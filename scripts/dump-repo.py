@@ -46,8 +46,7 @@ SKIP_DIRECTORY_NAMES: frozenset[str] = frozenset(
         "src-tauri",
         "frontend/test-results"
         "frontend/tmp",
-        "tmp",
-        "frontend"
+        "tmp"
     }
 )
 

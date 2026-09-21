@@ -314,17 +314,39 @@ func CompileWithPrevious(
 					if !hasInput {
 						toFieldID = FieldID(len(compiledNodes[vIdx].Inputs))
 						compiledNodes[vIdx].InputIndices[target.PortName] = toFieldID
+
+						var offset uint32
+						switch fromField.Which {
+						case schema.Type_Which_text, schema.Type_Which_data,
+							schema.Type_Which_structType, schema.Type_Which_list,
+							schema.Type_Which_anyPointer, schema.Type_Which_interface:
+							offset = uint32(compiledNodes[vIdx].Write.ParamsSize.PointerCount)
+							compiledNodes[vIdx].Write.ParamsSize.PointerCount++
+						default:
+							offset = uint32(compiledNodes[vIdx].Write.ParamsSize.DataSize / 8)
+							compiledNodes[vIdx].Write.ParamsSize.DataSize += 8
+						}
+
+						toField = FieldInfo{
+							Name:   target.PortName,
+							Offset: offset,
+							Which:  fromField.Which,
+						}
+						compiledNodes[vIdx].Inputs[target.PortName] = CompiledField{
+							Name:   target.PortName,
+							Which:  fromField.Which,
+							Offset: offset,
+							Index:  toFieldID,
+						}
 					}
-					toField = FieldInfo{
-						Name:   target.PortName,
-						Offset: uint32(toFieldID),
-						Which:  fromField.Which,
-					}
-					compiledNodes[vIdx].Inputs[target.PortName] = CompiledField{
-						Name:   target.PortName,
-						Which:  fromField.Which,
-						Offset: uint32(toFieldID),
-						Index:  toFieldID,
+
+					if hasInput {
+						existing := compiledNodes[vIdx].Inputs[target.PortName]
+						toField = FieldInfo{
+							Name:   target.PortName,
+							Offset: existing.Offset,
+							Which:  existing.Which,
+						}
 					}
 				}
 

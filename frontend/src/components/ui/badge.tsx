@@ -49,13 +49,13 @@ type BadgeVariantProps = VariantProps<typeof badgeVariants>;
 export type BadgeVariant = NonNullable<BadgeVariantProps["variant"]>;
 export type BadgeSize = NonNullable<BadgeVariantProps["size"]>;
 
-export type BadgeProps = Omit<ComponentProps<"span">, "children"> &
+export type BadgeProps = ComponentProps<"span"> &
 	BadgeVariantProps & {
 		/*
 			A label may be a subscribe-driven node rather than a literal, so a
 			value can sit in the slot without the badge re-rendering.
 		*/
-		label: ReactNode;
+		label?: ReactNode;
 		dot?: boolean;
 		/* Drives the dot's own animation, not the badge's. */
 		pulse?: boolean;
@@ -67,6 +67,7 @@ Badge is a compact status pill with semantic color variants and optional dot.
 export const Badge = ({
 	ref,
 	label,
+	children,
 	variant,
 	size,
 	dot = false,
@@ -89,7 +90,7 @@ export const Badge = ({
 					className="[--dot-tone:var(--badge-tone)]"
 				/>
 			) : null}
-			{label}
+			{label ?? children}
 		</span>
 	);
 };

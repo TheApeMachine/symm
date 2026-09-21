@@ -14,7 +14,9 @@
     "typecheck": "tsc -p tsconfig.typecheck.json --noEmit",
     "lint": "git ls-files --cached --others --exclude-standard 'src/**/*.ts' 'src/**/*.tsx' 'vite.config.ts' | grep -Ev '(^src/routeTree\\.gen\\.ts$|^src/providers/telemetry/telemetry/)' | while IFS= read -r file; do [ -e \"$file\" ] && printf '%s\\n' \"$file\"; done | xargs biome lint",
     "bench": "vitest bench --run",
-    "check:tokens": "./scripts/check-design-tokens.sh"
+    "check:tokens": "./scripts/check-design-tokens.sh",
+    "generate:ui": "node --experimental-strip-types scripts/reflect-components.ts",
+    "check:ui-drift": "./scripts/check-ui-drift.sh"
   },
   "dependencies": {
     "@naeemo/capnp": "^0.9.3",

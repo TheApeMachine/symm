@@ -6,7 +6,7 @@ import { Colors, Controls, FlumeConfig } from "./typeBuilders";
 createFlumeConfig instantiates the complete, authoritative Flume configuration
 with native port types, boundary nodes, compiled primitives, and definition sub-graphs.
 */
-export const createFlumeConfig = (_definitions: string[] = []): FlumeConfig => {
+export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 	const config = new FlumeConfig();
 
 	// 1. Standard Port Types
@@ -114,7 +114,30 @@ export const createFlumeConfig = (_definitions: string[] = []): FlumeConfig => {
 			],
 		});
 
-	// 2. Compiled Primitive Nodes
+	// 2. Boundary Nodes
+	config.addNodeType({
+		type: "source",
+		label: "source",
+		category: "Boundary",
+		initialWidth: 280,
+		inputs: [],
+		outputs: (ports) => [
+			ports.float64({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "sink",
+		label: "sink",
+		category: "Boundary",
+		initialWidth: 280,
+		inputs: (ports) => [
+			ports.float64({ name: "in", label: "in" }),
+		],
+		outputs: [],
+	});
+
+	// 3. Compiled Primitive Nodes
 	config.addNodeType({
 		type: "algo.GaussJordan",
 		label: "Gauss Jordan",
@@ -958,6 +981,7 @@ export const createFlumeConfig = (_definitions: string[] = []): FlumeConfig => {
 			ports.Status({ name: "status", label: "status" }),
 		],
 	});
+
 	config.addNodeType({
 		type: "data.MetricService",
 		label: "Metric Service",
@@ -1753,6 +1777,7 @@ export const createFlumeConfig = (_definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "values", label: "values" }),
 		],
 	});
+
 	config.addNodeType({
 		type: "store.Key",
 		label: "Key",
@@ -2165,11 +2190,11 @@ export const createFlumeConfig = (_definitions: string[] = []): FlumeConfig => {
 	// 3. Reusable Sub-graph Definitions
 	config.addNodeType({
 		type: "definition:correlation_ticker",
-		label: "correlation:ticker",
+		label: "correlation_ticker",
 		category: "Definitions",
 		description: "Sub-graph: correlation_ticker",
 		initialWidth: 320,
-		inputs: (ports) => [
+		inputs: (ports) => (_inputData, _connections) => [
 			ports.float64({ name: "hy.boundsEnd1", label: "hy.boundsEnd1" }),
 			ports.float64({ name: "hy.boundsEnd2", label: "hy.boundsEnd2" }),
 			ports["[]byte"]({ name: "hy.state", label: "hy.state" }),
@@ -2209,18 +2234,78 @@ export const createFlumeConfig = (_definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "metric:covariance.standardized", label: "metric:covariance.standardized" }),
 			ports.Status({ name: "metric:covariance.timescale", label: "metric:covariance.timescale" }),
 			ports.Status({ name: "metric:covariance.unit", label: "metric:covariance.unit" }),
+			ports.float64({ name: "metric:effective_sample_count.center", label: "metric:effective_sample_count.center" }),
+			ports.float64({ name: "metric:effective_sample_count.normalized", label: "metric:effective_sample_count.normalized" }),
+			ports.float64({ name: "metric:effective_sample_count.scale", label: "metric:effective_sample_count.scale" }),
+			ports.float64({ name: "metric:effective_sample_count.standardized", label: "metric:effective_sample_count.standardized" }),
+			ports.Status({ name: "metric:effective_sample_count.timescale", label: "metric:effective_sample_count.timescale" }),
+			ports.Status({ name: "metric:effective_sample_count.unit", label: "metric:effective_sample_count.unit" }),
+			ports.float64({ name: "metric:focal_return_energy_rate.center", label: "metric:focal_return_energy_rate.center" }),
+			ports.float64({ name: "metric:focal_return_energy_rate.normalized", label: "metric:focal_return_energy_rate.normalized" }),
+			ports.float64({ name: "metric:focal_return_energy_rate.scale", label: "metric:focal_return_energy_rate.scale" }),
+			ports.float64({ name: "metric:focal_return_energy_rate.standardized", label: "metric:focal_return_energy_rate.standardized" }),
+			ports.Status({ name: "metric:focal_return_energy_rate.timescale", label: "metric:focal_return_energy_rate.timescale" }),
+			ports.Status({ name: "metric:focal_return_energy_rate.unit", label: "metric:focal_return_energy_rate.unit" }),
+			ports.float64({ name: "metric:overlap_density.center", label: "metric:overlap_density.center" }),
+			ports.float64({ name: "metric:overlap_density.normalized", label: "metric:overlap_density.normalized" }),
+			ports.float64({ name: "metric:overlap_density.scale", label: "metric:overlap_density.scale" }),
+			ports.float64({ name: "metric:overlap_density.standardized", label: "metric:overlap_density.standardized" }),
+			ports.Status({ name: "metric:overlap_density.timescale", label: "metric:overlap_density.timescale" }),
+			ports.Status({ name: "metric:overlap_density.unit", label: "metric:overlap_density.unit" }),
 			ports.float64({ name: "metric:overlap_pair_count.center", label: "metric:overlap_pair_count.center" }),
 			ports.float64({ name: "metric:overlap_pair_count.normalized", label: "metric:overlap_pair_count.normalized" }),
 			ports.float64({ name: "metric:overlap_pair_count.scale", label: "metric:overlap_pair_count.scale" }),
 			ports.float64({ name: "metric:overlap_pair_count.standardized", label: "metric:overlap_pair_count.standardized" }),
 			ports.Status({ name: "metric:overlap_pair_count.timescale", label: "metric:overlap_pair_count.timescale" }),
 			ports.Status({ name: "metric:overlap_pair_count.unit", label: "metric:overlap_pair_count.unit" }),
+			ports.float64({ name: "metric:return_energy:measured.center", label: "metric:return_energy:measured.center" }),
+			ports.float64({ name: "metric:return_energy:measured.normalized", label: "metric:return_energy:measured.normalized" }),
+			ports.float64({ name: "metric:return_energy:measured.scale", label: "metric:return_energy:measured.scale" }),
+			ports.float64({ name: "metric:return_energy:measured.standardized", label: "metric:return_energy:measured.standardized" }),
+			ports.Status({ name: "metric:return_energy:measured.timescale", label: "metric:return_energy:measured.timescale" }),
+			ports.Status({ name: "metric:return_energy:measured.unit", label: "metric:return_energy:measured.unit" }),
+			ports.float64({ name: "metric:return_energy:reference.center", label: "metric:return_energy:reference.center" }),
+			ports.float64({ name: "metric:return_energy:reference.normalized", label: "metric:return_energy:reference.normalized" }),
+			ports.float64({ name: "metric:return_energy:reference.scale", label: "metric:return_energy:reference.scale" }),
+			ports.float64({ name: "metric:return_energy:reference.standardized", label: "metric:return_energy:reference.standardized" }),
+			ports.Status({ name: "metric:return_energy:reference.timescale", label: "metric:return_energy:reference.timescale" }),
+			ports.Status({ name: "metric:return_energy:reference.unit", label: "metric:return_energy:reference.unit" }),
+			ports.float64({ name: "metric:return_energy_rate:measured.center", label: "metric:return_energy_rate:measured.center" }),
+			ports.float64({ name: "metric:return_energy_rate:measured.normalized", label: "metric:return_energy_rate:measured.normalized" }),
+			ports.float64({ name: "metric:return_energy_rate:measured.scale", label: "metric:return_energy_rate:measured.scale" }),
+			ports.float64({ name: "metric:return_energy_rate:measured.standardized", label: "metric:return_energy_rate:measured.standardized" }),
+			ports.Status({ name: "metric:return_energy_rate:measured.timescale", label: "metric:return_energy_rate:measured.timescale" }),
+			ports.Status({ name: "metric:return_energy_rate:measured.unit", label: "metric:return_energy_rate:measured.unit" }),
+			ports.float64({ name: "metric:return_energy_rate:reference.center", label: "metric:return_energy_rate:reference.center" }),
+			ports.float64({ name: "metric:return_energy_rate:reference.normalized", label: "metric:return_energy_rate:reference.normalized" }),
+			ports.float64({ name: "metric:return_energy_rate:reference.scale", label: "metric:return_energy_rate:reference.scale" }),
+			ports.float64({ name: "metric:return_energy_rate:reference.standardized", label: "metric:return_energy_rate:reference.standardized" }),
+			ports.Status({ name: "metric:return_energy_rate:reference.timescale", label: "metric:return_energy_rate:reference.timescale" }),
+			ports.Status({ name: "metric:return_energy_rate:reference.unit", label: "metric:return_energy_rate:reference.unit" }),
+			ports.float64({ name: "metric:shared_time.center", label: "metric:shared_time.center" }),
+			ports.float64({ name: "metric:shared_time.normalized", label: "metric:shared_time.normalized" }),
+			ports.float64({ name: "metric:shared_time.scale", label: "metric:shared_time.scale" }),
+			ports.float64({ name: "metric:shared_time.standardized", label: "metric:shared_time.standardized" }),
+			ports.Status({ name: "metric:shared_time.timescale", label: "metric:shared_time.timescale" }),
+			ports.Status({ name: "metric:shared_time.unit", label: "metric:shared_time.unit" }),
 			ports.float64({ name: "metric:signed_correlation.center", label: "metric:signed_correlation.center" }),
 			ports.float64({ name: "metric:signed_correlation.normalized", label: "metric:signed_correlation.normalized" }),
 			ports.float64({ name: "metric:signed_correlation.scale", label: "metric:signed_correlation.scale" }),
 			ports.float64({ name: "metric:signed_correlation.standardized", label: "metric:signed_correlation.standardized" }),
 			ports.Status({ name: "metric:signed_correlation.timescale", label: "metric:signed_correlation.timescale" }),
 			ports.Status({ name: "metric:signed_correlation.unit", label: "metric:signed_correlation.unit" }),
+			ports.float64({ name: "metric:supported_return_count:measured.center", label: "metric:supported_return_count:measured.center" }),
+			ports.float64({ name: "metric:supported_return_count:measured.normalized", label: "metric:supported_return_count:measured.normalized" }),
+			ports.float64({ name: "metric:supported_return_count:measured.scale", label: "metric:supported_return_count:measured.scale" }),
+			ports.float64({ name: "metric:supported_return_count:measured.standardized", label: "metric:supported_return_count:measured.standardized" }),
+			ports.Status({ name: "metric:supported_return_count:measured.timescale", label: "metric:supported_return_count:measured.timescale" }),
+			ports.Status({ name: "metric:supported_return_count:measured.unit", label: "metric:supported_return_count:measured.unit" }),
+			ports.float64({ name: "metric:supported_return_count:reference.center", label: "metric:supported_return_count:reference.center" }),
+			ports.float64({ name: "metric:supported_return_count:reference.normalized", label: "metric:supported_return_count:reference.normalized" }),
+			ports.float64({ name: "metric:supported_return_count:reference.scale", label: "metric:supported_return_count:reference.scale" }),
+			ports.float64({ name: "metric:supported_return_count:reference.standardized", label: "metric:supported_return_count:reference.standardized" }),
+			ports.Status({ name: "metric:supported_return_count:reference.timescale", label: "metric:supported_return_count:reference.timescale" }),
+			ports.Status({ name: "metric:supported_return_count:reference.unit", label: "metric:supported_return_count:reference.unit" }),
 			ports.string({ name: "pairHistory.key", label: "pairHistory.key" }),
 			ports.bool({ name: "pairHistory.query", label: "pairHistory.query" }),
 			ports.float64({ name: "prevReferenceTimestamp.value", label: "prevReferenceTimestamp.value" }),
@@ -2229,15 +2314,7 @@ export const createFlumeConfig = (_definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "returns.value", label: "returns.value" }),
 			ports.float64({ name: "velocity.ts", label: "velocity.ts" }),
 		],
-		outputs: (ports) => [
-			ports.float64({ name: "hy.leftEnergy", label: "hy.leftEnergy" }),
-			ports.float64({ name: "hy.leftEnergyRate", label: "hy.leftEnergyRate" }),
-			ports.float64({ name: "hy.leftReturns", label: "hy.leftReturns" }),
-			ports.float64({ name: "hy.overlapDensity", label: "hy.overlapDensity" }),
-			ports.float64({ name: "hy.rightEnergy", label: "hy.rightEnergy" }),
-			ports.float64({ name: "hy.rightEnergyRate", label: "hy.rightEnergyRate" }),
-			ports.float64({ name: "hy.rightReturns", label: "hy.rightReturns" }),
-			ports.float64({ name: "hy.sharedTime", label: "hy.sharedTime" }),
+		outputs: (ports) => (_inputData, _connections) => [
 			ports.Status({ name: "hy.status", label: "hy.status" }),
 			ports["[]byte"]({ name: "metric:absolute_correlation.read", label: "metric:absolute_correlation.read" }),
 			ports.Status({ name: "metric:absolute_correlation.status", label: "metric:absolute_correlation.status" }),
@@ -2251,21 +2328,41 @@ export const createFlumeConfig = (_definitions: string[] = []): FlumeConfig => {
 			ports.Status({ name: "metric:correlation_zscore.status", label: "metric:correlation_zscore.status" }),
 			ports["[]byte"]({ name: "metric:covariance.read", label: "metric:covariance.read" }),
 			ports.Status({ name: "metric:covariance.status", label: "metric:covariance.status" }),
+			ports["[]byte"]({ name: "metric:effective_sample_count.read", label: "metric:effective_sample_count.read" }),
+			ports.Status({ name: "metric:effective_sample_count.status", label: "metric:effective_sample_count.status" }),
+			ports["[]byte"]({ name: "metric:focal_return_energy_rate.read", label: "metric:focal_return_energy_rate.read" }),
+			ports.Status({ name: "metric:focal_return_energy_rate.status", label: "metric:focal_return_energy_rate.status" }),
+			ports["[]byte"]({ name: "metric:overlap_density.read", label: "metric:overlap_density.read" }),
+			ports.Status({ name: "metric:overlap_density.status", label: "metric:overlap_density.status" }),
 			ports["[]byte"]({ name: "metric:overlap_pair_count.read", label: "metric:overlap_pair_count.read" }),
 			ports.Status({ name: "metric:overlap_pair_count.status", label: "metric:overlap_pair_count.status" }),
+			ports["[]byte"]({ name: "metric:return_energy:measured.read", label: "metric:return_energy:measured.read" }),
+			ports.Status({ name: "metric:return_energy:measured.status", label: "metric:return_energy:measured.status" }),
+			ports["[]byte"]({ name: "metric:return_energy:reference.read", label: "metric:return_energy:reference.read" }),
+			ports.Status({ name: "metric:return_energy:reference.status", label: "metric:return_energy:reference.status" }),
+			ports["[]byte"]({ name: "metric:return_energy_rate:measured.read", label: "metric:return_energy_rate:measured.read" }),
+			ports.Status({ name: "metric:return_energy_rate:measured.status", label: "metric:return_energy_rate:measured.status" }),
+			ports["[]byte"]({ name: "metric:return_energy_rate:reference.read", label: "metric:return_energy_rate:reference.read" }),
+			ports.Status({ name: "metric:return_energy_rate:reference.status", label: "metric:return_energy_rate:reference.status" }),
+			ports["[]byte"]({ name: "metric:shared_time.read", label: "metric:shared_time.read" }),
+			ports.Status({ name: "metric:shared_time.status", label: "metric:shared_time.status" }),
 			ports["[]byte"]({ name: "metric:signed_correlation.read", label: "metric:signed_correlation.read" }),
 			ports.Status({ name: "metric:signed_correlation.status", label: "metric:signed_correlation.status" }),
+			ports["[]byte"]({ name: "metric:supported_return_count:measured.read", label: "metric:supported_return_count:measured.read" }),
+			ports.Status({ name: "metric:supported_return_count:measured.status", label: "metric:supported_return_count:measured.status" }),
+			ports["[]byte"]({ name: "metric:supported_return_count:reference.read", label: "metric:supported_return_count:reference.read" }),
+			ports.Status({ name: "metric:supported_return_count:reference.status", label: "metric:supported_return_count:reference.status" }),
 			ports.bool({ name: "pairHistory.found", label: "pairHistory.found" }),
 			ports["[]byte"]({ name: "pairHistory.out", label: "pairHistory.out" }),
 		],
 	});
 	config.addNodeType({
 		type: "definition:cvd_trade",
-		label: "cvd:trade",
+		label: "cvd_trade",
 		category: "Definitions",
 		description: "Sub-graph: cvd_trade",
 		initialWidth: 320,
-		inputs: (ports) => [
+		inputs: (ports) => (_inputData, _connections) => [
 			ports.bool({ name: "aggressive_notional:buy.flush", label: "aggressive_notional:buy.flush" }),
 			ports.bool({ name: "aggressive_notional:sell.flush", label: "aggressive_notional:sell.flush" }),
 			ports.float64({ name: "buyQuantity.a", label: "buyQuantity.a" }),
@@ -2344,6 +2441,36 @@ export const createFlumeConfig = (_definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "metric:net_notional.standardized", label: "metric:net_notional.standardized" }),
 			ports.Status({ name: "metric:net_notional.timescale", label: "metric:net_notional.timescale" }),
 			ports.Status({ name: "metric:net_notional.unit", label: "metric:net_notional.unit" }),
+			ports.float64({ name: "metric:signed_count_fraction.center", label: "metric:signed_count_fraction.center" }),
+			ports.float64({ name: "metric:signed_count_fraction.normalized", label: "metric:signed_count_fraction.normalized" }),
+			ports.float64({ name: "metric:signed_count_fraction.scale", label: "metric:signed_count_fraction.scale" }),
+			ports.float64({ name: "metric:signed_count_fraction.standardized", label: "metric:signed_count_fraction.standardized" }),
+			ports.Status({ name: "metric:signed_count_fraction.timescale", label: "metric:signed_count_fraction.timescale" }),
+			ports.Status({ name: "metric:signed_count_fraction.unit", label: "metric:signed_count_fraction.unit" }),
+			ports.float64({ name: "metric:signed_net_fraction.center", label: "metric:signed_net_fraction.center" }),
+			ports.float64({ name: "metric:signed_net_fraction.normalized", label: "metric:signed_net_fraction.normalized" }),
+			ports.float64({ name: "metric:signed_net_fraction.scale", label: "metric:signed_net_fraction.scale" }),
+			ports.float64({ name: "metric:signed_net_fraction.standardized", label: "metric:signed_net_fraction.standardized" }),
+			ports.Status({ name: "metric:signed_net_fraction.timescale", label: "metric:signed_net_fraction.timescale" }),
+			ports.Status({ name: "metric:signed_net_fraction.unit", label: "metric:signed_net_fraction.unit" }),
+			ports.float64({ name: "metric:signed_net_fraction_baseline.center", label: "metric:signed_net_fraction_baseline.center" }),
+			ports.float64({ name: "metric:signed_net_fraction_baseline.normalized", label: "metric:signed_net_fraction_baseline.normalized" }),
+			ports.float64({ name: "metric:signed_net_fraction_baseline.scale", label: "metric:signed_net_fraction_baseline.scale" }),
+			ports.float64({ name: "metric:signed_net_fraction_baseline.standardized", label: "metric:signed_net_fraction_baseline.standardized" }),
+			ports.Status({ name: "metric:signed_net_fraction_baseline.timescale", label: "metric:signed_net_fraction_baseline.timescale" }),
+			ports.Status({ name: "metric:signed_net_fraction_baseline.unit", label: "metric:signed_net_fraction_baseline.unit" }),
+			ports.float64({ name: "metric:signed_net_fraction_divergence.center", label: "metric:signed_net_fraction_divergence.center" }),
+			ports.float64({ name: "metric:signed_net_fraction_divergence.normalized", label: "metric:signed_net_fraction_divergence.normalized" }),
+			ports.float64({ name: "metric:signed_net_fraction_divergence.scale", label: "metric:signed_net_fraction_divergence.scale" }),
+			ports.float64({ name: "metric:signed_net_fraction_divergence.standardized", label: "metric:signed_net_fraction_divergence.standardized" }),
+			ports.Status({ name: "metric:signed_net_fraction_divergence.timescale", label: "metric:signed_net_fraction_divergence.timescale" }),
+			ports.Status({ name: "metric:signed_net_fraction_divergence.unit", label: "metric:signed_net_fraction_divergence.unit" }),
+			ports.float64({ name: "metric:signed_net_fraction_zscore.center", label: "metric:signed_net_fraction_zscore.center" }),
+			ports.float64({ name: "metric:signed_net_fraction_zscore.normalized", label: "metric:signed_net_fraction_zscore.normalized" }),
+			ports.float64({ name: "metric:signed_net_fraction_zscore.scale", label: "metric:signed_net_fraction_zscore.scale" }),
+			ports.float64({ name: "metric:signed_net_fraction_zscore.standardized", label: "metric:signed_net_fraction_zscore.standardized" }),
+			ports.Status({ name: "metric:signed_net_fraction_zscore.timescale", label: "metric:signed_net_fraction_zscore.timescale" }),
+			ports.Status({ name: "metric:signed_net_fraction_zscore.unit", label: "metric:signed_net_fraction_zscore.unit" }),
 			ports.float64({ name: "metric:trade_count.center", label: "metric:trade_count.center" }),
 			ports.float64({ name: "metric:trade_count.normalized", label: "metric:trade_count.normalized" }),
 			ports.float64({ name: "metric:trade_count.scale", label: "metric:trade_count.scale" }),
@@ -2376,7 +2503,7 @@ export const createFlumeConfig = (_definitions: string[] = []): FlumeConfig => {
 			ports.bool({ name: "trade_count:buy.flush", label: "trade_count:buy.flush" }),
 			ports.bool({ name: "trade_count:sell.flush", label: "trade_count:sell.flush" }),
 		],
-		outputs: (ports) => [
+		outputs: (ports) => (_inputData, _connections) => [
 			ports.int64({ name: "aggressive_notional:buy.count", label: "aggressive_notional:buy.count" }),
 			ports.bool({ name: "aggressive_notional:buy.ready", label: "aggressive_notional:buy.ready" }),
 			ports.Status({ name: "aggressive_notional:buy.status", label: "aggressive_notional:buy.status" }),
@@ -2426,6 +2553,16 @@ export const createFlumeConfig = (_definitions: string[] = []): FlumeConfig => {
 			ports.Status({ name: "metric:net_executed_quantity.status", label: "metric:net_executed_quantity.status" }),
 			ports["[]byte"]({ name: "metric:net_notional.read", label: "metric:net_notional.read" }),
 			ports.Status({ name: "metric:net_notional.status", label: "metric:net_notional.status" }),
+			ports["[]byte"]({ name: "metric:signed_count_fraction.read", label: "metric:signed_count_fraction.read" }),
+			ports.Status({ name: "metric:signed_count_fraction.status", label: "metric:signed_count_fraction.status" }),
+			ports["[]byte"]({ name: "metric:signed_net_fraction.read", label: "metric:signed_net_fraction.read" }),
+			ports.Status({ name: "metric:signed_net_fraction.status", label: "metric:signed_net_fraction.status" }),
+			ports["[]byte"]({ name: "metric:signed_net_fraction_baseline.read", label: "metric:signed_net_fraction_baseline.read" }),
+			ports.Status({ name: "metric:signed_net_fraction_baseline.status", label: "metric:signed_net_fraction_baseline.status" }),
+			ports["[]byte"]({ name: "metric:signed_net_fraction_divergence.read", label: "metric:signed_net_fraction_divergence.read" }),
+			ports.Status({ name: "metric:signed_net_fraction_divergence.status", label: "metric:signed_net_fraction_divergence.status" }),
+			ports["[]byte"]({ name: "metric:signed_net_fraction_zscore.read", label: "metric:signed_net_fraction_zscore.read" }),
+			ports.Status({ name: "metric:signed_net_fraction_zscore.status", label: "metric:signed_net_fraction_zscore.status" }),
 			ports["[]byte"]({ name: "metric:trade_count.read", label: "metric:trade_count.read" }),
 			ports.Status({ name: "metric:trade_count.status", label: "metric:trade_count.status" }),
 			ports["[]byte"]({ name: "metric:trade_count:buy.read", label: "metric:trade_count:buy.read" }),
@@ -2451,11 +2588,11 @@ export const createFlumeConfig = (_definitions: string[] = []): FlumeConfig => {
 	});
 	config.addNodeType({
 		type: "definition:depthflow_level3",
-		label: "depthflow:level3",
+		label: "depthflow_level3",
 		category: "Definitions",
 		description: "Sub-graph: depthflow_level3",
 		initialWidth: 320,
-		inputs: (ports) => [
+		inputs: (ports) => (_inputData, _connections) => [
 			ports.int64({ name: "elapsed.timestamp", label: "elapsed.timestamp" }),
 			ports.float64({ name: "metric:mutation_activity_imbalance.center", label: "metric:mutation_activity_imbalance.center" }),
 			ports.float64({ name: "metric:mutation_activity_imbalance.normalized", label: "metric:mutation_activity_imbalance.normalized" }),
@@ -2463,6 +2600,36 @@ export const createFlumeConfig = (_definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "metric:mutation_activity_imbalance.standardized", label: "metric:mutation_activity_imbalance.standardized" }),
 			ports.Status({ name: "metric:mutation_activity_imbalance.timescale", label: "metric:mutation_activity_imbalance.timescale" }),
 			ports.Status({ name: "metric:mutation_activity_imbalance.unit", label: "metric:mutation_activity_imbalance.unit" }),
+			ports.float64({ name: "metric:mutation_count.center", label: "metric:mutation_count.center" }),
+			ports.float64({ name: "metric:mutation_count.normalized", label: "metric:mutation_count.normalized" }),
+			ports.float64({ name: "metric:mutation_count.scale", label: "metric:mutation_count.scale" }),
+			ports.float64({ name: "metric:mutation_count.standardized", label: "metric:mutation_count.standardized" }),
+			ports.Status({ name: "metric:mutation_count.timescale", label: "metric:mutation_count.timescale" }),
+			ports.Status({ name: "metric:mutation_count.unit", label: "metric:mutation_count.unit" }),
+			ports.float64({ name: "metric:mutation_count_diff.center", label: "metric:mutation_count_diff.center" }),
+			ports.float64({ name: "metric:mutation_count_diff.normalized", label: "metric:mutation_count_diff.normalized" }),
+			ports.float64({ name: "metric:mutation_count_diff.scale", label: "metric:mutation_count_diff.scale" }),
+			ports.float64({ name: "metric:mutation_count_diff.standardized", label: "metric:mutation_count_diff.standardized" }),
+			ports.Status({ name: "metric:mutation_count_diff.timescale", label: "metric:mutation_count_diff.timescale" }),
+			ports.Status({ name: "metric:mutation_count_diff.unit", label: "metric:mutation_count_diff.unit" }),
+			ports.float64({ name: "metric:observed_notional.center", label: "metric:observed_notional.center" }),
+			ports.float64({ name: "metric:observed_notional.normalized", label: "metric:observed_notional.normalized" }),
+			ports.float64({ name: "metric:observed_notional.scale", label: "metric:observed_notional.scale" }),
+			ports.float64({ name: "metric:observed_notional.standardized", label: "metric:observed_notional.standardized" }),
+			ports.Status({ name: "metric:observed_notional.timescale", label: "metric:observed_notional.timescale" }),
+			ports.Status({ name: "metric:observed_notional.unit", label: "metric:observed_notional.unit" }),
+			ports.float64({ name: "metric:observed_notional_diff.center", label: "metric:observed_notional_diff.center" }),
+			ports.float64({ name: "metric:observed_notional_diff.normalized", label: "metric:observed_notional_diff.normalized" }),
+			ports.float64({ name: "metric:observed_notional_diff.scale", label: "metric:observed_notional_diff.scale" }),
+			ports.float64({ name: "metric:observed_notional_diff.standardized", label: "metric:observed_notional_diff.standardized" }),
+			ports.Status({ name: "metric:observed_notional_diff.timescale", label: "metric:observed_notional_diff.timescale" }),
+			ports.Status({ name: "metric:observed_notional_diff.unit", label: "metric:observed_notional_diff.unit" }),
+			ports.float64({ name: "metric:observed_notional_imbalance.center", label: "metric:observed_notional_imbalance.center" }),
+			ports.float64({ name: "metric:observed_notional_imbalance.normalized", label: "metric:observed_notional_imbalance.normalized" }),
+			ports.float64({ name: "metric:observed_notional_imbalance.scale", label: "metric:observed_notional_imbalance.scale" }),
+			ports.float64({ name: "metric:observed_notional_imbalance.standardized", label: "metric:observed_notional_imbalance.standardized" }),
+			ports.Status({ name: "metric:observed_notional_imbalance.timescale", label: "metric:observed_notional_imbalance.timescale" }),
+			ports.Status({ name: "metric:observed_notional_imbalance.unit", label: "metric:observed_notional_imbalance.unit" }),
 			ports.float64({ name: "metric:observed_notional_imbalance_baseline.center", label: "metric:observed_notional_imbalance_baseline.center" }),
 			ports.float64({ name: "metric:observed_notional_imbalance_baseline.normalized", label: "metric:observed_notional_imbalance_baseline.normalized" }),
 			ports.float64({ name: "metric:observed_notional_imbalance_baseline.scale", label: "metric:observed_notional_imbalance_baseline.scale" }),
@@ -2481,6 +2648,12 @@ export const createFlumeConfig = (_definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "metric:observed_notional_imbalance_zscore.standardized", label: "metric:observed_notional_imbalance_zscore.standardized" }),
 			ports.Status({ name: "metric:observed_notional_imbalance_zscore.timescale", label: "metric:observed_notional_imbalance_zscore.timescale" }),
 			ports.Status({ name: "metric:observed_notional_imbalance_zscore.unit", label: "metric:observed_notional_imbalance_zscore.unit" }),
+			ports.float64({ name: "metric:observed_notional_rate.center", label: "metric:observed_notional_rate.center" }),
+			ports.float64({ name: "metric:observed_notional_rate.normalized", label: "metric:observed_notional_rate.normalized" }),
+			ports.float64({ name: "metric:observed_notional_rate.scale", label: "metric:observed_notional_rate.scale" }),
+			ports.float64({ name: "metric:observed_notional_rate.standardized", label: "metric:observed_notional_rate.standardized" }),
+			ports.Status({ name: "metric:observed_notional_rate.timescale", label: "metric:observed_notional_rate.timescale" }),
+			ports.Status({ name: "metric:observed_notional_rate.unit", label: "metric:observed_notional_rate.unit" }),
 			ports.float64({ name: "metric:observed_notional_rate_baseline.center", label: "metric:observed_notional_rate_baseline.center" }),
 			ports.float64({ name: "metric:observed_notional_rate_baseline.normalized", label: "metric:observed_notional_rate_baseline.normalized" }),
 			ports.float64({ name: "metric:observed_notional_rate_baseline.scale", label: "metric:observed_notional_rate_baseline.scale" }),
@@ -2508,15 +2681,27 @@ export const createFlumeConfig = (_definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "observed_notional.a", label: "observed_notional.a" }),
 			ports.float64({ name: "observed_notional.b", label: "observed_notional.b" }),
 		],
-		outputs: (ports) => [
+		outputs: (ports) => (_inputData, _connections) => [
 			ports["[]byte"]({ name: "metric:mutation_activity_imbalance.read", label: "metric:mutation_activity_imbalance.read" }),
 			ports.Status({ name: "metric:mutation_activity_imbalance.status", label: "metric:mutation_activity_imbalance.status" }),
+			ports["[]byte"]({ name: "metric:mutation_count.read", label: "metric:mutation_count.read" }),
+			ports.Status({ name: "metric:mutation_count.status", label: "metric:mutation_count.status" }),
+			ports["[]byte"]({ name: "metric:mutation_count_diff.read", label: "metric:mutation_count_diff.read" }),
+			ports.Status({ name: "metric:mutation_count_diff.status", label: "metric:mutation_count_diff.status" }),
+			ports["[]byte"]({ name: "metric:observed_notional.read", label: "metric:observed_notional.read" }),
+			ports.Status({ name: "metric:observed_notional.status", label: "metric:observed_notional.status" }),
+			ports["[]byte"]({ name: "metric:observed_notional_diff.read", label: "metric:observed_notional_diff.read" }),
+			ports.Status({ name: "metric:observed_notional_diff.status", label: "metric:observed_notional_diff.status" }),
+			ports["[]byte"]({ name: "metric:observed_notional_imbalance.read", label: "metric:observed_notional_imbalance.read" }),
+			ports.Status({ name: "metric:observed_notional_imbalance.status", label: "metric:observed_notional_imbalance.status" }),
 			ports["[]byte"]({ name: "metric:observed_notional_imbalance_baseline.read", label: "metric:observed_notional_imbalance_baseline.read" }),
 			ports.Status({ name: "metric:observed_notional_imbalance_baseline.status", label: "metric:observed_notional_imbalance_baseline.status" }),
 			ports["[]byte"]({ name: "metric:observed_notional_imbalance_divergence.read", label: "metric:observed_notional_imbalance_divergence.read" }),
 			ports.Status({ name: "metric:observed_notional_imbalance_divergence.status", label: "metric:observed_notional_imbalance_divergence.status" }),
 			ports["[]byte"]({ name: "metric:observed_notional_imbalance_zscore.read", label: "metric:observed_notional_imbalance_zscore.read" }),
 			ports.Status({ name: "metric:observed_notional_imbalance_zscore.status", label: "metric:observed_notional_imbalance_zscore.status" }),
+			ports["[]byte"]({ name: "metric:observed_notional_rate.read", label: "metric:observed_notional_rate.read" }),
+			ports.Status({ name: "metric:observed_notional_rate.status", label: "metric:observed_notional_rate.status" }),
 			ports["[]byte"]({ name: "metric:observed_notional_rate_baseline.read", label: "metric:observed_notional_rate_baseline.read" }),
 			ports.Status({ name: "metric:observed_notional_rate_baseline.status", label: "metric:observed_notional_rate_baseline.status" }),
 			ports["[]byte"]({ name: "metric:observed_notional_rate_divergence.read", label: "metric:observed_notional_rate_divergence.read" }),
@@ -2527,23 +2712,35 @@ export const createFlumeConfig = (_definitions: string[] = []): FlumeConfig => {
 	});
 	config.addNodeType({
 		type: "definition:derivatives_ticker",
-		label: "derivatives:ticker",
+		label: "derivatives_ticker",
 		category: "Definitions",
 		description: "Sub-graph: derivatives_ticker",
 		initialWidth: 320,
-		inputs: (ports) => [
+		inputs: (ports) => (_inputData, _connections) => [
 			ports.float64({ name: "basis.a", label: "basis.a" }),
 			ports.float64({ name: "basis.b", label: "basis.b" }),
 			ports.float64({ name: "basis_change.prev", label: "basis_change.prev" }),
 			ports.float64({ name: "basis_velocity.ts", label: "basis_velocity.ts" }),
 			ports.float64({ name: "derivative_log_return.value", label: "derivative_log_return.value" }),
 			ports.int64({ name: "elapsed.timestamp", label: "elapsed.timestamp" }),
+			ports.float64({ name: "metric:basis.center", label: "metric:basis.center" }),
+			ports.float64({ name: "metric:basis.normalized", label: "metric:basis.normalized" }),
+			ports.float64({ name: "metric:basis.scale", label: "metric:basis.scale" }),
+			ports.float64({ name: "metric:basis.standardized", label: "metric:basis.standardized" }),
+			ports.Status({ name: "metric:basis.timescale", label: "metric:basis.timescale" }),
+			ports.Status({ name: "metric:basis.unit", label: "metric:basis.unit" }),
 			ports.float64({ name: "metric:basis_baseline.center", label: "metric:basis_baseline.center" }),
 			ports.float64({ name: "metric:basis_baseline.normalized", label: "metric:basis_baseline.normalized" }),
 			ports.float64({ name: "metric:basis_baseline.scale", label: "metric:basis_baseline.scale" }),
 			ports.float64({ name: "metric:basis_baseline.standardized", label: "metric:basis_baseline.standardized" }),
 			ports.Status({ name: "metric:basis_baseline.timescale", label: "metric:basis_baseline.timescale" }),
 			ports.Status({ name: "metric:basis_baseline.unit", label: "metric:basis_baseline.unit" }),
+			ports.float64({ name: "metric:basis_change.center", label: "metric:basis_change.center" }),
+			ports.float64({ name: "metric:basis_change.normalized", label: "metric:basis_change.normalized" }),
+			ports.float64({ name: "metric:basis_change.scale", label: "metric:basis_change.scale" }),
+			ports.float64({ name: "metric:basis_change.standardized", label: "metric:basis_change.standardized" }),
+			ports.Status({ name: "metric:basis_change.timescale", label: "metric:basis_change.timescale" }),
+			ports.Status({ name: "metric:basis_change.unit", label: "metric:basis_change.unit" }),
 			ports.float64({ name: "metric:basis_rate.center", label: "metric:basis_rate.center" }),
 			ports.float64({ name: "metric:basis_rate.normalized", label: "metric:basis_rate.normalized" }),
 			ports.float64({ name: "metric:basis_rate.scale", label: "metric:basis_rate.scale" }),
@@ -2562,6 +2759,12 @@ export const createFlumeConfig = (_definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "metric:basis_zscore.standardized", label: "metric:basis_zscore.standardized" }),
 			ports.Status({ name: "metric:basis_zscore.timescale", label: "metric:basis_zscore.timescale" }),
 			ports.Status({ name: "metric:basis_zscore.unit", label: "metric:basis_zscore.unit" }),
+			ports.float64({ name: "metric:derivative_log_return.center", label: "metric:derivative_log_return.center" }),
+			ports.float64({ name: "metric:derivative_log_return.normalized", label: "metric:derivative_log_return.normalized" }),
+			ports.float64({ name: "metric:derivative_log_return.scale", label: "metric:derivative_log_return.scale" }),
+			ports.float64({ name: "metric:derivative_log_return.standardized", label: "metric:derivative_log_return.standardized" }),
+			ports.Status({ name: "metric:derivative_log_return.timescale", label: "metric:derivative_log_return.timescale" }),
+			ports.Status({ name: "metric:derivative_log_return.unit", label: "metric:derivative_log_return.unit" }),
 			ports.float64({ name: "metric:log_basis.center", label: "metric:log_basis.center" }),
 			ports.float64({ name: "metric:log_basis.normalized", label: "metric:log_basis.normalized" }),
 			ports.float64({ name: "metric:log_basis.scale", label: "metric:log_basis.scale" }),
@@ -2580,6 +2783,12 @@ export const createFlumeConfig = (_definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "metric:open_interest_growth_baseline.standardized", label: "metric:open_interest_growth_baseline.standardized" }),
 			ports.Status({ name: "metric:open_interest_growth_baseline.timescale", label: "metric:open_interest_growth_baseline.timescale" }),
 			ports.Status({ name: "metric:open_interest_growth_baseline.unit", label: "metric:open_interest_growth_baseline.unit" }),
+			ports.float64({ name: "metric:open_interest_growth_rate.center", label: "metric:open_interest_growth_rate.center" }),
+			ports.float64({ name: "metric:open_interest_growth_rate.normalized", label: "metric:open_interest_growth_rate.normalized" }),
+			ports.float64({ name: "metric:open_interest_growth_rate.scale", label: "metric:open_interest_growth_rate.scale" }),
+			ports.float64({ name: "metric:open_interest_growth_rate.standardized", label: "metric:open_interest_growth_rate.standardized" }),
+			ports.Status({ name: "metric:open_interest_growth_rate.timescale", label: "metric:open_interest_growth_rate.timescale" }),
+			ports.Status({ name: "metric:open_interest_growth_rate.unit", label: "metric:open_interest_growth_rate.unit" }),
 			ports.float64({ name: "metric:open_interest_growth_velocity.center", label: "metric:open_interest_growth_velocity.center" }),
 			ports.float64({ name: "metric:open_interest_growth_velocity.normalized", label: "metric:open_interest_growth_velocity.normalized" }),
 			ports.float64({ name: "metric:open_interest_growth_velocity.scale", label: "metric:open_interest_growth_velocity.scale" }),
@@ -2592,6 +2801,24 @@ export const createFlumeConfig = (_definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "metric:open_interest_growth_zscore.standardized", label: "metric:open_interest_growth_zscore.standardized" }),
 			ports.Status({ name: "metric:open_interest_growth_zscore.timescale", label: "metric:open_interest_growth_zscore.timescale" }),
 			ports.Status({ name: "metric:open_interest_growth_zscore.unit", label: "metric:open_interest_growth_zscore.unit" }),
+			ports.float64({ name: "metric:open_interest_log_change.center", label: "metric:open_interest_log_change.center" }),
+			ports.float64({ name: "metric:open_interest_log_change.normalized", label: "metric:open_interest_log_change.normalized" }),
+			ports.float64({ name: "metric:open_interest_log_change.scale", label: "metric:open_interest_log_change.scale" }),
+			ports.float64({ name: "metric:open_interest_log_change.standardized", label: "metric:open_interest_log_change.standardized" }),
+			ports.Status({ name: "metric:open_interest_log_change.timescale", label: "metric:open_interest_log_change.timescale" }),
+			ports.Status({ name: "metric:open_interest_log_change.unit", label: "metric:open_interest_log_change.unit" }),
+			ports.float64({ name: "metric:reference_log_return.center", label: "metric:reference_log_return.center" }),
+			ports.float64({ name: "metric:reference_log_return.normalized", label: "metric:reference_log_return.normalized" }),
+			ports.float64({ name: "metric:reference_log_return.scale", label: "metric:reference_log_return.scale" }),
+			ports.float64({ name: "metric:reference_log_return.standardized", label: "metric:reference_log_return.standardized" }),
+			ports.Status({ name: "metric:reference_log_return.timescale", label: "metric:reference_log_return.timescale" }),
+			ports.Status({ name: "metric:reference_log_return.unit", label: "metric:reference_log_return.unit" }),
+			ports.float64({ name: "metric:return_gap.center", label: "metric:return_gap.center" }),
+			ports.float64({ name: "metric:return_gap.normalized", label: "metric:return_gap.normalized" }),
+			ports.float64({ name: "metric:return_gap.scale", label: "metric:return_gap.scale" }),
+			ports.float64({ name: "metric:return_gap.standardized", label: "metric:return_gap.standardized" }),
+			ports.Status({ name: "metric:return_gap.timescale", label: "metric:return_gap.timescale" }),
+			ports.Status({ name: "metric:return_gap.unit", label: "metric:return_gap.unit" }),
 			ports.float64({ name: "metric:return_gap_baseline.center", label: "metric:return_gap_baseline.center" }),
 			ports.float64({ name: "metric:return_gap_baseline.normalized", label: "metric:return_gap_baseline.normalized" }),
 			ports.float64({ name: "metric:return_gap_baseline.scale", label: "metric:return_gap_baseline.scale" }),
@@ -2619,25 +2846,39 @@ export const createFlumeConfig = (_definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "reference_log_return.value", label: "reference_log_return.value" }),
 			ports.float64({ name: "return_gap_velocity.ts", label: "return_gap_velocity.ts" }),
 		],
-		outputs: (ports) => [
+		outputs: (ports) => (_inputData, _connections) => [
+			ports["[]byte"]({ name: "metric:basis.read", label: "metric:basis.read" }),
+			ports.Status({ name: "metric:basis.status", label: "metric:basis.status" }),
 			ports["[]byte"]({ name: "metric:basis_baseline.read", label: "metric:basis_baseline.read" }),
 			ports.Status({ name: "metric:basis_baseline.status", label: "metric:basis_baseline.status" }),
+			ports["[]byte"]({ name: "metric:basis_change.read", label: "metric:basis_change.read" }),
+			ports.Status({ name: "metric:basis_change.status", label: "metric:basis_change.status" }),
 			ports["[]byte"]({ name: "metric:basis_rate.read", label: "metric:basis_rate.read" }),
 			ports.Status({ name: "metric:basis_rate.status", label: "metric:basis_rate.status" }),
 			ports["[]byte"]({ name: "metric:basis_velocity.read", label: "metric:basis_velocity.read" }),
 			ports.Status({ name: "metric:basis_velocity.status", label: "metric:basis_velocity.status" }),
 			ports["[]byte"]({ name: "metric:basis_zscore.read", label: "metric:basis_zscore.read" }),
 			ports.Status({ name: "metric:basis_zscore.status", label: "metric:basis_zscore.status" }),
+			ports["[]byte"]({ name: "metric:derivative_log_return.read", label: "metric:derivative_log_return.read" }),
+			ports.Status({ name: "metric:derivative_log_return.status", label: "metric:derivative_log_return.status" }),
 			ports["[]byte"]({ name: "metric:log_basis.read", label: "metric:log_basis.read" }),
 			ports.Status({ name: "metric:log_basis.status", label: "metric:log_basis.status" }),
 			ports["[]byte"]({ name: "metric:open_interest_change.read", label: "metric:open_interest_change.read" }),
 			ports.Status({ name: "metric:open_interest_change.status", label: "metric:open_interest_change.status" }),
 			ports["[]byte"]({ name: "metric:open_interest_growth_baseline.read", label: "metric:open_interest_growth_baseline.read" }),
 			ports.Status({ name: "metric:open_interest_growth_baseline.status", label: "metric:open_interest_growth_baseline.status" }),
+			ports["[]byte"]({ name: "metric:open_interest_growth_rate.read", label: "metric:open_interest_growth_rate.read" }),
+			ports.Status({ name: "metric:open_interest_growth_rate.status", label: "metric:open_interest_growth_rate.status" }),
 			ports["[]byte"]({ name: "metric:open_interest_growth_velocity.read", label: "metric:open_interest_growth_velocity.read" }),
 			ports.Status({ name: "metric:open_interest_growth_velocity.status", label: "metric:open_interest_growth_velocity.status" }),
 			ports["[]byte"]({ name: "metric:open_interest_growth_zscore.read", label: "metric:open_interest_growth_zscore.read" }),
 			ports.Status({ name: "metric:open_interest_growth_zscore.status", label: "metric:open_interest_growth_zscore.status" }),
+			ports["[]byte"]({ name: "metric:open_interest_log_change.read", label: "metric:open_interest_log_change.read" }),
+			ports.Status({ name: "metric:open_interest_log_change.status", label: "metric:open_interest_log_change.status" }),
+			ports["[]byte"]({ name: "metric:reference_log_return.read", label: "metric:reference_log_return.read" }),
+			ports.Status({ name: "metric:reference_log_return.status", label: "metric:reference_log_return.status" }),
+			ports["[]byte"]({ name: "metric:return_gap.read", label: "metric:return_gap.read" }),
+			ports.Status({ name: "metric:return_gap.status", label: "metric:return_gap.status" }),
 			ports["[]byte"]({ name: "metric:return_gap_baseline.read", label: "metric:return_gap_baseline.read" }),
 			ports.Status({ name: "metric:return_gap_baseline.status", label: "metric:return_gap_baseline.status" }),
 			ports["[]byte"]({ name: "metric:return_gap_velocity.read", label: "metric:return_gap_velocity.read" }),
@@ -2648,23 +2889,41 @@ export const createFlumeConfig = (_definitions: string[] = []): FlumeConfig => {
 	});
 	config.addNodeType({
 		type: "definition:derivatives_trade",
-		label: "derivatives:trade",
+		label: "derivatives_trade",
 		category: "Definitions",
 		description: "Sub-graph: derivatives_trade",
 		initialWidth: 320,
-		inputs: (ports) => [
+		inputs: (ports) => (_inputData, _connections) => [
 			ports.int64({ name: "elapsed.timestamp", label: "elapsed.timestamp" }),
 			ports.bool({ name: "gross_derivative_trade_notional.flush", label: "gross_derivative_trade_notional.flush" }),
 			ports.float64({ name: "gross_derivative_trade_notional.value", label: "gross_derivative_trade_notional.value" }),
 			ports.float64({ name: "gross_liquidation_notional.a", label: "gross_liquidation_notional.a" }),
 			ports.float64({ name: "gross_liquidation_notional.b", label: "gross_liquidation_notional.b" }),
 			ports.float64({ name: "liquidation_share_velocity.ts", label: "liquidation_share_velocity.ts" }),
+			ports.float64({ name: "metric:gross_derivative_trade_notional.center", label: "metric:gross_derivative_trade_notional.center" }),
+			ports.float64({ name: "metric:gross_derivative_trade_notional.normalized", label: "metric:gross_derivative_trade_notional.normalized" }),
+			ports.float64({ name: "metric:gross_derivative_trade_notional.scale", label: "metric:gross_derivative_trade_notional.scale" }),
+			ports.float64({ name: "metric:gross_derivative_trade_notional.standardized", label: "metric:gross_derivative_trade_notional.standardized" }),
+			ports.Status({ name: "metric:gross_derivative_trade_notional.timescale", label: "metric:gross_derivative_trade_notional.timescale" }),
+			ports.Status({ name: "metric:gross_derivative_trade_notional.unit", label: "metric:gross_derivative_trade_notional.unit" }),
+			ports.float64({ name: "metric:gross_liquidation_notional.center", label: "metric:gross_liquidation_notional.center" }),
+			ports.float64({ name: "metric:gross_liquidation_notional.normalized", label: "metric:gross_liquidation_notional.normalized" }),
+			ports.float64({ name: "metric:gross_liquidation_notional.scale", label: "metric:gross_liquidation_notional.scale" }),
+			ports.float64({ name: "metric:gross_liquidation_notional.standardized", label: "metric:gross_liquidation_notional.standardized" }),
+			ports.Status({ name: "metric:gross_liquidation_notional.timescale", label: "metric:gross_liquidation_notional.timescale" }),
+			ports.Status({ name: "metric:gross_liquidation_notional.unit", label: "metric:gross_liquidation_notional.unit" }),
 			ports.float64({ name: "metric:liquidation_notional_rate.center", label: "metric:liquidation_notional_rate.center" }),
 			ports.float64({ name: "metric:liquidation_notional_rate.normalized", label: "metric:liquidation_notional_rate.normalized" }),
 			ports.float64({ name: "metric:liquidation_notional_rate.scale", label: "metric:liquidation_notional_rate.scale" }),
 			ports.float64({ name: "metric:liquidation_notional_rate.standardized", label: "metric:liquidation_notional_rate.standardized" }),
 			ports.Status({ name: "metric:liquidation_notional_rate.timescale", label: "metric:liquidation_notional_rate.timescale" }),
 			ports.Status({ name: "metric:liquidation_notional_rate.unit", label: "metric:liquidation_notional_rate.unit" }),
+			ports.float64({ name: "metric:liquidation_share.center", label: "metric:liquidation_share.center" }),
+			ports.float64({ name: "metric:liquidation_share.normalized", label: "metric:liquidation_share.normalized" }),
+			ports.float64({ name: "metric:liquidation_share.scale", label: "metric:liquidation_share.scale" }),
+			ports.float64({ name: "metric:liquidation_share.standardized", label: "metric:liquidation_share.standardized" }),
+			ports.Status({ name: "metric:liquidation_share.timescale", label: "metric:liquidation_share.timescale" }),
+			ports.Status({ name: "metric:liquidation_share.unit", label: "metric:liquidation_share.unit" }),
 			ports.float64({ name: "metric:liquidation_share_velocity.center", label: "metric:liquidation_share_velocity.center" }),
 			ports.float64({ name: "metric:liquidation_share_velocity.normalized", label: "metric:liquidation_share_velocity.normalized" }),
 			ports.float64({ name: "metric:liquidation_share_velocity.scale", label: "metric:liquidation_share_velocity.scale" }),
@@ -2677,28 +2936,42 @@ export const createFlumeConfig = (_definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "metric:liquidation_signed_fraction.standardized", label: "metric:liquidation_signed_fraction.standardized" }),
 			ports.Status({ name: "metric:liquidation_signed_fraction.timescale", label: "metric:liquidation_signed_fraction.timescale" }),
 			ports.Status({ name: "metric:liquidation_signed_fraction.unit", label: "metric:liquidation_signed_fraction.unit" }),
+			ports.float64({ name: "metric:net_liquidation_notional.center", label: "metric:net_liquidation_notional.center" }),
+			ports.float64({ name: "metric:net_liquidation_notional.normalized", label: "metric:net_liquidation_notional.normalized" }),
+			ports.float64({ name: "metric:net_liquidation_notional.scale", label: "metric:net_liquidation_notional.scale" }),
+			ports.float64({ name: "metric:net_liquidation_notional.standardized", label: "metric:net_liquidation_notional.standardized" }),
+			ports.Status({ name: "metric:net_liquidation_notional.timescale", label: "metric:net_liquidation_notional.timescale" }),
+			ports.Status({ name: "metric:net_liquidation_notional.unit", label: "metric:net_liquidation_notional.unit" }),
 			ports.float64({ name: "net_liquidation_notional.a", label: "net_liquidation_notional.a" }),
 			ports.float64({ name: "net_liquidation_notional.b", label: "net_liquidation_notional.b" }),
 		],
-		outputs: (ports) => [
+		outputs: (ports) => (_inputData, _connections) => [
 			ports.int64({ name: "gross_derivative_trade_notional.count", label: "gross_derivative_trade_notional.count" }),
 			ports.bool({ name: "gross_derivative_trade_notional.ready", label: "gross_derivative_trade_notional.ready" }),
 			ports.Status({ name: "gross_derivative_trade_notional.status", label: "gross_derivative_trade_notional.status" }),
+			ports["[]byte"]({ name: "metric:gross_derivative_trade_notional.read", label: "metric:gross_derivative_trade_notional.read" }),
+			ports.Status({ name: "metric:gross_derivative_trade_notional.status", label: "metric:gross_derivative_trade_notional.status" }),
+			ports["[]byte"]({ name: "metric:gross_liquidation_notional.read", label: "metric:gross_liquidation_notional.read" }),
+			ports.Status({ name: "metric:gross_liquidation_notional.status", label: "metric:gross_liquidation_notional.status" }),
 			ports["[]byte"]({ name: "metric:liquidation_notional_rate.read", label: "metric:liquidation_notional_rate.read" }),
 			ports.Status({ name: "metric:liquidation_notional_rate.status", label: "metric:liquidation_notional_rate.status" }),
+			ports["[]byte"]({ name: "metric:liquidation_share.read", label: "metric:liquidation_share.read" }),
+			ports.Status({ name: "metric:liquidation_share.status", label: "metric:liquidation_share.status" }),
 			ports["[]byte"]({ name: "metric:liquidation_share_velocity.read", label: "metric:liquidation_share_velocity.read" }),
 			ports.Status({ name: "metric:liquidation_share_velocity.status", label: "metric:liquidation_share_velocity.status" }),
 			ports["[]byte"]({ name: "metric:liquidation_signed_fraction.read", label: "metric:liquidation_signed_fraction.read" }),
 			ports.Status({ name: "metric:liquidation_signed_fraction.status", label: "metric:liquidation_signed_fraction.status" }),
+			ports["[]byte"]({ name: "metric:net_liquidation_notional.read", label: "metric:net_liquidation_notional.read" }),
+			ports.Status({ name: "metric:net_liquidation_notional.status", label: "metric:net_liquidation_notional.status" }),
 		],
 	});
 	config.addNodeType({
 		type: "definition:hawkes_trade",
-		label: "hawkes:trade",
+		label: "hawkes_trade",
 		category: "Definitions",
 		description: "Sub-graph: hawkes_trade",
 		initialWidth: 320,
-		inputs: (ports) => [
+		inputs: (ports) => (_inputData, _connections) => [
 			ports.float64({ name: "metric:stage_0.center", label: "metric:stage_0.center" }),
 			ports.float64({ name: "metric:stage_0.normalized", label: "metric:stage_0.normalized" }),
 			ports.float64({ name: "metric:stage_0.scale", label: "metric:stage_0.scale" }),
@@ -2779,7 +3052,7 @@ export const createFlumeConfig = (_definitions: string[] = []): FlumeConfig => {
 			ports.Status({ name: "metric:stage_1_spectralRadius.unit", label: "metric:stage_1_spectralRadius.unit" }),
 			ports["[]byte"]({ name: "stage_0.data", label: "stage_0.data" }),
 		],
-		outputs: (ports) => [
+		outputs: (ports) => (_inputData, _connections) => [
 			ports["[]byte"]({ name: "metric:stage_0.read", label: "metric:stage_0.read" }),
 			ports.Status({ name: "metric:stage_0.status", label: "metric:stage_0.status" }),
 			ports["[]byte"]({ name: "metric:stage_1_arrivalRate.read", label: "metric:stage_1_arrivalRate.read" }),
@@ -2810,14 +3083,15 @@ export const createFlumeConfig = (_definitions: string[] = []): FlumeConfig => {
 	});
 	config.addNodeType({
 		type: "definition:leadlag_ticker",
-		label: "leadlag:ticker",
+		label: "leadlag_ticker",
 		category: "Definitions",
 		description: "Sub-graph: leadlag_ticker",
 		initialWidth: 320,
-		inputs: (ports) => [
+		inputs: (ports) => (_inputData, _connections) => [
 			ports.float64({ name: "contemporaneous.boundsEnd1", label: "contemporaneous.boundsEnd1" }),
 			ports.float64({ name: "contemporaneous.boundsEnd2", label: "contemporaneous.boundsEnd2" }),
 			ports["[]byte"]({ name: "contemporaneous.state", label: "contemporaneous.state" }),
+			ports.float64({ name: "correlation_gain_velocity.ts", label: "correlation_gain_velocity.ts" }),
 			ports.float64({ name: "lagged.boundsEnd1", label: "lagged.boundsEnd1" }),
 			ports["[]byte"]({ name: "lagged.state", label: "lagged.state" }),
 			ports.float64({ name: "laggedReferenceEnd.a", label: "laggedReferenceEnd.a" }),
@@ -2829,6 +3103,30 @@ export const createFlumeConfig = (_definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "metric:absolute_correlation_gain.standardized", label: "metric:absolute_correlation_gain.standardized" }),
 			ports.Status({ name: "metric:absolute_correlation_gain.timescale", label: "metric:absolute_correlation_gain.timescale" }),
 			ports.Status({ name: "metric:absolute_correlation_gain.unit", label: "metric:absolute_correlation_gain.unit" }),
+			ports.float64({ name: "metric:best_lag_correlation.center", label: "metric:best_lag_correlation.center" }),
+			ports.float64({ name: "metric:best_lag_correlation.normalized", label: "metric:best_lag_correlation.normalized" }),
+			ports.float64({ name: "metric:best_lag_correlation.scale", label: "metric:best_lag_correlation.scale" }),
+			ports.float64({ name: "metric:best_lag_correlation.standardized", label: "metric:best_lag_correlation.standardized" }),
+			ports.Status({ name: "metric:best_lag_correlation.timescale", label: "metric:best_lag_correlation.timescale" }),
+			ports.Status({ name: "metric:best_lag_correlation.unit", label: "metric:best_lag_correlation.unit" }),
+			ports.float64({ name: "metric:best_lag_correlation_baseline.center", label: "metric:best_lag_correlation_baseline.center" }),
+			ports.float64({ name: "metric:best_lag_correlation_baseline.normalized", label: "metric:best_lag_correlation_baseline.normalized" }),
+			ports.float64({ name: "metric:best_lag_correlation_baseline.scale", label: "metric:best_lag_correlation_baseline.scale" }),
+			ports.float64({ name: "metric:best_lag_correlation_baseline.standardized", label: "metric:best_lag_correlation_baseline.standardized" }),
+			ports.Status({ name: "metric:best_lag_correlation_baseline.timescale", label: "metric:best_lag_correlation_baseline.timescale" }),
+			ports.Status({ name: "metric:best_lag_correlation_baseline.unit", label: "metric:best_lag_correlation_baseline.unit" }),
+			ports.float64({ name: "metric:best_lag_correlation_zscore.center", label: "metric:best_lag_correlation_zscore.center" }),
+			ports.float64({ name: "metric:best_lag_correlation_zscore.normalized", label: "metric:best_lag_correlation_zscore.normalized" }),
+			ports.float64({ name: "metric:best_lag_correlation_zscore.scale", label: "metric:best_lag_correlation_zscore.scale" }),
+			ports.float64({ name: "metric:best_lag_correlation_zscore.standardized", label: "metric:best_lag_correlation_zscore.standardized" }),
+			ports.Status({ name: "metric:best_lag_correlation_zscore.timescale", label: "metric:best_lag_correlation_zscore.timescale" }),
+			ports.Status({ name: "metric:best_lag_correlation_zscore.unit", label: "metric:best_lag_correlation_zscore.unit" }),
+			ports.float64({ name: "metric:contemporaneous_correlation.center", label: "metric:contemporaneous_correlation.center" }),
+			ports.float64({ name: "metric:contemporaneous_correlation.normalized", label: "metric:contemporaneous_correlation.normalized" }),
+			ports.float64({ name: "metric:contemporaneous_correlation.scale", label: "metric:contemporaneous_correlation.scale" }),
+			ports.float64({ name: "metric:contemporaneous_correlation.standardized", label: "metric:contemporaneous_correlation.standardized" }),
+			ports.Status({ name: "metric:contemporaneous_correlation.timescale", label: "metric:contemporaneous_correlation.timescale" }),
+			ports.Status({ name: "metric:contemporaneous_correlation.unit", label: "metric:contemporaneous_correlation.unit" }),
 			ports.float64({ name: "metric:contemporaneous_covariance.center", label: "metric:contemporaneous_covariance.center" }),
 			ports.float64({ name: "metric:contemporaneous_covariance.normalized", label: "metric:contemporaneous_covariance.normalized" }),
 			ports.float64({ name: "metric:contemporaneous_covariance.scale", label: "metric:contemporaneous_covariance.scale" }),
@@ -2847,6 +3145,24 @@ export const createFlumeConfig = (_definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "metric:contemporaneous_rightEnergy.standardized", label: "metric:contemporaneous_rightEnergy.standardized" }),
 			ports.Status({ name: "metric:contemporaneous_rightEnergy.timescale", label: "metric:contemporaneous_rightEnergy.timescale" }),
 			ports.Status({ name: "metric:contemporaneous_rightEnergy.unit", label: "metric:contemporaneous_rightEnergy.unit" }),
+			ports.float64({ name: "metric:correlation_gain_baseline.center", label: "metric:correlation_gain_baseline.center" }),
+			ports.float64({ name: "metric:correlation_gain_baseline.normalized", label: "metric:correlation_gain_baseline.normalized" }),
+			ports.float64({ name: "metric:correlation_gain_baseline.scale", label: "metric:correlation_gain_baseline.scale" }),
+			ports.float64({ name: "metric:correlation_gain_baseline.standardized", label: "metric:correlation_gain_baseline.standardized" }),
+			ports.Status({ name: "metric:correlation_gain_baseline.timescale", label: "metric:correlation_gain_baseline.timescale" }),
+			ports.Status({ name: "metric:correlation_gain_baseline.unit", label: "metric:correlation_gain_baseline.unit" }),
+			ports.float64({ name: "metric:correlation_gain_velocity.center", label: "metric:correlation_gain_velocity.center" }),
+			ports.float64({ name: "metric:correlation_gain_velocity.normalized", label: "metric:correlation_gain_velocity.normalized" }),
+			ports.float64({ name: "metric:correlation_gain_velocity.scale", label: "metric:correlation_gain_velocity.scale" }),
+			ports.float64({ name: "metric:correlation_gain_velocity.standardized", label: "metric:correlation_gain_velocity.standardized" }),
+			ports.Status({ name: "metric:correlation_gain_velocity.timescale", label: "metric:correlation_gain_velocity.timescale" }),
+			ports.Status({ name: "metric:correlation_gain_velocity.unit", label: "metric:correlation_gain_velocity.unit" }),
+			ports.float64({ name: "metric:correlation_gain_zscore.center", label: "metric:correlation_gain_zscore.center" }),
+			ports.float64({ name: "metric:correlation_gain_zscore.normalized", label: "metric:correlation_gain_zscore.normalized" }),
+			ports.float64({ name: "metric:correlation_gain_zscore.scale", label: "metric:correlation_gain_zscore.scale" }),
+			ports.float64({ name: "metric:correlation_gain_zscore.standardized", label: "metric:correlation_gain_zscore.standardized" }),
+			ports.Status({ name: "metric:correlation_gain_zscore.timescale", label: "metric:correlation_gain_zscore.timescale" }),
+			ports.Status({ name: "metric:correlation_gain_zscore.unit", label: "metric:correlation_gain_zscore.unit" }),
 			ports.float64({ name: "metric:lagged_covariance.center", label: "metric:lagged_covariance.center" }),
 			ports.float64({ name: "metric:lagged_covariance.normalized", label: "metric:lagged_covariance.normalized" }),
 			ports.float64({ name: "metric:lagged_covariance.scale", label: "metric:lagged_covariance.scale" }),
@@ -2883,7 +3199,7 @@ export const createFlumeConfig = (_definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "referenceReturns.value", label: "referenceReturns.value" }),
 			ports.float64({ name: "returns.value", label: "returns.value" }),
 		],
-		outputs: (ports) => [
+		outputs: (ports) => (_inputData, _connections) => [
 			ports.float64({ name: "contemporaneous.leftEnergyRate", label: "contemporaneous.leftEnergyRate" }),
 			ports.float64({ name: "contemporaneous.leftReturns", label: "contemporaneous.leftReturns" }),
 			ports.float64({ name: "contemporaneous.overlapDensity", label: "contemporaneous.overlapDensity" }),
@@ -2902,12 +3218,26 @@ export const createFlumeConfig = (_definitions: string[] = []): FlumeConfig => {
 			ports.Status({ name: "lagged.status", label: "lagged.status" }),
 			ports["[]byte"]({ name: "metric:absolute_correlation_gain.read", label: "metric:absolute_correlation_gain.read" }),
 			ports.Status({ name: "metric:absolute_correlation_gain.status", label: "metric:absolute_correlation_gain.status" }),
+			ports["[]byte"]({ name: "metric:best_lag_correlation.read", label: "metric:best_lag_correlation.read" }),
+			ports.Status({ name: "metric:best_lag_correlation.status", label: "metric:best_lag_correlation.status" }),
+			ports["[]byte"]({ name: "metric:best_lag_correlation_baseline.read", label: "metric:best_lag_correlation_baseline.read" }),
+			ports.Status({ name: "metric:best_lag_correlation_baseline.status", label: "metric:best_lag_correlation_baseline.status" }),
+			ports["[]byte"]({ name: "metric:best_lag_correlation_zscore.read", label: "metric:best_lag_correlation_zscore.read" }),
+			ports.Status({ name: "metric:best_lag_correlation_zscore.status", label: "metric:best_lag_correlation_zscore.status" }),
+			ports["[]byte"]({ name: "metric:contemporaneous_correlation.read", label: "metric:contemporaneous_correlation.read" }),
+			ports.Status({ name: "metric:contemporaneous_correlation.status", label: "metric:contemporaneous_correlation.status" }),
 			ports["[]byte"]({ name: "metric:contemporaneous_covariance.read", label: "metric:contemporaneous_covariance.read" }),
 			ports.Status({ name: "metric:contemporaneous_covariance.status", label: "metric:contemporaneous_covariance.status" }),
 			ports["[]byte"]({ name: "metric:contemporaneous_leftEnergy.read", label: "metric:contemporaneous_leftEnergy.read" }),
 			ports.Status({ name: "metric:contemporaneous_leftEnergy.status", label: "metric:contemporaneous_leftEnergy.status" }),
 			ports["[]byte"]({ name: "metric:contemporaneous_rightEnergy.read", label: "metric:contemporaneous_rightEnergy.read" }),
 			ports.Status({ name: "metric:contemporaneous_rightEnergy.status", label: "metric:contemporaneous_rightEnergy.status" }),
+			ports["[]byte"]({ name: "metric:correlation_gain_baseline.read", label: "metric:correlation_gain_baseline.read" }),
+			ports.Status({ name: "metric:correlation_gain_baseline.status", label: "metric:correlation_gain_baseline.status" }),
+			ports["[]byte"]({ name: "metric:correlation_gain_velocity.read", label: "metric:correlation_gain_velocity.read" }),
+			ports.Status({ name: "metric:correlation_gain_velocity.status", label: "metric:correlation_gain_velocity.status" }),
+			ports["[]byte"]({ name: "metric:correlation_gain_zscore.read", label: "metric:correlation_gain_zscore.read" }),
+			ports.Status({ name: "metric:correlation_gain_zscore.status", label: "metric:correlation_gain_zscore.status" }),
 			ports["[]byte"]({ name: "metric:lagged_covariance.read", label: "metric:lagged_covariance.read" }),
 			ports.Status({ name: "metric:lagged_covariance.status", label: "metric:lagged_covariance.status" }),
 			ports["[]byte"]({ name: "metric:lagged_leftEnergy.read", label: "metric:lagged_leftEnergy.read" }),
@@ -2925,11 +3255,11 @@ export const createFlumeConfig = (_definitions: string[] = []): FlumeConfig => {
 	});
 	config.addNodeType({
 		type: "definition:liquidity_ticker",
-		label: "liquidity:ticker",
+		label: "liquidity_ticker",
 		category: "Definitions",
 		description: "Sub-graph: liquidity_ticker",
 		initialWidth: 320,
-		inputs: (ports) => [
+		inputs: (ports) => (_inputData, _connections) => [
 			ports.float64({ name: "divergence_velocity:ask.ts", label: "divergence_velocity:ask.ts" }),
 			ports.float64({ name: "divergence_velocity:bid.ts", label: "divergence_velocity:bid.ts" }),
 			ports.float64({ name: "metric:depth_divergence:ask.center", label: "metric:depth_divergence:ask.center" }),
@@ -2980,12 +3310,30 @@ export const createFlumeConfig = (_definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "metric:divergence_velocity:bid.standardized", label: "metric:divergence_velocity:bid.standardized" }),
 			ports.Status({ name: "metric:divergence_velocity:bid.timescale", label: "metric:divergence_velocity:bid.timescale" }),
 			ports.Status({ name: "metric:divergence_velocity:bid.unit", label: "metric:divergence_velocity:bid.unit" }),
+			ports.float64({ name: "metric:midpoint.center", label: "metric:midpoint.center" }),
+			ports.float64({ name: "metric:midpoint.normalized", label: "metric:midpoint.normalized" }),
+			ports.float64({ name: "metric:midpoint.scale", label: "metric:midpoint.scale" }),
+			ports.float64({ name: "metric:midpoint.standardized", label: "metric:midpoint.standardized" }),
+			ports.Status({ name: "metric:midpoint.timescale", label: "metric:midpoint.timescale" }),
+			ports.Status({ name: "metric:midpoint.unit", label: "metric:midpoint.unit" }),
 			ports.float64({ name: "metric:relative_spread.center", label: "metric:relative_spread.center" }),
 			ports.float64({ name: "metric:relative_spread.normalized", label: "metric:relative_spread.normalized" }),
 			ports.float64({ name: "metric:relative_spread.scale", label: "metric:relative_spread.scale" }),
 			ports.float64({ name: "metric:relative_spread.standardized", label: "metric:relative_spread.standardized" }),
 			ports.Status({ name: "metric:relative_spread.timescale", label: "metric:relative_spread.timescale" }),
 			ports.Status({ name: "metric:relative_spread.unit", label: "metric:relative_spread.unit" }),
+			ports.float64({ name: "metric:relative_spread_baseline.center", label: "metric:relative_spread_baseline.center" }),
+			ports.float64({ name: "metric:relative_spread_baseline.normalized", label: "metric:relative_spread_baseline.normalized" }),
+			ports.float64({ name: "metric:relative_spread_baseline.scale", label: "metric:relative_spread_baseline.scale" }),
+			ports.float64({ name: "metric:relative_spread_baseline.standardized", label: "metric:relative_spread_baseline.standardized" }),
+			ports.Status({ name: "metric:relative_spread_baseline.timescale", label: "metric:relative_spread_baseline.timescale" }),
+			ports.Status({ name: "metric:relative_spread_baseline.unit", label: "metric:relative_spread_baseline.unit" }),
+			ports.float64({ name: "metric:spread.center", label: "metric:spread.center" }),
+			ports.float64({ name: "metric:spread.normalized", label: "metric:spread.normalized" }),
+			ports.float64({ name: "metric:spread.scale", label: "metric:spread.scale" }),
+			ports.float64({ name: "metric:spread.standardized", label: "metric:spread.standardized" }),
+			ports.Status({ name: "metric:spread.timescale", label: "metric:spread.timescale" }),
+			ports.Status({ name: "metric:spread.unit", label: "metric:spread.unit" }),
 			ports.float64({ name: "metric:spread_divergence.center", label: "metric:spread_divergence.center" }),
 			ports.float64({ name: "metric:spread_divergence.normalized", label: "metric:spread_divergence.normalized" }),
 			ports.float64({ name: "metric:spread_divergence.scale", label: "metric:spread_divergence.scale" }),
@@ -3010,12 +3358,42 @@ export const createFlumeConfig = (_definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "metric:spread_zscore.standardized", label: "metric:spread_zscore.standardized" }),
 			ports.Status({ name: "metric:spread_zscore.timescale", label: "metric:spread_zscore.timescale" }),
 			ports.Status({ name: "metric:spread_zscore.unit", label: "metric:spread_zscore.unit" }),
+			ports.float64({ name: "metric:touch_notional:ask.center", label: "metric:touch_notional:ask.center" }),
+			ports.float64({ name: "metric:touch_notional:ask.normalized", label: "metric:touch_notional:ask.normalized" }),
+			ports.float64({ name: "metric:touch_notional:ask.scale", label: "metric:touch_notional:ask.scale" }),
+			ports.float64({ name: "metric:touch_notional:ask.standardized", label: "metric:touch_notional:ask.standardized" }),
+			ports.Status({ name: "metric:touch_notional:ask.timescale", label: "metric:touch_notional:ask.timescale" }),
+			ports.Status({ name: "metric:touch_notional:ask.unit", label: "metric:touch_notional:ask.unit" }),
+			ports.float64({ name: "metric:touch_notional:bid.center", label: "metric:touch_notional:bid.center" }),
+			ports.float64({ name: "metric:touch_notional:bid.normalized", label: "metric:touch_notional:bid.normalized" }),
+			ports.float64({ name: "metric:touch_notional:bid.scale", label: "metric:touch_notional:bid.scale" }),
+			ports.float64({ name: "metric:touch_notional:bid.standardized", label: "metric:touch_notional:bid.standardized" }),
+			ports.Status({ name: "metric:touch_notional:bid.timescale", label: "metric:touch_notional:bid.timescale" }),
+			ports.Status({ name: "metric:touch_notional:bid.unit", label: "metric:touch_notional:bid.unit" }),
+			ports.float64({ name: "metric:touch_notional_baseline:ask.center", label: "metric:touch_notional_baseline:ask.center" }),
+			ports.float64({ name: "metric:touch_notional_baseline:ask.normalized", label: "metric:touch_notional_baseline:ask.normalized" }),
+			ports.float64({ name: "metric:touch_notional_baseline:ask.scale", label: "metric:touch_notional_baseline:ask.scale" }),
+			ports.float64({ name: "metric:touch_notional_baseline:ask.standardized", label: "metric:touch_notional_baseline:ask.standardized" }),
+			ports.Status({ name: "metric:touch_notional_baseline:ask.timescale", label: "metric:touch_notional_baseline:ask.timescale" }),
+			ports.Status({ name: "metric:touch_notional_baseline:ask.unit", label: "metric:touch_notional_baseline:ask.unit" }),
+			ports.float64({ name: "metric:touch_notional_baseline:bid.center", label: "metric:touch_notional_baseline:bid.center" }),
+			ports.float64({ name: "metric:touch_notional_baseline:bid.normalized", label: "metric:touch_notional_baseline:bid.normalized" }),
+			ports.float64({ name: "metric:touch_notional_baseline:bid.scale", label: "metric:touch_notional_baseline:bid.scale" }),
+			ports.float64({ name: "metric:touch_notional_baseline:bid.standardized", label: "metric:touch_notional_baseline:bid.standardized" }),
+			ports.Status({ name: "metric:touch_notional_baseline:bid.timescale", label: "metric:touch_notional_baseline:bid.timescale" }),
+			ports.Status({ name: "metric:touch_notional_baseline:bid.unit", label: "metric:touch_notional_baseline:bid.unit" }),
 			ports.float64({ name: "metric:touch_notional_imbalance.center", label: "metric:touch_notional_imbalance.center" }),
 			ports.float64({ name: "metric:touch_notional_imbalance.normalized", label: "metric:touch_notional_imbalance.normalized" }),
 			ports.float64({ name: "metric:touch_notional_imbalance.scale", label: "metric:touch_notional_imbalance.scale" }),
 			ports.float64({ name: "metric:touch_notional_imbalance.standardized", label: "metric:touch_notional_imbalance.standardized" }),
 			ports.Status({ name: "metric:touch_notional_imbalance.timescale", label: "metric:touch_notional_imbalance.timescale" }),
 			ports.Status({ name: "metric:touch_notional_imbalance.unit", label: "metric:touch_notional_imbalance.unit" }),
+			ports.float64({ name: "metric:two_sided_touch_notional.center", label: "metric:two_sided_touch_notional.center" }),
+			ports.float64({ name: "metric:two_sided_touch_notional.normalized", label: "metric:two_sided_touch_notional.normalized" }),
+			ports.float64({ name: "metric:two_sided_touch_notional.scale", label: "metric:two_sided_touch_notional.scale" }),
+			ports.float64({ name: "metric:two_sided_touch_notional.standardized", label: "metric:two_sided_touch_notional.standardized" }),
+			ports.Status({ name: "metric:two_sided_touch_notional.timescale", label: "metric:two_sided_touch_notional.timescale" }),
+			ports.Status({ name: "metric:two_sided_touch_notional.unit", label: "metric:two_sided_touch_notional.unit" }),
 			ports.float64({ name: "midpointSum.a", label: "midpointSum.a" }),
 			ports.float64({ name: "midpointSum.b", label: "midpointSum.b" }),
 			ports.float64({ name: "spread.a", label: "spread.a" }),
@@ -3026,7 +3404,7 @@ export const createFlumeConfig = (_definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "touch_notional:bid.a", label: "touch_notional:bid.a" }),
 			ports.float64({ name: "touch_notional:bid.b", label: "touch_notional:bid.b" }),
 		],
-		outputs: (ports) => [
+		outputs: (ports) => (_inputData, _connections) => [
 			ports["[]byte"]({ name: "metric:depth_divergence:ask.read", label: "metric:depth_divergence:ask.read" }),
 			ports.Status({ name: "metric:depth_divergence:ask.status", label: "metric:depth_divergence:ask.status" }),
 			ports["[]byte"]({ name: "metric:depth_divergence:bid.read", label: "metric:depth_divergence:bid.read" }),
@@ -3043,8 +3421,14 @@ export const createFlumeConfig = (_definitions: string[] = []): FlumeConfig => {
 			ports.Status({ name: "metric:divergence_velocity:ask.status", label: "metric:divergence_velocity:ask.status" }),
 			ports["[]byte"]({ name: "metric:divergence_velocity:bid.read", label: "metric:divergence_velocity:bid.read" }),
 			ports.Status({ name: "metric:divergence_velocity:bid.status", label: "metric:divergence_velocity:bid.status" }),
+			ports["[]byte"]({ name: "metric:midpoint.read", label: "metric:midpoint.read" }),
+			ports.Status({ name: "metric:midpoint.status", label: "metric:midpoint.status" }),
 			ports["[]byte"]({ name: "metric:relative_spread.read", label: "metric:relative_spread.read" }),
 			ports.Status({ name: "metric:relative_spread.status", label: "metric:relative_spread.status" }),
+			ports["[]byte"]({ name: "metric:relative_spread_baseline.read", label: "metric:relative_spread_baseline.read" }),
+			ports.Status({ name: "metric:relative_spread_baseline.status", label: "metric:relative_spread_baseline.status" }),
+			ports["[]byte"]({ name: "metric:spread.read", label: "metric:spread.read" }),
+			ports.Status({ name: "metric:spread.status", label: "metric:spread.status" }),
 			ports["[]byte"]({ name: "metric:spread_divergence.read", label: "metric:spread_divergence.read" }),
 			ports.Status({ name: "metric:spread_divergence.status", label: "metric:spread_divergence.status" }),
 			ports["[]byte"]({ name: "metric:spread_divergence_velocity.read", label: "metric:spread_divergence_velocity.read" }),
@@ -3053,23 +3437,33 @@ export const createFlumeConfig = (_definitions: string[] = []): FlumeConfig => {
 			ports.Status({ name: "metric:spread_ratio.status", label: "metric:spread_ratio.status" }),
 			ports["[]byte"]({ name: "metric:spread_zscore.read", label: "metric:spread_zscore.read" }),
 			ports.Status({ name: "metric:spread_zscore.status", label: "metric:spread_zscore.status" }),
+			ports["[]byte"]({ name: "metric:touch_notional:ask.read", label: "metric:touch_notional:ask.read" }),
+			ports.Status({ name: "metric:touch_notional:ask.status", label: "metric:touch_notional:ask.status" }),
+			ports["[]byte"]({ name: "metric:touch_notional:bid.read", label: "metric:touch_notional:bid.read" }),
+			ports.Status({ name: "metric:touch_notional:bid.status", label: "metric:touch_notional:bid.status" }),
+			ports["[]byte"]({ name: "metric:touch_notional_baseline:ask.read", label: "metric:touch_notional_baseline:ask.read" }),
+			ports.Status({ name: "metric:touch_notional_baseline:ask.status", label: "metric:touch_notional_baseline:ask.status" }),
+			ports["[]byte"]({ name: "metric:touch_notional_baseline:bid.read", label: "metric:touch_notional_baseline:bid.read" }),
+			ports.Status({ name: "metric:touch_notional_baseline:bid.status", label: "metric:touch_notional_baseline:bid.status" }),
 			ports["[]byte"]({ name: "metric:touch_notional_imbalance.read", label: "metric:touch_notional_imbalance.read" }),
 			ports.Status({ name: "metric:touch_notional_imbalance.status", label: "metric:touch_notional_imbalance.status" }),
+			ports["[]byte"]({ name: "metric:two_sided_touch_notional.read", label: "metric:two_sided_touch_notional.read" }),
+			ports.Status({ name: "metric:two_sided_touch_notional.status", label: "metric:two_sided_touch_notional.status" }),
 		],
 	});
 	config.addNodeType({
 		type: "definition:logic",
-		label: "logic:stage",
+		label: "logic",
 		category: "Definitions",
 		description: "Sub-graph: logic",
 		initialWidth: 320,
-		inputs: (ports) => [
+		inputs: (ports) => (_inputData, _connections) => [
 			ports["[]byte"]({ name: "associative_grid.data", label: "associative_grid.data" }),
 			ports.float64({ name: "cognition_classification.prob", label: "cognition_classification.prob" }),
 			ports.int64({ name: "cognition_classification.support", label: "cognition_classification.support" }),
 			ports["[]byte"]({ name: "cognition_reinforce.contextBytes", label: "cognition_reinforce.contextBytes" }),
 		],
-		outputs: (ports) => [
+		outputs: (ports) => (_inputData, _connections) => [
 			ports["[]byte"]({ name: "cognition_associate.precursor", label: "cognition_associate.precursor" }),
 			ports.int64({ name: "cognition_attractor.count", label: "cognition_attractor.count" }),
 			ports.float64({ name: "cognition_attractor.prob", label: "cognition_attractor.prob" }),
@@ -3083,11 +3477,11 @@ export const createFlumeConfig = (_definitions: string[] = []): FlumeConfig => {
 	});
 	config.addNodeType({
 		type: "definition:morphology_level3",
-		label: "morphology:level3",
+		label: "morphology_level3",
 		category: "Definitions",
 		description: "Sub-graph: morphology_level3",
 		initialWidth: 320,
-		inputs: (ports) => [
+		inputs: (ports) => (_inputData, _connections) => [
 			ports.float64({ name: "book_shape_distance.value", label: "book_shape_distance.value" }),
 			ports.float64({ name: "book_shape_ks.value", label: "book_shape_ks.value" }),
 			ports.float64({ name: "concentration:ask.value", label: "concentration:ask.value" }),
@@ -3130,6 +3524,12 @@ export const createFlumeConfig = (_definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "metric:concentration:ask.standardized", label: "metric:concentration:ask.standardized" }),
 			ports.Status({ name: "metric:concentration:ask.timescale", label: "metric:concentration:ask.timescale" }),
 			ports.Status({ name: "metric:concentration:ask.unit", label: "metric:concentration:ask.unit" }),
+			ports.float64({ name: "metric:concentration:bid.center", label: "metric:concentration:bid.center" }),
+			ports.float64({ name: "metric:concentration:bid.normalized", label: "metric:concentration:bid.normalized" }),
+			ports.float64({ name: "metric:concentration:bid.scale", label: "metric:concentration:bid.scale" }),
+			ports.float64({ name: "metric:concentration:bid.standardized", label: "metric:concentration:bid.standardized" }),
+			ports.Status({ name: "metric:concentration:bid.timescale", label: "metric:concentration:bid.timescale" }),
+			ports.Status({ name: "metric:concentration:bid.unit", label: "metric:concentration:bid.unit" }),
 			ports.float64({ name: "metric:entropy:ask.center", label: "metric:entropy:ask.center" }),
 			ports.float64({ name: "metric:entropy:ask.normalized", label: "metric:entropy:ask.normalized" }),
 			ports.float64({ name: "metric:entropy:ask.scale", label: "metric:entropy:ask.scale" }),
@@ -3148,9 +3548,21 @@ export const createFlumeConfig = (_definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "metric:morphology_change.standardized", label: "metric:morphology_change.standardized" }),
 			ports.Status({ name: "metric:morphology_change.timescale", label: "metric:morphology_change.timescale" }),
 			ports.Status({ name: "metric:morphology_change.unit", label: "metric:morphology_change.unit" }),
+			ports.float64({ name: "metric:morphology_change_baseline.center", label: "metric:morphology_change_baseline.center" }),
+			ports.float64({ name: "metric:morphology_change_baseline.normalized", label: "metric:morphology_change_baseline.normalized" }),
+			ports.float64({ name: "metric:morphology_change_baseline.scale", label: "metric:morphology_change_baseline.scale" }),
+			ports.float64({ name: "metric:morphology_change_baseline.standardized", label: "metric:morphology_change_baseline.standardized" }),
+			ports.Status({ name: "metric:morphology_change_baseline.timescale", label: "metric:morphology_change_baseline.timescale" }),
+			ports.Status({ name: "metric:morphology_change_baseline.unit", label: "metric:morphology_change_baseline.unit" }),
+			ports.float64({ name: "metric:morphology_change_zscore.center", label: "metric:morphology_change_zscore.center" }),
+			ports.float64({ name: "metric:morphology_change_zscore.normalized", label: "metric:morphology_change_zscore.normalized" }),
+			ports.float64({ name: "metric:morphology_change_zscore.scale", label: "metric:morphology_change_zscore.scale" }),
+			ports.float64({ name: "metric:morphology_change_zscore.standardized", label: "metric:morphology_change_zscore.standardized" }),
+			ports.Status({ name: "metric:morphology_change_zscore.timescale", label: "metric:morphology_change_zscore.timescale" }),
+			ports.Status({ name: "metric:morphology_change_zscore.unit", label: "metric:morphology_change_zscore.unit" }),
 			ports.float64({ name: "morphology_change.prev", label: "morphology_change.prev" }),
 		],
-		outputs: (ports) => [
+		outputs: (ports) => (_inputData, _connections) => [
 			ports.int64({ name: "book_shape_distance.winner", label: "book_shape_distance.winner" }),
 			ports["[]byte"]({ name: "metric:book_shape_distance.read", label: "metric:book_shape_distance.read" }),
 			ports.Status({ name: "metric:book_shape_distance.status", label: "metric:book_shape_distance.status" }),
@@ -3164,21 +3576,51 @@ export const createFlumeConfig = (_definitions: string[] = []): FlumeConfig => {
 			ports.Status({ name: "metric:book_shape_ks.status", label: "metric:book_shape_ks.status" }),
 			ports["[]byte"]({ name: "metric:concentration:ask.read", label: "metric:concentration:ask.read" }),
 			ports.Status({ name: "metric:concentration:ask.status", label: "metric:concentration:ask.status" }),
+			ports["[]byte"]({ name: "metric:concentration:bid.read", label: "metric:concentration:bid.read" }),
+			ports.Status({ name: "metric:concentration:bid.status", label: "metric:concentration:bid.status" }),
 			ports["[]byte"]({ name: "metric:entropy:ask.read", label: "metric:entropy:ask.read" }),
 			ports.Status({ name: "metric:entropy:ask.status", label: "metric:entropy:ask.status" }),
 			ports["[]byte"]({ name: "metric:entropy:bid.read", label: "metric:entropy:bid.read" }),
 			ports.Status({ name: "metric:entropy:bid.status", label: "metric:entropy:bid.status" }),
 			ports["[]byte"]({ name: "metric:morphology_change.read", label: "metric:morphology_change.read" }),
 			ports.Status({ name: "metric:morphology_change.status", label: "metric:morphology_change.status" }),
+			ports["[]byte"]({ name: "metric:morphology_change_baseline.read", label: "metric:morphology_change_baseline.read" }),
+			ports.Status({ name: "metric:morphology_change_baseline.status", label: "metric:morphology_change_baseline.status" }),
+			ports["[]byte"]({ name: "metric:morphology_change_zscore.read", label: "metric:morphology_change_zscore.read" }),
+			ports.Status({ name: "metric:morphology_change_zscore.status", label: "metric:morphology_change_zscore.status" }),
 		],
 	});
 	config.addNodeType({
 		type: "definition:pumpdump_level3",
-		label: "pumpdump:level3",
+		label: "pumpdump_level3",
 		category: "Definitions",
 		description: "Sub-graph: pumpdump_level3",
 		initialWidth: 320,
-		inputs: (ports) => [
+		inputs: (ports) => (_inputData, _connections) => [
+			ports.float64({ name: "metric:midpoint.center", label: "metric:midpoint.center" }),
+			ports.float64({ name: "metric:midpoint.normalized", label: "metric:midpoint.normalized" }),
+			ports.float64({ name: "metric:midpoint.scale", label: "metric:midpoint.scale" }),
+			ports.float64({ name: "metric:midpoint.standardized", label: "metric:midpoint.standardized" }),
+			ports.Status({ name: "metric:midpoint.timescale", label: "metric:midpoint.timescale" }),
+			ports.Status({ name: "metric:midpoint.unit", label: "metric:midpoint.unit" }),
+			ports.float64({ name: "metric:relative_spread.center", label: "metric:relative_spread.center" }),
+			ports.float64({ name: "metric:relative_spread.normalized", label: "metric:relative_spread.normalized" }),
+			ports.float64({ name: "metric:relative_spread.scale", label: "metric:relative_spread.scale" }),
+			ports.float64({ name: "metric:relative_spread.standardized", label: "metric:relative_spread.standardized" }),
+			ports.Status({ name: "metric:relative_spread.timescale", label: "metric:relative_spread.timescale" }),
+			ports.Status({ name: "metric:relative_spread.unit", label: "metric:relative_spread.unit" }),
+			ports.float64({ name: "metric:relative_spread_baseline.center", label: "metric:relative_spread_baseline.center" }),
+			ports.float64({ name: "metric:relative_spread_baseline.normalized", label: "metric:relative_spread_baseline.normalized" }),
+			ports.float64({ name: "metric:relative_spread_baseline.scale", label: "metric:relative_spread_baseline.scale" }),
+			ports.float64({ name: "metric:relative_spread_baseline.standardized", label: "metric:relative_spread_baseline.standardized" }),
+			ports.Status({ name: "metric:relative_spread_baseline.timescale", label: "metric:relative_spread_baseline.timescale" }),
+			ports.Status({ name: "metric:relative_spread_baseline.unit", label: "metric:relative_spread_baseline.unit" }),
+			ports.float64({ name: "metric:spread.center", label: "metric:spread.center" }),
+			ports.float64({ name: "metric:spread.normalized", label: "metric:spread.normalized" }),
+			ports.float64({ name: "metric:spread.scale", label: "metric:spread.scale" }),
+			ports.float64({ name: "metric:spread.standardized", label: "metric:spread.standardized" }),
+			ports.Status({ name: "metric:spread.timescale", label: "metric:spread.timescale" }),
+			ports.Status({ name: "metric:spread.unit", label: "metric:spread.unit" }),
 			ports.float64({ name: "metric:spread_divergence.center", label: "metric:spread_divergence.center" }),
 			ports.float64({ name: "metric:spread_divergence.normalized", label: "metric:spread_divergence.normalized" }),
 			ports.float64({ name: "metric:spread_divergence.scale", label: "metric:spread_divergence.scale" }),
@@ -3209,7 +3651,15 @@ export const createFlumeConfig = (_definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "spread.b", label: "spread.b" }),
 			ports.float64({ name: "spread_divergence_velocity.ts", label: "spread_divergence_velocity.ts" }),
 		],
-		outputs: (ports) => [
+		outputs: (ports) => (_inputData, _connections) => [
+			ports["[]byte"]({ name: "metric:midpoint.read", label: "metric:midpoint.read" }),
+			ports.Status({ name: "metric:midpoint.status", label: "metric:midpoint.status" }),
+			ports["[]byte"]({ name: "metric:relative_spread.read", label: "metric:relative_spread.read" }),
+			ports.Status({ name: "metric:relative_spread.status", label: "metric:relative_spread.status" }),
+			ports["[]byte"]({ name: "metric:relative_spread_baseline.read", label: "metric:relative_spread_baseline.read" }),
+			ports.Status({ name: "metric:relative_spread_baseline.status", label: "metric:relative_spread_baseline.status" }),
+			ports["[]byte"]({ name: "metric:spread.read", label: "metric:spread.read" }),
+			ports.Status({ name: "metric:spread.status", label: "metric:spread.status" }),
 			ports["[]byte"]({ name: "metric:spread_divergence.read", label: "metric:spread_divergence.read" }),
 			ports.Status({ name: "metric:spread_divergence.status", label: "metric:spread_divergence.status" }),
 			ports["[]byte"]({ name: "metric:spread_divergence_velocity.read", label: "metric:spread_divergence_velocity.read" }),
@@ -3222,12 +3672,18 @@ export const createFlumeConfig = (_definitions: string[] = []): FlumeConfig => {
 	});
 	config.addNodeType({
 		type: "definition:pumpdump_ticker",
-		label: "pumpdump:ticker",
+		label: "pumpdump_ticker",
 		category: "Definitions",
 		description: "Sub-graph: pumpdump_ticker",
 		initialWidth: 320,
-		inputs: (ports) => [
+		inputs: (ports) => (_inputData, _connections) => [
 			ports.int64({ name: "elapsed.timestamp", label: "elapsed.timestamp" }),
+			ports.float64({ name: "metric:midpoint.center", label: "metric:midpoint.center" }),
+			ports.float64({ name: "metric:midpoint.normalized", label: "metric:midpoint.normalized" }),
+			ports.float64({ name: "metric:midpoint.scale", label: "metric:midpoint.scale" }),
+			ports.float64({ name: "metric:midpoint.standardized", label: "metric:midpoint.standardized" }),
+			ports.Status({ name: "metric:midpoint.timescale", label: "metric:midpoint.timescale" }),
+			ports.Status({ name: "metric:midpoint.unit", label: "metric:midpoint.unit" }),
 			ports.float64({ name: "metric:midpoint_return_baseline.center", label: "metric:midpoint_return_baseline.center" }),
 			ports.float64({ name: "metric:midpoint_return_baseline.normalized", label: "metric:midpoint_return_baseline.normalized" }),
 			ports.float64({ name: "metric:midpoint_return_baseline.scale", label: "metric:midpoint_return_baseline.scale" }),
@@ -3288,6 +3744,24 @@ export const createFlumeConfig = (_definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "metric:positive_midpoint_return.standardized", label: "metric:positive_midpoint_return.standardized" }),
 			ports.Status({ name: "metric:positive_midpoint_return.timescale", label: "metric:positive_midpoint_return.timescale" }),
 			ports.Status({ name: "metric:positive_midpoint_return.unit", label: "metric:positive_midpoint_return.unit" }),
+			ports.float64({ name: "metric:relative_spread.center", label: "metric:relative_spread.center" }),
+			ports.float64({ name: "metric:relative_spread.normalized", label: "metric:relative_spread.normalized" }),
+			ports.float64({ name: "metric:relative_spread.scale", label: "metric:relative_spread.scale" }),
+			ports.float64({ name: "metric:relative_spread.standardized", label: "metric:relative_spread.standardized" }),
+			ports.Status({ name: "metric:relative_spread.timescale", label: "metric:relative_spread.timescale" }),
+			ports.Status({ name: "metric:relative_spread.unit", label: "metric:relative_spread.unit" }),
+			ports.float64({ name: "metric:relative_spread_baseline.center", label: "metric:relative_spread_baseline.center" }),
+			ports.float64({ name: "metric:relative_spread_baseline.normalized", label: "metric:relative_spread_baseline.normalized" }),
+			ports.float64({ name: "metric:relative_spread_baseline.scale", label: "metric:relative_spread_baseline.scale" }),
+			ports.float64({ name: "metric:relative_spread_baseline.standardized", label: "metric:relative_spread_baseline.standardized" }),
+			ports.Status({ name: "metric:relative_spread_baseline.timescale", label: "metric:relative_spread_baseline.timescale" }),
+			ports.Status({ name: "metric:relative_spread_baseline.unit", label: "metric:relative_spread_baseline.unit" }),
+			ports.float64({ name: "metric:spread.center", label: "metric:spread.center" }),
+			ports.float64({ name: "metric:spread.normalized", label: "metric:spread.normalized" }),
+			ports.float64({ name: "metric:spread.scale", label: "metric:spread.scale" }),
+			ports.float64({ name: "metric:spread.standardized", label: "metric:spread.standardized" }),
+			ports.Status({ name: "metric:spread.timescale", label: "metric:spread.timescale" }),
+			ports.Status({ name: "metric:spread.unit", label: "metric:spread.unit" }),
 			ports.float64({ name: "metric:spread_divergence.center", label: "metric:spread_divergence.center" }),
 			ports.float64({ name: "metric:spread_divergence.normalized", label: "metric:spread_divergence.normalized" }),
 			ports.float64({ name: "metric:spread_divergence.scale", label: "metric:spread_divergence.scale" }),
@@ -3320,7 +3794,9 @@ export const createFlumeConfig = (_definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "spread.b", label: "spread.b" }),
 			ports.float64({ name: "spread_divergence_velocity.ts", label: "spread_divergence_velocity.ts" }),
 		],
-		outputs: (ports) => [
+		outputs: (ports) => (_inputData, _connections) => [
+			ports["[]byte"]({ name: "metric:midpoint.read", label: "metric:midpoint.read" }),
+			ports.Status({ name: "metric:midpoint.status", label: "metric:midpoint.status" }),
 			ports["[]byte"]({ name: "metric:midpoint_return_baseline.read", label: "metric:midpoint_return_baseline.read" }),
 			ports.Status({ name: "metric:midpoint_return_baseline.status", label: "metric:midpoint_return_baseline.status" }),
 			ports["[]byte"]({ name: "metric:midpoint_return_divergence.read", label: "metric:midpoint_return_divergence.read" }),
@@ -3341,6 +3817,12 @@ export const createFlumeConfig = (_definitions: string[] = []): FlumeConfig => {
 			ports.Status({ name: "metric:notional_rate_velocity.status", label: "metric:notional_rate_velocity.status" }),
 			ports["[]byte"]({ name: "metric:positive_midpoint_return.read", label: "metric:positive_midpoint_return.read" }),
 			ports.Status({ name: "metric:positive_midpoint_return.status", label: "metric:positive_midpoint_return.status" }),
+			ports["[]byte"]({ name: "metric:relative_spread.read", label: "metric:relative_spread.read" }),
+			ports.Status({ name: "metric:relative_spread.status", label: "metric:relative_spread.status" }),
+			ports["[]byte"]({ name: "metric:relative_spread_baseline.read", label: "metric:relative_spread_baseline.read" }),
+			ports.Status({ name: "metric:relative_spread_baseline.status", label: "metric:relative_spread_baseline.status" }),
+			ports["[]byte"]({ name: "metric:spread.read", label: "metric:spread.read" }),
+			ports.Status({ name: "metric:spread.status", label: "metric:spread.status" }),
 			ports["[]byte"]({ name: "metric:spread_divergence.read", label: "metric:spread_divergence.read" }),
 			ports.Status({ name: "metric:spread_divergence.status", label: "metric:spread_divergence.status" }),
 			ports["[]byte"]({ name: "metric:spread_divergence_velocity.read", label: "metric:spread_divergence_velocity.read" }),
@@ -3353,11 +3835,23 @@ export const createFlumeConfig = (_definitions: string[] = []): FlumeConfig => {
 	});
 	config.addNodeType({
 		type: "definition:pumpdump_trade",
-		label: "pumpdump:trade",
+		label: "pumpdump_trade",
 		category: "Definitions",
 		description: "Sub-graph: pumpdump_trade",
 		initialWidth: 320,
-		inputs: (ports) => [
+		inputs: (ports) => (_inputData, _connections) => [
+			ports.float64({ name: "metric:notional_rate.center", label: "metric:notional_rate.center" }),
+			ports.float64({ name: "metric:notional_rate.normalized", label: "metric:notional_rate.normalized" }),
+			ports.float64({ name: "metric:notional_rate.scale", label: "metric:notional_rate.scale" }),
+			ports.float64({ name: "metric:notional_rate.standardized", label: "metric:notional_rate.standardized" }),
+			ports.Status({ name: "metric:notional_rate.timescale", label: "metric:notional_rate.timescale" }),
+			ports.Status({ name: "metric:notional_rate.unit", label: "metric:notional_rate.unit" }),
+			ports.float64({ name: "metric:notional_rate_baseline.center", label: "metric:notional_rate_baseline.center" }),
+			ports.float64({ name: "metric:notional_rate_baseline.normalized", label: "metric:notional_rate_baseline.normalized" }),
+			ports.float64({ name: "metric:notional_rate_baseline.scale", label: "metric:notional_rate_baseline.scale" }),
+			ports.float64({ name: "metric:notional_rate_baseline.standardized", label: "metric:notional_rate_baseline.standardized" }),
+			ports.Status({ name: "metric:notional_rate_baseline.timescale", label: "metric:notional_rate_baseline.timescale" }),
+			ports.Status({ name: "metric:notional_rate_baseline.unit", label: "metric:notional_rate_baseline.unit" }),
 			ports.float64({ name: "metric:notional_rate_divergence.center", label: "metric:notional_rate_divergence.center" }),
 			ports.float64({ name: "metric:notional_rate_divergence.normalized", label: "metric:notional_rate_divergence.normalized" }),
 			ports.float64({ name: "metric:notional_rate_divergence.scale", label: "metric:notional_rate_divergence.scale" }),
@@ -3405,7 +3899,11 @@ export const createFlumeConfig = (_definitions: string[] = []): FlumeConfig => {
 			ports.bool({ name: "volume_bar_trade_count.flush", label: "volume_bar_trade_count.flush" }),
 			ports.float64({ name: "volume_bar_trade_count.value", label: "volume_bar_trade_count.value" }),
 		],
-		outputs: (ports) => [
+		outputs: (ports) => (_inputData, _connections) => [
+			ports["[]byte"]({ name: "metric:notional_rate.read", label: "metric:notional_rate.read" }),
+			ports.Status({ name: "metric:notional_rate.status", label: "metric:notional_rate.status" }),
+			ports["[]byte"]({ name: "metric:notional_rate_baseline.read", label: "metric:notional_rate_baseline.read" }),
+			ports.Status({ name: "metric:notional_rate_baseline.status", label: "metric:notional_rate_baseline.status" }),
 			ports["[]byte"]({ name: "metric:notional_rate_divergence.read", label: "metric:notional_rate_divergence.read" }),
 			ports.Status({ name: "metric:notional_rate_divergence.status", label: "metric:notional_rate_divergence.status" }),
 			ports["[]byte"]({ name: "metric:notional_rate_ratio.read", label: "metric:notional_rate_ratio.read" }),
@@ -3434,11 +3932,11 @@ export const createFlumeConfig = (_definitions: string[] = []): FlumeConfig => {
 	});
 	config.addNodeType({
 		type: "definition:sentiment_ticker",
-		label: "sentiment:ticker",
+		label: "sentiment_ticker",
 		category: "Definitions",
 		description: "Sub-graph: sentiment_ticker",
 		initialWidth: 320,
-		inputs: (ports) => [
+		inputs: (ports) => (_inputData, _connections) => [
 			ports.float64({ name: "advance_fraction.a", label: "advance_fraction.a" }),
 			ports.float64({ name: "advance_fraction.b", label: "advance_fraction.b" }),
 			ports.float64({ name: "breadth_velocity.ts", label: "breadth_velocity.ts" }),
@@ -3456,6 +3954,12 @@ export const createFlumeConfig = (_definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "metric:advance_fraction.standardized", label: "metric:advance_fraction.standardized" }),
 			ports.Status({ name: "metric:advance_fraction.timescale", label: "metric:advance_fraction.timescale" }),
 			ports.Status({ name: "metric:advance_fraction.unit", label: "metric:advance_fraction.unit" }),
+			ports.float64({ name: "metric:breadth.center", label: "metric:breadth.center" }),
+			ports.float64({ name: "metric:breadth.normalized", label: "metric:breadth.normalized" }),
+			ports.float64({ name: "metric:breadth.scale", label: "metric:breadth.scale" }),
+			ports.float64({ name: "metric:breadth.standardized", label: "metric:breadth.standardized" }),
+			ports.Status({ name: "metric:breadth.timescale", label: "metric:breadth.timescale" }),
+			ports.Status({ name: "metric:breadth.unit", label: "metric:breadth.unit" }),
 			ports.float64({ name: "metric:breadth_baseline.center", label: "metric:breadth_baseline.center" }),
 			ports.float64({ name: "metric:breadth_baseline.normalized", label: "metric:breadth_baseline.normalized" }),
 			ports.float64({ name: "metric:breadth_baseline.scale", label: "metric:breadth_baseline.scale" }),
@@ -3498,6 +4002,12 @@ export const createFlumeConfig = (_definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "metric:directional_consensus.standardized", label: "metric:directional_consensus.standardized" }),
 			ports.Status({ name: "metric:directional_consensus.timescale", label: "metric:directional_consensus.timescale" }),
 			ports.Status({ name: "metric:directional_consensus.unit", label: "metric:directional_consensus.unit" }),
+			ports.float64({ name: "metric:directional_participation.center", label: "metric:directional_participation.center" }),
+			ports.float64({ name: "metric:directional_participation.normalized", label: "metric:directional_participation.normalized" }),
+			ports.float64({ name: "metric:directional_participation.scale", label: "metric:directional_participation.scale" }),
+			ports.float64({ name: "metric:directional_participation.standardized", label: "metric:directional_participation.standardized" }),
+			ports.Status({ name: "metric:directional_participation.timescale", label: "metric:directional_participation.timescale" }),
+			ports.Status({ name: "metric:directional_participation.unit", label: "metric:directional_participation.unit" }),
 			ports.float64({ name: "metric:median_absolute_return_ratio.center", label: "metric:median_absolute_return_ratio.center" }),
 			ports.float64({ name: "metric:median_absolute_return_ratio.normalized", label: "metric:median_absolute_return_ratio.normalized" }),
 			ports.float64({ name: "metric:median_absolute_return_ratio.scale", label: "metric:median_absolute_return_ratio.scale" }),
@@ -3538,9 +4048,11 @@ export const createFlumeConfig = (_definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "unchanged_fraction.a", label: "unchanged_fraction.a" }),
 			ports.float64({ name: "unchanged_fraction.b", label: "unchanged_fraction.b" }),
 		],
-		outputs: (ports) => [
+		outputs: (ports) => (_inputData, _connections) => [
 			ports["[]byte"]({ name: "metric:advance_fraction.read", label: "metric:advance_fraction.read" }),
 			ports.Status({ name: "metric:advance_fraction.status", label: "metric:advance_fraction.status" }),
+			ports["[]byte"]({ name: "metric:breadth.read", label: "metric:breadth.read" }),
+			ports.Status({ name: "metric:breadth.status", label: "metric:breadth.status" }),
 			ports["[]byte"]({ name: "metric:breadth_baseline.read", label: "metric:breadth_baseline.read" }),
 			ports.Status({ name: "metric:breadth_baseline.status", label: "metric:breadth_baseline.status" }),
 			ports["[]byte"]({ name: "metric:breadth_divergence.read", label: "metric:breadth_divergence.read" }),
@@ -3555,6 +4067,8 @@ export const createFlumeConfig = (_definitions: string[] = []): FlumeConfig => {
 			ports.Status({ name: "metric:directional_agreement.status", label: "metric:directional_agreement.status" }),
 			ports["[]byte"]({ name: "metric:directional_consensus.read", label: "metric:directional_consensus.read" }),
 			ports.Status({ name: "metric:directional_consensus.status", label: "metric:directional_consensus.status" }),
+			ports["[]byte"]({ name: "metric:directional_participation.read", label: "metric:directional_participation.read" }),
+			ports.Status({ name: "metric:directional_participation.status", label: "metric:directional_participation.status" }),
 			ports["[]byte"]({ name: "metric:median_absolute_return_ratio.read", label: "metric:median_absolute_return_ratio.read" }),
 			ports.Status({ name: "metric:median_absolute_return_ratio.status", label: "metric:median_absolute_return_ratio.status" }),
 			ports["[]byte"]({ name: "metric:median_return_baseline.read", label: "metric:median_return_baseline.read" }),
@@ -3571,15 +4085,15 @@ export const createFlumeConfig = (_definitions: string[] = []): FlumeConfig => {
 	});
 	config.addNodeType({
 		type: "definition:signals",
-		label: "signals:stage",
+		label: "signals",
 		category: "Definitions",
 		description: "Sub-graph: signals",
 		initialWidth: 320,
-		inputs: (ports) => [
+		inputs: (ports) => (_inputData, _connections) => [
 			ports["[]byte"]({ name: "grid.data", label: "grid.data" }),
 			ports.string({ name: "grid.interests", label: "grid.interests" }),
 		],
-		outputs: (ports) => [
+		outputs: (ports) => (_inputData, _connections) => [
 			ports.int64({ name: "grid.delivered", label: "grid.delivered" }),
 			ports.int64({ name: "grid.metrics", label: "grid.metrics" }),
 			ports["[]byte"]({ name: "grid.out", label: "grid.out" }),
@@ -3589,11 +4103,11 @@ export const createFlumeConfig = (_definitions: string[] = []): FlumeConfig => {
 	});
 	config.addNodeType({
 		type: "definition:toxicity_level3",
-		label: "toxicity:level3",
+		label: "toxicity_level3",
 		category: "Definitions",
 		description: "Sub-graph: toxicity_level3",
 		initialWidth: 320,
-		inputs: (ports) => [
+		inputs: (ports) => (_inputData, _connections) => [
 			ports.int64({ name: "elapsed.timestamp", label: "elapsed.timestamp" }),
 			ports.float64({ name: "metric:net_replenishment_fraction:ask.center", label: "metric:net_replenishment_fraction:ask.center" }),
 			ports.float64({ name: "metric:net_replenishment_fraction:ask.normalized", label: "metric:net_replenishment_fraction:ask.normalized" }),
@@ -3655,6 +4169,42 @@ export const createFlumeConfig = (_definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "metric:retreat_fraction:bid.standardized", label: "metric:retreat_fraction:bid.standardized" }),
 			ports.Status({ name: "metric:retreat_fraction:bid.timescale", label: "metric:retreat_fraction:bid.timescale" }),
 			ports.Status({ name: "metric:retreat_fraction:bid.unit", label: "metric:retreat_fraction:bid.unit" }),
+			ports.float64({ name: "metric:retreat_fraction_baseline:ask.center", label: "metric:retreat_fraction_baseline:ask.center" }),
+			ports.float64({ name: "metric:retreat_fraction_baseline:ask.normalized", label: "metric:retreat_fraction_baseline:ask.normalized" }),
+			ports.float64({ name: "metric:retreat_fraction_baseline:ask.scale", label: "metric:retreat_fraction_baseline:ask.scale" }),
+			ports.float64({ name: "metric:retreat_fraction_baseline:ask.standardized", label: "metric:retreat_fraction_baseline:ask.standardized" }),
+			ports.Status({ name: "metric:retreat_fraction_baseline:ask.timescale", label: "metric:retreat_fraction_baseline:ask.timescale" }),
+			ports.Status({ name: "metric:retreat_fraction_baseline:ask.unit", label: "metric:retreat_fraction_baseline:ask.unit" }),
+			ports.float64({ name: "metric:retreat_fraction_baseline:bid.center", label: "metric:retreat_fraction_baseline:bid.center" }),
+			ports.float64({ name: "metric:retreat_fraction_baseline:bid.normalized", label: "metric:retreat_fraction_baseline:bid.normalized" }),
+			ports.float64({ name: "metric:retreat_fraction_baseline:bid.scale", label: "metric:retreat_fraction_baseline:bid.scale" }),
+			ports.float64({ name: "metric:retreat_fraction_baseline:bid.standardized", label: "metric:retreat_fraction_baseline:bid.standardized" }),
+			ports.Status({ name: "metric:retreat_fraction_baseline:bid.timescale", label: "metric:retreat_fraction_baseline:bid.timescale" }),
+			ports.Status({ name: "metric:retreat_fraction_baseline:bid.unit", label: "metric:retreat_fraction_baseline:bid.unit" }),
+			ports.float64({ name: "metric:retreat_fraction_divergence:ask.center", label: "metric:retreat_fraction_divergence:ask.center" }),
+			ports.float64({ name: "metric:retreat_fraction_divergence:ask.normalized", label: "metric:retreat_fraction_divergence:ask.normalized" }),
+			ports.float64({ name: "metric:retreat_fraction_divergence:ask.scale", label: "metric:retreat_fraction_divergence:ask.scale" }),
+			ports.float64({ name: "metric:retreat_fraction_divergence:ask.standardized", label: "metric:retreat_fraction_divergence:ask.standardized" }),
+			ports.Status({ name: "metric:retreat_fraction_divergence:ask.timescale", label: "metric:retreat_fraction_divergence:ask.timescale" }),
+			ports.Status({ name: "metric:retreat_fraction_divergence:ask.unit", label: "metric:retreat_fraction_divergence:ask.unit" }),
+			ports.float64({ name: "metric:retreat_fraction_divergence:bid.center", label: "metric:retreat_fraction_divergence:bid.center" }),
+			ports.float64({ name: "metric:retreat_fraction_divergence:bid.normalized", label: "metric:retreat_fraction_divergence:bid.normalized" }),
+			ports.float64({ name: "metric:retreat_fraction_divergence:bid.scale", label: "metric:retreat_fraction_divergence:bid.scale" }),
+			ports.float64({ name: "metric:retreat_fraction_divergence:bid.standardized", label: "metric:retreat_fraction_divergence:bid.standardized" }),
+			ports.Status({ name: "metric:retreat_fraction_divergence:bid.timescale", label: "metric:retreat_fraction_divergence:bid.timescale" }),
+			ports.Status({ name: "metric:retreat_fraction_divergence:bid.unit", label: "metric:retreat_fraction_divergence:bid.unit" }),
+			ports.float64({ name: "metric:retreat_fraction_zscore:ask.center", label: "metric:retreat_fraction_zscore:ask.center" }),
+			ports.float64({ name: "metric:retreat_fraction_zscore:ask.normalized", label: "metric:retreat_fraction_zscore:ask.normalized" }),
+			ports.float64({ name: "metric:retreat_fraction_zscore:ask.scale", label: "metric:retreat_fraction_zscore:ask.scale" }),
+			ports.float64({ name: "metric:retreat_fraction_zscore:ask.standardized", label: "metric:retreat_fraction_zscore:ask.standardized" }),
+			ports.Status({ name: "metric:retreat_fraction_zscore:ask.timescale", label: "metric:retreat_fraction_zscore:ask.timescale" }),
+			ports.Status({ name: "metric:retreat_fraction_zscore:ask.unit", label: "metric:retreat_fraction_zscore:ask.unit" }),
+			ports.float64({ name: "metric:retreat_fraction_zscore:bid.center", label: "metric:retreat_fraction_zscore:bid.center" }),
+			ports.float64({ name: "metric:retreat_fraction_zscore:bid.normalized", label: "metric:retreat_fraction_zscore:bid.normalized" }),
+			ports.float64({ name: "metric:retreat_fraction_zscore:bid.scale", label: "metric:retreat_fraction_zscore:bid.scale" }),
+			ports.float64({ name: "metric:retreat_fraction_zscore:bid.standardized", label: "metric:retreat_fraction_zscore:bid.standardized" }),
+			ports.Status({ name: "metric:retreat_fraction_zscore:bid.timescale", label: "metric:retreat_fraction_zscore:bid.timescale" }),
+			ports.Status({ name: "metric:retreat_fraction_zscore:bid.unit", label: "metric:retreat_fraction_zscore:bid.unit" }),
 			ports.float64({ name: "metric:retreat_rate:ask.center", label: "metric:retreat_rate:ask.center" }),
 			ports.float64({ name: "metric:retreat_rate:ask.normalized", label: "metric:retreat_rate:ask.normalized" }),
 			ports.float64({ name: "metric:retreat_rate:ask.scale", label: "metric:retreat_rate:ask.scale" }),
@@ -3679,6 +4229,42 @@ export const createFlumeConfig = (_definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "metric:touch_price_log_change:bid.standardized", label: "metric:touch_price_log_change:bid.standardized" }),
 			ports.Status({ name: "metric:touch_price_log_change:bid.timescale", label: "metric:touch_price_log_change:bid.timescale" }),
 			ports.Status({ name: "metric:touch_price_log_change:bid.unit", label: "metric:touch_price_log_change:bid.unit" }),
+			ports.float64({ name: "metric:withdrawal_fraction_baseline:ask.center", label: "metric:withdrawal_fraction_baseline:ask.center" }),
+			ports.float64({ name: "metric:withdrawal_fraction_baseline:ask.normalized", label: "metric:withdrawal_fraction_baseline:ask.normalized" }),
+			ports.float64({ name: "metric:withdrawal_fraction_baseline:ask.scale", label: "metric:withdrawal_fraction_baseline:ask.scale" }),
+			ports.float64({ name: "metric:withdrawal_fraction_baseline:ask.standardized", label: "metric:withdrawal_fraction_baseline:ask.standardized" }),
+			ports.Status({ name: "metric:withdrawal_fraction_baseline:ask.timescale", label: "metric:withdrawal_fraction_baseline:ask.timescale" }),
+			ports.Status({ name: "metric:withdrawal_fraction_baseline:ask.unit", label: "metric:withdrawal_fraction_baseline:ask.unit" }),
+			ports.float64({ name: "metric:withdrawal_fraction_baseline:bid.center", label: "metric:withdrawal_fraction_baseline:bid.center" }),
+			ports.float64({ name: "metric:withdrawal_fraction_baseline:bid.normalized", label: "metric:withdrawal_fraction_baseline:bid.normalized" }),
+			ports.float64({ name: "metric:withdrawal_fraction_baseline:bid.scale", label: "metric:withdrawal_fraction_baseline:bid.scale" }),
+			ports.float64({ name: "metric:withdrawal_fraction_baseline:bid.standardized", label: "metric:withdrawal_fraction_baseline:bid.standardized" }),
+			ports.Status({ name: "metric:withdrawal_fraction_baseline:bid.timescale", label: "metric:withdrawal_fraction_baseline:bid.timescale" }),
+			ports.Status({ name: "metric:withdrawal_fraction_baseline:bid.unit", label: "metric:withdrawal_fraction_baseline:bid.unit" }),
+			ports.float64({ name: "metric:withdrawal_fraction_divergence:ask.center", label: "metric:withdrawal_fraction_divergence:ask.center" }),
+			ports.float64({ name: "metric:withdrawal_fraction_divergence:ask.normalized", label: "metric:withdrawal_fraction_divergence:ask.normalized" }),
+			ports.float64({ name: "metric:withdrawal_fraction_divergence:ask.scale", label: "metric:withdrawal_fraction_divergence:ask.scale" }),
+			ports.float64({ name: "metric:withdrawal_fraction_divergence:ask.standardized", label: "metric:withdrawal_fraction_divergence:ask.standardized" }),
+			ports.Status({ name: "metric:withdrawal_fraction_divergence:ask.timescale", label: "metric:withdrawal_fraction_divergence:ask.timescale" }),
+			ports.Status({ name: "metric:withdrawal_fraction_divergence:ask.unit", label: "metric:withdrawal_fraction_divergence:ask.unit" }),
+			ports.float64({ name: "metric:withdrawal_fraction_divergence:bid.center", label: "metric:withdrawal_fraction_divergence:bid.center" }),
+			ports.float64({ name: "metric:withdrawal_fraction_divergence:bid.normalized", label: "metric:withdrawal_fraction_divergence:bid.normalized" }),
+			ports.float64({ name: "metric:withdrawal_fraction_divergence:bid.scale", label: "metric:withdrawal_fraction_divergence:bid.scale" }),
+			ports.float64({ name: "metric:withdrawal_fraction_divergence:bid.standardized", label: "metric:withdrawal_fraction_divergence:bid.standardized" }),
+			ports.Status({ name: "metric:withdrawal_fraction_divergence:bid.timescale", label: "metric:withdrawal_fraction_divergence:bid.timescale" }),
+			ports.Status({ name: "metric:withdrawal_fraction_divergence:bid.unit", label: "metric:withdrawal_fraction_divergence:bid.unit" }),
+			ports.float64({ name: "metric:withdrawal_fraction_zscore:ask.center", label: "metric:withdrawal_fraction_zscore:ask.center" }),
+			ports.float64({ name: "metric:withdrawal_fraction_zscore:ask.normalized", label: "metric:withdrawal_fraction_zscore:ask.normalized" }),
+			ports.float64({ name: "metric:withdrawal_fraction_zscore:ask.scale", label: "metric:withdrawal_fraction_zscore:ask.scale" }),
+			ports.float64({ name: "metric:withdrawal_fraction_zscore:ask.standardized", label: "metric:withdrawal_fraction_zscore:ask.standardized" }),
+			ports.Status({ name: "metric:withdrawal_fraction_zscore:ask.timescale", label: "metric:withdrawal_fraction_zscore:ask.timescale" }),
+			ports.Status({ name: "metric:withdrawal_fraction_zscore:ask.unit", label: "metric:withdrawal_fraction_zscore:ask.unit" }),
+			ports.float64({ name: "metric:withdrawal_fraction_zscore:bid.center", label: "metric:withdrawal_fraction_zscore:bid.center" }),
+			ports.float64({ name: "metric:withdrawal_fraction_zscore:bid.normalized", label: "metric:withdrawal_fraction_zscore:bid.normalized" }),
+			ports.float64({ name: "metric:withdrawal_fraction_zscore:bid.scale", label: "metric:withdrawal_fraction_zscore:bid.scale" }),
+			ports.float64({ name: "metric:withdrawal_fraction_zscore:bid.standardized", label: "metric:withdrawal_fraction_zscore:bid.standardized" }),
+			ports.Status({ name: "metric:withdrawal_fraction_zscore:bid.timescale", label: "metric:withdrawal_fraction_zscore:bid.timescale" }),
+			ports.Status({ name: "metric:withdrawal_fraction_zscore:bid.unit", label: "metric:withdrawal_fraction_zscore:bid.unit" }),
 			ports.float64({ name: "net_replenishment_fraction:ask.b", label: "net_replenishment_fraction:ask.b" }),
 			ports.float64({ name: "net_replenishment_fraction:bid.b", label: "net_replenishment_fraction:bid.b" }),
 			ports.float64({ name: "net_withdrawal_fraction:ask.b", label: "net_withdrawal_fraction:ask.b" }),
@@ -3698,7 +4284,7 @@ export const createFlumeConfig = (_definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "unfilled_residual_quantity:bid.a", label: "unfilled_residual_quantity:bid.a" }),
 			ports.float64({ name: "unfilled_residual_quantity:bid.b", label: "unfilled_residual_quantity:bid.b" }),
 		],
-		outputs: (ports) => [
+		outputs: (ports) => (_inputData, _connections) => [
 			ports["[]byte"]({ name: "metric:net_replenishment_fraction:ask.read", label: "metric:net_replenishment_fraction:ask.read" }),
 			ports.Status({ name: "metric:net_replenishment_fraction:ask.status", label: "metric:net_replenishment_fraction:ask.status" }),
 			ports["[]byte"]({ name: "metric:net_replenishment_fraction:bid.read", label: "metric:net_replenishment_fraction:bid.read" }),
@@ -3719,6 +4305,18 @@ export const createFlumeConfig = (_definitions: string[] = []): FlumeConfig => {
 			ports.Status({ name: "metric:retreat_fraction:ask.status", label: "metric:retreat_fraction:ask.status" }),
 			ports["[]byte"]({ name: "metric:retreat_fraction:bid.read", label: "metric:retreat_fraction:bid.read" }),
 			ports.Status({ name: "metric:retreat_fraction:bid.status", label: "metric:retreat_fraction:bid.status" }),
+			ports["[]byte"]({ name: "metric:retreat_fraction_baseline:ask.read", label: "metric:retreat_fraction_baseline:ask.read" }),
+			ports.Status({ name: "metric:retreat_fraction_baseline:ask.status", label: "metric:retreat_fraction_baseline:ask.status" }),
+			ports["[]byte"]({ name: "metric:retreat_fraction_baseline:bid.read", label: "metric:retreat_fraction_baseline:bid.read" }),
+			ports.Status({ name: "metric:retreat_fraction_baseline:bid.status", label: "metric:retreat_fraction_baseline:bid.status" }),
+			ports["[]byte"]({ name: "metric:retreat_fraction_divergence:ask.read", label: "metric:retreat_fraction_divergence:ask.read" }),
+			ports.Status({ name: "metric:retreat_fraction_divergence:ask.status", label: "metric:retreat_fraction_divergence:ask.status" }),
+			ports["[]byte"]({ name: "metric:retreat_fraction_divergence:bid.read", label: "metric:retreat_fraction_divergence:bid.read" }),
+			ports.Status({ name: "metric:retreat_fraction_divergence:bid.status", label: "metric:retreat_fraction_divergence:bid.status" }),
+			ports["[]byte"]({ name: "metric:retreat_fraction_zscore:ask.read", label: "metric:retreat_fraction_zscore:ask.read" }),
+			ports.Status({ name: "metric:retreat_fraction_zscore:ask.status", label: "metric:retreat_fraction_zscore:ask.status" }),
+			ports["[]byte"]({ name: "metric:retreat_fraction_zscore:bid.read", label: "metric:retreat_fraction_zscore:bid.read" }),
+			ports.Status({ name: "metric:retreat_fraction_zscore:bid.status", label: "metric:retreat_fraction_zscore:bid.status" }),
 			ports["[]byte"]({ name: "metric:retreat_rate:ask.read", label: "metric:retreat_rate:ask.read" }),
 			ports.Status({ name: "metric:retreat_rate:ask.status", label: "metric:retreat_rate:ask.status" }),
 			ports["[]byte"]({ name: "metric:retreat_rate:bid.read", label: "metric:retreat_rate:bid.read" }),
@@ -3727,15 +4325,27 @@ export const createFlumeConfig = (_definitions: string[] = []): FlumeConfig => {
 			ports.Status({ name: "metric:touch_price_log_change:ask.status", label: "metric:touch_price_log_change:ask.status" }),
 			ports["[]byte"]({ name: "metric:touch_price_log_change:bid.read", label: "metric:touch_price_log_change:bid.read" }),
 			ports.Status({ name: "metric:touch_price_log_change:bid.status", label: "metric:touch_price_log_change:bid.status" }),
+			ports["[]byte"]({ name: "metric:withdrawal_fraction_baseline:ask.read", label: "metric:withdrawal_fraction_baseline:ask.read" }),
+			ports.Status({ name: "metric:withdrawal_fraction_baseline:ask.status", label: "metric:withdrawal_fraction_baseline:ask.status" }),
+			ports["[]byte"]({ name: "metric:withdrawal_fraction_baseline:bid.read", label: "metric:withdrawal_fraction_baseline:bid.read" }),
+			ports.Status({ name: "metric:withdrawal_fraction_baseline:bid.status", label: "metric:withdrawal_fraction_baseline:bid.status" }),
+			ports["[]byte"]({ name: "metric:withdrawal_fraction_divergence:ask.read", label: "metric:withdrawal_fraction_divergence:ask.read" }),
+			ports.Status({ name: "metric:withdrawal_fraction_divergence:ask.status", label: "metric:withdrawal_fraction_divergence:ask.status" }),
+			ports["[]byte"]({ name: "metric:withdrawal_fraction_divergence:bid.read", label: "metric:withdrawal_fraction_divergence:bid.read" }),
+			ports.Status({ name: "metric:withdrawal_fraction_divergence:bid.status", label: "metric:withdrawal_fraction_divergence:bid.status" }),
+			ports["[]byte"]({ name: "metric:withdrawal_fraction_zscore:ask.read", label: "metric:withdrawal_fraction_zscore:ask.read" }),
+			ports.Status({ name: "metric:withdrawal_fraction_zscore:ask.status", label: "metric:withdrawal_fraction_zscore:ask.status" }),
+			ports["[]byte"]({ name: "metric:withdrawal_fraction_zscore:bid.read", label: "metric:withdrawal_fraction_zscore:bid.read" }),
+			ports.Status({ name: "metric:withdrawal_fraction_zscore:bid.status", label: "metric:withdrawal_fraction_zscore:bid.status" }),
 		],
 	});
 	config.addNodeType({
 		type: "definition:toxicity_trade",
-		label: "toxicity:trade",
+		label: "toxicity_trade",
 		category: "Definitions",
 		description: "Sub-graph: toxicity_trade",
 		initialWidth: 320,
-		inputs: (ports) => [
+		inputs: (ports) => (_inputData, _connections) => [
 			ports.bool({ name: "matched_quantity:ask.flush", label: "matched_quantity:ask.flush" }),
 			ports.float64({ name: "matched_quantity:ask.value", label: "matched_quantity:ask.value" }),
 			ports.bool({ name: "matched_quantity:bid.flush", label: "matched_quantity:bid.flush" }),
@@ -3758,10 +4368,64 @@ export const createFlumeConfig = (_definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "metric:fill_fraction:bid.standardized", label: "metric:fill_fraction:bid.standardized" }),
 			ports.Status({ name: "metric:fill_fraction:bid.timescale", label: "metric:fill_fraction:bid.timescale" }),
 			ports.Status({ name: "metric:fill_fraction:bid.unit", label: "metric:fill_fraction:bid.unit" }),
+			ports.float64({ name: "metric:fill_fraction_baseline:ask.center", label: "metric:fill_fraction_baseline:ask.center" }),
+			ports.float64({ name: "metric:fill_fraction_baseline:ask.normalized", label: "metric:fill_fraction_baseline:ask.normalized" }),
+			ports.float64({ name: "metric:fill_fraction_baseline:ask.scale", label: "metric:fill_fraction_baseline:ask.scale" }),
+			ports.float64({ name: "metric:fill_fraction_baseline:ask.standardized", label: "metric:fill_fraction_baseline:ask.standardized" }),
+			ports.Status({ name: "metric:fill_fraction_baseline:ask.timescale", label: "metric:fill_fraction_baseline:ask.timescale" }),
+			ports.Status({ name: "metric:fill_fraction_baseline:ask.unit", label: "metric:fill_fraction_baseline:ask.unit" }),
+			ports.float64({ name: "metric:fill_fraction_baseline:bid.center", label: "metric:fill_fraction_baseline:bid.center" }),
+			ports.float64({ name: "metric:fill_fraction_baseline:bid.normalized", label: "metric:fill_fraction_baseline:bid.normalized" }),
+			ports.float64({ name: "metric:fill_fraction_baseline:bid.scale", label: "metric:fill_fraction_baseline:bid.scale" }),
+			ports.float64({ name: "metric:fill_fraction_baseline:bid.standardized", label: "metric:fill_fraction_baseline:bid.standardized" }),
+			ports.Status({ name: "metric:fill_fraction_baseline:bid.timescale", label: "metric:fill_fraction_baseline:bid.timescale" }),
+			ports.Status({ name: "metric:fill_fraction_baseline:bid.unit", label: "metric:fill_fraction_baseline:bid.unit" }),
+			ports.float64({ name: "metric:fill_fraction_divergence:ask.center", label: "metric:fill_fraction_divergence:ask.center" }),
+			ports.float64({ name: "metric:fill_fraction_divergence:ask.normalized", label: "metric:fill_fraction_divergence:ask.normalized" }),
+			ports.float64({ name: "metric:fill_fraction_divergence:ask.scale", label: "metric:fill_fraction_divergence:ask.scale" }),
+			ports.float64({ name: "metric:fill_fraction_divergence:ask.standardized", label: "metric:fill_fraction_divergence:ask.standardized" }),
+			ports.Status({ name: "metric:fill_fraction_divergence:ask.timescale", label: "metric:fill_fraction_divergence:ask.timescale" }),
+			ports.Status({ name: "metric:fill_fraction_divergence:ask.unit", label: "metric:fill_fraction_divergence:ask.unit" }),
+			ports.float64({ name: "metric:fill_fraction_divergence:bid.center", label: "metric:fill_fraction_divergence:bid.center" }),
+			ports.float64({ name: "metric:fill_fraction_divergence:bid.normalized", label: "metric:fill_fraction_divergence:bid.normalized" }),
+			ports.float64({ name: "metric:fill_fraction_divergence:bid.scale", label: "metric:fill_fraction_divergence:bid.scale" }),
+			ports.float64({ name: "metric:fill_fraction_divergence:bid.standardized", label: "metric:fill_fraction_divergence:bid.standardized" }),
+			ports.Status({ name: "metric:fill_fraction_divergence:bid.timescale", label: "metric:fill_fraction_divergence:bid.timescale" }),
+			ports.Status({ name: "metric:fill_fraction_divergence:bid.unit", label: "metric:fill_fraction_divergence:bid.unit" }),
+			ports.float64({ name: "metric:fill_fraction_zscore:ask.center", label: "metric:fill_fraction_zscore:ask.center" }),
+			ports.float64({ name: "metric:fill_fraction_zscore:ask.normalized", label: "metric:fill_fraction_zscore:ask.normalized" }),
+			ports.float64({ name: "metric:fill_fraction_zscore:ask.scale", label: "metric:fill_fraction_zscore:ask.scale" }),
+			ports.float64({ name: "metric:fill_fraction_zscore:ask.standardized", label: "metric:fill_fraction_zscore:ask.standardized" }),
+			ports.Status({ name: "metric:fill_fraction_zscore:ask.timescale", label: "metric:fill_fraction_zscore:ask.timescale" }),
+			ports.Status({ name: "metric:fill_fraction_zscore:ask.unit", label: "metric:fill_fraction_zscore:ask.unit" }),
+			ports.float64({ name: "metric:fill_fraction_zscore:bid.center", label: "metric:fill_fraction_zscore:bid.center" }),
+			ports.float64({ name: "metric:fill_fraction_zscore:bid.normalized", label: "metric:fill_fraction_zscore:bid.normalized" }),
+			ports.float64({ name: "metric:fill_fraction_zscore:bid.scale", label: "metric:fill_fraction_zscore:bid.scale" }),
+			ports.float64({ name: "metric:fill_fraction_zscore:bid.standardized", label: "metric:fill_fraction_zscore:bid.standardized" }),
+			ports.Status({ name: "metric:fill_fraction_zscore:bid.timescale", label: "metric:fill_fraction_zscore:bid.timescale" }),
+			ports.Status({ name: "metric:fill_fraction_zscore:bid.unit", label: "metric:fill_fraction_zscore:bid.unit" }),
+			ports.float64({ name: "metric:matched_touch_trade_quantity:ask.center", label: "metric:matched_touch_trade_quantity:ask.center" }),
+			ports.float64({ name: "metric:matched_touch_trade_quantity:ask.normalized", label: "metric:matched_touch_trade_quantity:ask.normalized" }),
+			ports.float64({ name: "metric:matched_touch_trade_quantity:ask.scale", label: "metric:matched_touch_trade_quantity:ask.scale" }),
+			ports.float64({ name: "metric:matched_touch_trade_quantity:ask.standardized", label: "metric:matched_touch_trade_quantity:ask.standardized" }),
+			ports.Status({ name: "metric:matched_touch_trade_quantity:ask.timescale", label: "metric:matched_touch_trade_quantity:ask.timescale" }),
+			ports.Status({ name: "metric:matched_touch_trade_quantity:ask.unit", label: "metric:matched_touch_trade_quantity:ask.unit" }),
+			ports.float64({ name: "metric:matched_touch_trade_quantity:bid.center", label: "metric:matched_touch_trade_quantity:bid.center" }),
+			ports.float64({ name: "metric:matched_touch_trade_quantity:bid.normalized", label: "metric:matched_touch_trade_quantity:bid.normalized" }),
+			ports.float64({ name: "metric:matched_touch_trade_quantity:bid.scale", label: "metric:matched_touch_trade_quantity:bid.scale" }),
+			ports.float64({ name: "metric:matched_touch_trade_quantity:bid.standardized", label: "metric:matched_touch_trade_quantity:bid.standardized" }),
+			ports.Status({ name: "metric:matched_touch_trade_quantity:bid.timescale", label: "metric:matched_touch_trade_quantity:bid.timescale" }),
+			ports.Status({ name: "metric:matched_touch_trade_quantity:bid.unit", label: "metric:matched_touch_trade_quantity:bid.unit" }),
+			ports.float64({ name: "metric:trade_quantity.center", label: "metric:trade_quantity.center" }),
+			ports.float64({ name: "metric:trade_quantity.normalized", label: "metric:trade_quantity.normalized" }),
+			ports.float64({ name: "metric:trade_quantity.scale", label: "metric:trade_quantity.scale" }),
+			ports.float64({ name: "metric:trade_quantity.standardized", label: "metric:trade_quantity.standardized" }),
+			ports.Status({ name: "metric:trade_quantity.timescale", label: "metric:trade_quantity.timescale" }),
+			ports.Status({ name: "metric:trade_quantity.unit", label: "metric:trade_quantity.unit" }),
 			ports.bool({ name: "trade_quantity.flush", label: "trade_quantity.flush" }),
 			ports.float64({ name: "trade_quantity.value", label: "trade_quantity.value" }),
 		],
-		outputs: (ports) => [
+		outputs: (ports) => (_inputData, _connections) => [
 			ports.int64({ name: "matched_quantity:ask.count", label: "matched_quantity:ask.count" }),
 			ports.bool({ name: "matched_quantity:ask.ready", label: "matched_quantity:ask.ready" }),
 			ports.Status({ name: "matched_quantity:ask.status", label: "matched_quantity:ask.status" }),
@@ -3774,6 +4438,24 @@ export const createFlumeConfig = (_definitions: string[] = []): FlumeConfig => {
 			ports.Status({ name: "metric:fill_fraction:ask.status", label: "metric:fill_fraction:ask.status" }),
 			ports["[]byte"]({ name: "metric:fill_fraction:bid.read", label: "metric:fill_fraction:bid.read" }),
 			ports.Status({ name: "metric:fill_fraction:bid.status", label: "metric:fill_fraction:bid.status" }),
+			ports["[]byte"]({ name: "metric:fill_fraction_baseline:ask.read", label: "metric:fill_fraction_baseline:ask.read" }),
+			ports.Status({ name: "metric:fill_fraction_baseline:ask.status", label: "metric:fill_fraction_baseline:ask.status" }),
+			ports["[]byte"]({ name: "metric:fill_fraction_baseline:bid.read", label: "metric:fill_fraction_baseline:bid.read" }),
+			ports.Status({ name: "metric:fill_fraction_baseline:bid.status", label: "metric:fill_fraction_baseline:bid.status" }),
+			ports["[]byte"]({ name: "metric:fill_fraction_divergence:ask.read", label: "metric:fill_fraction_divergence:ask.read" }),
+			ports.Status({ name: "metric:fill_fraction_divergence:ask.status", label: "metric:fill_fraction_divergence:ask.status" }),
+			ports["[]byte"]({ name: "metric:fill_fraction_divergence:bid.read", label: "metric:fill_fraction_divergence:bid.read" }),
+			ports.Status({ name: "metric:fill_fraction_divergence:bid.status", label: "metric:fill_fraction_divergence:bid.status" }),
+			ports["[]byte"]({ name: "metric:fill_fraction_zscore:ask.read", label: "metric:fill_fraction_zscore:ask.read" }),
+			ports.Status({ name: "metric:fill_fraction_zscore:ask.status", label: "metric:fill_fraction_zscore:ask.status" }),
+			ports["[]byte"]({ name: "metric:fill_fraction_zscore:bid.read", label: "metric:fill_fraction_zscore:bid.read" }),
+			ports.Status({ name: "metric:fill_fraction_zscore:bid.status", label: "metric:fill_fraction_zscore:bid.status" }),
+			ports["[]byte"]({ name: "metric:matched_touch_trade_quantity:ask.read", label: "metric:matched_touch_trade_quantity:ask.read" }),
+			ports.Status({ name: "metric:matched_touch_trade_quantity:ask.status", label: "metric:matched_touch_trade_quantity:ask.status" }),
+			ports["[]byte"]({ name: "metric:matched_touch_trade_quantity:bid.read", label: "metric:matched_touch_trade_quantity:bid.read" }),
+			ports.Status({ name: "metric:matched_touch_trade_quantity:bid.status", label: "metric:matched_touch_trade_quantity:bid.status" }),
+			ports["[]byte"]({ name: "metric:trade_quantity.read", label: "metric:trade_quantity.read" }),
+			ports.Status({ name: "metric:trade_quantity.status", label: "metric:trade_quantity.status" }),
 			ports.int64({ name: "trade_quantity.count", label: "trade_quantity.count" }),
 			ports.bool({ name: "trade_quantity.ready", label: "trade_quantity.ready" }),
 			ports.Status({ name: "trade_quantity.status", label: "trade_quantity.status" }),
@@ -3785,7 +4467,7 @@ export const createFlumeConfig = (_definitions: string[] = []): FlumeConfig => {
 		category: "Definitions",
 		description: "Sub-graph: training",
 		initialWidth: 320,
-		inputs: (ports) => [
+		inputs: (ports) => (_inputData, _connections) => [
 			ports["[]byte"]({ name: "associate.current", label: "associate.current" }),
 			ports["[]byte"]({ name: "attractor.contextBytes", label: "attractor.contextBytes" }),
 			ports["[]byte"]({ name: "classification.class", label: "classification.class" }),
@@ -3798,7 +4480,7 @@ export const createFlumeConfig = (_definitions: string[] = []): FlumeConfig => {
 			ports["[]byte"]({ name: "reinforce.contextBytes", label: "reinforce.contextBytes" }),
 			ports["[]byte"]({ name: "transition.data", label: "transition.data" }),
 		],
-		outputs: (ports) => [
+		outputs: (ports) => (_inputData, _connections) => [
 			ports["[]byte"]({ name: "associate.precursor", label: "associate.precursor" }),
 			ports.int64({ name: "attractor.count", label: "attractor.count" }),
 			ports.float64({ name: "attractor.prob", label: "attractor.prob" }),
@@ -3815,6 +4497,10516 @@ export const createFlumeConfig = (_definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "grid.values", label: "grid.values" }),
 		],
 	});
+
+	// 4. Reflected React UI Components
+	config.addNodeType({
+		type: "ui.Alert",
+		label: "Alert",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "variant",
+					label: "variant",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "variant",
+							defaultValue: "info",
+							options: [
+								{ value: "info", label: "info" },
+								{ value: "success", label: "success" },
+								{ value: "warning", label: "warning" },
+								{ value: "error", label: "error" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "size",
+					label: "size",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "size",
+							defaultValue: "s",
+							options: [
+								{ value: "s", label: "s" },
+								{ value: "m", label: "m" },
+								{ value: "lg", label: "lg" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "rule", label: "rule" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Badge",
+		label: "Badge",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "className", label: "className" }),
+				ports.string({ name: "title", label: "title" }),
+				ports.string({
+					name: "variant",
+					label: "variant",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "variant",
+							defaultValue: "info",
+							options: [
+								{ value: "info", label: "info" },
+								{ value: "success", label: "success" },
+								{ value: "warning", label: "warning" },
+								{ value: "error", label: "error" },
+								{ value: "brand", label: "brand" },
+								{ value: "disabled", label: "disabled" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "size",
+					label: "size",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "size",
+							defaultValue: "s",
+							options: [
+								{ value: "s", label: "s" },
+								{ value: "m", label: "m" },
+								{ value: "lg", label: "lg" },
+								{ value: "xxs", label: "xxs" },
+								{ value: "xs", label: "xs" },
+								{ value: "xl", label: "xl" },
+								{ value: "xxl", label: "xxl" },
+							],
+						}),
+					],
+				}),
+				ports.string({ name: "label", label: "label" }),
+				ports.bool({ name: "dot", label: "dot" }),
+				ports.bool({ name: "pulse", label: "pulse" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Button",
+		label: "Button",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.bool({ name: "disabled", label: "disabled" }),
+				ports.string({
+					name: "variant",
+					label: "variant",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "variant",
+							defaultValue: "solid",
+							options: [
+								{ value: "solid", label: "solid" },
+								{ value: "outline", label: "outline" },
+								{ value: "quiet", label: "quiet" },
+								{ value: "bare", label: "bare" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "size",
+					label: "size",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "size",
+							defaultValue: "s",
+							options: [
+								{ value: "s", label: "s" },
+								{ value: "m", label: "m" },
+								{ value: "lg", label: "lg" },
+								{ value: "xxs", label: "xxs" },
+								{ value: "xs", label: "xs" },
+								{ value: "xl", label: "xl" },
+								{ value: "xxl", label: "xxl" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "tone",
+					label: "tone",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "tone",
+							defaultValue: "info",
+							options: [
+								{ value: "info", label: "info" },
+								{ value: "success", label: "success" },
+								{ value: "warning", label: "warning" },
+								{ value: "error", label: "error" },
+								{ value: "brand", label: "brand" },
+								{ value: "disabled", label: "disabled" },
+								{ value: "accent", label: "accent" },
+								{ value: "muted", label: "muted" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "shape",
+					label: "shape",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "shape",
+							defaultValue: "icon",
+							options: [
+								{ value: "icon", label: "icon" },
+								{ value: "default", label: "default" },
+								{ value: "block", label: "block" },
+							],
+						}),
+					],
+				}),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Callout",
+		label: "Callout",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "size",
+					label: "size",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "size",
+							defaultValue: "s",
+							options: [
+								{ value: "s", label: "s" },
+								{ value: "m", label: "m" },
+								{ value: "lg", label: "lg" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "tone",
+					label: "tone",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "tone",
+							defaultValue: "info",
+							options: [
+								{ value: "info", label: "info" },
+								{ value: "success", label: "success" },
+								{ value: "warning", label: "warning" },
+								{ value: "accent", label: "accent" },
+								{ value: "neutral", label: "neutral" },
+							],
+						}),
+					],
+				}),
+				ports.string({ name: "meta", label: "meta" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Callout.Description",
+		label: "Callout.Description",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Callout.Meta",
+		label: "Callout.Meta",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Callout.Title",
+		label: "Callout.Title",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "size",
+					label: "size",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "size",
+							defaultValue: "s",
+							options: [
+								{ value: "s", label: "s" },
+								{ value: "m", label: "m" },
+								{ value: "lg", label: "lg" },
+								{ value: "xxs", label: "xxs" },
+								{ value: "xs", label: "xs" },
+								{ value: "xl", label: "xl" },
+								{ value: "xxl", label: "xxl" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "tone",
+					label: "tone",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "tone",
+							defaultValue: "accent",
+							options: [
+								{ value: "accent", label: "accent" },
+								{ value: "f1", label: "f1" },
+								{ value: "f2", label: "f2" },
+								{ value: "f3", label: "f3" },
+								{ value: "f4", label: "f4" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "weight",
+					label: "weight",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "weight",
+							defaultValue: "normal",
+							options: [
+								{ value: "normal", label: "normal" },
+								{ value: "medium", label: "medium" },
+								{ value: "semibold", label: "semibold" },
+							],
+						}),
+					],
+				}),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Canvas",
+		label: "Canvas",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "className", label: "className" }),
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "meta", label: "meta" }),
+				ports.string({ name: "topRight", label: "topRight" }),
+				ports.string({ name: "legend", label: "legend" }),
+				ports.string({ name: "footer", label: "footer" }),
+				ports.bool({ name: "scanlines", label: "scanlines" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Canvas.Plot",
+		label: "Canvas.Plot",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "className", label: "className" }),
+				ports.string({ name: "title", label: "title" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.CanvasPlot",
+		label: "CanvasPlot",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "className", label: "className" }),
+				ports.string({ name: "title", label: "title" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Card",
+		label: "Card",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "className", label: "className" }),
+				ports.string({ name: "title", label: "title" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.CardPanel",
+		label: "CardPanel",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "className", label: "className" }),
+				ports.string({ name: "title", label: "title" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Checkbox",
+		label: "Checkbox",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.bool({ name: "disabled", label: "disabled" }),
+				ports.string({ name: "alt", label: "alt" }),
+				ports.string({ name: "placeholder", label: "placeholder" }),
+				ports.bool({ name: "readOnly", label: "readOnly" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Chip",
+		label: "Chip",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "variant",
+					label: "variant",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "variant",
+							defaultValue: "outline",
+							options: [
+								{ value: "outline", label: "outline" },
+								{ value: "quiet", label: "quiet" },
+								{ value: "bare", label: "bare" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "size",
+					label: "size",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "size",
+							defaultValue: "s",
+							options: [
+								{ value: "s", label: "s" },
+								{ value: "m", label: "m" },
+								{ value: "lg", label: "lg" },
+								{ value: "xxs", label: "xxs" },
+								{ value: "xs", label: "xs" },
+								{ value: "xl", label: "xl" },
+								{ value: "xxl", label: "xxl" },
+							],
+						}),
+					],
+				}),
+				ports.string({ name: "label", label: "label" }),
+				ports.string({ name: "value", label: "value" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Collapsible",
+		label: "Collapsible",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.bool({ name: "defaultOpen", label: "defaultOpen" }),
+				ports.bool({ name: "open", label: "open" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.CollapsiblePanel",
+		label: "CollapsiblePanel",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "className", label: "className" }),
+				ports.string({ name: "title", label: "title" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.CollapsibleTrigger",
+		label: "CollapsibleTrigger",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.bool({ name: "disabled", label: "disabled" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({ name: "title", label: "title" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.DataRow",
+		label: "DataRow",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "density",
+					label: "density",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "density",
+							defaultValue: "bare",
+							options: [
+								{ value: "bare", label: "bare" },
+								{ value: "normal", label: "normal" },
+								{ value: "compact", label: "compact" },
+								{ value: "spacious", label: "spacious" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "border",
+					label: "border",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "border",
+							defaultValue: "none",
+							options: [
+								{ value: "none", label: "none" },
+								{ value: "bottom", label: "bottom" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "size",
+					label: "size",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "size",
+							defaultValue: "s",
+							options: [
+								{ value: "s", label: "s" },
+								{ value: "m", label: "m" },
+								{ value: "lg", label: "lg" },
+								{ value: "xs", label: "xs" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "tone",
+					label: "tone",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "tone",
+							defaultValue: "info",
+							options: [
+								{ value: "info", label: "info" },
+								{ value: "warning", label: "warning" },
+								{ value: "accent", label: "accent" },
+								{ value: "default", label: "default" },
+								{ value: "f1", label: "f1" },
+								{ value: "f2", label: "f2" },
+								{ value: "f3", label: "f3" },
+								{ value: "f4", label: "f4" },
+								{ value: "up", label: "up" },
+								{ value: "down", label: "down" },
+							],
+						}),
+					],
+				}),
+				ports.string({ name: "label", label: "label" }),
+				ports.string({ name: "value", label: "value" }),
+				ports.string({ name: "help", label: "help" }),
+				ports.string({ name: "description", label: "description" }),
+				ports.string({ name: "paintKey", label: "paintKey" }),
+				ports.string({ name: "labelClassName", label: "labelClassName" }),
+				ports.string({ name: "valueClassName", label: "valueClassName" }),
+			];
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.DataRow.Group",
+		label: "DataRow.Group",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "justify",
+					label: "justify",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "justify",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "between", label: "between" },
+								{ value: "around", label: "around" },
+								{ value: "evenly", label: "evenly" },
+								{ value: "stretch", label: "stretch" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "align",
+					label: "align",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "align",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "stretch", label: "stretch" },
+								{ value: "baseline", label: "baseline" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "wrap",
+					label: "wrap",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "wrap",
+							defaultValue: "wrap",
+							options: [
+								{ value: "wrap", label: "wrap" },
+								{ value: "wrapReverse", label: "wrapReverse" },
+								{ value: "nowrap", label: "nowrap" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gap",
+					label: "gap",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gap",
+							defaultValue: "1",
+							options: [
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "padding",
+					label: "padding",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "padding",
+							defaultValue: "1",
+							options: [
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "margin",
+					label: "margin",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "margin",
+							defaultValue: "1",
+							options: [
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "grow",
+					label: "grow",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "grow",
+							defaultValue: "grow",
+							options: [
+								{ value: "grow", label: "grow" },
+								{ value: "shrink", label: "shrink" },
+								{ value: "growShrink", label: "growShrink" },
+								{ value: "growShrinkGrow", label: "growShrinkGrow" },
+								{ value: "growShrinkShrink", label: "growShrinkShrink" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "fullHeight", label: "fullHeight" }),
+				ports.bool({ name: "fullWidth", label: "fullWidth" }),
+				ports.string({
+					name: "appear",
+					label: "appear",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "appear",
+							defaultValue: "panelBottomRight",
+							options: [
+								{ value: "panelBottomRight", label: "panelBottomRight" },
+								{ value: "panelCenter", label: "panelCenter" },
+								{ value: "fade", label: "fade" },
+								{ value: "fadeUp", label: "fadeUp" },
+								{ value: "fadeDown", label: "fadeDown" },
+								{ value: "slideRight", label: "slideRight" },
+								{ value: "slideLeft", label: "slideLeft" },
+								{ value: "scaleIn", label: "scaleIn" },
+								{ value: "wiggleIdle", label: "wiggleIdle" },
+								{ value: "press", label: "press" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "density",
+					label: "density",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "density",
+							defaultValue: "bare",
+							options: [
+								{ value: "bare", label: "bare" },
+								{ value: "normal", label: "normal" },
+								{ value: "compact", label: "compact" },
+								{ value: "spacious", label: "spacious" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "border", label: "border" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.DistributionCurve",
+		label: "DistributionCurve",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "className", label: "className" }),
+				ports.float64({ name: "height", label: "height" }),
+				ports.float64({ name: "width", label: "width" }),
+				ports.float64({ name: "max", label: "max" }),
+				ports.float64({ name: "min", label: "min" }),
+				ports.string({ name: "href", label: "href" }),
+				ports.float64({ name: "mean", label: "mean" }),
+				ports.float64({ name: "sd", label: "sd" }),
+				ports.float64({ name: "breakeven", label: "breakeven" }),
+				ports.string({
+					name: "tone",
+					label: "tone",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "tone",
+							defaultValue: "info",
+							options: [
+								{ value: "info", label: "info" },
+								{ value: "brand", label: "brand" },
+								{ value: "up", label: "up" },
+								{ value: "down", label: "down" },
+								{ value: "acc", label: "acc" },
+							],
+						}),
+					],
+				}),
+				ports.string({ name: "unit", label: "unit" }),
+			];
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Divider",
+		label: "Divider",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "weight",
+					label: "weight",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "weight",
+							defaultValue: "strong",
+							options: [
+								{ value: "strong", label: "strong" },
+								{ value: "hair", label: "hair" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "orientation",
+					label: "orientation",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "orientation",
+							defaultValue: "horizontal",
+							options: [
+								{ value: "horizontal", label: "horizontal" },
+								{ value: "vertical", label: "vertical" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "inset",
+					label: "inset",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "inset",
+							defaultValue: "s",
+							options: [
+								{ value: "s", label: "s" },
+								{ value: "m", label: "m" },
+								{ value: "none", label: "none" },
+							],
+						}),
+					],
+				}),
+			];
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Dot",
+		label: "Dot",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "variant",
+					label: "variant",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "variant",
+							defaultValue: "info",
+							options: [
+								{ value: "info", label: "info" },
+								{ value: "success", label: "success" },
+								{ value: "warning", label: "warning" },
+								{ value: "error", label: "error" },
+								{ value: "brand", label: "brand" },
+								{ value: "disabled", label: "disabled" },
+								{ value: "accent", label: "accent" },
+								{ value: "muted", label: "muted" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "size",
+					label: "size",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "size",
+							defaultValue: "s",
+							options: [
+								{ value: "s", label: "s" },
+								{ value: "m", label: "m" },
+								{ value: "lg", label: "lg" },
+								{ value: "xxs", label: "xxs" },
+								{ value: "xs", label: "xs" },
+								{ value: "xl", label: "xl" },
+								{ value: "xxl", label: "xxl" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "pulse", label: "pulse" }),
+				ports.string({
+					name: "fill",
+					label: "fill",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "fill",
+							defaultValue: "solid",
+							options: [
+								{ value: "solid", label: "solid" },
+								{ value: "hollow", label: "hollow" },
+								{ value: "halo", label: "halo" },
+							],
+						}),
+					],
+				}),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Flex",
+		label: "Flex",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "direction",
+					label: "direction",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "direction",
+							defaultValue: "row",
+							options: [
+								{ value: "row", label: "row" },
+								{ value: "column", label: "column" },
+								{ value: "rowReverse", label: "rowReverse" },
+								{ value: "columnReverse", label: "columnReverse" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "justify",
+					label: "justify",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "justify",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "between", label: "between" },
+								{ value: "around", label: "around" },
+								{ value: "evenly", label: "evenly" },
+								{ value: "stretch", label: "stretch" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "align",
+					label: "align",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "align",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "stretch", label: "stretch" },
+								{ value: "baseline", label: "baseline" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "wrap",
+					label: "wrap",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "wrap",
+							defaultValue: "wrap",
+							options: [
+								{ value: "wrap", label: "wrap" },
+								{ value: "wrapReverse", label: "wrapReverse" },
+								{ value: "nowrap", label: "nowrap" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gap",
+					label: "gap",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gap",
+							defaultValue: "1",
+							options: [
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "padding",
+					label: "padding",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "padding",
+							defaultValue: "1",
+							options: [
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "margin",
+					label: "margin",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "margin",
+							defaultValue: "1",
+							options: [
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "grow",
+					label: "grow",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "grow",
+							defaultValue: "grow",
+							options: [
+								{ value: "grow", label: "grow" },
+								{ value: "shrink", label: "shrink" },
+								{ value: "growShrink", label: "growShrink" },
+								{ value: "growShrinkGrow", label: "growShrinkGrow" },
+								{ value: "growShrinkShrink", label: "growShrinkShrink" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "fullHeight", label: "fullHeight" }),
+				ports.bool({ name: "fullWidth", label: "fullWidth" }),
+				ports.string({
+					name: "appear",
+					label: "appear",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "appear",
+							defaultValue: "panelBottomRight",
+							options: [
+								{ value: "panelBottomRight", label: "panelBottomRight" },
+								{ value: "panelCenter", label: "panelCenter" },
+								{ value: "fade", label: "fade" },
+								{ value: "fadeUp", label: "fadeUp" },
+								{ value: "fadeDown", label: "fadeDown" },
+								{ value: "slideRight", label: "slideRight" },
+								{ value: "slideLeft", label: "slideLeft" },
+								{ value: "scaleIn", label: "scaleIn" },
+								{ value: "wiggleIdle", label: "wiggleIdle" },
+								{ value: "press", label: "press" },
+							],
+						}),
+					],
+				}),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Flex.Center",
+		label: "Flex.Center",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "justify",
+					label: "justify",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "justify",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "between", label: "between" },
+								{ value: "around", label: "around" },
+								{ value: "evenly", label: "evenly" },
+								{ value: "stretch", label: "stretch" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "align",
+					label: "align",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "align",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "stretch", label: "stretch" },
+								{ value: "baseline", label: "baseline" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "wrap",
+					label: "wrap",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "wrap",
+							defaultValue: "wrap",
+							options: [
+								{ value: "wrap", label: "wrap" },
+								{ value: "wrapReverse", label: "wrapReverse" },
+								{ value: "nowrap", label: "nowrap" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gap",
+					label: "gap",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gap",
+							defaultValue: "1",
+							options: [
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "padding",
+					label: "padding",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "padding",
+							defaultValue: "1",
+							options: [
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "margin",
+					label: "margin",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "margin",
+							defaultValue: "1",
+							options: [
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "grow",
+					label: "grow",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "grow",
+							defaultValue: "grow",
+							options: [
+								{ value: "grow", label: "grow" },
+								{ value: "shrink", label: "shrink" },
+								{ value: "growShrink", label: "growShrink" },
+								{ value: "growShrinkGrow", label: "growShrinkGrow" },
+								{ value: "growShrinkShrink", label: "growShrinkShrink" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "fullHeight", label: "fullHeight" }),
+				ports.bool({ name: "fullWidth", label: "fullWidth" }),
+				ports.string({
+					name: "appear",
+					label: "appear",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "appear",
+							defaultValue: "panelBottomRight",
+							options: [
+								{ value: "panelBottomRight", label: "panelBottomRight" },
+								{ value: "panelCenter", label: "panelCenter" },
+								{ value: "fade", label: "fade" },
+								{ value: "fadeUp", label: "fadeUp" },
+								{ value: "fadeDown", label: "fadeDown" },
+								{ value: "slideRight", label: "slideRight" },
+								{ value: "slideLeft", label: "slideLeft" },
+								{ value: "scaleIn", label: "scaleIn" },
+								{ value: "wiggleIdle", label: "wiggleIdle" },
+								{ value: "press", label: "press" },
+							],
+						}),
+					],
+				}),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Flex.Column",
+		label: "Flex.Column",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "justify",
+					label: "justify",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "justify",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "between", label: "between" },
+								{ value: "around", label: "around" },
+								{ value: "evenly", label: "evenly" },
+								{ value: "stretch", label: "stretch" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "align",
+					label: "align",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "align",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "stretch", label: "stretch" },
+								{ value: "baseline", label: "baseline" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "wrap",
+					label: "wrap",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "wrap",
+							defaultValue: "wrap",
+							options: [
+								{ value: "wrap", label: "wrap" },
+								{ value: "wrapReverse", label: "wrapReverse" },
+								{ value: "nowrap", label: "nowrap" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gap",
+					label: "gap",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gap",
+							defaultValue: "1",
+							options: [
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "padding",
+					label: "padding",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "padding",
+							defaultValue: "1",
+							options: [
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "margin",
+					label: "margin",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "margin",
+							defaultValue: "1",
+							options: [
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "grow",
+					label: "grow",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "grow",
+							defaultValue: "grow",
+							options: [
+								{ value: "grow", label: "grow" },
+								{ value: "shrink", label: "shrink" },
+								{ value: "growShrink", label: "growShrink" },
+								{ value: "growShrinkGrow", label: "growShrinkGrow" },
+								{ value: "growShrinkShrink", label: "growShrinkShrink" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "fullHeight", label: "fullHeight" }),
+				ports.bool({ name: "fullWidth", label: "fullWidth" }),
+				ports.string({
+					name: "appear",
+					label: "appear",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "appear",
+							defaultValue: "panelBottomRight",
+							options: [
+								{ value: "panelBottomRight", label: "panelBottomRight" },
+								{ value: "panelCenter", label: "panelCenter" },
+								{ value: "fade", label: "fade" },
+								{ value: "fadeUp", label: "fadeUp" },
+								{ value: "fadeDown", label: "fadeDown" },
+								{ value: "slideRight", label: "slideRight" },
+								{ value: "slideLeft", label: "slideLeft" },
+								{ value: "scaleIn", label: "scaleIn" },
+								{ value: "wiggleIdle", label: "wiggleIdle" },
+								{ value: "press", label: "press" },
+							],
+						}),
+					],
+				}),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Flex.Row",
+		label: "Flex.Row",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "justify",
+					label: "justify",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "justify",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "between", label: "between" },
+								{ value: "around", label: "around" },
+								{ value: "evenly", label: "evenly" },
+								{ value: "stretch", label: "stretch" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "align",
+					label: "align",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "align",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "stretch", label: "stretch" },
+								{ value: "baseline", label: "baseline" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "wrap",
+					label: "wrap",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "wrap",
+							defaultValue: "wrap",
+							options: [
+								{ value: "wrap", label: "wrap" },
+								{ value: "wrapReverse", label: "wrapReverse" },
+								{ value: "nowrap", label: "nowrap" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gap",
+					label: "gap",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gap",
+							defaultValue: "1",
+							options: [
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "padding",
+					label: "padding",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "padding",
+							defaultValue: "1",
+							options: [
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "margin",
+					label: "margin",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "margin",
+							defaultValue: "1",
+							options: [
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "grow",
+					label: "grow",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "grow",
+							defaultValue: "grow",
+							options: [
+								{ value: "grow", label: "grow" },
+								{ value: "shrink", label: "shrink" },
+								{ value: "growShrink", label: "growShrink" },
+								{ value: "growShrinkGrow", label: "growShrinkGrow" },
+								{ value: "growShrinkShrink", label: "growShrinkShrink" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "fullHeight", label: "fullHeight" }),
+				ports.bool({ name: "fullWidth", label: "fullWidth" }),
+				ports.string({
+					name: "appear",
+					label: "appear",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "appear",
+							defaultValue: "panelBottomRight",
+							options: [
+								{ value: "panelBottomRight", label: "panelBottomRight" },
+								{ value: "panelCenter", label: "panelCenter" },
+								{ value: "fade", label: "fade" },
+								{ value: "fadeUp", label: "fadeUp" },
+								{ value: "fadeDown", label: "fadeDown" },
+								{ value: "slideRight", label: "slideRight" },
+								{ value: "slideLeft", label: "slideLeft" },
+								{ value: "scaleIn", label: "scaleIn" },
+								{ value: "wiggleIdle", label: "wiggleIdle" },
+								{ value: "press", label: "press" },
+							],
+						}),
+					],
+				}),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Frame",
+		label: "Frame",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "className", label: "className" }),
+				ports.string({ name: "title", label: "title" }),
+				ports.string({
+					name: "tone",
+					label: "tone",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "tone",
+							defaultValue: "error",
+							options: [
+								{ value: "error", label: "error" },
+								{ value: "accent", label: "accent" },
+								{ value: "default", label: "default" },
+							],
+						}),
+					],
+				}),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.FrameDescription",
+		label: "FrameDescription",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "className", label: "className" }),
+				ports.string({ name: "title", label: "title" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.FrameFooter",
+		label: "FrameFooter",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "className", label: "className" }),
+				ports.string({ name: "title", label: "title" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.FrameHeader",
+		label: "FrameHeader",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "className", label: "className" }),
+				ports.string({ name: "title", label: "title" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.FrameTitle",
+		label: "FrameTitle",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "className", label: "className" }),
+				ports.string({ name: "title", label: "title" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Grid",
+		label: "Grid",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "cols",
+					label: "cols",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "cols",
+							defaultValue: "1",
+							options: [
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "rows",
+					label: "rows",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "rows",
+							defaultValue: "1",
+							options: [
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "pad",
+					label: "pad",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "pad",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gap",
+					label: "gap",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gap",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gapX",
+					label: "gapX",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gapX",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gapY",
+					label: "gapY",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gapY",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "flow",
+					label: "flow",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "flow",
+							defaultValue: "col",
+							options: [
+								{ value: "col", label: "col" },
+								{ value: "row", label: "row" },
+								{ value: "col-dense", label: "col-dense" },
+								{ value: "dense", label: "dense" },
+								{ value: "row-dense", label: "row-dense" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "align",
+					label: "align",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "align",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "stretch", label: "stretch" },
+								{ value: "baseline", label: "baseline" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "justify",
+					label: "justify",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "justify",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "stretch", label: "stretch" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "place",
+					label: "place",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "place",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "between", label: "between" },
+								{ value: "around", label: "around" },
+								{ value: "evenly", label: "evenly" },
+								{ value: "stretch", label: "stretch" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "fullWidth", label: "fullWidth" }),
+				ports.bool({ name: "fullHeight", label: "fullHeight" }),
+				ports.bool({ name: "responsive", label: "responsive" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Grid.Adaptive",
+		label: "Grid.Adaptive",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "justify",
+					label: "justify",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "justify",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "stretch", label: "stretch" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "align",
+					label: "align",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "align",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "stretch", label: "stretch" },
+								{ value: "baseline", label: "baseline" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gap",
+					label: "gap",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gap",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "fullHeight", label: "fullHeight" }),
+				ports.bool({ name: "fullWidth", label: "fullWidth" }),
+				ports.string({
+					name: "rows",
+					label: "rows",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "rows",
+							defaultValue: "1",
+							options: [
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "pad",
+					label: "pad",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "pad",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gapX",
+					label: "gapX",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gapX",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gapY",
+					label: "gapY",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gapY",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "flow",
+					label: "flow",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "flow",
+							defaultValue: "col",
+							options: [
+								{ value: "col", label: "col" },
+								{ value: "row", label: "row" },
+								{ value: "col-dense", label: "col-dense" },
+								{ value: "dense", label: "dense" },
+								{ value: "row-dense", label: "row-dense" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "place",
+					label: "place",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "place",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "between", label: "between" },
+								{ value: "around", label: "around" },
+								{ value: "evenly", label: "evenly" },
+								{ value: "stretch", label: "stretch" },
+							],
+						}),
+					],
+				}),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Grid.Auto",
+		label: "Grid.Auto",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "justify",
+					label: "justify",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "justify",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "stretch", label: "stretch" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "align",
+					label: "align",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "align",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "stretch", label: "stretch" },
+								{ value: "baseline", label: "baseline" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gap",
+					label: "gap",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gap",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "fullHeight", label: "fullHeight" }),
+				ports.bool({ name: "fullWidth", label: "fullWidth" }),
+				ports.string({
+					name: "rows",
+					label: "rows",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "rows",
+							defaultValue: "1",
+							options: [
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "pad",
+					label: "pad",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "pad",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gapX",
+					label: "gapX",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gapX",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gapY",
+					label: "gapY",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gapY",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "flow",
+					label: "flow",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "flow",
+							defaultValue: "col",
+							options: [
+								{ value: "col", label: "col" },
+								{ value: "row", label: "row" },
+								{ value: "col-dense", label: "col-dense" },
+								{ value: "dense", label: "dense" },
+								{ value: "row-dense", label: "row-dense" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "place",
+					label: "place",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "place",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "between", label: "between" },
+								{ value: "around", label: "around" },
+								{ value: "evenly", label: "evenly" },
+								{ value: "stretch", label: "stretch" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "responsive", label: "responsive" }),
+				ports.string({ name: "minWidth", label: "minWidth" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Grid.Balanced",
+		label: "Grid.Balanced",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "justify",
+					label: "justify",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "justify",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "stretch", label: "stretch" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "align",
+					label: "align",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "align",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "stretch", label: "stretch" },
+								{ value: "baseline", label: "baseline" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gap",
+					label: "gap",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gap",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "fullHeight", label: "fullHeight" }),
+				ports.bool({ name: "fullWidth", label: "fullWidth" }),
+				ports.string({
+					name: "rows",
+					label: "rows",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "rows",
+							defaultValue: "1",
+							options: [
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "pad",
+					label: "pad",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "pad",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gapX",
+					label: "gapX",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gapX",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gapY",
+					label: "gapY",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gapY",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "flow",
+					label: "flow",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "flow",
+							defaultValue: "col",
+							options: [
+								{ value: "col", label: "col" },
+								{ value: "row", label: "row" },
+								{ value: "col-dense", label: "col-dense" },
+								{ value: "dense", label: "dense" },
+								{ value: "row-dense", label: "row-dense" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "place",
+					label: "place",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "place",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "between", label: "between" },
+								{ value: "around", label: "around" },
+								{ value: "evenly", label: "evenly" },
+								{ value: "stretch", label: "stretch" },
+							],
+						}),
+					],
+				}),
+				ports.string({ name: "minItemWidth", label: "minItemWidth" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Grid.Bento",
+		label: "Grid.Bento",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "justify",
+					label: "justify",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "justify",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "stretch", label: "stretch" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "align",
+					label: "align",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "align",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "stretch", label: "stretch" },
+								{ value: "baseline", label: "baseline" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gap",
+					label: "gap",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gap",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "fullHeight", label: "fullHeight" }),
+				ports.bool({ name: "fullWidth", label: "fullWidth" }),
+				ports.string({
+					name: "cols",
+					label: "cols",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "cols",
+							defaultValue: "1",
+							options: [
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "rows",
+					label: "rows",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "rows",
+							defaultValue: "1",
+							options: [
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "pad",
+					label: "pad",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "pad",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gapX",
+					label: "gapX",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gapX",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gapY",
+					label: "gapY",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gapY",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "flow",
+					label: "flow",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "flow",
+							defaultValue: "col",
+							options: [
+								{ value: "col", label: "col" },
+								{ value: "row", label: "row" },
+								{ value: "col-dense", label: "col-dense" },
+								{ value: "dense", label: "dense" },
+								{ value: "row-dense", label: "row-dense" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "place",
+					label: "place",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "place",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "between", label: "between" },
+								{ value: "around", label: "around" },
+								{ value: "evenly", label: "evenly" },
+								{ value: "stretch", label: "stretch" },
+							],
+						}),
+					],
+				}),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Grid.Cards",
+		label: "Grid.Cards",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "justify",
+					label: "justify",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "justify",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "stretch", label: "stretch" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "align",
+					label: "align",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "align",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "stretch", label: "stretch" },
+								{ value: "baseline", label: "baseline" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gap",
+					label: "gap",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gap",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "fullHeight", label: "fullHeight" }),
+				ports.bool({ name: "fullWidth", label: "fullWidth" }),
+				ports.string({
+					name: "rows",
+					label: "rows",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "rows",
+							defaultValue: "1",
+							options: [
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "pad",
+					label: "pad",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "pad",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gapX",
+					label: "gapX",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gapX",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gapY",
+					label: "gapY",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gapY",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "flow",
+					label: "flow",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "flow",
+							defaultValue: "col",
+							options: [
+								{ value: "col", label: "col" },
+								{ value: "row", label: "row" },
+								{ value: "col-dense", label: "col-dense" },
+								{ value: "dense", label: "dense" },
+								{ value: "row-dense", label: "row-dense" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "place",
+					label: "place",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "place",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "between", label: "between" },
+								{ value: "around", label: "around" },
+								{ value: "evenly", label: "evenly" },
+								{ value: "stretch", label: "stretch" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "responsive", label: "responsive" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Grid.Dashboard",
+		label: "Grid.Dashboard",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "cols",
+					label: "cols",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "cols",
+							defaultValue: "1",
+							options: [
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "rows",
+					label: "rows",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "rows",
+							defaultValue: "1",
+							options: [
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "pad",
+					label: "pad",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "pad",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gap",
+					label: "gap",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gap",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gapX",
+					label: "gapX",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gapX",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gapY",
+					label: "gapY",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gapY",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "flow",
+					label: "flow",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "flow",
+							defaultValue: "col",
+							options: [
+								{ value: "col", label: "col" },
+								{ value: "row", label: "row" },
+								{ value: "col-dense", label: "col-dense" },
+								{ value: "dense", label: "dense" },
+								{ value: "row-dense", label: "row-dense" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "align",
+					label: "align",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "align",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "stretch", label: "stretch" },
+								{ value: "baseline", label: "baseline" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "justify",
+					label: "justify",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "justify",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "stretch", label: "stretch" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "place",
+					label: "place",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "place",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "between", label: "between" },
+								{ value: "around", label: "around" },
+								{ value: "evenly", label: "evenly" },
+								{ value: "stretch", label: "stretch" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "fullWidth", label: "fullWidth" }),
+				ports.bool({ name: "fullHeight", label: "fullHeight" }),
+				ports.bool({ name: "responsive", label: "responsive" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Grid.Features",
+		label: "Grid.Features",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "justify",
+					label: "justify",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "justify",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "stretch", label: "stretch" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "align",
+					label: "align",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "align",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "stretch", label: "stretch" },
+								{ value: "baseline", label: "baseline" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gap",
+					label: "gap",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gap",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "fullHeight", label: "fullHeight" }),
+				ports.bool({ name: "fullWidth", label: "fullWidth" }),
+				ports.string({
+					name: "rows",
+					label: "rows",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "rows",
+							defaultValue: "1",
+							options: [
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "pad",
+					label: "pad",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "pad",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gapX",
+					label: "gapX",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gapX",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gapY",
+					label: "gapY",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gapY",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "flow",
+					label: "flow",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "flow",
+							defaultValue: "col",
+							options: [
+								{ value: "col", label: "col" },
+								{ value: "row", label: "row" },
+								{ value: "col-dense", label: "col-dense" },
+								{ value: "dense", label: "dense" },
+								{ value: "row-dense", label: "row-dense" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "place",
+					label: "place",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "place",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "between", label: "between" },
+								{ value: "around", label: "around" },
+								{ value: "evenly", label: "evenly" },
+								{ value: "stretch", label: "stretch" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "responsive", label: "responsive" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Grid.Form",
+		label: "Grid.Form",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "justify",
+					label: "justify",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "justify",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "stretch", label: "stretch" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gap",
+					label: "gap",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gap",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "fullHeight", label: "fullHeight" }),
+				ports.bool({ name: "fullWidth", label: "fullWidth" }),
+				ports.string({
+					name: "rows",
+					label: "rows",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "rows",
+							defaultValue: "1",
+							options: [
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "pad",
+					label: "pad",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "pad",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gapX",
+					label: "gapX",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gapX",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gapY",
+					label: "gapY",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gapY",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "flow",
+					label: "flow",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "flow",
+							defaultValue: "col",
+							options: [
+								{ value: "col", label: "col" },
+								{ value: "row", label: "row" },
+								{ value: "col-dense", label: "col-dense" },
+								{ value: "dense", label: "dense" },
+								{ value: "row-dense", label: "row-dense" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "place",
+					label: "place",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "place",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "between", label: "between" },
+								{ value: "around", label: "around" },
+								{ value: "evenly", label: "evenly" },
+								{ value: "stretch", label: "stretch" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "responsive", label: "responsive" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Grid.Gallery",
+		label: "Grid.Gallery",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "justify",
+					label: "justify",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "justify",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "stretch", label: "stretch" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "align",
+					label: "align",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "align",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "stretch", label: "stretch" },
+								{ value: "baseline", label: "baseline" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gap",
+					label: "gap",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gap",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "fullHeight", label: "fullHeight" }),
+				ports.bool({ name: "fullWidth", label: "fullWidth" }),
+				ports.string({
+					name: "rows",
+					label: "rows",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "rows",
+							defaultValue: "1",
+							options: [
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "pad",
+					label: "pad",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "pad",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gapX",
+					label: "gapX",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gapX",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gapY",
+					label: "gapY",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gapY",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "flow",
+					label: "flow",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "flow",
+							defaultValue: "col",
+							options: [
+								{ value: "col", label: "col" },
+								{ value: "row", label: "row" },
+								{ value: "col-dense", label: "col-dense" },
+								{ value: "dense", label: "dense" },
+								{ value: "row-dense", label: "row-dense" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "place",
+					label: "place",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "place",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "between", label: "between" },
+								{ value: "around", label: "around" },
+								{ value: "evenly", label: "evenly" },
+								{ value: "stretch", label: "stretch" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "responsive", label: "responsive" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Grid.Halves",
+		label: "Grid.Halves",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "justify",
+					label: "justify",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "justify",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "stretch", label: "stretch" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "align",
+					label: "align",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "align",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "stretch", label: "stretch" },
+								{ value: "baseline", label: "baseline" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gap",
+					label: "gap",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gap",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "fullHeight", label: "fullHeight" }),
+				ports.bool({ name: "fullWidth", label: "fullWidth" }),
+				ports.string({
+					name: "rows",
+					label: "rows",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "rows",
+							defaultValue: "1",
+							options: [
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "pad",
+					label: "pad",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "pad",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gapX",
+					label: "gapX",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gapX",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gapY",
+					label: "gapY",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gapY",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "flow",
+					label: "flow",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "flow",
+							defaultValue: "col",
+							options: [
+								{ value: "col", label: "col" },
+								{ value: "row", label: "row" },
+								{ value: "col-dense", label: "col-dense" },
+								{ value: "dense", label: "dense" },
+								{ value: "row-dense", label: "row-dense" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "place",
+					label: "place",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "place",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "between", label: "between" },
+								{ value: "around", label: "around" },
+								{ value: "evenly", label: "evenly" },
+								{ value: "stretch", label: "stretch" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "responsive", label: "responsive" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Grid.Island",
+		label: "Grid.Island",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "justify",
+					label: "justify",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "justify",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "stretch", label: "stretch" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "align",
+					label: "align",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "align",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "stretch", label: "stretch" },
+								{ value: "baseline", label: "baseline" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gap",
+					label: "gap",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gap",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "fullHeight", label: "fullHeight" }),
+				ports.bool({ name: "fullWidth", label: "fullWidth" }),
+				ports.string({
+					name: "pad",
+					label: "pad",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "pad",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gapX",
+					label: "gapX",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gapX",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gapY",
+					label: "gapY",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gapY",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "flow",
+					label: "flow",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "flow",
+							defaultValue: "col",
+							options: [
+								{ value: "col", label: "col" },
+								{ value: "row", label: "row" },
+								{ value: "col-dense", label: "col-dense" },
+								{ value: "dense", label: "dense" },
+								{ value: "row-dense", label: "row-dense" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "place",
+					label: "place",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "place",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "between", label: "between" },
+								{ value: "around", label: "around" },
+								{ value: "evenly", label: "evenly" },
+								{ value: "stretch", label: "stretch" },
+							],
+						}),
+					],
+				}),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Grid.IslandArea",
+		label: "Grid.IslandArea",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "area",
+					label: "area",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "area",
+							defaultValue: "a",
+							options: [
+								{ value: "a", label: "a" },
+								{ value: "m", label: "m" },
+								{ value: "h", label: "h" },
+								{ value: "f", label: "f" },
+								{ value: "n", label: "n" },
+							],
+						}),
+					],
+				}),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Grid.Masonry",
+		label: "Grid.Masonry",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "justify",
+					label: "justify",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "justify",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "stretch", label: "stretch" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "align",
+					label: "align",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "align",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "stretch", label: "stretch" },
+								{ value: "baseline", label: "baseline" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gap",
+					label: "gap",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gap",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "fullHeight", label: "fullHeight" }),
+				ports.bool({ name: "fullWidth", label: "fullWidth" }),
+				ports.string({
+					name: "cols",
+					label: "cols",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "cols",
+							defaultValue: "1",
+							options: [
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "rows",
+					label: "rows",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "rows",
+							defaultValue: "1",
+							options: [
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "pad",
+					label: "pad",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "pad",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gapX",
+					label: "gapX",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gapX",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gapY",
+					label: "gapY",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gapY",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "place",
+					label: "place",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "place",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "between", label: "between" },
+								{ value: "around", label: "around" },
+								{ value: "evenly", label: "evenly" },
+								{ value: "stretch", label: "stretch" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "responsive", label: "responsive" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Grid.Quarters",
+		label: "Grid.Quarters",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "justify",
+					label: "justify",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "justify",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "stretch", label: "stretch" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "align",
+					label: "align",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "align",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "stretch", label: "stretch" },
+								{ value: "baseline", label: "baseline" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gap",
+					label: "gap",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gap",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "fullHeight", label: "fullHeight" }),
+				ports.bool({ name: "fullWidth", label: "fullWidth" }),
+				ports.string({
+					name: "rows",
+					label: "rows",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "rows",
+							defaultValue: "1",
+							options: [
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "pad",
+					label: "pad",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "pad",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gapX",
+					label: "gapX",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gapX",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gapY",
+					label: "gapY",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gapY",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "flow",
+					label: "flow",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "flow",
+							defaultValue: "col",
+							options: [
+								{ value: "col", label: "col" },
+								{ value: "row", label: "row" },
+								{ value: "col-dense", label: "col-dense" },
+								{ value: "dense", label: "dense" },
+								{ value: "row-dense", label: "row-dense" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "place",
+					label: "place",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "place",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "between", label: "between" },
+								{ value: "around", label: "around" },
+								{ value: "evenly", label: "evenly" },
+								{ value: "stretch", label: "stretch" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "responsive", label: "responsive" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Grid.Sidebar",
+		label: "Grid.Sidebar",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "justify",
+					label: "justify",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "justify",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "stretch", label: "stretch" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "align",
+					label: "align",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "align",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "stretch", label: "stretch" },
+								{ value: "baseline", label: "baseline" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gap",
+					label: "gap",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gap",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "fullHeight", label: "fullHeight" }),
+				ports.bool({ name: "fullWidth", label: "fullWidth" }),
+				ports.string({
+					name: "rows",
+					label: "rows",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "rows",
+							defaultValue: "1",
+							options: [
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "pad",
+					label: "pad",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "pad",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gapX",
+					label: "gapX",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gapX",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gapY",
+					label: "gapY",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gapY",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "flow",
+					label: "flow",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "flow",
+							defaultValue: "col",
+							options: [
+								{ value: "col", label: "col" },
+								{ value: "row", label: "row" },
+								{ value: "col-dense", label: "col-dense" },
+								{ value: "dense", label: "dense" },
+								{ value: "row-dense", label: "row-dense" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "place",
+					label: "place",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "place",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "between", label: "between" },
+								{ value: "around", label: "around" },
+								{ value: "evenly", label: "evenly" },
+								{ value: "stretch", label: "stretch" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "responsive", label: "responsive" }),
+				ports.string({ name: "sidebarWidth", label: "sidebarWidth" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Grid.Smart",
+		label: "Grid.Smart",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "justify",
+					label: "justify",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "justify",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "stretch", label: "stretch" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "align",
+					label: "align",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "align",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "stretch", label: "stretch" },
+								{ value: "baseline", label: "baseline" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gap",
+					label: "gap",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gap",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "fullHeight", label: "fullHeight" }),
+				ports.bool({ name: "fullWidth", label: "fullWidth" }),
+				ports.string({
+					name: "rows",
+					label: "rows",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "rows",
+							defaultValue: "1",
+							options: [
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "pad",
+					label: "pad",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "pad",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gapX",
+					label: "gapX",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gapX",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gapY",
+					label: "gapY",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gapY",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "flow",
+					label: "flow",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "flow",
+							defaultValue: "col",
+							options: [
+								{ value: "col", label: "col" },
+								{ value: "row", label: "row" },
+								{ value: "col-dense", label: "col-dense" },
+								{ value: "dense", label: "dense" },
+								{ value: "row-dense", label: "row-dense" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "place",
+					label: "place",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "place",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "between", label: "between" },
+								{ value: "around", label: "around" },
+								{ value: "evenly", label: "evenly" },
+								{ value: "stretch", label: "stretch" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "responsive", label: "responsive" }),
+				ports.string({ name: "minItemWidth", label: "minItemWidth" }),
+				ports.float64({ name: "maxCols", label: "maxCols" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Grid.Span",
+		label: "Grid.Span",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "cols",
+					label: "cols",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "cols",
+							defaultValue: "1",
+							options: [
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "rows",
+					label: "rows",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "rows",
+							defaultValue: "1",
+							options: [
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.float64({ name: "colStart", label: "colStart" }),
+				ports.float64({ name: "rowStart", label: "rowStart" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Grid.Thirds",
+		label: "Grid.Thirds",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "justify",
+					label: "justify",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "justify",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "stretch", label: "stretch" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "align",
+					label: "align",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "align",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "stretch", label: "stretch" },
+								{ value: "baseline", label: "baseline" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gap",
+					label: "gap",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gap",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "fullHeight", label: "fullHeight" }),
+				ports.bool({ name: "fullWidth", label: "fullWidth" }),
+				ports.string({
+					name: "rows",
+					label: "rows",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "rows",
+							defaultValue: "1",
+							options: [
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "pad",
+					label: "pad",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "pad",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gapX",
+					label: "gapX",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gapX",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gapY",
+					label: "gapY",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gapY",
+							defaultValue: "0",
+							options: [
+								{ value: "0", label: "0" },
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "flow",
+					label: "flow",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "flow",
+							defaultValue: "col",
+							options: [
+								{ value: "col", label: "col" },
+								{ value: "row", label: "row" },
+								{ value: "col-dense", label: "col-dense" },
+								{ value: "dense", label: "dense" },
+								{ value: "row-dense", label: "row-dense" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "place",
+					label: "place",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "place",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "between", label: "between" },
+								{ value: "around", label: "around" },
+								{ value: "evenly", label: "evenly" },
+								{ value: "stretch", label: "stretch" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "responsive", label: "responsive" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.HeatmapRow",
+		label: "HeatmapRow",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "justify",
+					label: "justify",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "justify",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "between", label: "between" },
+								{ value: "around", label: "around" },
+								{ value: "evenly", label: "evenly" },
+								{ value: "stretch", label: "stretch" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "align",
+					label: "align",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "align",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "stretch", label: "stretch" },
+								{ value: "baseline", label: "baseline" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "wrap",
+					label: "wrap",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "wrap",
+							defaultValue: "wrap",
+							options: [
+								{ value: "wrap", label: "wrap" },
+								{ value: "wrapReverse", label: "wrapReverse" },
+								{ value: "nowrap", label: "nowrap" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gap",
+					label: "gap",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gap",
+							defaultValue: "1",
+							options: [
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "padding",
+					label: "padding",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "padding",
+							defaultValue: "1",
+							options: [
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "margin",
+					label: "margin",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "margin",
+							defaultValue: "1",
+							options: [
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "grow",
+					label: "grow",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "grow",
+							defaultValue: "grow",
+							options: [
+								{ value: "grow", label: "grow" },
+								{ value: "shrink", label: "shrink" },
+								{ value: "growShrink", label: "growShrink" },
+								{ value: "growShrinkGrow", label: "growShrinkGrow" },
+								{ value: "growShrinkShrink", label: "growShrinkShrink" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "fullHeight", label: "fullHeight" }),
+				ports.bool({ name: "fullWidth", label: "fullWidth" }),
+				ports.string({
+					name: "appear",
+					label: "appear",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "appear",
+							defaultValue: "panelBottomRight",
+							options: [
+								{ value: "panelBottomRight", label: "panelBottomRight" },
+								{ value: "panelCenter", label: "panelCenter" },
+								{ value: "fade", label: "fade" },
+								{ value: "fadeUp", label: "fadeUp" },
+								{ value: "fadeDown", label: "fadeDown" },
+								{ value: "slideRight", label: "slideRight" },
+								{ value: "slideLeft", label: "slideLeft" },
+								{ value: "scaleIn", label: "scaleIn" },
+								{ value: "wiggleIdle", label: "wiggleIdle" },
+								{ value: "press", label: "press" },
+							],
+						}),
+					],
+				}),
+				ports.string({ name: "label", label: "label" }),
+				ports.string({ name: "labelWidth", label: "labelWidth" }),
+				ports.string({
+					name: "columns",
+					label: "columns",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "columns",
+							defaultValue: "8",
+							options: [
+								{ value: "8", label: "8" },
+								{ value: "12", label: "12" },
+								{ value: "16", label: "16" },
+								{ value: "24", label: "24" },
+								{ value: "32", label: "32" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "stripHeight",
+					label: "stripHeight",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "stripHeight",
+							defaultValue: "s",
+							options: [
+								{ value: "s", label: "s" },
+								{ value: "m", label: "m" },
+								{ value: "lg", label: "lg" },
+								{ value: "auto", label: "auto" },
+							],
+						}),
+					],
+				}),
+				ports.string({ name: "metric", label: "metric" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.HeatmapRow.Group",
+		label: "HeatmapRow.Group",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "justify",
+					label: "justify",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "justify",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "between", label: "between" },
+								{ value: "around", label: "around" },
+								{ value: "evenly", label: "evenly" },
+								{ value: "stretch", label: "stretch" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "align",
+					label: "align",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "align",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "stretch", label: "stretch" },
+								{ value: "baseline", label: "baseline" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "wrap",
+					label: "wrap",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "wrap",
+							defaultValue: "wrap",
+							options: [
+								{ value: "wrap", label: "wrap" },
+								{ value: "wrapReverse", label: "wrapReverse" },
+								{ value: "nowrap", label: "nowrap" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gap",
+					label: "gap",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gap",
+							defaultValue: "1",
+							options: [
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "padding",
+					label: "padding",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "padding",
+							defaultValue: "1",
+							options: [
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "margin",
+					label: "margin",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "margin",
+							defaultValue: "1",
+							options: [
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "grow",
+					label: "grow",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "grow",
+							defaultValue: "grow",
+							options: [
+								{ value: "grow", label: "grow" },
+								{ value: "shrink", label: "shrink" },
+								{ value: "growShrink", label: "growShrink" },
+								{ value: "growShrinkGrow", label: "growShrinkGrow" },
+								{ value: "growShrinkShrink", label: "growShrinkShrink" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "fullHeight", label: "fullHeight" }),
+				ports.bool({ name: "fullWidth", label: "fullWidth" }),
+				ports.string({
+					name: "appear",
+					label: "appear",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "appear",
+							defaultValue: "panelBottomRight",
+							options: [
+								{ value: "panelBottomRight", label: "panelBottomRight" },
+								{ value: "panelCenter", label: "panelCenter" },
+								{ value: "fade", label: "fade" },
+								{ value: "fadeUp", label: "fadeUp" },
+								{ value: "fadeDown", label: "fadeDown" },
+								{ value: "slideRight", label: "slideRight" },
+								{ value: "slideLeft", label: "slideLeft" },
+								{ value: "scaleIn", label: "scaleIn" },
+								{ value: "wiggleIdle", label: "wiggleIdle" },
+								{ value: "press", label: "press" },
+							],
+						}),
+					],
+				}),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.HeatmapRow.Metric",
+		label: "HeatmapRow.Metric",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "label", label: "label" }),
+				ports.string({ name: "value", label: "value" }),
+				ports.float64({ name: "percent", label: "percent" }),
+				ports.string({
+					name: "variant",
+					label: "variant",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "variant",
+							defaultValue: "info",
+							options: [
+								{ value: "info", label: "info" },
+								{ value: "success", label: "success" },
+								{ value: "warning", label: "warning" },
+								{ value: "error", label: "error" },
+								{ value: "brand", label: "brand" },
+								{ value: "disabled", label: "disabled" },
+							],
+						}),
+					],
+				}),
+				ports.string({ name: "valueClassName", label: "valueClassName" }),
+				ports.string({ name: "className", label: "className" }),
+			];
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.HeatmapRow.Strip",
+		label: "HeatmapRow.Strip",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "height",
+					label: "height",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "height",
+							defaultValue: "s",
+							options: [
+								{ value: "s", label: "s" },
+								{ value: "m", label: "m" },
+								{ value: "lg", label: "lg" },
+								{ value: "auto", label: "auto" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "columns",
+					label: "columns",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "columns",
+							defaultValue: "8",
+							options: [
+								{ value: "8", label: "8" },
+								{ value: "12", label: "12" },
+								{ value: "16", label: "16" },
+								{ value: "24", label: "24" },
+								{ value: "32", label: "32" },
+							],
+						}),
+					],
+				}),
+				ports.string({ name: "cellClassName", label: "cellClassName" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.HeatmapRowMetric",
+		label: "HeatmapRowMetric",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "label", label: "label" }),
+				ports.string({ name: "value", label: "value" }),
+				ports.float64({ name: "percent", label: "percent" }),
+				ports.string({
+					name: "variant",
+					label: "variant",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "variant",
+							defaultValue: "info",
+							options: [
+								{ value: "info", label: "info" },
+								{ value: "success", label: "success" },
+								{ value: "warning", label: "warning" },
+								{ value: "error", label: "error" },
+								{ value: "brand", label: "brand" },
+								{ value: "disabled", label: "disabled" },
+							],
+						}),
+					],
+				}),
+				ports.string({ name: "valueClassName", label: "valueClassName" }),
+				ports.string({ name: "className", label: "className" }),
+			];
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.HeatmapStrip",
+		label: "HeatmapStrip",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "height",
+					label: "height",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "height",
+							defaultValue: "s",
+							options: [
+								{ value: "s", label: "s" },
+								{ value: "m", label: "m" },
+								{ value: "lg", label: "lg" },
+								{ value: "auto", label: "auto" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "columns",
+					label: "columns",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "columns",
+							defaultValue: "8",
+							options: [
+								{ value: "8", label: "8" },
+								{ value: "12", label: "12" },
+								{ value: "16", label: "16" },
+								{ value: "24", label: "24" },
+								{ value: "32", label: "32" },
+							],
+						}),
+					],
+				}),
+				ports.string({ name: "cellClassName", label: "cellClassName" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Icon",
+		label: "Icon",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "className", label: "className" }),
+				ports.string({ name: "href", label: "href" }),
+				ports.string({
+					name: "name",
+					label: "name",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "name",
+							defaultValue: "search",
+							options: [
+								{ value: "search", label: "search" },
+								{ value: "about", label: "about" },
+								{ value: "close", label: "close" },
+								{ value: "dashboard", label: "dashboard" },
+								{ value: "signal", label: "signal" },
+								{ value: "tree", label: "tree" },
+								{ value: "graph", label: "graph" },
+								{ value: "journal", label: "journal" },
+								{ value: "scan", label: "scan" },
+								{ value: "cortex", label: "cortex" },
+								{ value: "bars", label: "bars" },
+								{ value: "lanes", label: "lanes" },
+								{ value: "grid", label: "grid" },
+								{ value: "target", label: "target" },
+								{ value: "chevronDown", label: "chevronDown" },
+								{ value: "chevronRight", label: "chevronRight" },
+								{ value: "check", label: "check" },
+								{ value: "broken", label: "broken" },
+								{ value: "spark", label: "spark" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "size",
+					label: "size",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "size",
+							defaultValue: "s",
+							options: [
+								{ value: "s", label: "s" },
+								{ value: "m", label: "m" },
+								{ value: "lg", label: "lg" },
+								{ value: "xxs", label: "xxs" },
+								{ value: "xs", label: "xs" },
+								{ value: "xl", label: "xl" },
+								{ value: "xxl", label: "xxl" },
+							],
+						}),
+					],
+				}),
+				ports.string({ name: "title", label: "title" }),
+			];
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Input",
+		label: "Input",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.bool({ name: "disabled", label: "disabled" }),
+				ports.string({ name: "alt", label: "alt" }),
+				ports.string({ name: "placeholder", label: "placeholder" }),
+				ports.bool({ name: "readOnly", label: "readOnly" }),
+				ports.string({
+					name: "size",
+					label: "size",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "size",
+							defaultValue: "s",
+							options: [
+								{ value: "s", label: "s" },
+								{ value: "m", label: "m" },
+								{ value: "lg", label: "lg" },
+								{ value: "xxs", label: "xxs" },
+								{ value: "xs", label: "xs" },
+								{ value: "xl", label: "xl" },
+								{ value: "xxl", label: "xxl" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "mono", label: "mono" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Input.Field",
+		label: "Input.Field",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "className", label: "className" }),
+				ports.string({ name: "title", label: "title" }),
+				ports.string({
+					name: "variant",
+					label: "variant",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "variant",
+							defaultValue: "bare",
+							options: [
+								{ value: "bare", label: "bare" },
+								{ value: "box", label: "box" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gap",
+					label: "gap",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gap",
+							defaultValue: "s",
+							options: [
+								{ value: "s", label: "s" },
+								{ value: "m", label: "m" },
+							],
+						}),
+					],
+				}),
+				ports.string({ name: "leading", label: "leading" }),
+				ports.string({ name: "trailing", label: "trailing" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Input.Search",
+		label: "Input.Search",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.bool({ name: "disabled", label: "disabled" }),
+				ports.string({ name: "alt", label: "alt" }),
+				ports.string({ name: "placeholder", label: "placeholder" }),
+				ports.bool({ name: "readOnly", label: "readOnly" }),
+				ports.string({
+					name: "size",
+					label: "size",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "size",
+							defaultValue: "s",
+							options: [
+								{ value: "s", label: "s" },
+								{ value: "m", label: "m" },
+								{ value: "lg", label: "lg" },
+								{ value: "xxs", label: "xxs" },
+								{ value: "xs", label: "xs" },
+								{ value: "xl", label: "xl" },
+								{ value: "xxl", label: "xxl" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "mono", label: "mono" }),
+				ports.string({
+					name: "variant",
+					label: "variant",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "variant",
+							defaultValue: "bare",
+							options: [
+								{ value: "bare", label: "bare" },
+								{ value: "box", label: "box" },
+							],
+						}),
+					],
+				}),
+				ports.string({ name: "fieldClassName", label: "fieldClassName" }),
+				ports.string({ name: "trailing", label: "trailing" }),
+				ports.string({
+					name: "iconSize",
+					label: "iconSize",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "iconSize",
+							defaultValue: "s",
+							options: [
+								{ value: "s", label: "s" },
+								{ value: "m", label: "m" },
+								{ value: "lg", label: "lg" },
+								{ value: "xxs", label: "xxs" },
+								{ value: "xs", label: "xs" },
+								{ value: "xl", label: "xl" },
+								{ value: "xxl", label: "xxl" },
+							],
+						}),
+					],
+				}),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Key",
+		label: "Key",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "size",
+					label: "size",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "size",
+							defaultValue: "s",
+							options: [
+								{ value: "s", label: "s" },
+								{ value: "m", label: "m" },
+								{ value: "xs", label: "xs" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "modifier",
+					label: "modifier",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "modifier",
+							defaultValue: "none",
+							options: [
+								{ value: "none", label: "none" },
+								{ value: "alt", label: "alt" },
+								{ value: "cmd", label: "cmd" },
+								{ value: "ctrl", label: "ctrl" },
+								{ value: "shift", label: "shift" },
+							],
+						}),
+					],
+				}),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.List",
+		label: "List",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "justify",
+					label: "justify",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "justify",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "between", label: "between" },
+								{ value: "around", label: "around" },
+								{ value: "evenly", label: "evenly" },
+								{ value: "stretch", label: "stretch" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "align",
+					label: "align",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "align",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "stretch", label: "stretch" },
+								{ value: "baseline", label: "baseline" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "wrap",
+					label: "wrap",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "wrap",
+							defaultValue: "wrap",
+							options: [
+								{ value: "wrap", label: "wrap" },
+								{ value: "wrapReverse", label: "wrapReverse" },
+								{ value: "nowrap", label: "nowrap" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gap",
+					label: "gap",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gap",
+							defaultValue: "1",
+							options: [
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "padding",
+					label: "padding",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "padding",
+							defaultValue: "1",
+							options: [
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "margin",
+					label: "margin",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "margin",
+							defaultValue: "1",
+							options: [
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "grow",
+					label: "grow",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "grow",
+							defaultValue: "grow",
+							options: [
+								{ value: "grow", label: "grow" },
+								{ value: "shrink", label: "shrink" },
+								{ value: "growShrink", label: "growShrink" },
+								{ value: "growShrinkGrow", label: "growShrinkGrow" },
+								{ value: "growShrinkShrink", label: "growShrinkShrink" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "fullHeight", label: "fullHeight" }),
+				ports.bool({ name: "fullWidth", label: "fullWidth" }),
+				ports.string({
+					name: "appear",
+					label: "appear",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "appear",
+							defaultValue: "panelBottomRight",
+							options: [
+								{ value: "panelBottomRight", label: "panelBottomRight" },
+								{ value: "panelCenter", label: "panelCenter" },
+								{ value: "fade", label: "fade" },
+								{ value: "fadeUp", label: "fadeUp" },
+								{ value: "fadeDown", label: "fadeDown" },
+								{ value: "slideRight", label: "slideRight" },
+								{ value: "slideLeft", label: "slideLeft" },
+								{ value: "scaleIn", label: "scaleIn" },
+								{ value: "wiggleIdle", label: "wiggleIdle" },
+								{ value: "press", label: "press" },
+							],
+						}),
+					],
+				}),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.List.Empty",
+		label: "List.Empty",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "className", label: "className" }),
+				ports.string({ name: "title", label: "title" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.List.Item",
+		label: "List.Item",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "justify",
+					label: "justify",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "justify",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "between", label: "between" },
+								{ value: "around", label: "around" },
+								{ value: "evenly", label: "evenly" },
+								{ value: "stretch", label: "stretch" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "align",
+					label: "align",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "align",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "stretch", label: "stretch" },
+								{ value: "baseline", label: "baseline" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "wrap",
+					label: "wrap",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "wrap",
+							defaultValue: "wrap",
+							options: [
+								{ value: "wrap", label: "wrap" },
+								{ value: "wrapReverse", label: "wrapReverse" },
+								{ value: "nowrap", label: "nowrap" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gap",
+					label: "gap",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gap",
+							defaultValue: "1",
+							options: [
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "padding",
+					label: "padding",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "padding",
+							defaultValue: "1",
+							options: [
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "margin",
+					label: "margin",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "margin",
+							defaultValue: "1",
+							options: [
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "grow",
+					label: "grow",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "grow",
+							defaultValue: "grow",
+							options: [
+								{ value: "grow", label: "grow" },
+								{ value: "shrink", label: "shrink" },
+								{ value: "growShrink", label: "growShrink" },
+								{ value: "growShrinkGrow", label: "growShrinkGrow" },
+								{ value: "growShrinkShrink", label: "growShrinkShrink" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "fullHeight", label: "fullHeight" }),
+				ports.bool({ name: "fullWidth", label: "fullWidth" }),
+				ports.string({
+					name: "appear",
+					label: "appear",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "appear",
+							defaultValue: "panelBottomRight",
+							options: [
+								{ value: "panelBottomRight", label: "panelBottomRight" },
+								{ value: "panelCenter", label: "panelCenter" },
+								{ value: "fade", label: "fade" },
+								{ value: "fadeUp", label: "fadeUp" },
+								{ value: "fadeDown", label: "fadeDown" },
+								{ value: "slideRight", label: "slideRight" },
+								{ value: "slideLeft", label: "slideLeft" },
+								{ value: "scaleIn", label: "scaleIn" },
+								{ value: "wiggleIdle", label: "wiggleIdle" },
+								{ value: "press", label: "press" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "interactive", label: "interactive" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.List.Option",
+		label: "List.Option",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.bool({ name: "disabled", label: "disabled" }),
+				ports.string({
+					name: "size",
+					label: "size",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "size",
+							defaultValue: "s",
+							options: [
+								{ value: "s", label: "s" },
+								{ value: "m", label: "m" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "selected", label: "selected" }),
+				ports.string({ name: "icon", label: "icon" }),
+				ports.string({ name: "label", label: "label" }),
+				ports.string({ name: "hint", label: "hint" }),
+				ports.string({ name: "trailing", label: "trailing" }),
+				ports.bool({ name: "active", label: "active" }),
+			];
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Meter",
+		label: "Meter",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "variant",
+					label: "variant",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "variant",
+							defaultValue: "info",
+							options: [
+								{ value: "info", label: "info" },
+								{ value: "success", label: "success" },
+								{ value: "warning", label: "warning" },
+								{ value: "error", label: "error" },
+								{ value: "brand", label: "brand" },
+								{ value: "disabled", label: "disabled" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "size",
+					label: "size",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "size",
+							defaultValue: "s",
+							options: [
+								{ value: "s", label: "s" },
+								{ value: "m", label: "m" },
+								{ value: "lg", label: "lg" },
+								{ value: "xxs", label: "xxs" },
+								{ value: "xs", label: "xs" },
+								{ value: "xl", label: "xl" },
+								{ value: "xxl", label: "xxl" },
+							],
+						}),
+					],
+				}),
+				ports.float64({ name: "percent", label: "percent" }),
+				ports.string({ name: "label", label: "label" }),
+				ports.string({ name: "value", label: "value" }),
+				ports.bool({ name: "animated", label: "animated" }),
+				ports.string({ name: "labelClassName", label: "labelClassName" }),
+				ports.string({ name: "valueClassName", label: "valueClassName" }),
+				ports.string({ name: "trackClassName", label: "trackClassName" }),
+			];
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Modal",
+		label: "Modal",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "variant",
+					label: "variant",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "variant",
+							defaultValue: "solid",
+							options: [
+								{ value: "solid", label: "solid" },
+								{ value: "dim", label: "dim" },
+								{ value: "heavy", label: "heavy" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "open", label: "open" }),
+				ports.string({
+					name: "align",
+					label: "align",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "align",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "top", label: "top" },
+							],
+						}),
+					],
+				}),
+				ports.string({ name: "closeLabel", label: "closeLabel" }),
+				ports.string({
+					name: "size",
+					label: "size",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "size",
+							defaultValue: "s",
+							options: [
+								{ value: "s", label: "s" },
+								{ value: "m", label: "m" },
+								{ value: "lg", label: "lg" },
+								{ value: "xl", label: "xl" },
+							],
+						}),
+					],
+				}),
+				ports.string({ name: "panelClassName", label: "panelClassName" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Modal.Body",
+		label: "Modal.Body",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "className", label: "className" }),
+				ports.string({ name: "title", label: "title" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Modal.Close",
+		label: "Modal.Close",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.bool({ name: "disabled", label: "disabled" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({ name: "title", label: "title" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Modal.Footer",
+		label: "Modal.Footer",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "className", label: "className" }),
+				ports.string({ name: "title", label: "title" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Modal.Header",
+		label: "Modal.Header",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "className", label: "className" }),
+				ports.string({ name: "title", label: "title" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Nav",
+		label: "Nav",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "className", label: "className" }),
+				ports.string({ name: "title", label: "title" }),
+				ports.string({
+					name: "border",
+					label: "border",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "border",
+							defaultValue: "none",
+							options: [
+								{ value: "none", label: "none" },
+								{ value: "left", label: "left" },
+								{ value: "right", label: "right" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "surface",
+					label: "surface",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "surface",
+							defaultValue: "none",
+							options: [
+								{ value: "none", label: "none" },
+								{ value: "surface", label: "surface" },
+								{ value: "sunken", label: "sunken" },
+							],
+						}),
+					],
+				}),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Nav.Footer",
+		label: "Nav.Footer",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "className", label: "className" }),
+				ports.string({ name: "title", label: "title" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Nav.Group",
+		label: "Nav.Group",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "className", label: "className" }),
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "label", label: "label" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Nav.Item",
+		label: "Nav.Item",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "icon", label: "icon" }),
+				ports.string({ name: "label", label: "label" }),
+				ports.bool({ name: "active", label: "active" }),
+				ports.string({ name: "className", label: "className" }),
+			];
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Overlay",
+		label: "Overlay",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "variant",
+					label: "variant",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "variant",
+							defaultValue: "solid",
+							options: [
+								{ value: "solid", label: "solid" },
+								{ value: "dim", label: "dim" },
+								{ value: "heavy", label: "heavy" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "align",
+					label: "align",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "align",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "top", label: "top" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "open", label: "open" }),
+				ports.string({ name: "closeLabel", label: "closeLabel" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Panel",
+		label: "Panel",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "justify",
+					label: "justify",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "justify",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "between", label: "between" },
+								{ value: "around", label: "around" },
+								{ value: "evenly", label: "evenly" },
+								{ value: "stretch", label: "stretch" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "align",
+					label: "align",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "align",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "stretch", label: "stretch" },
+								{ value: "baseline", label: "baseline" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "wrap",
+					label: "wrap",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "wrap",
+							defaultValue: "wrap",
+							options: [
+								{ value: "wrap", label: "wrap" },
+								{ value: "wrapReverse", label: "wrapReverse" },
+								{ value: "nowrap", label: "nowrap" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gap",
+					label: "gap",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gap",
+							defaultValue: "1",
+							options: [
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "padding",
+					label: "padding",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "padding",
+							defaultValue: "1",
+							options: [
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "margin",
+					label: "margin",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "margin",
+							defaultValue: "1",
+							options: [
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "grow",
+					label: "grow",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "grow",
+							defaultValue: "grow",
+							options: [
+								{ value: "grow", label: "grow" },
+								{ value: "shrink", label: "shrink" },
+								{ value: "growShrink", label: "growShrink" },
+								{ value: "growShrinkGrow", label: "growShrinkGrow" },
+								{ value: "growShrinkShrink", label: "growShrinkShrink" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "fullHeight", label: "fullHeight" }),
+				ports.bool({ name: "fullWidth", label: "fullWidth" }),
+				ports.string({
+					name: "appear",
+					label: "appear",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "appear",
+							defaultValue: "panelBottomRight",
+							options: [
+								{ value: "panelBottomRight", label: "panelBottomRight" },
+								{ value: "panelCenter", label: "panelCenter" },
+								{ value: "fade", label: "fade" },
+								{ value: "fadeUp", label: "fadeUp" },
+								{ value: "fadeDown", label: "fadeDown" },
+								{ value: "slideRight", label: "slideRight" },
+								{ value: "slideLeft", label: "slideLeft" },
+								{ value: "scaleIn", label: "scaleIn" },
+								{ value: "wiggleIdle", label: "wiggleIdle" },
+								{ value: "press", label: "press" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "variant",
+					label: "variant",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "variant",
+							defaultValue: "surface",
+							options: [
+								{ value: "surface", label: "surface" },
+								{ value: "sunken", label: "sunken" },
+								{ value: "raised", label: "raised" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "size",
+					label: "size",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "size",
+							defaultValue: "s",
+							options: [
+								{ value: "s", label: "s" },
+								{ value: "m", label: "m" },
+								{ value: "lg", label: "lg" },
+								{ value: "bare", label: "bare" },
+							],
+						}),
+					],
+				}),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Panel.Caption",
+		label: "Panel.Caption",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "className", label: "className" }),
+				ports.string({ name: "title", label: "title" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Panel.Header",
+		label: "Panel.Header",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "className", label: "className" }),
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "meta", label: "meta" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Panel.Title",
+		label: "Panel.Title",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "className", label: "className" }),
+				ports.string({ name: "title", label: "title" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Radar",
+		label: "Radar",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "className", label: "className" }),
+				ports.string({ name: "href", label: "href" }),
+				ports.float64({ name: "radius", label: "radius" }),
+				ports.string({
+					name: "variant",
+					label: "variant",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "variant",
+							defaultValue: "info",
+							options: [
+								{ value: "info", label: "info" },
+								{ value: "success", label: "success" },
+								{ value: "warning", label: "warning" },
+								{ value: "error", label: "error" },
+								{ value: "brand", label: "brand" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "size",
+					label: "size",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "size",
+							defaultValue: "s",
+							options: [
+								{ value: "s", label: "s" },
+								{ value: "m", label: "m" },
+								{ value: "lg", label: "lg" },
+								{ value: "full", label: "full" },
+							],
+						}),
+					],
+				}),
+				ports.string({ name: "title", label: "title" }),
+				ports.float64({ name: "labelRadius", label: "labelRadius" }),
+				ports.bool({ name: "sweep", label: "sweep" }),
+			];
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Rail",
+		label: "Rail",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "width",
+					label: "width",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "width",
+							defaultValue: "default",
+							options: [
+								{ value: "default", label: "default" },
+								{ value: "auto", label: "auto" },
+								{ value: "full", label: "full" },
+								{ value: "narrow", label: "narrow" },
+								{ value: "wide", label: "wide" },
+								{ value: "xwide", label: "xwide" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "position",
+					label: "position",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "position",
+							defaultValue: "none",
+							options: [
+								{ value: "none", label: "none" },
+								{ value: "left", label: "left" },
+								{ value: "right", label: "right" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "surface",
+					label: "surface",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "surface",
+							defaultValue: "surface",
+							options: [
+								{ value: "surface", label: "surface" },
+								{ value: "sunken", label: "sunken" },
+								{ value: "bg", label: "bg" },
+								{ value: "transparent", label: "transparent" },
+							],
+						}),
+					],
+				}),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Rail.Body",
+		label: "Rail.Body",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "padding",
+					label: "padding",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "padding",
+							defaultValue: "s",
+							options: [
+								{ value: "s", label: "s" },
+								{ value: "m", label: "m" },
+								{ value: "lg", label: "lg" },
+								{ value: "none", label: "none" },
+							],
+						}),
+					],
+				}),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Rail.Footer",
+		label: "Rail.Footer",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Rail.Header",
+		label: "Rail.Header",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({ name: "meta", label: "meta" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.RatioBar",
+		label: "RatioBar",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "className", label: "className" }),
+				ports.string({ name: "title", label: "title" }),
+				ports.string({
+					name: "size",
+					label: "size",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "size",
+							defaultValue: "s",
+							options: [
+								{ value: "s", label: "s" },
+								{ value: "m", label: "m" },
+								{ value: "lg", label: "lg" },
+								{ value: "xs", label: "xs" },
+							],
+						}),
+					],
+				}),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Readout",
+		label: "Readout",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "className", label: "className" }),
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "label", label: "label" }),
+				ports.string({ name: "value", label: "value" }),
+				ports.string({ name: "dataKey", label: "dataKey" }),
+				ports.bool({ name: "dot", label: "dot" }),
+				ports.string({ name: "tone", label: "tone" }),
+				ports.string({ name: "meta", label: "meta" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Scanlines",
+		label: "Scanlines",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "variant",
+					label: "variant",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "variant",
+							defaultValue: "screen",
+							options: [
+								{ value: "screen", label: "screen" },
+								{ value: "plate", label: "plate" },
+							],
+						}),
+					],
+				}),
+			];
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Section",
+		label: "Section",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "className", label: "className" }),
+				ports.string({ name: "title", label: "title" }),
+				ports.string({
+					name: "surface",
+					label: "surface",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "surface",
+							defaultValue: "none",
+							options: [
+								{ value: "none", label: "none" },
+								{ value: "surface", label: "surface" },
+								{ value: "sunken", label: "sunken" },
+								{ value: "raised", label: "raised" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "fit",
+					label: "fit",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "fit",
+							defaultValue: "content",
+							options: [
+								{ value: "content", label: "content" },
+								{ value: "pane", label: "pane" },
+							],
+						}),
+					],
+				}),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Section.Body",
+		label: "Section.Body",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "className", label: "className" }),
+				ports.string({ name: "title", label: "title" }),
+				ports.bool({ name: "scroll", label: "scroll" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Section.Header",
+		label: "Section.Header",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "size",
+					label: "size",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "size",
+							defaultValue: "s",
+							options: [
+								{ value: "s", label: "s" },
+								{ value: "m", label: "m" },
+								{ value: "lg", label: "lg" },
+								{ value: "bare", label: "bare" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "rule", label: "rule" }),
+				ports.bool({ name: "sticky", label: "sticky" }),
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "meta", label: "meta" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Slider",
+		label: "Slider",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.bool({ name: "disabled", label: "disabled" }),
+				ports.string({ name: "alt", label: "alt" }),
+				ports.string({ name: "placeholder", label: "placeholder" }),
+				ports.bool({ name: "readOnly", label: "readOnly" }),
+				ports.string({
+					name: "size",
+					label: "size",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "size",
+							defaultValue: "s",
+							options: [
+								{ value: "s", label: "s" },
+								{ value: "m", label: "m" },
+								{ value: "xs", label: "xs" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "tone",
+					label: "tone",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "tone",
+							defaultValue: "info",
+							options: [
+								{ value: "info", label: "info" },
+								{ value: "success", label: "success" },
+								{ value: "error", label: "error" },
+								{ value: "brand", label: "brand" },
+								{ value: "acc", label: "acc" },
+								{ value: "warn", label: "warn" },
+							],
+						}),
+					],
+				}),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Slider.Field",
+		label: "Slider.Field",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "className", label: "className" }),
+				ports.string({ name: "title", label: "title" }),
+				ports.string({
+					name: "variant",
+					label: "variant",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "variant",
+							defaultValue: "bare",
+							options: [
+								{ value: "bare", label: "bare" },
+								{ value: "box", label: "box" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gap",
+					label: "gap",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gap",
+							defaultValue: "s",
+							options: [
+								{ value: "s", label: "s" },
+								{ value: "m", label: "m" },
+							],
+						}),
+					],
+				}),
+				ports.string({ name: "leading", label: "leading" }),
+				ports.string({ name: "trailing", label: "trailing" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Sparkline",
+		label: "Sparkline",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "className", label: "className" }),
+				ports.string({ name: "href", label: "href" }),
+				ports.string({ name: "title", label: "title" }),
+				ports.bool({ name: "active", label: "active" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Spinner",
+		label: "Spinner",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "variant",
+					label: "variant",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "variant",
+							defaultValue: "info",
+							options: [
+								{ value: "info", label: "info" },
+								{ value: "success", label: "success" },
+								{ value: "warning", label: "warning" },
+								{ value: "error", label: "error" },
+								{ value: "brand", label: "brand" },
+								{ value: "accent", label: "accent" },
+								{ value: "muted", label: "muted" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "size",
+					label: "size",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "size",
+							defaultValue: "s",
+							options: [
+								{ value: "s", label: "s" },
+								{ value: "m", label: "m" },
+								{ value: "lg", label: "lg" },
+								{ value: "xxs", label: "xxs" },
+								{ value: "xs", label: "xs" },
+								{ value: "xl", label: "xl" },
+								{ value: "xxl", label: "xxl" },
+							],
+						}),
+					],
+				}),
+				ports.float64({ name: "durationMs", label: "durationMs" }),
+				ports.string({ name: "label", label: "label" }),
+			];
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Stat",
+		label: "Stat",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "variant",
+					label: "variant",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "variant",
+							defaultValue: "info",
+							options: [
+								{ value: "info", label: "info" },
+								{ value: "success", label: "success" },
+								{ value: "warning", label: "warning" },
+								{ value: "error", label: "error" },
+								{ value: "brand", label: "brand" },
+								{ value: "disabled", label: "disabled" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "size",
+					label: "size",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "size",
+							defaultValue: "s",
+							options: [
+								{ value: "s", label: "s" },
+								{ value: "m", label: "m" },
+								{ value: "lg", label: "lg" },
+								{ value: "xxs", label: "xxs" },
+								{ value: "xs", label: "xs" },
+								{ value: "xl", label: "xl" },
+								{ value: "xxl", label: "xxl" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "emphasis",
+					label: "emphasis",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "emphasis",
+							defaultValue: "strong",
+							options: [
+								{ value: "strong", label: "strong" },
+								{ value: "default", label: "default" },
+							],
+						}),
+					],
+				}),
+				ports.string({ name: "value", label: "value" }),
+				ports.string({ name: "label", label: "label" }),
+				ports.string({ name: "valueClassName", label: "valueClassName" }),
+				ports.string({ name: "labelClassName", label: "labelClassName" }),
+			];
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.StepCard",
+		label: "StepCard",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "variant",
+					label: "variant",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "variant",
+							defaultValue: "surface",
+							options: [
+								{ value: "surface", label: "surface" },
+								{ value: "sunken", label: "sunken" },
+								{ value: "raised", label: "raised" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "status",
+					label: "status",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "status",
+							defaultValue: "info",
+							options: [
+								{ value: "info", label: "info" },
+								{ value: "success", label: "success" },
+								{ value: "warning", label: "warning" },
+								{ value: "error", label: "error" },
+								{ value: "default", label: "default" },
+							],
+						}),
+					],
+				}),
+				ports.string({ name: "step", label: "step" }),
+				ports.string({ name: "value", label: "value" }),
+				ports.string({ name: "description", label: "description" }),
+				ports.string({ name: "explanation", label: "explanation" }),
+				ports.string({ name: "footer", label: "footer" }),
+			];
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Tabs",
+		label: "Tabs",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "size",
+					label: "size",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "size",
+							defaultValue: "s",
+							options: [
+								{ value: "s", label: "s" },
+								{ value: "m", label: "m" },
+								{ value: "lg", label: "lg" },
+								{ value: "xs", label: "xs" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "fullWidth", label: "fullWidth" }),
+				ports.string({
+					name: "orientation",
+					label: "orientation",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "orientation",
+							defaultValue: "horizontal",
+							options: [
+								{ value: "horizontal", label: "horizontal" },
+								{ value: "vertical", label: "vertical" },
+							],
+						}),
+					],
+				}),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Tabs.Tab",
+		label: "Tabs.Tab",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.bool({ name: "disabled", label: "disabled" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({ name: "title", label: "title" }),
+				ports.string({
+					name: "size",
+					label: "size",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "size",
+							defaultValue: "s",
+							options: [
+								{ value: "s", label: "s" },
+								{ value: "m", label: "m" },
+								{ value: "lg", label: "lg" },
+								{ value: "xs", label: "xs" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "tone",
+					label: "tone",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "tone",
+							defaultValue: "info",
+							options: [
+								{ value: "info", label: "info" },
+								{ value: "success", label: "success" },
+								{ value: "warning", label: "warning" },
+								{ value: "error", label: "error" },
+								{ value: "accent", label: "accent" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "grow", label: "grow" }),
+				ports.bool({ name: "active", label: "active" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Toolbar",
+		label: "Toolbar",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "className", label: "className" }),
+				ports.string({ name: "title", label: "title" }),
+				ports.string({
+					name: "size",
+					label: "size",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "size",
+							defaultValue: "s",
+							options: [
+								{ value: "s", label: "s" },
+								{ value: "m", label: "m" },
+								{ value: "lg", label: "lg" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "overflow",
+					label: "overflow",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "overflow",
+							defaultValue: "clip",
+							options: [
+								{ value: "clip", label: "clip" },
+								{ value: "scroll", label: "scroll" },
+							],
+						}),
+					],
+				}),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Toolbar.Group",
+		label: "Toolbar.Group",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "className", label: "className" }),
+				ports.string({ name: "title", label: "title" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Toolbar.Spacer",
+		label: "Toolbar.Spacer",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "className", label: "className" }),
+				ports.string({ name: "title", label: "title" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Typography",
+		label: "Typography",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Typography.Blockquote",
+		label: "Typography.Blockquote",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "variant",
+					label: "variant",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "variant",
+							defaultValue: "info",
+							options: [
+								{ value: "info", label: "info" },
+								{ value: "success", label: "success" },
+								{ value: "warning", label: "warning" },
+								{ value: "error", label: "error" },
+								{ value: "accent", label: "accent" },
+								{ value: "muted", label: "muted" },
+								{ value: "f1", label: "f1" },
+								{ value: "f2", label: "f2" },
+								{ value: "f3", label: "f3" },
+								{ value: "f4", label: "f4" },
+								{ value: "foreground", label: "foreground" },
+								{ value: "lead", label: "lead" },
+								{ value: "sectionHeading", label: "sectionHeading" },
+								{ value: "codeExport", label: "codeExport" },
+								{ value: "primary", label: "primary" },
+								{ value: "secondary", label: "secondary" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "truncate", label: "truncate" }),
+				ports.bool({ name: "semibold", label: "semibold" }),
+				ports.bool({ name: "uppercase", label: "uppercase" }),
+				ports.bool({ name: "normal", label: "normal" }),
+				ports.bool({ name: "light", label: "light" }),
+				ports.bool({ name: "bold", label: "bold" }),
+				ports.bool({ name: "italic", label: "italic" }),
+				ports.bool({ name: "underline", label: "underline" }),
+				ports.string({ name: "tracking", label: "tracking" }),
+				ports.string({ name: "leading", label: "leading" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Typography.Code",
+		label: "Typography.Code",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "variant",
+					label: "variant",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "variant",
+							defaultValue: "info",
+							options: [
+								{ value: "info", label: "info" },
+								{ value: "success", label: "success" },
+								{ value: "warning", label: "warning" },
+								{ value: "error", label: "error" },
+								{ value: "accent", label: "accent" },
+								{ value: "muted", label: "muted" },
+								{ value: "f1", label: "f1" },
+								{ value: "f2", label: "f2" },
+								{ value: "f3", label: "f3" },
+								{ value: "f4", label: "f4" },
+								{ value: "foreground", label: "foreground" },
+								{ value: "lead", label: "lead" },
+								{ value: "sectionHeading", label: "sectionHeading" },
+								{ value: "codeExport", label: "codeExport" },
+								{ value: "primary", label: "primary" },
+								{ value: "secondary", label: "secondary" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "truncate", label: "truncate" }),
+				ports.bool({ name: "semibold", label: "semibold" }),
+				ports.bool({ name: "uppercase", label: "uppercase" }),
+				ports.bool({ name: "normal", label: "normal" }),
+				ports.bool({ name: "light", label: "light" }),
+				ports.bool({ name: "bold", label: "bold" }),
+				ports.bool({ name: "italic", label: "italic" }),
+				ports.bool({ name: "underline", label: "underline" }),
+				ports.string({ name: "tracking", label: "tracking" }),
+				ports.string({ name: "leading", label: "leading" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Typography.Display",
+		label: "Typography.Display",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "className", label: "className" }),
+				ports.string({ name: "title", label: "title" }),
+				ports.string({
+					name: "size",
+					label: "size",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "size",
+							defaultValue: "s",
+							options: [
+								{ value: "s", label: "s" },
+								{ value: "m", label: "m" },
+								{ value: "lg", label: "lg" },
+								{ value: "xl", label: "xl" },
+							],
+						}),
+					],
+				}),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Typography.Div",
+		label: "Typography.Div",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "variant",
+					label: "variant",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "variant",
+							defaultValue: "info",
+							options: [
+								{ value: "info", label: "info" },
+								{ value: "success", label: "success" },
+								{ value: "warning", label: "warning" },
+								{ value: "error", label: "error" },
+								{ value: "accent", label: "accent" },
+								{ value: "muted", label: "muted" },
+								{ value: "f1", label: "f1" },
+								{ value: "f2", label: "f2" },
+								{ value: "f3", label: "f3" },
+								{ value: "f4", label: "f4" },
+								{ value: "foreground", label: "foreground" },
+								{ value: "lead", label: "lead" },
+								{ value: "sectionHeading", label: "sectionHeading" },
+								{ value: "codeExport", label: "codeExport" },
+								{ value: "primary", label: "primary" },
+								{ value: "secondary", label: "secondary" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "truncate", label: "truncate" }),
+				ports.bool({ name: "semibold", label: "semibold" }),
+				ports.bool({ name: "uppercase", label: "uppercase" }),
+				ports.bool({ name: "normal", label: "normal" }),
+				ports.bool({ name: "light", label: "light" }),
+				ports.bool({ name: "bold", label: "bold" }),
+				ports.bool({ name: "italic", label: "italic" }),
+				ports.bool({ name: "underline", label: "underline" }),
+				ports.string({ name: "tracking", label: "tracking" }),
+				ports.string({ name: "leading", label: "leading" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Typography.H3",
+		label: "Typography.H3",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "variant",
+					label: "variant",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "variant",
+							defaultValue: "info",
+							options: [
+								{ value: "info", label: "info" },
+								{ value: "success", label: "success" },
+								{ value: "warning", label: "warning" },
+								{ value: "error", label: "error" },
+								{ value: "accent", label: "accent" },
+								{ value: "muted", label: "muted" },
+								{ value: "f1", label: "f1" },
+								{ value: "f2", label: "f2" },
+								{ value: "f3", label: "f3" },
+								{ value: "f4", label: "f4" },
+								{ value: "foreground", label: "foreground" },
+								{ value: "lead", label: "lead" },
+								{ value: "sectionHeading", label: "sectionHeading" },
+								{ value: "codeExport", label: "codeExport" },
+								{ value: "primary", label: "primary" },
+								{ value: "secondary", label: "secondary" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "truncate", label: "truncate" }),
+				ports.bool({ name: "semibold", label: "semibold" }),
+				ports.bool({ name: "uppercase", label: "uppercase" }),
+				ports.bool({ name: "normal", label: "normal" }),
+				ports.bool({ name: "light", label: "light" }),
+				ports.bool({ name: "bold", label: "bold" }),
+				ports.bool({ name: "italic", label: "italic" }),
+				ports.bool({ name: "underline", label: "underline" }),
+				ports.string({ name: "tracking", label: "tracking" }),
+				ports.string({ name: "leading", label: "leading" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Typography.H4",
+		label: "Typography.H4",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "variant",
+					label: "variant",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "variant",
+							defaultValue: "info",
+							options: [
+								{ value: "info", label: "info" },
+								{ value: "success", label: "success" },
+								{ value: "warning", label: "warning" },
+								{ value: "error", label: "error" },
+								{ value: "accent", label: "accent" },
+								{ value: "muted", label: "muted" },
+								{ value: "f1", label: "f1" },
+								{ value: "f2", label: "f2" },
+								{ value: "f3", label: "f3" },
+								{ value: "f4", label: "f4" },
+								{ value: "foreground", label: "foreground" },
+								{ value: "lead", label: "lead" },
+								{ value: "sectionHeading", label: "sectionHeading" },
+								{ value: "codeExport", label: "codeExport" },
+								{ value: "primary", label: "primary" },
+								{ value: "secondary", label: "secondary" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "truncate", label: "truncate" }),
+				ports.bool({ name: "semibold", label: "semibold" }),
+				ports.bool({ name: "uppercase", label: "uppercase" }),
+				ports.bool({ name: "normal", label: "normal" }),
+				ports.bool({ name: "light", label: "light" }),
+				ports.bool({ name: "bold", label: "bold" }),
+				ports.bool({ name: "italic", label: "italic" }),
+				ports.bool({ name: "underline", label: "underline" }),
+				ports.string({ name: "tracking", label: "tracking" }),
+				ports.string({ name: "leading", label: "leading" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Typography.H5",
+		label: "Typography.H5",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "variant",
+					label: "variant",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "variant",
+							defaultValue: "info",
+							options: [
+								{ value: "info", label: "info" },
+								{ value: "success", label: "success" },
+								{ value: "warning", label: "warning" },
+								{ value: "error", label: "error" },
+								{ value: "accent", label: "accent" },
+								{ value: "muted", label: "muted" },
+								{ value: "f1", label: "f1" },
+								{ value: "f2", label: "f2" },
+								{ value: "f3", label: "f3" },
+								{ value: "f4", label: "f4" },
+								{ value: "foreground", label: "foreground" },
+								{ value: "lead", label: "lead" },
+								{ value: "sectionHeading", label: "sectionHeading" },
+								{ value: "codeExport", label: "codeExport" },
+								{ value: "primary", label: "primary" },
+								{ value: "secondary", label: "secondary" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "truncate", label: "truncate" }),
+				ports.bool({ name: "semibold", label: "semibold" }),
+				ports.bool({ name: "uppercase", label: "uppercase" }),
+				ports.bool({ name: "normal", label: "normal" }),
+				ports.bool({ name: "light", label: "light" }),
+				ports.bool({ name: "bold", label: "bold" }),
+				ports.bool({ name: "italic", label: "italic" }),
+				ports.bool({ name: "underline", label: "underline" }),
+				ports.string({ name: "tracking", label: "tracking" }),
+				ports.string({ name: "leading", label: "leading" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Typography.H6",
+		label: "Typography.H6",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "variant",
+					label: "variant",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "variant",
+							defaultValue: "info",
+							options: [
+								{ value: "info", label: "info" },
+								{ value: "success", label: "success" },
+								{ value: "warning", label: "warning" },
+								{ value: "error", label: "error" },
+								{ value: "accent", label: "accent" },
+								{ value: "muted", label: "muted" },
+								{ value: "f1", label: "f1" },
+								{ value: "f2", label: "f2" },
+								{ value: "f3", label: "f3" },
+								{ value: "f4", label: "f4" },
+								{ value: "foreground", label: "foreground" },
+								{ value: "lead", label: "lead" },
+								{ value: "sectionHeading", label: "sectionHeading" },
+								{ value: "codeExport", label: "codeExport" },
+								{ value: "primary", label: "primary" },
+								{ value: "secondary", label: "secondary" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "truncate", label: "truncate" }),
+				ports.bool({ name: "semibold", label: "semibold" }),
+				ports.bool({ name: "uppercase", label: "uppercase" }),
+				ports.bool({ name: "normal", label: "normal" }),
+				ports.bool({ name: "light", label: "light" }),
+				ports.bool({ name: "bold", label: "bold" }),
+				ports.bool({ name: "italic", label: "italic" }),
+				ports.bool({ name: "underline", label: "underline" }),
+				ports.string({ name: "tracking", label: "tracking" }),
+				ports.string({ name: "leading", label: "leading" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Typography.Kbd",
+		label: "Typography.Kbd",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "variant",
+					label: "variant",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "variant",
+							defaultValue: "info",
+							options: [
+								{ value: "info", label: "info" },
+								{ value: "success", label: "success" },
+								{ value: "warning", label: "warning" },
+								{ value: "error", label: "error" },
+								{ value: "accent", label: "accent" },
+								{ value: "muted", label: "muted" },
+								{ value: "f1", label: "f1" },
+								{ value: "f2", label: "f2" },
+								{ value: "f3", label: "f3" },
+								{ value: "f4", label: "f4" },
+								{ value: "foreground", label: "foreground" },
+								{ value: "lead", label: "lead" },
+								{ value: "sectionHeading", label: "sectionHeading" },
+								{ value: "codeExport", label: "codeExport" },
+								{ value: "primary", label: "primary" },
+								{ value: "secondary", label: "secondary" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "truncate", label: "truncate" }),
+				ports.bool({ name: "semibold", label: "semibold" }),
+				ports.bool({ name: "uppercase", label: "uppercase" }),
+				ports.bool({ name: "normal", label: "normal" }),
+				ports.bool({ name: "light", label: "light" }),
+				ports.bool({ name: "bold", label: "bold" }),
+				ports.bool({ name: "italic", label: "italic" }),
+				ports.bool({ name: "underline", label: "underline" }),
+				ports.string({ name: "tracking", label: "tracking" }),
+				ports.string({ name: "leading", label: "leading" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Typography.Label",
+		label: "Typography.Label",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "className", label: "className" }),
+				ports.string({ name: "title", label: "title" }),
+				ports.string({
+					name: "size",
+					label: "size",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "size",
+							defaultValue: "s",
+							options: [
+								{ value: "s", label: "s" },
+								{ value: "m", label: "m" },
+								{ value: "lg", label: "lg" },
+								{ value: "xxs", label: "xxs" },
+								{ value: "xs", label: "xs" },
+								{ value: "xl", label: "xl" },
+								{ value: "xxl", label: "xxl" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "tone",
+					label: "tone",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "tone",
+							defaultValue: "accent",
+							options: [
+								{ value: "accent", label: "accent" },
+								{ value: "f1", label: "f1" },
+								{ value: "f2", label: "f2" },
+								{ value: "f3", label: "f3" },
+								{ value: "f4", label: "f4" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "weight",
+					label: "weight",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "weight",
+							defaultValue: "normal",
+							options: [
+								{ value: "normal", label: "normal" },
+								{ value: "medium", label: "medium" },
+								{ value: "semibold", label: "semibold" },
+							],
+						}),
+					],
+				}),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Typography.Mark",
+		label: "Typography.Mark",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "variant",
+					label: "variant",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "variant",
+							defaultValue: "info",
+							options: [
+								{ value: "info", label: "info" },
+								{ value: "success", label: "success" },
+								{ value: "warning", label: "warning" },
+								{ value: "error", label: "error" },
+								{ value: "accent", label: "accent" },
+								{ value: "muted", label: "muted" },
+								{ value: "f1", label: "f1" },
+								{ value: "f2", label: "f2" },
+								{ value: "f3", label: "f3" },
+								{ value: "f4", label: "f4" },
+								{ value: "foreground", label: "foreground" },
+								{ value: "lead", label: "lead" },
+								{ value: "sectionHeading", label: "sectionHeading" },
+								{ value: "codeExport", label: "codeExport" },
+								{ value: "primary", label: "primary" },
+								{ value: "secondary", label: "secondary" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "truncate", label: "truncate" }),
+				ports.bool({ name: "semibold", label: "semibold" }),
+				ports.bool({ name: "uppercase", label: "uppercase" }),
+				ports.bool({ name: "normal", label: "normal" }),
+				ports.bool({ name: "light", label: "light" }),
+				ports.bool({ name: "bold", label: "bold" }),
+				ports.bool({ name: "italic", label: "italic" }),
+				ports.bool({ name: "underline", label: "underline" }),
+				ports.string({ name: "tracking", label: "tracking" }),
+				ports.string({ name: "leading", label: "leading" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Typography.Mono",
+		label: "Typography.Mono",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "className", label: "className" }),
+				ports.string({ name: "title", label: "title" }),
+				ports.string({
+					name: "size",
+					label: "size",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "size",
+							defaultValue: "s",
+							options: [
+								{ value: "s", label: "s" },
+								{ value: "m", label: "m" },
+								{ value: "lg", label: "lg" },
+								{ value: "xxs", label: "xxs" },
+								{ value: "xs", label: "xs" },
+								{ value: "xl", label: "xl" },
+								{ value: "xxl", label: "xxl" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "tone",
+					label: "tone",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "tone",
+							defaultValue: "accent",
+							options: [
+								{ value: "accent", label: "accent" },
+								{ value: "f1", label: "f1" },
+								{ value: "f2", label: "f2" },
+								{ value: "f3", label: "f3" },
+								{ value: "f4", label: "f4" },
+								{ value: "up", label: "up" },
+								{ value: "down", label: "down" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "weight",
+					label: "weight",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "weight",
+							defaultValue: "normal",
+							options: [
+								{ value: "normal", label: "normal" },
+								{ value: "medium", label: "medium" },
+								{ value: "semibold", label: "semibold" },
+							],
+						}),
+					],
+				}),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Typography.PageTitle",
+		label: "Typography.PageTitle",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "variant",
+					label: "variant",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "variant",
+							defaultValue: "info",
+							options: [
+								{ value: "info", label: "info" },
+								{ value: "success", label: "success" },
+								{ value: "warning", label: "warning" },
+								{ value: "error", label: "error" },
+								{ value: "accent", label: "accent" },
+								{ value: "muted", label: "muted" },
+								{ value: "f1", label: "f1" },
+								{ value: "f2", label: "f2" },
+								{ value: "f3", label: "f3" },
+								{ value: "f4", label: "f4" },
+								{ value: "foreground", label: "foreground" },
+								{ value: "lead", label: "lead" },
+								{ value: "sectionHeading", label: "sectionHeading" },
+								{ value: "codeExport", label: "codeExport" },
+								{ value: "primary", label: "primary" },
+								{ value: "secondary", label: "secondary" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "truncate", label: "truncate" }),
+				ports.bool({ name: "semibold", label: "semibold" }),
+				ports.bool({ name: "uppercase", label: "uppercase" }),
+				ports.bool({ name: "normal", label: "normal" }),
+				ports.bool({ name: "light", label: "light" }),
+				ports.bool({ name: "bold", label: "bold" }),
+				ports.bool({ name: "italic", label: "italic" }),
+				ports.bool({ name: "underline", label: "underline" }),
+				ports.string({ name: "tracking", label: "tracking" }),
+				ports.string({ name: "leading", label: "leading" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Typography.Paragraph",
+		label: "Typography.Paragraph",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "variant",
+					label: "variant",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "variant",
+							defaultValue: "info",
+							options: [
+								{ value: "info", label: "info" },
+								{ value: "success", label: "success" },
+								{ value: "warning", label: "warning" },
+								{ value: "error", label: "error" },
+								{ value: "accent", label: "accent" },
+								{ value: "muted", label: "muted" },
+								{ value: "f1", label: "f1" },
+								{ value: "f2", label: "f2" },
+								{ value: "f3", label: "f3" },
+								{ value: "f4", label: "f4" },
+								{ value: "foreground", label: "foreground" },
+								{ value: "lead", label: "lead" },
+								{ value: "sectionHeading", label: "sectionHeading" },
+								{ value: "codeExport", label: "codeExport" },
+								{ value: "primary", label: "primary" },
+								{ value: "secondary", label: "secondary" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "truncate", label: "truncate" }),
+				ports.bool({ name: "semibold", label: "semibold" }),
+				ports.bool({ name: "uppercase", label: "uppercase" }),
+				ports.bool({ name: "normal", label: "normal" }),
+				ports.bool({ name: "light", label: "light" }),
+				ports.bool({ name: "bold", label: "bold" }),
+				ports.bool({ name: "italic", label: "italic" }),
+				ports.bool({ name: "underline", label: "underline" }),
+				ports.string({ name: "tracking", label: "tracking" }),
+				ports.string({ name: "leading", label: "leading" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Typography.Pre",
+		label: "Typography.Pre",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "variant",
+					label: "variant",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "variant",
+							defaultValue: "info",
+							options: [
+								{ value: "info", label: "info" },
+								{ value: "success", label: "success" },
+								{ value: "warning", label: "warning" },
+								{ value: "error", label: "error" },
+								{ value: "accent", label: "accent" },
+								{ value: "muted", label: "muted" },
+								{ value: "f1", label: "f1" },
+								{ value: "f2", label: "f2" },
+								{ value: "f3", label: "f3" },
+								{ value: "f4", label: "f4" },
+								{ value: "foreground", label: "foreground" },
+								{ value: "lead", label: "lead" },
+								{ value: "sectionHeading", label: "sectionHeading" },
+								{ value: "codeExport", label: "codeExport" },
+								{ value: "primary", label: "primary" },
+								{ value: "secondary", label: "secondary" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "truncate", label: "truncate" }),
+				ports.bool({ name: "semibold", label: "semibold" }),
+				ports.bool({ name: "uppercase", label: "uppercase" }),
+				ports.bool({ name: "normal", label: "normal" }),
+				ports.bool({ name: "light", label: "light" }),
+				ports.bool({ name: "bold", label: "bold" }),
+				ports.bool({ name: "italic", label: "italic" }),
+				ports.bool({ name: "underline", label: "underline" }),
+				ports.string({ name: "tracking", label: "tracking" }),
+				ports.string({ name: "leading", label: "leading" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Typography.S",
+		label: "Typography.S",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "variant",
+					label: "variant",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "variant",
+							defaultValue: "info",
+							options: [
+								{ value: "info", label: "info" },
+								{ value: "success", label: "success" },
+								{ value: "warning", label: "warning" },
+								{ value: "error", label: "error" },
+								{ value: "accent", label: "accent" },
+								{ value: "muted", label: "muted" },
+								{ value: "f1", label: "f1" },
+								{ value: "f2", label: "f2" },
+								{ value: "f3", label: "f3" },
+								{ value: "f4", label: "f4" },
+								{ value: "foreground", label: "foreground" },
+								{ value: "lead", label: "lead" },
+								{ value: "sectionHeading", label: "sectionHeading" },
+								{ value: "codeExport", label: "codeExport" },
+								{ value: "primary", label: "primary" },
+								{ value: "secondary", label: "secondary" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "truncate", label: "truncate" }),
+				ports.bool({ name: "semibold", label: "semibold" }),
+				ports.bool({ name: "uppercase", label: "uppercase" }),
+				ports.bool({ name: "normal", label: "normal" }),
+				ports.bool({ name: "light", label: "light" }),
+				ports.bool({ name: "bold", label: "bold" }),
+				ports.bool({ name: "italic", label: "italic" }),
+				ports.bool({ name: "underline", label: "underline" }),
+				ports.string({ name: "tracking", label: "tracking" }),
+				ports.string({ name: "leading", label: "leading" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Typography.Small",
+		label: "Typography.Small",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "variant",
+					label: "variant",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "variant",
+							defaultValue: "info",
+							options: [
+								{ value: "info", label: "info" },
+								{ value: "success", label: "success" },
+								{ value: "warning", label: "warning" },
+								{ value: "error", label: "error" },
+								{ value: "accent", label: "accent" },
+								{ value: "muted", label: "muted" },
+								{ value: "f1", label: "f1" },
+								{ value: "f2", label: "f2" },
+								{ value: "f3", label: "f3" },
+								{ value: "f4", label: "f4" },
+								{ value: "foreground", label: "foreground" },
+								{ value: "lead", label: "lead" },
+								{ value: "sectionHeading", label: "sectionHeading" },
+								{ value: "codeExport", label: "codeExport" },
+								{ value: "primary", label: "primary" },
+								{ value: "secondary", label: "secondary" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "truncate", label: "truncate" }),
+				ports.bool({ name: "semibold", label: "semibold" }),
+				ports.bool({ name: "uppercase", label: "uppercase" }),
+				ports.bool({ name: "normal", label: "normal" }),
+				ports.bool({ name: "light", label: "light" }),
+				ports.bool({ name: "bold", label: "bold" }),
+				ports.bool({ name: "italic", label: "italic" }),
+				ports.bool({ name: "underline", label: "underline" }),
+				ports.string({ name: "tracking", label: "tracking" }),
+				ports.string({ name: "leading", label: "leading" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Typography.Span",
+		label: "Typography.Span",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "variant",
+					label: "variant",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "variant",
+							defaultValue: "info",
+							options: [
+								{ value: "info", label: "info" },
+								{ value: "success", label: "success" },
+								{ value: "warning", label: "warning" },
+								{ value: "error", label: "error" },
+								{ value: "accent", label: "accent" },
+								{ value: "muted", label: "muted" },
+								{ value: "f1", label: "f1" },
+								{ value: "f2", label: "f2" },
+								{ value: "f3", label: "f3" },
+								{ value: "f4", label: "f4" },
+								{ value: "foreground", label: "foreground" },
+								{ value: "lead", label: "lead" },
+								{ value: "sectionHeading", label: "sectionHeading" },
+								{ value: "codeExport", label: "codeExport" },
+								{ value: "primary", label: "primary" },
+								{ value: "secondary", label: "secondary" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "truncate", label: "truncate" }),
+				ports.bool({ name: "semibold", label: "semibold" }),
+				ports.bool({ name: "uppercase", label: "uppercase" }),
+				ports.bool({ name: "normal", label: "normal" }),
+				ports.bool({ name: "light", label: "light" }),
+				ports.bool({ name: "bold", label: "bold" }),
+				ports.bool({ name: "italic", label: "italic" }),
+				ports.bool({ name: "underline", label: "underline" }),
+				ports.string({ name: "tracking", label: "tracking" }),
+				ports.string({ name: "leading", label: "leading" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Typography.Subtitle",
+		label: "Typography.Subtitle",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "variant",
+					label: "variant",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "variant",
+							defaultValue: "info",
+							options: [
+								{ value: "info", label: "info" },
+								{ value: "success", label: "success" },
+								{ value: "warning", label: "warning" },
+								{ value: "error", label: "error" },
+								{ value: "accent", label: "accent" },
+								{ value: "muted", label: "muted" },
+								{ value: "f1", label: "f1" },
+								{ value: "f2", label: "f2" },
+								{ value: "f3", label: "f3" },
+								{ value: "f4", label: "f4" },
+								{ value: "foreground", label: "foreground" },
+								{ value: "lead", label: "lead" },
+								{ value: "sectionHeading", label: "sectionHeading" },
+								{ value: "codeExport", label: "codeExport" },
+								{ value: "primary", label: "primary" },
+								{ value: "secondary", label: "secondary" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "truncate", label: "truncate" }),
+				ports.bool({ name: "semibold", label: "semibold" }),
+				ports.bool({ name: "uppercase", label: "uppercase" }),
+				ports.bool({ name: "normal", label: "normal" }),
+				ports.bool({ name: "light", label: "light" }),
+				ports.bool({ name: "bold", label: "bold" }),
+				ports.bool({ name: "italic", label: "italic" }),
+				ports.bool({ name: "underline", label: "underline" }),
+				ports.string({ name: "tracking", label: "tracking" }),
+				ports.string({ name: "leading", label: "leading" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Typography.Title",
+		label: "Typography.Title",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "variant",
+					label: "variant",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "variant",
+							defaultValue: "info",
+							options: [
+								{ value: "info", label: "info" },
+								{ value: "success", label: "success" },
+								{ value: "warning", label: "warning" },
+								{ value: "error", label: "error" },
+								{ value: "accent", label: "accent" },
+								{ value: "muted", label: "muted" },
+								{ value: "f1", label: "f1" },
+								{ value: "f2", label: "f2" },
+								{ value: "f3", label: "f3" },
+								{ value: "f4", label: "f4" },
+								{ value: "foreground", label: "foreground" },
+								{ value: "lead", label: "lead" },
+								{ value: "sectionHeading", label: "sectionHeading" },
+								{ value: "codeExport", label: "codeExport" },
+								{ value: "primary", label: "primary" },
+								{ value: "secondary", label: "secondary" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "truncate", label: "truncate" }),
+				ports.bool({ name: "semibold", label: "semibold" }),
+				ports.bool({ name: "uppercase", label: "uppercase" }),
+				ports.bool({ name: "normal", label: "normal" }),
+				ports.bool({ name: "light", label: "light" }),
+				ports.bool({ name: "bold", label: "bold" }),
+				ports.bool({ name: "italic", label: "italic" }),
+				ports.bool({ name: "underline", label: "underline" }),
+				ports.string({ name: "tracking", label: "tracking" }),
+				ports.string({ name: "leading", label: "leading" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+
+	for (const def of definitions) {
+		const nodeType = `definition:${def}`;
+		if (!config.nodeTypes[nodeType]) {
+			config.addNodeType({
+				type: nodeType,
+				label: def,
+				category: "Definitions",
+				initialWidth: 320,
+				inputs: (ports) => [],
+				outputs: (ports) => [],
+			});
+		}
+	}
 
 	return config;
 };
