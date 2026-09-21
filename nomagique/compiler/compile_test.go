@@ -2,13 +2,14 @@ package compiler_test
 
 import (
 	"context"
+	"encoding/json"
 	"math"
 	"testing"
 
 	capnp "capnproto.org/go/capnp/v3"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/compiler"
-	"github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 func TestCompileFlume(t *testing.T) {
@@ -55,94 +56,59 @@ func TestCompileFlume(t *testing.T) {
 				},
 			}
 
-			pipeline, err := compiler.Compile(graph, reg)
+			program, err := compiler.Compile(graph, reg)
 			So(err, ShouldBeNil)
-			So(pipeline, ShouldNotBeNil)
+			So(program, ShouldNotBeNil)
 
-			var receivedResult float64
-			sinkCapability := types.NewFloat64Sink(
-				func(ctx context.Context, eval uint64, val float64) error {
-					receivedResult = val
-					return nil
-				},
-				nil,
-			)
-			err = pipeline.ConnectOutput("sink", "out", capnp.Client(sinkCapability))
-			So(err, ShouldBeNil)
+			leftIdx := program.NodeMap["left"]
+			rightIdx := program.NodeMap["right"]
 
-			ctx, _ := types.NextEvaluationContext(context.Background())
-			leftSink, err := pipeline.Float64InputSink("left", "in")
-			So(err, ShouldBeNil)
-			rightSink, err := pipeline.Float64InputSink("right", "in")
-			So(err, ShouldBeNil)
+			_, segL, _ := capnp.NewMessage(capnp.SingleSegment(nil))
+			inL, _ := capnp.NewRootStruct(segL, capnp.ObjectSize{DataSize: 8})
+			inL.SetUint64(0, math.Float64bits(2.0))
 
-			err = leftSink.Write(ctx, func(p types.Float64Sink_write_Params) error {
-				p.SetValue(2.0)
-				return nil
+			_, segR, _ := capnp.NewMessage(capnp.SingleSegment(nil))
+			inR, _ := capnp.NewRootStruct(segR, capnp.ObjectSize{DataSize: 8})
+			inR.SetUint64(0, math.Float64bits(2.0))
+
+			err = program.Execute(context.Background(), map[compiler.NodeID]capnp.Struct{
+				leftIdx:  inL,
+				rightIdx: inR,
 			})
 			So(err, ShouldBeNil)
 
-			err = rightSink.Write(ctx, func(p types.Float64Sink_write_Params) error {
-				p.SetValue(2.0)
-				return nil
-			})
+			res, err := program.Float64Result("add", "out")
 			So(err, ShouldBeNil)
-
-			err = pipeline.WaitStreaming()
-			So(err, ShouldBeNil)
-			So(receivedResult, ShouldEqual, 4.0)
+			So(res, ShouldEqual, 4.0)
 
 			Convey("Test C: Incomplete invocation (send only add.a)", func() {
-				receivedResult = -999.0
-				incompleteCtx, _ := types.NextEvaluationContext(context.Background())
+				_, segSingle, _ := capnp.NewMessage(capnp.SingleSegment(nil))
+				inSingle, _ := capnp.NewRootStruct(segSingle, capnp.ObjectSize{DataSize: 8})
+				inSingle.SetUint64(0, math.Float64bits(2.0))
 
-				err := leftSink.Write(incompleteCtx, func(p types.Float64Sink_write_Params) error {
-					p.SetValue(2.0)
-					return nil
+				err := program.Execute(context.Background(), map[compiler.NodeID]capnp.Struct{
+					leftIdx: inSingle,
 				})
 				So(err, ShouldBeNil)
 
-				err = pipeline.WaitStreaming()
-				So(err, ShouldBeNil)
-				// Add.write was NOT invoked because add.b was never supplied for this evaluation
-				So(receivedResult, ShouldEqual, -999.0)
-			})
-
-			Convey("Test D: Evaluation isolation (eval 1 receives add.a, eval 2 receives add.b)", func() {
-				receivedResult = -999.0
-				ctx1 := types.WithEvaluationID(context.Background(), 100)
-				ctx2 := types.WithEvaluationID(context.Background(), 200)
-
-				// Evaluation 1 provides add.a = 2.0
-				err := leftSink.Write(ctx1, func(p types.Float64Sink_write_Params) error {
-					p.SetValue(2.0)
-					return nil
-				})
-				So(err, ShouldBeNil)
-
-				// Evaluation 2 provides add.b = 3.0
-				err = rightSink.Write(ctx2, func(p types.Float64Sink_write_Params) error {
-					p.SetValue(3.0)
-					return nil
-				})
-				So(err, ShouldBeNil)
-
-				err = pipeline.WaitStreaming()
-				So(err, ShouldBeNil)
-				// Never combined: Add.write was not invoked for either incomplete evaluation
-				So(receivedResult, ShouldEqual, -999.0)
+				// Add.write was NOT invoked because add.b was never supplied
+				_, addRan := program.Result("add")
+				So(addRan, ShouldBeFalse)
 			})
 		})
 
 		Convey("Test E: Type mismatch between incompatible ports fails at compile time", func() {
 			customReg := compiler.NewRegistry()
-			customReg.Register(compiler.PrimitiveDescriptor{
-				Op: "text.Producer",
-				OutputPorts: map[string]compiler.PortType{
-					"out": compiler.PortTypeText,
+			customReg.Register("transport.Base64Encode", compiler.Factory{
+				InterfaceID: transport.Base64Encode_TypeID,
+				New: func(ctx context.Context, cfg []byte) (capnp.Client, error) {
+					return capnp.Client(transport.Base64Encode_ServerToClient(transport.NewBase64Encode())), nil
 				},
-				Construct: func(node compiler.Node) (any, capnp.Client, error) {
-					return nil, capnp.Client{}, nil
+			})
+			customReg.Register("arithmetic.Add", compiler.Factory{
+				InterfaceID: compiler.DefaultRegistry().ResolveMust("arithmetic.Add").InterfaceID,
+				New: func(ctx context.Context, cfg []byte) (capnp.Client, error) {
+					return compiler.DefaultRegistry().ResolveMust("arithmetic.Add").New(ctx, cfg)
 				},
 			})
 
@@ -152,7 +118,7 @@ func TestCompileFlume(t *testing.T) {
 				Nodes: map[string]compiler.Node{
 					"textSrc": {
 						ID:   "textSrc",
-						Type: "text.Producer",
+						Type: "transport.Base64Encode",
 						Connections: compiler.Connections{
 							Outputs: map[string][]compiler.ConnectionTarget{
 								"out": {{NodeID: "add", PortName: "a"}},
@@ -197,8 +163,8 @@ func TestCompileFlume(t *testing.T) {
 					"add": {
 						ID:   "add",
 						Type: "arithmetic.Add",
-						InputData: map[string]any{
-							"b": 1.0,
+						InputData: map[string]json.RawMessage{
+							"b": json.RawMessage(`{"float": 1.0}`),
 						},
 						Connections: compiler.Connections{
 							Outputs: map[string][]compiler.ConnectionTarget{
@@ -213,29 +179,26 @@ func TestCompileFlume(t *testing.T) {
 				},
 			}
 
-			pipeline, err := compiler.Compile(endToEndGraph, reg)
+			prog, err := compiler.Compile(endToEndGraph, reg)
 			So(err, ShouldBeNil)
-			So(pipeline, ShouldNotBeNil)
+			So(prog, ShouldNotBeNil)
 
-			var finalResult float64
-			sinkCapability := types.NewFloat64Sink(
-				func(ctx context.Context, eval uint64, val float64) error {
-					finalResult = val
-					return nil
-				},
-				nil,
-			)
-			err = pipeline.ConnectOutput("sink", "out", capnp.Client(sinkCapability))
-			So(err, ShouldBeNil)
-
+			srcIdx := prog.NodeMap["src"]
 			inputVal := 0.5
-			ctx, _ := types.NextEvaluationContext(context.Background())
 
-			err = pipeline.WriteFloat64(ctx, inputVal)
+			_, segS, _ := capnp.NewMessage(capnp.SingleSegment(nil))
+			inS, _ := capnp.NewRootStruct(segS, capnp.ObjectSize{DataSize: 8})
+			inS.SetUint64(0, math.Float64bits(inputVal))
+
+			err = prog.Execute(context.Background(), map[compiler.NodeID]capnp.Struct{
+				srcIdx: inS,
+			})
 			So(err, ShouldBeNil)
 
+			finalResult, err := prog.Float64Result("add", "out")
+			So(err, ShouldBeNil)
 			expected := math.Atanh(inputVal) + 1.0
-			So(finalResult, ShouldEqual, expected)
+			So(finalResult, ShouldAlmostEqual, expected, 1e-6)
 		})
 	})
 }

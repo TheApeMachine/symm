@@ -2,160 +2,566 @@ package compiler
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
+	"strconv"
 	"strings"
 
 	capnp "capnproto.org/go/capnp/v3"
+	"capnproto.org/go/capnp/v3/std/capnp/schema"
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/nomagique/types"
 )
 
 /*
-CompiledNode stores the metadata, local capability client, and invocation assembler for one node.
-*/
-type CompiledNode struct {
-	ID          string
-	Type        string
-	Server      any
-	Client      capnp.Client
-	Assembler   *InvocationAssembler
-	Inputs      map[string]PortType
-	Outputs     map[string]PortType
-	Descriptor  PrimitiveDescriptor
-	Downstreams map[string][]capnp.Client
-}
-
-/*
-Pipeline represents an executable, in-memory composition of Cap'n Proto primitives.
+Compile lowers a declarative JSON Graph into an immutable in-memory executable Program.
 Zero any payloads or graph traversals exist on the runtime execution path.
 */
-type Pipeline struct {
-	Nodes      map[string]*CompiledNode
-	ExecOrder  []string
-	SourceNode *CompiledNode
-	SinkNode   *CompiledNode
+func Compile(
+	graph Graph,
+	registry *Registry,
+	repos ...DefinitionRepository,
+) (*Program, error) {
+	return CompileWithPrevious(graph, registry, nil, repos...)
 }
 
 /*
-InputSink returns the generic capnp.Client capability for an input port on a node.
+CompileWithPrevious compiles a graph candidate with capability reuse from a previous Program.
 */
-func (p *Pipeline) InputSink(nodeID, portName string) (capnp.Client, error) {
-	node, exists := p.Nodes[nodeID]
-	if !exists {
-		return capnp.Client{}, errnie.Error(errnie.Err(
-			errnie.NotFound,
-			fmt.Sprintf("pipeline: node %q not found", nodeID),
-			nil,
-		))
+func CompileWithPrevious(
+	graph Graph,
+	registry *Registry,
+	previous *Program,
+	repos ...DefinitionRepository,
+) (*Program, error) {
+	if registry == nil {
+		registry = DefaultRegistry()
 	}
 
-	return node.Assembler.InputSink(portName)
-}
+	var repo DefinitionRepository
+	if len(repos) > 0 {
+		repo = repos[0]
+	}
 
-/*
-Float64InputSink returns the typed Float64Sink capability for an input port on a node.
-*/
-func (p *Pipeline) Float64InputSink(nodeID, portName string) (types.Float64Sink, error) {
-	client, err := p.InputSink(nodeID, portName)
+	// 1. Phase 2: Recursively expand nested definitions
+	expandedGraph, err := expandDefinitions(graph, repo)
 	if err != nil {
-		return types.Float64Sink{}, err
+		return nil, err
+	}
+	graph = expandedGraph
+
+	if len(graph.Nodes) == 0 {
+		return &Program{
+			Version: graph.ID,
+			Nodes:   nil,
+			Routes:  nil,
+			Roots:   nil,
+			NodeMap: make(map[string]NodeID),
+		}, nil
 	}
 
-	return types.Float64Sink(client), nil
-}
+	// 2. Phase 8: Topological ordering and cycle detection
+	inDegree := make(map[string]int, len(graph.Nodes))
+	adjacency := make(map[string][]string, len(graph.Nodes))
 
-/*
-DataInputSink returns the typed DataSink capability for an input port on a node.
-*/
-func (p *Pipeline) DataInputSink(nodeID, portName string) (types.DataSink, error) {
-	client, err := p.InputSink(nodeID, portName)
-	if err != nil {
-		return types.DataSink{}, err
+	for id := range graph.Nodes {
+		inDegree[id] = 0
 	}
 
-	return types.DataSink(client), nil
-}
-
-/*
-ConnectOutput binds a downstream capability to a node's output port.
-*/
-func (p *Pipeline) ConnectOutput(nodeID, portName string, sink capnp.Client) error {
-	node, exists := p.Nodes[nodeID]
-	if !exists {
-		return errnie.Error(errnie.Err(
-			errnie.NotFound,
-			fmt.Sprintf("pipeline: node %q not found", nodeID),
-			nil,
-		))
-	}
-
-	node.Downstreams[portName] = append(node.Downstreams[portName], sink)
-	return node.Descriptor.BindDownstream(node.Server, portName, node.Downstreams[portName])
-}
-
-/*
-WaitStreaming waits for all streaming calls across all pipeline nodes to flush.
-*/
-func (p *Pipeline) WaitStreaming() error {
-	for _, id := range p.ExecOrder {
-		if n, ok := p.Nodes[id]; ok {
-			if err := n.Assembler.WaitStreaming(); err != nil {
-				return err
+	for id, node := range graph.Nodes {
+		for _, targets := range node.Connections.Outputs {
+			for _, target := range targets {
+				if _, exists := graph.Nodes[target.NodeID]; exists {
+					adjacency[id] = append(adjacency[id], target.NodeID)
+					inDegree[target.NodeID]++
+				}
 			}
 		}
 	}
 
-	return nil
-}
+	var queue []string
+	for id, degree := range inDegree {
+		if degree == 0 {
+			queue = append(queue, id)
+		}
+	}
+	sort.Strings(queue)
 
-/*
-WriteFloat64 sends a float64 observation into the pipeline's ingress.
-*/
-func (p *Pipeline) WriteFloat64(ctx context.Context, val float64) error {
-	if p.SourceNode == nil {
-		return errnie.Error(errnie.Err(
+	execOrder := make([]string, 0, len(graph.Nodes))
+	for len(queue) > 0 {
+		curr := queue[0]
+		queue = queue[1:]
+		execOrder = append(execOrder, curr)
+
+		for _, neighbor := range adjacency[curr] {
+			inDegree[neighbor]--
+			if inDegree[neighbor] == 0 {
+				queue = append(queue, neighbor)
+			}
+		}
+	}
+
+	if len(execOrder) != len(graph.Nodes) {
+		return nil, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"pipeline: no source node configured",
+			"compiler: graph contains an unsupported cycle",
 			nil,
 		))
 	}
 
-	sink, err := p.Float64InputSink(p.SourceNode.ID, "in")
-	if err != nil {
-		return err
+	// 3. Phase 10: Assign numeric NodeIDs
+	nodeCount := len(execOrder)
+	nodeMap := make(map[string]NodeID, nodeCount)
+	for i, id := range execOrder {
+		nodeMap[id] = NodeID(i)
 	}
 
-	eval, _ := types.EvaluationIDFromContext(ctx)
-	if err := sink.Write(ctx, func(params types.Float64Sink_write_Params) error {
-		params.SetEvaluation(eval)
-		params.SetValue(val)
-		return nil
-	}); err != nil {
-		return err
+	// 4. Phase 3 & 4: Resolve factories and reflect schemas
+	compiledNodes := make([]CompiledNode, nodeCount)
+	schemasMap := make([]*InterfaceSchema, nodeCount)
+	factoriesMap := make([]Factory, nodeCount)
+
+	for i, id := range execOrder {
+		node := graph.Nodes[id]
+		factory, err := registry.Resolve(node.Type)
+		if err != nil {
+			return nil, err
+		}
+		factoriesMap[i] = factory
+
+		var ifaceSchema *InterfaceSchema
+		if factory.InterfaceID != 0 {
+			ifaceSchema, err = ReflectInterface(factory.InterfaceID)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			// Boundary node (source/sink)
+			isSource := isBoundarySource(id, node)
+			isSink := isBoundarySink(id, node)
+			ifaceSchema = makeBoundarySchema(isSource, isSink)
+		}
+		schemasMap[i] = ifaceSchema
+
+		compiledNode := CompiledNode{
+			ID:           id,
+			Index:        NodeID(i),
+			Inputs:       make(map[string]CompiledField),
+			Outputs:      make(map[string]CompiledField),
+			InputIndices: make(map[string]FieldID),
+			IsSource:     isBoundarySource(id, node),
+			IsSink:       isBoundarySink(id, node),
+		}
+
+		if ifaceSchema != nil {
+			compiledNode.Write = CompiledMethod{
+				InterfaceID: ifaceSchema.InterfaceID,
+				MethodID:    ifaceSchema.WriteMethod,
+				ArgsSize:    ifaceSchema.WriteSize,
+			}
+			compiledNode.Done = CompiledMethod{
+				InterfaceID: ifaceSchema.InterfaceID,
+				MethodID:    ifaceSchema.DoneMethod,
+				ArgsSize:    ifaceSchema.DoneSize,
+			}
+
+			// Sort inputs for stable field index assignment
+			var inNames []string
+			for name := range ifaceSchema.Inputs {
+				inNames = append(inNames, name)
+			}
+			sort.Strings(inNames)
+			for idx, name := range inNames {
+				fi := ifaceSchema.Inputs[name]
+				compiledNode.Inputs[name] = CompiledField{
+					Name:   name,
+					Which:  fi.Which,
+					Offset: fi.Offset,
+					Index:  FieldID(idx),
+				}
+				compiledNode.InputIndices[name] = FieldID(idx)
+			}
+
+			// Sort outputs for stable field index assignment
+			var outNames []string
+			for name := range ifaceSchema.Outputs {
+				outNames = append(outNames, name)
+			}
+			sort.Strings(outNames)
+			for idx, name := range outNames {
+				fi := ifaceSchema.Outputs[name]
+				compiledNode.Outputs[name] = CompiledField{
+					Name:   name,
+					Which:  fi.Which,
+					Offset: fi.Offset,
+					Index:  FieldID(idx),
+				}
+			}
+
+			// Phase 6: Compile static inputs into ArgsTemplate
+			if ifaceSchema.WriteSize.DataSize > 0 || ifaceSchema.WriteSize.PointerCount > 0 {
+				_, seg, err := capnp.NewMessage(capnp.SingleSegment(nil))
+				if err == nil {
+					tmpl, err := capnp.NewRootStruct(seg, ifaceSchema.WriteSize)
+					if err == nil {
+						for portName, rawBytes := range node.InputData {
+							fi, exists := resolveInputField(ifaceSchema, portName)
+							if exists {
+								rawStr := parseRawInputString(rawBytes)
+								_ = SetStaticField(tmpl, fi, rawStr)
+							}
+						}
+						compiledNode.ArgsTemplate = tmpl
+					}
+				}
+			}
+		}
+
+		compiledNodes[i] = compiledNode
 	}
 
-	return p.WaitStreaming()
+	// 5. Phase 7, 9 & 10: Validate edges, compile routes and readiness masks
+	var routes []Route
+
+	for uIdx, uID := range execOrder {
+		uNode := graph.Nodes[uID]
+		uSchema := schemasMap[uIdx]
+
+		for outPort, targets := range uNode.Connections.Outputs {
+			for _, target := range targets {
+				vID := target.NodeID
+				vIdx, targetExists := nodeMap[vID]
+				if !targetExists {
+					return nil, errnie.Error(errnie.Err(
+						errnie.Validation,
+						fmt.Sprintf("compiler: target node %q not found", vID),
+						nil,
+					))
+				}
+
+				vNode := graph.Nodes[vID]
+				vSchema := schemasMap[vIdx]
+
+				toField, inExists := resolveInputField(vSchema, target.PortName)
+				isSink := isBoundarySink(vID, vNode) || vSchema.InterfaceID == 0
+				if !inExists && !isSink {
+					return nil, errnie.Error(errnie.Err(
+						errnie.Validation,
+						fmt.Sprintf("compiler: node %q (%s) has no input port %q", vID, vNode.Type, target.PortName),
+						nil,
+					))
+				}
+
+				var fromField FieldInfo
+				var exists bool
+				if !isSink && inExists {
+					fromField, exists = resolveOutputField(uSchema, outPort, toField.Which)
+				} else {
+					fromField, exists = resolveOutputField(uSchema, outPort, schema.Type_Which_void)
+				}
+				if !exists {
+					return nil, errnie.Error(errnie.Err(
+						errnie.Validation,
+						fmt.Sprintf("compiler: node %q (%s) has no output port %q", uID, uNode.Type, outPort),
+						nil,
+					))
+				}
+
+				fromFieldID := compiledNodes[uIdx].Outputs[fromField.Name].Index
+
+				if isSink {
+					toFieldID, hasInput := compiledNodes[vIdx].InputIndices[target.PortName]
+					if !hasInput {
+						toFieldID = FieldID(len(compiledNodes[vIdx].Inputs))
+						compiledNodes[vIdx].InputIndices[target.PortName] = toFieldID
+					}
+					toField = FieldInfo{
+						Name:   target.PortName,
+						Offset: uint32(toFieldID),
+						Which:  fromField.Which,
+					}
+					compiledNodes[vIdx].Inputs[target.PortName] = CompiledField{
+						Name:   target.PortName,
+						Which:  fromField.Which,
+						Offset: uint32(toFieldID),
+						Index:  toFieldID,
+					}
+				}
+
+				toFieldID := compiledNodes[vIdx].Inputs[toField.Name].Index
+
+				// Compile typed Copier with type compatibility validation
+				copier, err := CompileCopier(fromField, toField)
+				if err != nil {
+					return nil, errnie.Error(errnie.Err(
+						errnie.Validation,
+						fmt.Sprintf("compiler: type mismatch on edge %s.%s (%s) -> %s.%s (%s)",
+							uID, outPort, formatWhich(fromField.Which),
+							vID, target.PortName, formatWhich(toField.Which)),
+						err,
+					))
+				}
+
+				routes = append(routes, Route{
+					FromNode:  NodeID(uIdx),
+					FromField: fromFieldID,
+					ToNode:    vIdx,
+					ToField:   toFieldID,
+					Copy:      copier,
+				})
+
+				// Mark destination field as required dynamic input
+				compiledNodes[vIdx].RequiredMask |= (1 << toFieldID)
+			}
+		}
+	}
+
+	// 6. Phase 11: Reuse or construct capabilities
+	for i, id := range execOrder {
+		node := graph.Nodes[id]
+		factory := factoriesMap[i]
+
+		var configBytes []byte
+		if len(node.InputData) > 0 {
+			configBytes, _ = sonic.Marshal(node.InputData)
+		}
+		configDigest := sha256.Sum256(configBytes)
+
+		identity := NodeIdentity{
+			ID:           id,
+			Type:         node.Type,
+			InterfaceID:  factory.InterfaceID,
+			ConfigDigest: configDigest,
+		}
+		compiledNodes[i].Identity = identity
+
+		var client capnp.Client
+
+		// Check capability reuse from previous Program
+		if previous != nil {
+			for _, prevNode := range previous.Nodes {
+				if prevNode.Identity == identity && prevNode.Client.IsValid() {
+					client = prevNode.Client.AddRef()
+					break
+				}
+			}
+		}
+
+		// Construct new capability if not reused
+		if !client.IsValid() {
+			var err error
+			client, err = factory.New(context.Background(), configBytes)
+			if err != nil {
+				// Clean up any acquired references on candidate failure
+				for _, cn := range compiledNodes {
+					if cn.Client.IsValid() {
+						cn.Client.Release()
+					}
+				}
+				return nil, errnie.Error(errnie.Err(
+					errnie.Internal,
+					fmt.Sprintf("compiler: failed to construct capability for node %q (%s)", id, node.Type),
+					err,
+				))
+			}
+		}
+
+		compiledNodes[i].Client = client
+	}
+
+	// 7. Find root nodes (in-degree 0)
+	var roots []NodeID
+	for i := 0; i < nodeCount; i++ {
+		if inDegree[execOrder[i]] == 0 {
+			roots = append(roots, NodeID(i))
+		}
+	}
+
+	return &Program{
+		Version: graph.ID,
+		Nodes:   compiledNodes,
+		Routes:  routes,
+		Roots:   roots,
+		NodeMap: nodeMap,
+	}, nil
 }
 
 /*
-Start triggers background execution for runnable nodes (such as the ingress source).
+CompileFile reads a JSON graph from disk and compiles it into an immutable Program.
 */
-func (pipeline *Pipeline) Start(ctx context.Context) {
-	for _, node := range pipeline.Nodes {
-		if node.Server == nil {
-			continue
-		}
+func CompileFile(
+	jsonPath string,
+	reg *Registry,
+	repos ...DefinitionRepository,
+) (*Program, error) {
+	data, err := os.ReadFile(jsonPath)
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.IO,
+			fmt.Sprintf("compiler: read %s", jsonPath),
+			err,
+		))
+	}
 
-		if runner, ok := node.Server.(interface{ Start(context.Context) }); ok {
-			runner.Start(ctx)
+	var graph Graph
+	if err := sonic.Unmarshal(data, &graph); err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf("compiler: unmarshal %s", jsonPath),
+			err,
+		))
+	}
+
+	return Compile(graph, reg, repos...)
+}
+
+/*
+ParseGraph parses a raw JSON byte slice into a Graph AST.
+*/
+func ParseGraph(data []byte) (Graph, error) {
+	var graph Graph
+	if err := sonic.Unmarshal(data, &graph); err != nil {
+		return Graph{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"compiler: failed to unmarshal graph JSON",
+			err,
+		))
+	}
+	return graph, nil
+}
+
+/*
+CompileJSON compiles raw JSON graph bytes directly into an immutable Program.
+*/
+func CompileJSON(
+	data []byte,
+	reg *Registry,
+	repos ...DefinitionRepository,
+) (*Program, error) {
+	graph, err := ParseGraph(data)
+	if err != nil {
+		return nil, err
+	}
+	return Compile(graph, reg, repos...)
+}
+
+func resolveInputField(ifaceSchema *InterfaceSchema, port string) (FieldInfo, bool) {
+	if ifaceSchema == nil {
+		return FieldInfo{}, false
+	}
+	if fi, ok := ifaceSchema.Inputs[port]; ok {
+		return fi, true
+	}
+	// Symmetrical aliasing: if port is "in" and only one input exists, or if first input exists
+	if port == "in" && len(ifaceSchema.Inputs) > 0 {
+		var all []FieldInfo
+		for _, fi := range ifaceSchema.Inputs {
+			all = append(all, fi)
 		}
+		sort.Slice(all, func(i, j int) bool {
+			return all[i].Offset < all[j].Offset
+		})
+		return all[0], true
+	}
+	return FieldInfo{}, false
+}
+
+func resolveOutputField(ifaceSchema *InterfaceSchema, port string, preferredType schema.Type_Which) (FieldInfo, bool) {
+	if ifaceSchema == nil {
+		return FieldInfo{}, false
+	}
+	if fi, ok := ifaceSchema.Outputs[port]; ok {
+		return fi, true
+	}
+	// Symmetrical aliasing: if port is "out" and only one output exists, or if first output exists
+	if port == "out" && len(ifaceSchema.Outputs) > 0 {
+		var matching []FieldInfo
+		var all []FieldInfo
+		for _, fi := range ifaceSchema.Outputs {
+			all = append(all, fi)
+			if preferredType != schema.Type_Which_void && fi.Which == preferredType {
+				matching = append(matching, fi)
+			}
+		}
+		if len(matching) > 0 {
+			sort.Slice(matching, func(i, j int) bool {
+				return matching[i].Offset < matching[j].Offset
+			})
+			return matching[0], true
+		}
+		sort.Slice(all, func(i, j int) bool {
+			return all[i].Offset < all[j].Offset
+		})
+		return all[0], true
+	}
+	return FieldInfo{}, false
+}
+
+func makeBoundarySchema(isSource, isSink bool) *InterfaceSchema {
+	return &InterfaceSchema{
+		InterfaceID: 0,
+		WriteSize:   capnp.ObjectSize{DataSize: 64, PointerCount: 8},
+		DoneSize:    capnp.ObjectSize{DataSize: 64, PointerCount: 8},
+		Inputs: map[string]FieldInfo{
+			"in":    {Name: "in", Offset: 0, Which: schema.Type_Which_data},
+			"value": {Name: "value", Offset: 0, Which: schema.Type_Which_data},
+		},
+		Outputs: map[string]FieldInfo{
+			"out":   {Name: "out", Offset: 0, Which: schema.Type_Which_data},
+			"value": {Name: "value", Offset: 0, Which: schema.Type_Which_data},
+		},
+		HasDone: true,
+	}
+}
+
+func parseRawInputString(raw json.RawMessage) string {
+	var strVal string
+	if err := sonic.Unmarshal(raw, &strVal); err == nil {
+		return strVal
+	}
+	var numVal float64
+	if err := sonic.Unmarshal(raw, &numVal); err == nil {
+		return strconv.FormatFloat(numVal, 'f', -1, 64)
+	}
+	var boolVal bool
+	if err := sonic.Unmarshal(raw, &boolVal); err == nil {
+		return strconv.FormatBool(boolVal)
+	}
+	var m map[string]json.RawMessage
+	if err := sonic.Unmarshal(raw, &m); err == nil {
+		for _, k := range []string{"string", "float", "number", "int", "bool", "value"} {
+			if sub, ok := m[k]; ok {
+				return parseRawInputString(sub)
+			}
+		}
+	}
+	return string(raw)
+}
+
+func formatWhich(w schema.Type_Which) string {
+	switch w {
+	case schema.Type_Which_float64:
+		return "Float64"
+	case schema.Type_Which_int64:
+		return "Int64"
+	case schema.Type_Which_uint64:
+		return "UInt64"
+	case schema.Type_Which_text:
+		return "Text"
+	case schema.Type_Which_data:
+		return "Data"
+	case schema.Type_Which_bool:
+		return "Bool"
+	default:
+		return fmt.Sprint(w)
 	}
 }
 
 func isBoundarySource(id string, node Node) bool {
-	return node.Type == "source" || node.Type == "data.Source" || id == "source" || id == "src"
+	return node.Type == "source" || node.Type == "data.Source" || node.Type == "test.Float64Source" || id == "source" || id == "src" || strings.HasPrefix(id, "source")
 }
 
 func isBoundarySink(id string, node Node) bool {
@@ -376,282 +782,4 @@ func expandDefinitions(
 	}
 
 	return graph, nil
-}
-
-/*
-Compile lowers a declarative JSON Graph into an in-memory executable Cap'n Proto composition.
-Nodes are instantiated once, capabilities are wired directly, and port types are strictly validated.
-*/
-func Compile(
-	graph Graph,
-	reg *Registry,
-	repos ...DefinitionRepository,
-) (*Pipeline, error) {
-	if reg == nil {
-		reg = DefaultRegistry()
-	}
-
-	var repo DefinitionRepository
-	if len(repos) > 0 && repos[0] != nil {
-		repo = repos[0]
-	}
-
-	if repo == nil && reg != nil {
-		repo = reg.Repository()
-	}
-
-	expandedGraph, err := expandDefinitions(graph, repo)
-	if err != nil {
-		return nil, err
-	}
-
-	graph = expandedGraph
-
-	if len(graph.Nodes) == 0 {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation,
-			fmt.Sprintf("compiler: graph %q contains no nodes", graph.Name),
-			nil,
-		))
-	}
-
-	// 1. Build adjacency and in-degree maps for topological sort
-	inDegree := make(map[string]int)
-	adjacency := make(map[string][]string)
-
-	for id := range graph.Nodes {
-		inDegree[id] = 0
-	}
-
-	for id, node := range graph.Nodes {
-		for _, targets := range node.Connections.Outputs {
-			for _, target := range targets {
-				if _, exists := graph.Nodes[target.NodeID]; exists {
-					adjacency[id] = append(adjacency[id], target.NodeID)
-					inDegree[target.NodeID]++
-				}
-			}
-		}
-	}
-
-	// 2. Kahn's Algorithm for topological ordering and cycle detection
-	queue := make([]string, 0)
-	for id, degree := range inDegree {
-		if degree == 0 {
-			queue = append(queue, id)
-		}
-	}
-
-	execOrder := make([]string, 0, len(graph.Nodes))
-	for len(queue) > 0 {
-		curr := queue[0]
-		queue = queue[1:]
-		execOrder = append(execOrder, curr)
-
-		for _, neighbor := range adjacency[curr] {
-			inDegree[neighbor]--
-			if inDegree[neighbor] == 0 {
-				queue = append(queue, neighbor)
-			}
-		}
-	}
-
-	if len(execOrder) != len(graph.Nodes) {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation,
-			fmt.Sprintf("compiler: cycle detected in graph %s", graph.Name),
-			nil,
-		))
-	}
-
-	// 3. Instantiate nodes and setup InvocationAssemblers
-	nodes := make(map[string]*CompiledNode)
-	for _, id := range execOrder {
-		node := graph.Nodes[id]
-		desc, err := reg.Resolve(node.Type)
-		if err != nil {
-			return nil, errnie.Error(err)
-		}
-
-		server, client, err := desc.Construct(node)
-		if err != nil {
-			return nil, errnie.Error(err)
-		}
-
-		compiled := &CompiledNode{
-			ID:          id,
-			Type:        node.Type,
-			Server:      server,
-			Client:      client,
-			Inputs:      desc.InputPorts,
-			Outputs:     desc.OutputPorts,
-			Descriptor:  desc,
-			Downstreams: make(map[string][]capnp.Client),
-		}
-
-		assembler := NewInvocationAssembler(
-			node.ID,
-			client,
-			desc.InputPorts,
-			desc.CreateInputSink,
-			func(ctx context.Context, setters map[string]func(capnp.Struct)) error {
-				return desc.Invoke(ctx, client, setters, compiled.Downstreams)
-			},
-			func(ctx context.Context) error {
-				return desc.Done(ctx, client, compiled.Downstreams)
-			},
-		)
-
-		compiled.Assembler = assembler
-
-		// Populate static inputs from inputData if unwired
-		if node.InputData != nil {
-			for portName, valData := range node.InputData {
-				if _, isInput := desc.InputPorts[portName]; isInput {
-					isWired := false
-					if wires, ok := node.Connections.Inputs[portName]; ok && len(wires) > 0 {
-						isWired = true
-					}
-
-					if !isWired {
-						if setterGen, ok := desc.CreateStaticSetter[portName]; ok {
-							setter, sErr := setterGen(valData)
-							if sErr != nil {
-								return nil, errnie.Error(errnie.Err(
-									errnie.Validation,
-									"failed to create static setter",
-									sErr,
-								))
-							}
-
-							assembler.SetStaticInput(portName, setter)
-						}
-					}
-				}
-			}
-		}
-
-		nodes[id] = compiled
-	}
-
-	// 4. Validate port types on edges and bind capabilities
-	for id, fromNode := range nodes {
-		origNode := graph.Nodes[id]
-		for outPort, targets := range origNode.Connections.Outputs {
-			fromPortType, hasOut := fromNode.Outputs[outPort]
-			if !hasOut {
-				return nil, errnie.Error(errnie.Err(
-					errnie.Validation,
-					fmt.Sprintf("compiler: node %q (%s) has no output port %q", id, fromNode.Type, outPort),
-					nil,
-				))
-			}
-
-			for _, target := range targets {
-				toNode, exists := nodes[target.NodeID]
-				if !exists {
-					return nil, errnie.Error(errnie.Err(
-						errnie.Validation,
-						fmt.Sprintf("compiler: target node %q not found", target.NodeID),
-						nil,
-					))
-				}
-
-				toPortType, hasIn := toNode.Inputs[target.PortName]
-				if !hasIn {
-					return nil, errnie.Error(errnie.Err(
-						errnie.Validation,
-						fmt.Sprintf("compiler: node %q (%s) has no input port %q", target.NodeID, toNode.Type, target.PortName),
-						nil,
-					))
-				}
-
-				// Type check: output and input port types must match exactly
-				if fromPortType != toPortType {
-					return nil, errnie.Error(errnie.Err(
-						errnie.Validation,
-						fmt.Sprintf("compiler: type mismatch on edge %s.%s (%s) -> %s.%s (%s)",
-							fromNode.ID, outPort, fromPortType, toNode.ID, target.PortName, toPortType),
-						nil,
-					))
-				}
-
-				toNode.Assembler.MarkWired(target.PortName)
-
-				// Obtain typed input sink capability from target assembler
-				targetSink, err := toNode.Assembler.InputSink(target.PortName)
-				if err != nil {
-					return nil, err
-				}
-
-				fromNode.Downstreams[outPort] = append(fromNode.Downstreams[outPort], targetSink)
-			}
-		}
-	}
-
-	// 5. Connect downstream capabilities to each primitive server
-	for _, node := range nodes {
-		for outPort, sinks := range node.Downstreams {
-			if err := node.Descriptor.BindDownstream(node.Server, outPort, sinks); err != nil {
-				return nil, errnie.Error(err)
-			}
-		}
-	}
-
-	pipeline := &Pipeline{
-		Nodes:     nodes,
-		ExecOrder: execOrder,
-	}
-
-	// Identify Source and Sink nodes
-	for _, node := range nodes {
-		if isBoundarySource(node.ID, Node{Type: node.Type}) {
-			pipeline.SourceNode = node
-		}
-
-		if isBoundarySink(node.ID, Node{Type: node.Type}) {
-			pipeline.SinkNode = node
-		}
-	}
-
-	// If no explicit SourceNode, pick the first node in topological order with 0 in-degree
-	if pipeline.SourceNode == nil && len(execOrder) > 0 {
-		pipeline.SourceNode = nodes[execOrder[0]]
-	}
-
-	// If no explicit SinkNode, pick the last node in topological order
-	if pipeline.SinkNode == nil && len(execOrder) > 0 {
-		pipeline.SinkNode = nodes[execOrder[len(execOrder)-1]]
-	}
-
-	return pipeline, nil
-}
-
-/*
-CompileFile reads a JSON graph from disk and compiles it into an executable Pipeline.
-*/
-func CompileFile(
-	jsonPath string,
-	reg *Registry,
-	repos ...DefinitionRepository,
-) (*Pipeline, error) {
-	data, err := os.ReadFile(jsonPath)
-	if err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.IO,
-			fmt.Sprintf("compiler: read %s", jsonPath),
-			err,
-		))
-	}
-
-	var graph Graph
-	if err := sonic.Unmarshal(data, &graph); err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation,
-			fmt.Sprintf("compiler: unmarshal %s", jsonPath),
-			err,
-		))
-	}
-
-	return Compile(graph, reg, repos...)
 }

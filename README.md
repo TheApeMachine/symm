@@ -1,4 +1,4 @@
-![Header image of S.Y.M.M.](header.png)
+![Header image of S.Y.M.M.](symm.png)
 
 # S.Y.M.M. — Shake Your Money Maker
 
@@ -16,8 +16,6 @@ its own measured skill exceeds its own measurement error.
 Everything that crosses the wire is captured byte-for-byte, so **Hindsight** can later
 reconstruct exactly what the system knew at any historical moment and check whether the
 machinery was sane.
-
----
 
 > ### ⚠️ Read this first
 >
@@ -37,8 +35,6 @@ machinery was sane.
 > - **Trading real funds risks losing them.** Setting `trading.model: real` points
 >   experimental software at real money. Doing so is entirely at your own risk.
 > - Software provided **as is**, without warranty of any kind.
-
----
 
 ## Contents
 

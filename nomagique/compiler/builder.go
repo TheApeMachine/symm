@@ -8,7 +8,7 @@ import (
 
 /*
 Builder reads a JSON graph definition and dynamically composes it
-into a single, executable Cap'n Proto Pipeline at runtime.
+into a single, executable Cap'n Proto Program at runtime.
 */
 type Builder struct {
 	graph Graph
@@ -29,8 +29,8 @@ func NewBuilder(jsonPath string) (*Builder, error) {
 }
 
 /*
-Compose compiles the graph into a typed Pipeline.
+Compose compiles the graph into an immutable typed Program.
 */
-func (b *Builder) Compose(repos ...DefinitionRepository) (*Pipeline, error) {
+func (b *Builder) Compose(repos ...DefinitionRepository) (*Program, error) {
 	return Compile(b.graph, DefaultRegistry(), repos...)
 }
