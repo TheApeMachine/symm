@@ -5,8 +5,8 @@ import (
 	"context"
 	"sync/atomic"
 
-	"github.com/theapemachine/errnie"
 	iradix "github.com/hashicorp/go-immutable-radix/v2"
+	"github.com/theapemachine/errnie"
 )
 
 type RadixServer struct {

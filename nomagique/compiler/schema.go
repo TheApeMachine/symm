@@ -16,9 +16,12 @@ import (
 FieldInfo contains reflected Cap'n Proto field metadata.
 */
 type FieldInfo struct {
-	Name   string
-	Offset uint32
-	Which  schema.Type_Which
+	Name               string
+	Offset             uint32
+	Which              schema.Type_Which
+	InUnion            bool
+	DiscriminantValue  uint16
+	DiscriminantOffset uint32
 }
 
 /*
@@ -28,10 +31,12 @@ type InterfaceSchema struct {
 	InterfaceID uint64
 	Name        string
 	WriteMethod uint16
-	WriteSize   capnp.ObjectSize
+	WriteParams capnp.ObjectSize
+	WriteResult capnp.ObjectSize
 	Inputs      map[string]FieldInfo
 	DoneMethod  uint16
-	DoneSize    capnp.ObjectSize
+	DoneParams  capnp.ObjectSize
+	DoneResult  capnp.ObjectSize
 	Outputs     map[string]FieldInfo
 	HasDone     bool
 }
@@ -143,7 +148,7 @@ func ReflectInterface(interfaceID uint64) (*InterfaceSchema, error) {
 			paramNode := nodeMap[m.ParamStructType()]
 			if paramNode.IsValid() {
 				st := paramNode.StructNode()
-				result.WriteSize = capnp.ObjectSize{
+				result.WriteParams = capnp.ObjectSize{
 					DataSize:     capnp.Size(st.DataWordCount() * 8),
 					PointerCount: uint16(st.PointerCount()),
 				}
@@ -154,12 +159,24 @@ func ReflectInterface(interfaceID uint64) (*InterfaceSchema, error) {
 						fName, _ := f.Name()
 						slot := f.Slot()
 						t, _ := slot.Type()
+						discVal := f.DiscriminantValue()
 						result.Inputs[fName] = FieldInfo{
-							Name:   fName,
-							Offset: slot.Offset(),
-							Which:  t.Which(),
+							Name:               fName,
+							Offset:             slot.Offset(),
+							Which:              t.Which(),
+							InUnion:            discVal != schema.Field_noDiscriminant,
+							DiscriminantValue:  discVal,
+							DiscriminantOffset: st.DiscriminantOffset(),
 						}
 					}
+				}
+			}
+			resNode := nodeMap[m.ResultStructType()]
+			if resNode.IsValid() {
+				st := resNode.StructNode()
+				result.WriteResult = capnp.ObjectSize{
+					DataSize:     capnp.Size(st.DataWordCount() * 8),
+					PointerCount: uint16(st.PointerCount()),
 				}
 			}
 		}
@@ -167,10 +184,18 @@ func ReflectInterface(interfaceID uint64) (*InterfaceSchema, error) {
 		if mName == "done" || (i == 1 && mName == "") {
 			result.DoneMethod = uint16(i)
 			result.HasDone = true
+			paramNode := nodeMap[m.ParamStructType()]
+			if paramNode.IsValid() {
+				st := paramNode.StructNode()
+				result.DoneParams = capnp.ObjectSize{
+					DataSize:     capnp.Size(st.DataWordCount() * 8),
+					PointerCount: uint16(st.PointerCount()),
+				}
+			}
 			resNode := nodeMap[m.ResultStructType()]
 			if resNode.IsValid() {
 				st := resNode.StructNode()
-				result.DoneSize = capnp.ObjectSize{
+				result.DoneResult = capnp.ObjectSize{
 					DataSize:     capnp.Size(st.DataWordCount() * 8),
 					PointerCount: uint16(st.PointerCount()),
 				}
@@ -181,10 +206,14 @@ func ReflectInterface(interfaceID uint64) (*InterfaceSchema, error) {
 						fName, _ := f.Name()
 						slot := f.Slot()
 						t, _ := slot.Type()
+						discVal := f.DiscriminantValue()
 						result.Outputs[fName] = FieldInfo{
-							Name:   fName,
-							Offset: slot.Offset(),
-							Which:  t.Which(),
+							Name:               fName,
+							Offset:             slot.Offset(),
+							Which:              t.Which(),
+							InUnion:            discVal != schema.Field_noDiscriminant,
+							DiscriminantValue:  discVal,
+							DiscriminantOffset: st.DiscriminantOffset(),
 						}
 					}
 				}
@@ -201,17 +230,12 @@ CompileCopier creates a typed copy operation from source result field to destina
 */
 func CompileCopier(fromField FieldInfo, toField FieldInfo) (Copier, error) {
 	if fromField.Which != toField.Which {
-		// Allow compatible numeric copies where both are 64-bit float/int/uint
-		isFrom64 := fromField.Which == schema.Type_Which_float64 || fromField.Which == schema.Type_Which_int64 || fromField.Which == schema.Type_Which_uint64
-		isTo64 := toField.Which == schema.Type_Which_float64 || toField.Which == schema.Type_Which_int64 || toField.Which == schema.Type_Which_uint64
-		if !(isFrom64 && isTo64) {
-			return nil, errnie.Error(errnie.Err(
-				errnie.Validation,
-				fmt.Sprintf("compiler: type mismatch on field %s (%v) -> %s (%v)",
-					fromField.Name, fromField.Which, toField.Name, toField.Which),
-				nil,
-			))
-		}
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf("compiler: type mismatch on field %s (%v) -> %s (%v)",
+				fromField.Name, fromField.Which, toField.Name, toField.Which),
+			nil,
+		))
 	}
 
 	which := fromField.Which
@@ -243,7 +267,7 @@ func CompileCopier(fromField FieldInfo, toField FieldInfo) (Copier, error) {
 			return nil
 		}, nil
 
-	case schema.Type_Which_int32, schema.Type_Which_uint32, schema.Type_Which_float32:
+	case schema.Type_Which_int32, schema.Type_Which_uint32:
 		fromOff := capnp.DataOffset(fromOffset * 4)
 		toOff := capnp.DataOffset(toOffset * 4)
 		return func(src, dst capnp.Struct) error {
@@ -251,7 +275,23 @@ func CompileCopier(fromField FieldInfo, toField FieldInfo) (Copier, error) {
 			return nil
 		}, nil
 
-	case schema.Type_Which_int64, schema.Type_Which_uint64, schema.Type_Which_float64:
+	case schema.Type_Which_float32:
+		fromOff := capnp.DataOffset(fromOffset * 4)
+		toOff := capnp.DataOffset(toOffset * 4)
+		return func(src, dst capnp.Struct) error {
+			dst.SetUint32(toOff, src.Uint32(fromOff))
+			return nil
+		}, nil
+
+	case schema.Type_Which_int64, schema.Type_Which_uint64:
+		fromOff := capnp.DataOffset(fromOffset * 8)
+		toOff := capnp.DataOffset(toOffset * 8)
+		return func(src, dst capnp.Struct) error {
+			dst.SetUint64(toOff, src.Uint64(fromOff))
+			return nil
+		}, nil
+
+	case schema.Type_Which_float64:
 		fromOff := capnp.DataOffset(fromOffset * 8)
 		toOff := capnp.DataOffset(toOffset * 8)
 		return func(src, dst capnp.Struct) error {

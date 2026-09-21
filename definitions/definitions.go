@@ -61,14 +61,14 @@ func Load(name string) (compiler.Graph, error) {
 
 func readFromDisk(name string) ([]byte, error) {
 	candidates := []string{
-		filepath.Join("signal", "definitions", name+".json"),
-		filepath.Join("..", "signal", "definitions", name+".json"),
-		filepath.Join("..", "..", "signal", "definitions", name+".json"),
+		filepath.Join("manifest", name+".json"),
+		filepath.Join("..", "manifest", name+".json"),
+		filepath.Join("..", "..", "manifest", name+".json"),
 	}
 
 	_, goFile, _, ok := goruntime.Caller(0)
 	if ok {
-		candidates = append(candidates, filepath.Join(filepath.Dir(goFile), "..", "signal", "definitions", name+".json"))
+		candidates = append(candidates, filepath.Join(filepath.Dir(goFile), "..", "manifest", name+".json"))
 	}
 
 	for _, candidate := range candidates {

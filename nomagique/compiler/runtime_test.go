@@ -2,6 +2,8 @@ package compiler_test
 
 import (
 	"context"
+	"fmt"
+	"sync"
 	"testing"
 
 	capnp "capnproto.org/go/capnp/v3"
@@ -107,5 +109,74 @@ func TestRuntimeHotRecompile(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(val1, ShouldEqual, 15.0)
 		})
+	})
+}
+
+func TestRuntimeConcurrentQuiescentBarrier(t *testing.T) {
+	Convey("Given a Runtime executing concurrently while hot-recompiling", t, func() {
+		reg := compiler.DefaultRegistry()
+
+		initialJSON := []byte(`{
+			"nodes": {
+				"n1": {
+					"id": "n1",
+					"type": "arithmetic.Add",
+					"inputData": {
+						"a": {"number": 1},
+						"b": {"number": 1}
+					}
+				}
+			}
+		}`)
+
+		rt, err := compiler.NewRuntimeFromJSON(initialJSON, reg, nil)
+		So(err, ShouldBeNil)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		var wg sync.WaitGroup
+		// Concurrent executors
+		for i := 0; i < 4; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					default:
+						_ = rt.Execute(ctx, nil)
+					}
+				}
+			}()
+		}
+
+		// Recompile repeatedly across barrier
+		for i := 0; i < 20; i++ {
+			recompJSON := []byte(fmt.Sprintf(`{
+				"nodes": {
+					"n1": {
+						"id": "n1",
+						"type": "arithmetic.Add",
+						"inputData": {
+							"a": {"number": %d},
+							"b": {"number": %d}
+						}
+					}
+				}
+			}`, i, i))
+
+			prog, err := rt.RecompileJSON(ctx, recompJSON)
+			So(err, ShouldBeNil)
+			So(prog != nil, ShouldBeTrue)
+		}
+
+		cancel()
+		wg.Wait()
+
+		// Final execute on active program succeeds
+		err = rt.Execute(context.Background(), nil)
+		So(err, ShouldBeNil)
 	})
 }

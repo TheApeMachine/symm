@@ -18,7 +18,7 @@ type Runtime struct {
 	active   atomic.Pointer[Program]
 	registry *Registry
 	repo     DefinitionRepository
-	mu       sync.Mutex // quiescent swap and admission barrier
+	mu       sync.RWMutex // quiescent swap and admission barrier
 }
 
 func NewRuntime(initial *Program, reg *Registry, repo DefinitionRepository) *Runtime {
@@ -55,8 +55,13 @@ func (r *Runtime) Active() *Program {
 
 /*
 Execute runs an evaluation observation through the currently active program.
+Acquires read lock on the admission barrier so that hot-recompilation cannot release
+capabilities while an evaluation frame is in progress.
 */
 func (r *Runtime) Execute(ctx context.Context, initialInputs map[NodeID]capnp.Struct) error {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
 	prog := r.active.Load()
 	if prog == nil {
 		return errnie.Error(errnie.Err(

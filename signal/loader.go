@@ -1,19 +1,14 @@
 package signal
 
 import (
-	"embed"
 	"fmt"
-	"io/fs"
 	"strings"
 	"sync"
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
-
+	"github.com/theapemachine/symm/manifest"
 )
-
-//go:embed definitions/*.json
-var definitionsFS embed.FS
 
 var (
 	customDefinitionsMu sync.RWMutex
@@ -24,21 +19,14 @@ var (
 ListDefinitions returns all available signal definition IDs.
 */
 func ListDefinitions() ([]string, error) {
-	ids := make([]string, 0)
-	seen := make(map[string]bool)
+	ids, err := manifest.List()
+	if err != nil {
+		ids = make([]string, 0)
+	}
 
-	entries, err := fs.ReadDir(definitionsFS, "definitions")
-
-	if err == nil {
-		for _, entry := range entries {
-			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
-				continue
-			}
-
-			id := strings.TrimSuffix(entry.Name(), ".json")
-			ids = append(ids, id)
-			seen[id] = true
-		}
+	seen := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		seen[id] = true
 	}
 
 	customDefinitionsMu.RLock()
@@ -65,17 +53,10 @@ func GetDefinition(id string) ([]byte, error) {
 		return data, nil
 	}
 
-	// Try reading from embedded FS
-	filename := "definitions/" + id + ".json"
+	sanitized := strings.TrimSuffix(id, ".json")
+	sanitized = strings.ReplaceAll(sanitized, ":", "_")
 
-	if !strings.HasSuffix(id, ".json") {
-		// Also try with colon replaced by underscore (e.g. correlation:ticker -> correlation_ticker)
-		sanitized := strings.ReplaceAll(id, ":", "_")
-		filename = "definitions/" + sanitized + ".json"
-	}
-
-	embeddedData, err := definitionsFS.ReadFile(filename)
-
+	embeddedData, err := manifest.ReadFile(sanitized)
 	if err != nil {
 		return nil, errnie.Error(errnie.Err(
 			errnie.NotFound,
@@ -103,5 +84,3 @@ func SaveDefinition(id string, rawJSON []byte) error {
 	customDefinitionsMu.Unlock()
 	return nil
 }
-
-

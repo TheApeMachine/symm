@@ -20,17 +20,21 @@ CompiledMethod stores method dispatch coordinates.
 type CompiledMethod struct {
 	InterfaceID uint64
 	MethodID    uint16
-	ArgsSize    capnp.ObjectSize
+	ParamsSize  capnp.ObjectSize
+	ResultSize  capnp.ObjectSize
 }
 
 /*
 CompiledField describes a port field on write or done.
 */
 type CompiledField struct {
-	Name   string
-	Which  schema.Type_Which
-	Offset uint32
-	Index  FieldID
+	Name               string
+	Which              schema.Type_Which
+	Offset             uint32
+	Index              FieldID
+	InUnion            bool
+	DiscriminantValue  uint16
+	DiscriminantOffset uint32
 }
 
 /*
@@ -67,11 +71,14 @@ type CompiledNode struct {
 Route connects a source node result field to a destination node argument field.
 */
 type Route struct {
-	FromNode  NodeID
-	FromField FieldID
-	ToNode    NodeID
-	ToField   FieldID
-	Copy      Copier
+	FromNode       NodeID
+	FromField      FieldID
+	ToNode         NodeID
+	ToField        FieldID
+	Copy           Copier
+	FromInUnion    bool
+	FromDiscVal    uint16
+	FromDiscOffset uint32
 }
 
 /*
@@ -188,12 +195,12 @@ func (p *Program) Execute(
 	// 1. Initialize per-node argument structs
 	for i := 0; i < nodeCount; i++ {
 		node := &p.Nodes[i]
-		if node.Write.ArgsSize.DataSize > 0 || node.Write.ArgsSize.PointerCount > 0 {
+		if node.Write.ParamsSize.DataSize > 0 || node.Write.ParamsSize.PointerCount > 0 {
 			_, seg, err := capnp.NewMessage(capnp.SingleSegment(nil))
 			if err != nil {
 				return errnie.Error(errnie.Err(errnie.Internal, "failed to alloc evaluation message", err))
 			}
-			st, err := capnp.NewRootStruct(seg, node.Write.ArgsSize)
+			st, err := capnp.NewRootStruct(seg, node.Write.ParamsSize)
 			if err != nil {
 				return errnie.Error(errnie.Err(errnie.Internal, "failed to alloc argument struct", err))
 			}
@@ -254,7 +261,7 @@ func (p *Program) Execute(
 						InterfaceID: node.Write.InterfaceID,
 						MethodID:    node.Write.MethodID,
 					},
-					ArgsSize: node.Write.ArgsSize,
+					ArgsSize: node.Write.ParamsSize,
 					PlaceArgs: func(s capnp.Struct) error {
 						return s.CopyFrom(frames[currIdx].args)
 					},
@@ -283,7 +290,7 @@ func (p *Program) Execute(
 					InterfaceID: node.Done.InterfaceID,
 					MethodID:    node.Done.MethodID,
 				},
-				ArgsSize: node.Done.ArgsSize,
+				ArgsSize: node.Done.ParamsSize,
 			}
 			ans, release := client.SendCall(ctx, doneSend)
 			res, err := ans.Struct()
@@ -293,7 +300,7 @@ func (p *Program) Execute(
 				// Save clone for result retrieval
 				_, seg, cloneErr := capnp.NewMessage(capnp.SingleSegment(nil))
 				if cloneErr == nil {
-					cloneRes, initErr := capnp.NewRootStruct(seg, node.Done.ArgsSize)
+					cloneRes, initErr := capnp.NewRootStruct(seg, node.Done.ResultSize)
 					if initErr == nil {
 						_ = cloneRes.CopyFrom(res)
 						p.results[node.ID] = cloneRes
@@ -304,8 +311,27 @@ func (p *Program) Execute(
 			// Step D: Route results to downstreams
 			for _, r := range outgoing[currIdx] {
 				destIdx := r.ToNode
-				if int(destIdx) < nodeCount && resStruct.IsValid() && frames[destIdx].args.IsValid() {
+				if int(destIdx) < nodeCount {
+					if r.FromInUnion {
+						if !resStruct.IsValid() {
+							continue
+						}
+						disc := resStruct.Uint16(capnp.DataOffset(r.FromDiscOffset * 2))
+						if disc != r.FromDiscVal {
+							// Inactive union branch: skip routing to this downstream
+							continue
+						}
+					}
+
 					if r.Copy != nil {
+						if !resStruct.IsValid() || !frames[destIdx].args.IsValid() {
+							release()
+							return errnie.Error(errnie.Err(
+								errnie.Internal,
+								fmt.Sprintf("compiler: field copy failed from %q to %q (invalid struct)", node.ID, p.Nodes[destIdx].ID),
+								nil,
+							))
+						}
 						if err := r.Copy(resStruct, frames[destIdx].args); err != nil {
 							release()
 							return errnie.Error(errnie.Err(
@@ -326,13 +352,21 @@ func (p *Program) Execute(
 			release()
 		} else {
 			// Virtual boundary node (e.g. data source injected from outside or boundary sink)
-			if frames[currIdx].args.IsValid() {
-				p.results[node.ID] = frames[currIdx].args
-			}
+			p.results[node.ID] = frames[currIdx].args
 			for _, r := range outgoing[currIdx] {
 				destIdx := r.ToNode
-				if int(destIdx) < nodeCount && frames[currIdx].args.IsValid() && frames[destIdx].args.IsValid() {
-					if r.Copy != nil {
+				if int(destIdx) < nodeCount {
+					if r.FromInUnion {
+						if !frames[currIdx].args.IsValid() {
+							continue
+						}
+						disc := frames[currIdx].args.Uint16(capnp.DataOffset(r.FromDiscOffset * 2))
+						if disc != r.FromDiscVal {
+							continue
+						}
+					}
+
+					if r.Copy != nil && frames[currIdx].args.IsValid() && frames[destIdx].args.IsValid() {
 						_ = r.Copy(frames[currIdx].args, frames[destIdx].args)
 					}
 					frames[destIdx].ready |= (1 << r.ToField)

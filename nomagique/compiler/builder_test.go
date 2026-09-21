@@ -22,7 +22,7 @@ func TestBuilderCompose(t *testing.T) {
 
 		for _, id := range ids {
 			Convey("Compiling "+id, func() {
-				jsonPath := filepath.Join(repoRoot, "signal", "definitions", id+".json")
+				jsonPath := filepath.Join(repoRoot, "manifest", id+".json")
 				builder, err := compiler.NewBuilder(jsonPath)
 				So(err, ShouldBeNil)
 				So(builder, ShouldNotBeNil)

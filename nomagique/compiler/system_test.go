@@ -14,7 +14,7 @@ func TestSystemOrchestration(t *testing.T) {
 	Convey("Given the master system orchestration JSON", t, func() {
 		_, thisFile, _, _ := runtime.Caller(0)
 		repoRoot := filepath.Join(filepath.Dir(thisFile), "..", "..")
-		systemPath := filepath.Join(repoRoot, "signal", "definitions", "system.json")
+		systemPath := filepath.Join(repoRoot, "manifest", "system.json")
 
 		builder, err := compiler.NewBuilder(systemPath)
 		So(err, ShouldBeNil)

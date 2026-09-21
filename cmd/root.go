@@ -57,7 +57,7 @@ func init() {
 		&graphPath,
 		"graph",
 		"g",
-		"signal/definitions/system.json",
+		"manifest/system.json",
 		"path to the root JSON graph definition",
 	)
 }

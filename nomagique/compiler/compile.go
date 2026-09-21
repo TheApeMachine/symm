@@ -160,12 +160,14 @@ func CompileWithPrevious(
 			compiledNode.Write = CompiledMethod{
 				InterfaceID: ifaceSchema.InterfaceID,
 				MethodID:    ifaceSchema.WriteMethod,
-				ArgsSize:    ifaceSchema.WriteSize,
+				ParamsSize:  ifaceSchema.WriteParams,
+				ResultSize:  ifaceSchema.WriteResult,
 			}
 			compiledNode.Done = CompiledMethod{
 				InterfaceID: ifaceSchema.InterfaceID,
 				MethodID:    ifaceSchema.DoneMethod,
-				ArgsSize:    ifaceSchema.DoneSize,
+				ParamsSize:  ifaceSchema.DoneParams,
+				ResultSize:  ifaceSchema.DoneResult,
 			}
 
 			// Sort inputs for stable field index assignment
@@ -177,10 +179,13 @@ func CompileWithPrevious(
 			for idx, name := range inNames {
 				fi := ifaceSchema.Inputs[name]
 				compiledNode.Inputs[name] = CompiledField{
-					Name:   name,
-					Which:  fi.Which,
-					Offset: fi.Offset,
-					Index:  FieldID(idx),
+					Name:               name,
+					Which:              fi.Which,
+					Offset:             fi.Offset,
+					Index:              FieldID(idx),
+					InUnion:            fi.InUnion,
+					DiscriminantValue:  fi.DiscriminantValue,
+					DiscriminantOffset: fi.DiscriminantOffset,
 				}
 				compiledNode.InputIndices[name] = FieldID(idx)
 			}
@@ -194,18 +199,21 @@ func CompileWithPrevious(
 			for idx, name := range outNames {
 				fi := ifaceSchema.Outputs[name]
 				compiledNode.Outputs[name] = CompiledField{
-					Name:   name,
-					Which:  fi.Which,
-					Offset: fi.Offset,
-					Index:  FieldID(idx),
+					Name:               name,
+					Which:              fi.Which,
+					Offset:             fi.Offset,
+					Index:              FieldID(idx),
+					InUnion:            fi.InUnion,
+					DiscriminantValue:  fi.DiscriminantValue,
+					DiscriminantOffset: fi.DiscriminantOffset,
 				}
 			}
 
 			// Phase 6: Compile static inputs into ArgsTemplate
-			if ifaceSchema.WriteSize.DataSize > 0 || ifaceSchema.WriteSize.PointerCount > 0 {
+			if ifaceSchema.WriteParams.DataSize > 0 || ifaceSchema.WriteParams.PointerCount > 0 {
 				_, seg, err := capnp.NewMessage(capnp.SingleSegment(nil))
 				if err == nil {
-					tmpl, err := capnp.NewRootStruct(seg, ifaceSchema.WriteSize)
+					tmpl, err := capnp.NewRootStruct(seg, ifaceSchema.WriteParams)
 					if err == nil {
 						for portName, rawBytes := range node.InputData {
 							fi, exists := resolveInputField(ifaceSchema, portName)
@@ -306,11 +314,14 @@ func CompileWithPrevious(
 				}
 
 				routes = append(routes, Route{
-					FromNode:  NodeID(uIdx),
-					FromField: fromFieldID,
-					ToNode:    vIdx,
-					ToField:   toFieldID,
-					Copy:      copier,
+					FromNode:       NodeID(uIdx),
+					FromField:      fromFieldID,
+					ToNode:         vIdx,
+					ToField:        toFieldID,
+					Copy:           copier,
+					FromInUnion:    fromField.InUnion,
+					FromDiscVal:    fromField.DiscriminantValue,
+					FromDiscOffset: fromField.DiscriminantOffset,
 				})
 
 				// Mark destination field as required dynamic input
@@ -503,8 +514,8 @@ func resolveOutputField(ifaceSchema *InterfaceSchema, port string, preferredType
 func makeBoundarySchema(isSource, isSink bool) *InterfaceSchema {
 	return &InterfaceSchema{
 		InterfaceID: 0,
-		WriteSize:   capnp.ObjectSize{DataSize: 64, PointerCount: 8},
-		DoneSize:    capnp.ObjectSize{DataSize: 64, PointerCount: 8},
+		WriteParams: capnp.ObjectSize{DataSize: 64, PointerCount: 8},
+		DoneResult:  capnp.ObjectSize{DataSize: 64, PointerCount: 8},
 		Inputs: map[string]FieldInfo{
 			"in":    {Name: "in", Offset: 0, Which: schema.Type_Which_data},
 			"value": {Name: "value", Offset: 0, Which: schema.Type_Which_data},
