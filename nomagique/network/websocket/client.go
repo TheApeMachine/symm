@@ -109,6 +109,8 @@ func (server *WebSocketClientServer) Done(ctx context.Context, call WebSocketCli
 }
 
 func (server *WebSocketClientServer) connect() {
+	server.Info("connecting to %s", server.endpoint)
+
 	dialer := &gorillaws.Dialer{
 		HandshakeTimeout: 5 * time.Second,
 		Proxy:            http.ProxyFromEnvironment,
@@ -130,6 +132,8 @@ func (server *WebSocketClientServer) connect() {
 	server.conn = conn
 	server.Transition(runtime.READY)
 	server.read()
+
+	server.Info("connected to %s", server.endpoint)
 }
 
 func (server *WebSocketClientServer) read() {

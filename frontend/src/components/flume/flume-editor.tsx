@@ -28,7 +28,7 @@ import { hubBaseUrl } from "#/lib/hub";
 import { useDefinitions } from "#/service/compute";
 import { createFlumeConfig } from "./flume-config.generated";
 import type { EdgeRoutingMode } from "./connectionCalculator";
-import type { CompilerDiagnostic } from "./context";
+import type { CompilerDiagnostic, NodeLogEntry, NodeStatus } from "./context";
 import { setRoutingMode, useRoutingMode } from "./flume-editor.store";
 import {
 	type BackendGraph,
@@ -112,6 +112,8 @@ export const FlumeEditor = ({ projectId }: FlumeEditorProps) => {
 
 	const [diagnostics, setDiagnostics] = useState<CompilerDiagnostic[]>([]);
 	const [results, setResults] = useState<Record<string, Record<string, any>>>({});
+	const [statuses, setStatuses] = useState<Record<string, NodeStatus>>({});
+	const [logs, setLogs] = useState<Record<string, NodeLogEntry[]>>({});
 	const [isSaving, setIsSaving] = useState(false);
 	const [isCompiling, setIsCompiling] = useState(false);
 	const [isRunning, setIsRunning] = useState(false);
@@ -155,6 +157,8 @@ export const FlumeEditor = ({ projectId }: FlumeEditorProps) => {
 		setSelectedGraph(nextDef);
 		setDiagnostics([]);
 		setResults({});
+		setStatuses({});
+		setLogs({});
 		try {
 			await fetchAndImportDefinition(nextDef, graphId, projectId ?? null);
 			toastManager.add({
@@ -313,6 +317,12 @@ export const FlumeEditor = ({ projectId }: FlumeEditorProps) => {
 			if (data.ok) {
 				setDiagnostics([]);
 				setResults(data.results || {});
+				if (data.statuses) {
+					setStatuses(data.statuses);
+				}
+				if (data.logs) {
+					setLogs(data.logs);
+				}
 				toastManager.add({
 					title: "Execution Succeeded",
 					description: "Evaluated 1 observation through real Cap'n Proto program",
@@ -320,6 +330,12 @@ export const FlumeEditor = ({ projectId }: FlumeEditorProps) => {
 					timeout: 4000,
 				});
 			} else {
+				if (data.statuses) {
+					setStatuses(data.statuses);
+				}
+				if (data.logs) {
+					setLogs(data.logs);
+				}
 				if (data.diagnostics && data.diagnostics.length > 0) {
 					setDiagnostics(data.diagnostics);
 				}
@@ -648,6 +664,8 @@ export const FlumeEditor = ({ projectId }: FlumeEditorProps) => {
 				ref={editorHandleRef}
 				diagnostics={diagnostics}
 				results={results}
+				statuses={statuses}
+				logs={logs}
 				style={{ minHeight: "75vh" }}
 			/>
 

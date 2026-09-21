@@ -8,7 +8,23 @@ import type { Coordinate } from "#/components/flume/types";
 
 export const deleteConnection = ({ id }: { id: string }) => {
 	const line = document.querySelector(`[data-connection-id="${id}"]`);
-	line?.parentElement?.remove();
+
+	if (!line) {
+		return;
+	}
+
+	const parent = line.parentElement;
+
+	if (
+		parent &&
+		parent.tagName.toLowerCase() === "svg" &&
+		parent.hasAttribute("data-connection-wrapper")
+	) {
+		parent.remove();
+		return;
+	}
+
+	line.remove();
 };
 
 export const deleteConnectionsByNodeId = (nodeId: string) => {
@@ -19,7 +35,18 @@ export const deleteConnectionsByNodeId = (nodeId: string) => {
 	);
 
 	for (const line of lines) {
-		line?.parentElement?.remove();
+		const parent = line.parentElement;
+
+		if (
+			parent &&
+			parent.tagName.toLowerCase() === "svg" &&
+			parent.hasAttribute("data-connection-wrapper")
+		) {
+			parent.remove();
+			continue;
+		}
+
+		line.remove();
 	}
 };
 
@@ -67,17 +94,31 @@ export type ConnectionShellDescriptor = {
 const PATH_STROKE = "rgb(185, 186, 189)";
 const PATH_STROKE_WIDTH = "3";
 
+const getRootSvg = (stage: Element): SVGElement => {
+	if (stage.tagName.toLowerCase() === "svg") {
+		return stage as SVGElement;
+	}
+
+	let rootSvg = stage.querySelector<SVGSVGElement>("svg[data-connections-root]");
+
+	if (!rootSvg) {
+		rootSvg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+		rootSvg.setAttribute("data-connections-root", "true");
+		rootSvg.setAttribute(
+			"style",
+			"position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none;z-index:0;overflow:visible;",
+		);
+		stage.appendChild(rootSvg);
+	}
+
+	return rootSvg;
+};
+
 const createPathElement = (
 	descriptor: ConnectionShellDescriptor,
 	routingMode: EdgeRoutingMode,
 	initialD = "",
-): SVGSVGElement => {
-	const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-	svg.setAttribute(
-		"style",
-		"position:absolute;left:0;top:0;pointer-events:none;z-index:0;overflow:visible;",
-	);
-
+): SVGPathElement => {
 	const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
 	path.setAttribute("d", initialD);
 	path.setAttribute("stroke", PATH_STROKE);
@@ -95,8 +136,7 @@ const createPathElement = (
 	path.setAttribute("data-input-node-id", descriptor.inputNodeId);
 	path.setAttribute("data-input-port-name", descriptor.inputPortName);
 
-	svg.appendChild(path);
-	return svg;
+	return path;
 };
 
 /*
@@ -116,38 +156,65 @@ export const syncConnectionElements = (
 		return;
 	}
 
+	const rootSvg = getRootSvg(stage);
 	const rosterById = new Map<string, ConnectionShellDescriptor>();
 
 	for (const entry of roster) {
 		rosterById.set(entry.id, entry);
 	}
 
-	for (const pathElement of stage.querySelectorAll<SVGPathElement>(
+	const existingElements = new Map<string, SVGPathElement>();
+
+	for (const pathElement of rootSvg.querySelectorAll<SVGPathElement>(
 		"[data-connection-id]",
 	)) {
 		const id = pathElement.getAttribute("data-connection-id");
 
-		if (!id || !rosterById.has(id)) {
-			pathElement.parentElement?.remove();
+		if (id) {
+			existingElements.set(id, pathElement);
+		}
+	}
+
+	for (const [id, pathElement] of existingElements) {
+		if (!rosterById.has(id)) {
+			const parent = pathElement.parentElement as Element | null;
+
+			if (
+				parent &&
+				parent !== rootSvg &&
+				parent.tagName.toLowerCase() === "svg"
+			) {
+				parent.remove();
+			}
+
+			if (
+				!parent ||
+				parent === rootSvg ||
+				parent.tagName.toLowerCase() !== "svg"
+			) {
+				pathElement.remove();
+			}
+
+			existingElements.delete(id);
 		}
 	}
 
 	for (const entry of roster) {
-		const existing = stage.querySelector<SVGPathElement>(
-			`[data-connection-id="${entry.id}"]`,
-		);
+		const existing = existingElements.get(entry.id);
 
 		if (existing) {
 			if (routingMode === "orthogonal") {
 				existing.setAttribute("stroke-linejoin", "miter");
-			} else {
+			}
+
+			if (routingMode !== "orthogonal") {
 				existing.removeAttribute("stroke-linejoin");
 			}
 			continue;
 		}
 
-		const svg = createPathElement(entry, routingMode);
-		stage.appendChild(svg);
+		const path = createPathElement(entry, routingMode);
+		rootSvg.appendChild(path);
 	}
 };
 
@@ -171,7 +238,7 @@ export const createSVG = ({
 }: {
 	from: Coordinate;
 	to: Coordinate;
-	stage: HTMLDivElement;
+	stage: HTMLElement | SVGElement;
 	id: string;
 	outputNodeId: string;
 	outputPortName: string;
@@ -188,11 +255,12 @@ export const createSVG = ({
 		obstaclesVertical,
 		obstaclesHorizontal,
 	);
-	const svg = createPathElement(
+	const rootSvg = getRootSvg(stage);
+	const path = createPathElement(
 		{ id, outputNodeId, outputPortName, inputNodeId, inputPortName },
 		routingMode,
 		curve,
 	);
-	stage.appendChild(svg);
-	return svg;
+	rootSvg.appendChild(path);
+	return path;
 };

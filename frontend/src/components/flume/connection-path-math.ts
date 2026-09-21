@@ -2,6 +2,7 @@ import { curveBasis, line } from "d3-shape";
 import {
 	buildRoutingGridFromObstacles,
 	routeOrthogonalWithGrid,
+	type RoutingGrid,
 } from "#/components/flume/orthogonal-grid-router";
 import type { Coordinate } from "#/components/flume/types";
 
@@ -84,6 +85,8 @@ export const calculateOrthogonalEdgePath = (
 	to: Coordinate,
 	obstaclesVertical: ReadonlyArray<ObstacleRect>,
 	obstaclesHorizontal: ReadonlyArray<ObstacleRect>,
+	grid?: RoutingGrid,
+	excludedNodeIds?: ReadonlySet<string>,
 ): string => {
 	const corridorPath = tryOrthogonalCorridorRoute(
 		from,
@@ -96,8 +99,14 @@ export const calculateOrthogonalEdgePath = (
 		return corridorPath;
 	}
 
-	const grid = buildRoutingGridFromObstacles(obstaclesHorizontal);
-	const gridPath = routeOrthogonalWithGrid(from, to, grid);
+	const routingGrid =
+		grid ?? buildRoutingGridFromObstacles(obstaclesHorizontal);
+	const gridPath = routeOrthogonalWithGrid(
+		from,
+		to,
+		routingGrid,
+		excludedNodeIds,
+	);
 
 	if (gridPath) {
 		return gridPath;
@@ -293,6 +302,8 @@ export const calculateEdgePath = (
 	to: Coordinate,
 	obstaclesVertical?: ReadonlyArray<ObstacleRect>,
 	obstaclesHorizontal?: ReadonlyArray<ObstacleRect>,
+	grid?: RoutingGrid,
+	excludedNodeIds?: ReadonlySet<string>,
 ): string => {
 	switch (mode) {
 		case "straight":
@@ -300,7 +311,14 @@ export const calculateEdgePath = (
 		case "orthogonal": {
 			const v = obstaclesVertical ?? [];
 			const h = obstaclesHorizontal ?? v;
-			return calculateOrthogonalEdgePath(from, to, v, h);
+			return calculateOrthogonalEdgePath(
+				from,
+				to,
+				v,
+				h,
+				grid,
+				excludedNodeIds,
+			);
 		}
 		default:
 			return calculateSmoothCurve(from, to);

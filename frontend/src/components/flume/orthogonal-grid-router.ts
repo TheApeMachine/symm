@@ -23,14 +23,116 @@ export type GridCell = {
 
 type GridDirection = "east" | "west" | "north" | "south";
 
+const COORD_OFFSET = 32768;
+
+/**
+ * Packs 2D cell coordinates into a signed-safe 32-bit integer.
+ * Avoids string allocation and hashing overhead in hot path lookups.
+ */
+export const packCell = (cellX: number, cellY: number): number => {
+	return ((cellX + COORD_OFFSET) << 16) | ((cellY + COORD_OFFSET) & 0xffff);
+};
+
+export const unpackCell = (key: number): GridCell => {
+	const cellX = (key >> 16) - COORD_OFFSET;
+	const cellY = (key & 0xffff) - COORD_OFFSET;
+	return { cellX, cellY };
+};
+
+/**
+ * Binary Min-Heap Priority Queue for O(log N) A* open set extraction.
+ */
+export class MinHeap<T> {
+	private items: T[] = [];
+	private priorities: number[] = [];
+
+	get length(): number {
+		return this.items.length;
+	}
+
+	push(item: T, priority: number): void {
+		this.items.push(item);
+		this.priorities.push(priority);
+		this.bubbleUp(this.items.length - 1);
+	}
+
+	pop(): T | undefined {
+		const count = this.items.length;
+		if (count === 0) return undefined;
+		const top = this.items[0];
+		const bottomItem = this.items.pop()!;
+		const bottomPriority = this.priorities.pop()!;
+		if (count > 1) {
+			this.items[0] = bottomItem;
+			this.priorities[0] = bottomPriority;
+			this.bubbleDown(0);
+		}
+		return top;
+	}
+
+	clear(): void {
+		this.items.length = 0;
+		this.priorities.length = 0;
+	}
+
+	private bubbleUp(index: number): void {
+		const item = this.items[index];
+		const priority = this.priorities[index];
+
+		while (index > 0) {
+			const parentIndex = (index - 1) >> 1;
+			if (priority >= this.priorities[parentIndex]) {
+				break;
+			}
+			this.items[index] = this.items[parentIndex];
+			this.priorities[index] = this.priorities[parentIndex];
+			index = parentIndex;
+		}
+
+		this.items[index] = item;
+		this.priorities[index] = priority;
+	}
+
+	private bubbleDown(index: number): void {
+		const length = this.items.length;
+		const item = this.items[index];
+		const priority = this.priorities[index];
+		const halfLength = length >> 1;
+
+		while (index < halfLength) {
+			let left = (index << 1) + 1;
+			const right = left + 1;
+			let bestChildPriority = this.priorities[left];
+
+			if (right < length && this.priorities[right] < bestChildPriority) {
+				left = right;
+				bestChildPriority = this.priorities[right];
+			}
+
+			if (priority <= bestChildPriority) {
+				break;
+			}
+
+			this.items[index] = this.items[left];
+			this.priorities[index] = bestChildPriority;
+			index = left;
+		}
+
+		this.items[index] = item;
+		this.priorities[index] = priority;
+	}
+}
+
 /*
 RoutingGrid tracks occupied cells for orthogonal A* edge routing.
 */
 export class RoutingGrid {
-	private occupied = new Set<string>();
+	private occupied = new Set<number>();
+	private cellNodes = new Map<number, Set<string>>();
 
 	clear(): void {
 		this.occupied.clear();
+		this.cellNodes.clear();
 	}
 
 	cellKey(cellX: number, cellY: number): string {
@@ -61,16 +163,79 @@ export class RoutingGrid {
 
 		for (let cellX = minCell.cellX; cellX <= maxCell.cellX; cellX++) {
 			for (let cellY = minCell.cellY; cellY <= maxCell.cellY; cellY++) {
-				this.occupied.add(this.cellKey(cellX, cellY));
+				this.occupied.add(packCell(cellX, cellY));
 			}
 		}
 	}
 
-	isOccupied(cellX: number, cellY: number): boolean {
-		return this.occupied.has(this.cellKey(cellX, cellY));
+	markNode(
+		nodeId: string,
+		rect: GridObstacleRect,
+		padding = OBSTACLE_GRID_PADDING,
+	): void {
+		const left = rect.left - padding;
+		const right = rect.right + padding;
+		const top = rect.top - padding;
+		const bottom = rect.bottom + padding;
+		const minCell = this.worldToCell(left, top);
+		const maxCell = this.worldToCell(right, bottom);
+
+		for (let cellX = minCell.cellX; cellX <= maxCell.cellX; cellX++) {
+			for (let cellY = minCell.cellY; cellY <= maxCell.cellY; cellY++) {
+				const key = packCell(cellX, cellY);
+				this.occupied.add(key);
+				let nodes = this.cellNodes.get(key);
+
+				if (!nodes) {
+					nodes = new Set<string>();
+					this.cellNodes.set(key, nodes);
+				}
+
+				nodes.add(nodeId);
+			}
+		}
+	}
+
+	isOccupied(
+		cellX: number,
+		cellY: number,
+		excludedNodes?: ReadonlySet<string>,
+	): boolean {
+		const key = packCell(cellX, cellY);
+
+		if (!this.occupied.has(key)) {
+			return false;
+		}
+
+		if (!excludedNodes || excludedNodes.size === 0) {
+			return true;
+		}
+
+		const nodes = this.cellNodes.get(key);
+
+		if (!nodes) {
+			return true;
+		}
+
+		for (const nodeId of nodes) {
+			if (!excludedNodes.has(nodeId)) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	getOccupiedCells(): ReadonlySet<string> {
+		const strSet = new Set<string>();
+		for (const key of this.occupied) {
+			const cell = unpackCell(key);
+			strSet.add(`${cell.cellX},${cell.cellY}`);
+		}
+		return strSet;
+	}
+
+	getOccupiedPacked(): ReadonlySet<number> {
 		return this.occupied;
 	}
 }
@@ -90,23 +255,22 @@ export const buildRoutingGridFromObstacles = (
 
 export const buildRoutingGridFromObstacleMap = (
 	obstaclesById: Map<string, GridObstacleRect>,
-	excludeNodeIds: ReadonlySet<string>,
+	excludeNodeIds?: ReadonlySet<string>,
 	padding = OBSTACLE_GRID_PADDING,
 ): RoutingGrid => {
 	const grid = new RoutingGrid();
 
 	for (const [nodeId, rect] of obstaclesById) {
-		if (excludeNodeIds.has(nodeId)) {
+		if (excludeNodeIds && excludeNodeIds.has(nodeId)) {
 			continue;
 		}
 
-		grid.markRect(rect, padding);
+		grid.markNode(nodeId, rect, padding);
 	}
 
 	return grid;
 };
 
-const gridCellKey = (cell: GridCell) => `${cell.cellX},${cell.cellY}`;
 
 const manhattanDistance = (left: GridCell, right: GridCell) =>
 	Math.abs(left.cellX - right.cellX) + Math.abs(left.cellY - right.cellY);
@@ -149,6 +313,7 @@ const isWalkable = (
 	cell: GridCell,
 	start: GridCell,
 	goal: GridCell,
+	excludedNodes?: ReadonlySet<string>,
 ): boolean => {
 	if (cell.cellX === start.cellX && cell.cellY === start.cellY) {
 		return true;
@@ -158,27 +323,28 @@ const isWalkable = (
 		return true;
 	}
 
-	return !grid.isOccupied(cell.cellX, cell.cellY);
+	return !grid.isOccupied(cell.cellX, cell.cellY, excludedNodes);
 };
 
 const reconstructGridPath = (
-	cameFrom: Map<string, GridCell>,
+	cameFrom: Map<number, GridCell>,
 	current: GridCell,
 ): GridCell[] => {
 	const path: GridCell[] = [current];
 	let cursor = current;
 
-	while (cameFrom.has(gridCellKey(cursor))) {
-		const previous = cameFrom.get(gridCellKey(cursor));
+	while (cameFrom.has(packCell(cursor.cellX, cursor.cellY))) {
+		const previous = cameFrom.get(packCell(cursor.cellX, cursor.cellY));
 
 		if (!previous) {
 			break;
 		}
 
 		cursor = previous;
-		path.unshift(cursor);
+		path.push(cursor);
 	}
 
+	path.reverse();
 	return path;
 };
 
@@ -229,45 +395,38 @@ const centerlineBias = (
 };
 
 /*
-findGridPath runs A* over four-connected grid cells. Turn penalties prefer
-fewer bends; centerline bias prefers corridors through the midpoint.
+findGridPath runs A* over four-connected grid cells using MinHeap priority queue
+and packed integer keys for zero-allocation fast-path evaluation.
 */
 export const findGridPath = (
 	grid: RoutingGrid,
 	start: GridCell,
 	goal: GridCell,
+	excludedNodes?: ReadonlySet<string>,
 ): GridCell[] | null => {
-	const open: Array<{ cell: GridCell; fScore: number }> = [];
-	const cameFrom = new Map<string, GridCell>();
-	const gScore = new Map<string, number>();
-	const startKey = gridCellKey(start);
+	const open = new MinHeap<GridCell>();
+	const cameFrom = new Map<number, GridCell>();
+	const gScore = new Map<number, number>();
+	const startKey = packCell(start.cellX, start.cellY);
 
 	gScore.set(startKey, 0);
-	open.push({
-		cell: start,
-		fScore: manhattanDistance(start, goal) + centerlineBias(start, start, goal),
-	});
+	open.push(
+		start,
+		manhattanDistance(start, goal) + centerlineBias(start, start, goal),
+	);
 
 	for (let iteration = 0; iteration < ASTAR_ITERATION_LIMIT; iteration++) {
 		if (open.length === 0) {
 			return null;
 		}
 
-		let bestIndex = 0;
-
-		for (let index = 1; index < open.length; index++) {
-			if (open[index].fScore < open[bestIndex].fScore) {
-				bestIndex = index;
-			}
-		}
-
-		const current = open.splice(bestIndex, 1)[0].cell;
+		const current = open.pop()!;
 
 		if (current.cellX === goal.cellX && current.cellY === goal.cellY) {
 			return reconstructGridPath(cameFrom, current);
 		}
 
-		const currentKey = gridCellKey(current);
+		const currentKey = packCell(current.cellX, current.cellY);
 		const currentGScore = gScore.get(currentKey) ?? Number.POSITIVE_INFINITY;
 		const previousCell = cameFrom.get(currentKey);
 		const incomingDirection =
@@ -276,11 +435,11 @@ export const findGridPath = (
 				: directionBetween(previousCell, current);
 
 		for (const neighbor of neighborsOf(current)) {
-			if (!isWalkable(grid, neighbor, start, goal)) {
+			if (!isWalkable(grid, neighbor, start, goal, excludedNodes)) {
 				continue;
 			}
 
-			const neighborKey = gridCellKey(neighbor);
+			const neighborKey = packCell(neighbor.cellX, neighbor.cellY);
 			const moveDirection = directionBetween(current, neighbor);
 			const turnCost =
 				incomingDirection !== null &&
@@ -298,13 +457,12 @@ export const findGridPath = (
 
 			cameFrom.set(neighborKey, current);
 			gScore.set(neighborKey, tentativeGScore);
-			open.push({
-				cell: neighbor,
-				fScore:
-					tentativeGScore +
+			open.push(
+				neighbor,
+				tentativeGScore +
 					manhattanDistance(neighbor, goal) +
 					centerlineBias(neighbor, start, goal),
-			});
+			);
 		}
 	}
 
@@ -407,6 +565,7 @@ export const routeOrthogonalWithGrid = (
 	from: Coordinate,
 	to: Coordinate,
 	grid: RoutingGrid,
+	excludedNodes?: ReadonlySet<string>,
 ): string | null => {
 	const startStub: Coordinate = {
 		x: from.x + PORT_EXIT_STUB,
@@ -418,7 +577,7 @@ export const routeOrthogonalWithGrid = (
 	};
 	const startCell = grid.worldToCell(startStub.x, startStub.y);
 	const goalCell = grid.worldToCell(endStub.x, endStub.y);
-	const cellPath = findGridPath(grid, startCell, goalCell);
+	const cellPath = findGridPath(grid, startCell, goalCell, excludedNodes);
 
 	if (!cellPath) {
 		return null;

@@ -12,6 +12,7 @@ import (
 	"capnproto.org/go/capnp/v3/std/capnp/schema"
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/symm/nomagique/network/http"
+	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
 var (
@@ -30,7 +31,7 @@ func SetDefaultDefinitionRepository(repo DefinitionRepository) {
 
 func getDefaultDefinitionRepository() DefinitionRepository {
 	defaultDefRepoMu.RLock()
-	defer defaultDefRepoMu.RUnlock()
+	defaultDefRepoMu.RUnlock()
 	return defaultDefRepo
 }
 
@@ -56,10 +57,12 @@ type CompileResponse struct {
 }
 
 type RunResponse struct {
-	OK          bool                      `json:"ok"`
-	Results     map[string]map[string]any `json:"results,omitempty"`
-	Error       string                    `json:"error,omitempty"`
-	Diagnostics []Diagnostic              `json:"diagnostics,omitempty"`
+	OK          bool                          `json:"ok"`
+	Results     map[string]map[string]any     `json:"results,omitempty"`
+	Statuses    map[string]string             `json:"statuses,omitempty"`
+	Logs        map[string][]runtime.LogEntry `json:"logs,omitempty"`
+	Error       string                        `json:"error,omitempty"`
+	Diagnostics []Diagnostic                  `json:"diagnostics,omitempty"`
 }
 
 type WorkbenchRunnerImpl struct {
@@ -172,15 +175,41 @@ func (w *WorkbenchRunnerImpl) Run(ctx context.Context, rawJSON []byte) (any, err
 	}
 	defer prog.Release()
 
+	collectedLogs := make(map[string][]runtime.LogEntry)
+	var logMu sync.Mutex
+
+	runtime.SetGlobalLogHook(func(sys *runtime.System, entry runtime.LogEntry) {
+		logMu.Lock()
+		defer logMu.Unlock()
+		collectedLogs[sys.Name()] = append(collectedLogs[sys.Name()], entry)
+
+		for nodeID, node := range graph.Nodes {
+			if nodeMatchesSystem(node.Type, sys.Name()) {
+				collectedLogs[nodeID] = append(collectedLogs[nodeID], entry)
+			}
+		}
+	})
+	defer runtime.SetGlobalLogHook(nil)
+
 	if err := prog.Execute(ctx, nil); err != nil {
+		statuses := make(map[string]string)
+		for _, node := range prog.Nodes {
+			statuses[node.ID] = "error"
+		}
+
 		return RunResponse{
-			OK:    false,
-			Error: err.Error(),
+			OK:       false,
+			Error:    err.Error(),
+			Statuses: statuses,
+			Logs:     collectedLogs,
 		}, err
 	}
 
 	results := make(map[string]map[string]any)
+	statuses := make(map[string]string)
+
 	for _, node := range prog.Nodes {
+		statuses[node.ID] = "ready"
 		st, ok := prog.Result(node.ID)
 		if !ok {
 			continue
@@ -198,8 +227,10 @@ func (w *WorkbenchRunnerImpl) Run(ctx context.Context, rawJSON []byte) (any, err
 	}
 
 	return RunResponse{
-		OK:      true,
-		Results: results,
+		OK:       true,
+		Results:  results,
+		Statuses: statuses,
+		Logs:     collectedLogs,
 	}, nil
 }
 
@@ -322,6 +353,24 @@ func extractDiagnostics(err error) []Diagnostic {
 		Kind:    "compile_error",
 		Message: errStr,
 	}}
+}
+
+func nodeMatchesSystem(nodeType, sysName string) bool {
+	nt := strings.ToLower(strings.TrimSpace(nodeType))
+	sn := strings.ToLower(strings.TrimSpace(sysName))
+	if nt == sn {
+		return true
+	}
+
+	ntParts := strings.Split(nt, ".")
+	snParts := strings.Split(sn, ".")
+	if len(ntParts) >= 2 && len(snParts) >= 2 && ntParts[0] == snParts[0] {
+		if strings.Contains(ntParts[1], snParts[1]) || strings.Contains(snParts[1], ntParts[1]) {
+			return true
+		}
+	}
+
+	return strings.Contains(nt, sn) || strings.Contains(sn, nt)
 }
 
 func init() {

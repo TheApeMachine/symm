@@ -45,12 +45,16 @@ const applyPathsToDOM = (
 
 			if (path) {
 				cache.set(id, path);
-			} else {
+			}
+
+			if (!path) {
 				cache.delete(id);
 			}
 		}
 
-		path?.setAttribute("d", d);
+		if (path && path.getAttribute("d") !== d) {
+			path.setAttribute("d", d);
+		}
 	}
 };
 
@@ -197,28 +201,66 @@ export const useFlumeGraphWorker = (
 		scheduleRender();
 	}, [routingMode, scheduleRender]);
 
+	const pendingDragRef = React.useRef<{
+		nodeId: string;
+		x: number;
+		y: number;
+	} | null>(null);
+	const dragInFlightRef = React.useRef(false);
+
+	const flushDrag = React.useCallback(async () => {
+		const api = apiRef.current;
+
+		if (!api || dragInFlightRef.current || !pendingDragRef.current) {
+			return;
+		}
+
+		dragInFlightRef.current = true;
+
+		try {
+			while (pendingDragRef.current) {
+				const target = pendingDragRef.current;
+				pendingDragRef.current = null;
+				const paths = await api.updateDrag(target.nodeId, target.x, target.y);
+				applyPathsToDOM(paths, pathCacheRef.current);
+			}
+		} finally {
+			dragInFlightRef.current = false;
+		}
+	}, []);
+
 	const beginDrag = React.useCallback((nodeId: string) => {
 		const api = apiRef.current;
-		if (!api) return;
+
+		if (!api) {
+			return;
+		}
+
 		void api.beginDrag(nodeId);
 	}, []);
 
 	const updateDrag = React.useCallback(
 		(nodeId: string, x: number, y: number) => {
-			const api = apiRef.current;
-			if (!api) return;
-			void api.updateDrag(nodeId, x, y);
-			scheduleRender();
+			pendingDragRef.current = { nodeId, x, y };
+			void flushDrag();
 		},
-		[scheduleRender],
+		[flushDrag],
 	);
 
 	const endDrag = React.useCallback(
 		(nodeId: string, x: number, y: number) => {
+			pendingDragRef.current = null;
 			const api = apiRef.current;
-			if (!api) return;
-			void api.endDrag(nodeId, x, y);
-			scheduleRender();
+
+			if (!api) {
+				return;
+			}
+
+			void (async () => {
+				const paths = await api.endDrag(nodeId, x, y);
+				applyPathsToDOM(paths, pathCacheRef.current);
+				scheduleRender();
+			})();
 		},
 		[scheduleRender],
 	);

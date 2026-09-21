@@ -3,6 +3,7 @@ import {
 	type EdgeRoutingMode,
 	type ObstacleRect,
 } from "#/components/flume/connectionCalculator";
+import { RoutingGrid } from "#/components/flume/orthogonal-grid-router";
 
 import {
 	buildObstacleMapFromSpatialIndex,
@@ -42,9 +43,11 @@ const computeOrthogonalPath = (
 	outputNodeId: string,
 	inputNodeId: string,
 	allObstacles: ObstacleRect[],
+	sharedGrid?: RoutingGrid,
 ): string => {
+	const excludedNodeIds = new Set<string>([outputNodeId, inputNodeId]);
 	const obstaclesHorizontal = Array.from(allObstaclesById.entries())
-		.filter(([nodeId]) => nodeId !== outputNodeId && nodeId !== inputNodeId)
+		.filter(([nodeId]) => !excludedNodeIds.has(nodeId))
 		.map(([, rect]) => rect);
 
 	return calculateEdgePath(
@@ -53,6 +56,8 @@ const computeOrthogonalPath = (
 		to,
 		allObstacles,
 		obstaclesHorizontal,
+		sharedGrid,
+		excludedNodeIds,
 	);
 };
 
@@ -67,6 +72,7 @@ export class FlumeGraphEngine {
 	private portLayouts = new Map<string, PortLayoutEntry>();
 	private dragNodeId: string | null = null;
 	private dragPosition: Coordinate | null = null;
+	private cachedPaths = new Map<string, string>();
 
 	/*
 	setGraph replaces only the node topology, preserving any port and
@@ -79,6 +85,7 @@ export class FlumeGraphEngine {
 	*/
 	setGraph(nodes: NodeMap): void {
 		this.nodes = nodes;
+		this.cachedPaths.clear();
 
 		// Drop layouts for nodes that no longer exist; keep the rest.
 		const liveIds = new Set(Object.keys(this.nodes));
@@ -100,6 +107,7 @@ export class FlumeGraphEngine {
 
 	setRoutingMode(routingMode: EdgeRoutingMode): void {
 		this.routingMode = routingMode;
+		this.cachedPaths.clear();
 	}
 
 	setNodeLayout(nodeId: string, width: number, height: number): void {
@@ -108,6 +116,7 @@ export class FlumeGraphEngine {
 		}
 
 		this.nodeLayouts.set(nodeId, { width, height });
+		this.cachedPaths.clear();
 	}
 
 	setPortLayout(
@@ -121,6 +130,7 @@ export class FlumeGraphEngine {
 			offsetX,
 			offsetY,
 		});
+		this.cachedPaths.clear();
 	}
 
 	beginDrag(nodeId: string): void {
@@ -138,8 +148,74 @@ export class FlumeGraphEngine {
 		this.dragNodeId = nodeId;
 		this.dragPosition = { x, y };
 
+		const positionOverrides = this.buildPositionOverrides();
+		const snapshot = snapshotFromEngine(this.nodeLayouts, this.portLayouts);
+		const allObstaclesById = buildObstacleMapFromSpatialIndex(
+			this.nodes,
+			snapshot,
+			positionOverrides,
+		);
+		const allObstacles = Array.from(allObstaclesById.values());
+		const resolved = resolveConnectionsFromSpatialIndex(
+			this.nodes,
+			snapshot,
+			positionOverrides,
+		);
+
+		let sharedGrid: RoutingGrid | undefined;
+
+		if (this.routingMode === "orthogonal") {
+			sharedGrid = new RoutingGrid();
+
+			for (const [obstacleNodeId, rect] of allObstaclesById) {
+				sharedGrid.markNode(obstacleNodeId, rect);
+			}
+		}
+
+		const paths: ConnectionPathResult[] = [];
+
+		for (const connection of resolved) {
+			const isIncident =
+				connection.outputNodeId === nodeId || connection.inputNodeId === nodeId;
+
+			if (!isIncident && this.cachedPaths.has(connection.id)) {
+				paths.push({
+					id: connection.id,
+					d: this.cachedPaths.get(connection.id)!,
+				});
+				continue;
+			}
+
+			let d = "";
+
+			if (this.routingMode === "orthogonal") {
+				d = computeOrthogonalPath(
+					connection.from,
+					connection.to,
+					allObstaclesById,
+					connection.outputNodeId,
+					connection.inputNodeId,
+					allObstacles,
+					sharedGrid,
+				);
+			}
+
+			if (this.routingMode !== "orthogonal") {
+				d = calculateEdgePath(
+					this.routingMode,
+					connection.from,
+					connection.to,
+					allObstacles,
+					allObstacles,
+				);
+			}
+
+			this.cachedPaths.set(connection.id, d);
+			paths.push({ id: connection.id, d });
+		}
+
 		return {
-			paths: this.computePaths(),
+			paths,
 			dragPosition: { x, y },
 		};
 	}
@@ -155,7 +231,7 @@ export class FlumeGraphEngine {
 		this.dragNodeId = null;
 		this.dragPosition = null;
 
-		return this.computePaths();
+		return this.recalculate().paths;
 	}
 
 	computePaths(): ConnectionPathResult[] {
@@ -177,6 +253,16 @@ export class FlumeGraphEngine {
 			positionOverrides,
 		);
 
+		let sharedGrid: RoutingGrid | undefined;
+
+		if (this.routingMode === "orthogonal") {
+			sharedGrid = new RoutingGrid();
+
+			for (const [nodeId, rect] of allObstaclesById) {
+				sharedGrid.markNode(nodeId, rect);
+			}
+		}
+
 		const paths: ConnectionPathResult[] = [];
 		const roster: ConnectionDescriptor[] = [];
 
@@ -189,31 +275,32 @@ export class FlumeGraphEngine {
 				inputPortName: connection.inputPortName,
 			});
 
+			let d = "";
+
 			if (this.routingMode === "orthogonal") {
-				paths.push({
-					id: connection.id,
-					d: computeOrthogonalPath(
-						connection.from,
-						connection.to,
-						allObstaclesById,
-						connection.outputNodeId,
-						connection.inputNodeId,
-						allObstacles,
-					),
-				});
-				continue;
+				d = computeOrthogonalPath(
+					connection.from,
+					connection.to,
+					allObstaclesById,
+					connection.outputNodeId,
+					connection.inputNodeId,
+					allObstacles,
+					sharedGrid,
+				);
 			}
 
-			paths.push({
-				id: connection.id,
-				d: calculateEdgePath(
+			if (this.routingMode !== "orthogonal") {
+				d = calculateEdgePath(
 					this.routingMode,
 					connection.from,
 					connection.to,
 					allObstacles,
 					allObstacles,
-				),
-			});
+				);
+			}
+
+			paths.push({ id: connection.id, d });
+			this.cachedPaths.set(connection.id, d);
 		}
 
 		return { paths, roster };

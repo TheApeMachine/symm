@@ -11,7 +11,7 @@ export const getCanvasRef = (editorId: string) =>
 export const getStageRef = (editorId: string) =>
 	document.getElementById(
 		`${CONNECTIONS_ID}${editorId}`,
-	) as HTMLDivElement | null;
+	) as HTMLElement | SVGElement | null;
 
 /*
 getStageBounds returns the visible stage rect used to convert screen

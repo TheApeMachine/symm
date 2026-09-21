@@ -106,6 +106,34 @@ func TestWorkbenchCompileAndRun(t *testing.T) {
 			So(sqRes["out"], ShouldEqual, 25.0)
 		})
 
+		Convey("When compiling a graph with types.JSON and websocket.WebSocketClient", func() {
+			jsonGraph := map[string]any{
+				"nodes": map[string]any{
+					"json_1": map[string]any{
+						"id":   "json_1",
+						"type": "types.JSON",
+						"inputData": map[string]any{
+							"text": map[string]any{"text": `{"method":"subscribe"}`},
+						},
+					},
+					"ws_1": map[string]any{
+						"id":   "ws_1",
+						"type": "websocket.WebSocketClient",
+						"inputData": map[string]any{
+							"endpoint": map[string]any{"text": "wss://ws.kraken.com/v2"},
+						},
+					},
+				},
+			}
+			jsonBytes, err := json.Marshal(jsonGraph)
+			So(err, ShouldBeNil)
+			res, err := runner.Compile(jsonBytes)
+			So(err, ShouldBeNil)
+			compileResp, ok := res.(compiler.CompileResponse)
+			So(ok, ShouldBeTrue)
+			So(compileResp.OK, ShouldBeTrue)
+		})
+
 		Convey("When compiling an invalid graph with a type mismatch", func() {
 			badGraph := map[string]any{
 				"nodes": map[string]any{

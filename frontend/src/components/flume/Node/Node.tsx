@@ -1,6 +1,11 @@
 "use client";
 
-import { Maximize2Icon, Minimize2Icon, NetworkIcon } from "lucide-react";
+import {
+	Maximize2Icon,
+	Minimize2Icon,
+	NetworkIcon,
+	TerminalIcon,
+} from "lucide-react";
 import type { RefObject } from "react";
 import React from "react";
 import { createPortal } from "react-dom";
@@ -10,7 +15,11 @@ import {
 	FlumeGraphWorkerContext,
 	GraphIdContext,
 	NodeActionsContext,
+	NodeLogsContext,
+	type NodeLogEntry,
 	NodeResultsContext,
+	NodeStatusesContext,
+	type NodeStatus,
 	NodeTypesContext,
 	PortTypesContext,
 	StageContext,
@@ -23,6 +32,7 @@ import type {
 	NodeMap,
 	SelectOption,
 } from "#/components/flume/types";
+import { Badge } from "#/components/ui/badge";
 import { Card, CardPanel } from "#/components/ui/card";
 import { Flex } from "#/components/ui/flex";
 import { Form } from "#/components/ui/form";
@@ -32,9 +42,11 @@ import {
 	FrameHeader,
 	FrameTitle,
 } from "#/components/ui/frame";
+import { cn } from "@/lib/utils";
 import ContextMenu from "../ContextMenu/ContextMenu";
 import Draggable from "../Draggable/Draggable";
 import IoPorts from "../IoPorts/IoPorts";
+import { NodeLogs } from "./NodeLogs";
 
 /* Lazy to avoid circular dep — NodeEditor imports Node */
 const NodeEditor = React.lazy(() =>
@@ -86,6 +98,65 @@ const Node = ({
 	const currentNodeType = nodeTypes[type];
 	const diagnostics = React.useContext(DiagnosticsContext) || [];
 	const results = React.useContext(NodeResultsContext) || {};
+	const statuses = React.useContext(NodeStatusesContext) || {};
+	const allLogs = React.useContext(NodeLogsContext) || {};
+
+	const nodeDiagnostics = diagnostics.filter(
+		(d) => d.nodeId === id || (d.nodeType && d.nodeType === type),
+	);
+	const hasError = nodeDiagnostics.length > 0;
+	const nodeResult = results[id];
+	const nodeStatus: NodeStatus = statuses[id] ?? (hasError ? "error" : "init");
+
+	const nodeLogs: NodeLogEntry[] = React.useMemo(() => {
+		if (allLogs[id] && allLogs[id].length > 0) {
+			return allLogs[id];
+		}
+		if (type && allLogs[type] && allLogs[type].length > 0) {
+			return allLogs[type];
+		}
+		const normType = type ? type.toLowerCase() : "";
+		const normParts = normType.split(".");
+		for (const [key, entries] of Object.entries(allLogs)) {
+			const normKey = key.toLowerCase();
+			if (normKey === normType || normType.includes(normKey) || normKey.includes(normType)) {
+				return entries;
+			}
+			const keyParts = normKey.split(".");
+			if (normParts.length >= 2 && keyParts.length >= 2 && normParts[0] === keyParts[0]) {
+				if (normParts[1].includes(keyParts[1]) || keyParts[1].includes(normParts[1])) {
+					return entries;
+				}
+			}
+		}
+		return [];
+	}, [allLogs, id, type]);
+
+	const [logsOpen, setLogsOpen] = React.useState(false);
+
+	React.useEffect(() => {
+		triggerRecalculation?.();
+	}, [logsOpen, triggerRecalculation]);
+
+	const statusMeta = React.useMemo(() => {
+		switch (nodeStatus) {
+			case "ready":
+			case "ok":
+				return { label: "READY", variant: "success" as const, pulse: false };
+			case "busy":
+				return { label: "BUSY", variant: "info" as const, pulse: true };
+			case "waiting":
+				return { label: "WAITING", variant: "warning" as const, pulse: false };
+			case "error":
+			case "fatal":
+				return { label: "ERROR", variant: "error" as const, pulse: false };
+			case "done":
+				return { label: "DONE", variant: "brand" as const, pulse: false };
+			case "init":
+			default:
+				return { label: "INIT", variant: "disabled" as const, pulse: false };
+		}
+	}, [nodeStatus]);
 
 	const isDefinitionNode = Boolean(
 		String(currentNodeType?.type ?? "").startsWith("definition:") ||
@@ -98,12 +169,6 @@ const Node = ({
 			currentNodeType?.category === "memory" ||
 			String(currentNodeType?.type ?? "").startsWith("block."),
 	);
-
-	const nodeDiagnostics = diagnostics.filter(
-		(d) => d.nodeId === id || (d.nodeType && d.nodeType === type),
-	);
-	const hasError = nodeDiagnostics.length > 0;
-	const nodeResult = results[id];
 
 	const {
 		label,
@@ -290,24 +355,56 @@ const Node = ({
 		>
 			<Frame className={`min-w-0 w-full transition-all ${hasError ? "ring-2 ring-red-500 shadow-[0_0_12px_rgba(239,68,68,0.4)]" : ""}`}>
 				<FrameHeader>
-					{renderNodeHeader ? (
-						renderNodeHeader(FrameTitle, currentNodeType, {
-							openMenu: handleContextMenu,
-							closeMenu: closeContextMenu,
-							deleteNode,
-						})
-					) : (
-						<>
-							<FrameTitle data-flume-component="node-header">
-								{label}
-							</FrameTitle>
-							{description ? (
-								<FrameDescription data-flume-component="node-description">
-									{description}
-								</FrameDescription>
-							) : null}
-						</>
-					)}
+					<div className="flex items-center justify-between gap-2">
+						<div className="min-w-0 flex-1 flex flex-col">
+							{renderNodeHeader ? (
+								renderNodeHeader(FrameTitle, currentNodeType, {
+									openMenu: handleContextMenu,
+									closeMenu: closeContextMenu,
+									deleteNode,
+								})
+							) : (
+								<>
+									<FrameTitle data-flume-component="node-header">
+										{label}
+									</FrameTitle>
+									{description ? (
+										<FrameDescription data-flume-component="node-description">
+											{description}
+										</FrameDescription>
+									) : null}
+								</>
+							)}
+						</div>
+						<div className="flex items-center gap-1.5 shrink-0">
+							<Badge
+								variant={statusMeta.variant}
+								size="xxs"
+								dot
+								pulse={statusMeta.pulse}
+								label={statusMeta.label}
+								data-flume-node-status={id}
+							/>
+							<button
+								type="button"
+								onClick={(e) => {
+									e.stopPropagation();
+									setLogsOpen((v) => !v);
+								}}
+								className={cn(
+									"flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono tracking-tight transition-colors select-none cursor-pointer",
+									logsOpen
+										? "bg-(--acc)/20 text-(--acc) border border-(--acc)/40"
+										: "text-(--f3) hover:text-(--f1) hover:bg-(--raised)/60 border border-transparent",
+								)}
+								title={logsOpen ? "Hide logs" : "Show logs"}
+								data-flume-logs-toggle={id}
+							>
+								<TerminalIcon className="size-3" />
+								<span>{nodeLogs.length > 0 ? nodeLogs.length : "Logs"}</span>
+							</button>
+						</div>
+					</div>
 				</FrameHeader>
 
 				{hasError && (
@@ -346,6 +443,15 @@ const Node = ({
 						</Form>
 					</CardPanel>
 				</Card>
+
+				<NodeLogs
+					nodeId={id}
+					label={label}
+					logs={nodeLogs}
+					status={nodeStatus}
+					isOpen={logsOpen}
+					onClose={() => setLogsOpen(false)}
+				/>
 
 				{isBlock && (
 					<div className="border-t border-(--line)/48 px-3 py-2">

@@ -128,3 +128,25 @@ export type CompilerDiagnostic = {
 
 export const DiagnosticsContext = React.createContext<CompilerDiagnostic[]>([]);
 export const NodeResultsContext = React.createContext<Record<string, Record<string, any>>>({});
+
+export interface NodeLogEntry {
+	timestamp: number;
+	level: "info" | "warn" | "error";
+	message: string;
+	source?: string;
+	nodeId?: string;
+}
+
+export type NodeStatus =
+	| "init"
+	| "ok"
+	| "ready"
+	| "busy"
+	| "waiting"
+	| "done"
+	| "error"
+	| "fatal";
+
+export const NodeStatusesContext = React.createContext<Record<string, NodeStatus>>({});
+export const NodeLogsContext = React.createContext<Record<string, NodeLogEntry[]>>({});
+
