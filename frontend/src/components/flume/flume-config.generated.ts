@@ -751,6 +751,102 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 	});
 	config.addNodeType({
+		type: "crypto.Base64Decode",
+		label: "Base64 Decode",
+		category: "crypto",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports["[]byte"]({ name: "data", label: "data" }),
+		],
+		outputs: (ports) => [
+			ports["[]byte"]({ name: "out", label: "out" }),
+		],
+	});
+	config.addNodeType({
+		type: "crypto.Base64Encode",
+		label: "Base64 Encode",
+		category: "crypto",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports["[]byte"]({ name: "data", label: "data" }),
+		],
+		outputs: (ports) => [
+			ports["[]byte"]({ name: "out", label: "out" }),
+		],
+	});
+	config.addNodeType({
+		type: "crypto.BearerAuth",
+		label: "Bearer Auth",
+		category: "crypto",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports["[]byte"]({ name: "data", label: "data" }),
+		],
+		outputs: (ports) => [
+			ports["[]byte"]({ name: "out", label: "out" }),
+		],
+	});
+	config.addNodeType({
+		type: "crypto.HMACSHA256",
+		label: "H M A C S H A256",
+		category: "crypto",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports["[]byte"]({ name: "data", label: "data" }),
+		],
+		outputs: (ports) => [
+			ports["[]byte"]({ name: "out", label: "out" }),
+		],
+	});
+	config.addNodeType({
+		type: "crypto.HMACSHA512",
+		label: "H M A C S H A512",
+		category: "crypto",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports["[]byte"]({ name: "data", label: "data" }),
+		],
+		outputs: (ports) => [
+			ports["[]byte"]({ name: "out", label: "out" }),
+		],
+	});
+	config.addNodeType({
+		type: "crypto.HeaderAuth",
+		label: "Header Auth",
+		category: "crypto",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports["[]byte"]({ name: "data", label: "data" }),
+		],
+		outputs: (ports) => [
+			ports["[]byte"]({ name: "out", label: "out" }),
+		],
+	});
+	config.addNodeType({
+		type: "crypto.Nonce",
+		label: "Nonce",
+		category: "crypto",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports["[]byte"]({ name: "data", label: "data" }),
+		],
+		outputs: (ports) => [
+			ports["[]byte"]({ name: "out", label: "out" }),
+		],
+	});
+	config.addNodeType({
+		type: "crypto.SHA256",
+		label: "S H A256",
+		category: "crypto",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports["[]byte"]({ name: "data", label: "data" }),
+		],
+		outputs: (ports) => [
+			ports["[]byte"]({ name: "out", label: "out" }),
+		],
+	});
+	config.addNodeType({
 		type: "data.Equation",
 		label: "Equation",
 		category: "data",
@@ -825,75 +921,6 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "nsec", label: "nsec" }),
 			ports.float64({ name: "value", label: "value" }),
 			ports.bool({ name: "found", label: "found" }),
-		],
-	});
-	config.addNodeType({
-		type: "execution.Decide",
-		label: "Decide",
-		category: "execution",
-		initialWidth: 340,
-		inputs: (ports) => [
-			ports["[]byte"]({ name: "data", label: "data" }),
-			ports.string({ name: "winner", label: "winner" }),
-			ports.float64({ name: "contrast", label: "contrast" }),
-			ports.bool({ name: "isBreak", label: "isBreak" }),
-			ports.float64({ name: "minContrast", label: "minContrast" }),
-		],
-		outputs: (ports) => [
-			ports.string({ name: "out", label: "out" }),
-		],
-	});
-	config.addNodeType({
-		type: "execution.Gate",
-		label: "Gate",
-		category: "execution",
-		initialWidth: 340,
-		inputs: (ports) => [
-			ports.string({ name: "text", label: "text" }),
-		],
-		outputs: (ports) => [
-			ports.string({ name: "out", label: "out" }),
-		],
-	});
-	config.addNodeType({
-		type: "execution.Regulator",
-		label: "Regulator",
-		category: "execution",
-		initialWidth: 340,
-		inputs: (ports) => [
-			ports.string({ name: "id", label: "id" }),
-			ports.string({ name: "orderId", label: "orderId" }),
-			ports.string({ name: "clientOrderId", label: "clientOrderId" }),
-			ports.string({ name: "side", label: "side" }),
-			ports.float64({ name: "cumQty", label: "cumQty" }),
-			ports.float64({ name: "cumCost", label: "cumCost" }),
-			ports.float64({ name: "fee", label: "fee" }),
-			ports.string({ name: "status", label: "status" }),
-			ports.string({ name: "symbol", label: "symbol" }),
-		],
-		outputs: (ports) => [
-			ports.string({ name: "symbol", label: "symbol" }),
-			ports.float64({ name: "quantity", label: "quantity" }),
-			ports.float64({ name: "basis", label: "basis" }),
-			ports.float64({ name: "entryFee", label: "entryFee" }),
-			ports.float64({ name: "realized", label: "realized" }),
-		],
-	});
-	config.addNodeType({
-		type: "execution.Submit",
-		label: "Submit",
-		category: "execution",
-		initialWidth: 340,
-		inputs: (ports) => [
-			ports.string({ name: "action", label: "action" }),
-			ports.string({ name: "symbol", label: "symbol" }),
-		],
-		outputs: (ports) => [
-			ports["[]byte"]({ name: "out", label: "out" }),
-			ports.string({ name: "symbol", label: "symbol" }),
-			ports.string({ name: "action", label: "action" }),
-			ports.string({ name: "status", label: "status" }),
-			ports.int64({ name: "timestamp", label: "timestamp" }),
 		],
 	});
 	config.addNodeType({
@@ -1621,42 +1648,6 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 	});
 	config.addNodeType({
-		type: "transport.Base64Decode",
-		label: "Base64 Decode",
-		category: "transport",
-		initialWidth: 340,
-		inputs: (ports) => [
-			ports["[]byte"]({ name: "data", label: "data" }),
-		],
-		outputs: (ports) => [
-			ports["[]byte"]({ name: "out", label: "out" }),
-		],
-	});
-	config.addNodeType({
-		type: "transport.Base64Encode",
-		label: "Base64 Encode",
-		category: "transport",
-		initialWidth: 340,
-		inputs: (ports) => [
-			ports["[]byte"]({ name: "data", label: "data" }),
-		],
-		outputs: (ports) => [
-			ports["[]byte"]({ name: "out", label: "out" }),
-		],
-	});
-	config.addNodeType({
-		type: "transport.BearerAuth",
-		label: "Bearer Auth",
-		category: "transport",
-		initialWidth: 340,
-		inputs: (ports) => [
-			ports["[]byte"]({ name: "data", label: "data" }),
-		],
-		outputs: (ports) => [
-			ports["[]byte"]({ name: "out", label: "out" }),
-		],
-	});
-	config.addNodeType({
 		type: "transport.Broadcast",
 		label: "Broadcast",
 		category: "transport",
@@ -1717,54 +1708,6 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 	});
 	config.addNodeType({
-		type: "transport.HMACSHA256",
-		label: "H M A C S H A256",
-		category: "transport",
-		initialWidth: 340,
-		inputs: (ports) => [
-			ports["[]byte"]({ name: "data", label: "data" }),
-		],
-		outputs: (ports) => [
-			ports["[]byte"]({ name: "out", label: "out" }),
-		],
-	});
-	config.addNodeType({
-		type: "transport.HMACSHA512",
-		label: "H M A C S H A512",
-		category: "transport",
-		initialWidth: 340,
-		inputs: (ports) => [
-			ports["[]byte"]({ name: "data", label: "data" }),
-		],
-		outputs: (ports) => [
-			ports["[]byte"]({ name: "out", label: "out" }),
-		],
-	});
-	config.addNodeType({
-		type: "transport.HTTPRequest",
-		label: "H T T P Request",
-		category: "transport",
-		initialWidth: 340,
-		inputs: (ports) => [
-			ports["[]byte"]({ name: "data", label: "data" }),
-		],
-		outputs: (ports) => [
-			ports["[]byte"]({ name: "out", label: "out" }),
-		],
-	});
-	config.addNodeType({
-		type: "transport.HeaderAuth",
-		label: "Header Auth",
-		category: "transport",
-		initialWidth: 340,
-		inputs: (ports) => [
-			ports["[]byte"]({ name: "data", label: "data" }),
-		],
-		outputs: (ports) => [
-			ports["[]byte"]({ name: "out", label: "out" }),
-		],
-	});
-	config.addNodeType({
 		type: "transport.JSONDecode",
 		label: "J S O N Decode",
 		category: "transport",
@@ -1791,18 +1734,6 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 	config.addNodeType({
 		type: "transport.Join",
 		label: "Join",
-		category: "transport",
-		initialWidth: 340,
-		inputs: (ports) => [
-			ports["[]byte"]({ name: "data", label: "data" }),
-		],
-		outputs: (ports) => [
-			ports["[]byte"]({ name: "out", label: "out" }),
-		],
-	});
-	config.addNodeType({
-		type: "transport.Nonce",
-		label: "Nonce",
 		category: "transport",
 		initialWidth: 340,
 		inputs: (ports) => [
@@ -1851,30 +1782,6 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 	});
 	config.addNodeType({
-		type: "transport.Route",
-		label: "Route",
-		category: "transport",
-		initialWidth: 340,
-		inputs: (ports) => [
-			ports["[]byte"]({ name: "data", label: "data" }),
-		],
-		outputs: (ports) => [
-			ports["[]byte"]({ name: "out", label: "out" }),
-		],
-	});
-	config.addNodeType({
-		type: "transport.SHA256",
-		label: "S H A256",
-		category: "transport",
-		initialWidth: 340,
-		inputs: (ports) => [
-			ports["[]byte"]({ name: "data", label: "data" }),
-		],
-		outputs: (ports) => [
-			ports["[]byte"]({ name: "out", label: "out" }),
-		],
-	});
-	config.addNodeType({
 		type: "transport.Stream",
 		label: "Stream",
 		category: "transport",
@@ -1899,132 +1806,24 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 	});
 	config.addNodeType({
-		type: "transport.Timestamp",
-		label: "Timestamp",
-		category: "transport",
-		initialWidth: 340,
-		inputs: (ports) => [
-			ports["[]byte"]({ name: "data", label: "data" }),
-		],
-		outputs: (ports) => [
-			ports["[]byte"]({ name: "out", label: "out" }),
-		],
-	});
-	config.addNodeType({
-		type: "transport.WSBatch",
-		label: "W S Batch",
-		category: "transport",
-		initialWidth: 340,
-		inputs: (ports) => [
-			ports["[]byte"]({ name: "data", label: "data" }),
-		],
-		outputs: (ports) => [
-			ports["[]byte"]({ name: "out", label: "out" }),
-		],
-	});
-	config.addNodeType({
-		type: "transport.WSClose",
-		label: "W S Close",
-		category: "transport",
-		initialWidth: 340,
-		inputs: (ports) => [
-			ports["[]byte"]({ name: "data", label: "data" }),
-		],
-		outputs: (ports) => [
-			ports["[]byte"]({ name: "out", label: "out" }),
-		],
-	});
-	config.addNodeType({
-		type: "transport.WSConnect",
-		label: "W S Connect",
-		category: "transport",
-		initialWidth: 340,
-		inputs: (ports) => [
-			ports["[]byte"]({ name: "data", label: "data" }),
-		],
-		outputs: (ports) => [
-			ports["[]byte"]({ name: "out", label: "out" }),
-		],
-	});
-	config.addNodeType({
-		type: "transport.WSDecodeJSON",
-		label: "W S Decode J S O N",
-		category: "transport",
-		initialWidth: 340,
-		inputs: (ports) => [
-			ports["[]byte"]({ name: "data", label: "data" }),
-		],
-		outputs: (ports) => [
-			ports["[]byte"]({ name: "out", label: "out" }),
-		],
-	});
-	config.addNodeType({
-		type: "transport.WSEncodeJSON",
-		label: "W S Encode J S O N",
-		category: "transport",
-		initialWidth: 340,
-		inputs: (ports) => [
-			ports["[]byte"]({ name: "data", label: "data" }),
-		],
-		outputs: (ports) => [
-			ports["[]byte"]({ name: "out", label: "out" }),
-		],
-	});
-	config.addNodeType({
-		type: "transport.WSJSONMessage",
-		label: "W S J S O N Message",
-		category: "transport",
-		initialWidth: 340,
-		inputs: (ports) => [
-			ports["[]byte"]({ name: "data", label: "data" }),
-		],
-		outputs: (ports) => [
-			ports["[]byte"]({ name: "out", label: "out" }),
-		],
-	});
-	config.addNodeType({
-		type: "transport.WSPingPong",
-		label: "W S Ping Pong",
-		category: "transport",
-		initialWidth: 340,
-		inputs: (ports) => [
-			ports["[]byte"]({ name: "data", label: "data" }),
-		],
-		outputs: (ports) => [
-			ports["[]byte"]({ name: "out", label: "out" }),
-		],
-	});
-	config.addNodeType({
-		type: "transport.WSRead",
-		label: "W S Read",
-		category: "transport",
-		initialWidth: 340,
-		inputs: (ports) => [
-			ports["[]byte"]({ name: "data", label: "data" }),
-		],
-		outputs: (ports) => [
-			ports["[]byte"]({ name: "out", label: "out" }),
-		],
-	});
-	config.addNodeType({
-		type: "transport.WSWrite",
-		label: "W S Write",
-		category: "transport",
-		initialWidth: 340,
-		inputs: (ports) => [
-			ports["[]byte"]({ name: "data", label: "data" }),
-		],
-		outputs: (ports) => [
-			ports["[]byte"]({ name: "out", label: "out" }),
-		],
-	});
-	config.addNodeType({
 		type: "types.JSON",
 		label: "J S O N",
 		category: "types",
 		initialWidth: 340,
 		inputs: (ports) => [
 			ports.string({ name: "text", label: "text" }),
+		],
+		outputs: (ports) => [
+			ports["[]byte"]({ name: "out", label: "out" }),
+		],
+	});
+	config.addNodeType({
+		type: "types.Timestamp",
+		label: "Timestamp",
+		category: "types",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports["[]byte"]({ name: "data", label: "data" }),
 		],
 		outputs: (ports) => [
 			ports["[]byte"]({ name: "out", label: "out" }),

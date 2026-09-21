@@ -10,7 +10,7 @@ import (
 	"capnproto.org/go/capnp/v3/std/capnp/schema"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/compiler"
-	"github.com/theapemachine/symm/nomagique/transport"
+	crypto "github.com/theapemachine/symm/nomagique/transport/crypto"
 )
 
 func TestCompileFlume(t *testing.T) {
@@ -100,10 +100,10 @@ func TestCompileFlume(t *testing.T) {
 
 		Convey("Test E: Type mismatch between incompatible ports fails at compile time", func() {
 			customReg := compiler.NewRegistry()
-			customReg.Register("transport.Base64Encode", compiler.Factory{
-				InterfaceID: transport.Base64Encode_TypeID,
+			customReg.Register("crypto.Base64Encode", compiler.Factory{
+				InterfaceID: crypto.Base64Encode_TypeID,
 				New: func(ctx context.Context, cfg []byte) (capnp.Client, error) {
-					return capnp.Client(transport.Base64Encode_ServerToClient(transport.NewBase64Encode())), nil
+					return capnp.Client(crypto.Base64Encode_ServerToClient(crypto.NewBase64Encode(ctx))), nil
 				},
 			})
 			customReg.Register("arithmetic.Add", compiler.Factory{
@@ -119,7 +119,7 @@ func TestCompileFlume(t *testing.T) {
 				Nodes: map[string]compiler.Node{
 					"textSrc": {
 						ID:   "textSrc",
-						Type: "transport.Base64Encode",
+						Type: "crypto.Base64Encode",
 						Connections: compiler.Connections{
 							Outputs: map[string][]compiler.ConnectionTarget{
 								"out": {{NodeID: "add", PortName: "a"}},

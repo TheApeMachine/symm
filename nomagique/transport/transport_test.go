@@ -13,7 +13,7 @@ func TestTransportPrimitives(t *testing.T) {
 
 	Convey("Given transport primitives", t, func() {
 		Convey("Process streams data through Done", func() {
-			server := transport.NewProcess()
+			server := transport.NewProcess(t.Context())
 			client := transport.Process_ServerToClient(server)
 			So(client.IsValid(), ShouldBeTrue)
 

@@ -1,74 +1,57 @@
 {
-  "id": "system:orchestration",
-  "name": "system:orchestration",
+  "id": "system",
+  "name": "system",
   "nodes": {
-    "source": {
-      "id": "source",
-      "type": "data.Source",
+    "48484869-9b45-4c8f-8002-02fdeee8a71e": {
+      "id": "48484869-9b45-4c8f-8002-02fdeee8a71e",
+      "type": "controlflow.Loop",
+      "width": 280,
+      "height": 291,
+      "x": -400.0,
+      "y": -280.0,
+      "inputData": {
+        "data": {
+          "value": "{\n    \"method\": \"ping\",\n    \"req_id\": 101\n}"
+        },
+        "active": {
+          "value": true
+        },
+        "limit": {
+          "value": 0
+        }
+      },
       "connections": {
         "inputs": {},
         "outputs": {
           "out": [
             {
-              "nodeId": "signals",
-              "portName": "in"
-            }
-          ]
-        }
-      }
-    },
-    "signals": {
-      "id": "signals",
-      "type": "definition:signals",
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "source",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "logic",
-              "portName": "in"
-            }
-          ]
-        }
-      }
-    },
-    "logic": {
-      "id": "logic",
-      "type": "definition:logic",
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "signals",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "ui",
+              "nodeId": "88f7776c-2bd2-4867-93d7-584712b713c8",
               "portName": "data"
             }
           ]
         }
       }
     },
-    "ui": {
-      "id": "ui",
-      "type": "http.HTTPServer",
+    "88f7776c-2bd2-4867-93d7-584712b713c8": {
+      "id": "88f7776c-2bd2-4867-93d7-584712b713c8",
+      "type": "controlflow.Delay",
+      "width": 280,
+      "height": 172,
+      "x": 0.0,
+      "y": -220.0,
+      "inputData": {
+        "data": {
+          "value": ""
+        },
+        "millis": {
+          "value": 20000
+        }
+      },
       "connections": {
         "inputs": {
           "data": [
             {
-              "nodeId": "logic",
+              "nodeId": "48484869-9b45-4c8f-8002-02fdeee8a71e",
               "portName": "out"
             }
           ]
@@ -76,21 +59,90 @@
         "outputs": {
           "out": [
             {
-              "nodeId": "execution",
-              "portName": "in"
+              "nodeId": "1b06e22b-00b8-402d-9eba-454ae57daabd",
+              "portName": "write"
             }
           ]
         }
       }
     },
-    "execution": {
-      "id": "execution",
-      "type": "definition:execution",
+    "1b06e22b-00b8-402d-9eba-454ae57daabd": {
+      "id": "1b06e22b-00b8-402d-9eba-454ae57daabd",
+      "type": "websocket.WebSocketClient",
+      "width": 280,
+      "height": 172,
+      "x": 400.0,
+      "y": -50.0,
+      "inputData": {
+        "endpoint": {
+          "value": "wss://ws.kraken.com/v2"
+        },
+        "write": {
+          "value": ""
+        }
+      },
       "connections": {
         "inputs": {
-          "in": [
+          "write": [
             {
-              "nodeId": "ui",
+              "nodeId": "88f7776c-2bd2-4867-93d7-584712b713c8",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "2a01e001-0002-4000-8000-000000000001": {
+      "id": "2a01e001-0002-4000-8000-000000000001",
+      "type": "controlflow.Loop",
+      "width": 280,
+      "height": 291,
+      "x": -400.0,
+      "y": 120.0,
+      "inputData": {
+        "data": {
+          "value": "{\n    \"method\": \"ping\",\n    \"req_id\": 102\n}"
+        },
+        "active": {
+          "value": true
+        },
+        "limit": {
+          "value": 0
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "2a01e001-0002-4000-8000-000000000002",
+              "portName": "data"
+            }
+          ]
+        }
+      }
+    },
+    "2a01e001-0002-4000-8000-000000000002": {
+      "id": "2a01e001-0002-4000-8000-000000000002",
+      "type": "controlflow.Delay",
+      "width": 280,
+      "height": 172,
+      "x": 0.0,
+      "y": 180.0,
+      "inputData": {
+        "data": {
+          "value": ""
+        },
+        "millis": {
+          "value": 20000
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "2a01e001-0002-4000-8000-000000000001",
               "portName": "out"
             }
           ]
@@ -98,21 +150,306 @@
         "outputs": {
           "out": [
             {
-              "nodeId": "sink",
-              "portName": "in"
+              "nodeId": "2a01e001-0002-4000-8000-000000000003",
+              "portName": "write"
             }
           ]
         }
       }
     },
-    "sink": {
-      "id": "sink",
-      "type": "data.Sink",
+    "2a01e001-0002-4000-8000-000000000003": {
+      "id": "2a01e001-0002-4000-8000-000000000003",
+      "type": "websocket.WebSocketClient",
+      "width": 280,
+      "height": 172,
+      "x": 400.0,
+      "y": 350.0,
+      "inputData": {
+        "endpoint": {
+          "value": "wss://ws-auth.kraken.com/v2"
+        },
+        "write": {
+          "value": ""
+        }
+      },
       "connections": {
         "inputs": {
-          "in": [
+          "write": [
             {
-              "nodeId": "execution",
+              "nodeId": "2a01e001-0002-4000-8000-000000000002",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "3b01e001-0003-4000-8000-000000000001": {
+      "id": "3b01e001-0003-4000-8000-000000000001",
+      "type": "controlflow.Loop",
+      "width": 280,
+      "height": 291,
+      "x": -400.0,
+      "y": 520.0,
+      "inputData": {
+        "data": {
+          "value": "{\n    \"method\": \"ping\",\n    \"req_id\": 103\n}"
+        },
+        "active": {
+          "value": true
+        },
+        "limit": {
+          "value": 0
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "3b01e001-0003-4000-8000-000000000002",
+              "portName": "data"
+            }
+          ]
+        }
+      }
+    },
+    "3b01e001-0003-4000-8000-000000000002": {
+      "id": "3b01e001-0003-4000-8000-000000000002",
+      "type": "controlflow.Delay",
+      "width": 280,
+      "height": 172,
+      "x": 0.0,
+      "y": 580.0,
+      "inputData": {
+        "data": {
+          "value": ""
+        },
+        "millis": {
+          "value": 20000
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "3b01e001-0003-4000-8000-000000000001",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "3b01e001-0003-4000-8000-000000000003",
+              "portName": "write"
+            }
+          ]
+        }
+      }
+    },
+    "3b01e001-0003-4000-8000-000000000003": {
+      "id": "3b01e001-0003-4000-8000-000000000003",
+      "type": "websocket.WebSocketClient",
+      "width": 280,
+      "height": 172,
+      "x": 400.0,
+      "y": 750.0,
+      "inputData": {
+        "endpoint": {
+          "value": "wss://ws-l3.kraken.com/v2"
+        },
+        "write": {
+          "value": ""
+        }
+      },
+      "connections": {
+        "inputs": {
+          "write": [
+            {
+              "nodeId": "3b01e001-0003-4000-8000-000000000002",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "4c01e001-0004-4000-8000-000000000001": {
+      "id": "4c01e001-0004-4000-8000-000000000001",
+      "type": "controlflow.Loop",
+      "width": 280,
+      "height": 291,
+      "x": -400.0,
+      "y": 920.0,
+      "inputData": {
+        "data": {
+          "value": "{\n    \"event\": \"ping\",\n    \"req_id\": 104\n}"
+        },
+        "active": {
+          "value": true
+        },
+        "limit": {
+          "value": 0
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "4c01e001-0004-4000-8000-000000000002",
+              "portName": "data"
+            }
+          ]
+        }
+      }
+    },
+    "4c01e001-0004-4000-8000-000000000002": {
+      "id": "4c01e001-0004-4000-8000-000000000002",
+      "type": "controlflow.Delay",
+      "width": 280,
+      "height": 172,
+      "x": 0.0,
+      "y": 980.0,
+      "inputData": {
+        "data": {
+          "value": ""
+        },
+        "millis": {
+          "value": 20000
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "4c01e001-0004-4000-8000-000000000001",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "4c01e001-0004-4000-8000-000000000003",
+              "portName": "write"
+            }
+          ]
+        }
+      }
+    },
+    "4c01e001-0004-4000-8000-000000000003": {
+      "id": "4c01e001-0004-4000-8000-000000000003",
+      "type": "websocket.WebSocketClient",
+      "width": 280,
+      "height": 172,
+      "x": 400.0,
+      "y": 1150.0,
+      "inputData": {
+        "endpoint": {
+          "value": "wss://futures.kraken.com/ws/v1"
+        },
+        "write": {
+          "value": ""
+        }
+      },
+      "connections": {
+        "inputs": {
+          "write": [
+            {
+              "nodeId": "4c01e001-0004-4000-8000-000000000002",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "5d01e001-0005-4000-8000-000000000001": {
+      "id": "5d01e001-0005-4000-8000-000000000001",
+      "type": "controlflow.Loop",
+      "width": 280,
+      "height": 291,
+      "x": -400.0,
+      "y": 1320.0,
+      "inputData": {
+        "data": {
+          "value": "{}"
+        },
+        "active": {
+          "value": true
+        },
+        "limit": {
+          "value": 0
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "5d01e001-0005-4000-8000-000000000002",
+              "portName": "data"
+            }
+          ]
+        }
+      }
+    },
+    "5d01e001-0005-4000-8000-000000000002": {
+      "id": "5d01e001-0005-4000-8000-000000000002",
+      "type": "controlflow.Delay",
+      "width": 280,
+      "height": 172,
+      "x": 0.0,
+      "y": 1380.0,
+      "inputData": {
+        "data": {
+          "value": ""
+        },
+        "millis": {
+          "value": 30000
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "5d01e001-0005-4000-8000-000000000001",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "5d01e001-0005-4000-8000-000000000003",
+              "portName": "data"
+            }
+          ]
+        }
+      }
+    },
+    "5d01e001-0005-4000-8000-000000000003": {
+      "id": "5d01e001-0005-4000-8000-000000000003",
+      "type": "transport.Process",
+      "width": 280,
+      "height": 172,
+      "x": 400.0,
+      "y": 1550.0,
+      "inputData": {
+        "binary": {
+          "value": "kraken"
+        },
+        "args": {
+          "value": "paper status --output json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "5d01e001-0005-4000-8000-000000000002",
               "portName": "out"
             }
           ]

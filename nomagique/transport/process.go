@@ -5,14 +5,18 @@ import (
 	"context"
 
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
 type ProcessServer struct {
+	*runtime.System
 	out []byte
 }
 
-func NewProcess() *ProcessServer {
-	return &ProcessServer{}
+func NewProcess(ctx context.Context) *ProcessServer {
+	return &ProcessServer{
+		System: runtime.NewSystem(ctx, "transport.process"),
+	}
 }
 
 func (server *ProcessServer) Write(ctx context.Context, call Process_write) error {

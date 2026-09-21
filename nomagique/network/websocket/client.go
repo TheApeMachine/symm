@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"time"
+	"unicode/utf8"
 
 	gorillaws "github.com/gorilla/websocket"
 	"github.com/theapemachine/errnie"
@@ -51,7 +52,7 @@ func (server *WebSocketClientServer) Write(ctx context.Context, call WebSocketCl
 		server.Transition(runtime.WAITING)
 	}
 
-	if server.Status() != runtime.READY {
+	if server.endpoint != "" && server.Status() != runtime.READY {
 		server.connect()
 	}
 
@@ -66,7 +67,13 @@ func (server *WebSocketClientServer) Write(ctx context.Context, call WebSocketCl
 	}
 
 	if len(payload) > 0 && server.conn != nil && server.Status() == runtime.READY {
-		if err := server.conn.WriteMessage(gorillaws.BinaryMessage, payload); err != nil {
+		msgType := gorillaws.TextMessage
+
+		if !utf8.Valid(payload) {
+			msgType = gorillaws.BinaryMessage
+		}
+
+		if err := server.conn.WriteMessage(msgType, payload); err != nil {
 			return errnie.Error(errnie.Err(
 				errnie.IO,
 				fmt.Sprintf("websocket: failed to write frame to %s", server.endpoint),
