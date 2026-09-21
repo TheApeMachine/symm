@@ -874,6 +874,23 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 	});
 	config.addNodeType({
+		type: "data.Filter",
+		label: "Filter",
+		category: "data",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports["[]byte"]({ name: "data", label: "data" }),
+			ports.string({ name: "path", label: "path" }),
+			ports.string({ name: "operator", label: "operator" }),
+			ports.float64({ name: "threshold", label: "threshold" }),
+		],
+		outputs: (ports) => [
+			ports["[]byte"]({ name: "out", label: "out" }),
+			ports.bool({ name: "passed", label: "passed" }),
+			ports.Status({ name: "status", label: "status" }),
+		],
+	});
+	config.addNodeType({
 		type: "data.Insert",
 		label: "Insert",
 		category: "data",
@@ -885,6 +902,24 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports["[]byte"]({ name: "out", label: "out" }),
+			ports.Status({ name: "status", label: "status" }),
+		],
+	});
+	config.addNodeType({
+		type: "data.Iterate",
+		label: "Iterate",
+		category: "data",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports["[]byte"]({ name: "data", label: "data" }),
+			ports.string({ name: "path", label: "path" }),
+		],
+		outputs: (ports) => [
+			ports["[]byte"]({ name: "out", label: "out" }),
+			ports.int64({ name: "index", label: "index" }),
+			ports.int64({ name: "count", label: "count" }),
+			ports.bool({ name: "last", label: "last" }),
+			ports.bool({ name: "found", label: "found" }),
 			ports.Status({ name: "status", label: "status" }),
 		],
 	});
@@ -905,6 +940,23 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.bool({ name: "snrDefined", label: "snrDefined" }),
 			ports.bool({ name: "estimated", label: "estimated" }),
 			ports.float64({ name: "maturity", label: "maturity" }),
+		],
+	});
+	config.addNodeType({
+		type: "data.Reduce",
+		label: "Reduce",
+		category: "data",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "value", label: "value" }),
+			ports.string({ name: "operator", label: "operator" }),
+			ports.bool({ name: "flush", label: "flush" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "out", label: "out" }),
+			ports.int64({ name: "count", label: "count" }),
+			ports.bool({ name: "ready", label: "ready" }),
+			ports.Status({ name: "status", label: "status" }),
 		],
 	});
 	config.addNodeType({

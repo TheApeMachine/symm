@@ -168,6 +168,25 @@ func (server *ExtractServer) read(payload []byte) (float64, bool, error) {
 }
 
 /*
+readPath resolves a dotted path against a JSON structure, and is shared by
+every primitive that addresses a value by path.
+*/
+func readPath(payload []byte, path string) (float64, bool, error) {
+	var document any
+
+	if err := sonic.Unmarshal(payload, &document); err != nil {
+		return 0, false, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[data] payload is not a structure",
+			err,
+		))
+	}
+
+	value, found := extractAt(document, strings.Split(path, "."))
+	return value, found, nil
+}
+
+/*
 extractAt walks segments through the decoded structure.
 */
 func extractAt(document any, segments []string) (float64, bool) {
