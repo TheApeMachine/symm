@@ -208,7 +208,7 @@ func (c ConnectedComponents_done) Args() ConnectedComponents_done_Params {
 
 // AllocResults allocates the results struct.
 func (c ConnectedComponents_done) AllocResults() (ConnectedComponents_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 1})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 3})
 	return ConnectedComponents_done_Results(r), err
 }
 
@@ -403,12 +403,12 @@ type ConnectedComponents_done_Results capnp.Struct
 const ConnectedComponents_done_Results_TypeID = 0x9e84f02fbb473b3d
 
 func NewConnectedComponents_done_Results(s *capnp.Segment) (ConnectedComponents_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 3})
 	return ConnectedComponents_done_Results(st), err
 }
 
 func NewRootConnectedComponents_done_Results(s *capnp.Segment) (ConnectedComponents_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 3})
 	return ConnectedComponents_done_Results(st), err
 }
 
@@ -475,13 +475,59 @@ func (s ConnectedComponents_done_Results) NewComponentSizes(n int32) (capnp.Int6
 	err = capnp.Struct(s).SetPtr(0, l.ToPtr())
 	return l, err
 }
+func (s ConnectedComponents_done_Results) Members() (capnp.Int64List, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return capnp.Int64List(p.List()), err
+}
+
+func (s ConnectedComponents_done_Results) HasMembers() bool {
+	return capnp.Struct(s).HasPtr(1)
+}
+
+func (s ConnectedComponents_done_Results) SetMembers(v capnp.Int64List) error {
+	return capnp.Struct(s).SetPtr(1, v.ToPtr())
+}
+
+// NewMembers sets the members field to a newly
+// allocated capnp.Int64List, preferring placement in s's segment.
+func (s ConnectedComponents_done_Results) NewMembers(n int32) (capnp.Int64List, error) {
+	l, err := capnp.NewInt64List(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return capnp.Int64List{}, err
+	}
+	err = capnp.Struct(s).SetPtr(1, l.ToPtr())
+	return l, err
+}
+func (s ConnectedComponents_done_Results) MemberOf() (capnp.Int64List, error) {
+	p, err := capnp.Struct(s).Ptr(2)
+	return capnp.Int64List(p.List()), err
+}
+
+func (s ConnectedComponents_done_Results) HasMemberOf() bool {
+	return capnp.Struct(s).HasPtr(2)
+}
+
+func (s ConnectedComponents_done_Results) SetMemberOf(v capnp.Int64List) error {
+	return capnp.Struct(s).SetPtr(2, v.ToPtr())
+}
+
+// NewMemberOf sets the memberOf field to a newly
+// allocated capnp.Int64List, preferring placement in s's segment.
+func (s ConnectedComponents_done_Results) NewMemberOf(n int32) (capnp.Int64List, error) {
+	l, err := capnp.NewInt64List(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return capnp.Int64List{}, err
+	}
+	err = capnp.Struct(s).SetPtr(2, l.ToPtr())
+	return l, err
+}
 
 // ConnectedComponents_done_Results_List is a list of ConnectedComponents_done_Results.
 type ConnectedComponents_done_Results_List = capnp.StructList[ConnectedComponents_done_Results]
 
 // NewConnectedComponents_done_Results creates a new list of ConnectedComponents_done_Results.
 func NewConnectedComponents_done_Results_List(s *capnp.Segment, sz int32) (ConnectedComponents_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 3}, sz)
 	return capnp.StructList[ConnectedComponents_done_Results](l), err
 }
 

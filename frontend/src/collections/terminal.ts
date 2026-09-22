@@ -15,7 +15,8 @@ export type TerminalSurface =
 	| "diagnostics"
 	| "hindsight"
 	| "workbench"
-	| "pipeline";
+	| "pipeline"
+	| "dynamic";
 
 export { DEFAULT_FOCUS_SYMBOL };
 

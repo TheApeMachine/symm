@@ -16,6 +16,8 @@ type ConnectedComponentsServer struct {
 	*runtime.System
 	componentCount int32
 	componentSizes []int64
+	members        []int64
+	memberOf       []int64
 }
 
 func NewConnectedComponents(ctx context.Context) *ConnectedComponentsServer {
@@ -68,9 +70,16 @@ func (server *ConnectedComponentsServer) Write(ctx context.Context, call Connect
 	compList := topo.ConnectedComponents(graphVal)
 	server.componentCount = int32(len(compList))
 	server.componentSizes = make([]int64, len(compList))
+	server.members = server.members[:0]
+	server.memberOf = server.memberOf[:0]
 
 	for index, compItem := range compList {
 		server.componentSizes[index] = int64(len(compItem))
+
+		for _, held := range compItem {
+			server.members = append(server.members, held.ID())
+			server.memberOf = append(server.memberOf, int64(index))
+		}
 	}
 	return nil
 }
@@ -94,6 +103,27 @@ func (server *ConnectedComponentsServer) Done(ctx context.Context, call Connecte
 
 	for index, item := range server.componentSizes {
 		listComponentSizes.Set(index, item)
+	}
+
+	if len(server.members) == 0 {
+		return nil
+	}
+
+	members, err := results.NewMembers(int32(len(server.members)))
+
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.Internal, "failed to allocate members list", err))
+	}
+
+	memberOf, err := results.NewMemberOf(int32(len(server.memberOf)))
+
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.Internal, "failed to allocate memberOf list", err))
+	}
+
+	for index := range server.members {
+		members.Set(index, server.members[index])
+		memberOf.Set(index, server.memberOf[index])
 	}
 	return nil
 }

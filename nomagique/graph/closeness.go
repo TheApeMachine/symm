@@ -5,9 +5,9 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	"gonum.org/v1/gonum/graph/simple"
 	"gonum.org/v1/gonum/graph/network"
 	"gonum.org/v1/gonum/graph/path"
+	"gonum.org/v1/gonum/graph/simple"
 )
 
 /*
@@ -15,7 +15,7 @@ ClosenessServer calculates closeness centrality measuring average shortest dista
 */
 type ClosenessServer struct {
 	*runtime.System
-	nodes []int64
+	nodes  []int64
 	scores []float64
 }
 

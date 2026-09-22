@@ -32,6 +32,18 @@ const api = {
 		engine.setPortLayout(nodeId, portName, transputType, offsetX, offsetY);
 	},
 
+	clearPortLayout(
+		nodeId: string,
+		portName: string,
+		transputType: TransputType,
+	): void {
+		engine.clearPortLayout(nodeId, portName, transputType);
+	},
+
+	clearNodePortLayouts(nodeId: string): void {
+		engine.clearNodePortLayouts(nodeId);
+	},
+
 	beginDrag(nodeId: string): void {
 		engine.beginDrag(nodeId);
 	},

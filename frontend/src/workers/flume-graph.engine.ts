@@ -133,6 +133,34 @@ export class FlumeGraphEngine {
 		this.cachedPaths.clear();
 	}
 
+	clearPortLayout(
+		nodeId: string,
+		portName: string,
+		transputType: TransputType,
+	): void {
+		const layoutKey = portLayoutKey(nodeId, portName, transputType);
+		if (this.portLayouts.has(layoutKey)) {
+			this.portLayouts.delete(layoutKey);
+			this.cachedPaths.clear();
+		}
+	}
+
+	clearNodePortLayouts(nodeId: string): void {
+		let removedAny = false;
+		const nodePrefix = `${nodeId}|`;
+
+		for (const key of Array.from(this.portLayouts.keys())) {
+			if (key.startsWith(nodePrefix)) {
+				this.portLayouts.delete(key);
+				removedAny = true;
+			}
+		}
+
+		if (removedAny) {
+			this.cachedPaths.clear();
+		}
+	}
+
 	beginDrag(nodeId: string): void {
 		const node = this.nodes[nodeId];
 

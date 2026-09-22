@@ -3,20 +3,76 @@ Reorders and repositions nodes for simple pipeline previews. Consumers call
 {@link dispatchGraphLayout} after the user selects a non-freeform preset; topological
 ordering follows edges producer → consumer.
 */
+
 import type { NodeActions } from "#/components/flume/nodes-actions";
+import { portFamily } from "#/components/flume/port-families";
 import type { NodeMap } from "#/components/flume/types";
 
 /** How automatic arrangement places nodes relative to dependency order. */
 export type GraphLayoutMode =
 	| "freeform"
 	| "horizontalPipeline"
-	| "verticalPipeline";
+	| "verticalPipeline"
+	| "orthogonal";
+
+export const NODE_HEADER = 96;
+export const PORT_ROW = 28;
+export const GRID_CELL_SIZE = 32;
+export const NODE_WIDTH = 288;
+export const HORIZONTAL_CORRIDOR = 160;
+export const X_STEP = NODE_WIDTH + HORIZONTAL_CORRIDOR;
+export const MIN_VERTICAL_GAP = 64;
+export const START_X = 96;
+export const START_Y = 128;
 
 const HORIZ_STEP = 300;
 /** Vertical gap between dependency ranks (nodes are tall — match ~card + chart header). */
 const VERT_RANK_GAP = 360;
 /** Horizontal spacing between nodes that share the same rank (parallel branches). */
 const VERT_PARALLEL_GAP = 320;
+
+/** Estimates drawn height of a node based on its header and port rows. */
+export const estimateNodeHeight = (node: NodeMap[string]): number => {
+	if (node.type.startsWith("definition:")) {
+		return NODE_HEADER + PORT_ROW;
+	}
+
+	const rows = (ports: Record<string, unknown>) =>
+		new Set(Object.keys(ports).map((port) => portFamily(port) ?? port)).size;
+
+	const ports =
+		rows(node.connections?.inputs ?? {}) +
+		rows(node.connections?.outputs ?? {});
+
+	return NODE_HEADER + ports * PORT_ROW;
+};
+
+/** Calculates vertical offset of a port relative to the top of the node card. */
+export const estimatePortOffsetY = (
+	node: NodeMap[string],
+	portName: string,
+	isOutput: boolean,
+): number => {
+	const inputs = Object.keys(node.connections?.inputs ?? {});
+	const outputs = Object.keys(node.connections?.outputs ?? {});
+
+	const inputFamilies = Array.from(
+		new Set(inputs.map((name) => portFamily(name) ?? name)),
+	);
+	const outputFamilies = Array.from(
+		new Set(outputs.map((name) => portFamily(name) ?? name)),
+	);
+
+	const targetFamily = portFamily(portName) ?? portName;
+
+	if (isOutput) {
+		const outIndex = Math.max(0, outputFamilies.indexOf(targetFamily));
+		return NODE_HEADER + (inputFamilies.length + outIndex + 0.5) * PORT_ROW;
+	}
+
+	const inIndex = Math.max(0, inputFamilies.indexOf(targetFamily));
+	return NODE_HEADER + (inIndex + 0.5) * PORT_ROW;
+};
 
 /*
 Collects the producer -> consumer edges, dropping the ones that close a cycle.
@@ -203,6 +259,199 @@ export function topologicalSortNodeIds(nodes: NodeMap): string[] {
 	return sorted;
 }
 
+/**
+ * Optimizes node positioning for orthogonal edge routing:
+ * 1. Partitions nodes into topological ranks (left to right).
+ * 2. Minimizes edge crossings via multi-pass barycenter sweeps.
+ * 3. Horizontally aligns input and output ports (for 0-bend and 2-bend orthogonal routing).
+ * 4. Snaps all coordinates to the 32px occupancy grid with non-overlapping corridors.
+ */
+export function optimizeOrthogonalLayout(
+	nodes: NodeMap,
+): Array<{ nodeId: string; x: number; y: number }> {
+	const nodeIds = Object.keys(nodes);
+	if (nodeIds.length === 0) {
+		return [];
+	}
+
+	const ranks = computeNodeRanks(nodes);
+	const maxRank = Math.max(0, ...Array.from(ranks.values()));
+	const layers: string[][] = Array.from({ length: maxRank + 1 }, () => []);
+
+	for (const nodeId of nodeIds) {
+		const nodeRank = ranks.get(nodeId) ?? 0;
+		layers[nodeRank]?.push(nodeId);
+	}
+
+	// Crossing reduction: multi-pass barycenter sweeps
+	const sweepRounds = 2;
+	for (let round = 0; round < sweepRounds; round++) {
+		// Forward sweep: order each layer by average position of predecessors
+		for (let rankIndex = 1; rankIndex <= maxRank; rankIndex++) {
+			const prevLayer = layers[rankIndex - 1];
+			const currentLayer = layers[rankIndex];
+
+			const barycenters = new Map<string, number>();
+			for (const nodeId of currentLayer) {
+				const inputs = nodes[nodeId]?.connections?.inputs ?? {};
+				let predecessorSum = 0;
+				let predecessorCount = 0;
+
+				for (const links of Object.values(inputs)) {
+					for (const link of links) {
+						const predecessorIndex = prevLayer.indexOf(link.nodeId);
+						if (predecessorIndex >= 0) {
+							predecessorSum += predecessorIndex;
+							predecessorCount++;
+						}
+					}
+				}
+
+				const barycenterValue =
+					predecessorCount > 0
+						? predecessorSum / predecessorCount
+						: currentLayer.indexOf(nodeId);
+				barycenters.set(nodeId, barycenterValue);
+			}
+
+			currentLayer.sort((nodeA, nodeB) => {
+				const scoreA = barycenters.get(nodeA) ?? 0;
+				const scoreB = barycenters.get(nodeB) ?? 0;
+				if (scoreA !== scoreB) {
+					return scoreA - scoreB;
+				}
+
+				return nodeA.localeCompare(nodeB);
+			});
+		}
+
+		// Backward sweep: order each layer by average position of successors
+		for (let rankIndex = maxRank - 1; rankIndex >= 0; rankIndex--) {
+			const nextLayer = layers[rankIndex + 1];
+			const currentLayer = layers[rankIndex];
+
+			const barycenters = new Map<string, number>();
+			for (const nodeId of currentLayer) {
+				const outputs = nodes[nodeId]?.connections?.outputs ?? {};
+				let successorSum = 0;
+				let successorCount = 0;
+
+				for (const links of Object.values(outputs)) {
+					for (const link of links) {
+						const successorIndex = nextLayer.indexOf(link.nodeId);
+						if (successorIndex >= 0) {
+							successorSum += successorIndex;
+							successorCount++;
+						}
+					}
+				}
+
+				const barycenterValue =
+					successorCount > 0
+						? successorSum / successorCount
+						: currentLayer.indexOf(nodeId);
+				barycenters.set(nodeId, barycenterValue);
+			}
+
+			currentLayer.sort((nodeA, nodeB) => {
+				const scoreA = barycenters.get(nodeA) ?? 0;
+				const scoreB = barycenters.get(nodeB) ?? 0;
+				if (scoreA !== scoreB) {
+					return scoreA - scoreB;
+				}
+
+				return nodeA.localeCompare(nodeB);
+			});
+		}
+	}
+
+	// Position assignments
+	const positions = new Map<string, { coordX: number; coordY: number }>();
+
+	for (let rankIndex = 0; rankIndex <= maxRank; rankIndex++) {
+		const currentLayer = layers[rankIndex];
+		const layerCoordX = START_X + rankIndex * X_STEP;
+
+		if (rankIndex === 0) {
+			let currentCoordY = START_Y;
+			for (const nodeId of currentLayer) {
+				const snappedCoordY =
+					Math.round(currentCoordY / GRID_CELL_SIZE) * GRID_CELL_SIZE;
+				positions.set(nodeId, { coordX: layerCoordX, coordY: snappedCoordY });
+
+				const nodeHeight = estimateNodeHeight(nodes[nodeId]);
+				currentCoordY = snappedCoordY + nodeHeight + MIN_VERTICAL_GAP;
+			}
+			continue;
+		}
+
+		// Calculate target vertical positions to align input ports with predecessor output ports
+		const targetPositions: Array<{ nodeId: string; targetY: number }> = [];
+
+		for (const nodeId of currentLayer) {
+			const inputs = nodes[nodeId]?.connections?.inputs ?? {};
+			let targetSum = 0;
+			let targetCount = 0;
+
+			for (const [inputPortName, links] of Object.entries(inputs)) {
+				const inPortOffsetY = estimatePortOffsetY(
+					nodes[nodeId],
+					inputPortName,
+					false,
+				);
+
+				for (const link of links) {
+					const predecessorPos = positions.get(link.nodeId);
+					if (!predecessorPos) {
+						continue;
+					}
+
+					const outPortOffsetY = estimatePortOffsetY(
+						nodes[link.nodeId],
+						link.portName,
+						true,
+					);
+					const idealNodeY =
+						predecessorPos.coordY + outPortOffsetY - inPortOffsetY;
+					targetSum += idealNodeY;
+					targetCount++;
+				}
+			}
+
+			let computedTargetY = START_Y;
+			if (targetCount > 0) {
+				computedTargetY = targetSum / targetCount;
+			}
+
+			targetPositions.push({ nodeId, targetY: computedTargetY });
+		}
+
+		// Enforce non-overlapping vertical placement with minimum gaps
+		let runningCoordY = START_Y;
+		for (let itemIndex = 0; itemIndex < targetPositions.length; itemIndex++) {
+			const item = targetPositions[itemIndex];
+			const candidateY = Math.max(item.targetY, runningCoordY);
+			const snappedCoordY =
+				Math.round(candidateY / GRID_CELL_SIZE) * GRID_CELL_SIZE;
+
+			positions.set(item.nodeId, {
+				coordX: layerCoordX,
+				coordY: snappedCoordY,
+			});
+
+			const nodeHeight = estimateNodeHeight(nodes[item.nodeId]);
+			runningCoordY = snappedCoordY + nodeHeight + MIN_VERTICAL_GAP;
+		}
+	}
+
+	const updates: Array<{ nodeId: string; x: number; y: number }> = [];
+	for (const [nodeId, pos] of positions.entries()) {
+		updates.push({ nodeId, x: pos.coordX, y: pos.coordY });
+	}
+
+	return updates;
+}
+
 /** Repositions nodes for pipeline layouts (no-op for {@link GraphLayoutMode.freeform}). */
 export function dispatchGraphLayout(
 	mode: GraphLayoutMode,
@@ -210,6 +459,12 @@ export function dispatchGraphLayout(
 	actions: NodeActions,
 ) {
 	if (mode === "freeform") return;
+
+	if (mode === "orthogonal") {
+		const updates = optimizeOrthogonalLayout(nodeMap);
+		actions.applyNodeCoordinates(updates);
+		return;
+	}
 
 	if (mode === "verticalPipeline") {
 		const ranks = computeNodeRanks(nodeMap);

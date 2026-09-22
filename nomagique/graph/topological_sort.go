@@ -14,7 +14,7 @@ TopologicalSortServer calculates topological ordering of a directed acyclic grap
 */
 type TopologicalSortServer struct {
 	*runtime.System
-	order []int64
+	order    []int64
 	hasCycle bool
 }
 

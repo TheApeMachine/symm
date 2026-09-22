@@ -6,6 +6,7 @@ import {
 	CpuIcon,
 	DownloadIcon,
 	GitCommitVerticalIcon,
+	LayoutGridIcon,
 	PlayIcon,
 	PlusIcon,
 	RefreshCwIcon,
@@ -26,9 +27,9 @@ import { ToggleGroup, ToggleGroupItem } from "#/components/ui/toggle-group";
 import { Typography } from "#/components/ui/typography";
 import { hubBaseUrl } from "#/lib/hub";
 import { useDefinitions } from "#/service/compute";
-import { createFlumeConfig } from "./flume-config.generated";
 import type { EdgeRoutingMode } from "./connectionCalculator";
 import type { CompilerDiagnostic, NodeLogEntry, NodeStatus } from "./context";
+import { createFlumeConfig } from "./flume-config.generated";
 import { setRoutingMode, useRoutingMode } from "./flume-editor.store";
 import {
 	type BackendGraph,
@@ -112,7 +113,9 @@ export const FlumeEditor = ({ projectId }: FlumeEditorProps) => {
 	const [pastedJSON, setPastedJSON] = useState("");
 
 	const [diagnostics, setDiagnostics] = useState<CompilerDiagnostic[]>([]);
-	const [results, setResults] = useState<Record<string, Record<string, any>>>({});
+	const [results, setResults] = useState<Record<string, Record<string, any>>>(
+		{},
+	);
 	const [statuses, setStatuses] = useState<Record<string, NodeStatus>>({});
 	const [logs, setLogs] = useState<Record<string, NodeLogEntry[]>>({});
 	const [isSaving, setIsSaving] = useState(false);
@@ -202,6 +205,26 @@ export const FlumeEditor = ({ projectId }: FlumeEditorProps) => {
 		}
 	};
 
+	const handleAutoLayout = () => {
+		if (!editorHandleRef.current?.hasNodes()) {
+			toastManager.add({
+				title: "No Nodes to Layout",
+				description: "The canvas is currently empty",
+				type: "info",
+				timeout: 3000,
+			});
+			return;
+		}
+
+		editorHandleRef.current.autoLayout("orthogonal");
+		toastManager.add({
+			title: "Auto Layout Applied",
+			description: "Nodes positioned for optimal orthogonal routing",
+			type: "success",
+			timeout: 3000,
+		});
+	};
+
 	const handleSaveDefinition = async () => {
 		const currentRow = pipelineGraphCollection.get(graphId);
 		const nodes = currentRow?.nodes ?? {};
@@ -214,11 +237,14 @@ export const FlumeEditor = ({ projectId }: FlumeEditorProps) => {
 
 		setIsSaving(true);
 		try {
-			const res = await fetch(`${hubBaseUrl()}/workbench/signals/${selectedGraph}`, {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify(payload),
-			});
+			const res = await fetch(
+				`${hubBaseUrl()}/workbench/signals/${selectedGraph}`,
+				{
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify(payload),
+				},
+			);
 			if (!res.ok) {
 				const errText = await res.text();
 				throw new Error(errText || res.statusText);
@@ -280,7 +306,9 @@ export const FlumeEditor = ({ projectId }: FlumeEditorProps) => {
 					timeout: 4000,
 				});
 			} else {
-				const diags = data.diagnostics || [{ kind: "compile_error", message: data.error }];
+				const diags = data.diagnostics || [
+					{ kind: "compile_error", message: data.error },
+				];
 				setDiagnostics(diags);
 				toastManager.add({
 					title: "Compilation Failed",
@@ -329,7 +357,8 @@ export const FlumeEditor = ({ projectId }: FlumeEditorProps) => {
 				}
 				toastManager.add({
 					title: "Execution Succeeded",
-					description: "Evaluated 1 observation through real Cap'n Proto program",
+					description:
+						"Evaluated 1 observation through real Cap'n Proto program",
 					type: "success",
 					timeout: 4000,
 				});
@@ -363,7 +392,10 @@ export const FlumeEditor = ({ projectId }: FlumeEditorProps) => {
 	};
 
 	const handleCreateNewDefinition = () => {
-		const cleanName = newDefName.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "_");
+		const cleanName = newDefName
+			.trim()
+			.toLowerCase()
+			.replace(/[^a-z0-9_-]/g, "_");
 		if (!cleanName) return;
 
 		setSelectedGraph(cleanName);
@@ -466,7 +498,12 @@ export const FlumeEditor = ({ projectId }: FlumeEditorProps) => {
 	return (
 		<Flex.Column gap={2} className="min-h-[75vh] flex-1">
 			{/* Top action toolbar */}
-			<Flex.Row align="center" justify="between" gap={3} className="shrink-0 flex-wrap rounded-sm border bg-(--raised)/48 px-3 py-2">
+			<Flex.Row
+				align="center"
+				justify="between"
+				gap={3}
+				className="shrink-0 flex-wrap rounded-sm border bg-(--raised)/48 px-3 py-2"
+			>
 				<Flex.Row align="center" gap={2} className="flex-wrap">
 					<Flex.Row align="center" gap={2}>
 						<Typography.Label size="s" tone="f4">
@@ -486,10 +523,7 @@ export const FlumeEditor = ({ projectId }: FlumeEditorProps) => {
 							<optgroup label="Definitions">
 								{allDefinitions
 									.filter(
-										(d) =>
-											d !== "system" &&
-											d !== "logic" &&
-											d !== "execution",
+										(d) => d !== "system" && d !== "logic" && d !== "execution",
 									)
 									.sort()
 									.map((d) => (
@@ -572,6 +606,17 @@ export const FlumeEditor = ({ projectId }: FlumeEditorProps) => {
 					</Button>
 
 					<Button
+						onClick={handleAutoLayout}
+						size="s"
+						title="Auto-layout nodes for clean orthogonal routing"
+						type="button"
+						variant="quiet"
+					>
+						<LayoutGridIcon className="size-3.5" />
+						Auto Layout
+					</Button>
+
+					<Button
 						onClick={() => setImportModalOpen(true)}
 						size="s"
 						title="Import raw JSON"
@@ -599,7 +644,9 @@ export const FlumeEditor = ({ projectId }: FlumeEditorProps) => {
 
 			{/* Diagnostics Banner */}
 			{diagnostics.length > 0 && (
-				<Flex.Row align="center" justify="between"
+				<Flex.Row
+					align="center"
+					justify="between"
 					className="rounded border border-red-500/50 bg-red-950/70 px-3 py-2 text-xs text-red-200"
 					data-testid="diagnostics-banner"
 				>
@@ -629,7 +676,9 @@ export const FlumeEditor = ({ projectId }: FlumeEditorProps) => {
 
 			{/* Execution Result Banner */}
 			{Object.keys(results).length > 0 && (
-				<Flex.Row align="center" justify="between"
+				<Flex.Row
+					align="center"
+					justify="between"
 					className="rounded border border-emerald-500/50 bg-emerald-950/70 px-3 py-2 text-xs text-emerald-200"
 					data-testid="results-banner"
 				>
@@ -688,7 +737,8 @@ export const FlumeEditor = ({ projectId }: FlumeEditorProps) => {
 					</Modal.Header>
 					<Modal.Body className="flex flex-col gap-3">
 						<p className="text-xs text-(--f3)">
-							Name your reusable graph definition. It can be composed as a node inside other graphs.
+							Name your reusable graph definition. It can be composed as a node
+							inside other graphs.
 						</p>
 						<input
 							type="text"
@@ -704,10 +754,7 @@ export const FlumeEditor = ({ projectId }: FlumeEditorProps) => {
 						/>
 					</Modal.Body>
 					<Modal.Footer>
-						<Button
-							onClick={() => setNewDefModalOpen(false)}
-							variant="outline"
-						>
+						<Button onClick={() => setNewDefModalOpen(false)} variant="outline">
 							Cancel
 						</Button>
 						<Button
@@ -747,10 +794,7 @@ export const FlumeEditor = ({ projectId }: FlumeEditorProps) => {
 						/>
 					</Modal.Body>
 					<Modal.Footer>
-						<Button
-							onClick={() => setImportModalOpen(false)}
-							variant="outline"
-						>
+						<Button onClick={() => setImportModalOpen(false)} variant="outline">
 							Cancel
 						</Button>
 						<Button

@@ -15,6 +15,10 @@
         "outputs": {
           "read": [
             {
+              "nodeId": "capture",
+              "portName": "payload"
+            },
+            {
               "nodeId": "grid",
               "portName": "data"
             }
@@ -22,68 +26,536 @@
         }
       }
     },
+    "capture": {
+      "id": "capture",
+      "type": "tables.IcebergTable",
+      "inputData": {
+        "config": {
+          "value": "symm.raw_frames"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "payload": [
+            {
+              "nodeId": "feed",
+              "portName": "read"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
     "grid": {
       "id": "grid",
       "type": "store.Grid",
       "inputData": {
-        "metric": {
-          "value": "cognition"
-        },
         "interests": {
-          "value": "data.0.symbol,data.0.last"
+          "value": "ticker.data.timestamp,ticker.data.last,trade.data.qty,trade.data.side=sell,trade.data.price,trade.data.timestamp,level3.data.ask,level3.data.bid,level3.data.ask_qty,level3.data.bid_qty"
         }
       },
       "connections": {
-        "inputs": {},
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "feed",
+              "portName": "read"
+            },
+            {
+              "nodeId": "replay",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "values": [
+            {
+              "nodeId": "window",
+              "portName": "value"
+            }
+          ],
+          "present": [
+            {
+              "nodeId": "window",
+              "portName": "present"
+            }
+          ]
+        }
+      }
+    },
+    "window": {
+      "id": "window",
+      "type": "sequence.Window",
+      "inputData": {
+        "span": {
+          "value": 64
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "grid",
+              "portName": "values"
+            }
+          ],
+          "present": [
+            {
+              "nodeId": "grid",
+              "portName": "present"
+            }
+          ]
+        },
         "outputs": {
           "out": [
             {
-              "nodeId": "transition",
+              "nodeId": "affinity",
+              "portName": "data"
+            }
+          ],
+          "rows": [
+            {
+              "nodeId": "affinity",
+              "portName": "rows"
+            }
+          ],
+          "cols": [
+            {
+              "nodeId": "affinity",
+              "portName": "cols"
+            }
+          ]
+        }
+      }
+    },
+    "affinity": {
+      "id": "affinity",
+      "type": "statistic.CorrelationMatrix",
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "window",
+              "portName": "out"
+            }
+          ],
+          "rows": [
+            {
+              "nodeId": "window",
+              "portName": "rows"
+            }
+          ],
+          "cols": [
+            {
+              "nodeId": "window",
+              "portName": "cols"
+            }
+          ]
+        },
+        "outputs": {
+          "corr": [
+            {
+              "nodeId": "spread",
+              "portName": "value"
+            },
+            {
+              "nodeId": "edges",
+              "portName": "matrix"
+            }
+          ],
+          "dim": [
+            {
+              "nodeId": "edges",
+              "portName": "dim"
+            }
+          ]
+        }
+      }
+    },
+    "spread": {
+      "id": "spread",
+      "type": "statistic.Order",
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "affinity",
+              "portName": "corr"
+            }
+          ]
+        },
+        "outputs": {
+          "median": [
+            {
+              "nodeId": "cut",
+              "portName": "a"
+            }
+          ],
+          "medianAbsolute": [
+            {
+              "nodeId": "cut",
+              "portName": "b"
+            }
+          ]
+        }
+      }
+    },
+    "cut": {
+      "id": "cut",
+      "type": "arithmetic.Add",
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "spread",
+              "portName": "median"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "spread",
+              "portName": "medianAbsolute"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "edges",
+              "portName": "threshold"
+            }
+          ]
+        }
+      }
+    },
+    "edges": {
+      "id": "edges",
+      "type": "graph.Edges",
+      "connections": {
+        "inputs": {
+          "matrix": [
+            {
+              "nodeId": "affinity",
+              "portName": "corr"
+            }
+          ],
+          "dim": [
+            {
+              "nodeId": "affinity",
+              "portName": "dim"
+            }
+          ],
+          "threshold": [
+            {
+              "nodeId": "cut",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "fromNodes": [
+            {
+              "nodeId": "regions",
+              "portName": "fromNodes"
+            },
+            {
+              "nodeId": "standing",
+              "portName": "fromNodes"
+            }
+          ],
+          "toNodes": [
+            {
+              "nodeId": "regions",
+              "portName": "toNodes"
+            },
+            {
+              "nodeId": "standing",
+              "portName": "toNodes"
+            }
+          ]
+        }
+      }
+    },
+    "regions": {
+      "id": "regions",
+      "type": "graph.ConnectedComponents",
+      "connections": {
+        "inputs": {
+          "fromNodes": [
+            {
+              "nodeId": "edges",
+              "portName": "fromNodes"
+            }
+          ],
+          "toNodes": [
+            {
+              "nodeId": "edges",
+              "portName": "toNodes"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "standing": {
+      "id": "standing",
+      "type": "graph.PageRank",
+      "inputData": {
+        "damping": {
+          "value": 0.85
+        },
+        "tol": {
+          "value": 1e-06
+        }
+      },
+      "connections": {
+        "inputs": {
+          "fromNodes": [
+            {
+              "nodeId": "edges",
+              "portName": "fromNodes"
+            }
+          ],
+          "toNodes": [
+            {
+              "nodeId": "edges",
+              "portName": "toNodes"
+            }
+          ]
+        },
+        "outputs": {
+          "ranks": [
+            {
+              "nodeId": "heat",
+              "portName": "value"
+            }
+          ],
+          "ranks_0": [
+            {
+              "nodeId": "token_0",
+              "portName": "value"
+            }
+          ],
+          "ranks_1": [
+            {
+              "nodeId": "token_1",
+              "portName": "value"
+            }
+          ],
+          "ranks_2": [
+            {
+              "nodeId": "token_2",
+              "portName": "value"
+            }
+          ],
+          "ranks_3": [
+            {
+              "nodeId": "token_3",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "heat": {
+      "id": "heat",
+      "type": "statistic.Order",
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "standing",
+              "portName": "ranks"
+            }
+          ]
+        },
+        "outputs": {
+          "median": [
+            {
+              "nodeId": "hot",
+              "portName": "a"
+            }
+          ],
+          "medianAbsolute": [
+            {
+              "nodeId": "hot",
+              "portName": "b"
+            }
+          ]
+        }
+      }
+    },
+    "hot": {
+      "id": "hot",
+      "type": "arithmetic.Add",
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "heat",
+              "portName": "median"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "heat",
+              "portName": "medianAbsolute"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "token_0": {
+      "id": "token_0",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "region.0"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "standing",
+              "portName": "ranks_0"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "token_1",
               "portName": "data"
             }
           ]
         }
       }
     },
-    "transition": {
-      "id": "transition",
-      "type": "temporal.Transition",
+    "token_1": {
+      "id": "token_1",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "region.1"
+        }
+      },
       "connections": {
-        "inputs": {},
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "standing",
+              "portName": "ranks_1"
+            }
+          ],
+          "data": [
+            {
+              "nodeId": "token_0",
+              "portName": "out"
+            }
+          ]
+        },
         "outputs": {
           "out": [
             {
-              "nodeId": "associate",
-              "portName": "current"
+              "nodeId": "token_2",
+              "portName": "data"
             }
           ]
         }
       }
     },
-    "associate": {
-      "id": "associate",
-      "type": "cognition.Associate",
+    "token_2": {
+      "id": "token_2",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "region.2"
+        }
+      },
       "connections": {
-        "inputs": {},
-        "outputs": {
-          "current": [
+        "inputs": {
+          "value": [
             {
-              "nodeId": "reinforce",
-              "portName": "classBytes"
+              "nodeId": "standing",
+              "portName": "ranks_2"
+            }
+          ],
+          "data": [
+            {
+              "nodeId": "token_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "token_3",
+              "portName": "data"
             }
           ]
         }
       }
     },
-    "reinforce": {
-      "id": "reinforce",
-      "type": "cognition.Reinforce",
+    "token_3": {
+      "id": "token_3",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "region.3"
+        }
+      },
       "connections": {
-        "inputs": {},
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "standing",
+              "portName": "ranks_3"
+            }
+          ],
+          "data": [
+            {
+              "nodeId": "token_2",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sensory",
+              "portName": "contextBytes"
+            }
+          ]
+        }
+      }
+    },
+    "sensory": {
+      "id": "sensory",
+      "type": "cognition.SensoryKey",
+      "connections": {
+        "inputs": {
+          "contextBytes": [
+            {
+              "nodeId": "token_3",
+              "portName": "out"
+            }
+          ]
+        },
         "outputs": {
           "out": [
             {
               "nodeId": "attractor",
+              "portName": "contextBytes"
+            },
+            {
+              "nodeId": "sequence",
+              "portName": "current"
+            },
+            {
+              "nodeId": "surprisal",
               "portName": "contextBytes"
             }
           ]
@@ -94,22 +566,362 @@
       "id": "attractor",
       "type": "cognition.Attractor",
       "connections": {
-        "inputs": {},
+        "inputs": {
+          "contextBytes": [
+            {
+              "nodeId": "sensory",
+              "portName": "out"
+            }
+          ]
+        },
         "outputs": {
           "class": [
             {
-              "nodeId": "classification",
+              "nodeId": "decision",
               "portName": "class"
+            }
+          ],
+          "prob": [
+            {
+              "nodeId": "decision",
+              "portName": "prob"
+            }
+          ],
+          "count": [
+            {
+              "nodeId": "decision",
+              "portName": "support"
             }
           ]
         }
       }
     },
-    "classification": {
-      "id": "classification",
+    "decision": {
+      "id": "decision",
       "type": "cognition.Classification",
       "connections": {
+        "inputs": {
+          "class": [
+            {
+              "nodeId": "attractor",
+              "portName": "class"
+            }
+          ],
+          "prob": [
+            {
+              "nodeId": "attractor",
+              "portName": "prob"
+            }
+          ],
+          "support": [
+            {
+              "nodeId": "attractor",
+              "portName": "count"
+            }
+          ]
+        },
+        "outputs": {
+          "winner": [
+            {
+              "nodeId": "reinforce",
+              "portName": "classBytes"
+            }
+          ],
+          "contrast": [
+            {
+              "nodeId": "verdict",
+              "portName": "issueReference"
+            }
+          ],
+          "passed": [
+            {
+              "nodeId": "graded",
+              "portName": "observed"
+            }
+          ]
+        }
+      }
+    },
+    "sequence": {
+      "id": "sequence",
+      "type": "cognition.Associate",
+      "connections": {
+        "inputs": {
+          "current": [
+            {
+              "nodeId": "sensory",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "precursor": [
+            {
+              "nodeId": "reinforce",
+              "portName": "contextBytes"
+            }
+          ]
+        }
+      }
+    },
+    "reinforce": {
+      "id": "reinforce",
+      "type": "cognition.Reinforce",
+      "connections": {
+        "inputs": {
+          "contextBytes": [
+            {
+              "nodeId": "sequence",
+              "portName": "precursor"
+            }
+          ],
+          "classBytes": [
+            {
+              "nodeId": "decision",
+              "portName": "winner"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "surprisal": {
+      "id": "surprisal",
+      "type": "cognition.Surprisal",
+      "connections": {
+        "inputs": {
+          "contextBytes": [
+            {
+              "nodeId": "sensory",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "graded",
+              "portName": "feature"
+            }
+          ]
+        }
+      }
+    },
+    "replay": {
+      "id": "replay",
+      "type": "tables.IcebergScan",
+      "inputData": {
+        "config": {
+          "value": "symm.raw_frames"
+        }
+      },
+      "connections": {
         "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "grid",
+              "portName": "data"
+            },
+            {
+              "nodeId": "before",
+              "portName": "data"
+            },
+            {
+              "nodeId": "ignition",
+              "portName": "data"
+            },
+            {
+              "nodeId": "exhaustion",
+              "portName": "data"
+            }
+          ]
+        }
+      }
+    },
+    "before": {
+      "id": "before",
+      "type": "data.Extract",
+      "inputData": {
+        "path": {
+          "value": "excursion.before"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "replay",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "entry_leg",
+              "portName": "past"
+            }
+          ]
+        }
+      }
+    },
+    "ignition": {
+      "id": "ignition",
+      "type": "data.Extract",
+      "inputData": {
+        "path": {
+          "value": "excursion.ignition"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "replay",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "entry_leg",
+              "portName": "current"
+            },
+            {
+              "nodeId": "exit_leg",
+              "portName": "past"
+            }
+          ]
+        }
+      }
+    },
+    "exhaustion": {
+      "id": "exhaustion",
+      "type": "data.Extract",
+      "inputData": {
+        "path": {
+          "value": "excursion.exhaustion"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "replay",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "exit_leg",
+              "portName": "current"
+            }
+          ]
+        }
+      }
+    },
+    "entry_leg": {
+      "id": "entry_leg",
+      "type": "learning.DirectionalTarget",
+      "connections": {
+        "inputs": {
+          "past": [
+            {
+              "nodeId": "before",
+              "portName": "out"
+            }
+          ],
+          "current": [
+            {
+              "nodeId": "ignition",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "verdict",
+              "portName": "resolveReference"
+            },
+            {
+              "nodeId": "graded",
+              "portName": "target"
+            }
+          ]
+        }
+      }
+    },
+    "exit_leg": {
+      "id": "exit_leg",
+      "type": "learning.DirectionalTarget",
+      "connections": {
+        "inputs": {
+          "past": [
+            {
+              "nodeId": "ignition",
+              "portName": "out"
+            }
+          ],
+          "current": [
+            {
+              "nodeId": "exhaustion",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "verdict": {
+      "id": "verdict",
+      "type": "learning.TemporalLedger",
+      "connections": {
+        "inputs": {
+          "issueReference": [
+            {
+              "nodeId": "decision",
+              "portName": "contrast"
+            }
+          ],
+          "resolveReference": [
+            {
+              "nodeId": "entry_leg",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "graded": {
+      "id": "graded",
+      "type": "learning.TaskLearner",
+      "connections": {
+        "inputs": {
+          "feature": [
+            {
+              "nodeId": "surprisal",
+              "portName": "out"
+            }
+          ],
+          "target": [
+            {
+              "nodeId": "entry_leg",
+              "portName": "out"
+            }
+          ],
+          "observed": [
+            {
+              "nodeId": "decision",
+              "portName": "passed"
+            }
+          ]
+        },
         "outputs": {}
       }
     }

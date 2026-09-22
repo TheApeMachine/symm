@@ -1175,6 +1175,48 @@ func compileFanIn(edges []fanInEdge) ([]Route, error) {
 			return group[left].port < group[right].port
 		})
 
+		// A gathering port gathers producers, but one producer may already
+		// carry the whole list: a grid handing over every value it delivered
+		// is one wire, not one wire per value. Gathering that into a list of
+		// lists would bury it a level deeper than the consumer reads.
+		if len(group) == 1 && group[0].fromInfo.ValueList &&
+			group[0].fromInfo.ElementWhich == group[0].toInfo.ElementWhich {
+			edge := group[0]
+			copier, err := CompileCopier(
+				FieldInfo{
+					Name:   edge.fromInfo.Name,
+					Offset: edge.fromInfo.Offset,
+					Which:  schema.Type_Which_list,
+				},
+				FieldInfo{
+					Name:   edge.toInfo.Name,
+					Offset: edge.toInfo.Offset,
+					Which:  schema.Type_Which_list,
+				},
+			)
+
+			if err != nil {
+				return nil, errnie.Error(errnie.Err(
+					errnie.Validation,
+					fmt.Sprintf(
+						"compiler: %q hands a whole list to gathering port %q but their elements differ",
+						edge.fromInfo.Name, edge.port,
+					),
+					err,
+				))
+			}
+
+			routes = append(routes, Route{
+				FromNode:  edge.fromNode,
+				FromField: edge.fromField,
+				ToNode:    edge.toNode,
+				ToField:   edge.toField,
+				Copy:      copier,
+			})
+
+			continue
+		}
+
 		for index, edge := range group {
 			copier, err := CompileFanInCopier(edge.fromInfo, edge.toInfo, index, len(group))
 

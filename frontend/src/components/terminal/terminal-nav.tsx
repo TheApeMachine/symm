@@ -21,7 +21,8 @@ type TerminalRoutePath =
 	| "/diagnostics"
 	| "/hindsight"
 	| "/workbench"
-	| "/pipeline";
+	| "/pipeline"
+	| "/dynamic";
 
 export const SURFACE_ITEMS: Array<{
 	key: TerminalSurface;
@@ -63,6 +64,7 @@ export const SURFACE_ITEMS: Array<{
 		to: "/workbench",
 	},
 	{ key: "pipeline", label: "Pipeline editor", icon: "spark", to: "/pipeline" },
+	{ key: "dynamic", label: "Dynamic UI", icon: "spark", to: "/dynamic" },
 ];
 
 export const TerminalNav = ({ active }: { active: TerminalSurface }) => {

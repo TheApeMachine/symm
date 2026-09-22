@@ -36,6 +36,7 @@ const SURFACE_VALUES = new Set<TerminalSurface>([
 	"hindsight",
 	"workbench",
 	"pipeline",
+	"dynamic",
 ]);
 
 const SURFACE_ALIASES: Record<string, TerminalSurface> = {
@@ -60,6 +61,7 @@ const SURFACE_PATHS: Record<TerminalSurface, string> = {
 	hindsight: "/hindsight",
 	workbench: "/workbench",
 	pipeline: "/pipeline",
+	dynamic: "/ui-graph"
 };
 
 export const parseSurface = (path: unknown): TerminalSurface => {

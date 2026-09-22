@@ -8,17 +8,17 @@ import {
 	PORT_LAYER_ID,
 	STAGE_ID,
 } from "#/components/flume/constants";
+import type {
+	CompilerDiagnostic,
+	NodeLogEntry,
+	NodeStatus,
+} from "#/components/flume/context";
 import {
 	setDragOverride as setDragOverrideInStore,
 	useDragOverride,
 } from "#/components/flume/flume-editor.store";
 import Node from "#/components/flume/Node/Node";
 import Stage from "#/components/flume/Stage/Stage";
-import type {
-	CompilerDiagnostic,
-	NodeLogEntry,
-	NodeStatus,
-} from "#/components/flume/context";
 import { portLayoutKey } from "#/components/flume/spatial-index";
 import { useFlumeGraphWorker } from "#/components/flume/useFlumeGraphWorker";
 import {
@@ -60,6 +60,7 @@ export type NodeEditorHandle = {
 		defaultConnections?: DefaultConnection[];
 	}) => void;
 	hasNodes: () => boolean;
+	autoLayout: (mode?: GraphLayoutMode) => void;
 };
 
 interface NodeEditorProps {
@@ -310,6 +311,10 @@ export const NodeEditor = ({
 		},
 		seed: seedNodes,
 		hasNodes: () => Object.keys(nodes).length > 0,
+		autoLayout: (mode: GraphLayoutMode = "orthogonal") => {
+			dispatchGraphLayout(mode, nodesRefForLayout.current, nodeActions);
+			triggerRecalculation();
+		},
 	}));
 
 	// Persistence is owned by the collection — no onChange/onCommentsChange

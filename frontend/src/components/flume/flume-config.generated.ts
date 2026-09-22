@@ -1862,6 +1862,8 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.int64({ name: "componentCount", label: "componentCount" }),
 			ports.int64({ name: "componentSizes", label: "componentSizes" }),
+			ports.int64({ name: "memberOf", label: "memberOf" }),
+			ports.int64({ name: "members", label: "members" }),
 		],
 	});
 
@@ -1888,6 +1890,33 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.int64({ name: "cycleCount", label: "cycleCount" }),
 			ports.bool({ name: "hasCycles", label: "hasCycles" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "graph.Edges",
+		label: "Edges",
+		category: "graph",
+		initialWidth: 340,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.int64({ name: "dim", label: "dim" }),
+				ports.bool({ name: "signed", label: "signed" }),
+				ports.float64({ name: "threshold", label: "threshold" }),
+			];
+			const wiredMatrix = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("matrix"));
+			for (let index = 0; index < Math.max(1, wiredMatrix.length + 1); index++) {
+				const portName = index === 0 ? "matrix" : `matrix_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.int64({ name: "count", label: "count" }),
+			ports.int64({ name: "fromNodes", label: "fromNodes" }),
+			ports.float64({ name: "kept", label: "kept" }),
+			ports.int64({ name: "toNodes", label: "toNodes" }),
+			ports.float64({ name: "weights", label: "weights" }),
 		],
 	});
 
@@ -4267,53 +4296,35 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 	});
 	config.addNodeType({
-		type: "sequence.Append",
-		label: "Append",
-		category: "sequence",
-		initialWidth: 280,
-		inputs: [],
-		outputs: [],
-	});
-	config.addNodeType({
-		type: "sequence.At",
-		label: "At",
-		category: "sequence",
-		initialWidth: 280,
-		inputs: [],
-		outputs: [],
-	});
-	config.addNodeType({
-		type: "sequence.Order",
-		label: "Order",
-		category: "sequence",
-		initialWidth: 280,
-		inputs: [],
-		outputs: [],
-	});
-	config.addNodeType({
-		type: "sequence.Tail",
-		label: "Tail",
-		category: "sequence",
-		initialWidth: 280,
-		inputs: [],
-		outputs: [],
-	});
-	config.addNodeType({
-		type: "sequence.Values",
-		label: "Values",
-		category: "sequence",
-		initialWidth: 280,
-		inputs: [],
-		outputs: [],
-	});
-	config.addNodeType({
 		type: "sequence.Window",
 		label: "Window",
 		category: "sequence",
-		initialWidth: 280,
-		inputs: [],
-		outputs: [],
+		initialWidth: 340,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.int64({ name: "span", label: "span" }),
+			];
+			const wiredPresent = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("present"));
+			for (let index = 0; index < Math.max(1, wiredPresent.length + 1); index++) {
+				const portName = index === 0 ? "present" : `present_${index}`;
+				dynamicPorts.push(ports.bool({ name: portName, label: portName }));
+			}
+			const wiredValue = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("value"));
+			for (let index = 0; index < Math.max(1, wiredValue.length + 1); index++) {
+				const portName = index === 0 ? "value" : `value_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.int64({ name: "cols", label: "cols" }),
+			ports.bool({ name: "full", label: "full" }),
+			ports.float64({ name: "out", label: "out" }),
+			ports.int64({ name: "rows", label: "rows" }),
+			ports.Status({ name: "status", label: "status" }),
+		],
 	});
+
 	config.addNodeType({
 		type: "statistic.Bhattacharyya",
 		label: "Bhattacharyya",
@@ -7362,33 +7373,65 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		description: "Sub-graph: training",
 		initialWidth: 320,
 		inputs: (ports) => (_inputData, _connections) => [
-			ports["[]byte"]({ name: "associate.current", label: "associate.current" }),
-			ports["[]byte"]({ name: "attractor.contextBytes", label: "attractor.contextBytes" }),
-			ports["[]byte"]({ name: "classification.class", label: "classification.class" }),
-			ports.float64({ name: "classification.prob", label: "classification.prob" }),
-			ports.int64({ name: "classification.support", label: "classification.support" }),
+			ports.bool({ name: "edges.signed", label: "edges.signed" }),
 			ports["[]byte"]({ name: "feed.write", label: "feed.write" }),
-			ports["[]byte"]({ name: "grid.data", label: "grid.data" }),
 			ports.float64({ name: "grid.metrics", label: "grid.metrics" }),
-			ports["[]byte"]({ name: "reinforce.classBytes", label: "reinforce.classBytes" }),
-			ports["[]byte"]({ name: "reinforce.contextBytes", label: "reinforce.contextBytes" }),
-			ports["[]byte"]({ name: "transition.data", label: "transition.data" }),
+			ports["[]byte"]({ name: "replay.query", label: "replay.query" }),
+			ports["[]byte"]({ name: "token_0.data", label: "token_0.data" }),
+			ports.int64({ name: "verdict.issueStep", label: "verdict.issueStep" }),
+			ports.int64({ name: "verdict.resolveStep", label: "verdict.resolveStep" }),
 		],
 		outputs: (ports) => (_inputData, _connections) => [
-			ports["[]byte"]({ name: "associate.precursor", label: "associate.precursor" }),
-			ports.int64({ name: "attractor.count", label: "attractor.count" }),
-			ports.float64({ name: "attractor.prob", label: "attractor.prob" }),
-			ports.float64({ name: "classification.contrast", label: "classification.contrast" }),
-			ports.bool({ name: "classification.passed", label: "classification.passed" }),
-			ports.float64({ name: "classification.prob", label: "classification.prob" }),
-			ports["[]byte"]({ name: "classification.runnerUp", label: "classification.runnerUp" }),
-			ports.int64({ name: "classification.support", label: "classification.support" }),
-			ports["[]byte"]({ name: "classification.winner", label: "classification.winner" }),
+			ports.bool({ name: "before.found", label: "before.found" }),
+			ports["[]byte"]({ name: "capture.out", label: "capture.out" }),
+			ports.float64({ name: "decision.prob", label: "decision.prob" }),
+			ports["[]byte"]({ name: "decision.runnerUp", label: "decision.runnerUp" }),
+			ports.int64({ name: "decision.support", label: "decision.support" }),
+			ports.int64({ name: "edges.count", label: "edges.count" }),
+			ports.float64({ name: "edges.kept", label: "edges.kept" }),
+			ports.float64({ name: "edges.weights", label: "edges.weights" }),
+			ports.bool({ name: "exhaustion.found", label: "exhaustion.found" }),
+			ports.float64({ name: "exit_leg.out", label: "exit_leg.out" }),
+			ports.float64({ name: "graded.out", label: "graded.out" }),
 			ports.int64({ name: "grid.delivered", label: "grid.delivered" }),
 			ports.int64({ name: "grid.metrics", label: "grid.metrics" }),
-			ports.bool({ name: "grid.present", label: "grid.present" }),
-			ports.float64({ name: "grid.values", label: "grid.values" }),
+			ports["[]byte"]({ name: "grid.out", label: "grid.out" }),
 			ports.Capability({ name: "grid.self", label: "grid.self" }),
+			ports.float64({ name: "heat.count", label: "heat.count" }),
+			ports.float64({ name: "heat.extremeCurvature", label: "heat.extremeCurvature" }),
+			ports.float64({ name: "heat.extremeIndex", label: "heat.extremeIndex" }),
+			ports.float64({ name: "heat.extremeMagnitude", label: "heat.extremeMagnitude" }),
+			ports.float64({ name: "heat.extremeProminence", label: "heat.extremeProminence" }),
+			ports.float64({ name: "heat.extremeSigned", label: "heat.extremeSigned" }),
+			ports.float64({ name: "heat.interquartile", label: "heat.interquartile" }),
+			ports.float64({ name: "heat.lowerQuartile", label: "heat.lowerQuartile" }),
+			ports.float64({ name: "heat.negative", label: "heat.negative" }),
+			ports.float64({ name: "heat.positive", label: "heat.positive" }),
+			ports.float64({ name: "heat.upperQuartile", label: "heat.upperQuartile" }),
+			ports.float64({ name: "heat.zero", label: "heat.zero" }),
+			ports.float64({ name: "hot.out", label: "hot.out" }),
+			ports.bool({ name: "ignition.found", label: "ignition.found" }),
+			ports.int64({ name: "regions.componentCount", label: "regions.componentCount" }),
+			ports.int64({ name: "regions.componentSizes", label: "regions.componentSizes" }),
+			ports.int64({ name: "regions.memberOf", label: "regions.memberOf" }),
+			ports.int64({ name: "regions.members", label: "regions.members" }),
+			ports["[]byte"]({ name: "reinforce.out", label: "reinforce.out" }),
+			ports["[]byte"]({ name: "sequence.current", label: "sequence.current" }),
+			ports.float64({ name: "spread.count", label: "spread.count" }),
+			ports.float64({ name: "spread.extremeCurvature", label: "spread.extremeCurvature" }),
+			ports.float64({ name: "spread.extremeIndex", label: "spread.extremeIndex" }),
+			ports.float64({ name: "spread.extremeMagnitude", label: "spread.extremeMagnitude" }),
+			ports.float64({ name: "spread.extremeProminence", label: "spread.extremeProminence" }),
+			ports.float64({ name: "spread.extremeSigned", label: "spread.extremeSigned" }),
+			ports.float64({ name: "spread.interquartile", label: "spread.interquartile" }),
+			ports.float64({ name: "spread.lowerQuartile", label: "spread.lowerQuartile" }),
+			ports.float64({ name: "spread.negative", label: "spread.negative" }),
+			ports.float64({ name: "spread.positive", label: "spread.positive" }),
+			ports.float64({ name: "spread.upperQuartile", label: "spread.upperQuartile" }),
+			ports.float64({ name: "spread.zero", label: "spread.zero" }),
+			ports.int64({ name: "standing.nodes", label: "standing.nodes" }),
+			ports.float64({ name: "verdict.out", label: "verdict.out" }),
+			ports.bool({ name: "window.full", label: "window.full" }),
 		],
 	});
 	config.addNodeType({

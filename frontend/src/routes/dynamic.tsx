@@ -56,6 +56,6 @@ function UIGraphRouteComponent() {
 	);
 }
 
-export const Route = createFileRoute("/ui-graph")({
+export const Route = createFileRoute("/dynamic")({
 	component: UIGraphRouteComponent,
 });

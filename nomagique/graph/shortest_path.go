@@ -5,8 +5,8 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	"gonum.org/v1/gonum/graph/simple"
 	"gonum.org/v1/gonum/graph/path"
+	"gonum.org/v1/gonum/graph/simple"
 )
 
 /*
@@ -14,7 +14,7 @@ ShortestPathServer calculates shortest path between source and target nodes usin
 */
 type ShortestPathServer struct {
 	*runtime.System
-	path []int64
+	path   []int64
 	weight float64
 }
 

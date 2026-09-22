@@ -5,8 +5,8 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	"gonum.org/v1/gonum/graph/simple"
 	"gonum.org/v1/gonum/graph/network"
+	"gonum.org/v1/gonum/graph/simple"
 )
 
 /*
@@ -14,8 +14,8 @@ HITSServer calculates Kleinberg HITS hub and authority centrality scores.
 */
 type HITSServer struct {
 	*runtime.System
-	nodes []int64
-	hubs []float64
+	nodes       []int64
+	hubs        []float64
 	authorities []float64
 }
 

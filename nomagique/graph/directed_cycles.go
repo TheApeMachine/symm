@@ -15,7 +15,7 @@ DirectedCyclesServer detects cycles in a directed graph.
 type DirectedCyclesServer struct {
 	*runtime.System
 	cycleCount int32
-	hasCycles bool
+	hasCycles  bool
 }
 
 func NewDirectedCycles(ctx context.Context) *DirectedCyclesServer {

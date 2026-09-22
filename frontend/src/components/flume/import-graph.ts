@@ -3,8 +3,7 @@ import {
 	pipelineGraphCollection,
 } from "#/collections/pipeline_graph";
 import { hubBaseUrl } from "#/lib/hub";
-import { computeNodeRanks } from "./graphLayout";
-import { portFamily } from "./port-families";
+import { computeNodeRanks, estimateNodeHeight } from "./graphLayout";
 import type { InputData, NodeMap } from "./types";
 
 export type BackendGraph = {
@@ -25,46 +24,14 @@ export type BackendGraph = {
 };
 
 const X_STEP = 360;
-
-/* What a node costs vertically: its header, and a row per port it draws. */
-const NODE_HEADER = 96;
-const PORT_ROW = 28;
 const COLUMN_GAP = 56;
-
-/*
-Estimates how tall a node will be drawn.
-
-A node's height is its ports, and a gathering port's numbered slots collapse
-into the one port they belong to, so the grid collecting four hundred metrics
-is a few rows rather than four hundred. Spacing every node the same distance
-apart is what piled the signals on top of each other: they are the tallest
-nodes in the graph and were given the same room as a websocket client.
-*/
-const estimateHeight = (node: NodeMap[string]) => {
-	// A sub-graph is closed until someone opens it, and draws no ports while
-	// it is: a title and the line saying what it holds.
-	if (node.type.startsWith("definition:")) {
-		return NODE_HEADER + PORT_ROW;
-	}
-
-	const rows = (ports: Record<string, unknown>) =>
-		new Set(
-			Object.keys(ports).map((port) => portFamily(port) ?? port),
-		).size;
-
-	const ports =
-		rows(node.connections?.inputs ?? {}) + rows(node.connections?.outputs ?? {});
-
-	return NODE_HEADER + ports * PORT_ROW;
-};
+const estimateHeight = estimateNodeHeight;
 
 /*
 Convert a backend declarative JSON graph into a fully-laid-out Flume NodeMap.
 Topological ranks place sources on the left and flow rightwards to sinks.
 */
-export const convertJSONGraphToFlumeNodes = (
-	graph: BackendGraph,
-): NodeMap => {
+export const convertJSONGraphToFlumeNodes = (graph: BackendGraph): NodeMap => {
 	const flumeNodes: NodeMap = {};
 
 	if (!graph?.nodes || typeof graph.nodes !== "object") {
@@ -251,7 +218,9 @@ export const fetchAndImportDefinition = async (
 	projectId: string | null = null,
 ): Promise<NodeMap> => {
 	const sanitized = definitionId.replace(/:/g, "_");
-	const response = await fetch(`${hubBaseUrl()}/workbench/signals/${sanitized}`);
+	const response = await fetch(
+		`${hubBaseUrl()}/workbench/signals/${sanitized}`,
+	);
 
 	if (!response.ok) {
 		throw new Error(
@@ -283,7 +252,9 @@ export const reconcileDefinition = async (
 	projectId: string | null = null,
 ): Promise<boolean> => {
 	const sanitized = definitionId.replace(/:/g, "_");
-	const response = await fetch(`${hubBaseUrl()}/workbench/signals/${sanitized}`);
+	const response = await fetch(
+		`${hubBaseUrl()}/workbench/signals/${sanitized}`,
+	);
 
 	if (!response.ok) {
 		throw new Error(

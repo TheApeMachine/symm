@@ -94,6 +94,12 @@ export type FlumeGraphWorkerHandle = {
 		offsetX: number,
 		offsetY: number,
 	) => void;
+	clearPortLayout: (
+		nodeId: string,
+		portName: string,
+		transputType: "input" | "output",
+	) => void;
+	clearNodePortLayouts: (nodeId: string) => void;
 	setNodeLayout: (nodeId: string, width: number, height: number) => void;
 	scheduleRender: () => void;
 };

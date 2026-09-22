@@ -5,8 +5,8 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	"gonum.org/v1/gonum/graph/simple"
 	"gonum.org/v1/gonum/graph/network"
+	"gonum.org/v1/gonum/graph/simple"
 )
 
 /*
@@ -14,7 +14,7 @@ BetweennessServer calculates betweenness centrality for routing bottleneck detec
 */
 type BetweennessServer struct {
 	*runtime.System
-	nodes []int64
+	nodes  []int64
 	scores []float64
 }
 

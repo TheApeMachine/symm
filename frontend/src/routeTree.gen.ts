@@ -11,7 +11,6 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as XrayRouteImport } from './routes/xray'
 import { Route as WorkbenchRouteImport } from './routes/workbench'
-import { Route as UiGraphRouteImport } from './routes/ui-graph'
 import { Route as SignalsRouteImport } from './routes/signals'
 import { Route as PipelineRouteImport } from './routes/pipeline'
 import { Route as LineageRouteImport } from './routes/lineage'
@@ -20,6 +19,7 @@ import { Route as JournalRouteImport } from './routes/journal'
 import { Route as InfluenceRouteImport } from './routes/influence'
 import { Route as HindsightRouteImport } from './routes/hindsight'
 import { Route as FluidRouteImport } from './routes/fluid'
+import { Route as DynamicRouteImport } from './routes/dynamic'
 import { Route as DiagnosticsRouteImport } from './routes/diagnostics'
 import { Route as CortexRouteImport } from './routes/cortex'
 import { Route as IndexRouteImport } from './routes/index'
@@ -32,11 +32,6 @@ const XrayRoute = XrayRouteImport.update({
 const WorkbenchRoute = WorkbenchRouteImport.update({
   id: '/workbench',
   path: '/workbench',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const UiGraphRoute = UiGraphRouteImport.update({
-  id: '/ui-graph',
-  path: '/ui-graph',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SignalsRoute = SignalsRouteImport.update({
@@ -79,6 +74,11 @@ const FluidRoute = FluidRouteImport.update({
   path: '/fluid',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DynamicRoute = DynamicRouteImport.update({
+  id: '/dynamic',
+  path: '/dynamic',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const DiagnosticsRoute = DiagnosticsRouteImport.update({
   id: '/diagnostics',
   path: '/diagnostics',
@@ -99,6 +99,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/cortex': typeof CortexRoute
   '/diagnostics': typeof DiagnosticsRoute
+  '/dynamic': typeof DynamicRoute
   '/fluid': typeof FluidRoute
   '/hindsight': typeof HindsightRoute
   '/influence': typeof InfluenceRoute
@@ -107,7 +108,6 @@ export interface FileRoutesByFullPath {
   '/lineage': typeof LineageRoute
   '/pipeline': typeof PipelineRoute
   '/signals': typeof SignalsRoute
-  '/ui-graph': typeof UiGraphRoute
   '/workbench': typeof WorkbenchRoute
   '/xray': typeof XrayRoute
 }
@@ -115,6 +115,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/cortex': typeof CortexRoute
   '/diagnostics': typeof DiagnosticsRoute
+  '/dynamic': typeof DynamicRoute
   '/fluid': typeof FluidRoute
   '/hindsight': typeof HindsightRoute
   '/influence': typeof InfluenceRoute
@@ -123,7 +124,6 @@ export interface FileRoutesByTo {
   '/lineage': typeof LineageRoute
   '/pipeline': typeof PipelineRoute
   '/signals': typeof SignalsRoute
-  '/ui-graph': typeof UiGraphRoute
   '/workbench': typeof WorkbenchRoute
   '/xray': typeof XrayRoute
 }
@@ -132,6 +132,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/cortex': typeof CortexRoute
   '/diagnostics': typeof DiagnosticsRoute
+  '/dynamic': typeof DynamicRoute
   '/fluid': typeof FluidRoute
   '/hindsight': typeof HindsightRoute
   '/influence': typeof InfluenceRoute
@@ -140,7 +141,6 @@ export interface FileRoutesById {
   '/lineage': typeof LineageRoute
   '/pipeline': typeof PipelineRoute
   '/signals': typeof SignalsRoute
-  '/ui-graph': typeof UiGraphRoute
   '/workbench': typeof WorkbenchRoute
   '/xray': typeof XrayRoute
 }
@@ -150,6 +150,7 @@ export interface FileRouteTypes {
     | '/'
     | '/cortex'
     | '/diagnostics'
+    | '/dynamic'
     | '/fluid'
     | '/hindsight'
     | '/influence'
@@ -158,7 +159,6 @@ export interface FileRouteTypes {
     | '/lineage'
     | '/pipeline'
     | '/signals'
-    | '/ui-graph'
     | '/workbench'
     | '/xray'
   fileRoutesByTo: FileRoutesByTo
@@ -166,6 +166,7 @@ export interface FileRouteTypes {
     | '/'
     | '/cortex'
     | '/diagnostics'
+    | '/dynamic'
     | '/fluid'
     | '/hindsight'
     | '/influence'
@@ -174,7 +175,6 @@ export interface FileRouteTypes {
     | '/lineage'
     | '/pipeline'
     | '/signals'
-    | '/ui-graph'
     | '/workbench'
     | '/xray'
   id:
@@ -182,6 +182,7 @@ export interface FileRouteTypes {
     | '/'
     | '/cortex'
     | '/diagnostics'
+    | '/dynamic'
     | '/fluid'
     | '/hindsight'
     | '/influence'
@@ -190,7 +191,6 @@ export interface FileRouteTypes {
     | '/lineage'
     | '/pipeline'
     | '/signals'
-    | '/ui-graph'
     | '/workbench'
     | '/xray'
   fileRoutesById: FileRoutesById
@@ -199,6 +199,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   CortexRoute: typeof CortexRoute
   DiagnosticsRoute: typeof DiagnosticsRoute
+  DynamicRoute: typeof DynamicRoute
   FluidRoute: typeof FluidRoute
   HindsightRoute: typeof HindsightRoute
   InfluenceRoute: typeof InfluenceRoute
@@ -207,7 +208,6 @@ export interface RootRouteChildren {
   LineageRoute: typeof LineageRoute
   PipelineRoute: typeof PipelineRoute
   SignalsRoute: typeof SignalsRoute
-  UiGraphRoute: typeof UiGraphRoute
   WorkbenchRoute: typeof WorkbenchRoute
   XrayRoute: typeof XrayRoute
 }
@@ -226,13 +226,6 @@ declare module '@tanstack/react-router' {
       path: '/workbench'
       fullPath: '/workbench'
       preLoaderRoute: typeof WorkbenchRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/ui-graph': {
-      id: '/ui-graph'
-      path: '/ui-graph'
-      fullPath: '/ui-graph'
-      preLoaderRoute: typeof UiGraphRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/signals': {
@@ -291,6 +284,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof FluidRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/dynamic': {
+      id: '/dynamic'
+      path: '/dynamic'
+      fullPath: '/dynamic'
+      preLoaderRoute: typeof DynamicRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/diagnostics': {
       id: '/diagnostics'
       path: '/diagnostics'
@@ -319,6 +319,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   CortexRoute: CortexRoute,
   DiagnosticsRoute: DiagnosticsRoute,
+  DynamicRoute: DynamicRoute,
   FluidRoute: FluidRoute,
   HindsightRoute: HindsightRoute,
   InfluenceRoute: InfluenceRoute,
@@ -327,7 +328,6 @@ const rootRouteChildren: RootRouteChildren = {
   LineageRoute: LineageRoute,
   PipelineRoute: PipelineRoute,
   SignalsRoute: SignalsRoute,
-  UiGraphRoute: UiGraphRoute,
   WorkbenchRoute: WorkbenchRoute,
   XrayRoute: XrayRoute,
 }

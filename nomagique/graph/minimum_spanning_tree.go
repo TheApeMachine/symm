@@ -5,8 +5,8 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	"gonum.org/v1/gonum/graph/simple"
 	"gonum.org/v1/gonum/graph/path"
+	"gonum.org/v1/gonum/graph/simple"
 )
 
 /*
@@ -15,8 +15,8 @@ MinimumSpanningTreeServer calculates minimum spanning tree of graph using Kruska
 type MinimumSpanningTreeServer struct {
 	*runtime.System
 	totalWeight float64
-	mstFrom []int64
-	mstTo []int64
+	mstFrom     []int64
+	mstTo       []int64
 }
 
 func NewMinimumSpanningTree(ctx context.Context) *MinimumSpanningTreeServer {
