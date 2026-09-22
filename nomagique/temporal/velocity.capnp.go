@@ -209,7 +209,7 @@ func (c Velocity_done) Args() Velocity_done_Params {
 
 // AllocResults allocates the results struct.
 func (c Velocity_done) AllocResults() (Velocity_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 24, PointerCount: 0})
 	return Velocity_done_Results(r), err
 }
 
@@ -373,12 +373,12 @@ type Velocity_done_Results capnp.Struct
 const Velocity_done_Results_TypeID = 0xa6e8e107f58c7f59
 
 func NewVelocity_done_Results(s *capnp.Segment) (Velocity_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 0})
 	return Velocity_done_Results(st), err
 }
 
 func NewRootVelocity_done_Results(s *capnp.Segment) (Velocity_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 0})
 	return Velocity_done_Results(st), err
 }
 
@@ -422,12 +422,28 @@ func (s Velocity_done_Results) SetOut(v float64) {
 	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
 }
 
+func (s Velocity_done_Results) Snr() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(8))
+}
+
+func (s Velocity_done_Results) SetSnr(v float64) {
+	capnp.Struct(s).SetUint64(8, math.Float64bits(v))
+}
+
+func (s Velocity_done_Results) Defined() bool {
+	return capnp.Struct(s).Bit(128)
+}
+
+func (s Velocity_done_Results) SetDefined(v bool) {
+	capnp.Struct(s).SetBit(128, v)
+}
+
 // Velocity_done_Results_List is a list of Velocity_done_Results.
 type Velocity_done_Results_List = capnp.StructList[Velocity_done_Results]
 
 // NewVelocity_done_Results creates a new list of Velocity_done_Results.
 func NewVelocity_done_Results_List(s *capnp.Segment, sz int32) (Velocity_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 24, PointerCount: 0}, sz)
 	return capnp.StructList[Velocity_done_Results](l), err
 }
 

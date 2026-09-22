@@ -601,6 +601,12 @@
               "nodeId": "metric:divergence_velocity:bid",
               "portName": "raw"
             }
+          ],
+          "snr": [
+            {
+              "nodeId": "metric:divergence_velocity_snr:bid",
+              "portName": "raw"
+            }
           ]
         }
       }
@@ -881,6 +887,12 @@
               "nodeId": "metric:divergence_velocity:ask",
               "portName": "raw"
             }
+          ],
+          "snr": [
+            {
+              "nodeId": "metric:divergence_velocity_snr:ask",
+              "portName": "raw"
+            }
           ]
         }
       }
@@ -944,6 +956,10 @@
             {
               "nodeId": "spread_divergence",
               "portName": "b"
+            },
+            {
+              "nodeId": "spread_baseline",
+              "portName": "a"
             }
           ]
         }
@@ -1159,6 +1175,12 @@
           "out": [
             {
               "nodeId": "metric:spread_divergence_velocity",
+              "portName": "raw"
+            }
+          ],
+          "snr": [
+            {
+              "nodeId": "metric:spread_divergence_velocity_snr",
               "portName": "raw"
             }
           ]
@@ -1685,6 +1707,113 @@
       "y": 4200.0,
       "connections": {
         "inputs": {},
+        "outputs": {}
+      }
+    },
+    "metric:divergence_velocity_snr:bid": {
+      "id": "metric:divergence_velocity_snr:bid",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 3000.0,
+      "y": 5000.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "divergence_velocity:bid",
+              "portName": "snr"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:divergence_velocity_snr:ask": {
+      "id": "metric:divergence_velocity_snr:ask",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 3000.0,
+      "y": 5150.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "divergence_velocity:ask",
+              "portName": "snr"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:spread_divergence_velocity_snr": {
+      "id": "metric:spread_divergence_velocity_snr",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 3000.0,
+      "y": 5300.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "spread_divergence_velocity",
+              "portName": "snr"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "spread_baseline": {
+      "id": "spread_baseline",
+      "type": "arithmetic.Add",
+      "width": 280,
+      "height": 172,
+      "x": 1500.0,
+      "y": 5450.0,
+      "inputData": {
+        "b": {
+          "value": 0
+        }
+      },
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "spreadHistoryBaselineLog",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:spread_baseline",
+              "portName": "raw"
+            }
+          ]
+        }
+      }
+    },
+    "metric:spread_baseline": {
+      "id": "metric:spread_baseline",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 3000.0,
+      "y": 5450.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "spread_baseline",
+              "portName": "out"
+            }
+          ]
+        },
         "outputs": {}
       }
     }

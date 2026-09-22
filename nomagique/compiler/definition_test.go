@@ -167,7 +167,7 @@ func TestSystemGridServesPublishedMetrics(t *testing.T) {
 				pointer, err := grid.ArgsTemplate.Ptr(uint16(field.Offset))
 				So(err, ShouldBeNil)
 				So(pointer.IsValid(), ShouldBeTrue)
-				So(pointer.List().Len(), ShouldEqual, 259)
+				So(pointer.List().Len(), ShouldEqual, 455)
 			})
 
 			Convey("Then the metrics came from inside the signal sub-graph", func() {

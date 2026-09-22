@@ -7,8 +7,8 @@
       "type": "temporal.Elapsed",
       "width": 280,
       "height": 172,
-      "x": -900.0,
-      "y": 300.0,
+      "x": -1200.0,
+      "y": 0.0,
       "connections": {
         "inputs": {},
         "outputs": {
@@ -21,15 +21,307 @@
         }
       }
     },
+    "tradeNotional": {
+      "id": "tradeNotional",
+      "type": "arithmetic.Multiply",
+      "width": 280,
+      "height": 172,
+      "x": -1200.0,
+      "y": -450.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "liquidationNotional:buy",
+              "portName": "a"
+            },
+            {
+              "nodeId": "liquidationNotional:sell",
+              "portName": "a"
+            },
+            {
+              "nodeId": "gross_derivative_trade_notional",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "buyShare": {
+      "id": "buyShare",
+      "type": "arithmetic.Add",
+      "width": 280,
+      "height": 172,
+      "x": -1200.0,
+      "y": -300.0,
+      "inputData": {
+        "b": {
+          "value": 1
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "buyIndicator",
+              "portName": "a"
+            }
+          ]
+        }
+      }
+    },
+    "buyIndicator": {
+      "id": "buyIndicator",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": -900.0,
+      "y": -300.0,
+      "inputData": {
+        "b": {
+          "value": 2
+        }
+      },
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "buyShare",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "liquidationNotional:buy",
+              "portName": "b"
+            }
+          ]
+        }
+      }
+    },
+    "sellShare": {
+      "id": "sellShare",
+      "type": "arithmetic.Subtract",
+      "width": 280,
+      "height": 172,
+      "x": -1200.0,
+      "y": -150.0,
+      "inputData": {
+        "a": {
+          "value": 1
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sellIndicator",
+              "portName": "a"
+            }
+          ]
+        }
+      }
+    },
+    "sellIndicator": {
+      "id": "sellIndicator",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": -900.0,
+      "y": -150.0,
+      "inputData": {
+        "b": {
+          "value": 2
+        }
+      },
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "sellShare",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "liquidationNotional:sell",
+              "portName": "b"
+            }
+          ]
+        }
+      }
+    },
+    "liquidationNotional:buy": {
+      "id": "liquidationNotional:buy",
+      "type": "arithmetic.Multiply",
+      "width": 280,
+      "height": 172,
+      "x": -560.0,
+      "y": -300.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "tradeNotional",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "buyIndicator",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "liquidation_notional:buy",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "liquidation_notional:buy": {
+      "id": "liquidation_notional:buy",
+      "type": "data.Reduce",
+      "width": 280,
+      "height": 172,
+      "x": -220.0,
+      "y": -300.0,
+      "inputData": {
+        "operator": {
+          "value": "sum"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "liquidationNotional:buy",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "gross_liquidation_notional",
+              "portName": "a"
+            },
+            {
+              "nodeId": "net_liquidation_notional",
+              "portName": "a"
+            },
+            {
+              "nodeId": "metric:liquidation_notional:buy",
+              "portName": "raw"
+            }
+          ]
+        }
+      }
+    },
+    "liquidationNotional:sell": {
+      "id": "liquidationNotional:sell",
+      "type": "arithmetic.Multiply",
+      "width": 280,
+      "height": 172,
+      "x": -560.0,
+      "y": -150.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "tradeNotional",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "sellIndicator",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "liquidation_notional:sell",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "liquidation_notional:sell": {
+      "id": "liquidation_notional:sell",
+      "type": "data.Reduce",
+      "width": 280,
+      "height": 172,
+      "x": -220.0,
+      "y": -150.0,
+      "inputData": {
+        "operator": {
+          "value": "sum"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "liquidationNotional:sell",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "gross_liquidation_notional",
+              "portName": "b"
+            },
+            {
+              "nodeId": "net_liquidation_notional",
+              "portName": "b"
+            },
+            {
+              "nodeId": "metric:liquidation_notional:sell",
+              "portName": "raw"
+            }
+          ]
+        }
+      }
+    },
     "gross_liquidation_notional": {
       "id": "gross_liquidation_notional",
       "type": "arithmetic.Add",
       "width": 280,
       "height": 172,
-      "x": -600.0,
-      "y": -200.0,
+      "x": 120.0,
+      "y": -225.0,
       "connections": {
-        "inputs": {},
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "liquidation_notional:buy",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "liquidation_notional:sell",
+              "portName": "out"
+            }
+          ]
+        },
         "outputs": {
           "out": [
             {
@@ -57,10 +349,23 @@
       "type": "arithmetic.Subtract",
       "width": 280,
       "height": 172,
-      "x": -600.0,
-      "y": -60.0,
+      "x": 120.0,
+      "y": -75.0,
       "connections": {
-        "inputs": {},
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "liquidation_notional:buy",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "liquidation_notional:sell",
+              "portName": "out"
+            }
+          ]
+        },
         "outputs": {
           "out": [
             {
@@ -80,8 +385,8 @@
       "type": "arithmetic.Divide",
       "width": 280,
       "height": 172,
-      "x": -300.0,
-      "y": -60.0,
+      "x": 460.0,
+      "y": -150.0,
       "connections": {
         "inputs": {
           "a": [
@@ -112,8 +417,8 @@
       "type": "arithmetic.Divide",
       "width": 280,
       "height": 172,
-      "x": -300.0,
-      "y": 120.0,
+      "x": 460.0,
+      "y": 0.0,
       "connections": {
         "inputs": {
           "a": [
@@ -144,15 +449,22 @@
       "type": "data.Reduce",
       "width": 280,
       "height": 172,
-      "x": -600.0,
-      "y": 460.0,
+      "x": -220.0,
+      "y": 150.0,
       "inputData": {
         "operator": {
           "value": "sum"
         }
       },
       "connections": {
-        "inputs": {},
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "tradeNotional",
+              "portName": "out"
+            }
+          ]
+        },
         "outputs": {
           "out": [
             {
@@ -172,8 +484,8 @@
       "type": "arithmetic.Divide",
       "width": 280,
       "height": 172,
-      "x": -300.0,
-      "y": 460.0,
+      "x": 460.0,
+      "y": 150.0,
       "connections": {
         "inputs": {
           "a": [
@@ -196,6 +508,18 @@
               "portName": "val"
             },
             {
+              "nodeId": "shareBaseline",
+              "portName": "value"
+            },
+            {
+              "nodeId": "liquidation_share_divergence",
+              "portName": "a"
+            },
+            {
+              "nodeId": "shareVariance",
+              "portName": "value"
+            },
+            {
               "nodeId": "metric:liquidation_share",
               "portName": "raw"
             }
@@ -208,8 +532,8 @@
       "type": "temporal.Velocity",
       "width": 280,
       "height": 172,
-      "x": 0.0,
-      "y": 460.0,
+      "x": 800.0,
+      "y": 150.0,
       "connections": {
         "inputs": {
           "val": [
@@ -229,18 +553,53 @@
         }
       }
     },
-    "metric:liquidation_signed_fraction": {
-      "id": "metric:liquidation_signed_fraction",
-      "type": "data.MetricService",
+    "shareBaseline": {
+      "id": "shareBaseline",
+      "type": "statistic.CausalMean",
       "width": 280,
       "height": 172,
-      "x": 1400.0,
-      "y": -400.0,
+      "x": 800.0,
+      "y": 400.0,
       "connections": {
         "inputs": {
-          "raw": [
+          "value": [
             {
-              "nodeId": "liquidation_signed_fraction",
+              "nodeId": "liquidation_share",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "liquidation_share_baseline",
+              "portName": "a"
+            },
+            {
+              "nodeId": "liquidation_share_divergence",
+              "portName": "b"
+            }
+          ]
+        }
+      }
+    },
+    "liquidation_share_baseline": {
+      "id": "liquidation_share_baseline",
+      "type": "arithmetic.Add",
+      "width": 280,
+      "height": 172,
+      "x": 1140.0,
+      "y": 400.0,
+      "inputData": {
+        "b": {
+          "value": 0
+        }
+      },
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "shareBaseline",
               "portName": "out"
             }
           ]
@@ -248,18 +607,108 @@
         "outputs": {}
       }
     },
-    "metric:liquidation_notional_rate": {
-      "id": "metric:liquidation_notional_rate",
-      "type": "data.MetricService",
+    "liquidation_share_divergence": {
+      "id": "liquidation_share_divergence",
+      "type": "arithmetic.Subtract",
       "width": 280,
       "height": 172,
-      "x": 1400.0,
-      "y": -250.0,
+      "x": 1140.0,
+      "y": 550.0,
       "connections": {
         "inputs": {
-          "raw": [
+          "a": [
             {
-              "nodeId": "liquidation_notional_rate",
+              "nodeId": "liquidation_share",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "shareBaseline",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "liquidation_share_zscore",
+              "portName": "a"
+            }
+          ]
+        }
+      }
+    },
+    "shareVariance": {
+      "id": "shareVariance",
+      "type": "statistic.CausalVariance",
+      "width": 280,
+      "height": 172,
+      "x": 800.0,
+      "y": 700.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "liquidation_share",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "shareNoise",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "shareNoise": {
+      "id": "shareNoise",
+      "type": "calculus.Sqrt",
+      "width": 280,
+      "height": 172,
+      "x": 1140.0,
+      "y": 700.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "shareVariance",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "liquidation_share_zscore",
+              "portName": "b"
+            }
+          ]
+        }
+      }
+    },
+    "liquidation_share_zscore": {
+      "id": "liquidation_share_zscore",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": 1480.0,
+      "y": 700.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "liquidation_share_divergence",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "shareNoise",
               "portName": "out"
             }
           ]
@@ -267,18 +716,37 @@
         "outputs": {}
       }
     },
-    "metric:liquidation_share_velocity": {
-      "id": "metric:liquidation_share_velocity",
+    "metric:liquidation_notional:buy": {
+      "id": "metric:liquidation_notional:buy",
       "type": "data.MetricService",
       "width": 280,
       "height": 172,
-      "x": 1400.0,
-      "y": 50.0,
+      "x": 2400.0,
+      "y": 0.0,
       "connections": {
         "inputs": {
           "raw": [
             {
-              "nodeId": "liquidation_share_velocity",
+              "nodeId": "liquidation_notional:buy",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:liquidation_notional:sell": {
+      "id": "metric:liquidation_notional:sell",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 150.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "liquidation_notional:sell",
               "portName": "out"
             }
           ]
@@ -291,8 +759,8 @@
       "type": "data.MetricService",
       "width": 280,
       "height": 172,
-      "x": 1400.0,
-      "y": 200.0,
+      "x": 2400.0,
+      "y": 300.0,
       "connections": {
         "inputs": {
           "raw": [
@@ -310,8 +778,8 @@
       "type": "data.MetricService",
       "width": 280,
       "height": 172,
-      "x": 1400.0,
-      "y": 350.0,
+      "x": 2400.0,
+      "y": 450.0,
       "connections": {
         "inputs": {
           "raw": [
@@ -324,13 +792,51 @@
         "outputs": {}
       }
     },
+    "metric:liquidation_signed_fraction": {
+      "id": "metric:liquidation_signed_fraction",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 600.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "liquidation_signed_fraction",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:liquidation_notional_rate": {
+      "id": "metric:liquidation_notional_rate",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 750.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "liquidation_notional_rate",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
     "metric:gross_derivative_trade_notional": {
       "id": "metric:gross_derivative_trade_notional",
       "type": "data.MetricService",
       "width": 280,
       "height": 172,
-      "x": 1400.0,
-      "y": 500.0,
+      "x": 2400.0,
+      "y": 900.0,
       "connections": {
         "inputs": {
           "raw": [
@@ -348,13 +854,32 @@
       "type": "data.MetricService",
       "width": 280,
       "height": 172,
-      "x": 1400.0,
-      "y": 650.0,
+      "x": 2400.0,
+      "y": 1050.0,
       "connections": {
         "inputs": {
           "raw": [
             {
               "nodeId": "liquidation_share",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:liquidation_share_velocity": {
+      "id": "metric:liquidation_share_velocity",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 1200.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "liquidation_share_velocity",
               "portName": "out"
             }
           ]

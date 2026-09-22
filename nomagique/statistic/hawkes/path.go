@@ -28,8 +28,16 @@ type path struct {
 	selfOnlyReady  bool
 	eventsSinceFit int
 	modelSupport   float64
-	snr            float64
-	hasSNR         bool
+	// What the fitted process, a plain Poisson process, and a process whose
+	// directions do not excite each other each said the observed arrivals
+	// were worth. Their differences are how much the self-excitation and the
+	// cross-excitation actually bought.
+	hawkesLogLikelihood   float64
+	poissonLogLikelihood  float64
+	selfOnlyLogLikelihood float64
+	likelihoodsReady      bool
+	snr                   float64
+	hasSNR                bool
 }
 
 /*
@@ -124,5 +132,47 @@ func (path *path) refit(atSec float64) {
 	if selfOnly.valid() {
 		path.selfOnlyModel = selfOnly
 		path.selfOnlyReady = true
+	}
+
+	path.recordLikelihoods(stream, atSec, context, fitted, selfOnly)
+}
+
+/*
+recordLikelihoods keeps what each competing description of the arrivals was
+worth, so a caller can see whether the excitation earned its parameters.
+*/
+func (path *path) recordLikelihoods(
+	stream arrivalStream,
+	atSec float64,
+	context fitContext,
+	fitted bivariateFit,
+	selfOnly bivariateFit,
+) {
+	path.likelihoodsReady = false
+
+	hawkes, hawkesOK := fitted.logLikelihood(stream, atSec)
+
+	if !hawkesOK {
+		return
+	}
+
+	poisson, poissonOK := context.poissonFit().withIntensitiesAt(stream, atSec).
+		logLikelihood(stream, atSec)
+
+	if !poissonOK {
+		return
+	}
+
+	path.hawkesLogLikelihood = hawkes
+	path.poissonLogLikelihood = poisson
+	path.selfOnlyLogLikelihood = poisson
+	path.likelihoodsReady = true
+
+	if !selfOnly.valid() {
+		return
+	}
+
+	if value, ok := selfOnly.logLikelihood(stream, atSec); ok {
+		path.selfOnlyLogLikelihood = value
 	}
 }

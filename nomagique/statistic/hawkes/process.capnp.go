@@ -209,7 +209,7 @@ func (c Process_done) Args() Process_done_Params {
 
 // AllocResults allocates the results struct.
 func (c Process_done) AllocResults() (Process_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 96, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 312, PointerCount: 0})
 	return Process_done_Results(r), err
 }
 
@@ -373,12 +373,12 @@ type Process_done_Results capnp.Struct
 const Process_done_Results_TypeID = 0x875b53b1e1e80b71
 
 func NewProcess_done_Results(s *capnp.Segment) (Process_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 96, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 312, PointerCount: 0})
 	return Process_done_Results(st), err
 }
 
 func NewRootProcess_done_Results(s *capnp.Segment) (Process_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 96, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 312, PointerCount: 0})
 	return Process_done_Results(st), err
 }
 
@@ -510,12 +510,228 @@ func (s Process_done_Results) SetSpectralRadius(v float64) {
 	capnp.Struct(s).SetUint64(88, math.Float64bits(v))
 }
 
+func (s Process_done_Results) MuBuy() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(96))
+}
+
+func (s Process_done_Results) SetMuBuy(v float64) {
+	capnp.Struct(s).SetUint64(96, math.Float64bits(v))
+}
+
+func (s Process_done_Results) MuSell() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(104))
+}
+
+func (s Process_done_Results) SetMuSell(v float64) {
+	capnp.Struct(s).SetUint64(104, math.Float64bits(v))
+}
+
+func (s Process_done_Results) Mu() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(112))
+}
+
+func (s Process_done_Results) SetMu(v float64) {
+	capnp.Struct(s).SetUint64(112, math.Float64bits(v))
+}
+
+func (s Process_done_Results) ExcessBuy() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(120))
+}
+
+func (s Process_done_Results) SetExcessBuy(v float64) {
+	capnp.Struct(s).SetUint64(120, math.Float64bits(v))
+}
+
+func (s Process_done_Results) ExcessSell() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(128))
+}
+
+func (s Process_done_Results) SetExcessSell(v float64) {
+	capnp.Struct(s).SetUint64(128, math.Float64bits(v))
+}
+
+func (s Process_done_Results) ExcitationBuy() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(136))
+}
+
+func (s Process_done_Results) SetExcitationBuy(v float64) {
+	capnp.Struct(s).SetUint64(136, math.Float64bits(v))
+}
+
+func (s Process_done_Results) ExcitationSell() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(144))
+}
+
+func (s Process_done_Results) SetExcitationSell(v float64) {
+	capnp.Struct(s).SetUint64(144, math.Float64bits(v))
+}
+
+func (s Process_done_Results) AlphaBuyBuy() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(152))
+}
+
+func (s Process_done_Results) SetAlphaBuyBuy(v float64) {
+	capnp.Struct(s).SetUint64(152, math.Float64bits(v))
+}
+
+func (s Process_done_Results) AlphaBuySell() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(160))
+}
+
+func (s Process_done_Results) SetAlphaBuySell(v float64) {
+	capnp.Struct(s).SetUint64(160, math.Float64bits(v))
+}
+
+func (s Process_done_Results) AlphaSellBuy() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(168))
+}
+
+func (s Process_done_Results) SetAlphaSellBuy(v float64) {
+	capnp.Struct(s).SetUint64(168, math.Float64bits(v))
+}
+
+func (s Process_done_Results) AlphaSellSell() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(176))
+}
+
+func (s Process_done_Results) SetAlphaSellSell(v float64) {
+	capnp.Struct(s).SetUint64(176, math.Float64bits(v))
+}
+
+func (s Process_done_Results) Beta() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(184))
+}
+
+func (s Process_done_Results) SetBeta(v float64) {
+	capnp.Struct(s).SetUint64(184, math.Float64bits(v))
+}
+
+func (s Process_done_Results) Timescale() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(192))
+}
+
+func (s Process_done_Results) SetTimescale(v float64) {
+	capnp.Struct(s).SetUint64(192, math.Float64bits(v))
+}
+
+func (s Process_done_Results) OffspringBuyBuy() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(200))
+}
+
+func (s Process_done_Results) SetOffspringBuyBuy(v float64) {
+	capnp.Struct(s).SetUint64(200, math.Float64bits(v))
+}
+
+func (s Process_done_Results) OffspringBuySell() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(208))
+}
+
+func (s Process_done_Results) SetOffspringBuySell(v float64) {
+	capnp.Struct(s).SetUint64(208, math.Float64bits(v))
+}
+
+func (s Process_done_Results) OffspringSellBuy() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(216))
+}
+
+func (s Process_done_Results) SetOffspringSellBuy(v float64) {
+	capnp.Struct(s).SetUint64(216, math.Float64bits(v))
+}
+
+func (s Process_done_Results) OffspringSellSell() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(224))
+}
+
+func (s Process_done_Results) SetOffspringSellSell(v float64) {
+	capnp.Struct(s).SetUint64(224, math.Float64bits(v))
+}
+
+func (s Process_done_Results) DescendantsBuy() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(232))
+}
+
+func (s Process_done_Results) SetDescendantsBuy(v float64) {
+	capnp.Struct(s).SetUint64(232, math.Float64bits(v))
+}
+
+func (s Process_done_Results) DescendantsSell() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(240))
+}
+
+func (s Process_done_Results) SetDescendantsSell(v float64) {
+	capnp.Struct(s).SetUint64(240, math.Float64bits(v))
+}
+
+func (s Process_done_Results) CompensatorBuy() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(248))
+}
+
+func (s Process_done_Results) SetCompensatorBuy(v float64) {
+	capnp.Struct(s).SetUint64(248, math.Float64bits(v))
+}
+
+func (s Process_done_Results) CompensatorSell() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(256))
+}
+
+func (s Process_done_Results) SetCompensatorSell(v float64) {
+	capnp.Struct(s).SetUint64(256, math.Float64bits(v))
+}
+
+func (s Process_done_Results) InnovationBuy() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(264))
+}
+
+func (s Process_done_Results) SetInnovationBuy(v float64) {
+	capnp.Struct(s).SetUint64(264, math.Float64bits(v))
+}
+
+func (s Process_done_Results) InnovationSell() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(272))
+}
+
+func (s Process_done_Results) SetInnovationSell(v float64) {
+	capnp.Struct(s).SetUint64(272, math.Float64bits(v))
+}
+
+func (s Process_done_Results) Snr() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(280))
+}
+
+func (s Process_done_Results) SetSnr(v float64) {
+	capnp.Struct(s).SetUint64(280, math.Float64bits(v))
+}
+
+func (s Process_done_Results) LogLikelihoodHawkes() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(288))
+}
+
+func (s Process_done_Results) SetLogLikelihoodHawkes(v float64) {
+	capnp.Struct(s).SetUint64(288, math.Float64bits(v))
+}
+
+func (s Process_done_Results) LogLikelihoodPoisson() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(296))
+}
+
+func (s Process_done_Results) SetLogLikelihoodPoisson(v float64) {
+	capnp.Struct(s).SetUint64(296, math.Float64bits(v))
+}
+
+func (s Process_done_Results) LogLikelihoodSelfOnly() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(304))
+}
+
+func (s Process_done_Results) SetLogLikelihoodSelfOnly(v float64) {
+	capnp.Struct(s).SetUint64(304, math.Float64bits(v))
+}
+
 // Process_done_Results_List is a list of Process_done_Results.
 type Process_done_Results_List = capnp.StructList[Process_done_Results]
 
 // NewProcess_done_Results creates a new list of Process_done_Results.
 func NewProcess_done_Results_List(s *capnp.Segment, sz int32) (Process_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 96, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 312, PointerCount: 0}, sz)
 	return capnp.StructList[Process_done_Results](l), err
 }
 

@@ -1,252 +1,394 @@
 {
-  "id": "hawkes:trade",
+  "id": "hawkes_trade",
   "name": "hawkes:trade",
-  "source": "hawkes:trade",
   "nodes": {
-    "stage_0": {
-      "id": "stage_0",
+    "assemble": {
+      "id": "assemble",
       "type": "hawkes.Assemble",
-      "x": 200,
-      "y": 100,
-      "inputData": {
-        "timestamp": {
-          "string": "timestamp"
-        },
-        "side": {
-          "string": "side"
-        },
-        "symbol": {
-          "string": "symbol"
-        }
-      },
+      "width": 280,
+      "height": 172,
+      "x": -900.0,
+      "y": 0.0,
       "connections": {
         "inputs": {},
         "outputs": {
-          "time": [
-            {
-              "nodeId": "stage_1",
-              "portName": "time"
-            }
-          ],
           "mark": [
             {
-              "nodeId": "stage_1",
+              "nodeId": "process",
               "portName": "mark"
             }
           ],
           "out": [
             {
-              "nodeId": "metric:stage_0",
-              "portName": "raw"
+              "nodeId": "process",
+              "portName": "time"
             }
           ]
         }
       }
     },
-    "stage_1": {
-      "id": "stage_1",
+    "process": {
+      "id": "process",
       "type": "hawkes.Process",
-      "x": 400,
-      "y": 100,
-      "inputData": {},
+      "width": 280,
+      "height": 172,
+      "x": -560.0,
+      "y": 0.0,
       "connections": {
         "inputs": {
-          "time": [
-            {
-              "nodeId": "stage_0",
-              "portName": "time"
-            }
-          ],
           "mark": [
             {
-              "nodeId": "stage_0",
+              "nodeId": "assemble",
               "portName": "mark"
+            }
+          ],
+          "time": [
+            {
+              "nodeId": "assemble",
+              "portName": "out"
             }
           ]
         },
         "outputs": {
-          "arrivalRate": [
+          "eventCount": [
             {
-              "nodeId": "metric:stage_1_arrivalRate",
+              "nodeId": "metric:event_count",
               "portName": "raw"
+            },
+            {
+              "nodeId": "log_likelihood_per_event:hawkes",
+              "portName": "b"
+            },
+            {
+              "nodeId": "log_likelihood_gain_per_event_vs_poisson",
+              "portName": "b"
+            },
+            {
+              "nodeId": "log_likelihood_gain_per_event_vs_self_only",
+              "portName": "b"
             }
           ],
           "buyCount": [
             {
-              "nodeId": "metric:stage_1_buyCount",
+              "nodeId": "metric:event_count:buy",
               "portName": "raw"
-            }
-          ],
-          "buyFraction": [
+            },
             {
-              "nodeId": "metric:stage_1_buyFraction",
-              "portName": "raw"
-            }
-          ],
-          "buyRate": [
-            {
-              "nodeId": "metric:stage_1_buyRate",
-              "portName": "raw"
-            }
-          ],
-          "eventCount": [
-            {
-              "nodeId": "metric:stage_1_eventCount",
-              "portName": "raw"
-            }
-          ],
-          "lambda": [
-            {
-              "nodeId": "metric:stage_1_lambda",
-              "portName": "raw"
-            }
-          ],
-          "lambdaBuy": [
-            {
-              "nodeId": "metric:stage_1_lambdaBuy",
-              "portName": "raw"
-            }
-          ],
-          "lambdaSell": [
-            {
-              "nodeId": "metric:stage_1_lambdaSell",
-              "portName": "raw"
+              "nodeId": "count_innovation:buy",
+              "portName": "a"
             }
           ],
           "sellCount": [
             {
-              "nodeId": "metric:stage_1_sellCount",
+              "nodeId": "metric:event_count:sell",
+              "portName": "raw"
+            },
+            {
+              "nodeId": "count_innovation:sell",
+              "portName": "a"
+            }
+          ],
+          "buyFraction": [
+            {
+              "nodeId": "metric:event_fraction:buy",
               "portName": "raw"
             }
           ],
           "sellFraction": [
             {
-              "nodeId": "metric:stage_1_sellFraction",
+              "nodeId": "metric:event_fraction:sell",
+              "portName": "raw"
+            }
+          ],
+          "arrivalRate": [
+            {
+              "nodeId": "metric:arrival_rate",
+              "portName": "raw"
+            },
+            {
+              "nodeId": "excitation_intensity",
+              "portName": "b"
+            },
+            {
+              "nodeId": "metric:background_rate",
+              "portName": "raw"
+            }
+          ],
+          "buyRate": [
+            {
+              "nodeId": "metric:arrival_rate:buy",
+              "portName": "raw"
+            },
+            {
+              "nodeId": "excitation_intensity:buy",
+              "portName": "b"
+            },
+            {
+              "nodeId": "metric:background_rate:buy",
               "portName": "raw"
             }
           ],
           "sellRate": [
             {
-              "nodeId": "metric:stage_1_sellRate",
+              "nodeId": "metric:arrival_rate:sell",
               "portName": "raw"
+            },
+            {
+              "nodeId": "excitation_intensity:sell",
+              "portName": "b"
+            },
+            {
+              "nodeId": "metric:background_rate:sell",
+              "portName": "raw"
+            }
+          ],
+          "lambda": [
+            {
+              "nodeId": "metric:conditional_intensity",
+              "portName": "raw"
+            },
+            {
+              "nodeId": "excitation_intensity",
+              "portName": "a"
+            },
+            {
+              "nodeId": "excitation_share",
+              "portName": "b"
+            },
+            {
+              "nodeId": "conditional_intensity_velocity",
+              "portName": "val"
+            }
+          ],
+          "lambdaBuy": [
+            {
+              "nodeId": "metric:conditional_intensity:buy",
+              "portName": "raw"
+            },
+            {
+              "nodeId": "excitation_intensity:buy",
+              "portName": "a"
+            },
+            {
+              "nodeId": "excitation_share:buy",
+              "portName": "b"
+            },
+            {
+              "nodeId": "compensator:buy",
+              "portName": "a"
+            }
+          ],
+          "lambdaSell": [
+            {
+              "nodeId": "metric:conditional_intensity:sell",
+              "portName": "raw"
+            },
+            {
+              "nodeId": "excitation_intensity:sell",
+              "portName": "a"
+            },
+            {
+              "nodeId": "excitation_share:sell",
+              "portName": "b"
+            },
+            {
+              "nodeId": "compensator:sell",
+              "portName": "a"
             }
           ],
           "spectralRadius": [
             {
-              "nodeId": "metric:stage_1_spectralRadius",
+              "nodeId": "metric:branching_spectral_radius",
               "portName": "raw"
+            },
+            {
+              "nodeId": "expected_descendants",
+              "portName": "a"
+            },
+            {
+              "nodeId": "descendantsRemainder",
+              "portName": "b"
+            },
+            {
+              "nodeId": "spectral_radius_velocity",
+              "portName": "val"
+            }
+          ],
+          "excessBuy": [
+            {
+              "nodeId": "metric:excitation_mass:buy",
+              "portName": "raw"
+            }
+          ],
+          "excessSell": [
+            {
+              "nodeId": "metric:excitation_mass:sell",
+              "portName": "raw"
+            }
+          ],
+          "excitationBuy": [
+            {
+              "nodeId": "metric:excitation_fraction:buy",
+              "portName": "raw"
+            }
+          ],
+          "excitationSell": [
+            {
+              "nodeId": "metric:excitation_fraction:sell",
+              "portName": "raw"
+            }
+          ],
+          "alphaBuyBuy": [
+            {
+              "nodeId": "metric:excitation_amplitude:buy_from_buy",
+              "portName": "raw"
+            }
+          ],
+          "alphaBuySell": [
+            {
+              "nodeId": "metric:excitation_amplitude:buy_from_sell",
+              "portName": "raw"
+            }
+          ],
+          "alphaSellBuy": [
+            {
+              "nodeId": "metric:excitation_amplitude:sell_from_buy",
+              "portName": "raw"
+            }
+          ],
+          "alphaSellSell": [
+            {
+              "nodeId": "metric:excitation_amplitude:sell_from_sell",
+              "portName": "raw"
+            }
+          ],
+          "beta": [
+            {
+              "nodeId": "metric:excitation_decay",
+              "portName": "raw"
+            },
+            {
+              "nodeId": "metric:excitation_decay:buy_from_buy",
+              "portName": "raw"
+            },
+            {
+              "nodeId": "metric:excitation_decay:buy_from_sell",
+              "portName": "raw"
+            },
+            {
+              "nodeId": "metric:excitation_decay:sell_from_buy",
+              "portName": "raw"
+            },
+            {
+              "nodeId": "metric:excitation_decay:sell_from_sell",
+              "portName": "raw"
+            }
+          ],
+          "timescale": [
+            {
+              "nodeId": "metric:excitation_timescale",
+              "portName": "raw"
+            },
+            {
+              "nodeId": "metric:excitation_timescale:buy_from_buy",
+              "portName": "raw"
+            },
+            {
+              "nodeId": "metric:excitation_timescale:buy_from_sell",
+              "portName": "raw"
+            },
+            {
+              "nodeId": "metric:excitation_timescale:sell_from_buy",
+              "portName": "raw"
+            },
+            {
+              "nodeId": "metric:excitation_timescale:sell_from_sell",
+              "portName": "raw"
+            }
+          ],
+          "offspringBuyBuy": [
+            {
+              "nodeId": "metric:offspring:buy_from_buy",
+              "portName": "raw"
+            }
+          ],
+          "offspringBuySell": [
+            {
+              "nodeId": "metric:offspring:buy_from_sell",
+              "portName": "raw"
+            }
+          ],
+          "offspringSellBuy": [
+            {
+              "nodeId": "metric:offspring:sell_from_buy",
+              "portName": "raw"
+            }
+          ],
+          "offspringSellSell": [
+            {
+              "nodeId": "metric:offspring:sell_from_sell",
+              "portName": "raw"
+            }
+          ],
+          "snr": [
+            {
+              "nodeId": "metric:snr",
+              "portName": "raw"
+            }
+          ],
+          "logLikelihoodHawkes": [
+            {
+              "nodeId": "metric:log_likelihood:hawkes",
+              "portName": "raw"
+            },
+            {
+              "nodeId": "log_likelihood_gain_vs_poisson",
+              "portName": "a"
+            },
+            {
+              "nodeId": "log_likelihood_gain_vs_self_only",
+              "portName": "a"
+            },
+            {
+              "nodeId": "log_likelihood_per_event:hawkes",
+              "portName": "a"
+            }
+          ],
+          "logLikelihoodPoisson": [
+            {
+              "nodeId": "metric:log_likelihood:poisson",
+              "portName": "raw"
+            },
+            {
+              "nodeId": "log_likelihood_gain_vs_poisson",
+              "portName": "b"
+            }
+          ],
+          "logLikelihoodSelfOnly": [
+            {
+              "nodeId": "metric:log_likelihood:self_only",
+              "portName": "raw"
+            },
+            {
+              "nodeId": "log_likelihood_gain_vs_self_only",
+              "portName": "b"
             }
           ]
         }
       }
     },
-    "metric:stage_0": {
-      "id": "metric:stage_0",
+    "metric:event_count": {
+      "id": "metric:event_count",
       "type": "data.MetricService",
       "width": 280,
       "height": 172,
-      "x": 1400.0,
-      "y": -400.0,
+      "x": 2400.0,
+      "y": 0.0,
       "connections": {
         "inputs": {
           "raw": [
             {
-              "nodeId": "stage_0",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:stage_1_arrivalRate": {
-      "id": "metric:stage_1_arrivalRate",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 1400.0,
-      "y": -250.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "stage_1",
-              "portName": "arrivalRate"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:stage_1_buyCount": {
-      "id": "metric:stage_1_buyCount",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 1400.0,
-      "y": -100.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "stage_1",
-              "portName": "buyCount"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:stage_1_buyFraction": {
-      "id": "metric:stage_1_buyFraction",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 1400.0,
-      "y": 50.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "stage_1",
-              "portName": "buyFraction"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:stage_1_buyRate": {
-      "id": "metric:stage_1_buyRate",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 1400.0,
-      "y": 200.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "stage_1",
-              "portName": "buyRate"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:stage_1_eventCount": {
-      "id": "metric:stage_1_eventCount",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 1400.0,
-      "y": 350.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "stage_1",
+              "nodeId": "process",
               "portName": "eventCount"
             }
           ]
@@ -254,75 +396,37 @@
         "outputs": {}
       }
     },
-    "metric:stage_1_lambda": {
-      "id": "metric:stage_1_lambda",
+    "metric:event_count:buy": {
+      "id": "metric:event_count:buy",
       "type": "data.MetricService",
       "width": 280,
       "height": 172,
-      "x": 1400.0,
-      "y": 500.0,
+      "x": 2400.0,
+      "y": 150.0,
       "connections": {
         "inputs": {
           "raw": [
             {
-              "nodeId": "stage_1",
-              "portName": "lambda"
+              "nodeId": "process",
+              "portName": "buyCount"
             }
           ]
         },
         "outputs": {}
       }
     },
-    "metric:stage_1_lambdaBuy": {
-      "id": "metric:stage_1_lambdaBuy",
+    "metric:event_count:sell": {
+      "id": "metric:event_count:sell",
       "type": "data.MetricService",
       "width": 280,
       "height": 172,
-      "x": 1400.0,
-      "y": 650.0,
+      "x": 2400.0,
+      "y": 300.0,
       "connections": {
         "inputs": {
           "raw": [
             {
-              "nodeId": "stage_1",
-              "portName": "lambdaBuy"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:stage_1_lambdaSell": {
-      "id": "metric:stage_1_lambdaSell",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 1400.0,
-      "y": 800.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "stage_1",
-              "portName": "lambdaSell"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:stage_1_sellCount": {
-      "id": "metric:stage_1_sellCount",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 1400.0,
-      "y": 950.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "stage_1",
+              "nodeId": "process",
               "portName": "sellCount"
             }
           ]
@@ -330,18 +434,37 @@
         "outputs": {}
       }
     },
-    "metric:stage_1_sellFraction": {
-      "id": "metric:stage_1_sellFraction",
+    "metric:event_fraction:buy": {
+      "id": "metric:event_fraction:buy",
       "type": "data.MetricService",
       "width": 280,
       "height": 172,
-      "x": 1400.0,
-      "y": 1100.0,
+      "x": 2400.0,
+      "y": 450.0,
       "connections": {
         "inputs": {
           "raw": [
             {
-              "nodeId": "stage_1",
+              "nodeId": "process",
+              "portName": "buyFraction"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:event_fraction:sell": {
+      "id": "metric:event_fraction:sell",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 600.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "process",
               "portName": "sellFraction"
             }
           ]
@@ -349,18 +472,56 @@
         "outputs": {}
       }
     },
-    "metric:stage_1_sellRate": {
-      "id": "metric:stage_1_sellRate",
+    "metric:arrival_rate": {
+      "id": "metric:arrival_rate",
       "type": "data.MetricService",
       "width": 280,
       "height": 172,
-      "x": 1400.0,
-      "y": 1250.0,
+      "x": 2400.0,
+      "y": 750.0,
       "connections": {
         "inputs": {
           "raw": [
             {
-              "nodeId": "stage_1",
+              "nodeId": "process",
+              "portName": "arrivalRate"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:arrival_rate:buy": {
+      "id": "metric:arrival_rate:buy",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 900.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "process",
+              "portName": "buyRate"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:arrival_rate:sell": {
+      "id": "metric:arrival_rate:sell",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 1050.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "process",
               "portName": "sellRate"
             }
           ]
@@ -368,19 +529,1760 @@
         "outputs": {}
       }
     },
-    "metric:stage_1_spectralRadius": {
-      "id": "metric:stage_1_spectralRadius",
+    "metric:conditional_intensity": {
+      "id": "metric:conditional_intensity",
       "type": "data.MetricService",
       "width": 280,
       "height": 172,
-      "x": 1400.0,
-      "y": 1400.0,
+      "x": 2400.0,
+      "y": 1200.0,
       "connections": {
         "inputs": {
           "raw": [
             {
-              "nodeId": "stage_1",
+              "nodeId": "process",
+              "portName": "lambda"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:conditional_intensity:buy": {
+      "id": "metric:conditional_intensity:buy",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 1350.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "process",
+              "portName": "lambdaBuy"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:conditional_intensity:sell": {
+      "id": "metric:conditional_intensity:sell",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 1500.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "process",
+              "portName": "lambdaSell"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:branching_spectral_radius": {
+      "id": "metric:branching_spectral_radius",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 1650.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "process",
               "portName": "spectralRadius"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "excitation_intensity:buy": {
+      "id": "excitation_intensity:buy",
+      "type": "arithmetic.Subtract",
+      "width": 280,
+      "height": 172,
+      "x": -200.0,
+      "y": 0.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "process",
+              "portName": "lambdaBuy"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "process",
+              "portName": "buyRate"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "excitation_share:buy",
+              "portName": "a"
+            },
+            {
+              "nodeId": "metric:excitation_intensity:buy",
+              "portName": "raw"
+            }
+          ]
+        }
+      }
+    },
+    "excitation_share:buy": {
+      "id": "excitation_share:buy",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": 140.0,
+      "y": 0.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "excitation_intensity:buy",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "process",
+              "portName": "lambdaBuy"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:excitation_share:buy",
+              "portName": "raw"
+            }
+          ]
+        }
+      }
+    },
+    "metric:excitation_intensity:buy": {
+      "id": "metric:excitation_intensity:buy",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 1800.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "excitation_intensity:buy",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:excitation_share:buy": {
+      "id": "metric:excitation_share:buy",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 1950.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "excitation_share:buy",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:background_rate:buy": {
+      "id": "metric:background_rate:buy",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 2100.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "process",
+              "portName": "buyRate"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "excitation_intensity:sell": {
+      "id": "excitation_intensity:sell",
+      "type": "arithmetic.Subtract",
+      "width": 280,
+      "height": 172,
+      "x": -200.0,
+      "y": 300.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "process",
+              "portName": "lambdaSell"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "process",
+              "portName": "sellRate"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "excitation_share:sell",
+              "portName": "a"
+            },
+            {
+              "nodeId": "metric:excitation_intensity:sell",
+              "portName": "raw"
+            }
+          ]
+        }
+      }
+    },
+    "excitation_share:sell": {
+      "id": "excitation_share:sell",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": 140.0,
+      "y": 300.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "excitation_intensity:sell",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "process",
+              "portName": "lambdaSell"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:excitation_share:sell",
+              "portName": "raw"
+            }
+          ]
+        }
+      }
+    },
+    "metric:excitation_intensity:sell": {
+      "id": "metric:excitation_intensity:sell",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 2250.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "excitation_intensity:sell",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:excitation_share:sell": {
+      "id": "metric:excitation_share:sell",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 2400.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "excitation_share:sell",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:background_rate:sell": {
+      "id": "metric:background_rate:sell",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 2550.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "process",
+              "portName": "sellRate"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "excitation_intensity": {
+      "id": "excitation_intensity",
+      "type": "arithmetic.Subtract",
+      "width": 280,
+      "height": 172,
+      "x": -200.0,
+      "y": 600.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "process",
+              "portName": "lambda"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "process",
+              "portName": "arrivalRate"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "excitation_share",
+              "portName": "a"
+            }
+          ]
+        }
+      }
+    },
+    "excitation_share": {
+      "id": "excitation_share",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": 140.0,
+      "y": 600.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "excitation_intensity",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "process",
+              "portName": "lambda"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:excitation_share",
+              "portName": "raw"
+            }
+          ]
+        }
+      }
+    },
+    "metric:excitation_share": {
+      "id": "metric:excitation_share",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 2700.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "excitation_share",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:background_rate": {
+      "id": "metric:background_rate",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 2850.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "process",
+              "portName": "arrivalRate"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "expected_descendants": {
+      "id": "expected_descendants",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": 480.0,
+      "y": 600.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "process",
+              "portName": "spectralRadius"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "descendantsRemainder",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:expected_descendants_from_buy",
+              "portName": "raw"
+            },
+            {
+              "nodeId": "metric:expected_descendants_from_sell",
+              "portName": "raw"
+            }
+          ]
+        }
+      }
+    },
+    "descendantsRemainder": {
+      "id": "descendantsRemainder",
+      "type": "arithmetic.Subtract",
+      "width": 280,
+      "height": 172,
+      "x": 140.0,
+      "y": 750.0,
+      "inputData": {
+        "a": {
+          "value": 1
+        }
+      },
+      "connections": {
+        "inputs": {
+          "b": [
+            {
+              "nodeId": "process",
+              "portName": "spectralRadius"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "expected_descendants",
+              "portName": "b"
+            }
+          ]
+        }
+      }
+    },
+    "metric:expected_descendants_from_buy": {
+      "id": "metric:expected_descendants_from_buy",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 3000.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "expected_descendants",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:expected_descendants_from_sell": {
+      "id": "metric:expected_descendants_from_sell",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 3150.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "expected_descendants",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "conditional_intensity_velocity": {
+      "id": "conditional_intensity_velocity",
+      "type": "temporal.Velocity",
+      "width": 280,
+      "height": 172,
+      "x": 480.0,
+      "y": 900.0,
+      "connections": {
+        "inputs": {
+          "val": [
+            {
+              "nodeId": "process",
+              "portName": "lambda"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:conditional_intensity_velocity",
+              "portName": "raw"
+            }
+          ]
+        }
+      }
+    },
+    "spectral_radius_velocity": {
+      "id": "spectral_radius_velocity",
+      "type": "temporal.Velocity",
+      "width": 280,
+      "height": 172,
+      "x": 480.0,
+      "y": 1050.0,
+      "connections": {
+        "inputs": {
+          "val": [
+            {
+              "nodeId": "process",
+              "portName": "spectralRadius"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:spectral_radius_velocity",
+              "portName": "raw"
+            }
+          ]
+        }
+      }
+    },
+    "metric:conditional_intensity_velocity": {
+      "id": "metric:conditional_intensity_velocity",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 3300.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "conditional_intensity_velocity",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:spectral_radius_velocity": {
+      "id": "metric:spectral_radius_velocity",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 3450.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "spectral_radius_velocity",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "compensator:buy": {
+      "id": "compensator:buy",
+      "type": "arithmetic.Add",
+      "width": 280,
+      "height": 172,
+      "x": 820.0,
+      "y": 0.0,
+      "inputData": {
+        "b": {
+          "value": 0
+        }
+      },
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "process",
+              "portName": "lambdaBuy"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "count_innovation:buy",
+              "portName": "b"
+            },
+            {
+              "nodeId": "compensator:buyRoot",
+              "portName": "value"
+            },
+            {
+              "nodeId": "metric:compensator:buy",
+              "portName": "raw"
+            }
+          ]
+        }
+      }
+    },
+    "count_innovation:buy": {
+      "id": "count_innovation:buy",
+      "type": "arithmetic.Subtract",
+      "width": 280,
+      "height": 172,
+      "x": 1160.0,
+      "y": 0.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "process",
+              "portName": "buyCount"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "compensator:buy",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "standardized_innovation:buy",
+              "portName": "a"
+            },
+            {
+              "nodeId": "metric:count_innovation:buy",
+              "portName": "raw"
+            }
+          ]
+        }
+      }
+    },
+    "compensator:buyRoot": {
+      "id": "compensator:buyRoot",
+      "type": "calculus.Sqrt",
+      "width": 280,
+      "height": 172,
+      "x": 1160.0,
+      "y": 150.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "compensator:buy",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "standardized_innovation:buy",
+              "portName": "b"
+            }
+          ]
+        }
+      }
+    },
+    "standardized_innovation:buy": {
+      "id": "standardized_innovation:buy",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": 1500.0,
+      "y": 150.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "count_innovation:buy",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "compensator:buyRoot",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:standardized_innovation:buy",
+              "portName": "raw"
+            }
+          ]
+        }
+      }
+    },
+    "metric:compensator:buy": {
+      "id": "metric:compensator:buy",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 3600.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "compensator:buy",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:count_innovation:buy": {
+      "id": "metric:count_innovation:buy",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 3750.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "count_innovation:buy",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:standardized_innovation:buy": {
+      "id": "metric:standardized_innovation:buy",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 3900.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "standardized_innovation:buy",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "compensator:sell": {
+      "id": "compensator:sell",
+      "type": "arithmetic.Add",
+      "width": 280,
+      "height": 172,
+      "x": 820.0,
+      "y": 450.0,
+      "inputData": {
+        "b": {
+          "value": 0
+        }
+      },
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "process",
+              "portName": "lambdaSell"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "count_innovation:sell",
+              "portName": "b"
+            },
+            {
+              "nodeId": "compensator:sellRoot",
+              "portName": "value"
+            },
+            {
+              "nodeId": "metric:compensator:sell",
+              "portName": "raw"
+            }
+          ]
+        }
+      }
+    },
+    "count_innovation:sell": {
+      "id": "count_innovation:sell",
+      "type": "arithmetic.Subtract",
+      "width": 280,
+      "height": 172,
+      "x": 1160.0,
+      "y": 450.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "process",
+              "portName": "sellCount"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "compensator:sell",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "standardized_innovation:sell",
+              "portName": "a"
+            },
+            {
+              "nodeId": "metric:count_innovation:sell",
+              "portName": "raw"
+            }
+          ]
+        }
+      }
+    },
+    "compensator:sellRoot": {
+      "id": "compensator:sellRoot",
+      "type": "calculus.Sqrt",
+      "width": 280,
+      "height": 172,
+      "x": 1160.0,
+      "y": 600.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "compensator:sell",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "standardized_innovation:sell",
+              "portName": "b"
+            }
+          ]
+        }
+      }
+    },
+    "standardized_innovation:sell": {
+      "id": "standardized_innovation:sell",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": 1500.0,
+      "y": 600.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "count_innovation:sell",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "compensator:sellRoot",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:standardized_innovation:sell",
+              "portName": "raw"
+            }
+          ]
+        }
+      }
+    },
+    "metric:compensator:sell": {
+      "id": "metric:compensator:sell",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 4050.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "compensator:sell",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:count_innovation:sell": {
+      "id": "metric:count_innovation:sell",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 4200.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "count_innovation:sell",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:standardized_innovation:sell": {
+      "id": "metric:standardized_innovation:sell",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 4350.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "standardized_innovation:sell",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:excitation_mass:buy": {
+      "id": "metric:excitation_mass:buy",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 3000.0,
+      "y": 4000.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "process",
+              "portName": "excessBuy"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:excitation_mass:sell": {
+      "id": "metric:excitation_mass:sell",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 3000.0,
+      "y": 4150.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "process",
+              "portName": "excessSell"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:excitation_fraction:buy": {
+      "id": "metric:excitation_fraction:buy",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 3000.0,
+      "y": 4300.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "process",
+              "portName": "excitationBuy"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:excitation_fraction:sell": {
+      "id": "metric:excitation_fraction:sell",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 3000.0,
+      "y": 4450.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "process",
+              "portName": "excitationSell"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:excitation_amplitude:buy_from_buy": {
+      "id": "metric:excitation_amplitude:buy_from_buy",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 3000.0,
+      "y": 4600.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "process",
+              "portName": "alphaBuyBuy"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:excitation_amplitude:buy_from_sell": {
+      "id": "metric:excitation_amplitude:buy_from_sell",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 3000.0,
+      "y": 4750.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "process",
+              "portName": "alphaBuySell"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:excitation_amplitude:sell_from_buy": {
+      "id": "metric:excitation_amplitude:sell_from_buy",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 3000.0,
+      "y": 4900.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "process",
+              "portName": "alphaSellBuy"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:excitation_amplitude:sell_from_sell": {
+      "id": "metric:excitation_amplitude:sell_from_sell",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 3000.0,
+      "y": 5050.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "process",
+              "portName": "alphaSellSell"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:excitation_decay": {
+      "id": "metric:excitation_decay",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 3000.0,
+      "y": 5200.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "process",
+              "portName": "beta"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:excitation_timescale": {
+      "id": "metric:excitation_timescale",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 3000.0,
+      "y": 5350.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "process",
+              "portName": "timescale"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:offspring:buy_from_buy": {
+      "id": "metric:offspring:buy_from_buy",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 3000.0,
+      "y": 5500.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "process",
+              "portName": "offspringBuyBuy"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:offspring:buy_from_sell": {
+      "id": "metric:offspring:buy_from_sell",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 3000.0,
+      "y": 5650.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "process",
+              "portName": "offspringBuySell"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:offspring:sell_from_buy": {
+      "id": "metric:offspring:sell_from_buy",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 3000.0,
+      "y": 5800.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "process",
+              "portName": "offspringSellBuy"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:offspring:sell_from_sell": {
+      "id": "metric:offspring:sell_from_sell",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 3000.0,
+      "y": 5950.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "process",
+              "portName": "offspringSellSell"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:snr": {
+      "id": "metric:snr",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 3000.0,
+      "y": 6100.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "process",
+              "portName": "snr"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:excitation_decay:buy_from_buy": {
+      "id": "metric:excitation_decay:buy_from_buy",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 3000.0,
+      "y": 6250.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "process",
+              "portName": "beta"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:excitation_timescale:buy_from_buy": {
+      "id": "metric:excitation_timescale:buy_from_buy",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 3000.0,
+      "y": 6400.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "process",
+              "portName": "timescale"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:excitation_decay:buy_from_sell": {
+      "id": "metric:excitation_decay:buy_from_sell",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 3000.0,
+      "y": 6550.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "process",
+              "portName": "beta"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:excitation_timescale:buy_from_sell": {
+      "id": "metric:excitation_timescale:buy_from_sell",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 3000.0,
+      "y": 6700.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "process",
+              "portName": "timescale"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:excitation_decay:sell_from_buy": {
+      "id": "metric:excitation_decay:sell_from_buy",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 3000.0,
+      "y": 6850.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "process",
+              "portName": "beta"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:excitation_timescale:sell_from_buy": {
+      "id": "metric:excitation_timescale:sell_from_buy",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 3000.0,
+      "y": 7000.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "process",
+              "portName": "timescale"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:excitation_decay:sell_from_sell": {
+      "id": "metric:excitation_decay:sell_from_sell",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 3000.0,
+      "y": 7150.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "process",
+              "portName": "beta"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:excitation_timescale:sell_from_sell": {
+      "id": "metric:excitation_timescale:sell_from_sell",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 3000.0,
+      "y": 7300.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "process",
+              "portName": "timescale"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:log_likelihood:hawkes": {
+      "id": "metric:log_likelihood:hawkes",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 3400.0,
+      "y": 9000.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "process",
+              "portName": "logLikelihoodHawkes"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:log_likelihood:poisson": {
+      "id": "metric:log_likelihood:poisson",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 3400.0,
+      "y": 9150.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "process",
+              "portName": "logLikelihoodPoisson"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:log_likelihood:self_only": {
+      "id": "metric:log_likelihood:self_only",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 3400.0,
+      "y": 9300.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "process",
+              "portName": "logLikelihoodSelfOnly"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "log_likelihood_gain_vs_poisson": {
+      "id": "log_likelihood_gain_vs_poisson",
+      "type": "arithmetic.Subtract",
+      "width": 280,
+      "height": 172,
+      "x": 2600.0,
+      "y": 9450.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "process",
+              "portName": "logLikelihoodHawkes"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "process",
+              "portName": "logLikelihoodPoisson"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:log_likelihood_gain_vs_poisson",
+              "portName": "raw"
+            },
+            {
+              "nodeId": "log_likelihood_gain_per_event_vs_poisson",
+              "portName": "a"
+            }
+          ]
+        }
+      }
+    },
+    "metric:log_likelihood_gain_vs_poisson": {
+      "id": "metric:log_likelihood_gain_vs_poisson",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 3400.0,
+      "y": 9450.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "log_likelihood_gain_vs_poisson",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "log_likelihood_gain_vs_self_only": {
+      "id": "log_likelihood_gain_vs_self_only",
+      "type": "arithmetic.Subtract",
+      "width": 280,
+      "height": 172,
+      "x": 2600.0,
+      "y": 9600.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "process",
+              "portName": "logLikelihoodHawkes"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "process",
+              "portName": "logLikelihoodSelfOnly"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:log_likelihood_gain_vs_self_only",
+              "portName": "raw"
+            },
+            {
+              "nodeId": "log_likelihood_gain_per_event_vs_self_only",
+              "portName": "a"
+            }
+          ]
+        }
+      }
+    },
+    "metric:log_likelihood_gain_vs_self_only": {
+      "id": "metric:log_likelihood_gain_vs_self_only",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 3400.0,
+      "y": 9600.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "log_likelihood_gain_vs_self_only",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "log_likelihood_per_event:hawkes": {
+      "id": "log_likelihood_per_event:hawkes",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": 2940.0,
+      "y": 9750.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "process",
+              "portName": "logLikelihoodHawkes"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "process",
+              "portName": "eventCount"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:log_likelihood_per_event:hawkes",
+              "portName": "raw"
+            }
+          ]
+        }
+      }
+    },
+    "metric:log_likelihood_per_event:hawkes": {
+      "id": "metric:log_likelihood_per_event:hawkes",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 3400.0,
+      "y": 9750.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "log_likelihood_per_event:hawkes",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "log_likelihood_gain_per_event_vs_poisson": {
+      "id": "log_likelihood_gain_per_event_vs_poisson",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": 2940.0,
+      "y": 9900.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "log_likelihood_gain_vs_poisson",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "process",
+              "portName": "eventCount"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:log_likelihood_gain_per_event_vs_poisson",
+              "portName": "raw"
+            }
+          ]
+        }
+      }
+    },
+    "metric:log_likelihood_gain_per_event_vs_poisson": {
+      "id": "metric:log_likelihood_gain_per_event_vs_poisson",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 3400.0,
+      "y": 9900.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "log_likelihood_gain_per_event_vs_poisson",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "log_likelihood_gain_per_event_vs_self_only": {
+      "id": "log_likelihood_gain_per_event_vs_self_only",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": 2940.0,
+      "y": 10050.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "log_likelihood_gain_vs_self_only",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "process",
+              "portName": "eventCount"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:log_likelihood_gain_per_event_vs_self_only",
+              "portName": "raw"
+            }
+          ]
+        }
+      }
+    },
+    "metric:log_likelihood_gain_per_event_vs_self_only": {
+      "id": "metric:log_likelihood_gain_per_event_vs_self_only",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 3400.0,
+      "y": 10050.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "log_likelihood_gain_per_event_vs_self_only",
+              "portName": "out"
             }
           ]
         },

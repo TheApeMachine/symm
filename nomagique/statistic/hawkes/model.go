@@ -24,6 +24,10 @@ type Reading struct {
 	InnovationBuy, InnovationSell                      float64
 	SNR                                                float64
 	HasSNR                                             bool
+	HawkesLogLikelihood                                float64
+	PoissonLogLikelihood                               float64
+	SelfOnlyLogLikelihood                              float64
+	HasLikelihoods                                     bool
 }
 
 func evaluateReading(
@@ -51,6 +55,11 @@ func evaluateReading(
 	if lambdaSell > 0 {
 		reading.ExcitationSellFrac = reading.ExcessSell / lambdaSell
 	}
+
+	reading.HawkesLogLikelihood = state.hawkesLogLikelihood
+	reading.PoissonLogLikelihood = state.poissonLogLikelihood
+	reading.SelfOnlyLogLikelihood = state.selfOnlyLogLikelihood
+	reading.HasLikelihoods = state.likelihoodsReady
 
 	reading.AlphaBB = model.alphaXX
 	reading.AlphaBS = model.alphaXY

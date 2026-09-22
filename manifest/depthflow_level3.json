@@ -7,8 +7,8 @@
       "type": "arithmetic.Add",
       "width": 280,
       "height": 172,
-      "x": -600.0,
-      "y": -200.0,
+      "x": -900.0,
+      "y": -300.0,
       "connections": {
         "inputs": {},
         "outputs": {
@@ -29,13 +29,13 @@
         }
       }
     },
-    "observedDifference": {
-      "id": "observedDifference",
+    "observed_notional_diff": {
+      "id": "observed_notional_diff",
       "type": "arithmetic.Subtract",
       "width": 280,
       "height": 172,
-      "x": -600.0,
-      "y": 0.0,
+      "x": -900.0,
+      "y": -150.0,
       "connections": {
         "inputs": {},
         "outputs": {
@@ -52,57 +52,13 @@
         }
       }
     },
-    "observed_notional_imbalance": {
-      "id": "observed_notional_imbalance",
-      "type": "arithmetic.Divide",
-      "width": 280,
-      "height": 172,
-      "x": -300.0,
-      "y": 0.0,
-      "connections": {
-        "inputs": {
-          "a": [
-            {
-              "nodeId": "observedDifference",
-              "portName": "out"
-            }
-          ],
-          "b": [
-            {
-              "nodeId": "observed_notional",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "observed_notional_imbalance_baseline",
-              "portName": "value"
-            },
-            {
-              "nodeId": "observed_notional_imbalance_divergence",
-              "portName": "a"
-            },
-            {
-              "nodeId": "observed_notional_imbalance_zscore",
-              "portName": "value"
-            },
-            {
-              "nodeId": "metric:observed_notional_imbalance",
-              "portName": "raw"
-            }
-          ]
-        }
-      }
-    },
-    "mutation_total": {
-      "id": "mutation_total",
+    "mutation_count": {
+      "id": "mutation_count",
       "type": "arithmetic.Add",
       "width": 280,
       "height": 172,
-      "x": -600.0,
-      "y": 240.0,
+      "x": -900.0,
+      "y": 150.0,
       "connections": {
         "inputs": {},
         "outputs": {
@@ -119,13 +75,13 @@
         }
       }
     },
-    "mutationDifference": {
-      "id": "mutationDifference",
+    "mutation_count_diff": {
+      "id": "mutation_count_diff",
       "type": "arithmetic.Subtract",
       "width": 280,
       "height": 172,
-      "x": -600.0,
-      "y": 400.0,
+      "x": -900.0,
+      "y": 300.0,
       "connections": {
         "inputs": {},
         "outputs": {
@@ -142,24 +98,68 @@
         }
       }
     },
-    "mutation_activity_imbalance": {
-      "id": "mutation_activity_imbalance",
+    "observed_notional_imbalance": {
+      "id": "observed_notional_imbalance",
       "type": "arithmetic.Divide",
       "width": 280,
       "height": 172,
-      "x": -300.0,
-      "y": 400.0,
+      "x": -560.0,
+      "y": -225.0,
       "connections": {
         "inputs": {
           "a": [
             {
-              "nodeId": "mutationDifference",
+              "nodeId": "observed_notional_diff",
               "portName": "out"
             }
           ],
           "b": [
             {
-              "nodeId": "mutation_total",
+              "nodeId": "observed_notional",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "imbalanceBaseline",
+              "portName": "value"
+            },
+            {
+              "nodeId": "observed_notional_imbalance_divergence",
+              "portName": "a"
+            },
+            {
+              "nodeId": "imbalanceVariance",
+              "portName": "value"
+            },
+            {
+              "nodeId": "metric:observed_notional_imbalance",
+              "portName": "raw"
+            }
+          ]
+        }
+      }
+    },
+    "mutation_activity_imbalance": {
+      "id": "mutation_activity_imbalance",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": -560.0,
+      "y": 225.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "mutation_count_diff",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "mutation_count",
               "portName": "out"
             }
           ]
@@ -179,8 +179,8 @@
       "type": "temporal.Elapsed",
       "width": 280,
       "height": 172,
-      "x": -600.0,
-      "y": 640.0,
+      "x": -900.0,
+      "y": 450.0,
       "connections": {
         "inputs": {},
         "outputs": {
@@ -198,8 +198,8 @@
       "type": "arithmetic.Divide",
       "width": 280,
       "height": 172,
-      "x": -300.0,
-      "y": 640.0,
+      "x": -560.0,
+      "y": 450.0,
       "connections": {
         "inputs": {
           "a": [
@@ -218,7 +218,7 @@
         "outputs": {
           "out": [
             {
-              "nodeId": "observed_notional_rate_baseline",
+              "nodeId": "rateBaseline",
               "portName": "value"
             },
             {
@@ -226,7 +226,7 @@
               "portName": "a"
             },
             {
-              "nodeId": "observed_notional_rate_zscore",
+              "nodeId": "rateVariance",
               "portName": "value"
             },
             {
@@ -237,12 +237,12 @@
         }
       }
     },
-    "observed_notional_imbalance_baseline": {
-      "id": "observed_notional_imbalance_baseline",
+    "imbalanceBaseline": {
+      "id": "imbalanceBaseline",
       "type": "statistic.CausalMean",
       "width": 280,
       "height": 172,
-      "x": 200.0,
+      "x": -200.0,
       "y": -300.0,
       "connections": {
         "inputs": {
@@ -256,12 +256,47 @@
         "outputs": {
           "out": [
             {
-              "nodeId": "metric:observed_notional_imbalance_baseline",
-              "portName": "raw"
+              "nodeId": "observed_notional_imbalance_baseline",
+              "portName": "a"
             },
             {
               "nodeId": "observed_notional_imbalance_divergence",
               "portName": "b"
+            },
+            {
+              "nodeId": "observed_notional_imbalance_mean",
+              "portName": "a"
+            }
+          ]
+        }
+      }
+    },
+    "observed_notional_imbalance_baseline": {
+      "id": "observed_notional_imbalance_baseline",
+      "type": "arithmetic.Add",
+      "width": 280,
+      "height": 172,
+      "x": 140.0,
+      "y": -300.0,
+      "inputData": {
+        "b": {
+          "value": 0
+        }
+      },
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "imbalanceBaseline",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:observed_notional_imbalance_baseline",
+              "portName": "raw"
             }
           ]
         }
@@ -272,8 +307,8 @@
       "type": "arithmetic.Subtract",
       "width": 280,
       "height": 172,
-      "x": 200.0,
-      "y": -160.0,
+      "x": 140.0,
+      "y": -150.0,
       "connections": {
         "inputs": {
           "a": [
@@ -284,13 +319,17 @@
           ],
           "b": [
             {
-              "nodeId": "observed_notional_imbalance_baseline",
+              "nodeId": "imbalanceBaseline",
               "portName": "out"
             }
           ]
         },
         "outputs": {
           "out": [
+            {
+              "nodeId": "observed_notional_imbalance_zscore",
+              "portName": "a"
+            },
             {
               "nodeId": "metric:observed_notional_imbalance_divergence",
               "portName": "raw"
@@ -299,18 +338,76 @@
         }
       }
     },
-    "observed_notional_imbalance_zscore": {
-      "id": "observed_notional_imbalance_zscore",
-      "type": "statistic.ZScore",
+    "imbalanceVariance": {
+      "id": "imbalanceVariance",
+      "type": "statistic.CausalVariance",
       "width": 280,
       "height": 172,
-      "x": 200.0,
-      "y": -20.0,
+      "x": -200.0,
+      "y": 0.0,
       "connections": {
         "inputs": {
           "value": [
             {
               "nodeId": "observed_notional_imbalance",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "imbalanceNoise",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "imbalanceNoise": {
+      "id": "imbalanceNoise",
+      "type": "calculus.Sqrt",
+      "width": 280,
+      "height": 172,
+      "x": 140.0,
+      "y": 0.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "imbalanceVariance",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "observed_notional_imbalance_zscore",
+              "portName": "b"
+            }
+          ]
+        }
+      }
+    },
+    "observed_notional_imbalance_zscore": {
+      "id": "observed_notional_imbalance_zscore",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": 480.0,
+      "y": 0.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "observed_notional_imbalance_divergence",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "imbalanceNoise",
               "portName": "out"
             }
           ]
@@ -325,13 +422,13 @@
         }
       }
     },
-    "observed_notional_rate_baseline": {
-      "id": "observed_notional_rate_baseline",
+    "rateBaseline": {
+      "id": "rateBaseline",
       "type": "statistic.CausalMean",
       "width": 280,
       "height": 172,
-      "x": 200.0,
-      "y": 300.0,
+      "x": -200.0,
+      "y": 600.0,
       "connections": {
         "inputs": {
           "value": [
@@ -344,12 +441,47 @@
         "outputs": {
           "out": [
             {
-              "nodeId": "metric:observed_notional_rate_baseline",
-              "portName": "raw"
+              "nodeId": "observed_notional_rate_baseline",
+              "portName": "a"
             },
             {
               "nodeId": "observed_notional_rate_divergence",
               "portName": "b"
+            },
+            {
+              "nodeId": "observed_notional_rate_mean",
+              "portName": "a"
+            }
+          ]
+        }
+      }
+    },
+    "observed_notional_rate_baseline": {
+      "id": "observed_notional_rate_baseline",
+      "type": "arithmetic.Add",
+      "width": 280,
+      "height": 172,
+      "x": 140.0,
+      "y": 600.0,
+      "inputData": {
+        "b": {
+          "value": 0
+        }
+      },
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "rateBaseline",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:observed_notional_rate_baseline",
+              "portName": "raw"
             }
           ]
         }
@@ -360,8 +492,8 @@
       "type": "arithmetic.Subtract",
       "width": 280,
       "height": 172,
-      "x": 200.0,
-      "y": 440.0,
+      "x": 140.0,
+      "y": 750.0,
       "connections": {
         "inputs": {
           "a": [
@@ -372,13 +504,17 @@
           ],
           "b": [
             {
-              "nodeId": "observed_notional_rate_baseline",
+              "nodeId": "rateBaseline",
               "portName": "out"
             }
           ]
         },
         "outputs": {
           "out": [
+            {
+              "nodeId": "observed_notional_rate_zscore",
+              "portName": "a"
+            },
             {
               "nodeId": "metric:observed_notional_rate_divergence",
               "portName": "raw"
@@ -387,18 +523,76 @@
         }
       }
     },
-    "observed_notional_rate_zscore": {
-      "id": "observed_notional_rate_zscore",
-      "type": "statistic.ZScore",
+    "rateVariance": {
+      "id": "rateVariance",
+      "type": "statistic.CausalVariance",
       "width": 280,
       "height": 172,
-      "x": 200.0,
-      "y": 580.0,
+      "x": -200.0,
+      "y": 900.0,
       "connections": {
         "inputs": {
           "value": [
             {
               "nodeId": "observed_notional_rate",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "rateNoise",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "rateNoise": {
+      "id": "rateNoise",
+      "type": "calculus.Sqrt",
+      "width": 280,
+      "height": 172,
+      "x": 140.0,
+      "y": 900.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "rateVariance",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "observed_notional_rate_zscore",
+              "portName": "b"
+            }
+          ]
+        }
+      }
+    },
+    "observed_notional_rate_zscore": {
+      "id": "observed_notional_rate_zscore",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": 480.0,
+      "y": 900.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "observed_notional_rate_divergence",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "rateNoise",
               "portName": "out"
             }
           ]
@@ -413,146 +607,13 @@
         }
       }
     },
-    "metric:mutation_activity_imbalance": {
-      "id": "metric:mutation_activity_imbalance",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 1400.0,
-      "y": -400.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "mutation_activity_imbalance",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:observed_notional_imbalance_baseline": {
-      "id": "metric:observed_notional_imbalance_baseline",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 1400.0,
-      "y": -250.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "observed_notional_imbalance_baseline",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:observed_notional_imbalance_divergence": {
-      "id": "metric:observed_notional_imbalance_divergence",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 1400.0,
-      "y": -100.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "observed_notional_imbalance_divergence",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:observed_notional_imbalance_zscore": {
-      "id": "metric:observed_notional_imbalance_zscore",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 1400.0,
-      "y": 50.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "observed_notional_imbalance_zscore",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:observed_notional_rate_baseline": {
-      "id": "metric:observed_notional_rate_baseline",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 1400.0,
-      "y": 200.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "observed_notional_rate_baseline",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:observed_notional_rate_divergence": {
-      "id": "metric:observed_notional_rate_divergence",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 1400.0,
-      "y": 350.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "observed_notional_rate_divergence",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:observed_notional_rate_zscore": {
-      "id": "metric:observed_notional_rate_zscore",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 1400.0,
-      "y": 500.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "observed_notional_rate_zscore",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
     "metric:observed_notional": {
       "id": "metric:observed_notional",
       "type": "data.MetricService",
       "width": 280,
       "height": 172,
-      "x": 1400.0,
-      "y": 650.0,
+      "x": 2400.0,
+      "y": 0.0,
       "connections": {
         "inputs": {
           "raw": [
@@ -570,51 +631,13 @@
       "type": "data.MetricService",
       "width": 280,
       "height": 172,
-      "x": 1400.0,
-      "y": 800.0,
+      "x": 2400.0,
+      "y": 150.0,
       "connections": {
         "inputs": {
           "raw": [
             {
-              "nodeId": "observedDifference",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:observed_notional_imbalance": {
-      "id": "metric:observed_notional_imbalance",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 1400.0,
-      "y": 950.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "observed_notional_imbalance",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:observed_notional_rate": {
-      "id": "metric:observed_notional_rate",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 1400.0,
-      "y": 1100.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "observed_notional_rate",
+              "nodeId": "observed_notional_diff",
               "portName": "out"
             }
           ]
@@ -627,13 +650,13 @@
       "type": "data.MetricService",
       "width": 280,
       "height": 172,
-      "x": 1400.0,
-      "y": 1250.0,
+      "x": 2400.0,
+      "y": 300.0,
       "connections": {
         "inputs": {
           "raw": [
             {
-              "nodeId": "mutation_total",
+              "nodeId": "mutation_count",
               "portName": "out"
             }
           ]
@@ -646,13 +669,404 @@
       "type": "data.MetricService",
       "width": 280,
       "height": 172,
-      "x": 1400.0,
-      "y": 1400.0,
+      "x": 2400.0,
+      "y": 450.0,
       "connections": {
         "inputs": {
           "raw": [
             {
-              "nodeId": "mutationDifference",
+              "nodeId": "mutation_count_diff",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:observed_notional_imbalance": {
+      "id": "metric:observed_notional_imbalance",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 600.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "observed_notional_imbalance",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:mutation_activity_imbalance": {
+      "id": "metric:mutation_activity_imbalance",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 750.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "mutation_activity_imbalance",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:observed_notional_rate": {
+      "id": "metric:observed_notional_rate",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 900.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "observed_notional_rate",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:observed_notional_imbalance_baseline": {
+      "id": "metric:observed_notional_imbalance_baseline",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 1050.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "observed_notional_imbalance_baseline",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:observed_notional_imbalance_divergence": {
+      "id": "metric:observed_notional_imbalance_divergence",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 1200.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "observed_notional_imbalance_divergence",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:observed_notional_imbalance_zscore": {
+      "id": "metric:observed_notional_imbalance_zscore",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 1350.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "observed_notional_imbalance_zscore",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:observed_notional_rate_baseline": {
+      "id": "metric:observed_notional_rate_baseline",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 1500.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "observed_notional_rate_baseline",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:observed_notional_rate_divergence": {
+      "id": "metric:observed_notional_rate_divergence",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 1650.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "observed_notional_rate_divergence",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:observed_notional_rate_zscore": {
+      "id": "metric:observed_notional_rate_zscore",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 1800.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "observed_notional_rate_zscore",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:observed_notional:bid": {
+      "id": "metric:observed_notional:bid",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 1950.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {}
+      }
+    },
+    "metric:observed_notional:ask": {
+      "id": "metric:observed_notional:ask",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 2100.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {}
+      }
+    },
+    "metric:add_notional:bid": {
+      "id": "metric:add_notional:bid",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 2250.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {}
+      }
+    },
+    "metric:add_notional:ask": {
+      "id": "metric:add_notional:ask",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 2400.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {}
+      }
+    },
+    "metric:modify_remaining_notional:bid": {
+      "id": "metric:modify_remaining_notional:bid",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 2550.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {}
+      }
+    },
+    "metric:modify_remaining_notional:ask": {
+      "id": "metric:modify_remaining_notional:ask",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 2700.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {}
+      }
+    },
+    "metric:delete_count:bid": {
+      "id": "metric:delete_count:bid",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 2850.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {}
+      }
+    },
+    "metric:delete_count:ask": {
+      "id": "metric:delete_count:ask",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 3000.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {}
+      }
+    },
+    "metric:mutation_count:bid": {
+      "id": "metric:mutation_count:bid",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 3150.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {}
+      }
+    },
+    "metric:mutation_count:ask": {
+      "id": "metric:mutation_count:ask",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 3300.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {}
+      }
+    },
+    "observed_notional_imbalance_mean": {
+      "id": "observed_notional_imbalance_mean",
+      "type": "arithmetic.Add",
+      "width": 280,
+      "height": 172,
+      "x": 1500.0,
+      "y": 5000.0,
+      "inputData": {
+        "b": {
+          "value": 0
+        }
+      },
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "imbalanceBaseline",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:observed_notional_imbalance_mean",
+              "portName": "raw"
+            }
+          ]
+        }
+      }
+    },
+    "metric:observed_notional_imbalance_mean": {
+      "id": "metric:observed_notional_imbalance_mean",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 3000.0,
+      "y": 5000.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "observed_notional_imbalance_mean",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "observed_notional_rate_mean": {
+      "id": "observed_notional_rate_mean",
+      "type": "arithmetic.Add",
+      "width": 280,
+      "height": 172,
+      "x": 1500.0,
+      "y": 5150.0,
+      "inputData": {
+        "b": {
+          "value": 0
+        }
+      },
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "rateBaseline",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:observed_notional_rate_mean",
+              "portName": "raw"
+            }
+          ]
+        }
+      }
+    },
+    "metric:observed_notional_rate_mean": {
+      "id": "metric:observed_notional_rate_mean",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 3000.0,
+      "y": 5150.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "observed_notional_rate_mean",
               "portName": "out"
             }
           ]
