@@ -14,10 +14,10 @@ McGinleyDynamicServer calculates the McGinley Dynamic indicator.
 type McGinleyDynamicServer struct {
 	*runtime.System
 	calculator *trend.McGinleyDynamic[float64]
-	value chan float64
-	out <-chan float64
-	result float64
-	count int
+	value      chan float64
+	out        <-chan float64
+	result     float64
+	count      int
 }
 
 func NewMcGinleyDynamic(ctx context.Context) *McGinleyDynamicServer {
@@ -25,10 +25,10 @@ func NewMcGinleyDynamic(ctx context.Context) *McGinleyDynamicServer {
 	calculator := trend.NewMcGinleyDynamic[float64]()
 
 	server := &McGinleyDynamicServer{
-		System: runtime.NewSystem(ctx, "financial.trend.mcginley_dynamic"),
+		System:     runtime.NewSystem(ctx, "financial.trend.mcginley_dynamic"),
 		calculator: calculator,
-		value: value,
-		out: calculator.ComputeWithContext(ctx, value),
+		value:      value,
+		out:        calculator.ComputeWithContext(ctx, value),
 	}
 
 	server.Transition(runtime.READY)

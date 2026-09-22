@@ -14,12 +14,12 @@ PoServer calculates the Projection Oscillator (PO).
 type PoServer struct {
 	*runtime.System
 	calculator *indicator.Po[float64]
-	high chan float64
-	low chan float64
-	close chan float64
-	out <-chan float64
-	result float64
-	count int
+	high       chan float64
+	low        chan float64
+	close      chan float64
+	out        <-chan float64
+	result     float64
+	count      int
 }
 
 func NewPo(ctx context.Context) *PoServer {
@@ -29,12 +29,12 @@ func NewPo(ctx context.Context) *PoServer {
 	calculator := indicator.NewPo[float64]()
 
 	server := &PoServer{
-		System: runtime.NewSystem(ctx, "financial.volatility.po"),
+		System:     runtime.NewSystem(ctx, "financial.volatility.po"),
 		calculator: calculator,
-		high: high,
-		low: low,
-		close: close,
-		out: calculator.ComputeWithContext(ctx, high, low, close),
+		high:       high,
+		low:        low,
+		close:      close,
+		out:        calculator.ComputeWithContext(ctx, high, low, close),
 	}
 
 	server.Transition(runtime.READY)

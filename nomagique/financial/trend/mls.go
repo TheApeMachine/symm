@@ -14,13 +14,13 @@ MlsServer calculates Moving Least Squares slope (m) and intercept (b).
 type MlsServer struct {
 	*runtime.System
 	calculator *trend.Mls[float64]
-	x chan float64
-	y chan float64
-	mOut <-chan float64
-	bOut <-chan float64
-	m float64
-	b float64
-	count int
+	x          chan float64
+	y          chan float64
+	mOut       <-chan float64
+	bOut       <-chan float64
+	m          float64
+	b          float64
+	count      int
 }
 
 func NewMls(ctx context.Context) *MlsServer {
@@ -29,10 +29,10 @@ func NewMls(ctx context.Context) *MlsServer {
 	calculator := trend.NewMls[float64]()
 
 	server := &MlsServer{
-		System: runtime.NewSystem(ctx, "financial.trend.mls"),
+		System:     runtime.NewSystem(ctx, "financial.trend.mls"),
 		calculator: calculator,
-		x: x,
-		y: y,
+		x:          x,
+		y:          y,
 	}
 
 	server.mOut, server.bOut = calculator.ComputeWithContext(ctx, x, y)

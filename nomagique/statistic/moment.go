@@ -13,7 +13,7 @@ MomentServer calculates online r-th raw moment of streaming observations.
 */
 type MomentServer struct {
 	*runtime.System
-	count float64
+	count  float64
 	sumPow float64
 	result float64
 }

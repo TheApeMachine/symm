@@ -14,11 +14,11 @@ MassIndexServer calculates the Mass Index.
 type MassIndexServer struct {
 	*runtime.System
 	calculator *trend.MassIndex[float64]
-	high chan float64
-	low chan float64
-	out <-chan float64
-	result float64
-	count int
+	high       chan float64
+	low        chan float64
+	out        <-chan float64
+	result     float64
+	count      int
 }
 
 func NewMassIndex(ctx context.Context) *MassIndexServer {
@@ -27,11 +27,11 @@ func NewMassIndex(ctx context.Context) *MassIndexServer {
 	calculator := trend.NewMassIndex[float64]()
 
 	server := &MassIndexServer{
-		System: runtime.NewSystem(ctx, "financial.trend.mass_index"),
+		System:     runtime.NewSystem(ctx, "financial.trend.mass_index"),
 		calculator: calculator,
-		high: high,
-		low: low,
-		out: calculator.ComputeWithContext(ctx, high, low),
+		high:       high,
+		low:        low,
+		out:        calculator.ComputeWithContext(ctx, high, low),
 	}
 
 	server.Transition(runtime.READY)

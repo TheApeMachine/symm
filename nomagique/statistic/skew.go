@@ -13,10 +13,10 @@ SkewServer calculates online sample skewness of streaming observations.
 */
 type SkewServer struct {
 	*runtime.System
-	count float64
-	mean float64
-	m2 float64
-	m3 float64
+	count  float64
+	mean   float64
+	m2     float64
+	m3     float64
 	result float64
 }
 

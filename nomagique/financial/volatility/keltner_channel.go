@@ -14,16 +14,16 @@ KeltnerChannelServer calculates the Keltner Channel.
 type KeltnerChannelServer struct {
 	*runtime.System
 	calculator *indicator.KeltnerChannel[float64]
-	high chan float64
-	low chan float64
-	close chan float64
-	upperOut <-chan float64
-	middleOut <-chan float64
-	lowerOut <-chan float64
-	upper float64
-	middle float64
-	lower float64
-	count int
+	high       chan float64
+	low        chan float64
+	close      chan float64
+	upperOut   <-chan float64
+	middleOut  <-chan float64
+	lowerOut   <-chan float64
+	upper      float64
+	middle     float64
+	lower      float64
+	count      int
 }
 
 func NewKeltnerChannel(ctx context.Context) *KeltnerChannelServer {
@@ -33,11 +33,11 @@ func NewKeltnerChannel(ctx context.Context) *KeltnerChannelServer {
 	calculator := indicator.NewKeltnerChannel[float64]()
 
 	server := &KeltnerChannelServer{
-		System: runtime.NewSystem(ctx, "financial.volatility.keltner_channel"),
+		System:     runtime.NewSystem(ctx, "financial.volatility.keltner_channel"),
 		calculator: calculator,
-		high: high,
-		low: low,
-		close: close,
+		high:       high,
+		low:        low,
+		close:      close,
 	}
 
 	server.upperOut, server.middleOut, server.lowerOut = calculator.ComputeWithContext(ctx, high, low, close)

@@ -14,10 +14,10 @@ CoppockCurveServer calculates the Coppock Curve.
 type CoppockCurveServer struct {
 	*runtime.System
 	calculator *indicator.CoppockCurve[float64]
-	value chan float64
-	out <-chan float64
-	result float64
-	count int
+	value      chan float64
+	out        <-chan float64
+	result     float64
+	count      int
 }
 
 func NewCoppockCurve(ctx context.Context) *CoppockCurveServer {
@@ -25,10 +25,10 @@ func NewCoppockCurve(ctx context.Context) *CoppockCurveServer {
 	calculator := indicator.NewCoppockCurve[float64]()
 
 	server := &CoppockCurveServer{
-		System: runtime.NewSystem(ctx, "financial.momentum.coppock_curve"),
+		System:     runtime.NewSystem(ctx, "financial.momentum.coppock_curve"),
 		calculator: calculator,
-		value: value,
-		out: calculator.ComputeWithContext(ctx, value),
+		value:      value,
+		out:        calculator.ComputeWithContext(ctx, value),
 	}
 
 	server.Transition(runtime.READY)

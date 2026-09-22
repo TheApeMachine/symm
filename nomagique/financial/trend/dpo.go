@@ -14,10 +14,10 @@ DpoServer calculates the Detrended Price Oscillator (DPO).
 type DpoServer struct {
 	*runtime.System
 	calculator *trend.Dpo[float64]
-	value chan float64
-	out <-chan float64
-	result float64
-	count int
+	value      chan float64
+	out        <-chan float64
+	result     float64
+	count      int
 }
 
 func NewDpo(ctx context.Context) *DpoServer {
@@ -25,10 +25,10 @@ func NewDpo(ctx context.Context) *DpoServer {
 	calculator := trend.NewDpo[float64]()
 
 	server := &DpoServer{
-		System: runtime.NewSystem(ctx, "financial.trend.dpo"),
+		System:     runtime.NewSystem(ctx, "financial.trend.dpo"),
 		calculator: calculator,
-		value: value,
-		out: calculator.ComputeWithContext(ctx, value),
+		value:      value,
+		out:        calculator.ComputeWithContext(ctx, value),
 	}
 
 	server.Transition(runtime.READY)

@@ -578,46 +578,202 @@
               "portName": "metrics"
             }
           ],
-          "metric:correlation_baseline.read": [
+          "metric:cohort_absolute_correlation.read": [
             {
               "nodeId": "grid",
               "portName": "metrics_1"
             }
           ],
-          "metric:correlation_divergence.read": [
+          "metric:cohort_correlation_dispersion.read": [
             {
               "nodeId": "grid",
               "portName": "metrics_2"
             }
           ],
-          "metric:correlation_velocity.read": [
+          "metric:cohort_effective_peer_count.read": [
             {
               "nodeId": "grid",
               "portName": "metrics_3"
             }
           ],
-          "metric:correlation_zscore.read": [
+          "metric:cohort_peer_count.read": [
             {
               "nodeId": "grid",
               "portName": "metrics_4"
             }
           ],
-          "metric:covariance.read": [
+          "metric:cohort_signed_correlation.read": [
             {
               "nodeId": "grid",
               "portName": "metrics_5"
             }
           ],
-          "metric:overlap_pair_count.read": [
+          "metric:correlation_baseline.read": [
             {
               "nodeId": "grid",
               "portName": "metrics_6"
             }
           ],
-          "metric:signed_correlation.read": [
+          "metric:correlation_divergence.read": [
             {
               "nodeId": "grid",
               "portName": "metrics_7"
+            }
+          ],
+          "metric:correlation_p_value.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_8"
+            }
+          ],
+          "metric:correlation_standard_error_fisher.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_9"
+            }
+          ],
+          "metric:correlation_velocity.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_10"
+            }
+          ],
+          "metric:correlation_zscore.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_11"
+            }
+          ],
+          "metric:covariance.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_12"
+            }
+          ],
+          "metric:effective_sample_count.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_13"
+            }
+          ],
+          "metric:focal_return_energy_rate.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_14"
+            }
+          ],
+          "metric:last_price.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_15"
+            }
+          ],
+          "metric:observation_count.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_16"
+            }
+          ],
+          "metric:overlap_density.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_17"
+            }
+          ],
+          "metric:overlap_pair_count.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_18"
+            }
+          ],
+          "metric:peer_return_energy_rate.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_19"
+            }
+          ],
+          "metric:relative_cohort_return_energy.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_20"
+            }
+          ],
+          "metric:relative_return_energy.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_21"
+            }
+          ],
+          "metric:relative_return_energy_baseline.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_22"
+            }
+          ],
+          "metric:relative_return_energy_divergence.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_23"
+            }
+          ],
+          "metric:relative_return_energy_velocity.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_24"
+            }
+          ],
+          "metric:relative_return_energy_zscore.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_25"
+            }
+          ],
+          "metric:return_energy:measured.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_26"
+            }
+          ],
+          "metric:return_energy:reference.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_27"
+            }
+          ],
+          "metric:return_energy_rate:measured.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_28"
+            }
+          ],
+          "metric:return_energy_rate:reference.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_29"
+            }
+          ],
+          "metric:shared_time.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_30"
+            }
+          ],
+          "metric:signed_correlation.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_31"
+            }
+          ],
+          "metric:supported_return_count:measured.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_32"
+            }
+          ],
+          "metric:supported_return_count:reference.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_33"
             }
           ]
         }
@@ -644,10 +800,16 @@
               "portName": "values_3"
             }
           ],
-          "gross_executed_quantity.value": [
+          "midpoint_log_return.value": [
             {
               "nodeId": "grid",
-              "portName": "values_2"
+              "portName": "values_4"
+            }
+          ],
+          "net_notional_rate_velocity.ts": [
+            {
+              "nodeId": "grid",
+              "portName": "values_5"
             }
           ],
           "sellQuantity.a": [
@@ -657,24 +819,6 @@
             }
           ],
           "sellShare.b": [
-            {
-              "nodeId": "grid",
-              "portName": "values_3"
-            }
-          ],
-          "signedNotional.b": [
-            {
-              "nodeId": "grid",
-              "portName": "values_3"
-            }
-          ],
-          "signedQuantity.a": [
-            {
-              "nodeId": "grid",
-              "portName": "values_2"
-            }
-          ],
-          "signedQuantity.b": [
             {
               "nodeId": "grid",
               "portName": "values_3"
@@ -703,85 +847,169 @@
           "metric:aggressive_notional:buy.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_8"
+              "portName": "metrics_34"
             }
           ],
           "metric:aggressive_notional:sell.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_9"
+              "portName": "metrics_35"
+            }
+          ],
+          "metric:buy_notional_rate.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_36"
             }
           ],
           "metric:cumulative_notional_delta.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_10"
+              "portName": "metrics_37"
             }
           ],
           "metric:cumulative_volume_delta.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_11"
+              "portName": "metrics_38"
             }
           ],
           "metric:executed_quantity:buy.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_12"
+              "portName": "metrics_39"
             }
           ],
           "metric:executed_quantity:sell.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_13"
+              "portName": "metrics_40"
+            }
+          ],
+          "metric:flow_aligned_midpoint_return.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_41"
             }
           ],
           "metric:gross_executed_quantity.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_14"
+              "portName": "metrics_42"
             }
           ],
           "metric:gross_notional.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_15"
+              "portName": "metrics_43"
+            }
+          ],
+          "metric:gross_notional_rate.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_44"
             }
           ],
           "metric:mean_trade_notional.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_16"
+              "portName": "metrics_45"
+            }
+          ],
+          "metric:midpoint_log_return.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_46"
+            }
+          ],
+          "metric:midpoint_response_per_net_notional.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_47"
             }
           ],
           "metric:net_executed_quantity.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_17"
+              "portName": "metrics_48"
             }
           ],
           "metric:net_notional.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_18"
+              "portName": "metrics_49"
+            }
+          ],
+          "metric:net_notional_rate.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_50"
+            }
+          ],
+          "metric:net_notional_rate_velocity.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_51"
+            }
+          ],
+          "metric:sell_notional_rate.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_52"
+            }
+          ],
+          "metric:signed_count_fraction.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_53"
+            }
+          ],
+          "metric:signed_net_fraction.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_54"
+            }
+          ],
+          "metric:signed_net_fraction_baseline.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_55"
+            }
+          ],
+          "metric:signed_net_fraction_divergence.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_56"
+            }
+          ],
+          "metric:signed_net_fraction_zscore.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_57"
             }
           ],
           "metric:trade_count.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_19"
+              "portName": "metrics_58"
             }
           ],
           "metric:trade_count:buy.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_20"
+              "portName": "metrics_59"
             }
           ],
           "metric:trade_count:sell.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_21"
+              "portName": "metrics_60"
+            }
+          ],
+          "metric:trade_rate.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_61"
             }
           ]
         }
@@ -799,49 +1027,49 @@
           "mutationDifference.a": [
             {
               "nodeId": "grid",
-              "portName": "values_5"
+              "portName": "values_6"
             }
           ],
           "mutationDifference.b": [
             {
               "nodeId": "grid",
-              "portName": "values_6"
+              "portName": "values_7"
             }
           ],
           "mutation_total.a": [
             {
               "nodeId": "grid",
-              "portName": "values_5"
+              "portName": "values_6"
             }
           ],
           "mutation_total.b": [
             {
               "nodeId": "grid",
-              "portName": "values_6"
+              "portName": "values_7"
             }
           ],
           "observedDifference.a": [
             {
               "nodeId": "grid",
-              "portName": "values_7"
+              "portName": "values_8"
             }
           ],
           "observedDifference.b": [
             {
               "nodeId": "grid",
-              "portName": "values_8"
+              "portName": "values_9"
             }
           ],
           "observed_notional.a": [
             {
               "nodeId": "grid",
-              "portName": "values_7"
+              "portName": "values_8"
             }
           ],
           "observed_notional.b": [
             {
               "nodeId": "grid",
-              "portName": "values_8"
+              "portName": "values_9"
             }
           ]
         },
@@ -849,43 +1077,79 @@
           "metric:mutation_activity_imbalance.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_22"
+              "portName": "metrics_62"
+            }
+          ],
+          "metric:mutation_count.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_63"
+            }
+          ],
+          "metric:mutation_count_diff.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_64"
+            }
+          ],
+          "metric:observed_notional.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_65"
+            }
+          ],
+          "metric:observed_notional_diff.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_66"
+            }
+          ],
+          "metric:observed_notional_imbalance.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_67"
             }
           ],
           "metric:observed_notional_imbalance_baseline.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_23"
+              "portName": "metrics_68"
             }
           ],
           "metric:observed_notional_imbalance_divergence.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_24"
+              "portName": "metrics_69"
             }
           ],
           "metric:observed_notional_imbalance_zscore.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_25"
+              "portName": "metrics_70"
+            }
+          ],
+          "metric:observed_notional_rate.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_71"
             }
           ],
           "metric:observed_notional_rate_baseline.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_26"
+              "portName": "metrics_72"
             }
           ],
           "metric:observed_notional_rate_divergence.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_27"
+              "portName": "metrics_73"
             }
           ],
           "metric:observed_notional_rate_zscore.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_28"
+              "portName": "metrics_74"
             }
           ]
         }
@@ -980,76 +1244,118 @@
           ]
         },
         "outputs": {
+          "metric:basis.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_75"
+            }
+          ],
           "metric:basis_baseline.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_29"
+              "portName": "metrics_76"
+            }
+          ],
+          "metric:basis_change.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_77"
             }
           ],
           "metric:basis_rate.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_30"
+              "portName": "metrics_78"
             }
           ],
           "metric:basis_velocity.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_31"
+              "portName": "metrics_79"
             }
           ],
           "metric:basis_zscore.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_32"
+              "portName": "metrics_80"
+            }
+          ],
+          "metric:derivative_log_return.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_81"
             }
           ],
           "metric:log_basis.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_33"
+              "portName": "metrics_82"
             }
           ],
           "metric:open_interest_change.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_34"
+              "portName": "metrics_83"
             }
           ],
           "metric:open_interest_growth_baseline.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_35"
+              "portName": "metrics_84"
+            }
+          ],
+          "metric:open_interest_growth_rate.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_85"
             }
           ],
           "metric:open_interest_growth_velocity.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_36"
+              "portName": "metrics_86"
             }
           ],
           "metric:open_interest_growth_zscore.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_37"
+              "portName": "metrics_87"
+            }
+          ],
+          "metric:open_interest_log_change.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_88"
+            }
+          ],
+          "metric:reference_log_return.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_89"
+            }
+          ],
+          "metric:return_gap.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_90"
             }
           ],
           "metric:return_gap_baseline.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_38"
+              "portName": "metrics_91"
             }
           ],
           "metric:return_gap_velocity.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_39"
+              "portName": "metrics_92"
             }
           ],
           "metric:return_gap_zscore.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_40"
+              "portName": "metrics_93"
             }
           ]
         }
@@ -1085,7 +1391,7 @@
           "liquidation_share_velocity.ts": [
             {
               "nodeId": "grid",
-              "portName": "values_9"
+              "portName": "values_5"
             }
           ],
           "net_liquidation_notional.a": [
@@ -1102,22 +1408,46 @@
           ]
         },
         "outputs": {
+          "metric:gross_derivative_trade_notional.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_94"
+            }
+          ],
+          "metric:gross_liquidation_notional.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_95"
+            }
+          ],
           "metric:liquidation_notional_rate.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_41"
+              "portName": "metrics_96"
+            }
+          ],
+          "metric:liquidation_share.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_97"
             }
           ],
           "metric:liquidation_share_velocity.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_42"
+              "portName": "metrics_98"
             }
           ],
           "metric:liquidation_signed_fraction.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_43"
+              "portName": "metrics_99"
+            }
+          ],
+          "metric:net_liquidation_notional.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_100"
             }
           ]
         }
@@ -1136,79 +1466,79 @@
           "metric:stage_0.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_44"
+              "portName": "metrics_101"
             }
           ],
           "metric:stage_1_arrivalRate.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_45"
+              "portName": "metrics_102"
             }
           ],
           "metric:stage_1_buyCount.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_46"
+              "portName": "metrics_103"
             }
           ],
           "metric:stage_1_buyFraction.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_47"
+              "portName": "metrics_104"
             }
           ],
           "metric:stage_1_buyRate.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_48"
+              "portName": "metrics_105"
             }
           ],
           "metric:stage_1_eventCount.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_49"
+              "portName": "metrics_106"
             }
           ],
           "metric:stage_1_lambda.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_50"
+              "portName": "metrics_107"
             }
           ],
           "metric:stage_1_lambdaBuy.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_51"
+              "portName": "metrics_108"
             }
           ],
           "metric:stage_1_lambdaSell.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_52"
+              "portName": "metrics_109"
             }
           ],
           "metric:stage_1_sellCount.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_53"
+              "portName": "metrics_110"
             }
           ],
           "metric:stage_1_sellFraction.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_54"
+              "portName": "metrics_111"
             }
           ],
           "metric:stage_1_sellRate.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_55"
+              "portName": "metrics_112"
             }
           ],
           "metric:stage_1_spectralRadius.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_56"
+              "portName": "metrics_113"
             }
           ]
         }
@@ -1288,55 +1618,97 @@
           "metric:absolute_correlation_gain.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_57"
+              "portName": "metrics_114"
+            }
+          ],
+          "metric:best_lag_correlation.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_115"
+            }
+          ],
+          "metric:best_lag_correlation_baseline.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_116"
+            }
+          ],
+          "metric:best_lag_correlation_zscore.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_117"
+            }
+          ],
+          "metric:contemporaneous_correlation.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_118"
             }
           ],
           "metric:contemporaneous_covariance.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_58"
+              "portName": "metrics_119"
             }
           ],
           "metric:contemporaneous_leftEnergy.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_59"
+              "portName": "metrics_120"
             }
           ],
           "metric:contemporaneous_rightEnergy.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_60"
+              "portName": "metrics_121"
+            }
+          ],
+          "metric:correlation_gain_baseline.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_122"
+            }
+          ],
+          "metric:correlation_gain_velocity.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_123"
+            }
+          ],
+          "metric:correlation_gain_zscore.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_124"
             }
           ],
           "metric:lagged_covariance.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_61"
+              "portName": "metrics_125"
             }
           ],
           "metric:lagged_leftEnergy.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_62"
+              "portName": "metrics_126"
             }
           ],
           "metric:lagged_rightEnergy.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_63"
+              "portName": "metrics_127"
             }
           ],
           "metric:lagged_support.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_64"
+              "portName": "metrics_128"
             }
           ],
           "metric:overlap_pair_count.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_65"
+              "portName": "metrics_129"
             }
           ]
         }
@@ -1361,6 +1733,30 @@
             {
               "nodeId": "grid",
               "portName": "values_11"
+            }
+          ],
+          "metric:best_ask_price.raw": [
+            {
+              "nodeId": "grid",
+              "portName": "values_10"
+            }
+          ],
+          "metric:best_bid_price.raw": [
+            {
+              "nodeId": "grid",
+              "portName": "values_11"
+            }
+          ],
+          "metric:touch_quantity:ask.raw": [
+            {
+              "nodeId": "grid",
+              "portName": "values_12"
+            }
+          ],
+          "metric:touch_quantity:bid.raw": [
+            {
+              "nodeId": "grid",
+              "portName": "values_13"
             }
           ],
           "midpointSum.a": [
@@ -1419,88 +1815,178 @@
           ]
         },
         "outputs": {
+          "metric:best_ask_price.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_130"
+            }
+          ],
+          "metric:best_bid_price.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_131"
+            }
+          ],
           "metric:depth_divergence:ask.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_66"
+              "portName": "metrics_132"
             }
           ],
           "metric:depth_divergence:bid.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_67"
+              "portName": "metrics_133"
+            }
+          ],
+          "metric:depth_noise_scale:ask.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_134"
+            }
+          ],
+          "metric:depth_noise_scale:bid.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_135"
             }
           ],
           "metric:depth_ratio:ask.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_68"
+              "portName": "metrics_136"
             }
           ],
           "metric:depth_ratio:bid.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_69"
+              "portName": "metrics_137"
             }
           ],
           "metric:depth_zscore:ask.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_70"
+              "portName": "metrics_138"
             }
           ],
           "metric:depth_zscore:bid.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_71"
+              "portName": "metrics_139"
             }
           ],
           "metric:divergence_velocity:ask.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_72"
+              "portName": "metrics_140"
             }
           ],
           "metric:divergence_velocity:bid.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_73"
+              "portName": "metrics_141"
+            }
+          ],
+          "metric:midpoint.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_142"
             }
           ],
           "metric:relative_spread.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_74"
+              "portName": "metrics_143"
+            }
+          ],
+          "metric:relative_spread_baseline.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_144"
+            }
+          ],
+          "metric:spread.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_145"
             }
           ],
           "metric:spread_divergence.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_75"
+              "portName": "metrics_146"
             }
           ],
           "metric:spread_divergence_velocity.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_76"
+              "portName": "metrics_147"
+            }
+          ],
+          "metric:spread_noise_scale.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_148"
             }
           ],
           "metric:spread_ratio.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_77"
+              "portName": "metrics_149"
             }
           ],
           "metric:spread_zscore.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_78"
+              "portName": "metrics_150"
+            }
+          ],
+          "metric:touch_notional:ask.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_151"
+            }
+          ],
+          "metric:touch_notional:bid.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_152"
+            }
+          ],
+          "metric:touch_notional_baseline:ask.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_153"
+            }
+          ],
+          "metric:touch_notional_baseline:bid.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_154"
             }
           ],
           "metric:touch_notional_imbalance.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_79"
+              "portName": "metrics_155"
+            }
+          ],
+          "metric:touch_quantity:ask.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_156"
+            }
+          ],
+          "metric:touch_quantity:bid.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_157"
+            }
+          ],
+          "metric:two_sided_touch_notional.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_158"
             }
           ]
         }
@@ -1562,55 +2048,73 @@
           "metric:book_shape_distance.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_80"
+              "portName": "metrics_159"
             }
           ],
           "metric:book_shape_distance_ambiguity.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_81"
+              "portName": "metrics_160"
             }
           ],
           "metric:book_shape_distance_confidence.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_82"
+              "portName": "metrics_161"
             }
           ],
           "metric:book_shape_distance_sharpness.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_83"
+              "portName": "metrics_162"
             }
           ],
           "metric:book_shape_ks.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_84"
+              "portName": "metrics_163"
             }
           ],
           "metric:concentration:ask.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_85"
+              "portName": "metrics_164"
+            }
+          ],
+          "metric:concentration:bid.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_165"
             }
           ],
           "metric:entropy:ask.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_86"
+              "portName": "metrics_166"
             }
           ],
           "metric:entropy:bid.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_87"
+              "portName": "metrics_167"
             }
           ],
           "metric:morphology_change.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_88"
+              "portName": "metrics_168"
+            }
+          ],
+          "metric:morphology_change_baseline.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_169"
+            }
+          ],
+          "metric:morphology_change_zscore.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_170"
             }
           ]
         }
@@ -1628,57 +2132,81 @@
           "midpointSum.a": [
             {
               "nodeId": "grid",
-              "portName": "values_8"
+              "portName": "values_9"
             }
           ],
           "midpointSum.b": [
             {
               "nodeId": "grid",
-              "portName": "values_7"
+              "portName": "values_8"
             }
           ],
           "spread.a": [
             {
               "nodeId": "grid",
-              "portName": "values_8"
+              "portName": "values_9"
             }
           ],
           "spread.b": [
             {
               "nodeId": "grid",
-              "portName": "values_7"
+              "portName": "values_8"
             }
           ],
           "spread_divergence_velocity.ts": [
             {
               "nodeId": "grid",
-              "portName": "values_7"
+              "portName": "values_8"
             }
           ]
         },
         "outputs": {
+          "metric:midpoint.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_171"
+            }
+          ],
+          "metric:relative_spread.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_172"
+            }
+          ],
+          "metric:relative_spread_baseline.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_173"
+            }
+          ],
+          "metric:spread.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_174"
+            }
+          ],
           "metric:spread_divergence.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_89"
+              "portName": "metrics_175"
             }
           ],
           "metric:spread_divergence_velocity.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_90"
+              "portName": "metrics_176"
             }
           ],
           "metric:spread_ratio.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_91"
+              "portName": "metrics_177"
             }
           ],
           "metric:spread_zscore.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_92"
+              "portName": "metrics_178"
             }
           ]
         }
@@ -1737,88 +2265,112 @@
           ]
         },
         "outputs": {
+          "metric:midpoint.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_179"
+            }
+          ],
           "metric:midpoint_return_baseline.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_93"
+              "portName": "metrics_180"
             }
           ],
           "metric:midpoint_return_divergence.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_94"
+              "portName": "metrics_181"
             }
           ],
           "metric:midpoint_return_rate_zscore.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_95"
+              "portName": "metrics_182"
             }
           ],
           "metric:midpoint_return_velocity.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_96"
+              "portName": "metrics_183"
             }
           ],
           "metric:midpoint_return_zscore.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_97"
+              "portName": "metrics_184"
             }
           ],
           "metric:negative_midpoint_return.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_98"
+              "portName": "metrics_185"
             }
           ],
           "metric:notional_rate_divergence.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_99"
+              "portName": "metrics_186"
             }
           ],
           "metric:notional_rate_ratio.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_100"
+              "portName": "metrics_187"
             }
           ],
           "metric:notional_rate_velocity.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_101"
+              "portName": "metrics_188"
             }
           ],
           "metric:positive_midpoint_return.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_102"
+              "portName": "metrics_189"
+            }
+          ],
+          "metric:relative_spread.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_190"
+            }
+          ],
+          "metric:relative_spread_baseline.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_191"
+            }
+          ],
+          "metric:spread.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_192"
             }
           ],
           "metric:spread_divergence.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_103"
+              "portName": "metrics_193"
             }
           ],
           "metric:spread_divergence_velocity.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_104"
+              "portName": "metrics_194"
             }
           ],
           "metric:spread_ratio.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_105"
+              "portName": "metrics_195"
             }
           ],
           "metric:spread_zscore.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_106"
+              "portName": "metrics_196"
             }
           ]
         }
@@ -1836,7 +2388,7 @@
           "notional_rate_velocity.ts": [
             {
               "nodeId": "grid",
-              "portName": "values_9"
+              "portName": "values_5"
             }
           ],
           "trade_notional.a": [
@@ -1865,40 +2417,52 @@
           ]
         },
         "outputs": {
+          "metric:notional_rate.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_197"
+            }
+          ],
+          "metric:notional_rate_baseline.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_198"
+            }
+          ],
           "metric:notional_rate_divergence.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_107"
+              "portName": "metrics_199"
             }
           ],
           "metric:notional_rate_ratio.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_108"
+              "portName": "metrics_200"
             }
           ],
           "metric:notional_rate_velocity.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_109"
+              "portName": "metrics_201"
             }
           ],
           "metric:notional_rate_zscore.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_110"
+              "portName": "metrics_202"
             }
           ],
           "metric:trade_rate.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_111"
+              "portName": "metrics_203"
             }
           ],
           "metric:volume_rate.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_112"
+              "portName": "metrics_204"
             }
           ]
         }
@@ -2002,85 +2566,97 @@
           "metric:advance_fraction.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_113"
+              "portName": "metrics_205"
+            }
+          ],
+          "metric:breadth.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_206"
             }
           ],
           "metric:breadth_baseline.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_114"
+              "portName": "metrics_207"
             }
           ],
           "metric:breadth_divergence.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_115"
+              "portName": "metrics_208"
             }
           ],
           "metric:breadth_velocity.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_116"
+              "portName": "metrics_209"
             }
           ],
           "metric:breadth_zscore.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_117"
+              "portName": "metrics_210"
             }
           ],
           "metric:decline_fraction.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_118"
+              "portName": "metrics_211"
             }
           ],
           "metric:directional_agreement.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_119"
+              "portName": "metrics_212"
             }
           ],
           "metric:directional_consensus.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_120"
+              "portName": "metrics_213"
+            }
+          ],
+          "metric:directional_participation.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_214"
             }
           ],
           "metric:median_absolute_return_ratio.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_121"
+              "portName": "metrics_215"
             }
           ],
           "metric:median_return_baseline.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_122"
+              "portName": "metrics_216"
             }
           ],
           "metric:median_return_divergence.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_123"
+              "portName": "metrics_217"
             }
           ],
           "metric:median_return_velocity.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_124"
+              "portName": "metrics_218"
             }
           ],
           "metric:median_return_zscore.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_125"
+              "portName": "metrics_219"
             }
           ],
           "metric:unchanged_fraction.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_126"
+              "portName": "metrics_220"
             }
           ]
         }
@@ -2098,109 +2674,109 @@
           "net_replenishment_fraction:ask.b": [
             {
               "nodeId": "grid",
-              "portName": "values_6"
+              "portName": "values_7"
             }
           ],
           "net_replenishment_fraction:bid.b": [
             {
               "nodeId": "grid",
-              "portName": "values_5"
+              "portName": "values_6"
             }
           ],
           "net_withdrawal_fraction:ask.b": [
             {
               "nodeId": "grid",
-              "portName": "values_6"
+              "portName": "values_7"
             }
           ],
           "net_withdrawal_fraction:bid.b": [
             {
               "nodeId": "grid",
-              "portName": "values_5"
+              "portName": "values_6"
             }
           ],
           "quantityChange:ask.a": [
             {
               "nodeId": "grid",
-              "portName": "values_6"
+              "portName": "values_7"
             }
           ],
           "quantityChange:ask.b": [
             {
               "nodeId": "grid",
-              "portName": "values_6"
+              "portName": "values_7"
             }
           ],
           "quantityChange:bid.a": [
             {
               "nodeId": "grid",
-              "portName": "values_5"
+              "portName": "values_6"
             }
           ],
           "quantityChange:bid.b": [
             {
               "nodeId": "grid",
-              "portName": "values_5"
+              "portName": "values_6"
             }
           ],
           "retreat_fraction:ask.b": [
             {
               "nodeId": "grid",
-              "portName": "values_6"
+              "portName": "values_7"
             }
           ],
           "retreat_fraction:bid.b": [
             {
               "nodeId": "grid",
-              "portName": "values_5"
+              "portName": "values_6"
             }
           ],
           "retreated_quantity:ask.b": [
             {
               "nodeId": "grid",
-              "portName": "values_6"
+              "portName": "values_7"
             }
           ],
           "retreated_quantity:bid.b": [
             {
               "nodeId": "grid",
-              "portName": "values_5"
+              "portName": "values_6"
             }
           ],
           "touch_price_log_change:ask.value": [
             {
               "nodeId": "grid",
-              "portName": "values_8"
+              "portName": "values_9"
             }
           ],
           "touch_price_log_change:bid.value": [
             {
               "nodeId": "grid",
-              "portName": "values_7"
+              "portName": "values_8"
             }
           ],
           "unfilled_residual_quantity:ask.a": [
             {
               "nodeId": "grid",
-              "portName": "values_6"
+              "portName": "values_7"
             }
           ],
           "unfilled_residual_quantity:ask.b": [
             {
               "nodeId": "grid",
-              "portName": "values_6"
+              "portName": "values_7"
             }
           ],
           "unfilled_residual_quantity:bid.a": [
             {
               "nodeId": "grid",
-              "portName": "values_5"
+              "portName": "values_6"
             }
           ],
           "unfilled_residual_quantity:bid.b": [
             {
               "nodeId": "grid",
-              "portName": "values_5"
+              "portName": "values_6"
             }
           ]
         },
@@ -2208,85 +2784,157 @@
           "metric:net_replenishment_fraction:ask.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_127"
+              "portName": "metrics_221"
             }
           ],
           "metric:net_replenishment_fraction:bid.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_128"
+              "portName": "metrics_222"
             }
           ],
           "metric:net_replenishment_rate:ask.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_129"
+              "portName": "metrics_223"
             }
           ],
           "metric:net_replenishment_rate:bid.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_130"
+              "portName": "metrics_224"
             }
           ],
           "metric:net_withdrawal_fraction:ask.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_131"
+              "portName": "metrics_225"
             }
           ],
           "metric:net_withdrawal_fraction:bid.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_132"
+              "portName": "metrics_226"
             }
           ],
           "metric:net_withdrawal_rate:ask.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_133"
+              "portName": "metrics_227"
             }
           ],
           "metric:net_withdrawal_rate:bid.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_134"
+              "portName": "metrics_228"
             }
           ],
           "metric:retreat_fraction:ask.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_135"
+              "portName": "metrics_229"
             }
           ],
           "metric:retreat_fraction:bid.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_136"
+              "portName": "metrics_230"
+            }
+          ],
+          "metric:retreat_fraction_baseline:ask.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_231"
+            }
+          ],
+          "metric:retreat_fraction_baseline:bid.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_232"
+            }
+          ],
+          "metric:retreat_fraction_divergence:ask.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_233"
+            }
+          ],
+          "metric:retreat_fraction_divergence:bid.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_234"
+            }
+          ],
+          "metric:retreat_fraction_zscore:ask.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_235"
+            }
+          ],
+          "metric:retreat_fraction_zscore:bid.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_236"
             }
           ],
           "metric:retreat_rate:ask.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_137"
+              "portName": "metrics_237"
             }
           ],
           "metric:retreat_rate:bid.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_138"
+              "portName": "metrics_238"
             }
           ],
           "metric:touch_price_log_change:ask.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_139"
+              "portName": "metrics_239"
             }
           ],
           "metric:touch_price_log_change:bid.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_140"
+              "portName": "metrics_240"
+            }
+          ],
+          "metric:withdrawal_fraction_baseline:ask.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_241"
+            }
+          ],
+          "metric:withdrawal_fraction_baseline:bid.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_242"
+            }
+          ],
+          "metric:withdrawal_fraction_divergence:ask.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_243"
+            }
+          ],
+          "metric:withdrawal_fraction_divergence:bid.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_244"
+            }
+          ],
+          "metric:withdrawal_fraction_zscore:ask.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_245"
+            }
+          ],
+          "metric:withdrawal_fraction_zscore:bid.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_246"
             }
           ]
         }
@@ -2324,19 +2972,73 @@
           "metric:bracket_quantity.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_141"
+              "portName": "metrics_247"
             }
           ],
           "metric:fill_fraction:ask.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_142"
+              "portName": "metrics_248"
             }
           ],
           "metric:fill_fraction:bid.read": [
             {
               "nodeId": "grid",
-              "portName": "metrics_143"
+              "portName": "metrics_249"
+            }
+          ],
+          "metric:fill_fraction_baseline:ask.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_250"
+            }
+          ],
+          "metric:fill_fraction_baseline:bid.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_251"
+            }
+          ],
+          "metric:fill_fraction_divergence:ask.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_252"
+            }
+          ],
+          "metric:fill_fraction_divergence:bid.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_253"
+            }
+          ],
+          "metric:fill_fraction_zscore:ask.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_254"
+            }
+          ],
+          "metric:fill_fraction_zscore:bid.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_255"
+            }
+          ],
+          "metric:matched_touch_trade_quantity:ask.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_256"
+            }
+          ],
+          "metric:matched_touch_trade_quantity:bid.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_257"
+            }
+          ],
+          "metric:trade_quantity.read": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_258"
             }
           ]
         }
@@ -2351,875 +3053,11 @@
       "y": 0.0,
       "inputData": {
         "interests": {
-          "value": "ticker.data.timestamp,ticker.data.last,trade.data.qty,trade.data.side,trade.data.price,level3.data.bid_qty,level3.data.ask_qty,level3.data.bid,level3.data.ask,trade.data.timestamp,ticker.data.ask,ticker.data.bid,ticker.data.ask_qty,ticker.data.bid_qty,level3.data.bids,level3.data.asks"
+          "value": "ticker.data.timestamp,ticker.data.last,trade.data.qty,trade.data.side,trade.data.price,trade.data.timestamp,level3.data.bid_qty,level3.data.ask_qty,level3.data.bid,level3.data.ask,ticker.data.ask,ticker.data.bid,ticker.data.ask_qty,ticker.data.bid_qty,level3.data.bids,level3.data.asks"
         }
       },
       "connections": {
         "inputs": {
-          "metrics": [
-            {
-              "nodeId": "definition-correlation_ticker",
-              "portName": "metric:absolute_correlation.read"
-            }
-          ],
-          "metrics_1": [
-            {
-              "nodeId": "definition-correlation_ticker",
-              "portName": "metric:correlation_baseline.read"
-            }
-          ],
-          "metrics_2": [
-            {
-              "nodeId": "definition-correlation_ticker",
-              "portName": "metric:correlation_divergence.read"
-            }
-          ],
-          "metrics_3": [
-            {
-              "nodeId": "definition-correlation_ticker",
-              "portName": "metric:correlation_velocity.read"
-            }
-          ],
-          "metrics_4": [
-            {
-              "nodeId": "definition-correlation_ticker",
-              "portName": "metric:correlation_zscore.read"
-            }
-          ],
-          "metrics_5": [
-            {
-              "nodeId": "definition-correlation_ticker",
-              "portName": "metric:covariance.read"
-            }
-          ],
-          "metrics_6": [
-            {
-              "nodeId": "definition-correlation_ticker",
-              "portName": "metric:overlap_pair_count.read"
-            }
-          ],
-          "metrics_7": [
-            {
-              "nodeId": "definition-correlation_ticker",
-              "portName": "metric:signed_correlation.read"
-            }
-          ],
-          "metrics_8": [
-            {
-              "nodeId": "definition-cvd_trade",
-              "portName": "metric:aggressive_notional:buy.read"
-            }
-          ],
-          "metrics_9": [
-            {
-              "nodeId": "definition-cvd_trade",
-              "portName": "metric:aggressive_notional:sell.read"
-            }
-          ],
-          "metrics_10": [
-            {
-              "nodeId": "definition-cvd_trade",
-              "portName": "metric:cumulative_notional_delta.read"
-            }
-          ],
-          "metrics_11": [
-            {
-              "nodeId": "definition-cvd_trade",
-              "portName": "metric:cumulative_volume_delta.read"
-            }
-          ],
-          "metrics_12": [
-            {
-              "nodeId": "definition-cvd_trade",
-              "portName": "metric:executed_quantity:buy.read"
-            }
-          ],
-          "metrics_13": [
-            {
-              "nodeId": "definition-cvd_trade",
-              "portName": "metric:executed_quantity:sell.read"
-            }
-          ],
-          "metrics_14": [
-            {
-              "nodeId": "definition-cvd_trade",
-              "portName": "metric:gross_executed_quantity.read"
-            }
-          ],
-          "metrics_15": [
-            {
-              "nodeId": "definition-cvd_trade",
-              "portName": "metric:gross_notional.read"
-            }
-          ],
-          "metrics_16": [
-            {
-              "nodeId": "definition-cvd_trade",
-              "portName": "metric:mean_trade_notional.read"
-            }
-          ],
-          "metrics_17": [
-            {
-              "nodeId": "definition-cvd_trade",
-              "portName": "metric:net_executed_quantity.read"
-            }
-          ],
-          "metrics_18": [
-            {
-              "nodeId": "definition-cvd_trade",
-              "portName": "metric:net_notional.read"
-            }
-          ],
-          "metrics_19": [
-            {
-              "nodeId": "definition-cvd_trade",
-              "portName": "metric:trade_count.read"
-            }
-          ],
-          "metrics_20": [
-            {
-              "nodeId": "definition-cvd_trade",
-              "portName": "metric:trade_count:buy.read"
-            }
-          ],
-          "metrics_21": [
-            {
-              "nodeId": "definition-cvd_trade",
-              "portName": "metric:trade_count:sell.read"
-            }
-          ],
-          "metrics_22": [
-            {
-              "nodeId": "definition-depthflow_level3",
-              "portName": "metric:mutation_activity_imbalance.read"
-            }
-          ],
-          "metrics_23": [
-            {
-              "nodeId": "definition-depthflow_level3",
-              "portName": "metric:observed_notional_imbalance_baseline.read"
-            }
-          ],
-          "metrics_24": [
-            {
-              "nodeId": "definition-depthflow_level3",
-              "portName": "metric:observed_notional_imbalance_divergence.read"
-            }
-          ],
-          "metrics_25": [
-            {
-              "nodeId": "definition-depthflow_level3",
-              "portName": "metric:observed_notional_imbalance_zscore.read"
-            }
-          ],
-          "metrics_26": [
-            {
-              "nodeId": "definition-depthflow_level3",
-              "portName": "metric:observed_notional_rate_baseline.read"
-            }
-          ],
-          "metrics_27": [
-            {
-              "nodeId": "definition-depthflow_level3",
-              "portName": "metric:observed_notional_rate_divergence.read"
-            }
-          ],
-          "metrics_28": [
-            {
-              "nodeId": "definition-depthflow_level3",
-              "portName": "metric:observed_notional_rate_zscore.read"
-            }
-          ],
-          "metrics_29": [
-            {
-              "nodeId": "definition-derivatives_ticker",
-              "portName": "metric:basis_baseline.read"
-            }
-          ],
-          "metrics_30": [
-            {
-              "nodeId": "definition-derivatives_ticker",
-              "portName": "metric:basis_rate.read"
-            }
-          ],
-          "metrics_31": [
-            {
-              "nodeId": "definition-derivatives_ticker",
-              "portName": "metric:basis_velocity.read"
-            }
-          ],
-          "metrics_32": [
-            {
-              "nodeId": "definition-derivatives_ticker",
-              "portName": "metric:basis_zscore.read"
-            }
-          ],
-          "metrics_33": [
-            {
-              "nodeId": "definition-derivatives_ticker",
-              "portName": "metric:log_basis.read"
-            }
-          ],
-          "metrics_34": [
-            {
-              "nodeId": "definition-derivatives_ticker",
-              "portName": "metric:open_interest_change.read"
-            }
-          ],
-          "metrics_35": [
-            {
-              "nodeId": "definition-derivatives_ticker",
-              "portName": "metric:open_interest_growth_baseline.read"
-            }
-          ],
-          "metrics_36": [
-            {
-              "nodeId": "definition-derivatives_ticker",
-              "portName": "metric:open_interest_growth_velocity.read"
-            }
-          ],
-          "metrics_37": [
-            {
-              "nodeId": "definition-derivatives_ticker",
-              "portName": "metric:open_interest_growth_zscore.read"
-            }
-          ],
-          "metrics_38": [
-            {
-              "nodeId": "definition-derivatives_ticker",
-              "portName": "metric:return_gap_baseline.read"
-            }
-          ],
-          "metrics_39": [
-            {
-              "nodeId": "definition-derivatives_ticker",
-              "portName": "metric:return_gap_velocity.read"
-            }
-          ],
-          "metrics_40": [
-            {
-              "nodeId": "definition-derivatives_ticker",
-              "portName": "metric:return_gap_zscore.read"
-            }
-          ],
-          "metrics_41": [
-            {
-              "nodeId": "definition-derivatives_trade",
-              "portName": "metric:liquidation_notional_rate.read"
-            }
-          ],
-          "metrics_42": [
-            {
-              "nodeId": "definition-derivatives_trade",
-              "portName": "metric:liquidation_share_velocity.read"
-            }
-          ],
-          "metrics_43": [
-            {
-              "nodeId": "definition-derivatives_trade",
-              "portName": "metric:liquidation_signed_fraction.read"
-            }
-          ],
-          "metrics_44": [
-            {
-              "nodeId": "definition-hawkes_trade",
-              "portName": "metric:stage_0.read"
-            }
-          ],
-          "metrics_45": [
-            {
-              "nodeId": "definition-hawkes_trade",
-              "portName": "metric:stage_1_arrivalRate.read"
-            }
-          ],
-          "metrics_46": [
-            {
-              "nodeId": "definition-hawkes_trade",
-              "portName": "metric:stage_1_buyCount.read"
-            }
-          ],
-          "metrics_47": [
-            {
-              "nodeId": "definition-hawkes_trade",
-              "portName": "metric:stage_1_buyFraction.read"
-            }
-          ],
-          "metrics_48": [
-            {
-              "nodeId": "definition-hawkes_trade",
-              "portName": "metric:stage_1_buyRate.read"
-            }
-          ],
-          "metrics_49": [
-            {
-              "nodeId": "definition-hawkes_trade",
-              "portName": "metric:stage_1_eventCount.read"
-            }
-          ],
-          "metrics_50": [
-            {
-              "nodeId": "definition-hawkes_trade",
-              "portName": "metric:stage_1_lambda.read"
-            }
-          ],
-          "metrics_51": [
-            {
-              "nodeId": "definition-hawkes_trade",
-              "portName": "metric:stage_1_lambdaBuy.read"
-            }
-          ],
-          "metrics_52": [
-            {
-              "nodeId": "definition-hawkes_trade",
-              "portName": "metric:stage_1_lambdaSell.read"
-            }
-          ],
-          "metrics_53": [
-            {
-              "nodeId": "definition-hawkes_trade",
-              "portName": "metric:stage_1_sellCount.read"
-            }
-          ],
-          "metrics_54": [
-            {
-              "nodeId": "definition-hawkes_trade",
-              "portName": "metric:stage_1_sellFraction.read"
-            }
-          ],
-          "metrics_55": [
-            {
-              "nodeId": "definition-hawkes_trade",
-              "portName": "metric:stage_1_sellRate.read"
-            }
-          ],
-          "metrics_56": [
-            {
-              "nodeId": "definition-hawkes_trade",
-              "portName": "metric:stage_1_spectralRadius.read"
-            }
-          ],
-          "metrics_57": [
-            {
-              "nodeId": "definition-leadlag_ticker",
-              "portName": "metric:absolute_correlation_gain.read"
-            }
-          ],
-          "metrics_58": [
-            {
-              "nodeId": "definition-leadlag_ticker",
-              "portName": "metric:contemporaneous_covariance.read"
-            }
-          ],
-          "metrics_59": [
-            {
-              "nodeId": "definition-leadlag_ticker",
-              "portName": "metric:contemporaneous_leftEnergy.read"
-            }
-          ],
-          "metrics_60": [
-            {
-              "nodeId": "definition-leadlag_ticker",
-              "portName": "metric:contemporaneous_rightEnergy.read"
-            }
-          ],
-          "metrics_61": [
-            {
-              "nodeId": "definition-leadlag_ticker",
-              "portName": "metric:lagged_covariance.read"
-            }
-          ],
-          "metrics_62": [
-            {
-              "nodeId": "definition-leadlag_ticker",
-              "portName": "metric:lagged_leftEnergy.read"
-            }
-          ],
-          "metrics_63": [
-            {
-              "nodeId": "definition-leadlag_ticker",
-              "portName": "metric:lagged_rightEnergy.read"
-            }
-          ],
-          "metrics_64": [
-            {
-              "nodeId": "definition-leadlag_ticker",
-              "portName": "metric:lagged_support.read"
-            }
-          ],
-          "metrics_65": [
-            {
-              "nodeId": "definition-leadlag_ticker",
-              "portName": "metric:overlap_pair_count.read"
-            }
-          ],
-          "metrics_66": [
-            {
-              "nodeId": "definition-liquidity_ticker",
-              "portName": "metric:depth_divergence:ask.read"
-            }
-          ],
-          "metrics_67": [
-            {
-              "nodeId": "definition-liquidity_ticker",
-              "portName": "metric:depth_divergence:bid.read"
-            }
-          ],
-          "metrics_68": [
-            {
-              "nodeId": "definition-liquidity_ticker",
-              "portName": "metric:depth_ratio:ask.read"
-            }
-          ],
-          "metrics_69": [
-            {
-              "nodeId": "definition-liquidity_ticker",
-              "portName": "metric:depth_ratio:bid.read"
-            }
-          ],
-          "metrics_70": [
-            {
-              "nodeId": "definition-liquidity_ticker",
-              "portName": "metric:depth_zscore:ask.read"
-            }
-          ],
-          "metrics_71": [
-            {
-              "nodeId": "definition-liquidity_ticker",
-              "portName": "metric:depth_zscore:bid.read"
-            }
-          ],
-          "metrics_72": [
-            {
-              "nodeId": "definition-liquidity_ticker",
-              "portName": "metric:divergence_velocity:ask.read"
-            }
-          ],
-          "metrics_73": [
-            {
-              "nodeId": "definition-liquidity_ticker",
-              "portName": "metric:divergence_velocity:bid.read"
-            }
-          ],
-          "metrics_74": [
-            {
-              "nodeId": "definition-liquidity_ticker",
-              "portName": "metric:relative_spread.read"
-            }
-          ],
-          "metrics_75": [
-            {
-              "nodeId": "definition-liquidity_ticker",
-              "portName": "metric:spread_divergence.read"
-            }
-          ],
-          "metrics_76": [
-            {
-              "nodeId": "definition-liquidity_ticker",
-              "portName": "metric:spread_divergence_velocity.read"
-            }
-          ],
-          "metrics_77": [
-            {
-              "nodeId": "definition-liquidity_ticker",
-              "portName": "metric:spread_ratio.read"
-            }
-          ],
-          "metrics_78": [
-            {
-              "nodeId": "definition-liquidity_ticker",
-              "portName": "metric:spread_zscore.read"
-            }
-          ],
-          "metrics_79": [
-            {
-              "nodeId": "definition-liquidity_ticker",
-              "portName": "metric:touch_notional_imbalance.read"
-            }
-          ],
-          "metrics_80": [
-            {
-              "nodeId": "definition-morphology_level3",
-              "portName": "metric:book_shape_distance.read"
-            }
-          ],
-          "metrics_81": [
-            {
-              "nodeId": "definition-morphology_level3",
-              "portName": "metric:book_shape_distance_ambiguity.read"
-            }
-          ],
-          "metrics_82": [
-            {
-              "nodeId": "definition-morphology_level3",
-              "portName": "metric:book_shape_distance_confidence.read"
-            }
-          ],
-          "metrics_83": [
-            {
-              "nodeId": "definition-morphology_level3",
-              "portName": "metric:book_shape_distance_sharpness.read"
-            }
-          ],
-          "metrics_84": [
-            {
-              "nodeId": "definition-morphology_level3",
-              "portName": "metric:book_shape_ks.read"
-            }
-          ],
-          "metrics_85": [
-            {
-              "nodeId": "definition-morphology_level3",
-              "portName": "metric:concentration:ask.read"
-            }
-          ],
-          "metrics_86": [
-            {
-              "nodeId": "definition-morphology_level3",
-              "portName": "metric:entropy:ask.read"
-            }
-          ],
-          "metrics_87": [
-            {
-              "nodeId": "definition-morphology_level3",
-              "portName": "metric:entropy:bid.read"
-            }
-          ],
-          "metrics_88": [
-            {
-              "nodeId": "definition-morphology_level3",
-              "portName": "metric:morphology_change.read"
-            }
-          ],
-          "metrics_89": [
-            {
-              "nodeId": "definition-pumpdump_level3",
-              "portName": "metric:spread_divergence.read"
-            }
-          ],
-          "metrics_90": [
-            {
-              "nodeId": "definition-pumpdump_level3",
-              "portName": "metric:spread_divergence_velocity.read"
-            }
-          ],
-          "metrics_91": [
-            {
-              "nodeId": "definition-pumpdump_level3",
-              "portName": "metric:spread_ratio.read"
-            }
-          ],
-          "metrics_92": [
-            {
-              "nodeId": "definition-pumpdump_level3",
-              "portName": "metric:spread_zscore.read"
-            }
-          ],
-          "metrics_93": [
-            {
-              "nodeId": "definition-pumpdump_ticker",
-              "portName": "metric:midpoint_return_baseline.read"
-            }
-          ],
-          "metrics_94": [
-            {
-              "nodeId": "definition-pumpdump_ticker",
-              "portName": "metric:midpoint_return_divergence.read"
-            }
-          ],
-          "metrics_95": [
-            {
-              "nodeId": "definition-pumpdump_ticker",
-              "portName": "metric:midpoint_return_rate_zscore.read"
-            }
-          ],
-          "metrics_96": [
-            {
-              "nodeId": "definition-pumpdump_ticker",
-              "portName": "metric:midpoint_return_velocity.read"
-            }
-          ],
-          "metrics_97": [
-            {
-              "nodeId": "definition-pumpdump_ticker",
-              "portName": "metric:midpoint_return_zscore.read"
-            }
-          ],
-          "metrics_98": [
-            {
-              "nodeId": "definition-pumpdump_ticker",
-              "portName": "metric:negative_midpoint_return.read"
-            }
-          ],
-          "metrics_99": [
-            {
-              "nodeId": "definition-pumpdump_ticker",
-              "portName": "metric:notional_rate_divergence.read"
-            }
-          ],
-          "metrics_100": [
-            {
-              "nodeId": "definition-pumpdump_ticker",
-              "portName": "metric:notional_rate_ratio.read"
-            }
-          ],
-          "metrics_101": [
-            {
-              "nodeId": "definition-pumpdump_ticker",
-              "portName": "metric:notional_rate_velocity.read"
-            }
-          ],
-          "metrics_102": [
-            {
-              "nodeId": "definition-pumpdump_ticker",
-              "portName": "metric:positive_midpoint_return.read"
-            }
-          ],
-          "metrics_103": [
-            {
-              "nodeId": "definition-pumpdump_ticker",
-              "portName": "metric:spread_divergence.read"
-            }
-          ],
-          "metrics_104": [
-            {
-              "nodeId": "definition-pumpdump_ticker",
-              "portName": "metric:spread_divergence_velocity.read"
-            }
-          ],
-          "metrics_105": [
-            {
-              "nodeId": "definition-pumpdump_ticker",
-              "portName": "metric:spread_ratio.read"
-            }
-          ],
-          "metrics_106": [
-            {
-              "nodeId": "definition-pumpdump_ticker",
-              "portName": "metric:spread_zscore.read"
-            }
-          ],
-          "metrics_107": [
-            {
-              "nodeId": "definition-pumpdump_trade",
-              "portName": "metric:notional_rate_divergence.read"
-            }
-          ],
-          "metrics_108": [
-            {
-              "nodeId": "definition-pumpdump_trade",
-              "portName": "metric:notional_rate_ratio.read"
-            }
-          ],
-          "metrics_109": [
-            {
-              "nodeId": "definition-pumpdump_trade",
-              "portName": "metric:notional_rate_velocity.read"
-            }
-          ],
-          "metrics_110": [
-            {
-              "nodeId": "definition-pumpdump_trade",
-              "portName": "metric:notional_rate_zscore.read"
-            }
-          ],
-          "metrics_111": [
-            {
-              "nodeId": "definition-pumpdump_trade",
-              "portName": "metric:trade_rate.read"
-            }
-          ],
-          "metrics_112": [
-            {
-              "nodeId": "definition-pumpdump_trade",
-              "portName": "metric:volume_rate.read"
-            }
-          ],
-          "metrics_113": [
-            {
-              "nodeId": "definition-sentiment_ticker",
-              "portName": "metric:advance_fraction.read"
-            }
-          ],
-          "metrics_114": [
-            {
-              "nodeId": "definition-sentiment_ticker",
-              "portName": "metric:breadth_baseline.read"
-            }
-          ],
-          "metrics_115": [
-            {
-              "nodeId": "definition-sentiment_ticker",
-              "portName": "metric:breadth_divergence.read"
-            }
-          ],
-          "metrics_116": [
-            {
-              "nodeId": "definition-sentiment_ticker",
-              "portName": "metric:breadth_velocity.read"
-            }
-          ],
-          "metrics_117": [
-            {
-              "nodeId": "definition-sentiment_ticker",
-              "portName": "metric:breadth_zscore.read"
-            }
-          ],
-          "metrics_118": [
-            {
-              "nodeId": "definition-sentiment_ticker",
-              "portName": "metric:decline_fraction.read"
-            }
-          ],
-          "metrics_119": [
-            {
-              "nodeId": "definition-sentiment_ticker",
-              "portName": "metric:directional_agreement.read"
-            }
-          ],
-          "metrics_120": [
-            {
-              "nodeId": "definition-sentiment_ticker",
-              "portName": "metric:directional_consensus.read"
-            }
-          ],
-          "metrics_121": [
-            {
-              "nodeId": "definition-sentiment_ticker",
-              "portName": "metric:median_absolute_return_ratio.read"
-            }
-          ],
-          "metrics_122": [
-            {
-              "nodeId": "definition-sentiment_ticker",
-              "portName": "metric:median_return_baseline.read"
-            }
-          ],
-          "metrics_123": [
-            {
-              "nodeId": "definition-sentiment_ticker",
-              "portName": "metric:median_return_divergence.read"
-            }
-          ],
-          "metrics_124": [
-            {
-              "nodeId": "definition-sentiment_ticker",
-              "portName": "metric:median_return_velocity.read"
-            }
-          ],
-          "metrics_125": [
-            {
-              "nodeId": "definition-sentiment_ticker",
-              "portName": "metric:median_return_zscore.read"
-            }
-          ],
-          "metrics_126": [
-            {
-              "nodeId": "definition-sentiment_ticker",
-              "portName": "metric:unchanged_fraction.read"
-            }
-          ],
-          "metrics_127": [
-            {
-              "nodeId": "definition-toxicity_level3",
-              "portName": "metric:net_replenishment_fraction:ask.read"
-            }
-          ],
-          "metrics_128": [
-            {
-              "nodeId": "definition-toxicity_level3",
-              "portName": "metric:net_replenishment_fraction:bid.read"
-            }
-          ],
-          "metrics_129": [
-            {
-              "nodeId": "definition-toxicity_level3",
-              "portName": "metric:net_replenishment_rate:ask.read"
-            }
-          ],
-          "metrics_130": [
-            {
-              "nodeId": "definition-toxicity_level3",
-              "portName": "metric:net_replenishment_rate:bid.read"
-            }
-          ],
-          "metrics_131": [
-            {
-              "nodeId": "definition-toxicity_level3",
-              "portName": "metric:net_withdrawal_fraction:ask.read"
-            }
-          ],
-          "metrics_132": [
-            {
-              "nodeId": "definition-toxicity_level3",
-              "portName": "metric:net_withdrawal_fraction:bid.read"
-            }
-          ],
-          "metrics_133": [
-            {
-              "nodeId": "definition-toxicity_level3",
-              "portName": "metric:net_withdrawal_rate:ask.read"
-            }
-          ],
-          "metrics_134": [
-            {
-              "nodeId": "definition-toxicity_level3",
-              "portName": "metric:net_withdrawal_rate:bid.read"
-            }
-          ],
-          "metrics_135": [
-            {
-              "nodeId": "definition-toxicity_level3",
-              "portName": "metric:retreat_fraction:ask.read"
-            }
-          ],
-          "metrics_136": [
-            {
-              "nodeId": "definition-toxicity_level3",
-              "portName": "metric:retreat_fraction:bid.read"
-            }
-          ],
-          "metrics_137": [
-            {
-              "nodeId": "definition-toxicity_level3",
-              "portName": "metric:retreat_rate:ask.read"
-            }
-          ],
-          "metrics_138": [
-            {
-              "nodeId": "definition-toxicity_level3",
-              "portName": "metric:retreat_rate:bid.read"
-            }
-          ],
-          "metrics_139": [
-            {
-              "nodeId": "definition-toxicity_level3",
-              "portName": "metric:touch_price_log_change:ask.read"
-            }
-          ],
-          "metrics_140": [
-            {
-              "nodeId": "definition-toxicity_level3",
-              "portName": "metric:touch_price_log_change:bid.read"
-            }
-          ],
-          "metrics_141": [
-            {
-              "nodeId": "definition-toxicity_trade",
-              "portName": "metric:bracket_quantity.read"
-            }
-          ],
-          "metrics_142": [
-            {
-              "nodeId": "definition-toxicity_trade",
-              "portName": "metric:fill_fraction:ask.read"
-            }
-          ],
-          "metrics_143": [
-            {
-              "nodeId": "definition-toxicity_trade",
-              "portName": "metric:fill_fraction:bid.read"
-            }
-          ],
           "data": [
             {
               "nodeId": "1b06e22b-00b8-402d-9eba-454ae57daabd",
@@ -3242,6 +3080,1560 @@
             {
               "nodeId": "4c01e001-0004-4000-8000-000000000003",
               "portName": "read"
+            }
+          ],
+          "metrics": [
+            {
+              "nodeId": "definition-correlation_ticker",
+              "portName": "metric:absolute_correlation.read"
+            }
+          ],
+          "metrics_1": [
+            {
+              "nodeId": "definition-correlation_ticker",
+              "portName": "metric:cohort_absolute_correlation.read"
+            }
+          ],
+          "metrics_2": [
+            {
+              "nodeId": "definition-correlation_ticker",
+              "portName": "metric:cohort_correlation_dispersion.read"
+            }
+          ],
+          "metrics_3": [
+            {
+              "nodeId": "definition-correlation_ticker",
+              "portName": "metric:cohort_effective_peer_count.read"
+            }
+          ],
+          "metrics_4": [
+            {
+              "nodeId": "definition-correlation_ticker",
+              "portName": "metric:cohort_peer_count.read"
+            }
+          ],
+          "metrics_5": [
+            {
+              "nodeId": "definition-correlation_ticker",
+              "portName": "metric:cohort_signed_correlation.read"
+            }
+          ],
+          "metrics_6": [
+            {
+              "nodeId": "definition-correlation_ticker",
+              "portName": "metric:correlation_baseline.read"
+            }
+          ],
+          "metrics_7": [
+            {
+              "nodeId": "definition-correlation_ticker",
+              "portName": "metric:correlation_divergence.read"
+            }
+          ],
+          "metrics_8": [
+            {
+              "nodeId": "definition-correlation_ticker",
+              "portName": "metric:correlation_p_value.read"
+            }
+          ],
+          "metrics_9": [
+            {
+              "nodeId": "definition-correlation_ticker",
+              "portName": "metric:correlation_standard_error_fisher.read"
+            }
+          ],
+          "metrics_10": [
+            {
+              "nodeId": "definition-correlation_ticker",
+              "portName": "metric:correlation_velocity.read"
+            }
+          ],
+          "metrics_11": [
+            {
+              "nodeId": "definition-correlation_ticker",
+              "portName": "metric:correlation_zscore.read"
+            }
+          ],
+          "metrics_12": [
+            {
+              "nodeId": "definition-correlation_ticker",
+              "portName": "metric:covariance.read"
+            }
+          ],
+          "metrics_13": [
+            {
+              "nodeId": "definition-correlation_ticker",
+              "portName": "metric:effective_sample_count.read"
+            }
+          ],
+          "metrics_14": [
+            {
+              "nodeId": "definition-correlation_ticker",
+              "portName": "metric:focal_return_energy_rate.read"
+            }
+          ],
+          "metrics_15": [
+            {
+              "nodeId": "definition-correlation_ticker",
+              "portName": "metric:last_price.read"
+            }
+          ],
+          "metrics_16": [
+            {
+              "nodeId": "definition-correlation_ticker",
+              "portName": "metric:observation_count.read"
+            }
+          ],
+          "metrics_17": [
+            {
+              "nodeId": "definition-correlation_ticker",
+              "portName": "metric:overlap_density.read"
+            }
+          ],
+          "metrics_18": [
+            {
+              "nodeId": "definition-correlation_ticker",
+              "portName": "metric:overlap_pair_count.read"
+            }
+          ],
+          "metrics_19": [
+            {
+              "nodeId": "definition-correlation_ticker",
+              "portName": "metric:peer_return_energy_rate.read"
+            }
+          ],
+          "metrics_20": [
+            {
+              "nodeId": "definition-correlation_ticker",
+              "portName": "metric:relative_cohort_return_energy.read"
+            }
+          ],
+          "metrics_21": [
+            {
+              "nodeId": "definition-correlation_ticker",
+              "portName": "metric:relative_return_energy.read"
+            }
+          ],
+          "metrics_22": [
+            {
+              "nodeId": "definition-correlation_ticker",
+              "portName": "metric:relative_return_energy_baseline.read"
+            }
+          ],
+          "metrics_23": [
+            {
+              "nodeId": "definition-correlation_ticker",
+              "portName": "metric:relative_return_energy_divergence.read"
+            }
+          ],
+          "metrics_24": [
+            {
+              "nodeId": "definition-correlation_ticker",
+              "portName": "metric:relative_return_energy_velocity.read"
+            }
+          ],
+          "metrics_25": [
+            {
+              "nodeId": "definition-correlation_ticker",
+              "portName": "metric:relative_return_energy_zscore.read"
+            }
+          ],
+          "metrics_26": [
+            {
+              "nodeId": "definition-correlation_ticker",
+              "portName": "metric:return_energy:measured.read"
+            }
+          ],
+          "metrics_27": [
+            {
+              "nodeId": "definition-correlation_ticker",
+              "portName": "metric:return_energy:reference.read"
+            }
+          ],
+          "metrics_28": [
+            {
+              "nodeId": "definition-correlation_ticker",
+              "portName": "metric:return_energy_rate:measured.read"
+            }
+          ],
+          "metrics_29": [
+            {
+              "nodeId": "definition-correlation_ticker",
+              "portName": "metric:return_energy_rate:reference.read"
+            }
+          ],
+          "metrics_30": [
+            {
+              "nodeId": "definition-correlation_ticker",
+              "portName": "metric:shared_time.read"
+            }
+          ],
+          "metrics_31": [
+            {
+              "nodeId": "definition-correlation_ticker",
+              "portName": "metric:signed_correlation.read"
+            }
+          ],
+          "metrics_32": [
+            {
+              "nodeId": "definition-correlation_ticker",
+              "portName": "metric:supported_return_count:measured.read"
+            }
+          ],
+          "metrics_33": [
+            {
+              "nodeId": "definition-correlation_ticker",
+              "portName": "metric:supported_return_count:reference.read"
+            }
+          ],
+          "metrics_34": [
+            {
+              "nodeId": "definition-cvd_trade",
+              "portName": "metric:aggressive_notional:buy.read"
+            }
+          ],
+          "metrics_35": [
+            {
+              "nodeId": "definition-cvd_trade",
+              "portName": "metric:aggressive_notional:sell.read"
+            }
+          ],
+          "metrics_36": [
+            {
+              "nodeId": "definition-cvd_trade",
+              "portName": "metric:buy_notional_rate.read"
+            }
+          ],
+          "metrics_37": [
+            {
+              "nodeId": "definition-cvd_trade",
+              "portName": "metric:cumulative_notional_delta.read"
+            }
+          ],
+          "metrics_38": [
+            {
+              "nodeId": "definition-cvd_trade",
+              "portName": "metric:cumulative_volume_delta.read"
+            }
+          ],
+          "metrics_39": [
+            {
+              "nodeId": "definition-cvd_trade",
+              "portName": "metric:executed_quantity:buy.read"
+            }
+          ],
+          "metrics_40": [
+            {
+              "nodeId": "definition-cvd_trade",
+              "portName": "metric:executed_quantity:sell.read"
+            }
+          ],
+          "metrics_41": [
+            {
+              "nodeId": "definition-cvd_trade",
+              "portName": "metric:flow_aligned_midpoint_return.read"
+            }
+          ],
+          "metrics_42": [
+            {
+              "nodeId": "definition-cvd_trade",
+              "portName": "metric:gross_executed_quantity.read"
+            }
+          ],
+          "metrics_43": [
+            {
+              "nodeId": "definition-cvd_trade",
+              "portName": "metric:gross_notional.read"
+            }
+          ],
+          "metrics_44": [
+            {
+              "nodeId": "definition-cvd_trade",
+              "portName": "metric:gross_notional_rate.read"
+            }
+          ],
+          "metrics_45": [
+            {
+              "nodeId": "definition-cvd_trade",
+              "portName": "metric:mean_trade_notional.read"
+            }
+          ],
+          "metrics_46": [
+            {
+              "nodeId": "definition-cvd_trade",
+              "portName": "metric:midpoint_log_return.read"
+            }
+          ],
+          "metrics_47": [
+            {
+              "nodeId": "definition-cvd_trade",
+              "portName": "metric:midpoint_response_per_net_notional.read"
+            }
+          ],
+          "metrics_48": [
+            {
+              "nodeId": "definition-cvd_trade",
+              "portName": "metric:net_executed_quantity.read"
+            }
+          ],
+          "metrics_49": [
+            {
+              "nodeId": "definition-cvd_trade",
+              "portName": "metric:net_notional.read"
+            }
+          ],
+          "metrics_50": [
+            {
+              "nodeId": "definition-cvd_trade",
+              "portName": "metric:net_notional_rate.read"
+            }
+          ],
+          "metrics_51": [
+            {
+              "nodeId": "definition-cvd_trade",
+              "portName": "metric:net_notional_rate_velocity.read"
+            }
+          ],
+          "metrics_52": [
+            {
+              "nodeId": "definition-cvd_trade",
+              "portName": "metric:sell_notional_rate.read"
+            }
+          ],
+          "metrics_53": [
+            {
+              "nodeId": "definition-cvd_trade",
+              "portName": "metric:signed_count_fraction.read"
+            }
+          ],
+          "metrics_54": [
+            {
+              "nodeId": "definition-cvd_trade",
+              "portName": "metric:signed_net_fraction.read"
+            }
+          ],
+          "metrics_55": [
+            {
+              "nodeId": "definition-cvd_trade",
+              "portName": "metric:signed_net_fraction_baseline.read"
+            }
+          ],
+          "metrics_56": [
+            {
+              "nodeId": "definition-cvd_trade",
+              "portName": "metric:signed_net_fraction_divergence.read"
+            }
+          ],
+          "metrics_57": [
+            {
+              "nodeId": "definition-cvd_trade",
+              "portName": "metric:signed_net_fraction_zscore.read"
+            }
+          ],
+          "metrics_58": [
+            {
+              "nodeId": "definition-cvd_trade",
+              "portName": "metric:trade_count.read"
+            }
+          ],
+          "metrics_59": [
+            {
+              "nodeId": "definition-cvd_trade",
+              "portName": "metric:trade_count:buy.read"
+            }
+          ],
+          "metrics_60": [
+            {
+              "nodeId": "definition-cvd_trade",
+              "portName": "metric:trade_count:sell.read"
+            }
+          ],
+          "metrics_61": [
+            {
+              "nodeId": "definition-cvd_trade",
+              "portName": "metric:trade_rate.read"
+            }
+          ],
+          "metrics_62": [
+            {
+              "nodeId": "definition-depthflow_level3",
+              "portName": "metric:mutation_activity_imbalance.read"
+            }
+          ],
+          "metrics_63": [
+            {
+              "nodeId": "definition-depthflow_level3",
+              "portName": "metric:mutation_count.read"
+            }
+          ],
+          "metrics_64": [
+            {
+              "nodeId": "definition-depthflow_level3",
+              "portName": "metric:mutation_count_diff.read"
+            }
+          ],
+          "metrics_65": [
+            {
+              "nodeId": "definition-depthflow_level3",
+              "portName": "metric:observed_notional.read"
+            }
+          ],
+          "metrics_66": [
+            {
+              "nodeId": "definition-depthflow_level3",
+              "portName": "metric:observed_notional_diff.read"
+            }
+          ],
+          "metrics_67": [
+            {
+              "nodeId": "definition-depthflow_level3",
+              "portName": "metric:observed_notional_imbalance.read"
+            }
+          ],
+          "metrics_68": [
+            {
+              "nodeId": "definition-depthflow_level3",
+              "portName": "metric:observed_notional_imbalance_baseline.read"
+            }
+          ],
+          "metrics_69": [
+            {
+              "nodeId": "definition-depthflow_level3",
+              "portName": "metric:observed_notional_imbalance_divergence.read"
+            }
+          ],
+          "metrics_70": [
+            {
+              "nodeId": "definition-depthflow_level3",
+              "portName": "metric:observed_notional_imbalance_zscore.read"
+            }
+          ],
+          "metrics_71": [
+            {
+              "nodeId": "definition-depthflow_level3",
+              "portName": "metric:observed_notional_rate.read"
+            }
+          ],
+          "metrics_72": [
+            {
+              "nodeId": "definition-depthflow_level3",
+              "portName": "metric:observed_notional_rate_baseline.read"
+            }
+          ],
+          "metrics_73": [
+            {
+              "nodeId": "definition-depthflow_level3",
+              "portName": "metric:observed_notional_rate_divergence.read"
+            }
+          ],
+          "metrics_74": [
+            {
+              "nodeId": "definition-depthflow_level3",
+              "portName": "metric:observed_notional_rate_zscore.read"
+            }
+          ],
+          "metrics_75": [
+            {
+              "nodeId": "definition-derivatives_ticker",
+              "portName": "metric:basis.read"
+            }
+          ],
+          "metrics_76": [
+            {
+              "nodeId": "definition-derivatives_ticker",
+              "portName": "metric:basis_baseline.read"
+            }
+          ],
+          "metrics_77": [
+            {
+              "nodeId": "definition-derivatives_ticker",
+              "portName": "metric:basis_change.read"
+            }
+          ],
+          "metrics_78": [
+            {
+              "nodeId": "definition-derivatives_ticker",
+              "portName": "metric:basis_rate.read"
+            }
+          ],
+          "metrics_79": [
+            {
+              "nodeId": "definition-derivatives_ticker",
+              "portName": "metric:basis_velocity.read"
+            }
+          ],
+          "metrics_80": [
+            {
+              "nodeId": "definition-derivatives_ticker",
+              "portName": "metric:basis_zscore.read"
+            }
+          ],
+          "metrics_81": [
+            {
+              "nodeId": "definition-derivatives_ticker",
+              "portName": "metric:derivative_log_return.read"
+            }
+          ],
+          "metrics_82": [
+            {
+              "nodeId": "definition-derivatives_ticker",
+              "portName": "metric:log_basis.read"
+            }
+          ],
+          "metrics_83": [
+            {
+              "nodeId": "definition-derivatives_ticker",
+              "portName": "metric:open_interest_change.read"
+            }
+          ],
+          "metrics_84": [
+            {
+              "nodeId": "definition-derivatives_ticker",
+              "portName": "metric:open_interest_growth_baseline.read"
+            }
+          ],
+          "metrics_85": [
+            {
+              "nodeId": "definition-derivatives_ticker",
+              "portName": "metric:open_interest_growth_rate.read"
+            }
+          ],
+          "metrics_86": [
+            {
+              "nodeId": "definition-derivatives_ticker",
+              "portName": "metric:open_interest_growth_velocity.read"
+            }
+          ],
+          "metrics_87": [
+            {
+              "nodeId": "definition-derivatives_ticker",
+              "portName": "metric:open_interest_growth_zscore.read"
+            }
+          ],
+          "metrics_88": [
+            {
+              "nodeId": "definition-derivatives_ticker",
+              "portName": "metric:open_interest_log_change.read"
+            }
+          ],
+          "metrics_89": [
+            {
+              "nodeId": "definition-derivatives_ticker",
+              "portName": "metric:reference_log_return.read"
+            }
+          ],
+          "metrics_90": [
+            {
+              "nodeId": "definition-derivatives_ticker",
+              "portName": "metric:return_gap.read"
+            }
+          ],
+          "metrics_91": [
+            {
+              "nodeId": "definition-derivatives_ticker",
+              "portName": "metric:return_gap_baseline.read"
+            }
+          ],
+          "metrics_92": [
+            {
+              "nodeId": "definition-derivatives_ticker",
+              "portName": "metric:return_gap_velocity.read"
+            }
+          ],
+          "metrics_93": [
+            {
+              "nodeId": "definition-derivatives_ticker",
+              "portName": "metric:return_gap_zscore.read"
+            }
+          ],
+          "metrics_94": [
+            {
+              "nodeId": "definition-derivatives_trade",
+              "portName": "metric:gross_derivative_trade_notional.read"
+            }
+          ],
+          "metrics_95": [
+            {
+              "nodeId": "definition-derivatives_trade",
+              "portName": "metric:gross_liquidation_notional.read"
+            }
+          ],
+          "metrics_96": [
+            {
+              "nodeId": "definition-derivatives_trade",
+              "portName": "metric:liquidation_notional_rate.read"
+            }
+          ],
+          "metrics_97": [
+            {
+              "nodeId": "definition-derivatives_trade",
+              "portName": "metric:liquidation_share.read"
+            }
+          ],
+          "metrics_98": [
+            {
+              "nodeId": "definition-derivatives_trade",
+              "portName": "metric:liquidation_share_velocity.read"
+            }
+          ],
+          "metrics_99": [
+            {
+              "nodeId": "definition-derivatives_trade",
+              "portName": "metric:liquidation_signed_fraction.read"
+            }
+          ],
+          "metrics_100": [
+            {
+              "nodeId": "definition-derivatives_trade",
+              "portName": "metric:net_liquidation_notional.read"
+            }
+          ],
+          "metrics_101": [
+            {
+              "nodeId": "definition-hawkes_trade",
+              "portName": "metric:stage_0.read"
+            }
+          ],
+          "metrics_102": [
+            {
+              "nodeId": "definition-hawkes_trade",
+              "portName": "metric:stage_1_arrivalRate.read"
+            }
+          ],
+          "metrics_103": [
+            {
+              "nodeId": "definition-hawkes_trade",
+              "portName": "metric:stage_1_buyCount.read"
+            }
+          ],
+          "metrics_104": [
+            {
+              "nodeId": "definition-hawkes_trade",
+              "portName": "metric:stage_1_buyFraction.read"
+            }
+          ],
+          "metrics_105": [
+            {
+              "nodeId": "definition-hawkes_trade",
+              "portName": "metric:stage_1_buyRate.read"
+            }
+          ],
+          "metrics_106": [
+            {
+              "nodeId": "definition-hawkes_trade",
+              "portName": "metric:stage_1_eventCount.read"
+            }
+          ],
+          "metrics_107": [
+            {
+              "nodeId": "definition-hawkes_trade",
+              "portName": "metric:stage_1_lambda.read"
+            }
+          ],
+          "metrics_108": [
+            {
+              "nodeId": "definition-hawkes_trade",
+              "portName": "metric:stage_1_lambdaBuy.read"
+            }
+          ],
+          "metrics_109": [
+            {
+              "nodeId": "definition-hawkes_trade",
+              "portName": "metric:stage_1_lambdaSell.read"
+            }
+          ],
+          "metrics_110": [
+            {
+              "nodeId": "definition-hawkes_trade",
+              "portName": "metric:stage_1_sellCount.read"
+            }
+          ],
+          "metrics_111": [
+            {
+              "nodeId": "definition-hawkes_trade",
+              "portName": "metric:stage_1_sellFraction.read"
+            }
+          ],
+          "metrics_112": [
+            {
+              "nodeId": "definition-hawkes_trade",
+              "portName": "metric:stage_1_sellRate.read"
+            }
+          ],
+          "metrics_113": [
+            {
+              "nodeId": "definition-hawkes_trade",
+              "portName": "metric:stage_1_spectralRadius.read"
+            }
+          ],
+          "metrics_114": [
+            {
+              "nodeId": "definition-leadlag_ticker",
+              "portName": "metric:absolute_correlation_gain.read"
+            }
+          ],
+          "metrics_115": [
+            {
+              "nodeId": "definition-leadlag_ticker",
+              "portName": "metric:best_lag_correlation.read"
+            }
+          ],
+          "metrics_116": [
+            {
+              "nodeId": "definition-leadlag_ticker",
+              "portName": "metric:best_lag_correlation_baseline.read"
+            }
+          ],
+          "metrics_117": [
+            {
+              "nodeId": "definition-leadlag_ticker",
+              "portName": "metric:best_lag_correlation_zscore.read"
+            }
+          ],
+          "metrics_118": [
+            {
+              "nodeId": "definition-leadlag_ticker",
+              "portName": "metric:contemporaneous_correlation.read"
+            }
+          ],
+          "metrics_119": [
+            {
+              "nodeId": "definition-leadlag_ticker",
+              "portName": "metric:contemporaneous_covariance.read"
+            }
+          ],
+          "metrics_120": [
+            {
+              "nodeId": "definition-leadlag_ticker",
+              "portName": "metric:contemporaneous_leftEnergy.read"
+            }
+          ],
+          "metrics_121": [
+            {
+              "nodeId": "definition-leadlag_ticker",
+              "portName": "metric:contemporaneous_rightEnergy.read"
+            }
+          ],
+          "metrics_122": [
+            {
+              "nodeId": "definition-leadlag_ticker",
+              "portName": "metric:correlation_gain_baseline.read"
+            }
+          ],
+          "metrics_123": [
+            {
+              "nodeId": "definition-leadlag_ticker",
+              "portName": "metric:correlation_gain_velocity.read"
+            }
+          ],
+          "metrics_124": [
+            {
+              "nodeId": "definition-leadlag_ticker",
+              "portName": "metric:correlation_gain_zscore.read"
+            }
+          ],
+          "metrics_125": [
+            {
+              "nodeId": "definition-leadlag_ticker",
+              "portName": "metric:lagged_covariance.read"
+            }
+          ],
+          "metrics_126": [
+            {
+              "nodeId": "definition-leadlag_ticker",
+              "portName": "metric:lagged_leftEnergy.read"
+            }
+          ],
+          "metrics_127": [
+            {
+              "nodeId": "definition-leadlag_ticker",
+              "portName": "metric:lagged_rightEnergy.read"
+            }
+          ],
+          "metrics_128": [
+            {
+              "nodeId": "definition-leadlag_ticker",
+              "portName": "metric:lagged_support.read"
+            }
+          ],
+          "metrics_129": [
+            {
+              "nodeId": "definition-leadlag_ticker",
+              "portName": "metric:overlap_pair_count.read"
+            }
+          ],
+          "metrics_130": [
+            {
+              "nodeId": "definition-liquidity_ticker",
+              "portName": "metric:best_ask_price.read"
+            }
+          ],
+          "metrics_131": [
+            {
+              "nodeId": "definition-liquidity_ticker",
+              "portName": "metric:best_bid_price.read"
+            }
+          ],
+          "metrics_132": [
+            {
+              "nodeId": "definition-liquidity_ticker",
+              "portName": "metric:depth_divergence:ask.read"
+            }
+          ],
+          "metrics_133": [
+            {
+              "nodeId": "definition-liquidity_ticker",
+              "portName": "metric:depth_divergence:bid.read"
+            }
+          ],
+          "metrics_134": [
+            {
+              "nodeId": "definition-liquidity_ticker",
+              "portName": "metric:depth_noise_scale:ask.read"
+            }
+          ],
+          "metrics_135": [
+            {
+              "nodeId": "definition-liquidity_ticker",
+              "portName": "metric:depth_noise_scale:bid.read"
+            }
+          ],
+          "metrics_136": [
+            {
+              "nodeId": "definition-liquidity_ticker",
+              "portName": "metric:depth_ratio:ask.read"
+            }
+          ],
+          "metrics_137": [
+            {
+              "nodeId": "definition-liquidity_ticker",
+              "portName": "metric:depth_ratio:bid.read"
+            }
+          ],
+          "metrics_138": [
+            {
+              "nodeId": "definition-liquidity_ticker",
+              "portName": "metric:depth_zscore:ask.read"
+            }
+          ],
+          "metrics_139": [
+            {
+              "nodeId": "definition-liquidity_ticker",
+              "portName": "metric:depth_zscore:bid.read"
+            }
+          ],
+          "metrics_140": [
+            {
+              "nodeId": "definition-liquidity_ticker",
+              "portName": "metric:divergence_velocity:ask.read"
+            }
+          ],
+          "metrics_141": [
+            {
+              "nodeId": "definition-liquidity_ticker",
+              "portName": "metric:divergence_velocity:bid.read"
+            }
+          ],
+          "metrics_142": [
+            {
+              "nodeId": "definition-liquidity_ticker",
+              "portName": "metric:midpoint.read"
+            }
+          ],
+          "metrics_143": [
+            {
+              "nodeId": "definition-liquidity_ticker",
+              "portName": "metric:relative_spread.read"
+            }
+          ],
+          "metrics_144": [
+            {
+              "nodeId": "definition-liquidity_ticker",
+              "portName": "metric:relative_spread_baseline.read"
+            }
+          ],
+          "metrics_145": [
+            {
+              "nodeId": "definition-liquidity_ticker",
+              "portName": "metric:spread.read"
+            }
+          ],
+          "metrics_146": [
+            {
+              "nodeId": "definition-liquidity_ticker",
+              "portName": "metric:spread_divergence.read"
+            }
+          ],
+          "metrics_147": [
+            {
+              "nodeId": "definition-liquidity_ticker",
+              "portName": "metric:spread_divergence_velocity.read"
+            }
+          ],
+          "metrics_148": [
+            {
+              "nodeId": "definition-liquidity_ticker",
+              "portName": "metric:spread_noise_scale.read"
+            }
+          ],
+          "metrics_149": [
+            {
+              "nodeId": "definition-liquidity_ticker",
+              "portName": "metric:spread_ratio.read"
+            }
+          ],
+          "metrics_150": [
+            {
+              "nodeId": "definition-liquidity_ticker",
+              "portName": "metric:spread_zscore.read"
+            }
+          ],
+          "metrics_151": [
+            {
+              "nodeId": "definition-liquidity_ticker",
+              "portName": "metric:touch_notional:ask.read"
+            }
+          ],
+          "metrics_152": [
+            {
+              "nodeId": "definition-liquidity_ticker",
+              "portName": "metric:touch_notional:bid.read"
+            }
+          ],
+          "metrics_153": [
+            {
+              "nodeId": "definition-liquidity_ticker",
+              "portName": "metric:touch_notional_baseline:ask.read"
+            }
+          ],
+          "metrics_154": [
+            {
+              "nodeId": "definition-liquidity_ticker",
+              "portName": "metric:touch_notional_baseline:bid.read"
+            }
+          ],
+          "metrics_155": [
+            {
+              "nodeId": "definition-liquidity_ticker",
+              "portName": "metric:touch_notional_imbalance.read"
+            }
+          ],
+          "metrics_156": [
+            {
+              "nodeId": "definition-liquidity_ticker",
+              "portName": "metric:touch_quantity:ask.read"
+            }
+          ],
+          "metrics_157": [
+            {
+              "nodeId": "definition-liquidity_ticker",
+              "portName": "metric:touch_quantity:bid.read"
+            }
+          ],
+          "metrics_158": [
+            {
+              "nodeId": "definition-liquidity_ticker",
+              "portName": "metric:two_sided_touch_notional.read"
+            }
+          ],
+          "metrics_159": [
+            {
+              "nodeId": "definition-morphology_level3",
+              "portName": "metric:book_shape_distance.read"
+            }
+          ],
+          "metrics_160": [
+            {
+              "nodeId": "definition-morphology_level3",
+              "portName": "metric:book_shape_distance_ambiguity.read"
+            }
+          ],
+          "metrics_161": [
+            {
+              "nodeId": "definition-morphology_level3",
+              "portName": "metric:book_shape_distance_confidence.read"
+            }
+          ],
+          "metrics_162": [
+            {
+              "nodeId": "definition-morphology_level3",
+              "portName": "metric:book_shape_distance_sharpness.read"
+            }
+          ],
+          "metrics_163": [
+            {
+              "nodeId": "definition-morphology_level3",
+              "portName": "metric:book_shape_ks.read"
+            }
+          ],
+          "metrics_164": [
+            {
+              "nodeId": "definition-morphology_level3",
+              "portName": "metric:concentration:ask.read"
+            }
+          ],
+          "metrics_165": [
+            {
+              "nodeId": "definition-morphology_level3",
+              "portName": "metric:concentration:bid.read"
+            }
+          ],
+          "metrics_166": [
+            {
+              "nodeId": "definition-morphology_level3",
+              "portName": "metric:entropy:ask.read"
+            }
+          ],
+          "metrics_167": [
+            {
+              "nodeId": "definition-morphology_level3",
+              "portName": "metric:entropy:bid.read"
+            }
+          ],
+          "metrics_168": [
+            {
+              "nodeId": "definition-morphology_level3",
+              "portName": "metric:morphology_change.read"
+            }
+          ],
+          "metrics_169": [
+            {
+              "nodeId": "definition-morphology_level3",
+              "portName": "metric:morphology_change_baseline.read"
+            }
+          ],
+          "metrics_170": [
+            {
+              "nodeId": "definition-morphology_level3",
+              "portName": "metric:morphology_change_zscore.read"
+            }
+          ],
+          "metrics_171": [
+            {
+              "nodeId": "definition-pumpdump_level3",
+              "portName": "metric:midpoint.read"
+            }
+          ],
+          "metrics_172": [
+            {
+              "nodeId": "definition-pumpdump_level3",
+              "portName": "metric:relative_spread.read"
+            }
+          ],
+          "metrics_173": [
+            {
+              "nodeId": "definition-pumpdump_level3",
+              "portName": "metric:relative_spread_baseline.read"
+            }
+          ],
+          "metrics_174": [
+            {
+              "nodeId": "definition-pumpdump_level3",
+              "portName": "metric:spread.read"
+            }
+          ],
+          "metrics_175": [
+            {
+              "nodeId": "definition-pumpdump_level3",
+              "portName": "metric:spread_divergence.read"
+            }
+          ],
+          "metrics_176": [
+            {
+              "nodeId": "definition-pumpdump_level3",
+              "portName": "metric:spread_divergence_velocity.read"
+            }
+          ],
+          "metrics_177": [
+            {
+              "nodeId": "definition-pumpdump_level3",
+              "portName": "metric:spread_ratio.read"
+            }
+          ],
+          "metrics_178": [
+            {
+              "nodeId": "definition-pumpdump_level3",
+              "portName": "metric:spread_zscore.read"
+            }
+          ],
+          "metrics_179": [
+            {
+              "nodeId": "definition-pumpdump_ticker",
+              "portName": "metric:midpoint.read"
+            }
+          ],
+          "metrics_180": [
+            {
+              "nodeId": "definition-pumpdump_ticker",
+              "portName": "metric:midpoint_return_baseline.read"
+            }
+          ],
+          "metrics_181": [
+            {
+              "nodeId": "definition-pumpdump_ticker",
+              "portName": "metric:midpoint_return_divergence.read"
+            }
+          ],
+          "metrics_182": [
+            {
+              "nodeId": "definition-pumpdump_ticker",
+              "portName": "metric:midpoint_return_rate_zscore.read"
+            }
+          ],
+          "metrics_183": [
+            {
+              "nodeId": "definition-pumpdump_ticker",
+              "portName": "metric:midpoint_return_velocity.read"
+            }
+          ],
+          "metrics_184": [
+            {
+              "nodeId": "definition-pumpdump_ticker",
+              "portName": "metric:midpoint_return_zscore.read"
+            }
+          ],
+          "metrics_185": [
+            {
+              "nodeId": "definition-pumpdump_ticker",
+              "portName": "metric:negative_midpoint_return.read"
+            }
+          ],
+          "metrics_186": [
+            {
+              "nodeId": "definition-pumpdump_ticker",
+              "portName": "metric:notional_rate_divergence.read"
+            }
+          ],
+          "metrics_187": [
+            {
+              "nodeId": "definition-pumpdump_ticker",
+              "portName": "metric:notional_rate_ratio.read"
+            }
+          ],
+          "metrics_188": [
+            {
+              "nodeId": "definition-pumpdump_ticker",
+              "portName": "metric:notional_rate_velocity.read"
+            }
+          ],
+          "metrics_189": [
+            {
+              "nodeId": "definition-pumpdump_ticker",
+              "portName": "metric:positive_midpoint_return.read"
+            }
+          ],
+          "metrics_190": [
+            {
+              "nodeId": "definition-pumpdump_ticker",
+              "portName": "metric:relative_spread.read"
+            }
+          ],
+          "metrics_191": [
+            {
+              "nodeId": "definition-pumpdump_ticker",
+              "portName": "metric:relative_spread_baseline.read"
+            }
+          ],
+          "metrics_192": [
+            {
+              "nodeId": "definition-pumpdump_ticker",
+              "portName": "metric:spread.read"
+            }
+          ],
+          "metrics_193": [
+            {
+              "nodeId": "definition-pumpdump_ticker",
+              "portName": "metric:spread_divergence.read"
+            }
+          ],
+          "metrics_194": [
+            {
+              "nodeId": "definition-pumpdump_ticker",
+              "portName": "metric:spread_divergence_velocity.read"
+            }
+          ],
+          "metrics_195": [
+            {
+              "nodeId": "definition-pumpdump_ticker",
+              "portName": "metric:spread_ratio.read"
+            }
+          ],
+          "metrics_196": [
+            {
+              "nodeId": "definition-pumpdump_ticker",
+              "portName": "metric:spread_zscore.read"
+            }
+          ],
+          "metrics_197": [
+            {
+              "nodeId": "definition-pumpdump_trade",
+              "portName": "metric:notional_rate.read"
+            }
+          ],
+          "metrics_198": [
+            {
+              "nodeId": "definition-pumpdump_trade",
+              "portName": "metric:notional_rate_baseline.read"
+            }
+          ],
+          "metrics_199": [
+            {
+              "nodeId": "definition-pumpdump_trade",
+              "portName": "metric:notional_rate_divergence.read"
+            }
+          ],
+          "metrics_200": [
+            {
+              "nodeId": "definition-pumpdump_trade",
+              "portName": "metric:notional_rate_ratio.read"
+            }
+          ],
+          "metrics_201": [
+            {
+              "nodeId": "definition-pumpdump_trade",
+              "portName": "metric:notional_rate_velocity.read"
+            }
+          ],
+          "metrics_202": [
+            {
+              "nodeId": "definition-pumpdump_trade",
+              "portName": "metric:notional_rate_zscore.read"
+            }
+          ],
+          "metrics_203": [
+            {
+              "nodeId": "definition-pumpdump_trade",
+              "portName": "metric:trade_rate.read"
+            }
+          ],
+          "metrics_204": [
+            {
+              "nodeId": "definition-pumpdump_trade",
+              "portName": "metric:volume_rate.read"
+            }
+          ],
+          "metrics_205": [
+            {
+              "nodeId": "definition-sentiment_ticker",
+              "portName": "metric:advance_fraction.read"
+            }
+          ],
+          "metrics_206": [
+            {
+              "nodeId": "definition-sentiment_ticker",
+              "portName": "metric:breadth.read"
+            }
+          ],
+          "metrics_207": [
+            {
+              "nodeId": "definition-sentiment_ticker",
+              "portName": "metric:breadth_baseline.read"
+            }
+          ],
+          "metrics_208": [
+            {
+              "nodeId": "definition-sentiment_ticker",
+              "portName": "metric:breadth_divergence.read"
+            }
+          ],
+          "metrics_209": [
+            {
+              "nodeId": "definition-sentiment_ticker",
+              "portName": "metric:breadth_velocity.read"
+            }
+          ],
+          "metrics_210": [
+            {
+              "nodeId": "definition-sentiment_ticker",
+              "portName": "metric:breadth_zscore.read"
+            }
+          ],
+          "metrics_211": [
+            {
+              "nodeId": "definition-sentiment_ticker",
+              "portName": "metric:decline_fraction.read"
+            }
+          ],
+          "metrics_212": [
+            {
+              "nodeId": "definition-sentiment_ticker",
+              "portName": "metric:directional_agreement.read"
+            }
+          ],
+          "metrics_213": [
+            {
+              "nodeId": "definition-sentiment_ticker",
+              "portName": "metric:directional_consensus.read"
+            }
+          ],
+          "metrics_214": [
+            {
+              "nodeId": "definition-sentiment_ticker",
+              "portName": "metric:directional_participation.read"
+            }
+          ],
+          "metrics_215": [
+            {
+              "nodeId": "definition-sentiment_ticker",
+              "portName": "metric:median_absolute_return_ratio.read"
+            }
+          ],
+          "metrics_216": [
+            {
+              "nodeId": "definition-sentiment_ticker",
+              "portName": "metric:median_return_baseline.read"
+            }
+          ],
+          "metrics_217": [
+            {
+              "nodeId": "definition-sentiment_ticker",
+              "portName": "metric:median_return_divergence.read"
+            }
+          ],
+          "metrics_218": [
+            {
+              "nodeId": "definition-sentiment_ticker",
+              "portName": "metric:median_return_velocity.read"
+            }
+          ],
+          "metrics_219": [
+            {
+              "nodeId": "definition-sentiment_ticker",
+              "portName": "metric:median_return_zscore.read"
+            }
+          ],
+          "metrics_220": [
+            {
+              "nodeId": "definition-sentiment_ticker",
+              "portName": "metric:unchanged_fraction.read"
+            }
+          ],
+          "metrics_221": [
+            {
+              "nodeId": "definition-toxicity_level3",
+              "portName": "metric:net_replenishment_fraction:ask.read"
+            }
+          ],
+          "metrics_222": [
+            {
+              "nodeId": "definition-toxicity_level3",
+              "portName": "metric:net_replenishment_fraction:bid.read"
+            }
+          ],
+          "metrics_223": [
+            {
+              "nodeId": "definition-toxicity_level3",
+              "portName": "metric:net_replenishment_rate:ask.read"
+            }
+          ],
+          "metrics_224": [
+            {
+              "nodeId": "definition-toxicity_level3",
+              "portName": "metric:net_replenishment_rate:bid.read"
+            }
+          ],
+          "metrics_225": [
+            {
+              "nodeId": "definition-toxicity_level3",
+              "portName": "metric:net_withdrawal_fraction:ask.read"
+            }
+          ],
+          "metrics_226": [
+            {
+              "nodeId": "definition-toxicity_level3",
+              "portName": "metric:net_withdrawal_fraction:bid.read"
+            }
+          ],
+          "metrics_227": [
+            {
+              "nodeId": "definition-toxicity_level3",
+              "portName": "metric:net_withdrawal_rate:ask.read"
+            }
+          ],
+          "metrics_228": [
+            {
+              "nodeId": "definition-toxicity_level3",
+              "portName": "metric:net_withdrawal_rate:bid.read"
+            }
+          ],
+          "metrics_229": [
+            {
+              "nodeId": "definition-toxicity_level3",
+              "portName": "metric:retreat_fraction:ask.read"
+            }
+          ],
+          "metrics_230": [
+            {
+              "nodeId": "definition-toxicity_level3",
+              "portName": "metric:retreat_fraction:bid.read"
+            }
+          ],
+          "metrics_231": [
+            {
+              "nodeId": "definition-toxicity_level3",
+              "portName": "metric:retreat_fraction_baseline:ask.read"
+            }
+          ],
+          "metrics_232": [
+            {
+              "nodeId": "definition-toxicity_level3",
+              "portName": "metric:retreat_fraction_baseline:bid.read"
+            }
+          ],
+          "metrics_233": [
+            {
+              "nodeId": "definition-toxicity_level3",
+              "portName": "metric:retreat_fraction_divergence:ask.read"
+            }
+          ],
+          "metrics_234": [
+            {
+              "nodeId": "definition-toxicity_level3",
+              "portName": "metric:retreat_fraction_divergence:bid.read"
+            }
+          ],
+          "metrics_235": [
+            {
+              "nodeId": "definition-toxicity_level3",
+              "portName": "metric:retreat_fraction_zscore:ask.read"
+            }
+          ],
+          "metrics_236": [
+            {
+              "nodeId": "definition-toxicity_level3",
+              "portName": "metric:retreat_fraction_zscore:bid.read"
+            }
+          ],
+          "metrics_237": [
+            {
+              "nodeId": "definition-toxicity_level3",
+              "portName": "metric:retreat_rate:ask.read"
+            }
+          ],
+          "metrics_238": [
+            {
+              "nodeId": "definition-toxicity_level3",
+              "portName": "metric:retreat_rate:bid.read"
+            }
+          ],
+          "metrics_239": [
+            {
+              "nodeId": "definition-toxicity_level3",
+              "portName": "metric:touch_price_log_change:ask.read"
+            }
+          ],
+          "metrics_240": [
+            {
+              "nodeId": "definition-toxicity_level3",
+              "portName": "metric:touch_price_log_change:bid.read"
+            }
+          ],
+          "metrics_241": [
+            {
+              "nodeId": "definition-toxicity_level3",
+              "portName": "metric:withdrawal_fraction_baseline:ask.read"
+            }
+          ],
+          "metrics_242": [
+            {
+              "nodeId": "definition-toxicity_level3",
+              "portName": "metric:withdrawal_fraction_baseline:bid.read"
+            }
+          ],
+          "metrics_243": [
+            {
+              "nodeId": "definition-toxicity_level3",
+              "portName": "metric:withdrawal_fraction_divergence:ask.read"
+            }
+          ],
+          "metrics_244": [
+            {
+              "nodeId": "definition-toxicity_level3",
+              "portName": "metric:withdrawal_fraction_divergence:bid.read"
+            }
+          ],
+          "metrics_245": [
+            {
+              "nodeId": "definition-toxicity_level3",
+              "portName": "metric:withdrawal_fraction_zscore:ask.read"
+            }
+          ],
+          "metrics_246": [
+            {
+              "nodeId": "definition-toxicity_level3",
+              "portName": "metric:withdrawal_fraction_zscore:bid.read"
+            }
+          ],
+          "metrics_247": [
+            {
+              "nodeId": "definition-toxicity_trade",
+              "portName": "metric:bracket_quantity.read"
+            }
+          ],
+          "metrics_248": [
+            {
+              "nodeId": "definition-toxicity_trade",
+              "portName": "metric:fill_fraction:ask.read"
+            }
+          ],
+          "metrics_249": [
+            {
+              "nodeId": "definition-toxicity_trade",
+              "portName": "metric:fill_fraction:bid.read"
+            }
+          ],
+          "metrics_250": [
+            {
+              "nodeId": "definition-toxicity_trade",
+              "portName": "metric:fill_fraction_baseline:ask.read"
+            }
+          ],
+          "metrics_251": [
+            {
+              "nodeId": "definition-toxicity_trade",
+              "portName": "metric:fill_fraction_baseline:bid.read"
+            }
+          ],
+          "metrics_252": [
+            {
+              "nodeId": "definition-toxicity_trade",
+              "portName": "metric:fill_fraction_divergence:ask.read"
+            }
+          ],
+          "metrics_253": [
+            {
+              "nodeId": "definition-toxicity_trade",
+              "portName": "metric:fill_fraction_divergence:bid.read"
+            }
+          ],
+          "metrics_254": [
+            {
+              "nodeId": "definition-toxicity_trade",
+              "portName": "metric:fill_fraction_zscore:ask.read"
+            }
+          ],
+          "metrics_255": [
+            {
+              "nodeId": "definition-toxicity_trade",
+              "portName": "metric:fill_fraction_zscore:bid.read"
+            }
+          ],
+          "metrics_256": [
+            {
+              "nodeId": "definition-toxicity_trade",
+              "portName": "metric:matched_touch_trade_quantity:ask.read"
+            }
+          ],
+          "metrics_257": [
+            {
+              "nodeId": "definition-toxicity_trade",
+              "portName": "metric:matched_touch_trade_quantity:bid.read"
+            }
+          ],
+          "metrics_258": [
+            {
+              "nodeId": "definition-toxicity_trade",
+              "portName": "metric:trade_quantity.read"
             }
           ]
         },
@@ -3445,15 +4837,7 @@
             },
             {
               "nodeId": "definition-cvd_trade",
-              "portName": "gross_executed_quantity.value"
-            },
-            {
-              "nodeId": "definition-cvd_trade",
               "portName": "sellQuantity.a"
-            },
-            {
-              "nodeId": "definition-cvd_trade",
-              "portName": "signedQuantity.a"
             },
             {
               "nodeId": "definition-cvd_trade",
@@ -3512,17 +4896,13 @@
             {
               "nodeId": "definition-cvd_trade",
               "portName": "sellShare.b"
-            },
-            {
-              "nodeId": "definition-cvd_trade",
-              "portName": "signedNotional.b"
-            },
-            {
-              "nodeId": "definition-cvd_trade",
-              "portName": "signedQuantity.b"
             }
           ],
           "values_4": [
+            {
+              "nodeId": "definition-cvd_trade",
+              "portName": "midpoint_log_return.value"
+            },
             {
               "nodeId": "definition-cvd_trade",
               "portName": "tradeNotional.b"
@@ -3537,6 +4917,20 @@
             }
           ],
           "values_5": [
+            {
+              "nodeId": "definition-cvd_trade",
+              "portName": "net_notional_rate_velocity.ts"
+            },
+            {
+              "nodeId": "definition-derivatives_trade",
+              "portName": "liquidation_share_velocity.ts"
+            },
+            {
+              "nodeId": "definition-pumpdump_trade",
+              "portName": "notional_rate_velocity.ts"
+            }
+          ],
+          "values_6": [
             {
               "nodeId": "definition-depthflow_level3",
               "portName": "mutationDifference.a"
@@ -3578,7 +4972,7 @@
               "portName": "unfilled_residual_quantity:bid.b"
             }
           ],
-          "values_6": [
+          "values_7": [
             {
               "nodeId": "definition-depthflow_level3",
               "portName": "mutationDifference.b"
@@ -3620,7 +5014,7 @@
               "portName": "unfilled_residual_quantity:ask.b"
             }
           ],
-          "values_7": [
+          "values_8": [
             {
               "nodeId": "definition-depthflow_level3",
               "portName": "observedDifference.a"
@@ -3646,7 +5040,7 @@
               "portName": "touch_price_log_change:bid.value"
             }
           ],
-          "values_8": [
+          "values_9": [
             {
               "nodeId": "definition-depthflow_level3",
               "portName": "observedDifference.b"
@@ -3668,20 +5062,14 @@
               "portName": "touch_price_log_change:ask.value"
             }
           ],
-          "values_9": [
-            {
-              "nodeId": "definition-derivatives_trade",
-              "portName": "liquidation_share_velocity.ts"
-            },
-            {
-              "nodeId": "definition-pumpdump_trade",
-              "portName": "notional_rate_velocity.ts"
-            }
-          ],
           "values_10": [
             {
               "nodeId": "definition-liquidity_ticker",
               "portName": "divergence_velocity:ask.ts"
+            },
+            {
+              "nodeId": "definition-liquidity_ticker",
+              "portName": "metric:best_ask_price.raw"
             },
             {
               "nodeId": "definition-liquidity_ticker",
@@ -3711,6 +5099,10 @@
             },
             {
               "nodeId": "definition-liquidity_ticker",
+              "portName": "metric:best_bid_price.raw"
+            },
+            {
+              "nodeId": "definition-liquidity_ticker",
               "portName": "midpointSum.b"
             },
             {
@@ -3737,10 +5129,18 @@
           "values_12": [
             {
               "nodeId": "definition-liquidity_ticker",
+              "portName": "metric:touch_quantity:ask.raw"
+            },
+            {
+              "nodeId": "definition-liquidity_ticker",
               "portName": "touch_notional:ask.b"
             }
           ],
           "values_13": [
+            {
+              "nodeId": "definition-liquidity_ticker",
+              "portName": "metric:touch_quantity:bid.raw"
+            },
             {
               "nodeId": "definition-liquidity_ticker",
               "portName": "touch_notional:bid.b"

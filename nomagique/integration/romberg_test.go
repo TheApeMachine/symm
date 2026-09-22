@@ -1,0 +1,48 @@
+package integration_test
+
+import (
+	"context"
+	"testing"
+
+	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique/integration"
+)
+
+func TestRomberg(t *testing.T) {
+	Convey("Given a Romberg server and client", t, func() {
+		ctx := context.Background()
+		server := integration.NewRomberg(ctx)
+		So(server, ShouldNotBeNil)
+
+		client := integration.Romberg_ServerToClient(server)
+		So(client.IsValid(), ShouldBeTrue)
+
+		Convey("When writing input values", func() {
+			err := client.Write(ctx, func(params integration.Romberg_write_Params) error {
+				listY, err := params.NewY(5)
+
+				if err != nil {
+					return err
+				}
+				listY.Set(0, 0.0)
+				listY.Set(1, 1.0)
+				listY.Set(2, 4.0)
+				listY.Set(3, 9.0)
+				listY.Set(4, 16.0)
+				params.SetDx(1.0)
+				return nil
+			})
+			So(err, ShouldBeNil)
+
+			err = client.WaitStreaming()
+			So(err, ShouldBeNil)
+
+			future, release := client.Done(ctx, nil)
+			defer release()
+
+			results, err := future.Struct()
+			So(err, ShouldBeNil)
+			So(results.IsValid(), ShouldBeTrue)
+		})
+	})
+}

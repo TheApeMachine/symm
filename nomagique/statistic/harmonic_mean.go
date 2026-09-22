@@ -12,9 +12,9 @@ HarmonicMeanServer calculates online harmonic mean of streaming nonzero observat
 */
 type HarmonicMeanServer struct {
 	*runtime.System
-	count float64
+	count    float64
 	sumRecip float64
-	result float64
+	result   float64
 }
 
 func NewHarmonicMean(ctx context.Context) *HarmonicMeanServer {

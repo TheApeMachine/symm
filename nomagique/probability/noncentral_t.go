@@ -13,11 +13,11 @@ NoncentralTServer evaluates continuous Noncentral Student's t distribution.
 */
 type NoncentralTServer struct {
 	*runtime.System
-	prob float64
-	logProb float64
-	cdf float64
+	prob     float64
+	logProb  float64
+	cdf      float64
 	quantile float64
-	mean float64
+	mean     float64
 	variance float64
 }
 

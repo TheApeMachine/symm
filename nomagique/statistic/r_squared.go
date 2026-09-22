@@ -13,13 +13,13 @@ RSquaredServer calculates online coefficient of determination R^2 between x and 
 */
 type RSquaredServer struct {
 	*runtime.System
-	count float64
-	meanX float64
-	meanY float64
-	m2X float64
-	m2Y float64
+	count    float64
+	meanX    float64
+	meanY    float64
+	m2X      float64
+	m2Y      float64
 	coMoment float64
-	result float64
+	result   float64
 }
 
 func NewRSquared(ctx context.Context) *RSquaredServer {

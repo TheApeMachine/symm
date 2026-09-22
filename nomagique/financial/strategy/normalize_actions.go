@@ -13,17 +13,17 @@ NormalizeActionsServer filters redundant consecutive actions to maintain a consi
 type NormalizeActionsServer struct {
 	*runtime.System
 	actions chan indicator.Action
-	out <-chan indicator.Action
-	result int64
+	out     <-chan indicator.Action
+	result  int64
 }
 
 func NewNormalizeActions(ctx context.Context) *NormalizeActionsServer {
 	actions := make(chan indicator.Action, 1)
 
 	server := &NormalizeActionsServer{
-		System: runtime.NewSystem(ctx, "financial.strategy.normalize_actions"),
+		System:  runtime.NewSystem(ctx, "financial.strategy.normalize_actions"),
 		actions: actions,
-		out: indicator.NormalizeActionsWithContext(ctx, actions),
+		out:     indicator.NormalizeActionsWithContext(ctx, actions),
 	}
 
 	server.Transition(runtime.READY)

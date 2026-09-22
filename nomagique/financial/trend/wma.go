@@ -14,10 +14,10 @@ WmaServer calculates the Weighted Moving Average (WMA).
 type WmaServer struct {
 	*runtime.System
 	calculator *trend.Wma[float64]
-	value chan float64
-	out <-chan float64
-	result float64
-	count int
+	value      chan float64
+	out        <-chan float64
+	result     float64
+	count      int
 }
 
 func NewWma(ctx context.Context) *WmaServer {
@@ -25,10 +25,10 @@ func NewWma(ctx context.Context) *WmaServer {
 	calculator := trend.NewWma[float64]()
 
 	server := &WmaServer{
-		System: runtime.NewSystem(ctx, "financial.trend.wma"),
+		System:     runtime.NewSystem(ctx, "financial.trend.wma"),
 		calculator: calculator,
-		value: value,
-		out: calculator.ComputeWithContext(ctx, value),
+		value:      value,
+		out:        calculator.ComputeWithContext(ctx, value),
 	}
 
 	server.Transition(runtime.READY)

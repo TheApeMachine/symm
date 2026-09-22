@@ -13,21 +13,21 @@ IchimokuCloudServer calculates the Ichimoku Cloud.
 */
 type IchimokuCloudServer struct {
 	*runtime.System
-	calculator *indicator.IchimokuCloud[float64]
-	high chan float64
-	low chan float64
-	close chan float64
+	calculator        *indicator.IchimokuCloud[float64]
+	high              chan float64
+	low               chan float64
+	close             chan float64
 	conversionLineOut <-chan float64
-	conversionLine float64
-	baseLineOut <-chan float64
-	baseLine float64
-	leadingSpanAOut <-chan float64
-	leadingSpanA float64
-	leadingSpanBOut <-chan float64
-	leadingSpanB float64
-	laggingLineOut <-chan float64
-	laggingLine float64
-	count int
+	conversionLine    float64
+	baseLineOut       <-chan float64
+	baseLine          float64
+	leadingSpanAOut   <-chan float64
+	leadingSpanA      float64
+	leadingSpanBOut   <-chan float64
+	leadingSpanB      float64
+	laggingLineOut    <-chan float64
+	laggingLine       float64
+	count             int
 }
 
 func NewIchimokuCloud(ctx context.Context) *IchimokuCloudServer {
@@ -37,11 +37,11 @@ func NewIchimokuCloud(ctx context.Context) *IchimokuCloudServer {
 	calculator := indicator.NewIchimokuCloud[float64]()
 
 	server := &IchimokuCloudServer{
-		System: runtime.NewSystem(ctx, "financial.momentum.ichimoku_cloud"),
+		System:     runtime.NewSystem(ctx, "financial.momentum.ichimoku_cloud"),
 		calculator: calculator,
-		high: high,
-		low: low,
-		close: close,
+		high:       high,
+		low:        low,
+		close:      close,
 	}
 
 	server.conversionLineOut, server.baseLineOut, server.leadingSpanAOut, server.leadingSpanBOut, server.laggingLineOut = calculator.ComputeWithContext(ctx, high, low, close)

@@ -14,10 +14,10 @@ MovingMinServer calculates the Moving Minimum.
 type MovingMinServer struct {
 	*runtime.System
 	calculator *trend.MovingMin[float64]
-	value chan float64
-	out <-chan float64
-	result float64
-	count int
+	value      chan float64
+	out        <-chan float64
+	result     float64
+	count      int
 }
 
 func NewMovingMin(ctx context.Context) *MovingMinServer {
@@ -25,10 +25,10 @@ func NewMovingMin(ctx context.Context) *MovingMinServer {
 	calculator := trend.NewMovingMin[float64]()
 
 	server := &MovingMinServer{
-		System: runtime.NewSystem(ctx, "financial.trend.moving_min"),
+		System:     runtime.NewSystem(ctx, "financial.trend.moving_min"),
 		calculator: calculator,
-		value: value,
-		out: calculator.ComputeWithContext(ctx, value),
+		value:      value,
+		out:        calculator.ComputeWithContext(ctx, value),
 	}
 
 	server.Transition(runtime.READY)

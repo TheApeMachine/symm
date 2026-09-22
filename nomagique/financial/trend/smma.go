@@ -14,10 +14,10 @@ SmmaServer calculates the Smoothed Moving Average (SMMA).
 type SmmaServer struct {
 	*runtime.System
 	calculator *trend.Smma[float64]
-	value chan float64
-	out <-chan float64
-	result float64
-	count int
+	value      chan float64
+	out        <-chan float64
+	result     float64
+	count      int
 }
 
 func NewSmma(ctx context.Context) *SmmaServer {
@@ -25,10 +25,10 @@ func NewSmma(ctx context.Context) *SmmaServer {
 	calculator := trend.NewSmma[float64]()
 
 	server := &SmmaServer{
-		System: runtime.NewSystem(ctx, "financial.trend.smma"),
+		System:     runtime.NewSystem(ctx, "financial.trend.smma"),
 		calculator: calculator,
-		value: value,
-		out: calculator.ComputeWithContext(ctx, value),
+		value:      value,
+		out:        calculator.ComputeWithContext(ctx, value),
 	}
 
 	server.Transition(runtime.READY)

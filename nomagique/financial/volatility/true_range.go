@@ -14,12 +14,12 @@ TrueRangeServer calculates the True Range (TR).
 type TrueRangeServer struct {
 	*runtime.System
 	calculator *indicator.TrueRange[float64]
-	high chan float64
-	low chan float64
-	close chan float64
-	out <-chan float64
-	result float64
-	count int
+	high       chan float64
+	low        chan float64
+	close      chan float64
+	out        <-chan float64
+	result     float64
+	count      int
 }
 
 func NewTrueRange(ctx context.Context) *TrueRangeServer {
@@ -29,12 +29,12 @@ func NewTrueRange(ctx context.Context) *TrueRangeServer {
 	calculator := indicator.NewTrueRange[float64]()
 
 	server := &TrueRangeServer{
-		System: runtime.NewSystem(ctx, "financial.volatility.true_range"),
+		System:     runtime.NewSystem(ctx, "financial.volatility.true_range"),
 		calculator: calculator,
-		high: high,
-		low: low,
-		close: close,
-		out: calculator.ComputeWithContext(ctx, high, low, close),
+		high:       high,
+		low:        low,
+		close:      close,
+		out:        calculator.ComputeWithContext(ctx, high, low, close),
 	}
 
 	server.Transition(runtime.READY)

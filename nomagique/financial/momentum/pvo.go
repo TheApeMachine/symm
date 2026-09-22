@@ -13,15 +13,15 @@ PvoServer calculates the Percentage Volume Oscillator (PVO).
 */
 type PvoServer struct {
 	*runtime.System
-	calculator *indicator.Pvo[float64]
-	volume chan float64
-	pvoOut <-chan float64
-	pvo float64
-	signalOut <-chan float64
-	signal float64
+	calculator   *indicator.Pvo[float64]
+	volume       chan float64
+	pvoOut       <-chan float64
+	pvo          float64
+	signalOut    <-chan float64
+	signal       float64
 	histogramOut <-chan float64
-	histogram float64
-	count int
+	histogram    float64
+	count        int
 }
 
 func NewPvo(ctx context.Context) *PvoServer {
@@ -29,9 +29,9 @@ func NewPvo(ctx context.Context) *PvoServer {
 	calculator := indicator.NewPvo[float64]()
 
 	server := &PvoServer{
-		System: runtime.NewSystem(ctx, "financial.momentum.pvo"),
+		System:     runtime.NewSystem(ctx, "financial.momentum.pvo"),
 		calculator: calculator,
-		volume: volume,
+		volume:     volume,
 	}
 
 	server.pvoOut, server.signalOut, server.histogramOut = calculator.ComputeWithContext(ctx, volume)

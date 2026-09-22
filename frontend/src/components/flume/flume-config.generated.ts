@@ -1071,6 +1071,499 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 	});
 	config.addNodeType({
+		type: "distribution.Dirichlet",
+		label: "Dirichlet",
+		category: "distribution",
+		initialWidth: 340,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+			];
+			const wiredAlpha = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("alpha"));
+			for (let index = 0; index < Math.max(1, wiredAlpha.length + 1); index++) {
+				const portName = index === 0 ? "alpha" : `alpha_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			const wiredX = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("x"));
+			for (let index = 0; index < Math.max(1, wiredX.length + 1); index++) {
+				const portName = index === 0 ? "x" : `x_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.float64({ name: "logProb", label: "logProb" }),
+			ports.float64({ name: "mean", label: "mean" }),
+			ports.float64({ name: "prob", label: "prob" }),
+			ports.float64({ name: "rand", label: "rand" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "distribution.DirichletKullbackLeibler",
+		label: "Dirichlet Kullback Leibler",
+		category: "distribution",
+		initialWidth: 340,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+			];
+			const wiredAlphaL = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("alphaL"));
+			for (let index = 0; index < Math.max(1, wiredAlphaL.length + 1); index++) {
+				const portName = index === 0 ? "alphaL" : `alphaL_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			const wiredAlphaR = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("alphaR"));
+			for (let index = 0; index < Math.max(1, wiredAlphaR.length + 1); index++) {
+				const portName = index === 0 ? "alphaR" : `alphaR_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.float64({ name: "kl", label: "kl" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "distribution.Normal",
+		label: "Normal",
+		category: "distribution",
+		initialWidth: 340,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.int64({ name: "dim", label: "dim" }),
+			];
+			const wiredMu = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("mu"));
+			for (let index = 0; index < Math.max(1, wiredMu.length + 1); index++) {
+				const portName = index === 0 ? "mu" : `mu_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			const wiredP = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("p"));
+			for (let index = 0; index < Math.max(1, wiredP.length + 1); index++) {
+				const portName = index === 0 ? "p" : `p_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			const wiredSigma = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("sigma"));
+			for (let index = 0; index < Math.max(1, wiredSigma.length + 1); index++) {
+				const portName = index === 0 ? "sigma" : `sigma_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			const wiredX = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("x"));
+			for (let index = 0; index < Math.max(1, wiredX.length + 1); index++) {
+				const portName = index === 0 ? "x" : `x_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.float64({ name: "cov", label: "cov" }),
+			ports.float64({ name: "entropy", label: "entropy" }),
+			ports.float64({ name: "logProb", label: "logProb" }),
+			ports.float64({ name: "mean", label: "mean" }),
+			ports.float64({ name: "prob", label: "prob" }),
+			ports.float64({ name: "quantile", label: "quantile" }),
+			ports.float64({ name: "rand", label: "rand" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "distribution.NormalBhattacharyya",
+		label: "Normal Bhattacharyya",
+		category: "distribution",
+		initialWidth: 340,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.int64({ name: "dim", label: "dim" }),
+			];
+			const wiredMuL = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("muL"));
+			for (let index = 0; index < Math.max(1, wiredMuL.length + 1); index++) {
+				const portName = index === 0 ? "muL" : `muL_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			const wiredMuR = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("muR"));
+			for (let index = 0; index < Math.max(1, wiredMuR.length + 1); index++) {
+				const portName = index === 0 ? "muR" : `muR_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			const wiredSigmaL = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("sigmaL"));
+			for (let index = 0; index < Math.max(1, wiredSigmaL.length + 1); index++) {
+				const portName = index === 0 ? "sigmaL" : `sigmaL_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			const wiredSigmaR = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("sigmaR"));
+			for (let index = 0; index < Math.max(1, wiredSigmaR.length + 1); index++) {
+				const portName = index === 0 ? "sigmaR" : `sigmaR_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.float64({ name: "bhattacharyya", label: "bhattacharyya" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "distribution.NormalCrossEntropy",
+		label: "Normal Cross Entropy",
+		category: "distribution",
+		initialWidth: 340,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.int64({ name: "dim", label: "dim" }),
+			];
+			const wiredMuL = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("muL"));
+			for (let index = 0; index < Math.max(1, wiredMuL.length + 1); index++) {
+				const portName = index === 0 ? "muL" : `muL_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			const wiredMuR = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("muR"));
+			for (let index = 0; index < Math.max(1, wiredMuR.length + 1); index++) {
+				const portName = index === 0 ? "muR" : `muR_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			const wiredSigmaL = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("sigmaL"));
+			for (let index = 0; index < Math.max(1, wiredSigmaL.length + 1); index++) {
+				const portName = index === 0 ? "sigmaL" : `sigmaL_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			const wiredSigmaR = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("sigmaR"));
+			for (let index = 0; index < Math.max(1, wiredSigmaR.length + 1); index++) {
+				const portName = index === 0 ? "sigmaR" : `sigmaR_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.float64({ name: "crossEntropy", label: "crossEntropy" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "distribution.NormalHellinger",
+		label: "Normal Hellinger",
+		category: "distribution",
+		initialWidth: 340,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.int64({ name: "dim", label: "dim" }),
+			];
+			const wiredMuL = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("muL"));
+			for (let index = 0; index < Math.max(1, wiredMuL.length + 1); index++) {
+				const portName = index === 0 ? "muL" : `muL_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			const wiredMuR = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("muR"));
+			for (let index = 0; index < Math.max(1, wiredMuR.length + 1); index++) {
+				const portName = index === 0 ? "muR" : `muR_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			const wiredSigmaL = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("sigmaL"));
+			for (let index = 0; index < Math.max(1, wiredSigmaL.length + 1); index++) {
+				const portName = index === 0 ? "sigmaL" : `sigmaL_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			const wiredSigmaR = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("sigmaR"));
+			for (let index = 0; index < Math.max(1, wiredSigmaR.length + 1); index++) {
+				const portName = index === 0 ? "sigmaR" : `sigmaR_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.float64({ name: "hellinger", label: "hellinger" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "distribution.NormalKullbackLeibler",
+		label: "Normal Kullback Leibler",
+		category: "distribution",
+		initialWidth: 340,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.int64({ name: "dim", label: "dim" }),
+			];
+			const wiredMuL = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("muL"));
+			for (let index = 0; index < Math.max(1, wiredMuL.length + 1); index++) {
+				const portName = index === 0 ? "muL" : `muL_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			const wiredMuR = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("muR"));
+			for (let index = 0; index < Math.max(1, wiredMuR.length + 1); index++) {
+				const portName = index === 0 ? "muR" : `muR_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			const wiredSigmaL = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("sigmaL"));
+			for (let index = 0; index < Math.max(1, wiredSigmaL.length + 1); index++) {
+				const portName = index === 0 ? "sigmaL" : `sigmaL_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			const wiredSigmaR = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("sigmaR"));
+			for (let index = 0; index < Math.max(1, wiredSigmaR.length + 1); index++) {
+				const portName = index === 0 ? "sigmaR" : `sigmaR_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.float64({ name: "kl", label: "kl" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "distribution.NormalLogProb",
+		label: "Normal Log Prob",
+		category: "distribution",
+		initialWidth: 340,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.int64({ name: "dim", label: "dim" }),
+			];
+			const wiredCholData = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("cholData"));
+			for (let index = 0; index < Math.max(1, wiredCholData.length + 1); index++) {
+				const portName = index === 0 ? "cholData" : `cholData_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			const wiredMu = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("mu"));
+			for (let index = 0; index < Math.max(1, wiredMu.length + 1); index++) {
+				const portName = index === 0 ? "mu" : `mu_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			const wiredX = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("x"));
+			for (let index = 0; index < Math.max(1, wiredX.length + 1); index++) {
+				const portName = index === 0 ? "x" : `x_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.float64({ name: "logProb", label: "logProb" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "distribution.NormalRenyi",
+		label: "Normal Renyi",
+		category: "distribution",
+		initialWidth: 340,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.float64({ name: "alpha", label: "alpha" }),
+				ports.int64({ name: "dim", label: "dim" }),
+			];
+			const wiredMuL = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("muL"));
+			for (let index = 0; index < Math.max(1, wiredMuL.length + 1); index++) {
+				const portName = index === 0 ? "muL" : `muL_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			const wiredMuR = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("muR"));
+			for (let index = 0; index < Math.max(1, wiredMuR.length + 1); index++) {
+				const portName = index === 0 ? "muR" : `muR_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			const wiredSigmaL = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("sigmaL"));
+			for (let index = 0; index < Math.max(1, wiredSigmaL.length + 1); index++) {
+				const portName = index === 0 ? "sigmaL" : `sigmaL_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			const wiredSigmaR = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("sigmaR"));
+			for (let index = 0; index < Math.max(1, wiredSigmaR.length + 1); index++) {
+				const portName = index === 0 ? "sigmaR" : `sigmaR_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.float64({ name: "renyi", label: "renyi" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "distribution.NormalWasserstein",
+		label: "Normal Wasserstein",
+		category: "distribution",
+		initialWidth: 340,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.int64({ name: "dim", label: "dim" }),
+			];
+			const wiredMuL = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("muL"));
+			for (let index = 0; index < Math.max(1, wiredMuL.length + 1); index++) {
+				const portName = index === 0 ? "muL" : `muL_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			const wiredMuR = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("muR"));
+			for (let index = 0; index < Math.max(1, wiredMuR.length + 1); index++) {
+				const portName = index === 0 ? "muR" : `muR_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			const wiredSigmaL = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("sigmaL"));
+			for (let index = 0; index < Math.max(1, wiredSigmaL.length + 1); index++) {
+				const portName = index === 0 ? "sigmaL" : `sigmaL_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			const wiredSigmaR = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("sigmaR"));
+			for (let index = 0; index < Math.max(1, wiredSigmaR.length + 1); index++) {
+				const portName = index === 0 ? "sigmaR" : `sigmaR_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.float64({ name: "wasserstein", label: "wasserstein" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "distribution.StudentsT",
+		label: "Students T",
+		category: "distribution",
+		initialWidth: 340,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.int64({ name: "dim", label: "dim" }),
+				ports.float64({ name: "nu", label: "nu" }),
+			];
+			const wiredMu = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("mu"));
+			for (let index = 0; index < Math.max(1, wiredMu.length + 1); index++) {
+				const portName = index === 0 ? "mu" : `mu_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			const wiredSigma = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("sigma"));
+			for (let index = 0; index < Math.max(1, wiredSigma.length + 1); index++) {
+				const portName = index === 0 ? "sigma" : `sigma_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			const wiredY = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("y"));
+			for (let index = 0; index < Math.max(1, wiredY.length + 1); index++) {
+				const portName = index === 0 ? "y" : `y_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.float64({ name: "cov", label: "cov" }),
+			ports.float64({ name: "logProb", label: "logProb" }),
+			ports.float64({ name: "mean", label: "mean" }),
+			ports.float64({ name: "prob", label: "prob" }),
+			ports.float64({ name: "rand", label: "rand" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "distribution.Uniform",
+		label: "Uniform",
+		category: "distribution",
+		initialWidth: 340,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.int64({ name: "dim", label: "dim" }),
+			];
+			const wiredMax = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("max"));
+			for (let index = 0; index < Math.max(1, wiredMax.length + 1); index++) {
+				const portName = index === 0 ? "max" : `max_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			const wiredMin = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("min"));
+			for (let index = 0; index < Math.max(1, wiredMin.length + 1); index++) {
+				const portName = index === 0 ? "min" : `min_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			const wiredP = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("p"));
+			for (let index = 0; index < Math.max(1, wiredP.length + 1); index++) {
+				const portName = index === 0 ? "p" : `p_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			const wiredX = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("x"));
+			for (let index = 0; index < Math.max(1, wiredX.length + 1); index++) {
+				const portName = index === 0 ? "x" : `x_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.float64({ name: "cdf", label: "cdf" }),
+			ports.float64({ name: "entropy", label: "entropy" }),
+			ports.float64({ name: "logProb", label: "logProb" }),
+			ports.float64({ name: "mean", label: "mean" }),
+			ports.float64({ name: "prob", label: "prob" }),
+			ports.float64({ name: "quantile", label: "quantile" }),
+			ports.float64({ name: "rand", label: "rand" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "distribution.UniformBhattacharyya",
+		label: "Uniform Bhattacharyya",
+		category: "distribution",
+		initialWidth: 340,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.int64({ name: "dim", label: "dim" }),
+			];
+			const wiredMaxL = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("maxL"));
+			for (let index = 0; index < Math.max(1, wiredMaxL.length + 1); index++) {
+				const portName = index === 0 ? "maxL" : `maxL_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			const wiredMaxR = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("maxR"));
+			for (let index = 0; index < Math.max(1, wiredMaxR.length + 1); index++) {
+				const portName = index === 0 ? "maxR" : `maxR_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			const wiredMinL = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("minL"));
+			for (let index = 0; index < Math.max(1, wiredMinL.length + 1); index++) {
+				const portName = index === 0 ? "minL" : `minL_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			const wiredMinR = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("minR"));
+			for (let index = 0; index < Math.max(1, wiredMinR.length + 1); index++) {
+				const portName = index === 0 ? "minR" : `minR_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.float64({ name: "bhattacharyya", label: "bhattacharyya" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "distribution.UniformKullbackLeibler",
+		label: "Uniform Kullback Leibler",
+		category: "distribution",
+		initialWidth: 340,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.int64({ name: "dim", label: "dim" }),
+			];
+			const wiredMaxL = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("maxL"));
+			for (let index = 0; index < Math.max(1, wiredMaxL.length + 1); index++) {
+				const portName = index === 0 ? "maxL" : `maxL_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			const wiredMaxR = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("maxR"));
+			for (let index = 0; index < Math.max(1, wiredMaxR.length + 1); index++) {
+				const portName = index === 0 ? "maxR" : `maxR_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			const wiredMinL = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("minL"));
+			for (let index = 0; index < Math.max(1, wiredMinL.length + 1); index++) {
+				const portName = index === 0 ? "minL" : `minL_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			const wiredMinR = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("minR"));
+			for (let index = 0; index < Math.max(1, wiredMinR.length + 1); index++) {
+				const portName = index === 0 ? "minR" : `minR_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.float64({ name: "kl", label: "kl" }),
+		],
+	});
+
+	config.addNodeType({
 		type: "geometry.Intersection",
 		label: "Intersection",
 		category: "geometry",
@@ -3491,6 +3984,35 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 	});
 
 	config.addNodeType({
+		type: "statistic.Weighted",
+		label: "Weighted",
+		category: "statistic",
+		initialWidth: 340,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+			];
+			const wiredValue = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("value"));
+			for (let index = 0; index < Math.max(1, wiredValue.length + 1); index++) {
+				const portName = index === 0 ? "value" : `value_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			const wiredWeight = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("weight"));
+			for (let index = 0; index < Math.max(1, wiredWeight.length + 1); index++) {
+				const portName = index === 0 ? "weight" : `weight_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.float64({ name: "count", label: "count" }),
+			ports.float64({ name: "effective", label: "effective" }),
+			ports.float64({ name: "mean", label: "mean" }),
+			ports.float64({ name: "total", label: "total" }),
+			ports.float64({ name: "variance", label: "variance" }),
+		],
+	});
+
+	config.addNodeType({
 		type: "statistic.ZScore",
 		label: "Z Score",
 		category: "statistic",
@@ -3571,6 +4093,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.bool({ name: "found", label: "found" }),
 			ports["[]byte"]({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -5020,13 +5543,42 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		inputs: (ports) => (_inputData, _connections) => [
 			ports.float64({ name: "hy.boundsEnd1", label: "hy.boundsEnd1" }),
 			ports.float64({ name: "hy.boundsEnd2", label: "hy.boundsEnd2" }),
-			ports["[]byte"]({ name: "hy.state", label: "hy.state" }),
 			ports.float64({ name: "metric:absolute_correlation.center", label: "metric:absolute_correlation.center" }),
 			ports.float64({ name: "metric:absolute_correlation.normalized", label: "metric:absolute_correlation.normalized" }),
 			ports.float64({ name: "metric:absolute_correlation.scale", label: "metric:absolute_correlation.scale" }),
 			ports.float64({ name: "metric:absolute_correlation.standardized", label: "metric:absolute_correlation.standardized" }),
 			ports.Status({ name: "metric:absolute_correlation.timescale", label: "metric:absolute_correlation.timescale" }),
 			ports.Status({ name: "metric:absolute_correlation.unit", label: "metric:absolute_correlation.unit" }),
+			ports.float64({ name: "metric:cohort_absolute_correlation.center", label: "metric:cohort_absolute_correlation.center" }),
+			ports.float64({ name: "metric:cohort_absolute_correlation.normalized", label: "metric:cohort_absolute_correlation.normalized" }),
+			ports.float64({ name: "metric:cohort_absolute_correlation.scale", label: "metric:cohort_absolute_correlation.scale" }),
+			ports.float64({ name: "metric:cohort_absolute_correlation.standardized", label: "metric:cohort_absolute_correlation.standardized" }),
+			ports.Status({ name: "metric:cohort_absolute_correlation.timescale", label: "metric:cohort_absolute_correlation.timescale" }),
+			ports.Status({ name: "metric:cohort_absolute_correlation.unit", label: "metric:cohort_absolute_correlation.unit" }),
+			ports.float64({ name: "metric:cohort_correlation_dispersion.center", label: "metric:cohort_correlation_dispersion.center" }),
+			ports.float64({ name: "metric:cohort_correlation_dispersion.normalized", label: "metric:cohort_correlation_dispersion.normalized" }),
+			ports.float64({ name: "metric:cohort_correlation_dispersion.scale", label: "metric:cohort_correlation_dispersion.scale" }),
+			ports.float64({ name: "metric:cohort_correlation_dispersion.standardized", label: "metric:cohort_correlation_dispersion.standardized" }),
+			ports.Status({ name: "metric:cohort_correlation_dispersion.timescale", label: "metric:cohort_correlation_dispersion.timescale" }),
+			ports.Status({ name: "metric:cohort_correlation_dispersion.unit", label: "metric:cohort_correlation_dispersion.unit" }),
+			ports.float64({ name: "metric:cohort_effective_peer_count.center", label: "metric:cohort_effective_peer_count.center" }),
+			ports.float64({ name: "metric:cohort_effective_peer_count.normalized", label: "metric:cohort_effective_peer_count.normalized" }),
+			ports.float64({ name: "metric:cohort_effective_peer_count.scale", label: "metric:cohort_effective_peer_count.scale" }),
+			ports.float64({ name: "metric:cohort_effective_peer_count.standardized", label: "metric:cohort_effective_peer_count.standardized" }),
+			ports.Status({ name: "metric:cohort_effective_peer_count.timescale", label: "metric:cohort_effective_peer_count.timescale" }),
+			ports.Status({ name: "metric:cohort_effective_peer_count.unit", label: "metric:cohort_effective_peer_count.unit" }),
+			ports.float64({ name: "metric:cohort_peer_count.center", label: "metric:cohort_peer_count.center" }),
+			ports.float64({ name: "metric:cohort_peer_count.normalized", label: "metric:cohort_peer_count.normalized" }),
+			ports.float64({ name: "metric:cohort_peer_count.scale", label: "metric:cohort_peer_count.scale" }),
+			ports.float64({ name: "metric:cohort_peer_count.standardized", label: "metric:cohort_peer_count.standardized" }),
+			ports.Status({ name: "metric:cohort_peer_count.timescale", label: "metric:cohort_peer_count.timescale" }),
+			ports.Status({ name: "metric:cohort_peer_count.unit", label: "metric:cohort_peer_count.unit" }),
+			ports.float64({ name: "metric:cohort_signed_correlation.center", label: "metric:cohort_signed_correlation.center" }),
+			ports.float64({ name: "metric:cohort_signed_correlation.normalized", label: "metric:cohort_signed_correlation.normalized" }),
+			ports.float64({ name: "metric:cohort_signed_correlation.scale", label: "metric:cohort_signed_correlation.scale" }),
+			ports.float64({ name: "metric:cohort_signed_correlation.standardized", label: "metric:cohort_signed_correlation.standardized" }),
+			ports.Status({ name: "metric:cohort_signed_correlation.timescale", label: "metric:cohort_signed_correlation.timescale" }),
+			ports.Status({ name: "metric:cohort_signed_correlation.unit", label: "metric:cohort_signed_correlation.unit" }),
 			ports.float64({ name: "metric:correlation_baseline.center", label: "metric:correlation_baseline.center" }),
 			ports.float64({ name: "metric:correlation_baseline.normalized", label: "metric:correlation_baseline.normalized" }),
 			ports.float64({ name: "metric:correlation_baseline.scale", label: "metric:correlation_baseline.scale" }),
@@ -5039,6 +5591,18 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "metric:correlation_divergence.standardized", label: "metric:correlation_divergence.standardized" }),
 			ports.Status({ name: "metric:correlation_divergence.timescale", label: "metric:correlation_divergence.timescale" }),
 			ports.Status({ name: "metric:correlation_divergence.unit", label: "metric:correlation_divergence.unit" }),
+			ports.float64({ name: "metric:correlation_p_value.center", label: "metric:correlation_p_value.center" }),
+			ports.float64({ name: "metric:correlation_p_value.normalized", label: "metric:correlation_p_value.normalized" }),
+			ports.float64({ name: "metric:correlation_p_value.scale", label: "metric:correlation_p_value.scale" }),
+			ports.float64({ name: "metric:correlation_p_value.standardized", label: "metric:correlation_p_value.standardized" }),
+			ports.Status({ name: "metric:correlation_p_value.timescale", label: "metric:correlation_p_value.timescale" }),
+			ports.Status({ name: "metric:correlation_p_value.unit", label: "metric:correlation_p_value.unit" }),
+			ports.float64({ name: "metric:correlation_standard_error_fisher.center", label: "metric:correlation_standard_error_fisher.center" }),
+			ports.float64({ name: "metric:correlation_standard_error_fisher.normalized", label: "metric:correlation_standard_error_fisher.normalized" }),
+			ports.float64({ name: "metric:correlation_standard_error_fisher.scale", label: "metric:correlation_standard_error_fisher.scale" }),
+			ports.float64({ name: "metric:correlation_standard_error_fisher.standardized", label: "metric:correlation_standard_error_fisher.standardized" }),
+			ports.Status({ name: "metric:correlation_standard_error_fisher.timescale", label: "metric:correlation_standard_error_fisher.timescale" }),
+			ports.Status({ name: "metric:correlation_standard_error_fisher.unit", label: "metric:correlation_standard_error_fisher.unit" }),
 			ports.float64({ name: "metric:correlation_velocity.center", label: "metric:correlation_velocity.center" }),
 			ports.float64({ name: "metric:correlation_velocity.normalized", label: "metric:correlation_velocity.normalized" }),
 			ports.float64({ name: "metric:correlation_velocity.scale", label: "metric:correlation_velocity.scale" }),
@@ -5069,6 +5633,19 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "metric:focal_return_energy_rate.standardized", label: "metric:focal_return_energy_rate.standardized" }),
 			ports.Status({ name: "metric:focal_return_energy_rate.timescale", label: "metric:focal_return_energy_rate.timescale" }),
 			ports.Status({ name: "metric:focal_return_energy_rate.unit", label: "metric:focal_return_energy_rate.unit" }),
+			ports.float64({ name: "metric:last_price.center", label: "metric:last_price.center" }),
+			ports.float64({ name: "metric:last_price.normalized", label: "metric:last_price.normalized" }),
+			ports.float64({ name: "metric:last_price.raw", label: "metric:last_price.raw" }),
+			ports.float64({ name: "metric:last_price.scale", label: "metric:last_price.scale" }),
+			ports.float64({ name: "metric:last_price.standardized", label: "metric:last_price.standardized" }),
+			ports.Status({ name: "metric:last_price.timescale", label: "metric:last_price.timescale" }),
+			ports.Status({ name: "metric:last_price.unit", label: "metric:last_price.unit" }),
+			ports.float64({ name: "metric:observation_count.center", label: "metric:observation_count.center" }),
+			ports.float64({ name: "metric:observation_count.normalized", label: "metric:observation_count.normalized" }),
+			ports.float64({ name: "metric:observation_count.scale", label: "metric:observation_count.scale" }),
+			ports.float64({ name: "metric:observation_count.standardized", label: "metric:observation_count.standardized" }),
+			ports.Status({ name: "metric:observation_count.timescale", label: "metric:observation_count.timescale" }),
+			ports.Status({ name: "metric:observation_count.unit", label: "metric:observation_count.unit" }),
 			ports.float64({ name: "metric:overlap_density.center", label: "metric:overlap_density.center" }),
 			ports.float64({ name: "metric:overlap_density.normalized", label: "metric:overlap_density.normalized" }),
 			ports.float64({ name: "metric:overlap_density.scale", label: "metric:overlap_density.scale" }),
@@ -5081,6 +5658,48 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "metric:overlap_pair_count.standardized", label: "metric:overlap_pair_count.standardized" }),
 			ports.Status({ name: "metric:overlap_pair_count.timescale", label: "metric:overlap_pair_count.timescale" }),
 			ports.Status({ name: "metric:overlap_pair_count.unit", label: "metric:overlap_pair_count.unit" }),
+			ports.float64({ name: "metric:peer_return_energy_rate.center", label: "metric:peer_return_energy_rate.center" }),
+			ports.float64({ name: "metric:peer_return_energy_rate.normalized", label: "metric:peer_return_energy_rate.normalized" }),
+			ports.float64({ name: "metric:peer_return_energy_rate.scale", label: "metric:peer_return_energy_rate.scale" }),
+			ports.float64({ name: "metric:peer_return_energy_rate.standardized", label: "metric:peer_return_energy_rate.standardized" }),
+			ports.Status({ name: "metric:peer_return_energy_rate.timescale", label: "metric:peer_return_energy_rate.timescale" }),
+			ports.Status({ name: "metric:peer_return_energy_rate.unit", label: "metric:peer_return_energy_rate.unit" }),
+			ports.float64({ name: "metric:relative_cohort_return_energy.center", label: "metric:relative_cohort_return_energy.center" }),
+			ports.float64({ name: "metric:relative_cohort_return_energy.normalized", label: "metric:relative_cohort_return_energy.normalized" }),
+			ports.float64({ name: "metric:relative_cohort_return_energy.scale", label: "metric:relative_cohort_return_energy.scale" }),
+			ports.float64({ name: "metric:relative_cohort_return_energy.standardized", label: "metric:relative_cohort_return_energy.standardized" }),
+			ports.Status({ name: "metric:relative_cohort_return_energy.timescale", label: "metric:relative_cohort_return_energy.timescale" }),
+			ports.Status({ name: "metric:relative_cohort_return_energy.unit", label: "metric:relative_cohort_return_energy.unit" }),
+			ports.float64({ name: "metric:relative_return_energy.center", label: "metric:relative_return_energy.center" }),
+			ports.float64({ name: "metric:relative_return_energy.normalized", label: "metric:relative_return_energy.normalized" }),
+			ports.float64({ name: "metric:relative_return_energy.scale", label: "metric:relative_return_energy.scale" }),
+			ports.float64({ name: "metric:relative_return_energy.standardized", label: "metric:relative_return_energy.standardized" }),
+			ports.Status({ name: "metric:relative_return_energy.timescale", label: "metric:relative_return_energy.timescale" }),
+			ports.Status({ name: "metric:relative_return_energy.unit", label: "metric:relative_return_energy.unit" }),
+			ports.float64({ name: "metric:relative_return_energy_baseline.center", label: "metric:relative_return_energy_baseline.center" }),
+			ports.float64({ name: "metric:relative_return_energy_baseline.normalized", label: "metric:relative_return_energy_baseline.normalized" }),
+			ports.float64({ name: "metric:relative_return_energy_baseline.scale", label: "metric:relative_return_energy_baseline.scale" }),
+			ports.float64({ name: "metric:relative_return_energy_baseline.standardized", label: "metric:relative_return_energy_baseline.standardized" }),
+			ports.Status({ name: "metric:relative_return_energy_baseline.timescale", label: "metric:relative_return_energy_baseline.timescale" }),
+			ports.Status({ name: "metric:relative_return_energy_baseline.unit", label: "metric:relative_return_energy_baseline.unit" }),
+			ports.float64({ name: "metric:relative_return_energy_divergence.center", label: "metric:relative_return_energy_divergence.center" }),
+			ports.float64({ name: "metric:relative_return_energy_divergence.normalized", label: "metric:relative_return_energy_divergence.normalized" }),
+			ports.float64({ name: "metric:relative_return_energy_divergence.scale", label: "metric:relative_return_energy_divergence.scale" }),
+			ports.float64({ name: "metric:relative_return_energy_divergence.standardized", label: "metric:relative_return_energy_divergence.standardized" }),
+			ports.Status({ name: "metric:relative_return_energy_divergence.timescale", label: "metric:relative_return_energy_divergence.timescale" }),
+			ports.Status({ name: "metric:relative_return_energy_divergence.unit", label: "metric:relative_return_energy_divergence.unit" }),
+			ports.float64({ name: "metric:relative_return_energy_velocity.center", label: "metric:relative_return_energy_velocity.center" }),
+			ports.float64({ name: "metric:relative_return_energy_velocity.normalized", label: "metric:relative_return_energy_velocity.normalized" }),
+			ports.float64({ name: "metric:relative_return_energy_velocity.scale", label: "metric:relative_return_energy_velocity.scale" }),
+			ports.float64({ name: "metric:relative_return_energy_velocity.standardized", label: "metric:relative_return_energy_velocity.standardized" }),
+			ports.Status({ name: "metric:relative_return_energy_velocity.timescale", label: "metric:relative_return_energy_velocity.timescale" }),
+			ports.Status({ name: "metric:relative_return_energy_velocity.unit", label: "metric:relative_return_energy_velocity.unit" }),
+			ports.float64({ name: "metric:relative_return_energy_zscore.center", label: "metric:relative_return_energy_zscore.center" }),
+			ports.float64({ name: "metric:relative_return_energy_zscore.normalized", label: "metric:relative_return_energy_zscore.normalized" }),
+			ports.float64({ name: "metric:relative_return_energy_zscore.scale", label: "metric:relative_return_energy_zscore.scale" }),
+			ports.float64({ name: "metric:relative_return_energy_zscore.standardized", label: "metric:relative_return_energy_zscore.standardized" }),
+			ports.Status({ name: "metric:relative_return_energy_zscore.timescale", label: "metric:relative_return_energy_zscore.timescale" }),
+			ports.Status({ name: "metric:relative_return_energy_zscore.unit", label: "metric:relative_return_energy_zscore.unit" }),
 			ports.float64({ name: "metric:return_energy:measured.center", label: "metric:return_energy:measured.center" }),
 			ports.float64({ name: "metric:return_energy:measured.normalized", label: "metric:return_energy:measured.normalized" }),
 			ports.float64({ name: "metric:return_energy:measured.scale", label: "metric:return_energy:measured.scale" }),
@@ -5129,22 +5748,49 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "metric:supported_return_count:reference.standardized", label: "metric:supported_return_count:reference.standardized" }),
 			ports.Status({ name: "metric:supported_return_count:reference.timescale", label: "metric:supported_return_count:reference.timescale" }),
 			ports.Status({ name: "metric:supported_return_count:reference.unit", label: "metric:supported_return_count:reference.unit" }),
-			ports.string({ name: "pairHistory.key", label: "pairHistory.key" }),
-			ports.bool({ name: "pairHistory.query", label: "pairHistory.query" }),
 			ports.float64({ name: "prevReferenceTimestamp.value", label: "prevReferenceTimestamp.value" }),
 			ports.float64({ name: "prevTimestamp.value", label: "prevTimestamp.value" }),
 			ports.float64({ name: "referenceReturns.value", label: "referenceReturns.value" }),
+			ports.float64({ name: "relativeVelocity.ts", label: "relativeVelocity.ts" }),
 			ports.float64({ name: "returns.value", label: "returns.value" }),
 			ports.float64({ name: "velocity.ts", label: "velocity.ts" }),
 		],
 		outputs: (ports) => (_inputData, _connections) => [
+			ports.float64({ name: "cohortAbsolute.count", label: "cohortAbsolute.count" }),
+			ports.float64({ name: "cohortAbsolute.effective", label: "cohortAbsolute.effective" }),
+			ports.float64({ name: "cohortAbsolute.total", label: "cohortAbsolute.total" }),
+			ports.float64({ name: "cohortAbsolute.variance", label: "cohortAbsolute.variance" }),
+			ports.float64({ name: "cohortEnergy.count", label: "cohortEnergy.count" }),
+			ports.float64({ name: "cohortEnergy.effective", label: "cohortEnergy.effective" }),
+			ports.float64({ name: "cohortEnergy.total", label: "cohortEnergy.total" }),
+			ports.float64({ name: "cohortEnergy.variance", label: "cohortEnergy.variance" }),
+			ports.float64({ name: "cohortFisher.count", label: "cohortFisher.count" }),
+			ports.float64({ name: "cohortFisher.effective", label: "cohortFisher.effective" }),
+			ports.float64({ name: "cohortFisher.mean", label: "cohortFisher.mean" }),
+			ports.float64({ name: "cohortFisher.total", label: "cohortFisher.total" }),
+			ports.float64({ name: "cohortSigned.total", label: "cohortSigned.total" }),
+			ports.float64({ name: "cohortSigned.variance", label: "cohortSigned.variance" }),
 			ports.Status({ name: "hy.status", label: "hy.status" }),
 			ports["[]byte"]({ name: "metric:absolute_correlation.read", label: "metric:absolute_correlation.read" }),
 			ports.Status({ name: "metric:absolute_correlation.status", label: "metric:absolute_correlation.status" }),
+			ports["[]byte"]({ name: "metric:cohort_absolute_correlation.read", label: "metric:cohort_absolute_correlation.read" }),
+			ports.Status({ name: "metric:cohort_absolute_correlation.status", label: "metric:cohort_absolute_correlation.status" }),
+			ports["[]byte"]({ name: "metric:cohort_correlation_dispersion.read", label: "metric:cohort_correlation_dispersion.read" }),
+			ports.Status({ name: "metric:cohort_correlation_dispersion.status", label: "metric:cohort_correlation_dispersion.status" }),
+			ports["[]byte"]({ name: "metric:cohort_effective_peer_count.read", label: "metric:cohort_effective_peer_count.read" }),
+			ports.Status({ name: "metric:cohort_effective_peer_count.status", label: "metric:cohort_effective_peer_count.status" }),
+			ports["[]byte"]({ name: "metric:cohort_peer_count.read", label: "metric:cohort_peer_count.read" }),
+			ports.Status({ name: "metric:cohort_peer_count.status", label: "metric:cohort_peer_count.status" }),
+			ports["[]byte"]({ name: "metric:cohort_signed_correlation.read", label: "metric:cohort_signed_correlation.read" }),
+			ports.Status({ name: "metric:cohort_signed_correlation.status", label: "metric:cohort_signed_correlation.status" }),
 			ports["[]byte"]({ name: "metric:correlation_baseline.read", label: "metric:correlation_baseline.read" }),
 			ports.Status({ name: "metric:correlation_baseline.status", label: "metric:correlation_baseline.status" }),
 			ports["[]byte"]({ name: "metric:correlation_divergence.read", label: "metric:correlation_divergence.read" }),
 			ports.Status({ name: "metric:correlation_divergence.status", label: "metric:correlation_divergence.status" }),
+			ports["[]byte"]({ name: "metric:correlation_p_value.read", label: "metric:correlation_p_value.read" }),
+			ports.Status({ name: "metric:correlation_p_value.status", label: "metric:correlation_p_value.status" }),
+			ports["[]byte"]({ name: "metric:correlation_standard_error_fisher.read", label: "metric:correlation_standard_error_fisher.read" }),
+			ports.Status({ name: "metric:correlation_standard_error_fisher.status", label: "metric:correlation_standard_error_fisher.status" }),
 			ports["[]byte"]({ name: "metric:correlation_velocity.read", label: "metric:correlation_velocity.read" }),
 			ports.Status({ name: "metric:correlation_velocity.status", label: "metric:correlation_velocity.status" }),
 			ports["[]byte"]({ name: "metric:correlation_zscore.read", label: "metric:correlation_zscore.read" }),
@@ -5155,10 +5801,28 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.Status({ name: "metric:effective_sample_count.status", label: "metric:effective_sample_count.status" }),
 			ports["[]byte"]({ name: "metric:focal_return_energy_rate.read", label: "metric:focal_return_energy_rate.read" }),
 			ports.Status({ name: "metric:focal_return_energy_rate.status", label: "metric:focal_return_energy_rate.status" }),
+			ports["[]byte"]({ name: "metric:last_price.read", label: "metric:last_price.read" }),
+			ports.Status({ name: "metric:last_price.status", label: "metric:last_price.status" }),
+			ports["[]byte"]({ name: "metric:observation_count.read", label: "metric:observation_count.read" }),
+			ports.Status({ name: "metric:observation_count.status", label: "metric:observation_count.status" }),
 			ports["[]byte"]({ name: "metric:overlap_density.read", label: "metric:overlap_density.read" }),
 			ports.Status({ name: "metric:overlap_density.status", label: "metric:overlap_density.status" }),
 			ports["[]byte"]({ name: "metric:overlap_pair_count.read", label: "metric:overlap_pair_count.read" }),
 			ports.Status({ name: "metric:overlap_pair_count.status", label: "metric:overlap_pair_count.status" }),
+			ports["[]byte"]({ name: "metric:peer_return_energy_rate.read", label: "metric:peer_return_energy_rate.read" }),
+			ports.Status({ name: "metric:peer_return_energy_rate.status", label: "metric:peer_return_energy_rate.status" }),
+			ports["[]byte"]({ name: "metric:relative_cohort_return_energy.read", label: "metric:relative_cohort_return_energy.read" }),
+			ports.Status({ name: "metric:relative_cohort_return_energy.status", label: "metric:relative_cohort_return_energy.status" }),
+			ports["[]byte"]({ name: "metric:relative_return_energy.read", label: "metric:relative_return_energy.read" }),
+			ports.Status({ name: "metric:relative_return_energy.status", label: "metric:relative_return_energy.status" }),
+			ports["[]byte"]({ name: "metric:relative_return_energy_baseline.read", label: "metric:relative_return_energy_baseline.read" }),
+			ports.Status({ name: "metric:relative_return_energy_baseline.status", label: "metric:relative_return_energy_baseline.status" }),
+			ports["[]byte"]({ name: "metric:relative_return_energy_divergence.read", label: "metric:relative_return_energy_divergence.read" }),
+			ports.Status({ name: "metric:relative_return_energy_divergence.status", label: "metric:relative_return_energy_divergence.status" }),
+			ports["[]byte"]({ name: "metric:relative_return_energy_velocity.read", label: "metric:relative_return_energy_velocity.read" }),
+			ports.Status({ name: "metric:relative_return_energy_velocity.status", label: "metric:relative_return_energy_velocity.status" }),
+			ports["[]byte"]({ name: "metric:relative_return_energy_zscore.read", label: "metric:relative_return_energy_zscore.read" }),
+			ports.Status({ name: "metric:relative_return_energy_zscore.status", label: "metric:relative_return_energy_zscore.status" }),
 			ports["[]byte"]({ name: "metric:return_energy:measured.read", label: "metric:return_energy:measured.read" }),
 			ports.Status({ name: "metric:return_energy:measured.status", label: "metric:return_energy:measured.status" }),
 			ports["[]byte"]({ name: "metric:return_energy:reference.read", label: "metric:return_energy:reference.read" }),
@@ -5176,7 +5840,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports["[]byte"]({ name: "metric:supported_return_count:reference.read", label: "metric:supported_return_count:reference.read" }),
 			ports.Status({ name: "metric:supported_return_count:reference.status", label: "metric:supported_return_count:reference.status" }),
 			ports.bool({ name: "pairHistory.found", label: "pairHistory.found" }),
-			ports["[]byte"]({ name: "pairHistory.out", label: "pairHistory.out" }),
+			ports.Capability({ name: "pairHistory.self", label: "pairHistory.self" }),
 		],
 	});
 	config.addNodeType({

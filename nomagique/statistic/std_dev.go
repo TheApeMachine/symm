@@ -13,9 +13,9 @@ StdDevServer calculates online sample standard deviation of streaming observatio
 */
 type StdDevServer struct {
 	*runtime.System
-	count float64
-	mean float64
-	m2 float64
+	count  float64
+	mean   float64
+	m2     float64
 	result float64
 }
 

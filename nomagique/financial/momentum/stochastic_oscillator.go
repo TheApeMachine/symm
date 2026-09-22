@@ -14,14 +14,14 @@ StochasticOscillatorServer calculates the Stochastic Oscillator.
 type StochasticOscillatorServer struct {
 	*runtime.System
 	calculator *indicator.StochasticOscillator[float64]
-	high chan float64
-	low chan float64
-	close chan float64
-	kOut <-chan float64
-	k float64
-	dOut <-chan float64
-	d float64
-	count int
+	high       chan float64
+	low        chan float64
+	close      chan float64
+	kOut       <-chan float64
+	k          float64
+	dOut       <-chan float64
+	d          float64
+	count      int
 }
 
 func NewStochasticOscillator(ctx context.Context) *StochasticOscillatorServer {
@@ -31,11 +31,11 @@ func NewStochasticOscillator(ctx context.Context) *StochasticOscillatorServer {
 	calculator := indicator.NewStochasticOscillator[float64]()
 
 	server := &StochasticOscillatorServer{
-		System: runtime.NewSystem(ctx, "financial.momentum.stochastic_oscillator"),
+		System:     runtime.NewSystem(ctx, "financial.momentum.stochastic_oscillator"),
 		calculator: calculator,
-		high: high,
-		low: low,
-		close: close,
+		high:       high,
+		low:        low,
+		close:      close,
 	}
 
 	server.kOut, server.dOut = calculator.ComputeWithContext(ctx, high, low, close)

@@ -14,8 +14,8 @@ BuyAndHoldServer calculates the baseline Buy and Hold strategy recommendations.
 type BuyAndHoldServer struct {
 	*runtime.System
 	snapshots chan *asset.Snapshot
-	out <-chan indicator.Action
-	result int64
+	out       <-chan indicator.Action
+	result    int64
 }
 
 func NewBuyAndHold(ctx context.Context) *BuyAndHoldServer {
@@ -23,9 +23,9 @@ func NewBuyAndHold(ctx context.Context) *BuyAndHoldServer {
 	calculator := indicator.NewBuyAndHoldStrategy()
 
 	server := &BuyAndHoldServer{
-		System: runtime.NewSystem(ctx, "financial.strategy.buy_and_hold"),
+		System:    runtime.NewSystem(ctx, "financial.strategy.buy_and_hold"),
 		snapshots: snapshots,
-		out: calculator.ComputeWithContext(ctx, snapshots),
+		out:       calculator.ComputeWithContext(ctx, snapshots),
 	}
 
 	server.Transition(runtime.READY)
@@ -43,10 +43,10 @@ func (server *BuyAndHoldServer) Write(ctx context.Context, call BuyAndHold_write
 	volumeVal := call.Args().Volume()
 
 	snapshot := &asset.Snapshot{
-		Open: openVal,
-		High: highVal,
-		Low: lowVal,
-		Close: closeVal,
+		Open:   openVal,
+		High:   highVal,
+		Low:    lowVal,
+		Close:  closeVal,
 		Volume: volumeVal,
 	}
 

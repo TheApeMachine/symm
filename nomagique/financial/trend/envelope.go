@@ -14,14 +14,14 @@ EnvelopeServer calculates the Moving Average Envelope (upper, middle, lower).
 type EnvelopeServer struct {
 	*runtime.System
 	calculator *trend.Envelope[float64]
-	close chan float64
-	upperOut <-chan float64
-	middleOut <-chan float64
-	lowerOut <-chan float64
-	upper float64
-	middle float64
-	lower float64
-	count int
+	close      chan float64
+	upperOut   <-chan float64
+	middleOut  <-chan float64
+	lowerOut   <-chan float64
+	upper      float64
+	middle     float64
+	lower      float64
+	count      int
 }
 
 func NewEnvelope(ctx context.Context) *EnvelopeServer {
@@ -29,9 +29,9 @@ func NewEnvelope(ctx context.Context) *EnvelopeServer {
 	calculator := trend.NewEnvelopeWithSma[float64]()
 
 	server := &EnvelopeServer{
-		System: runtime.NewSystem(ctx, "financial.trend.envelope"),
+		System:     runtime.NewSystem(ctx, "financial.trend.envelope"),
 		calculator: calculator,
-		close: close,
+		close:      close,
 	}
 
 	server.upperOut, server.middleOut, server.lowerOut = calculator.ComputeWithContext(ctx, close)

@@ -345,7 +345,7 @@
     },
     "morphology_change_baseline": {
       "id": "morphology_change_baseline",
-      "type": "statistic.ResidualBaseline",
+      "type": "statistic.CausalMean",
       "width": 280,
       "height": 172,
       "x": 440.0,

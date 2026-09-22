@@ -23,7 +23,7 @@
             },
             {
               "nodeId": "median_return_divergence",
-              "portName": "value"
+              "portName": "a"
             },
             {
               "nodeId": "median_return_zscore",
@@ -204,7 +204,7 @@
             },
             {
               "nodeId": "breadth_divergence",
-              "portName": "value"
+              "portName": "a"
             },
             {
               "nodeId": "breadth_zscore",
@@ -276,7 +276,7 @@
     },
     "breadth_baseline": {
       "id": "breadth_baseline",
-      "type": "statistic.ResidualBaseline",
+      "type": "statistic.CausalMean",
       "width": 280,
       "height": 172,
       "x": 360.0,
@@ -295,6 +295,10 @@
             {
               "nodeId": "metric:breadth_baseline",
               "portName": "raw"
+            },
+            {
+              "nodeId": "breadth_divergence",
+              "portName": "b"
             }
           ]
         }
@@ -302,16 +306,22 @@
     },
     "breadth_divergence": {
       "id": "breadth_divergence",
-      "type": "statistic.ResidualDivergence",
+      "type": "arithmetic.Subtract",
       "width": 280,
       "height": 172,
       "x": 360.0,
       "y": -460.0,
       "connections": {
         "inputs": {
-          "value": [
+          "a": [
             {
               "nodeId": "breadth",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "breadth_baseline",
               "portName": "out"
             }
           ]
@@ -380,7 +390,7 @@
     },
     "median_return_baseline": {
       "id": "median_return_baseline",
-      "type": "statistic.ResidualBaseline",
+      "type": "statistic.CausalMean",
       "width": 280,
       "height": 172,
       "x": 360.0,
@@ -399,6 +409,10 @@
             {
               "nodeId": "metric:median_return_baseline",
               "portName": "raw"
+            },
+            {
+              "nodeId": "median_return_divergence",
+              "portName": "b"
             }
           ]
         }
@@ -406,16 +420,22 @@
     },
     "median_return_divergence": {
       "id": "median_return_divergence",
-      "type": "statistic.ResidualDivergence",
+      "type": "arithmetic.Subtract",
       "width": 280,
       "height": 172,
       "x": 360.0,
       "y": 140.0,
       "connections": {
         "inputs": {
-          "value": [
+          "a": [
             {
               "nodeId": "return",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "median_return_baseline",
               "portName": "out"
             }
           ]
@@ -484,7 +504,7 @@
     },
     "median_absolute_return_baseline": {
       "id": "median_absolute_return_baseline",
-      "type": "statistic.ResidualBaseline",
+      "type": "statistic.CausalMean",
       "width": 280,
       "height": 172,
       "x": 360.0,

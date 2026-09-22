@@ -14,11 +14,11 @@ EhlersFisherServer calculates the Ehlers Fisher Transform.
 type EhlersFisherServer struct {
 	*runtime.System
 	calculator *indicator.EhlersFisher[float64]
-	high chan float64
-	low chan float64
-	out <-chan float64
-	result float64
-	count int
+	high       chan float64
+	low        chan float64
+	out        <-chan float64
+	result     float64
+	count      int
 }
 
 func NewEhlersFisher(ctx context.Context) *EhlersFisherServer {
@@ -27,11 +27,11 @@ func NewEhlersFisher(ctx context.Context) *EhlersFisherServer {
 	calculator := indicator.NewEhlersFisher[float64]()
 
 	server := &EhlersFisherServer{
-		System: runtime.NewSystem(ctx, "financial.momentum.ehlers_fisher"),
+		System:     runtime.NewSystem(ctx, "financial.momentum.ehlers_fisher"),
 		calculator: calculator,
-		high: high,
-		low: low,
-		out: calculator.ComputeWithContext(ctx, high, low),
+		high:       high,
+		low:        low,
+		out:        calculator.ComputeWithContext(ctx, high, low),
 	}
 
 	server.Transition(runtime.READY)

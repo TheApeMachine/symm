@@ -13,12 +13,12 @@ CategoricalServer evaluates discrete categorical distribution over k categories.
 */
 type CategoricalServer struct {
 	*runtime.System
-	prob float64
+	prob    float64
 	logProb float64
-	cdf float64
-	mean float64
+	cdf     float64
+	mean    float64
 	entropy float64
-	rand float64
+	rand    float64
 }
 
 func NewCategorical(ctx context.Context) *CategoricalServer {

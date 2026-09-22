@@ -14,13 +14,13 @@ MfiServer calculates the Money Flow Index (MFI).
 type MfiServer struct {
 	*runtime.System
 	calculator *indicator.Mfi[float64]
-	high chan float64
-	low chan float64
-	close chan float64
-	volume chan float64
-	out <-chan float64
-	result float64
-	count int
+	high       chan float64
+	low        chan float64
+	close      chan float64
+	volume     chan float64
+	out        <-chan float64
+	result     float64
+	count      int
 }
 
 func NewMfi(ctx context.Context) *MfiServer {
@@ -31,13 +31,13 @@ func NewMfi(ctx context.Context) *MfiServer {
 	calculator := indicator.NewMfi[float64]()
 
 	server := &MfiServer{
-		System: runtime.NewSystem(ctx, "financial.volume.mfi"),
+		System:     runtime.NewSystem(ctx, "financial.volume.mfi"),
 		calculator: calculator,
-		high: high,
-		low: low,
-		close: close,
-		volume: volume,
-		out: calculator.ComputeWithContext(ctx, high, low, close, volume),
+		high:       high,
+		low:        low,
+		close:      close,
+		volume:     volume,
+		out:        calculator.ComputeWithContext(ctx, high, low, close, volume),
 	}
 
 	server.Transition(runtime.READY)

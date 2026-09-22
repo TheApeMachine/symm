@@ -132,7 +132,7 @@
             },
             {
               "nodeId": "fill_fraction_divergence:bid",
-              "portName": "value"
+              "portName": "a"
             },
             {
               "nodeId": "fill_fraction_zscore:bid",
@@ -176,7 +176,7 @@
             },
             {
               "nodeId": "fill_fraction_divergence:ask",
-              "portName": "value"
+              "portName": "a"
             },
             {
               "nodeId": "fill_fraction_zscore:ask",
@@ -277,7 +277,7 @@
     },
     "fill_fraction_baseline:bid": {
       "id": "fill_fraction_baseline:bid",
-      "type": "statistic.ResidualBaseline",
+      "type": "statistic.CausalMean",
       "width": 280,
       "height": 172,
       "x": -260.0,
@@ -296,6 +296,10 @@
             {
               "nodeId": "metric:fill_fraction_baseline:bid",
               "portName": "raw"
+            },
+            {
+              "nodeId": "fill_fraction_divergence:bid",
+              "portName": "b"
             }
           ]
         }
@@ -303,16 +307,22 @@
     },
     "fill_fraction_divergence:bid": {
       "id": "fill_fraction_divergence:bid",
-      "type": "statistic.ResidualDivergence",
+      "type": "arithmetic.Subtract",
       "width": 280,
       "height": 172,
       "x": -260.0,
       "y": 60.0,
       "connections": {
         "inputs": {
-          "value": [
+          "a": [
             {
               "nodeId": "fill_fraction:bid",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "fill_fraction_baseline:bid",
               "portName": "out"
             }
           ]
@@ -355,7 +365,7 @@
     },
     "fill_fraction_baseline:ask": {
       "id": "fill_fraction_baseline:ask",
-      "type": "statistic.ResidualBaseline",
+      "type": "statistic.CausalMean",
       "width": 280,
       "height": 172,
       "x": -260.0,
@@ -374,6 +384,10 @@
             {
               "nodeId": "metric:fill_fraction_baseline:ask",
               "portName": "raw"
+            },
+            {
+              "nodeId": "fill_fraction_divergence:ask",
+              "portName": "b"
             }
           ]
         }
@@ -381,16 +395,22 @@
     },
     "fill_fraction_divergence:ask": {
       "id": "fill_fraction_divergence:ask",
-      "type": "statistic.ResidualDivergence",
+      "type": "arithmetic.Subtract",
       "width": 280,
       "height": 172,
       "x": -260.0,
       "y": 540.0,
       "connections": {
         "inputs": {
-          "value": [
+          "a": [
             {
               "nodeId": "fill_fraction:ask",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "fill_fraction_baseline:ask",
               "portName": "out"
             }
           ]

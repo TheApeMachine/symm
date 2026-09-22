@@ -13,13 +13,13 @@ CorrelationServer calculates online Pearson correlation coefficient between two 
 */
 type CorrelationServer struct {
 	*runtime.System
-	count float64
-	meanX float64
-	meanY float64
-	m2X float64
-	m2Y float64
+	count    float64
+	meanX    float64
+	meanY    float64
+	m2X      float64
+	m2Y      float64
 	coMoment float64
-	result float64
+	result   float64
 }
 
 func NewCorrelation(ctx context.Context) *CorrelationServer {

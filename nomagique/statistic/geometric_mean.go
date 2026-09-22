@@ -13,7 +13,7 @@ GeometricMeanServer calculates online geometric mean of streaming positive obser
 */
 type GeometricMeanServer struct {
 	*runtime.System
-	count float64
+	count  float64
 	sumLog float64
 	result float64
 }

@@ -13,16 +13,16 @@ GumbelRightServer evaluates continuous Gumbel extreme value distribution.
 */
 type GumbelRightServer struct {
 	*runtime.System
-	prob float64
-	logProb float64
-	cdf float64
+	prob     float64
+	logProb  float64
+	cdf      float64
 	quantile float64
 	survival float64
-	mean float64
+	mean     float64
 	variance float64
-	stdDev float64
-	entropy float64
-	rand float64
+	stdDev   float64
+	entropy  float64
+	rand     float64
 }
 
 func NewGumbelRight(ctx context.Context) *GumbelRightServer {

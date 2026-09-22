@@ -14,12 +14,12 @@ WeightedCloseServer calculates the Weighted Close.
 type WeightedCloseServer struct {
 	*runtime.System
 	calculator *trend.WeightedClose[float64]
-	high chan float64
-	low chan float64
-	close chan float64
-	out <-chan float64
-	result float64
-	count int
+	high       chan float64
+	low        chan float64
+	close      chan float64
+	out        <-chan float64
+	result     float64
+	count      int
 }
 
 func NewWeightedClose(ctx context.Context) *WeightedCloseServer {
@@ -29,12 +29,12 @@ func NewWeightedClose(ctx context.Context) *WeightedCloseServer {
 	calculator := trend.NewWeightedClose[float64]()
 
 	server := &WeightedCloseServer{
-		System: runtime.NewSystem(ctx, "financial.trend.weighted_close"),
+		System:     runtime.NewSystem(ctx, "financial.trend.weighted_close"),
 		calculator: calculator,
-		high: high,
-		low: low,
-		close: close,
-		out: calculator.ComputeWithContext(ctx, high, low, close),
+		high:       high,
+		low:        low,
+		close:      close,
+		out:        calculator.ComputeWithContext(ctx, high, low, close),
 	}
 
 	server.Transition(runtime.READY)

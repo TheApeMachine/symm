@@ -14,10 +14,10 @@ TrimaServer calculates the Triangular Moving Average (TRIMA).
 type TrimaServer struct {
 	*runtime.System
 	calculator *trend.Trima[float64]
-	value chan float64
-	out <-chan float64
-	result float64
-	count int
+	value      chan float64
+	out        <-chan float64
+	result     float64
+	count      int
 }
 
 func NewTrima(ctx context.Context) *TrimaServer {
@@ -25,10 +25,10 @@ func NewTrima(ctx context.Context) *TrimaServer {
 	calculator := trend.NewTrima[float64]()
 
 	server := &TrimaServer{
-		System: runtime.NewSystem(ctx, "financial.trend.trima"),
+		System:     runtime.NewSystem(ctx, "financial.trend.trima"),
 		calculator: calculator,
-		value: value,
-		out: calculator.ComputeWithContext(ctx, value),
+		value:      value,
+		out:        calculator.ComputeWithContext(ctx, value),
 	}
 
 	server.Transition(runtime.READY)

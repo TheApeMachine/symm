@@ -14,14 +14,14 @@ KvoServer calculates the Klinger Volume Oscillator (KVO) and signal line.
 type KvoServer struct {
 	*runtime.System
 	calculator *indicator.Kvo[float64]
-	high chan float64
-	low chan float64
-	volume chan float64
-	kvoOut <-chan float64
-	signalOut <-chan float64
-	kvo float64
-	signal float64
-	count int
+	high       chan float64
+	low        chan float64
+	volume     chan float64
+	kvoOut     <-chan float64
+	signalOut  <-chan float64
+	kvo        float64
+	signal     float64
+	count      int
 }
 
 func NewKvo(ctx context.Context) *KvoServer {
@@ -31,11 +31,11 @@ func NewKvo(ctx context.Context) *KvoServer {
 	calculator := indicator.NewKvo[float64]()
 
 	server := &KvoServer{
-		System: runtime.NewSystem(ctx, "financial.volume.kvo"),
+		System:     runtime.NewSystem(ctx, "financial.volume.kvo"),
 		calculator: calculator,
-		high: high,
-		low: low,
-		volume: volume,
+		high:       high,
+		low:        low,
+		volume:     volume,
 	}
 
 	server.kvoOut, server.signalOut = calculator.ComputeWithContext(ctx, high, low, volume)

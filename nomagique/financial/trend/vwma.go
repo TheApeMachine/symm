@@ -14,11 +14,11 @@ VwmaServer calculates the Volume Weighted Moving Average (VWMA).
 type VwmaServer struct {
 	*runtime.System
 	calculator *trend.Vwma[float64]
-	close chan float64
-	volume chan float64
-	out <-chan float64
-	result float64
-	count int
+	close      chan float64
+	volume     chan float64
+	out        <-chan float64
+	result     float64
+	count      int
 }
 
 func NewVwma(ctx context.Context) *VwmaServer {
@@ -27,11 +27,11 @@ func NewVwma(ctx context.Context) *VwmaServer {
 	calculator := trend.NewVwma[float64]()
 
 	server := &VwmaServer{
-		System: runtime.NewSystem(ctx, "financial.trend.vwma"),
+		System:     runtime.NewSystem(ctx, "financial.trend.vwma"),
 		calculator: calculator,
-		close: close,
-		volume: volume,
-		out: calculator.ComputeWithContext(ctx, close, volume),
+		close:      close,
+		volume:     volume,
+		out:        calculator.ComputeWithContext(ctx, close, volume),
 	}
 
 	server.Transition(runtime.READY)

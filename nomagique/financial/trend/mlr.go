@@ -14,11 +14,11 @@ MlrServer calculates the Moving Linear Regression (MLR).
 type MlrServer struct {
 	*runtime.System
 	calculator *trend.Mlr[float64]
-	x chan float64
-	y chan float64
-	out <-chan float64
-	result float64
-	count int
+	x          chan float64
+	y          chan float64
+	out        <-chan float64
+	result     float64
+	count      int
 }
 
 func NewMlr(ctx context.Context) *MlrServer {
@@ -27,11 +27,11 @@ func NewMlr(ctx context.Context) *MlrServer {
 	calculator := trend.NewMlr[float64]()
 
 	server := &MlrServer{
-		System: runtime.NewSystem(ctx, "financial.trend.mlr"),
+		System:     runtime.NewSystem(ctx, "financial.trend.mlr"),
 		calculator: calculator,
-		x: x,
-		y: y,
-		out: calculator.ComputeWithContext(ctx, x, y),
+		x:          x,
+		y:          y,
+		out:        calculator.ComputeWithContext(ctx, x, y),
 	}
 
 	server.Transition(runtime.READY)

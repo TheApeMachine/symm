@@ -13,15 +13,15 @@ ElderRayServer calculates the Elder-Ray Index.
 */
 type ElderRayServer struct {
 	*runtime.System
-	calculator *indicator.ElderRay[float64]
-	high chan float64
-	low chan float64
-	close chan float64
+	calculator   *indicator.ElderRay[float64]
+	high         chan float64
+	low          chan float64
+	close        chan float64
 	bullPowerOut <-chan float64
-	bullPower float64
+	bullPower    float64
 	bearPowerOut <-chan float64
-	bearPower float64
-	count int
+	bearPower    float64
+	count        int
 }
 
 func NewElderRay(ctx context.Context) *ElderRayServer {
@@ -31,11 +31,11 @@ func NewElderRay(ctx context.Context) *ElderRayServer {
 	calculator := indicator.NewElderRay[float64]()
 
 	server := &ElderRayServer{
-		System: runtime.NewSystem(ctx, "financial.momentum.elder_ray"),
+		System:     runtime.NewSystem(ctx, "financial.momentum.elder_ray"),
 		calculator: calculator,
-		high: high,
-		low: low,
-		close: close,
+		high:       high,
+		low:        low,
+		close:      close,
 	}
 
 	server.bullPowerOut, server.bearPowerOut = calculator.ComputeWithContext(ctx, high, low, close)

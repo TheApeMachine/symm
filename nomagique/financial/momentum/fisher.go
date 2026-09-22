@@ -14,10 +14,10 @@ FisherServer calculates the Fisher Transform.
 type FisherServer struct {
 	*runtime.System
 	calculator *indicator.Fisher[float64]
-	close chan float64
-	out <-chan float64
-	result float64
-	count int
+	close      chan float64
+	out        <-chan float64
+	result     float64
+	count      int
 }
 
 func NewFisher(ctx context.Context) *FisherServer {
@@ -25,10 +25,10 @@ func NewFisher(ctx context.Context) *FisherServer {
 	calculator := indicator.NewFisher[float64]()
 
 	server := &FisherServer{
-		System: runtime.NewSystem(ctx, "financial.momentum.fisher"),
+		System:     runtime.NewSystem(ctx, "financial.momentum.fisher"),
 		calculator: calculator,
-		close: close,
-		out: calculator.ComputeWithContext(ctx, close),
+		close:      close,
+		out:        calculator.ComputeWithContext(ctx, close),
 	}
 
 	server.Transition(runtime.READY)

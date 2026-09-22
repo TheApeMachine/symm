@@ -11,6 +11,117 @@ import (
 	context "context"
 )
 
+type Retained capnp.Client
+
+// Retained_TypeID is the unique identifier for the type Retained.
+const Retained_TypeID = 0x8e89588bca783bc0
+
+func (c Retained) WaitStreaming() error {
+	return capnp.Client(c).WaitStreaming()
+}
+
+// String returns a string that identifies this capability for debugging
+// purposes.  Its format should not be depended on: in particular, it
+// should not be used to compare clients.  Use IsSame to compare clients
+// for equality.
+func (c Retained) String() string {
+	return "Retained(" + capnp.Client(c).String() + ")"
+}
+
+// AddRef creates a new Client that refers to the same capability as c.
+// If c is nil or has resolved to null, then AddRef returns nil.
+func (c Retained) AddRef() Retained {
+	return Retained(capnp.Client(c).AddRef())
+}
+
+// Release releases a capability reference.  If this is the last
+// reference to the capability, then the underlying resources associated
+// with the capability will be released.
+//
+// Release will panic if c has already been released, but not if c is
+// nil or resolved to null.
+func (c Retained) Release() {
+	capnp.Client(c).Release()
+}
+
+// Resolve blocks until the capability is fully resolved or the Context
+// expires.
+func (c Retained) Resolve(ctx context.Context) error {
+	return capnp.Client(c).Resolve(ctx)
+}
+
+func (c Retained) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+	return capnp.Client(c).EncodeAsPtr(seg)
+}
+
+func (Retained) DecodeFromPtr(p capnp.Ptr) Retained {
+	return Retained(capnp.Client{}.DecodeFromPtr(p))
+}
+
+// IsValid reports whether c is a valid reference to a capability.
+// A reference is invalid if it is nil, has resolved to null, or has
+// been released.
+func (c Retained) IsValid() bool {
+	return capnp.Client(c).IsValid()
+}
+
+// IsSame reports whether c and other refer to a capability created by the
+// same call to NewClient.  This can return false negatives if c or other
+// are not fully resolved: use Resolve if this is an issue.  If either
+// c or other are released, then IsSame panics.
+func (c Retained) IsSame(other Retained) bool {
+	return capnp.Client(c).IsSame(capnp.Client(other))
+}
+
+// Update the flowcontrol.FlowLimiter used to manage flow control for
+// this client. This affects all future calls, but not calls already
+// waiting to send. Passing nil sets the value to flowcontrol.NopLimiter,
+// which is also the default.
+func (c Retained) SetFlowLimiter(lim fc.FlowLimiter) {
+	capnp.Client(c).SetFlowLimiter(lim)
+}
+
+// Get the current flowcontrol.FlowLimiter used to manage flow control
+// for this client.
+func (c Retained) GetFlowLimiter() fc.FlowLimiter {
+	return capnp.Client(c).GetFlowLimiter()
+}
+
+// A Retained_Server is a Retained with a local implementation.
+type Retained_Server interface {
+}
+
+// Retained_NewServer creates a new Server from an implementation of Retained_Server.
+func Retained_NewServer(s Retained_Server) *server.Server {
+	c, _ := s.(server.Shutdowner)
+	return server.New(Retained_Methods(nil, s), s, c)
+}
+
+// Retained_ServerToClient creates a new Client from an implementation of Retained_Server.
+// The caller is responsible for calling Release on the returned Client.
+func Retained_ServerToClient(s Retained_Server) Retained {
+	return Retained(capnp.NewClient(Retained_NewServer(s)))
+}
+
+// Retained_Methods appends Methods to a slice that invoke the methods on s.
+// This can be used to create a more complicated Server.
+func Retained_Methods(methods []server.Method, s Retained_Server) []server.Method {
+	if cap(methods) == 0 {
+		methods = make([]server.Method, 0, 0)
+	}
+
+	return methods
+}
+
+// Retained_List is a list of Retained.
+type Retained_List = capnp.CapList[Retained]
+
+// NewRetained_List creates a new list of Retained.
+func NewRetained_List(s *capnp.Segment, sz int32) (Retained_List, error) {
+	l, err := capnp.NewPointerList(s, sz)
+	return capnp.CapList[Retained](l), err
+}
+
 type Radix capnp.Client
 
 // Radix_TypeID is the unique identifier for the type Radix.

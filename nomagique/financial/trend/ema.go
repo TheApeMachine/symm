@@ -14,10 +14,10 @@ EmaServer calculates the Exponential Moving Average (EMA).
 type EmaServer struct {
 	*runtime.System
 	calculator *trend.Ema[float64]
-	value chan float64
-	out <-chan float64
-	result float64
-	count int
+	value      chan float64
+	out        <-chan float64
+	result     float64
+	count      int
 }
 
 func NewEma(ctx context.Context) *EmaServer {
@@ -25,10 +25,10 @@ func NewEma(ctx context.Context) *EmaServer {
 	calculator := trend.NewEma[float64]()
 
 	server := &EmaServer{
-		System: runtime.NewSystem(ctx, "financial.trend.ema"),
+		System:     runtime.NewSystem(ctx, "financial.trend.ema"),
 		calculator: calculator,
-		value: value,
-		out: calculator.ComputeWithContext(ctx, value),
+		value:      value,
+		out:        calculator.ComputeWithContext(ctx, value),
 	}
 
 	server.Transition(runtime.READY)

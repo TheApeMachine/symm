@@ -14,10 +14,10 @@ ApoServer calculates the Absolute Price Oscillator (APO).
 type ApoServer struct {
 	*runtime.System
 	calculator *trend.Apo[float64]
-	value chan float64
-	out <-chan float64
-	result float64
-	count int
+	value      chan float64
+	out        <-chan float64
+	result     float64
+	count      int
 }
 
 func NewApo(ctx context.Context) *ApoServer {
@@ -25,10 +25,10 @@ func NewApo(ctx context.Context) *ApoServer {
 	calculator := trend.NewApo[float64]()
 
 	server := &ApoServer{
-		System: runtime.NewSystem(ctx, "financial.trend.apo"),
+		System:     runtime.NewSystem(ctx, "financial.trend.apo"),
 		calculator: calculator,
-		value: value,
-		out: calculator.ComputeWithContext(ctx, value),
+		value:      value,
+		out:        calculator.ComputeWithContext(ctx, value),
 	}
 
 	server.Transition(runtime.READY)

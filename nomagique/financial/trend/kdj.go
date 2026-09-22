@@ -14,16 +14,16 @@ KdjServer calculates the KDJ indicator (%K, %D, %J).
 type KdjServer struct {
 	*runtime.System
 	calculator *trend.Kdj[float64]
-	high chan float64
-	low chan float64
-	close chan float64
-	kOut <-chan float64
-	dOut <-chan float64
-	jOut <-chan float64
-	k float64
-	d float64
-	j float64
-	count int
+	high       chan float64
+	low        chan float64
+	close      chan float64
+	kOut       <-chan float64
+	dOut       <-chan float64
+	jOut       <-chan float64
+	k          float64
+	d          float64
+	j          float64
+	count      int
 }
 
 func NewKdj(ctx context.Context) *KdjServer {
@@ -33,11 +33,11 @@ func NewKdj(ctx context.Context) *KdjServer {
 	calculator := trend.NewKdj[float64]()
 
 	server := &KdjServer{
-		System: runtime.NewSystem(ctx, "financial.trend.kdj"),
+		System:     runtime.NewSystem(ctx, "financial.trend.kdj"),
 		calculator: calculator,
-		high: high,
-		low: low,
-		close: close,
+		high:       high,
+		low:        low,
+		close:      close,
 	}
 
 	server.kOut, server.dOut, server.jOut = calculator.ComputeWithContext(ctx, high, low, close)

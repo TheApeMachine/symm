@@ -14,10 +14,10 @@ PercentBServer calculates the Percent B (%B).
 type PercentBServer struct {
 	*runtime.System
 	calculator *indicator.PercentB[float64]
-	close chan float64
-	out <-chan float64
-	result float64
-	count int
+	close      chan float64
+	out        <-chan float64
+	result     float64
+	count      int
 }
 
 func NewPercentB(ctx context.Context) *PercentBServer {
@@ -25,10 +25,10 @@ func NewPercentB(ctx context.Context) *PercentBServer {
 	calculator := indicator.NewPercentB[float64]()
 
 	server := &PercentBServer{
-		System: runtime.NewSystem(ctx, "financial.volatility.percent_b"),
+		System:     runtime.NewSystem(ctx, "financial.volatility.percent_b"),
 		calculator: calculator,
-		close: close,
-		out: calculator.ComputeWithContext(ctx, close),
+		close:      close,
+		out:        calculator.ComputeWithContext(ctx, close),
 	}
 
 	server.Transition(runtime.READY)

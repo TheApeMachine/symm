@@ -14,10 +14,10 @@ PringsSpecialKServer calculates the Pring's Special K.
 type PringsSpecialKServer struct {
 	*runtime.System
 	calculator *indicator.PringsSpecialK[float64]
-	close chan float64
-	out <-chan float64
-	result float64
-	count int
+	close      chan float64
+	out        <-chan float64
+	result     float64
+	count      int
 }
 
 func NewPringsSpecialK(ctx context.Context) *PringsSpecialKServer {
@@ -25,10 +25,10 @@ func NewPringsSpecialK(ctx context.Context) *PringsSpecialKServer {
 	calculator := indicator.NewPringsSpecialK[float64]()
 
 	server := &PringsSpecialKServer{
-		System: runtime.NewSystem(ctx, "financial.momentum.prings_special_k"),
+		System:     runtime.NewSystem(ctx, "financial.momentum.prings_special_k"),
 		calculator: calculator,
-		close: close,
-		out: calculator.ComputeWithContext(ctx, close),
+		close:      close,
+		out:        calculator.ComputeWithContext(ctx, close),
 	}
 
 	server.Transition(runtime.READY)

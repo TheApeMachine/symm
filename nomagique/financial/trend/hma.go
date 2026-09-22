@@ -14,10 +14,10 @@ HmaServer calculates the Hull Moving Average (HMA).
 type HmaServer struct {
 	*runtime.System
 	calculator *trend.Hma[float64]
-	value chan float64
-	out <-chan float64
-	result float64
-	count int
+	value      chan float64
+	out        <-chan float64
+	result     float64
+	count      int
 }
 
 func NewHma(ctx context.Context) *HmaServer {
@@ -25,10 +25,10 @@ func NewHma(ctx context.Context) *HmaServer {
 	calculator := trend.NewHma[float64]()
 
 	server := &HmaServer{
-		System: runtime.NewSystem(ctx, "financial.trend.hma"),
+		System:     runtime.NewSystem(ctx, "financial.trend.hma"),
 		calculator: calculator,
-		value: value,
-		out: calculator.ComputeWithContext(ctx, value),
+		value:      value,
+		out:        calculator.ComputeWithContext(ctx, value),
 	}
 
 	server.Transition(runtime.READY)

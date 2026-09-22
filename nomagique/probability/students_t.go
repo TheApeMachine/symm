@@ -13,15 +13,15 @@ StudentsTServer evaluates continuous Student's t distribution.
 */
 type StudentsTServer struct {
 	*runtime.System
-	prob float64
-	logProb float64
-	cdf float64
+	prob     float64
+	logProb  float64
+	cdf      float64
 	quantile float64
 	survival float64
-	mean float64
+	mean     float64
 	variance float64
-	stdDev float64
-	rand float64
+	stdDev   float64
+	rand     float64
 }
 
 func NewStudentsT(ctx context.Context) *StudentsTServer {

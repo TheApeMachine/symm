@@ -13,17 +13,17 @@ TdSequentialServer calculates the TD Sequential indicator.
 */
 type TdSequentialServer struct {
 	*runtime.System
-	calculator *indicator.TdSequential[float64]
-	close chan float64
-	buySetupOut <-chan float64
-	buySetup float64
-	sellSetupOut <-chan float64
-	sellSetup float64
-	buyCountdownOut <-chan float64
-	buyCountdown float64
+	calculator       *indicator.TdSequential[float64]
+	close            chan float64
+	buySetupOut      <-chan float64
+	buySetup         float64
+	sellSetupOut     <-chan float64
+	sellSetup        float64
+	buyCountdownOut  <-chan float64
+	buyCountdown     float64
 	sellCountdownOut <-chan float64
-	sellCountdown float64
-	count int
+	sellCountdown    float64
+	count            int
 }
 
 func NewTdSequential(ctx context.Context) *TdSequentialServer {
@@ -31,9 +31,9 @@ func NewTdSequential(ctx context.Context) *TdSequentialServer {
 	calculator := indicator.NewTdSequential[float64]()
 
 	server := &TdSequentialServer{
-		System: runtime.NewSystem(ctx, "financial.momentum.td_sequential"),
+		System:     runtime.NewSystem(ctx, "financial.momentum.td_sequential"),
 		calculator: calculator,
-		close: close,
+		close:      close,
 	}
 
 	server.buySetupOut, server.sellSetupOut, server.buyCountdownOut, server.sellCountdownOut = calculator.ComputeWithContext(ctx, close)

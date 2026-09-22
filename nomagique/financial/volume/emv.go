@@ -14,12 +14,12 @@ EmvServer calculates the Ease of Movement (EMV).
 type EmvServer struct {
 	*runtime.System
 	calculator *indicator.Emv[float64]
-	high chan float64
-	low chan float64
-	volume chan float64
-	out <-chan float64
-	result float64
-	count int
+	high       chan float64
+	low        chan float64
+	volume     chan float64
+	out        <-chan float64
+	result     float64
+	count      int
 }
 
 func NewEmv(ctx context.Context) *EmvServer {
@@ -29,12 +29,12 @@ func NewEmv(ctx context.Context) *EmvServer {
 	calculator := indicator.NewEmv[float64]()
 
 	server := &EmvServer{
-		System: runtime.NewSystem(ctx, "financial.volume.emv"),
+		System:     runtime.NewSystem(ctx, "financial.volume.emv"),
 		calculator: calculator,
-		high: high,
-		low: low,
-		volume: volume,
-		out: calculator.ComputeWithContext(ctx, high, low, volume),
+		high:       high,
+		low:        low,
+		volume:     volume,
+		out:        calculator.ComputeWithContext(ctx, high, low, volume),
 	}
 
 	server.Transition(runtime.READY)

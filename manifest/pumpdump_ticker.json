@@ -113,7 +113,7 @@
             },
             {
               "nodeId": "spread_divergence",
-              "portName": "value"
+              "portName": "a"
             },
             {
               "nodeId": "spread_zscore",
@@ -171,7 +171,7 @@
             },
             {
               "nodeId": "midpoint_return_divergence",
-              "portName": "value"
+              "portName": "a"
             },
             {
               "nodeId": "midpoint_return_zscore",
@@ -234,7 +234,7 @@
             },
             {
               "nodeId": "notional_rate_divergence",
-              "portName": "value"
+              "portName": "a"
             },
             {
               "nodeId": "midpoint_return_rate_zscore",
@@ -316,7 +316,7 @@
     },
     "relative_spread_baseline": {
       "id": "relative_spread_baseline",
-      "type": "statistic.ResidualBaseline",
+      "type": "statistic.CausalMean",
       "width": 280,
       "height": 172,
       "x": 400.0,
@@ -339,6 +339,10 @@
             {
               "nodeId": "metric:relative_spread_baseline",
               "portName": "raw"
+            },
+            {
+              "nodeId": "spread_divergence",
+              "portName": "b"
             }
           ]
         }
@@ -346,16 +350,22 @@
     },
     "spread_divergence": {
       "id": "spread_divergence",
-      "type": "statistic.ResidualDivergence",
+      "type": "arithmetic.Subtract",
       "width": 280,
       "height": 172,
       "x": 400.0,
       "y": -460.0,
       "connections": {
         "inputs": {
-          "value": [
+          "a": [
             {
               "nodeId": "relative_spread",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "relative_spread_baseline",
               "portName": "out"
             }
           ]
@@ -456,7 +466,7 @@
     },
     "midpoint_return_baseline": {
       "id": "midpoint_return_baseline",
-      "type": "statistic.ResidualBaseline",
+      "type": "statistic.CausalMean",
       "width": 280,
       "height": 172,
       "x": 400.0,
@@ -475,6 +485,10 @@
             {
               "nodeId": "metric:midpoint_return_baseline",
               "portName": "raw"
+            },
+            {
+              "nodeId": "midpoint_return_divergence",
+              "portName": "b"
             }
           ]
         }
@@ -482,16 +496,22 @@
     },
     "midpoint_return_divergence": {
       "id": "midpoint_return_divergence",
-      "type": "statistic.ResidualDivergence",
+      "type": "arithmetic.Subtract",
       "width": 280,
       "height": 172,
       "x": 400.0,
       "y": 140.0,
       "connections": {
         "inputs": {
-          "value": [
+          "a": [
             {
               "nodeId": "midpoint_log_return",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "midpoint_return_baseline",
               "portName": "out"
             }
           ]
@@ -560,7 +580,7 @@
     },
     "notional_rate_baseline": {
       "id": "notional_rate_baseline",
-      "type": "statistic.ResidualBaseline",
+      "type": "statistic.CausalMean",
       "width": 280,
       "height": 172,
       "x": 400.0,
@@ -579,6 +599,10 @@
             {
               "nodeId": "notional_rate_ratio",
               "portName": "b"
+            },
+            {
+              "nodeId": "notional_rate_divergence",
+              "portName": "b"
             }
           ]
         }
@@ -586,16 +610,22 @@
     },
     "notional_rate_divergence": {
       "id": "notional_rate_divergence",
-      "type": "statistic.ResidualDivergence",
+      "type": "arithmetic.Subtract",
       "width": 280,
       "height": 172,
       "x": 400.0,
       "y": 740.0,
       "connections": {
         "inputs": {
-          "value": [
+          "a": [
             {
               "nodeId": "midpoint_return_rate",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "notional_rate_baseline",
               "portName": "out"
             }
           ]

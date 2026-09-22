@@ -14,10 +14,10 @@ RsiServer calculates the Relative Strength Index (RSI).
 type RsiServer struct {
 	*runtime.System
 	calculator *indicator.Rsi[float64]
-	close chan float64
-	out <-chan float64
-	result float64
-	count int
+	close      chan float64
+	out        <-chan float64
+	result     float64
+	count      int
 }
 
 func NewRsi(ctx context.Context) *RsiServer {
@@ -25,10 +25,10 @@ func NewRsi(ctx context.Context) *RsiServer {
 	calculator := indicator.NewRsi[float64]()
 
 	server := &RsiServer{
-		System: runtime.NewSystem(ctx, "financial.momentum.rsi"),
+		System:     runtime.NewSystem(ctx, "financial.momentum.rsi"),
 		calculator: calculator,
-		close: close,
-		out: calculator.ComputeWithContext(ctx, close),
+		close:      close,
+		out:        calculator.ComputeWithContext(ctx, close),
 	}
 
 	server.Transition(runtime.READY)

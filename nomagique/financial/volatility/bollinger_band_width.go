@@ -14,10 +14,10 @@ BollingerBandWidthServer calculates the Bollinger Band Width.
 type BollingerBandWidthServer struct {
 	*runtime.System
 	calculator *indicator.BollingerBandWidth[float64]
-	close chan float64
-	out <-chan float64
-	result float64
-	count int
+	close      chan float64
+	out        <-chan float64
+	result     float64
+	count      int
 }
 
 func NewBollingerBandWidth(ctx context.Context) *BollingerBandWidthServer {
@@ -25,10 +25,10 @@ func NewBollingerBandWidth(ctx context.Context) *BollingerBandWidthServer {
 	calculator := indicator.NewBollingerBandWidth[float64]()
 
 	server := &BollingerBandWidthServer{
-		System: runtime.NewSystem(ctx, "financial.volatility.bollinger_band_width"),
+		System:     runtime.NewSystem(ctx, "financial.volatility.bollinger_band_width"),
 		calculator: calculator,
-		close: close,
-		out: calculator.ComputeWithContext(ctx, close),
+		close:      close,
+		out:        calculator.ComputeWithContext(ctx, close),
 	}
 
 	server.Transition(runtime.READY)

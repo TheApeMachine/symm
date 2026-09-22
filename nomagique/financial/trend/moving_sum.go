@@ -14,10 +14,10 @@ MovingSumServer calculates the Moving Sum.
 type MovingSumServer struct {
 	*runtime.System
 	calculator *trend.MovingSum[float64]
-	value chan float64
-	out <-chan float64
-	result float64
-	count int
+	value      chan float64
+	out        <-chan float64
+	result     float64
+	count      int
 }
 
 func NewMovingSum(ctx context.Context) *MovingSumServer {
@@ -25,10 +25,10 @@ func NewMovingSum(ctx context.Context) *MovingSumServer {
 	calculator := trend.NewMovingSum[float64]()
 
 	server := &MovingSumServer{
-		System: runtime.NewSystem(ctx, "financial.trend.moving_sum"),
+		System:     runtime.NewSystem(ctx, "financial.trend.moving_sum"),
 		calculator: calculator,
-		value: value,
-		out: calculator.ComputeWithContext(ctx, value),
+		value:      value,
+		out:        calculator.ComputeWithContext(ctx, value),
 	}
 
 	server.Transition(runtime.READY)

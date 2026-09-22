@@ -14,12 +14,12 @@ InternalBarStrengthServer calculates the Internal Bar Strength (IBS).
 type InternalBarStrengthServer struct {
 	*runtime.System
 	calculator *indicator.InternalBarStrength[float64]
-	high chan float64
-	low chan float64
-	close chan float64
-	out <-chan float64
-	result float64
-	count int
+	high       chan float64
+	low        chan float64
+	close      chan float64
+	out        <-chan float64
+	result     float64
+	count      int
 }
 
 func NewInternalBarStrength(ctx context.Context) *InternalBarStrengthServer {
@@ -29,12 +29,12 @@ func NewInternalBarStrength(ctx context.Context) *InternalBarStrengthServer {
 	calculator := indicator.NewInternalBarStrength[float64]()
 
 	server := &InternalBarStrengthServer{
-		System: runtime.NewSystem(ctx, "financial.momentum.internal_bar_strength"),
+		System:     runtime.NewSystem(ctx, "financial.momentum.internal_bar_strength"),
 		calculator: calculator,
-		high: high,
-		low: low,
-		close: close,
-		out: calculator.ComputeWithContext(ctx, high, low, close),
+		high:       high,
+		low:        low,
+		close:      close,
+		out:        calculator.ComputeWithContext(ctx, high, low, close),
 	}
 
 	server.Transition(runtime.READY)

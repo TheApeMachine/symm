@@ -14,12 +14,12 @@ ChopServer calculates the Choppiness Index (CHOP).
 type ChopServer struct {
 	*runtime.System
 	calculator *indicator.Chop[float64]
-	high chan float64
-	low chan float64
-	close chan float64
-	out <-chan float64
-	result float64
-	count int
+	high       chan float64
+	low        chan float64
+	close      chan float64
+	out        <-chan float64
+	result     float64
+	count      int
 }
 
 func NewChop(ctx context.Context) *ChopServer {
@@ -29,12 +29,12 @@ func NewChop(ctx context.Context) *ChopServer {
 	calculator := indicator.NewChop[float64]()
 
 	server := &ChopServer{
-		System: runtime.NewSystem(ctx, "financial.volatility.chop"),
+		System:     runtime.NewSystem(ctx, "financial.volatility.chop"),
 		calculator: calculator,
-		high: high,
-		low: low,
-		close: close,
-		out: calculator.ComputeWithContext(ctx, high, low, close),
+		high:       high,
+		low:        low,
+		close:      close,
+		out:        calculator.ComputeWithContext(ctx, high, low, close),
 	}
 
 	server.Transition(runtime.READY)

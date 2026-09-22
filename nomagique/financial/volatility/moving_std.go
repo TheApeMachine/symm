@@ -14,10 +14,10 @@ MovingStdServer calculates the Moving Standard Deviation.
 type MovingStdServer struct {
 	*runtime.System
 	calculator *indicator.MovingStd[float64]
-	value chan float64
-	out <-chan float64
-	result float64
-	count int
+	value      chan float64
+	out        <-chan float64
+	result     float64
+	count      int
 }
 
 func NewMovingStd(ctx context.Context) *MovingStdServer {
@@ -25,10 +25,10 @@ func NewMovingStd(ctx context.Context) *MovingStdServer {
 	calculator := indicator.NewMovingStd[float64]()
 
 	server := &MovingStdServer{
-		System: runtime.NewSystem(ctx, "financial.volatility.moving_std"),
+		System:     runtime.NewSystem(ctx, "financial.volatility.moving_std"),
 		calculator: calculator,
-		value: value,
-		out: calculator.ComputeWithContext(ctx, value),
+		value:      value,
+		out:        calculator.ComputeWithContext(ctx, value),
 	}
 
 	server.Transition(runtime.READY)

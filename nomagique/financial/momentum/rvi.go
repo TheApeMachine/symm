@@ -14,15 +14,15 @@ RviServer calculates the Relative Volatility Index (RVI).
 type RviServer struct {
 	*runtime.System
 	calculator *indicator.Rvi[float64]
-	open chan float64
-	high chan float64
-	low chan float64
-	close chan float64
-	rviOut <-chan float64
-	rvi float64
-	signalOut <-chan float64
-	signal float64
-	count int
+	open       chan float64
+	high       chan float64
+	low        chan float64
+	close      chan float64
+	rviOut     <-chan float64
+	rvi        float64
+	signalOut  <-chan float64
+	signal     float64
+	count      int
 }
 
 func NewRvi(ctx context.Context) *RviServer {
@@ -33,12 +33,12 @@ func NewRvi(ctx context.Context) *RviServer {
 	calculator := indicator.NewRvi[float64]()
 
 	server := &RviServer{
-		System: runtime.NewSystem(ctx, "financial.momentum.rvi"),
+		System:     runtime.NewSystem(ctx, "financial.momentum.rvi"),
 		calculator: calculator,
-		open: open,
-		high: high,
-		low: low,
-		close: close,
+		open:       open,
+		high:       high,
+		low:        low,
+		close:      close,
 	}
 
 	server.rviOut, server.signalOut = calculator.ComputeWithContext(ctx, open, high, low, close)

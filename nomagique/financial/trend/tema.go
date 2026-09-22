@@ -14,10 +14,10 @@ TemaServer calculates the Triple Exponential Moving Average (TEMA).
 type TemaServer struct {
 	*runtime.System
 	calculator *trend.Tema[float64]
-	value chan float64
-	out <-chan float64
-	result float64
-	count int
+	value      chan float64
+	out        <-chan float64
+	result     float64
+	count      int
 }
 
 func NewTema(ctx context.Context) *TemaServer {
@@ -25,10 +25,10 @@ func NewTema(ctx context.Context) *TemaServer {
 	calculator := trend.NewTema[float64]()
 
 	server := &TemaServer{
-		System: runtime.NewSystem(ctx, "financial.trend.tema"),
+		System:     runtime.NewSystem(ctx, "financial.trend.tema"),
 		calculator: calculator,
-		value: value,
-		out: calculator.ComputeWithContext(ctx, value),
+		value:      value,
+		out:        calculator.ComputeWithContext(ctx, value),
 	}
 
 	server.Transition(runtime.READY)

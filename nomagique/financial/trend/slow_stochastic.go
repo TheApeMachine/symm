@@ -14,12 +14,12 @@ SlowStochasticServer calculates the Slow Stochastic %K and %D.
 type SlowStochasticServer struct {
 	*runtime.System
 	calculator *trend.SlowStochastic[float64]
-	value chan float64
-	kOut <-chan float64
-	dOut <-chan float64
-	k float64
-	d float64
-	count int
+	value      chan float64
+	kOut       <-chan float64
+	dOut       <-chan float64
+	k          float64
+	d          float64
+	count      int
 }
 
 func NewSlowStochastic(ctx context.Context) *SlowStochasticServer {
@@ -27,9 +27,9 @@ func NewSlowStochastic(ctx context.Context) *SlowStochasticServer {
 	calculator := trend.NewSlowStochastic[float64]()
 
 	server := &SlowStochasticServer{
-		System: runtime.NewSystem(ctx, "financial.trend.slow_stochastic"),
+		System:     runtime.NewSystem(ctx, "financial.trend.slow_stochastic"),
 		calculator: calculator,
-		value: value,
+		value:      value,
 	}
 
 	server.kOut, server.dOut = calculator.ComputeWithContext(ctx, value)

@@ -14,14 +14,14 @@ BollingerBandsServer calculates the Bollinger Bands.
 type BollingerBandsServer struct {
 	*runtime.System
 	calculator *indicator.BollingerBands[float64]
-	close chan float64
-	upperOut <-chan float64
-	middleOut <-chan float64
-	lowerOut <-chan float64
-	upper float64
-	middle float64
-	lower float64
-	count int
+	close      chan float64
+	upperOut   <-chan float64
+	middleOut  <-chan float64
+	lowerOut   <-chan float64
+	upper      float64
+	middle     float64
+	lower      float64
+	count      int
 }
 
 func NewBollingerBands(ctx context.Context) *BollingerBandsServer {
@@ -29,9 +29,9 @@ func NewBollingerBands(ctx context.Context) *BollingerBandsServer {
 	calculator := indicator.NewBollingerBands[float64]()
 
 	server := &BollingerBandsServer{
-		System: runtime.NewSystem(ctx, "financial.volatility.bollinger_bands"),
+		System:     runtime.NewSystem(ctx, "financial.volatility.bollinger_bands"),
 		calculator: calculator,
-		close: close,
+		close:      close,
 	}
 
 	server.upperOut, server.middleOut, server.lowerOut = calculator.ComputeWithContext(ctx, close)

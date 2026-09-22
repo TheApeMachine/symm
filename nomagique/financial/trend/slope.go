@@ -14,10 +14,10 @@ SlopeServer calculates the Moving Linear Regression Slope.
 type SlopeServer struct {
 	*runtime.System
 	calculator *trend.Slope[float64]
-	value chan float64
-	out <-chan float64
-	result float64
-	count int
+	value      chan float64
+	out        <-chan float64
+	result     float64
+	count      int
 }
 
 func NewSlope(ctx context.Context) *SlopeServer {
@@ -25,10 +25,10 @@ func NewSlope(ctx context.Context) *SlopeServer {
 	calculator := trend.NewSlope[float64]()
 
 	server := &SlopeServer{
-		System: runtime.NewSystem(ctx, "financial.trend.slope"),
+		System:     runtime.NewSystem(ctx, "financial.trend.slope"),
 		calculator: calculator,
-		value: value,
-		out: calculator.ComputeWithContext(ctx, value),
+		value:      value,
+		out:        calculator.ComputeWithContext(ctx, value),
 	}
 
 	server.Transition(runtime.READY)

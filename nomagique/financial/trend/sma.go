@@ -14,10 +14,10 @@ SmaServer calculates the Simple Moving Average (SMA).
 type SmaServer struct {
 	*runtime.System
 	calculator *trend.Sma[float64]
-	value chan float64
-	out <-chan float64
-	result float64
-	count int
+	value      chan float64
+	out        <-chan float64
+	result     float64
+	count      int
 }
 
 func NewSma(ctx context.Context) *SmaServer {
@@ -25,10 +25,10 @@ func NewSma(ctx context.Context) *SmaServer {
 	calculator := trend.NewSma[float64]()
 
 	server := &SmaServer{
-		System: runtime.NewSystem(ctx, "financial.trend.sma"),
+		System:     runtime.NewSystem(ctx, "financial.trend.sma"),
 		calculator: calculator,
-		value: value,
-		out: calculator.ComputeWithContext(ctx, value),
+		value:      value,
+		out:        calculator.ComputeWithContext(ctx, value),
 	}
 
 	server.Transition(runtime.READY)

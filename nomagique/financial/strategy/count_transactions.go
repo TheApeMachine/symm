@@ -13,17 +13,17 @@ CountTransactionsServer counts total executed buy and sell transactions.
 type CountTransactionsServer struct {
 	*runtime.System
 	actions chan indicator.Action
-	out <-chan int
-	result int64
+	out     <-chan int
+	result  int64
 }
 
 func NewCountTransactions(ctx context.Context) *CountTransactionsServer {
 	actions := make(chan indicator.Action, 1)
 
 	server := &CountTransactionsServer{
-		System: runtime.NewSystem(ctx, "financial.strategy.count_transactions"),
+		System:  runtime.NewSystem(ctx, "financial.strategy.count_transactions"),
 		actions: actions,
-		out: indicator.CountTransactions(actions),
+		out:     indicator.CountTransactions(actions),
 	}
 
 	server.Transition(runtime.READY)

@@ -13,14 +13,14 @@ AlphaStableServer calculates properties and samples from an alpha-stable continu
 */
 type AlphaStableServer struct {
 	*runtime.System
-	mean float64
-	variance float64
-	stdDev float64
-	median float64
-	mode float64
+	mean       float64
+	variance   float64
+	stdDev     float64
+	median     float64
+	mode       float64
 	exKurtosis float64
-	skewness float64
-	rand float64
+	skewness   float64
+	rand       float64
 }
 
 func NewAlphaStable(ctx context.Context) *AlphaStableServer {

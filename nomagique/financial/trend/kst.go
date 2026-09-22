@@ -14,12 +14,12 @@ KstServer calculates the Know Sure Thing (KST) oscillator and signal.
 type KstServer struct {
 	*runtime.System
 	calculator *trend.Kst[float64]
-	value chan float64
-	kstOut <-chan float64
-	signalOut <-chan float64
-	kst float64
-	signal float64
-	count int
+	value      chan float64
+	kstOut     <-chan float64
+	signalOut  <-chan float64
+	kst        float64
+	signal     float64
+	count      int
 }
 
 func NewKst(ctx context.Context) *KstServer {
@@ -27,9 +27,9 @@ func NewKst(ctx context.Context) *KstServer {
 	calculator := trend.NewKst[float64]()
 
 	server := &KstServer{
-		System: runtime.NewSystem(ctx, "financial.trend.kst"),
+		System:     runtime.NewSystem(ctx, "financial.trend.kst"),
 		calculator: calculator,
-		value: value,
+		value:      value,
 	}
 
 	server.kstOut, server.signalOut = calculator.ComputeWithContext(ctx, value)

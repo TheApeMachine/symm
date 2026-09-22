@@ -12,13 +12,13 @@ LinearRegressionServer calculates online least-squares linear regression paramet
 */
 type LinearRegressionServer struct {
 	*runtime.System
-	count float64
-	meanX float64
-	meanY float64
-	m2X float64
+	count    float64
+	meanX    float64
+	meanY    float64
+	m2X      float64
 	coMoment float64
-	alpha float64
-	beta float64
+	alpha    float64
+	beta     float64
 }
 
 func NewLinearRegression(ctx context.Context) *LinearRegressionServer {
@@ -46,7 +46,7 @@ func (server *LinearRegressionServer) Write(ctx context.Context, call LinearRegr
 
 	if server.count > 1 && server.m2X > 0 {
 		server.beta = server.coMoment / server.m2X
-		server.alpha = server.meanY - server.beta * server.meanX
+		server.alpha = server.meanY - server.beta*server.meanX
 	}
 	return nil
 }

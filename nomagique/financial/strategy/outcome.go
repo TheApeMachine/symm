@@ -12,10 +12,10 @@ OutcomeServer simulates cumulative returns from price and action streams.
 */
 type OutcomeServer struct {
 	*runtime.System
-	values chan float64
+	values  chan float64
 	actions chan indicator.Action
-	out <-chan float64
-	result float64
+	out     <-chan float64
+	result  float64
 }
 
 func NewOutcome(ctx context.Context) *OutcomeServer {
@@ -23,10 +23,10 @@ func NewOutcome(ctx context.Context) *OutcomeServer {
 	actions := make(chan indicator.Action, 1)
 
 	server := &OutcomeServer{
-		System: runtime.NewSystem(ctx, "financial.strategy.outcome"),
-		values: values,
+		System:  runtime.NewSystem(ctx, "financial.strategy.outcome"),
+		values:  values,
 		actions: actions,
-		out: indicator.OutcomeWithContext(ctx, values, actions),
+		out:     indicator.OutcomeWithContext(ctx, values, actions),
 	}
 
 	server.Transition(runtime.READY)

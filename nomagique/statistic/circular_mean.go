@@ -13,7 +13,7 @@ CircularMeanServer calculates online circular mean of streaming angles.
 */
 type CircularMeanServer struct {
 	*runtime.System
-	count float64
+	count  float64
 	sumSin float64
 	sumCos float64
 	result float64

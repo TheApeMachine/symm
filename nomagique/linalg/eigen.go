@@ -13,7 +13,7 @@ EigenServer computes eigenvalues and right eigenvectors of square matrix A.
 */
 type EigenServer struct {
 	*runtime.System
-	resultValues *mat.VecDense
+	resultValues  *mat.VecDense
 	resultVectors *mat.Dense
 }
 

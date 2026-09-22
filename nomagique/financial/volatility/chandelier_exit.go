@@ -13,15 +13,15 @@ ChandelierExitServer calculates the Chandelier Exit.
 */
 type ChandelierExitServer struct {
 	*runtime.System
-	calculator *indicator.ChandelierExit[float64]
-	high chan float64
-	low chan float64
-	close chan float64
-	exitLongOut <-chan float64
+	calculator   *indicator.ChandelierExit[float64]
+	high         chan float64
+	low          chan float64
+	close        chan float64
+	exitLongOut  <-chan float64
 	exitShortOut <-chan float64
-	exitLong float64
-	exitShort float64
-	count int
+	exitLong     float64
+	exitShort    float64
+	count        int
 }
 
 func NewChandelierExit(ctx context.Context) *ChandelierExitServer {
@@ -31,11 +31,11 @@ func NewChandelierExit(ctx context.Context) *ChandelierExitServer {
 	calculator := indicator.NewChandelierExit[float64]()
 
 	server := &ChandelierExitServer{
-		System: runtime.NewSystem(ctx, "financial.volatility.chandelier_exit"),
+		System:     runtime.NewSystem(ctx, "financial.volatility.chandelier_exit"),
 		calculator: calculator,
-		high: high,
-		low: low,
-		close: close,
+		high:       high,
+		low:        low,
+		close:      close,
 	}
 
 	server.exitLongOut, server.exitShortOut = calculator.ComputeWithContext(ctx, high, low, close)

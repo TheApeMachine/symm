@@ -220,7 +220,7 @@
             },
             {
               "nodeId": "notional_rate_divergence",
-              "portName": "value"
+              "portName": "a"
             },
             {
               "nodeId": "notional_rate_zscore",
@@ -276,7 +276,7 @@
     },
     "notional_rate_baseline": {
       "id": "notional_rate_baseline",
-      "type": "statistic.ResidualBaseline",
+      "type": "statistic.CausalMean",
       "width": 280,
       "height": 172,
       "x": 100.0,
@@ -299,6 +299,10 @@
             {
               "nodeId": "metric:notional_rate_baseline",
               "portName": "raw"
+            },
+            {
+              "nodeId": "notional_rate_divergence",
+              "portName": "b"
             }
           ]
         }
@@ -306,16 +310,22 @@
     },
     "notional_rate_divergence": {
       "id": "notional_rate_divergence",
-      "type": "statistic.ResidualDivergence",
+      "type": "arithmetic.Subtract",
       "width": 280,
       "height": 172,
       "x": 100.0,
       "y": 360.0,
       "connections": {
         "inputs": {
-          "value": [
+          "a": [
             {
               "nodeId": "notional_rate",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "notional_rate_baseline",
               "portName": "out"
             }
           ]

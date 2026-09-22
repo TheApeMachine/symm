@@ -14,12 +14,12 @@ CciServer calculates the Commodity Channel Index (CCI).
 type CciServer struct {
 	*runtime.System
 	calculator *trend.Cci[float64]
-	high chan float64
-	low chan float64
-	close chan float64
-	out <-chan float64
-	result float64
-	count int
+	high       chan float64
+	low        chan float64
+	close      chan float64
+	out        <-chan float64
+	result     float64
+	count      int
 }
 
 func NewCci(ctx context.Context) *CciServer {
@@ -29,12 +29,12 @@ func NewCci(ctx context.Context) *CciServer {
 	calculator := trend.NewCci[float64]()
 
 	server := &CciServer{
-		System: runtime.NewSystem(ctx, "financial.trend.cci"),
+		System:     runtime.NewSystem(ctx, "financial.trend.cci"),
 		calculator: calculator,
-		high: high,
-		low: low,
-		close: close,
-		out: calculator.ComputeWithContext(ctx, high, low, close),
+		high:       high,
+		low:        low,
+		close:      close,
+		out:        calculator.ComputeWithContext(ctx, high, low, close),
 	}
 
 	server.Transition(runtime.READY)

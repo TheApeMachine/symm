@@ -14,15 +14,15 @@ DonchianChannelServer calculates the Donchian Channel.
 type DonchianChannelServer struct {
 	*runtime.System
 	calculator *indicator.DonchianChannel[float64]
-	high chan float64
-	low chan float64
-	upperOut <-chan float64
-	middleOut <-chan float64
-	lowerOut <-chan float64
-	upper float64
-	middle float64
-	lower float64
-	count int
+	high       chan float64
+	low        chan float64
+	upperOut   <-chan float64
+	middleOut  <-chan float64
+	lowerOut   <-chan float64
+	upper      float64
+	middle     float64
+	lower      float64
+	count      int
 }
 
 func NewDonchianChannel(ctx context.Context) *DonchianChannelServer {
@@ -31,10 +31,10 @@ func NewDonchianChannel(ctx context.Context) *DonchianChannelServer {
 	calculator := indicator.NewDonchianChannel[float64]()
 
 	server := &DonchianChannelServer{
-		System: runtime.NewSystem(ctx, "financial.volatility.donchian_channel"),
+		System:     runtime.NewSystem(ctx, "financial.volatility.donchian_channel"),
 		calculator: calculator,
-		high: high,
-		low: low,
+		high:       high,
+		low:        low,
 	}
 
 	server.upperOut, server.middleOut, server.lowerOut = calculator.ComputeWithContext(ctx, high, low)

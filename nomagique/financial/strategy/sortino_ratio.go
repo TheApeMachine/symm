@@ -2,9 +2,9 @@ package strategy
 
 import (
 	"context"
-	"math"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	"math"
 )
 
 /*
@@ -12,13 +12,13 @@ SortinoRatioServer calculates the online annualized Sortino Ratio of cumulative 
 */
 type SortinoRatioServer struct {
 	*runtime.System
-	prevEquity float64
-	mean float64
+	prevEquity    float64
+	mean          float64
 	downsideSumSq float64
 	downsideCount int
-	returnsCount int
-	count int
-	ratio float64
+	returnsCount  int
+	count         int
+	ratio         float64
 }
 
 func NewSortinoRatio(ctx context.Context) *SortinoRatioServer {

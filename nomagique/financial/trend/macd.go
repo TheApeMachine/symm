@@ -14,12 +14,12 @@ MacdServer calculates Moving Average Convergence Divergence (MACD) and signal.
 type MacdServer struct {
 	*runtime.System
 	calculator *trend.Macd[float64]
-	value chan float64
-	macdOut <-chan float64
-	signalOut <-chan float64
-	macd float64
-	signal float64
-	count int
+	value      chan float64
+	macdOut    <-chan float64
+	signalOut  <-chan float64
+	macd       float64
+	signal     float64
+	count      int
 }
 
 func NewMacd(ctx context.Context) *MacdServer {
@@ -27,9 +27,9 @@ func NewMacd(ctx context.Context) *MacdServer {
 	calculator := trend.NewMacd[float64]()
 
 	server := &MacdServer{
-		System: runtime.NewSystem(ctx, "financial.trend.macd"),
+		System:     runtime.NewSystem(ctx, "financial.trend.macd"),
 		calculator: calculator,
-		value: value,
+		value:      value,
 	}
 
 	server.macdOut, server.signalOut = calculator.ComputeWithContext(ctx, value)

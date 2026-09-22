@@ -13,14 +13,14 @@ LogisticServer evaluates continuous Logistic distribution.
 */
 type LogisticServer struct {
 	*runtime.System
-	prob float64
-	logProb float64
-	cdf float64
+	prob     float64
+	logProb  float64
+	cdf      float64
 	quantile float64
 	survival float64
-	mean float64
+	mean     float64
 	variance float64
-	stdDev float64
+	stdDev   float64
 }
 
 func NewLogistic(ctx context.Context) *LogisticServer {

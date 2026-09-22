@@ -14,13 +14,13 @@ MfvServer calculates the Money Flow Volume (MFV).
 type MfvServer struct {
 	*runtime.System
 	calculator *indicator.Mfv[float64]
-	high chan float64
-	low chan float64
-	close chan float64
-	volume chan float64
-	out <-chan float64
-	result float64
-	count int
+	high       chan float64
+	low        chan float64
+	close      chan float64
+	volume     chan float64
+	out        <-chan float64
+	result     float64
+	count      int
 }
 
 func NewMfv(ctx context.Context) *MfvServer {
@@ -31,13 +31,13 @@ func NewMfv(ctx context.Context) *MfvServer {
 	calculator := indicator.NewMfv[float64]()
 
 	server := &MfvServer{
-		System: runtime.NewSystem(ctx, "financial.volume.mfv"),
+		System:     runtime.NewSystem(ctx, "financial.volume.mfv"),
 		calculator: calculator,
-		high: high,
-		low: low,
-		close: close,
-		volume: volume,
-		out: calculator.ComputeWithContext(ctx, high, low, close, volume),
+		high:       high,
+		low:        low,
+		close:      close,
+		volume:     volume,
+		out:        calculator.ComputeWithContext(ctx, high, low, close, volume),
 	}
 
 	server.Transition(runtime.READY)

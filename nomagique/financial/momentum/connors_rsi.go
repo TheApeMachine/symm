@@ -14,10 +14,10 @@ ConnorsRsiServer calculates the Connors RSI (CRSI).
 type ConnorsRsiServer struct {
 	*runtime.System
 	calculator *indicator.ConnorsRsi[float64]
-	close chan float64
-	out <-chan float64
-	result float64
-	count int
+	close      chan float64
+	out        <-chan float64
+	result     float64
+	count      int
 }
 
 func NewConnorsRsi(ctx context.Context) *ConnorsRsiServer {
@@ -25,10 +25,10 @@ func NewConnorsRsi(ctx context.Context) *ConnorsRsiServer {
 	calculator := indicator.NewConnorsRsi[float64]()
 
 	server := &ConnorsRsiServer{
-		System: runtime.NewSystem(ctx, "financial.momentum.connors_rsi"),
+		System:     runtime.NewSystem(ctx, "financial.momentum.connors_rsi"),
 		calculator: calculator,
-		close: close,
-		out: calculator.ComputeWithContext(ctx, close),
+		close:      close,
+		out:        calculator.ComputeWithContext(ctx, close),
 	}
 
 	server.Transition(runtime.READY)

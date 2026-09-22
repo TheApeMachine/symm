@@ -13,17 +13,17 @@ DenormalizeActionsServer forward-fills the action sequence until a new non-hold 
 type DenormalizeActionsServer struct {
 	*runtime.System
 	actions chan indicator.Action
-	out <-chan indicator.Action
-	result int64
+	out     <-chan indicator.Action
+	result  int64
 }
 
 func NewDenormalizeActions(ctx context.Context) *DenormalizeActionsServer {
 	actions := make(chan indicator.Action, 1)
 
 	server := &DenormalizeActionsServer{
-		System: runtime.NewSystem(ctx, "financial.strategy.denormalize_actions"),
+		System:  runtime.NewSystem(ctx, "financial.strategy.denormalize_actions"),
 		actions: actions,
-		out: indicator.DenormalizeActionsWithContext(ctx, actions),
+		out:     indicator.DenormalizeActionsWithContext(ctx, actions),
 	}
 
 	server.Transition(runtime.READY)

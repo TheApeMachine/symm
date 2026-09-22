@@ -14,10 +14,10 @@ DemaServer calculates the Double Exponential Moving Average (DEMA).
 type DemaServer struct {
 	*runtime.System
 	calculator *trend.Dema[float64]
-	value chan float64
-	out <-chan float64
-	result float64
-	count int
+	value      chan float64
+	out        <-chan float64
+	result     float64
+	count      int
 }
 
 func NewDema(ctx context.Context) *DemaServer {
@@ -25,10 +25,10 @@ func NewDema(ctx context.Context) *DemaServer {
 	calculator := trend.NewDema[float64]()
 
 	server := &DemaServer{
-		System: runtime.NewSystem(ctx, "financial.trend.dema"),
+		System:     runtime.NewSystem(ctx, "financial.trend.dema"),
 		calculator: calculator,
-		value: value,
-		out: calculator.ComputeWithContext(ctx, value),
+		value:      value,
+		out:        calculator.ComputeWithContext(ctx, value),
 	}
 
 	server.Transition(runtime.READY)

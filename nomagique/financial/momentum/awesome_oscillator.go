@@ -14,11 +14,11 @@ AwesomeOscillatorServer calculates the Awesome Oscillator (AO).
 type AwesomeOscillatorServer struct {
 	*runtime.System
 	calculator *indicator.AwesomeOscillator[float64]
-	high chan float64
-	low chan float64
-	out <-chan float64
-	result float64
-	count int
+	high       chan float64
+	low        chan float64
+	out        <-chan float64
+	result     float64
+	count      int
 }
 
 func NewAwesomeOscillator(ctx context.Context) *AwesomeOscillatorServer {
@@ -27,11 +27,11 @@ func NewAwesomeOscillator(ctx context.Context) *AwesomeOscillatorServer {
 	calculator := indicator.NewAwesomeOscillator[float64]()
 
 	server := &AwesomeOscillatorServer{
-		System: runtime.NewSystem(ctx, "financial.momentum.awesome_oscillator"),
+		System:     runtime.NewSystem(ctx, "financial.momentum.awesome_oscillator"),
 		calculator: calculator,
-		high: high,
-		low: low,
-		out: calculator.ComputeWithContext(ctx, high, low),
+		high:       high,
+		low:        low,
+		out:        calculator.ComputeWithContext(ctx, high, low),
 	}
 
 	server.Transition(runtime.READY)

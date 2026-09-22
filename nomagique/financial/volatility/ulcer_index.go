@@ -14,10 +14,10 @@ UlcerIndexServer calculates the Ulcer Index (UI).
 type UlcerIndexServer struct {
 	*runtime.System
 	calculator *indicator.UlcerIndex[float64]
-	close chan float64
-	out <-chan float64
-	result float64
-	count int
+	close      chan float64
+	out        <-chan float64
+	result     float64
+	count      int
 }
 
 func NewUlcerIndex(ctx context.Context) *UlcerIndexServer {
@@ -25,10 +25,10 @@ func NewUlcerIndex(ctx context.Context) *UlcerIndexServer {
 	calculator := indicator.NewUlcerIndex[float64]()
 
 	server := &UlcerIndexServer{
-		System: runtime.NewSystem(ctx, "financial.volatility.ulcer_index"),
+		System:     runtime.NewSystem(ctx, "financial.volatility.ulcer_index"),
 		calculator: calculator,
-		close: close,
-		out: calculator.ComputeWithContext(ctx, close),
+		close:      close,
+		out:        calculator.ComputeWithContext(ctx, close),
 	}
 
 	server.Transition(runtime.READY)

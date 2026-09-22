@@ -14,11 +14,11 @@ VptServer calculates the Volume Price Trend (VPT).
 type VptServer struct {
 	*runtime.System
 	calculator *indicator.Vpt[float64]
-	close chan float64
-	volume chan float64
-	out <-chan float64
-	result float64
-	count int
+	close      chan float64
+	volume     chan float64
+	out        <-chan float64
+	result     float64
+	count      int
 }
 
 func NewVpt(ctx context.Context) *VptServer {
@@ -27,11 +27,11 @@ func NewVpt(ctx context.Context) *VptServer {
 	calculator := indicator.NewVpt[float64]()
 
 	server := &VptServer{
-		System: runtime.NewSystem(ctx, "financial.volume.vpt"),
+		System:     runtime.NewSystem(ctx, "financial.volume.vpt"),
 		calculator: calculator,
-		close: close,
-		volume: volume,
-		out: calculator.ComputeWithContext(ctx, close, volume),
+		close:      close,
+		volume:     volume,
+		out:        calculator.ComputeWithContext(ctx, close, volume),
 	}
 
 	server.Transition(runtime.READY)

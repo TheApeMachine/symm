@@ -12,11 +12,11 @@ KurtosisServer calculates online excess kurtosis of streaming observations.
 */
 type KurtosisServer struct {
 	*runtime.System
-	count float64
-	mean float64
-	m2 float64
-	m3 float64
-	m4 float64
+	count  float64
+	mean   float64
+	m2     float64
+	m3     float64
+	m4     float64
 	result float64
 }
 
@@ -46,13 +46,13 @@ func (server *KurtosisServer) Write(ctx context.Context, call Kurtosis_write) er
 	deltaN2 := deltaN * deltaN
 	term1 := delta * deltaN * (server.count - 1)
 	server.mean += deltaN
-	server.m4 += term1*deltaN2*(server.count*server.count - 3*server.count + 3) + 6*deltaN2*server.m2 - 4*deltaN*server.m3
+	server.m4 += term1*deltaN2*(server.count*server.count-3*server.count+3) + 6*deltaN2*server.m2 - 4*deltaN*server.m3
 	server.m3 += term1*deltaN*(server.count-1) - 3*deltaN*server.m2
 	server.m2 += term1
 
 	if server.count > 3 && server.m2 > 0 {
 		variance := server.m2 / (server.count - 1)
-		server.result = (server.m4 / server.count) / (variance * variance) - 3.0
+		server.result = (server.m4/server.count)/(variance*variance) - 3.0
 	}
 	return nil
 }

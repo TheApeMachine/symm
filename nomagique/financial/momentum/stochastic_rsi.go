@@ -14,10 +14,10 @@ StochasticRsiServer calculates the Stochastic RSI (StochRSI).
 type StochasticRsiServer struct {
 	*runtime.System
 	calculator *indicator.StochasticRsi[float64]
-	close chan float64
-	out <-chan float64
-	result float64
-	count int
+	close      chan float64
+	out        <-chan float64
+	result     float64
+	count      int
 }
 
 func NewStochasticRsi(ctx context.Context) *StochasticRsiServer {
@@ -25,10 +25,10 @@ func NewStochasticRsi(ctx context.Context) *StochasticRsiServer {
 	calculator := indicator.NewStochasticRsi[float64]()
 
 	server := &StochasticRsiServer{
-		System: runtime.NewSystem(ctx, "financial.momentum.stochastic_rsi"),
+		System:     runtime.NewSystem(ctx, "financial.momentum.stochastic_rsi"),
 		calculator: calculator,
-		close: close,
-		out: calculator.ComputeWithContext(ctx, close),
+		close:      close,
+		out:        calculator.ComputeWithContext(ctx, close),
 	}
 
 	server.Transition(runtime.READY)

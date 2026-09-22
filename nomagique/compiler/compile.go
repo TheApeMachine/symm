@@ -14,6 +14,7 @@ import (
 	"capnproto.org/go/capnp/v3/std/capnp/schema"
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/nomagique/store"
 )
 
 /*
@@ -120,6 +121,14 @@ func CompileWithPrevious(
 				// so the two do not have to be ordered against each other and
 				// a node may be handed to something it also reads from.
 				if carriesCapability(registry, consumer, target.PortName) {
+					continue
+				}
+
+				// Reading what a store held before this evaluation is not a
+				// dependency either: the value is already there. That is what
+				// lets a node continue the estimate it left behind without the
+				// graph closing a cycle around it.
+				if holdsRetained(registry, node) {
 					continue
 				}
 
@@ -1547,4 +1556,18 @@ func lowerUINode(graph Graph, id string, visited map[string]bool) UINodePlan {
 		Props:     props,
 		Children:  children,
 	}
+}
+
+/*
+holdsRetained reports a producer that hands back what it held before this
+evaluation, which a consumer reads without waiting for it.
+*/
+func holdsRetained(registry *Registry, producer Node) bool {
+	factory, err := registry.Resolve(producer.Type)
+
+	if err != nil || factory.InterfaceID == 0 {
+		return false
+	}
+
+	return Implements(factory.InterfaceID, store.Retained_TypeID)
 }

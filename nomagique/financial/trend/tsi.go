@@ -14,10 +14,10 @@ TsiServer calculates the True Strength Index (TSI).
 type TsiServer struct {
 	*runtime.System
 	calculator *trend.Tsi[float64]
-	value chan float64
-	out <-chan float64
-	result float64
-	count int
+	value      chan float64
+	out        <-chan float64
+	result     float64
+	count      int
 }
 
 func NewTsi(ctx context.Context) *TsiServer {
@@ -25,10 +25,10 @@ func NewTsi(ctx context.Context) *TsiServer {
 	calculator := trend.NewTsi[float64]()
 
 	server := &TsiServer{
-		System: runtime.NewSystem(ctx, "financial.trend.tsi"),
+		System:     runtime.NewSystem(ctx, "financial.trend.tsi"),
 		calculator: calculator,
-		value: value,
-		out: calculator.ComputeWithContext(ctx, value),
+		value:      value,
+		out:        calculator.ComputeWithContext(ctx, value),
 	}
 
 	server.Transition(runtime.READY)

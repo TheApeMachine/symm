@@ -13,7 +13,7 @@ MomentAboutServer calculates online r-th central moment about c of streaming obs
 */
 type MomentAboutServer struct {
 	*runtime.System
-	count float64
+	count  float64
 	sumPow float64
 	result float64
 }
@@ -35,7 +35,7 @@ func (server *MomentAboutServer) Write(ctx context.Context, call MomentAbout_wri
 	orderVal := call.Args().Order()
 	meanVal := call.Args().Mean()
 	server.count++
-	server.sumPow += math.Pow(valueVal - meanVal, orderVal)
+	server.sumPow += math.Pow(valueVal-meanVal, orderVal)
 	server.result = server.sumPow / server.count
 	return nil
 }

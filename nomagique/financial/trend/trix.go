@@ -14,10 +14,10 @@ TrixServer calculates the TRIX indicator.
 type TrixServer struct {
 	*runtime.System
 	calculator *trend.Trix[float64]
-	value chan float64
-	out <-chan float64
-	result float64
-	count int
+	value      chan float64
+	out        <-chan float64
+	result     float64
+	count      int
 }
 
 func NewTrix(ctx context.Context) *TrixServer {
@@ -25,10 +25,10 @@ func NewTrix(ctx context.Context) *TrixServer {
 	calculator := trend.NewTrix[float64]()
 
 	server := &TrixServer{
-		System: runtime.NewSystem(ctx, "financial.trend.trix"),
+		System:     runtime.NewSystem(ctx, "financial.trend.trix"),
 		calculator: calculator,
-		value: value,
-		out: calculator.ComputeWithContext(ctx, value),
+		value:      value,
+		out:        calculator.ComputeWithContext(ctx, value),
 	}
 
 	server.Transition(runtime.READY)

@@ -14,13 +14,13 @@ AdServer calculates the Accumulation/Distribution (A/D) indicator.
 type AdServer struct {
 	*runtime.System
 	calculator *indicator.Ad[float64]
-	high chan float64
-	low chan float64
-	close chan float64
-	volume chan float64
-	out <-chan float64
-	result float64
-	count int
+	high       chan float64
+	low        chan float64
+	close      chan float64
+	volume     chan float64
+	out        <-chan float64
+	result     float64
+	count      int
 }
 
 func NewAd(ctx context.Context) *AdServer {
@@ -31,13 +31,13 @@ func NewAd(ctx context.Context) *AdServer {
 	calculator := indicator.NewAd[float64]()
 
 	server := &AdServer{
-		System: runtime.NewSystem(ctx, "financial.volume.ad"),
+		System:     runtime.NewSystem(ctx, "financial.volume.ad"),
 		calculator: calculator,
-		high: high,
-		low: low,
-		close: close,
-		volume: volume,
-		out: calculator.ComputeWithContext(ctx, high, low, close, volume),
+		high:       high,
+		low:        low,
+		close:      close,
+		volume:     volume,
+		out:        calculator.ComputeWithContext(ctx, high, low, close, volume),
 	}
 
 	server.Transition(runtime.READY)

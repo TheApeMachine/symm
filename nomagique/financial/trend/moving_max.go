@@ -14,10 +14,10 @@ MovingMaxServer calculates the Moving Maximum.
 type MovingMaxServer struct {
 	*runtime.System
 	calculator *trend.MovingMax[float64]
-	value chan float64
-	out <-chan float64
-	result float64
-	count int
+	value      chan float64
+	out        <-chan float64
+	result     float64
+	count      int
 }
 
 func NewMovingMax(ctx context.Context) *MovingMaxServer {
@@ -25,10 +25,10 @@ func NewMovingMax(ctx context.Context) *MovingMaxServer {
 	calculator := trend.NewMovingMax[float64]()
 
 	server := &MovingMaxServer{
-		System: runtime.NewSystem(ctx, "financial.trend.moving_max"),
+		System:     runtime.NewSystem(ctx, "financial.trend.moving_max"),
 		calculator: calculator,
-		value: value,
-		out: calculator.ComputeWithContext(ctx, value),
+		value:      value,
+		out:        calculator.ComputeWithContext(ctx, value),
 	}
 
 	server.Transition(runtime.READY)

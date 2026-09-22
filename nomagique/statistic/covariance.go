@@ -12,13 +12,13 @@ CovarianceServer calculates online sample covariance between two streaming varia
 */
 type CovarianceServer struct {
 	*runtime.System
-	count float64
-	meanX float64
-	meanY float64
-	m2X float64
-	m2Y float64
+	count    float64
+	meanX    float64
+	meanY    float64
+	m2X      float64
+	m2Y      float64
 	coMoment float64
-	result float64
+	result   float64
 }
 
 func NewCovariance(ctx context.Context) *CovarianceServer {

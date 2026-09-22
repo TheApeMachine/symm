@@ -14,10 +14,10 @@ CfoServer calculates the Chande Forecast Oscillator (CFO).
 type CfoServer struct {
 	*runtime.System
 	calculator *trend.Cfo[float64]
-	value chan float64
-	out <-chan float64
-	result float64
-	count int
+	value      chan float64
+	out        <-chan float64
+	result     float64
+	count      int
 }
 
 func NewCfo(ctx context.Context) *CfoServer {
@@ -25,10 +25,10 @@ func NewCfo(ctx context.Context) *CfoServer {
 	calculator := trend.NewCfo[float64]()
 
 	server := &CfoServer{
-		System: runtime.NewSystem(ctx, "financial.trend.cfo"),
+		System:     runtime.NewSystem(ctx, "financial.trend.cfo"),
 		calculator: calculator,
-		value: value,
-		out: calculator.ComputeWithContext(ctx, value),
+		value:      value,
+		out:        calculator.ComputeWithContext(ctx, value),
 	}
 
 	server.Transition(runtime.READY)

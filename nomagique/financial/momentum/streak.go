@@ -14,10 +14,10 @@ StreakServer calculates the price streak.
 type StreakServer struct {
 	*runtime.System
 	calculator *indicator.Streak[float64]
-	close chan float64
-	out <-chan float64
-	result float64
-	count int
+	close      chan float64
+	out        <-chan float64
+	result     float64
+	count      int
 }
 
 func NewStreak(ctx context.Context) *StreakServer {
@@ -25,10 +25,10 @@ func NewStreak(ctx context.Context) *StreakServer {
 	calculator := indicator.NewStreak[float64]()
 
 	server := &StreakServer{
-		System: runtime.NewSystem(ctx, "financial.momentum.streak"),
+		System:     runtime.NewSystem(ctx, "financial.momentum.streak"),
 		calculator: calculator,
-		close: close,
-		out: calculator.ComputeWithContext(ctx, close),
+		close:      close,
+		out:        calculator.ComputeWithContext(ctx, close),
 	}
 
 	server.Transition(runtime.READY)

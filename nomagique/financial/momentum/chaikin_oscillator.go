@@ -14,15 +14,15 @@ ChaikinOscillatorServer calculates the Chaikin Oscillator.
 type ChaikinOscillatorServer struct {
 	*runtime.System
 	calculator *indicator.ChaikinOscillator[float64]
-	high chan float64
-	low chan float64
-	close chan float64
-	volume chan float64
-	coOut <-chan float64
-	co float64
-	adOut <-chan float64
-	ad float64
-	count int
+	high       chan float64
+	low        chan float64
+	close      chan float64
+	volume     chan float64
+	coOut      <-chan float64
+	co         float64
+	adOut      <-chan float64
+	ad         float64
+	count      int
 }
 
 func NewChaikinOscillator(ctx context.Context) *ChaikinOscillatorServer {
@@ -33,12 +33,12 @@ func NewChaikinOscillator(ctx context.Context) *ChaikinOscillatorServer {
 	calculator := indicator.NewChaikinOscillator[float64]()
 
 	server := &ChaikinOscillatorServer{
-		System: runtime.NewSystem(ctx, "financial.momentum.chaikin_oscillator"),
+		System:     runtime.NewSystem(ctx, "financial.momentum.chaikin_oscillator"),
 		calculator: calculator,
-		high: high,
-		low: low,
-		close: close,
-		volume: volume,
+		high:       high,
+		low:        low,
+		close:      close,
+		volume:     volume,
 	}
 
 	server.coOut, server.adOut = calculator.ComputeWithContext(ctx, high, low, close, volume)

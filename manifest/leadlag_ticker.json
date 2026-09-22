@@ -597,7 +597,7 @@
     },
     "correlation_gain_baseline": {
       "id": "correlation_gain_baseline",
-      "type": "statistic.ResidualBaseline",
+      "type": "statistic.CausalMean",
       "width": 280,
       "height": 172,
       "x": 750.0,
@@ -675,7 +675,7 @@
     },
     "best_lag_correlation_baseline": {
       "id": "best_lag_correlation_baseline",
-      "type": "statistic.ResidualBaseline",
+      "type": "statistic.CausalMean",
       "width": 280,
       "height": 172,
       "x": 100.0,

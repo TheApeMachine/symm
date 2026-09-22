@@ -14,13 +14,13 @@ AroonServer calculates the Aroon Indicator (Aroon Up and Aroon Down).
 type AroonServer struct {
 	*runtime.System
 	calculator *trend.Aroon[float64]
-	high chan float64
-	low chan float64
-	upOut <-chan float64
-	downOut <-chan float64
-	up float64
-	down float64
-	count int
+	high       chan float64
+	low        chan float64
+	upOut      <-chan float64
+	downOut    <-chan float64
+	up         float64
+	down       float64
+	count      int
 }
 
 func NewAroon(ctx context.Context) *AroonServer {
@@ -29,10 +29,10 @@ func NewAroon(ctx context.Context) *AroonServer {
 	calculator := trend.NewAroon[float64]()
 
 	server := &AroonServer{
-		System: runtime.NewSystem(ctx, "financial.trend.aroon"),
+		System:     runtime.NewSystem(ctx, "financial.trend.aroon"),
 		calculator: calculator,
-		high: high,
-		low: low,
+		high:       high,
+		low:        low,
 	}
 
 	server.upOut, server.downOut = calculator.ComputeWithContext(ctx, high, low)

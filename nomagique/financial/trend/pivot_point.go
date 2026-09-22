@@ -14,13 +14,13 @@ PivotPointServer calculates standard Pivot Point support and resistance levels.
 type PivotPointServer struct {
 	*runtime.System
 	calculator *trend.PivotPoint[float64]
-	open chan float64
-	high chan float64
-	low chan float64
-	close chan float64
-	out <-chan trend.PivotPointResult[float64]
-	result trend.PivotPointResult[float64]
-	count int
+	open       chan float64
+	high       chan float64
+	low        chan float64
+	close      chan float64
+	out        <-chan trend.PivotPointResult[float64]
+	result     trend.PivotPointResult[float64]
+	count      int
 }
 
 func NewPivotPoint(ctx context.Context) *PivotPointServer {
@@ -31,13 +31,13 @@ func NewPivotPoint(ctx context.Context) *PivotPointServer {
 	calculator := trend.NewPivotPoint[float64]()
 
 	server := &PivotPointServer{
-		System: runtime.NewSystem(ctx, "financial.trend.pivot_point"),
+		System:     runtime.NewSystem(ctx, "financial.trend.pivot_point"),
 		calculator: calculator,
-		open: open,
-		high: high,
-		low: low,
-		close: close,
-		out: calculator.ComputeWithContext(ctx, open, high, low, close),
+		open:       open,
+		high:       high,
+		low:        low,
+		close:      close,
+		out:        calculator.ComputeWithContext(ctx, open, high, low, close),
 	}
 
 	server.Transition(runtime.READY)

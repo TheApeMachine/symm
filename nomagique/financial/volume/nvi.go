@@ -14,11 +14,11 @@ NviServer calculates the Negative Volume Index (NVI).
 type NviServer struct {
 	*runtime.System
 	calculator *indicator.Nvi[float64]
-	close chan float64
-	volume chan float64
-	out <-chan float64
-	result float64
-	count int
+	close      chan float64
+	volume     chan float64
+	out        <-chan float64
+	result     float64
+	count      int
 }
 
 func NewNvi(ctx context.Context) *NviServer {
@@ -27,11 +27,11 @@ func NewNvi(ctx context.Context) *NviServer {
 	calculator := indicator.NewNvi[float64]()
 
 	server := &NviServer{
-		System: runtime.NewSystem(ctx, "financial.volume.nvi"),
+		System:     runtime.NewSystem(ctx, "financial.volume.nvi"),
 		calculator: calculator,
-		close: close,
-		volume: volume,
-		out: calculator.ComputeWithContext(ctx, close, volume),
+		close:      close,
+		volume:     volume,
+		out:        calculator.ComputeWithContext(ctx, close, volume),
 	}
 
 	server.Transition(runtime.READY)

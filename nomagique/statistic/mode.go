@@ -13,13 +13,13 @@ ModeServer identifies the sample mode and frequency from streaming observations.
 type ModeServer struct {
 	*runtime.System
 	frequencies map[float64]int64
-	mode float64
-	maxFreq int64
+	mode        float64
+	maxFreq     int64
 }
 
 func NewMode(ctx context.Context) *ModeServer {
 	server := &ModeServer{
-		System: runtime.NewSystem(ctx, "statistic.mode"),
+		System:      runtime.NewSystem(ctx, "statistic.mode"),
 		frequencies: make(map[float64]int64),
 	}
 

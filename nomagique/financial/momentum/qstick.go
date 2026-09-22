@@ -14,11 +14,11 @@ QstickServer calculates the Qstick indicator.
 type QstickServer struct {
 	*runtime.System
 	calculator *indicator.Qstick[float64]
-	open chan float64
-	close chan float64
-	out <-chan float64
-	result float64
-	count int
+	open       chan float64
+	close      chan float64
+	out        <-chan float64
+	result     float64
+	count      int
 }
 
 func NewQstick(ctx context.Context) *QstickServer {
@@ -27,11 +27,11 @@ func NewQstick(ctx context.Context) *QstickServer {
 	calculator := indicator.NewQstick[float64]()
 
 	server := &QstickServer{
-		System: runtime.NewSystem(ctx, "financial.momentum.qstick"),
+		System:     runtime.NewSystem(ctx, "financial.momentum.qstick"),
 		calculator: calculator,
-		open: open,
-		close: close,
-		out: calculator.ComputeWithContext(ctx, open, close),
+		open:       open,
+		close:      close,
+		out:        calculator.ComputeWithContext(ctx, open, close),
 	}
 
 	server.Transition(runtime.READY)

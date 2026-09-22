@@ -109,7 +109,7 @@
             },
             {
               "nodeId": "spread_divergence",
-              "portName": "value"
+              "portName": "a"
             },
             {
               "nodeId": "spread_zscore",
@@ -133,7 +133,7 @@
     },
     "relative_spread_baseline": {
       "id": "relative_spread_baseline",
-      "type": "statistic.ResidualBaseline",
+      "type": "statistic.CausalMean",
       "width": 280,
       "height": 172,
       "x": 0.0,
@@ -156,6 +156,10 @@
             {
               "nodeId": "metric:relative_spread_baseline",
               "portName": "raw"
+            },
+            {
+              "nodeId": "spread_divergence",
+              "portName": "b"
             }
           ]
         }
@@ -163,16 +167,22 @@
     },
     "spread_divergence": {
       "id": "spread_divergence",
-      "type": "statistic.ResidualDivergence",
+      "type": "arithmetic.Subtract",
       "width": 280,
       "height": 172,
       "x": 0.0,
       "y": -60.0,
       "connections": {
         "inputs": {
-          "value": [
+          "a": [
             {
               "nodeId": "relative_spread",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "relative_spread_baseline",
               "portName": "out"
             }
           ]

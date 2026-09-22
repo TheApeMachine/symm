@@ -14,12 +14,12 @@ TypicalPriceServer calculates the Typical Price.
 type TypicalPriceServer struct {
 	*runtime.System
 	calculator *trend.TypicalPrice[float64]
-	high chan float64
-	low chan float64
-	close chan float64
-	out <-chan float64
-	result float64
-	count int
+	high       chan float64
+	low        chan float64
+	close      chan float64
+	out        <-chan float64
+	result     float64
+	count      int
 }
 
 func NewTypicalPrice(ctx context.Context) *TypicalPriceServer {
@@ -29,12 +29,12 @@ func NewTypicalPrice(ctx context.Context) *TypicalPriceServer {
 	calculator := trend.NewTypicalPrice[float64]()
 
 	server := &TypicalPriceServer{
-		System: runtime.NewSystem(ctx, "financial.trend.typical_price"),
+		System:     runtime.NewSystem(ctx, "financial.trend.typical_price"),
 		calculator: calculator,
-		high: high,
-		low: low,
-		close: close,
-		out: calculator.ComputeWithContext(ctx, high, low, close),
+		high:       high,
+		low:        low,
+		close:      close,
+		out:        calculator.ComputeWithContext(ctx, high, low, close),
 	}
 
 	server.Transition(runtime.READY)

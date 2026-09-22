@@ -15,7 +15,7 @@ CovarianceMatrixServer calculates sample covariance matrix of multi-column obser
 type CovarianceMatrixServer struct {
 	*runtime.System
 	resultMatrix []float64
-	dim int32
+	dim          int32
 }
 
 func NewCovarianceMatrix(ctx context.Context) *CovarianceMatrixServer {

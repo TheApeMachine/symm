@@ -14,10 +14,10 @@ T3Server calculates the Tillson T3 Moving Average.
 type T3Server struct {
 	*runtime.System
 	calculator *trend.T3[float64]
-	value chan float64
-	out <-chan float64
-	result float64
-	count int
+	value      chan float64
+	out        <-chan float64
+	result     float64
+	count      int
 }
 
 func NewT3(ctx context.Context) *T3Server {
@@ -25,10 +25,10 @@ func NewT3(ctx context.Context) *T3Server {
 	calculator := trend.NewT3[float64]()
 
 	server := &T3Server{
-		System: runtime.NewSystem(ctx, "financial.trend.t3"),
+		System:     runtime.NewSystem(ctx, "financial.trend.t3"),
 		calculator: calculator,
-		value: value,
-		out: calculator.ComputeWithContext(ctx, value),
+		value:      value,
+		out:        calculator.ComputeWithContext(ctx, value),
 	}
 
 	server.Transition(runtime.READY)

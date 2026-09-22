@@ -14,11 +14,11 @@ ObvServer calculates the On-Balance Volume (OBV).
 type ObvServer struct {
 	*runtime.System
 	calculator *indicator.Obv[float64]
-	close chan float64
-	volume chan float64
-	out <-chan float64
-	result float64
-	count int
+	close      chan float64
+	volume     chan float64
+	out        <-chan float64
+	result     float64
+	count      int
 }
 
 func NewObv(ctx context.Context) *ObvServer {
@@ -27,11 +27,11 @@ func NewObv(ctx context.Context) *ObvServer {
 	calculator := indicator.NewObv[float64]()
 
 	server := &ObvServer{
-		System: runtime.NewSystem(ctx, "financial.volume.obv"),
+		System:     runtime.NewSystem(ctx, "financial.volume.obv"),
 		calculator: calculator,
-		close: close,
-		volume: volume,
-		out: calculator.ComputeWithContext(ctx, close, volume),
+		close:      close,
+		volume:     volume,
+		out:        calculator.ComputeWithContext(ctx, close, volume),
 	}
 
 	server.Transition(runtime.READY)

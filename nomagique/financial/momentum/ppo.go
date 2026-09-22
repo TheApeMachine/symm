@@ -13,15 +13,15 @@ PpoServer calculates the Percentage Price Oscillator (PPO).
 */
 type PpoServer struct {
 	*runtime.System
-	calculator *indicator.Ppo[float64]
-	close chan float64
-	ppoOut <-chan float64
-	ppo float64
-	signalOut <-chan float64
-	signal float64
+	calculator   *indicator.Ppo[float64]
+	close        chan float64
+	ppoOut       <-chan float64
+	ppo          float64
+	signalOut    <-chan float64
+	signal       float64
 	histogramOut <-chan float64
-	histogram float64
-	count int
+	histogram    float64
+	count        int
 }
 
 func NewPpo(ctx context.Context) *PpoServer {
@@ -29,9 +29,9 @@ func NewPpo(ctx context.Context) *PpoServer {
 	calculator := indicator.NewPpo[float64]()
 
 	server := &PpoServer{
-		System: runtime.NewSystem(ctx, "financial.momentum.ppo"),
+		System:     runtime.NewSystem(ctx, "financial.momentum.ppo"),
 		calculator: calculator,
-		close: close,
+		close:      close,
 	}
 
 	server.ppoOut, server.signalOut, server.histogramOut = calculator.ComputeWithContext(ctx, close)

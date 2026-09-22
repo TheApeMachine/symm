@@ -2,8 +2,8 @@ package linalg_test
 
 import (
 	"context"
-	"testing"
 	"gonum.org/v1/gonum/mat"
+	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/linalg"
@@ -21,10 +21,14 @@ func TestCholesky(t *testing.T) {
 		Convey("When writing input values", func() {
 			err := client.Write(ctx, func(params linalg.Cholesky_write_Params) error {
 				matA, err := params.NewA()
-				if err != nil { return err }
+				if err != nil {
+					return err
+				}
 				denseA := mat.NewDense(2, 2, []float64{2, 1, 1, 3})
 				err = linalg.DenseToMatrix(denseA, matA)
-				if err != nil { return err }
+				if err != nil {
+					return err
+				}
 				return nil
 			})
 			So(err, ShouldBeNil)

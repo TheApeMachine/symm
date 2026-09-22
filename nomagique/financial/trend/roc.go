@@ -14,10 +14,10 @@ RocServer calculates the Rate of Change (ROC).
 type RocServer struct {
 	*runtime.System
 	calculator *trend.Roc[float64]
-	value chan float64
-	out <-chan float64
-	result float64
-	count int
+	value      chan float64
+	out        <-chan float64
+	result     float64
+	count      int
 }
 
 func NewRoc(ctx context.Context) *RocServer {
@@ -25,10 +25,10 @@ func NewRoc(ctx context.Context) *RocServer {
 	calculator := trend.NewRoc[float64]()
 
 	server := &RocServer{
-		System: runtime.NewSystem(ctx, "financial.trend.roc"),
+		System:     runtime.NewSystem(ctx, "financial.trend.roc"),
 		calculator: calculator,
-		value: value,
-		out: calculator.ComputeWithContext(ctx, value),
+		value:      value,
+		out:        calculator.ComputeWithContext(ctx, value),
 	}
 
 	server.Transition(runtime.READY)

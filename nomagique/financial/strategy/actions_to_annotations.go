@@ -13,17 +13,17 @@ ActionsToAnnotationsServer maps actions to human-readable string annotations.
 type ActionsToAnnotationsServer struct {
 	*runtime.System
 	actions chan indicator.Action
-	out <-chan string
-	result string
+	out     <-chan string
+	result  string
 }
 
 func NewActionsToAnnotations(ctx context.Context) *ActionsToAnnotationsServer {
 	actions := make(chan indicator.Action, 1)
 
 	server := &ActionsToAnnotationsServer{
-		System: runtime.NewSystem(ctx, "financial.strategy.actions_to_annotations"),
+		System:  runtime.NewSystem(ctx, "financial.strategy.actions_to_annotations"),
 		actions: actions,
-		out: indicator.ActionsToAnnotationsWithContext(ctx, actions),
+		out:     indicator.ActionsToAnnotationsWithContext(ctx, actions),
 	}
 
 	server.Transition(runtime.READY)

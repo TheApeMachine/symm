@@ -14,10 +14,10 @@ StcServer calculates the Schaff Trend Cycle (STC).
 type StcServer struct {
 	*runtime.System
 	calculator *trend.Stc[float64]
-	value chan float64
-	out <-chan float64
-	result float64
-	count int
+	value      chan float64
+	out        <-chan float64
+	result     float64
+	count      int
 }
 
 func NewStc(ctx context.Context) *StcServer {
@@ -25,10 +25,10 @@ func NewStc(ctx context.Context) *StcServer {
 	calculator := trend.NewStc[float64]()
 
 	server := &StcServer{
-		System: runtime.NewSystem(ctx, "financial.trend.stc"),
+		System:     runtime.NewSystem(ctx, "financial.trend.stc"),
 		calculator: calculator,
-		value: value,
-		out: calculator.ComputeWithContext(ctx, value),
+		value:      value,
+		out:        calculator.ComputeWithContext(ctx, value),
 	}
 
 	server.Transition(runtime.READY)

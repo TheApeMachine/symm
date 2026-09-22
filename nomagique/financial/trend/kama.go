@@ -14,10 +14,10 @@ KamaServer calculates Kaufman's Adaptive Moving Average (KAMA).
 type KamaServer struct {
 	*runtime.System
 	calculator *trend.Kama[float64]
-	value chan float64
-	out <-chan float64
-	result float64
-	count int
+	value      chan float64
+	out        <-chan float64
+	result     float64
+	count      int
 }
 
 func NewKama(ctx context.Context) *KamaServer {
@@ -25,10 +25,10 @@ func NewKama(ctx context.Context) *KamaServer {
 	calculator := trend.NewKama[float64]()
 
 	server := &KamaServer{
-		System: runtime.NewSystem(ctx, "financial.trend.kama"),
+		System:     runtime.NewSystem(ctx, "financial.trend.kama"),
 		calculator: calculator,
-		value: value,
-		out: calculator.ComputeWithContext(ctx, value),
+		value:      value,
+		out:        calculator.ComputeWithContext(ctx, value),
 	}
 
 	server.Transition(runtime.READY)

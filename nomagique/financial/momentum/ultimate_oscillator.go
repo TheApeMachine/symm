@@ -14,12 +14,12 @@ UltimateOscillatorServer calculates the Ultimate Oscillator (UO).
 type UltimateOscillatorServer struct {
 	*runtime.System
 	calculator *indicator.UltimateOscillator[float64]
-	high chan float64
-	low chan float64
-	close chan float64
-	out <-chan float64
-	result float64
-	count int
+	high       chan float64
+	low        chan float64
+	close      chan float64
+	out        <-chan float64
+	result     float64
+	count      int
 }
 
 func NewUltimateOscillator(ctx context.Context) *UltimateOscillatorServer {
@@ -29,12 +29,12 @@ func NewUltimateOscillator(ctx context.Context) *UltimateOscillatorServer {
 	calculator := indicator.NewUltimateOscillator[float64]()
 
 	server := &UltimateOscillatorServer{
-		System: runtime.NewSystem(ctx, "financial.momentum.ultimate_oscillator"),
+		System:     runtime.NewSystem(ctx, "financial.momentum.ultimate_oscillator"),
 		calculator: calculator,
-		high: high,
-		low: low,
-		close: close,
-		out: calculator.ComputeWithContext(ctx, high, low, close),
+		high:       high,
+		low:        low,
+		close:      close,
+		out:        calculator.ComputeWithContext(ctx, high, low, close),
 	}
 
 	server.Transition(runtime.READY)

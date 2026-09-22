@@ -14,10 +14,10 @@ ZScoreServer calculates the Z-Score.
 type ZScoreServer struct {
 	*runtime.System
 	calculator *indicator.ZScore[float64]
-	value chan float64
-	out <-chan float64
-	result float64
-	count int
+	value      chan float64
+	out        <-chan float64
+	result     float64
+	count      int
 }
 
 func NewZScore(ctx context.Context) *ZScoreServer {
@@ -25,10 +25,10 @@ func NewZScore(ctx context.Context) *ZScoreServer {
 	calculator := indicator.NewZScore[float64]()
 
 	server := &ZScoreServer{
-		System: runtime.NewSystem(ctx, "financial.volatility.z_score"),
+		System:     runtime.NewSystem(ctx, "financial.volatility.z_score"),
 		calculator: calculator,
-		value: value,
-		out: calculator.ComputeWithContext(ctx, value),
+		value:      value,
+		out:        calculator.ComputeWithContext(ctx, value),
 	}
 
 	server.Transition(runtime.READY)

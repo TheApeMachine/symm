@@ -14,12 +14,12 @@ WilliamsRServer calculates the Williams %R.
 type WilliamsRServer struct {
 	*runtime.System
 	calculator *indicator.WilliamsR[float64]
-	high chan float64
-	low chan float64
-	close chan float64
-	out <-chan float64
-	result float64
-	count int
+	high       chan float64
+	low        chan float64
+	close      chan float64
+	out        <-chan float64
+	result     float64
+	count      int
 }
 
 func NewWilliamsR(ctx context.Context) *WilliamsRServer {
@@ -29,12 +29,12 @@ func NewWilliamsR(ctx context.Context) *WilliamsRServer {
 	calculator := indicator.NewWilliamsR[float64]()
 
 	server := &WilliamsRServer{
-		System: runtime.NewSystem(ctx, "financial.momentum.williams_r"),
+		System:     runtime.NewSystem(ctx, "financial.momentum.williams_r"),
 		calculator: calculator,
-		high: high,
-		low: low,
-		close: close,
-		out: calculator.ComputeWithContext(ctx, high, low, close),
+		high:       high,
+		low:        low,
+		close:      close,
+		out:        calculator.ComputeWithContext(ctx, high, low, close),
 	}
 
 	server.Transition(runtime.READY)

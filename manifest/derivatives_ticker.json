@@ -345,7 +345,7 @@
     },
     "basis_baseline": {
       "id": "basis_baseline",
-      "type": "statistic.ResidualBaseline",
+      "type": "statistic.CausalMean",
       "width": 280,
       "height": 172,
       "x": 200.0,
@@ -423,7 +423,7 @@
     },
     "open_interest_growth_baseline": {
       "id": "open_interest_growth_baseline",
-      "type": "statistic.ResidualBaseline",
+      "type": "statistic.CausalMean",
       "width": 280,
       "height": 172,
       "x": 200.0,
@@ -501,7 +501,7 @@
     },
     "return_gap_baseline": {
       "id": "return_gap_baseline",
-      "type": "statistic.ResidualBaseline",
+      "type": "statistic.CausalMean",
       "width": 280,
       "height": 172,
       "x": 200.0,

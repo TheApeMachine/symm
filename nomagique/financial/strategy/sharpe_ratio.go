@@ -2,9 +2,9 @@ package strategy
 
 import (
 	"context"
-	"math"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	"math"
 )
 
 /*
@@ -12,12 +12,12 @@ SharpeRatioServer calculates the online annualized Sharpe Ratio of cumulative ou
 */
 type SharpeRatioServer struct {
 	*runtime.System
-	prevEquity float64
-	mean float64
-	m2 float64
+	prevEquity   float64
+	mean         float64
+	m2           float64
 	returnsCount int
-	count int
-	ratio float64
+	count        int
+	ratio        float64
 }
 
 func NewSharpeRatio(ctx context.Context) *SharpeRatioServer {

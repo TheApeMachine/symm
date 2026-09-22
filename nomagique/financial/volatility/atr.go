@@ -14,12 +14,12 @@ AtrServer calculates the Average True Range (ATR).
 type AtrServer struct {
 	*runtime.System
 	calculator *indicator.Atr[float64]
-	high chan float64
-	low chan float64
-	close chan float64
-	out <-chan float64
-	result float64
-	count int
+	high       chan float64
+	low        chan float64
+	close      chan float64
+	out        <-chan float64
+	result     float64
+	count      int
 }
 
 func NewAtr(ctx context.Context) *AtrServer {
@@ -29,12 +29,12 @@ func NewAtr(ctx context.Context) *AtrServer {
 	calculator := indicator.NewAtr[float64]()
 
 	server := &AtrServer{
-		System: runtime.NewSystem(ctx, "financial.volatility.atr"),
+		System:     runtime.NewSystem(ctx, "financial.volatility.atr"),
 		calculator: calculator,
-		high: high,
-		low: low,
-		close: close,
-		out: calculator.ComputeWithContext(ctx, high, low, close),
+		high:       high,
+		low:        low,
+		close:      close,
+		out:        calculator.ComputeWithContext(ctx, high, low, close),
 	}
 
 	server.Transition(runtime.READY)

@@ -2,9 +2,9 @@
   "id": "liquidity_ticker",
   "name": "liquidity:ticker",
   "nodes": {
-    "spread": {
-      "id": "spread",
-      "type": "arithmetic.Subtract",
+    "touch_notional:bid": {
+      "id": "touch_notional:bid",
+      "type": "arithmetic.Multiply",
       "width": 280,
       "height": 172,
       "x": -900.0,
@@ -14,27 +14,85 @@
         "outputs": {
           "out": [
             {
-              "nodeId": "relative_spread",
+              "nodeId": "two_sided_touch_notional",
               "portName": "a"
             },
             {
-              "nodeId": "spread_baseline",
+              "nodeId": "notionalDifference",
+              "portName": "a"
+            },
+            {
+              "nodeId": "notionalTotal",
+              "portName": "a"
+            },
+            {
+              "nodeId": "bidLog",
               "portName": "value"
             },
             {
-              "nodeId": "spread_divergence",
+              "nodeId": "depth_ratio:bid",
+              "portName": "a"
+            },
+            {
+              "nodeId": "metric:touch_notional:bid",
+              "portName": "raw"
+            }
+          ]
+        }
+      }
+    },
+    "touch_notional:ask": {
+      "id": "touch_notional:ask",
+      "type": "arithmetic.Multiply",
+      "width": 280,
+      "height": 172,
+      "x": -900.0,
+      "y": -150.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "two_sided_touch_notional",
+              "portName": "b"
+            },
+            {
+              "nodeId": "notionalDifference",
+              "portName": "b"
+            },
+            {
+              "nodeId": "notionalTotal",
+              "portName": "b"
+            },
+            {
+              "nodeId": "askLog",
               "portName": "value"
             },
             {
-              "nodeId": "spread_zscore",
-              "portName": "value"
+              "nodeId": "depth_ratio:ask",
+              "portName": "a"
             },
             {
-              "nodeId": "spread_divergence_velocity",
-              "portName": "val"
-            },
+              "nodeId": "metric:touch_notional:ask",
+              "portName": "raw"
+            }
+          ]
+        }
+      }
+    },
+    "spread": {
+      "id": "spread",
+      "type": "arithmetic.Subtract",
+      "width": 280,
+      "height": 172,
+      "x": -900.0,
+      "y": 0.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
             {
-              "nodeId": "spread_ratio",
+              "nodeId": "relative_spread",
               "portName": "a"
             },
             {
@@ -51,7 +109,7 @@
       "width": 280,
       "height": 172,
       "x": -900.0,
-      "y": -120.0,
+      "y": 150.0,
       "connections": {
         "inputs": {},
         "outputs": {
@@ -70,7 +128,7 @@
       "width": 280,
       "height": 172,
       "x": -600.0,
-      "y": -120.0,
+      "y": 150.0,
       "inputData": {
         "b": {
           "value": 2
@@ -105,7 +163,7 @@
       "width": 280,
       "height": 172,
       "x": -300.0,
-      "y": -120.0,
+      "y": 150.0,
       "connections": {
         "inputs": {
           "a": [
@@ -124,101 +182,15 @@
         "outputs": {
           "out": [
             {
+              "nodeId": "spreadHistoryLog",
+              "portName": "value"
+            },
+            {
+              "nodeId": "spread_ratio",
+              "portName": "a"
+            },
+            {
               "nodeId": "metric:relative_spread",
-              "portName": "raw"
-            }
-          ]
-        }
-      }
-    },
-    "touch_notional:bid": {
-      "id": "touch_notional:bid",
-      "type": "arithmetic.Multiply",
-      "width": 280,
-      "height": 172,
-      "x": -900.0,
-      "y": 80.0,
-      "connections": {
-        "inputs": {},
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "two_sided_touch_notional",
-              "portName": "a"
-            },
-            {
-              "nodeId": "notionalDifference",
-              "portName": "a"
-            },
-            {
-              "nodeId": "touch_notional_baseline:bid",
-              "portName": "value"
-            },
-            {
-              "nodeId": "depth_divergence:bid",
-              "portName": "value"
-            },
-            {
-              "nodeId": "depth_zscore:bid",
-              "portName": "value"
-            },
-            {
-              "nodeId": "divergence_velocity:bid",
-              "portName": "val"
-            },
-            {
-              "nodeId": "depth_ratio:bid",
-              "portName": "a"
-            },
-            {
-              "nodeId": "metric:touch_notional:bid",
-              "portName": "raw"
-            }
-          ]
-        }
-      }
-    },
-    "touch_notional:ask": {
-      "id": "touch_notional:ask",
-      "type": "arithmetic.Multiply",
-      "width": 280,
-      "height": 172,
-      "x": -900.0,
-      "y": 240.0,
-      "connections": {
-        "inputs": {},
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "two_sided_touch_notional",
-              "portName": "b"
-            },
-            {
-              "nodeId": "notionalDifference",
-              "portName": "b"
-            },
-            {
-              "nodeId": "touch_notional_baseline:ask",
-              "portName": "value"
-            },
-            {
-              "nodeId": "depth_divergence:ask",
-              "portName": "value"
-            },
-            {
-              "nodeId": "depth_zscore:ask",
-              "portName": "value"
-            },
-            {
-              "nodeId": "divergence_velocity:ask",
-              "portName": "val"
-            },
-            {
-              "nodeId": "depth_ratio:ask",
-              "portName": "a"
-            },
-            {
-              "nodeId": "metric:touch_notional:ask",
               "portName": "raw"
             }
           ]
@@ -227,11 +199,11 @@
     },
     "two_sided_touch_notional": {
       "id": "two_sided_touch_notional",
-      "type": "arithmetic.Add",
+      "type": "calculus.Minimum",
       "width": 280,
       "height": 172,
       "x": -600.0,
-      "y": 160.0,
+      "y": -225.0,
       "connections": {
         "inputs": {
           "a": [
@@ -249,10 +221,6 @@
         },
         "outputs": {
           "out": [
-            {
-              "nodeId": "touch_notional_imbalance",
-              "portName": "b"
-            },
             {
               "nodeId": "metric:two_sided_touch_notional",
               "portName": "raw"
@@ -267,7 +235,7 @@
       "width": 280,
       "height": 172,
       "x": -600.0,
-      "y": 400.0,
+      "y": 300.0,
       "connections": {
         "inputs": {
           "a": [
@@ -293,13 +261,45 @@
         }
       }
     },
+    "notionalTotal": {
+      "id": "notionalTotal",
+      "type": "arithmetic.Add",
+      "width": 280,
+      "height": 172,
+      "x": -600.0,
+      "y": 450.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "touch_notional:bid",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "touch_notional:ask",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "touch_notional_imbalance",
+              "portName": "b"
+            }
+          ]
+        }
+      }
+    },
     "touch_notional_imbalance": {
       "id": "touch_notional_imbalance",
       "type": "arithmetic.Divide",
       "width": 280,
       "height": 172,
       "x": -300.0,
-      "y": 400.0,
+      "y": 375.0,
       "connections": {
         "inputs": {
           "a": [
@@ -310,7 +310,7 @@
           ],
           "b": [
             {
-              "nodeId": "two_sided_touch_notional",
+              "nodeId": "notionalTotal",
               "portName": "out"
             }
           ]
@@ -325,18 +325,18 @@
         }
       }
     },
-    "spread_baseline": {
-      "id": "spread_baseline",
-      "type": "statistic.ResidualBaseline",
+    "bidLog": {
+      "id": "bidLog",
+      "type": "calculus.Log",
       "width": 280,
       "height": 172,
-      "x": 300.0,
-      "y": -900.0,
+      "x": 100.0,
+      "y": -300.0,
       "connections": {
         "inputs": {
           "value": [
             {
-              "nodeId": "spread",
+              "nodeId": "touch_notional:bid",
               "portName": "out"
             }
           ]
@@ -344,29 +344,33 @@
         "outputs": {
           "out": [
             {
-              "nodeId": "spread_ratio",
-              "portName": "b"
+              "nodeId": "bidBaselineLog",
+              "portName": "value"
             },
             {
-              "nodeId": "metric:relative_spread_baseline",
-              "portName": "raw"
+              "nodeId": "depth_divergence:bid",
+              "portName": "a"
+            },
+            {
+              "nodeId": "bidVariance",
+              "portName": "value"
             }
           ]
         }
       }
     },
-    "spread_divergence": {
-      "id": "spread_divergence",
-      "type": "statistic.ResidualDivergence",
+    "bidBaselineLog": {
+      "id": "bidBaselineLog",
+      "type": "statistic.CausalMean",
       "width": 280,
       "height": 172,
-      "x": 300.0,
-      "y": -760.0,
+      "x": 440.0,
+      "y": -300.0,
       "connections": {
         "inputs": {
           "value": [
             {
-              "nodeId": "spread",
+              "nodeId": "bidLog",
               "portName": "out"
             }
           ]
@@ -374,92 +378,12 @@
         "outputs": {
           "out": [
             {
-              "nodeId": "metric:spread_divergence",
-              "portName": "raw"
-            }
-          ]
-        }
-      }
-    },
-    "spread_zscore": {
-      "id": "spread_zscore",
-      "type": "statistic.ZScore",
-      "width": 280,
-      "height": 172,
-      "x": 300.0,
-      "y": -620.0,
-      "connections": {
-        "inputs": {
-          "value": [
+              "nodeId": "touch_notional_baseline:bid",
+              "portName": "value"
+            },
             {
-              "nodeId": "spread",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:spread_zscore",
-              "portName": "raw"
-            }
-          ]
-        }
-      }
-    },
-    "spread_divergence_velocity": {
-      "id": "spread_divergence_velocity",
-      "type": "temporal.Velocity",
-      "width": 280,
-      "height": 172,
-      "x": 300.0,
-      "y": -480.0,
-      "connections": {
-        "inputs": {
-          "val": [
-            {
-              "nodeId": "spread",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:spread_divergence_velocity",
-              "portName": "raw"
-            }
-          ]
-        }
-      }
-    },
-    "spread_ratio": {
-      "id": "spread_ratio",
-      "type": "arithmetic.Divide",
-      "width": 280,
-      "height": 172,
-      "x": 640.0,
-      "y": -900.0,
-      "connections": {
-        "inputs": {
-          "a": [
-            {
-              "nodeId": "spread",
-              "portName": "out"
-            }
-          ],
-          "b": [
-            {
-              "nodeId": "spread_baseline",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:spread_ratio",
-              "portName": "raw"
+              "nodeId": "depth_divergence:bid",
+              "portName": "b"
             }
           ]
         }
@@ -467,16 +391,16 @@
     },
     "touch_notional_baseline:bid": {
       "id": "touch_notional_baseline:bid",
-      "type": "statistic.ResidualBaseline",
+      "type": "calculus.Exp",
       "width": 280,
       "height": 172,
-      "x": 300.0,
+      "x": 780.0,
       "y": -300.0,
       "connections": {
         "inputs": {
           "value": [
             {
-              "nodeId": "touch_notional:bid",
+              "nodeId": "bidBaselineLog",
               "portName": "out"
             }
           ]
@@ -495,90 +419,12 @@
         }
       }
     },
-    "depth_divergence:bid": {
-      "id": "depth_divergence:bid",
-      "type": "statistic.ResidualDivergence",
-      "width": 280,
-      "height": 172,
-      "x": 300.0,
-      "y": -160.0,
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "touch_notional:bid",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:depth_divergence:bid",
-              "portName": "raw"
-            }
-          ]
-        }
-      }
-    },
-    "depth_zscore:bid": {
-      "id": "depth_zscore:bid",
-      "type": "statistic.ZScore",
-      "width": 280,
-      "height": 172,
-      "x": 300.0,
-      "y": -20.0,
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "touch_notional:bid",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:depth_zscore:bid",
-              "portName": "raw"
-            }
-          ]
-        }
-      }
-    },
-    "divergence_velocity:bid": {
-      "id": "divergence_velocity:bid",
-      "type": "temporal.Velocity",
-      "width": 280,
-      "height": 172,
-      "x": 300.0,
-      "y": 120.0,
-      "connections": {
-        "inputs": {
-          "val": [
-            {
-              "nodeId": "touch_notional:bid",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:divergence_velocity:bid",
-              "portName": "raw"
-            }
-          ]
-        }
-      }
-    },
     "depth_ratio:bid": {
       "id": "depth_ratio:bid",
       "type": "arithmetic.Divide",
       "width": 280,
       "height": 172,
-      "x": 640.0,
+      "x": 1120.0,
       "y": -300.0,
       "connections": {
         "inputs": {
@@ -605,18 +451,236 @@
         }
       }
     },
-    "touch_notional_baseline:ask": {
-      "id": "touch_notional_baseline:ask",
-      "type": "statistic.ResidualBaseline",
+    "depth_divergence:bid": {
+      "id": "depth_divergence:bid",
+      "type": "arithmetic.Subtract",
       "width": 280,
       "height": 172,
-      "x": 300.0,
+      "x": 440.0,
+      "y": -150.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "bidLog",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "bidBaselineLog",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "depth_zscore:bid",
+              "portName": "a"
+            },
+            {
+              "nodeId": "divergence_velocity:bid",
+              "portName": "val"
+            },
+            {
+              "nodeId": "metric:depth_divergence:bid",
+              "portName": "raw"
+            }
+          ]
+        }
+      }
+    },
+    "bidVariance": {
+      "id": "bidVariance",
+      "type": "statistic.CausalVariance",
+      "width": 280,
+      "height": 172,
+      "x": 440.0,
+      "y": 0.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "bidLog",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "depth_noise_scale:bid",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "depth_noise_scale:bid": {
+      "id": "depth_noise_scale:bid",
+      "type": "calculus.Sqrt",
+      "width": 280,
+      "height": 172,
+      "x": 780.0,
+      "y": 0.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "bidVariance",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "depth_zscore:bid",
+              "portName": "b"
+            },
+            {
+              "nodeId": "metric:depth_noise_scale:bid",
+              "portName": "raw"
+            }
+          ]
+        }
+      }
+    },
+    "depth_zscore:bid": {
+      "id": "depth_zscore:bid",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": 1120.0,
+      "y": 0.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "depth_divergence:bid",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "depth_noise_scale:bid",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:depth_zscore:bid",
+              "portName": "raw"
+            }
+          ]
+        }
+      }
+    },
+    "divergence_velocity:bid": {
+      "id": "divergence_velocity:bid",
+      "type": "temporal.Velocity",
+      "width": 280,
+      "height": 172,
+      "x": 1120.0,
+      "y": 150.0,
+      "connections": {
+        "inputs": {
+          "val": [
+            {
+              "nodeId": "depth_divergence:bid",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:divergence_velocity:bid",
+              "portName": "raw"
+            }
+          ]
+        }
+      }
+    },
+    "askLog": {
+      "id": "askLog",
+      "type": "calculus.Log",
+      "width": 280,
+      "height": 172,
+      "x": 100.0,
       "y": 300.0,
       "connections": {
         "inputs": {
           "value": [
             {
               "nodeId": "touch_notional:ask",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "askBaselineLog",
+              "portName": "value"
+            },
+            {
+              "nodeId": "depth_divergence:ask",
+              "portName": "a"
+            },
+            {
+              "nodeId": "askVariance",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "askBaselineLog": {
+      "id": "askBaselineLog",
+      "type": "statistic.CausalMean",
+      "width": 280,
+      "height": 172,
+      "x": 440.0,
+      "y": 300.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "askLog",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "touch_notional_baseline:ask",
+              "portName": "value"
+            },
+            {
+              "nodeId": "depth_divergence:ask",
+              "portName": "b"
+            }
+          ]
+        }
+      }
+    },
+    "touch_notional_baseline:ask": {
+      "id": "touch_notional_baseline:ask",
+      "type": "calculus.Exp",
+      "width": 280,
+      "height": 172,
+      "x": 780.0,
+      "y": 300.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "askBaselineLog",
               "portName": "out"
             }
           ]
@@ -635,90 +699,12 @@
         }
       }
     },
-    "depth_divergence:ask": {
-      "id": "depth_divergence:ask",
-      "type": "statistic.ResidualDivergence",
-      "width": 280,
-      "height": 172,
-      "x": 300.0,
-      "y": 440.0,
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "touch_notional:ask",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:depth_divergence:ask",
-              "portName": "raw"
-            }
-          ]
-        }
-      }
-    },
-    "depth_zscore:ask": {
-      "id": "depth_zscore:ask",
-      "type": "statistic.ZScore",
-      "width": 280,
-      "height": 172,
-      "x": 300.0,
-      "y": 580.0,
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "touch_notional:ask",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:depth_zscore:ask",
-              "portName": "raw"
-            }
-          ]
-        }
-      }
-    },
-    "divergence_velocity:ask": {
-      "id": "divergence_velocity:ask",
-      "type": "temporal.Velocity",
-      "width": 280,
-      "height": 172,
-      "x": 300.0,
-      "y": 720.0,
-      "connections": {
-        "inputs": {
-          "val": [
-            {
-              "nodeId": "touch_notional:ask",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:divergence_velocity:ask",
-              "portName": "raw"
-            }
-          ]
-        }
-      }
-    },
     "depth_ratio:ask": {
       "id": "depth_ratio:ask",
       "type": "arithmetic.Divide",
       "width": 280,
       "height": 172,
-      "x": 640.0,
+      "x": 1120.0,
       "y": 300.0,
       "connections": {
         "inputs": {
@@ -745,308 +731,438 @@
         }
       }
     },
-    "metric:relative_spread": {
-      "id": "metric:relative_spread",
-      "type": "data.MetricService",
+    "depth_divergence:ask": {
+      "id": "depth_divergence:ask",
+      "type": "arithmetic.Subtract",
       "width": 280,
       "height": 172,
-      "x": 1400.0,
-      "y": -400.0,
+      "x": 440.0,
+      "y": 450.0,
       "connections": {
         "inputs": {
-          "raw": [
+          "a": [
             {
-              "nodeId": "relative_spread",
+              "nodeId": "askLog",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "askBaselineLog",
               "portName": "out"
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "depth_zscore:ask",
+              "portName": "a"
+            },
+            {
+              "nodeId": "divergence_velocity:ask",
+              "portName": "val"
+            },
+            {
+              "nodeId": "metric:depth_divergence:ask",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
-    "metric:touch_notional_imbalance": {
-      "id": "metric:touch_notional_imbalance",
-      "type": "data.MetricService",
+    "askVariance": {
+      "id": "askVariance",
+      "type": "statistic.CausalVariance",
       "width": 280,
       "height": 172,
-      "x": 1400.0,
-      "y": -250.0,
+      "x": 440.0,
+      "y": 600.0,
       "connections": {
         "inputs": {
-          "raw": [
+          "value": [
             {
-              "nodeId": "touch_notional_imbalance",
+              "nodeId": "askLog",
               "portName": "out"
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "depth_noise_scale:ask",
+              "portName": "value"
+            }
+          ]
+        }
       }
     },
-    "metric:spread_divergence": {
-      "id": "metric:spread_divergence",
-      "type": "data.MetricService",
+    "depth_noise_scale:ask": {
+      "id": "depth_noise_scale:ask",
+      "type": "calculus.Sqrt",
       "width": 280,
       "height": 172,
-      "x": 1400.0,
-      "y": -100.0,
+      "x": 780.0,
+      "y": 600.0,
       "connections": {
         "inputs": {
-          "raw": [
+          "value": [
             {
-              "nodeId": "spread_divergence",
+              "nodeId": "askVariance",
               "portName": "out"
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "depth_zscore:ask",
+              "portName": "b"
+            },
+            {
+              "nodeId": "metric:depth_noise_scale:ask",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
-    "metric:spread_zscore": {
-      "id": "metric:spread_zscore",
-      "type": "data.MetricService",
+    "depth_zscore:ask": {
+      "id": "depth_zscore:ask",
+      "type": "arithmetic.Divide",
       "width": 280,
       "height": 172,
-      "x": 1400.0,
-      "y": 50.0,
+      "x": 1120.0,
+      "y": 600.0,
       "connections": {
         "inputs": {
-          "raw": [
+          "a": [
             {
-              "nodeId": "spread_zscore",
+              "nodeId": "depth_divergence:ask",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "depth_noise_scale:ask",
               "portName": "out"
             }
           ]
         },
-        "outputs": {}
-      }
-    },
-    "metric:spread_divergence_velocity": {
-      "id": "metric:spread_divergence_velocity",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 1400.0,
-      "y": 200.0,
-      "connections": {
-        "inputs": {
-          "raw": [
+        "outputs": {
+          "out": [
             {
-              "nodeId": "spread_divergence_velocity",
-              "portName": "out"
+              "nodeId": "metric:depth_zscore:ask",
+              "portName": "raw"
             }
           ]
-        },
-        "outputs": {}
+        }
       }
     },
-    "metric:spread_ratio": {
-      "id": "metric:spread_ratio",
-      "type": "data.MetricService",
+    "divergence_velocity:ask": {
+      "id": "divergence_velocity:ask",
+      "type": "temporal.Velocity",
       "width": 280,
       "height": 172,
-      "x": 1400.0,
-      "y": 350.0,
+      "x": 1120.0,
+      "y": 750.0,
       "connections": {
         "inputs": {
-          "raw": [
-            {
-              "nodeId": "spread_ratio",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:depth_divergence:bid": {
-      "id": "metric:depth_divergence:bid",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 1400.0,
-      "y": 500.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "depth_divergence:bid",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:depth_zscore:bid": {
-      "id": "metric:depth_zscore:bid",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 1400.0,
-      "y": 650.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "depth_zscore:bid",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:divergence_velocity:bid": {
-      "id": "metric:divergence_velocity:bid",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 1400.0,
-      "y": 800.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "divergence_velocity:bid",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:depth_ratio:bid": {
-      "id": "metric:depth_ratio:bid",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 1400.0,
-      "y": 950.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "depth_ratio:bid",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:depth_divergence:ask": {
-      "id": "metric:depth_divergence:ask",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 1400.0,
-      "y": 1100.0,
-      "connections": {
-        "inputs": {
-          "raw": [
+          "val": [
             {
               "nodeId": "depth_divergence:ask",
               "portName": "out"
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:divergence_velocity:ask",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
-    "metric:depth_zscore:ask": {
-      "id": "metric:depth_zscore:ask",
-      "type": "data.MetricService",
+    "spreadHistoryLog": {
+      "id": "spreadHistoryLog",
+      "type": "calculus.Log",
       "width": 280,
       "height": 172,
-      "x": 1400.0,
-      "y": 1250.0,
+      "x": 100.0,
+      "y": 900.0,
       "connections": {
         "inputs": {
-          "raw": [
+          "value": [
             {
-              "nodeId": "depth_zscore:ask",
+              "nodeId": "relative_spread",
               "portName": "out"
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "spreadHistoryBaselineLog",
+              "portName": "value"
+            },
+            {
+              "nodeId": "spread_divergence",
+              "portName": "a"
+            },
+            {
+              "nodeId": "spreadHistoryVariance",
+              "portName": "value"
+            }
+          ]
+        }
       }
     },
-    "metric:divergence_velocity:ask": {
-      "id": "metric:divergence_velocity:ask",
-      "type": "data.MetricService",
+    "spreadHistoryBaselineLog": {
+      "id": "spreadHistoryBaselineLog",
+      "type": "statistic.CausalMean",
       "width": 280,
       "height": 172,
-      "x": 1400.0,
-      "y": 1400.0,
+      "x": 440.0,
+      "y": 900.0,
       "connections": {
         "inputs": {
-          "raw": [
+          "value": [
             {
-              "nodeId": "divergence_velocity:ask",
+              "nodeId": "spreadHistoryLog",
               "portName": "out"
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "relative_spread_baseline",
+              "portName": "value"
+            },
+            {
+              "nodeId": "spread_divergence",
+              "portName": "b"
+            }
+          ]
+        }
       }
     },
-    "metric:depth_ratio:ask": {
-      "id": "metric:depth_ratio:ask",
-      "type": "data.MetricService",
+    "relative_spread_baseline": {
+      "id": "relative_spread_baseline",
+      "type": "calculus.Exp",
       "width": 280,
       "height": 172,
-      "x": 1400.0,
-      "y": 1550.0,
+      "x": 780.0,
+      "y": 900.0,
       "connections": {
         "inputs": {
-          "raw": [
+          "value": [
             {
-              "nodeId": "depth_ratio:ask",
+              "nodeId": "spreadHistoryBaselineLog",
               "portName": "out"
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "spread_ratio",
+              "portName": "b"
+            },
+            {
+              "nodeId": "metric:relative_spread_baseline",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
-    "metric:spread": {
-      "id": "metric:spread",
-      "type": "data.MetricService",
+    "spread_ratio": {
+      "id": "spread_ratio",
+      "type": "arithmetic.Divide",
       "width": 280,
       "height": 172,
-      "x": 1400.0,
-      "y": 1700.0,
+      "x": 1120.0,
+      "y": 900.0,
       "connections": {
         "inputs": {
-          "raw": [
+          "a": [
             {
-              "nodeId": "spread",
+              "nodeId": "relative_spread",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "relative_spread_baseline",
               "portName": "out"
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:spread_ratio",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
-    "metric:midpoint": {
-      "id": "metric:midpoint",
-      "type": "data.MetricService",
+    "spread_divergence": {
+      "id": "spread_divergence",
+      "type": "arithmetic.Subtract",
       "width": 280,
       "height": 172,
-      "x": 1400.0,
-      "y": 1850.0,
+      "x": 440.0,
+      "y": 1050.0,
       "connections": {
         "inputs": {
-          "raw": [
+          "a": [
             {
-              "nodeId": "midpoint",
+              "nodeId": "spreadHistoryLog",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "spreadHistoryBaselineLog",
               "portName": "out"
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "spread_zscore",
+              "portName": "a"
+            },
+            {
+              "nodeId": "spread_divergence_velocity",
+              "portName": "val"
+            },
+            {
+              "nodeId": "metric:spread_divergence",
+              "portName": "raw"
+            }
+          ]
+        }
+      }
+    },
+    "spreadHistoryVariance": {
+      "id": "spreadHistoryVariance",
+      "type": "statistic.CausalVariance",
+      "width": 280,
+      "height": 172,
+      "x": 440.0,
+      "y": 1200.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "spreadHistoryLog",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "spread_noise_scale",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "spread_noise_scale": {
+      "id": "spread_noise_scale",
+      "type": "calculus.Sqrt",
+      "width": 280,
+      "height": 172,
+      "x": 780.0,
+      "y": 1200.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "spreadHistoryVariance",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "spread_zscore",
+              "portName": "b"
+            },
+            {
+              "nodeId": "metric:spread_noise_scale",
+              "portName": "raw"
+            }
+          ]
+        }
+      }
+    },
+    "spread_zscore": {
+      "id": "spread_zscore",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": 1120.0,
+      "y": 1200.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "spread_divergence",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "spread_noise_scale",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:spread_zscore",
+              "portName": "raw"
+            }
+          ]
+        }
+      }
+    },
+    "spread_divergence_velocity": {
+      "id": "spread_divergence_velocity",
+      "type": "temporal.Velocity",
+      "width": 280,
+      "height": 172,
+      "x": 1120.0,
+      "y": 1350.0,
+      "connections": {
+        "inputs": {
+          "val": [
+            {
+              "nodeId": "spread_divergence",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:spread_divergence_velocity",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
     "metric:touch_notional:bid": {
@@ -1054,8 +1170,8 @@
       "type": "data.MetricService",
       "width": 280,
       "height": 172,
-      "x": 1400.0,
-      "y": 2000.0,
+      "x": 2400.0,
+      "y": 0.0,
       "connections": {
         "inputs": {
           "raw": [
@@ -1073,8 +1189,8 @@
       "type": "data.MetricService",
       "width": 280,
       "height": 172,
-      "x": 1400.0,
-      "y": 2150.0,
+      "x": 2400.0,
+      "y": 150.0,
       "connections": {
         "inputs": {
           "raw": [
@@ -1087,13 +1203,70 @@
         "outputs": {}
       }
     },
+    "metric:midpoint": {
+      "id": "metric:midpoint",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 300.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "midpoint",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:spread": {
+      "id": "metric:spread",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 450.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "spread",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:relative_spread": {
+      "id": "metric:relative_spread",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 600.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "relative_spread",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
     "metric:two_sided_touch_notional": {
       "id": "metric:two_sided_touch_notional",
       "type": "data.MetricService",
       "width": 280,
       "height": 172,
-      "x": 1400.0,
-      "y": 2300.0,
+      "x": 2400.0,
+      "y": 750.0,
       "connections": {
         "inputs": {
           "raw": [
@@ -1106,18 +1279,18 @@
         "outputs": {}
       }
     },
-    "metric:relative_spread_baseline": {
-      "id": "metric:relative_spread_baseline",
+    "metric:touch_notional_imbalance": {
+      "id": "metric:touch_notional_imbalance",
       "type": "data.MetricService",
       "width": 280,
       "height": 172,
-      "x": 1400.0,
-      "y": 2450.0,
+      "x": 2400.0,
+      "y": 900.0,
       "connections": {
         "inputs": {
           "raw": [
             {
-              "nodeId": "spread_baseline",
+              "nodeId": "touch_notional_imbalance",
               "portName": "out"
             }
           ]
@@ -1130,8 +1303,8 @@
       "type": "data.MetricService",
       "width": 280,
       "height": 172,
-      "x": 1400.0,
-      "y": 2600.0,
+      "x": 2400.0,
+      "y": 1050.0,
       "connections": {
         "inputs": {
           "raw": [
@@ -1144,13 +1317,108 @@
         "outputs": {}
       }
     },
+    "metric:depth_ratio:bid": {
+      "id": "metric:depth_ratio:bid",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 1200.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "depth_ratio:bid",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:depth_divergence:bid": {
+      "id": "metric:depth_divergence:bid",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 1350.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "depth_divergence:bid",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:depth_noise_scale:bid": {
+      "id": "metric:depth_noise_scale:bid",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 1500.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "depth_noise_scale:bid",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:depth_zscore:bid": {
+      "id": "metric:depth_zscore:bid",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 1650.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "depth_zscore:bid",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:divergence_velocity:bid": {
+      "id": "metric:divergence_velocity:bid",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 1800.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "divergence_velocity:bid",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
     "metric:touch_notional_baseline:ask": {
       "id": "metric:touch_notional_baseline:ask",
       "type": "data.MetricService",
       "width": 280,
       "height": 172,
-      "x": 1400.0,
-      "y": 2750.0,
+      "x": 2400.0,
+      "y": 1950.0,
       "connections": {
         "inputs": {
           "raw": [
@@ -1160,6 +1428,263 @@
             }
           ]
         },
+        "outputs": {}
+      }
+    },
+    "metric:depth_ratio:ask": {
+      "id": "metric:depth_ratio:ask",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 2100.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "depth_ratio:ask",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:depth_divergence:ask": {
+      "id": "metric:depth_divergence:ask",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 2250.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "depth_divergence:ask",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:depth_noise_scale:ask": {
+      "id": "metric:depth_noise_scale:ask",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 2400.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "depth_noise_scale:ask",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:depth_zscore:ask": {
+      "id": "metric:depth_zscore:ask",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 2550.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "depth_zscore:ask",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:divergence_velocity:ask": {
+      "id": "metric:divergence_velocity:ask",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 2700.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "divergence_velocity:ask",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:relative_spread_baseline": {
+      "id": "metric:relative_spread_baseline",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 2850.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "relative_spread_baseline",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:spread_ratio": {
+      "id": "metric:spread_ratio",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 3000.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "spread_ratio",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:spread_divergence": {
+      "id": "metric:spread_divergence",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 3150.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "spread_divergence",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:spread_noise_scale": {
+      "id": "metric:spread_noise_scale",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 3300.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "spread_noise_scale",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:spread_zscore": {
+      "id": "metric:spread_zscore",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 3450.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "spread_zscore",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:spread_divergence_velocity": {
+      "id": "metric:spread_divergence_velocity",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 3600.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "spread_divergence_velocity",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:best_bid_price": {
+      "id": "metric:best_bid_price",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 3750.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {}
+      }
+    },
+    "metric:best_ask_price": {
+      "id": "metric:best_ask_price",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 3900.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {}
+      }
+    },
+    "metric:touch_quantity:bid": {
+      "id": "metric:touch_quantity:bid",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 4050.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {}
+      }
+    },
+    "metric:touch_quantity:ask": {
+      "id": "metric:touch_quantity:ask",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 2400.0,
+      "y": 4200.0,
+      "connections": {
+        "inputs": {},
         "outputs": {}
       }
     }

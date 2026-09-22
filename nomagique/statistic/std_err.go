@@ -13,9 +13,9 @@ StdErrServer calculates online standard error of the mean of streaming observati
 */
 type StdErrServer struct {
 	*runtime.System
-	count float64
-	mean float64
-	m2 float64
+	count  float64
+	mean   float64
+	m2     float64
 	result float64
 }
 

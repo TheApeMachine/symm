@@ -14,10 +14,10 @@ AnnualizedHistoricalVolatilityServer calculates the Annualized Historical Volati
 type AnnualizedHistoricalVolatilityServer struct {
 	*runtime.System
 	calculator *indicator.AnnualizedHistoricalVolatility[float64]
-	price chan float64
-	out <-chan float64
-	result float64
-	count int
+	price      chan float64
+	out        <-chan float64
+	result     float64
+	count      int
 }
 
 func NewAnnualizedHistoricalVolatility(ctx context.Context) *AnnualizedHistoricalVolatilityServer {
@@ -25,10 +25,10 @@ func NewAnnualizedHistoricalVolatility(ctx context.Context) *AnnualizedHistorica
 	calculator := indicator.NewAnnualizedHistoricalVolatility[float64]()
 
 	server := &AnnualizedHistoricalVolatilityServer{
-		System: runtime.NewSystem(ctx, "financial.volatility.annualized_historical_volatility"),
+		System:     runtime.NewSystem(ctx, "financial.volatility.annualized_historical_volatility"),
 		calculator: calculator,
-		price: price,
-		out: calculator.ComputeWithContext(ctx, price),
+		price:      price,
+		out:        calculator.ComputeWithContext(ctx, price),
 	}
 
 	server.Transition(runtime.READY)

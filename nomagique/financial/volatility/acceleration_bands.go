@@ -14,16 +14,16 @@ AccelerationBandsServer calculates the Acceleration Bands.
 type AccelerationBandsServer struct {
 	*runtime.System
 	calculator *indicator.AccelerationBands[float64]
-	high chan float64
-	low chan float64
-	close chan float64
-	upperOut <-chan float64
-	middleOut <-chan float64
-	lowerOut <-chan float64
-	upper float64
-	middle float64
-	lower float64
-	count int
+	high       chan float64
+	low        chan float64
+	close      chan float64
+	upperOut   <-chan float64
+	middleOut  <-chan float64
+	lowerOut   <-chan float64
+	upper      float64
+	middle     float64
+	lower      float64
+	count      int
 }
 
 func NewAccelerationBands(ctx context.Context) *AccelerationBandsServer {
@@ -33,11 +33,11 @@ func NewAccelerationBands(ctx context.Context) *AccelerationBandsServer {
 	calculator := indicator.NewAccelerationBands[float64]()
 
 	server := &AccelerationBandsServer{
-		System: runtime.NewSystem(ctx, "financial.volatility.acceleration_bands"),
+		System:     runtime.NewSystem(ctx, "financial.volatility.acceleration_bands"),
 		calculator: calculator,
-		high: high,
-		low: low,
-		close: close,
+		high:       high,
+		low:        low,
+		close:      close,
 	}
 
 	server.upperOut, server.middleOut, server.lowerOut = calculator.ComputeWithContext(ctx, high, low, close)

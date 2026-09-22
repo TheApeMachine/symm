@@ -15,7 +15,7 @@ CorrelationMatrixServer calculates sample correlation matrix of multi-column obs
 type CorrelationMatrixServer struct {
 	*runtime.System
 	resultMatrix []float64
-	dim int32
+	dim          int32
 }
 
 func NewCorrelationMatrix(ctx context.Context) *CorrelationMatrixServer {

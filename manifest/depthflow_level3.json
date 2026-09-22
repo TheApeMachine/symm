@@ -82,7 +82,7 @@
             },
             {
               "nodeId": "observed_notional_imbalance_divergence",
-              "portName": "value"
+              "portName": "a"
             },
             {
               "nodeId": "observed_notional_imbalance_zscore",
@@ -223,7 +223,7 @@
             },
             {
               "nodeId": "observed_notional_rate_divergence",
-              "portName": "value"
+              "portName": "a"
             },
             {
               "nodeId": "observed_notional_rate_zscore",
@@ -239,7 +239,7 @@
     },
     "observed_notional_imbalance_baseline": {
       "id": "observed_notional_imbalance_baseline",
-      "type": "statistic.ResidualBaseline",
+      "type": "statistic.CausalMean",
       "width": 280,
       "height": 172,
       "x": 200.0,
@@ -258,6 +258,10 @@
             {
               "nodeId": "metric:observed_notional_imbalance_baseline",
               "portName": "raw"
+            },
+            {
+              "nodeId": "observed_notional_imbalance_divergence",
+              "portName": "b"
             }
           ]
         }
@@ -265,16 +269,22 @@
     },
     "observed_notional_imbalance_divergence": {
       "id": "observed_notional_imbalance_divergence",
-      "type": "statistic.ResidualDivergence",
+      "type": "arithmetic.Subtract",
       "width": 280,
       "height": 172,
       "x": 200.0,
       "y": -160.0,
       "connections": {
         "inputs": {
-          "value": [
+          "a": [
             {
               "nodeId": "observed_notional_imbalance",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "observed_notional_imbalance_baseline",
               "portName": "out"
             }
           ]
@@ -317,7 +327,7 @@
     },
     "observed_notional_rate_baseline": {
       "id": "observed_notional_rate_baseline",
-      "type": "statistic.ResidualBaseline",
+      "type": "statistic.CausalMean",
       "width": 280,
       "height": 172,
       "x": 200.0,
@@ -336,6 +346,10 @@
             {
               "nodeId": "metric:observed_notional_rate_baseline",
               "portName": "raw"
+            },
+            {
+              "nodeId": "observed_notional_rate_divergence",
+              "portName": "b"
             }
           ]
         }
@@ -343,16 +357,22 @@
     },
     "observed_notional_rate_divergence": {
       "id": "observed_notional_rate_divergence",
-      "type": "statistic.ResidualDivergence",
+      "type": "arithmetic.Subtract",
       "width": 280,
       "height": 172,
       "x": 200.0,
       "y": 440.0,
       "connections": {
         "inputs": {
-          "value": [
+          "a": [
             {
               "nodeId": "observed_notional_rate",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "observed_notional_rate_baseline",
               "portName": "out"
             }
           ]

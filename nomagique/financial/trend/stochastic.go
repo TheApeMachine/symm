@@ -14,12 +14,12 @@ StochasticServer calculates the Stochastic %K and %D.
 type StochasticServer struct {
 	*runtime.System
 	calculator *trend.Stochastic[float64]
-	value chan float64
-	kOut <-chan float64
-	dOut <-chan float64
-	k float64
-	d float64
-	count int
+	value      chan float64
+	kOut       <-chan float64
+	dOut       <-chan float64
+	k          float64
+	d          float64
+	count      int
 }
 
 func NewStochastic(ctx context.Context) *StochasticServer {
@@ -27,9 +27,9 @@ func NewStochastic(ctx context.Context) *StochasticServer {
 	calculator := trend.NewStochastic[float64]()
 
 	server := &StochasticServer{
-		System: runtime.NewSystem(ctx, "financial.trend.stochastic"),
+		System:     runtime.NewSystem(ctx, "financial.trend.stochastic"),
 		calculator: calculator,
-		value: value,
+		value:      value,
 	}
 
 	server.kOut, server.dOut = calculator.ComputeWithContext(ctx, value)

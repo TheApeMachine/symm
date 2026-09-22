@@ -14,10 +14,10 @@ RmaServer calculates the Running Moving Average (RMA).
 type RmaServer struct {
 	*runtime.System
 	calculator *trend.Rma[float64]
-	value chan float64
-	out <-chan float64
-	result float64
-	count int
+	value      chan float64
+	out        <-chan float64
+	result     float64
+	count      int
 }
 
 func NewRma(ctx context.Context) *RmaServer {
@@ -25,10 +25,10 @@ func NewRma(ctx context.Context) *RmaServer {
 	calculator := trend.NewRma[float64]()
 
 	server := &RmaServer{
-		System: runtime.NewSystem(ctx, "financial.trend.rma"),
+		System:     runtime.NewSystem(ctx, "financial.trend.rma"),
 		calculator: calculator,
-		value: value,
-		out: calculator.ComputeWithContext(ctx, value),
+		value:      value,
+		out:        calculator.ComputeWithContext(ctx, value),
 	}
 
 	server.Transition(runtime.READY)

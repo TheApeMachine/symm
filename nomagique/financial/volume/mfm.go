@@ -14,12 +14,12 @@ MfmServer calculates the Money Flow Multiplier (MFM).
 type MfmServer struct {
 	*runtime.System
 	calculator *indicator.Mfm[float64]
-	high chan float64
-	low chan float64
-	close chan float64
-	out <-chan float64
-	result float64
-	count int
+	high       chan float64
+	low        chan float64
+	close      chan float64
+	out        <-chan float64
+	result     float64
+	count      int
 }
 
 func NewMfm(ctx context.Context) *MfmServer {
@@ -29,12 +29,12 @@ func NewMfm(ctx context.Context) *MfmServer {
 	calculator := indicator.NewMfm[float64]()
 
 	server := &MfmServer{
-		System: runtime.NewSystem(ctx, "financial.volume.mfm"),
+		System:     runtime.NewSystem(ctx, "financial.volume.mfm"),
 		calculator: calculator,
-		high: high,
-		low: low,
-		close: close,
-		out: calculator.ComputeWithContext(ctx, high, low, close),
+		high:       high,
+		low:        low,
+		close:      close,
+		out:        calculator.ComputeWithContext(ctx, high, low, close),
 	}
 
 	server.Transition(runtime.READY)

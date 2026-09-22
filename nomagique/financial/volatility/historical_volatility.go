@@ -14,10 +14,10 @@ HistoricalVolatilityServer calculates the Historical Volatility (HV).
 type HistoricalVolatilityServer struct {
 	*runtime.System
 	calculator *indicator.HistoricalVolatility[float64]
-	price chan float64
-	out <-chan float64
-	result float64
-	count int
+	price      chan float64
+	out        <-chan float64
+	result     float64
+	count      int
 }
 
 func NewHistoricalVolatility(ctx context.Context) *HistoricalVolatilityServer {
@@ -25,10 +25,10 @@ func NewHistoricalVolatility(ctx context.Context) *HistoricalVolatilityServer {
 	calculator := indicator.NewHistoricalVolatility[float64]()
 
 	server := &HistoricalVolatilityServer{
-		System: runtime.NewSystem(ctx, "financial.volatility.historical_volatility"),
+		System:     runtime.NewSystem(ctx, "financial.volatility.historical_volatility"),
 		calculator: calculator,
-		price: price,
-		out: calculator.ComputeWithContext(ctx, price),
+		price:      price,
+		out:        calculator.ComputeWithContext(ctx, price),
 	}
 
 	server.Transition(runtime.READY)
