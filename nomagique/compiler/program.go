@@ -81,16 +81,63 @@ type Route struct {
 }
 
 /*
+UIPlan holds the lowered structural UI route trees extracted from a compiled graph.
+*/
+type UIPlan struct {
+	Routes []UIRoutePlan `json:"routes"`
+}
+
+/*
+UIRoutePlan describes a route and its root component tree.
+*/
+type UIRoutePlan struct {
+	Path       string       `json:"path"`
+	Title      string       `json:"title,omitempty"`
+	Components []UINodePlan `json:"components"`
+}
+
+/*
+UINodePlan describes one lowered component node in a UI tree.
+*/
+type UINodePlan struct {
+	ID        string         `json:"id"`
+	Name      string         `json:"name"`
+	ClassName string         `json:"className,omitempty"`
+	Props     map[string]any `json:"props,omitempty"`
+	Children  []UINodePlan   `json:"children,omitempty"`
+}
+
+/*
+BindingPlan holds cross-domain observable data bindings connecting backend outputs
+to frontend UI component inputs.
+*/
+type BindingPlan struct {
+	Bindings []BindingEntry `json:"bindings"`
+}
+
+/*
+BindingEntry represents one cross-domain edge from a backend output to a UI input.
+*/
+type BindingEntry struct {
+	SourceNode string `json:"sourceNode"`
+	SourcePort string `json:"sourcePort"`
+	TargetNode string `json:"targetNode"`
+	TargetProp string `json:"targetProp"`
+}
+
+/*
 Program is an immutable compiled executable Cap'n Proto execution plan.
 */
 type Program struct {
-	Version string
-	Nodes   []CompiledNode
-	Routes  []Route
-	Roots   []NodeID
-	NodeMap map[string]NodeID
-	results map[string]capnp.Struct
-	mu      sync.Mutex // ensures one graph evaluation at a time per program
+	Version  string
+	Nodes    []CompiledNode
+	Routes   []Route
+	Roots    []NodeID
+	NodeMap  map[string]NodeID
+	UI       *UIPlan
+	Bindings *BindingPlan
+	results  map[string]capnp.Struct
+	mu       sync.Mutex // ensures one graph evaluation at a time per program
 }
 
 /*

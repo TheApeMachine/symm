@@ -73,6 +73,7 @@ frontend_verify() {
 	(
 		cd "$ROOT/frontend"
 		pnpm install --frozen-lockfile
+		pnpm check:ui-drift
 		pnpm typecheck
 		pnpm test
 		pnpm lint

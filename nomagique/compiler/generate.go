@@ -532,8 +532,8 @@ func generateFlumeConfigSource(schemas map[string]Schema, uiMeta map[string]UICo
 	buf.WriteString("\t\t\t\tlabel: def,\n")
 	buf.WriteString("\t\t\t\tcategory: \"Definitions\",\n")
 	buf.WriteString("\t\t\t\tinitialWidth: 320,\n")
-	buf.WriteString("\t\t\t\tinputs: (ports) => [],\n")
-	buf.WriteString("\t\t\t\toutputs: (ports) => [],\n")
+	buf.WriteString("\t\t\t\tinputs: () => [],\n")
+	buf.WriteString("\t\t\t\toutputs: () => [],\n")
 	buf.WriteString("\t\t\t});\n")
 	buf.WriteString("\t\t}\n")
 	buf.WriteString("\t}\n")
@@ -898,7 +898,7 @@ func emitUIComponentNodeTypes(buf *strings.Builder, uiMeta map[string]UIComponen
 		fmt.Fprintf(buf, "\t\tlabel: %q,\n", comp.Name)
 		buf.WriteString("\t\tcategory: \"UI Components\",\n")
 		buf.WriteString("\t\tinitialWidth: 280,\n")
-		buf.WriteString("\t\tinputs: (ports) => (_inputData, connections) => {\n")
+		buf.WriteString("\t\tinputs: (ports) => (_inputData, _connections) => {\n")
 		buf.WriteString("\t\t\tconst dynamicPorts = [\n")
 
 		for _, prop := range comp.Props {
@@ -939,6 +939,9 @@ func emitUIComponentNodeTypes(buf *strings.Builder, uiMeta map[string]UIComponen
 
 			case "string":
 				fmt.Fprintf(buf, "\t\t\t\tports.string({ name: %q, label: %q }),\n", prop.Name, prop.Name)
+
+			case "slot":
+				fmt.Fprintf(buf, "\t\t\t\tports.Capability({ name: %q, label: %q }),\n", prop.Name, prop.Name)
 			}
 		}
 
@@ -947,7 +950,7 @@ func emitUIComponentNodeTypes(buf *strings.Builder, uiMeta map[string]UIComponen
 		if comp.HasChildren {
 			fmt.Fprintf(
 				buf,
-				"\t\t\tconst connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith(%q));\n",
+				"\t\t\tconst connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith(%q));\n",
 				uiChildrenPort,
 			)
 			buf.WriteString("\t\t\tconst count = Math.max(1, connected.length + 1);\n")

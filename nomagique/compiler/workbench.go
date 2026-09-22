@@ -53,6 +53,8 @@ type CompileResponse struct {
 	OK          bool         `json:"ok"`
 	NodeCount   int          `json:"nodeCount,omitempty"`
 	RouteCount  int          `json:"routeCount,omitempty"`
+	UI          *UIPlan      `json:"ui,omitempty"`
+	Bindings    *BindingPlan `json:"bindings,omitempty"`
 	Error       string       `json:"error,omitempty"`
 	Diagnostics []Diagnostic `json:"diagnostics,omitempty"`
 }
@@ -151,6 +153,8 @@ func (w *WorkbenchRunnerImpl) Compile(rawJSON []byte) (any, error) {
 		OK:         true,
 		NodeCount:  len(prog.Nodes),
 		RouteCount: len(prog.Routes),
+		UI:         prog.UI,
+		Bindings:   prog.Bindings,
 	}, nil
 }
 

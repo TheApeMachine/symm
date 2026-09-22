@@ -9,7 +9,7 @@ import (
 )
 
 /*
-BoPServer calculates balance of power,
+BoPServer calculates the balance of power (BoP).
 */
 type BoPServer struct {
 	*runtime.System
@@ -17,93 +17,97 @@ type BoPServer struct {
 	opening    chan float64
 	high       chan float64
 	low        chan float64
-	close      chan float64
+	closing    chan float64
+	out        <-chan float64
 	result     float64
 }
 
-func NewBoPServer(ctx context.Context) *BoPServer {
-	return &BoPServer{
-		System:     runtime.NewSystem(ctx, "financial.bop"),
-		calculator: trend.NewBop[float64](),
+func NewBoP(ctx context.Context) *BoPServer {
+	opening := make(chan float64, 1)
+	high := make(chan float64, 1)
+	low := make(chan float64, 1)
+	closing := make(chan float64, 1)
+	calculator := trend.NewBop[float64]()
+
+	server := &BoPServer{
+		System:     runtime.NewSystem(ctx, "financial.trend.bop"),
+		calculator: calculator,
+		opening:    opening,
+		high:       high,
+		low:        low,
+		closing:    closing,
+		out:        calculator.ComputeWithContext(ctx, opening, high, low, closing),
 	}
+
+	server.Transition(runtime.READY)
+	return server
 }
 
 /*
-Write accepts opening, high, low, and close.
+Write accepts opening, high, low, and close values.
 */
-func (server *BoPServer) Write(ctx context.Context, call BoPServer_write) error {
-	opening, err := call.Args().Opening()
+func (server *BoPServer) Write(ctx context.Context, call BoP_write) error {
+	opening := call.Args().Opening()
+	high := call.Args().High()
+	low := call.Args().Low()
+	closeVal := call.Args().Close()
 
-	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.BadRequest,
-			"[financial.bop.Calculate] opening argument is required",
-			err,
-		))
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case server.opening <- opening:
 	}
 
-	server.opening <- opening
-
-	high, err := call.Args().High()
-
-	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.BadRequest,
-			"[financial.bop.Calculate] high argument is required",
-			err,
-		))
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case server.high <- high:
 	}
 
-	server.high <- high
-
-	low, err := call.Args().Low()
-
-	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.BadRequest,
-			"[financial.bop.Calculate] low argument is required",
-			err,
-		))
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case server.low <- low:
 	}
 
-	server.low <- low
-
-	close, err := call.Args().Close()
-
-	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.BadRequest,
-			"[financial.bop.Calculate] 	opening argument is required",
-			err,
-		))
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case server.closing <- closeVal:
 	}
 
-	server.close <- close
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case res, ok := <-server.out:
+		if !ok {
+			return errnie.Error(errnie.Err(
+				errnie.Internal,
+				"[financial.trend.bop.Write] calculator channel closed",
+				nil,
+			))
+		}
 
-	server.result = <-server.calculator.ComputeWithContext(
-		server.Context(),
-		server.opening,
-		server.high,
-		server.low,
-		server.close,
-	)
+		server.result = res
+	}
 
 	return nil
 }
 
 /*
-Done returns the result.
+Done returns the calculated BoP result.
 */
-func (server *BoPServer) Done(ctx context.Context, call BoPServer_done) error {
+func (server *BoPServer) Done(ctx context.Context, call BoP_done) error {
 	results, err := call.AllocResults()
 
 	if err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.Internal,
-			"[financial.bop] failed to allocate done results",
+			"[financial.trend.bop.Done] failed to allocate done results",
 			err,
 		))
 	}
 
-	return results.SetResult(server.result)
+	results.SetResult(server.result)
+	return nil
 }

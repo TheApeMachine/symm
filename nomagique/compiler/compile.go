@@ -63,18 +63,53 @@ func CompileWithPrevious(
 		}, nil
 	}
 
-	// 2. Phase 8: Topological ordering and cycle detection
-	inDegree := make(map[string]int, len(graph.Nodes))
-	adjacency := make(map[string][]string, len(graph.Nodes))
+	// 1b. Domain Partitioning: Lower UI hierarchy and cross-domain bindings
+	var uiPlan *UIPlan
+	var bindingPlan *BindingPlan
 
-	for id := range graph.Nodes {
+	hasUINodes := false
+	for _, node := range graph.Nodes {
+		if strings.HasPrefix(node.Type, "ui.") {
+			hasUINodes = true
+			break
+		}
+	}
+
+	if hasUINodes {
+		uiPlan, bindingPlan = lowerUIAndBindings(graph)
+	}
+
+	backendNodes := make(map[string]Node)
+	for id, node := range graph.Nodes {
+		if !strings.HasPrefix(node.Type, "ui.") {
+			backendNodes[id] = node
+		}
+	}
+
+	if len(backendNodes) == 0 {
+		return &Program{
+			Version:  graph.ID,
+			Nodes:    nil,
+			Routes:   nil,
+			Roots:    nil,
+			NodeMap:  make(map[string]NodeID),
+			UI:       uiPlan,
+			Bindings: bindingPlan,
+		}, nil
+	}
+
+	// 2. Phase 8: Topological ordering and cycle detection
+	inDegree := make(map[string]int, len(backendNodes))
+	adjacency := make(map[string][]string, len(backendNodes))
+
+	for id := range backendNodes {
 		inDegree[id] = 0
 	}
 
-	for id, node := range graph.Nodes {
+	for id, node := range backendNodes {
 		for _, targets := range node.Connections.Outputs {
 			for _, target := range targets {
-				consumer, exists := graph.Nodes[target.NodeID]
+				consumer, exists := backendNodes[target.NodeID]
 
 				if !exists {
 					continue
@@ -102,7 +137,7 @@ func CompileWithPrevious(
 	}
 	sort.Strings(queue)
 
-	execOrder := make([]string, 0, len(graph.Nodes))
+	execOrder := make([]string, 0, len(backendNodes))
 	for len(queue) > 0 {
 		curr := queue[0]
 		queue = queue[1:]
@@ -116,7 +151,7 @@ func CompileWithPrevious(
 		}
 	}
 
-	if len(execOrder) != len(graph.Nodes) {
+	if len(execOrder) != len(backendNodes) {
 		return nil, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"compiler: graph contains an unsupported cycle",
@@ -251,6 +286,10 @@ func CompileWithPrevious(
 				vID := target.NodeID
 				vIdx, targetExists := nodeMap[vID]
 				if !targetExists {
+					if targetNode, ok := graph.Nodes[vID]; ok && strings.HasPrefix(targetNode.Type, "ui.") {
+						continue
+					}
+
 					return nil, errnie.Error(errnie.Err(
 						errnie.Validation,
 						fmt.Sprintf("compiler: target node %q not found", vID),
@@ -515,11 +554,13 @@ func CompileWithPrevious(
 	}
 
 	return &Program{
-		Version: graph.ID,
-		Nodes:   compiledNodes,
-		Routes:  routes,
-		Roots:   roots,
-		NodeMap: nodeMap,
+		Version:  graph.ID,
+		Nodes:    compiledNodes,
+		Routes:   routes,
+		Roots:    roots,
+		NodeMap:  nodeMap,
+		UI:       uiPlan,
+		Bindings: bindingPlan,
 	}, nil
 }
 
@@ -1266,4 +1307,244 @@ func carriesCapability(registry *Registry, consumer Node, port string) bool {
 	}
 
 	return field.CapabilityList || field.Which == schema.Type_Which_interface
+}
+
+func lowerUIAndBindings(graph Graph) (*UIPlan, *BindingPlan) {
+	bindings := make([]BindingEntry, 0)
+	routes := make([]UIRoutePlan, 0)
+
+	for id, node := range graph.Nodes {
+		if strings.HasPrefix(node.Type, "ui.") {
+			continue
+		}
+
+		for outPort, targets := range node.Connections.Outputs {
+			for _, target := range targets {
+				consumer, exists := graph.Nodes[target.NodeID]
+
+				if !exists {
+					continue
+				}
+
+				if strings.HasPrefix(consumer.Type, "ui.") {
+					bindings = append(bindings, BindingEntry{
+						SourceNode: id,
+						SourcePort: outPort,
+						TargetNode: target.NodeID,
+						TargetProp: target.PortName,
+					})
+				}
+			}
+		}
+	}
+
+	for id, node := range graph.Nodes {
+		if node.Type != "ui.UIRoute" {
+			continue
+		}
+
+		pathVal := "/"
+		if val, ok := node.InputData["path"]; ok {
+			var p struct {
+				Value string `json:"value"`
+			}
+			err := sonic.Unmarshal(val, &p)
+
+			if err == nil && p.Value != "" {
+				pathVal = p.Value
+			}
+
+			if err != nil || p.Value == "" {
+				var direct string
+				err = sonic.Unmarshal(val, &direct)
+
+				if err == nil && direct != "" {
+					pathVal = direct
+				}
+			}
+		}
+
+		titleVal := ""
+		if val, ok := node.InputData["title"]; ok {
+			var t struct {
+				Value string `json:"value"`
+			}
+			err := sonic.Unmarshal(val, &t)
+
+			if err == nil {
+				titleVal = t.Value
+			}
+
+			if err != nil {
+				var direct string
+				err = sonic.Unmarshal(val, &direct)
+
+				if err == nil {
+					titleVal = direct
+				}
+			}
+		}
+
+		components := lowerUIChildren(graph, id)
+		routes = append(routes, UIRoutePlan{
+			Path:       pathVal,
+			Title:      titleVal,
+			Components: components,
+		})
+	}
+
+	if len(routes) == 0 {
+		childSet := make(map[string]bool)
+		for _, node := range graph.Nodes {
+			if !strings.HasPrefix(node.Type, "ui.") {
+				continue
+			}
+
+			for inPort, targets := range node.Connections.Inputs {
+				if strings.HasPrefix(inPort, "components") {
+					for _, target := range targets {
+						childSet[target.NodeID] = true
+					}
+				}
+			}
+		}
+
+		var rootComponents []UINodePlan
+		for id, node := range graph.Nodes {
+			if !strings.HasPrefix(node.Type, "ui.") || node.Type == "ui.UIRoute" {
+				continue
+			}
+
+			if !childSet[id] {
+				rootComponents = append(rootComponents, lowerUINode(graph, id, make(map[string]bool)))
+			}
+		}
+
+		if len(rootComponents) > 0 {
+			routes = append(routes, UIRoutePlan{
+				Path:       "/",
+				Title:      "Root",
+				Components: rootComponents,
+			})
+		}
+	}
+
+	return &UIPlan{Routes: routes}, &BindingPlan{Bindings: bindings}
+}
+
+func lowerUIChildren(graph Graph, parentID string) []UINodePlan {
+	parent, ok := graph.Nodes[parentID]
+
+	if !ok {
+		return nil
+	}
+
+	ports := make([]string, 0)
+	for portName := range parent.Connections.Inputs {
+		if strings.HasPrefix(portName, "components") {
+			ports = append(ports, portName)
+		}
+	}
+	sort.Slice(ports, func(i, j int) bool {
+		return parsePortIndex(ports[i]) < parsePortIndex(ports[j])
+	})
+
+	var children []UINodePlan
+	visited := map[string]bool{parentID: true}
+
+	for _, port := range ports {
+		for _, target := range parent.Connections.Inputs[port] {
+			child, exists := graph.Nodes[target.NodeID]
+
+			if exists && strings.HasPrefix(child.Type, "ui.") {
+				children = append(children, lowerUINode(graph, target.NodeID, copyVisited(visited)))
+			}
+		}
+	}
+
+	return children
+}
+
+func parsePortIndex(port string) int {
+	if port == "components" {
+		return 0
+	}
+
+	if strings.HasPrefix(port, "components_") {
+		num, err := strconv.Atoi(strings.TrimPrefix(port, "components_"))
+
+		if err == nil {
+			return num
+		}
+	}
+
+	return int(^uint(0) >> 1)
+}
+
+func copyVisited(visited map[string]bool) map[string]bool {
+	cp := make(map[string]bool, len(visited)+1)
+	for key, val := range visited {
+		cp[key] = val
+	}
+
+	return cp
+}
+
+func lowerUINode(graph Graph, id string, visited map[string]bool) UINodePlan {
+	node := graph.Nodes[id]
+	visited[id] = true
+
+	compName := strings.TrimPrefix(node.Type, "ui.")
+	props := make(map[string]any)
+	var className string
+
+	for propName, rawVal := range node.InputData {
+		if propName == "components" || strings.HasPrefix(propName, "components_") {
+			continue
+		}
+
+		var entry struct {
+			Value any `json:"value"`
+		}
+		err := sonic.Unmarshal(rawVal, &entry)
+
+		if err == nil && entry.Value != nil {
+			if propName == "className" {
+				if s, ok := entry.Value.(string); ok {
+					className = s
+				}
+			}
+
+			if propName != "className" {
+				props[propName] = entry.Value
+			}
+
+			continue
+		}
+
+		var direct any
+		err = sonic.Unmarshal(rawVal, &direct)
+
+		if err == nil && direct != nil {
+			if propName == "className" {
+				if s, ok := direct.(string); ok {
+					className = s
+				}
+			}
+
+			if propName != "className" {
+				props[propName] = direct
+			}
+		}
+	}
+
+	children := lowerUIChildren(graph, id)
+
+	return UINodePlan{
+		ID:        id,
+		Name:      compName,
+		ClassName: className,
+		Props:     props,
+		Children:  children,
+	}
 }

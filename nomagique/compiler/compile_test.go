@@ -380,5 +380,86 @@ func TestCompileFlume(t *testing.T) {
 			So(yesRan2, ShouldBeFalse)
 			So(noRan2, ShouldBeTrue)
 		})
+
+		Convey("Test J: Unified multi-domain compilation partitions UI and backend lowering", func() {
+			mixedJSON := `{
+				"id": "mixed_graph",
+				"name": "mixed_graph",
+				"nodes": {
+					"calc": {
+						"id": "calc",
+						"type": "arithmetic.Add",
+						"connections": {
+							"outputs": {
+								"out": [
+									{"nodeId": "meter", "portName": "value"}
+								]
+							}
+						}
+					},
+					"panel": {
+						"id": "panel",
+						"type": "ui.Panel",
+						"inputData": {
+							"variant": {"value": "sunken"},
+							"className": {"value": "p-4"}
+						},
+						"connections": {
+							"inputs": {
+								"components": [
+									{"nodeId": "meter", "portName": "out"}
+								]
+							}
+						}
+					},
+					"meter": {
+						"id": "meter",
+						"type": "ui.Meter",
+						"connections": {
+							"inputs": {
+								"value": [
+									{"nodeId": "calc", "portName": "out"}
+								]
+							},
+							"outputs": {
+								"out": [
+									{"nodeId": "panel", "portName": "components"}
+								]
+							}
+						}
+					}
+				}
+			}`
+
+			var graph compiler.Graph
+			unmarshalErr := json.Unmarshal([]byte(mixedJSON), &graph)
+			So(unmarshalErr, ShouldBeNil)
+
+			prog, err := compiler.Compile(graph, reg)
+			So(err, ShouldBeNil)
+			So(prog, ShouldNotBeNil)
+
+			// Backend execution contains only backend nodes
+			So(len(prog.Nodes), ShouldEqual, 1)
+			So(prog.Nodes[0].ID, ShouldEqual, "calc")
+
+			// UI plan contains the structural hierarchy
+			So(prog.UI, ShouldNotBeNil)
+			So(len(prog.UI.Routes), ShouldEqual, 1)
+			So(len(prog.UI.Routes[0].Components), ShouldEqual, 1)
+			rootNode := prog.UI.Routes[0].Components[0]
+			So(rootNode.Name, ShouldEqual, "Panel")
+			So(rootNode.ClassName, ShouldEqual, "p-4")
+			So(len(rootNode.Children), ShouldEqual, 1)
+			So(rootNode.Children[0].Name, ShouldEqual, "Meter")
+
+			// Binding plan captures cross-domain edge: calc.out -> meter.value
+			So(prog.Bindings, ShouldNotBeNil)
+			So(len(prog.Bindings.Bindings), ShouldEqual, 1)
+			So(prog.Bindings.Bindings[0].SourceNode, ShouldEqual, "calc")
+			So(prog.Bindings.Bindings[0].SourcePort, ShouldEqual, "out")
+			So(prog.Bindings.Bindings[0].TargetNode, ShouldEqual, "meter")
+			So(prog.Bindings.Bindings[0].TargetProp, ShouldEqual, "value")
+		})
 	})
 }

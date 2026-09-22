@@ -3,7 +3,7 @@
 import type React from "react";
 import * as UI from "./index";
 
-export const uiComponents: Record<string, React.ComponentType<any>> = {
+export const uiComponents = {
 	"Alert": UI.Alert,
 	"Badge": UI.Badge,
 	"Button": UI.Button,
@@ -127,6 +127,6 @@ export const uiComponents: Record<string, React.ComponentType<any>> = {
 	"Typography.Span": (UI.Typography as any).Span,
 	"Typography.Subtitle": (UI.Typography as any).Subtitle,
 	"Typography.Title": (UI.Typography as any).Title,
-};
+} as const satisfies Record<string, React.ComponentType<any>>;
 
 export type UIComponentName = keyof typeof uiComponents;

@@ -207,7 +207,7 @@
       },
       {
         "name": "meta",
-        "type": "string",
+        "type": "slot",
         "optional": true
       }
     ]
@@ -319,22 +319,22 @@
       },
       {
         "name": "meta",
-        "type": "string",
+        "type": "slot",
         "optional": true
       },
       {
         "name": "topRight",
-        "type": "string",
+        "type": "slot",
         "optional": true
       },
       {
         "name": "legend",
-        "type": "string",
+        "type": "slot",
         "optional": true
       },
       {
         "name": "footer",
-        "type": "string",
+        "type": "slot",
         "optional": true
       },
       {
@@ -496,7 +496,7 @@
       },
       {
         "name": "value",
-        "type": "string",
+        "type": "slot",
         "optional": true
       }
     ]
@@ -637,12 +637,12 @@
       },
       {
         "name": "value",
-        "type": "string",
+        "type": "slot",
         "optional": true
       },
       {
         "name": "help",
-        "type": "string",
+        "type": "slot",
         "optional": true
       },
       {
@@ -5105,7 +5105,7 @@
       },
       {
         "name": "metric",
-        "type": "string",
+        "type": "slot",
         "optional": true
       }
     ]
@@ -5273,7 +5273,7 @@
       },
       {
         "name": "value",
-        "type": "string",
+        "type": "slot",
         "optional": true
       },
       {
@@ -5364,7 +5364,7 @@
       },
       {
         "name": "value",
-        "type": "string",
+        "type": "slot",
         "optional": true
       },
       {
@@ -5596,12 +5596,12 @@
       },
       {
         "name": "leading",
-        "type": "string",
+        "type": "slot",
         "optional": true
       },
       {
         "name": "trailing",
-        "type": "string",
+        "type": "slot",
         "optional": true
       }
     ]
@@ -5677,7 +5677,7 @@
       },
       {
         "name": "trailing",
-        "type": "string",
+        "type": "slot",
         "optional": true
       },
       {
@@ -6094,7 +6094,7 @@
       },
       {
         "name": "icon",
-        "type": "string",
+        "type": "slot",
         "optional": true
       },
       {
@@ -6104,12 +6104,12 @@
       },
       {
         "name": "hint",
-        "type": "string",
+        "type": "slot",
         "optional": true
       },
       {
         "name": "trailing",
-        "type": "string",
+        "type": "slot",
         "optional": true
       },
       {
@@ -6423,7 +6423,7 @@
     "props": [
       {
         "name": "icon",
-        "type": "string",
+        "type": "slot",
         "optional": true
       },
       {
@@ -6695,7 +6695,7 @@
       },
       {
         "name": "meta",
-        "type": "string",
+        "type": "slot",
         "optional": true
       }
     ]
@@ -6894,7 +6894,7 @@
       },
       {
         "name": "meta",
-        "type": "string",
+        "type": "slot",
         "optional": true
       }
     ]
@@ -6949,7 +6949,7 @@
       },
       {
         "name": "value",
-        "type": "string",
+        "type": "slot",
         "optional": true
       },
       {
@@ -6969,7 +6969,7 @@
       },
       {
         "name": "meta",
-        "type": "string",
+        "type": "slot",
         "optional": true
       }
     ]
@@ -7099,7 +7099,7 @@
       },
       {
         "name": "meta",
-        "type": "string",
+        "type": "slot",
         "optional": true
       }
     ]
@@ -7200,12 +7200,12 @@
       },
       {
         "name": "leading",
-        "type": "string",
+        "type": "slot",
         "optional": true
       },
       {
         "name": "trailing",
-        "type": "string",
+        "type": "slot",
         "optional": true
       }
     ]
@@ -7345,7 +7345,7 @@
       },
       {
         "name": "value",
-        "type": "string",
+        "type": "slot",
         "optional": true
       },
       {
@@ -7404,12 +7404,12 @@
       },
       {
         "name": "step",
-        "type": "string",
+        "type": "slot",
         "optional": true
       },
       {
         "name": "value",
-        "type": "string",
+        "type": "slot",
         "optional": true
       },
       {
@@ -7419,12 +7419,12 @@
       },
       {
         "name": "explanation",
-        "type": "string",
+        "type": "slot",
         "optional": true
       },
       {
         "name": "footer",
-        "type": "string",
+        "type": "slot",
         "optional": true
       }
     ]

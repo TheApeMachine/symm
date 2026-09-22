@@ -1,0 +1,41 @@
+package probability_test
+
+import (
+	"context"
+	"testing"
+
+	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique/probability"
+)
+
+func TestPareto(t *testing.T) {
+	Convey("Given a Pareto server and client", t, func() {
+		ctx := context.Background()
+		server := probability.NewPareto(ctx)
+		So(server, ShouldNotBeNil)
+
+		client := probability.Pareto_ServerToClient(server)
+		So(client.IsValid(), ShouldBeTrue)
+
+		Convey("When writing input values", func() {
+			err := client.Write(ctx, func(params probability.Pareto_write_Params) error {
+				params.SetXm(1.0)
+				params.SetAlpha(3.0)
+				params.SetX(2.0)
+				params.SetP(0.5)
+				return nil
+			})
+			So(err, ShouldBeNil)
+
+			err = client.WaitStreaming()
+			So(err, ShouldBeNil)
+
+			future, release := client.Done(ctx, nil)
+			defer release()
+
+			results, err := future.Struct()
+			So(err, ShouldBeNil)
+			So(results.IsValid(), ShouldBeTrue)
+		})
+	})
+}

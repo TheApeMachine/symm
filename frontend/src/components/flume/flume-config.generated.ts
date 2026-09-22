@@ -1517,6 +1517,603 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 	});
 	config.addNodeType({
+		type: "linalg.Add",
+		label: "Add",
+		category: "linalg",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports["[]byte"]({ name: "a", label: "a" }),
+			ports["[]byte"]({ name: "b", label: "b" }),
+		],
+		outputs: (ports) => [
+			ports["[]byte"]({ name: "c", label: "c" }),
+		],
+	});
+	config.addNodeType({
+		type: "linalg.Cholesky",
+		label: "Cholesky",
+		category: "linalg",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports["[]byte"]({ name: "a", label: "a" }),
+		],
+		outputs: (ports) => [
+			ports["[]byte"]({ name: "l", label: "l" }),
+		],
+	});
+	config.addNodeType({
+		type: "linalg.Det",
+		label: "Det",
+		category: "linalg",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports["[]byte"]({ name: "a", label: "a" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "det", label: "det" }),
+		],
+	});
+	config.addNodeType({
+		type: "linalg.DivElem",
+		label: "Div Elem",
+		category: "linalg",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports["[]byte"]({ name: "a", label: "a" }),
+			ports["[]byte"]({ name: "b", label: "b" }),
+		],
+		outputs: (ports) => [
+			ports["[]byte"]({ name: "c", label: "c" }),
+		],
+	});
+	config.addNodeType({
+		type: "linalg.Dot",
+		label: "Dot",
+		category: "linalg",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports["[]byte"]({ name: "u", label: "u" }),
+			ports["[]byte"]({ name: "v", label: "v" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "dot", label: "dot" }),
+		],
+	});
+	config.addNodeType({
+		type: "linalg.Eigen",
+		label: "Eigen",
+		category: "linalg",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports["[]byte"]({ name: "a", label: "a" }),
+		],
+		outputs: (ports) => [
+			ports["[]byte"]({ name: "values", label: "values" }),
+			ports["[]byte"]({ name: "vectors", label: "vectors" }),
+		],
+	});
+	config.addNodeType({
+		type: "linalg.Inverse",
+		label: "Inverse",
+		category: "linalg",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports["[]byte"]({ name: "a", label: "a" }),
+		],
+		outputs: (ports) => [
+			ports["[]byte"]({ name: "c", label: "c" }),
+		],
+	});
+	config.addNodeType({
+		type: "linalg.LU",
+		label: "L U",
+		category: "linalg",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports["[]byte"]({ name: "a", label: "a" }),
+		],
+		outputs: (ports) => [
+			ports["[]byte"]({ name: "l", label: "l" }),
+			ports["[]byte"]({ name: "u", label: "u" }),
+		],
+	});
+	config.addNodeType({
+		type: "linalg.MatVecMul",
+		label: "Mat Vec Mul",
+		category: "linalg",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports["[]byte"]({ name: "a", label: "a" }),
+			ports["[]byte"]({ name: "x", label: "x" }),
+		],
+		outputs: (ports) => [
+			ports["[]byte"]({ name: "y", label: "y" }),
+		],
+	});
+	config.addNodeType({
+		type: "linalg.MulElem",
+		label: "Mul Elem",
+		category: "linalg",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports["[]byte"]({ name: "a", label: "a" }),
+			ports["[]byte"]({ name: "b", label: "b" }),
+		],
+		outputs: (ports) => [
+			ports["[]byte"]({ name: "c", label: "c" }),
+		],
+	});
+	config.addNodeType({
+		type: "linalg.Multiply",
+		label: "Multiply",
+		category: "linalg",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports["[]byte"]({ name: "a", label: "a" }),
+			ports["[]byte"]({ name: "b", label: "b" }),
+		],
+		outputs: (ports) => [
+			ports["[]byte"]({ name: "c", label: "c" }),
+		],
+	});
+	config.addNodeType({
+		type: "linalg.Norm",
+		label: "Norm",
+		category: "linalg",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports["[]byte"]({ name: "a", label: "a" }),
+			ports.float64({ name: "ord", label: "ord" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "norm", label: "norm" }),
+		],
+	});
+	config.addNodeType({
+		type: "linalg.Outer",
+		label: "Outer",
+		category: "linalg",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "alpha", label: "alpha" }),
+			ports["[]byte"]({ name: "u", label: "u" }),
+			ports["[]byte"]({ name: "v", label: "v" }),
+		],
+		outputs: (ports) => [
+			ports["[]byte"]({ name: "c", label: "c" }),
+		],
+	});
+	config.addNodeType({
+		type: "linalg.QR",
+		label: "Q R",
+		category: "linalg",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports["[]byte"]({ name: "a", label: "a" }),
+		],
+		outputs: (ports) => [
+			ports["[]byte"]({ name: "q", label: "q" }),
+			ports["[]byte"]({ name: "r", label: "r" }),
+		],
+	});
+	config.addNodeType({
+		type: "linalg.SVD",
+		label: "S V D",
+		category: "linalg",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports["[]byte"]({ name: "a", label: "a" }),
+		],
+		outputs: (ports) => [
+			ports["[]byte"]({ name: "s", label: "s" }),
+			ports["[]byte"]({ name: "u", label: "u" }),
+			ports["[]byte"]({ name: "v", label: "v" }),
+		],
+	});
+	config.addNodeType({
+		type: "linalg.Scale",
+		label: "Scale",
+		category: "linalg",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports["[]byte"]({ name: "a", label: "a" }),
+			ports.float64({ name: "alpha", label: "alpha" }),
+		],
+		outputs: (ports) => [
+			ports["[]byte"]({ name: "c", label: "c" }),
+		],
+	});
+	config.addNodeType({
+		type: "linalg.Solve",
+		label: "Solve",
+		category: "linalg",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports["[]byte"]({ name: "a", label: "a" }),
+			ports["[]byte"]({ name: "b", label: "b" }),
+		],
+		outputs: (ports) => [
+			ports["[]byte"]({ name: "x", label: "x" }),
+		],
+	});
+	config.addNodeType({
+		type: "linalg.SolveVec",
+		label: "Solve Vec",
+		category: "linalg",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports["[]byte"]({ name: "a", label: "a" }),
+			ports["[]byte"]({ name: "b", label: "b" }),
+		],
+		outputs: (ports) => [
+			ports["[]byte"]({ name: "x", label: "x" }),
+		],
+	});
+	config.addNodeType({
+		type: "linalg.Subtract",
+		label: "Subtract",
+		category: "linalg",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports["[]byte"]({ name: "a", label: "a" }),
+			ports["[]byte"]({ name: "b", label: "b" }),
+		],
+		outputs: (ports) => [
+			ports["[]byte"]({ name: "c", label: "c" }),
+		],
+	});
+	config.addNodeType({
+		type: "linalg.Trace",
+		label: "Trace",
+		category: "linalg",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports["[]byte"]({ name: "a", label: "a" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "trace", label: "trace" }),
+		],
+	});
+	config.addNodeType({
+		type: "linalg.Transpose",
+		label: "Transpose",
+		category: "linalg",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports["[]byte"]({ name: "a", label: "a" }),
+		],
+		outputs: (ports) => [
+			ports["[]byte"]({ name: "c", label: "c" }),
+		],
+	});
+	config.addNodeType({
+		type: "linalg.VecAdd",
+		label: "Vec Add",
+		category: "linalg",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports["[]byte"]({ name: "u", label: "u" }),
+			ports["[]byte"]({ name: "v", label: "v" }),
+		],
+		outputs: (ports) => [
+			ports["[]byte"]({ name: "w", label: "w" }),
+		],
+	});
+	config.addNodeType({
+		type: "linalg.VecNorm",
+		label: "Vec Norm",
+		category: "linalg",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "ord", label: "ord" }),
+			ports["[]byte"]({ name: "u", label: "u" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "norm", label: "norm" }),
+		],
+	});
+	config.addNodeType({
+		type: "linalg.VecScale",
+		label: "Vec Scale",
+		category: "linalg",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "alpha", label: "alpha" }),
+			ports["[]byte"]({ name: "u", label: "u" }),
+		],
+		outputs: (ports) => [
+			ports["[]byte"]({ name: "w", label: "w" }),
+		],
+	});
+	config.addNodeType({
+		type: "momentum.AwesomeOscillator",
+		label: "Awesome Oscillator",
+		category: "momentum",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "high", label: "high" }),
+			ports.float64({ name: "low", label: "low" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "momentum.ChaikinOscillator",
+		label: "Chaikin Oscillator",
+		category: "momentum",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "close", label: "close" }),
+			ports.float64({ name: "high", label: "high" }),
+			ports.float64({ name: "low", label: "low" }),
+			ports.float64({ name: "volume", label: "volume" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "ad", label: "ad" }),
+			ports.float64({ name: "co", label: "co" }),
+		],
+	});
+	config.addNodeType({
+		type: "momentum.ConnorsRsi",
+		label: "Connors Rsi",
+		category: "momentum",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "close", label: "close" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "momentum.CoppockCurve",
+		label: "Coppock Curve",
+		category: "momentum",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "value", label: "value" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "momentum.EhlersFisher",
+		label: "Ehlers Fisher",
+		category: "momentum",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "high", label: "high" }),
+			ports.float64({ name: "low", label: "low" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "momentum.ElderRay",
+		label: "Elder Ray",
+		category: "momentum",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "close", label: "close" }),
+			ports.float64({ name: "high", label: "high" }),
+			ports.float64({ name: "low", label: "low" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "bearPower", label: "bearPower" }),
+			ports.float64({ name: "bullPower", label: "bullPower" }),
+		],
+	});
+	config.addNodeType({
+		type: "momentum.Fisher",
+		label: "Fisher",
+		category: "momentum",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "close", label: "close" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "momentum.IchimokuCloud",
+		label: "Ichimoku Cloud",
+		category: "momentum",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "close", label: "close" }),
+			ports.float64({ name: "high", label: "high" }),
+			ports.float64({ name: "low", label: "low" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "baseLine", label: "baseLine" }),
+			ports.float64({ name: "conversionLine", label: "conversionLine" }),
+			ports.float64({ name: "laggingLine", label: "laggingLine" }),
+			ports.float64({ name: "leadingSpanA", label: "leadingSpanA" }),
+			ports.float64({ name: "leadingSpanB", label: "leadingSpanB" }),
+		],
+	});
+	config.addNodeType({
+		type: "momentum.InternalBarStrength",
+		label: "Internal Bar Strength",
+		category: "momentum",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "close", label: "close" }),
+			ports.float64({ name: "high", label: "high" }),
+			ports.float64({ name: "low", label: "low" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "momentum.Ppo",
+		label: "Ppo",
+		category: "momentum",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "close", label: "close" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "histogram", label: "histogram" }),
+			ports.float64({ name: "ppo", label: "ppo" }),
+			ports.float64({ name: "signal", label: "signal" }),
+		],
+	});
+	config.addNodeType({
+		type: "momentum.PringsSpecialK",
+		label: "Prings Special K",
+		category: "momentum",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "close", label: "close" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "momentum.Pvo",
+		label: "Pvo",
+		category: "momentum",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "volume", label: "volume" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "histogram", label: "histogram" }),
+			ports.float64({ name: "pvo", label: "pvo" }),
+			ports.float64({ name: "signal", label: "signal" }),
+		],
+	});
+	config.addNodeType({
+		type: "momentum.Qstick",
+		label: "Qstick",
+		category: "momentum",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "close", label: "close" }),
+			ports.float64({ name: "open", label: "open" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "momentum.Rsi",
+		label: "Rsi",
+		category: "momentum",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "close", label: "close" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "momentum.Rvi",
+		label: "Rvi",
+		category: "momentum",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "close", label: "close" }),
+			ports.float64({ name: "high", label: "high" }),
+			ports.float64({ name: "low", label: "low" }),
+			ports.float64({ name: "open", label: "open" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "rvi", label: "rvi" }),
+			ports.float64({ name: "signal", label: "signal" }),
+		],
+	});
+	config.addNodeType({
+		type: "momentum.StochasticOscillator",
+		label: "Stochastic Oscillator",
+		category: "momentum",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "close", label: "close" }),
+			ports.float64({ name: "high", label: "high" }),
+			ports.float64({ name: "low", label: "low" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "d", label: "d" }),
+			ports.float64({ name: "k", label: "k" }),
+		],
+	});
+	config.addNodeType({
+		type: "momentum.StochasticRsi",
+		label: "Stochastic Rsi",
+		category: "momentum",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "close", label: "close" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "momentum.Streak",
+		label: "Streak",
+		category: "momentum",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "close", label: "close" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "momentum.TdSequential",
+		label: "Td Sequential",
+		category: "momentum",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "close", label: "close" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "buyCountdown", label: "buyCountdown" }),
+			ports.float64({ name: "buySetup", label: "buySetup" }),
+			ports.float64({ name: "sellCountdown", label: "sellCountdown" }),
+			ports.float64({ name: "sellSetup", label: "sellSetup" }),
+		],
+	});
+	config.addNodeType({
+		type: "momentum.UltimateOscillator",
+		label: "Ultimate Oscillator",
+		category: "momentum",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "close", label: "close" }),
+			ports.float64({ name: "high", label: "high" }),
+			ports.float64({ name: "low", label: "low" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "momentum.WilliamsR",
+		label: "Williams R",
+		category: "momentum",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "close", label: "close" }),
+			ports.float64({ name: "high", label: "high" }),
+			ports.float64({ name: "low", label: "low" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
 		type: "physics.Simulation",
 		label: "Simulation",
 		category: "physics",
@@ -1526,6 +2123,212 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports["[]byte"]({ name: "out", label: "out" }),
+		],
+	});
+	config.addNodeType({
+		type: "probability.AlphaStable",
+		label: "Alpha Stable",
+		category: "probability",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "alpha", label: "alpha" }),
+			ports.float64({ name: "beta", label: "beta" }),
+			ports.float64({ name: "c", label: "c" }),
+			ports.float64({ name: "mu", label: "mu" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "exKurtosis", label: "exKurtosis" }),
+			ports.float64({ name: "mean", label: "mean" }),
+			ports.float64({ name: "median", label: "median" }),
+			ports.float64({ name: "mode", label: "mode" }),
+			ports.float64({ name: "rand", label: "rand" }),
+			ports.float64({ name: "skewness", label: "skewness" }),
+			ports.float64({ name: "stdDev", label: "stdDev" }),
+			ports.float64({ name: "variance", label: "variance" }),
+		],
+	});
+	config.addNodeType({
+		type: "probability.Bernoulli",
+		label: "Bernoulli",
+		category: "probability",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "p", label: "p" }),
+			ports.float64({ name: "q", label: "q" }),
+			ports.float64({ name: "x", label: "x" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "cdf", label: "cdf" }),
+			ports.float64({ name: "entropy", label: "entropy" }),
+			ports.float64({ name: "logProb", label: "logProb" }),
+			ports.float64({ name: "mean", label: "mean" }),
+			ports.float64({ name: "prob", label: "prob" }),
+			ports.float64({ name: "quantile", label: "quantile" }),
+			ports.float64({ name: "rand", label: "rand" }),
+			ports.float64({ name: "stdDev", label: "stdDev" }),
+			ports.float64({ name: "survival", label: "survival" }),
+			ports.float64({ name: "variance", label: "variance" }),
+		],
+	});
+	config.addNodeType({
+		type: "probability.Beta",
+		label: "Beta",
+		category: "probability",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "alpha", label: "alpha" }),
+			ports.float64({ name: "beta", label: "beta" }),
+			ports.float64({ name: "p", label: "p" }),
+			ports.float64({ name: "x", label: "x" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "cdf", label: "cdf" }),
+			ports.float64({ name: "entropy", label: "entropy" }),
+			ports.float64({ name: "logProb", label: "logProb" }),
+			ports.float64({ name: "mean", label: "mean" }),
+			ports.float64({ name: "prob", label: "prob" }),
+			ports.float64({ name: "quantile", label: "quantile" }),
+			ports.float64({ name: "rand", label: "rand" }),
+			ports.float64({ name: "stdDev", label: "stdDev" }),
+			ports.float64({ name: "survival", label: "survival" }),
+			ports.float64({ name: "variance", label: "variance" }),
+		],
+	});
+	config.addNodeType({
+		type: "probability.BetaBhattacharyya",
+		label: "Beta Bhattacharyya",
+		category: "probability",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "alphaL", label: "alphaL" }),
+			ports.float64({ name: "alphaR", label: "alphaR" }),
+			ports.float64({ name: "betaL", label: "betaL" }),
+			ports.float64({ name: "betaR", label: "betaR" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "bhattacharyya", label: "bhattacharyya" }),
+		],
+	});
+	config.addNodeType({
+		type: "probability.BetaHellinger",
+		label: "Beta Hellinger",
+		category: "probability",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "alphaL", label: "alphaL" }),
+			ports.float64({ name: "alphaR", label: "alphaR" }),
+			ports.float64({ name: "betaL", label: "betaL" }),
+			ports.float64({ name: "betaR", label: "betaR" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "hellinger", label: "hellinger" }),
+		],
+	});
+	config.addNodeType({
+		type: "probability.BetaKullbackLeibler",
+		label: "Beta Kullback Leibler",
+		category: "probability",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "alphaL", label: "alphaL" }),
+			ports.float64({ name: "alphaR", label: "alphaR" }),
+			ports.float64({ name: "betaL", label: "betaL" }),
+			ports.float64({ name: "betaR", label: "betaR" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "kl", label: "kl" }),
+		],
+	});
+	config.addNodeType({
+		type: "probability.Binomial",
+		label: "Binomial",
+		category: "probability",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "n", label: "n" }),
+			ports.float64({ name: "p", label: "p" }),
+			ports.float64({ name: "x", label: "x" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "cdf", label: "cdf" }),
+			ports.float64({ name: "logProb", label: "logProb" }),
+			ports.float64({ name: "mean", label: "mean" }),
+			ports.float64({ name: "prob", label: "prob" }),
+			ports.float64({ name: "rand", label: "rand" }),
+			ports.float64({ name: "stdDev", label: "stdDev" }),
+			ports.float64({ name: "survival", label: "survival" }),
+			ports.float64({ name: "variance", label: "variance" }),
+		],
+	});
+	config.addNodeType({
+		type: "probability.Categorical",
+		label: "Categorical",
+		category: "probability",
+		initialWidth: 340,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.float64({ name: "x", label: "x" }),
+			];
+			const wiredWeights = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("weights"));
+			for (let index = 0; index < Math.max(1, wiredWeights.length + 1); index++) {
+				const portName = index === 0 ? "weights" : `weights_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.float64({ name: "cdf", label: "cdf" }),
+			ports.float64({ name: "entropy", label: "entropy" }),
+			ports.float64({ name: "logProb", label: "logProb" }),
+			ports.float64({ name: "mean", label: "mean" }),
+			ports.float64({ name: "prob", label: "prob" }),
+			ports.float64({ name: "rand", label: "rand" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "probability.Chi",
+		label: "Chi",
+		category: "probability",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "k", label: "k" }),
+			ports.float64({ name: "p", label: "p" }),
+			ports.float64({ name: "x", label: "x" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "cdf", label: "cdf" }),
+			ports.float64({ name: "entropy", label: "entropy" }),
+			ports.float64({ name: "logProb", label: "logProb" }),
+			ports.float64({ name: "mean", label: "mean" }),
+			ports.float64({ name: "prob", label: "prob" }),
+			ports.float64({ name: "quantile", label: "quantile" }),
+			ports.float64({ name: "rand", label: "rand" }),
+			ports.float64({ name: "stdDev", label: "stdDev" }),
+			ports.float64({ name: "survival", label: "survival" }),
+			ports.float64({ name: "variance", label: "variance" }),
+		],
+	});
+	config.addNodeType({
+		type: "probability.ChiSquared",
+		label: "Chi Squared",
+		category: "probability",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "k", label: "k" }),
+			ports.float64({ name: "p", label: "p" }),
+			ports.float64({ name: "x", label: "x" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "cdf", label: "cdf" }),
+			ports.float64({ name: "logProb", label: "logProb" }),
+			ports.float64({ name: "mean", label: "mean" }),
+			ports.float64({ name: "prob", label: "prob" }),
+			ports.float64({ name: "quantile", label: "quantile" }),
+			ports.float64({ name: "rand", label: "rand" }),
+			ports.float64({ name: "stdDev", label: "stdDev" }),
+			ports.float64({ name: "survival", label: "survival" }),
+			ports.float64({ name: "variance", label: "variance" }),
 		],
 	});
 	config.addNodeType({
@@ -1569,6 +2372,75 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 	});
 	config.addNodeType({
+		type: "probability.Exponential",
+		label: "Exponential",
+		category: "probability",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "p", label: "p" }),
+			ports.float64({ name: "rate", label: "rate" }),
+			ports.float64({ name: "x", label: "x" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "cdf", label: "cdf" }),
+			ports.float64({ name: "entropy", label: "entropy" }),
+			ports.float64({ name: "logProb", label: "logProb" }),
+			ports.float64({ name: "mean", label: "mean" }),
+			ports.float64({ name: "prob", label: "prob" }),
+			ports.float64({ name: "quantile", label: "quantile" }),
+			ports.float64({ name: "rand", label: "rand" }),
+			ports.float64({ name: "stdDev", label: "stdDev" }),
+			ports.float64({ name: "survival", label: "survival" }),
+			ports.float64({ name: "variance", label: "variance" }),
+		],
+	});
+	config.addNodeType({
+		type: "probability.F",
+		label: "F",
+		category: "probability",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "d1", label: "d1" }),
+			ports.float64({ name: "d2", label: "d2" }),
+			ports.float64({ name: "p", label: "p" }),
+			ports.float64({ name: "x", label: "x" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "cdf", label: "cdf" }),
+			ports.float64({ name: "logProb", label: "logProb" }),
+			ports.float64({ name: "mean", label: "mean" }),
+			ports.float64({ name: "prob", label: "prob" }),
+			ports.float64({ name: "quantile", label: "quantile" }),
+			ports.float64({ name: "rand", label: "rand" }),
+			ports.float64({ name: "stdDev", label: "stdDev" }),
+			ports.float64({ name: "survival", label: "survival" }),
+			ports.float64({ name: "variance", label: "variance" }),
+		],
+	});
+	config.addNodeType({
+		type: "probability.Gamma",
+		label: "Gamma",
+		category: "probability",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "alpha", label: "alpha" }),
+			ports.float64({ name: "beta", label: "beta" }),
+			ports.float64({ name: "p", label: "p" }),
+			ports.float64({ name: "x", label: "x" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "cdf", label: "cdf" }),
+			ports.float64({ name: "logProb", label: "logProb" }),
+			ports.float64({ name: "mean", label: "mean" }),
+			ports.float64({ name: "prob", label: "prob" }),
+			ports.float64({ name: "quantile", label: "quantile" }),
+			ports.float64({ name: "rand", label: "rand" }),
+			ports.float64({ name: "stdDev", label: "stdDev" }),
+			ports.float64({ name: "survival", label: "survival" }),
+			ports.float64({ name: "variance", label: "variance" }),
+		],
+	});
+	config.addNodeType({
 		type: "probability.Geomean",
 		label: "Geomean",
 		category: "probability",
@@ -1578,6 +2450,53 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "out", label: "out" }),
+		],
+	});
+	config.addNodeType({
+		type: "probability.GumbelRight",
+		label: "Gumbel Right",
+		category: "probability",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "beta", label: "beta" }),
+			ports.float64({ name: "mu", label: "mu" }),
+			ports.float64({ name: "p", label: "p" }),
+			ports.float64({ name: "x", label: "x" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "cdf", label: "cdf" }),
+			ports.float64({ name: "entropy", label: "entropy" }),
+			ports.float64({ name: "logProb", label: "logProb" }),
+			ports.float64({ name: "mean", label: "mean" }),
+			ports.float64({ name: "prob", label: "prob" }),
+			ports.float64({ name: "quantile", label: "quantile" }),
+			ports.float64({ name: "rand", label: "rand" }),
+			ports.float64({ name: "stdDev", label: "stdDev" }),
+			ports.float64({ name: "survival", label: "survival" }),
+			ports.float64({ name: "variance", label: "variance" }),
+		],
+	});
+	config.addNodeType({
+		type: "probability.InverseGamma",
+		label: "Inverse Gamma",
+		category: "probability",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "alpha", label: "alpha" }),
+			ports.float64({ name: "beta", label: "beta" }),
+			ports.float64({ name: "p", label: "p" }),
+			ports.float64({ name: "x", label: "x" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "cdf", label: "cdf" }),
+			ports.float64({ name: "logProb", label: "logProb" }),
+			ports.float64({ name: "mean", label: "mean" }),
+			ports.float64({ name: "prob", label: "prob" }),
+			ports.float64({ name: "quantile", label: "quantile" }),
+			ports.float64({ name: "rand", label: "rand" }),
+			ports.float64({ name: "stdDev", label: "stdDev" }),
+			ports.float64({ name: "survival", label: "survival" }),
+			ports.float64({ name: "variance", label: "variance" }),
 		],
 	});
 	config.addNodeType({
@@ -1593,6 +2512,209 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 	});
 	config.addNodeType({
+		type: "probability.Laplace",
+		label: "Laplace",
+		category: "probability",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "mu", label: "mu" }),
+			ports.float64({ name: "p", label: "p" }),
+			ports.float64({ name: "scale", label: "scale" }),
+			ports.float64({ name: "x", label: "x" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "cdf", label: "cdf" }),
+			ports.float64({ name: "entropy", label: "entropy" }),
+			ports.float64({ name: "logProb", label: "logProb" }),
+			ports.float64({ name: "mean", label: "mean" }),
+			ports.float64({ name: "prob", label: "prob" }),
+			ports.float64({ name: "quantile", label: "quantile" }),
+			ports.float64({ name: "rand", label: "rand" }),
+			ports.float64({ name: "stdDev", label: "stdDev" }),
+			ports.float64({ name: "survival", label: "survival" }),
+			ports.float64({ name: "variance", label: "variance" }),
+		],
+	});
+	config.addNodeType({
+		type: "probability.LogNormal",
+		label: "Log Normal",
+		category: "probability",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "mu", label: "mu" }),
+			ports.float64({ name: "p", label: "p" }),
+			ports.float64({ name: "sigma", label: "sigma" }),
+			ports.float64({ name: "x", label: "x" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "cdf", label: "cdf" }),
+			ports.float64({ name: "entropy", label: "entropy" }),
+			ports.float64({ name: "logProb", label: "logProb" }),
+			ports.float64({ name: "mean", label: "mean" }),
+			ports.float64({ name: "prob", label: "prob" }),
+			ports.float64({ name: "quantile", label: "quantile" }),
+			ports.float64({ name: "rand", label: "rand" }),
+			ports.float64({ name: "stdDev", label: "stdDev" }),
+			ports.float64({ name: "survival", label: "survival" }),
+			ports.float64({ name: "variance", label: "variance" }),
+		],
+	});
+	config.addNodeType({
+		type: "probability.Logistic",
+		label: "Logistic",
+		category: "probability",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "mu", label: "mu" }),
+			ports.float64({ name: "p", label: "p" }),
+			ports.float64({ name: "s", label: "s" }),
+			ports.float64({ name: "x", label: "x" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "cdf", label: "cdf" }),
+			ports.float64({ name: "logProb", label: "logProb" }),
+			ports.float64({ name: "mean", label: "mean" }),
+			ports.float64({ name: "prob", label: "prob" }),
+			ports.float64({ name: "quantile", label: "quantile" }),
+			ports.float64({ name: "stdDev", label: "stdDev" }),
+			ports.float64({ name: "survival", label: "survival" }),
+			ports.float64({ name: "variance", label: "variance" }),
+		],
+	});
+	config.addNodeType({
+		type: "probability.NoncentralT",
+		label: "Noncentral T",
+		category: "probability",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "mu", label: "mu" }),
+			ports.float64({ name: "nu", label: "nu" }),
+			ports.float64({ name: "p", label: "p" }),
+			ports.float64({ name: "x", label: "x" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "cdf", label: "cdf" }),
+			ports.float64({ name: "logProb", label: "logProb" }),
+			ports.float64({ name: "mean", label: "mean" }),
+			ports.float64({ name: "prob", label: "prob" }),
+			ports.float64({ name: "quantile", label: "quantile" }),
+			ports.float64({ name: "variance", label: "variance" }),
+		],
+	});
+	config.addNodeType({
+		type: "probability.Normal",
+		label: "Normal",
+		category: "probability",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "mu", label: "mu" }),
+			ports.float64({ name: "p", label: "p" }),
+			ports.float64({ name: "sigma", label: "sigma" }),
+			ports.float64({ name: "x", label: "x" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "cdf", label: "cdf" }),
+			ports.float64({ name: "entropy", label: "entropy" }),
+			ports.float64({ name: "logProb", label: "logProb" }),
+			ports.float64({ name: "mean", label: "mean" }),
+			ports.float64({ name: "prob", label: "prob" }),
+			ports.float64({ name: "quantile", label: "quantile" }),
+			ports.float64({ name: "rand", label: "rand" }),
+			ports.float64({ name: "stdDev", label: "stdDev" }),
+			ports.float64({ name: "survival", label: "survival" }),
+			ports.float64({ name: "variance", label: "variance" }),
+		],
+	});
+	config.addNodeType({
+		type: "probability.NormalBhattacharyya",
+		label: "Normal Bhattacharyya",
+		category: "probability",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "muL", label: "muL" }),
+			ports.float64({ name: "muR", label: "muR" }),
+			ports.float64({ name: "sigmaL", label: "sigmaL" }),
+			ports.float64({ name: "sigmaR", label: "sigmaR" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "bhattacharyya", label: "bhattacharyya" }),
+		],
+	});
+	config.addNodeType({
+		type: "probability.NormalHellinger",
+		label: "Normal Hellinger",
+		category: "probability",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "muL", label: "muL" }),
+			ports.float64({ name: "muR", label: "muR" }),
+			ports.float64({ name: "sigmaL", label: "sigmaL" }),
+			ports.float64({ name: "sigmaR", label: "sigmaR" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "hellinger", label: "hellinger" }),
+		],
+	});
+	config.addNodeType({
+		type: "probability.NormalKullbackLeibler",
+		label: "Normal Kullback Leibler",
+		category: "probability",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "muL", label: "muL" }),
+			ports.float64({ name: "muR", label: "muR" }),
+			ports.float64({ name: "sigmaL", label: "sigmaL" }),
+			ports.float64({ name: "sigmaR", label: "sigmaR" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "kl", label: "kl" }),
+		],
+	});
+	config.addNodeType({
+		type: "probability.Pareto",
+		label: "Pareto",
+		category: "probability",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "alpha", label: "alpha" }),
+			ports.float64({ name: "p", label: "p" }),
+			ports.float64({ name: "x", label: "x" }),
+			ports.float64({ name: "xm", label: "xm" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "cdf", label: "cdf" }),
+			ports.float64({ name: "entropy", label: "entropy" }),
+			ports.float64({ name: "logProb", label: "logProb" }),
+			ports.float64({ name: "mean", label: "mean" }),
+			ports.float64({ name: "prob", label: "prob" }),
+			ports.float64({ name: "quantile", label: "quantile" }),
+			ports.float64({ name: "rand", label: "rand" }),
+			ports.float64({ name: "stdDev", label: "stdDev" }),
+			ports.float64({ name: "survival", label: "survival" }),
+			ports.float64({ name: "variance", label: "variance" }),
+		],
+	});
+	config.addNodeType({
+		type: "probability.Poisson",
+		label: "Poisson",
+		category: "probability",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "lambda", label: "lambda" }),
+			ports.float64({ name: "x", label: "x" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "cdf", label: "cdf" }),
+			ports.float64({ name: "logProb", label: "logProb" }),
+			ports.float64({ name: "mean", label: "mean" }),
+			ports.float64({ name: "prob", label: "prob" }),
+			ports.float64({ name: "rand", label: "rand" }),
+			ports.float64({ name: "stdDev", label: "stdDev" }),
+			ports.float64({ name: "survival", label: "survival" }),
+			ports.float64({ name: "variance", label: "variance" }),
+		],
+	});
+	config.addNodeType({
 		type: "probability.ShannonAmbiguity",
 		label: "Shannon Ambiguity",
 		category: "probability",
@@ -1602,6 +2724,103 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "out", label: "out" }),
+		],
+	});
+	config.addNodeType({
+		type: "probability.StudentsT",
+		label: "Students T",
+		category: "probability",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "mu", label: "mu" }),
+			ports.float64({ name: "nu", label: "nu" }),
+			ports.float64({ name: "p", label: "p" }),
+			ports.float64({ name: "sigma", label: "sigma" }),
+			ports.float64({ name: "x", label: "x" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "cdf", label: "cdf" }),
+			ports.float64({ name: "logProb", label: "logProb" }),
+			ports.float64({ name: "mean", label: "mean" }),
+			ports.float64({ name: "prob", label: "prob" }),
+			ports.float64({ name: "quantile", label: "quantile" }),
+			ports.float64({ name: "rand", label: "rand" }),
+			ports.float64({ name: "stdDev", label: "stdDev" }),
+			ports.float64({ name: "survival", label: "survival" }),
+			ports.float64({ name: "variance", label: "variance" }),
+		],
+	});
+	config.addNodeType({
+		type: "probability.Triangle",
+		label: "Triangle",
+		category: "probability",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "a", label: "a" }),
+			ports.float64({ name: "b", label: "b" }),
+			ports.float64({ name: "c", label: "c" }),
+			ports.float64({ name: "p", label: "p" }),
+			ports.float64({ name: "x", label: "x" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "cdf", label: "cdf" }),
+			ports.float64({ name: "entropy", label: "entropy" }),
+			ports.float64({ name: "logProb", label: "logProb" }),
+			ports.float64({ name: "mean", label: "mean" }),
+			ports.float64({ name: "prob", label: "prob" }),
+			ports.float64({ name: "quantile", label: "quantile" }),
+			ports.float64({ name: "rand", label: "rand" }),
+			ports.float64({ name: "stdDev", label: "stdDev" }),
+			ports.float64({ name: "survival", label: "survival" }),
+			ports.float64({ name: "variance", label: "variance" }),
+		],
+	});
+	config.addNodeType({
+		type: "probability.Uniform",
+		label: "Uniform",
+		category: "probability",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "max", label: "max" }),
+			ports.float64({ name: "min", label: "min" }),
+			ports.float64({ name: "p", label: "p" }),
+			ports.float64({ name: "x", label: "x" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "cdf", label: "cdf" }),
+			ports.float64({ name: "entropy", label: "entropy" }),
+			ports.float64({ name: "logProb", label: "logProb" }),
+			ports.float64({ name: "mean", label: "mean" }),
+			ports.float64({ name: "prob", label: "prob" }),
+			ports.float64({ name: "quantile", label: "quantile" }),
+			ports.float64({ name: "rand", label: "rand" }),
+			ports.float64({ name: "stdDev", label: "stdDev" }),
+			ports.float64({ name: "survival", label: "survival" }),
+			ports.float64({ name: "variance", label: "variance" }),
+		],
+	});
+	config.addNodeType({
+		type: "probability.Weibull",
+		label: "Weibull",
+		category: "probability",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "k", label: "k" }),
+			ports.float64({ name: "lambda", label: "lambda" }),
+			ports.float64({ name: "p", label: "p" }),
+			ports.float64({ name: "x", label: "x" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "cdf", label: "cdf" }),
+			ports.float64({ name: "entropy", label: "entropy" }),
+			ports.float64({ name: "logProb", label: "logProb" }),
+			ports.float64({ name: "mean", label: "mean" }),
+			ports.float64({ name: "prob", label: "prob" }),
+			ports.float64({ name: "quantile", label: "quantile" }),
+			ports.float64({ name: "rand", label: "rand" }),
+			ports.float64({ name: "stdDev", label: "stdDev" }),
+			ports.float64({ name: "survival", label: "survival" }),
+			ports.float64({ name: "variance", label: "variance" }),
 		],
 	});
 	config.addNodeType({
@@ -1653,6 +2872,58 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: [],
 	});
 	config.addNodeType({
+		type: "statistic.Bhattacharyya",
+		label: "Bhattacharyya",
+		category: "statistic",
+		initialWidth: 340,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+			];
+			const wiredP = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("p"));
+			for (let index = 0; index < Math.max(1, wiredP.length + 1); index++) {
+				const portName = index === 0 ? "p" : `p_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			const wiredQ = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("q"));
+			for (let index = 0; index < Math.max(1, wiredQ.length + 1); index++) {
+				const portName = index === 0 ? "q" : `q_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.float64({ name: "bhattacharyya", label: "bhattacharyya" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "statistic.BivariateMoment",
+		label: "Bivariate Moment",
+		category: "statistic",
+		initialWidth: 340,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.float64({ name: "orderR", label: "orderR" }),
+				ports.float64({ name: "orderS", label: "orderS" }),
+			];
+			const wiredX = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("x"));
+			for (let index = 0; index < Math.max(1, wiredX.length + 1); index++) {
+				const portName = index === 0 ? "x" : `x_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			const wiredY = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("y"));
+			for (let index = 0; index < Math.max(1, wiredY.length + 1); index++) {
+				const portName = index === 0 ? "y" : `y_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.float64({ name: "moment", label: "moment" }),
+		],
+	});
+
+	config.addNodeType({
 		type: "statistic.CausalMean",
 		label: "Causal Mean",
 		category: "statistic",
@@ -1677,6 +2948,366 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 	});
 	config.addNodeType({
+		type: "statistic.ChiSquare",
+		label: "Chi Square",
+		category: "statistic",
+		initialWidth: 340,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+			];
+			const wiredExpected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("expected"));
+			for (let index = 0; index < Math.max(1, wiredExpected.length + 1); index++) {
+				const portName = index === 0 ? "expected" : `expected_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			const wiredObserved = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("observed"));
+			for (let index = 0; index < Math.max(1, wiredObserved.length + 1); index++) {
+				const portName = index === 0 ? "observed" : `observed_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.float64({ name: "chiSquare", label: "chiSquare" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "statistic.CircularMean",
+		label: "Circular Mean",
+		category: "statistic",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "angle", label: "angle" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "meanAngle", label: "meanAngle" }),
+		],
+	});
+	config.addNodeType({
+		type: "statistic.Correlation",
+		label: "Correlation",
+		category: "statistic",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "x", label: "x" }),
+			ports.float64({ name: "y", label: "y" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "correlation", label: "correlation" }),
+		],
+	});
+	config.addNodeType({
+		type: "statistic.CorrelationMatrix",
+		label: "Correlation Matrix",
+		category: "statistic",
+		initialWidth: 340,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.int64({ name: "cols", label: "cols" }),
+				ports.int64({ name: "rows", label: "rows" }),
+			];
+			const wiredData = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("data"));
+			for (let index = 0; index < Math.max(1, wiredData.length + 1); index++) {
+				const portName = index === 0 ? "data" : `data_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.float64({ name: "corr", label: "corr" }),
+			ports.int64({ name: "dim", label: "dim" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "statistic.Covariance",
+		label: "Covariance",
+		category: "statistic",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "x", label: "x" }),
+			ports.float64({ name: "y", label: "y" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "covariance", label: "covariance" }),
+		],
+	});
+	config.addNodeType({
+		type: "statistic.CovarianceMatrix",
+		label: "Covariance Matrix",
+		category: "statistic",
+		initialWidth: 340,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.int64({ name: "cols", label: "cols" }),
+				ports.int64({ name: "rows", label: "rows" }),
+			];
+			const wiredData = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("data"));
+			for (let index = 0; index < Math.max(1, wiredData.length + 1); index++) {
+				const portName = index === 0 ? "data" : `data_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.float64({ name: "cov", label: "cov" }),
+			ports.int64({ name: "dim", label: "dim" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "statistic.CrossEntropy",
+		label: "Cross Entropy",
+		category: "statistic",
+		initialWidth: 340,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+			];
+			const wiredP = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("p"));
+			for (let index = 0; index < Math.max(1, wiredP.length + 1); index++) {
+				const portName = index === 0 ? "p" : `p_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			const wiredQ = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("q"));
+			for (let index = 0; index < Math.max(1, wiredQ.length + 1); index++) {
+				const portName = index === 0 ? "q" : `q_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.float64({ name: "crossEntropy", label: "crossEntropy" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "statistic.Entropy",
+		label: "Entropy",
+		category: "statistic",
+		initialWidth: 340,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+			];
+			const wiredP = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("p"));
+			for (let index = 0; index < Math.max(1, wiredP.length + 1); index++) {
+				const portName = index === 0 ? "p" : `p_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.float64({ name: "entropy", label: "entropy" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "statistic.GeometricMean",
+		label: "Geometric Mean",
+		category: "statistic",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "value", label: "value" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "geometricMean", label: "geometricMean" }),
+		],
+	});
+	config.addNodeType({
+		type: "statistic.HarmonicMean",
+		label: "Harmonic Mean",
+		category: "statistic",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "value", label: "value" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "harmonicMean", label: "harmonicMean" }),
+		],
+	});
+	config.addNodeType({
+		type: "statistic.Hellinger",
+		label: "Hellinger",
+		category: "statistic",
+		initialWidth: 340,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+			];
+			const wiredP = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("p"));
+			for (let index = 0; index < Math.max(1, wiredP.length + 1); index++) {
+				const portName = index === 0 ? "p" : `p_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			const wiredQ = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("q"));
+			for (let index = 0; index < Math.max(1, wiredQ.length + 1); index++) {
+				const portName = index === 0 ? "q" : `q_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.float64({ name: "hellinger", label: "hellinger" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "statistic.JensenShannon",
+		label: "Jensen Shannon",
+		category: "statistic",
+		initialWidth: 340,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+			];
+			const wiredP = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("p"));
+			for (let index = 0; index < Math.max(1, wiredP.length + 1); index++) {
+				const portName = index === 0 ? "p" : `p_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			const wiredQ = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("q"));
+			for (let index = 0; index < Math.max(1, wiredQ.length + 1); index++) {
+				const portName = index === 0 ? "q" : `q_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.float64({ name: "jensenShannon", label: "jensenShannon" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "statistic.Kendall",
+		label: "Kendall",
+		category: "statistic",
+		initialWidth: 340,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+			];
+			const wiredX = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("x"));
+			for (let index = 0; index < Math.max(1, wiredX.length + 1); index++) {
+				const portName = index === 0 ? "x" : `x_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			const wiredY = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("y"));
+			for (let index = 0; index < Math.max(1, wiredY.length + 1); index++) {
+				const portName = index === 0 ? "y" : `y_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.float64({ name: "kendall", label: "kendall" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "statistic.KolmogorovSmirnov",
+		label: "Kolmogorov Smirnov",
+		category: "statistic",
+		initialWidth: 340,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+			];
+			const wiredX = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("x"));
+			for (let index = 0; index < Math.max(1, wiredX.length + 1); index++) {
+				const portName = index === 0 ? "x" : `x_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			const wiredY = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("y"));
+			for (let index = 0; index < Math.max(1, wiredY.length + 1); index++) {
+				const portName = index === 0 ? "y" : `y_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.float64({ name: "statistic", label: "statistic" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "statistic.KullbackLeibler",
+		label: "Kullback Leibler",
+		category: "statistic",
+		initialWidth: 340,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+			];
+			const wiredP = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("p"));
+			for (let index = 0; index < Math.max(1, wiredP.length + 1); index++) {
+				const portName = index === 0 ? "p" : `p_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			const wiredQ = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("q"));
+			for (let index = 0; index < Math.max(1, wiredQ.length + 1); index++) {
+				const portName = index === 0 ? "q" : `q_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.float64({ name: "kullbackLeibler", label: "kullbackLeibler" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "statistic.Kurtosis",
+		label: "Kurtosis",
+		category: "statistic",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "value", label: "value" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "kurtosis", label: "kurtosis" }),
+		],
+	});
+	config.addNodeType({
+		type: "statistic.LinearRegression",
+		label: "Linear Regression",
+		category: "statistic",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "x", label: "x" }),
+			ports.float64({ name: "y", label: "y" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "alpha", label: "alpha" }),
+			ports.float64({ name: "beta", label: "beta" }),
+		],
+	});
+	config.addNodeType({
+		type: "statistic.Mahalanobis",
+		label: "Mahalanobis",
+		category: "statistic",
+		initialWidth: 340,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.int64({ name: "dim", label: "dim" }),
+			];
+			const wiredCholData = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("cholData"));
+			for (let index = 0; index < Math.max(1, wiredCholData.length + 1); index++) {
+				const portName = index === 0 ? "cholData" : `cholData_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			const wiredX = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("x"));
+			for (let index = 0; index < Math.max(1, wiredX.length + 1); index++) {
+				const portName = index === 0 ? "x" : `x_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			const wiredY = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("y"));
+			for (let index = 0; index < Math.max(1, wiredY.length + 1); index++) {
+				const portName = index === 0 ? "y" : `y_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.float64({ name: "distance", label: "distance" }),
+		],
+	});
+
+	config.addNodeType({
 		type: "statistic.Mean",
 		label: "Mean",
 		category: "statistic",
@@ -1686,6 +3317,80 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "out", label: "out" }),
+		],
+	});
+	config.addNodeType({
+		type: "statistic.Mode",
+		label: "Mode",
+		category: "statistic",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "value", label: "value" }),
+		],
+		outputs: (ports) => [
+			ports.int64({ name: "frequency", label: "frequency" }),
+			ports.float64({ name: "mode", label: "mode" }),
+		],
+	});
+	config.addNodeType({
+		type: "statistic.Moment",
+		label: "Moment",
+		category: "statistic",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "order", label: "order" }),
+			ports.float64({ name: "value", label: "value" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "moment", label: "moment" }),
+		],
+	});
+	config.addNodeType({
+		type: "statistic.MomentAbout",
+		label: "Moment About",
+		category: "statistic",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "mean", label: "mean" }),
+			ports.float64({ name: "order", label: "order" }),
+			ports.float64({ name: "value", label: "value" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "moment", label: "moment" }),
+		],
+	});
+	config.addNodeType({
+		type: "statistic.Quantile",
+		label: "Quantile",
+		category: "statistic",
+		initialWidth: 340,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.float64({ name: "p", label: "p" }),
+			];
+			const wiredValues = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("values"));
+			for (let index = 0; index < Math.max(1, wiredValues.length + 1); index++) {
+				const portName = index === 0 ? "values" : `values_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.float64({ name: "quantile", label: "quantile" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "statistic.RSquared",
+		label: "R Squared",
+		category: "statistic",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "x", label: "x" }),
+			ports.float64({ name: "y", label: "y" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "rSquared", label: "rSquared" }),
 		],
 	});
 	config.addNodeType({
@@ -1713,6 +3418,42 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 	});
 	config.addNodeType({
+		type: "statistic.Skew",
+		label: "Skew",
+		category: "statistic",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "value", label: "value" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "skew", label: "skew" }),
+		],
+	});
+	config.addNodeType({
+		type: "statistic.StdDev",
+		label: "Std Dev",
+		category: "statistic",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "value", label: "value" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "stdDev", label: "stdDev" }),
+		],
+	});
+	config.addNodeType({
+		type: "statistic.StdErr",
+		label: "Std Err",
+		category: "statistic",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "value", label: "value" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "stdErr", label: "stdErr" }),
+		],
+	});
+	config.addNodeType({
 		type: "statistic.Variance",
 		label: "Variance",
 		category: "statistic",
@@ -1724,6 +3465,31 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "out", label: "out" }),
 		],
 	});
+	config.addNodeType({
+		type: "statistic.WassersteinDistance",
+		label: "Wasserstein Distance",
+		category: "statistic",
+		initialWidth: 340,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+			];
+			const wiredP = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("p"));
+			for (let index = 0; index < Math.max(1, wiredP.length + 1); index++) {
+				const portName = index === 0 ? "p" : `p_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			const wiredQ = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("q"));
+			for (let index = 0; index < Math.max(1, wiredQ.length + 1); index++) {
+				const portName = index === 0 ? "q" : `q_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.float64({ name: "wassersteinDistance", label: "wassersteinDistance" }),
+		],
+	});
+
 	config.addNodeType({
 		type: "statistic.ZScore",
 		label: "Z Score",
@@ -1805,6 +3571,160 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.bool({ name: "found", label: "found" }),
 			ports["[]byte"]({ name: "out", label: "out" }),
+		],
+	});
+	config.addNodeType({
+		type: "strategy.ActionsToAnnotations",
+		label: "Actions To Annotations",
+		category: "strategy",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.int64({ name: "action", label: "action" }),
+		],
+		outputs: (ports) => [
+			ports.string({ name: "annotation", label: "annotation" }),
+		],
+	});
+	config.addNodeType({
+		type: "strategy.And",
+		label: "And",
+		category: "strategy",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.int64({ name: "action1", label: "action1" }),
+			ports.int64({ name: "action2", label: "action2" }),
+		],
+		outputs: (ports) => [
+			ports.int64({ name: "action", label: "action" }),
+		],
+	});
+	config.addNodeType({
+		type: "strategy.BuyAndHold",
+		label: "Buy And Hold",
+		category: "strategy",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "close", label: "close" }),
+			ports.float64({ name: "high", label: "high" }),
+			ports.float64({ name: "low", label: "low" }),
+			ports.float64({ name: "open", label: "open" }),
+			ports.float64({ name: "volume", label: "volume" }),
+		],
+		outputs: (ports) => [
+			ports.int64({ name: "action", label: "action" }),
+		],
+	});
+	config.addNodeType({
+		type: "strategy.CountTransactions",
+		label: "Count Transactions",
+		category: "strategy",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.int64({ name: "action", label: "action" }),
+		],
+		outputs: (ports) => [
+			ports.int64({ name: "count", label: "count" }),
+		],
+	});
+	config.addNodeType({
+		type: "strategy.DenormalizeActions",
+		label: "Denormalize Actions",
+		category: "strategy",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.int64({ name: "action", label: "action" }),
+		],
+		outputs: (ports) => [
+			ports.int64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "strategy.Majority",
+		label: "Majority",
+		category: "strategy",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.int64({ name: "action1", label: "action1" }),
+			ports.int64({ name: "action2", label: "action2" }),
+			ports.int64({ name: "action3", label: "action3" }),
+		],
+		outputs: (ports) => [
+			ports.int64({ name: "action", label: "action" }),
+		],
+	});
+	config.addNodeType({
+		type: "strategy.NormalizeActions",
+		label: "Normalize Actions",
+		category: "strategy",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.int64({ name: "action", label: "action" }),
+		],
+		outputs: (ports) => [
+			ports.int64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "strategy.Or",
+		label: "Or",
+		category: "strategy",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.int64({ name: "action1", label: "action1" }),
+			ports.int64({ name: "action2", label: "action2" }),
+		],
+		outputs: (ports) => [
+			ports.int64({ name: "action", label: "action" }),
+		],
+	});
+	config.addNodeType({
+		type: "strategy.Outcome",
+		label: "Outcome",
+		category: "strategy",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.int64({ name: "action", label: "action" }),
+			ports.float64({ name: "value", label: "value" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "strategy.SharpeRatio",
+		label: "Sharpe Ratio",
+		category: "strategy",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "outcome", label: "outcome" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "ratio", label: "ratio" }),
+		],
+	});
+	config.addNodeType({
+		type: "strategy.SortinoRatio",
+		label: "Sortino Ratio",
+		category: "strategy",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "outcome", label: "outcome" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "ratio", label: "ratio" }),
+		],
+	});
+	config.addNodeType({
+		type: "strategy.Split",
+		label: "Split",
+		category: "strategy",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.int64({ name: "buyAction", label: "buyAction" }),
+			ports.int64({ name: "sellAction", label: "sellAction" }),
+		],
+		outputs: (ports) => [
+			ports.int64({ name: "action", label: "action" }),
 		],
 	});
 	config.addNodeType({
@@ -2073,6 +3993,511 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 	});
 	config.addNodeType({
+		type: "trend.Apo",
+		label: "Apo",
+		category: "trend",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "value", label: "value" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "trend.Aroon",
+		label: "Aroon",
+		category: "trend",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "high", label: "high" }),
+			ports.float64({ name: "low", label: "low" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "down", label: "down" }),
+			ports.float64({ name: "up", label: "up" }),
+		],
+	});
+	config.addNodeType({
+		type: "trend.BoP",
+		label: "Bo P",
+		category: "trend",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "close", label: "close" }),
+			ports.float64({ name: "high", label: "high" }),
+			ports.float64({ name: "low", label: "low" }),
+			ports.float64({ name: "opening", label: "opening" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "trend.Cci",
+		label: "Cci",
+		category: "trend",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "close", label: "close" }),
+			ports.float64({ name: "high", label: "high" }),
+			ports.float64({ name: "low", label: "low" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "trend.Cfo",
+		label: "Cfo",
+		category: "trend",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "value", label: "value" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "trend.Dema",
+		label: "Dema",
+		category: "trend",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "value", label: "value" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "trend.Dpo",
+		label: "Dpo",
+		category: "trend",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "value", label: "value" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "trend.Ema",
+		label: "Ema",
+		category: "trend",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "value", label: "value" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "trend.Envelope",
+		label: "Envelope",
+		category: "trend",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "close", label: "close" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "lower", label: "lower" }),
+			ports.float64({ name: "middle", label: "middle" }),
+			ports.float64({ name: "upper", label: "upper" }),
+		],
+	});
+	config.addNodeType({
+		type: "trend.Hma",
+		label: "Hma",
+		category: "trend",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "value", label: "value" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "trend.Kama",
+		label: "Kama",
+		category: "trend",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "value", label: "value" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "trend.Kdj",
+		label: "Kdj",
+		category: "trend",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "close", label: "close" }),
+			ports.float64({ name: "high", label: "high" }),
+			ports.float64({ name: "low", label: "low" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "d", label: "d" }),
+			ports.float64({ name: "j", label: "j" }),
+			ports.float64({ name: "k", label: "k" }),
+		],
+	});
+	config.addNodeType({
+		type: "trend.Kst",
+		label: "Kst",
+		category: "trend",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "value", label: "value" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "kst", label: "kst" }),
+			ports.float64({ name: "signal", label: "signal" }),
+		],
+	});
+	config.addNodeType({
+		type: "trend.Macd",
+		label: "Macd",
+		category: "trend",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "value", label: "value" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "macd", label: "macd" }),
+			ports.float64({ name: "signal", label: "signal" }),
+		],
+	});
+	config.addNodeType({
+		type: "trend.MassIndex",
+		label: "Mass Index",
+		category: "trend",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "high", label: "high" }),
+			ports.float64({ name: "low", label: "low" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "trend.McGinleyDynamic",
+		label: "Mc Ginley Dynamic",
+		category: "trend",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "value", label: "value" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "trend.Mlr",
+		label: "Mlr",
+		category: "trend",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "x", label: "x" }),
+			ports.float64({ name: "y", label: "y" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "trend.Mls",
+		label: "Mls",
+		category: "trend",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "x", label: "x" }),
+			ports.float64({ name: "y", label: "y" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "b", label: "b" }),
+			ports.float64({ name: "m", label: "m" }),
+		],
+	});
+	config.addNodeType({
+		type: "trend.MovingMax",
+		label: "Moving Max",
+		category: "trend",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "value", label: "value" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "trend.MovingMin",
+		label: "Moving Min",
+		category: "trend",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "value", label: "value" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "trend.MovingSum",
+		label: "Moving Sum",
+		category: "trend",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "value", label: "value" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "trend.PivotPoint",
+		label: "Pivot Point",
+		category: "trend",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "close", label: "close" }),
+			ports.float64({ name: "high", label: "high" }),
+			ports.float64({ name: "low", label: "low" }),
+			ports.float64({ name: "open", label: "open" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "p", label: "p" }),
+			ports.float64({ name: "r1", label: "r1" }),
+			ports.float64({ name: "r2", label: "r2" }),
+			ports.float64({ name: "r3", label: "r3" }),
+			ports.float64({ name: "r4", label: "r4" }),
+			ports.float64({ name: "s1", label: "s1" }),
+			ports.float64({ name: "s2", label: "s2" }),
+			ports.float64({ name: "s3", label: "s3" }),
+			ports.float64({ name: "s4", label: "s4" }),
+		],
+	});
+	config.addNodeType({
+		type: "trend.Rma",
+		label: "Rma",
+		category: "trend",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "value", label: "value" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "trend.Roc",
+		label: "Roc",
+		category: "trend",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "value", label: "value" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "trend.Slope",
+		label: "Slope",
+		category: "trend",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "value", label: "value" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "trend.SlowStochastic",
+		label: "Slow Stochastic",
+		category: "trend",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "value", label: "value" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "d", label: "d" }),
+			ports.float64({ name: "k", label: "k" }),
+		],
+	});
+	config.addNodeType({
+		type: "trend.Sma",
+		label: "Sma",
+		category: "trend",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "value", label: "value" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "trend.Smma",
+		label: "Smma",
+		category: "trend",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "value", label: "value" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "trend.Stc",
+		label: "Stc",
+		category: "trend",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "value", label: "value" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "trend.Stochastic",
+		label: "Stochastic",
+		category: "trend",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "value", label: "value" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "d", label: "d" }),
+			ports.float64({ name: "k", label: "k" }),
+		],
+	});
+	config.addNodeType({
+		type: "trend.T3",
+		label: "T3",
+		category: "trend",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "value", label: "value" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "trend.Tema",
+		label: "Tema",
+		category: "trend",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "value", label: "value" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "trend.Trima",
+		label: "Trima",
+		category: "trend",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "value", label: "value" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "trend.Trix",
+		label: "Trix",
+		category: "trend",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "value", label: "value" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "trend.Tsi",
+		label: "Tsi",
+		category: "trend",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "value", label: "value" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "trend.TypicalPrice",
+		label: "Typical Price",
+		category: "trend",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "close", label: "close" }),
+			ports.float64({ name: "high", label: "high" }),
+			ports.float64({ name: "low", label: "low" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "trend.Vwma",
+		label: "Vwma",
+		category: "trend",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "close", label: "close" }),
+			ports.float64({ name: "volume", label: "volume" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "trend.WeightedClose",
+		label: "Weighted Close",
+		category: "trend",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "close", label: "close" }),
+			ports.float64({ name: "high", label: "high" }),
+			ports.float64({ name: "low", label: "low" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "trend.Wma",
+		label: "Wma",
+		category: "trend",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "value", label: "value" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
 		type: "types.JSON",
 		label: "J S O N",
 		category: "types",
@@ -2143,6 +4568,404 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 	});
 
+	config.addNodeType({
+		type: "volatility.AccelerationBands",
+		label: "Acceleration Bands",
+		category: "volatility",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "close", label: "close" }),
+			ports.float64({ name: "high", label: "high" }),
+			ports.float64({ name: "low", label: "low" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "lower", label: "lower" }),
+			ports.float64({ name: "middle", label: "middle" }),
+			ports.float64({ name: "upper", label: "upper" }),
+		],
+	});
+	config.addNodeType({
+		type: "volatility.AnnualizedHistoricalVolatility",
+		label: "Annualized Historical Volatility",
+		category: "volatility",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "price", label: "price" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "volatility.Atr",
+		label: "Atr",
+		category: "volatility",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "close", label: "close" }),
+			ports.float64({ name: "high", label: "high" }),
+			ports.float64({ name: "low", label: "low" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "volatility.BollingerBandWidth",
+		label: "Bollinger Band Width",
+		category: "volatility",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "close", label: "close" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "volatility.BollingerBands",
+		label: "Bollinger Bands",
+		category: "volatility",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "close", label: "close" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "lower", label: "lower" }),
+			ports.float64({ name: "middle", label: "middle" }),
+			ports.float64({ name: "upper", label: "upper" }),
+		],
+	});
+	config.addNodeType({
+		type: "volatility.ChandelierExit",
+		label: "Chandelier Exit",
+		category: "volatility",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "close", label: "close" }),
+			ports.float64({ name: "high", label: "high" }),
+			ports.float64({ name: "low", label: "low" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "exitLong", label: "exitLong" }),
+			ports.float64({ name: "exitShort", label: "exitShort" }),
+		],
+	});
+	config.addNodeType({
+		type: "volatility.Chop",
+		label: "Chop",
+		category: "volatility",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "close", label: "close" }),
+			ports.float64({ name: "high", label: "high" }),
+			ports.float64({ name: "low", label: "low" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "volatility.DonchianChannel",
+		label: "Donchian Channel",
+		category: "volatility",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "high", label: "high" }),
+			ports.float64({ name: "low", label: "low" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "lower", label: "lower" }),
+			ports.float64({ name: "middle", label: "middle" }),
+			ports.float64({ name: "upper", label: "upper" }),
+		],
+	});
+	config.addNodeType({
+		type: "volatility.HistoricalVolatility",
+		label: "Historical Volatility",
+		category: "volatility",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "price", label: "price" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "volatility.KeltnerChannel",
+		label: "Keltner Channel",
+		category: "volatility",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "close", label: "close" }),
+			ports.float64({ name: "high", label: "high" }),
+			ports.float64({ name: "low", label: "low" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "lower", label: "lower" }),
+			ports.float64({ name: "middle", label: "middle" }),
+			ports.float64({ name: "upper", label: "upper" }),
+		],
+	});
+	config.addNodeType({
+		type: "volatility.MovingStd",
+		label: "Moving Std",
+		category: "volatility",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "value", label: "value" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "volatility.PercentB",
+		label: "Percent B",
+		category: "volatility",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "close", label: "close" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "volatility.Po",
+		label: "Po",
+		category: "volatility",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "close", label: "close" }),
+			ports.float64({ name: "high", label: "high" }),
+			ports.float64({ name: "low", label: "low" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "volatility.SuperTrend",
+		label: "Super Trend",
+		category: "volatility",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "close", label: "close" }),
+			ports.float64({ name: "high", label: "high" }),
+			ports.float64({ name: "low", label: "low" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "volatility.TrueRange",
+		label: "True Range",
+		category: "volatility",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "close", label: "close" }),
+			ports.float64({ name: "high", label: "high" }),
+			ports.float64({ name: "low", label: "low" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "volatility.UlcerIndex",
+		label: "Ulcer Index",
+		category: "volatility",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "close", label: "close" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "volatility.ZScore",
+		label: "Z Score",
+		category: "volatility",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "value", label: "value" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "volume.Ad",
+		label: "Ad",
+		category: "volume",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "close", label: "close" }),
+			ports.float64({ name: "high", label: "high" }),
+			ports.float64({ name: "low", label: "low" }),
+			ports.float64({ name: "volume", label: "volume" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "volume.Cmf",
+		label: "Cmf",
+		category: "volume",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "close", label: "close" }),
+			ports.float64({ name: "high", label: "high" }),
+			ports.float64({ name: "low", label: "low" }),
+			ports.float64({ name: "volume", label: "volume" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "volume.Emv",
+		label: "Emv",
+		category: "volume",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "high", label: "high" }),
+			ports.float64({ name: "low", label: "low" }),
+			ports.float64({ name: "volume", label: "volume" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "volume.Fi",
+		label: "Fi",
+		category: "volume",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "close", label: "close" }),
+			ports.float64({ name: "volume", label: "volume" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "volume.Kvo",
+		label: "Kvo",
+		category: "volume",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "high", label: "high" }),
+			ports.float64({ name: "low", label: "low" }),
+			ports.float64({ name: "volume", label: "volume" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "kvo", label: "kvo" }),
+			ports.float64({ name: "signal", label: "signal" }),
+		],
+	});
+	config.addNodeType({
+		type: "volume.Mfi",
+		label: "Mfi",
+		category: "volume",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "close", label: "close" }),
+			ports.float64({ name: "high", label: "high" }),
+			ports.float64({ name: "low", label: "low" }),
+			ports.float64({ name: "volume", label: "volume" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "volume.Mfm",
+		label: "Mfm",
+		category: "volume",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "close", label: "close" }),
+			ports.float64({ name: "high", label: "high" }),
+			ports.float64({ name: "low", label: "low" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "volume.Mfv",
+		label: "Mfv",
+		category: "volume",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "close", label: "close" }),
+			ports.float64({ name: "high", label: "high" }),
+			ports.float64({ name: "low", label: "low" }),
+			ports.float64({ name: "volume", label: "volume" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "volume.Nvi",
+		label: "Nvi",
+		category: "volume",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "close", label: "close" }),
+			ports.float64({ name: "volume", label: "volume" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "volume.Obv",
+		label: "Obv",
+		category: "volume",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "close", label: "close" }),
+			ports.float64({ name: "volume", label: "volume" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "volume.Vpt",
+		label: "Vpt",
+		category: "volume",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "close", label: "close" }),
+			ports.float64({ name: "volume", label: "volume" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
+	config.addNodeType({
+		type: "volume.Vwap",
+		label: "Vwap",
+		category: "volume",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "close", label: "close" }),
+			ports.float64({ name: "volume", label: "volume" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "result", label: "result" }),
+		],
+	});
 	config.addNodeType({
 		type: "webrtc.WebRTCServer",
 		label: "Web R T C Server",
@@ -4504,7 +7327,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Alert",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "className", label: "className" }),
 				ports.string({
@@ -4542,7 +7365,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 				}),
 				ports.bool({ name: "rule", label: "rule" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -4560,7 +7383,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Badge",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "className", label: "className" }),
 				ports.string({ name: "title", label: "title" }),
@@ -4607,7 +7430,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 				ports.bool({ name: "dot", label: "dot" }),
 				ports.bool({ name: "pulse", label: "pulse" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -4625,7 +7448,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Button",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -4705,7 +7528,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 					],
 				}),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -4723,7 +7546,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Callout",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -4761,9 +7584,9 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 						}),
 					],
 				}),
-				ports.string({ name: "meta", label: "meta" }),
+				ports.Capability({ name: "meta", label: "meta" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -4781,12 +7604,12 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Callout.Description",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -4804,12 +7627,12 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Callout.Meta",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -4827,7 +7650,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Callout.Title",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -4886,7 +7709,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 					],
 				}),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -4904,17 +7727,17 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Canvas",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "className", label: "className" }),
 				ports.string({ name: "title", label: "title" }),
-				ports.string({ name: "meta", label: "meta" }),
-				ports.string({ name: "topRight", label: "topRight" }),
-				ports.string({ name: "legend", label: "legend" }),
-				ports.string({ name: "footer", label: "footer" }),
+				ports.Capability({ name: "meta", label: "meta" }),
+				ports.Capability({ name: "topRight", label: "topRight" }),
+				ports.Capability({ name: "legend", label: "legend" }),
+				ports.Capability({ name: "footer", label: "footer" }),
 				ports.bool({ name: "scanlines", label: "scanlines" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -4932,12 +7755,12 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Canvas.Plot",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "className", label: "className" }),
 				ports.string({ name: "title", label: "title" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -4955,12 +7778,12 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "CanvasPlot",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "className", label: "className" }),
 				ports.string({ name: "title", label: "title" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -4978,12 +7801,12 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Card",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "className", label: "className" }),
 				ports.string({ name: "title", label: "title" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -5001,12 +7824,12 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "CardPanel",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "className", label: "className" }),
 				ports.string({ name: "title", label: "title" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -5024,7 +7847,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Checkbox",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -5033,7 +7856,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 				ports.string({ name: "placeholder", label: "placeholder" }),
 				ports.bool({ name: "readOnly", label: "readOnly" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -5051,7 +7874,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Chip",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -5092,9 +7915,9 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 					],
 				}),
 				ports.string({ name: "label", label: "label" }),
-				ports.string({ name: "value", label: "value" }),
+				ports.Capability({ name: "value", label: "value" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -5112,14 +7935,14 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Collapsible",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
 				ports.bool({ name: "defaultOpen", label: "defaultOpen" }),
 				ports.bool({ name: "open", label: "open" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -5137,12 +7960,12 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "CollapsiblePanel",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "className", label: "className" }),
 				ports.string({ name: "title", label: "title" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -5160,13 +7983,13 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "CollapsibleTrigger",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.bool({ name: "disabled", label: "disabled" }),
 				ports.string({ name: "className", label: "className" }),
 				ports.string({ name: "title", label: "title" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -5184,7 +8007,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "DataRow",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -5261,8 +8084,8 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 					],
 				}),
 				ports.string({ name: "label", label: "label" }),
-				ports.string({ name: "value", label: "value" }),
-				ports.string({ name: "help", label: "help" }),
+				ports.Capability({ name: "value", label: "value" }),
+				ports.Capability({ name: "help", label: "help" }),
 				ports.string({ name: "description", label: "description" }),
 				ports.string({ name: "paintKey", label: "paintKey" }),
 				ports.string({ name: "labelClassName", label: "labelClassName" }),
@@ -5280,7 +8103,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "DataRow.Group",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -5475,7 +8298,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 				}),
 				ports.bool({ name: "border", label: "border" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -5493,7 +8316,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "DistributionCurve",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "className", label: "className" }),
 				ports.float64({ name: "height", label: "height" }),
@@ -5536,7 +8359,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Divider",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -5599,7 +8422,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Dot",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -5662,7 +8485,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 					],
 				}),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -5680,7 +8503,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Flex",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -5874,7 +8697,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 					],
 				}),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -5892,7 +8715,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Flex.Center",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -6069,7 +8892,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 					],
 				}),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -6087,7 +8910,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Flex.Column",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -6264,7 +9087,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 					],
 				}),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -6282,7 +9105,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Flex.Row",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -6459,7 +9282,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 					],
 				}),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -6477,7 +9300,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Frame",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "className", label: "className" }),
 				ports.string({ name: "title", label: "title" }),
@@ -6498,7 +9321,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 					],
 				}),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -6516,12 +9339,12 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "FrameDescription",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "className", label: "className" }),
 				ports.string({ name: "title", label: "title" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -6539,12 +9362,12 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "FrameFooter",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "className", label: "className" }),
 				ports.string({ name: "title", label: "title" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -6562,12 +9385,12 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "FrameHeader",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "className", label: "className" }),
 				ports.string({ name: "title", label: "title" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -6585,12 +9408,12 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "FrameTitle",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "className", label: "className" }),
 				ports.string({ name: "title", label: "title" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -6608,7 +9431,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Grid",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -6843,7 +9666,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 				ports.bool({ name: "fullHeight", label: "fullHeight" }),
 				ports.bool({ name: "responsive", label: "responsive" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -6861,7 +9684,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Grid.Adaptive",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -7070,7 +9893,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 					],
 				}),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -7088,7 +9911,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Grid.Auto",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -7299,7 +10122,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 				ports.bool({ name: "responsive", label: "responsive" }),
 				ports.string({ name: "minWidth", label: "minWidth" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -7317,7 +10140,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Grid.Balanced",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -7527,7 +10350,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 				}),
 				ports.string({ name: "minItemWidth", label: "minItemWidth" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -7545,7 +10368,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Grid.Bento",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -7779,7 +10602,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 					],
 				}),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -7797,7 +10620,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Grid.Cards",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -8007,7 +10830,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 				}),
 				ports.bool({ name: "responsive", label: "responsive" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -8025,7 +10848,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Grid.Dashboard",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -8260,7 +11083,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 				ports.bool({ name: "fullHeight", label: "fullHeight" }),
 				ports.bool({ name: "responsive", label: "responsive" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -8278,7 +11101,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Grid.Features",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -8488,7 +11311,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 				}),
 				ports.bool({ name: "responsive", label: "responsive" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -8506,7 +11329,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Grid.Form",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -8698,7 +11521,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 				}),
 				ports.bool({ name: "responsive", label: "responsive" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -8716,7 +11539,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Grid.Gallery",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -8926,7 +11749,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 				}),
 				ports.bool({ name: "responsive", label: "responsive" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -8944,7 +11767,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Grid.Halves",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -9154,7 +11977,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 				}),
 				ports.bool({ name: "responsive", label: "responsive" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -9172,7 +11995,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Grid.Island",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -9356,7 +12179,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 					],
 				}),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -9374,7 +12197,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Grid.IslandArea",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -9397,7 +12220,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 					],
 				}),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -9415,7 +12238,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Grid.Masonry",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -9632,7 +12455,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 				}),
 				ports.bool({ name: "responsive", label: "responsive" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -9650,7 +12473,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Grid.Quarters",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -9860,7 +12683,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 				}),
 				ports.bool({ name: "responsive", label: "responsive" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -9878,7 +12701,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Grid.Sidebar",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -10089,7 +12912,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 				ports.bool({ name: "responsive", label: "responsive" }),
 				ports.string({ name: "sidebarWidth", label: "sidebarWidth" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -10107,7 +12930,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Grid.Smart",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -10319,7 +13142,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 				ports.string({ name: "minItemWidth", label: "minItemWidth" }),
 				ports.float64({ name: "maxCols", label: "maxCols" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -10337,7 +13160,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Grid.Span",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -10394,7 +13217,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 				ports.float64({ name: "colStart", label: "colStart" }),
 				ports.float64({ name: "rowStart", label: "rowStart" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -10412,7 +13235,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Grid.Thirds",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -10622,7 +13445,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 				}),
 				ports.bool({ name: "responsive", label: "responsive" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -10640,7 +13463,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "HeatmapRow",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -10853,9 +13676,9 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 						}),
 					],
 				}),
-				ports.string({ name: "metric", label: "metric" }),
+				ports.Capability({ name: "metric", label: "metric" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -10873,7 +13696,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "HeatmapRow.Group",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -11050,7 +13873,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 					],
 				}),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -11068,10 +13891,10 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "HeatmapRow.Metric",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "label", label: "label" }),
-				ports.string({ name: "value", label: "value" }),
+				ports.Capability({ name: "value", label: "value" }),
 				ports.float64({ name: "percent", label: "percent" }),
 				ports.string({
 					name: "variant",
@@ -11107,7 +13930,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "HeatmapRow.Strip",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -11148,7 +13971,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 				}),
 				ports.string({ name: "cellClassName", label: "cellClassName" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -11166,10 +13989,10 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "HeatmapRowMetric",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "label", label: "label" }),
-				ports.string({ name: "value", label: "value" }),
+				ports.Capability({ name: "value", label: "value" }),
 				ports.float64({ name: "percent", label: "percent" }),
 				ports.string({
 					name: "variant",
@@ -11205,7 +14028,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "HeatmapStrip",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -11246,7 +14069,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 				}),
 				ports.string({ name: "cellClassName", label: "cellClassName" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -11264,7 +14087,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Icon",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "className", label: "className" }),
 				ports.string({ name: "href", label: "href" }),
@@ -11334,7 +14157,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Input",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -11364,7 +14187,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 				}),
 				ports.bool({ name: "mono", label: "mono" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -11382,7 +14205,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Input.Field",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "className", label: "className" }),
 				ports.string({ name: "title", label: "title" }),
@@ -11416,10 +14239,10 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 						}),
 					],
 				}),
-				ports.string({ name: "leading", label: "leading" }),
-				ports.string({ name: "trailing", label: "trailing" }),
+				ports.Capability({ name: "leading", label: "leading" }),
+				ports.Capability({ name: "trailing", label: "trailing" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -11437,7 +14260,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Input.Search",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -11482,7 +14305,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 					],
 				}),
 				ports.string({ name: "fieldClassName", label: "fieldClassName" }),
-				ports.string({ name: "trailing", label: "trailing" }),
+				ports.Capability({ name: "trailing", label: "trailing" }),
 				ports.string({
 					name: "iconSize",
 					label: "iconSize",
@@ -11504,7 +14327,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 					],
 				}),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -11522,7 +14345,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Key",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -11561,7 +14384,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 					],
 				}),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -11579,7 +14402,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "List",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -11756,7 +14579,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 					],
 				}),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -11774,12 +14597,12 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "List.Empty",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "className", label: "className" }),
 				ports.string({ name: "title", label: "title" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -11797,7 +14620,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "List.Item",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -11975,7 +14798,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 				}),
 				ports.bool({ name: "interactive", label: "interactive" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -11993,7 +14816,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "List.Option",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -12014,10 +14837,10 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 					],
 				}),
 				ports.bool({ name: "selected", label: "selected" }),
-				ports.string({ name: "icon", label: "icon" }),
+				ports.Capability({ name: "icon", label: "icon" }),
 				ports.string({ name: "label", label: "label" }),
-				ports.string({ name: "hint", label: "hint" }),
-				ports.string({ name: "trailing", label: "trailing" }),
+				ports.Capability({ name: "hint", label: "hint" }),
+				ports.Capability({ name: "trailing", label: "trailing" }),
 				ports.bool({ name: "active", label: "active" }),
 			];
 			return dynamicPorts;
@@ -12032,7 +14855,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Meter",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -12095,7 +14918,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Modal",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -12151,7 +14974,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 				}),
 				ports.string({ name: "panelClassName", label: "panelClassName" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -12169,12 +14992,12 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Modal.Body",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "className", label: "className" }),
 				ports.string({ name: "title", label: "title" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -12192,13 +15015,13 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Modal.Close",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.bool({ name: "disabled", label: "disabled" }),
 				ports.string({ name: "className", label: "className" }),
 				ports.string({ name: "title", label: "title" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -12216,12 +15039,12 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Modal.Footer",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "className", label: "className" }),
 				ports.string({ name: "title", label: "title" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -12239,12 +15062,12 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Modal.Header",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "className", label: "className" }),
 				ports.string({ name: "title", label: "title" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -12262,7 +15085,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Nav",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "className", label: "className" }),
 				ports.string({ name: "title", label: "title" }),
@@ -12299,7 +15122,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 					],
 				}),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -12317,12 +15140,12 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Nav.Footer",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "className", label: "className" }),
 				ports.string({ name: "title", label: "title" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -12340,13 +15163,13 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Nav.Group",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "className", label: "className" }),
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "label", label: "label" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -12364,9 +15187,9 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Nav.Item",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
-				ports.string({ name: "icon", label: "icon" }),
+				ports.Capability({ name: "icon", label: "icon" }),
 				ports.string({ name: "label", label: "label" }),
 				ports.bool({ name: "active", label: "active" }),
 				ports.string({ name: "className", label: "className" }),
@@ -12383,7 +15206,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Overlay",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -12421,7 +15244,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 				ports.bool({ name: "open", label: "open" }),
 				ports.string({ name: "closeLabel", label: "closeLabel" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -12439,7 +15262,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Panel",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -12649,7 +15472,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 					],
 				}),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -12667,12 +15490,12 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Panel.Caption",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "className", label: "className" }),
 				ports.string({ name: "title", label: "title" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -12690,13 +15513,13 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Panel.Header",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "className", label: "className" }),
 				ports.string({ name: "title", label: "title" }),
-				ports.string({ name: "meta", label: "meta" }),
+				ports.Capability({ name: "meta", label: "meta" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -12714,12 +15537,12 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Panel.Title",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "className", label: "className" }),
 				ports.string({ name: "title", label: "title" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -12737,7 +15560,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Radar",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "className", label: "className" }),
 				ports.string({ name: "href", label: "href" }),
@@ -12793,7 +15616,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Rail",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -12850,7 +15673,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 					],
 				}),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -12868,7 +15691,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Rail.Body",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -12890,7 +15713,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 					],
 				}),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -12908,12 +15731,12 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Rail.Footer",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -12931,13 +15754,13 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Rail.Header",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
-				ports.string({ name: "meta", label: "meta" }),
+				ports.Capability({ name: "meta", label: "meta" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -12955,7 +15778,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "RatioBar",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "className", label: "className" }),
 				ports.string({ name: "title", label: "title" }),
@@ -12977,7 +15800,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 					],
 				}),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -12995,18 +15818,18 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Readout",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "className", label: "className" }),
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "label", label: "label" }),
-				ports.string({ name: "value", label: "value" }),
+				ports.Capability({ name: "value", label: "value" }),
 				ports.string({ name: "dataKey", label: "dataKey" }),
 				ports.bool({ name: "dot", label: "dot" }),
 				ports.string({ name: "tone", label: "tone" }),
-				ports.string({ name: "meta", label: "meta" }),
+				ports.Capability({ name: "meta", label: "meta" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -13024,7 +15847,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Scanlines",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -13056,7 +15879,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Section",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "className", label: "className" }),
 				ports.string({ name: "title", label: "title" }),
@@ -13093,7 +15916,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 					],
 				}),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -13111,13 +15934,13 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Section.Body",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "className", label: "className" }),
 				ports.string({ name: "title", label: "title" }),
 				ports.bool({ name: "scroll", label: "scroll" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -13135,7 +15958,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Section.Header",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "className", label: "className" }),
 				ports.string({
@@ -13158,9 +15981,9 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 				ports.bool({ name: "rule", label: "rule" }),
 				ports.bool({ name: "sticky", label: "sticky" }),
 				ports.string({ name: "title", label: "title" }),
-				ports.string({ name: "meta", label: "meta" }),
+				ports.Capability({ name: "meta", label: "meta" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -13178,7 +16001,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Slider",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -13222,7 +16045,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 					],
 				}),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -13240,7 +16063,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Slider.Field",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "className", label: "className" }),
 				ports.string({ name: "title", label: "title" }),
@@ -13274,10 +16097,10 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 						}),
 					],
 				}),
-				ports.string({ name: "leading", label: "leading" }),
-				ports.string({ name: "trailing", label: "trailing" }),
+				ports.Capability({ name: "leading", label: "leading" }),
+				ports.Capability({ name: "trailing", label: "trailing" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -13295,14 +16118,14 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Sparkline",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "className", label: "className" }),
 				ports.string({ name: "href", label: "href" }),
 				ports.string({ name: "title", label: "title" }),
 				ports.bool({ name: "active", label: "active" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -13320,7 +16143,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Spinner",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -13379,7 +16202,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Stat",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -13437,7 +16260,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 						}),
 					],
 				}),
-				ports.string({ name: "value", label: "value" }),
+				ports.Capability({ name: "value", label: "value" }),
 				ports.string({ name: "label", label: "label" }),
 				ports.string({ name: "valueClassName", label: "valueClassName" }),
 				ports.string({ name: "labelClassName", label: "labelClassName" }),
@@ -13454,7 +16277,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "StepCard",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -13492,11 +16315,11 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 						}),
 					],
 				}),
-				ports.string({ name: "step", label: "step" }),
-				ports.string({ name: "value", label: "value" }),
+				ports.Capability({ name: "step", label: "step" }),
+				ports.Capability({ name: "value", label: "value" }),
 				ports.string({ name: "description", label: "description" }),
-				ports.string({ name: "explanation", label: "explanation" }),
-				ports.string({ name: "footer", label: "footer" }),
+				ports.Capability({ name: "explanation", label: "explanation" }),
+				ports.Capability({ name: "footer", label: "footer" }),
 			];
 			return dynamicPorts;
 		},
@@ -13510,7 +16333,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Tabs",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -13548,7 +16371,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 					],
 				}),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -13566,7 +16389,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Tabs.Tab",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.bool({ name: "disabled", label: "disabled" }),
 				ports.string({ name: "className", label: "className" }),
@@ -13609,7 +16432,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 				ports.bool({ name: "grow", label: "grow" }),
 				ports.bool({ name: "active", label: "active" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -13627,7 +16450,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Toolbar",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "className", label: "className" }),
 				ports.string({ name: "title", label: "title" }),
@@ -13663,7 +16486,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 					],
 				}),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -13681,12 +16504,12 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Toolbar.Group",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "className", label: "className" }),
 				ports.string({ name: "title", label: "title" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -13704,12 +16527,12 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Toolbar.Spacer",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "className", label: "className" }),
 				ports.string({ name: "title", label: "title" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -13727,10 +16550,10 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Typography",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -13748,7 +16571,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Typography.Blockquote",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -13792,7 +16615,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 				ports.string({ name: "tracking", label: "tracking" }),
 				ports.string({ name: "leading", label: "leading" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -13810,7 +16633,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Typography.Code",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -13854,7 +16677,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 				ports.string({ name: "tracking", label: "tracking" }),
 				ports.string({ name: "leading", label: "leading" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -13872,7 +16695,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Typography.Display",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "className", label: "className" }),
 				ports.string({ name: "title", label: "title" }),
@@ -13894,7 +16717,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 					],
 				}),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -13912,7 +16735,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Typography.Div",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -13956,7 +16779,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 				ports.string({ name: "tracking", label: "tracking" }),
 				ports.string({ name: "leading", label: "leading" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -13974,7 +16797,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Typography.H3",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -14018,7 +16841,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 				ports.string({ name: "tracking", label: "tracking" }),
 				ports.string({ name: "leading", label: "leading" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -14036,7 +16859,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Typography.H4",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -14080,7 +16903,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 				ports.string({ name: "tracking", label: "tracking" }),
 				ports.string({ name: "leading", label: "leading" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -14098,7 +16921,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Typography.H5",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -14142,7 +16965,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 				ports.string({ name: "tracking", label: "tracking" }),
 				ports.string({ name: "leading", label: "leading" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -14160,7 +16983,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Typography.H6",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -14204,7 +17027,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 				ports.string({ name: "tracking", label: "tracking" }),
 				ports.string({ name: "leading", label: "leading" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -14222,7 +17045,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Typography.Kbd",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -14266,7 +17089,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 				ports.string({ name: "tracking", label: "tracking" }),
 				ports.string({ name: "leading", label: "leading" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -14284,7 +17107,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Typography.Label",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "className", label: "className" }),
 				ports.string({ name: "title", label: "title" }),
@@ -14343,7 +17166,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 					],
 				}),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -14361,7 +17184,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Typography.Mark",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -14405,7 +17228,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 				ports.string({ name: "tracking", label: "tracking" }),
 				ports.string({ name: "leading", label: "leading" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -14423,7 +17246,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Typography.Mono",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "className", label: "className" }),
 				ports.string({ name: "title", label: "title" }),
@@ -14484,7 +17307,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 					],
 				}),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -14502,7 +17325,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Typography.PageTitle",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -14546,7 +17369,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 				ports.string({ name: "tracking", label: "tracking" }),
 				ports.string({ name: "leading", label: "leading" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -14564,7 +17387,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Typography.Paragraph",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -14608,7 +17431,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 				ports.string({ name: "tracking", label: "tracking" }),
 				ports.string({ name: "leading", label: "leading" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -14626,7 +17449,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Typography.Pre",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -14670,7 +17493,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 				ports.string({ name: "tracking", label: "tracking" }),
 				ports.string({ name: "leading", label: "leading" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -14688,7 +17511,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Typography.S",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -14732,7 +17555,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 				ports.string({ name: "tracking", label: "tracking" }),
 				ports.string({ name: "leading", label: "leading" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -14750,7 +17573,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Typography.Small",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -14794,7 +17617,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 				ports.string({ name: "tracking", label: "tracking" }),
 				ports.string({ name: "leading", label: "leading" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -14812,7 +17635,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Typography.Span",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -14856,7 +17679,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 				ports.string({ name: "tracking", label: "tracking" }),
 				ports.string({ name: "leading", label: "leading" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -14874,7 +17697,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Typography.Subtitle",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -14918,7 +17741,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 				ports.string({ name: "tracking", label: "tracking" }),
 				ports.string({ name: "leading", label: "leading" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -14936,7 +17759,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Typography.Title",
 		category: "UI Components",
 		initialWidth: 280,
-		inputs: (ports) => (_inputData, connections) => {
+		inputs: (ports) => (_inputData, _connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "title", label: "title" }),
 				ports.string({ name: "className", label: "className" }),
@@ -14980,7 +17803,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 				ports.string({ name: "tracking", label: "tracking" }),
 				ports.string({ name: "leading", label: "leading" }),
 			];
-			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);
 			for (let index = 0; index < count; index++) {
 				const portName = index === 0 ? "components" : `components_${index}`;
@@ -15002,8 +17825,8 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 				label: def,
 				category: "Definitions",
 				initialWidth: 320,
-				inputs: (ports) => [],
-				outputs: (ports) => [],
+				inputs: () => [],
+				outputs: () => [],
 			});
 		}
 	}
