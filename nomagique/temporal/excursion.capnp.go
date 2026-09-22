@@ -6,6 +6,7 @@ import (
 	capnp "capnproto.org/go/capnp/v3"
 	text "capnproto.org/go/capnp/v3/encoding/text"
 	fc "capnproto.org/go/capnp/v3/flowcontrol"
+	schemas "capnproto.org/go/capnp/v3/schemas"
 	server "capnproto.org/go/capnp/v3/server"
 	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
 	context "context"
@@ -27,7 +28,7 @@ func (c Excursion) Write(ctx context.Context, params func(Excursion_write_Params
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 40, PointerCount: 0}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 8, PointerCount: 0}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(Excursion_write_Params(s)) }
 	}
 
@@ -209,7 +210,7 @@ func (c Excursion_done) Args() Excursion_done_Params {
 
 // AllocResults allocates the results struct.
 func (c Excursion_done) AllocResults() (Excursion_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 72, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 88, PointerCount: 0})
 	return Excursion_done_Results(r), err
 }
 
@@ -228,12 +229,12 @@ type Excursion_write_Params capnp.Struct
 const Excursion_write_Params_TypeID = 0xe973342ae95eaf1a
 
 func NewExcursion_write_Params(s *capnp.Segment) (Excursion_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 40, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return Excursion_write_Params(st), err
 }
 
 func NewRootExcursion_write_Params(s *capnp.Segment) (Excursion_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 40, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return Excursion_write_Params(st), err
 }
 
@@ -277,44 +278,12 @@ func (s Excursion_write_Params) SetValue(v float64) {
 	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
 }
 
-func (s Excursion_write_Params) Sigmas() float64 {
-	return math.Float64frombits(capnp.Struct(s).Uint64(8))
-}
-
-func (s Excursion_write_Params) SetSigmas(v float64) {
-	capnp.Struct(s).SetUint64(8, math.Float64bits(v))
-}
-
-func (s Excursion_write_Params) Horizon() int32 {
-	return int32(capnp.Struct(s).Uint32(16))
-}
-
-func (s Excursion_write_Params) SetHorizon(v int32) {
-	capnp.Struct(s).SetUint32(16, uint32(v))
-}
-
-func (s Excursion_write_Params) Retrace() float64 {
-	return math.Float64frombits(capnp.Struct(s).Uint64(24))
-}
-
-func (s Excursion_write_Params) SetRetrace(v float64) {
-	capnp.Struct(s).SetUint64(24, math.Float64bits(v))
-}
-
-func (s Excursion_write_Params) Floor() float64 {
-	return math.Float64frombits(capnp.Struct(s).Uint64(32))
-}
-
-func (s Excursion_write_Params) SetFloor(v float64) {
-	capnp.Struct(s).SetUint64(32, math.Float64bits(v))
-}
-
 // Excursion_write_Params_List is a list of Excursion_write_Params.
 type Excursion_write_Params_List = capnp.StructList[Excursion_write_Params]
 
 // NewExcursion_write_Params creates a new list of Excursion_write_Params.
 func NewExcursion_write_Params_List(s *capnp.Segment, sz int32) (Excursion_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 40, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0}, sz)
 	return capnp.StructList[Excursion_write_Params](l), err
 }
 
@@ -397,12 +366,12 @@ type Excursion_done_Results capnp.Struct
 const Excursion_done_Results_TypeID = 0xe5a530d9939148c7
 
 func NewExcursion_done_Results(s *capnp.Segment) (Excursion_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 72, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 88, PointerCount: 0})
 	return Excursion_done_Results(st), err
 }
 
 func NewRootExcursion_done_Results(s *capnp.Segment) (Excursion_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 72, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 88, PointerCount: 0})
 	return Excursion_done_Results(st), err
 }
 
@@ -486,36 +455,52 @@ func (s Excursion_done_Results) SetSigma(v float64) {
 	capnp.Struct(s).SetUint64(40, math.Float64bits(v))
 }
 
+func (s Excursion_done_Results) Floor() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(48))
+}
+
+func (s Excursion_done_Results) SetFloor(v float64) {
+	capnp.Struct(s).SetUint64(48, math.Float64bits(v))
+}
+
+func (s Excursion_done_Results) Horizon() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(56))
+}
+
+func (s Excursion_done_Results) SetHorizon(v float64) {
+	capnp.Struct(s).SetUint64(56, math.Float64bits(v))
+}
+
 func (s Excursion_done_Results) Steps() int64 {
-	return int64(capnp.Struct(s).Uint64(48))
+	return int64(capnp.Struct(s).Uint64(64))
 }
 
 func (s Excursion_done_Results) SetSteps(v int64) {
-	capnp.Struct(s).SetUint64(48, uint64(v))
+	capnp.Struct(s).SetUint64(64, uint64(v))
 }
 
 func (s Excursion_done_Results) Legs() int64 {
-	return int64(capnp.Struct(s).Uint64(56))
+	return int64(capnp.Struct(s).Uint64(72))
 }
 
 func (s Excursion_done_Results) SetLegs(v int64) {
-	capnp.Struct(s).SetUint64(56, uint64(v))
+	capnp.Struct(s).SetUint64(72, uint64(v))
 }
 
 func (s Excursion_done_Results) Confirmed() bool {
-	return capnp.Struct(s).Bit(512)
+	return capnp.Struct(s).Bit(640)
 }
 
 func (s Excursion_done_Results) SetConfirmed(v bool) {
-	capnp.Struct(s).SetBit(512, v)
+	capnp.Struct(s).SetBit(640, v)
 }
 
 func (s Excursion_done_Results) Found() bool {
-	return capnp.Struct(s).Bit(513)
+	return capnp.Struct(s).Bit(641)
 }
 
 func (s Excursion_done_Results) SetFound(v bool) {
-	capnp.Struct(s).SetBit(513, v)
+	capnp.Struct(s).SetBit(641, v)
 }
 
 // Excursion_done_Results_List is a list of Excursion_done_Results.
@@ -523,7 +508,7 @@ type Excursion_done_Results_List = capnp.StructList[Excursion_done_Results]
 
 // NewExcursion_done_Results creates a new list of Excursion_done_Results.
 func NewExcursion_done_Results_List(s *capnp.Segment, sz int32) (Excursion_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 72, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 88, PointerCount: 0}, sz)
 	return capnp.StructList[Excursion_done_Results](l), err
 }
 
@@ -533,4 +518,56 @@ type Excursion_done_Results_Future struct{ *capnp.Future }
 func (f Excursion_done_Results_Future) Struct() (Excursion_done_Results, error) {
 	p, err := f.Future.Ptr()
 	return Excursion_done_Results(p.Struct()), err
+}
+
+const schema_d41f7a25b6c8e930 = "x\xda\x9c\xd3=h\x13\x7f\x18\x07\xf0\xef\xf7wwI" +
+	"\xda\x10\xcaq\xb7\xfc\xffK\x06\xadB\xb16m\x9c\x8a" +
+	"\xd0*\x16\x8aTLz\x8aE\xac\xed\x91^\x93\x93{" +
+	"I\xefr6-\x05-\x0a\xea(\x82\xa0\xbb\xb8)." +
+	"\x0aNn\xbe\x8c\"\x88\x83\xa3C\x07A\xba9\xc8\xc9" +
+	"/6W\x9cD\xc7\xe7\xf3<\xf7{\xbb\xe7\xa9\xdc\xe1" +
+	"\xb4:^:\xacB\xd4+Z.}\xf9\xf1\xec\x8bC" +
+	"\x17\x8e\xdc\x80>J@\xcd\x03\xd5\xef|G\xa8\xe9\xeb" +
+	"\xd9\xbb\xf7>U\x1e}A}\x94\xc5\xbd\xd4W\xbe'" +
+	"X\xa5x,\xc0\xf4\xff\xa7\x97wF\x8e\xc5;\xb2\xa2" +
+	"\xff\xf1[UV\x18\x9f\xd5)0]\xda}\xe2\xdf\xdf" +
+	"\x9d\xfb\x06\xfd\x80\x92Vv\xde<\x1f\xde,\x7f\x00X" +
+	"\xfd\xa1^\xa1\xa1ky\xc0(i\xb7\x8cE-\x8f\x85" +
+	"4\x08}\xbb\xe9\xae%9g\xac\xe3\xf8\xed0\xb2\xbd" +
+	"1\xa7\xdbH\xa2\xd8\x0d\x83\xa3\x0d\xbb\x1d\xb4'g\xb2" +
+	"x%\x0c\x9c\x835;\xb2\xfd\x18\xf8\x97o\xe7\x9d8" +
+	"\xf1:\x8c\xeb\x15E\x05T\x02\xc6\x09N\x02\xd6q*" +
+	"\xb4f)\xa8\x93\xa6\xbc\x981\xc3\xd3\x80uJzM" +
+	"\xba\x10&\x05`\x9c\xe9\xf9\x9c\xf4\x05\xe9\x8abR\x01" +
+	"\x8c\xf3\x9c\x07\xacs\xd2\x97\xa5\xab\xaaI\x150\x16y" +
+	"\x11\xb0.IoI\xd74\x93\x1a`8\x9c\x00\xace" +
+	"\xe9\x9e\xf4\\\xced\x0e0\xdc\x9e\xafHoK\xcf\xe7" +
+	"M\xca7\xf3y\x12\xb0Z\xd2;\xd2\x0b\x05\x93\x05\xc0" +
+	"X\xeb\xd5{\xd2\xbb\xd2\x07\x06L\x0e\x00F\xc2\x11\xc0" +
+	"jK\xdf\xa2\xe0\xf8\xe0uar\x1006z\x07\xed" +
+	"\xca\xc4M\x99(n\x0bS\xfelc\xbb\xb7\xd2\x96L" +
+	"\xdc\xa6\xe0\x94\x1d4Za\xc4\"\x04\x8b`\xea6\x03" +
+	"\xb7\xe3\x86\x01\x80\xcc\x9cn'r\xfc\xc4\xff\xdd~=" +
+	"9\x18d\xb6\x96\xd8\x9e\xbb\xba\xe1B\x09\x9a},\xc7" +
+	"n\xd3\xb7\xb3h\xd5\x0b\xf77\xbb\xd6\x0a#w3\x0c" +
+	"\xf6k;N;\xa6\x06A\x0d\x1c\xf2\x9cf\x16\xa4\x8d" +
+	"0Xu#\xdf\x01WH\x08R.\x16&A\x16\xfd" +
+	"e\xa3\xacGng\xaf\xcb\x18\xd7\xd5~\xa3\xe8\xa5\x09" +
+	"\xa0^PX7\x05\xcbWm/q\xb2\xeb\xf57P" +
+	"\xff\xb4\xc1\x90\x84\x1aY/(\x1a\x90\x0d\x13\x83g\xaf" +
+	"\xd6\xab\x0f\x97\x1e\xe8\xe3\x13\x10\xfap\x9e\xcc\x86\x94\xfd" +
+	"\x99\xd4\xff\x1b\x81\xd0K\xf9r\xef\x80\xd3\x1c\x92\x1d=" +
+	"\xcd\x1a\xf93\x00\x00\xff\xff\xe5\xc4\xe75"
+
+func RegisterSchema(reg *schemas.Registry) {
+	reg.Register(&schemas.Schema{
+		String: schema_d41f7a25b6c8e930,
+		Nodes: []uint64{
+			0x832c5726b74fd7ba,
+			0xe5a530d9939148c7,
+			0xe973342ae95eaf1a,
+			0xf04cf2966daef25f,
+		},
+		Compressed: true,
+	})
 }

@@ -6,28 +6,20 @@ $Go.import("github.com/theapemachine/symm/nomagique/temporal");
 
 # Excursion finds the moves a path actually made.
 #
-# A path is walked as alternating legs. A leg runs until the path retraces a
-# proportion of what that leg travelled, so a leg closes on evidence that the
-# move is over rather than on the first step against it. A leg that travelled
-# far enough qualifies.
+# A path is walked as alternating legs. A leg runs until the path pulls back
+# further than the walk would by chance over the leg's own length, so a leg
+# closes on evidence that the move is over rather than on the first step
+# against it. A leg that travelled further than this path's own moves
+# typically do qualifies.
 #
-# Far enough is derived, never declared: it is sigmas of the path's own
-# per-step log return, scaled over horizon steps the way a random walk scales,
-# and floored so a numerically dead path cannot manufacture moves out of
-# quantisation noise.
-#
-# What comes back is the three points a qualified move is made of. Anchor is
-# where the previous leg began, ignition is where this leg began, and extremum
-# is the furthest it reached. A run into ignition is what a precursor looks
-# like; the run out of it is what the move was worth.
+# Nothing here is declared. The path says how far is far: the bar is the mean
+# and dispersion of the moves it has already made, floored by the smallest
+# change it is able to express at all, and bootstrapped before any move has
+# closed by what a walk of the same dispersion would reach over the path's own
+# characteristic span. The span is measured too — it is how long this path's
+# moves run.
 interface Excursion {
-  write @0 (
-    value   :Float64,
-    sigmas  :Float64,
-    horizon :Int32,
-    retrace :Float64,
-    floor   :Float64
-  ) -> stream;
+  write @0 (value :Float64) -> stream;
   done @1 () -> (
     anchor     :Float64,
     ignition   :Float64,
@@ -35,6 +27,8 @@ interface Excursion {
     excursion  :Float64,
     qualifying :Float64,
     sigma      :Float64,
+    floor      :Float64,
+    horizon    :Float64,
     steps      :Int64,
     legs       :Int64,
     confirmed  :Bool,

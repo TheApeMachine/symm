@@ -21,6 +21,10 @@
             {
               "nodeId": "grid",
               "portName": "data"
+            },
+            {
+              "nodeId": "cadence",
+              "portName": "item"
             }
           ]
         }
@@ -40,6 +44,12 @@
             {
               "nodeId": "feed",
               "portName": "read"
+            }
+          ],
+          "commit": [
+            {
+              "nodeId": "cadence",
+              "portName": "ready"
             }
           ]
         },
@@ -912,6 +922,33 @@
             {
               "nodeId": "reinforce",
               "portName": "memory"
+            }
+          ]
+        }
+      }
+    },
+    "cadence": {
+      "id": "cadence",
+      "type": "controlflow.Batch",
+      "inputData": {
+        "size": {
+          "value": 256
+        }
+      },
+      "connections": {
+        "inputs": {
+          "item": [
+            {
+              "nodeId": "feed",
+              "portName": "read"
+            }
+          ]
+        },
+        "outputs": {
+          "ready": [
+            {
+              "nodeId": "capture",
+              "portName": "commit"
             }
           ]
         }

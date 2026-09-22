@@ -5243,11 +5243,15 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		category: "tables",
 		initialWidth: 340,
 		inputs: (ports) => [
+			ports.bool({ name: "commit", label: "commit" }),
 			ports.string({ name: "config", label: "config" }),
 			ports["[]byte"]({ name: "payload", label: "payload" }),
 		],
 		outputs: (ports) => [
+			ports.int64({ name: "bytes", label: "bytes" }),
+			ports.int64({ name: "committed", label: "committed" }),
 			ports["[]byte"]({ name: "out", label: "out" }),
+			ports.int64({ name: "pending", label: "pending" }),
 		],
 	});
 	config.addNodeType({
@@ -7402,18 +7406,20 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		description: "Sub-graph: training",
 		initialWidth: 320,
 		inputs: (ports) => (_inputData, _connections) => [
-			ports.Capability({ name: "attractor.memory", label: "attractor.memory" }),
+			ports.bool({ name: "capture.commit", label: "capture.commit" }),
 			ports.bool({ name: "edges.signed", label: "edges.signed" }),
 			ports["[]byte"]({ name: "feed.write", label: "feed.write" }),
 			ports.float64({ name: "grid.metrics", label: "grid.metrics" }),
-			ports.Capability({ name: "reinforce.memory", label: "reinforce.memory" }),
 			ports["[]byte"]({ name: "replay.query", label: "replay.query" }),
 			ports["[]byte"]({ name: "token_0.data", label: "token_0.data" }),
 			ports.int64({ name: "verdict.issueStep", label: "verdict.issueStep" }),
 			ports.int64({ name: "verdict.resolveStep", label: "verdict.resolveStep" }),
 		],
 		outputs: (ports) => (_inputData, _connections) => [
+			ports.int64({ name: "capture.bytes", label: "capture.bytes" }),
+			ports.int64({ name: "capture.committed", label: "capture.committed" }),
 			ports["[]byte"]({ name: "capture.out", label: "capture.out" }),
+			ports.int64({ name: "capture.pending", label: "capture.pending" }),
 			ports.float64({ name: "decision.prob", label: "decision.prob" }),
 			ports["[]byte"]({ name: "decision.runnerUp", label: "decision.runnerUp" }),
 			ports.int64({ name: "decision.support", label: "decision.support" }),

@@ -27,7 +27,7 @@ func (c IcebergTable) Write(ctx context.Context, params func(IcebergTable_write_
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 2}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 8, PointerCount: 2}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(IcebergTable_write_Params(s)) }
 	}
 
@@ -209,7 +209,7 @@ func (c IcebergTable_done) Args() IcebergTable_done_Params {
 
 // AllocResults allocates the results struct.
 func (c IcebergTable_done) AllocResults() (IcebergTable_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 24, PointerCount: 1})
 	return IcebergTable_done_Results(r), err
 }
 
@@ -228,12 +228,12 @@ type IcebergTable_write_Params capnp.Struct
 const IcebergTable_write_Params_TypeID = 0xcec2209f6cf83c36
 
 func NewIcebergTable_write_Params(s *capnp.Segment) (IcebergTable_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 2})
 	return IcebergTable_write_Params(st), err
 }
 
 func NewRootIcebergTable_write_Params(s *capnp.Segment) (IcebergTable_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 2})
 	return IcebergTable_write_Params(st), err
 }
 
@@ -300,12 +300,20 @@ func (s IcebergTable_write_Params) SetPayload(v []byte) error {
 	return capnp.Struct(s).SetData(1, v)
 }
 
+func (s IcebergTable_write_Params) Commit() bool {
+	return capnp.Struct(s).Bit(0)
+}
+
+func (s IcebergTable_write_Params) SetCommit(v bool) {
+	capnp.Struct(s).SetBit(0, v)
+}
+
 // IcebergTable_write_Params_List is a list of IcebergTable_write_Params.
 type IcebergTable_write_Params_List = capnp.StructList[IcebergTable_write_Params]
 
 // NewIcebergTable_write_Params creates a new list of IcebergTable_write_Params.
 func NewIcebergTable_write_Params_List(s *capnp.Segment, sz int32) (IcebergTable_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 2}, sz)
 	return capnp.StructList[IcebergTable_write_Params](l), err
 }
 
@@ -388,12 +396,12 @@ type IcebergTable_done_Results capnp.Struct
 const IcebergTable_done_Results_TypeID = 0x8b02f933f4bac737
 
 func NewIcebergTable_done_Results(s *capnp.Segment) (IcebergTable_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 1})
 	return IcebergTable_done_Results(st), err
 }
 
 func NewRootIcebergTable_done_Results(s *capnp.Segment) (IcebergTable_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 1})
 	return IcebergTable_done_Results(st), err
 }
 
@@ -442,12 +450,36 @@ func (s IcebergTable_done_Results) SetOut(v []byte) error {
 	return capnp.Struct(s).SetData(0, v)
 }
 
+func (s IcebergTable_done_Results) Pending() int64 {
+	return int64(capnp.Struct(s).Uint64(0))
+}
+
+func (s IcebergTable_done_Results) SetPending(v int64) {
+	capnp.Struct(s).SetUint64(0, uint64(v))
+}
+
+func (s IcebergTable_done_Results) Committed() int64 {
+	return int64(capnp.Struct(s).Uint64(8))
+}
+
+func (s IcebergTable_done_Results) SetCommitted(v int64) {
+	capnp.Struct(s).SetUint64(8, uint64(v))
+}
+
+func (s IcebergTable_done_Results) Bytes() int64 {
+	return int64(capnp.Struct(s).Uint64(16))
+}
+
+func (s IcebergTable_done_Results) SetBytes(v int64) {
+	capnp.Struct(s).SetUint64(16, uint64(v))
+}
+
 // IcebergTable_done_Results_List is a list of IcebergTable_done_Results.
 type IcebergTable_done_Results_List = capnp.StructList[IcebergTable_done_Results]
 
 // NewIcebergTable_done_Results creates a new list of IcebergTable_done_Results.
 func NewIcebergTable_done_Results_List(s *capnp.Segment, sz int32) (IcebergTable_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 24, PointerCount: 1}, sz)
 	return capnp.StructList[IcebergTable_done_Results](l), err
 }
 
@@ -906,41 +938,48 @@ func (f IcebergScan_done_Results_Future) Struct() (IcebergScan_done_Results, err
 	return IcebergScan_done_Results(p.Struct()), err
 }
 
-const schema_c7e14a3b8d9a2c1f = "x\xda\xac\x94Mh\x13A\x14\xc7\xdf\x9b\x99\xedF\xe8" +
-	"\x12\x96\xed\xc5S\xfc\x88\xa8\xc56_~V!\xd1\x93" +
-	"z\xcaT\x05\xf5\"\xd3t\x8c\xc1d7\xdd\xdd\x10\xda" +
-	"\x83\xa2\x1e\"\x88\x08*h+\xa2\x08\x1e\x14<\x04\xa9" +
-	"\x82 \x88 \xbd\x15\x04/z\xd2\x82\x1eD\xf0\"b" +
-	"O+;il\xa0\x96j\xe8i\x97\xd9\xff\xfb\xcfo" +
-	"\xde\x7f\xf6%\xcfa\x8e\xa5\x8c\x86\x06\x84\xe7\xb4\x9e\xe0" +
-	"\xda\x97\x1b\x0fn\x0d<\xbe\x04f\x02\x01\x98\x0e\x90y" +
-	"D> \xb0`\xd7\xcc\x8b\x1f\x99yr\x05\xcc$\x02" +
-	"h\x18~\xbaK\xbe\"\xa0\xd5$Y\xc0 \xbd\xf9\xe0" +
-	"\xcd\xcbO\xfd\xc9ViK\xf0\x96\xcc\x85\x82\xcfJ@" +
-	"\xf1\x1b\x9e<\xebN\xb7\x1c\x94\xb7F\xe7B\xef3\x0f" +
-	"\x7f\xee\xa6\xd3\xfd\xb3`n\xa4Al\xdb\xd4\xd5\xbd\x87" +
-	"?\xcd\x00`f\x9e\\D\xcb\xa0:\x80\xb5\x866\xac" +
-	"\x13\xe1[\xb0s\xdf\xaf\xf2\xbdu\xafg\x17HHh" +
-	"\xb4\x9f*\x92c\xb4\x0e\x18<{~\xe7\xb6\xfb\xfe\xdd" +
-	"\xc7\x05\x12%hRE\xf2F\x09\xaeW\xf6L\xbc|" +
-	"r\xff\xfb\x92\xfd\xd6\xb3\x09\xb4v\x84hV\x8a5\xac" +
-	"\x0bL\x87\xe3\x81\xedTD\xb14V\xeb\x91\x09\xcfw" +
-	"\\\x99\xf0\xc5HYz\xad\xc7`AT\xed\xea\xd0\xa1" +
-	"\x82\x1c\x91n\xf1HA\xd8\x83\xa3\x8e-\xe3y\xe1\x0a" +
-	"Z\xf1\xfe\xa7\xf8\xa8ZR\xd5\xc3\xd2\x8b\xd6\xca\xbe\xc7" +
-	"\x19e\x00\x0c\x01Lc\x03\x00\x8fP\xe4}\x04u\xa7" +
-	"\xe6\xa3\x01\x04\x0d\xc0\xee\xf0\x86\xa5W\xd3W\x7f\x83\x8e" +
-	"#\xe4\x85\xab\x8b\x8e\x06h\xffX\x0dyD\x1e\xa1Z" +
-	"G\xd0h7_\xd53S\xa7&\xcdT\x1a\x88\xb9I" +
-	"\xc7\xc5\xcb\x84\xed{i\xae\xed\x07b\x1az\xac\xee\x96" +
-	"|\x99\xc3hH\x91\xc3<vq\x00e\x11\xcf\x8b\xa8" +
-	"+*\x1e\x8f\xfci\xd1\xd6!\x00\x1e\xa7\xc8\x93\x04M" +
-	"\xc4>\x0c\x17\x07\x0e\x00\xf0-\x14\xf9v\x82\xd9\x82c" +
-	"\x9f.\x15\xb1\x17\x08\xf6\x02\x9e\xaf\x8a\xf1\xb2#F\xbb" +
-	"\xce\xaa\x0d\xa2Z\xb9\"HzY\x90\xd8XM\xba\xe3" +
-	"K0\xd8J\x18\xd9\x16\xc7b$\xed_\xebo\x91\xb4" +
-	"g\x07\xb6'\xc1\xf2\x91\xfc\x0e\x00\x00\xff\xffJ\xf2J" +
-	"\xd2"
+const schema_c7e14a3b8d9a2c1f = "x\xda\x9c\x94Oh\x13M\x18\xc6\xdfgf\xb7\xdbC" +
+	"C\xbf!\xf9\x0e\xdf)\x1f\xda\xa2-\xb6M\x1b\xf1O" +
+	"\x15\x12D\xa1\x15\x85L\xedAD\xd0m\xb2\xa6\xc1d" +
+	"\xd3\xeen\xa8\xedE\xd0C\x15\x11A\x05m\xa5(B" +
+	"\x0f\x0a\"E\xaa\xa8\x14T\x90\xdez\xf2\xa2'\xf5\xa0" +
+	" \x82\x17\x11{Z\x99\x8d\x9bV\xaa\xa89-\xec\xbc" +
+	"\x7f~\xef\xf3\xbc3\x89\xc7Hk\xdd\x91I\x9d\x98L" +
+	"\xeb\x0d\xfe\x85w\x97n^\xe9\xb8}\x9aD\x17\x884" +
+	"\x83(y\x8b\xbd\x02i\xfe\xd6\xc5G\x9f\x93\xcb\xec\x1c" +
+	"\xc9\x048\x91\x0eu6\xc3>\x80\x10\x9dc\xef\x09~" +
+	"\xcf\x86\xbe\xcbg\xeeyS\xd5\xdcj\xc0Y\xfeV\x05" +
+	"\xcc\xf0\x14\xc1\xe7\xf8\x88C\xc7\x9dy\x12\x89\xb0\xf8\x82" +
+	":\xd7\xfc\xe1\xd9/\xdb\xf8|\xfb\x12\x89\xf5\xdc\x8fo" +
+	"\x9a>\xbfc\xef\x9bE\"$\xe7\xf8)D\x9fs\x83" +
+	"(\xfa\x94OF\x85J\xf2\xb7\xec\xfcZ\xbc\xfe\xff\xb3" +
+	"%\x85\xa2:1Ui\x99\x07(\x11\xed.\xc1\xbf\xff" +
+	"\xe0\xdaU\xe7\xe5\x8b\xd7\xdfQ\x82\x80Y-@y\xa8" +
+	"\x8d\x11\xfc\x8b\xa5\xed\x13\x0bwn|Z\xd3\xf0_}" +
+	"\x02\xd16]5l\xd5'\xa3\x15\xdd\xa0\x83\xbe]." +
+	"\x99\xf9\xc2h\xa5\xc1\xear\xbd\xb2cuy\xe6P\xd1" +
+	"r\xab\x9f\xce\xac9b\x8f\xf4\xf6g\xad!\xcb\xc9\x1f" +
+	"\xc8\x9avg\xael[-\x19\xd31y\xc9\xfd\x9b\xe4" +
+	"\xc1\xe0W\x90=`\xb9\xcd\x95\xa2\xe7\xca\x7f\xb8F\xa4" +
+	"\x81H\x98\xeb\x88\xe4a\x0e9\xcc\x00\xc4\xd4\xe8\xc2\xda" +
+	"E$\x8fr\xc8\"\x83`\x88\x81\x11\x89\xc2\x00\x91\x1c" +
+	"\xe6\x90\x1e\x83\xe0,\xa6\xfc\x12\xa3=D\xb2\xc8!O" +
+	"0\x18\xe5\x8a\x87\x081D\x08'G,;W\xb0\xf3" +
+	"\xd0\x89A'\xf8\xd9r\xa9T\xf0<\x8b\x90\x0b\xff\xc5" +
+	"\x87\xc6=\xcb\xadE\xd4%\xc7\x80\xe5V\x0c5\x90V" +
+	"\x1b(\xa2\x06j\xe4\x90\xb1\x1f\x91\xea\x94,c:\x86" +
+	"\xb9Jp\xfd\x0f\xb3)\x03\xc8F\xae\xaf\xda,\xd8s" +
+	"O\xc6\x92\xd3G\xa6Dw\x0f1\xd1j`e{\x11" +
+	"\xde\x04\xf1_;1\x111\xe2cN\xc1\xb3\xd2hV" +
+	"\x14idP\xc7\x00A\x89\x96\x8c\xd9\xec\x98%W6" +
+	"\xd5$\xda\xd3K$\xd3\x1cr\x1f\x83\x08M\xefW\xa6" +
+	"\xef\xe6\x90\x19\x06\xb0\xaa\xe7\xfbU`\x1f\x87\x1cdH" +
+	"e\xcb\xf6\xb1B\x1eM\xc4\xd0\xa4\x1c6\xc7\x8be3" +
+	"\x17\xca\x9b\xaa:\x0c\x10\x03\xea\xb03d\x0d\xd4\x96\x8d" +
+	"5\xd66\x85\xd0\xc2!\x13\xabX;\xd4\xdam\xe4\x90" +
+	"\x9b\xd7p\xc5G+\x963\xbe\xc6t\xedw\x18\xa9*" +
+	"\xc7\x8ak\xe1m\xff\x99k\xe1\x83\x86\xf0u\xfa\xb5k" +
+	"\xdf\x02\x00\x00\xff\xff\xa0Te\xf5"
 
 func RegisterSchema(reg *schemas.Registry) {
 	reg.Register(&schemas.Schema{

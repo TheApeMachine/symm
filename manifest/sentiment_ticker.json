@@ -1148,10 +1148,6 @@
             {
               "nodeId": "median_absolute_return_zscore",
               "portName": "a"
-            },
-            {
-              "nodeId": "median_absolute_return_velocity",
-              "portName": "val"
             }
           ]
         }

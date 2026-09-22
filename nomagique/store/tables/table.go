@@ -33,8 +33,10 @@ type IcebergTableServer struct {
 	table   *icetable.Table
 
 	pending     [][]byte
+	held        int
 	appendBytes int
 	committed   int64
+	asked       bool
 }
 
 func NewIcebergTable() *IcebergTableServer {
@@ -85,9 +87,34 @@ func (server *IcebergTableServer) Write(ctx context.Context, call IcebergTable_w
 
 	server.mutex.Lock()
 	server.pending = append(server.pending, bytes.Clone(payload))
+	server.held += len(payload)
+
+	if call.Args().Commit() {
+		server.asked = true
+	}
+
 	server.mutex.Unlock()
 
 	return nil
+}
+
+/*
+worthSending reports whether there is a reason to spend a snapshot.
+
+The reason is the storage, not the market: a snapshot carries a metadata
+write whatever it holds, so one per observation makes the catalog the clock.
+Rows wait until they add up to what an append is sized for, or until a caller
+says now.
+*/
+func (server *IcebergTableServer) worthSending() bool {
+	server.mutex.Lock()
+	defer server.mutex.Unlock()
+
+	if server.asked {
+		return true
+	}
+
+	return server.appendBytes > 0 && server.held >= server.appendBytes
 }
 
 /*
@@ -146,16 +173,27 @@ func (server *IcebergTableServer) Done(ctx context.Context, call IcebergTable_do
 		))
 	}
 
-	if err := server.commit(ctx); err != nil {
-		return err
+	if server.worthSending() {
+		if err := server.commit(ctx); err != nil {
+			return err
+		}
 	}
+
+	server.mutex.Lock()
+	pending, committed, held := len(server.pending), server.committed, server.held
+	server.asked = false
+	server.mutex.Unlock()
+
+	results.SetPending(int64(pending))
+	results.SetCommitted(committed)
+	results.SetBytes(int64(held))
 
 	// What the caller gets back is the state of the record, not the rows: the
 	// table is where the rows went.
 	report, err := sonic.Marshal(map[string]any{
 		"table":     server.opened.Namespace + "." + server.opened.Table,
-		"committed": server.committed,
-		"pending":   server.held(),
+		"committed": committed,
+		"pending":   pending,
 	})
 
 	if err != nil {
@@ -175,14 +213,6 @@ func (server *IcebergTableServer) Done(ctx context.Context, call IcebergTable_do
 	}
 
 	return nil
-}
-
-/* held is how many rows have not reached the catalog. */
-func (server *IcebergTableServer) held() int {
-	server.mutex.Lock()
-	defer server.mutex.Unlock()
-
-	return len(server.pending)
 }
 
 /*
@@ -241,6 +271,12 @@ func (server *IcebergTableServer) commit(ctx context.Context) error {
 
 	server.mutex.Lock()
 	server.committed += int64(sent)
+	server.held = 0
+
+	for _, row := range server.pending {
+		server.held += len(row)
+	}
+
 	server.mutex.Unlock()
 
 	return nil

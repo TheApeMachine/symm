@@ -67,3 +67,47 @@ func TestReplayCursor(t *testing.T) {
 		})
 	})
 }
+
+/*
+Every append is a snapshot plus a metadata write. Committing on every
+evaluation makes one snapshot per observation and turns the catalog into the
+clock, which is what the byte budget and the explicit signal exist to stop.
+*/
+func TestWorthSending(t *testing.T) {
+	Convey("Given a writer holding rows", t, func() {
+		server := NewIcebergTable()
+		server.appendBytes = 64
+
+		Convey("It waits while what it holds is not worth a snapshot", func() {
+			server.pending = [][]byte{make([]byte, 16)}
+			server.held = 16
+
+			So(server.worthSending(), ShouldBeFalse)
+		})
+
+		Convey("It sends once the rows add up to what an append is sized for", func() {
+			server.pending = [][]byte{make([]byte, 40), make([]byte, 40)}
+			server.held = 80
+
+			So(server.worthSending(), ShouldBeTrue)
+		})
+
+		// A caller that knows the run is ending must be able to say so, or
+		// the last rows sit in memory and the tape loses its tail.
+		Convey("It sends when a caller says now, whatever it holds", func() {
+			server.pending = [][]byte{make([]byte, 1)}
+			server.held = 1
+			server.asked = true
+
+			So(server.worthSending(), ShouldBeTrue)
+		})
+
+		Convey("An unbounded budget never sends on size alone", func() {
+			server.appendBytes = 0
+			server.pending = [][]byte{make([]byte, 1<<20)}
+			server.held = 1 << 20
+
+			So(server.worthSending(), ShouldBeFalse)
+		})
+	})
+}

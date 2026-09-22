@@ -194,3 +194,69 @@ func TestProgramRoots(t *testing.T) {
 		})
 	})
 }
+
+/*
+An edge is written down under both the node that sends it and the node that
+receives it. Routing is built from the sender's half, so a receiver declaring
+an edge its sender does not is not a compile error — it is a node that runs
+on zero while everything reports success. The two halves have to agree.
+*/
+func TestGraphHalvesMustAgree(t *testing.T) {
+	Convey("Given a graph whose two halves disagree about an edge", t, func() {
+		Convey("A reader nobody sends to is refused", func() {
+			_, err := compiler.ParseGraph([]byte(`{
+				"id": "disagree", "name": "disagree",
+				"nodes": {
+					"a": {"id": "a", "type": "arithmetic.Add",
+						"connections": {"inputs": {}, "outputs": {}}},
+					"b": {"id": "b", "type": "calculus.Square",
+						"connections": {
+							"inputs": {"value": [{"nodeId": "a", "portName": "out"}]},
+							"outputs": {}
+						}}
+				}
+			}`))
+
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "does not send it")
+		})
+
+		Convey("A sender nobody reads is refused", func() {
+			_, err := compiler.ParseGraph([]byte(`{
+				"id": "disagree", "name": "disagree",
+				"nodes": {
+					"a": {"id": "a", "type": "arithmetic.Add",
+						"connections": {
+							"inputs": {},
+							"outputs": {"out": [{"nodeId": "b", "portName": "value"}]}
+						}},
+					"b": {"id": "b", "type": "calculus.Square",
+						"connections": {"inputs": {}, "outputs": {}}}
+				}
+			}`))
+
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "does not read it")
+		})
+
+		Convey("Both halves agreeing is accepted", func() {
+			_, err := compiler.ParseGraph([]byte(`{
+				"id": "agree", "name": "agree",
+				"nodes": {
+					"a": {"id": "a", "type": "arithmetic.Add",
+						"connections": {
+							"inputs": {},
+							"outputs": {"out": [{"nodeId": "b", "portName": "value"}]}
+						}},
+					"b": {"id": "b", "type": "calculus.Square",
+						"connections": {
+							"inputs": {"value": [{"nodeId": "a", "portName": "out"}]},
+							"outputs": {}
+						}}
+				}
+			}`))
+
+			So(err, ShouldBeNil)
+		})
+	})
+}

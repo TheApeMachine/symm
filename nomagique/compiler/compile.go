@@ -648,7 +648,88 @@ func ParseGraph(data []byte) (Graph, error) {
 			err,
 		))
 	}
+
+	if err := agree(graph); err != nil {
+		return Graph{}, err
+	}
+
 	return graph, nil
+}
+
+/*
+agree refuses a graph whose two halves disagree about an edge.
+
+An edge is written down twice: once under the producer that sends it and once
+under the consumer that receives it. Routing is built from the producer's
+half alone, so a consumer declaring an edge its producer does not is not a
+wiring mistake that shows up as a compile error. It shows up as a node with
+nothing routed into it, running on whatever its arguments held — zero — while
+the graph compiles, executes, and reports success.
+
+That is the one failure mode this whole system cannot survive, because it
+looks exactly like working. So the two halves have to say the same thing.
+*/
+func agree(graph Graph) error {
+	type edge struct {
+		from, fromPort, to, toPort string
+	}
+
+	declared := make(map[edge]bool)
+	received := make(map[edge]bool)
+
+	for id, node := range graph.Nodes {
+		for port, targets := range node.Connections.Outputs {
+			for _, target := range targets {
+				declared[edge{id, port, target.NodeID, target.PortName}] = true
+			}
+		}
+
+		for port, sources := range node.Connections.Inputs {
+			for _, source := range sources {
+				received[edge{source.NodeID, source.PortName, id, port}] = true
+			}
+		}
+	}
+
+	for held := range received {
+		if declared[held] {
+			continue
+		}
+
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf(
+				"compiler: %q reads %q.%q on %q, but %q does not send it: "+
+					"nothing would be routed and the node would run on zero",
+				held.to, held.from, held.fromPort, held.toPort, held.from,
+			),
+			nil,
+		))
+	}
+
+	for held := range declared {
+		if received[held] {
+			continue
+		}
+
+		// A wire the consumer does not acknowledge still routes, so this
+		// one runs. It is refused anyway: an edge only one end knows about
+		// is an edge nobody can reason about.
+		if _, exists := graph.Nodes[held.to]; !exists {
+			continue
+		}
+
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf(
+				"compiler: %q sends %q to %q.%q, but %q does not read it",
+				held.from, held.fromPort, held.to, held.toPort, held.to,
+			),
+			nil,
+		))
+	}
+
+	return nil
 }
 
 /*
