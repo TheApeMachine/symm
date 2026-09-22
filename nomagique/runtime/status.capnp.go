@@ -268,28 +268,326 @@ func NewSource_List(s *capnp.Segment, sz int32) (Source_List, error) {
 	return capnp.CapList[Source](l), err
 }
 
-const schema_91d758a99e934525 = "x\xda\x8c\x901K\xc3P\x14\x85\xcfM\xf2\x1a\x11J" +
-	"x\xd4I\x94\xe8\xe0`\x07k[\x17\x0bR\x15\x14:" +
-	"\x08\x09.:8<\xdb\xb4\xa4\xb6I}M\x90\x82 " +
-	":\xb9\x14\x91\x8e\x82\xe8\xe8P\xc4\x1f\xe0\xe0$\x08\xce" +
-	"N\x8e\x0e\x0e\xfe\x86HZ\xb08\x08\x0e\x8f\xc3\x83\xef" +
-	"\x1e\xbe{\x17oiU\xcb&\xef\xc7\xa1\xd8\xc7,\x11" +
-	"\xed\xd5o\x1e\xa67\xaf\xce\xc1M%\x9a\xdb\xe8]\xdf" +
-	"\xed\xbc]\x02\x94_a9Jm1\x1dH\x95\xd83" +
-	"(\xea\x9f:\xafg/\xbd.l\x93h\x84j:\x90" +
-	"\xef\xb3:\xa5\x9e\x06\xf0#+\x82\xa2|U^L\xf1" +
-	"\x8f.\xb8\xa9\xfe\xaa}\x8fk\xbf\x06\xe4'\xd3\xe3\x87" +
-	"\x08K\x91\xe77E\xcd=\x0cU'#C/p\x9b" +
-	"N\xa6\x1d\x88 l/\x94E\xcbk\x15\xb6\xcd\xc1\xcf" +
-	"\"\xb2gH\x01\xf8n\x1a \xe2\xf6$@\x0a/\xe5" +
-	"\x00R\xf9Z\x1c\x1a_\x8e\x83\xf1l\x8c$\xf8\xfc:" +
-	"@:\x9fM\x03\x86\xeb\xb9\x81\xea\x1f\x98\x8e\x94\xbe4" +
-	"\xab\"\x10\x0dS:\xa2\xd21\xf6\xc3v\xe7\xe4H\xb8" +
-	"\x81\xeb\xd5\x8c\x8a\xef9?J\xda_JC#\xd11" +
-	"\x1a\xbe\xa8\xc4f\x9a\xaa\x01\x1a\x01<Y\x00\xec1\x95" +
-	"\xec\x09\x85\x8a\xc3)2F\xb7\x06\x91\x01\xfa\xc7\xd2~" +
-	"(\xcb\x8eEd\xa9\xcc\"\xfa\x0e\x00\x00\xff\xff\x19\xfc" +
-	"~k"
+type Durable capnp.Client
+
+// Durable_TypeID is the unique identifier for the type Durable.
+const Durable_TypeID = 0xd317eb5f30a42558
+
+func (c Durable) Flush(ctx context.Context, params func(Durable_flush_Params) error) (Durable_flush_Results_Future, capnp.ReleaseFunc) {
+
+	s := capnp.Send{
+		Method: capnp.Method{
+			InterfaceID:   0xd317eb5f30a42558,
+			MethodID:      0,
+			InterfaceName: "nomagique/runtime/status.capnp:Durable",
+			MethodName:    "flush",
+		},
+	}
+	if params != nil {
+		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 0}
+		s.PlaceArgs = func(s capnp.Struct) error { return params(Durable_flush_Params(s)) }
+	}
+
+	ans, release := capnp.Client(c).SendCall(ctx, s)
+	return Durable_flush_Results_Future{Future: ans.Future()}, release
+
+}
+
+func (c Durable) WaitStreaming() error {
+	return capnp.Client(c).WaitStreaming()
+}
+
+// String returns a string that identifies this capability for debugging
+// purposes.  Its format should not be depended on: in particular, it
+// should not be used to compare clients.  Use IsSame to compare clients
+// for equality.
+func (c Durable) String() string {
+	return "Durable(" + capnp.Client(c).String() + ")"
+}
+
+// AddRef creates a new Client that refers to the same capability as c.
+// If c is nil or has resolved to null, then AddRef returns nil.
+func (c Durable) AddRef() Durable {
+	return Durable(capnp.Client(c).AddRef())
+}
+
+// Release releases a capability reference.  If this is the last
+// reference to the capability, then the underlying resources associated
+// with the capability will be released.
+//
+// Release will panic if c has already been released, but not if c is
+// nil or resolved to null.
+func (c Durable) Release() {
+	capnp.Client(c).Release()
+}
+
+// Resolve blocks until the capability is fully resolved or the Context
+// expires.
+func (c Durable) Resolve(ctx context.Context) error {
+	return capnp.Client(c).Resolve(ctx)
+}
+
+func (c Durable) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+	return capnp.Client(c).EncodeAsPtr(seg)
+}
+
+func (Durable) DecodeFromPtr(p capnp.Ptr) Durable {
+	return Durable(capnp.Client{}.DecodeFromPtr(p))
+}
+
+// IsValid reports whether c is a valid reference to a capability.
+// A reference is invalid if it is nil, has resolved to null, or has
+// been released.
+func (c Durable) IsValid() bool {
+	return capnp.Client(c).IsValid()
+}
+
+// IsSame reports whether c and other refer to a capability created by the
+// same call to NewClient.  This can return false negatives if c or other
+// are not fully resolved: use Resolve if this is an issue.  If either
+// c or other are released, then IsSame panics.
+func (c Durable) IsSame(other Durable) bool {
+	return capnp.Client(c).IsSame(capnp.Client(other))
+}
+
+// Update the flowcontrol.FlowLimiter used to manage flow control for
+// this client. This affects all future calls, but not calls already
+// waiting to send. Passing nil sets the value to flowcontrol.NopLimiter,
+// which is also the default.
+func (c Durable) SetFlowLimiter(lim fc.FlowLimiter) {
+	capnp.Client(c).SetFlowLimiter(lim)
+}
+
+// Get the current flowcontrol.FlowLimiter used to manage flow control
+// for this client.
+func (c Durable) GetFlowLimiter() fc.FlowLimiter {
+	return capnp.Client(c).GetFlowLimiter()
+}
+
+// A Durable_Server is a Durable with a local implementation.
+type Durable_Server interface {
+	Flush(context.Context, Durable_flush) error
+}
+
+// Durable_NewServer creates a new Server from an implementation of Durable_Server.
+func Durable_NewServer(s Durable_Server) *server.Server {
+	c, _ := s.(server.Shutdowner)
+	return server.New(Durable_Methods(nil, s), s, c)
+}
+
+// Durable_ServerToClient creates a new Client from an implementation of Durable_Server.
+// The caller is responsible for calling Release on the returned Client.
+func Durable_ServerToClient(s Durable_Server) Durable {
+	return Durable(capnp.NewClient(Durable_NewServer(s)))
+}
+
+// Durable_Methods appends Methods to a slice that invoke the methods on s.
+// This can be used to create a more complicated Server.
+func Durable_Methods(methods []server.Method, s Durable_Server) []server.Method {
+	if cap(methods) == 0 {
+		methods = make([]server.Method, 0, 1)
+	}
+
+	methods = append(methods, server.Method{
+		Method: capnp.Method{
+			InterfaceID:   0xd317eb5f30a42558,
+			MethodID:      0,
+			InterfaceName: "nomagique/runtime/status.capnp:Durable",
+			MethodName:    "flush",
+		},
+		Impl: func(ctx context.Context, call *server.Call) error {
+			return s.Flush(ctx, Durable_flush{call})
+		},
+	})
+
+	return methods
+}
+
+// Durable_flush holds the state for a server call to Durable.flush.
+// See server.Call for documentation.
+type Durable_flush struct {
+	*server.Call
+}
+
+// Args returns the call's arguments.
+func (c Durable_flush) Args() Durable_flush_Params {
+	return Durable_flush_Params(c.Call.Args())
+}
+
+// AllocResults allocates the results struct.
+func (c Durable_flush) AllocResults() (Durable_flush_Results, error) {
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	return Durable_flush_Results(r), err
+}
+
+// Durable_List is a list of Durable.
+type Durable_List = capnp.CapList[Durable]
+
+// NewDurable_List creates a new list of Durable.
+func NewDurable_List(s *capnp.Segment, sz int32) (Durable_List, error) {
+	l, err := capnp.NewPointerList(s, sz)
+	return capnp.CapList[Durable](l), err
+}
+
+type Durable_flush_Params capnp.Struct
+
+// Durable_flush_Params_TypeID is the unique identifier for the type Durable_flush_Params.
+const Durable_flush_Params_TypeID = 0xa476b2efa6e23869
+
+func NewDurable_flush_Params(s *capnp.Segment) (Durable_flush_Params, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	return Durable_flush_Params(st), err
+}
+
+func NewRootDurable_flush_Params(s *capnp.Segment) (Durable_flush_Params, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	return Durable_flush_Params(st), err
+}
+
+func ReadRootDurable_flush_Params(msg *capnp.Message) (Durable_flush_Params, error) {
+	root, err := msg.Root()
+	return Durable_flush_Params(root.Struct()), err
+}
+
+func (s Durable_flush_Params) String() string {
+	str, _ := text.Marshal(0xa476b2efa6e23869, capnp.Struct(s))
+	return str
+}
+
+func (s Durable_flush_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+	return capnp.Struct(s).EncodeAsPtr(seg)
+}
+
+func (Durable_flush_Params) DecodeFromPtr(p capnp.Ptr) Durable_flush_Params {
+	return Durable_flush_Params(capnp.Struct{}.DecodeFromPtr(p))
+}
+
+func (s Durable_flush_Params) ToPtr() capnp.Ptr {
+	return capnp.Struct(s).ToPtr()
+}
+func (s Durable_flush_Params) IsValid() bool {
+	return capnp.Struct(s).IsValid()
+}
+
+func (s Durable_flush_Params) Message() *capnp.Message {
+	return capnp.Struct(s).Message()
+}
+
+func (s Durable_flush_Params) Segment() *capnp.Segment {
+	return capnp.Struct(s).Segment()
+}
+
+// Durable_flush_Params_List is a list of Durable_flush_Params.
+type Durable_flush_Params_List = capnp.StructList[Durable_flush_Params]
+
+// NewDurable_flush_Params creates a new list of Durable_flush_Params.
+func NewDurable_flush_Params_List(s *capnp.Segment, sz int32) (Durable_flush_Params_List, error) {
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	return capnp.StructList[Durable_flush_Params](l), err
+}
+
+// Durable_flush_Params_Future is a wrapper for a Durable_flush_Params promised by a client call.
+type Durable_flush_Params_Future struct{ *capnp.Future }
+
+func (f Durable_flush_Params_Future) Struct() (Durable_flush_Params, error) {
+	p, err := f.Future.Ptr()
+	return Durable_flush_Params(p.Struct()), err
+}
+
+type Durable_flush_Results capnp.Struct
+
+// Durable_flush_Results_TypeID is the unique identifier for the type Durable_flush_Results.
+const Durable_flush_Results_TypeID = 0xd9f084c64783b9fa
+
+func NewDurable_flush_Results(s *capnp.Segment) (Durable_flush_Results, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	return Durable_flush_Results(st), err
+}
+
+func NewRootDurable_flush_Results(s *capnp.Segment) (Durable_flush_Results, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	return Durable_flush_Results(st), err
+}
+
+func ReadRootDurable_flush_Results(msg *capnp.Message) (Durable_flush_Results, error) {
+	root, err := msg.Root()
+	return Durable_flush_Results(root.Struct()), err
+}
+
+func (s Durable_flush_Results) String() string {
+	str, _ := text.Marshal(0xd9f084c64783b9fa, capnp.Struct(s))
+	return str
+}
+
+func (s Durable_flush_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+	return capnp.Struct(s).EncodeAsPtr(seg)
+}
+
+func (Durable_flush_Results) DecodeFromPtr(p capnp.Ptr) Durable_flush_Results {
+	return Durable_flush_Results(capnp.Struct{}.DecodeFromPtr(p))
+}
+
+func (s Durable_flush_Results) ToPtr() capnp.Ptr {
+	return capnp.Struct(s).ToPtr()
+}
+func (s Durable_flush_Results) IsValid() bool {
+	return capnp.Struct(s).IsValid()
+}
+
+func (s Durable_flush_Results) Message() *capnp.Message {
+	return capnp.Struct(s).Message()
+}
+
+func (s Durable_flush_Results) Segment() *capnp.Segment {
+	return capnp.Struct(s).Segment()
+}
+
+// Durable_flush_Results_List is a list of Durable_flush_Results.
+type Durable_flush_Results_List = capnp.StructList[Durable_flush_Results]
+
+// NewDurable_flush_Results creates a new list of Durable_flush_Results.
+func NewDurable_flush_Results_List(s *capnp.Segment, sz int32) (Durable_flush_Results_List, error) {
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	return capnp.StructList[Durable_flush_Results](l), err
+}
+
+// Durable_flush_Results_Future is a wrapper for a Durable_flush_Results promised by a client call.
+type Durable_flush_Results_Future struct{ *capnp.Future }
+
+func (f Durable_flush_Results_Future) Struct() (Durable_flush_Results, error) {
+	p, err := f.Future.Ptr()
+	return Durable_flush_Results(p.Struct()), err
+}
+
+const schema_91d758a99e934525 = "x\xda\x94\x91?h\x14A\x18\xc5\xdf\xb73\x9b\xb5\x09" +
+	"\xcb\xb0\x82 \xca*\x18\xc4\x14\xf9s\xd7\xe85\x17%" +
+	"\x1a,\x84]m\"\x18d\x92\x9b\x8b\x1b\xf7vs\xb3" +
+	"\xbb\xca\x15A\xfcShq\x88\x04+AD\x82\xa0`" +
+	"\xa1\x9d\x95\x9d\x82`e!\x166\x82\x85\x88\xc4\xdaf" +
+	"ew\xd1\x8b\xc8\xa1)\x86o\x06\xde\xfb\xcd\xfbxS" +
+	"\x01\xcd\xf0\xe9\xd1M\x0b\x86\x7f\xce\x1c\xc9\x17V\x1e<" +
+	"\xdb{\xe2\xdeM\x08\xd7\xc8\xc7\x8e\xaf\xdf\x7f<\xff\xfe" +
+	"\x0e@\xf5\x8f\xacF\xce7f\x01\xce\x17\xf6\x1a\x94?" +
+	"\xbd\xaa\xde^{\xb3\xde\x87\xef\x12\x0d\xa4\xdc\x02\xea\xa7" +
+	"\xf8\x0a9\xb2\xb8:\x0b\xbc\x09\xca\xebm}{\x8f\xf8" +
+	"\xdc\x87p\xd9\x1f\xd85^#\xa7_*oq\xab8" +
+	"@\x1e\x1c\xfe\xf4h\xf3\xf9\xa5\x0d\x88\x83\x84\x8a\xd8\xe5" +
+	"\x0f\x09<\x9f\x1f\xdb\x98:\xffu\xd7\xbb\xbf8\x927" +
+	"\xc8\xe9\x96\x9c\x0e\x9fs\xee\x96\x9c\x1f/\xae\xcf\xbd\xba" +
+	"\xf1\xfd\xc3\x16\xce\x1a\x7fBx\x99GqG.\x07\xdd" +
+	"\x8c\xa9I\x9dEi\xd0Q\x93I*\xd3,\x99X\x92" +
+	"\xab\xd1j\xe3\x8c[\xbe<\"\x7f\x1f\x19\x808;\x0e" +
+	"\x10\x09\x7f7@\x868Y\x03\x88\x89\xa3\xc5\xe0\xe2H" +
+	"1L1]HF\xc4\xa1c\x00Yb\xff8`\x07" +
+	"Q\x90\xb2\xf8\xa2\xab\xb4\x8e\xb5\xdb\x96\xa9\x0c]\xadd" +
+	"\xabg/fI\xef\xcae\x19\xa4A\xb4l\xb7\xe2H" +
+	"\xfd\x8e\xc4\x87E\xaa\x12\xc9\x9e\x1d\xc6\xb2U$\xe3\x8c" +
+	"\x03\x9c\x001\xda\x00\xfc\x1d\x8c\xfc\x9d\x065+\x17\xd9" +
+	"\x83.Ad\x83\xfec\xe98\xd3K\xca#\xf2\x98\xe9" +
+	"\xd1\xc0`\x0e1\xccfZ.\x86j\xa2\x1df\xc9\x85" +
+	"\x03\x9e\xd4\x96\xec$\xff\xfcf\xb6Y\xd9\xaa\x15\xcc-" +
+	"}\xd3\xaf\xc2\x84\xa8\xc1\x10\xa6\xe5\x96\xe4\x19\xda~\x98" +
+	"\xd3*\xb1\xb30M~\x06\x00\x00\xff\xff\xb0V\xe3h"
 
 func RegisterSchema(reg *schemas.Registry) {
 	reg.Register(&schemas.Schema{
@@ -298,6 +596,9 @@ func RegisterSchema(reg *schemas.Registry) {
 			0x889b461db1a06a5d,
 			0x8d93ca82cd6581ad,
 			0x8de5111c8f726633,
+			0xa476b2efa6e23869,
+			0xd317eb5f30a42558,
+			0xd9f084c64783b9fa,
 		},
 		Compressed: true,
 	})

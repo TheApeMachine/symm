@@ -24,13 +24,15 @@ export const EvidenceGraph = ({
 	const canvasRef = useRef<HTMLCanvasElement>(null);
 	const sceneRef = useRef<GraphScene | null>(null);
 	const [hover, setHover] = useState<{
+		graph: Graph;
 		hit: GraphHit;
 		x: number;
 		y: number;
 	} | null>(null);
-	const hoverKey = hover?.hit.kind === "node" ? hover.hit.node.key : undefined;
+	const currentHover = hover?.graph === graph ? hover : null;
+	const hoverKey =
+		currentHover?.hit.kind === "node" ? currentHover.hit.node.key : undefined;
 
-	useEffect(() => setHover(null), [graph]);
 	useEffect(() => {
 		const canvas = canvasRef.current;
 
@@ -80,10 +82,10 @@ export const EvidenceGraph = ({
 					const x = event.clientX - bounds.left;
 					const y = event.clientY - bounds.top;
 					const hit = hitTest(graph, sceneRef.current, x, y);
-					setHover(hit ? { hit, x, y } : null);
+					setHover(hit ? { graph, hit, x, y } : null);
 				}}
 			/>
-			{hover && <GraphInspector {...hover} />}
+			{currentHover && <GraphInspector {...currentHover} />}
 		</div>
 	);
 };

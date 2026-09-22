@@ -8,6 +8,10 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/arithmetic"
+	"github.com/theapemachine/symm/nomagique/cognition"
+	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/nomagique/store/tables"
+	"github.com/theapemachine/symm/nomagique/temporal"
 )
 
 type failingAddition struct{ arithmetic.AddServer }
@@ -111,4 +115,112 @@ func BenchmarkProgramCarriedPayload(b *testing.B) {
 			b.Fatal("idle graph reported external activity")
 		}
 	}
+}
+
+func TestProgramExecuteResource(t *testing.T) {
+	Convey("Given capability-only memory bound into a consumer", t, func() {
+		program, err := CompileJSON([]byte(`{"nodes":{
+   "memory":{"id":"memory","type":"cognition.Memory","connections":{"outputs":{"self":[{"nodeId":"reinforce","portName":"memory"}]}}},
+   "reinforce":{"id":"reinforce","type":"cognition.Reinforce","inputData":{"contextBytes":{"value":"precursor"},"classBytes":{"value":"ENTER"}},"connections":{"inputs":{"memory":[{"nodeId":"memory","portName":"self"}]}}}
+  }}`), nil, nil)
+		So(err, ShouldBeNil)
+		defer program.Release()
+		resource := program.Nodes[program.NodeMap["memory"]]
+		So(resource.Resource, ShouldBeTrue)
+		So(program.Roots, ShouldNotContain, resource.Index)
+
+		Convey("Repeated execution uses memory only through its consumer", func() {
+			for range 3 {
+				So(program.Execute(context.Background(), nil), ShouldBeNil)
+				_, found := program.Result("memory")
+				So(found, ShouldBeFalse)
+			}
+			memory := cognition.Memory(resource.Client)
+			future, release := memory.Steps(context.Background(), nil)
+			defer release()
+			result, err := future.Struct()
+			So(err, ShouldBeNil)
+			So(result.Out(), ShouldEqual, 3)
+		})
+	})
+}
+
+func TestProgramExecuteExcursion(t *testing.T) {
+	Convey("Given a consumer of completed excursion values", t, func() {
+		program, err := CompileJSON([]byte(`{"nodes":{
+   "excursion":{"id":"excursion","type":"temporal.Excursion","connections":{"outputs":{"move.anchor":[{"nodeId":"consumer","portName":"a"}],"move.ignition":[{"nodeId":"consumer","portName":"b"}]}}},
+   "consumer":{"id":"consumer","type":"arithmetic.Add","connections":{"inputs":{"a":[{"nodeId":"excursion","portName":"move.anchor"}],"b":[{"nodeId":"excursion","portName":"move.ignition"}]}}}
+  }}`), nil, nil)
+		So(err, ShouldBeNil)
+		defer program.Release()
+		delivered := 0
+		price := 100.0
+
+		for step := range 100 {
+			rate := 0.005
+
+			if step >= 60 {
+				rate = -0.005
+			}
+
+			price *= 1 + rate
+			_, segment, err := capnp.NewMessage(capnp.SingleSegment(nil))
+			So(err, ShouldBeNil)
+			params, err := temporal.NewExcursion_write_Params(segment)
+			So(err, ShouldBeNil)
+			params.SetValue(price)
+			So(program.Execute(context.Background(), map[NodeID]capnp.Struct{program.NodeMap["excursion"]: capnp.Struct(params)}), ShouldBeNil)
+			source, found := program.Result("excursion")
+			So(found, ShouldBeTrue)
+			_, ran := program.Result("consumer")
+			move := temporal.ExcursionResult(source).Which() == temporal.ExcursionResult_Which_move
+			So(ran, ShouldEqual, move)
+			_, err = program.Float64Result("excursion", "move.anchor")
+
+			if !move {
+				So(err, ShouldNotBeNil)
+			}
+
+			if move {
+				So(err, ShouldBeNil)
+			}
+
+			if ran {
+				delivered++
+			}
+		}
+
+		So(delivered, ShouldBeGreaterThan, 0)
+		So(delivered, ShouldBeLessThan, 100)
+	})
+}
+
+type failingDurable struct {
+	tables.IcebergTableServer
+	calls int
+}
+
+func (owner *failingDurable) Flush(ctx context.Context, call runtime.Durable_flush) error {
+	owner.calls++
+	return errnie.Error(errnie.Err(errnie.IO, "fixture: durability unavailable", nil))
+}
+
+func TestProgramFlush(t *testing.T) {
+	Convey("Given a durable owner whose flush fails", t, func() {
+		owner := &failingDurable{}
+		registry := NewRegistry()
+		registry.Register("test.Durable", Factory{InterfaceID: tables.IcebergTable_TypeID,
+			New: func(ctx context.Context, config []byte) (capnp.Client, error) {
+				return capnp.Client(tables.IcebergTable_ServerToClient(owner)), nil
+			},
+		})
+		program, err := CompileJSON([]byte(`{"nodes":{"archive":{"id":"archive","type":"test.Durable"}}}`), registry, nil)
+		So(err, ShouldBeNil)
+		defer program.Release()
+		err = program.Flush(context.Background())
+		So(err, ShouldNotBeNil)
+		So(err.Error(), ShouldContainSubstring, "archive")
+		So(err.Error(), ShouldContainSubstring, "durability unavailable")
+		So(owner.calls, ShouldEqual, 1)
+	})
 }

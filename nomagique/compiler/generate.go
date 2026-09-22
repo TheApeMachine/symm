@@ -257,6 +257,8 @@ func tsPortBuilder(portType string) string {
 		return "ports.bool"
 	case "text", "string":
 		return "ports.string"
+	case "structured":
+		return "ports.data"
 	case "data", "bytes", "[]byte":
 		return "ports[\"[]byte\"]"
 	case "status":
@@ -967,11 +969,6 @@ func emitUIComponentNodeTypes(buf *strings.Builder, uiMeta map[string]UIComponen
 
 			case "string":
 				fmt.Fprintf(buf, "\t\t\t\tports.string({ name: %q, label: %q }),\n", prop.Name, prop.Name)
-
-			case "series":
-				// One scalar per evaluation. The history the component draws
-				// is kept where it is drawn, not carried on the wire.
-				fmt.Fprintf(buf, "\t\t\t\tports.float64({ name: %q, label: %q }),\n", prop.Name, prop.Name)
 
 			case "data":
 				fmt.Fprintf(buf, "\t\t\t\tports.data({ name: %q, label: %q }),\n", prop.Name, prop.Name)

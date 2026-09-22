@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
+	"fmt"
 	"sync"
 	"time"
 
@@ -11,6 +13,7 @@ import (
 	icetable "github.com/apache/iceberg-go/table"
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
 /*
@@ -81,21 +84,25 @@ func (server *IcebergTableServer) Write(ctx context.Context, call IcebergTable_w
 		return err
 	}
 
-	if len(payload) == 0 {
-		return nil
-	}
-
 	server.mutex.Lock()
-	server.pending = append(server.pending, bytes.Clone(payload))
-	server.held += len(payload)
+	defer server.mutex.Unlock()
 
 	if call.Args().Commit() {
 		server.asked = true
 	}
 
-	server.mutex.Unlock()
+	if len(payload) == 0 {
+		return nil
+	}
+	server.pending = append(server.pending, bytes.Clone(payload))
+	server.held += len(payload)
 
 	return nil
+}
+
+/* Flush persists the tail even when it has not reached the append byte budget. */
+func (server *IcebergTableServer) Flush(ctx context.Context, call runtime.Durable_flush) error {
+	return server.commit(ctx)
 }
 
 /*
@@ -143,6 +150,10 @@ func (server *IcebergTableServer) open(ctx context.Context, config string) error
 
 	if server.catalog == nil {
 		server.catalog = Open(ctx)
+	}
+
+	if server.catalog == nil {
+		return errnie.Error(errnie.Err(errnie.Validation, "iceberg: catalog is not configured", nil))
 	}
 
 	loaded, err := server.catalog.CreateTable(
@@ -266,18 +277,16 @@ func (server *IcebergTableServer) commit(ctx context.Context) error {
 			return err
 		}
 
+		server.mutex.Lock()
+		table = server.table
+		server.committed += int64(end - sent)
+		for _, row := range rows[sent:end] {
+			server.held -= len(row)
+		}
+		server.mutex.Unlock()
+
 		sent = end
 	}
-
-	server.mutex.Lock()
-	server.committed += int64(sent)
-	server.held = 0
-
-	for _, row := range server.pending {
-		server.held += len(row)
-	}
-
-	server.mutex.Unlock()
 
 	return nil
 }
@@ -302,10 +311,13 @@ func (server *IcebergTableServer) appendRange(
 	reader, err := records(
 		table.Schema(), end-start,
 		func(index int) int { return len(rows[start+index]) },
-		func(builder *array.RecordBuilder, from, to int) {
+		func(builder *array.RecordBuilder, from, to int) error {
 			for index := from; index < to; index++ {
-				fillRow(builder, server.opened, rows[start+index])
+				if err := fillRow(builder, server.opened, rows[start+index]); err != nil {
+					return err
+				}
 			}
+			return nil
 		},
 	)
 
@@ -315,13 +327,19 @@ func (server *IcebergTableServer) appendRange(
 
 	defer reader.Release()
 
-	if _, err := table.Append(ctx, reader, nil); err != nil {
+	updated, err := table.Append(ctx, reader, nil)
+
+	if err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.BadGateway,
 			"[iceberg] failed to append to "+server.opened.Table,
 			err,
 		))
 	}
+
+	server.mutex.Lock()
+	server.table = updated
+	server.mutex.Unlock()
 
 	return nil
 }
@@ -333,101 +351,97 @@ A field the payload does not carry is written as null rather than as a zero:
 "not in this record" and "recorded as zero" are different readings and must
 not share a representation.
 */
-func fillRow(builder *array.RecordBuilder, declared TableConfig, payload []byte) {
-	var held map[string]any
+func fillRow(builder *array.RecordBuilder, declared TableConfig, payload []byte) error {
+	var held map[string]json.RawMessage
 
-	if err := sonic.Unmarshal(payload, &held); err != nil {
-		held = nil
+	if err := json.Unmarshal(payload, &held); err != nil {
+		return errnie.Error(errnie.Err(errnie.Validation, "iceberg: row must be a JSON object", err))
 	}
 
-	columns := len(builder.Fields())
+	if len(declared.Fields) != len(builder.Fields()) {
+		return errnie.Error(errnie.Err(errnie.Validation, "iceberg: declared columns differ from table schema", nil))
+	}
 
 	for index, field := range declared.Fields {
-		if index >= columns {
-			break
+		if builder.Schema().Field(index).Name != field.Name {
+			return errnie.Error(errnie.Err(errnie.Validation, "iceberg: declared column order differs from table schema", nil))
 		}
 
 		value, carried := held[field.Name]
 
-		if !carried {
+		if !carried || bytes.Equal(value, []byte("null")) {
+			if field.Required || !builder.Schema().Field(index).Nullable {
+				return errnie.Error(errnie.Err(errnie.Validation, "iceberg: missing required column "+field.Name, nil))
+			}
+
 			builder.Field(index).AppendNull()
 			continue
 		}
 
-		appendValue(builder, index, value, payload)
+		if err := appendValue(builder, index, value); err != nil {
+			return errnie.Error(errnie.Err(errnie.Validation, "iceberg: invalid column "+field.Name, err))
+		}
 	}
+
+	return nil
 }
 
-/* appendValue writes one field as whatever the column holds. */
-func appendValue(
-	builder *array.RecordBuilder, index int, value any, payload []byte,
-) {
+/* appendValue decodes the declared field, never substitutes the entire input row. */
+func appendValue(builder *array.RecordBuilder, index int, value json.RawMessage) error {
 	switch target := builder.Field(index).(type) {
 	case *array.StringBuilder:
-		text, ok := value.(string)
+		var text string
 
-		if !ok {
-			target.AppendNull()
-			return
+		if err := json.Unmarshal(value, &text); err != nil {
+			return errnie.Error(errnie.Err(errnie.Validation, "expected text", err))
 		}
 
 		target.Append(text)
-
 	case *array.Int64Builder:
-		number, ok := value.(float64)
+		var number int64
 
-		if !ok {
-			target.AppendNull()
-			return
-		}
-
-		target.Append(int64(number))
-
-	case *array.Float64Builder:
-		number, ok := value.(float64)
-
-		if !ok {
-			target.AppendNull()
-			return
+		if err := json.Unmarshal(value, &number); err != nil {
+			return errnie.Error(errnie.Err(errnie.Validation, "expected int64", err))
 		}
 
 		target.Append(number)
+	case *array.Float64Builder:
+		var number float64
 
+		if err := json.Unmarshal(value, &number); err != nil {
+			return errnie.Error(errnie.Err(errnie.Validation, "expected float64", err))
+		}
+
+		target.Append(number)
 	case *array.BooleanBuilder:
-		flag, ok := value.(bool)
+		var flag bool
 
-		if !ok {
-			target.AppendNull()
-			return
+		if err := json.Unmarshal(value, &flag); err != nil {
+			return errnie.Error(errnie.Err(errnie.Validation, "expected boolean", err))
 		}
 
 		target.Append(flag)
-
 	case *array.TimestampBuilder:
-		text, ok := value.(string)
+		var instant time.Time
 
-		if !ok {
-			target.AppendNull()
-			return
-		}
-
-		instant, err := time.Parse(time.RFC3339Nano, text)
-
-		if err != nil {
-			target.AppendNull()
-			return
+		if err := json.Unmarshal(value, &instant); err != nil {
+			return errnie.Error(errnie.Err(errnie.Validation, "expected RFC3339 timestamp", err))
 		}
 
 		timestamp(target, instant)
-
 	case *array.BinaryBuilder:
-		// A binary column carries the record exactly as it arrived, which is
-		// what makes the tape replayable rather than merely summarised.
-		target.Append(payload)
+		var binary []byte
 
+		if err := json.Unmarshal(value, &binary); err != nil {
+			return errnie.Error(errnie.Err(errnie.Validation, "expected base64 binary", err))
+		}
+
+		target.Append(binary)
 	default:
-		builder.Field(index).AppendNull()
+		return errnie.Error(errnie.Err(errnie.Validation, fmt.Sprintf("iceberg: unsupported column type %s", target.Type()), nil))
 	}
+
+	return nil
 }
 
 /*
@@ -477,6 +491,10 @@ func (server *IcebergScanServer) Write(ctx context.Context, call IcebergScan_wri
 
 	if server.catalog == nil {
 		server.catalog = Open(ctx)
+	}
+
+	if server.catalog == nil {
+		return errnie.Error(errnie.Err(errnie.Validation, "iceberg: catalog is not configured", nil))
 	}
 
 	loaded, err := server.catalog.Load(ctx, declared.Namespace, declared.Table)
@@ -567,7 +585,8 @@ func (server *IcebergScanServer) read(
 			// it as one would put a reading into the tape that never
 			// happened.
 			if !carried {
-				continue
+				batch.Release()
+				return nil, errnie.Error(errnie.Err(errnie.Validation, "iceberg: replay row has missing or malformed payload", nil))
 			}
 
 			collected = append(collected, frame)
@@ -605,7 +624,7 @@ func frameBytes(held any) ([]byte, bool) {
 			return decoded, true
 		}
 
-		return []byte(value), true
+		return nil, false
 	}
 
 	return nil, false
@@ -614,8 +633,8 @@ func frameBytes(held any) ([]byte, bool) {
 /*
 Done hands back the next frame.
 
-One frame per evaluation, in the order they were captured, which is how the
-live feed delivers them. Handing back the whole table at once would present
+One frame per evaluation, in table scan order. Callers must establish capture
+ordering before treating a multi-file scan as a chronological tape. Handing back the whole table at once would present
 an array where every reader downstream expects one record.
 */
 func (server *IcebergScanServer) Done(ctx context.Context, call IcebergScan_done) error {

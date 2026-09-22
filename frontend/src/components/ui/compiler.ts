@@ -55,7 +55,7 @@ interface ComponentMeta {
 	hasChildren: boolean;
 	props: Array<{
 		name: string;
-		type: "string" | "number" | "boolean" | "select" | "slot" | "series" | "data";
+		type: "string" | "number" | "boolean" | "select" | "slot" | "data";
 		options?: string[];
 		optional: boolean;
 		defaultValue?: any;

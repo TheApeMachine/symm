@@ -509,3 +509,92 @@ func BenchmarkCompileJSON(b *testing.B) {
 		program.Release()
 	}
 }
+
+/* TestCompileTraining verifies the offline repair boundary, not a surrogate learner. */
+func TestCompileTraining(t *testing.T) {
+	Convey("Given the separated capture and offline mining programs", t, func() {
+		for _, name := range []string{"capture", "training"} {
+			program, err := compiler.CompileFile("../../manifest/"+name+".json", nil, compiler.DefaultRepository())
+			So(err, ShouldBeNil)
+			defer program.Release()
+
+			if name == "capture" {
+				So(program.Nodes, ShouldHaveLength, 3)
+				So(program.Routes, ShouldHaveLength, 4)
+				So(program.Nodes[program.Roots[0]].ID, ShouldEqual, "feed")
+				continue
+			}
+
+			So(program.Nodes, ShouldHaveLength, 3)
+			So(program.Roots, ShouldHaveLength, 2)
+			So(program.Nodes[program.Roots[0]].ID, ShouldEqual, "excursion")
+			So(program.Nodes[program.Roots[1]].ID, ShouldEqual, "replay")
+
+			for _, node := range program.Nodes {
+				So(node.Identity.Type, ShouldNotEqual, "cognition.Reinforce")
+				So(node.Identity.Type, ShouldNotEqual, "learning.TaskLearner")
+				So(node.Identity.Type, ShouldNotEqual, "websocket.WebSocketClient")
+			}
+		}
+	})
+}
+
+func TestParseGraphAgreement(t *testing.T) {
+	Convey("Given a graph whose two halves disagree about an edge", t, func() {
+		Convey("A reader nobody sends to is refused", func() {
+			_, err := compiler.ParseGraph([]byte(`{
+				"id": "disagree", "name": "disagree",
+				"nodes": {
+					"a": {"id": "a", "type": "arithmetic.Add",
+						"connections": {"inputs": {}, "outputs": {}}},
+					"b": {"id": "b", "type": "calculus.Square",
+						"connections": {
+							"inputs": {"value": [{"nodeId": "a", "portName": "out"}]},
+							"outputs": {}
+						}}
+				}
+			}`))
+
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "does not send it")
+		})
+
+		Convey("A sender nobody reads is refused", func() {
+			_, err := compiler.ParseGraph([]byte(`{
+				"id": "disagree", "name": "disagree",
+				"nodes": {
+					"a": {"id": "a", "type": "arithmetic.Add",
+						"connections": {
+							"inputs": {},
+							"outputs": {"out": [{"nodeId": "b", "portName": "value"}]}
+						}},
+					"b": {"id": "b", "type": "calculus.Square",
+						"connections": {"inputs": {}, "outputs": {}}}
+				}
+			}`))
+
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "does not read it")
+		})
+
+		Convey("Both halves agreeing is accepted", func() {
+			_, err := compiler.ParseGraph([]byte(`{
+				"id": "agree", "name": "agree",
+				"nodes": {
+					"a": {"id": "a", "type": "arithmetic.Add",
+						"connections": {
+							"inputs": {},
+							"outputs": {"out": [{"nodeId": "b", "portName": "value"}]}
+						}},
+					"b": {"id": "b", "type": "calculus.Square",
+						"connections": {
+							"inputs": {"value": [{"nodeId": "a", "portName": "out"}]},
+							"outputs": {}
+						}}
+				}
+			}`))
+
+			So(err, ShouldBeNil)
+		})
+	})
+}

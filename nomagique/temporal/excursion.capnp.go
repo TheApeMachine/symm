@@ -10,6 +10,7 @@ import (
 	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
 	context "context"
 	math "math"
+	strconv "strconv"
 )
 
 type Excursion capnp.Client
@@ -35,7 +36,7 @@ func (c Excursion) Write(ctx context.Context, params func(Excursion_write_Params
 
 }
 
-func (c Excursion) Done(ctx context.Context, params func(Excursion_done_Params) error) (Excursion_done_Results_Future, capnp.ReleaseFunc) {
+func (c Excursion) Done(ctx context.Context, params func(Excursion_done_Params) error) (ExcursionResult_Future, capnp.ReleaseFunc) {
 
 	s := capnp.Send{
 		Method: capnp.Method{
@@ -51,7 +52,7 @@ func (c Excursion) Done(ctx context.Context, params func(Excursion_done_Params) 
 	}
 
 	ans, release := capnp.Client(c).SendCall(ctx, s)
-	return Excursion_done_Results_Future{Future: ans.Future()}, release
+	return ExcursionResult_Future{Future: ans.Future()}, release
 
 }
 
@@ -208,9 +209,9 @@ func (c Excursion_done) Args() Excursion_done_Params {
 }
 
 // AllocResults allocates the results struct.
-func (c Excursion_done) AllocResults() (Excursion_done_Results, error) {
+func (c Excursion_done) AllocResults() (ExcursionResult, error) {
 	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 88, PointerCount: 0})
-	return Excursion_done_Results(r), err
+	return ExcursionResult(r), err
 }
 
 // Excursion_List is a list of Excursion.
@@ -359,162 +360,210 @@ func (f Excursion_done_Params_Future) Struct() (Excursion_done_Params, error) {
 	return Excursion_done_Params(p.Struct()), err
 }
 
-type Excursion_done_Results capnp.Struct
+type ExcursionResult capnp.Struct
+type ExcursionResult_move ExcursionResult
+type ExcursionResult_Which uint16
 
-// Excursion_done_Results_TypeID is the unique identifier for the type Excursion_done_Results.
-const Excursion_done_Results_TypeID = 0xe5a530d9939148c7
+const (
+	ExcursionResult_Which_none ExcursionResult_Which = 0
+	ExcursionResult_Which_move ExcursionResult_Which = 1
+)
 
-func NewExcursion_done_Results(s *capnp.Segment) (Excursion_done_Results, error) {
+func (w ExcursionResult_Which) String() string {
+	const s = "nonemove"
+	switch w {
+	case ExcursionResult_Which_none:
+		return s[0:4]
+	case ExcursionResult_Which_move:
+		return s[4:8]
+
+	}
+	return "ExcursionResult_Which(" + strconv.FormatUint(uint64(w), 10) + ")"
+}
+
+// ExcursionResult_TypeID is the unique identifier for the type ExcursionResult.
+const ExcursionResult_TypeID = 0xc13a67a40582d9d3
+
+func NewExcursionResult(s *capnp.Segment) (ExcursionResult, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 88, PointerCount: 0})
-	return Excursion_done_Results(st), err
+	return ExcursionResult(st), err
 }
 
-func NewRootExcursion_done_Results(s *capnp.Segment) (Excursion_done_Results, error) {
+func NewRootExcursionResult(s *capnp.Segment) (ExcursionResult, error) {
 	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 88, PointerCount: 0})
-	return Excursion_done_Results(st), err
+	return ExcursionResult(st), err
 }
 
-func ReadRootExcursion_done_Results(msg *capnp.Message) (Excursion_done_Results, error) {
+func ReadRootExcursionResult(msg *capnp.Message) (ExcursionResult, error) {
 	root, err := msg.Root()
-	return Excursion_done_Results(root.Struct()), err
+	return ExcursionResult(root.Struct()), err
 }
 
-func (s Excursion_done_Results) String() string {
-	str, _ := text.Marshal(0xe5a530d9939148c7, capnp.Struct(s))
+func (s ExcursionResult) String() string {
+	str, _ := text.Marshal(0xc13a67a40582d9d3, capnp.Struct(s))
 	return str
 }
 
-func (s Excursion_done_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+func (s ExcursionResult) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
 	return capnp.Struct(s).EncodeAsPtr(seg)
 }
 
-func (Excursion_done_Results) DecodeFromPtr(p capnp.Ptr) Excursion_done_Results {
-	return Excursion_done_Results(capnp.Struct{}.DecodeFromPtr(p))
+func (ExcursionResult) DecodeFromPtr(p capnp.Ptr) ExcursionResult {
+	return ExcursionResult(capnp.Struct{}.DecodeFromPtr(p))
 }
 
-func (s Excursion_done_Results) ToPtr() capnp.Ptr {
+func (s ExcursionResult) ToPtr() capnp.Ptr {
 	return capnp.Struct(s).ToPtr()
 }
-func (s Excursion_done_Results) IsValid() bool {
+
+func (s ExcursionResult) Which() ExcursionResult_Which {
+	return ExcursionResult_Which(capnp.Struct(s).Uint16(0))
+}
+func (s ExcursionResult) IsValid() bool {
 	return capnp.Struct(s).IsValid()
 }
 
-func (s Excursion_done_Results) Message() *capnp.Message {
+func (s ExcursionResult) Message() *capnp.Message {
 	return capnp.Struct(s).Message()
 }
 
-func (s Excursion_done_Results) Segment() *capnp.Segment {
+func (s ExcursionResult) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Excursion_done_Results) Anchor() float64 {
-	return math.Float64frombits(capnp.Struct(s).Uint64(0))
+func (s ExcursionResult) SetNone() {
+	capnp.Struct(s).SetUint16(0, 0)
+
 }
 
-func (s Excursion_done_Results) SetAnchor(v float64) {
-	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
+func (s ExcursionResult) Move() ExcursionResult_move { return ExcursionResult_move(s) }
+
+func (s ExcursionResult) SetMove() {
+	capnp.Struct(s).SetUint16(0, 1)
 }
 
-func (s Excursion_done_Results) Ignition() float64 {
+func (s ExcursionResult_move) IsValid() bool {
+	return capnp.Struct(s).IsValid()
+}
+
+func (s ExcursionResult_move) Message() *capnp.Message {
+	return capnp.Struct(s).Message()
+}
+
+func (s ExcursionResult_move) Segment() *capnp.Segment {
+	return capnp.Struct(s).Segment()
+}
+func (s ExcursionResult_move) Anchor() float64 {
 	return math.Float64frombits(capnp.Struct(s).Uint64(8))
 }
 
-func (s Excursion_done_Results) SetIgnition(v float64) {
+func (s ExcursionResult_move) SetAnchor(v float64) {
 	capnp.Struct(s).SetUint64(8, math.Float64bits(v))
 }
 
-func (s Excursion_done_Results) Extremum() float64 {
+func (s ExcursionResult_move) Ignition() float64 {
 	return math.Float64frombits(capnp.Struct(s).Uint64(16))
 }
 
-func (s Excursion_done_Results) SetExtremum(v float64) {
+func (s ExcursionResult_move) SetIgnition(v float64) {
 	capnp.Struct(s).SetUint64(16, math.Float64bits(v))
 }
 
-func (s Excursion_done_Results) Excursion() float64 {
+func (s ExcursionResult_move) Extremum() float64 {
 	return math.Float64frombits(capnp.Struct(s).Uint64(24))
 }
 
-func (s Excursion_done_Results) SetExcursion(v float64) {
+func (s ExcursionResult_move) SetExtremum(v float64) {
 	capnp.Struct(s).SetUint64(24, math.Float64bits(v))
 }
 
-func (s Excursion_done_Results) Qualifying() float64 {
+func (s ExcursionResult_move) Excursion() float64 {
 	return math.Float64frombits(capnp.Struct(s).Uint64(32))
 }
 
-func (s Excursion_done_Results) SetQualifying(v float64) {
+func (s ExcursionResult_move) SetExcursion(v float64) {
 	capnp.Struct(s).SetUint64(32, math.Float64bits(v))
 }
 
-func (s Excursion_done_Results) Sigma() float64 {
+func (s ExcursionResult_move) Confirmed() bool {
+	return capnp.Struct(s).Bit(16)
+}
+
+func (s ExcursionResult_move) SetConfirmed(v bool) {
+	capnp.Struct(s).SetBit(16, v)
+}
+
+func (s ExcursionResult) Qualifying() float64 {
 	return math.Float64frombits(capnp.Struct(s).Uint64(40))
 }
 
-func (s Excursion_done_Results) SetSigma(v float64) {
+func (s ExcursionResult) SetQualifying(v float64) {
 	capnp.Struct(s).SetUint64(40, math.Float64bits(v))
 }
 
-func (s Excursion_done_Results) Floor() float64 {
+func (s ExcursionResult) Sigma() float64 {
 	return math.Float64frombits(capnp.Struct(s).Uint64(48))
 }
 
-func (s Excursion_done_Results) SetFloor(v float64) {
+func (s ExcursionResult) SetSigma(v float64) {
 	capnp.Struct(s).SetUint64(48, math.Float64bits(v))
 }
 
-func (s Excursion_done_Results) Horizon() float64 {
+func (s ExcursionResult) Floor() float64 {
 	return math.Float64frombits(capnp.Struct(s).Uint64(56))
 }
 
-func (s Excursion_done_Results) SetHorizon(v float64) {
+func (s ExcursionResult) SetFloor(v float64) {
 	capnp.Struct(s).SetUint64(56, math.Float64bits(v))
 }
 
-func (s Excursion_done_Results) Steps() int64 {
-	return int64(capnp.Struct(s).Uint64(64))
+func (s ExcursionResult) Horizon() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(64))
 }
 
-func (s Excursion_done_Results) SetSteps(v int64) {
-	capnp.Struct(s).SetUint64(64, uint64(v))
+func (s ExcursionResult) SetHorizon(v float64) {
+	capnp.Struct(s).SetUint64(64, math.Float64bits(v))
 }
 
-func (s Excursion_done_Results) Legs() int64 {
+func (s ExcursionResult) Steps() int64 {
 	return int64(capnp.Struct(s).Uint64(72))
 }
 
-func (s Excursion_done_Results) SetLegs(v int64) {
+func (s ExcursionResult) SetSteps(v int64) {
 	capnp.Struct(s).SetUint64(72, uint64(v))
 }
 
-func (s Excursion_done_Results) Confirmed() bool {
-	return capnp.Struct(s).Bit(640)
+func (s ExcursionResult) Legs() int64 {
+	return int64(capnp.Struct(s).Uint64(80))
 }
 
-func (s Excursion_done_Results) SetConfirmed(v bool) {
-	capnp.Struct(s).SetBit(640, v)
+func (s ExcursionResult) SetLegs(v int64) {
+	capnp.Struct(s).SetUint64(80, uint64(v))
 }
 
-func (s Excursion_done_Results) Found() bool {
-	return capnp.Struct(s).Bit(641)
-}
+// ExcursionResult_List is a list of ExcursionResult.
+type ExcursionResult_List = capnp.StructList[ExcursionResult]
 
-func (s Excursion_done_Results) SetFound(v bool) {
-	capnp.Struct(s).SetBit(641, v)
-}
-
-// Excursion_done_Results_List is a list of Excursion_done_Results.
-type Excursion_done_Results_List = capnp.StructList[Excursion_done_Results]
-
-// NewExcursion_done_Results creates a new list of Excursion_done_Results.
-func NewExcursion_done_Results_List(s *capnp.Segment, sz int32) (Excursion_done_Results_List, error) {
+// NewExcursionResult creates a new list of ExcursionResult.
+func NewExcursionResult_List(s *capnp.Segment, sz int32) (ExcursionResult_List, error) {
 	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 88, PointerCount: 0}, sz)
-	return capnp.StructList[Excursion_done_Results](l), err
+	return capnp.StructList[ExcursionResult](l), err
 }
 
-// Excursion_done_Results_Future is a wrapper for a Excursion_done_Results promised by a client call.
-type Excursion_done_Results_Future struct{ *capnp.Future }
+// ExcursionResult_Future is a wrapper for a ExcursionResult promised by a client call.
+type ExcursionResult_Future struct{ *capnp.Future }
 
-func (f Excursion_done_Results_Future) Struct() (Excursion_done_Results, error) {
+func (f ExcursionResult_Future) Struct() (ExcursionResult, error) {
 	p, err := f.Future.Ptr()
-	return Excursion_done_Results(p.Struct()), err
+	return ExcursionResult(p.Struct()), err
+}
+func (p ExcursionResult_Future) Move() ExcursionResult_move_Future {
+	return ExcursionResult_move_Future{p.Future}
+}
+
+// ExcursionResult_move_Future is a wrapper for a ExcursionResult_move promised by a client call.
+type ExcursionResult_move_Future struct{ *capnp.Future }
+
+func (f ExcursionResult_move_Future) Struct() (ExcursionResult_move, error) {
+	p, err := f.Future.Ptr()
+	return ExcursionResult_move(p.Struct()), err
 }

@@ -4,6 +4,7 @@ go 1.26.1
 
 require (
 	capnproto.org/go/capnp/v3 v3.1.0-alpha.2
+	github.com/apache/arrow-go/v18 v18.6.0
 	github.com/apache/iceberg-go v0.6.0
 	github.com/aws/aws-sdk-go-v2 v1.46.0
 	github.com/aws/aws-sdk-go-v2/config v1.33.3
@@ -13,6 +14,7 @@ require (
 	github.com/hashicorp/go-immutable-radix/v2 v2.1.0
 	github.com/krakenfx/api-go/v2 v2.0.0
 	github.com/marcboeker/go-duckdb/v2 v2.4.3
+	github.com/mattn/go-sqlite3 v1.14.34
 	github.com/pion/webrtc/v4 v4.2.18
 	github.com/smartystreets/goconvey v1.8.1
 	github.com/spf13/cobra v1.10.2
@@ -45,7 +47,6 @@ require (
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/internal/resourcemapping v0.55.0 // indirect
 	github.com/andybalholm/brotli v1.2.1 // indirect
 	github.com/antlr4-go/antlr/v4 v4.13.1 // indirect
-	github.com/apache/arrow-go/v18 v18.6.0 // indirect
 	github.com/apache/thrift v0.23.0 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.20 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.19.2 // indirect
@@ -85,6 +86,7 @@ require (
 	github.com/elastic/go-elasticsearch/v9 v9.4.1 // indirect
 	github.com/envoyproxy/go-control-plane/envoy v1.36.0 // indirect
 	github.com/envoyproxy/protoc-gen-validate v1.3.0 // indirect
+	github.com/fatih/color v1.18.0 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
@@ -104,6 +106,7 @@ require (
 	github.com/gopherjs/gopherjs v1.20.2 // indirect
 	github.com/grafana/pyroscope-go/godeltaprof v0.1.11 // indirect
 	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
+	github.com/jinzhu/inflection v1.0.0 // indirect
 	github.com/jtolds/gls v4.20.0+incompatible // indirect
 	github.com/klauspost/compress v1.18.7 // indirect
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
@@ -111,6 +114,7 @@ require (
 	github.com/lithammer/fuzzysearch v1.1.8 // indirect
 	github.com/marcboeker/go-duckdb/arrowmapping v0.0.21 // indirect
 	github.com/marcboeker/go-duckdb/mapping v0.0.21 // indirect
+	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.22 // indirect
 	github.com/mattn/go-runewidth v0.0.20 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
@@ -135,6 +139,7 @@ require (
 	github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/pterm/pterm v0.12.83 // indirect
+	github.com/puzpuzpuz/xsync/v3 v3.5.1 // indirect
 	github.com/rogpeppe/go-internal v1.15.0 // indirect
 	github.com/sagikazarmark/locafero v0.11.0 // indirect
 	github.com/smarty/assertions v1.16.0 // indirect
@@ -149,11 +154,21 @@ require (
 	github.com/substrait-io/substrait-go/v8 v8.1.0 // indirect
 	github.com/substrait-io/substrait-protobuf/go v0.85.0 // indirect
 	github.com/tinylib/msgp v1.6.4 // indirect
+	github.com/tmthrgd/go-hex v0.0.0-20190904060850-447a3041c3bc // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/twmb/avro v1.7.2 // indirect
 	github.com/twmb/murmur3 v1.1.8 // indirect
+	github.com/uptrace/bun v1.2.18 // indirect
+	github.com/uptrace/bun/dialect/mssqldialect v1.2.18 // indirect
+	github.com/uptrace/bun/dialect/mysqldialect v1.2.18 // indirect
+	github.com/uptrace/bun/dialect/oracledialect v1.2.18 // indirect
+	github.com/uptrace/bun/dialect/pgdialect v1.2.18 // indirect
+	github.com/uptrace/bun/dialect/sqlitedialect v1.2.18 // indirect
+	github.com/uptrace/bun/extra/bundebug v1.2.18 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	github.com/valyala/fasthttp v1.71.0 // indirect
+	github.com/vmihailenco/msgpack/v5 v5.4.1 // indirect
+	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
 	github.com/wlynxg/anet v0.0.5 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	github.com/zeebo/xxh3 v1.1.0 // indirect

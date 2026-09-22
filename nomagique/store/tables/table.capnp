@@ -9,7 +9,9 @@ $Go.import("github.com/theapemachine/symm/nomagique/store/tables");
 # observation makes one snapshot per frame and the catalog becomes the clock.
 # Rows are held until there is a reason to send them: enough bytes to be worth
 # a snapshot, or a caller saying now.
-interface IcebergTable {
+using import "../../runtime/status.capnp".Durable;
+
+interface IcebergTable extends(Durable) {
   write @0 (config :Text, payload :Data, commit :Bool) -> stream;
   done @1 () -> (out :Data, pending :Int64, committed :Int64, bytes :Int64);
 }

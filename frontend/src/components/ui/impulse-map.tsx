@@ -108,7 +108,9 @@ export const ImpulseMap = ({
 					);
 				})}
 				{points?.map((point) => (
+					// biome-ignore lint/a11y/useSemanticElements: SVG has no native button; this circle supports click, Enter, Space and focus inspection.
 					<circle
+						role="button"
 						key={point.id}
 						cx={point.x}
 						cy={point.y}
@@ -123,6 +125,13 @@ export const ImpulseMap = ({
 						aria-label={point.label}
 						onMouseEnter={() => setSelected(point.id)}
 						onMouseLeave={() => setSelected(null)}
+						onClick={() => setSelected(point.id)}
+						onKeyDown={(event) => {
+							if (event.key === "Enter" || event.key === " ") {
+								event.preventDefault();
+								setSelected(point.id);
+							}
+						}}
 						onFocus={() => setSelected(point.id)}
 						onBlur={() => setSelected(null)}
 					>

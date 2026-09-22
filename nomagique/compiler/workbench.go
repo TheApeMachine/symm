@@ -3,7 +3,6 @@ package compiler
 import (
 	"context"
 	"fmt"
-	"math"
 	"regexp"
 	"strings"
 	"sync"
@@ -11,6 +10,7 @@ import (
 	capnp "capnproto.org/go/capnp/v3"
 	"capnproto.org/go/capnp/v3/std/capnp/schema"
 	"github.com/bytedance/sonic"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/network/http"
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
@@ -210,6 +210,7 @@ func (w *WorkbenchRunnerImpl) Run(ctx context.Context, rawJSON []byte) (any, err
 		}, err
 	}
 
+	projection := &resultProjection{nodes: make(map[uint64]schema.Node)}
 	results := make(map[string]map[string]any)
 	statuses := make(map[string]string)
 
@@ -222,7 +223,16 @@ func (w *WorkbenchRunnerImpl) Run(ctx context.Context, rawJSON []byte) (any, err
 
 		nodeRes := make(map[string]any)
 		for outName, field := range node.Outputs {
-			val := extractFieldValue(st, field)
+			if field.InUnion && st.Uint16(capnp.DataOffset(field.DiscriminantOffset*2)) != field.DiscriminantValue {
+				continue
+			}
+
+			val, err := projection.Field(st, field.SchemaField)
+
+			if err != nil {
+				err = errnie.Error(errnie.Err(errnie.Validation, fmt.Sprintf("workbench: project %s.%s", node.ID, outName), err))
+				return RunResponse{OK: false, Error: err.Error()}, err
+			}
 			nodeRes[outName] = val
 		}
 
@@ -237,63 +247,6 @@ func (w *WorkbenchRunnerImpl) Run(ctx context.Context, rawJSON []byte) (any, err
 		Statuses: statuses,
 		Logs:     collectedLogs,
 	}, nil
-}
-
-func extractFieldValue(st capnp.Struct, field CompiledField) any {
-	switch field.Which {
-	case schema.Type_Which_float64:
-		return math.Float64frombits(st.Uint64(capnp.DataOffset(field.Offset * 8)))
-	case schema.Type_Which_float32:
-		return math.Float32frombits(st.Uint32(capnp.DataOffset(field.Offset * 4)))
-	case schema.Type_Which_int64:
-		return int64(st.Uint64(capnp.DataOffset(field.Offset * 8)))
-	case schema.Type_Which_uint64:
-		return st.Uint64(capnp.DataOffset(field.Offset * 8))
-	case schema.Type_Which_int32:
-		return int32(st.Uint32(capnp.DataOffset(field.Offset * 4)))
-	case schema.Type_Which_uint32:
-		return st.Uint32(capnp.DataOffset(field.Offset * 4))
-	case schema.Type_Which_int16:
-		return int16(st.Uint16(capnp.DataOffset(field.Offset * 2)))
-	case schema.Type_Which_uint16:
-		return st.Uint16(capnp.DataOffset(field.Offset * 2))
-	case schema.Type_Which_int8:
-		return int8(st.Uint8(capnp.DataOffset(field.Offset)))
-	case schema.Type_Which_uint8:
-		return st.Uint8(capnp.DataOffset(field.Offset))
-	case schema.Type_Which_bool:
-		return st.Bit(capnp.BitOffset(field.Offset))
-	case schema.Type_Which_text:
-		p, err := st.Ptr(uint16(field.Offset))
-		if err != nil {
-			return ""
-		}
-		return p.Text()
-	case schema.Type_Which_data:
-		p, err := st.Ptr(uint16(field.Offset))
-		if err != nil || !p.IsValid() {
-			return nil
-		}
-		return p.Data()
-	case schema.Type_Which_structType:
-		p, err := st.Ptr(uint16(field.Offset))
-		if err != nil || !p.IsValid() {
-			return nil
-		}
-		return "<struct>"
-	case schema.Type_Which_list:
-		p, err := st.Ptr(uint16(field.Offset))
-		if err != nil || !p.IsValid() {
-			return nil
-		}
-		return fmt.Sprintf("<list:%d>", p.List().Len())
-	case schema.Type_Which_enum:
-		return st.Uint16(capnp.DataOffset(field.Offset * 2))
-	case schema.Type_Which_void:
-		return "void"
-	default:
-		return fmt.Sprintf("<%v>", field.Which)
-	}
 }
 
 var (

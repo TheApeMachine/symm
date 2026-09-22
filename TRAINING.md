@@ -1,5 +1,11 @@
 # TRAINING.md
 
+Implementation/design boundary: the current `training.json` performs offline
+single-series excursion mining only. It does not train a model. The unsafe
+self-reinforcement and RLS/ledger paths have been removed. Capture is a separate
+program. See [the repair design](docs/TRAINING-REPAIR-DESIGN.md) for the proposed
+remapper, truth labels, bootstrap, and remaining causal-ordering requirements.
+
 How the system learns. Read `ARCHITECTURE.md` first for how the graph is built
 and run; this describes what is built on top of it.
 
@@ -156,8 +162,10 @@ be kept.
 
 **Step one — store raw market data in Iceberg tables.** Every stream, as
 received. `nomagique/store/tables/table.capnp` has `IcebergTable` and
-`IcebergScan`; the capture path that feeds them does not currently exist in
-this repo.
+`IcebergScan`; `store.Capture` now supplies a byte-preserving envelope and `manifest/capture.json`
+connects socket receipt metadata to it. A local Iceberg round trip is tested.
+Live subscriptions and protocol metadata extraction still need deployment
+configuration; archive ordering/deduplication remains required before training.
 
 **Step two — compute excursions.** An excursion is a move the tape actually
 made: a missed opportunity. Mining these from the stored capture gives the
@@ -223,7 +231,7 @@ Paper versus real is a deployment setting, not a stage of learning.
 | Remapper and settling gate | not built |
 | Region tokens | not built |
 | Radix trie | partly built (`nomagique/cognition`) |
-| Raw capture into Iceberg | **not built — do this first** |
+| Raw capture into Iceberg | envelope and local round trip built; subscriptions and chronological replay pending |
 | Excursion mining and fragment retrieval | not built |
 | A/B/C grading | not built |
 | Fragment training loop | not built |

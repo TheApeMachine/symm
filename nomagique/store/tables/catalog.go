@@ -320,11 +320,15 @@ func (catalog *Catalog) CreateTable(
 	ident := table.Identifier{namespace, name}
 
 	exists, err := catalog.underlying.CheckTableExists(ctx, ident)
-	if err == nil && exists {
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(errnie.IO, "iceberg: check table existence", err))
+	}
+
+	if exists {
 		return catalog.Load(ctx, namespace, name)
 	}
 
-	tbl, err := catalog.underlying.CreateTable(ctx, ident, schema, nil)
+	tbl, err := catalog.underlying.CreateTable(ctx, ident, schema)
 	if err != nil {
 		if errors.Is(err, icecat.ErrTableAlreadyExists) {
 			return catalog.Load(ctx, namespace, name)

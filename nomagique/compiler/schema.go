@@ -16,6 +16,7 @@ import (
 FieldInfo contains reflected Cap'n Proto field metadata.
 */
 type FieldInfo struct {
+	SchemaField        schema.Field
 	Name               string
 	Offset             uint32
 	Which              schema.Type_Which
@@ -50,6 +51,7 @@ type InterfaceSchema struct {
 	DoneParams  capnp.ObjectSize
 	DoneResult  capnp.ObjectSize
 	Outputs     map[string]FieldInfo
+	HasWrite    bool
 	HasDone     bool
 }
 
@@ -100,6 +102,9 @@ func ReflectInterface(interfaceID uint64) (*InterfaceSchema, error) {
 		))
 	}
 
+	// This immutable generated schema is cached across executions. Its read
+	// budget must not expire as callers inspect metadata; payloads retain theirs.
+	msg.ResetReadLimit(math.MaxUint64)
 	req, err := schema.ReadRootCodeGeneratorRequest(msg)
 	if err != nil {
 		return nil, errnie.Error(errnie.Err(
@@ -156,6 +161,7 @@ func ReflectInterface(interfaceID uint64) (*InterfaceSchema, error) {
 		mName, _ := m.Name()
 
 		if mName == "write" || (i == 0 && mName == "") {
+			result.HasWrite = true
 			result.WriteMethod = uint16(i)
 			paramNode := nodeMap[m.ParamStructType()]
 			if paramNode.IsValid() {
@@ -215,28 +221,12 @@ func ReflectInterface(interfaceID uint64) (*InterfaceSchema, error) {
 					DataSize:     capnp.Size(st.DataWordCount() * 8),
 					PointerCount: uint16(st.PointerCount()),
 				}
-				fields, err := st.Fields()
-				if err == nil {
-					for k := 0; k < fields.Len(); k++ {
-						f := fields.At(k)
-						fName, _ := f.Name()
-						slot := f.Slot()
-						t, _ := slot.Type()
-						discVal := f.DiscriminantValue()
-						result.Outputs[fName] = FieldInfo{
-							Name:               fName,
-							Offset:             slot.Offset(),
-							Which:              t.Which(),
-							InUnion:            discVal != schema.Field_noDiscriminant,
-							DiscriminantValue:  discVal,
-							DiscriminantOffset: st.DiscriminantOffset(),
-							InterfaceID:        requiredInterface(t),
-							CapabilityList:     isCapabilityList(t),
-							ValueList:          isValueList(t),
-							ElementWhich:       elementWhich(t),
-						}
-					}
+				result.Outputs, err = reflectOutputFields(resNode, nodeMap, "", nil)
+
+				if err != nil {
+					return nil, err
 				}
+
 			}
 		}
 	}
@@ -763,4 +753,76 @@ func CompileFanOutDelivery(
 
 		return filled(src, index)
 	}
+}
+
+/*
+reflectOutputFields flattens result groups into named ports while retaining their
+union discriminator. Every value inside move is absent when none is active.
+*/
+func reflectOutputFields(node schema.Node, nodes map[uint64]schema.Node, prefix string, inherited *FieldInfo) (map[string]FieldInfo, error) {
+	fields, err := node.StructNode().Fields()
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(errnie.Validation, "compiler: read result fields", err))
+	}
+
+	output := make(map[string]FieldInfo)
+
+	for index := range fields.Len() {
+		field := fields.At(index)
+		name, err := field.Name()
+
+		if err != nil {
+			return nil, errnie.Error(errnie.Err(errnie.Validation, "compiler: read result field name", err))
+		}
+
+		info := FieldInfo{Name: prefix + name}
+
+		if inherited != nil {
+			info.InUnion = inherited.InUnion
+			info.DiscriminantValue = inherited.DiscriminantValue
+			info.DiscriminantOffset = inherited.DiscriminantOffset
+		}
+
+		if field.DiscriminantValue() != schema.Field_noDiscriminant {
+			if info.InUnion {
+				return nil, errnie.Error(errnie.Err(errnie.Validation, "compiler: nested result unions require multiple discriminators", nil))
+			}
+
+			info.InUnion = true
+			info.DiscriminantValue = field.DiscriminantValue()
+			info.DiscriminantOffset = node.StructNode().DiscriminantOffset()
+		}
+
+		if field.Which() == schema.Field_Which_group {
+			group, err := reflectOutputFields(nodes[field.Group().TypeId()], nodes, info.Name+".", &info)
+
+			if err != nil {
+				return nil, err
+			}
+
+			for key, value := range group {
+				output[key] = value
+			}
+			continue
+		}
+
+		slot := field.Slot()
+		valueType, err := slot.Type()
+
+		if err != nil {
+			return nil, errnie.Error(errnie.Err(errnie.Validation, "compiler: read result field type", err))
+		}
+
+		info.SchemaField = field
+		info.Offset = slot.Offset()
+		info.Which = valueType.Which()
+		info.InterfaceID = requiredInterface(valueType)
+		info.CapabilityList = isCapabilityList(valueType)
+		info.ValueList = isValueList(valueType)
+		info.ElementWhich = elementWhich(valueType)
+		output[info.Name] = info
+	}
+
+	return output, nil
 }

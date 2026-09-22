@@ -26,18 +26,24 @@ $Go.import("github.com/theapemachine/symm/nomagique/temporal");
 # its bound strictly. The excursion output remains the relative price change.
 interface Excursion {
   write @0 (value :Float64) -> stream;
-  done @1 () -> (
-    anchor     :Float64,
-    ignition   :Float64,
-    extremum   :Float64,
-    excursion  :Float64,
-    qualifying :Float64,
-    sigma      :Float64,
-    floor      :Float64,
-    horizon    :Float64,
-    steps      :Int64,
-    legs       :Int64,
-    confirmed  :Bool,
-    found      :Bool
-  );
+  done @1 () -> ExcursionResult;
+}
+
+struct ExcursionResult {
+ union {
+  none @0 :Void;
+  move :group {
+   anchor @1 :Float64;
+   ignition @2 :Float64;
+   extremum @3 :Float64;
+   excursion @4 :Float64;
+   confirmed @5 :Bool;
+  }
+ }
+ qualifying @6 :Float64;
+ sigma @7 :Float64;
+ floor @8 :Float64;
+ horizon @9 :Float64;
+ steps @10 :Int64;
+ legs @11 :Int64;
 }

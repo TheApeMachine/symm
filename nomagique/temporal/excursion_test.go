@@ -38,8 +38,12 @@ func TestExcursionWrite(t *testing.T) {
 			results, err := future.Struct()
 			So(err, ShouldBeNil)
 
-			return results.Anchor(), results.Ignition(), results.Extremum(),
-				results.Excursion(), results.Found(), results.Legs()
+			if results.Which() == temporal.ExcursionResult_Which_none {
+				return 0, 0, 0, 0, false, results.Legs()
+			}
+
+			move := results.Move()
+			return move.Anchor(), move.Ignition(), move.Extremum(), move.Excursion(), true, results.Legs()
 		}
 
 		// A trend is many small steps in one direction. The bar is read from
@@ -173,14 +177,14 @@ func TestExcursionDone(t *testing.T) {
 		So(result.Horizon(), ShouldBeGreaterThan, 0)
 		So(result.Sigma(), ShouldBeGreaterThan, 0)
 		So(result.Legs(), ShouldBeGreaterThan, 0)
-		So(result.Found(), ShouldBeTrue)
+		So(result.Which(), ShouldEqual, temporal.ExcursionResult_Which_move)
 
 		Convey("Then reading again cannot report the same completed move", func() {
 			future, release := client.Done(ctx, nil)
 			defer release()
 			result, err := future.Struct()
 			So(err, ShouldBeNil)
-			So(result.Found(), ShouldBeFalse)
+			So(result.Which(), ShouldEqual, temporal.ExcursionResult_Which_none)
 			So(result.Steps(), ShouldEqual, len(path)-1)
 		})
 	})

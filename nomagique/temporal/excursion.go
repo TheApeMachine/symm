@@ -250,7 +250,7 @@ func (server *ExcursionServer) Done(ctx context.Context, call Excursion_done) er
 	results.SetFloor(server.floor)
 	results.SetHorizon(server.horizon())
 
-	results.SetFound(server.reported.found)
+	results.SetNone()
 
 	// A move that was not completed is not a move. Reporting the open leg's
 	// positions would hand back a beginning as though it were an outcome.
@@ -258,11 +258,13 @@ func (server *ExcursionServer) Done(ctx context.Context, call Excursion_done) er
 		return nil
 	}
 
-	results.SetAnchor(server.reported.anchor)
-	results.SetIgnition(server.reported.ignition)
-	results.SetExtremum(server.reported.extremum)
-	results.SetExcursion(server.reported.excursion)
-	results.SetConfirmed(server.reported.confirmed)
+	results.SetMove()
+	move := results.Move()
+	move.SetAnchor(server.reported.anchor)
+	move.SetIgnition(server.reported.ignition)
+	move.SetExtremum(server.reported.extremum)
+	move.SetExcursion(server.reported.excursion)
+	move.SetConfirmed(server.reported.confirmed)
 
 	server.reported.found = false
 	return nil

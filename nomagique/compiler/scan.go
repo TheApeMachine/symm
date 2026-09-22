@@ -699,7 +699,7 @@ capability.
 */
 func isCapabilityType(portType string) bool {
 	switch portType {
-	case "Data", "Text", "Bool", "Int64", "Float64", "Status", "Void", "":
+	case "Structured", "Data", "Text", "Bool", "Int64", "Float64", "Status", "Void", "":
 		return false
 	}
 
@@ -726,8 +726,15 @@ func reflectPorts(interfaceID uint64) (inputs, outputs []Port, extends string, o
 		return nil, nil, "", false
 	}
 
-	inputs = portsOf(reflected.Inputs)
-	outputs = portsOf(reflected.Outputs)
+	inputs = portsOf(reflected.Inputs, true)
+	outputs = portsOf(reflected.Outputs, false)
+
+	if (!reflected.HasWrite || !reflected.HasDone) && superclassOf(interfaceID) == "" {
+		outputs = append(outputs, Port{
+			Name: "self", Type: "Capability", RawType: reflected.Name,
+			Description: "Resource capability, bound into consumers without evaluation",
+		})
+	}
 
 	if super := superclassOf(interfaceID); super != "" {
 		extends = super
@@ -747,7 +754,7 @@ func reflectPorts(interfaceID uint64) (inputs, outputs []Port, extends string, o
 portsOf converts reflected fields into catalog ports, ordered by name so the
 catalog is stable across runs.
 */
-func portsOf(fields map[string]FieldInfo) []Port {
+func portsOf(fields map[string]FieldInfo, inputs bool) []Port {
 	names := make([]string, 0, len(fields))
 
 	for name := range fields {
@@ -760,6 +767,10 @@ func portsOf(fields map[string]FieldInfo) []Port {
 
 	for _, name := range names {
 		field := fields[name]
+
+		if !inputs {
+			field.ValueList = false
+		}
 
 		ports = append(ports, Port{
 			Name:        name,
@@ -794,9 +805,10 @@ func portTypeOf(field FieldInfo) string {
 			return "FanIn:" + portTypeOfWhich(field.ElementWhich)
 		}
 
-		return "Data"
-	case schema.Type_Which_data, schema.Type_Which_structType,
-		schema.Type_Which_anyPointer:
+		return "Structured"
+	case schema.Type_Which_structType:
+		return "Structured"
+	case schema.Type_Which_data, schema.Type_Which_anyPointer:
 		return "Data"
 	case schema.Type_Which_float32, schema.Type_Which_float64:
 		return "Float64"

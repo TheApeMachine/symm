@@ -42,32 +42,22 @@ export const computeSparklinePaths = (
 	values: number[],
 	active = true,
 ): SparklinePaths => {
-	const history = values.length > 0 ? values : [0];
+	let minimum = values[0];
+	let maximum = values[0];
 
-	const scaled = history.map((value) => {
-		if (!Number.isFinite(value)) return 0.5;
-		if (value < 0) return Math.max(0, (value + 1) / 2);
-		return Math.min(1, value);
+	for (const value of values) {
+		minimum = Math.min(minimum, value);
+		maximum = Math.max(maximum, value);
+	}
+	const range = maximum - minimum;
+	// These dimensions match the SVG viewBox, with y coordinates from 3 to 29.
+	const points = values.map((value, index) => {
+		const x = values.length === 1 ? 75 : (index / (values.length - 1)) * 150;
+		const y = range === 0 ? 16 : 29 - ((value - minimum) / range) * 26;
+		return `${x.toFixed(1)},${y.toFixed(1)}`;
 	});
-
-	const points = scaled.map((value, index) => {
-		const x =
-			scaled.length === 1
-				? index === 0
-					? "0.0"
-					: "150.0"
-				: ((index / Math.max(scaled.length - 1, 1)) * 150).toFixed(1);
-		const clamped = Math.max(0, Math.min(1, value));
-		const y = (29 - clamped * 26).toFixed(1);
-
-		return `${x},${y}`;
-	});
-
-	const spark =
-		scaled.length === 1
-			? `${points[0]} 150,${points[0].split(",")[1]}`
-			: points.join(" ");
-	const area = `${spark} 150,30 0,30`;
+	const spark = points.join(" ");
+	const area = points.length > 0 ? `${spark} 150,30 0,30` : "";
 
 	return {
 		spark,
@@ -98,12 +88,16 @@ export const setSparkline = (
 	if (Array.isArray(areaOrValues)) {
 		const root = sparkOrSvg as HTMLElement | SVGElement | null | undefined;
 		if (!root) return;
-		sparkEl = (root.matches?.('[data-k="spark"]')
-			? root
-			: root.querySelector('[data-k="spark"]')) as SVGPolylineElement | null;
-		areaEl = (root.matches?.('[data-k="area"]')
-			? root
-			: root.querySelector('[data-k="area"]')) as SVGPolylineElement | null;
+		sparkEl = (
+			root.matches?.('[data-k="spark"]')
+				? root
+				: root.querySelector('[data-k="spark"]')
+		) as SVGPolylineElement | null;
+		areaEl = (
+			root.matches?.('[data-k="area"]')
+				? root
+				: root.querySelector('[data-k="area"]')
+		) as SVGPolylineElement | null;
 		values = areaOrValues;
 		isActive = typeof valuesOrActive === "boolean" ? valuesOrActive : true;
 	} else {
@@ -126,7 +120,7 @@ export const setSparkline = (
 };
 
 export type SparklineProps = Omit<SVGProps<SVGSVGElement>, "points"> & {
-	points?: number[];
+	points?: number[] | null;
 	title?: string;
 	active?: boolean;
 };
@@ -138,7 +132,7 @@ export const Sparkline = ({
 	className,
 	...props
 }: SparklineProps) => {
-	const paths = computeSparklinePaths(points, active);
+	const paths = computeSparklinePaths(points ?? [], active);
 
 	return (
 		<svg

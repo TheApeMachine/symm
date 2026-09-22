@@ -218,6 +218,7 @@ func CompileWithPrevious(
 		}
 
 		if ifaceSchema != nil {
+			compiledNode.Resource = !ifaceSchema.HasWrite || !ifaceSchema.HasDone
 			compiledNode.Write = CompiledMethod{
 				InterfaceID: ifaceSchema.InterfaceID,
 				MethodID:    ifaceSchema.WriteMethod,
@@ -260,6 +261,7 @@ func CompileWithPrevious(
 			for idx, name := range outNames {
 				fi := ifaceSchema.Outputs[name]
 				compiledNode.Outputs[name] = CompiledField{
+					SchemaField:        fi.SchemaField,
 					Name:               name,
 					Which:              fi.Which,
 					Offset:             fi.Offset,
@@ -617,7 +619,7 @@ func CompileWithPrevious(
 	var roots []NodeID
 
 	for i := range nodeCount {
-		if origins[execOrder[i]] != 0 {
+		if compiledNodes[i].Resource || origins[execOrder[i]] != 0 {
 			continue
 		}
 

@@ -24,16 +24,23 @@ type WebSocketClientServer struct {
 	*runtime.System
 	conn     *gorillaws.Conn
 	endpoint string
-	incoming *lf.Queue[[]byte]
+	incoming *lf.Queue[receivedFrame]
 	// dialing admits a single reconnect loop. Without it every failed dial
 	// would start another one and the retries would double each round.
 	dialing atomic.Bool
 }
 
+/* receivedFrame retains metadata at socket receipt, before graph scheduling. */
+type receivedFrame struct {
+	payload  []byte
+	at       time.Time
+	endpoint string
+}
+
 func NewWebSocketClient(ctx context.Context) *WebSocketClientServer {
 	return &WebSocketClientServer{
 		System:   runtime.NewSystem(ctx, "websocket.client"),
-		incoming: lf.NewQueue[[]byte](),
+		incoming: lf.NewQueue[receivedFrame](),
 	}
 }
 
@@ -121,7 +128,15 @@ func (server *WebSocketClientServer) Done(ctx context.Context, call WebSocketCli
 		return nil
 	}
 
-	return results.SetRead(msg)
+	if err := results.SetReceivedAt(msg.at.UTC().Format(time.RFC3339Nano)); err != nil {
+		return errnie.Error(errnie.Err(errnie.Internal, "websocket: set receive time", err))
+	}
+
+	if err := results.SetEndpoint(msg.endpoint); err != nil {
+		return errnie.Error(errnie.Err(errnie.Internal, "websocket: set receive endpoint", err))
+	}
+
+	return results.SetRead(msg.payload)
 }
 
 /*
@@ -198,6 +213,8 @@ func (server *WebSocketClientServer) reconnect() {
 }
 
 func (server *WebSocketClientServer) read() {
+	endpoint := server.endpoint
+	connection := server.conn
 	go func() {
 		for {
 			select {
@@ -210,7 +227,7 @@ func (server *WebSocketClientServer) read() {
 				return
 			}
 
-			_, message, err := server.conn.ReadMessage()
+			_, message, err := connection.ReadMessage()
 
 			if err != nil {
 				server.Error(errnie.Err(
@@ -230,7 +247,7 @@ func (server *WebSocketClientServer) read() {
 				return
 			}
 
-			server.incoming.Enqueue(message)
+			server.incoming.Enqueue(receivedFrame{payload: message, at: time.Now(), endpoint: endpoint})
 		}
 	}()
 }

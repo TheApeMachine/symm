@@ -2,6 +2,7 @@ package compiler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"sync"
@@ -10,6 +11,7 @@ import (
 	capnp "capnproto.org/go/capnp/v3"
 	"capnproto.org/go/capnp/v3/std/capnp/schema"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
 type NodeID uint32
@@ -29,6 +31,7 @@ type CompiledMethod struct {
 CompiledField describes a port field on write or done.
 */
 type CompiledField struct {
+	SchemaField        schema.Field
 	Name               string
 	Which              schema.Type_Which
 	Offset             uint32
@@ -53,6 +56,7 @@ CompiledNode is an immutable execution plan node containing capability and compi
 It retains NO concrete Go server, NO server any, NO map[string]any.
 */
 type CompiledNode struct {
+	Resource     bool // Constructed capability without the write/done evaluation protocol.
 	Source       bool
 	ID           string
 	Index        NodeID
@@ -155,6 +159,29 @@ func (p *Program) Release() {
 			p.Nodes[i].Client.Release()
 		}
 	}
+}
+
+/* Flush fences evaluation and persists durable owners before Release. */
+func (p *Program) Flush(ctx context.Context) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	var failures []error
+
+	for _, node := range p.Nodes {
+		if !Implements(node.Identity.InterfaceID, runtime.Durable_TypeID) {
+			continue
+		}
+
+		future, release := runtime.Durable(node.Client).Flush(ctx, nil)
+		_, err := future.Struct()
+		release()
+
+		if err != nil {
+			failures = append(failures, errnie.Error(errnie.Err(errnie.IO, "compiler: flush node "+node.ID, err)))
+		}
+	}
+
+	return errors.Join(failures...)
 }
 
 /*
@@ -331,6 +358,10 @@ func (p *Program) Float64Result(nodeID, fieldName string) (float64, error) {
 		))
 	}
 
+	if field.InUnion && res.Uint16(capnp.DataOffset(field.DiscriminantOffset*2)) != field.DiscriminantValue {
+		return 0, errnie.Error(errnie.Err(errnie.Validation, "program: output "+fieldName+" is absent", nil))
+	}
+
 	return math.Float64frombits(res.Uint64(capnp.DataOffset(field.Offset * 8))), nil
 }
 
@@ -428,6 +459,10 @@ func (p *Program) Execute(
 	var queue []NodeID
 	for i := 0; i < nodeCount; i++ {
 		node := &p.Nodes[i]
+
+		if node.Resource {
+			continue
+		}
 
 		if _, seeded := initialInputs[NodeID(i)]; seeded {
 			queue = append(queue, NodeID(i))

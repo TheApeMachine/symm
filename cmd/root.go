@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -55,10 +56,14 @@ var (
 				))
 			}
 
+			defer graph.Release()
+
 			errnie.Info("[root] system ready; running graph")
 			graph.Start(ctx)
 
-			<-ctx.Done()
+			if err := graph.Flush(context.WithoutCancel(ctx)); err != nil {
+				return err
+			}
 			errnie.Info("[root] system terminated cleanly")
 			return nil
 		},

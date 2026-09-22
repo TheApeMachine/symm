@@ -5104,7 +5104,7 @@
       },
       {
         "name": "values",
-        "type": "series",
+        "type": "data",
         "optional": true
       },
       {
@@ -5374,7 +5374,7 @@
       },
       {
         "name": "values",
-        "type": "series",
+        "type": "data",
         "optional": false
       },
       {
@@ -5469,7 +5469,7 @@
       },
       {
         "name": "values",
-        "type": "series",
+        "type": "data",
         "optional": false
       },
       {
@@ -7453,7 +7453,7 @@
       },
       {
         "name": "points",
-        "type": "series",
+        "type": "data",
         "optional": true
       },
       {

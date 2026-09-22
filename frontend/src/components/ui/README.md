@@ -115,6 +115,20 @@ not market thresholds. Empty or absent points render an explicit empty state.
 The evidence graph preserves layout, directed/reciprocal edges, and hover details.
 
 These components do not adapt retired telemetry schemas. Producers must provide
-the matching structured values; Cap'n Proto workbench list/struct projection is
-not yet available (the existing endpoint still returns summaries for those
-fields). Registering a view does not manufacture a compatible backend producer.
+the matching structured values. The backend projects Cap'n Proto lists and
+structs into JSON arrays and objects using the registered schema, recursively
+including active union fields and declared defaults. Inactive union fields are
+omitted; absent struct/list pointers are null. Binary Data is base64; Int64 and
+UInt64 are decimal strings to preserve precision in the browser. Enums retain
+their numeric ordinal. Capabilities and untyped pointers are not serializable UI
+values and produce an explicit projection error.
+
+Array props (including Sparkline.points) are structured data ports. The renderer
+passes graph outputs directly to component props: it does not retain a separate
+history, collect samples on React renders, or run graph calculations. A producer
+must supply any history a view requires. Sparkline scales its geometry from the
+provided values; empty data produces no line.
+
+The remaining application-specific routes and feed-bound components have not
+all been migrated. They must be converted to graph-authored composition and
+prop-driven library views before their existing implementations are removed.

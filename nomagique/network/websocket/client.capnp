@@ -9,5 +9,5 @@ using import "../../runtime/status.capnp".Source;
 
 interface WebSocketClient extends(Source) {
   write @0 (endpoint :Text, write :Data) -> stream;
-  done @1 () -> (status: Status, read :Data);
+  done @1 () -> (status: Status, read :Data, receivedAt :Text, endpoint :Text);
 }

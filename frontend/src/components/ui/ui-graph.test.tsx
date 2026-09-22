@@ -1,14 +1,12 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { createFlumeConfig } from "../flume/flume-config.generated";
 import { compileUI, type FlumeGraph } from "./compiler";
 import {
-	clearSeries,
 	type CompiledUINode,
 	type CompiledUIRoute,
-	readSeriesForTest,
 	renderNode,
 	renderUIRoute,
 } from "./renderer";
@@ -557,132 +555,61 @@ describe("an unfilled control", () => {
 	});
 });
 
-describe("a component that draws a series", () => {
-	/*
-		The whole point of the editor is plugging data into a component. A
-		series prop was dropped by the reflector, so Sparkline had no port to
-		plug anything into.
-	*/
-	it("exposes the port its data arrives on", () => {
+describe("graph-owned visualization data", () => {
+	it("exposes compatible structured ports on producers and views", () => {
+		const config = createFlumeConfig();
+		const outputs = config.nodeTypes["store.Grid"].outputs;
+		const inputs = config.nodeTypes["ui.Sparkline"].inputs;
+		const sourcePorts =
+			typeof outputs === "function"
+				? outputs({}, { inputs: {}, outputs: {} }, undefined)
+				: outputs;
+		const targetPorts =
+			typeof inputs === "function"
+				? inputs({}, { inputs: {}, outputs: {} }, undefined)
+				: inputs;
+		const source = sourcePorts.find((port) => port.name === "values");
+		const target = targetPorts.find((port) => port.name === "points");
+		expect(source?.type).toBe("data");
+		expect(target?.type).toBe("data");
+		expect(config.portTypes.data.acceptTypes).toContain(source?.type);
+	});
+	it("reflects arrays as data ports and renders replacements without accumulating history", () => {
+		expect(
+			metadataJson.Sparkline.props.find((prop) => prop.name === "points")?.type,
+		).toBe("data");
 		const compilation = compileUI({
 			nodes: {
-				feed: {
-					id: "feed",
-					type: "arithmetic.Add",
+				source: {
+					id: "source",
+					type: "store.Grid",
 					connections: {
-						outputs: { out: [{ nodeId: "spark", portName: "points" }] },
+						outputs: { values: [{ nodeId: "spark", portName: "points" }] },
 					},
 				},
 				spark: {
 					id: "spark",
 					type: "ui.Sparkline",
 					connections: {
-						inputs: { points: [{ nodeId: "feed", portName: "out" }] },
+						inputs: { points: [{ nodeId: "source", portName: "values" }] },
 					},
 				},
 			},
 		});
-
 		expect(compilation.diagnostics).toEqual([]);
-
-		const [spark] = compilation.routes[0].components;
-		expect(spark.props?.points).toEqual({
-			binding: { node: "feed", port: "out" },
+		const route = compilation.routes[0];
+		expect(route.components[0].props?.points).toEqual({
+			binding: { node: "source", port: "values" },
 		});
-	});
-
-	it("accumulates the scalars it is handed into the history it draws", async () => {
-		clearSeries();
-
-		const graph = {
-			nodes: {
-				feed: {
-					id: "feed",
-					type: "arithmetic.Add",
-					connections: {
-						outputs: { out: [{ nodeId: "spark", portName: "points" }] },
-					},
-				},
-				spark: {
-					id: "spark",
-					type: "ui.Sparkline",
-					connections: {
-						inputs: { points: [{ nodeId: "feed", portName: "out" }] },
-					},
-				},
-			},
-		};
-
-		const [route] = compileUI(graph).routes;
-
-		const { rerender } = render(
-			<>{renderUIRoute(route, { feed: { out: 1 } })}</>,
+		const { container, rerender } = render(
+			<>{renderUIRoute(route, { source: { values: [100, 200, 100] } })}</>,
 		);
-		rerender(<>{renderUIRoute(route, { feed: { out: 2 } })}</>);
-		rerender(<>{renderUIRoute(route, { feed: { out: 3 } })}</>);
-
-		// The readings are held against the producer, so the history is the
-		// series the sparkline draws rather than only the latest scalar.
-		await waitFor(() => {
-			const path = document.querySelector("svg polyline, svg path");
-			expect(path).toBeDefined();
-		});
-
-		expect(readSeriesForTest("feed.out")).toEqual([1, 2, 3]);
-	});
-
-	it("renders successive backend Add results in a Sparkline", async () => {
-		clearSeries();
-
-		const graph: FlumeGraph = {
-			nodes: {
-				addNode: {
-					id: "addNode",
-					type: "arithmetic.Add",
-					inputData: {
-						a: { value: 15 },
-						b: { value: 25 },
-					},
-					connections: {
-						outputs: {
-							out: [{ nodeId: "sparklineNode", portName: "points" }],
-						},
-					},
-				},
-				sparklineNode: {
-					id: "sparklineNode",
-					type: "ui.Sparkline",
-					connections: {
-						inputs: {
-							points: [{ nodeId: "addNode", portName: "out" }],
-						},
-					},
-				},
-			},
-		};
-
-		// Backend output fixtures; arithmetic is tested by the Go compiler tests.
-		const initialEvaluation = { addNode: { out: 40 } };
-
-		// 2. Compile UI route
-		const compilation = compileUI(graph);
-		expect(compilation.routes).toHaveLength(1);
-		const [route] = compilation.routes;
-
-		// 3. Render route with evaluated data
-		const { rerender } = render(
-			renderUIRoute(route, initialEvaluation) as React.ReactElement,
-		);
-
-		const updatedEvaluation = { addNode: { out: 50 } };
-
-		rerender(renderUIRoute(route, updatedEvaluation) as React.ReactElement);
-
-		await waitFor(() => {
-			const path = document.querySelector("svg polyline, svg path");
-			expect(path).toBeDefined();
-		});
-
-		expect(readSeriesForTest("addNode.out")).toEqual([40, 50]);
+		const spark = () =>
+			container.querySelector('[data-k="spark"]')?.getAttribute("points");
+		expect(spark()).toBe("0.0,29.0 75.0,3.0 150.0,29.0");
+		rerender(<>{renderUIRoute(route, { source: { values: [200, 100] } })}</>);
+		expect(spark()).toBe("0.0,3.0 150.0,29.0");
+		rerender(<>{renderUIRoute(route, { source: { values: [] } })}</>);
+		expect(spark()).toBe("");
 	});
 });

@@ -86,7 +86,7 @@ records builds the Arrow batches one append sends.
 */
 func records(
 	schema *iceberg.Schema, count int, payloadSize func(int) int,
-	fill func(*array.RecordBuilder, int, int),
+	fill func(*array.RecordBuilder, int, int) error,
 ) (array.RecordReader, error) {
 	converted, err := arrowSchemaFor(schema)
 
@@ -113,7 +113,9 @@ func records(
 		}
 
 		builder.Reserve(end - start)
-		fill(builder, start, end)
+		if err := fill(builder, start, end); err != nil {
+			return nil, err
+		}
 		batches = append(batches, builder.NewRecord())
 		start = end
 	}
