@@ -11,8 +11,18 @@ storage on it. A test that wants to observe what was written can read it back
 through the same object.
 */
 const install = () => {
-	if (typeof window === "undefined" || window.localStorage) {
+	if (typeof window === "undefined") {
 		return;
+	}
+
+	try {
+		if (window.localStorage) {
+			return;
+		}
+	} catch (err) {
+		if (!(err instanceof Error) || err.name !== "SecurityError") {
+			throw err;
+		}
 	}
 
 	const entries = new Map<string, string>();

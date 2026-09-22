@@ -831,6 +831,14 @@ If a source genuinely requires asynchronous callback capabilities, use Cap'n Pro
 
 Candidate compilation must not accidentally start duplicate uncontrolled listeners or disturb the active source.
 
+The nonblocking WebSocket client implements the empty `runtime.Source` marker
+interface alongside its write/done protocol. Only capabilities whose Data results
+represent received observations implement it; servers that also echo outgoing
+data do not. The compiler records this schema
+property in each compiled node. Idle backoff observes Data results from these
+external sources only; recirculated Loop payloads cannot keep an idle graph busy.
+
+
 ---
 
 # 17. Terminal and side-effect nodes

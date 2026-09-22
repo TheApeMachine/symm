@@ -1,3 +1,4 @@
+import { measurementBytes } from "./measurement.fixture";
 import { describe, expect, it } from "vitest";
 import {
 	EntityType,
@@ -20,17 +21,7 @@ describe("Cap'n Proto Measurement & Metric", () => {
 	});
 
 	it("decodes authoritative Cap'n Proto WireMeasurement produced by Go backend", () => {
-		// Base64 of WireMeasurement serialized by nomagique/data/measurement.go MarshalCapnp()
-		const base64Payload =
-			"AAAAACcAAAAAAAAABwAEABXNhT3+nJcXZQAAAAAAAAAA8VNlAAAAAAAABwAAAAAAAAAAAAAADEAzMzMzMzPrPwAAAAAAAAAADQAAAFoAAAARAAAAOgAAABEAAAA3AAAAKAAAAAAAAQB0ZXN0LWlkLTEyMwAAAAAAQlRDL1VTRAAEAAAABgAAAAAAAAAAAARArkfhehSu8z/NzMzMzMzcPwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAnAAAACAAAAAAAAgANAAAAOgAAAAwAAAACAAEAGQAAAFoAAAAcAAAAAgABAGFjdGlvbgAAAQAAAAAAAAAAAAAAAAAAAAEAAAAqAAAAd2FpdAAAAABjb25maWRlbmNlAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAEAAAAqAAAAMC44NQAAAAA=";
-
-		const binaryString = atob(base64Payload);
-		const bytes = new Uint8Array(binaryString.length);
-		for (let i = 0; i < binaryString.length; i++) {
-			bytes[i] = binaryString.charCodeAt(i);
-		}
-
-		const measurement = readWireMeasurement(bytes.buffer);
+		const measurement = readWireMeasurement(measurementBytes);
 
 		expect(measurement.id).toBe("test-id-123");
 		expect(measurement.symbol).toBe("BTC/USD");

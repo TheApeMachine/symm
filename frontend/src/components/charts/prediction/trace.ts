@@ -1,5 +1,5 @@
 import type { PredictionSample } from "#/components/charts/prediction/series";
-import { drawPolyline, TERMINAL_COLORS } from "#/components/terminal/canvas";
+import { drawPolyline, TERMINAL_COLORS } from "#/components/ui/canvas-utils";
 
 export const PREDICTION_LAYOUT = {
 	top: 52,

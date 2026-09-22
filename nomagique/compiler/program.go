@@ -53,6 +53,7 @@ CompiledNode is an immutable execution plan node containing capability and compi
 It retains NO concrete Go server, NO server any, NO map[string]any.
 */
 type CompiledNode struct {
+	Source       bool
 	ID           string
 	Index        NodeID
 	Client       capnp.Client
@@ -222,7 +223,7 @@ func (p *Program) carriedPayload() bool {
 	for index := range p.Nodes {
 		node := &p.Nodes[index]
 
-		if !node.Client.IsValid() {
+		if !node.Source || !node.Client.IsValid() {
 			continue
 		}
 
@@ -361,7 +362,11 @@ func (p *Program) arguments(frames []nodeFrame, index NodeID) (capnp.Struct, err
 	}
 
 	if node.ArgsTemplate.IsValid() {
-		_ = arguments.CopyFrom(node.ArgsTemplate)
+		if err := arguments.CopyFrom(node.ArgsTemplate); err != nil {
+			return capnp.Struct{}, errnie.Error(errnie.Err(
+				errnie.Internal, "compiler: copy argument template", err,
+			))
+		}
 	}
 
 	frames[index].args = arguments
@@ -407,11 +412,7 @@ func (p *Program) Execute(
 	// 2. Populate initial inputs if supplied
 	for nodeIdx, initStruct := range initialInputs {
 		if int(nodeIdx) < nodeCount && initStruct.IsValid() {
-			if frames[nodeIdx].args.IsValid() {
-				_ = frames[nodeIdx].args.CopyFrom(initStruct)
-			} else {
-				frames[nodeIdx].args = initStruct
-			}
+			frames[nodeIdx].args = initStruct
 			frames[nodeIdx].ready = p.Nodes[nodeIdx].RequiredMask
 		}
 	}
@@ -497,18 +498,40 @@ func (p *Program) Execute(
 			}
 			ans, release := client.SendCall(ctx, doneSend)
 			res, err := ans.Struct()
-			if err == nil && res.IsValid() {
+
+			if err != nil {
+				release()
+				return errnie.Error(errnie.Err(
+					errnie.IO,
+					fmt.Sprintf("compiler: done call failed on node %q", node.ID),
+					err,
+				))
+			}
+
+			if res.IsValid() {
 				resStruct = res
 
-				// Save clone for result retrieval
-				_, seg, cloneErr := capnp.NewMessage(capnp.SingleSegment(nil))
-				if cloneErr == nil {
-					cloneRes, initErr := capnp.NewRootStruct(seg, node.Done.ResultSize)
-					if initErr == nil {
-						_ = cloneRes.CopyFrom(res)
-						p.results[node.ID] = cloneRes
-					}
+				// Retain a result independently of the RPC answer's lifetime.
+				_, segment, err := capnp.NewMessage(capnp.SingleSegment(nil))
+
+				if err != nil {
+					release()
+					return errnie.Error(errnie.Err(errnie.Internal, "compiler: allocate result message", err))
 				}
+
+				cloned, err := capnp.NewRootStruct(segment, node.Done.ResultSize)
+
+				if err != nil {
+					release()
+					return errnie.Error(errnie.Err(errnie.Internal, "compiler: allocate result struct", err))
+				}
+
+				if err := cloned.CopyFrom(res); err != nil {
+					release()
+					return errnie.Error(errnie.Err(errnie.Internal, "compiler: clone result", err))
+				}
+
+				p.results[node.ID] = cloned
 			}
 
 			// Step D: Route results to downstreams
@@ -589,7 +612,11 @@ func (p *Program) Execute(
 					}
 
 					if r.Copy != nil && frames[currIdx].args.IsValid() && destArgs.IsValid() {
-						_ = r.Copy(frames[currIdx].args, destArgs)
+						if err := r.Copy(frames[currIdx].args, destArgs); err != nil {
+							return errnie.Error(errnie.Err(
+								errnie.Internal, "compiler: copy boundary result", err,
+							))
+						}
 					}
 					frames[destIdx].ready |= (1 << r.ToField)
 					destReq := p.Nodes[destIdx].RequiredMask

@@ -859,20 +859,6 @@
     "excursion": {
       "id": "excursion",
       "type": "temporal.Excursion",
-      "inputData": {
-        "sigmas": {
-          "value": 3.0
-        },
-        "horizon": {
-          "value": 32
-        },
-        "retrace": {
-          "value": 0.5
-        },
-        "floor": {
-          "value": 0.003
-        }
-      },
       "connections": {
         "inputs": {
           "value": [

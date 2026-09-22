@@ -1008,6 +1008,28 @@
       }
     ]
   },
+  "EvidenceGraph": {
+    "name": "EvidenceGraph",
+    "exportName": "EvidenceGraph",
+    "hasChildren": false,
+    "props": [
+      {
+        "name": "title",
+        "type": "string",
+        "optional": true
+      },
+      {
+        "name": "className",
+        "type": "string",
+        "optional": true
+      },
+      {
+        "name": "graph",
+        "type": "data",
+        "optional": true
+      }
+    ]
+  },
   "Flex": {
     "name": "Flex",
     "exportName": "Flex",
@@ -5519,6 +5541,175 @@
       }
     ]
   },
+  "ImpulseMap": {
+    "name": "ImpulseMap",
+    "exportName": "ImpulseMap",
+    "hasChildren": false,
+    "props": [
+      {
+        "name": "title",
+        "type": "string",
+        "optional": true
+      },
+      {
+        "name": "className",
+        "type": "string",
+        "optional": true
+      },
+      {
+        "name": "justify",
+        "type": "select",
+        "options": [
+          "center",
+          "start",
+          "end",
+          "between",
+          "around",
+          "evenly",
+          "stretch"
+        ],
+        "optional": true
+      },
+      {
+        "name": "align",
+        "type": "select",
+        "options": [
+          "center",
+          "start",
+          "end",
+          "stretch",
+          "baseline"
+        ],
+        "optional": true
+      },
+      {
+        "name": "wrap",
+        "type": "select",
+        "options": [
+          "wrap",
+          "wrapReverse",
+          "nowrap"
+        ],
+        "optional": true
+      },
+      {
+        "name": "gap",
+        "type": "select",
+        "options": [
+          "1",
+          "2",
+          "3",
+          "4",
+          "5",
+          "6",
+          "7",
+          "8",
+          "9",
+          "10",
+          "11",
+          "12"
+        ],
+        "optional": true
+      },
+      {
+        "name": "padding",
+        "type": "select",
+        "options": [
+          "1",
+          "2",
+          "3",
+          "4",
+          "5",
+          "6",
+          "7",
+          "8",
+          "9",
+          "10",
+          "11",
+          "12"
+        ],
+        "optional": true
+      },
+      {
+        "name": "margin",
+        "type": "select",
+        "options": [
+          "1",
+          "2",
+          "3",
+          "4",
+          "5",
+          "6",
+          "7",
+          "8",
+          "9",
+          "10",
+          "11",
+          "12"
+        ],
+        "optional": true
+      },
+      {
+        "name": "grow",
+        "type": "select",
+        "options": [
+          "grow",
+          "shrink",
+          "growShrink",
+          "growShrinkGrow",
+          "growShrinkShrink"
+        ],
+        "optional": true
+      },
+      {
+        "name": "fullHeight",
+        "type": "boolean",
+        "optional": true
+      },
+      {
+        "name": "fullWidth",
+        "type": "boolean",
+        "optional": true
+      },
+      {
+        "name": "appear",
+        "type": "select",
+        "options": [
+          "panelBottomRight",
+          "panelCenter",
+          "fade",
+          "fadeUp",
+          "fadeDown",
+          "slideRight",
+          "slideLeft",
+          "scaleIn",
+          "wiggleIdle",
+          "press"
+        ],
+        "optional": true
+      },
+      {
+        "name": "points",
+        "type": "data",
+        "optional": true
+      },
+      {
+        "name": "regions",
+        "type": "data",
+        "optional": true
+      },
+      {
+        "name": "contours",
+        "type": "data",
+        "optional": true
+      },
+      {
+        "name": "connections",
+        "type": "data",
+        "optional": true
+      }
+    ]
+  },
   "Input": {
     "name": "Input",
     "exportName": "Input",
@@ -6777,6 +6968,11 @@
         "optional": true
       },
       {
+        "name": "axes",
+        "type": "data",
+        "optional": false
+      },
+      {
         "name": "title",
         "type": "string",
         "optional": true
@@ -6784,6 +6980,16 @@
       {
         "name": "labelRadius",
         "type": "number",
+        "optional": true
+      },
+      {
+        "name": "center",
+        "type": "data",
+        "optional": true
+      },
+      {
+        "name": "levels",
+        "type": "data",
         "optional": true
       },
       {
@@ -6939,6 +7145,11 @@
           "xs"
         ],
         "optional": true
+      },
+      {
+        "name": "segments",
+        "type": "data",
+        "optional": false
       }
     ]
   },

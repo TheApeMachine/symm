@@ -4,7 +4,7 @@ import {
 	drawGrid,
 	resizeCanvas,
 	TERMINAL_COLORS,
-} from "#/components/terminal/canvas";
+} from "#/components/ui/canvas-utils";
 import { requirePositiveLength } from "#/lib/domain";
 
 export {

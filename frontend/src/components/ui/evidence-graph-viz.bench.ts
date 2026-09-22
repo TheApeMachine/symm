@@ -1,6 +1,6 @@
 import { bench, describe } from "vitest";
-import { layoutEvidenceGraph } from "#/components/terminal/evidence-graph-viz";
-import type { Graph } from "#/types/thesis";
+import { layoutEvidenceGraph } from "./evidence-graph-viz";
+import type { Graph } from "./evidence-graph.types";
 
 const graph: Graph = {
 	symbol: "BTC/USD",

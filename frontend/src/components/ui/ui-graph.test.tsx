@@ -546,9 +546,9 @@ describe("an unfilled control", () => {
 		expect(compilation.diagnostics).toEqual([]);
 
 		const rendered = compilation.routes[0].components;
-		const stat = rendered.flatMap((node) => node.children ?? []).find(
-			(child) => child.name === "Stat",
-		);
+		const stat = rendered
+			.flatMap((node) => node.children ?? [])
+			.find((child) => child.name === "Stat");
 
 		expect(stat?.props?.value).toBeUndefined();
 
@@ -629,5 +629,60 @@ describe("a component that draws a series", () => {
 		});
 
 		expect(readSeriesForTest("feed.out")).toEqual([1, 2, 3]);
+	});
+
+	it("renders successive backend Add results in a Sparkline", async () => {
+		clearSeries();
+
+		const graph: FlumeGraph = {
+			nodes: {
+				addNode: {
+					id: "addNode",
+					type: "arithmetic.Add",
+					inputData: {
+						a: { value: 15 },
+						b: { value: 25 },
+					},
+					connections: {
+						outputs: {
+							out: [{ nodeId: "sparklineNode", portName: "points" }],
+						},
+					},
+				},
+				sparklineNode: {
+					id: "sparklineNode",
+					type: "ui.Sparkline",
+					connections: {
+						inputs: {
+							points: [{ nodeId: "addNode", portName: "out" }],
+						},
+					},
+				},
+			},
+		};
+
+		// Backend output fixtures; arithmetic is tested by the Go compiler tests.
+		const initialEvaluation = { addNode: { out: 40 } };
+
+		// 2. Compile UI route
+		const compilation = compileUI(graph);
+		expect(compilation.routes).toHaveLength(1);
+		const [route] = compilation.routes;
+
+		// 3. Render route with evaluated data
+		const { rerender } = render(
+			renderUIRoute(route, initialEvaluation) as React.ReactElement,
+		);
+
+		const updatedEvaluation = { addNode: { out: 50 } };
+
+		rerender(renderUIRoute(route, updatedEvaluation) as React.ReactElement);
+
+		await waitFor(() => {
+			const path = document.querySelector("svg polyline, svg path");
+			expect(path).toBeDefined();
+		});
+
+		expect(readSeriesForTest("addNode.out")).toEqual([40, 50]);
 	});
 });

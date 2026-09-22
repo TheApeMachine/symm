@@ -4,8 +4,8 @@ import {
 	measurementString,
 	nodeKind,
 	nodeLabel,
-} from "#/components/terminal/evidence-graph-viz";
-import type { GraphNode } from "#/types/thesis";
+} from "./evidence-graph-viz";
+import type { GraphNode } from "./evidence-graph.types";
 
 const Row = ({ label, value }: { label: string; value: string }) => (
 	<div className="flex justify-between gap-3">
@@ -125,7 +125,7 @@ const EdgeDetail = ({
 };
 
 /*
-GraphInspector renders the hover tooltip for a node or edge, clamped near the
+GraphInspector renders the hover tooltip for a node or edge, placed near the
 pointer, exposing the full measurement provenance the canvas cannot show inline.
 */
 export const GraphInspector = ({

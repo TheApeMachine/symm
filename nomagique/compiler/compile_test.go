@@ -463,3 +463,49 @@ func TestCompileFlume(t *testing.T) {
 		})
 	})
 }
+
+func TestCompileJSON(t *testing.T) {
+	Convey("Given authored static values", t, func() {
+		Convey("An invalid numeric value reports the node and port", func() {
+			program, err := compiler.CompileJSON([]byte(`{"nodes":{"sum":{"id":"sum","type":"arithmetic.Add","inputData":{"a":{"value":"not a number"}}}}}`), nil, nil)
+			So(program, ShouldBeNil)
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, `invalid static input "a" on node "sum"`)
+		})
+		Convey("A null numeric control is missing rather than zero", func() {
+			program, err := compiler.CompileJSON([]byte(`{"nodes":{"sum":{"id":"sum","type":"arithmetic.Add","inputData":{"a":{"value":null}}}}}`), nil, nil)
+			So(program, ShouldBeNil)
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "static input has no value")
+		})
+		Convey("A missing schema field cannot silently disappear", func() {
+			program, err := compiler.CompileJSON([]byte(`{"nodes":{"sum":{"id":"sum","type":"arithmetic.Add","inputData":{"missing":{"value":12}}}}}`), nil, nil)
+			So(program, ShouldBeNil)
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, `no input port "missing"`)
+		})
+		Convey("A valid zero remains an authored value", func() {
+			program, err := compiler.CompileJSON([]byte(`{"nodes":{"sum":{"id":"sum","type":"arithmetic.Add","inputData":{"a":{"value":0},"b":{"value":7}}}}}`), nil, nil)
+			So(err, ShouldBeNil)
+			defer program.Release()
+			So(program.Execute(context.Background(), nil), ShouldBeNil)
+			value, err := program.Float64Result("sum", "out")
+			So(err, ShouldBeNil)
+			So(value, ShouldEqual, 7)
+		})
+	})
+}
+
+func BenchmarkCompileJSON(b *testing.B) {
+	payload := []byte(`{"nodes":{"sum":{"id":"sum","type":"arithmetic.Add","inputData":{"a":{"value":0},"b":{"value":7}}}}}`)
+	b.ReportAllocs()
+
+	for b.Loop() {
+		program, err := compiler.CompileJSON(payload, nil, nil)
+
+		if err != nil {
+			b.Fatal(err)
+		}
+		program.Release()
+	}
+}

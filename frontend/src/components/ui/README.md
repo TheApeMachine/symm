@@ -97,3 +97,24 @@ the title. That is the whole difference, and it is worth keeping.
 the painting runtime, not a widget. A project adopting this library without a
 feed can delete `component.tsx` and `paint.ts` and take everything else
 unchanged.
+
+### Graph-fed visualizations
+
+`EvidenceGraph` and `ImpulseMap` are public library components. Their generated
+nodes are `ui.EvidenceGraph` and `ui.ImpulseMap`; place them inside the same
+`Flex`, `Grid`, and `Panel` nodes used for other UI. Structured props use `data`
+ports and bindings pass objects/arrays directly, without accumulating scalar
+history. For example, bind `ImpulseMap.points` to `{ binding: { node: "projection",
+port: "points" } }`, or `EvidenceGraph.graph` to the producer's graph output.
+
+The exported TypeScript contracts describe the input shapes. `ImpulseMap`
+requires supplied positions and optionally accepts regions, contour polygons,
+and connections. It does not generate market observations, infer hot regions,
+or modify incoming coordinates. Drawing dimensions are SVG coordinate units,
+not market thresholds. Empty or absent points render an explicit empty state.
+The evidence graph preserves layout, directed/reciprocal edges, and hover details.
+
+These components do not adapt retired telemetry schemas. Producers must provide
+the matching structured values; Cap'n Proto workbench list/struct projection is
+not yet available (the existing endpoint still returns summaries for those
+fields). Registering a view does not manufacture a compatible backend producer.

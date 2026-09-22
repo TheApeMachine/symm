@@ -47,8 +47,8 @@ export const AgentSkill = () => {
 		};
 
 		const getTrainingRing = (
-			records?: Record<string, RingBuffer<MeasurementT>>,
-		): RingBuffer<MeasurementT> | null => {
+			records?: Record<string, RingBuffer<WireMeasurement>>,
+		): RingBuffer<WireMeasurement> | null => {
 			if (!records) {
 				return null;
 			}

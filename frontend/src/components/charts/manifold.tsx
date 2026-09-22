@@ -6,7 +6,7 @@ import {
 	drawMatrix,
 	resizeCanvas,
 	TERMINAL_COLORS,
-} from "#/components/terminal/canvas";
+} from "#/components/ui/canvas-utils";
 import { frameMatrix } from "#/components/terminal/charts-frame";
 
 const manifoldCanvasRef = createRef<HTMLCanvasElement>();

@@ -5,7 +5,7 @@ import {
 	PREDICTION_LAYOUT,
 	positiveScale,
 } from "#/components/charts/prediction/trace";
-import { TERMINAL_COLORS } from "#/components/terminal/canvas";
+import { TERMINAL_COLORS } from "#/components/ui/canvas-utils";
 
 /*
 drawProfile compares every current state component with its top-down prediction;

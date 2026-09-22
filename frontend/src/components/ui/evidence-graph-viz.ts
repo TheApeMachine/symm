@@ -3,13 +3,13 @@ import {
 	clearCanvas,
 	drawGrid,
 	TERMINAL_COLORS,
-} from "#/components/terminal/canvas";
+} from "./canvas-utils";
 import type {
 	Graph,
 	GraphEdge,
 	GraphNode,
 	GraphNodeKind,
-} from "#/types/thesis";
+} from "./evidence-graph.types";
 
 export type GraphNodePosition = {
 	x: number;

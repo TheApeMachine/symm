@@ -5,7 +5,10 @@ package runtime
 import (
 	capnp "capnproto.org/go/capnp/v3"
 	text "capnproto.org/go/capnp/v3/encoding/text"
+	fc "capnproto.org/go/capnp/v3/flowcontrol"
 	schemas "capnproto.org/go/capnp/v3/schemas"
+	server "capnproto.org/go/capnp/v3/server"
+	context "context"
 )
 
 type Status uint16
@@ -154,24 +157,139 @@ func (f StatusPayload_Future) Struct() (StatusPayload, error) {
 	return StatusPayload(p.Struct()), err
 }
 
-const schema_91d758a99e934525 = "x\xdat\x901K\xc3@\x18\x86\xdf7\xb9\xb6.%" +
-	"\x1e\x15\x14A\xa2\x83\x83\x05-\xad\x93]\xaa\x82\x82\x9b" +
-	"\xc1E\x07\x87\xd3\xc6r\xb5\xbd\xb4\xe9\x05\xe9$:\x88" +
-	"\x8b\x83t\x14\xc4\xd5\xc1\xc1_!\x08\xce\xfe\x0e\x7f\x80" +
-	"Db\xc1NN\x0f\x1f<\x1f<\xbc\xd37\x9b\xa2Z" +
-	"\x9cu\xe0\x04s\xb9|z\xdc~z]\xd8}\xb8\x85" +
-	"\xf4\x9dtyg\xf4\xf8|\xf8y\x0f\xb0\xfaUc\x89" +
-	",\x00\xf2\xfb\x0dL_\xae\xc2\x8f\xeb\xf7\xd1\x1d\x02\x9f" +
-	"\x9c\x88\xa2\x00\xac+\xb6YJ2\xb7\xd4g\x03\xab\xa9" +
-	"\x89\xba\xaa\xa5\xfb\x89\x1bV\xe2\xc4X\xdd\x0d+\x03\xab" +
-	"l2X;U=\xd3\xab\x1f\xf8\xbf\xd7>\x19,\xd2" +
-	"\x01\xe4Q\x19 e0\x0f\xd0\x91{5\x80\xae\xdc\xca" +
-	" \xe4F\x86\x9c\xacfJ^\xael\x03,\xc8\xa52" +
-	"\xe0i\xa3\xad\x1b\x9d\xfba\x1cG\xb1\x7f\xa6\xac\xea\xf8" +
-	"q\xa8\x9aC\xef$\x19\x0c//\x94\xb6\xda\xb4\xbcf" +
-	"d\xc2\xbf$\xf1_\xd2\xb8H\x0d\xbdN\xa4\x9aY\x99" +
-	"p\x05 \x08\xc8b\x1d\x08\xa6\\\x063\x0e\x1b\xe3/" +
-	"z\x93\xe5@z\xe0O\x00\x00\x00\xff\xffZU]\x97"
+type Source capnp.Client
+
+// Source_TypeID is the unique identifier for the type Source.
+const Source_TypeID = 0x8de5111c8f726633
+
+func (c Source) WaitStreaming() error {
+	return capnp.Client(c).WaitStreaming()
+}
+
+// String returns a string that identifies this capability for debugging
+// purposes.  Its format should not be depended on: in particular, it
+// should not be used to compare clients.  Use IsSame to compare clients
+// for equality.
+func (c Source) String() string {
+	return "Source(" + capnp.Client(c).String() + ")"
+}
+
+// AddRef creates a new Client that refers to the same capability as c.
+// If c is nil or has resolved to null, then AddRef returns nil.
+func (c Source) AddRef() Source {
+	return Source(capnp.Client(c).AddRef())
+}
+
+// Release releases a capability reference.  If this is the last
+// reference to the capability, then the underlying resources associated
+// with the capability will be released.
+//
+// Release will panic if c has already been released, but not if c is
+// nil or resolved to null.
+func (c Source) Release() {
+	capnp.Client(c).Release()
+}
+
+// Resolve blocks until the capability is fully resolved or the Context
+// expires.
+func (c Source) Resolve(ctx context.Context) error {
+	return capnp.Client(c).Resolve(ctx)
+}
+
+func (c Source) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+	return capnp.Client(c).EncodeAsPtr(seg)
+}
+
+func (Source) DecodeFromPtr(p capnp.Ptr) Source {
+	return Source(capnp.Client{}.DecodeFromPtr(p))
+}
+
+// IsValid reports whether c is a valid reference to a capability.
+// A reference is invalid if it is nil, has resolved to null, or has
+// been released.
+func (c Source) IsValid() bool {
+	return capnp.Client(c).IsValid()
+}
+
+// IsSame reports whether c and other refer to a capability created by the
+// same call to NewClient.  This can return false negatives if c or other
+// are not fully resolved: use Resolve if this is an issue.  If either
+// c or other are released, then IsSame panics.
+func (c Source) IsSame(other Source) bool {
+	return capnp.Client(c).IsSame(capnp.Client(other))
+}
+
+// Update the flowcontrol.FlowLimiter used to manage flow control for
+// this client. This affects all future calls, but not calls already
+// waiting to send. Passing nil sets the value to flowcontrol.NopLimiter,
+// which is also the default.
+func (c Source) SetFlowLimiter(lim fc.FlowLimiter) {
+	capnp.Client(c).SetFlowLimiter(lim)
+}
+
+// Get the current flowcontrol.FlowLimiter used to manage flow control
+// for this client.
+func (c Source) GetFlowLimiter() fc.FlowLimiter {
+	return capnp.Client(c).GetFlowLimiter()
+}
+
+// A Source_Server is a Source with a local implementation.
+type Source_Server interface {
+}
+
+// Source_NewServer creates a new Server from an implementation of Source_Server.
+func Source_NewServer(s Source_Server) *server.Server {
+	c, _ := s.(server.Shutdowner)
+	return server.New(Source_Methods(nil, s), s, c)
+}
+
+// Source_ServerToClient creates a new Client from an implementation of Source_Server.
+// The caller is responsible for calling Release on the returned Client.
+func Source_ServerToClient(s Source_Server) Source {
+	return Source(capnp.NewClient(Source_NewServer(s)))
+}
+
+// Source_Methods appends Methods to a slice that invoke the methods on s.
+// This can be used to create a more complicated Server.
+func Source_Methods(methods []server.Method, s Source_Server) []server.Method {
+	if cap(methods) == 0 {
+		methods = make([]server.Method, 0, 0)
+	}
+
+	return methods
+}
+
+// Source_List is a list of Source.
+type Source_List = capnp.CapList[Source]
+
+// NewSource_List creates a new list of Source.
+func NewSource_List(s *capnp.Segment, sz int32) (Source_List, error) {
+	l, err := capnp.NewPointerList(s, sz)
+	return capnp.CapList[Source](l), err
+}
+
+const schema_91d758a99e934525 = "x\xda\x8c\x901K\xc3P\x14\x85\xcfM\xf2\x1a\x11J" +
+	"x\xd4I\x94\xe8\xe0`\x07k[\x17\x0bR\x15\x14:" +
+	"\x08\x09.:8<\xdb\xb4\xa4\xb6I}M\x90\x82 " +
+	":\xb9\x14\x91\x8e\x82\xe8\xe8P\xc4\x1f\xe0\xe0$\x08\xce" +
+	"N\x8e\x0e\x0e\xfe\x86HZ\xb08\x08\x0e\x8f\xc3\x83\xef" +
+	"\x1e\xbe{\x17oiU\xcb&\xef\xc7\xa1\xd8\xc7,\x11" +
+	"\xed\xd5o\x1e\xa67\xaf\xce\xc1M%\x9a\xdb\xe8]\xdf" +
+	"\xed\xbc]\x02\x94_a9Jm1\x1dH\x95\xd83" +
+	"(\xea\x9f:\xafg/\xbd.l\x93h\x84j:\x90" +
+	"\xef\xb3:\xa5\x9e\x06\xf0#+\x82\xa2|U^L\xf1" +
+	"\x8f.\xb8\xa9\xfe\xaa}\x8fk\xbf\x06\xe4'\xd3\xe3\x87" +
+	"\x08K\x91\xe77E\xcd=\x0cU'#C/p\x9b" +
+	"N\xa6\x1d\x88 l/\x94E\xcbk\x15\xb6\xcd\xc1\xcf" +
+	"\"\xb2gH\x01\xf8n\x1a \xe2\xf6$@\x0a/\xe5" +
+	"\x00R\xf9Z\x1c\x1a_\x8e\x83\xf1l\x8c$\xf8\xfc:" +
+	"@:\x9fM\x03\x86\xeb\xb9\x81\xea\x1f\x98\x8e\x94\xbe4" +
+	"\xab\"\x10\x0dS:\xa2\xd21\xf6\xc3v\xe7\xe4H\xb8" +
+	"\x81\xeb\xd5\x8c\x8a\xef9?J\xda_JC#\xd11" +
+	"\x1a\xbe\xa8\xc4f\x9a\xaa\x01\x1a\x01<Y\x00\xec1\x95" +
+	"\xec\x09\x85\x8a\xc3)2F\xb7\x06\x91\x01\xfa\xc7\xd2~" +
+	"(\xcb\x8eEd\xa9\xcc\"\xfa\x0e\x00\x00\xff\xff\x19\xfc" +
+	"~k"
 
 func RegisterSchema(reg *schemas.Registry) {
 	reg.Register(&schemas.Schema{
@@ -179,6 +297,7 @@ func RegisterSchema(reg *schemas.Registry) {
 		Nodes: []uint64{
 			0x889b461db1a06a5d,
 			0x8d93ca82cd6581ad,
+			0x8de5111c8f726633,
 		},
 		Compressed: true,
 	})

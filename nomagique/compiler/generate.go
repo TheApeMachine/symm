@@ -353,6 +353,13 @@ func generateFlumeConfigSource(schemas map[string]Schema, uiMeta map[string]UICo
 	buf.WriteString("\t\t\t],\n")
 	buf.WriteString("\t\t})\n")
 	buf.WriteString("\t\t.addPortType({\n")
+	buf.WriteString("\t\t\ttype: \"data\",\n")
+	buf.WriteString("\t\t\tname: \"data\",\n")
+	buf.WriteString("\t\t\tlabel: \"data\",\n")
+	buf.WriteString("\t\t\tcolor: Colors.orange,\n")
+	buf.WriteString("\t\t\tacceptTypes: [\"data\"],\n")
+	buf.WriteString("\t\t})\n")
+	buf.WriteString("\t\t.addPortType({\n")
 	buf.WriteString("\t\t\ttype: \"Capability\",\n")
 	buf.WriteString("\t\t\tname: \"Capability\",\n")
 	buf.WriteString("\t\t\tlabel: \"Capability\",\n")
@@ -764,7 +771,13 @@ func definitionPorts(graph Graph, schemas map[string]Schema) (inputs, outputs []
 emitDefinitionPorts writes one side of a sub-graph node's ports.
 */
 func emitDefinitionPorts(buf *strings.Builder, side string, ports []definitionPort) {
-	fmt.Fprintf(buf, "\t\t%s: (ports) => (_inputData, _connections) => [\n", side)
+	parameter := "ports"
+
+	if len(ports) == 0 {
+		parameter = "_ports"
+	}
+
+	fmt.Fprintf(buf, "\t\t%s: (%s) => (_inputData, _connections) => [\n", side, parameter)
 
 	for _, port := range ports {
 		fmt.Fprintf(
@@ -959,6 +972,9 @@ func emitUIComponentNodeTypes(buf *strings.Builder, uiMeta map[string]UIComponen
 				// One scalar per evaluation. The history the component draws
 				// is kept where it is drawn, not carried on the wire.
 				fmt.Fprintf(buf, "\t\t\t\tports.float64({ name: %q, label: %q }),\n", prop.Name, prop.Name)
+
+			case "data":
+				fmt.Fprintf(buf, "\t\t\t\tports.data({ name: %q, label: %q }),\n", prop.Name, prop.Name)
 
 			case "slot":
 				fmt.Fprintf(buf, "\t\t\t\tports.Capability({ name: %q, label: %q }),\n", prop.Name, prop.Name)

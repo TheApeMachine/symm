@@ -4,12 +4,12 @@ import { focusAtom, type RingBuffer, signals } from "#/collections/app";
 import { RingCursor } from "#/collections/ring";
 import { Badge } from "#/components/ui/badge";
 import { Flex } from "#/components/ui/flex";
+import { Typography } from "#/components/ui/typography";
 import { Tabs } from "#/components/ui/tabs";
-import { memoizedQuery, renderValue } from "#/lib/utils";
+import { renderValue } from "#/lib/utils";
 import type { WireMeasurement } from "#/types/capnp/measurement";
 import { basis, percent } from "./format";
 import { ForwardView } from "./forward-view";
-import { type HotRegion, type ImpulsePoint, ImpulseView } from "./impulse-view";
 import { type ActivityRow, RecognitionView } from "./recognition-view";
 import { TrieView } from "./trie-view";
 
@@ -27,9 +27,9 @@ export const LearningDashboard = () => {
 	const [tab, setTab] = useState<Tab>("forward");
 	const containerRef = useRef<HTMLDivElement>(null);
 
-	const [liveMetricMap, setLiveMetricMap] = useState<Record<string, number>>({});
-	const [livePoints, setLivePoints] = useState<ImpulsePoint[]>([]);
-	const [liveRegions, setLiveRegions] = useState<HotRegion[]>([]);
+	const [liveMetricMap, setLiveMetricMap] = useState<Record<string, number>>(
+		{},
+	);
 	const [recentActivity, setRecentActivity] = useState<ActivityRow[]>([]);
 
 	useEffect(() => {
@@ -95,90 +95,6 @@ export const LearningDashboard = () => {
 				}
 
 				setLiveMetricMap(metricMap);
-
-				// Process grid coordinates & hot regions from telemetry
-				const grid = measurement.grid;
-				const quantities = grid?.symbol === focusSymbol ? grid.quantities : [];
-				const measuredRegions =
-					grid?.symbol === focusSymbol ? grid.regions : [];
-
-				if (quantities && quantities.length > 0) {
-					const points: ImpulsePoint[] = quantities.map((cell) => ({
-						id: Number(cell.id),
-						source: String(cell.source ?? ""),
-						label: String(cell.label ?? ""),
-						cluster: Number(cell.id) % 4,
-						snr: Number(cell.quality ?? 1) * 5 + 1,
-						activation: Math.min(1, Math.max(0, Number(cell.activity ?? 0))),
-						x: cell.x,
-						y: cell.y,
-						gridX: cell.x,
-						gridY: cell.y,
-						energy: cell.activity,
-						authority: cell.quality,
-						present: cell.present,
-					}));
-					setLivePoints(points);
-
-					// Paint map points for direct DOM observers/tests
-					const mapPointsEl = memoizedQuery(
-						root,
-						'[data-l="map-points"]',
-					) as SVGGElement;
-					const mapMetaEl = memoizedQuery(
-						root,
-						'[data-l="map-meta"]',
-					) as HTMLElement;
-
-					if (mapMetaEl) {
-						mapMetaEl.textContent = `${points.length} numeric cells · ${measuredRegions.length} hot regions`;
-					}
-
-					if (mapPointsEl) {
-						const extent = Math.max(
-							...points.flatMap((point) => [
-								Math.abs(point.x),
-								Math.abs(point.y),
-							]),
-							0,
-						);
-						const scale = extent > 0 ? 240 / extent : 1;
-
-						while (mapPointsEl.children.length < points.length) {
-							const circle = document.createElementNS(
-								"http://www.w3.org/2000/svg",
-								"circle",
-							);
-							mapPointsEl.appendChild(circle);
-						}
-						while (mapPointsEl.children.length > points.length) {
-							mapPointsEl.removeChild(mapPointsEl.lastElementChild as Node);
-						}
-
-						for (let i = 0; i < points.length; i++) {
-							const pt = points[i];
-							const circle = mapPointsEl.children[i] as SVGCircleElement;
-							const cx = String((pt.x * scale).toFixed(1));
-							const cy = String((pt.y * scale).toFixed(1));
-							if (circle.getAttribute("cx") !== cx) circle.setAttribute("cx", cx);
-							if (circle.getAttribute("cy") !== cy) circle.setAttribute("cy", cy);
-						}
-					}
-				}
-
-				if (measuredRegions && measuredRegions.length > 0) {
-					const regions: HotRegion[] = measuredRegions.map((r) => ({
-						id: Number(r.id),
-						source: String(
-							quantities.find((cell) => cell.id === r.id)?.label ??
-								`REGION_${r.id}`,
-						),
-						snr: r.strength,
-						authority: r.authority,
-						members: r.members,
-					}));
-					setLiveRegions(regions);
-				}
 
 				// Activity logging
 				if (!seen.has(measurement)) {
@@ -334,10 +250,6 @@ export const LearningDashboard = () => {
 					<span data-l="forward-meta" className="hidden" />
 					<span data-l="recog-meta" className="hidden" />
 					<span data-l="recog-status" className="hidden" />
-					<span data-l="map-meta" className="hidden" />
-					<svg className="hidden">
-						<g data-l="map-points" />
-					</svg>
 				</div>
 
 				{/* Right: Tabs Navigation */}
@@ -366,16 +278,12 @@ export const LearningDashboard = () => {
 				)}
 				{tab === "trie" && <TrieView />}
 				{tab === "impulse" && (
-					<ImpulseView 
-						livePoints={livePoints} 
-						liveRegions={liveRegions} 
-						recentActivity={recentActivity.map((a, i) => ({
-							id: i,
-							name: a.actionStr,
-							latency: a.time,
-							hot: (a.pnl ?? 0) > 0
-						}))}
-					/>
+					<Flex.Column className="p-6" gap={3}>
+						<Typography.Label>Impulse map unavailable</Typography.Label>
+						<Typography.Label>
+							The current feed does not provide grid coordinates or regions.
+						</Typography.Label>
+					</Flex.Column>
 				)}
 				{tab === "recognition" && (
 					<RecognitionView

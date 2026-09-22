@@ -1,4 +1,4 @@
-import { heatColor } from "#/components/terminal/canvas";
+import { heatColor } from "#/components/ui/canvas-utils";
 import { HeatmapRow } from "@/components/ui/heatmap-row";
 import type { Variant } from "@/components/ui/types";
 

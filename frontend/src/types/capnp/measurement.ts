@@ -21,12 +21,16 @@ StructReader.prototype.getList = function (
 	const { segmentIndex, wordOffset, pointer } = resolved;
 	if (pointer.tag !== PointerTag.LIST) return undefined;
 	const listPtr = pointer;
+	if (listPtr.elementSize === undefined || listPtr.elementCount === undefined) {
+		throw new Error("Cap'n Proto list is missing its element size or count");
+	}
 	let targetOffset = wordOffset;
 	let elementCount = listPtr.elementCount;
 	let actualStructSize = structSize;
 	const segment = this.message.getSegment(segmentIndex);
 	if (listPtr.elementSize === ElementSize.COMPOSITE) {
-		if (targetOffset < 0 || !segment || targetOffset >= segment.wordCount) return undefined;
+		if (targetOffset < 0 || !segment || targetOffset >= segment.wordCount)
+			return undefined;
 		try {
 			const tagWord = segment.getWord(targetOffset);
 			elementCount = Number((tagWord >> 2n) & 0x3fffffffn);
@@ -307,24 +311,29 @@ export class WireMeasurementReader {
 
 			const which = valStruct.getUint16(0);
 			switch (which) {
-				case 0: { // id (Data)
+				case 0: {
+					// id (Data)
 					const data = valStruct.getData(0);
 					out[key] = data ? textDecoder.decode(data) : "";
 					break;
 				}
-				case 1: { // text (Text)
+				case 1: {
+					// text (Text)
 					out[key] = valStruct.getText(0) || "";
 					break;
 				}
-				case 2: { // int (Int64)
+				case 2: {
+					// int (Int64)
 					out[key] = Number(valStruct.getInt64(8));
 					break;
 				}
-				case 3: { // float (Float64)
+				case 3: {
+					// float (Float64)
 					out[key] = valStruct.getFloat64(8);
 					break;
 				}
-				case 4: { // bool (Bool)
+				case 4: {
+					// bool (Bool)
 					out[key] = (valStruct.getInt64(8) & 1n) !== 0n;
 					break;
 				}
@@ -357,7 +366,9 @@ export class WireMeasurementReader {
 	}
 }
 
-export function readWireMeasurement(buffer: ArrayBuffer | Uint8Array): WireMeasurement {
+export function readWireMeasurement(
+	buffer: ArrayBuffer | Uint8Array,
+): WireMeasurement {
 	const message = new MessageReader(buffer);
 	const root = message.getRoot(7, 4);
 	const reader = new WireMeasurementReader(root);

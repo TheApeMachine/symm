@@ -20,10 +20,6 @@ func TestExcursionWrite(t *testing.T) {
 			for _, value := range path {
 				err := client.Write(ctx, func(params temporal.Excursion_write_Params) error {
 					params.SetValue(value)
-					params.SetSigmas(3)
-					params.SetHorizon(32)
-					params.SetRetrace(0.5)
-					params.SetFloor(0.003)
 					return nil
 				})
 
@@ -94,6 +90,13 @@ func TestExcursionWrite(t *testing.T) {
 			})
 		})
 
+		Convey("When the first leg falls without reversing", func() {
+			So(walk(trend(100, 60, -0.005)), ShouldBeNil)
+			_, _, _, _, found, legs := read()
+			So(found, ShouldBeFalse)
+			So(legs, ShouldEqual, 0)
+		})
+
 		Convey("When the path only jitters", func() {
 			path := make([]float64, 0, 64)
 
@@ -135,9 +138,6 @@ func TestExcursionWrite(t *testing.T) {
 		Convey("When the path stands at zero", func() {
 			err := client.Write(ctx, func(params temporal.Excursion_write_Params) error {
 				params.SetValue(0)
-				params.SetSigmas(3)
-				params.SetHorizon(32)
-				params.SetRetrace(0.5)
 				return nil
 			})
 			So(err, ShouldBeNil)
@@ -147,4 +147,75 @@ func TestExcursionWrite(t *testing.T) {
 			})
 		})
 	})
+}
+
+func TestExcursionDone(t *testing.T) {
+	Convey("Given measurements from a flat path followed by two opposing runs", t, func() {
+		ctx := context.Background()
+		client := temporal.Excursion_ServerToClient(temporal.NewExcursion(ctx))
+		defer client.Release()
+		path := []float64{100, 100, 100, 101, 102, 104, 108, 104, 100, 96, 92, 98, 104}
+
+		for _, value := range path {
+			So(client.Write(ctx, func(params temporal.Excursion_write_Params) error {
+				params.SetValue(value)
+				return nil
+			}), ShouldBeNil)
+			So(client.WaitStreaming(), ShouldBeNil)
+		}
+
+		future, release := client.Done(ctx, nil)
+		defer release()
+		result, err := future.Struct()
+		So(err, ShouldBeNil)
+		So(result.Steps(), ShouldEqual, len(path)-1)
+		So(result.Floor(), ShouldAlmostEqual, math.Log(102.0/101.0))
+		So(result.Horizon(), ShouldBeGreaterThan, 0)
+		So(result.Sigma(), ShouldBeGreaterThan, 0)
+		So(result.Legs(), ShouldBeGreaterThan, 0)
+		So(result.Found(), ShouldBeTrue)
+
+		Convey("Then reading again cannot report the same completed move", func() {
+			future, release := client.Done(ctx, nil)
+			defer release()
+			result, err := future.Struct()
+			So(err, ShouldBeNil)
+			So(result.Found(), ShouldBeFalse)
+			So(result.Steps(), ShouldEqual, len(path)-1)
+		})
+	})
+}
+
+func BenchmarkExcursionWrite(b *testing.B) {
+	ctx := context.Background()
+	client := temporal.Excursion_ServerToClient(temporal.NewExcursion(ctx))
+	defer client.Release()
+	// A complete rise, decline and recovery, repeated through the public protocol.
+	path := []float64{100, 101, 103, 107, 109, 108, 104, 98, 94, 96, 99, 100}
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for b.Loop() {
+		for _, value := range path {
+			err := client.Write(ctx, func(params temporal.Excursion_write_Params) error {
+				params.SetValue(value)
+				return nil
+			})
+
+			if err != nil {
+				b.Fatal(err)
+			}
+
+			if err := client.WaitStreaming(); err != nil {
+				b.Fatal(err)
+			}
+			future, release := client.Done(ctx, nil)
+			_, err = future.Struct()
+			release()
+
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+	}
 }

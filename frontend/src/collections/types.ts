@@ -1,23 +1,3 @@
-import type {
-	Decision,
-	Finding,
-	Graph,
-	LifecycleState,
-	ThesisCategory,
-	ThesisForecast,
-	ThesisHypothesis,
-} from "#/types/thesis";
-
-export type {
-	Finding,
-	Graph,
-	LifecycleState,
-	Decision,
-	ThesisCategory,
-	ThesisForecast,
-	ThesisHypothesis,
-};
-
 /*
 Balance mirrors the Balance.Frame wallet row JSON.
 */
@@ -64,64 +44,6 @@ export type Fill = {
 	fee: number | string;
 };
 
-export type Position = {
-	status: string;
-	decision: Decision;
-	entry_order: Record<string, unknown> | null;
-	exit_order: Record<string, unknown> | null;
-	entry_order_result: Record<string, unknown> | null;
-	exit_order_result: Record<string, unknown> | null;
-	holding: Holding;
-};
-
-export type CategoryGraphNode = {
-	symbol: string;
-	type: string;
-	strength: number;
-	freshness: number;
-	at: string;
-};
-
-export type CategoryGraphEdge = {
-	symbol: string;
-	from: string;
-	to: string;
-	type: string;
-	weight: number | null;
-	evidence: string[];
-	at: string;
-};
-
-export type CategoryGraph = {
-	nodes: CategoryGraphNode[];
-	edges: CategoryGraphEdge[];
-	priors: Record<string, string>;
-};
-
-export type Thesis = {
-	tick: number;
-	at: string;
-	forecasts?: ThesisForecast[];
-	decisions?: Decision[];
-	findings?: Finding[];
-	hypotheses?: ThesisHypothesis[];
-	categories?: Record<string, ThesisCategory[]>;
-	positions?: Record<string, boolean>;
-	holdings?: Record<string, Holding>;
-	lifecycle?: Record<string, LifecycleState>;
-	graphs?: Record<string, unknown> & {
-		categories?: CategoryGraph;
-	};
-	measurements?: Record<string, unknown>;
-	manifold?: Record<string, unknown>;
-	cognition?: Record<string, unknown>;
-	resonance?: Record<string, unknown>;
-	causal?: Record<string, unknown>;
-};
-
-/*
-Order mirrors an open-order row on the UI wire.
-*/
 export type Order = {
 	id: string;
 	pair: string;
@@ -159,14 +81,6 @@ Instrument is one traded pair row on the UI wire.
 */
 export type Instrument = Record<string, unknown> & {
 	symbol: string;
-};
-
-/*
-LifecycleRow is one symbol's lifecycle phase on the UI wire.
-*/
-export type LifecycleRow = {
-	symbol: string;
-	state: LifecycleState;
 };
 
 /*
@@ -425,10 +339,6 @@ export type CognitiveClass = {
 	probability: number;
 };
 
-export type MeasurementCategory = Omit<ThesisCategory, "maturity"> & {
-	maturity?: number;
-};
-
 export type Measurement = {
 	id?: string | number;
 	label?: string;
@@ -467,7 +377,6 @@ export type Measurement = {
 	>;
 	metadata?: Record<string, string | number>;
 	provenance?: Record<string, string>;
-	categories?: MeasurementCategory[];
 	peers?: Measurement[];
 	Peers?: Measurement[];
 };

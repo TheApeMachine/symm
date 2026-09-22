@@ -6,7 +6,7 @@ import {
 	drawMatrix,
 	resizeCanvas,
 	TERMINAL_COLORS,
-} from "#/components/terminal/canvas";
+} from "#/components/ui/canvas-utils";
 import { terminalResonanceLayerMatrixFromFrame } from "#/components/terminal/charts-frame";
 
 const resonanceCanvasRef = createRef<HTMLCanvasElement>();

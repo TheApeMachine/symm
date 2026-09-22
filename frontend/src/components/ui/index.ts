@@ -211,3 +211,17 @@ export {
 	type TypographyVariant,
 	typographyVariants,
 } from "./typography";
+export { EvidenceGraph, type EvidenceGraphProps } from "./evidence-graph";
+export type {
+	Graph as EvidenceGraphData,
+	GraphNode as EvidenceGraphNode,
+	GraphEdge as EvidenceGraphEdge,
+} from "./evidence-graph.types";
+export {
+	ImpulseMap,
+	type ImpulseMapProps,
+	type ImpulsePoint,
+	type ImpulseRegion,
+	type ImpulseContour,
+	type ImpulseConnection,
+} from "./impulse-map";

@@ -14,6 +14,7 @@ import (
 	"capnproto.org/go/capnp/v3/std/capnp/schema"
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/store"
 )
 
@@ -210,6 +211,7 @@ func CompileWithPrevious(
 		compiledNode := CompiledNode{
 			ID:           id,
 			Index:        NodeID(i),
+			Source:       Implements(factory.InterfaceID, runtime.Source_TypeID),
 			Inputs:       make(map[string]CompiledField),
 			Outputs:      make(map[string]CompiledField),
 			InputIndices: make(map[string]FieldID),
@@ -268,23 +270,49 @@ func CompileWithPrevious(
 				}
 			}
 
-			// Phase 6: Compile static inputs into ArgsTemplate
-			if ifaceSchema.WriteParams.DataSize > 0 || ifaceSchema.WriteParams.PointerCount > 0 {
-				_, seg, err := capnp.NewMessage(capnp.SingleSegment(nil))
+			// Phase 6: Compile authored inputs into the argument template.
+			_, segment, err := capnp.NewMessage(capnp.SingleSegment(nil))
+
+			if err != nil {
+				return nil, errnie.Error(errnie.Err(errnie.Internal, "compiler: allocate argument message", err))
+			}
+
+			template, err := capnp.NewRootStruct(segment, ifaceSchema.WriteParams)
+
+			if err != nil {
+				return nil, errnie.Error(errnie.Err(errnie.Internal, "compiler: allocate argument template", err))
+			}
+
+			for portName, rawBytes := range node.InputData {
+				field, exists := resolveInputField(ifaceSchema, portName)
+
+				if !exists {
+					return nil, errnie.Error(errnie.Err(
+						errnie.Validation,
+						fmt.Sprintf("compiler: node %q (%s) has no input port %q", id, node.Type, portName), nil,
+					))
+				}
+
+				// A wired port is supplied by its producer, not its editor control.
+				if len(node.Connections.Inputs[portName]) > 0 {
+					continue
+				}
+
+				literal, err := parseRawInputString(rawBytes)
+
 				if err == nil {
-					tmpl, err := capnp.NewRootStruct(seg, ifaceSchema.WriteParams)
-					if err == nil {
-						for portName, rawBytes := range node.InputData {
-							fi, exists := resolveInputField(ifaceSchema, portName)
-							if exists {
-								rawStr := parseRawInputString(rawBytes)
-								_ = SetStaticField(tmpl, fi, rawStr)
-							}
-						}
-						compiledNode.ArgsTemplate = tmpl
-					}
+					err = SetStaticField(template, field, literal)
+				}
+
+				if err != nil {
+					return nil, errnie.Error(errnie.Err(
+						errnie.Validation,
+						fmt.Sprintf("compiler: invalid static input %q on node %q (%s)", portName, id, node.Type), err,
+					))
 				}
 			}
+
+			compiledNode.ArgsTemplate = template
 		}
 
 		compiledNodes[i] = compiledNode
@@ -821,28 +849,38 @@ func outputSlot(port string) (int, bool) {
 	return slot, true
 }
 
-func parseRawInputString(raw json.RawMessage) string {
-	var strVal string
-	if err := sonic.Unmarshal(raw, &strVal); err == nil {
-		return strVal
+func parseRawInputString(raw json.RawMessage) (string, error) {
+	literal := strings.TrimSpace(string(raw))
+
+	if literal == "" || literal == "null" {
+		return "", errnie.Error(errnie.Err(errnie.Validation, "static input has no value", nil))
 	}
-	var numVal float64
-	if err := sonic.Unmarshal(raw, &numVal); err == nil {
-		return strconv.FormatFloat(numVal, 'f', -1, 64)
+
+	if literal[0] == '"' {
+		var value string
+		err := sonic.Unmarshal(raw, &value)
+		return value, err
 	}
-	var boolVal bool
-	if err := sonic.Unmarshal(raw, &boolVal); err == nil {
-		return strconv.FormatBool(boolVal)
+
+	if literal[0] != '{' {
+		// Preserve integer digits; parsing through float64 loses large Int64 values.
+		return literal, nil
 	}
-	var m map[string]json.RawMessage
-	if err := sonic.Unmarshal(raw, &m); err == nil {
-		for _, k := range []string{"string", "float", "number", "int", "bool", "value"} {
-			if sub, ok := m[k]; ok {
-				return parseRawInputString(sub)
-			}
+
+	var control map[string]json.RawMessage
+
+	if err := sonic.Unmarshal(raw, &control); err != nil {
+		return "", errnie.Error(errnie.Err(errnie.Validation, "invalid static control", err))
+	}
+
+	for _, key := range []string{"string", "float", "number", "int", "bool", "value"} {
+		if value, exists := control[key]; exists {
+			return parseRawInputString(value)
 		}
 	}
-	return string(raw)
+
+	// A JSON object can itself be a text/data literal. Its destination validates it.
+	return literal, nil
 }
 
 func formatWhich(w schema.Type_Which) string {

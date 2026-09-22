@@ -11,15 +11,13 @@ import (
 /*
 ExcursionServer walks a path and reports the moves it actually made.
 
-The path is read as alternating legs. A leg runs while the path continues its
-way and closes when the path retraces a proportion of what that leg
-travelled — never on the first step against it, which would cut every move
-into noise.
-
-The bar a leg has to clear is derived from the path's own behaviour: the
-dispersion of its per-step log return, scaled over the horizon the way a
-random walk scales. A path that barely moves has a low bar; a violent one has
-a high bar; neither is compared against a number chosen in advance.
+A reversal must exceed the measured random-walk scale over the open leg.
+The characteristic span is the mean length of completed directional runs,
+including the current run while no completed run exists. Qualifying uses the
+root mean square magnitude of completed legs (mean and dispersion together).
+Before any leg closes, the random-walk scale over the measured run span is used.
+Both bounds are floored by the smallest observed nonzero log return.
+All comparisons use log returns; the reported excursion remains a price ratio.
 */
 type ExcursionServer struct {
 	*runtime.System
@@ -41,7 +39,14 @@ type ExcursionServer struct {
 	mean     float64
 	squares  float64
 
-	legs int64
+	legs       int64
+	legSteps   float64
+	floor      float64
+	direction  float64
+	runSteps   float64
+	runs       float64
+	span       float64
+	legSquares float64
 
 	reported struct {
 		anchor     float64
@@ -81,17 +86,6 @@ func (server *ExcursionServer) Write(ctx context.Context, call Excursion_write) 
 		))
 	}
 
-	horizon := int(args.Horizon())
-	retrace := args.Retrace()
-
-	if horizon < 1 || retrace <= 0 || retrace >= 1 {
-		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"temporal.excursion: a leg closes on a proportion of itself over a horizon of at least one step",
-			nil,
-		))
-	}
-
 	server.observe(value)
 
 	if !server.opened {
@@ -100,10 +94,12 @@ func (server *ExcursionServer) Write(ctx context.Context, call Excursion_write) 
 		return nil
 	}
 
-	qualifying := server.qualifying(args.Sigmas(), horizon, args.Floor())
+	server.legSteps++
+	qualifying := server.qualifying()
 	server.reported.qualifying = qualifying
 
-	server.step(value, qualifying*retrace, qualifying)
+	confirm := math.Max(server.floor, server.sigma()*math.Sqrt(server.legSteps))
+	server.step(value, confirm, qualifying)
 	return nil
 }
 
@@ -119,6 +115,25 @@ func (server *ExcursionServer) observe(value float64) {
 	change := math.Log(value / server.previous)
 	server.previous = value
 
+	if change != 0 {
+		magnitude := math.Abs(change)
+
+		if server.floor == 0 || magnitude < server.floor {
+			server.floor = magnitude
+		}
+
+		direction := math.Copysign(1, change)
+
+		if server.direction != 0 && direction != server.direction {
+			server.runs++
+			server.span += (server.runSteps - server.span) / server.runs
+			server.runSteps = 0
+		}
+
+		server.direction = direction
+	}
+
+	server.runSteps++
 	server.count++
 	delta := change - server.mean
 	server.mean += delta / server.count
@@ -128,21 +143,28 @@ func (server *ExcursionServer) observe(value float64) {
 /*
 qualifying is how far a leg must travel to count as a move.
 */
-func (server *ExcursionServer) qualifying(
-	sigmas float64, horizon int, floor float64,
-) float64 {
-	if server.count < 2 {
-		return floor
+func (server *ExcursionServer) qualifying() float64 {
+	if server.legs > 0 {
+		return math.Max(server.floor, math.Sqrt(server.legSquares/float64(server.legs)))
 	}
 
-	sigma := math.Sqrt(server.squares / server.count)
-	derived := sigmas * sigma * math.Sqrt(float64(horizon))
+	return math.Max(server.floor, server.sigma()*math.Sqrt(server.horizon()))
+}
 
-	if derived > floor {
-		return derived
+func (server *ExcursionServer) sigma() float64 {
+	if server.count == 0 {
+		return 0
 	}
 
-	return floor
+	return math.Sqrt(server.squares / server.count)
+}
+
+func (server *ExcursionServer) horizon() float64 {
+	if server.runs == 0 {
+		return server.runSteps
+	}
+
+	return server.span
 }
 
 /*
@@ -150,7 +172,13 @@ step carries the path one position further, closing the open leg when the
 path has retraced enough of it to say the move is over.
 */
 func (server *ExcursionServer) step(value, confirm, qualifying float64) {
-	travelled := (value - server.extremum) / server.extremum
+	// The first move establishes direction; an initially falling path has
+	// not completed an upward leg of zero length.
+	if server.legs == 0 && server.extremum == server.ignition {
+		server.rising = value >= server.ignition
+	}
+
+	travelled := math.Log(value / server.extremum)
 
 	if server.rising && travelled >= 0 {
 		server.extremum = value
@@ -162,7 +190,7 @@ func (server *ExcursionServer) step(value, confirm, qualifying float64) {
 		return
 	}
 
-	if math.Abs(travelled) < confirm {
+	if math.Abs(travelled) <= confirm {
 		return
 	}
 
@@ -172,6 +200,7 @@ func (server *ExcursionServer) step(value, confirm, qualifying float64) {
 	server.ignition = server.extremum
 	server.extremum = value
 	server.rising = !server.rising
+	server.legSteps = 1
 }
 
 /*
@@ -179,18 +208,18 @@ close reports the leg that just ended, if it travelled far enough to be a move
 rather than the path milling about.
 */
 func (server *ExcursionServer) close(qualifying float64) {
+	logExcursion := math.Log(server.extremum / server.ignition)
 	server.legs++
+	server.legSquares += logExcursion * logExcursion
 
-	excursion := (server.extremum - server.ignition) / server.ignition
-
-	if math.Abs(excursion) < qualifying {
+	if math.Abs(logExcursion) <= qualifying {
 		return
 	}
 
 	server.reported.anchor = server.anchor
 	server.reported.ignition = server.ignition
 	server.reported.extremum = server.extremum
-	server.reported.excursion = excursion
+	server.reported.excursion = (server.extremum - server.ignition) / server.ignition
 	server.reported.confirmed = true
 	server.reported.found = true
 }
@@ -217,9 +246,9 @@ func (server *ExcursionServer) Done(ctx context.Context, call Excursion_done) er
 	results.SetLegs(server.legs)
 	results.SetQualifying(server.reported.qualifying)
 
-	if server.count >= 2 {
-		results.SetSigma(math.Sqrt(server.squares / server.count))
-	}
+	results.SetSigma(server.sigma())
+	results.SetFloor(server.floor)
+	results.SetHorizon(server.horizon())
 
 	results.SetFound(server.reported.found)
 

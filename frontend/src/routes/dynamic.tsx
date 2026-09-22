@@ -1,6 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo } from "react";
 import { usePipelineGraphRow } from "#/collections/pipeline_graph_row";
+import { useGraphResults } from "#/components/flume/graph-results.store";
+import type { FlumeNode } from "#/components/flume/types";
 import { compileUI } from "#/components/ui/compiler";
 import { renderUIRoute } from "#/components/ui/renderer";
 
@@ -8,17 +10,21 @@ const LOCAL_GRAPH_ID = "local-default";
 
 /*
 UIGraphRouteComponent compiles the active Flume UI graph into a runtime route tree
-and renders it with the generic recursive renderer.
+and renders results from the latest backend run of this graph revision.
 */
 function UIGraphRouteComponent() {
 	const row = usePipelineGraphRow(LOCAL_GRAPH_ID);
+	const storedResults = useGraphResults(
+		LOCAL_GRAPH_ID,
+		JSON.stringify(row?.nodes ?? {}),
+	);
 
 	const compilation = useMemo(() => {
 		if (!row?.nodes || Object.keys(row.nodes).length === 0) {
 			return null;
 		}
 
-		return compileUI({ nodes: row.nodes as any });
+		return compileUI({ nodes: row.nodes as Record<string, FlumeNode> });
 	}, [row?.nodes]);
 
 	if (!compilation || compilation.routes.length === 0) {
@@ -43,15 +49,17 @@ function UIGraphRouteComponent() {
 						UI Graph Compilation Warnings ({compilation.diagnostics.length}):
 					</div>
 					<ul className="list-disc pl-4 space-y-1">
-						{compilation.diagnostics.map((d, i) => (
-							<li key={`${d.kind}-${d.nodeId ?? i}-${d.propName ?? ""}`}>
-								{d.message}
+						{compilation.diagnostics.map((diagnostic, diagnosticIndex) => (
+							<li
+								key={`${diagnostic.kind}-${diagnostic.nodeId ?? diagnosticIndex}-${diagnostic.propName ?? ""}`}
+							>
+								{diagnostic.message}
 							</li>
 						))}
 					</ul>
 				</div>
 			)}
-			{renderUIRoute(primaryRoute)}
+			{renderUIRoute(primaryRoute, storedResults)}
 		</div>
 	);
 }

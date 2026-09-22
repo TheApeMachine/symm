@@ -17,3 +17,7 @@ enum Status {
 struct StatusPayload {
   status @0 :Status;
 }
+
+# Source owns external observations. Nonempty Data results indicate work
+# received from outside the graph, rather than recirculated graph values.
+interface Source {}

@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { pipelineGraphCollection } from "#/collections/pipeline_graph";
+import { usePipelineGraphRow } from "#/collections/pipeline_graph_row";
 import { Button } from "#/components/ui/button";
 import { Flex } from "#/components/ui/flex";
 import { Modal } from "#/components/ui/modal";
@@ -31,6 +32,11 @@ import type { EdgeRoutingMode } from "./connectionCalculator";
 import type { CompilerDiagnostic, NodeLogEntry, NodeStatus } from "./context";
 import { createFlumeConfig } from "./flume-config.generated";
 import { setRoutingMode, useRoutingMode } from "./flume-editor.store";
+import {
+	clearGraphResults,
+	setGraphResults,
+	useGraphResults,
+} from "./graph-results.store";
 import {
 	type BackendGraph,
 	fetchAndImportDefinition,
@@ -113,9 +119,6 @@ export const FlumeEditor = ({ projectId }: FlumeEditorProps) => {
 	const [pastedJSON, setPastedJSON] = useState("");
 
 	const [diagnostics, setDiagnostics] = useState<CompilerDiagnostic[]>([]);
-	const [results, setResults] = useState<Record<string, Record<string, any>>>(
-		{},
-	);
 	const [statuses, setStatuses] = useState<Record<string, NodeStatus>>({});
 	const [logs, setLogs] = useState<Record<string, NodeLogEntry[]>>({});
 	const [isSaving, setIsSaving] = useState(false);
@@ -123,8 +126,12 @@ export const FlumeEditor = ({ projectId }: FlumeEditorProps) => {
 	const [isRunning, setIsRunning] = useState(false);
 
 	const graphId = projectId ?? LOCAL_GRAPH_ID;
+	const row = usePipelineGraphRow(graphId);
 	const routingMode = useRoutingMode();
 	const editorHandleRef = useRef<NodeEditorHandle | null>(null);
+
+	const graphVersion = JSON.stringify(row?.nodes ?? {});
+	const activeResults = useGraphResults(graphId, graphVersion);
 
 	const allDefinitions = useMemo(() => {
 		return Array.from(
@@ -163,7 +170,7 @@ export const FlumeEditor = ({ projectId }: FlumeEditorProps) => {
 	const handleSwitchDefinition = async (nextDef: string) => {
 		setSelectedGraph(nextDef);
 		setDiagnostics([]);
-		setResults({});
+		clearGraphResults(graphId);
 		setStatuses({});
 		setLogs({});
 		try {
@@ -174,10 +181,10 @@ export const FlumeEditor = ({ projectId }: FlumeEditorProps) => {
 				type: "success",
 				timeout: 3000,
 			});
-		} catch (e) {
+		} catch (err: unknown) {
 			toastManager.add({
 				title: "Failed to load definition",
-				description: e instanceof Error ? e.message : String(e),
+				description: err instanceof Error ? err.message : String(err),
 				type: "error",
 				timeout: 5000,
 			});
@@ -186,7 +193,7 @@ export const FlumeEditor = ({ projectId }: FlumeEditorProps) => {
 
 	const handleReloadDefinition = async () => {
 		setDiagnostics([]);
-		setResults({});
+		clearGraphResults(graphId);
 		try {
 			await fetchAndImportDefinition(selectedGraph, graphId, projectId ?? null);
 			toastManager.add({
@@ -195,10 +202,10 @@ export const FlumeEditor = ({ projectId }: FlumeEditorProps) => {
 				type: "success",
 				timeout: 3000,
 			});
-		} catch (e) {
+		} catch (err: unknown) {
 			toastManager.add({
 				title: "Reload failed",
-				description: e instanceof Error ? e.message : String(e),
+				description: err instanceof Error ? err.message : String(err),
 				type: "error",
 				timeout: 5000,
 			});
@@ -338,6 +345,8 @@ export const FlumeEditor = ({ projectId }: FlumeEditorProps) => {
 			nodes,
 		};
 
+		const version = JSON.stringify(nodes);
+		clearGraphResults(graphId);
 		setIsRunning(true);
 		try {
 			const res = await fetch(`${hubBaseUrl()}/workbench/run`, {
@@ -348,7 +357,8 @@ export const FlumeEditor = ({ projectId }: FlumeEditorProps) => {
 			const data = await res.json();
 			if (data.ok) {
 				setDiagnostics([]);
-				setResults(data.results || {});
+				const runResults = data.results || {};
+				setGraphResults(graphId, version, runResults);
 				if (data.statuses) {
 					setStatuses(data.statuses);
 				}
@@ -379,10 +389,10 @@ export const FlumeEditor = ({ projectId }: FlumeEditorProps) => {
 					timeout: 6000,
 				});
 			}
-		} catch (e) {
+		} catch (err: unknown) {
 			toastManager.add({
 				title: "Run Request Failed",
-				description: e instanceof Error ? e.message : String(e),
+				description: err instanceof Error ? err.message : String(err),
 				type: "error",
 				timeout: 5000,
 			});
@@ -400,7 +410,7 @@ export const FlumeEditor = ({ projectId }: FlumeEditorProps) => {
 
 		setSelectedGraph(cleanName);
 		setDiagnostics([]);
-		setResults({});
+		clearGraphResults(graphId);
 
 		// Initialize empty graph row in collection
 		const emptyNodes = {};
@@ -675,7 +685,7 @@ export const FlumeEditor = ({ projectId }: FlumeEditorProps) => {
 			)}
 
 			{/* Execution Result Banner */}
-			{Object.keys(results).length > 0 && (
+			{Object.keys(activeResults).length > 0 && (
 				<Flex.Row
 					align="center"
 					justify="between"
@@ -689,15 +699,20 @@ export const FlumeEditor = ({ projectId }: FlumeEditorProps) => {
 								Program Output:
 							</span>{" "}
 							<span className="font-mono">
-								{Object.entries(results)
-									.map(([nid, out]) => `${nid}: ${JSON.stringify(out)}`)
+								{Object.entries(activeResults)
+									.map(
+										([nodeId, portOutputs]) =>
+											`${nodeId}: ${JSON.stringify(portOutputs)}`,
+									)
 									.join(" | ")}
 							</span>
 						</div>
 					</Flex.Row>
 					<button
 						type="button"
-						onClick={() => setResults({})}
+						onClick={() => {
+							clearGraphResults(graphId);
+						}}
 						className="text-emerald-400 hover:text-emerald-200"
 					>
 						<XIcon className="size-4" />
@@ -716,7 +731,7 @@ export const FlumeEditor = ({ projectId }: FlumeEditorProps) => {
 				projectId={projectId ?? null}
 				ref={editorHandleRef}
 				diagnostics={diagnostics}
-				results={results}
+				results={activeResults}
 				statuses={statuses}
 				logs={logs}
 				style={{ minHeight: "75vh" }}
@@ -745,11 +760,10 @@ export const FlumeEditor = ({ projectId }: FlumeEditorProps) => {
 							className="h-8 w-full rounded border border-(--line2) bg-(--sunken) px-3 font-mono text-xs text-(--f1) outline-none focus:border-(--accent)"
 							placeholder="e.g. inner, custom_signal, my_pipeline"
 							value={newDefName}
-							onChange={(e) => setNewDefName(e.target.value)}
-							onKeyDown={(e) => {
-								if (e.key === "Enter") handleCreateNewDefinition();
+							onChange={(event) => setNewDefName(event.target.value)}
+							onKeyDown={(event) => {
+								if (event.key === "Enter") handleCreateNewDefinition();
 							}}
-							autoFocus
 							data-testid="new-definition-input"
 						/>
 					</Modal.Body>
@@ -788,7 +802,7 @@ export const FlumeEditor = ({ projectId }: FlumeEditorProps) => {
 						</p>
 						<Textarea
 							className="h-64 font-mono text-xs"
-							onChange={(e) => setPastedJSON(e.target.value)}
+							onChange={(event) => setPastedJSON(event.target.value)}
 							placeholder={`{\n  "nodes": {\n    "source": { "type": "data.Source", ... },\n    "sink": { "type": "data.Sink", ... }\n  }\n}`}
 							value={pastedJSON}
 						/>

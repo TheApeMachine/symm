@@ -33,7 +33,7 @@ if (!moduleSymbol) {
 
 export interface PropMetadata {
 	name: string;
-	type: "string" | "number" | "boolean" | "select" | "slot" | "series";
+	type: "string" | "number" | "boolean" | "select" | "slot" | "series" | "data";
 	options?: string[];
 	optional: boolean;
 	defaultValue?: any;
@@ -101,7 +101,7 @@ function resolvePropType(
 	type: ts.Type,
 	propName: string,
 ): {
-	kind: "string" | "number" | "boolean" | "select" | "slot" | "series" | null;
+	kind: "string" | "number" | "boolean" | "select" | "slot" | "series" | "data" | null;
 	options?: string[];
 } {
 	// Remove undefined & null from union to inspect underlying type
@@ -212,6 +212,11 @@ function resolvePropType(
 				options: Array.from(new Set(numberLiterals.map(String))),
 			};
 		}
+	}
+
+	// Structured data remains one value on a wire, without scalar history.
+	if (flags & ts.TypeFlags.Object && nonNullableType.getCallSignatures().length === 0) {
+		return { kind: "data" };
 	}
 
 	return { kind: null };

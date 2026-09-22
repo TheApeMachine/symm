@@ -48,12 +48,47 @@ import {
 	FrameHeader,
 	FrameTitle,
 } from "#/components/ui/frame";
+import type { CompiledUINode } from "#/components/ui/renderer";
+import { renderNode } from "#/components/ui/renderer";
+import {
+	type UIComponentName,
+	uiComponents,
+} from "#/components/ui/ui-component-registry.generated";
 import { cn } from "@/lib/utils";
 import ContextMenu from "../ContextMenu/ContextMenu";
 import Draggable from "../Draggable/Draggable";
 import IoPorts from "../IoPorts/IoPorts";
 import { fetchAndImportDefinition } from "../import-graph";
 import { NodeLogs } from "./NodeLogs";
+
+class UIPreviewBoundary extends React.Component<
+	{ children: React.ReactNode; fallback?: React.ReactNode },
+	{ hasError: boolean }
+> {
+	constructor(props: {
+		children: React.ReactNode;
+		fallback?: React.ReactNode;
+	}) {
+		super(props);
+		this.state = { hasError: false };
+	}
+
+	static getDerivedStateFromError() {
+		return { hasError: true };
+	}
+
+	componentDidCatch(err: Error) {
+		console.warn("UI Node preview error:", err);
+	}
+
+	render() {
+		if (this.state.hasError) {
+			return this.props.fallback ?? null;
+		}
+
+		return this.props.children;
+	}
+}
 
 /* Lazy to avoid circular dep — NodeEditor imports Node */
 const NodeEditor = React.lazy(() =>
@@ -157,7 +192,9 @@ const Node = ({
 	const [logsOpen, setLogsOpen] = React.useState(false);
 
 	React.useEffect(() => {
-		triggerRecalculation?.();
+		if (typeof logsOpen === "boolean") {
+			triggerRecalculation?.();
+		}
 	}, [logsOpen, triggerRecalculation]);
 
 	const statusMeta = React.useMemo(() => {
@@ -174,7 +211,6 @@ const Node = ({
 				return { label: "ERROR", variant: "error" as const, pulse: false };
 			case "done":
 				return { label: "DONE", variant: "brand" as const, pulse: false };
-			case "init":
 			default:
 				return { label: "INIT", variant: "disabled" as const, pulse: false };
 		}
@@ -184,6 +220,63 @@ const Node = ({
 		String(currentNodeType?.type ?? "").startsWith("definition:") ||
 			currentNodeType?.category === "Definitions",
 	);
+
+	const isUiComponent =
+		type.startsWith("ui.") &&
+		type !== "ui.UIRoute" &&
+		type.slice(3) in uiComponents;
+
+	const compiledUiNode = React.useMemo(() => {
+		if (!isUiComponent) {
+			return null;
+		}
+
+		const compName = type.slice(3);
+		const nodeProps: Record<string, unknown> = {};
+
+		for (const [propName, rawEntry] of Object.entries(inputData ?? {})) {
+			if (propName === "components" || propName.startsWith("components_")) {
+				continue;
+			}
+
+			const extracted =
+				rawEntry !== null && typeof rawEntry === "object"
+					? "value" in rawEntry
+						? (rawEntry as { value: unknown }).value
+						: undefined
+					: rawEntry;
+
+			if (extracted !== undefined && extracted !== null && extracted !== "") {
+				nodeProps[propName] = extracted;
+			}
+		}
+
+		for (const [portName, targets] of Object.entries(
+			connections?.inputs ?? {},
+		)) {
+			if (portName.startsWith("components")) {
+				continue;
+			}
+
+			if (!targets || targets.length === 0) {
+				continue;
+			}
+
+			const firstTarget = targets[0];
+
+			nodeProps[portName] = {
+				binding: {
+					node: firstTarget.nodeId,
+					port: firstTarget.portName ?? "out",
+				},
+			};
+		}
+
+		return {
+			name: compName as UIComponentName,
+			props: nodeProps,
+		} as CompiledUINode;
+	}, [isUiComponent, type, inputData, connections?.inputs]);
 
 	const isBlock = Boolean(
 		currentNodeType?.defaultSubGraph ||
@@ -237,11 +330,11 @@ const Node = ({
 		graphWorker?.updateDrag(id, x, y);
 	};
 
-	const handleContextMenu = (e: MouseEvent | React.MouseEvent) => {
-		e.preventDefault();
-		e.stopPropagation();
+	const handleContextMenu = (event: MouseEvent | React.MouseEvent) => {
+		event.preventDefault();
+		event.stopPropagation();
 		setSelectedNode(editorId, id);
-		setMenuCoordinates({ x: e.clientX, y: e.clientY });
+		setMenuCoordinates({ x: event.clientX, y: event.clientY });
 		setMenuOpen(true);
 		return false;
 	};
@@ -273,16 +366,16 @@ const Node = ({
 		: `${parentGraphId}:${id}`;
 
 	const suppressEmbeddedPortControlPrep = React.useCallback(
-		(e: React.MouseEvent<HTMLDivElement>) => {
-			if (!(e.target instanceof Element)) return false;
-			if (e.target.closest("button, input, textarea, select, option"))
+		(event: React.MouseEvent<HTMLDivElement>) => {
+			if (!(event.target instanceof Element)) return false;
+			if (event.target.closest("button, input, textarea, select, option"))
 				return true;
 			// Suppress only when the click originates inside the nested sub-graph
 			// editor, not the outer stage that the block node itself lives in.
-			const subgraphContainer = e.currentTarget.querySelector(
+			const subgraphContainer = event.currentTarget.querySelector(
 				"[data-subgraph-editor]",
 			);
-			return Boolean(subgraphContainer?.contains(e.target));
+			return Boolean(subgraphContainer?.contains(event.target));
 		},
 		[],
 	);
@@ -485,9 +578,9 @@ const Node = ({
 							/>
 							<button
 								type="button"
-								onClick={(e) => {
-									e.stopPropagation();
-									setLogsOpen((v) => !v);
+								onClick={(event) => {
+									event.stopPropagation();
+									setLogsOpen((open) => !open);
 								}}
 								className={cn(
 									"flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono tracking-tight transition-colors select-none cursor-pointer",
@@ -520,7 +613,7 @@ const Node = ({
 						data-flume-node-result={id}
 					>
 						{Object.entries(nodeResult)
-							.map(([k, v]) => `${k}: ${v}`)
+							.map(([portName, portValue]) => `${portName}: ${portValue}`)
 							.join(" | ")}
 					</div>
 				)}
@@ -551,6 +644,23 @@ const Node = ({
 					</Card>
 				)}
 
+				{isUiComponent && compiledUiNode && (
+					<div
+						className="border-t border-(--line)/48 p-2.5 bg-(--bg)/60 rounded-b flex flex-col items-center justify-center min-h-[44px]"
+						data-flume-ui-preview={id}
+					>
+						<UIPreviewBoundary
+							fallback={
+								<span className="text-[10px] font-mono text-(--f3)">
+									Preview unavailable
+								</span>
+							}
+						>
+							{renderNode(compiledUiNode, id, results)}
+						</UIPreviewBoundary>
+					</div>
+				)}
+
 				{!showPorts && (
 					<button
 						type="button"
@@ -577,7 +687,7 @@ const Node = ({
 						<Flex.Row align="center" gap={2}>
 							<button
 								type="button"
-								onClick={() => setSubGraphOpen((v) => !v)}
+								onClick={() => setSubGraphOpen((open) => !open)}
 								className="flex flex-1 items-center gap-1.5 rounded px-2 py-1 text-xs text-(--f3) hover:bg-(--raised)/60 hover:text-(--f1)"
 							>
 								<NetworkIcon className="size-3.5" />

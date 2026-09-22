@@ -2,7 +2,7 @@ import {
 	clearCanvas,
 	drawGrid,
 	TERMINAL_COLORS,
-} from "#/components/terminal/canvas";
+} from "#/components/ui/canvas-utils";
 import type { LatentPoint } from "#/components/terminal/xray-view";
 import { requirePositiveLength } from "#/lib/domain";
 

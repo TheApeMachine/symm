@@ -1,4 +1,4 @@
-import { TERMINAL_COLORS } from "#/components/terminal/canvas";
+import { TERMINAL_COLORS } from "#/components/ui/canvas-utils";
 import type { CortexNode, CortexTree } from "#/components/terminal/cortex-tree";
 
 export type CortexLayout = {

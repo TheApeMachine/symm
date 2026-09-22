@@ -7,7 +7,7 @@ import {
 	clearCanvas,
 	resizeCanvas,
 	TERMINAL_COLORS,
-} from "#/components/terminal/canvas";
+} from "#/components/ui/canvas-utils";
 import {
 	categoryColor,
 	drawXrayWaiting,

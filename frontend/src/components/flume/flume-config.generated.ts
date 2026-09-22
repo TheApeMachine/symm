@@ -84,6 +84,13 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			],
 		})
 		.addPortType({
+			type: "data",
+			name: "data",
+			label: "data",
+			color: Colors.orange,
+			acceptTypes: ["data"],
+		})
+		.addPortType({
 			type: "Capability",
 			name: "Capability",
 			label: "Capability",
@@ -5284,10 +5291,6 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		category: "temporal",
 		initialWidth: 340,
 		inputs: (ports) => [
-			ports.float64({ name: "floor", label: "floor" }),
-			ports.int64({ name: "horizon", label: "horizon" }),
-			ports.float64({ name: "retrace", label: "retrace" }),
-			ports.float64({ name: "sigmas", label: "sigmas" }),
 			ports.float64({ name: "value", label: "value" }),
 		],
 		outputs: (ports) => [
@@ -5295,7 +5298,9 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.bool({ name: "confirmed", label: "confirmed" }),
 			ports.float64({ name: "excursion", label: "excursion" }),
 			ports.float64({ name: "extremum", label: "extremum" }),
+			ports.float64({ name: "floor", label: "floor" }),
 			ports.bool({ name: "found", label: "found" }),
+			ports.float64({ name: "horizon", label: "horizon" }),
 			ports.float64({ name: "ignition", label: "ignition" }),
 			ports.int64({ name: "legs", label: "legs" }),
 			ports.float64({ name: "qualifying", label: "qualifying" }),
@@ -7297,6 +7302,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		inputs: (ports) => (_inputData, _connections) => [
 			ports["[]byte"]({ name: "grid.data", label: "grid.data" }),
 			ports.string({ name: "grid.interests", label: "grid.interests" }),
+			ports.float64({ name: "grid.metrics", label: "grid.metrics" }),
 		],
 		outputs: (ports) => (_inputData, _connections) => [
 			ports.int64({ name: "grid.delivered", label: "grid.delivered" }),
@@ -7406,7 +7412,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		description: "Sub-graph: training",
 		initialWidth: 320,
 		inputs: (ports) => (_inputData, _connections) => [
-			ports.bool({ name: "capture.commit", label: "capture.commit" }),
+			ports.bool({ name: "cadence.flush", label: "cadence.flush" }),
 			ports.bool({ name: "edges.signed", label: "edges.signed" }),
 			ports["[]byte"]({ name: "feed.write", label: "feed.write" }),
 			ports.float64({ name: "grid.metrics", label: "grid.metrics" }),
@@ -7416,6 +7422,8 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.int64({ name: "verdict.resolveStep", label: "verdict.resolveStep" }),
 		],
 		outputs: (ports) => (_inputData, _connections) => [
+			ports.int64({ name: "cadence.count", label: "cadence.count" }),
+			ports["[]byte"]({ name: "cadence.out", label: "cadence.out" }),
 			ports.int64({ name: "capture.bytes", label: "capture.bytes" }),
 			ports.int64({ name: "capture.committed", label: "capture.committed" }),
 			ports["[]byte"]({ name: "capture.out", label: "capture.out" }),
@@ -7428,7 +7436,9 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "edges.weights", label: "edges.weights" }),
 			ports.bool({ name: "excursion.confirmed", label: "excursion.confirmed" }),
 			ports.float64({ name: "excursion.excursion", label: "excursion.excursion" }),
+			ports.float64({ name: "excursion.floor", label: "excursion.floor" }),
 			ports.bool({ name: "excursion.found", label: "excursion.found" }),
+			ports.float64({ name: "excursion.horizon", label: "excursion.horizon" }),
 			ports.int64({ name: "excursion.legs", label: "excursion.legs" }),
 			ports.float64({ name: "excursion.qualifying", label: "excursion.qualifying" }),
 			ports.float64({ name: "excursion.sigma", label: "excursion.sigma" }),
@@ -7481,7 +7491,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		category: "Definitions",
 		description: "Sub-graph: ui_overview",
 		initialWidth: 320,
-		inputs: (ports) => (_inputData, _connections) => [
+		inputs: (_ports) => (_inputData, _connections) => [
 		],
 		outputs: (ports) => (_inputData, _connections) => [
 			ports["[]byte"]({ name: "route.out", label: "route.out" }),
@@ -8658,6 +8668,24 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 				const portName = index === 0 ? "components" : `components_${index}`;
 				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
 			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.EvidenceGraph",
+		label: "EvidenceGraph",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, _connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.data({ name: "graph", label: "graph" }),
+			];
 			return dynamicPorts;
 		},
 		outputs: (ports) => [
@@ -14323,6 +14351,199 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 	});
 
 	config.addNodeType({
+		type: "ui.ImpulseMap",
+		label: "ImpulseMap",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, _connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "title", label: "title" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.string({
+					name: "justify",
+					label: "justify",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "justify",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "between", label: "between" },
+								{ value: "around", label: "around" },
+								{ value: "evenly", label: "evenly" },
+								{ value: "stretch", label: "stretch" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "align",
+					label: "align",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "align",
+							defaultValue: "center",
+							options: [
+								{ value: "center", label: "center" },
+								{ value: "start", label: "start" },
+								{ value: "end", label: "end" },
+								{ value: "stretch", label: "stretch" },
+								{ value: "baseline", label: "baseline" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "wrap",
+					label: "wrap",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "wrap",
+							defaultValue: "wrap",
+							options: [
+								{ value: "wrap", label: "wrap" },
+								{ value: "wrapReverse", label: "wrapReverse" },
+								{ value: "nowrap", label: "nowrap" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "gap",
+					label: "gap",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "gap",
+							defaultValue: "1",
+							options: [
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "padding",
+					label: "padding",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "padding",
+							defaultValue: "1",
+							options: [
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "margin",
+					label: "margin",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "margin",
+							defaultValue: "1",
+							options: [
+								{ value: "1", label: "1" },
+								{ value: "2", label: "2" },
+								{ value: "3", label: "3" },
+								{ value: "4", label: "4" },
+								{ value: "5", label: "5" },
+								{ value: "6", label: "6" },
+								{ value: "7", label: "7" },
+								{ value: "8", label: "8" },
+								{ value: "9", label: "9" },
+								{ value: "10", label: "10" },
+								{ value: "11", label: "11" },
+								{ value: "12", label: "12" },
+							],
+						}),
+					],
+				}),
+				ports.string({
+					name: "grow",
+					label: "grow",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "grow",
+							defaultValue: "grow",
+							options: [
+								{ value: "grow", label: "grow" },
+								{ value: "shrink", label: "shrink" },
+								{ value: "growShrink", label: "growShrink" },
+								{ value: "growShrinkGrow", label: "growShrinkGrow" },
+								{ value: "growShrinkShrink", label: "growShrinkShrink" },
+							],
+						}),
+					],
+				}),
+				ports.bool({ name: "fullHeight", label: "fullHeight" }),
+				ports.bool({ name: "fullWidth", label: "fullWidth" }),
+				ports.string({
+					name: "appear",
+					label: "appear",
+					controls: [
+						Controls.select({
+							name: "value",
+							label: "appear",
+							defaultValue: "panelBottomRight",
+							options: [
+								{ value: "panelBottomRight", label: "panelBottomRight" },
+								{ value: "panelCenter", label: "panelCenter" },
+								{ value: "fade", label: "fade" },
+								{ value: "fadeUp", label: "fadeUp" },
+								{ value: "fadeDown", label: "fadeDown" },
+								{ value: "slideRight", label: "slideRight" },
+								{ value: "slideLeft", label: "slideLeft" },
+								{ value: "scaleIn", label: "scaleIn" },
+								{ value: "wiggleIdle", label: "wiggleIdle" },
+								{ value: "press", label: "press" },
+							],
+						}),
+					],
+				}),
+				ports.data({ name: "points", label: "points" }),
+				ports.data({ name: "regions", label: "regions" }),
+				ports.data({ name: "contours", label: "contours" }),
+				ports.data({ name: "connections", label: "connections" }),
+			];
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
 		type: "ui.Input",
 		label: "Input",
 		category: "UI Components",
@@ -15770,8 +15991,11 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 						}),
 					],
 				}),
+				ports.data({ name: "axes", label: "axes" }),
 				ports.string({ name: "title", label: "title" }),
 				ports.float64({ name: "labelRadius", label: "labelRadius" }),
+				ports.data({ name: "center", label: "center" }),
+				ports.data({ name: "levels", label: "levels" }),
 				ports.bool({ name: "sweep", label: "sweep" }),
 			];
 			return dynamicPorts;
@@ -15969,6 +16193,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 						}),
 					],
 				}),
+				ports.data({ name: "segments", label: "segments" }),
 			];
 			const connected = Object.keys(_connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
 			const count = Math.max(1, connected.length + 1);

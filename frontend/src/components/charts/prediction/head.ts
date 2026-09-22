@@ -7,7 +7,7 @@ import {
 	type TraceScale,
 	traceSegments,
 } from "#/components/charts/prediction/trace";
-import { TERMINAL_COLORS } from "#/components/terminal/canvas";
+import { TERMINAL_COLORS } from "#/components/ui/canvas-utils";
 
 /*
 fillUncertainty paints each contiguous empirical residual interval around the

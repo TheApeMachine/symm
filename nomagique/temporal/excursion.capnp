@@ -18,6 +18,12 @@ $Go.import("github.com/theapemachine/symm/nomagique/temporal");
 # closed by what a walk of the same dispersion would reach over the path's own
 # characteristic span. The span is measured too — it is how long this path's
 # moves run.
+# Bounds use log returns. The reversal scale is sigma * sqrt(open-leg steps).
+# The qualifying scale is the RMS log magnitude of completed legs; before
+# any close it is sigma * sqrt(mean directional-run length). RMS combines
+# the observed mean and variance without a confidence multiplier. The floor
+# is the minimum observed nonzero absolute log return. A move must exceed
+# its bound strictly. The excursion output remains the relative price change.
 interface Excursion {
   write @0 (value :Float64) -> stream;
   done @1 () -> (
