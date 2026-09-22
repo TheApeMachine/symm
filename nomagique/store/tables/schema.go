@@ -23,12 +23,48 @@ TableConfig declares the table identifier, catalog endpoints, fields, and partit
 Config comes entirely from JSON.
 */
 type TableConfig struct {
+	// declaration is the JSON this was read from, kept so a node can tell
+	// whether the table it holds open is still the one it was declared with.
+	declaration string
+
 	Namespace  string             `json:"namespace"`
 	Table      string             `json:"table"`
 	URI        string             `json:"uri"`
 	Warehouse  string             `json:"warehouse"`
 	Fields     []TableFieldConfig `json:"fields"`
 	Partitions []string           `json:"partitions"`
+}
+
+/*
+ConfigFromJSON reads one table declaration.
+*/
+func ConfigFromJSON(jsonConfig string) (TableConfig, error) {
+	var cfg TableConfig
+
+	if err := sonic.Unmarshal([]byte(jsonConfig), &cfg); err != nil {
+		return cfg, errnie.Error(errnie.Err(
+			errnie.Validation, "tables: invalid table declaration JSON", err,
+		))
+	}
+
+	if cfg.Namespace == "" || cfg.Table == "" {
+		return cfg, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"tables: a table declaration names a namespace and a table",
+			nil,
+		))
+	}
+
+	if len(cfg.Fields) == 0 {
+		return cfg, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"tables: a table declaration names the columns it holds",
+			nil,
+		))
+	}
+
+	cfg.declaration = jsonConfig
+	return cfg, nil
 }
 
 /*

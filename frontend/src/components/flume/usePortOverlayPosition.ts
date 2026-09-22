@@ -2,6 +2,7 @@ import type { RefObject } from "react";
 import React from "react";
 import { readLiveStageScale } from "#/components/flume/connectionCalculator";
 import {
+	FlumeGraphWorkerContext,
 	NodeDragOverrideContext,
 	NodeMapContext,
 } from "#/components/flume/context";
@@ -42,6 +43,7 @@ export const usePortOverlayPosition = (
 	transputType: "input" | "output",
 ): PortOverlayPosition => {
 	const registerPortLayout = React.useContext(PortLayoutRegistrationContext);
+	const graphWorker = React.useContext(FlumeGraphWorkerContext);
 	const nodes = React.useContext(NodeMapContext);
 	const dragOverride = React.useContext(NodeDragOverrideContext);
 	const [portSize, setPortSize] = React.useState({ width: 12, height: 12 });
@@ -119,10 +121,12 @@ export const usePortOverlayPosition = (
 		return () => {
 			resizeObserver.disconnect();
 			window.removeEventListener("resize", measurePortLayout);
+			graphWorker?.clearPortLayout(nodeId, portName, transputType);
 		};
 	}, [
 		anchorRef,
 		editorId,
+		graphWorker,
 		node,
 		nodeId,
 		portName,

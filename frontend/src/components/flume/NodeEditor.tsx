@@ -208,8 +208,12 @@ export const NodeEditor = ({
 		[],
 	);
 
-	const { indexRef, registerPortLayout: registerPortLayoutBase } =
-		useSpatialIndex(editorId, nodeActions, onNodeLayoutChange);
+	const {
+		indexRef,
+		registerPortLayout: registerPortLayoutBase,
+		clearPortLayout: clearPortLayoutBase,
+		clearNodePortLayouts: clearNodePortLayoutsBase,
+	} = useSpatialIndex(editorId, nodeActions, onNodeLayoutChange);
 	const graphWorkerBase = useFlumeGraphWorker(
 		editorId,
 		edgeRoutingMode,
@@ -220,6 +224,18 @@ export const NodeEditor = ({
 	const graphWorker = React.useMemo(
 		() => ({
 			...graphWorkerBase,
+			clearPortLayout: (
+				nodeId: string,
+				portName: string,
+				transputType: "input" | "output",
+			) => {
+				clearPortLayoutBase(nodeId, portName, transputType);
+				graphWorkerBase.clearPortLayout(nodeId, portName, transputType);
+			},
+			clearNodePortLayouts: (nodeId: string) => {
+				clearNodePortLayoutsBase(nodeId);
+				graphWorkerBase.clearNodePortLayouts(nodeId);
+			},
 			beginDrag: (nodeId: string) => {
 				graphWorkerBase.beginDrag(nodeId);
 			},
@@ -232,7 +248,7 @@ export const NodeEditor = ({
 				graphWorkerBase.endDrag(nodeId, x, y);
 			},
 		}),
-		[graphWorkerBase, editorId],
+		[graphWorkerBase, clearPortLayoutBase, clearNodePortLayoutsBase, editorId],
 	);
 
 	// Push topology to the worker whenever nodes change. This is the

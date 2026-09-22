@@ -102,4 +102,27 @@ describe("FlumeGraphEngine", () => {
 		expect(paths).toHaveLength(1);
 		expect(paths[0]?.d).toMatch(/^M .* L .* L /);
 	});
+
+	it("resets connection endpoints to node center when port layouts are cleared on collapse", () => {
+		const engine = new FlumeGraphEngine();
+		seedTwoNode(engine, "straight");
+
+		// Simulate expanding sub-graph: node becomes taller and port offset moves down to 120
+		engine.setNodeLayout("sink-1", 200, 200);
+		engine.setPortLayout("sink-1", "value", "input", 0, 120);
+
+		const expandedPaths = engine.computePaths();
+		expect(expandedPaths).toHaveLength(1);
+		// With sink at (200, 80), input at offset 120 gives target (200, 200)
+		expect(expandedPaths[0]?.d).toContain("L 200 200");
+
+		// Simulate collapsing sub-graph: node shrinks to 80 and port layouts are cleared
+		engine.setNodeLayout("sink-1", 200, 80);
+		engine.clearNodePortLayouts("sink-1");
+
+		const collapsedPaths = engine.computePaths();
+		expect(collapsedPaths).toHaveLength(1);
+		// With sink at (200, 80) and height 80, fallback center is (200, 80 + 40) = (200, 120)
+		expect(collapsedPaths[0]?.d).toContain("L 200 120");
+	});
 });

@@ -182,6 +182,28 @@ export const useFlumeGraphWorker = (
 		[scheduleRender],
 	);
 
+	const clearPortLayout = React.useCallback(
+		(nodeId: string, portName: string, transputType: TransputType) => {
+			const api = apiRef.current;
+			if (!api) return;
+
+			void api.clearPortLayout(nodeId, portName, transputType);
+			scheduleRender();
+		},
+		[scheduleRender],
+	);
+
+	const clearNodePortLayouts = React.useCallback(
+		(nodeId: string) => {
+			const api = apiRef.current;
+			if (!api) return;
+
+			void api.clearNodePortLayouts(nodeId);
+			scheduleRender();
+		},
+		[scheduleRender],
+	);
+
 	const setNodeLayout = React.useCallback(
 		(nodeId: string, width: number, height: number) => {
 			const api = apiRef.current;
@@ -283,11 +305,15 @@ export const useFlumeGraphWorker = (
 			recalculate,
 			setGraph,
 			setPortLayout,
+			clearPortLayout,
+			clearNodePortLayouts,
 			setNodeLayout,
 			scheduleRender,
 		}),
 		[
 			beginDrag,
+			clearNodePortLayouts,
+			clearPortLayout,
 			endDrag,
 			recalculate,
 			scheduleRender,

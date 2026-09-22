@@ -102,7 +102,6 @@ func (server *ExcursionServer) Write(ctx context.Context, call Excursion_write) 
 
 	qualifying := server.qualifying(args.Sigmas(), horizon, args.Floor())
 	server.reported.qualifying = qualifying
-	server.reported.found = false
 
 	server.step(value, qualifying*retrace, qualifying)
 	return nil
@@ -197,7 +196,11 @@ func (server *ExcursionServer) close(qualifying float64) {
 }
 
 /*
-Done reports the move the path last completed.
+Done reports the move the path last completed, and forgets it.
+
+A completed move is reported once. Clearing it as the next step arrives would
+lose a move made between two reads, and leaving it would report the same move
+for every step that followed it.
 */
 func (server *ExcursionServer) Done(ctx context.Context, call Excursion_done) error {
 	results, err := call.AllocResults()
@@ -232,5 +235,6 @@ func (server *ExcursionServer) Done(ctx context.Context, call Excursion_done) er
 	results.SetExcursion(server.reported.excursion)
 	results.SetConfirmed(server.reported.confirmed)
 
+	server.reported.found = false
 	return nil
 }

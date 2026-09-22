@@ -5273,6 +5273,31 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 	});
 	config.addNodeType({
+		type: "temporal.Excursion",
+		label: "Excursion",
+		category: "temporal",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "floor", label: "floor" }),
+			ports.int64({ name: "horizon", label: "horizon" }),
+			ports.float64({ name: "retrace", label: "retrace" }),
+			ports.float64({ name: "sigmas", label: "sigmas" }),
+			ports.float64({ name: "value", label: "value" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "anchor", label: "anchor" }),
+			ports.bool({ name: "confirmed", label: "confirmed" }),
+			ports.float64({ name: "excursion", label: "excursion" }),
+			ports.float64({ name: "extremum", label: "extremum" }),
+			ports.bool({ name: "found", label: "found" }),
+			ports.float64({ name: "ignition", label: "ignition" }),
+			ports.int64({ name: "legs", label: "legs" }),
+			ports.float64({ name: "qualifying", label: "qualifying" }),
+			ports.float64({ name: "sigma", label: "sigma" }),
+			ports.int64({ name: "steps", label: "steps" }),
+		],
+	});
+	config.addNodeType({
 		type: "temporal.LogReturns",
 		label: "Log Returns",
 		category: "temporal",

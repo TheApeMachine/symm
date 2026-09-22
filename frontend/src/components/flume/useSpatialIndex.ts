@@ -25,6 +25,14 @@ export type RegisterPortLayout = (
 	entry: PortLayoutEntry,
 ) => void;
 
+export type ClearPortLayout = (
+	nodeId: string,
+	portName: string,
+	transputType: "input" | "output",
+) => void;
+
+export type ClearNodePortLayouts = (nodeId: string) => void;
+
 export const PortLayoutRegistrationContext =
 	React.createContext<RegisterPortLayout | null>(null);
 
@@ -40,6 +48,8 @@ export function useSpatialIndex(
 ): {
 	indexRef: React.RefObject<SpatialIndexSnapshot>;
 	registerPortLayout: RegisterPortLayout;
+	clearPortLayout: ClearPortLayout;
+	clearNodePortLayouts: ClearNodePortLayouts;
 } {
 	const indexRef = React.useRef<SpatialIndexSnapshot>(
 		createSpatialIndexSnapshot(),
@@ -51,6 +61,27 @@ export function useSpatialIndex(
 				portLayoutKey(nodeId, portName, transputType),
 				entry,
 			);
+		},
+		[],
+	);
+
+	const clearPortLayout = React.useCallback<ClearPortLayout>(
+		(nodeId, portName, transputType) => {
+			indexRef.current.portLayouts.delete(
+				portLayoutKey(nodeId, portName, transputType),
+			);
+		},
+		[],
+	);
+
+	const clearNodePortLayouts = React.useCallback<ClearNodePortLayouts>(
+		(nodeId) => {
+			const nodePrefix = `${nodeId}|`;
+			for (const key of Array.from(indexRef.current.portLayouts.keys())) {
+				if (key.startsWith(nodePrefix)) {
+					indexRef.current.portLayouts.delete(key);
+				}
+			}
 		},
 		[],
 	);
@@ -143,7 +174,12 @@ export function useSpatialIndex(
 		};
 	}, [editorId, nodeActions, onNodeLayoutChange]);
 
-	return { indexRef, registerPortLayout };
+	return {
+		indexRef,
+		registerPortLayout,
+		clearPortLayout,
+		clearNodePortLayouts,
+	};
 }
 
 /*

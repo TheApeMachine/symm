@@ -9,17 +9,18 @@ import {
 import type { RefObject } from "react";
 import React from "react";
 import { createPortal } from "react-dom";
+import { pipelineGraphCollection } from "#/collections/pipeline_graph";
 import {
 	ConnectionRecalculateContext,
 	DiagnosticsContext,
 	FlumeGraphWorkerContext,
 	GraphIdContext,
 	NodeActionsContext,
-	NodeLogsContext,
 	type NodeLogEntry,
+	NodeLogsContext,
 	NodeResultsContext,
-	NodeStatusesContext,
 	type NodeStatus,
+	NodeStatusesContext,
 	NodeTypesContext,
 	PortTypesContext,
 	StageContext,
@@ -43,11 +44,10 @@ import {
 	FrameTitle,
 } from "#/components/ui/frame";
 import { cn } from "@/lib/utils";
-import { pipelineGraphCollection } from "#/collections/pipeline_graph";
-import { fetchAndImportDefinition } from "../import-graph";
 import ContextMenu from "../ContextMenu/ContextMenu";
 import Draggable from "../Draggable/Draggable";
 import IoPorts from "../IoPorts/IoPorts";
+import { fetchAndImportDefinition } from "../import-graph";
 import { NodeLogs } from "./NodeLogs";
 
 /* Lazy to avoid circular dep — NodeEditor imports Node */
@@ -121,12 +121,23 @@ const Node = ({
 		const normParts = normType.split(".");
 		for (const [key, entries] of Object.entries(allLogs)) {
 			const normKey = key.toLowerCase();
-			if (normKey === normType || normType.includes(normKey) || normKey.includes(normType)) {
+			if (
+				normKey === normType ||
+				normType.includes(normKey) ||
+				normKey.includes(normType)
+			) {
 				return entries;
 			}
 			const keyParts = normKey.split(".");
-			if (normParts.length >= 2 && keyParts.length >= 2 && normParts[0] === keyParts[0]) {
-				if (normParts[1].includes(keyParts[1]) || keyParts[1].includes(normParts[1])) {
+			if (
+				normParts.length >= 2 &&
+				keyParts.length >= 2 &&
+				normParts[0] === keyParts[0]
+			) {
+				if (
+					normParts[1].includes(keyParts[1]) ||
+					keyParts[1].includes(normParts[1])
+				) {
 					return entries;
 				}
 			}
@@ -298,6 +309,31 @@ const Node = ({
 
 	// A sub-graph shows its ports only while it is open.
 	const showPorts = !isDefinitionNode || subGraphOpen;
+	const prevShowPortsRef = React.useRef(showPorts);
+
+	React.useLayoutEffect(() => {
+		if (prevShowPortsRef.current && !showPorts) {
+			graphWorker?.clearNodePortLayouts(id);
+
+			if (nodeWrapper.current) {
+				const clientWidth = nodeWrapper.current.clientWidth;
+				const clientHeight = nodeWrapper.current.clientHeight;
+
+				if (clientWidth > 0 && clientHeight > 0) {
+					graphWorker?.setNodeLayout(id, clientWidth, clientHeight);
+				}
+			}
+
+			triggerRecalculation?.();
+		}
+
+		if (!prevShowPortsRef.current && showPorts) {
+			triggerRecalculation?.();
+		}
+
+		prevShowPortsRef.current = showPorts;
+	}, [showPorts, id, graphWorker, triggerRecalculation]);
+
 	const wiredPortCount =
 		Object.keys(connections?.inputs ?? {}).length +
 		Object.keys(connections?.outputs ?? {}).length;
@@ -330,7 +366,11 @@ const Node = ({
 		portalContainer
 			? createPortal(
 					<Flex.Column className="fixed inset-0 z-50 bg-(--bg)">
-						<Flex.Row align="center" gap={3} className="border-b px-4 py-2 text-sm text-(--f3)">
+						<Flex.Row
+							align="center"
+							gap={3}
+							className="border-b px-4 py-2 text-sm text-(--f3)"
+						>
 							<NetworkIcon className="size-4" />
 							<span className="font-medium text-(--f1)">{label}</span>
 							<span className="flex-1">{description}</span>
@@ -388,7 +428,9 @@ const Node = ({
 			stageState={stageState}
 			stageRect={stageRect}
 		>
-			<Frame className={`min-w-0 w-full transition-all ${hasError ? "ring-2 ring-red-500 shadow-[0_0_12px_rgba(239,68,68,0.4)]" : ""}`}>
+			<Frame
+				className={`min-w-0 w-full transition-all ${hasError ? "ring-2 ring-red-500 shadow-[0_0_12px_rgba(239,68,68,0.4)]" : ""}`}
+			>
 				<FrameHeader>
 					<div className="flex items-center justify-between gap-2">
 						<div className="min-w-0 flex-1 flex flex-col">
@@ -470,22 +512,22 @@ const Node = ({
 					side; opened, it shows what it is made of.
 				*/}
 				{showPorts && (
-				<Card>
-					<CardPanel>
-						<Form>
-							<Flex.Column gap={4}>
-								<IoPorts
-									nodeId={id}
-									inputs={inputs}
-									outputs={outputs}
-									connections={connections}
-									updateNodeConnections={updateNodeConnections}
-									inputData={inputData}
-								/>
-							</Flex.Column>
-						</Form>
-					</CardPanel>
-				</Card>
+					<Card>
+						<CardPanel>
+							<Form>
+								<Flex.Column gap={4}>
+									<IoPorts
+										nodeId={id}
+										inputs={inputs}
+										outputs={outputs}
+										connections={connections}
+										updateNodeConnections={updateNodeConnections}
+										inputData={inputData}
+									/>
+								</Flex.Column>
+							</Form>
+						</CardPanel>
+					</Card>
 				)}
 
 				{!showPorts && (

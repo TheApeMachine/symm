@@ -50,6 +50,7 @@ func TestTrainingGraph(t *testing.T) {
 				"decision",  // wait, enter or exit
 				"reinforce", // and what it learns
 				"replay",    // fragments come back out of the same table
+				"excursion", // the moves the tape actually made
 				"entry_leg", // graded on the run into ignition
 				"exit_leg",  // and the run out of it
 			} {
