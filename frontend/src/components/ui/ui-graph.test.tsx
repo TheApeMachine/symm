@@ -1,12 +1,14 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { createFlumeConfig } from "../flume/flume-config.generated";
 import { compileUI, type FlumeGraph } from "./compiler";
 import {
+	clearSeries,
 	type CompiledUINode,
 	type CompiledUIRoute,
+	readSeriesForTest,
 	renderNode,
 	renderUIRoute,
 } from "./renderer";
@@ -404,5 +406,228 @@ describe("UI Graph Compiler (compileUI)", () => {
 				port: "out",
 			},
 		});
+	});
+});
+
+describe("Authored UI manifest", () => {
+	/*
+		The manifest the backend ships, compiled and rendered by the same path
+		the app uses. A graph that only compiles proves nothing about whether
+		anything reaches the screen.
+	*/
+	it("renders the authored overview graph", async () => {
+		const manifest = (await import("../../../../manifest/ui_overview.json"))
+			.default as unknown as FlumeGraph;
+
+		const compilation = compileUI(manifest);
+
+		expect(compilation.diagnostics).toEqual([]);
+		expect(compilation.routes).toHaveLength(1);
+
+		const [route] = compilation.routes;
+		expect(route.path).toBe("/overview");
+		expect(route.title).toBe("Signal Overview");
+
+		render(<>{renderUIRoute(route)}</>);
+
+		// Each panel the graph authored, by the title it was given.
+		expect(screen.getByText("Correlation")).toBeDefined();
+		expect(screen.getByText("Liquidity")).toBeDefined();
+		expect(screen.getByText("Arrivals")).toBeDefined();
+
+		// And what each panel was told to show.
+		expect(screen.getByText("signed correlation")).toBeDefined();
+		expect(screen.getByText("relative spread")).toBeDefined();
+		expect(screen.getByText("conditional intensity")).toBeDefined();
+	});
+
+	it("nests components the way the graph wired them", async () => {
+		const manifest = (await import("../../../../manifest/ui_overview.json"))
+			.default as unknown as FlumeGraph;
+
+		const [route] = compileUI(manifest).routes;
+		const [page] = route.components;
+
+		expect(page.name).toBe("Flex.Column");
+		expect(page.className).toBe("h-full min-h-0 gap-4 p-4");
+		expect(page.children).toHaveLength(3);
+
+		const [correlation] = page.children ?? [];
+		expect(correlation.name).toBe("Panel");
+
+		// The heading is a component of its own, not an attribute on the panel.
+		const [heading] = correlation.children ?? [];
+		expect(heading.name).toBe("Panel.Header");
+		expect(heading.props?.title).toBe("Correlation");
+		expect((correlation.children ?? []).map((child) => child.name)).toEqual([
+			"Panel.Header",
+			"Meter",
+			"Badge",
+		]);
+	});
+
+	it("refuses a component the library does not have", () => {
+		const compilation = compileUI({
+			nodes: {
+				route: {
+					id: "route",
+					type: "ui.UIRoute",
+					inputData: { path: { value: "/broken" } },
+					connections: {
+						inputs: { components: [{ nodeId: "ghost", portName: "out" }] },
+						outputs: {},
+					},
+				},
+				ghost: {
+					id: "ghost",
+					type: "ui.NotAComponent",
+					connections: {
+						inputs: {},
+						outputs: { out: [{ nodeId: "route", portName: "components" }] },
+					},
+				},
+			},
+		} as unknown as FlumeGraph);
+
+		// Naming a component that does not exist is reported against the node
+		// that named it, rather than rendering as nothing.
+		const unknown = compilation.diagnostics.filter(
+			(diagnostic) => diagnostic.kind === "unknown_component",
+		);
+
+		expect(unknown.length).toBeGreaterThan(0);
+		expect(unknown[0].nodeId).toBe("ghost");
+	});
+});
+
+describe("an unfilled control", () => {
+	/*
+		Flume stores a control the author never typed into as an empty object.
+		Stat renders its value slot directly, so passing that object on throws
+		"Objects are not valid as a React child" and takes the whole page down.
+	*/
+	it("carries no value rather than an empty object", () => {
+		const compilation = compileUI({
+			nodes: {
+				row: {
+					id: "row",
+					type: "ui.Flex.Row",
+					inputData: { className: {} },
+					connections: {
+						inputs: {
+							components: [{ nodeId: "spark", portName: "out" }],
+							components_1: [{ nodeId: "stat", portName: "out" }],
+						},
+						outputs: {},
+					},
+				},
+				spark: {
+					id: "spark",
+					type: "ui.Sparkline",
+					inputData: { title: {} },
+					connections: {
+						inputs: {},
+						outputs: { out: [{ nodeId: "row", portName: "components" }] },
+					},
+				},
+				stat: {
+					id: "stat",
+					type: "ui.Stat",
+					// The slot the author never filled in.
+					inputData: { value: {}, label: {} },
+					connections: {
+						inputs: {},
+						outputs: { out: [{ nodeId: "row", portName: "components_1" }] },
+					},
+				},
+			},
+		});
+
+		expect(compilation.diagnostics).toEqual([]);
+
+		const rendered = compilation.routes[0].components;
+		const stat = rendered.flatMap((node) => node.children ?? []).find(
+			(child) => child.name === "Stat",
+		);
+
+		expect(stat?.props?.value).toBeUndefined();
+
+		// And the page renders rather than throwing.
+		render(<>{renderUIRoute(compilation.routes[0])}</>);
+	});
+});
+
+describe("a component that draws a series", () => {
+	/*
+		The whole point of the editor is plugging data into a component. A
+		series prop was dropped by the reflector, so Sparkline had no port to
+		plug anything into.
+	*/
+	it("exposes the port its data arrives on", () => {
+		const compilation = compileUI({
+			nodes: {
+				feed: {
+					id: "feed",
+					type: "arithmetic.Add",
+					connections: {
+						outputs: { out: [{ nodeId: "spark", portName: "points" }] },
+					},
+				},
+				spark: {
+					id: "spark",
+					type: "ui.Sparkline",
+					connections: {
+						inputs: { points: [{ nodeId: "feed", portName: "out" }] },
+					},
+				},
+			},
+		});
+
+		expect(compilation.diagnostics).toEqual([]);
+
+		const [spark] = compilation.routes[0].components;
+		expect(spark.props?.points).toEqual({
+			binding: { node: "feed", port: "out" },
+		});
+	});
+
+	it("accumulates the scalars it is handed into the history it draws", async () => {
+		clearSeries();
+
+		const graph = {
+			nodes: {
+				feed: {
+					id: "feed",
+					type: "arithmetic.Add",
+					connections: {
+						outputs: { out: [{ nodeId: "spark", portName: "points" }] },
+					},
+				},
+				spark: {
+					id: "spark",
+					type: "ui.Sparkline",
+					connections: {
+						inputs: { points: [{ nodeId: "feed", portName: "out" }] },
+					},
+				},
+			},
+		};
+
+		const [route] = compileUI(graph).routes;
+
+		const { rerender } = render(
+			<>{renderUIRoute(route, { feed: { out: 1 } })}</>,
+		);
+		rerender(<>{renderUIRoute(route, { feed: { out: 2 } })}</>);
+		rerender(<>{renderUIRoute(route, { feed: { out: 3 } })}</>);
+
+		// The readings are held against the producer, so the history is the
+		// series the sparkline draws rather than only the latest scalar.
+		await waitFor(() => {
+			const path = document.querySelector("svg polyline, svg path");
+			expect(path).toBeDefined();
+		});
+
+		expect(readSeriesForTest("feed.out")).toEqual([1, 2, 3]);
 	});
 });

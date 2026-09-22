@@ -1,6 +1,7 @@
 import type { RefObject } from "react";
 import type FlumeCache from "#/components/flume/Cache";
 import { getCanvasRef } from "#/components/flume/connection-stage-coords";
+import { portFamily } from "#/components/flume/port-families";
 import type { TransputType } from "#/components/flume/types";
 
 /** Encodes a connection-id segment so the `|` delimiter is unambiguous. */
@@ -28,7 +29,25 @@ export const findPortHandle = (
 	nodeId: string,
 	portName: string,
 	transputType: TransputType = "input",
-) => root.querySelector(portHandleSelector(nodeId, portName, transputType));
+) => {
+	const handle = root.querySelector(
+		portHandleSelector(nodeId, portName, transputType),
+	);
+
+	if (handle) {
+		return handle;
+	}
+
+	// A collapsed gathering port draws one handle for all of its slots, so an
+	// edge into a slot anchors on the port the slot belongs to.
+	const family = portFamily(portName);
+
+	if (!family) {
+		return null;
+	}
+
+	return root.querySelector(portHandleSelector(nodeId, family, transputType));
+};
 
 const portHandleFromElement = (element: Element): HTMLElement | null => {
 	const portHandle = element.closest(

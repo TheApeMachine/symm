@@ -724,6 +724,14 @@ func definitionPorts(graph Graph, schemas map[string]Schema) (inputs, outputs []
 				continue
 			}
 
+			// An enum names one of a fixed set and always stands for one of
+			// them, so it declares what a value is rather than waiting for a
+			// value to arrive. Exposing it would ask the enclosing graph to
+			// supply something the node already has.
+			if field.Type == "Status" {
+				continue
+			}
+
 			inputs = append(inputs, definitionPort{
 				Name: id + "." + field.Name,
 				Type: field.Type,
@@ -732,6 +740,13 @@ func definitionPorts(graph Graph, schemas map[string]Schema) (inputs, outputs []
 
 		for _, field := range schema.Outputs {
 			if len(node.Connections.Outputs[field.Name]) > 0 {
+				continue
+			}
+
+			// A node's status is how it is doing, not something it measured.
+			// The enclosing graph reads the values a sub-graph produced; each
+			// node's health belongs to the node.
+			if field.Type == "Status" {
 				continue
 			}
 
@@ -939,6 +954,11 @@ func emitUIComponentNodeTypes(buf *strings.Builder, uiMeta map[string]UIComponen
 
 			case "string":
 				fmt.Fprintf(buf, "\t\t\t\tports.string({ name: %q, label: %q }),\n", prop.Name, prop.Name)
+
+			case "series":
+				// One scalar per evaluation. The history the component draws
+				// is kept where it is drawn, not carried on the wire.
+				fmt.Fprintf(buf, "\t\t\t\tports.float64({ name: %q, label: %q }),\n", prop.Name, prop.Name)
 
 			case "slot":
 				fmt.Fprintf(buf, "\t\t\t\tports.Capability({ name: %q, label: %q }),\n", prop.Name, prop.Name)

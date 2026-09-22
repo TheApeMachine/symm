@@ -1,0 +1,350 @@
+{
+  "id": "ui_overview",
+  "name": "ui_overview",
+  "nodes": {
+    "route": {
+      "id": "route",
+      "type": "ui.UIRoute",
+      "inputData": {
+        "path": {
+          "value": "/overview"
+        },
+        "title": {
+          "value": "Signal Overview"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "components": [
+            {
+              "nodeId": "page",
+              "portName": "self"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "page": {
+      "id": "page",
+      "type": "ui.Flex.Column",
+      "inputData": {
+        "className": {
+          "value": "h-full min-h-0 gap-4 p-4"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "components": [
+            {
+              "nodeId": "correlation",
+              "portName": "self"
+            }
+          ],
+          "components_1": [
+            {
+              "nodeId": "liquidity",
+              "portName": "self"
+            }
+          ],
+          "components_2": [
+            {
+              "nodeId": "arrivals",
+              "portName": "self"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "route",
+              "portName": "components"
+            }
+          ]
+        }
+      }
+    },
+    "correlation": {
+      "id": "correlation",
+      "type": "ui.Panel",
+      "connections": {
+        "inputs": {
+          "components": [
+            {
+              "nodeId": "correlationHeader",
+              "portName": "self"
+            }
+          ],
+          "components_1": [
+            {
+              "nodeId": "correlationMeter",
+              "portName": "self"
+            }
+          ],
+          "components_2": [
+            {
+              "nodeId": "correlationBadge",
+              "portName": "self"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "page",
+              "portName": "components"
+            }
+          ]
+        }
+      }
+    },
+    "correlationHeader": {
+      "id": "correlationHeader",
+      "type": "ui.Panel.Header",
+      "inputData": {
+        "title": {
+          "value": "Correlation"
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "correlation",
+              "portName": "components"
+            }
+          ]
+        }
+      }
+    },
+    "correlationMeter": {
+      "id": "correlationMeter",
+      "type": "ui.Meter",
+      "inputData": {
+        "label": {
+          "value": "signed correlation"
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "correlation",
+              "portName": "components_1"
+            }
+          ]
+        }
+      }
+    },
+    "correlationBadge": {
+      "id": "correlationBadge",
+      "type": "ui.Badge",
+      "inputData": {
+        "label": {
+          "value": "leadlag"
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "correlation",
+              "portName": "components_2"
+            }
+          ]
+        }
+      }
+    },
+    "liquidity": {
+      "id": "liquidity",
+      "type": "ui.Panel",
+      "connections": {
+        "inputs": {
+          "components": [
+            {
+              "nodeId": "liquidityHeader",
+              "portName": "self"
+            }
+          ],
+          "components_1": [
+            {
+              "nodeId": "liquidityMeter",
+              "portName": "self"
+            }
+          ],
+          "components_2": [
+            {
+              "nodeId": "liquidityBadge",
+              "portName": "self"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "page",
+              "portName": "components_1"
+            }
+          ]
+        }
+      }
+    },
+    "liquidityHeader": {
+      "id": "liquidityHeader",
+      "type": "ui.Panel.Header",
+      "inputData": {
+        "title": {
+          "value": "Liquidity"
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "liquidity",
+              "portName": "components"
+            }
+          ]
+        }
+      }
+    },
+    "liquidityMeter": {
+      "id": "liquidityMeter",
+      "type": "ui.Meter",
+      "inputData": {
+        "label": {
+          "value": "relative spread"
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "liquidity",
+              "portName": "components_1"
+            }
+          ]
+        }
+      }
+    },
+    "liquidityBadge": {
+      "id": "liquidityBadge",
+      "type": "ui.Badge",
+      "inputData": {
+        "label": {
+          "value": "book"
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "liquidity",
+              "portName": "components_2"
+            }
+          ]
+        }
+      }
+    },
+    "arrivals": {
+      "id": "arrivals",
+      "type": "ui.Panel",
+      "connections": {
+        "inputs": {
+          "components": [
+            {
+              "nodeId": "arrivalsHeader",
+              "portName": "self"
+            }
+          ],
+          "components_1": [
+            {
+              "nodeId": "arrivalsMeter",
+              "portName": "self"
+            }
+          ],
+          "components_2": [
+            {
+              "nodeId": "arrivalsBadge",
+              "portName": "self"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "page",
+              "portName": "components_2"
+            }
+          ]
+        }
+      }
+    },
+    "arrivalsHeader": {
+      "id": "arrivalsHeader",
+      "type": "ui.Panel.Header",
+      "inputData": {
+        "title": {
+          "value": "Arrivals"
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "arrivals",
+              "portName": "components"
+            }
+          ]
+        }
+      }
+    },
+    "arrivalsMeter": {
+      "id": "arrivalsMeter",
+      "type": "ui.Meter",
+      "inputData": {
+        "label": {
+          "value": "conditional intensity"
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "arrivals",
+              "portName": "components_1"
+            }
+          ]
+        }
+      }
+    },
+    "arrivalsBadge": {
+      "id": "arrivalsBadge",
+      "type": "ui.Badge",
+      "inputData": {
+        "label": {
+          "value": "hawkes"
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "arrivals",
+              "portName": "components_2"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

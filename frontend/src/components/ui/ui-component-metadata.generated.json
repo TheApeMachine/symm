@@ -5081,6 +5081,11 @@
         "optional": true
       },
       {
+        "name": "values",
+        "type": "series",
+        "optional": true
+      },
+      {
         "name": "columns",
         "type": "select",
         "options": [
@@ -5346,6 +5351,11 @@
         "optional": true
       },
       {
+        "name": "values",
+        "type": "series",
+        "optional": false
+      },
+      {
         "name": "cellClassName",
         "type": "string",
         "optional": true
@@ -5434,6 +5444,11 @@
           "32"
         ],
         "optional": true
+      },
+      {
+        "name": "values",
+        "type": "series",
+        "optional": false
       },
       {
         "name": "cellClassName",
@@ -7223,6 +7238,11 @@
       {
         "name": "href",
         "type": "string",
+        "optional": true
+      },
+      {
+        "name": "points",
+        "type": "series",
         "optional": true
       },
       {

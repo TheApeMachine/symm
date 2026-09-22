@@ -50,14 +50,7 @@
       "y": -900.0,
       "connections": {
         "inputs": {},
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:previous_best_price:bid",
-              "portName": "raw"
-            }
-          ]
-        }
+        "outputs": {}
       }
     },
     "previous_touch_quantity:bid": {
@@ -86,10 +79,6 @@
             {
               "nodeId": "retreat_fraction:bid",
               "portName": "b"
-            },
-            {
-              "nodeId": "metric:previous_touch_quantity:bid",
-              "portName": "raw"
             }
           ]
         }
@@ -109,10 +98,6 @@
             {
               "nodeId": "retreated_quantity:bid",
               "portName": "b"
-            },
-            {
-              "nodeId": "metric:touch_price_log_change:bid",
-              "portName": "raw"
             }
           ]
         }
@@ -178,10 +163,6 @@
             {
               "nodeId": "net_withdrawal_rate:bid",
               "portName": "a"
-            },
-            {
-              "nodeId": "metric:net_withdrawn_quantity:bid",
-              "portName": "raw"
             }
           ]
         }
@@ -217,10 +198,6 @@
             {
               "nodeId": "net_replenishment_rate:bid",
               "portName": "a"
-            },
-            {
-              "nodeId": "metric:net_replenished_quantity:bid",
-              "portName": "raw"
             }
           ]
         }
@@ -240,10 +217,6 @@
             {
               "nodeId": "retreated_quantity:bid",
               "portName": "a"
-            },
-            {
-              "nodeId": "metric:unfilled_residual_quantity:bid",
-              "portName": "raw"
             }
           ]
         }
@@ -280,10 +253,6 @@
             {
               "nodeId": "retreat_rate:bid",
               "portName": "a"
-            },
-            {
-              "nodeId": "metric:retreated_quantity:bid",
-              "portName": "raw"
             }
           ]
         }
@@ -326,10 +295,6 @@
               "portName": "value"
             },
             {
-              "nodeId": "metric:net_withdrawal_fraction:bid",
-              "portName": "raw"
-            },
-            {
               "nodeId": "withdrawal_fraction_velocity:bid",
               "portName": "val"
             }
@@ -359,14 +324,7 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:net_withdrawal_rate:bid",
-              "portName": "raw"
-            }
-          ]
-        }
+        "outputs": {}
       }
     },
     "net_replenishment_fraction:bid": {
@@ -391,14 +349,7 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:net_replenishment_fraction:bid",
-              "portName": "raw"
-            }
-          ]
-        }
+        "outputs": {}
       }
     },
     "net_replenishment_rate:bid": {
@@ -423,14 +374,7 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:net_replenishment_rate:bid",
-              "portName": "raw"
-            }
-          ]
-        }
+        "outputs": {}
       }
     },
     "retreat_fraction:bid": {
@@ -468,10 +412,6 @@
             {
               "nodeId": "retreatbidVariance",
               "portName": "value"
-            },
-            {
-              "nodeId": "metric:retreat_fraction:bid",
-              "portName": "raw"
             }
           ]
         }
@@ -499,14 +439,7 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:retreat_rate:bid",
-              "portName": "raw"
-            }
-          ]
-        }
+        "outputs": {}
       }
     },
     "previous_best_price:ask": {
@@ -518,14 +451,7 @@
       "y": -230.0,
       "connections": {
         "inputs": {},
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:previous_best_price:ask",
-              "portName": "raw"
-            }
-          ]
-        }
+        "outputs": {}
       }
     },
     "previous_touch_quantity:ask": {
@@ -554,10 +480,6 @@
             {
               "nodeId": "retreat_fraction:ask",
               "portName": "b"
-            },
-            {
-              "nodeId": "metric:previous_touch_quantity:ask",
-              "portName": "raw"
             }
           ]
         }
@@ -577,10 +499,6 @@
             {
               "nodeId": "retreated_quantity:ask",
               "portName": "b"
-            },
-            {
-              "nodeId": "metric:touch_price_log_change:ask",
-              "portName": "raw"
             }
           ]
         }
@@ -646,10 +564,6 @@
             {
               "nodeId": "net_withdrawal_rate:ask",
               "portName": "a"
-            },
-            {
-              "nodeId": "metric:net_withdrawn_quantity:ask",
-              "portName": "raw"
             }
           ]
         }
@@ -685,10 +599,6 @@
             {
               "nodeId": "net_replenishment_rate:ask",
               "portName": "a"
-            },
-            {
-              "nodeId": "metric:net_replenished_quantity:ask",
-              "portName": "raw"
             }
           ]
         }
@@ -708,10 +618,6 @@
             {
               "nodeId": "retreated_quantity:ask",
               "portName": "a"
-            },
-            {
-              "nodeId": "metric:unfilled_residual_quantity:ask",
-              "portName": "raw"
             }
           ]
         }
@@ -748,10 +654,6 @@
             {
               "nodeId": "retreat_rate:ask",
               "portName": "a"
-            },
-            {
-              "nodeId": "metric:retreated_quantity:ask",
-              "portName": "raw"
             }
           ]
         }
@@ -794,10 +696,6 @@
               "portName": "value"
             },
             {
-              "nodeId": "metric:net_withdrawal_fraction:ask",
-              "portName": "raw"
-            },
-            {
               "nodeId": "withdrawal_fraction_velocity:ask",
               "portName": "val"
             }
@@ -827,14 +725,7 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:net_withdrawal_rate:ask",
-              "portName": "raw"
-            }
-          ]
-        }
+        "outputs": {}
       }
     },
     "net_replenishment_fraction:ask": {
@@ -859,14 +750,7 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:net_replenishment_fraction:ask",
-              "portName": "raw"
-            }
-          ]
-        }
+        "outputs": {}
       }
     },
     "net_replenishment_rate:ask": {
@@ -891,14 +775,7 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:net_replenishment_rate:ask",
-              "portName": "raw"
-            }
-          ]
-        }
+        "outputs": {}
       }
     },
     "retreat_fraction:ask": {
@@ -936,10 +813,6 @@
             {
               "nodeId": "retreataskVariance",
               "portName": "value"
-            },
-            {
-              "nodeId": "metric:retreat_fraction:ask",
-              "portName": "raw"
             }
           ]
         }
@@ -967,14 +840,7 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:retreat_rate:ask",
-              "portName": "raw"
-            }
-          ]
-        }
+        "outputs": {}
       }
     },
     "withdrawbidBaseline": {
@@ -1032,14 +898,7 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:withdrawal_fraction_baseline:bid",
-              "portName": "raw"
-            }
-          ]
-        }
+        "outputs": {}
       }
     },
     "withdrawal_fraction_divergence:bid": {
@@ -1069,10 +928,6 @@
             {
               "nodeId": "withdrawal_fraction_zscore:bid",
               "portName": "a"
-            },
-            {
-              "nodeId": "metric:withdrawal_fraction_divergence:bid",
-              "portName": "raw"
             }
           ]
         }
@@ -1152,14 +1007,7 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:withdrawal_fraction_zscore:bid",
-              "portName": "raw"
-            }
-          ]
-        }
+        "outputs": {}
       }
     },
     "retreatbidBaseline": {
@@ -1221,14 +1069,7 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:retreat_fraction_baseline:bid",
-              "portName": "raw"
-            }
-          ]
-        }
+        "outputs": {}
       }
     },
     "retreat_fraction_divergence:bid": {
@@ -1258,10 +1099,6 @@
             {
               "nodeId": "retreat_fraction_zscore:bid",
               "portName": "a"
-            },
-            {
-              "nodeId": "metric:retreat_fraction_divergence:bid",
-              "portName": "raw"
             }
           ]
         }
@@ -1341,14 +1178,7 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:retreat_fraction_zscore:bid",
-              "portName": "raw"
-            }
-          ]
-        }
+        "outputs": {}
       }
     },
     "withdrawaskBaseline": {
@@ -1402,14 +1232,7 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:withdrawal_fraction_baseline:ask",
-              "portName": "raw"
-            }
-          ]
-        }
+        "outputs": {}
       }
     },
     "withdrawal_fraction_divergence:ask": {
@@ -1439,10 +1262,6 @@
             {
               "nodeId": "withdrawal_fraction_zscore:ask",
               "portName": "a"
-            },
-            {
-              "nodeId": "metric:withdrawal_fraction_divergence:ask",
-              "portName": "raw"
             }
           ]
         }
@@ -1522,14 +1341,7 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:withdrawal_fraction_zscore:ask",
-              "portName": "raw"
-            }
-          ]
-        }
+        "outputs": {}
       }
     },
     "retreataskBaseline": {
@@ -1583,14 +1395,7 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:retreat_fraction_baseline:ask",
-              "portName": "raw"
-            }
-          ]
-        }
+        "outputs": {}
       }
     },
     "retreat_fraction_divergence:ask": {
@@ -1620,10 +1425,6 @@
             {
               "nodeId": "retreat_fraction_zscore:ask",
               "portName": "a"
-            },
-            {
-              "nodeId": "metric:retreat_fraction_divergence:ask",
-              "portName": "raw"
             }
           ]
         }
@@ -1703,783 +1504,6 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:retreat_fraction_zscore:ask",
-              "portName": "raw"
-            }
-          ]
-        }
-      }
-    },
-    "metric:previous_best_price:bid": {
-      "id": "metric:previous_best_price:bid",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 0.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "previous_best_price:bid",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:previous_touch_quantity:bid": {
-      "id": "metric:previous_touch_quantity:bid",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 150.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "previous_touch_quantity:bid",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:touch_price_log_change:bid": {
-      "id": "metric:touch_price_log_change:bid",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 300.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "touch_price_log_change:bid",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:unfilled_residual_quantity:bid": {
-      "id": "metric:unfilled_residual_quantity:bid",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 450.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "unfilled_residual_quantity:bid",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:retreated_quantity:bid": {
-      "id": "metric:retreated_quantity:bid",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 600.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "retreated_quantity:bid",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:net_withdrawn_quantity:bid": {
-      "id": "metric:net_withdrawn_quantity:bid",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 750.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "net_withdrawn_quantity:bid",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:net_replenished_quantity:bid": {
-      "id": "metric:net_replenished_quantity:bid",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 900.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "net_replenished_quantity:bid",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:retreat_fraction:bid": {
-      "id": "metric:retreat_fraction:bid",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 1050.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "retreat_fraction:bid",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:net_withdrawal_fraction:bid": {
-      "id": "metric:net_withdrawal_fraction:bid",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 1200.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "net_withdrawal_fraction:bid",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:net_replenishment_fraction:bid": {
-      "id": "metric:net_replenishment_fraction:bid",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 1350.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "net_replenishment_fraction:bid",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:retreat_rate:bid": {
-      "id": "metric:retreat_rate:bid",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 1500.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "retreat_rate:bid",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:net_withdrawal_rate:bid": {
-      "id": "metric:net_withdrawal_rate:bid",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 1650.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "net_withdrawal_rate:bid",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:net_replenishment_rate:bid": {
-      "id": "metric:net_replenishment_rate:bid",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 1800.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "net_replenishment_rate:bid",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:withdrawal_fraction_baseline:bid": {
-      "id": "metric:withdrawal_fraction_baseline:bid",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 1950.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "withdrawal_fraction_baseline:bid",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:withdrawal_fraction_divergence:bid": {
-      "id": "metric:withdrawal_fraction_divergence:bid",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 2100.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "withdrawal_fraction_divergence:bid",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:withdrawal_fraction_zscore:bid": {
-      "id": "metric:withdrawal_fraction_zscore:bid",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 2250.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "withdrawal_fraction_zscore:bid",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:retreat_fraction_baseline:bid": {
-      "id": "metric:retreat_fraction_baseline:bid",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 2400.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "retreat_fraction_baseline:bid",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:retreat_fraction_divergence:bid": {
-      "id": "metric:retreat_fraction_divergence:bid",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 2550.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "retreat_fraction_divergence:bid",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:retreat_fraction_zscore:bid": {
-      "id": "metric:retreat_fraction_zscore:bid",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 2700.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "retreat_fraction_zscore:bid",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:previous_best_price:ask": {
-      "id": "metric:previous_best_price:ask",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 2850.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "previous_best_price:ask",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:previous_touch_quantity:ask": {
-      "id": "metric:previous_touch_quantity:ask",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 3000.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "previous_touch_quantity:ask",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:touch_price_log_change:ask": {
-      "id": "metric:touch_price_log_change:ask",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 3150.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "touch_price_log_change:ask",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:unfilled_residual_quantity:ask": {
-      "id": "metric:unfilled_residual_quantity:ask",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 3300.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "unfilled_residual_quantity:ask",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:retreated_quantity:ask": {
-      "id": "metric:retreated_quantity:ask",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 3450.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "retreated_quantity:ask",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:net_withdrawn_quantity:ask": {
-      "id": "metric:net_withdrawn_quantity:ask",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 3600.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "net_withdrawn_quantity:ask",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:net_replenished_quantity:ask": {
-      "id": "metric:net_replenished_quantity:ask",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 3750.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "net_replenished_quantity:ask",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:retreat_fraction:ask": {
-      "id": "metric:retreat_fraction:ask",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 3900.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "retreat_fraction:ask",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:net_withdrawal_fraction:ask": {
-      "id": "metric:net_withdrawal_fraction:ask",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 4050.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "net_withdrawal_fraction:ask",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:net_replenishment_fraction:ask": {
-      "id": "metric:net_replenishment_fraction:ask",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 4200.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "net_replenishment_fraction:ask",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:retreat_rate:ask": {
-      "id": "metric:retreat_rate:ask",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 4350.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "retreat_rate:ask",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:net_withdrawal_rate:ask": {
-      "id": "metric:net_withdrawal_rate:ask",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 4500.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "net_withdrawal_rate:ask",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:net_replenishment_rate:ask": {
-      "id": "metric:net_replenishment_rate:ask",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 4650.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "net_replenishment_rate:ask",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:withdrawal_fraction_baseline:ask": {
-      "id": "metric:withdrawal_fraction_baseline:ask",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 4800.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "withdrawal_fraction_baseline:ask",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:withdrawal_fraction_divergence:ask": {
-      "id": "metric:withdrawal_fraction_divergence:ask",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 4950.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "withdrawal_fraction_divergence:ask",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:withdrawal_fraction_zscore:ask": {
-      "id": "metric:withdrawal_fraction_zscore:ask",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 5100.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "withdrawal_fraction_zscore:ask",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:retreat_fraction_baseline:ask": {
-      "id": "metric:retreat_fraction_baseline:ask",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 5250.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "retreat_fraction_baseline:ask",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:retreat_fraction_divergence:ask": {
-      "id": "metric:retreat_fraction_divergence:ask",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 5400.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "retreat_fraction_divergence:ask",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:retreat_fraction_zscore:ask": {
-      "id": "metric:retreat_fraction_zscore:ask",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 5550.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "retreat_fraction_zscore:ask",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:best_price:bid": {
-      "id": "metric:best_price:bid",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 5700.0,
-      "connections": {
-        "inputs": {},
-        "outputs": {}
-      }
-    },
-    "metric:touch_quantity:bid": {
-      "id": "metric:touch_quantity:bid",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 5850.0,
-      "connections": {
-        "inputs": {},
-        "outputs": {}
-      }
-    },
-    "metric:best_price:ask": {
-      "id": "metric:best_price:ask",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 6000.0,
-      "connections": {
-        "inputs": {},
-        "outputs": {}
-      }
-    },
-    "metric:touch_quantity:ask": {
-      "id": "metric:touch_quantity:ask",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 6150.0,
-      "connections": {
-        "inputs": {},
         "outputs": {}
       }
     },
@@ -2499,32 +1523,6 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:withdrawal_fraction_velocity:bid",
-              "portName": "raw"
-            }
-          ]
-        }
-      }
-    },
-    "metric:withdrawal_fraction_velocity:bid": {
-      "id": "metric:withdrawal_fraction_velocity:bid",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 3000.0,
-      "y": 5000.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "withdrawal_fraction_velocity:bid",
-              "portName": "out"
-            }
-          ]
-        },
         "outputs": {}
       }
     },
@@ -2540,32 +1538,6 @@
           "val": [
             {
               "nodeId": "net_withdrawal_fraction:ask",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:withdrawal_fraction_velocity:ask",
-              "portName": "raw"
-            }
-          ]
-        }
-      }
-    },
-    "metric:withdrawal_fraction_velocity:ask": {
-      "id": "metric:withdrawal_fraction_velocity:ask",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 3000.0,
-      "y": 5150.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "withdrawal_fraction_velocity:ask",
               "portName": "out"
             }
           ]
@@ -2594,32 +1566,6 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:withdrawal_fraction_baseline",
-              "portName": "raw"
-            }
-          ]
-        }
-      }
-    },
-    "metric:withdrawal_fraction_baseline": {
-      "id": "metric:withdrawal_fraction_baseline",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 3000.0,
-      "y": 5300.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "withdrawal_fraction_baseline",
-              "portName": "out"
-            }
-          ]
-        },
         "outputs": {}
       }
     },
@@ -2644,32 +1590,6 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:retreat_fraction_baseline",
-              "portName": "raw"
-            }
-          ]
-        }
-      }
-    },
-    "metric:retreat_fraction_baseline": {
-      "id": "metric:retreat_fraction_baseline",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 3000.0,
-      "y": 5450.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "retreat_fraction_baseline",
-              "portName": "out"
-            }
-          ]
-        },
         "outputs": {}
       }
     },
@@ -2690,32 +1610,6 @@
           "a": [
             {
               "nodeId": "retreatbidBaseline",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:retreat_fraction_divergence",
-              "portName": "raw"
-            }
-          ]
-        }
-      }
-    },
-    "metric:retreat_fraction_divergence": {
-      "id": "metric:retreat_fraction_divergence",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 3000.0,
-      "y": 5600.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "retreat_fraction_divergence",
               "portName": "out"
             }
           ]

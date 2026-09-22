@@ -340,7 +340,6 @@ func CompileWithPrevious(
 						consumer: NodeID(vIdx),
 						field:    uint16(toField.Offset),
 						port:     target.PortName,
-						listed:   toField.CapabilityList,
 					})
 
 					continue
@@ -417,7 +416,29 @@ func CompileWithPrevious(
 						))
 					}
 
-					copier, err := CompileFanOutCopier(fromField, toField, slot)
+					// A producer that fills only some of its slots says so
+					// alongside them, so a consumer reading a slot that stayed
+					// empty keeps waiting instead of reading a zero.
+					presence, carried := resolveOutputField(uSchema, presencePort)
+
+					if carried && presence.ElementWhich != schema.Type_Which_bool {
+						return nil, errnie.Error(errnie.Err(
+							errnie.Validation,
+							fmt.Sprintf(
+								"compiler: node %q (%s) reports slot presence on %q, which must be a list of Bool",
+								uID, uNode.Type, presencePort,
+							),
+							nil,
+						))
+					}
+
+					if !carried {
+						presence = FieldInfo{}
+					}
+
+					copier, err := CompileFanOutCopier(
+						fromField, toField, slot, presence, carried,
+					)
 
 					if err != nil {
 						return nil, errnie.Error(errnie.Err(
@@ -435,6 +456,7 @@ func CompileWithPrevious(
 						ToNode:    vIdx,
 						ToField:   toFieldID,
 						Copy:      copier,
+						Delivered: CompileFanOutDelivery(fromField, slot, presence, carried),
 					})
 
 					compiledNodes[vIdx].RequiredMask |= (1 << toFieldID)
@@ -682,6 +704,12 @@ func resolveOutputField(ifaceSchema *InterfaceSchema, port string) (FieldInfo, b
 }
 
 /*
+presencePort is the port a producer uses to say which of its slots it filled.
+A producer without one filled every slot it handed back.
+*/
+const presencePort = "present"
+
+/*
 outputSlot reads the slot a numbered output port names.
 */
 func outputSlot(port string) (int, bool) {
@@ -900,9 +928,6 @@ type capabilityEdge struct {
 	consumer NodeID
 	field    uint16
 	port     string
-	// listed marks an edge into a port that carries several capabilities, so
-	// the providers accumulate instead of replacing one another.
-	listed bool
 }
 
 /*
@@ -912,16 +937,8 @@ reference for as long as the program does, and releasing the program releases
 it.
 */
 func bindCapabilities(nodes []CompiledNode, edges []capabilityEdge) error {
-	single, listed := partitionCapabilities(edges)
-
-	for _, edge := range single {
+	for _, edge := range edges {
 		if err := bindCapability(nodes, edge); err != nil {
-			return err
-		}
-	}
-
-	for slot, group := range listed {
-		if err := bindCapabilityList(nodes, slot, group); err != nil {
 			return err
 		}
 	}
@@ -930,34 +947,11 @@ func bindCapabilities(nodes []CompiledNode, edges []capabilityEdge) error {
 }
 
 /*
-capabilitySlot names one consumer port that capabilities are wired into.
+capabilitySlot names one consumer port that producers are wired into.
 */
 type capabilitySlot struct {
 	consumer NodeID
 	field    uint16
-}
-
-/*
-partitionCapabilities separates the wires that carry one capability from those
-that accumulate into a list, grouping the latter by the port they feed.
-*/
-func partitionCapabilities(
-	edges []capabilityEdge,
-) ([]capabilityEdge, map[capabilitySlot][]capabilityEdge) {
-	single := make([]capabilityEdge, 0, len(edges))
-	listed := make(map[capabilitySlot][]capabilityEdge)
-
-	for _, edge := range edges {
-		if !edge.listed {
-			single = append(single, edge)
-			continue
-		}
-
-		slot := capabilitySlot{consumer: edge.consumer, field: edge.field}
-		listed[slot] = append(listed[slot], edge)
-	}
-
-	return single, listed
 }
 
 /*
@@ -982,88 +976,6 @@ func bindCapability(nodes []CompiledNode, edge capabilityEdge) error {
 			fmt.Sprintf(
 				"compiler: failed to bind capability onto port %q of node %q",
 				edge.port, consumer.ID,
-			),
-			err,
-		))
-	}
-
-	return nil
-}
-
-/*
-bindCapabilityList places every provider wired into one port as a capability
-list, which is how a node that serves many others holds all of them.
-
-The providers are ordered by the port name the graph used, so the list a
-consumer reads is the order the graph shows rather than the order the compiler
-happened to walk the nodes in.
-*/
-func bindCapabilityList(
-	nodes []CompiledNode,
-	slot capabilitySlot,
-	group []capabilityEdge,
-) error {
-	sort.Slice(group, func(left, right int) bool {
-		return group[left].port < group[right].port
-	})
-
-	consumer := &nodes[slot.consumer]
-
-	if !consumer.ArgsTemplate.IsValid() {
-		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			fmt.Sprintf(
-				"compiler: node %q has no arguments to carry the capabilities on port %q",
-				consumer.ID, group[0].port,
-			),
-			nil,
-		))
-	}
-
-	segment := consumer.ArgsTemplate.Segment()
-	message := consumer.ArgsTemplate.Message()
-
-	// A capability list is a pointer list whose entries are interfaces.
-	list, err := capnp.NewPointerList(segment, int32(len(group)))
-
-	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.Internal,
-			fmt.Sprintf(
-				"compiler: failed to allocate capability list for port %q of node %q",
-				group[0].port, consumer.ID,
-			),
-			err,
-		))
-	}
-
-	for index, edge := range group {
-		provider, _, err := capabilityEnds(nodes, edge)
-
-		if err != nil {
-			return err
-		}
-
-		interfaceID := message.CapTable().Add(provider.Client.AddRef())
-
-		if err := list.Set(index, capnp.NewInterface(segment, interfaceID).ToPtr()); err != nil {
-			return errnie.Error(errnie.Err(
-				errnie.Internal,
-				fmt.Sprintf(
-					"compiler: failed to place capability %q into port %q of node %q",
-					provider.ID, edge.port, consumer.ID,
-				),
-				err,
-			))
-		}
-	}
-
-	if err := consumer.ArgsTemplate.SetPtr(slot.field, list.ToPtr()); err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.Internal,
-			fmt.Sprintf(
-				"compiler: failed to bind capability list onto port %q of node %q",
-				group[0].port, consumer.ID,
 			),
 			err,
 		))

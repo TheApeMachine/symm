@@ -34,6 +34,7 @@ import {
 	type BackendGraph,
 	fetchAndImportDefinition,
 	importJSONGraphToCollection,
+	reconcileDefinition,
 } from "./import-graph";
 import { NodeEditor, type NodeEditorHandle } from "./NodeEditor";
 
@@ -138,19 +139,22 @@ export const FlumeEditor = ({ projectId }: FlumeEditorProps) => {
 		If the canvas has no nodes or is empty, automatically load the master system graph.
 	*/
 	useEffect(() => {
-		const existing = pipelineGraphCollection.get(graphId);
-		const isEmpty =
-			!existing ||
-			!existing.nodes ||
-			Object.keys(existing.nodes).length === 0;
+		reconcileDefinition(selectedGraph, graphId, projectId ?? null)
+			.then((replaced: boolean) => {
+				if (!replaced) {
+					return;
+				}
 
-		if (isEmpty) {
-			fetchAndImportDefinition(selectedGraph, graphId, projectId ?? null).catch(
-				(err) => {
-					console.error("Auto-import failed for architecture:", err);
-				},
-			);
-		}
+				toastManager.add({
+					title: `Reloaded ${selectedGraph}`,
+					description: "The definition changed since this was drawn",
+					type: "info",
+					timeout: 4000,
+				});
+			})
+			.catch((err: unknown) => {
+				console.error("Auto-import failed for architecture:", err);
+			});
 	}, [graphId, selectedGraph, projectId]);
 
 	const handleSwitchDefinition = async (nextDef: string) => {

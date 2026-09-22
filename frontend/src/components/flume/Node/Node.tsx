@@ -43,6 +43,8 @@ import {
 	FrameTitle,
 } from "#/components/ui/frame";
 import { cn } from "@/lib/utils";
+import { pipelineGraphCollection } from "#/collections/pipeline_graph";
+import { fetchAndImportDefinition } from "../import-graph";
 import ContextMenu from "../ContextMenu/ContextMenu";
 import Draggable from "../Draggable/Draggable";
 import IoPorts from "../IoPorts/IoPorts";
@@ -267,6 +269,39 @@ const Node = ({
 	const portalContainer =
 		typeof document !== "undefined" ? document.body : null;
 
+	/*
+		A definition node's operations live in its own collection row, keyed by
+		the definition it is. The manifest behind it is held by the backend, so
+		opening the node is what brings it down: without this the row stays
+		empty and the sub-graph paints a blank canvas.
+	*/
+	React.useEffect(() => {
+		if (!isDefinitionNode || !subGraphOpen) {
+			return;
+		}
+
+		const existing = pipelineGraphCollection.get(subgraphId);
+
+		if (existing && Object.keys(existing.nodes ?? {}).length > 0) {
+			return;
+		}
+
+		const definition = String(currentNodeType?.type ?? "").slice(
+			"definition:".length,
+		);
+
+		fetchAndImportDefinition(definition, subgraphId).catch(() => {
+			// The node shows an empty canvas rather than tearing down the
+			// stage it is drawn on; the definition select reports the failure.
+		});
+	}, [isDefinitionNode, subGraphOpen, subgraphId, currentNodeType?.type]);
+
+	// A sub-graph shows its ports only while it is open.
+	const showPorts = !isDefinitionNode || subGraphOpen;
+	const wiredPortCount =
+		Object.keys(connections?.inputs ?? {}).length +
+		Object.keys(connections?.outputs ?? {}).length;
+
 	const resolvedSubGraph = isBlock ? (subGraph ?? true) : undefined;
 
 	const subGraphEditor =
@@ -427,6 +462,14 @@ const Node = ({
 					</div>
 				)}
 
+				{/*
+					A sub-graph's ports are its whole signal's worth of metrics.
+					Drawn while it is closed they make the node hundreds of rows
+					tall, and there are too many of them across the graph for the
+					router to place. Closed, it is a box its edges meet at the
+					side; opened, it shows what it is made of.
+				*/}
+				{showPorts && (
 				<Card>
 					<CardPanel>
 						<Form>
@@ -443,6 +486,19 @@ const Node = ({
 						</Form>
 					</CardPanel>
 				</Card>
+				)}
+
+				{!showPorts && (
+					<button
+						type="button"
+						onClick={() => setSubGraphOpen(true)}
+						className="w-full border-t border-(--line)/48 px-3 py-2 text-left text-xs text-(--f3) hover:bg-(--raised)/60 hover:text-(--f1)"
+						data-flume-subgraph-summary={id}
+					>
+						{wiredPortCount} wired{" "}
+						{wiredPortCount === 1 ? "connection" : "connections"}
+					</button>
+				)}
 
 				<NodeLogs
 					nodeId={id}

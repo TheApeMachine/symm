@@ -1,58 +1,45 @@
 // @vitest-environment jsdom
 
 import { describe, expect, it } from "vitest";
-import { resolvePortDropTarget } from "./connection-ports";
+import { findPortHandle } from "./connection-ports";
 
-describe("resolvePortDropTarget", () => {
-	it("walks up from nested event targets to the port handle", () => {
-		const portHandle = document.createElement("button");
-		portHandle.dataset.flumeComponent = "port-handle";
-		portHandle.dataset.portName = "in";
-		portHandle.dataset.nodeId = "gate";
-		portHandle.dataset.portType = "tensor";
-		portHandle.dataset.portTransputType = "input";
+const handle = (nodeId: string, portName: string, transput: string) => {
+	const element = document.createElement("div");
+	element.setAttribute("data-flume-component", "port-handle");
+	element.setAttribute("data-node-id", nodeId);
+	element.setAttribute("data-port-name", portName);
+	element.setAttribute("data-port-transput-type", transput);
+	document.body.appendChild(element);
+	return element;
+};
 
-		const inner = document.createElement("span");
-		portHandle.appendChild(inner);
-		document.body.appendChild(portHandle);
+describe("findPortHandle", () => {
+	it("finds a port drawn under its own name", () => {
+		document.body.innerHTML = "";
+		const port = handle("grid", "metrics_7", "input");
 
-		const event = {
-			clientX: 106,
-			clientY: 106,
-			target: inner,
-		} as unknown as MouseEvent;
-
-		expect(resolvePortDropTarget(event)).toBe(portHandle);
-
-		portHandle.remove();
+		expect(findPortHandle(document, "grid", "metrics_7", "input")).toBe(port);
 	});
 
-	it("finds a port handle below a pointer-events-none overlay", () => {
-		const portHandle = document.createElement("button");
-		portHandle.dataset.flumeComponent = "port-handle";
-		portHandle.dataset.portName = "x";
-		portHandle.dataset.nodeId = "relu";
-		portHandle.dataset.portType = "tensor";
-		portHandle.dataset.portTransputType = "input";
+	it("anchors a slot on the collapsed port it belongs to", () => {
+		document.body.innerHTML = "";
+		const port = handle("grid", "metrics", "input");
 
-		const overlay = document.createElement("div");
-		overlay.style.pointerEvents = "none";
+		expect(findPortHandle(document, "grid", "metrics_7", "input")).toBe(port);
+	});
 
-		document.body.append(portHandle, overlay);
+	it("anchors a slot the node never declared as its own port", () => {
+		document.body.innerHTML = "";
+		// store.Grid declares one `values` output; values_5 exists only as
+		// the name a consumer wired to.
+		const port = handle("grid", "values", "output");
 
-		const previousElementsFromPoint = document.elementsFromPoint;
-		document.elementsFromPoint = () => [overlay, portHandle];
+		expect(findPortHandle(document, "grid", "values_5", "output")).toBe(port);
+	});
 
-		const event = {
-			clientX: 106,
-			clientY: 106,
-			target: overlay,
-		} as unknown as MouseEvent;
+	it("reports nothing when neither the slot nor its port is drawn", () => {
+		document.body.innerHTML = "";
 
-		expect(resolvePortDropTarget(event)).toBe(portHandle);
-
-		document.elementsFromPoint = previousElementsFromPoint;
-		portHandle.remove();
-		overlay.remove();
+		expect(findPortHandle(document, "grid", "metrics_7", "input")).toBeNull();
 	});
 });

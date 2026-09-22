@@ -34,15 +34,16 @@ struct Metric {
     }
 }
 
+# A metric carries the value that was measured, and what that value is in.
+#
+# The normalized and standardized forms are not supplied here: a signal that
+# derives them publishes them as metrics of their own, which is what makes each
+# one addressable and auditable rather than hidden inside another.
 interface MetricService {
     write @0 (
-        raw          :Float64,
-        normalized   :Float64,
-        standardized :Float64,
-        center       :Float64,
-        scale        :Float64,
-        unit         :Metric.UnitType,
-        timescale    :Metric.Timescale
+        raw       :Float64,
+        unit      :Metric.UnitType,
+        timescale :Metric.Timescale
     ) -> stream;
     done @1 () -> (status :Status, read :Data);
 }

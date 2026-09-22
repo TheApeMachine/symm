@@ -32,10 +32,6 @@
             {
               "nodeId": "depth_ratio:bid",
               "portName": "a"
-            },
-            {
-              "nodeId": "metric:touch_notional:bid",
-              "portName": "raw"
             }
           ]
         }
@@ -71,10 +67,6 @@
             {
               "nodeId": "depth_ratio:ask",
               "portName": "a"
-            },
-            {
-              "nodeId": "metric:touch_notional:ask",
-              "portName": "raw"
             }
           ]
         }
@@ -94,10 +86,6 @@
             {
               "nodeId": "relative_spread",
               "portName": "a"
-            },
-            {
-              "nodeId": "metric:spread",
-              "portName": "raw"
             }
           ]
         }
@@ -148,10 +136,6 @@
             {
               "nodeId": "relative_spread",
               "portName": "b"
-            },
-            {
-              "nodeId": "metric:midpoint",
-              "portName": "raw"
             }
           ]
         }
@@ -188,10 +172,6 @@
             {
               "nodeId": "spread_ratio",
               "portName": "a"
-            },
-            {
-              "nodeId": "metric:relative_spread",
-              "portName": "raw"
             }
           ]
         }
@@ -219,14 +199,7 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:two_sided_touch_notional",
-              "portName": "raw"
-            }
-          ]
-        }
+        "outputs": {}
       }
     },
     "notionalDifference": {
@@ -315,14 +288,7 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:touch_notional_imbalance",
-              "portName": "raw"
-            }
-          ]
-        }
+        "outputs": {}
       }
     },
     "bidLog": {
@@ -410,10 +376,6 @@
             {
               "nodeId": "depth_ratio:bid",
               "portName": "b"
-            },
-            {
-              "nodeId": "metric:touch_notional_baseline:bid",
-              "portName": "raw"
             }
           ]
         }
@@ -441,14 +403,7 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:depth_ratio:bid",
-              "portName": "raw"
-            }
-          ]
-        }
+        "outputs": {}
       }
     },
     "depth_divergence:bid": {
@@ -482,10 +437,6 @@
             {
               "nodeId": "divergence_velocity:bid",
               "portName": "val"
-            },
-            {
-              "nodeId": "metric:depth_divergence:bid",
-              "portName": "raw"
             }
           ]
         }
@@ -538,10 +489,6 @@
             {
               "nodeId": "depth_zscore:bid",
               "portName": "b"
-            },
-            {
-              "nodeId": "metric:depth_noise_scale:bid",
-              "portName": "raw"
             }
           ]
         }
@@ -569,14 +516,7 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:depth_zscore:bid",
-              "portName": "raw"
-            }
-          ]
-        }
+        "outputs": {}
       }
     },
     "divergence_velocity:bid": {
@@ -595,20 +535,7 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:divergence_velocity:bid",
-              "portName": "raw"
-            }
-          ],
-          "snr": [
-            {
-              "nodeId": "metric:divergence_velocity_snr:bid",
-              "portName": "raw"
-            }
-          ]
-        }
+        "outputs": {}
       }
     },
     "askLog": {
@@ -696,10 +623,6 @@
             {
               "nodeId": "depth_ratio:ask",
               "portName": "b"
-            },
-            {
-              "nodeId": "metric:touch_notional_baseline:ask",
-              "portName": "raw"
             }
           ]
         }
@@ -727,14 +650,7 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:depth_ratio:ask",
-              "portName": "raw"
-            }
-          ]
-        }
+        "outputs": {}
       }
     },
     "depth_divergence:ask": {
@@ -768,10 +684,6 @@
             {
               "nodeId": "divergence_velocity:ask",
               "portName": "val"
-            },
-            {
-              "nodeId": "metric:depth_divergence:ask",
-              "portName": "raw"
             }
           ]
         }
@@ -824,10 +736,6 @@
             {
               "nodeId": "depth_zscore:ask",
               "portName": "b"
-            },
-            {
-              "nodeId": "metric:depth_noise_scale:ask",
-              "portName": "raw"
             }
           ]
         }
@@ -855,14 +763,7 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:depth_zscore:ask",
-              "portName": "raw"
-            }
-          ]
-        }
+        "outputs": {}
       }
     },
     "divergence_velocity:ask": {
@@ -881,20 +782,7 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:divergence_velocity:ask",
-              "portName": "raw"
-            }
-          ],
-          "snr": [
-            {
-              "nodeId": "metric:divergence_velocity_snr:ask",
-              "portName": "raw"
-            }
-          ]
-        }
+        "outputs": {}
       }
     },
     "spreadHistoryLog": {
@@ -986,10 +874,6 @@
             {
               "nodeId": "spread_ratio",
               "portName": "b"
-            },
-            {
-              "nodeId": "metric:relative_spread_baseline",
-              "portName": "raw"
             }
           ]
         }
@@ -1017,14 +901,7 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:spread_ratio",
-              "portName": "raw"
-            }
-          ]
-        }
+        "outputs": {}
       }
     },
     "spread_divergence": {
@@ -1058,10 +935,6 @@
             {
               "nodeId": "spread_divergence_velocity",
               "portName": "val"
-            },
-            {
-              "nodeId": "metric:spread_divergence",
-              "portName": "raw"
             }
           ]
         }
@@ -1114,10 +987,6 @@
             {
               "nodeId": "spread_zscore",
               "portName": "b"
-            },
-            {
-              "nodeId": "metric:spread_noise_scale",
-              "portName": "raw"
             }
           ]
         }
@@ -1145,14 +1014,7 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:spread_zscore",
-              "portName": "raw"
-            }
-          ]
-        }
+        "outputs": {}
       }
     },
     "spread_divergence_velocity": {
@@ -1168,599 +1030,6 @@
             {
               "nodeId": "spread_divergence",
               "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:spread_divergence_velocity",
-              "portName": "raw"
-            }
-          ],
-          "snr": [
-            {
-              "nodeId": "metric:spread_divergence_velocity_snr",
-              "portName": "raw"
-            }
-          ]
-        }
-      }
-    },
-    "metric:touch_notional:bid": {
-      "id": "metric:touch_notional:bid",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 0.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "touch_notional:bid",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:touch_notional:ask": {
-      "id": "metric:touch_notional:ask",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 150.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "touch_notional:ask",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:midpoint": {
-      "id": "metric:midpoint",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 300.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "midpoint",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:spread": {
-      "id": "metric:spread",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 450.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "spread",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:relative_spread": {
-      "id": "metric:relative_spread",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 600.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "relative_spread",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:two_sided_touch_notional": {
-      "id": "metric:two_sided_touch_notional",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 750.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "two_sided_touch_notional",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:touch_notional_imbalance": {
-      "id": "metric:touch_notional_imbalance",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 900.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "touch_notional_imbalance",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:touch_notional_baseline:bid": {
-      "id": "metric:touch_notional_baseline:bid",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 1050.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "touch_notional_baseline:bid",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:depth_ratio:bid": {
-      "id": "metric:depth_ratio:bid",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 1200.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "depth_ratio:bid",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:depth_divergence:bid": {
-      "id": "metric:depth_divergence:bid",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 1350.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "depth_divergence:bid",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:depth_noise_scale:bid": {
-      "id": "metric:depth_noise_scale:bid",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 1500.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "depth_noise_scale:bid",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:depth_zscore:bid": {
-      "id": "metric:depth_zscore:bid",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 1650.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "depth_zscore:bid",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:divergence_velocity:bid": {
-      "id": "metric:divergence_velocity:bid",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 1800.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "divergence_velocity:bid",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:touch_notional_baseline:ask": {
-      "id": "metric:touch_notional_baseline:ask",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 1950.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "touch_notional_baseline:ask",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:depth_ratio:ask": {
-      "id": "metric:depth_ratio:ask",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 2100.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "depth_ratio:ask",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:depth_divergence:ask": {
-      "id": "metric:depth_divergence:ask",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 2250.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "depth_divergence:ask",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:depth_noise_scale:ask": {
-      "id": "metric:depth_noise_scale:ask",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 2400.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "depth_noise_scale:ask",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:depth_zscore:ask": {
-      "id": "metric:depth_zscore:ask",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 2550.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "depth_zscore:ask",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:divergence_velocity:ask": {
-      "id": "metric:divergence_velocity:ask",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 2700.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "divergence_velocity:ask",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:relative_spread_baseline": {
-      "id": "metric:relative_spread_baseline",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 2850.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "relative_spread_baseline",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:spread_ratio": {
-      "id": "metric:spread_ratio",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 3000.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "spread_ratio",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:spread_divergence": {
-      "id": "metric:spread_divergence",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 3150.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "spread_divergence",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:spread_noise_scale": {
-      "id": "metric:spread_noise_scale",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 3300.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "spread_noise_scale",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:spread_zscore": {
-      "id": "metric:spread_zscore",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 3450.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "spread_zscore",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:spread_divergence_velocity": {
-      "id": "metric:spread_divergence_velocity",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 3600.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "spread_divergence_velocity",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:best_bid_price": {
-      "id": "metric:best_bid_price",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 3750.0,
-      "connections": {
-        "inputs": {},
-        "outputs": {}
-      }
-    },
-    "metric:best_ask_price": {
-      "id": "metric:best_ask_price",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 3900.0,
-      "connections": {
-        "inputs": {},
-        "outputs": {}
-      }
-    },
-    "metric:touch_quantity:bid": {
-      "id": "metric:touch_quantity:bid",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 4050.0,
-      "connections": {
-        "inputs": {},
-        "outputs": {}
-      }
-    },
-    "metric:touch_quantity:ask": {
-      "id": "metric:touch_quantity:ask",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 4200.0,
-      "connections": {
-        "inputs": {},
-        "outputs": {}
-      }
-    },
-    "metric:divergence_velocity_snr:bid": {
-      "id": "metric:divergence_velocity_snr:bid",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 3000.0,
-      "y": 5000.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "divergence_velocity:bid",
-              "portName": "snr"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:divergence_velocity_snr:ask": {
-      "id": "metric:divergence_velocity_snr:ask",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 3000.0,
-      "y": 5150.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "divergence_velocity:ask",
-              "portName": "snr"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:spread_divergence_velocity_snr": {
-      "id": "metric:spread_divergence_velocity_snr",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 3000.0,
-      "y": 5300.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "spread_divergence_velocity",
-              "portName": "snr"
             }
           ]
         },
@@ -1784,32 +1053,6 @@
           "a": [
             {
               "nodeId": "spreadHistoryBaselineLog",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:spread_baseline",
-              "portName": "raw"
-            }
-          ]
-        }
-      }
-    },
-    "metric:spread_baseline": {
-      "id": "metric:spread_baseline",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 3000.0,
-      "y": 5450.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "spread_baseline",
               "portName": "out"
             }
           ]

@@ -664,6 +664,8 @@ func CompileFanOutCopier(
 	fromField FieldInfo,
 	toField FieldInfo,
 	index int,
+	presence FieldInfo,
+	carried bool,
 ) (Copier, error) {
 	if fromField.ElementWhich != toField.Which {
 		return nil, errnie.Error(errnie.Err(
@@ -676,6 +678,7 @@ func CompileFanOutCopier(
 
 	fromOffset := uint16(fromField.Offset)
 	toOffset := capnp.DataOffset(toField.Offset * 8)
+	filled := compileSlotPresence(presence, carried)
 
 	return func(src, dst capnp.Struct) error {
 		pointer, err := src.Ptr(fromOffset)
@@ -696,7 +699,68 @@ func CompileFanOutCopier(
 			return nil
 		}
 
+		if !filled(src, index) {
+			return nil
+		}
+
 		dst.SetUint64(toOffset, math.Float64bits(handed.At(index)))
 		return nil
 	}, nil
+}
+
+/*
+compileSlotPresence reads whether a producer filled one of its slots. A
+producer that does not report presence filled every slot it handed back.
+*/
+func compileSlotPresence(
+	presence FieldInfo, carried bool,
+) func(capnp.Struct, int) bool {
+	if !carried {
+		return func(capnp.Struct, int) bool { return true }
+	}
+
+	offset := uint16(presence.Offset)
+
+	return func(src capnp.Struct, index int) bool {
+		pointer, err := src.Ptr(offset)
+
+		if err != nil {
+			return false
+		}
+
+		reported := capnp.BitList(pointer.List())
+
+		if !reported.IsValid() || index >= reported.Len() {
+			return false
+		}
+
+		return reported.At(index)
+	}
+}
+
+/*
+CompileFanOutDelivery reports whether a port handing back several values
+carried the one a consumer is waiting for.
+*/
+func CompileFanOutDelivery(
+	fromField FieldInfo, index int, presence FieldInfo, carried bool,
+) func(capnp.Struct) bool {
+	fromOffset := uint16(fromField.Offset)
+	filled := compileSlotPresence(presence, carried)
+
+	return func(src capnp.Struct) bool {
+		pointer, err := src.Ptr(fromOffset)
+
+		if err != nil {
+			return false
+		}
+
+		handed := capnp.Float64List(pointer.List())
+
+		if !handed.IsValid() || index >= handed.Len() {
+			return false
+		}
+
+		return filled(src, index)
+	}
 }

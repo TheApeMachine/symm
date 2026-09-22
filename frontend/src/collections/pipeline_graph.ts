@@ -37,8 +37,51 @@ export const PipelineGraphRow = z.object({
 				.default({ x: 0, y: 0 }),
 		})
 		.default({ scale: 1, translate: { x: 0, y: 0 } }),
+	/*
+		What this drawing was imported from. The canvas is a working copy of a
+		definition the backend holds, so when that definition changes the copy
+		is stale — a graph rewired on disk would otherwise keep showing the
+		shape it had when it was first opened, with no way to tell.
+
+		null means the row predates this field, or was drawn from nothing.
+	*/
+	source: z
+		.object({
+			definition: z.string(),
+			fingerprint: z.string(),
+		})
+		.nullable()
+		.default(null),
 	updated_at: z.coerce.date(),
 });
+
+/*
+Identifies a definition by the nodes it holds. Two graphs with the same nodes
+wired the same way are the same drawing; anything else is a different one.
+*/
+export const fingerprintNodes = (nodes: Record<string, unknown>): string => {
+	const shape = Object.keys(nodes)
+		.sort()
+		.map((id) => {
+			const node = nodes[id] as {
+				type?: string;
+				connections?: { inputs?: Record<string, unknown> };
+			};
+
+			return `${id}:${node?.type ?? ""}:${Object.keys(node?.connections?.inputs ?? {}).sort().join(",")}`;
+		})
+		.join("|");
+
+	// FNV-1a: short, stable, and never leaves the browser.
+	let hash = 0x811c9dc5;
+
+	for (let index = 0; index < shape.length; index++) {
+		hash ^= shape.charCodeAt(index);
+		hash = Math.imul(hash, 0x01000193) >>> 0;
+	}
+
+	return `${Object.keys(nodes).length}-${hash.toString(16)}`;
+};
 
 export type PipelineGraphRowType = z.infer<typeof PipelineGraphRow>;
 

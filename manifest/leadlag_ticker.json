@@ -292,18 +292,6 @@
               "nodeId": "search_count",
               "portName": "a"
             }
-          ],
-          "extremeProminence": [
-            {
-              "nodeId": "metric:lag_peak_prominence",
-              "portName": "raw"
-            }
-          ],
-          "extremeCurvature": [
-            {
-              "nodeId": "metric:lag_peak_curvature",
-              "portName": "raw"
-            }
           ]
         }
       }
@@ -887,30 +875,6 @@
             {
               "nodeId": "fisherDegreesOfFreedom",
               "portName": "a"
-            },
-            {
-              "nodeId": "metric:overlap_pair_count",
-              "portName": "raw"
-            },
-            {
-              "nodeId": "metric:effective_sample_count",
-              "portName": "raw"
-            }
-          ],
-          "rightReturns": [
-            {
-              "nodeId": "metric:reference_return_count",
-              "portName": "raw"
-            }
-          ],
-          "leftReturns": [
-            {
-              "nodeId": "metric:measured_return_count",
-              "portName": "raw"
-            },
-            {
-              "nodeId": "metric:observation_count",
-              "portName": "raw"
             }
           ]
         }
@@ -1542,10 +1506,6 @@
             {
               "nodeId": "absolute_correlation_gain",
               "portName": "b"
-            },
-            {
-              "nodeId": "metric:contemporaneous_correlation",
-              "portName": "raw"
             }
           ]
         }
@@ -1587,10 +1547,6 @@
               "portName": "value"
             },
             {
-              "nodeId": "metric:best_lag_correlation",
-              "portName": "raw"
-            },
-            {
               "nodeId": "bestMean",
               "portName": "value"
             },
@@ -1627,14 +1583,7 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:best_lag_index",
-              "portName": "raw"
-            }
-          ]
-        }
+        "outputs": {}
       }
     },
     "bestLagOffset": {
@@ -1701,10 +1650,6 @@
             {
               "nodeId": "lag_velocity",
               "portName": "val"
-            },
-            {
-              "nodeId": "metric:best_lag_seconds",
-              "portName": "raw"
             }
           ]
         }
@@ -1758,10 +1703,6 @@
             {
               "nodeId": "correlation_gain_velocity",
               "portName": "val"
-            },
-            {
-              "nodeId": "metric:absolute_correlation_gain",
-              "portName": "raw"
             }
           ]
         }
@@ -1789,14 +1730,7 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:lag_fraction",
-              "portName": "raw"
-            }
-          ]
-        }
+        "outputs": {}
       }
     },
     "search_count": {
@@ -1829,10 +1763,6 @@
             {
               "nodeId": "search_adjusted_p_value",
               "portName": "b"
-            },
-            {
-              "nodeId": "metric:search_count",
-              "portName": "raw"
             }
           ]
         }
@@ -1854,14 +1784,7 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:lag_search_span",
-              "portName": "raw"
-            }
-          ]
-        }
+        "outputs": {}
       },
       "inputData": {
         "b": {
@@ -2062,10 +1985,6 @@
             {
               "nodeId": "search_adjusted_p_value",
               "portName": "a"
-            },
-            {
-              "nodeId": "metric:correlation_p_value",
-              "portName": "raw"
             }
           ]
         }
@@ -2093,14 +2012,7 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:search_adjusted_p_value",
-              "portName": "raw"
-            }
-          ]
-        }
+        "outputs": {}
       }
     },
     "lagMean": {
@@ -2154,14 +2066,7 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:lag_baseline_seconds",
-              "portName": "raw"
-            }
-          ]
-        }
+        "outputs": {}
       }
     },
     "lag_divergence_seconds": {
@@ -2191,10 +2096,6 @@
             {
               "nodeId": "lag_zscore",
               "portName": "a"
-            },
-            {
-              "nodeId": "metric:lag_divergence_seconds",
-              "portName": "raw"
             }
           ]
         }
@@ -2247,10 +2148,6 @@
             {
               "nodeId": "lag_zscore",
               "portName": "b"
-            },
-            {
-              "nodeId": "metric:lag_noise_scale_seconds",
-              "portName": "raw"
             }
           ]
         }
@@ -2278,14 +2175,7 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:lag_zscore",
-              "portName": "raw"
-            }
-          ]
-        }
+        "outputs": {}
       }
     },
     "lag_velocity": {
@@ -2304,14 +2194,7 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:lag_velocity",
-              "portName": "raw"
-            }
-          ]
-        }
+        "outputs": {}
       }
     },
     "gainMean": {
@@ -2365,14 +2248,7 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:correlation_gain_baseline",
-              "portName": "raw"
-            }
-          ]
-        }
+        "outputs": {}
       }
     },
     "correlation_gain_divergence": {
@@ -2481,14 +2357,7 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:correlation_gain_zscore",
-              "portName": "raw"
-            }
-          ]
-        }
+        "outputs": {}
       }
     },
     "correlation_gain_velocity": {
@@ -2507,518 +2376,7 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:correlation_gain_velocity",
-              "portName": "raw"
-            }
-          ]
-        }
-      }
-    },
-    "metric:contemporaneous_correlation": {
-      "id": "metric:contemporaneous_correlation",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 0.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "contemporaneous_correlation",
-              "portName": "out"
-            }
-          ]
-        },
         "outputs": {}
-      }
-    },
-    "metric:best_lag_correlation": {
-      "id": "metric:best_lag_correlation",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 150.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "best_lag_correlation",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:best_lag_index": {
-      "id": "metric:best_lag_index",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 300.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "best_lag_index",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:best_lag_seconds": {
-      "id": "metric:best_lag_seconds",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 450.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "best_lag_seconds",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:absolute_correlation_gain": {
-      "id": "metric:absolute_correlation_gain",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 600.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "absolute_correlation_gain",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:lag_fraction": {
-      "id": "metric:lag_fraction",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 750.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "lag_fraction",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:lag_search_span": {
-      "id": "metric:lag_search_span",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 900.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "lag_search_span",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:search_count": {
-      "id": "metric:search_count",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 1050.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "search_count",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:lag_peak_prominence": {
-      "id": "metric:lag_peak_prominence",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 1200.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "searchProfile",
-              "portName": "extremeProminence"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:lag_peak_curvature": {
-      "id": "metric:lag_peak_curvature",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 1350.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "searchProfile",
-              "portName": "extremeCurvature"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:correlation_p_value": {
-      "id": "metric:correlation_p_value",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 1500.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "correlation_p_value",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:search_adjusted_p_value": {
-      "id": "metric:search_adjusted_p_value",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 1650.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "search_adjusted_p_value",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:overlap_pair_count": {
-      "id": "metric:overlap_pair_count",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 1800.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "candidate_4",
-              "portName": "support"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:effective_sample_count": {
-      "id": "metric:effective_sample_count",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 1950.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "candidate_4",
-              "portName": "support"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:reference_return_count": {
-      "id": "metric:reference_return_count",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 2100.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "candidate_4",
-              "portName": "rightReturns"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:measured_return_count": {
-      "id": "metric:measured_return_count",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 2250.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "candidate_4",
-              "portName": "leftReturns"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:observation_count": {
-      "id": "metric:observation_count",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 2400.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "candidate_4",
-              "portName": "leftReturns"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:lag_baseline_seconds": {
-      "id": "metric:lag_baseline_seconds",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 2550.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "lag_baseline_seconds",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:lag_divergence_seconds": {
-      "id": "metric:lag_divergence_seconds",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 2700.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "lag_divergence_seconds",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:lag_noise_scale_seconds": {
-      "id": "metric:lag_noise_scale_seconds",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 2850.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "lag_noise_scale_seconds",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:lag_zscore": {
-      "id": "metric:lag_zscore",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 3000.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "lag_zscore",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:lag_velocity": {
-      "id": "metric:lag_velocity",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 3150.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "lag_velocity",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:correlation_gain_baseline": {
-      "id": "metric:correlation_gain_baseline",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 3300.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "correlation_gain_baseline",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:correlation_gain_zscore": {
-      "id": "metric:correlation_gain_zscore",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 3450.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "correlation_gain_zscore",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:correlation_gain_velocity": {
-      "id": "metric:correlation_gain_velocity",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 3600.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "correlation_gain_velocity",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:last_price": {
-      "id": "metric:last_price",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 3000.0,
-      "y": 3750.0,
-      "connections": {
-        "inputs": {},
-        "outputs": {}
-      }
-    },
-    "metric:lag_search_resolution_seconds": {
-      "id": "metric:lag_search_resolution_seconds",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 3000.0,
-      "y": 3900.0,
-      "connections": {
-        "inputs": {},
-        "outputs": {}
-      },
-      "inputData": {
-        "raw": {
-          "value": 1.0
-        }
       }
     },
     "bestMean": {
@@ -3072,14 +2430,7 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:best_lag_correlation_baseline",
-              "portName": "raw"
-            }
-          ]
-        }
+        "outputs": {}
       }
     },
     "bestDivergence": {
@@ -3184,51 +2535,6 @@
           "b": [
             {
               "nodeId": "bestNoise",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:best_lag_correlation_zscore",
-              "portName": "raw"
-            }
-          ]
-        }
-      }
-    },
-    "metric:best_lag_correlation_baseline": {
-      "id": "metric:best_lag_correlation_baseline",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 3400.0,
-      "y": 9000.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "best_lag_correlation_baseline",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:best_lag_correlation_zscore": {
-      "id": "metric:best_lag_correlation_zscore",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 3400.0,
-      "y": 9150.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "best_lag_correlation_zscore",
               "portName": "out"
             }
           ]

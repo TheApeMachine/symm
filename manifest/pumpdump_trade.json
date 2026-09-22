@@ -16,10 +16,6 @@
             {
               "nodeId": "volume_bar_notional",
               "portName": "value"
-            },
-            {
-              "nodeId": "metric:trade_notional",
-              "portName": "raw"
             }
           ]
         }
@@ -39,10 +35,6 @@
             {
               "nodeId": "volume_bar_duration",
               "portName": "value"
-            },
-            {
-              "nodeId": "metric:trade_interval_seconds",
-              "portName": "raw"
             }
           ]
         }
@@ -67,10 +59,6 @@
             {
               "nodeId": "volume_rate",
               "portName": "a"
-            },
-            {
-              "nodeId": "metric:volume_bar_quantity",
-              "portName": "raw"
             }
           ]
         }
@@ -102,10 +90,6 @@
             {
               "nodeId": "notional_rate",
               "portName": "a"
-            },
-            {
-              "nodeId": "metric:volume_bar_notional",
-              "portName": "raw"
             }
           ]
         }
@@ -130,10 +114,6 @@
             {
               "nodeId": "trade_rate",
               "portName": "a"
-            },
-            {
-              "nodeId": "metric:volume_bar_trade_count",
-              "portName": "raw"
             }
           ]
         }
@@ -177,10 +157,6 @@
             {
               "nodeId": "midpoint_return_rate",
               "portName": "b"
-            },
-            {
-              "nodeId": "metric:volume_bar_duration",
-              "portName": "raw"
             }
           ]
         }
@@ -208,14 +184,7 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:volume_rate",
-              "portName": "raw"
-            }
-          ]
-        }
+        "outputs": {}
       }
     },
     "notional_rate": {
@@ -257,10 +226,6 @@
             {
               "nodeId": "notional_rate_ratio",
               "portName": "a"
-            },
-            {
-              "nodeId": "metric:notional_rate",
-              "portName": "raw"
             }
           ]
         }
@@ -288,14 +253,7 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:trade_rate",
-              "portName": "raw"
-            }
-          ]
-        }
+        "outputs": {}
       }
     },
     "midpoint_log_return": {
@@ -324,10 +282,6 @@
             {
               "nodeId": "returnHistoryVariance",
               "portName": "value"
-            },
-            {
-              "nodeId": "metric:midpoint_log_return",
-              "portName": "raw"
             }
           ]
         }
@@ -355,14 +309,7 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:midpoint_return_rate",
-              "portName": "raw"
-            }
-          ]
-        }
+        "outputs": {}
       }
     },
     "notionalHistoryBaseline": {
@@ -421,10 +368,6 @@
             {
               "nodeId": "notional_rate_ratio",
               "portName": "b"
-            },
-            {
-              "nodeId": "metric:notional_rate_baseline",
-              "portName": "raw"
             }
           ]
         }
@@ -461,10 +404,6 @@
             {
               "nodeId": "notional_rate_velocity",
               "portName": "val"
-            },
-            {
-              "nodeId": "metric:notional_rate_divergence",
-              "portName": "raw"
             }
           ]
         }
@@ -544,14 +483,7 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:notional_rate_zscore",
-              "portName": "raw"
-            }
-          ]
-        }
+        "outputs": {}
       }
     },
     "notional_rate_velocity": {
@@ -570,14 +502,7 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:notional_rate_velocity",
-              "portName": "raw"
-            }
-          ]
-        }
+        "outputs": {}
       }
     },
     "notional_rate_ratio": {
@@ -602,14 +527,7 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:notional_rate_ratio",
-              "portName": "raw"
-            }
-          ]
-        }
+        "outputs": {}
       }
     },
     "returnHistoryBaseline": {
@@ -663,14 +581,7 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:midpoint_return_baseline",
-              "portName": "raw"
-            }
-          ]
-        }
+        "outputs": {}
       }
     },
     "midpoint_return_divergence": {
@@ -704,10 +615,6 @@
             {
               "nodeId": "midpoint_return_velocity",
               "portName": "val"
-            },
-            {
-              "nodeId": "metric:midpoint_return_divergence",
-              "portName": "raw"
             }
           ]
         }
@@ -787,14 +694,7 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:midpoint_return_zscore",
-              "portName": "raw"
-            }
-          ]
-        }
+        "outputs": {}
       }
     },
     "midpoint_return_velocity": {
@@ -813,465 +713,6 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:midpoint_return_velocity",
-              "portName": "raw"
-            }
-          ]
-        }
-      }
-    },
-    "metric:trade_notional": {
-      "id": "metric:trade_notional",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 0.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "trade_notional",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:trade_interval_seconds": {
-      "id": "metric:trade_interval_seconds",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 150.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "trade_interval_seconds",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:volume_bar_quantity": {
-      "id": "metric:volume_bar_quantity",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 300.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "volume_bar_quantity",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:volume_bar_notional": {
-      "id": "metric:volume_bar_notional",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 450.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "volume_bar_notional",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:volume_bar_trade_count": {
-      "id": "metric:volume_bar_trade_count",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 600.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "volume_bar_trade_count",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:volume_bar_duration": {
-      "id": "metric:volume_bar_duration",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 750.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "volume_bar_duration",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:volume_rate": {
-      "id": "metric:volume_rate",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 900.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "volume_rate",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:notional_rate": {
-      "id": "metric:notional_rate",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 1050.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "notional_rate",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:trade_rate": {
-      "id": "metric:trade_rate",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 1200.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "trade_rate",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:midpoint_log_return": {
-      "id": "metric:midpoint_log_return",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 1350.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "midpoint_log_return",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:midpoint_return_rate": {
-      "id": "metric:midpoint_return_rate",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 1500.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "midpoint_return_rate",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:notional_rate_baseline": {
-      "id": "metric:notional_rate_baseline",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 1650.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "notional_rate_baseline",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:notional_rate_ratio": {
-      "id": "metric:notional_rate_ratio",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 1800.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "notional_rate_ratio",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:notional_rate_divergence": {
-      "id": "metric:notional_rate_divergence",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 1950.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "notional_rate_divergence",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:notional_rate_zscore": {
-      "id": "metric:notional_rate_zscore",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 2100.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "notional_rate_zscore",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:notional_rate_velocity": {
-      "id": "metric:notional_rate_velocity",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 2250.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "notional_rate_velocity",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:midpoint_return_baseline": {
-      "id": "metric:midpoint_return_baseline",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 2400.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "midpoint_return_baseline",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:midpoint_return_divergence": {
-      "id": "metric:midpoint_return_divergence",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 2550.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "midpoint_return_divergence",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:midpoint_return_zscore": {
-      "id": "metric:midpoint_return_zscore",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 2700.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "midpoint_return_zscore",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:midpoint_return_velocity": {
-      "id": "metric:midpoint_return_velocity",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 2850.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "midpoint_return_velocity",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:trade_price": {
-      "id": "metric:trade_price",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 3000.0,
-      "connections": {
-        "inputs": {},
-        "outputs": {}
-      }
-    },
-    "metric:trade_quantity": {
-      "id": "metric:trade_quantity",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 3150.0,
-      "connections": {
-        "inputs": {},
-        "outputs": {}
-      }
-    },
-    "metric:volume_bar_target_quantity": {
-      "id": "metric:volume_bar_target_quantity",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 3000.0,
-      "y": 7000.0,
-      "connections": {
-        "inputs": {},
-        "outputs": {}
-      }
-    },
-    "metric:completed_volume_bar_ordinal": {
-      "id": "metric:completed_volume_bar_ordinal",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 3000.0,
-      "y": 7150.0,
-      "connections": {
-        "inputs": {},
-        "outputs": {}
-      }
-    },
-    "metric:midpoint:from": {
-      "id": "metric:midpoint:from",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 3000.0,
-      "y": 7300.0,
-      "connections": {
-        "inputs": {},
-        "outputs": {}
-      }
-    },
-    "metric:midpoint:at": {
-      "id": "metric:midpoint:at",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 3000.0,
-      "y": 7450.0,
-      "connections": {
-        "inputs": {},
         "outputs": {}
       }
     }

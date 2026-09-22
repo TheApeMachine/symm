@@ -13,28 +13,6 @@ func TestHawkesPipeline(t *testing.T) {
 	ctx := context.Background()
 
 	Convey("Given Hawkes primitives", t, func() {
-		Convey("Assemble constructs time and mark from scalar args", func() {
-			server := hawkes.NewAssemble()
-			client := hawkes.Assemble_ServerToClient(server)
-			So(client.IsValid(), ShouldBeTrue)
-
-			err := client.Write(ctx, func(params hawkes.Assemble_write_Params) error {
-				params.SetTimestamp(1000000000)
-				params.SetSide("buy")
-				params.SetSymbol("BTC/USD")
-				return nil
-			})
-			So(err, ShouldBeNil)
-			So(client.WaitStreaming(), ShouldBeNil)
-
-			future, release := client.Done(ctx, nil)
-			defer release()
-
-			results, err := future.Struct()
-			So(err, ShouldBeNil)
-			So(results.Time(), ShouldEqual, 1000000000.0)
-			So(results.Mark(), ShouldEqual, 1.0)
-		})
 
 		Convey("Process consumes time and mark and outputs statistics on Done", func() {
 			server := hawkes.NewProcess()

@@ -11,9 +11,10 @@ import (
 /*
 MetricServiceServer builds one metric out of the forms a signal derived for it.
 
-A metric is not only its raw value: the normalized and standardized forms, and
-the center and scale they were formed against, travel with it so a reader can
-see what a value was compared to rather than trusting the comparison.
+A metric carries the value that was measured and what that value is in. A
+signal that derives a normalized or standardized form publishes it as a metric
+of its own, so every number stays addressable rather than hidden inside
+another.
 
 Done emits the metric and clears it, because a metric describes one value.
 */
@@ -58,10 +59,6 @@ func (server *MetricServiceServer) Write(ctx context.Context, call MetricService
 	}
 
 	metric.SetRaw(args.Raw())
-	metric.SetNormalized(args.Normalized())
-	metric.SetStandardized(args.Standardized())
-	metric.SetCenter(args.Center())
-	metric.SetScale(args.Scale())
 	metric.SetUnit(args.Unit())
 	metric.SetTimescale(args.Timescale())
 

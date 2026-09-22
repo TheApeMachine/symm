@@ -4,7 +4,7 @@ $Go.package("store");
 $Go.import("github.com/theapemachine/symm/nomagique/store");
 
 using import "../runtime/status.capnp".Status;
-using import "../data/metric.capnp".MetricService;
+using import "radix.capnp".Retained;
 
 # Grid is the virtual grid. Raw market data is written to it and the metrics
 # wired into it receive the fields they declared an interest in.
@@ -13,22 +13,33 @@ using import "../data/metric.capnp".MetricService;
 # adding a venue is wiring one more producer into it rather than widening the
 # schema.
 #
-# What a metric asked for comes back out already typed, one value per declared
+# What a metric asked for comes back out already typed, one slot per declared
 # interest and in the order they were declared, so a metric is handed the
 # numbers it needs rather than a document it has to go looking through.
+#
+# A record carries the fields of the feed it came from and no others, so most
+# deliveries fill only some of the slots. Every declared interest still gets
+# its own slot, and present says which ones the record actually carried. A
+# metric waiting on a slot that stayed empty keeps waiting; it is never handed
+# a zero standing in for a field that was not there, and never reads its
+# neighbour's field because an absent one closed the gap.
 #
 # The grid holds no values of its own. A metric is not a cell holding a number
 # but a capability the grid calls, so reading the grid is asking every metric
 # wired into it for its current state. Wiring another metric in is what makes
 # the grid wider; nothing here enumerates them.
-interface Grid {
+# The grid is Retained: what it hands out is what it was holding when the
+# evaluation began. That is what lets the same grid feed the metrics and
+# collect them, without the two closing a cycle around each other.
+interface Grid extends(Retained) {
   write @0 (
     data      :List(Data),
     interests :Text,
-    metrics   :List(MetricService)
+    metrics   :List(Float64)
   ) -> stream;
   done @1 () -> (
     values    :List(Float64),
+    present   :List(Bool),
     out       :Data,
     delivered :Int64,
     metrics   :Int64,

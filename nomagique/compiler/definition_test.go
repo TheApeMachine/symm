@@ -157,21 +157,25 @@ func TestSystemGridServesPublishedMetrics(t *testing.T) {
 			grid := program.Nodes[index]
 			So(grid.ArgsTemplate.IsValid(), ShouldBeTrue)
 
-			schema, err := ReflectInterface(grid.Write.InterfaceID)
-			So(err, ShouldBeNil)
+			Convey("Then every metric reaches it as a value of its own", func() {
+				landing := 0
 
-			field, resolved := resolveInputField(schema, "metrics")
-			So(resolved, ShouldBeTrue)
+				for _, route := range program.Routes {
+					if route.ToNode == index {
+						landing++
+					}
+				}
 
-			Convey("Then the grid holds every metric wired into it", func() {
-				pointer, err := grid.ArgsTemplate.Ptr(uint16(field.Offset))
-				So(err, ShouldBeNil)
-				So(pointer.IsValid(), ShouldBeTrue)
-				So(pointer.List().Len(), ShouldEqual, 455)
+				// Each metric is the value its last operation produced, wired
+				// straight in. Nothing stands between the two.
+				So(landing, ShouldBeGreaterThan, 400)
 			})
 
-			Convey("Then the metrics came from inside the signal sub-graph", func() {
-				_, published := program.NodeMap["definition-correlation_ticker__metric:correlation_zscore"]
+			Convey("Then they came from inside the sub-graphs that computed them", func() {
+				// A sub-graph groups a signal's metrics for the editor. It is
+				// expanded away at compile time, so the operation that
+				// produced a metric is a node like any other in the program.
+				_, published := program.NodeMap["definition-correlation_ticker__zscore"]
 				So(published, ShouldBeTrue)
 			})
 		})

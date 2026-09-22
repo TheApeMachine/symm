@@ -281,7 +281,7 @@ func (c MetricService) Write(ctx context.Context, params func(MetricService_writ
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 48, PointerCount: 0}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 16, PointerCount: 0}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(MetricService_write_Params(s)) }
 	}
 
@@ -482,12 +482,12 @@ type MetricService_write_Params capnp.Struct
 const MetricService_write_Params_TypeID = 0xde4b1b520471b93d
 
 func NewMetricService_write_Params(s *capnp.Segment) (MetricService_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 48, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 0})
 	return MetricService_write_Params(st), err
 }
 
 func NewRootMetricService_write_Params(s *capnp.Segment) (MetricService_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 48, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 0})
 	return MetricService_write_Params(st), err
 }
 
@@ -531,52 +531,20 @@ func (s MetricService_write_Params) SetRaw(v float64) {
 	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
 }
 
-func (s MetricService_write_Params) Normalized() float64 {
-	return math.Float64frombits(capnp.Struct(s).Uint64(8))
-}
-
-func (s MetricService_write_Params) SetNormalized(v float64) {
-	capnp.Struct(s).SetUint64(8, math.Float64bits(v))
-}
-
-func (s MetricService_write_Params) Standardized() float64 {
-	return math.Float64frombits(capnp.Struct(s).Uint64(16))
-}
-
-func (s MetricService_write_Params) SetStandardized(v float64) {
-	capnp.Struct(s).SetUint64(16, math.Float64bits(v))
-}
-
-func (s MetricService_write_Params) Center() float64 {
-	return math.Float64frombits(capnp.Struct(s).Uint64(24))
-}
-
-func (s MetricService_write_Params) SetCenter(v float64) {
-	capnp.Struct(s).SetUint64(24, math.Float64bits(v))
-}
-
-func (s MetricService_write_Params) Scale() float64 {
-	return math.Float64frombits(capnp.Struct(s).Uint64(32))
-}
-
-func (s MetricService_write_Params) SetScale(v float64) {
-	capnp.Struct(s).SetUint64(32, math.Float64bits(v))
-}
-
 func (s MetricService_write_Params) Unit() Metric_UnitType {
-	return Metric_UnitType(capnp.Struct(s).Uint16(40))
+	return Metric_UnitType(capnp.Struct(s).Uint16(8))
 }
 
 func (s MetricService_write_Params) SetUnit(v Metric_UnitType) {
-	capnp.Struct(s).SetUint16(40, uint16(v))
+	capnp.Struct(s).SetUint16(8, uint16(v))
 }
 
 func (s MetricService_write_Params) Timescale() Metric_Timescale {
-	return Metric_Timescale(capnp.Struct(s).Uint16(42))
+	return Metric_Timescale(capnp.Struct(s).Uint16(10))
 }
 
 func (s MetricService_write_Params) SetTimescale(v Metric_Timescale) {
-	capnp.Struct(s).SetUint16(42, uint16(v))
+	capnp.Struct(s).SetUint16(10, uint16(v))
 }
 
 // MetricService_write_Params_List is a list of MetricService_write_Params.
@@ -584,7 +552,7 @@ type MetricService_write_Params_List = capnp.StructList[MetricService_write_Para
 
 // NewMetricService_write_Params creates a new list of MetricService_write_Params.
 func NewMetricService_write_Params_List(s *capnp.Segment, sz int32) (MetricService_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 48, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 16, PointerCount: 0}, sz)
 	return capnp.StructList[MetricService_write_Params](l), err
 }
 

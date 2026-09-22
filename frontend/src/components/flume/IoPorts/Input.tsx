@@ -33,6 +33,8 @@ interface InputProps {
 	isConnected?: boolean;
 	inputData: InputData;
 	hidePort?: boolean;
+	/* Present when this row stands for a gathering port's collapsed slots. */
+	onToggleFamily?: () => void;
 }
 
 interface RenderControlOptions {
@@ -137,6 +139,7 @@ const Input = ({
 	isConnected,
 	inputData,
 	hidePort,
+	onToggleFamily,
 }: InputProps) => {
 	const {
 		label: defaultLabel,
@@ -152,8 +155,9 @@ const Input = ({
 		}
 	}, [isConnected, prevConnected, triggerRecalculation]);
 
-	const showLabel = !controls.length || noControls || isConnected;
-	const showControls = !noControls && !isConnected;
+	// A row standing for several slots names the port, never one slot's value.
+	const showLabel = Boolean(onToggleFamily) || !controls.length || noControls || isConnected;
+	const showControls = !onToggleFamily && !noControls && !isConnected;
 	const isMonoControl = controls.length === 1;
 
 	return (
@@ -176,7 +180,22 @@ const Input = ({
 					triggerRecalculation={triggerRecalculation}
 				/>
 			) : null}
-			{showLabel ? (
+			{showLabel && onToggleFamily ? (
+				<button
+					type="button"
+					onClick={onToggleFamily}
+					className="cursor-pointer text-left underline decoration-dotted underline-offset-2"
+					data-flume-port-family={name}
+				>
+					<Label
+						data-flume-component="port-label"
+						className="text-xs font-normal text-(--f2) select-none"
+					>
+						{label || defaultLabel}
+					</Label>
+				</button>
+			) : null}
+			{showLabel && !onToggleFamily ? (
 				<Label
 					data-flume-component="port-label"
 					className="text-xs font-normal text-(--f2) select-none"

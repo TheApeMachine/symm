@@ -6,22 +6,22 @@ import (
 	"github.com/theapemachine/errnie"
 )
 
+/*
+DivideServer owns division.
+
+A zero divisor is not an error here. The quotient is undefined, and saying so
+is what division by zero means: the result carries that forward as infinity or
+as not-a-number, and whichever metric depended on it reports undefined. Refusing
+the call instead would abort the whole evaluation, so one undefined quotient
+would erase every other metric measured from the same observation — including
+all the ones that were perfectly well defined.
+*/
 type DivideServer struct {
 	out float64
 }
 
 func (srv *DivideServer) Write(ctx context.Context, call Divide_write) error {
-	divisor := call.Args().B()
-
-	if divisor == 0 {
-		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"arithmetic: division by zero",
-			nil,
-		))
-	}
-
-	srv.out = call.Args().A() / divisor
+	srv.out = call.Args().A() / call.Args().B()
 	return nil
 }
 
@@ -38,6 +38,7 @@ func (srv *DivideServer) Done(ctx context.Context, call Divide_done) error {
 
 	res.SetOut(srv.out)
 	srv.out = 0
+
 	return nil
 }
 

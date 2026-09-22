@@ -24,7 +24,16 @@ func TestManifestsCompile(t *testing.T) {
 
 				program, err := Compile(graph, nil, DefaultRepository())
 				So(err, ShouldBeNil)
-				So(len(program.Nodes), ShouldBeGreaterThan, 0)
+
+				// A graph describes work to do or a surface to show it on, so
+				// one that lowered to neither did not describe anything.
+				surfaces := 0
+
+				if program.UI != nil {
+					surfaces = len(program.UI.Routes)
+				}
+
+				So(len(program.Nodes)+surfaces, ShouldBeGreaterThan, 0)
 			})
 		}
 	})

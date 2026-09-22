@@ -19,8 +19,91 @@ const VERT_RANK_GAP = 360;
 const VERT_PARALLEL_GAP = 320;
 
 /*
-Computes dependency depth (longest path from any source). Nodes with no incoming graph
-edges are rank 0; each hop along an edge increases rank by one.
+Collects the producer -> consumer edges, dropping the ones that close a cycle.
+Feedback is real in this system: the grid hands the signals the values it was
+holding when the evaluation began, and the signals hand their results back. An
+edge that reaches a node already open on the walk is that feedback, and it
+constrains no position, so the walk records it and moves on.
+*/
+function forwardEdges(nodes: NodeMap): Map<string, Set<string>> {
+	const successors = new Map<string, Set<string>>();
+	for (const id of Object.keys(nodes)) {
+		successors.set(id, new Set());
+	}
+
+	for (const id of Object.keys(nodes)) {
+		const inputs = nodes[id]?.connections?.inputs;
+
+		if (!inputs) continue;
+
+		for (const incoming of Object.values(inputs)) {
+			for (const link of incoming) {
+				if (!successors.has(link.nodeId)) continue;
+
+				successors.get(link.nodeId)?.add(id);
+			}
+		}
+	}
+
+	const open = new Set<string>();
+	const settled = new Set<string>();
+
+	const walk = (root: string) => {
+		const stack: Array<{ id: string; next: string[]; at: number }> = [
+			{ id: root, next: [...(successors.get(root) ?? [])], at: 0 },
+		];
+		open.add(root);
+
+		while (stack.length > 0) {
+			const frame = stack[stack.length - 1];
+
+			if (frame.at >= frame.next.length) {
+				open.delete(frame.id);
+				settled.add(frame.id);
+				stack.pop();
+				continue;
+			}
+
+			const succ = frame.next[frame.at];
+			frame.at++;
+
+			if (open.has(succ)) {
+				successors.get(frame.id)?.delete(succ);
+				continue;
+			}
+
+			if (settled.has(succ)) continue;
+
+			open.add(succ);
+			stack.push({ id: succ, next: [...(successors.get(succ) ?? [])], at: 0 });
+		}
+	};
+
+	// Walking out of the true sources first breaks each loop at the edge that
+	// actually reaches backwards. Starting anywhere else breaks it at whichever
+	// edge the walk happened to enter on, which strands that node at rank 0.
+	const incoming = new Set<string>();
+	for (const outs of successors.values()) {
+		for (const succ of outs) {
+			incoming.add(succ);
+		}
+	}
+
+	const roots = Object.keys(nodes).filter((id) => !incoming.has(id));
+
+	for (const id of [...roots, ...Object.keys(nodes)]) {
+		if (settled.has(id)) continue;
+
+		walk(id);
+	}
+
+	return successors;
+}
+
+/*
+Computes dependency depth (longest path from any source) over the acyclic
+edges. Nodes with no incoming edge are rank 0; each hop along an edge increases
+rank by one.
 */
 export function computeNodeRanks(nodes: NodeMap): Map<string, number> {
 	const ranks = new Map<string, number>();
@@ -28,28 +111,38 @@ export function computeNodeRanks(nodes: NodeMap): Map<string, number> {
 		ranks.set(id, 0);
 	}
 
-	let changed = true;
-	let iterations = 0;
-	const limit = Math.max(Object.keys(nodes).length, 1) + 8;
-	while (changed && iterations < limit) {
-		iterations++;
-		changed = false;
-		for (const id of Object.keys(nodes)) {
-			const inputs = nodes[id]?.connections?.inputs;
-			if (!inputs) continue;
-			for (const outs of Object.values(inputs)) {
-				for (const link of outs) {
-					const pred = link.nodeId;
-					if (!ranks.has(pred)) continue;
-					const next = (ranks.get(pred) ?? 0) + 1;
-					if (next > (ranks.get(id) ?? 0)) {
-						ranks.set(id, next);
-						changed = true;
-					}
-				}
+	const successors = forwardEdges(nodes);
+	const remaining = new Map<string, number>();
+	for (const id of Object.keys(nodes)) {
+		remaining.set(id, 0);
+	}
+	for (const outs of successors.values()) {
+		for (const succ of outs) {
+			remaining.set(succ, (remaining.get(succ) ?? 0) + 1);
+		}
+	}
+
+	const queue = Object.keys(nodes).filter((id) => remaining.get(id) === 0);
+
+	while (queue.length > 0) {
+		const id = queue.shift() as string;
+
+		for (const succ of successors.get(id) ?? []) {
+			const next = (ranks.get(id) ?? 0) + 1;
+
+			if (next > (ranks.get(succ) ?? 0)) {
+				ranks.set(succ, next);
+			}
+
+			const left = (remaining.get(succ) ?? 0) - 1;
+			remaining.set(succ, left);
+
+			if (left === 0) {
+				queue.push(succ);
 			}
 		}
 	}
+
 	return ranks;
 }
 

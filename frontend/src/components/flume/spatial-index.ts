@@ -1,5 +1,6 @@
 import type { ObstacleRect } from "#/components/flume/connectionCalculator";
 import { connectionId } from "#/components/flume/connectionCalculator";
+import { portFamily } from "#/components/flume/port-families";
 import type {
 	Coordinate,
 	FlumeNode,
@@ -32,6 +33,53 @@ export const portLayoutKey = (
 	portName: string,
 	transputType: TransputType,
 ): string => `${nodeId}|${portName}|${transputType}`;
+
+/*
+Finds where a port was drawn.
+
+A gathering port's slots are drawn as the one port they belong to, so only
+that port is measured. An edge wired to a slot anchors on it, the same way it
+does in the DOM.
+
+A closed sub-graph draws no ports at all, so an edge to one meets the node
+itself: the side it arrives on, halfway down. Without this every edge to a
+closed sub-graph is dropped for having nowhere to land.
+*/
+const findPortLayout = (
+	snapshot: SpatialIndexSnapshot,
+	nodeId: string,
+	portName: string,
+	transputType: TransputType,
+): PortLayoutEntry | undefined => {
+	const layout = snapshot.portLayouts.get(
+		portLayoutKey(nodeId, portName, transputType),
+	);
+
+	if (layout) {
+		return layout;
+	}
+
+	const family = portFamily(portName);
+
+	const collapsed =
+		family &&
+		snapshot.portLayouts.get(portLayoutKey(nodeId, family, transputType));
+
+	if (collapsed) {
+		return collapsed;
+	}
+
+	const node = snapshot.nodeLayouts.get(nodeId);
+
+	if (!node) {
+		return undefined;
+	}
+
+	return {
+		offsetX: transputType === "input" ? 0 : node.width,
+		offsetY: node.height / 2,
+	};
+};
 
 export const resolveNodePosition = (
 	node: FlumeNode,
@@ -104,9 +152,7 @@ export const resolveConnectionsFromSpatialIndex = (
 		for (const [inputName, outputs] of Object.entries(
 			node.connections.inputs,
 		)) {
-			const toLayout = snapshot.portLayouts.get(
-				portLayoutKey(node.id, inputName, "input"),
-			);
+			const toLayout = findPortLayout(snapshot, node.id, inputName, "input");
 
 			if (!toLayout) {
 				continue;
@@ -121,8 +167,11 @@ export const resolveConnectionsFromSpatialIndex = (
 					continue;
 				}
 
-				const fromLayout = snapshot.portLayouts.get(
-					portLayoutKey(output.nodeId, output.portName, "output"),
+				const fromLayout = findPortLayout(
+					snapshot,
+					output.nodeId,
+					output.portName,
+					"output",
 				);
 
 				if (!fromLayout) {

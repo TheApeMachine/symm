@@ -4,9 +4,9 @@ import (
 	"context"
 	"strings"
 
+	capnp "capnproto.org/go/capnp/v3"
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
@@ -14,10 +14,9 @@ import (
 GridServer is the virtual grid. Raw market data is written to it and the
 metrics wired into it observe the fields the grid was told to deliver.
 
-The grid holds no values of its own. A metric is not a cell holding a number
-but a capability the grid can call, so reading the grid is asking the metrics
-wired into it for their current state. Wiring another metric in is what makes
-the grid wider, which is why nothing here enumerates them by name.
+The grid holds no values of its own. A metric is the value its last operation
+produced. Wiring another metric in is what makes the grid wider, which is why
+nothing here enumerates them by name.
 
 A metric that asked for a field the written data does not carry observes
 nothing, so a metric is never handed a frame it cannot read and never has to
@@ -26,8 +25,10 @@ recognise one it should ignore.
 type GridServer struct {
 	*runtime.System
 	interests []string
-	metrics   data.MetricService_List
+	declared  string
+	metrics   capnp.Float64List
 	values    []float64
+	present   []bool
 	out       []byte
 	delivered int64
 }
@@ -55,9 +56,7 @@ func (server *GridServer) Write(ctx context.Context, call Grid_write) error {
 		))
 	}
 
-	if interests != "" {
-		server.declare(interests)
-	}
+	server.declare(interests)
 
 	metrics, err := call.Args().Metrics()
 
@@ -85,6 +84,7 @@ func (server *GridServer) Write(ctx context.Context, call Grid_write) error {
 
 	server.out = nil
 	server.values = nil
+	server.present = nil
 	server.delivered = 0
 
 	if !feeds.IsValid() {
@@ -159,26 +159,34 @@ func (server *GridServer) Done(ctx context.Context, call Grid_done) error {
 }
 
 /*
-declare records the fields this grid delivers. Declaring again replaces what
-it delivers, so a grid's interests are whatever it was last told.
+declare records the fields this grid delivers. Declaring again replaces what it
+delivers, so a grid's interests are whatever it was last told.
+
+The same interests arrive on every observation, because they are configuration
+rather than news. Only a change is worth saying out loud.
 */
 func (server *GridServer) declare(interests string) {
-	declared := make([]string, 0, 4)
+	if interests == "" || interests == server.declared {
+		return
+	}
+
+	fields := make([]string, 0, 4)
 
 	for _, interest := range strings.Split(interests, ",") {
 		interest = strings.TrimSpace(interest)
 
 		if interest != "" {
-			declared = append(declared, interest)
+			fields = append(fields, interest)
 		}
 	}
 
-	if len(declared) == 0 {
+	if len(fields) == 0 {
 		return
 	}
 
-	server.interests = declared
-	server.Info("delivering %d fields to %d metrics", len(declared), server.metrics.Len())
+	server.interests = fields
+	server.declared = interests
+	server.Info("delivering %d fields to %d metrics", len(fields), server.metrics.Len())
 }
 
 /*
@@ -195,9 +203,9 @@ func (server *GridServer) resolve(payload []byte) error {
 		))
 	}
 
-	resolved, satisfied := resolveInterests(document, server.interests)
+	resolved := resolveInterests(document, server.interests)
 
-	if !satisfied {
+	if len(resolved) == 0 {
 		return nil
 	}
 
@@ -213,25 +221,29 @@ func (server *GridServer) resolve(payload []byte) error {
 
 	server.out = encoded
 	server.delivered = int64(len(resolved))
-	server.values = make([]float64, 0, len(server.interests))
+	server.values = make([]float64, len(server.interests))
+	server.present = make([]bool, len(server.interests))
 
-	// The values come back in the order they were declared, so a metric reads
-	// the slot it asked for rather than searching for its field by name.
-	for _, interest := range server.interests {
-		value, numeric := resolved[interest].(float64)
+	// Every declared interest keeps its own slot whether or not this record
+	// carried it, so a metric reads the slot it asked for rather than
+	// whichever field happened to land ahead of it.
+	for index, interest := range server.interests {
+		value, numeric := readInterest(resolved, interest)
 
 		if !numeric {
 			continue
 		}
 
-		server.values = append(server.values, value)
+		server.values[index] = value
+		server.present[index] = true
 	}
 
 	return nil
 }
 
 /*
-deliver hands back one value per declared interest.
+deliver hands back one slot per declared interest, and says which of them this
+record carried.
 */
 func (server *GridServer) deliver(results Grid_done_Results) error {
 	if len(server.values) == 0 {
@@ -248,34 +260,87 @@ func (server *GridServer) deliver(results Grid_done_Results) error {
 		))
 	}
 
+	carried, err := results.NewPresent(int32(len(server.present)))
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"[store.grid.deliver] failed to allocate delivered presence",
+			err,
+		))
+	}
+
 	for index, value := range server.values {
 		delivered.Set(index, value)
+		carried.Set(index, server.present[index])
 	}
 
 	server.values = nil
+	server.present = nil
 	return nil
 }
 
 /*
-resolveInterests collects the fields the grid declared, reporting whether the
-data carried all of them. Data missing a declared field is not delivered,
-because a partial reading is not a reading.
+resolveInterests collects whichever of the declared fields this data carries.
+
+One record comes from one feed and carries that feed's fields, so asking for
+all of them at once and refusing anything less would mean nothing is ever
+delivered. What the record does carry is a reading; what it does not is simply
+not in it.
 */
-func resolveInterests(document any, interests []string) (map[string]any, bool) {
+func resolveInterests(document any, interests []string) map[string]any {
 	resolved := make(map[string]any, len(interests))
 
 	for _, interest := range interests {
-		value, found := walkInterest(document, strings.Split(interest, "."))
+		field, _, _ := strings.Cut(interest, "=")
+		value, found := walkInterest(document, strings.Split(field, "."))
 
 		if !found {
-			return nil, false
+			continue
 		}
 
-		resolved[interest] = value
+		resolved[field] = value
 	}
 
-	return resolved, len(resolved) > 0
+	return resolved
 }
+
+/*
+readInterest reads one declared interest as a number.
+
+A field carrying a number is that number. A field carrying anything else can
+still be asked a question: an interest written field=literal reads as one when
+the field holds that literal and zero when it holds something else, so which
+of several kinds of record arrived is an observation like any other rather
+than something a metric has to go parsing the document for.
+*/
+func readInterest(resolved map[string]any, interest string) (float64, bool) {
+	field, literal, asked := strings.Cut(interest, "=")
+
+	if !asked {
+		value, numeric := resolved[interest].(float64)
+		return value, numeric
+	}
+
+	held, found := resolved[field]
+
+	if !found {
+		return 0, false
+	}
+
+	text, textual := held.(string)
+
+	if !textual {
+		return 0, false
+	}
+
+	if text != literal {
+		return 0, true
+	}
+
+	return 1, true
+}
+
 func walkInterest(document any, segments []string) (any, bool) {
 	current := document
 

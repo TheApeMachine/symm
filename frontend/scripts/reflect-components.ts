@@ -33,7 +33,7 @@ if (!moduleSymbol) {
 
 export interface PropMetadata {
 	name: string;
-	type: "string" | "number" | "boolean" | "select" | "slot";
+	type: "string" | "number" | "boolean" | "select" | "slot" | "series";
 	options?: string[];
 	optional: boolean;
 	defaultValue?: any;
@@ -100,7 +100,10 @@ function isComponentSymbol(symbol: ts.Symbol): boolean {
 function resolvePropType(
 	type: ts.Type,
 	propName: string,
-): { kind: "string" | "number" | "boolean" | "select" | "slot" | null; options?: string[] } {
+): {
+	kind: "string" | "number" | "boolean" | "select" | "slot" | "series" | null;
+	options?: string[];
+} {
 	// Remove undefined & null from union to inspect underlying type
 	const nonNullableType = type.getNonNullableType();
 	const flags = nonNullableType.getFlags();
@@ -127,6 +130,19 @@ function resolvePropType(
 	// String
 	if (flags & ts.TypeFlags.String) {
 		return { kind: "string" };
+	}
+
+	// A series of numbers. The graph carries one scalar per evaluation and
+	// the history is kept where it is drawn, so this is a number coming in
+	// over time rather than an array arriving on a wire.
+	if (checker.isArrayType(nonNullableType)) {
+		const [element] = checker.getTypeArguments(
+			nonNullableType as ts.TypeReference,
+		);
+
+		if (element && element.getFlags() & ts.TypeFlags.Number) {
+			return { kind: "series" };
+		}
 	}
 
 	// ReactNode / ReactElement: distinguish text-like controls from structural slots

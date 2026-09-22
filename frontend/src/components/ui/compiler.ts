@@ -158,9 +158,14 @@ export function compileUI(
 				continue;
 			}
 
+			// A control the author never filled in is stored as an empty
+			// object. It carries no value, and handing it on as one puts an
+			// object where the component expected a string or a child.
 			const val =
-				rawEntry !== null && typeof rawEntry === "object" && "value" in rawEntry
-					? rawEntry.value
+				rawEntry !== null && typeof rawEntry === "object"
+					? "value" in rawEntry
+						? (rawEntry as { value: unknown }).value
+						: undefined
 					: rawEntry;
 
 			if (propName === "className") {

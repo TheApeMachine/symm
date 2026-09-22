@@ -16,10 +16,6 @@
             {
               "nodeId": "relative_spread",
               "portName": "a"
-            },
-            {
-              "nodeId": "metric:spread",
-              "portName": "raw"
             }
           ]
         }
@@ -70,10 +66,6 @@
             {
               "nodeId": "relative_spread",
               "portName": "b"
-            },
-            {
-              "nodeId": "metric:midpoint",
-              "portName": "raw"
             }
           ]
         }
@@ -118,10 +110,6 @@
             {
               "nodeId": "spread_ratio",
               "portName": "a"
-            },
-            {
-              "nodeId": "metric:relative_spread",
-              "portName": "raw"
             }
           ]
         }
@@ -183,10 +171,6 @@
             {
               "nodeId": "spread_ratio",
               "portName": "b"
-            },
-            {
-              "nodeId": "metric:relative_spread_baseline",
-              "portName": "raw"
             }
           ]
         }
@@ -223,10 +207,6 @@
             {
               "nodeId": "spread_divergence_velocity",
               "portName": "val"
-            },
-            {
-              "nodeId": "metric:spread_divergence",
-              "portName": "raw"
             }
           ]
         }
@@ -306,14 +286,7 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:spread_zscore",
-              "portName": "raw"
-            }
-          ]
-        }
+        "outputs": {}
       }
     },
     "spread_divergence_velocity": {
@@ -332,14 +305,7 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:spread_divergence_velocity",
-              "portName": "raw"
-            }
-          ]
-        }
+        "outputs": {}
       }
     },
     "spread_ratio": {
@@ -364,189 +330,6 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:spread_ratio",
-              "portName": "raw"
-            }
-          ]
-        }
-      }
-    },
-    "metric:spread": {
-      "id": "metric:spread",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 0.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "spread",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:midpoint": {
-      "id": "metric:midpoint",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 150.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "midpoint",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:relative_spread": {
-      "id": "metric:relative_spread",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 300.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "relative_spread",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:relative_spread_baseline": {
-      "id": "metric:relative_spread_baseline",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 450.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "relative_spread_baseline",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:spread_ratio": {
-      "id": "metric:spread_ratio",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 600.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "spread_ratio",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:spread_divergence": {
-      "id": "metric:spread_divergence",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 750.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "spread_divergence",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:spread_zscore": {
-      "id": "metric:spread_zscore",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 900.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "spread_zscore",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:spread_divergence_velocity": {
-      "id": "metric:spread_divergence_velocity",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 1050.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "spread_divergence_velocity",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:best_bid": {
-      "id": "metric:best_bid",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 1200.0,
-      "connections": {
-        "inputs": {},
-        "outputs": {}
-      }
-    },
-    "metric:best_ask": {
-      "id": "metric:best_ask",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2400.0,
-      "y": 1350.0,
-      "connections": {
-        "inputs": {},
         "outputs": {}
       }
     }

@@ -9,6 +9,7 @@ import type {
 	PortType,
 	TransputBuilder,
 } from "#/components/flume/types";
+import { groupPorts } from "#/components/flume/port-families";
 import { Flex } from "#/components/ui/flex";
 import Input from "./Input";
 import Output from "./Output";
@@ -58,9 +59,43 @@ const IoPorts = ({
 		connections,
 	);
 
+	// A gathering port's slots are drawn as the one port they belong to,
+	// unless the node is opened up to show them.
+	const [openFamilies, setOpenFamilies] = React.useState<string[]>([]);
+
 	if (!triggerRecalculation || !inputTypes) {
 		return null;
 	}
+
+	const shown = (ports: typeof resolvedInputs) =>
+		groupPorts(ports).flatMap((group) => {
+			if (group.members.length === 1) {
+				return group.members;
+			}
+
+			if (openFamilies.includes(group.base)) {
+				return group.members;
+			}
+
+			return [
+				{
+					...group.representative,
+					label: `${group.representative.label ?? group.base} (${group.members.length})`,
+					family: group.base,
+					slots: group.members.length,
+				},
+			];
+		});
+
+	const toggleFamily = (base: string) =>
+		setOpenFamilies((open) =>
+			open.includes(base)
+				? open.filter((name) => name !== base)
+				: [...open, base],
+		);
+
+	const shownInputs = shown(resolvedInputs);
+	const shownOutputs = shown(resolvedOutputs);
 
 	return (
 		<Flex.Column
@@ -69,7 +104,7 @@ const IoPorts = ({
 			className="mt-auto"
 			data-flume-component="ports"
 		>
-			{resolvedInputs.length ? (
+			{shownInputs.length ? (
 				<Flex.Column
 					align="stretch"
 					justify="start"
@@ -77,7 +112,7 @@ const IoPorts = ({
 					fullWidth
 					gap={3}
 				>
-					{resolvedInputs.map((input) => (
+					{shownInputs.map((input) => (
 						<Input
 							{...input}
 							data={inputData[input.name] || {}}
@@ -88,23 +123,33 @@ const IoPorts = ({
 							nodeId={nodeId}
 							inputData={inputData}
 							key={input.name}
+							onToggleFamily={
+								"family" in input
+									? () => toggleFamily(String(input.family))
+									: undefined
+							}
 						/>
 					))}
 				</Flex.Column>
 			) : null}
-			{resolvedOutputs.length ? (
+			{shownOutputs.length ? (
 				<Flex.Column
 					align="end"
 					gap={2}
 					data-flume-component="ports-outputs"
 				>
-					{resolvedOutputs.map((output) => (
+					{shownOutputs.map((output) => (
 						<Output
 							{...output}
 							triggerRecalculation={triggerRecalculation}
 							inputTypes={inputTypes}
 							nodeId={nodeId}
 							key={output.name}
+							onToggleFamily={
+								"family" in output
+									? () => toggleFamily(String(output.family))
+									: undefined
+							}
 						/>
 					))}
 				</Flex.Column>

@@ -110,10 +110,6 @@
               "portName": "value"
             },
             {
-              "nodeId": "metric:signed_correlation",
-              "portName": "raw"
-            },
-            {
               "nodeId": "cohortSigned",
               "portName": "value"
             },
@@ -128,21 +124,7 @@
               "portName": "value"
             }
           ],
-          "covariance": [
-            {
-              "nodeId": "metric:covariance",
-              "portName": "raw"
-            }
-          ],
           "support": [
-            {
-              "nodeId": "metric:overlap_pair_count",
-              "portName": "raw"
-            },
-            {
-              "nodeId": "metric:effective_sample_count",
-              "portName": "raw"
-            },
             {
               "nodeId": "fisherDegreesOfFreedom",
               "portName": "a"
@@ -164,27 +146,7 @@
               "portName": "weight"
             }
           ],
-          "leftEnergy": [
-            {
-              "nodeId": "metric:return_energy:measured",
-              "portName": "raw"
-            }
-          ],
-          "rightEnergy": [
-            {
-              "nodeId": "metric:return_energy:reference",
-              "portName": "raw"
-            }
-          ],
           "leftEnergyRate": [
-            {
-              "nodeId": "metric:return_energy_rate:measured",
-              "portName": "raw"
-            },
-            {
-              "nodeId": "metric:focal_return_energy_rate",
-              "portName": "raw"
-            },
             {
               "nodeId": "cohortEnergy",
               "portName": "value"
@@ -192,40 +154,6 @@
             {
               "nodeId": "relativeReturnEnergy",
               "portName": "a"
-            }
-          ],
-          "rightEnergyRate": [
-            {
-              "nodeId": "metric:return_energy_rate:reference",
-              "portName": "raw"
-            }
-          ],
-          "leftReturns": [
-            {
-              "nodeId": "metric:supported_return_count:measured",
-              "portName": "raw"
-            },
-            {
-              "nodeId": "metric:observation_count",
-              "portName": "raw"
-            }
-          ],
-          "rightReturns": [
-            {
-              "nodeId": "metric:supported_return_count:reference",
-              "portName": "raw"
-            }
-          ],
-          "sharedTime": [
-            {
-              "nodeId": "metric:shared_time",
-              "portName": "raw"
-            }
-          ],
-          "overlapDensity": [
-            {
-              "nodeId": "metric:overlap_density",
-              "portName": "raw"
             }
           ]
         }
@@ -247,14 +175,7 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:absolute_correlation",
-              "portName": "raw"
-            }
-          ]
-        }
+        "outputs": {}
       }
     },
     "atanh": {
@@ -349,14 +270,7 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:correlation_baseline",
-              "portName": "raw"
-            }
-          ]
-        }
+        "outputs": {}
       }
     },
     "divergence": {
@@ -381,14 +295,7 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:correlation_divergence",
-              "portName": "raw"
-            }
-          ]
-        }
+        "outputs": {}
       }
     },
     "zscore": {
@@ -407,14 +314,7 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:correlation_zscore",
-              "portName": "raw"
-            }
-          ]
-        }
+        "outputs": {}
       }
     },
     "velocity": {
@@ -433,14 +333,7 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:correlation_velocity",
-              "portName": "raw"
-            }
-          ]
-        }
+        "outputs": {}
       }
     },
     "prevReferenceTimestamp": {
@@ -494,348 +387,6 @@
         "query": {
           "value": false
         }
-      }
-    },
-    "metric:signed_correlation": {
-      "id": "metric:signed_correlation",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 1100.0,
-      "y": -400.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "hy",
-              "portName": "correlation"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:covariance": {
-      "id": "metric:covariance",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 1100.0,
-      "y": -250.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "hy",
-              "portName": "covariance"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:overlap_pair_count": {
-      "id": "metric:overlap_pair_count",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 1100.0,
-      "y": -100.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "hy",
-              "portName": "support"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:absolute_correlation": {
-      "id": "metric:absolute_correlation",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 1100.0,
-      "y": 50.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "absolute",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:correlation_baseline": {
-      "id": "metric:correlation_baseline",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 1100.0,
-      "y": 200.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "baselineCorrelation",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:correlation_divergence": {
-      "id": "metric:correlation_divergence",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 1100.0,
-      "y": 350.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "divergence",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:correlation_zscore": {
-      "id": "metric:correlation_zscore",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 1100.0,
-      "y": 500.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "zscore",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:correlation_velocity": {
-      "id": "metric:correlation_velocity",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 1100.0,
-      "y": 650.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "velocity",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:return_energy:measured": {
-      "id": "metric:return_energy:measured",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 1460.0,
-      "y": -400.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "hy",
-              "portName": "leftEnergy"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:return_energy:reference": {
-      "id": "metric:return_energy:reference",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 1460.0,
-      "y": -250.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "hy",
-              "portName": "rightEnergy"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:return_energy_rate:measured": {
-      "id": "metric:return_energy_rate:measured",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 1460.0,
-      "y": -100.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "hy",
-              "portName": "leftEnergyRate"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:return_energy_rate:reference": {
-      "id": "metric:return_energy_rate:reference",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 1460.0,
-      "y": 50.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "hy",
-              "portName": "rightEnergyRate"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:focal_return_energy_rate": {
-      "id": "metric:focal_return_energy_rate",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 1460.0,
-      "y": 200.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "hy",
-              "portName": "leftEnergyRate"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:supported_return_count:measured": {
-      "id": "metric:supported_return_count:measured",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 1460.0,
-      "y": 350.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "hy",
-              "portName": "leftReturns"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:supported_return_count:reference": {
-      "id": "metric:supported_return_count:reference",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 1460.0,
-      "y": 500.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "hy",
-              "portName": "rightReturns"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:shared_time": {
-      "id": "metric:shared_time",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 1460.0,
-      "y": 650.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "hy",
-              "portName": "sharedTime"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:overlap_density": {
-      "id": "metric:overlap_density",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 1460.0,
-      "y": 800.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "hy",
-              "portName": "overlapDensity"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:effective_sample_count": {
-      "id": "metric:effective_sample_count",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 1460.0,
-      "y": 950.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "hy",
-              "portName": "support"
-            }
-          ]
-        },
-        "outputs": {}
       }
     },
     "fisherDegreesOfFreedom": {
@@ -911,32 +462,6 @@
           "value": [
             {
               "nodeId": "fisherDegrees",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:correlation_standard_error_fisher",
-              "portName": "raw"
-            }
-          ]
-        }
-      }
-    },
-    "metric:correlation_standard_error_fisher": {
-      "id": "metric:correlation_standard_error_fisher",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 1820.0,
-      "y": 400.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "fisherStandardError",
               "portName": "out"
             }
           ]
@@ -1049,32 +574,6 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:correlation_p_value",
-              "portName": "raw"
-            }
-          ]
-        }
-      }
-    },
-    "metric:correlation_p_value": {
-      "id": "metric:correlation_p_value",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 1820.0,
-      "y": 550.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "fisherPValue",
-              "portName": "out"
-            }
-          ]
-        },
         "outputs": {}
       }
     },
@@ -1100,26 +599,7 @@
             }
           ]
         },
-        "outputs": {
-          "mean": [
-            {
-              "nodeId": "metric:cohort_signed_correlation",
-              "portName": "raw"
-            }
-          ],
-          "count": [
-            {
-              "nodeId": "metric:cohort_peer_count",
-              "portName": "raw"
-            }
-          ],
-          "effective": [
-            {
-              "nodeId": "metric:cohort_effective_peer_count",
-              "portName": "raw"
-            }
-          ]
-        }
+        "outputs": {}
       }
     },
     "cohortAbsoluteValue": {
@@ -1170,14 +650,7 @@
             }
           ]
         },
-        "outputs": {
-          "mean": [
-            {
-              "nodeId": "metric:cohort_absolute_correlation",
-              "portName": "raw"
-            }
-          ]
-        }
+        "outputs": {}
       }
     },
     "cohortEnergy": {
@@ -1204,10 +677,6 @@
         },
         "outputs": {
           "mean": [
-            {
-              "nodeId": "metric:peer_return_energy_rate",
-              "portName": "raw"
-            },
             {
               "nodeId": "relativeReturnEnergy",
               "portName": "b"
@@ -1248,101 +717,6 @@
         }
       }
     },
-    "metric:cohort_signed_correlation": {
-      "id": "metric:cohort_signed_correlation",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 1820.0,
-      "y": 700.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "cohortSigned",
-              "portName": "mean"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:cohort_absolute_correlation": {
-      "id": "metric:cohort_absolute_correlation",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 1820.0,
-      "y": 850.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "cohortAbsolute",
-              "portName": "mean"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:peer_return_energy_rate": {
-      "id": "metric:peer_return_energy_rate",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 1820.0,
-      "y": 1000.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "cohortEnergy",
-              "portName": "mean"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:cohort_peer_count": {
-      "id": "metric:cohort_peer_count",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 1820.0,
-      "y": 1150.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "cohortSigned",
-              "portName": "count"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:cohort_effective_peer_count": {
-      "id": "metric:cohort_effective_peer_count",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 1820.0,
-      "y": 1300.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "cohortSigned",
-              "portName": "effective"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
     "cohortDispersion": {
       "id": "cohortDispersion",
       "type": "calculus.Sqrt",
@@ -1356,32 +730,6 @@
             {
               "nodeId": "cohortFisher",
               "portName": "variance"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:cohort_correlation_dispersion",
-              "portName": "raw"
-            }
-          ]
-        }
-      }
-    },
-    "metric:cohort_correlation_dispersion": {
-      "id": "metric:cohort_correlation_dispersion",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 1820.0,
-      "y": 1450.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "cohortDispersion",
-              "portName": "out"
             }
           ]
         },
@@ -1413,14 +761,6 @@
         "outputs": {
           "out": [
             {
-              "nodeId": "metric:relative_return_energy",
-              "portName": "raw"
-            },
-            {
-              "nodeId": "metric:relative_cohort_return_energy",
-              "portName": "raw"
-            },
-            {
               "nodeId": "relativeBaseline",
               "portName": "value"
             },
@@ -1438,44 +778,6 @@
             }
           ]
         }
-      }
-    },
-    "metric:relative_return_energy": {
-      "id": "metric:relative_return_energy",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2180.0,
-      "y": 1600.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "relativeReturnEnergy",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:relative_cohort_return_energy": {
-      "id": "metric:relative_cohort_return_energy",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2180.0,
-      "y": 1750.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "relativeReturnEnergy",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
       }
     },
     "relativeBaseline": {
@@ -1496,10 +798,6 @@
         },
         "outputs": {
           "out": [
-            {
-              "nodeId": "metric:relative_return_energy_baseline",
-              "portName": "raw"
-            },
             {
               "nodeId": "relativeDivergence",
               "portName": "b"
@@ -1530,14 +828,7 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:relative_return_energy_divergence",
-              "portName": "raw"
-            }
-          ]
-        }
+        "outputs": {}
       }
     },
     "relativeZScore": {
@@ -1556,14 +847,7 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:relative_return_energy_zscore",
-              "portName": "raw"
-            }
-          ]
-        }
+        "outputs": {}
       }
     },
     "relativeVelocity": {
@@ -1582,120 +866,6 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "metric:relative_return_energy_velocity",
-              "portName": "raw"
-            }
-          ]
-        }
-      }
-    },
-    "metric:relative_return_energy_baseline": {
-      "id": "metric:relative_return_energy_baseline",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2180.0,
-      "y": 1900.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "relativeBaseline",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:relative_return_energy_divergence": {
-      "id": "metric:relative_return_energy_divergence",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2180.0,
-      "y": 2050.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "relativeDivergence",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:relative_return_energy_zscore": {
-      "id": "metric:relative_return_energy_zscore",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2180.0,
-      "y": 2200.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "relativeZScore",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:relative_return_energy_velocity": {
-      "id": "metric:relative_return_energy_velocity",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2180.0,
-      "y": 2350.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "relativeVelocity",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:observation_count": {
-      "id": "metric:observation_count",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2180.0,
-      "y": 2500.0,
-      "connections": {
-        "inputs": {
-          "raw": [
-            {
-              "nodeId": "hy",
-              "portName": "leftReturns"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "metric:last_price": {
-      "id": "metric:last_price",
-      "type": "data.MetricService",
-      "width": 280,
-      "height": 172,
-      "x": 2180.0,
-      "y": 2650.0,
-      "connections": {
-        "inputs": {},
         "outputs": {}
       }
     }

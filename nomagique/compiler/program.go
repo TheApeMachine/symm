@@ -78,6 +78,11 @@ type Route struct {
 	FromInUnion    bool
 	FromDiscVal    uint16
 	FromDiscOffset uint32
+	// Delivered reports whether the producer actually carried a value for this
+	// route. A producer that reports several values may carry only some of
+	// them, and a consumer waiting on one that did not arrive must keep
+	// waiting rather than run on whatever its arguments held.
+	Delivered func(src capnp.Struct) bool
 }
 
 /*
@@ -285,34 +290,46 @@ Float64Result retrieves a float64 output value from the latest evaluation.
 func (p *Program) Float64Result(nodeID, fieldName string) (float64, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+
 	if p.results == nil {
-		return 0, fmt.Errorf("program: no results available")
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"program: no results available",
+			nil,
+		))
 	}
+
 	res, ok := p.results[nodeID]
+
 	if !ok {
-		return 0, fmt.Errorf("program: node %q result not found", nodeID)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf("program: node %q result not found", nodeID),
+			nil,
+		))
 	}
+
 	nodeIdx, ok := p.NodeMap[nodeID]
+
 	if !ok {
-		return 0, fmt.Errorf("program: node %q not in node map", nodeID)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf("program: node %q not in node map", nodeID),
+			nil,
+		))
 	}
+
 	node := p.Nodes[nodeIdx]
 	field, ok := node.Outputs[fieldName]
+
 	if !ok {
-		field, ok = node.Outputs["out"]
-		if !ok {
-			field, ok = node.Inputs[fieldName]
-			if !ok {
-				field, ok = node.Inputs["in"]
-				if !ok {
-					field, ok = node.Inputs["value"]
-					if !ok {
-						return 0, fmt.Errorf("program: field %q not found on node %q", fieldName, nodeID)
-					}
-				}
-			}
-		}
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf("program: output field %q not found on node %q", fieldName, nodeID),
+			nil,
+		))
 	}
+
 	return math.Float64frombits(res.Uint64(capnp.DataOffset(field.Offset * 8))), nil
 }
 
@@ -525,6 +542,12 @@ func (p *Program) Execute(
 								nil,
 							))
 						}
+						// Nothing arrived for this route, so the consumer is
+						// still waiting rather than ready with a default.
+						if r.Delivered != nil && !r.Delivered(resStruct) {
+							continue
+						}
+
 						if err := r.Copy(resStruct, destArgs); err != nil {
 							release()
 							return errnie.Error(errnie.Err(

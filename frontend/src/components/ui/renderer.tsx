@@ -1,8 +1,106 @@
-import type React from "react";
+import React from "react";
+import { RingBuffer } from "#/collections/ring";
+import componentMetadata from "./ui-component-metadata.generated.json";
 import {
 	type UIComponentName,
 	uiComponents,
 } from "./ui-component-registry.generated";
+
+/*
+The graph carries one scalar per evaluation, so a component that draws a
+series keeps its own history. The ring is held against the producer rather
+than the component reading it, so two views of the same metric share one
+history instead of each starting empty.
+
+A sparkline draws into a 150-unit viewBox, so it holds a point per unit; past
+that the oldest reading leaves as the newest arrives.
+*/
+const SERIES_CAPACITY = 150;
+
+const seriesRings = new Map<string, RingBuffer<number>>();
+
+const seriesKey = (node: string, port: string) => `${node}.${port}`;
+
+const readSeries = (key: string): number[] =>
+	seriesRings.get(key)?.toArray() ?? [];
+
+const recordSeries = (key: string, value: number) => {
+	let ring = seriesRings.get(key);
+
+	if (!ring) {
+		ring = new RingBuffer<number>(SERIES_CAPACITY);
+		seriesRings.set(key, ring);
+	}
+
+	ring.add(value);
+};
+
+/** Forgets every accumulated history. Tests start from nothing. */
+export const clearSeries = () => seriesRings.clear();
+
+/** The history held against one producer's port. */
+export const readSeriesForTest = (key: string): number[] => readSeries(key);
+
+const seriesProps = (componentName: string): Set<string> => {
+	const meta = (componentMetadata as Record<string, { props?: Array<{ name: string; type: string }> }>)[
+		componentName
+	];
+
+	return new Set(
+		(meta?.props ?? [])
+			.filter((prop) => prop.type === "series")
+			.map((prop) => prop.name),
+	);
+};
+
+type SeriesBinding = { prop: string; key: string; value: number | undefined };
+
+/*
+SeriesBound draws a component whose data arrives a scalar at a time.
+
+Recording happens after the render that observed the value, never during it,
+so a repeated render cannot enter the same reading twice.
+*/
+const SeriesBound = ({
+	component: Component,
+	props,
+	bindings,
+	children,
+}: {
+	component: React.ComponentType<any>;
+	props: Record<string, any>;
+	bindings: SeriesBinding[];
+	children?: React.ReactNode;
+}) => {
+	const [, observed] = React.useReducer((count: number) => count + 1, 0);
+	const readings = bindings.map((binding) => binding.value).join(",");
+
+	React.useEffect(() => {
+		let recorded = false;
+
+		for (const binding of bindings) {
+			if (typeof binding.value !== "number") continue;
+
+			recordSeries(binding.key, binding.value);
+			recorded = true;
+		}
+
+		if (recorded) observed();
+		// The readings are what changed; the bindings array is rebuilt each render.
+	}, [readings]);
+
+	const withHistory = { ...props };
+
+	for (const binding of bindings) {
+		withHistory[binding.prop] = readSeries(binding.key);
+	}
+
+	return children ? (
+		<Component {...withHistory}>{children}</Component>
+	) : (
+		<Component {...withHistory} />
+	);
+};
 
 /*
 CompiledUINode represents one node in a compiled UI subgraph.
@@ -103,16 +201,56 @@ export function renderNode(
 			: node.className;
 	}
 
-	const childNodes = node.children ?? [];
-	if (childNodes.length > 0) {
-		const renderedChildren = childNodes.map((child, index) =>
-			renderNode(
-				child,
-				key !== undefined ? `${key}-${index}` : index,
-				observableState,
-			),
-		);
+	// A prop the component draws as a series takes its readings one at a
+	// time, so it is handed the history rather than the latest scalar.
+	const series = seriesProps(node.name);
+	const bindings: SeriesBinding[] = [];
 
+	if (series.size > 0 && node.props) {
+		for (const [prop, authored] of Object.entries(node.props)) {
+			if (!series.has(prop)) continue;
+
+			const binding = (authored as { binding?: { node: string; port?: string } })
+				?.binding;
+
+			if (!binding) continue;
+
+			bindings.push({
+				prop,
+				key: seriesKey(binding.node, binding.port ?? "out"),
+				value: resolvedProps[prop],
+			});
+
+			delete resolvedProps[prop];
+		}
+	}
+
+	const childNodes = node.children ?? [];
+	const renderedChildren =
+		childNodes.length > 0
+			? childNodes.map((child, index) =>
+					renderNode(
+						child,
+						key !== undefined ? `${key}-${index}` : index,
+						observableState,
+					),
+				)
+			: undefined;
+
+	if (bindings.length > 0) {
+		return (
+			<SeriesBound
+				key={key}
+				component={Component}
+				props={resolvedProps}
+				bindings={bindings}
+			>
+				{renderedChildren}
+			</SeriesBound>
+		);
+	}
+
+	if (renderedChildren) {
 		return (
 			<Component key={key} {...resolvedProps}>
 				{renderedChildren}

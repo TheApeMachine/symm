@@ -10,6 +10,8 @@ interface OutputProps {
 	type: string;
 	inputTypes: PortTypeMap;
 	triggerRecalculation: () => void;
+	/* Present when this row stands for a gathering port's collapsed slots. */
+	onToggleFamily?: () => void;
 }
 
 const Output = ({
@@ -19,6 +21,7 @@ const Output = ({
 	type,
 	inputTypes,
 	triggerRecalculation,
+	onToggleFamily,
 }: OutputProps) => {
 	const { label: defaultLabel, color } = inputTypes[type] || {};
 
@@ -31,7 +34,18 @@ const Output = ({
 				e.stopPropagation();
 			}}
 		>
-			<Label>{label || defaultLabel}</Label>
+			{onToggleFamily ? (
+				<button
+					type="button"
+					onClick={onToggleFamily}
+					className="cursor-pointer underline decoration-dotted underline-offset-2"
+					data-flume-port-family={name}
+				>
+					<Label>{label || defaultLabel}</Label>
+				</button>
+			) : (
+				<Label>{label || defaultLabel}</Label>
+			)}
 			<Port
 				type={type}
 				name={name}

@@ -23,12 +23,79 @@ const CORRIDOR_SCAN_LIMIT = 200;
 /** Exit stub length: distance the wire travels horizontally before turning. */
 const PORT_EXIT_STUB = 40;
 
-const padObstacle = (o: ObstacleRect, pad: number): ObstacleRect => ({
-	left: o.left - pad,
-	right: o.right + pad,
-	top: o.top - pad,
-	bottom: o.bottom + pad,
-});
+/*
+The corridor scan asks, two hundred times per edge, whether a straight run
+hits anything. Answered by walking every obstacle it is the whole cost of
+routing a large graph: the work is edges times scan steps times nodes.
+
+Almost none of those obstacles can be hit. A horizontal run at one height can
+only meet obstacles that span that height, so the obstacles are filed into
+bands once and each question reads the one band it concerns.
+
+The filing is keyed on the obstacle list itself, which the engine builds once
+per recalculate and hands to every edge, so it is built once and read
+thousands of times.
+*/
+const OBSTACLE_BAND = 256;
+
+type ObstacleIndex = {
+	byRow: Map<number, ObstacleRect[]>;
+	byColumn: Map<number, ObstacleRect[]>;
+};
+
+const obstacleIndexes = new WeakMap<
+	ReadonlyArray<ObstacleRect>,
+	ObstacleIndex
+>();
+
+const fileInto = (
+	bands: Map<number, ObstacleRect[]>,
+	from: number,
+	to: number,
+	obstacle: ObstacleRect,
+) => {
+	const first = Math.floor(from / OBSTACLE_BAND);
+	const last = Math.floor(to / OBSTACLE_BAND);
+
+	for (let band = first; band <= last; band++) {
+		const held = bands.get(band);
+
+		if (held) {
+			held.push(obstacle);
+			continue;
+		}
+
+		bands.set(band, [obstacle]);
+	}
+};
+
+const indexOf = (obstacles: ReadonlyArray<ObstacleRect>): ObstacleIndex => {
+	const existing = obstacleIndexes.get(obstacles);
+
+	if (existing) {
+		return existing;
+	}
+
+	const index: ObstacleIndex = { byRow: new Map(), byColumn: new Map() };
+
+	for (const obstacle of obstacles) {
+		fileInto(
+			index.byRow,
+			obstacle.top - OBSTACLE_PADDING,
+			obstacle.bottom + OBSTACLE_PADDING,
+			obstacle,
+		);
+		fileInto(
+			index.byColumn,
+			obstacle.left - OBSTACLE_PADDING,
+			obstacle.right + OBSTACLE_PADDING,
+			obstacle,
+		);
+	}
+
+	obstacleIndexes.set(obstacles, index);
+	return index;
+};
 
 const segmentHitsHorizontal = (
 	y: number,
@@ -39,10 +106,18 @@ const segmentHitsHorizontal = (
 	if (x1 === x2) return false;
 	const [xa, xb] = x1 <= x2 ? [x1, x2] : [x2, x1];
 
-	for (const raw of obstacles) {
-		const o = padObstacle(raw, OBSTACLE_PADDING);
-		if (y <= o.top || y >= o.bottom) continue;
-		if (xb <= o.left || xa >= o.right) continue;
+	// Padding is arithmetic on the comparison, not a rectangle built per
+	// obstacle: this runs for every obstacle, on every step of the corridor
+	// scan, for every edge.
+	const band = indexOf(obstacles).byRow.get(Math.floor(y / OBSTACLE_BAND));
+
+	if (!band) return false;
+
+	for (const o of band) {
+		if (y <= o.top - OBSTACLE_PADDING || y >= o.bottom + OBSTACLE_PADDING)
+			continue;
+		if (xb <= o.left - OBSTACLE_PADDING || xa >= o.right + OBSTACLE_PADDING)
+			continue;
 		return true;
 	}
 
@@ -58,10 +133,15 @@ const segmentHitsVertical = (
 	if (y1 === y2) return false;
 	const [ya, yb] = y1 <= y2 ? [y1, y2] : [y2, y1];
 
-	for (const raw of obstacles) {
-		const o = padObstacle(raw, OBSTACLE_PADDING);
-		if (x <= o.left || x >= o.right) continue;
-		if (yb <= o.top || ya >= o.bottom) continue;
+	const band = indexOf(obstacles).byColumn.get(Math.floor(x / OBSTACLE_BAND));
+
+	if (!band) return false;
+
+	for (const o of band) {
+		if (x <= o.left - OBSTACLE_PADDING || x >= o.right + OBSTACLE_PADDING)
+			continue;
+		if (yb <= o.top - OBSTACLE_PADDING || ya >= o.bottom + OBSTACLE_PADDING)
+			continue;
 		return true;
 	}
 

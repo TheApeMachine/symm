@@ -1,70 +1,58 @@
-package arithmetic_test
+package arithmetic
 
 import (
 	"context"
+	"math"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique/arithmetic"
 )
 
-func TestDividePrimitive(t *testing.T) {
-	Convey("Given a native Divide Cap'n Proto server", t, func() {
-		server := arithmetic.NewDivide()
-		So(server, ShouldNotBeNil)
+func TestDivideWrite(t *testing.T) {
+	Convey("Given a division", t, func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
 
-		client := arithmetic.Divide_ServerToClient(server)
-		So(client.IsValid(), ShouldBeTrue)
+		client := Divide_ServerToClient(NewDivide())
+		defer client.Release()
 
-		Convey("When invoking Write with a valid divisor", func() {
-			ctx := context.Background()
-
-			err := client.Write(ctx, func(params arithmetic.Divide_write_Params) error {
-				params.SetA(15.0)
-				params.SetB(3.0)
+		divide := func(a, b float64) float64 {
+			err := client.Write(ctx, func(params Divide_write_Params) error {
+				params.SetA(a)
+				params.SetB(b)
 				return nil
 			})
 			So(err, ShouldBeNil)
-
-			err = client.WaitStreaming()
-			So(err, ShouldBeNil)
+			So(client.WaitStreaming(), ShouldBeNil)
 
 			future, release := client.Done(ctx, nil)
 			defer release()
 
 			results, err := future.Struct()
 			So(err, ShouldBeNil)
-			So(results.Out(), ShouldEqual, 5.0)
 
-			Convey("When dividing by zero, an error is returned on streaming flush", func() {
-				err = client.Write(ctx, func(params arithmetic.Divide_write_Params) error {
-					params.SetA(10.0)
-					params.SetB(0.0)
-					return nil
-				})
-				So(err, ShouldBeNil)
+			return results.Out()
+		}
 
-				err = client.WaitStreaming()
-				So(err, ShouldNotBeNil)
+		Convey("When the divisor is a number", func() {
+			Convey("Then the quotient is reported", func() {
+				So(divide(7, 2), ShouldAlmostEqual, 3.5, 1e-12)
+			})
+		})
+
+		Convey("When the divisor is zero", func() {
+			Convey("Then the quotient is undefined rather than refused", func() {
+				// Refusing would abort the evaluation, so one undefined
+				// quotient would erase every other metric measured from the
+				// same observation. It stays undefined and travels alone.
+				So(math.IsInf(divide(1, 0), 1), ShouldBeTrue)
+				So(math.IsInf(divide(-1, 0), -1), ShouldBeTrue)
+				So(math.IsNaN(divide(0, 0)), ShouldBeTrue)
 			})
 
-			Convey("When performing a second valid evaluation, state is reset", func() {
-				err = client.Write(ctx, func(params arithmetic.Divide_write_Params) error {
-					params.SetA(40.0)
-					params.SetB(8.0)
-					return nil
-				})
-				So(err, ShouldBeNil)
-
-				err = client.WaitStreaming()
-				So(err, ShouldBeNil)
-
-				secondFuture, secondRelease := client.Done(ctx, nil)
-				defer secondRelease()
-
-				secondResults, err := secondFuture.Struct()
-				So(err, ShouldBeNil)
-				So(secondResults.Out(), ShouldEqual, 5.0)
+			Convey("Then the next division still reports its own answer", func() {
+				divide(1, 0)
+				So(divide(9, 3), ShouldAlmostEqual, 3, 1e-12)
 			})
 		})
 	})
