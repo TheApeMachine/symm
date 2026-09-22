@@ -42,7 +42,11 @@ func TestIcebergScanWrite(t *testing.T) {
 					if err := metadata.Set(0, encoded); err != nil {
 						return err
 					}
-					return args.SetProperties([]byte(fixture.properties))
+					properties, err := args.NewProperties(1)
+					if err != nil {
+						return err
+					}
+					return properties.Set(0, []byte(fixture.properties))
 				}), ShouldBeNil)
 				err := client.WaitStreaming()
 				if !fixture.valid {

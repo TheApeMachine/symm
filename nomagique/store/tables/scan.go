@@ -47,9 +47,16 @@ func (server *IcebergScanServer) Write(ctx context.Context, call IcebergScan_wri
 	if err != nil {
 		return errnie.Error(errnie.Err(errnie.Validation, "scan: metadata input", err))
 	}
-	properties, err := call.Args().Properties()
+	configurations, err := call.Args().Properties()
 	if err != nil {
 		return errnie.Error(errnie.Err(errnie.Validation, "scan: properties", err))
+	}
+	if configurations.Len() != 1 {
+		return errnie.Error(errnie.Err(errnie.Validation, "scan: one explicit I/O properties object is required", nil))
+	}
+	properties, err := configurations.At(0)
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.Validation, "scan: I/O properties", err))
 	}
 	if server.next != nil {
 		if !bytes.Equal(metadata, server.metadata) || !bytes.Equal(properties, server.properties) {

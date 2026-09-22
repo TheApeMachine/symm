@@ -108,7 +108,11 @@ func TestIcebergTableFlush(t *testing.T) {
 			reader := IcebergScan_ServerToClient(scanner)
 			defer reader.Release()
 			So(reader.Write(ctx, func(params IcebergScan_write_Params) error {
-				if err := params.SetProperties([]byte(`{}`)); err != nil {
+				properties, err := params.NewProperties(1)
+				if err != nil {
+					return err
+				}
+				if err := properties.Set(0, []byte(`{}`)); err != nil {
 					return err
 				}
 				arrivals, err := params.NewMetadata(1)
