@@ -62,7 +62,7 @@ export const usePortOverlayPosition = (
 			const anchor = anchorRef.current;
 			const nodeElement = anchor?.closest('[data-flume-component="node"]');
 
-			if (!anchor || !(nodeElement instanceof HTMLElement) || !node) {
+			if (!anchor || !(nodeElement instanceof HTMLElement)) {
 				setMeasuredLayout(null);
 				return;
 			}
@@ -121,13 +121,13 @@ export const usePortOverlayPosition = (
 		return () => {
 			resizeObserver.disconnect();
 			window.removeEventListener("resize", measurePortLayout);
+			lastRegistrationRef.current = "";
 			graphWorker?.clearPortLayout(nodeId, portName, transputType);
 		};
 	}, [
 		anchorRef,
 		editorId,
 		graphWorker,
-		node,
 		nodeId,
 		portName,
 		registerPortLayout,

@@ -18,7 +18,6 @@ anything other than having happened.
 */
 type ReinforceServer struct {
 	*runtime.System
-	trie   *Trie
 	out    []byte
 	weight uint64
 }
@@ -26,18 +25,11 @@ type ReinforceServer struct {
 func NewReinforce(ctx context.Context) *ReinforceServer {
 	server := &ReinforceServer{
 		System: runtime.NewSystem(ctx, "cognition.reinforce"),
-		trie:   NewTrie(),
 	}
 
 	server.Transition(runtime.READY)
 	return server
 }
-
-/*
-Share hands this node's trie to the nodes that read it, so a writer and a
-reader hold one structure.
-*/
-func (server *ReinforceServer) Share() *Trie { return server.trie }
 
 /*
 Write reinforces the observed sequence.
@@ -70,11 +62,37 @@ func (server *ReinforceServer) Write(ctx context.Context, call Reinforce_write) 
 		return nil
 	}
 
+	memory := call.Args().Memory()
+
+	// Recording into a structure of this node's own would learn perfectly
+	// and teach nothing: the node that reads it would be walking another.
+	if !memory.IsValid() {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[cognition.reinforce.Write] no learned memory is wired to this node",
+			nil,
+		))
+	}
+
 	key := BasinKeyOf(contextBytes, classBytes)
-	weight, _ := server.trie.Reinforce(key)
+
+	future, release := memory.Reinforce(ctx, func(params Memory_reinforce_Params) error {
+		return params.SetKey(key)
+	})
+	defer release()
+
+	recorded, err := future.Struct()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"[cognition.reinforce.Write] failed to record the observed sequence",
+			err,
+		))
+	}
 
 	server.out = key
-	server.weight = weight
+	server.weight = recorded.Weight()
 
 	return nil
 }

@@ -14,11 +14,11 @@ StudentsTServer evaluates multivariate Student's t distribution with degrees of 
 */
 type StudentsTServer struct {
 	*runtime.System
-	prob float64
+	prob    float64
 	logProb float64
-	mean []float64
-	cov []float64
-	rand []float64
+	mean    []float64
+	cov     []float64
+	rand    []float64
 }
 
 func NewStudentsT(ctx context.Context) *StudentsTServer {

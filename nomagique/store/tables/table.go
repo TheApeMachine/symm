@@ -3,6 +3,7 @@ package tables
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"sync"
 	"time"
 
@@ -188,10 +189,14 @@ func (server *IcebergTableServer) held() int {
 commit sends what is held as successive snapshots, each small enough for the
 catalog call to finish.
 
-Rows are detached for the append and only the unacknowledged suffix is put
-back. A snapshot that was already sent is not retried: repeating it could
-duplicate it, and a duplicate frame in the record is worse than a gap that is
-reported.
+Rows are detached for the append and put back when it fails. A failed append
+is ambiguous — the snapshot may or may not have reached the catalog — and
+nothing here can tell the two apart. The rows are kept.
+
+That risks a duplicate. It is the right risk to take: a duplicated
+observation is repairable by whatever reads the table, and a missing one is
+not. A tape with a hole in it cannot be replayed against, and nothing
+downstream can tell a hole from a quiet market.
 */
 func (server *IcebergTableServer) commit(ctx context.Context) error {
 	server.mutex.Lock()
@@ -226,13 +231,7 @@ func (server *IcebergTableServer) commit(ctx context.Context) error {
 			return err
 		}
 
-		acknowledged, err := server.appendRange(ctx, table, rows, sent, end)
-
-		if err != nil {
-			if acknowledged {
-				sent = end
-			}
-
+		if err := server.appendRange(ctx, table, rows, sent, end); err != nil {
 			server.restore(rows[sent:])
 			return err
 		}
@@ -259,12 +258,11 @@ func (server *IcebergTableServer) restore(rows [][]byte) {
 }
 
 /*
-appendRange sends one snapshot. It reports whether the snapshot reached the
-catalog, because a failure after sending is not the same as one before it.
+appendRange sends one snapshot.
 */
 func (server *IcebergTableServer) appendRange(
 	ctx context.Context, table *icetable.Table, rows [][]byte, start, end int,
-) (bool, error) {
+) error {
 	reader, err := records(
 		table.Schema(), end-start,
 		func(index int) int { return len(rows[start+index]) },
@@ -276,20 +274,20 @@ func (server *IcebergTableServer) appendRange(
 	)
 
 	if err != nil {
-		return false, err
+		return err
 	}
 
 	defer reader.Release()
 
 	if _, err := table.Append(ctx, reader, nil); err != nil {
-		return true, errnie.Error(errnie.Err(
+		return errnie.Error(errnie.Err(
 			errnie.BadGateway,
 			"[iceberg] failed to append to "+server.opened.Table,
 			err,
 		))
 	}
 
-	return true, nil
+	return nil
 }
 
 /*
@@ -403,8 +401,10 @@ This is the other end of the record: what was captured is what gets replayed,
 so a fragment comes back out of the same table the tape went into.
 */
 type IcebergScanServer struct {
-	catalog *Catalog
-	rows    []byte
+	catalog  *Catalog
+	payloads [][]byte
+	cursor   int
+	loaded   string
 }
 
 func NewIcebergScan() *IcebergScanServer {
@@ -449,22 +449,37 @@ func (server *IcebergScanServer) Write(ctx context.Context, call IcebergScan_wri
 		return err
 	}
 
+	// The table is read once and then handed back a frame at a time. Reading
+	// it again on every evaluation would replay the beginning forever.
+	if server.loaded == declared.declaration {
+		return nil
+	}
+
 	held, err := server.read(ctx, loaded, declared)
 
 	if err != nil {
 		return err
 	}
 
-	server.rows = held
+	server.payloads = held
+	server.cursor = 0
+	server.loaded = declared.declaration
+
 	return nil
 }
 
 /*
-read walks the table's current snapshot and collects its rows.
+read walks the table's current snapshot and collects the frames it holds.
+
+What comes back is what went in: the payload column carries each frame
+exactly as it arrived, so replaying the table is the same thing happening
+again rather than a summary of it being described. Anything that reads a
+replayed frame cannot tell it from a live one, which is the only way a
+decision made against the archive means anything about the market.
 */
 func (server *IcebergScanServer) read(
 	ctx context.Context, loaded *icetable.Table, declared TableConfig,
-) ([]byte, error) {
+) ([][]byte, error) {
 	scan := loaded.Scan()
 	_, batches, err := scan.ToArrowRecords(ctx)
 
@@ -476,7 +491,7 @@ func (server *IcebergScanServer) read(
 		))
 	}
 
-	collected := make([]map[string]any, 0)
+	collected := make([][]byte, 0)
 
 	for batch, err := range batches {
 		if err != nil {
@@ -487,35 +502,85 @@ func (server *IcebergScanServer) read(
 			))
 		}
 
-		for row := range int(batch.NumRows()) {
-			held := make(map[string]any, batch.NumCols())
+		column := -1
 
-			for column := range int(batch.NumCols()) {
-				name := batch.Schema().Field(column).Name
-				held[name] = batch.Column(column).GetOneForMarshal(row)
+		for index := range int(batch.NumCols()) {
+			if batch.Schema().Field(index).Name == payloadColumn {
+				column = index
+				break
+			}
+		}
+
+		if column < 0 {
+			batch.Release()
+
+			return nil, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[iceberg] "+declared.Table+" holds no "+payloadColumn+
+					" column, so there is nothing to replay",
+				nil,
+			))
+		}
+
+		for row := range int(batch.NumRows()) {
+			frame, carried := frameBytes(
+				batch.Column(column).GetOneForMarshal(row),
+			)
+
+			// A row whose frame is missing is not an empty frame. Replaying
+			// it as one would put a reading into the tape that never
+			// happened.
+			if !carried {
+				continue
 			}
 
-			collected = append(collected, held)
+			collected = append(collected, frame)
 		}
 
 		batch.Release()
 	}
 
-	encoded, err := sonic.Marshal(collected)
+	return collected, nil
+}
 
-	if err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Internal,
-			"[iceberg] failed to encode what was read",
-			err,
-		))
+// payloadColumn is where a frame is kept, exactly as it arrived.
+const payloadColumn = "payload"
+
+/*
+frameBytes reads one archived frame, whichever way Arrow handed it over.
+*/
+func frameBytes(held any) ([]byte, bool) {
+	switch value := held.(type) {
+	case []byte:
+		if len(value) == 0 {
+			return nil, false
+		}
+
+		return value, true
+
+	case string:
+		if value == "" {
+			return nil, false
+		}
+
+		decoded, err := base64.StdEncoding.DecodeString(value)
+
+		if err == nil {
+			return decoded, true
+		}
+
+		return []byte(value), true
 	}
 
-	return encoded, nil
+	return nil, false
 }
 
 /*
-Done hands back what was read.
+Done hands back the next frame.
+
+One frame per evaluation, in the order they were captured, which is how the
+live feed delivers them. Handing back the whole table at once would present
+an array where every reader downstream expects one record.
 */
 func (server *IcebergScanServer) Done(ctx context.Context, call IcebergScan_done) error {
 	results, err := call.AllocResults()
@@ -528,11 +593,14 @@ func (server *IcebergScanServer) Done(ctx context.Context, call IcebergScan_done
 		))
 	}
 
-	if len(server.rows) == 0 {
+	if server.cursor >= len(server.payloads) {
 		return nil
 	}
 
-	if err := results.SetOut(server.rows); err != nil {
+	frame := server.payloads[server.cursor]
+	server.cursor++
+
+	if err := results.SetOut(frame); err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.Internal,
 			"[iceberg] failed to set out",
@@ -540,6 +608,5 @@ func (server *IcebergScanServer) Done(ctx context.Context, call IcebergScan_done
 		))
 	}
 
-	server.rows = nil
 	return nil
 }

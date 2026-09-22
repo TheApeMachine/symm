@@ -27,7 +27,7 @@ func (c Attractor) Write(ctx context.Context, params func(Attractor_write_Params
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 1}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 2}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(Attractor_write_Params(s)) }
 	}
 
@@ -228,12 +228,12 @@ type Attractor_write_Params capnp.Struct
 const Attractor_write_Params_TypeID = 0xc6dc472209cf22b4
 
 func NewAttractor_write_Params(s *capnp.Segment) (Attractor_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
 	return Attractor_write_Params(st), err
 }
 
 func NewRootAttractor_write_Params(s *capnp.Segment) (Attractor_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
 	return Attractor_write_Params(st), err
 }
 
@@ -282,12 +282,30 @@ func (s Attractor_write_Params) SetContextBytes(v []byte) error {
 	return capnp.Struct(s).SetData(0, v)
 }
 
+func (s Attractor_write_Params) Memory() Memory {
+	p, _ := capnp.Struct(s).Ptr(1)
+	return Memory(p.Interface().Client())
+}
+
+func (s Attractor_write_Params) HasMemory() bool {
+	return capnp.Struct(s).HasPtr(1)
+}
+
+func (s Attractor_write_Params) SetMemory(v Memory) error {
+	if !v.IsValid() {
+		return capnp.Struct(s).SetPtr(1, capnp.Ptr{})
+	}
+	seg := s.Segment()
+	in := capnp.NewInterface(seg, seg.Message().CapTable().Add(capnp.Client(v)))
+	return capnp.Struct(s).SetPtr(1, in.ToPtr())
+}
+
 // Attractor_write_Params_List is a list of Attractor_write_Params.
 type Attractor_write_Params_List = capnp.StructList[Attractor_write_Params]
 
 // NewAttractor_write_Params creates a new list of Attractor_write_Params.
 func NewAttractor_write_Params_List(s *capnp.Segment, sz int32) (Attractor_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2}, sz)
 	return capnp.StructList[Attractor_write_Params](l), err
 }
 
@@ -297,6 +315,9 @@ type Attractor_write_Params_Future struct{ *capnp.Future }
 func (f Attractor_write_Params_Future) Struct() (Attractor_write_Params, error) {
 	p, err := f.Future.Ptr()
 	return Attractor_write_Params(p.Struct()), err
+}
+func (p Attractor_write_Params_Future) Memory() Memory {
+	return Memory(p.Future.Field(1, nil).Client())
 }
 
 type Attractor_done_Params capnp.Struct

@@ -8,6 +8,7 @@ import {
 	NodeActionsContext,
 	NodeTypesContext,
 } from "#/components/flume/context";
+import { setSelectedNode } from "#/components/flume/flume-editor.store";
 import type { StageActionSetter } from "#/components/flume/stageReducer";
 import { StageActionType } from "#/components/flume/stageReducer";
 import type {
@@ -335,6 +336,17 @@ const Stage = ({
 		return options;
 	}, [nodeTypes, disableComments]);
 
+	const handleStageMouseDown = (event: React.MouseEvent<HTMLDivElement>) => {
+		const target = event.target as HTMLElement | null;
+		const isNodeOrComment = target?.closest(
+			'[data-flume-component="node"], [data-flume-component="comment"], [data-comment]',
+		);
+
+		if (!isNodeOrComment) {
+			setSelectedNode(editorId, null);
+		}
+	};
+
 	const portalContainer =
 		typeof document !== "undefined" ? document.body : null;
 
@@ -345,6 +357,7 @@ const Stage = ({
 			className={styles.wrapper}
 			innerRef={wrapper}
 			onContextMenu={handleContextMenu}
+			onMouseDown={handleStageMouseDown}
 			onMouseEnter={handleMouseEnter}
 			onDragDelayStart={handleDragDelayStart}
 			onDragStart={handleDragStart}

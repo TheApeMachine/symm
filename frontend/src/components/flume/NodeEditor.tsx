@@ -19,7 +19,6 @@ import {
 } from "#/components/flume/flume-editor.store";
 import Node from "#/components/flume/Node/Node";
 import Stage from "#/components/flume/Stage/Stage";
-import { portLayoutKey } from "#/components/flume/spatial-index";
 import { useFlumeGraphWorker } from "#/components/flume/useFlumeGraphWorker";
 import {
 	type PortLayoutRegistrationContext,
@@ -271,17 +270,6 @@ export const NodeEditor = ({
 		NonNullable<React.ContextType<typeof PortLayoutRegistrationContext>>
 	>(
 		(nodeId, portName, transputType, entry) => {
-			const layoutKey = portLayoutKey(nodeId, portName, transputType);
-			const previous = indexRef.current.portLayouts.get(layoutKey);
-
-			if (
-				previous &&
-				previous.offsetX === entry.offsetX &&
-				previous.offsetY === entry.offsetY
-			) {
-				return;
-			}
-
 			registerPortLayoutBase(nodeId, portName, transputType, entry);
 			graphWorkerBase.setPortLayout(
 				nodeId,
@@ -291,7 +279,7 @@ export const NodeEditor = ({
 				entry.offsetY,
 			);
 		},
-		[indexRef, registerPortLayoutBase, graphWorkerBase],
+		[registerPortLayoutBase, graphWorkerBase],
 	);
 
 	const recalculateStageRect = React.useCallback(() => {

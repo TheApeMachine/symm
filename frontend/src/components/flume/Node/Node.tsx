@@ -13,6 +13,7 @@ import { pipelineGraphCollection } from "#/collections/pipeline_graph";
 import {
 	ConnectionRecalculateContext,
 	DiagnosticsContext,
+	EditorIdContext,
 	FlumeGraphWorkerContext,
 	GraphIdContext,
 	NodeActionsContext,
@@ -25,6 +26,10 @@ import {
 	PortTypesContext,
 	StageContext,
 } from "#/components/flume/context";
+import {
+	setSelectedNode,
+	useSelectedNode,
+} from "#/components/flume/flume-editor.store";
 import type {
 	Connections,
 	Coordinate,
@@ -87,6 +92,10 @@ const Node = ({
 	renderNodeHeader,
 	subGraph,
 }: NodeProps) => {
+	const editorId = React.useContext(EditorIdContext);
+	const selectedNodeId = useSelectedNode(editorId);
+	const isSelected = selectedNodeId === id;
+
 	const nodeTypes = React.useContext(NodeTypesContext) ?? {};
 	const portTypes = React.useContext(PortTypesContext) ?? {};
 	const nodeActions = React.useContext(NodeActionsContext);
@@ -231,6 +240,7 @@ const Node = ({
 	const handleContextMenu = (e: MouseEvent | React.MouseEvent) => {
 		e.preventDefault();
 		e.stopPropagation();
+		setSelectedNode(editorId, id);
 		setMenuCoordinates({ x: e.clientX, y: e.clientY });
 		setMenuOpen(true);
 		return false;
@@ -418,6 +428,9 @@ const Node = ({
 			onDragStart={handleDragStartWithGraph}
 			onDrag={handleDrag}
 			onDragEnd={stopDrag}
+			onMouseDown={() => {
+				setSelectedNode(editorId, id);
+			}}
 			innerRef={nodeWrapper}
 			data-node-id={id}
 			data-flume-component="node"
@@ -429,7 +442,15 @@ const Node = ({
 			stageRect={stageRect}
 		>
 			<Frame
-				className={`min-w-0 w-full transition-all ${hasError ? "ring-2 ring-red-500 shadow-[0_0_12px_rgba(239,68,68,0.4)]" : ""}`}
+				className={cn(
+					"min-w-0 w-full transition-all duration-150",
+					hasError &&
+						"ring-2 ring-red-500 shadow-[0_0_12px_rgba(239,68,68,0.4)]",
+					isSelected &&
+						!hasError &&
+						"ring-2 ring-(--acc) shadow-[0_0_16px_color-mix(in_srgb,var(--acc)_35%,transparent)]",
+				)}
+				data-selected={isSelected ? "true" : undefined}
 			>
 				<FrameHeader>
 					<div className="flex items-center justify-between gap-2">

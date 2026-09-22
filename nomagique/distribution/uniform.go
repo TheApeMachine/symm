@@ -14,13 +14,13 @@ UniformServer evaluates multivariate continuous Uniform distribution over multid
 */
 type UniformServer struct {
 	*runtime.System
-	prob float64
-	logProb float64
-	entropy float64
-	cdf []float64
-	mean []float64
+	prob     float64
+	logProb  float64
+	entropy  float64
+	cdf      []float64
+	mean     []float64
 	quantile []float64
-	rand []float64
+	rand     []float64
 }
 
 func NewUniform(ctx context.Context) *UniformServer {

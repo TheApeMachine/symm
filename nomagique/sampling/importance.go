@@ -53,7 +53,7 @@ func (server *ImportanceServer) Write(ctx context.Context, call Importance_write
 	target := distuv.Normal{Mu: targetMu, Sigma: targetSigma}
 	proposal := distuv.Normal{Mu: propMu, Sigma: propSigma}
 	imp := sampleuv.Importance{
-		Target: target,
+		Target:   target,
 		Proposal: proposal,
 	}
 	server.samples = make([]float64, countVal)

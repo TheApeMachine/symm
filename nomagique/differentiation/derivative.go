@@ -13,7 +13,7 @@ DerivativeServer approximates first and second derivatives via finite difference
 */
 type DerivativeServer struct {
 	*runtime.System
-	deriv float64
+	deriv  float64
 	deriv2 float64
 }
 

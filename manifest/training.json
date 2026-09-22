@@ -578,6 +578,12 @@
               "nodeId": "sensory",
               "portName": "out"
             }
+          ],
+          "memory": [
+            {
+              "nodeId": "memory",
+              "portName": "self"
+            }
           ]
         },
         "outputs": {
@@ -686,6 +692,12 @@
               "nodeId": "decision",
               "portName": "winner"
             }
+          ],
+          "memory": [
+            {
+              "nodeId": "memory",
+              "portName": "self"
+            }
           ]
         },
         "outputs": {}
@@ -740,14 +752,14 @@
         "inputs": {
           "past": [
             {
-              "nodeId": "before",
-              "portName": "out"
+              "nodeId": "excursion",
+              "portName": "anchor"
             }
           ],
           "current": [
             {
-              "nodeId": "ignition",
-              "portName": "out"
+              "nodeId": "excursion",
+              "portName": "ignition"
             }
           ]
         },
@@ -772,14 +784,14 @@
         "inputs": {
           "past": [
             {
-              "nodeId": "ignition",
-              "portName": "out"
+              "nodeId": "excursion",
+              "portName": "ignition"
             }
           ],
           "current": [
             {
-              "nodeId": "exhaustion",
-              "portName": "out"
+              "nodeId": "excursion",
+              "portName": "extremum"
             }
           ]
         },
@@ -863,83 +875,46 @@
         "outputs": {
           "anchor": [
             {
-              "nodeId": "before",
-              "portName": "a"
+              "nodeId": "entry_leg",
+              "portName": "past"
             }
           ],
           "ignition": [
             {
-              "nodeId": "ignition",
-              "portName": "a"
+              "nodeId": "entry_leg",
+              "portName": "current"
+            },
+            {
+              "nodeId": "exit_leg",
+              "portName": "past"
             }
           ],
           "extremum": [
             {
-              "nodeId": "exhaustion",
-              "portName": "a"
+              "nodeId": "exit_leg",
+              "portName": "current"
             }
           ]
         }
       }
     },
-    "before": {
-      "id": "before",
-      "type": "arithmetic.Add",
-      "inputData": {
-        "b": {
-          "value": 0.0
-        }
-      },
+    "memory": {
+      "id": "memory",
+      "type": "cognition.Memory",
       "connections": {
-        "inputs": {
-          "a": [
+        "inputs": {},
+        "outputs": {
+          "self": [
             {
-              "nodeId": "excursion",
-              "portName": "anchor"
+              "nodeId": "attractor",
+              "portName": "memory"
+            },
+            {
+              "nodeId": "reinforce",
+              "portName": "memory"
             }
           ]
-        },
-        "outputs": {}
-      }
-    },
-    "ignition": {
-      "id": "ignition",
-      "type": "arithmetic.Add",
-      "inputData": {
-        "b": {
-          "value": 0.0
         }
-      },
-      "connections": {
-        "inputs": {
-          "a": [
-            {
-              "nodeId": "excursion",
-              "portName": "ignition"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "exhaustion": {
-      "id": "exhaustion",
-      "type": "arithmetic.Add",
-      "inputData": {
-        "b": {
-          "value": 0.0
-        }
-      },
-      "connections": {
-        "inputs": {
-          "a": [
-            {
-              "nodeId": "excursion",
-              "portName": "extremum"
-            }
-          ]
-        },
-        "outputs": {}
       }
     }
   }

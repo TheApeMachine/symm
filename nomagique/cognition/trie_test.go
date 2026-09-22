@@ -15,7 +15,10 @@ func TestLearning(t *testing.T) {
 	Convey("Given a writer reinforcing what it observes", t, func() {
 		writer := cognition.NewReinforce(ctx)
 		reader := cognition.NewAttractor(ctx)
-		reader.Observe(writer.Share())
+
+		// One learned memory, wired to both, the way the graph wires it.
+		memory := cognition.Memory_ServerToClient(cognition.NewMemory())
+		defer memory.Release()
 
 		reinforce := func(basin, class string) []byte {
 			client := cognition.Reinforce_ServerToClient(writer)
@@ -25,7 +28,11 @@ func TestLearning(t *testing.T) {
 					return err
 				}
 
-				return params.SetClassBytes([]byte(class))
+				if err := params.SetClassBytes([]byte(class)); err != nil {
+					return err
+				}
+
+				return params.SetMemory(memory.AddRef())
 			})
 			So(err, ShouldBeNil)
 			So(client.WaitStreaming(), ShouldBeNil)
@@ -46,7 +53,11 @@ func TestLearning(t *testing.T) {
 			client := cognition.Attractor_ServerToClient(reader)
 
 			err := client.Write(ctx, func(params cognition.Attractor_write_Params) error {
-				return params.SetContextBytes([]byte(basin))
+				if err := params.SetContextBytes([]byte(basin)); err != nil {
+					return err
+				}
+
+				return params.SetMemory(memory.AddRef())
 			})
 			So(err, ShouldBeNil)
 			So(client.WaitStreaming(), ShouldBeNil)
@@ -88,11 +99,20 @@ func TestLearning(t *testing.T) {
 			reinforce("quiet", "wait")
 			reinforce("quiet", "wait")
 
-			weight, found := writer.Share().Weight(
-				cognition.BasinKeyOf([]byte("quiet"), []byte("wait")),
-			)
-			So(found, ShouldBeTrue)
-			So(weight, ShouldEqual, 2)
+			// What the memory carries is read back through the memory, not
+			// through a structure the writer kept to itself.
+			future, release := memory.Basin(ctx, func(params cognition.Memory_basin_Params) error {
+				return params.SetPrefix(cognition.BasinPrefixOf([]byte("quiet")))
+			})
+			defer release()
+
+			basin, err := future.Struct()
+			So(err, ShouldBeNil)
+
+			weights, err := basin.Weights()
+			So(err, ShouldBeNil)
+			So(weights.Len(), ShouldEqual, 1)
+			So(weights.At(0), ShouldEqual, 2)
 		})
 
 		Convey("A basin key emitted by the writer is accepted as a context", func() {

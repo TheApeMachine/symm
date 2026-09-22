@@ -13,7 +13,7 @@ CumulativeTrapezoidServer calculates running cumulative trapezoidal integral cur
 type CumulativeTrapezoidServer struct {
 	*runtime.System
 	cumulative []float64
-	total float64
+	total      float64
 }
 
 func NewCumulativeTrapezoid(ctx context.Context) *CumulativeTrapezoidServer {

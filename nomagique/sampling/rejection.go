@@ -14,7 +14,7 @@ RejectionServer draws samples using rejection sampling algorithm.
 */
 type RejectionServer struct {
 	*runtime.System
-	samples []float64
+	samples  []float64
 	proposed int32
 }
 
@@ -56,9 +56,9 @@ func (server *RejectionServer) Write(ctx context.Context, call Rejection_write) 
 	target := distuv.Laplace{Mu: 0, Scale: targetScale}
 	proposal := distuv.Normal{Mu: 0, Sigma: proposalScale}
 	rej := &sampleuv.Rejection{
-		Target: target,
+		Target:   target,
 		Proposal: proposal,
-		C: constC,
+		C:        constC,
 	}
 	server.samples = make([]float64, countVal)
 	rej.Sample(server.samples)

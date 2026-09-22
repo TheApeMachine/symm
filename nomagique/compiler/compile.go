@@ -139,6 +139,15 @@ func CompileWithPrevious(
 	}
 
 	var queue []string
+	// What a node's indegree was before the sort consumed it. Kahn's
+	// algorithm decrements every entry to zero on its way through, so the
+	// map it leaves behind reports every node as an origin.
+	origins := make(map[string]int, len(inDegree))
+
+	for id, degree := range inDegree {
+		origins[id] = degree
+	}
+
 	for id, degree := range inDegree {
 		if degree == 0 {
 			queue = append(queue, id)
@@ -576,12 +585,15 @@ func CompileWithPrevious(
 		return nil, err
 	}
 
-	// 7. Find root nodes (in-degree 0)
+	// 7. The nodes nothing produces for: where an evaluation begins.
 	var roots []NodeID
-	for i := 0; i < nodeCount; i++ {
-		if inDegree[execOrder[i]] == 0 {
-			roots = append(roots, NodeID(i))
+
+	for i := range nodeCount {
+		if origins[execOrder[i]] != 0 {
+			continue
 		}
+
+		roots = append(roots, compiledNodes[i].Index)
 	}
 
 	return &Program{

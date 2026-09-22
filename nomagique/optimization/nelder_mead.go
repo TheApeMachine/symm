@@ -5,8 +5,8 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	"gonum.org/v1/gonum/optimize"
 	"gonum.org/v1/gonum/mat"
+	"gonum.org/v1/gonum/optimize"
 )
 
 /*
@@ -14,8 +14,8 @@ NelderMeadServer minimizes quadratic objective function using derivative-free Ne
 */
 type NelderMeadServer struct {
 	*runtime.System
-	x []float64
-	fVal float64
+	x          []float64
+	fVal       float64
 	iterations int32
 }
 

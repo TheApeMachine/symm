@@ -12,8 +12,8 @@ FiniteDifferenceServer calculates discrete forward, central, and backward differ
 */
 type FiniteDifferenceServer struct {
 	*runtime.System
-	forward []float64
-	central []float64
+	forward  []float64
+	central  []float64
 	backward []float64
 }
 

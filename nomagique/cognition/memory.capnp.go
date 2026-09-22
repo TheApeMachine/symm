@@ -10,218 +10,68 @@ import (
 	context "context"
 )
 
-type KVPair capnp.Struct
-
-// KVPair_TypeID is the unique identifier for the type KVPair.
-const KVPair_TypeID = 0xc634e443399681f8
-
-func NewKVPair(s *capnp.Segment) (KVPair, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
-	return KVPair(st), err
-}
-
-func NewRootKVPair(s *capnp.Segment) (KVPair, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
-	return KVPair(st), err
-}
-
-func ReadRootKVPair(msg *capnp.Message) (KVPair, error) {
-	root, err := msg.Root()
-	return KVPair(root.Struct()), err
-}
-
-func (s KVPair) String() string {
-	str, _ := text.Marshal(0xc634e443399681f8, capnp.Struct(s))
-	return str
-}
-
-func (s KVPair) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (KVPair) DecodeFromPtr(p capnp.Ptr) KVPair {
-	return KVPair(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s KVPair) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s KVPair) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s KVPair) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s KVPair) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s KVPair) Key() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return []byte(p.Data()), err
-}
-
-func (s KVPair) HasKey() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s KVPair) SetKey(v []byte) error {
-	return capnp.Struct(s).SetData(0, v)
-}
-
-func (s KVPair) Value() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(1)
-	return []byte(p.Data()), err
-}
-
-func (s KVPair) HasValue() bool {
-	return capnp.Struct(s).HasPtr(1)
-}
-
-func (s KVPair) SetValue(v []byte) error {
-	return capnp.Struct(s).SetData(1, v)
-}
-
-// KVPair_List is a list of KVPair.
-type KVPair_List = capnp.StructList[KVPair]
-
-// NewKVPair creates a new list of KVPair.
-func NewKVPair_List(s *capnp.Segment, sz int32) (KVPair_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2}, sz)
-	return capnp.StructList[KVPair](l), err
-}
-
-// KVPair_Future is a wrapper for a KVPair promised by a client call.
-type KVPair_Future struct{ *capnp.Future }
-
-func (f KVPair_Future) Struct() (KVPair, error) {
-	p, err := f.Future.Ptr()
-	return KVPair(p.Struct()), err
-}
-
 type Memory capnp.Client
 
 // Memory_TypeID is the unique identifier for the type Memory.
-const Memory_TypeID = 0xdeb59568902846df
+const Memory_TypeID = 0xe6eab94e2089c1ab
 
-func (c Memory) Get(ctx context.Context, params func(Memory_get_Params) error) (Memory_get_Results_Future, capnp.ReleaseFunc) {
+func (c Memory) Reinforce(ctx context.Context, params func(Memory_reinforce_Params) error) (Memory_reinforce_Results_Future, capnp.ReleaseFunc) {
 
 	s := capnp.Send{
 		Method: capnp.Method{
-			InterfaceID:   0xdeb59568902846df,
+			InterfaceID:   0xe6eab94e2089c1ab,
 			MethodID:      0,
 			InterfaceName: "nomagique/cognition/memory.capnp:Memory",
-			MethodName:    "get",
+			MethodName:    "reinforce",
 		},
 	}
 	if params != nil {
 		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 1}
-		s.PlaceArgs = func(s capnp.Struct) error { return params(Memory_get_Params(s)) }
+		s.PlaceArgs = func(s capnp.Struct) error { return params(Memory_reinforce_Params(s)) }
 	}
 
 	ans, release := capnp.Client(c).SendCall(ctx, s)
-	return Memory_get_Results_Future{Future: ans.Future()}, release
+	return Memory_reinforce_Results_Future{Future: ans.Future()}, release
 
 }
 
-func (c Memory) SeekPrefix(ctx context.Context, params func(Memory_seekPrefix_Params) error) (Memory_seekPrefix_Results_Future, capnp.ReleaseFunc) {
+func (c Memory) Basin(ctx context.Context, params func(Memory_basin_Params) error) (Memory_basin_Results_Future, capnp.ReleaseFunc) {
 
 	s := capnp.Send{
 		Method: capnp.Method{
-			InterfaceID:   0xdeb59568902846df,
+			InterfaceID:   0xe6eab94e2089c1ab,
 			MethodID:      1,
 			InterfaceName: "nomagique/cognition/memory.capnp:Memory",
-			MethodName:    "seekPrefix",
+			MethodName:    "basin",
 		},
 	}
 	if params != nil {
 		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 1}
-		s.PlaceArgs = func(s capnp.Struct) error { return params(Memory_seekPrefix_Params(s)) }
+		s.PlaceArgs = func(s capnp.Struct) error { return params(Memory_basin_Params(s)) }
 	}
 
 	ans, release := capnp.Client(c).SendCall(ctx, s)
-	return Memory_seekPrefix_Results_Future{Future: ans.Future()}, release
+	return Memory_basin_Results_Future{Future: ans.Future()}, release
 
 }
 
-func (c Memory) Cas(ctx context.Context, params func(Memory_cas_Params) error) (Memory_cas_Results_Future, capnp.ReleaseFunc) {
+func (c Memory) Steps(ctx context.Context, params func(Memory_steps_Params) error) (Memory_steps_Results_Future, capnp.ReleaseFunc) {
 
 	s := capnp.Send{
 		Method: capnp.Method{
-			InterfaceID:   0xdeb59568902846df,
+			InterfaceID:   0xe6eab94e2089c1ab,
 			MethodID:      2,
 			InterfaceName: "nomagique/cognition/memory.capnp:Memory",
-			MethodName:    "cas",
-		},
-	}
-	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 1}
-		s.PlaceArgs = func(s capnp.Struct) error { return params(Memory_cas_Params(s)) }
-	}
-
-	ans, release := capnp.Client(c).SendCall(ctx, s)
-	return Memory_cas_Results_Future{Future: ans.Future()}, release
-
-}
-
-func (c Memory) GetStep(ctx context.Context, params func(Memory_getStep_Params) error) (Memory_getStep_Results_Future, capnp.ReleaseFunc) {
-
-	s := capnp.Send{
-		Method: capnp.Method{
-			InterfaceID:   0xdeb59568902846df,
-			MethodID:      3,
-			InterfaceName: "nomagique/cognition/memory.capnp:Memory",
-			MethodName:    "getStep",
+			MethodName:    "steps",
 		},
 	}
 	if params != nil {
 		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 0}
-		s.PlaceArgs = func(s capnp.Struct) error { return params(Memory_getStep_Params(s)) }
+		s.PlaceArgs = func(s capnp.Struct) error { return params(Memory_steps_Params(s)) }
 	}
 
 	ans, release := capnp.Client(c).SendCall(ctx, s)
-	return Memory_getStep_Results_Future{Future: ans.Future()}, release
-
-}
-
-func (c Memory) IncrementStep(ctx context.Context, params func(Memory_incrementStep_Params) error) (Memory_incrementStep_Results_Future, capnp.ReleaseFunc) {
-
-	s := capnp.Send{
-		Method: capnp.Method{
-			InterfaceID:   0xdeb59568902846df,
-			MethodID:      4,
-			InterfaceName: "nomagique/cognition/memory.capnp:Memory",
-			MethodName:    "incrementStep",
-		},
-	}
-	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 0}
-		s.PlaceArgs = func(s capnp.Struct) error { return params(Memory_incrementStep_Params(s)) }
-	}
-
-	ans, release := capnp.Client(c).SendCall(ctx, s)
-	return Memory_incrementStep_Results_Future{Future: ans.Future()}, release
-
-}
-
-func (c Memory) Done(ctx context.Context, params func(Memory_done_Params) error) (Memory_done_Results_Future, capnp.ReleaseFunc) {
-
-	s := capnp.Send{
-		Method: capnp.Method{
-			InterfaceID:   0xdeb59568902846df,
-			MethodID:      5,
-			InterfaceName: "nomagique/cognition/memory.capnp:Memory",
-			MethodName:    "done",
-		},
-	}
-	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 0}
-		s.PlaceArgs = func(s capnp.Struct) error { return params(Memory_done_Params(s)) }
-	}
-
-	ans, release := capnp.Client(c).SendCall(ctx, s)
-	return Memory_done_Results_Future{Future: ans.Future()}, release
+	return Memory_steps_Results_Future{Future: ans.Future()}, release
 
 }
 
@@ -298,17 +148,11 @@ func (c Memory) GetFlowLimiter() fc.FlowLimiter {
 
 // A Memory_Server is a Memory with a local implementation.
 type Memory_Server interface {
-	Get(context.Context, Memory_get) error
+	Reinforce(context.Context, Memory_reinforce) error
 
-	SeekPrefix(context.Context, Memory_seekPrefix) error
+	Basin(context.Context, Memory_basin) error
 
-	Cas(context.Context, Memory_cas) error
-
-	GetStep(context.Context, Memory_getStep) error
-
-	IncrementStep(context.Context, Memory_incrementStep) error
-
-	Done(context.Context, Memory_done) error
+	Steps(context.Context, Memory_steps) error
 }
 
 // Memory_NewServer creates a new Server from an implementation of Memory_Server.
@@ -327,184 +171,97 @@ func Memory_ServerToClient(s Memory_Server) Memory {
 // This can be used to create a more complicated Server.
 func Memory_Methods(methods []server.Method, s Memory_Server) []server.Method {
 	if cap(methods) == 0 {
-		methods = make([]server.Method, 0, 6)
+		methods = make([]server.Method, 0, 3)
 	}
 
 	methods = append(methods, server.Method{
 		Method: capnp.Method{
-			InterfaceID:   0xdeb59568902846df,
+			InterfaceID:   0xe6eab94e2089c1ab,
 			MethodID:      0,
 			InterfaceName: "nomagique/cognition/memory.capnp:Memory",
-			MethodName:    "get",
+			MethodName:    "reinforce",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
-			return s.Get(ctx, Memory_get{call})
+			return s.Reinforce(ctx, Memory_reinforce{call})
 		},
 	})
 
 	methods = append(methods, server.Method{
 		Method: capnp.Method{
-			InterfaceID:   0xdeb59568902846df,
+			InterfaceID:   0xe6eab94e2089c1ab,
 			MethodID:      1,
 			InterfaceName: "nomagique/cognition/memory.capnp:Memory",
-			MethodName:    "seekPrefix",
+			MethodName:    "basin",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
-			return s.SeekPrefix(ctx, Memory_seekPrefix{call})
+			return s.Basin(ctx, Memory_basin{call})
 		},
 	})
 
 	methods = append(methods, server.Method{
 		Method: capnp.Method{
-			InterfaceID:   0xdeb59568902846df,
+			InterfaceID:   0xe6eab94e2089c1ab,
 			MethodID:      2,
 			InterfaceName: "nomagique/cognition/memory.capnp:Memory",
-			MethodName:    "cas",
+			MethodName:    "steps",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
-			return s.Cas(ctx, Memory_cas{call})
-		},
-	})
-
-	methods = append(methods, server.Method{
-		Method: capnp.Method{
-			InterfaceID:   0xdeb59568902846df,
-			MethodID:      3,
-			InterfaceName: "nomagique/cognition/memory.capnp:Memory",
-			MethodName:    "getStep",
-		},
-		Impl: func(ctx context.Context, call *server.Call) error {
-			return s.GetStep(ctx, Memory_getStep{call})
-		},
-	})
-
-	methods = append(methods, server.Method{
-		Method: capnp.Method{
-			InterfaceID:   0xdeb59568902846df,
-			MethodID:      4,
-			InterfaceName: "nomagique/cognition/memory.capnp:Memory",
-			MethodName:    "incrementStep",
-		},
-		Impl: func(ctx context.Context, call *server.Call) error {
-			return s.IncrementStep(ctx, Memory_incrementStep{call})
-		},
-	})
-
-	methods = append(methods, server.Method{
-		Method: capnp.Method{
-			InterfaceID:   0xdeb59568902846df,
-			MethodID:      5,
-			InterfaceName: "nomagique/cognition/memory.capnp:Memory",
-			MethodName:    "done",
-		},
-		Impl: func(ctx context.Context, call *server.Call) error {
-			return s.Done(ctx, Memory_done{call})
+			return s.Steps(ctx, Memory_steps{call})
 		},
 	})
 
 	return methods
 }
 
-// Memory_get holds the state for a server call to Memory.get.
+// Memory_reinforce holds the state for a server call to Memory.reinforce.
 // See server.Call for documentation.
-type Memory_get struct {
+type Memory_reinforce struct {
 	*server.Call
 }
 
 // Args returns the call's arguments.
-func (c Memory_get) Args() Memory_get_Params {
-	return Memory_get_Params(c.Call.Args())
+func (c Memory_reinforce) Args() Memory_reinforce_Params {
+	return Memory_reinforce_Params(c.Call.Args())
 }
 
 // AllocResults allocates the results struct.
-func (c Memory_get) AllocResults() (Memory_get_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return Memory_get_Results(r), err
+func (c Memory_reinforce) AllocResults() (Memory_reinforce_Results, error) {
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 16, PointerCount: 0})
+	return Memory_reinforce_Results(r), err
 }
 
-// Memory_seekPrefix holds the state for a server call to Memory.seekPrefix.
+// Memory_basin holds the state for a server call to Memory.basin.
 // See server.Call for documentation.
-type Memory_seekPrefix struct {
+type Memory_basin struct {
 	*server.Call
 }
 
 // Args returns the call's arguments.
-func (c Memory_seekPrefix) Args() Memory_seekPrefix_Params {
-	return Memory_seekPrefix_Params(c.Call.Args())
+func (c Memory_basin) Args() Memory_basin_Params {
+	return Memory_basin_Params(c.Call.Args())
 }
 
 // AllocResults allocates the results struct.
-func (c Memory_seekPrefix) AllocResults() (Memory_seekPrefix_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return Memory_seekPrefix_Results(r), err
+func (c Memory_basin) AllocResults() (Memory_basin_Results, error) {
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 2})
+	return Memory_basin_Results(r), err
 }
 
-// Memory_cas holds the state for a server call to Memory.cas.
+// Memory_steps holds the state for a server call to Memory.steps.
 // See server.Call for documentation.
-type Memory_cas struct {
+type Memory_steps struct {
 	*server.Call
 }
 
 // Args returns the call's arguments.
-func (c Memory_cas) Args() Memory_cas_Params {
-	return Memory_cas_Params(c.Call.Args())
+func (c Memory_steps) Args() Memory_steps_Params {
+	return Memory_steps_Params(c.Call.Args())
 }
 
 // AllocResults allocates the results struct.
-func (c Memory_cas) AllocResults() (Memory_cas_Results, error) {
+func (c Memory_steps) AllocResults() (Memory_steps_Results, error) {
 	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 0})
-	return Memory_cas_Results(r), err
-}
-
-// Memory_getStep holds the state for a server call to Memory.getStep.
-// See server.Call for documentation.
-type Memory_getStep struct {
-	*server.Call
-}
-
-// Args returns the call's arguments.
-func (c Memory_getStep) Args() Memory_getStep_Params {
-	return Memory_getStep_Params(c.Call.Args())
-}
-
-// AllocResults allocates the results struct.
-func (c Memory_getStep) AllocResults() (Memory_getStep_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 0})
-	return Memory_getStep_Results(r), err
-}
-
-// Memory_incrementStep holds the state for a server call to Memory.incrementStep.
-// See server.Call for documentation.
-type Memory_incrementStep struct {
-	*server.Call
-}
-
-// Args returns the call's arguments.
-func (c Memory_incrementStep) Args() Memory_incrementStep_Params {
-	return Memory_incrementStep_Params(c.Call.Args())
-}
-
-// AllocResults allocates the results struct.
-func (c Memory_incrementStep) AllocResults() (Memory_incrementStep_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 0})
-	return Memory_incrementStep_Results(r), err
-}
-
-// Memory_done holds the state for a server call to Memory.done.
-// See server.Call for documentation.
-type Memory_done struct {
-	*server.Call
-}
-
-// Args returns the call's arguments.
-func (c Memory_done) Args() Memory_done_Params {
-	return Memory_done_Params(c.Call.Args())
-}
-
-// AllocResults allocates the results struct.
-func (c Memory_done) AllocResults() (Memory_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
-	return Memory_done_Results(r), err
+	return Memory_steps_Results(r), err
 }
 
 // Memory_List is a list of Memory.
@@ -516,885 +273,484 @@ func NewMemory_List(s *capnp.Segment, sz int32) (Memory_List, error) {
 	return capnp.CapList[Memory](l), err
 }
 
-type Memory_get_Params capnp.Struct
+type Memory_reinforce_Params capnp.Struct
 
-// Memory_get_Params_TypeID is the unique identifier for the type Memory_get_Params.
-const Memory_get_Params_TypeID = 0xba498db0d9c493ff
+// Memory_reinforce_Params_TypeID is the unique identifier for the type Memory_reinforce_Params.
+const Memory_reinforce_Params_TypeID = 0x867da4a328ebdaed
 
-func NewMemory_get_Params(s *capnp.Segment) (Memory_get_Params, error) {
+func NewMemory_reinforce_Params(s *capnp.Segment) (Memory_reinforce_Params, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return Memory_get_Params(st), err
+	return Memory_reinforce_Params(st), err
 }
 
-func NewRootMemory_get_Params(s *capnp.Segment) (Memory_get_Params, error) {
+func NewRootMemory_reinforce_Params(s *capnp.Segment) (Memory_reinforce_Params, error) {
 	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return Memory_get_Params(st), err
+	return Memory_reinforce_Params(st), err
 }
 
-func ReadRootMemory_get_Params(msg *capnp.Message) (Memory_get_Params, error) {
+func ReadRootMemory_reinforce_Params(msg *capnp.Message) (Memory_reinforce_Params, error) {
 	root, err := msg.Root()
-	return Memory_get_Params(root.Struct()), err
+	return Memory_reinforce_Params(root.Struct()), err
 }
 
-func (s Memory_get_Params) String() string {
-	str, _ := text.Marshal(0xba498db0d9c493ff, capnp.Struct(s))
+func (s Memory_reinforce_Params) String() string {
+	str, _ := text.Marshal(0x867da4a328ebdaed, capnp.Struct(s))
 	return str
 }
 
-func (s Memory_get_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+func (s Memory_reinforce_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
 	return capnp.Struct(s).EncodeAsPtr(seg)
 }
 
-func (Memory_get_Params) DecodeFromPtr(p capnp.Ptr) Memory_get_Params {
-	return Memory_get_Params(capnp.Struct{}.DecodeFromPtr(p))
+func (Memory_reinforce_Params) DecodeFromPtr(p capnp.Ptr) Memory_reinforce_Params {
+	return Memory_reinforce_Params(capnp.Struct{}.DecodeFromPtr(p))
 }
 
-func (s Memory_get_Params) ToPtr() capnp.Ptr {
+func (s Memory_reinforce_Params) ToPtr() capnp.Ptr {
 	return capnp.Struct(s).ToPtr()
 }
-func (s Memory_get_Params) IsValid() bool {
+func (s Memory_reinforce_Params) IsValid() bool {
 	return capnp.Struct(s).IsValid()
 }
 
-func (s Memory_get_Params) Message() *capnp.Message {
+func (s Memory_reinforce_Params) Message() *capnp.Message {
 	return capnp.Struct(s).Message()
 }
 
-func (s Memory_get_Params) Segment() *capnp.Segment {
+func (s Memory_reinforce_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Memory_get_Params) Key() ([]byte, error) {
+func (s Memory_reinforce_Params) Key() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(0)
 	return []byte(p.Data()), err
 }
 
-func (s Memory_get_Params) HasKey() bool {
+func (s Memory_reinforce_Params) HasKey() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s Memory_get_Params) SetKey(v []byte) error {
+func (s Memory_reinforce_Params) SetKey(v []byte) error {
 	return capnp.Struct(s).SetData(0, v)
 }
 
-// Memory_get_Params_List is a list of Memory_get_Params.
-type Memory_get_Params_List = capnp.StructList[Memory_get_Params]
+// Memory_reinforce_Params_List is a list of Memory_reinforce_Params.
+type Memory_reinforce_Params_List = capnp.StructList[Memory_reinforce_Params]
 
-// NewMemory_get_Params creates a new list of Memory_get_Params.
-func NewMemory_get_Params_List(s *capnp.Segment, sz int32) (Memory_get_Params_List, error) {
+// NewMemory_reinforce_Params creates a new list of Memory_reinforce_Params.
+func NewMemory_reinforce_Params_List(s *capnp.Segment, sz int32) (Memory_reinforce_Params_List, error) {
 	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[Memory_get_Params](l), err
+	return capnp.StructList[Memory_reinforce_Params](l), err
 }
 
-// Memory_get_Params_Future is a wrapper for a Memory_get_Params promised by a client call.
-type Memory_get_Params_Future struct{ *capnp.Future }
+// Memory_reinforce_Params_Future is a wrapper for a Memory_reinforce_Params promised by a client call.
+type Memory_reinforce_Params_Future struct{ *capnp.Future }
 
-func (f Memory_get_Params_Future) Struct() (Memory_get_Params, error) {
+func (f Memory_reinforce_Params_Future) Struct() (Memory_reinforce_Params, error) {
 	p, err := f.Future.Ptr()
-	return Memory_get_Params(p.Struct()), err
+	return Memory_reinforce_Params(p.Struct()), err
 }
 
-type Memory_get_Results capnp.Struct
+type Memory_reinforce_Results capnp.Struct
 
-// Memory_get_Results_TypeID is the unique identifier for the type Memory_get_Results.
-const Memory_get_Results_TypeID = 0xdae58c196d6f1ac2
+// Memory_reinforce_Results_TypeID is the unique identifier for the type Memory_reinforce_Results.
+const Memory_reinforce_Results_TypeID = 0x81073536070a8456
 
-func NewMemory_get_Results(s *capnp.Segment) (Memory_get_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return Memory_get_Results(st), err
+func NewMemory_reinforce_Results(s *capnp.Segment) (Memory_reinforce_Results, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 0})
+	return Memory_reinforce_Results(st), err
 }
 
-func NewRootMemory_get_Results(s *capnp.Segment) (Memory_get_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return Memory_get_Results(st), err
+func NewRootMemory_reinforce_Results(s *capnp.Segment) (Memory_reinforce_Results, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 0})
+	return Memory_reinforce_Results(st), err
 }
 
-func ReadRootMemory_get_Results(msg *capnp.Message) (Memory_get_Results, error) {
+func ReadRootMemory_reinforce_Results(msg *capnp.Message) (Memory_reinforce_Results, error) {
 	root, err := msg.Root()
-	return Memory_get_Results(root.Struct()), err
+	return Memory_reinforce_Results(root.Struct()), err
 }
 
-func (s Memory_get_Results) String() string {
-	str, _ := text.Marshal(0xdae58c196d6f1ac2, capnp.Struct(s))
+func (s Memory_reinforce_Results) String() string {
+	str, _ := text.Marshal(0x81073536070a8456, capnp.Struct(s))
 	return str
 }
 
-func (s Memory_get_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+func (s Memory_reinforce_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
 	return capnp.Struct(s).EncodeAsPtr(seg)
 }
 
-func (Memory_get_Results) DecodeFromPtr(p capnp.Ptr) Memory_get_Results {
-	return Memory_get_Results(capnp.Struct{}.DecodeFromPtr(p))
+func (Memory_reinforce_Results) DecodeFromPtr(p capnp.Ptr) Memory_reinforce_Results {
+	return Memory_reinforce_Results(capnp.Struct{}.DecodeFromPtr(p))
 }
 
-func (s Memory_get_Results) ToPtr() capnp.Ptr {
+func (s Memory_reinforce_Results) ToPtr() capnp.Ptr {
 	return capnp.Struct(s).ToPtr()
 }
-func (s Memory_get_Results) IsValid() bool {
+func (s Memory_reinforce_Results) IsValid() bool {
 	return capnp.Struct(s).IsValid()
 }
 
-func (s Memory_get_Results) Message() *capnp.Message {
+func (s Memory_reinforce_Results) Message() *capnp.Message {
 	return capnp.Struct(s).Message()
 }
 
-func (s Memory_get_Results) Segment() *capnp.Segment {
+func (s Memory_reinforce_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Memory_get_Results) Value() ([]byte, error) {
+func (s Memory_reinforce_Results) Weight() uint64 {
+	return capnp.Struct(s).Uint64(0)
+}
+
+func (s Memory_reinforce_Results) SetWeight(v uint64) {
+	capnp.Struct(s).SetUint64(0, v)
+}
+
+func (s Memory_reinforce_Results) LastSeen() uint64 {
+	return capnp.Struct(s).Uint64(8)
+}
+
+func (s Memory_reinforce_Results) SetLastSeen(v uint64) {
+	capnp.Struct(s).SetUint64(8, v)
+}
+
+// Memory_reinforce_Results_List is a list of Memory_reinforce_Results.
+type Memory_reinforce_Results_List = capnp.StructList[Memory_reinforce_Results]
+
+// NewMemory_reinforce_Results creates a new list of Memory_reinforce_Results.
+func NewMemory_reinforce_Results_List(s *capnp.Segment, sz int32) (Memory_reinforce_Results_List, error) {
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 16, PointerCount: 0}, sz)
+	return capnp.StructList[Memory_reinforce_Results](l), err
+}
+
+// Memory_reinforce_Results_Future is a wrapper for a Memory_reinforce_Results promised by a client call.
+type Memory_reinforce_Results_Future struct{ *capnp.Future }
+
+func (f Memory_reinforce_Results_Future) Struct() (Memory_reinforce_Results, error) {
+	p, err := f.Future.Ptr()
+	return Memory_reinforce_Results(p.Struct()), err
+}
+
+type Memory_basin_Params capnp.Struct
+
+// Memory_basin_Params_TypeID is the unique identifier for the type Memory_basin_Params.
+const Memory_basin_Params_TypeID = 0x9fe7de9ac33a176a
+
+func NewMemory_basin_Params(s *capnp.Segment) (Memory_basin_Params, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	return Memory_basin_Params(st), err
+}
+
+func NewRootMemory_basin_Params(s *capnp.Segment) (Memory_basin_Params, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	return Memory_basin_Params(st), err
+}
+
+func ReadRootMemory_basin_Params(msg *capnp.Message) (Memory_basin_Params, error) {
+	root, err := msg.Root()
+	return Memory_basin_Params(root.Struct()), err
+}
+
+func (s Memory_basin_Params) String() string {
+	str, _ := text.Marshal(0x9fe7de9ac33a176a, capnp.Struct(s))
+	return str
+}
+
+func (s Memory_basin_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+	return capnp.Struct(s).EncodeAsPtr(seg)
+}
+
+func (Memory_basin_Params) DecodeFromPtr(p capnp.Ptr) Memory_basin_Params {
+	return Memory_basin_Params(capnp.Struct{}.DecodeFromPtr(p))
+}
+
+func (s Memory_basin_Params) ToPtr() capnp.Ptr {
+	return capnp.Struct(s).ToPtr()
+}
+func (s Memory_basin_Params) IsValid() bool {
+	return capnp.Struct(s).IsValid()
+}
+
+func (s Memory_basin_Params) Message() *capnp.Message {
+	return capnp.Struct(s).Message()
+}
+
+func (s Memory_basin_Params) Segment() *capnp.Segment {
+	return capnp.Struct(s).Segment()
+}
+func (s Memory_basin_Params) Prefix() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(0)
 	return []byte(p.Data()), err
 }
 
-func (s Memory_get_Results) HasValue() bool {
+func (s Memory_basin_Params) HasPrefix() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s Memory_get_Results) SetValue(v []byte) error {
+func (s Memory_basin_Params) SetPrefix(v []byte) error {
 	return capnp.Struct(s).SetData(0, v)
 }
 
-// Memory_get_Results_List is a list of Memory_get_Results.
-type Memory_get_Results_List = capnp.StructList[Memory_get_Results]
+// Memory_basin_Params_List is a list of Memory_basin_Params.
+type Memory_basin_Params_List = capnp.StructList[Memory_basin_Params]
 
-// NewMemory_get_Results creates a new list of Memory_get_Results.
-func NewMemory_get_Results_List(s *capnp.Segment, sz int32) (Memory_get_Results_List, error) {
+// NewMemory_basin_Params creates a new list of Memory_basin_Params.
+func NewMemory_basin_Params_List(s *capnp.Segment, sz int32) (Memory_basin_Params_List, error) {
 	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[Memory_get_Results](l), err
+	return capnp.StructList[Memory_basin_Params](l), err
 }
 
-// Memory_get_Results_Future is a wrapper for a Memory_get_Results promised by a client call.
-type Memory_get_Results_Future struct{ *capnp.Future }
+// Memory_basin_Params_Future is a wrapper for a Memory_basin_Params promised by a client call.
+type Memory_basin_Params_Future struct{ *capnp.Future }
 
-func (f Memory_get_Results_Future) Struct() (Memory_get_Results, error) {
+func (f Memory_basin_Params_Future) Struct() (Memory_basin_Params, error) {
 	p, err := f.Future.Ptr()
-	return Memory_get_Results(p.Struct()), err
+	return Memory_basin_Params(p.Struct()), err
 }
 
-type Memory_seekPrefix_Params capnp.Struct
+type Memory_basin_Results capnp.Struct
 
-// Memory_seekPrefix_Params_TypeID is the unique identifier for the type Memory_seekPrefix_Params.
-const Memory_seekPrefix_Params_TypeID = 0xf4904c1ee634ee84
+// Memory_basin_Results_TypeID is the unique identifier for the type Memory_basin_Results.
+const Memory_basin_Results_TypeID = 0xcd84a2add9c748cb
 
-func NewMemory_seekPrefix_Params(s *capnp.Segment) (Memory_seekPrefix_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return Memory_seekPrefix_Params(st), err
+func NewMemory_basin_Results(s *capnp.Segment) (Memory_basin_Results, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
+	return Memory_basin_Results(st), err
 }
 
-func NewRootMemory_seekPrefix_Params(s *capnp.Segment) (Memory_seekPrefix_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return Memory_seekPrefix_Params(st), err
+func NewRootMemory_basin_Results(s *capnp.Segment) (Memory_basin_Results, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
+	return Memory_basin_Results(st), err
 }
 
-func ReadRootMemory_seekPrefix_Params(msg *capnp.Message) (Memory_seekPrefix_Params, error) {
+func ReadRootMemory_basin_Results(msg *capnp.Message) (Memory_basin_Results, error) {
 	root, err := msg.Root()
-	return Memory_seekPrefix_Params(root.Struct()), err
+	return Memory_basin_Results(root.Struct()), err
 }
 
-func (s Memory_seekPrefix_Params) String() string {
-	str, _ := text.Marshal(0xf4904c1ee634ee84, capnp.Struct(s))
+func (s Memory_basin_Results) String() string {
+	str, _ := text.Marshal(0xcd84a2add9c748cb, capnp.Struct(s))
 	return str
 }
 
-func (s Memory_seekPrefix_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+func (s Memory_basin_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
 	return capnp.Struct(s).EncodeAsPtr(seg)
 }
 
-func (Memory_seekPrefix_Params) DecodeFromPtr(p capnp.Ptr) Memory_seekPrefix_Params {
-	return Memory_seekPrefix_Params(capnp.Struct{}.DecodeFromPtr(p))
+func (Memory_basin_Results) DecodeFromPtr(p capnp.Ptr) Memory_basin_Results {
+	return Memory_basin_Results(capnp.Struct{}.DecodeFromPtr(p))
 }
 
-func (s Memory_seekPrefix_Params) ToPtr() capnp.Ptr {
+func (s Memory_basin_Results) ToPtr() capnp.Ptr {
 	return capnp.Struct(s).ToPtr()
 }
-func (s Memory_seekPrefix_Params) IsValid() bool {
+func (s Memory_basin_Results) IsValid() bool {
 	return capnp.Struct(s).IsValid()
 }
 
-func (s Memory_seekPrefix_Params) Message() *capnp.Message {
+func (s Memory_basin_Results) Message() *capnp.Message {
 	return capnp.Struct(s).Message()
 }
 
-func (s Memory_seekPrefix_Params) Segment() *capnp.Segment {
+func (s Memory_basin_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Memory_seekPrefix_Params) Prefix() ([]byte, error) {
+func (s Memory_basin_Results) Classes() (capnp.DataList, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return []byte(p.Data()), err
+	return capnp.DataList(p.List()), err
 }
 
-func (s Memory_seekPrefix_Params) HasPrefix() bool {
+func (s Memory_basin_Results) HasClasses() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s Memory_seekPrefix_Params) SetPrefix(v []byte) error {
-	return capnp.Struct(s).SetData(0, v)
-}
-
-// Memory_seekPrefix_Params_List is a list of Memory_seekPrefix_Params.
-type Memory_seekPrefix_Params_List = capnp.StructList[Memory_seekPrefix_Params]
-
-// NewMemory_seekPrefix_Params creates a new list of Memory_seekPrefix_Params.
-func NewMemory_seekPrefix_Params_List(s *capnp.Segment, sz int32) (Memory_seekPrefix_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[Memory_seekPrefix_Params](l), err
-}
-
-// Memory_seekPrefix_Params_Future is a wrapper for a Memory_seekPrefix_Params promised by a client call.
-type Memory_seekPrefix_Params_Future struct{ *capnp.Future }
-
-func (f Memory_seekPrefix_Params_Future) Struct() (Memory_seekPrefix_Params, error) {
-	p, err := f.Future.Ptr()
-	return Memory_seekPrefix_Params(p.Struct()), err
-}
-
-type Memory_seekPrefix_Results capnp.Struct
-
-// Memory_seekPrefix_Results_TypeID is the unique identifier for the type Memory_seekPrefix_Results.
-const Memory_seekPrefix_Results_TypeID = 0xb32cc74a38d7d72a
-
-func NewMemory_seekPrefix_Results(s *capnp.Segment) (Memory_seekPrefix_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return Memory_seekPrefix_Results(st), err
-}
-
-func NewRootMemory_seekPrefix_Results(s *capnp.Segment) (Memory_seekPrefix_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return Memory_seekPrefix_Results(st), err
-}
-
-func ReadRootMemory_seekPrefix_Results(msg *capnp.Message) (Memory_seekPrefix_Results, error) {
-	root, err := msg.Root()
-	return Memory_seekPrefix_Results(root.Struct()), err
-}
-
-func (s Memory_seekPrefix_Results) String() string {
-	str, _ := text.Marshal(0xb32cc74a38d7d72a, capnp.Struct(s))
-	return str
-}
-
-func (s Memory_seekPrefix_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (Memory_seekPrefix_Results) DecodeFromPtr(p capnp.Ptr) Memory_seekPrefix_Results {
-	return Memory_seekPrefix_Results(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s Memory_seekPrefix_Results) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s Memory_seekPrefix_Results) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s Memory_seekPrefix_Results) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s Memory_seekPrefix_Results) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s Memory_seekPrefix_Results) Pairs() (KVPair_List, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return KVPair_List(p.List()), err
-}
-
-func (s Memory_seekPrefix_Results) HasPairs() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s Memory_seekPrefix_Results) SetPairs(v KVPair_List) error {
+func (s Memory_basin_Results) SetClasses(v capnp.DataList) error {
 	return capnp.Struct(s).SetPtr(0, v.ToPtr())
 }
 
-// NewPairs sets the pairs field to a newly
-// allocated KVPair_List, preferring placement in s's segment.
-func (s Memory_seekPrefix_Results) NewPairs(n int32) (KVPair_List, error) {
-	l, err := NewKVPair_List(capnp.Struct(s).Segment(), n)
+// NewClasses sets the classes field to a newly
+// allocated capnp.DataList, preferring placement in s's segment.
+func (s Memory_basin_Results) NewClasses(n int32) (capnp.DataList, error) {
+	l, err := capnp.NewDataList(capnp.Struct(s).Segment(), n)
 	if err != nil {
-		return KVPair_List{}, err
+		return capnp.DataList{}, err
 	}
 	err = capnp.Struct(s).SetPtr(0, l.ToPtr())
 	return l, err
 }
-
-// Memory_seekPrefix_Results_List is a list of Memory_seekPrefix_Results.
-type Memory_seekPrefix_Results_List = capnp.StructList[Memory_seekPrefix_Results]
-
-// NewMemory_seekPrefix_Results creates a new list of Memory_seekPrefix_Results.
-func NewMemory_seekPrefix_Results_List(s *capnp.Segment, sz int32) (Memory_seekPrefix_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[Memory_seekPrefix_Results](l), err
+func (s Memory_basin_Results) Weights() (capnp.UInt64List, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return capnp.UInt64List(p.List()), err
 }
 
-// Memory_seekPrefix_Results_Future is a wrapper for a Memory_seekPrefix_Results promised by a client call.
-type Memory_seekPrefix_Results_Future struct{ *capnp.Future }
-
-func (f Memory_seekPrefix_Results_Future) Struct() (Memory_seekPrefix_Results, error) {
-	p, err := f.Future.Ptr()
-	return Memory_seekPrefix_Results(p.Struct()), err
+func (s Memory_basin_Results) HasWeights() bool {
+	return capnp.Struct(s).HasPtr(1)
 }
 
-type Memory_cas_Params capnp.Struct
-
-// Memory_cas_Params_TypeID is the unique identifier for the type Memory_cas_Params.
-const Memory_cas_Params_TypeID = 0x9a7504ee50638e4d
-
-func NewMemory_cas_Params(s *capnp.Segment) (Memory_cas_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return Memory_cas_Params(st), err
+func (s Memory_basin_Results) SetWeights(v capnp.UInt64List) error {
+	return capnp.Struct(s).SetPtr(1, v.ToPtr())
 }
 
-func NewRootMemory_cas_Params(s *capnp.Segment) (Memory_cas_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return Memory_cas_Params(st), err
-}
-
-func ReadRootMemory_cas_Params(msg *capnp.Message) (Memory_cas_Params, error) {
-	root, err := msg.Root()
-	return Memory_cas_Params(root.Struct()), err
-}
-
-func (s Memory_cas_Params) String() string {
-	str, _ := text.Marshal(0x9a7504ee50638e4d, capnp.Struct(s))
-	return str
-}
-
-func (s Memory_cas_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (Memory_cas_Params) DecodeFromPtr(p capnp.Ptr) Memory_cas_Params {
-	return Memory_cas_Params(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s Memory_cas_Params) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s Memory_cas_Params) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s Memory_cas_Params) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s Memory_cas_Params) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s Memory_cas_Params) Updates() (KVPair_List, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return KVPair_List(p.List()), err
-}
-
-func (s Memory_cas_Params) HasUpdates() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s Memory_cas_Params) SetUpdates(v KVPair_List) error {
-	return capnp.Struct(s).SetPtr(0, v.ToPtr())
-}
-
-// NewUpdates sets the updates field to a newly
-// allocated KVPair_List, preferring placement in s's segment.
-func (s Memory_cas_Params) NewUpdates(n int32) (KVPair_List, error) {
-	l, err := NewKVPair_List(capnp.Struct(s).Segment(), n)
+// NewWeights sets the weights field to a newly
+// allocated capnp.UInt64List, preferring placement in s's segment.
+func (s Memory_basin_Results) NewWeights(n int32) (capnp.UInt64List, error) {
+	l, err := capnp.NewUInt64List(capnp.Struct(s).Segment(), n)
 	if err != nil {
-		return KVPair_List{}, err
+		return capnp.UInt64List{}, err
 	}
-	err = capnp.Struct(s).SetPtr(0, l.ToPtr())
+	err = capnp.Struct(s).SetPtr(1, l.ToPtr())
 	return l, err
 }
 
-// Memory_cas_Params_List is a list of Memory_cas_Params.
-type Memory_cas_Params_List = capnp.StructList[Memory_cas_Params]
+// Memory_basin_Results_List is a list of Memory_basin_Results.
+type Memory_basin_Results_List = capnp.StructList[Memory_basin_Results]
 
-// NewMemory_cas_Params creates a new list of Memory_cas_Params.
-func NewMemory_cas_Params_List(s *capnp.Segment, sz int32) (Memory_cas_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[Memory_cas_Params](l), err
+// NewMemory_basin_Results creates a new list of Memory_basin_Results.
+func NewMemory_basin_Results_List(s *capnp.Segment, sz int32) (Memory_basin_Results_List, error) {
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2}, sz)
+	return capnp.StructList[Memory_basin_Results](l), err
 }
 
-// Memory_cas_Params_Future is a wrapper for a Memory_cas_Params promised by a client call.
-type Memory_cas_Params_Future struct{ *capnp.Future }
+// Memory_basin_Results_Future is a wrapper for a Memory_basin_Results promised by a client call.
+type Memory_basin_Results_Future struct{ *capnp.Future }
 
-func (f Memory_cas_Params_Future) Struct() (Memory_cas_Params, error) {
+func (f Memory_basin_Results_Future) Struct() (Memory_basin_Results, error) {
 	p, err := f.Future.Ptr()
-	return Memory_cas_Params(p.Struct()), err
+	return Memory_basin_Results(p.Struct()), err
 }
 
-type Memory_cas_Results capnp.Struct
+type Memory_steps_Params capnp.Struct
 
-// Memory_cas_Results_TypeID is the unique identifier for the type Memory_cas_Results.
-const Memory_cas_Results_TypeID = 0x9128920f4a8c15df
+// Memory_steps_Params_TypeID is the unique identifier for the type Memory_steps_Params.
+const Memory_steps_Params_TypeID = 0xde8a8437969166de
 
-func NewMemory_cas_Results(s *capnp.Segment) (Memory_cas_Results, error) {
+func NewMemory_steps_Params(s *capnp.Segment) (Memory_steps_Params, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	return Memory_steps_Params(st), err
+}
+
+func NewRootMemory_steps_Params(s *capnp.Segment) (Memory_steps_Params, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	return Memory_steps_Params(st), err
+}
+
+func ReadRootMemory_steps_Params(msg *capnp.Message) (Memory_steps_Params, error) {
+	root, err := msg.Root()
+	return Memory_steps_Params(root.Struct()), err
+}
+
+func (s Memory_steps_Params) String() string {
+	str, _ := text.Marshal(0xde8a8437969166de, capnp.Struct(s))
+	return str
+}
+
+func (s Memory_steps_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+	return capnp.Struct(s).EncodeAsPtr(seg)
+}
+
+func (Memory_steps_Params) DecodeFromPtr(p capnp.Ptr) Memory_steps_Params {
+	return Memory_steps_Params(capnp.Struct{}.DecodeFromPtr(p))
+}
+
+func (s Memory_steps_Params) ToPtr() capnp.Ptr {
+	return capnp.Struct(s).ToPtr()
+}
+func (s Memory_steps_Params) IsValid() bool {
+	return capnp.Struct(s).IsValid()
+}
+
+func (s Memory_steps_Params) Message() *capnp.Message {
+	return capnp.Struct(s).Message()
+}
+
+func (s Memory_steps_Params) Segment() *capnp.Segment {
+	return capnp.Struct(s).Segment()
+}
+
+// Memory_steps_Params_List is a list of Memory_steps_Params.
+type Memory_steps_Params_List = capnp.StructList[Memory_steps_Params]
+
+// NewMemory_steps_Params creates a new list of Memory_steps_Params.
+func NewMemory_steps_Params_List(s *capnp.Segment, sz int32) (Memory_steps_Params_List, error) {
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	return capnp.StructList[Memory_steps_Params](l), err
+}
+
+// Memory_steps_Params_Future is a wrapper for a Memory_steps_Params promised by a client call.
+type Memory_steps_Params_Future struct{ *capnp.Future }
+
+func (f Memory_steps_Params_Future) Struct() (Memory_steps_Params, error) {
+	p, err := f.Future.Ptr()
+	return Memory_steps_Params(p.Struct()), err
+}
+
+type Memory_steps_Results capnp.Struct
+
+// Memory_steps_Results_TypeID is the unique identifier for the type Memory_steps_Results.
+const Memory_steps_Results_TypeID = 0xa5fb84a32c7b6134
+
+func NewMemory_steps_Results(s *capnp.Segment) (Memory_steps_Results, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
-	return Memory_cas_Results(st), err
+	return Memory_steps_Results(st), err
 }
 
-func NewRootMemory_cas_Results(s *capnp.Segment) (Memory_cas_Results, error) {
+func NewRootMemory_steps_Results(s *capnp.Segment) (Memory_steps_Results, error) {
 	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
-	return Memory_cas_Results(st), err
+	return Memory_steps_Results(st), err
 }
 
-func ReadRootMemory_cas_Results(msg *capnp.Message) (Memory_cas_Results, error) {
+func ReadRootMemory_steps_Results(msg *capnp.Message) (Memory_steps_Results, error) {
 	root, err := msg.Root()
-	return Memory_cas_Results(root.Struct()), err
+	return Memory_steps_Results(root.Struct()), err
 }
 
-func (s Memory_cas_Results) String() string {
-	str, _ := text.Marshal(0x9128920f4a8c15df, capnp.Struct(s))
+func (s Memory_steps_Results) String() string {
+	str, _ := text.Marshal(0xa5fb84a32c7b6134, capnp.Struct(s))
 	return str
 }
 
-func (s Memory_cas_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+func (s Memory_steps_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
 	return capnp.Struct(s).EncodeAsPtr(seg)
 }
 
-func (Memory_cas_Results) DecodeFromPtr(p capnp.Ptr) Memory_cas_Results {
-	return Memory_cas_Results(capnp.Struct{}.DecodeFromPtr(p))
+func (Memory_steps_Results) DecodeFromPtr(p capnp.Ptr) Memory_steps_Results {
+	return Memory_steps_Results(capnp.Struct{}.DecodeFromPtr(p))
 }
 
-func (s Memory_cas_Results) ToPtr() capnp.Ptr {
+func (s Memory_steps_Results) ToPtr() capnp.Ptr {
 	return capnp.Struct(s).ToPtr()
 }
-func (s Memory_cas_Results) IsValid() bool {
+func (s Memory_steps_Results) IsValid() bool {
 	return capnp.Struct(s).IsValid()
 }
 
-func (s Memory_cas_Results) Message() *capnp.Message {
+func (s Memory_steps_Results) Message() *capnp.Message {
 	return capnp.Struct(s).Message()
 }
 
-func (s Memory_cas_Results) Segment() *capnp.Segment {
+func (s Memory_steps_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Memory_cas_Results) Ok() bool {
-	return capnp.Struct(s).Bit(0)
+func (s Memory_steps_Results) Out() uint64 {
+	return capnp.Struct(s).Uint64(0)
 }
 
-func (s Memory_cas_Results) SetOk(v bool) {
-	capnp.Struct(s).SetBit(0, v)
+func (s Memory_steps_Results) SetOut(v uint64) {
+	capnp.Struct(s).SetUint64(0, v)
 }
 
-// Memory_cas_Results_List is a list of Memory_cas_Results.
-type Memory_cas_Results_List = capnp.StructList[Memory_cas_Results]
+// Memory_steps_Results_List is a list of Memory_steps_Results.
+type Memory_steps_Results_List = capnp.StructList[Memory_steps_Results]
 
-// NewMemory_cas_Results creates a new list of Memory_cas_Results.
-func NewMemory_cas_Results_List(s *capnp.Segment, sz int32) (Memory_cas_Results_List, error) {
+// NewMemory_steps_Results creates a new list of Memory_steps_Results.
+func NewMemory_steps_Results_List(s *capnp.Segment, sz int32) (Memory_steps_Results_List, error) {
 	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0}, sz)
-	return capnp.StructList[Memory_cas_Results](l), err
+	return capnp.StructList[Memory_steps_Results](l), err
 }
 
-// Memory_cas_Results_Future is a wrapper for a Memory_cas_Results promised by a client call.
-type Memory_cas_Results_Future struct{ *capnp.Future }
+// Memory_steps_Results_Future is a wrapper for a Memory_steps_Results promised by a client call.
+type Memory_steps_Results_Future struct{ *capnp.Future }
 
-func (f Memory_cas_Results_Future) Struct() (Memory_cas_Results, error) {
+func (f Memory_steps_Results_Future) Struct() (Memory_steps_Results, error) {
 	p, err := f.Future.Ptr()
-	return Memory_cas_Results(p.Struct()), err
-}
-
-type Memory_getStep_Params capnp.Struct
-
-// Memory_getStep_Params_TypeID is the unique identifier for the type Memory_getStep_Params.
-const Memory_getStep_Params_TypeID = 0xe4b1609f5683966b
-
-func NewMemory_getStep_Params(s *capnp.Segment) (Memory_getStep_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
-	return Memory_getStep_Params(st), err
-}
-
-func NewRootMemory_getStep_Params(s *capnp.Segment) (Memory_getStep_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
-	return Memory_getStep_Params(st), err
-}
-
-func ReadRootMemory_getStep_Params(msg *capnp.Message) (Memory_getStep_Params, error) {
-	root, err := msg.Root()
-	return Memory_getStep_Params(root.Struct()), err
-}
-
-func (s Memory_getStep_Params) String() string {
-	str, _ := text.Marshal(0xe4b1609f5683966b, capnp.Struct(s))
-	return str
-}
-
-func (s Memory_getStep_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (Memory_getStep_Params) DecodeFromPtr(p capnp.Ptr) Memory_getStep_Params {
-	return Memory_getStep_Params(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s Memory_getStep_Params) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s Memory_getStep_Params) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s Memory_getStep_Params) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s Memory_getStep_Params) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-
-// Memory_getStep_Params_List is a list of Memory_getStep_Params.
-type Memory_getStep_Params_List = capnp.StructList[Memory_getStep_Params]
-
-// NewMemory_getStep_Params creates a new list of Memory_getStep_Params.
-func NewMemory_getStep_Params_List(s *capnp.Segment, sz int32) (Memory_getStep_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
-	return capnp.StructList[Memory_getStep_Params](l), err
-}
-
-// Memory_getStep_Params_Future is a wrapper for a Memory_getStep_Params promised by a client call.
-type Memory_getStep_Params_Future struct{ *capnp.Future }
-
-func (f Memory_getStep_Params_Future) Struct() (Memory_getStep_Params, error) {
-	p, err := f.Future.Ptr()
-	return Memory_getStep_Params(p.Struct()), err
-}
-
-type Memory_getStep_Results capnp.Struct
-
-// Memory_getStep_Results_TypeID is the unique identifier for the type Memory_getStep_Results.
-const Memory_getStep_Results_TypeID = 0xfcbff8813a378e34
-
-func NewMemory_getStep_Results(s *capnp.Segment) (Memory_getStep_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
-	return Memory_getStep_Results(st), err
-}
-
-func NewRootMemory_getStep_Results(s *capnp.Segment) (Memory_getStep_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
-	return Memory_getStep_Results(st), err
-}
-
-func ReadRootMemory_getStep_Results(msg *capnp.Message) (Memory_getStep_Results, error) {
-	root, err := msg.Root()
-	return Memory_getStep_Results(root.Struct()), err
-}
-
-func (s Memory_getStep_Results) String() string {
-	str, _ := text.Marshal(0xfcbff8813a378e34, capnp.Struct(s))
-	return str
-}
-
-func (s Memory_getStep_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (Memory_getStep_Results) DecodeFromPtr(p capnp.Ptr) Memory_getStep_Results {
-	return Memory_getStep_Results(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s Memory_getStep_Results) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s Memory_getStep_Results) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s Memory_getStep_Results) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s Memory_getStep_Results) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s Memory_getStep_Results) Step() int64 {
-	return int64(capnp.Struct(s).Uint64(0))
-}
-
-func (s Memory_getStep_Results) SetStep(v int64) {
-	capnp.Struct(s).SetUint64(0, uint64(v))
-}
-
-// Memory_getStep_Results_List is a list of Memory_getStep_Results.
-type Memory_getStep_Results_List = capnp.StructList[Memory_getStep_Results]
-
-// NewMemory_getStep_Results creates a new list of Memory_getStep_Results.
-func NewMemory_getStep_Results_List(s *capnp.Segment, sz int32) (Memory_getStep_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0}, sz)
-	return capnp.StructList[Memory_getStep_Results](l), err
-}
-
-// Memory_getStep_Results_Future is a wrapper for a Memory_getStep_Results promised by a client call.
-type Memory_getStep_Results_Future struct{ *capnp.Future }
-
-func (f Memory_getStep_Results_Future) Struct() (Memory_getStep_Results, error) {
-	p, err := f.Future.Ptr()
-	return Memory_getStep_Results(p.Struct()), err
-}
-
-type Memory_incrementStep_Params capnp.Struct
-
-// Memory_incrementStep_Params_TypeID is the unique identifier for the type Memory_incrementStep_Params.
-const Memory_incrementStep_Params_TypeID = 0xbceb307c064e028d
-
-func NewMemory_incrementStep_Params(s *capnp.Segment) (Memory_incrementStep_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
-	return Memory_incrementStep_Params(st), err
-}
-
-func NewRootMemory_incrementStep_Params(s *capnp.Segment) (Memory_incrementStep_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
-	return Memory_incrementStep_Params(st), err
-}
-
-func ReadRootMemory_incrementStep_Params(msg *capnp.Message) (Memory_incrementStep_Params, error) {
-	root, err := msg.Root()
-	return Memory_incrementStep_Params(root.Struct()), err
-}
-
-func (s Memory_incrementStep_Params) String() string {
-	str, _ := text.Marshal(0xbceb307c064e028d, capnp.Struct(s))
-	return str
-}
-
-func (s Memory_incrementStep_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (Memory_incrementStep_Params) DecodeFromPtr(p capnp.Ptr) Memory_incrementStep_Params {
-	return Memory_incrementStep_Params(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s Memory_incrementStep_Params) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s Memory_incrementStep_Params) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s Memory_incrementStep_Params) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s Memory_incrementStep_Params) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-
-// Memory_incrementStep_Params_List is a list of Memory_incrementStep_Params.
-type Memory_incrementStep_Params_List = capnp.StructList[Memory_incrementStep_Params]
-
-// NewMemory_incrementStep_Params creates a new list of Memory_incrementStep_Params.
-func NewMemory_incrementStep_Params_List(s *capnp.Segment, sz int32) (Memory_incrementStep_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
-	return capnp.StructList[Memory_incrementStep_Params](l), err
-}
-
-// Memory_incrementStep_Params_Future is a wrapper for a Memory_incrementStep_Params promised by a client call.
-type Memory_incrementStep_Params_Future struct{ *capnp.Future }
-
-func (f Memory_incrementStep_Params_Future) Struct() (Memory_incrementStep_Params, error) {
-	p, err := f.Future.Ptr()
-	return Memory_incrementStep_Params(p.Struct()), err
-}
-
-type Memory_incrementStep_Results capnp.Struct
-
-// Memory_incrementStep_Results_TypeID is the unique identifier for the type Memory_incrementStep_Results.
-const Memory_incrementStep_Results_TypeID = 0xfbcacdd30e9bc109
-
-func NewMemory_incrementStep_Results(s *capnp.Segment) (Memory_incrementStep_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
-	return Memory_incrementStep_Results(st), err
-}
-
-func NewRootMemory_incrementStep_Results(s *capnp.Segment) (Memory_incrementStep_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
-	return Memory_incrementStep_Results(st), err
-}
-
-func ReadRootMemory_incrementStep_Results(msg *capnp.Message) (Memory_incrementStep_Results, error) {
-	root, err := msg.Root()
-	return Memory_incrementStep_Results(root.Struct()), err
-}
-
-func (s Memory_incrementStep_Results) String() string {
-	str, _ := text.Marshal(0xfbcacdd30e9bc109, capnp.Struct(s))
-	return str
-}
-
-func (s Memory_incrementStep_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (Memory_incrementStep_Results) DecodeFromPtr(p capnp.Ptr) Memory_incrementStep_Results {
-	return Memory_incrementStep_Results(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s Memory_incrementStep_Results) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s Memory_incrementStep_Results) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s Memory_incrementStep_Results) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s Memory_incrementStep_Results) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s Memory_incrementStep_Results) Step() int64 {
-	return int64(capnp.Struct(s).Uint64(0))
-}
-
-func (s Memory_incrementStep_Results) SetStep(v int64) {
-	capnp.Struct(s).SetUint64(0, uint64(v))
-}
-
-// Memory_incrementStep_Results_List is a list of Memory_incrementStep_Results.
-type Memory_incrementStep_Results_List = capnp.StructList[Memory_incrementStep_Results]
-
-// NewMemory_incrementStep_Results creates a new list of Memory_incrementStep_Results.
-func NewMemory_incrementStep_Results_List(s *capnp.Segment, sz int32) (Memory_incrementStep_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0}, sz)
-	return capnp.StructList[Memory_incrementStep_Results](l), err
-}
-
-// Memory_incrementStep_Results_Future is a wrapper for a Memory_incrementStep_Results promised by a client call.
-type Memory_incrementStep_Results_Future struct{ *capnp.Future }
-
-func (f Memory_incrementStep_Results_Future) Struct() (Memory_incrementStep_Results, error) {
-	p, err := f.Future.Ptr()
-	return Memory_incrementStep_Results(p.Struct()), err
-}
-
-type Memory_done_Params capnp.Struct
-
-// Memory_done_Params_TypeID is the unique identifier for the type Memory_done_Params.
-const Memory_done_Params_TypeID = 0xea8ea61a2ddb9e41
-
-func NewMemory_done_Params(s *capnp.Segment) (Memory_done_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
-	return Memory_done_Params(st), err
-}
-
-func NewRootMemory_done_Params(s *capnp.Segment) (Memory_done_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
-	return Memory_done_Params(st), err
-}
-
-func ReadRootMemory_done_Params(msg *capnp.Message) (Memory_done_Params, error) {
-	root, err := msg.Root()
-	return Memory_done_Params(root.Struct()), err
-}
-
-func (s Memory_done_Params) String() string {
-	str, _ := text.Marshal(0xea8ea61a2ddb9e41, capnp.Struct(s))
-	return str
-}
-
-func (s Memory_done_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (Memory_done_Params) DecodeFromPtr(p capnp.Ptr) Memory_done_Params {
-	return Memory_done_Params(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s Memory_done_Params) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s Memory_done_Params) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s Memory_done_Params) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s Memory_done_Params) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-
-// Memory_done_Params_List is a list of Memory_done_Params.
-type Memory_done_Params_List = capnp.StructList[Memory_done_Params]
-
-// NewMemory_done_Params creates a new list of Memory_done_Params.
-func NewMemory_done_Params_List(s *capnp.Segment, sz int32) (Memory_done_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
-	return capnp.StructList[Memory_done_Params](l), err
-}
-
-// Memory_done_Params_Future is a wrapper for a Memory_done_Params promised by a client call.
-type Memory_done_Params_Future struct{ *capnp.Future }
-
-func (f Memory_done_Params_Future) Struct() (Memory_done_Params, error) {
-	p, err := f.Future.Ptr()
-	return Memory_done_Params(p.Struct()), err
-}
-
-type Memory_done_Results capnp.Struct
-
-// Memory_done_Results_TypeID is the unique identifier for the type Memory_done_Results.
-const Memory_done_Results_TypeID = 0xea51584da115685b
-
-func NewMemory_done_Results(s *capnp.Segment) (Memory_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
-	return Memory_done_Results(st), err
-}
-
-func NewRootMemory_done_Results(s *capnp.Segment) (Memory_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
-	return Memory_done_Results(st), err
-}
-
-func ReadRootMemory_done_Results(msg *capnp.Message) (Memory_done_Results, error) {
-	root, err := msg.Root()
-	return Memory_done_Results(root.Struct()), err
-}
-
-func (s Memory_done_Results) String() string {
-	str, _ := text.Marshal(0xea51584da115685b, capnp.Struct(s))
-	return str
-}
-
-func (s Memory_done_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (Memory_done_Results) DecodeFromPtr(p capnp.Ptr) Memory_done_Results {
-	return Memory_done_Results(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s Memory_done_Results) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s Memory_done_Results) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s Memory_done_Results) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s Memory_done_Results) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-
-// Memory_done_Results_List is a list of Memory_done_Results.
-type Memory_done_Results_List = capnp.StructList[Memory_done_Results]
-
-// NewMemory_done_Results creates a new list of Memory_done_Results.
-func NewMemory_done_Results_List(s *capnp.Segment, sz int32) (Memory_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
-	return capnp.StructList[Memory_done_Results](l), err
-}
-
-// Memory_done_Results_Future is a wrapper for a Memory_done_Results promised by a client call.
-type Memory_done_Results_Future struct{ *capnp.Future }
-
-func (f Memory_done_Results_Future) Struct() (Memory_done_Results, error) {
-	p, err := f.Future.Ptr()
-	return Memory_done_Results(p.Struct()), err
+	return Memory_steps_Results(p.Struct()), err
 }

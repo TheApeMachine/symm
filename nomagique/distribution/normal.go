@@ -14,13 +14,13 @@ NormalServer evaluates multivariate Normal Gaussian distribution.
 */
 type NormalServer struct {
 	*runtime.System
-	prob float64
-	logProb float64
-	entropy float64
-	mean []float64
-	cov []float64
+	prob     float64
+	logProb  float64
+	entropy  float64
+	mean     []float64
+	cov      []float64
 	quantile []float64
-	rand []float64
+	rand     []float64
 }
 
 func NewNormal(ctx context.Context) *NormalServer {

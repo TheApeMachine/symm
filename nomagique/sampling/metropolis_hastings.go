@@ -61,11 +61,11 @@ func (server *MetropolisHastingsServer) Write(ctx context.Context, call Metropol
 	target := distuv.Normal{Mu: 0, Sigma: 1}
 	proposal := GaussianProposal{Sigma: 0.5}
 	mh := sampleuv.MetropolisHastings{
-		Initial: initVal,
-		Target: target,
+		Initial:  initVal,
+		Target:   target,
 		Proposal: proposal,
-		BurnIn: burnIn,
-		Rate: rateVal,
+		BurnIn:   burnIn,
+		Rate:     rateVal,
 	}
 	server.samples = make([]float64, countVal)
 	mh.Sample(server.samples)

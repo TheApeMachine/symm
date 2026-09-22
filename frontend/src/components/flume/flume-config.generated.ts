@@ -521,6 +521,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		initialWidth: 340,
 		inputs: (ports) => [
 			ports["[]byte"]({ name: "contextBytes", label: "contextBytes" }),
+			ports.Capability({ name: "memory", label: "memory" }),
 		],
 		outputs: (ports) => [
 			ports["[]byte"]({ name: "class", label: "class" }),
@@ -617,6 +618,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		inputs: (ports) => [
 			ports["[]byte"]({ name: "classBytes", label: "classBytes" }),
 			ports["[]byte"]({ name: "contextBytes", label: "contextBytes" }),
+			ports.Capability({ name: "memory", label: "memory" }),
 		],
 		outputs: (ports) => [
 			ports["[]byte"]({ name: "out", label: "out" }),
@@ -7042,9 +7044,11 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		initialWidth: 320,
 		inputs: (ports) => (_inputData, _connections) => [
 			ports["[]byte"]({ name: "associative_grid.data", label: "associative_grid.data" }),
+			ports.Capability({ name: "cognition_attractor.memory", label: "cognition_attractor.memory" }),
 			ports.float64({ name: "cognition_classification.prob", label: "cognition_classification.prob" }),
 			ports.int64({ name: "cognition_classification.support", label: "cognition_classification.support" }),
 			ports["[]byte"]({ name: "cognition_reinforce.contextBytes", label: "cognition_reinforce.contextBytes" }),
+			ports.Capability({ name: "cognition_reinforce.memory", label: "cognition_reinforce.memory" }),
 		],
 		outputs: (ports) => (_inputData, _connections) => [
 			ports["[]byte"]({ name: "cognition_associate.precursor", label: "cognition_associate.precursor" }),
@@ -7398,16 +7402,17 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		description: "Sub-graph: training",
 		initialWidth: 320,
 		inputs: (ports) => (_inputData, _connections) => [
+			ports.Capability({ name: "attractor.memory", label: "attractor.memory" }),
 			ports.bool({ name: "edges.signed", label: "edges.signed" }),
 			ports["[]byte"]({ name: "feed.write", label: "feed.write" }),
 			ports.float64({ name: "grid.metrics", label: "grid.metrics" }),
+			ports.Capability({ name: "reinforce.memory", label: "reinforce.memory" }),
 			ports["[]byte"]({ name: "replay.query", label: "replay.query" }),
 			ports["[]byte"]({ name: "token_0.data", label: "token_0.data" }),
 			ports.int64({ name: "verdict.issueStep", label: "verdict.issueStep" }),
 			ports.int64({ name: "verdict.resolveStep", label: "verdict.resolveStep" }),
 		],
 		outputs: (ports) => (_inputData, _connections) => [
-			ports.bool({ name: "before.found", label: "before.found" }),
 			ports["[]byte"]({ name: "capture.out", label: "capture.out" }),
 			ports.float64({ name: "decision.prob", label: "decision.prob" }),
 			ports["[]byte"]({ name: "decision.runnerUp", label: "decision.runnerUp" }),
@@ -7415,7 +7420,13 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.int64({ name: "edges.count", label: "edges.count" }),
 			ports.float64({ name: "edges.kept", label: "edges.kept" }),
 			ports.float64({ name: "edges.weights", label: "edges.weights" }),
-			ports.bool({ name: "exhaustion.found", label: "exhaustion.found" }),
+			ports.bool({ name: "excursion.confirmed", label: "excursion.confirmed" }),
+			ports.float64({ name: "excursion.excursion", label: "excursion.excursion" }),
+			ports.bool({ name: "excursion.found", label: "excursion.found" }),
+			ports.int64({ name: "excursion.legs", label: "excursion.legs" }),
+			ports.float64({ name: "excursion.qualifying", label: "excursion.qualifying" }),
+			ports.float64({ name: "excursion.sigma", label: "excursion.sigma" }),
+			ports.int64({ name: "excursion.steps", label: "excursion.steps" }),
 			ports.float64({ name: "exit_leg.out", label: "exit_leg.out" }),
 			ports.float64({ name: "graded.out", label: "graded.out" }),
 			ports.int64({ name: "grid.delivered", label: "grid.delivered" }),
@@ -7435,7 +7446,6 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "heat.upperQuartile", label: "heat.upperQuartile" }),
 			ports.float64({ name: "heat.zero", label: "heat.zero" }),
 			ports.float64({ name: "hot.out", label: "hot.out" }),
-			ports.bool({ name: "ignition.found", label: "ignition.found" }),
 			ports.int64({ name: "regions.componentCount", label: "regions.componentCount" }),
 			ports.int64({ name: "regions.componentSizes", label: "regions.componentSizes" }),
 			ports.int64({ name: "regions.memberOf", label: "regions.memberOf" }),

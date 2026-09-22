@@ -13,8 +13,8 @@ RosenbrockServer minimizes non-convex Rosenbrock banana benchmark function using
 */
 type RosenbrockServer struct {
 	*runtime.System
-	x []float64
-	fVal float64
+	x          []float64
+	fVal       float64
 	iterations int32
 }
 
@@ -56,7 +56,7 @@ func (server *RosenbrockServer) Write(ctx context.Context, call Rosenbrock_write
 			diffA := paramA - point[0]
 			diffB := point[1] - point[0]*point[0]
 			grad[0] = -2.0*diffA - 4.0*paramB*point[0]*diffB
-			grad[1] = 2.0*paramB*diffB
+			grad[1] = 2.0 * paramB * diffB
 		},
 	}
 

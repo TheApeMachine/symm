@@ -17,6 +17,7 @@ export type DragOverride = { x: number; y: number };
 export type FlumeEditorState = {
 	routingMode: FlumeRoutingMode;
 	dragOverrideByEditorId: Record<string, Record<string, DragOverride>>;
+	selectedNodeIdByEditorId: Record<string, string | null>;
 };
 
 const STORAGE_KEY = "symm.flume.routingMode";
@@ -36,6 +37,7 @@ const readInitialRoutingMode = (): FlumeRoutingMode => {
 export const flumeEditorStore = new Store<FlumeEditorState>({
 	routingMode: readInitialRoutingMode(),
 	dragOverrideByEditorId: {},
+	selectedNodeIdByEditorId: {},
 });
 
 if (typeof window !== "undefined") {
@@ -46,7 +48,7 @@ if (typeof window !== "undefined") {
 }
 
 export const setRoutingMode = (mode: FlumeRoutingMode): void => {
-	flumeEditorStore.setState((previous: any) =>
+	flumeEditorStore.setState((previous: FlumeEditorState) =>
 		previous.routingMode === mode
 			? previous
 			: { ...previous, routingMode: mode },
@@ -60,7 +62,7 @@ export const setDragOverride = (
 	editorId: string,
 	override: Record<string, DragOverride> | null,
 ): void => {
-	flumeEditorStore.setState((previous: any) => {
+	flumeEditorStore.setState((previous: FlumeEditorState) => {
 		const next = { ...previous.dragOverrideByEditorId };
 
 		if (override === null || Object.keys(override).length === 0) {
@@ -68,7 +70,9 @@ export const setDragOverride = (
 				return previous;
 			}
 			delete next[editorId];
-		} else {
+		}
+
+		if (override !== null && Object.keys(override).length > 0) {
 			next[editorId] = override;
 		}
 
@@ -82,4 +86,35 @@ export const useDragOverride = (
 	useStore(
 		flumeEditorStore,
 		(state) => state.dragOverrideByEditorId[editorId] ?? null,
+	);
+
+export const setSelectedNode = (
+	editorId: string,
+	nodeId: string | null,
+): void => {
+	flumeEditorStore.setState((previous: FlumeEditorState) => {
+		const current = previous.selectedNodeIdByEditorId[editorId] ?? null;
+
+		if (current === nodeId) {
+			return previous;
+		}
+
+		const next = { ...previous.selectedNodeIdByEditorId };
+
+		if (nodeId === null) {
+			delete next[editorId];
+		}
+
+		if (nodeId !== null) {
+			next[editorId] = nodeId;
+		}
+
+		return { ...previous, selectedNodeIdByEditorId: next };
+	});
+};
+
+export const useSelectedNode = (editorId: string): string | null =>
+	useStore(
+		flumeEditorStore,
+		(state) => state.selectedNodeIdByEditorId[editorId] ?? null,
 	);

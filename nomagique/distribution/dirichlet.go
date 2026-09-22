@@ -13,10 +13,10 @@ DirichletServer evaluates multivariate Dirichlet distribution on the standard si
 */
 type DirichletServer struct {
 	*runtime.System
-	prob float64
+	prob    float64
 	logProb float64
-	mean []float64
-	rand []float64
+	mean    []float64
+	rand    []float64
 }
 
 func NewDirichlet(ctx context.Context) *DirichletServer {

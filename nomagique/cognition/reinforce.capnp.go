@@ -26,7 +26,7 @@ func (c Reinforce) Write(ctx context.Context, params func(Reinforce_write_Params
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 2}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 3}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(Reinforce_write_Params(s)) }
 	}
 
@@ -227,12 +227,12 @@ type Reinforce_write_Params capnp.Struct
 const Reinforce_write_Params_TypeID = 0xd329cba2ff52de07
 
 func NewReinforce_write_Params(s *capnp.Segment) (Reinforce_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 3})
 	return Reinforce_write_Params(st), err
 }
 
 func NewRootReinforce_write_Params(s *capnp.Segment) (Reinforce_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 3})
 	return Reinforce_write_Params(st), err
 }
 
@@ -294,12 +294,30 @@ func (s Reinforce_write_Params) SetClassBytes(v []byte) error {
 	return capnp.Struct(s).SetData(1, v)
 }
 
+func (s Reinforce_write_Params) Memory() Memory {
+	p, _ := capnp.Struct(s).Ptr(2)
+	return Memory(p.Interface().Client())
+}
+
+func (s Reinforce_write_Params) HasMemory() bool {
+	return capnp.Struct(s).HasPtr(2)
+}
+
+func (s Reinforce_write_Params) SetMemory(v Memory) error {
+	if !v.IsValid() {
+		return capnp.Struct(s).SetPtr(2, capnp.Ptr{})
+	}
+	seg := s.Segment()
+	in := capnp.NewInterface(seg, seg.Message().CapTable().Add(capnp.Client(v)))
+	return capnp.Struct(s).SetPtr(2, in.ToPtr())
+}
+
 // Reinforce_write_Params_List is a list of Reinforce_write_Params.
 type Reinforce_write_Params_List = capnp.StructList[Reinforce_write_Params]
 
 // NewReinforce_write_Params creates a new list of Reinforce_write_Params.
 func NewReinforce_write_Params_List(s *capnp.Segment, sz int32) (Reinforce_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 3}, sz)
 	return capnp.StructList[Reinforce_write_Params](l), err
 }
 
@@ -309,6 +327,9 @@ type Reinforce_write_Params_Future struct{ *capnp.Future }
 func (f Reinforce_write_Params_Future) Struct() (Reinforce_write_Params, error) {
 	p, err := f.Future.Ptr()
 	return Reinforce_write_Params(p.Struct()), err
+}
+func (p Reinforce_write_Params_Future) Memory() Memory {
+	return Memory(p.Future.Field(2, nil).Client())
 }
 
 type Reinforce_done_Params capnp.Struct

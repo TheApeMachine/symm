@@ -19,7 +19,6 @@ and reports so rather than naming an arbitrary class.
 */
 type AttractorServer struct {
 	*runtime.System
-	trie  *Trie
 	class []byte
 	prob  float64
 	count int64
@@ -28,18 +27,11 @@ type AttractorServer struct {
 func NewAttractor(ctx context.Context) *AttractorServer {
 	server := &AttractorServer{
 		System: runtime.NewSystem(ctx, "cognition.attractor"),
-		trie:   NewTrie(),
 	}
 
 	server.Transition(runtime.READY)
 	return server
 }
-
-/*
-Observe binds this node to the trie a writer reinforces, so what it walks is
-what was learned.
-*/
-func (server *AttractorServer) Observe(trie *Trie) { server.trie = trie }
 
 /*
 Write walks the basin and settles on the class carrying the most weight.
@@ -63,25 +55,71 @@ func (server *AttractorServer) Write(ctx context.Context, call Attractor_write) 
 		return nil
 	}
 
+	memory := call.Args().Memory()
+
+	// A node that reads what was learned has to be told where the learning
+	// is. Walking a structure of its own would answer every question with
+	// silence while the system ran perfectly.
+	if !memory.IsValid() {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[cognition.attractor.Write] no learned memory is wired to this node",
+			nil,
+		))
+	}
+
 	prefix := BasinPrefixOf(basinOf(contextBytes))
-	iterator := server.trie.Root().Load().Root().Iterator()
-	iterator.SeekPrefix(prefix)
+
+	future, release := memory.Basin(ctx, func(params Memory_basin_Params) error {
+		return params.SetPrefix(prefix)
+	})
+	defer release()
+
+	basin, err := future.Struct()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"[cognition.attractor.Write] failed to read the basin",
+			err,
+		))
+	}
+
+	classes, err := basin.Classes()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"[cognition.attractor.Write] failed to read the observed classes",
+			err,
+		))
+	}
+
+	weights, err := basin.Weights()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"[cognition.attractor.Write] failed to read what each class carries",
+			err,
+		))
+	}
 
 	var winner []byte
 	var winning, total uint64
 
-	for key, record, ok := iterator.Next(); ok; key, record, ok = iterator.Next() {
-		if !bytes.HasPrefix(key, prefix) {
-			break
+	for index := range classes.Len() {
+		class, err := classes.At(index)
+
+		if err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.Internal,
+				"[cognition.attractor.Write] failed to read an observed class",
+				err,
+			))
 		}
 
-		class := key[len(prefix):]
-
-		if len(class) == 0 {
-			continue
-		}
-
-		weight := WeightOf(record)
+		weight := weights.At(index)
 		total += weight
 		server.count++
 
