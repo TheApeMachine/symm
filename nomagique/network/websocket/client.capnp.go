@@ -11,6 +11,7 @@ import (
 	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
 	context "context"
 	runtime "github.com/theapemachine/symm/nomagique/runtime"
+	strconv "strconv"
 )
 
 type WebSocketClient capnp.Client
@@ -36,7 +37,7 @@ func (c WebSocketClient) Write(ctx context.Context, params func(WebSocketClient_
 
 }
 
-func (c WebSocketClient) Done(ctx context.Context, params func(WebSocketClient_done_Params) error) (WebSocketClient_done_Results_Future, capnp.ReleaseFunc) {
+func (c WebSocketClient) Done(ctx context.Context, params func(WebSocketClient_done_Params) error) (Received_Future, capnp.ReleaseFunc) {
 
 	s := capnp.Send{
 		Method: capnp.Method{
@@ -52,7 +53,7 @@ func (c WebSocketClient) Done(ctx context.Context, params func(WebSocketClient_d
 	}
 
 	ans, release := capnp.Client(c).SendCall(ctx, s)
-	return WebSocketClient_done_Results_Future{Future: ans.Future()}, release
+	return Received_Future{Future: ans.Future()}, release
 
 }
 
@@ -209,9 +210,9 @@ func (c WebSocketClient_done) Args() WebSocketClient_done_Params {
 }
 
 // AllocResults allocates the results struct.
-func (c WebSocketClient_done) AllocResults() (WebSocketClient_done_Results, error) {
+func (c WebSocketClient_done) AllocResults() (Received, error) {
 	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 3})
-	return WebSocketClient_done_Results(r), err
+	return Received(r), err
 }
 
 // WebSocketClient_List is a list of WebSocketClient.
@@ -383,180 +384,240 @@ func (f WebSocketClient_done_Params_Future) Struct() (WebSocketClient_done_Param
 	return WebSocketClient_done_Params(p.Struct()), err
 }
 
-type WebSocketClient_done_Results capnp.Struct
+type Received capnp.Struct
+type Received_frame Received
+type Received_Which uint16
 
-// WebSocketClient_done_Results_TypeID is the unique identifier for the type WebSocketClient_done_Results.
-const WebSocketClient_done_Results_TypeID = 0xaf16d46db01c1670
+const (
+	Received_Which_idle  Received_Which = 0
+	Received_Which_frame Received_Which = 1
+)
 
-func NewWebSocketClient_done_Results(s *capnp.Segment) (WebSocketClient_done_Results, error) {
+func (w Received_Which) String() string {
+	const s = "idleframe"
+	switch w {
+	case Received_Which_idle:
+		return s[0:4]
+	case Received_Which_frame:
+		return s[4:9]
+
+	}
+	return "Received_Which(" + strconv.FormatUint(uint64(w), 10) + ")"
+}
+
+// Received_TypeID is the unique identifier for the type Received.
+const Received_TypeID = 0xa47cf8178fe76d4e
+
+func NewReceived(s *capnp.Segment) (Received, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 3})
-	return WebSocketClient_done_Results(st), err
+	return Received(st), err
 }
 
-func NewRootWebSocketClient_done_Results(s *capnp.Segment) (WebSocketClient_done_Results, error) {
+func NewRootReceived(s *capnp.Segment) (Received, error) {
 	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 3})
-	return WebSocketClient_done_Results(st), err
+	return Received(st), err
 }
 
-func ReadRootWebSocketClient_done_Results(msg *capnp.Message) (WebSocketClient_done_Results, error) {
+func ReadRootReceived(msg *capnp.Message) (Received, error) {
 	root, err := msg.Root()
-	return WebSocketClient_done_Results(root.Struct()), err
+	return Received(root.Struct()), err
 }
 
-func (s WebSocketClient_done_Results) String() string {
-	str, _ := text.Marshal(0xaf16d46db01c1670, capnp.Struct(s))
+func (s Received) String() string {
+	str, _ := text.Marshal(0xa47cf8178fe76d4e, capnp.Struct(s))
 	return str
 }
 
-func (s WebSocketClient_done_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+func (s Received) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
 	return capnp.Struct(s).EncodeAsPtr(seg)
 }
 
-func (WebSocketClient_done_Results) DecodeFromPtr(p capnp.Ptr) WebSocketClient_done_Results {
-	return WebSocketClient_done_Results(capnp.Struct{}.DecodeFromPtr(p))
+func (Received) DecodeFromPtr(p capnp.Ptr) Received {
+	return Received(capnp.Struct{}.DecodeFromPtr(p))
 }
 
-func (s WebSocketClient_done_Results) ToPtr() capnp.Ptr {
+func (s Received) ToPtr() capnp.Ptr {
 	return capnp.Struct(s).ToPtr()
 }
-func (s WebSocketClient_done_Results) IsValid() bool {
+
+func (s Received) Which() Received_Which {
+	return Received_Which(capnp.Struct(s).Uint16(2))
+}
+func (s Received) IsValid() bool {
 	return capnp.Struct(s).IsValid()
 }
 
-func (s WebSocketClient_done_Results) Message() *capnp.Message {
+func (s Received) Message() *capnp.Message {
 	return capnp.Struct(s).Message()
 }
 
-func (s WebSocketClient_done_Results) Segment() *capnp.Segment {
+func (s Received) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s WebSocketClient_done_Results) Status() runtime.Status {
+func (s Received) Status() runtime.Status {
 	return runtime.Status(capnp.Struct(s).Uint16(0))
 }
 
-func (s WebSocketClient_done_Results) SetStatus(v runtime.Status) {
+func (s Received) SetStatus(v runtime.Status) {
 	capnp.Struct(s).SetUint16(0, uint16(v))
 }
 
-func (s WebSocketClient_done_Results) Read() ([]byte, error) {
+func (s Received) SetIdle() {
+	capnp.Struct(s).SetUint16(2, 0)
+
+}
+
+func (s Received) Frame() Received_frame { return Received_frame(s) }
+
+func (s Received) SetFrame() {
+	capnp.Struct(s).SetUint16(2, 1)
+}
+
+func (s Received_frame) IsValid() bool {
+	return capnp.Struct(s).IsValid()
+}
+
+func (s Received_frame) Message() *capnp.Message {
+	return capnp.Struct(s).Message()
+}
+
+func (s Received_frame) Segment() *capnp.Segment {
+	return capnp.Struct(s).Segment()
+}
+func (s Received_frame) Read() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(0)
 	return []byte(p.Data()), err
 }
 
-func (s WebSocketClient_done_Results) HasRead() bool {
+func (s Received_frame) HasRead() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s WebSocketClient_done_Results) SetRead(v []byte) error {
+func (s Received_frame) SetRead(v []byte) error {
 	return capnp.Struct(s).SetData(0, v)
 }
 
-func (s WebSocketClient_done_Results) ReceivedAt() (string, error) {
+func (s Received_frame) ReceivedAt() (string, error) {
 	p, err := capnp.Struct(s).Ptr(1)
 	return p.Text(), err
 }
 
-func (s WebSocketClient_done_Results) HasReceivedAt() bool {
+func (s Received_frame) HasReceivedAt() bool {
 	return capnp.Struct(s).HasPtr(1)
 }
 
-func (s WebSocketClient_done_Results) ReceivedAtBytes() ([]byte, error) {
+func (s Received_frame) ReceivedAtBytes() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(1)
 	return p.TextBytes(), err
 }
 
-func (s WebSocketClient_done_Results) SetReceivedAt(v string) error {
+func (s Received_frame) SetReceivedAt(v string) error {
 	return capnp.Struct(s).SetText(1, v)
 }
 
-func (s WebSocketClient_done_Results) Endpoint() (string, error) {
+func (s Received_frame) Endpoint() (string, error) {
 	p, err := capnp.Struct(s).Ptr(2)
 	return p.Text(), err
 }
 
-func (s WebSocketClient_done_Results) HasEndpoint() bool {
+func (s Received_frame) HasEndpoint() bool {
 	return capnp.Struct(s).HasPtr(2)
 }
 
-func (s WebSocketClient_done_Results) EndpointBytes() ([]byte, error) {
+func (s Received_frame) EndpointBytes() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(2)
 	return p.TextBytes(), err
 }
 
-func (s WebSocketClient_done_Results) SetEndpoint(v string) error {
+func (s Received_frame) SetEndpoint(v string) error {
 	return capnp.Struct(s).SetText(2, v)
 }
 
-// WebSocketClient_done_Results_List is a list of WebSocketClient_done_Results.
-type WebSocketClient_done_Results_List = capnp.StructList[WebSocketClient_done_Results]
+// Received_List is a list of Received.
+type Received_List = capnp.StructList[Received]
 
-// NewWebSocketClient_done_Results creates a new list of WebSocketClient_done_Results.
-func NewWebSocketClient_done_Results_List(s *capnp.Segment, sz int32) (WebSocketClient_done_Results_List, error) {
+// NewReceived creates a new list of Received.
+func NewReceived_List(s *capnp.Segment, sz int32) (Received_List, error) {
 	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 3}, sz)
-	return capnp.StructList[WebSocketClient_done_Results](l), err
+	return capnp.StructList[Received](l), err
 }
 
-// WebSocketClient_done_Results_Future is a wrapper for a WebSocketClient_done_Results promised by a client call.
-type WebSocketClient_done_Results_Future struct{ *capnp.Future }
+// Received_Future is a wrapper for a Received promised by a client call.
+type Received_Future struct{ *capnp.Future }
 
-func (f WebSocketClient_done_Results_Future) Struct() (WebSocketClient_done_Results, error) {
+func (f Received_Future) Struct() (Received, error) {
 	p, err := f.Future.Ptr()
-	return WebSocketClient_done_Results(p.Struct()), err
+	return Received(p.Struct()), err
+}
+func (p Received_Future) Frame() Received_frame_Future { return Received_frame_Future{p.Future} }
+
+// Received_frame_Future is a wrapper for a Received_frame promised by a client call.
+type Received_frame_Future struct{ *capnp.Future }
+
+func (f Received_frame_Future) Struct() (Received_frame, error) {
+	p, err := f.Future.Ptr()
+	return Received_frame(p.Struct()), err
 }
 
-const schema_91d758a99e924524 = "x\xda\xac\x92\xdfK\x14k\x18\xc7\x9f\xe7}gw\xbc" +
-	"p\x993\xee\xa2\x08\x9e\xe3\xe1\xb0\x1e\x7fP\xfe\xda." +
-	"T\xa86\xcc\xd0J\xd87\x83,\x0c\x1dw\xders" +
-	"wv\x9c\x99u\x09\xc2\xabJ\xbb\xc8\xb0\xae*\xa8n" +
-	"\xbc\x08\"\x93\xfe\x81\xbc\x10\xb2(\x08\x8a\xae\x13\xc2\x9b" +
-	"\xfe\x80\xbc\x9axg\x9du\x13]\x0a\xbb}\xe6;\xcf" +
-	"\xfb\xf9~\xbfO\xbbD\xe2RGh#\x08\x84%\x02" +
-	"A\xb7j\xfe\xf0\xe8\xfb\xb7\xa7\xae\x83\xdaL\xddh\xdf" +
-	"\xddGO\x87?/\x00`\xec<}\x83\xe1\x1c\x95\x01" +
-	"\xc2St6\xbcBk\x00\xdco7\xd7\x9eU\x8d\xfe" +
-	"\xbb\xe8\xa9k\xd6\xbb\x1e\xff3P\xf1A\xa8\x97\x85\xfa" +
-	"\x9d\xa7^\xa3\xb3\xe1ZI\x06p\xefU\x7f_\x19y" +
-	"\xb9\xfe\x1c\xd4n\x04\x08\x10\x19 \x86R'\x01\x0c\xd7" +
-	"Jy@\xd7\xac\xae{\x91\xf9X\xbd\x04\xac\x1b\x85B" +
-	"\xfc\x1f\xbbZP,H\x1b\x80n\xba\xa1123\x1f" +
-	"]\xf5\x15(\x14\x99\x80\xa7\xb8\x11\x10;f6z%" +
-	"\xad\xb1au\xeb\x11o\xc5\x97\x82`3\xb0\x04\xe8\xf2" +
-	"\xe1#\xe6\xd8\xe2\xe0\xa7\x82@\x80\xc5\x16\x82-\x04$" +
-	"\xf7u\xb0\xa9?\xd3\xf7\xfff\xc9\x97[\xe2\xcb\x9ck" +
-	"d3\xda\xe5\xd4T.\xc8\xdb\x0c\xee\xe4\xb3\xd6d[" +
-	"\x9e\x8f\xdb\xd9\xe4$w\xda\x92\xe9\x147\x9c\xd6\xa4f" +
-	"\x1af\xcf9>>\xe4\x8d{\xbd)@\x02\x91U\xd0" +
-	"@\x89}4\x96_\xe5c\x0fF\xef\xab\x1d\x9d@\xd4" +
-	"\x06\x19\xb1\xf84\xfa\x11\xa8\xb5-@\xd4\x90\\\x9f\xb7" +
-	"R\x0e\x8f\xa3\xa2g\x0d\x1eG&!\xba\xb1K\xd6\x9d" +
-	":\xf5\xebm\x00(Ofsk\x9a[;\xc9\x86\xbc" +
-	"i)\x99\x9f\xd9nd~\\\xe8G\xbf\x07Y\x02\xb1" +
-	"\x08#\xffnL\xad\xde\xaeh\xa2^\xb3\xb4\x8c\xcd*" +
-	"\xa8\x04 !\x80\xda|\x12\x805Qd\x87\x08\xaa\x88" +
-	"\x11Q\xba\x80\x03v\x80\"\xeb\"\xe8rC7\xb3)" +
-	"\x914`%\x10\xac\x04,\x90a\x08\x08\x86`?T" +
-	"\xc2Y\xf4\x0c\xaf\xb7si\xc7f\x7f\x15\xa9\xb4\x1e\x00" +
-	"6B\x91M\x10\xf4\xa1x\x0b\x00\x1b\xa3\xc8\xd2\x04U" +
-	"\x82\x11$\x00j\xea\x02\x00\x9b\xa0\xc8\x1c\x82*%\x11" +
-	"\xa4\x00\xea\x94\xf0dRd\xd7\x08\x1e\xb5\x1d\xcd\xc9\xd9" +
-	"\xa8\xb8\x17\xaf<Y\xfe\xfb\xc4\xc39\x00D\x05P\xb1" +
-	"\xb8\xa6\x17-X<\xc9S\xd3\\\x07z\xcc\xf1]\xee" +
-	"\xe6\xbc\xbc\xd7r\xe7\xb0\xc3kI\x03\xc2k\x94\"k" +
-	"\xdf\xf6z\xf0\xbf\xedV\xf6t gs\xce\xafuP" +
-	"\x96\xeb\xe7\xcb\xa8,r\xf5\x89\xbc\xe3\x14\xd9\xe9\x92\xcb" +
-	"\x18\x10\xc3\xe3\x14YB\x94@\x0a%\x0c\x8aa?E" +
-	"v\x96\xa0\xa2k\x8e\xe6S)\x9a\xae[~t\x8a\xa9" +
-	"9\x13\x7f*\xc7\x84\xa6\x08\xdc\xfd\x9e\xde\xd6\x9a\x1f\x01" +
-	"\x00\x00\xff\xff\xd8\x8e\x8d\xf7"
+const schema_91d758a99e924524 = "x\xda\xac\x93Oh\x1cU\x1c\xc7\x7f\xdf\xf7fv\"" +
+	"d\x19\xa6\xb3\x1a\x04uE6m\xb3\xd8M\xb3\xa3\xd0" +
+	"\x16\xb4+u\xa5U#\xfb\xda\x82U*q\xba\xf3\xaa" +
+	"k\xf7_fg\xbb\x17\xe9\xc9\xdaz0\xc1xRQ" +
+	"#\x98\x83 J\xf0,\x18!\xa0\x11\x04\x0f\xc1\x93\x1e" +
+	"\x02!\x17=x\x10\xe2AG\xdelfw\x13\x93H" +
+	"\xd0\xdb\xf2\xe6\xb7\xdf\xf7\x99\xcf\xf77\xc7\x8f\xb1\x826" +
+	"\x91<m\x10\x13\x17\xf5Dxh\xe6\x91\xa9\xef\xbf{" +
+	"\xea5\xb2\xc6x\x98)\xce}\xf0\xc9\xa5\x1f\xdf\"\x82" +
+	"s\x93\xaf\xc0\xfe\x88\x1bD\xf6\xfb\xfc\x96\xfd+\x1f!" +
+	"\x0a\x9f\xa9m\xcc\x8el\xbe\xfa1\x891\xa0?^\xe4" +
+	"\x06\x03\x9c\x9f\xf8\x1c\xec\xdf\xa3\xbf\xfc\xc6?'\x84\xbf" +
+	"\xbc\xfe\xed\xa7\x87\xa6\xee_\x88\xc2G\xd6N|x\xdf" +
+	"\xb9\xa1\x1fTxM[\x81\xfd\x86\xa6&oj\xb7\xec" +
+	"U\xf5+|\xfb\xae\xcd\xa5\xcb_\xac}F\xd6I\x10" +
+	"\xe9\xcc r\xbe\xd4\xf2\x8c`\xafj\x1dB\xb8\xf9\xf3" +
+	"\xe1\xf9\xe9\x1c\x96H\xe4\x81>\xcb\x9d\xdc\x00\x91\xf3\xb0" +
+	"\xfe5\x08vQW7WG\x8f\xa4n\xccd\x96I" +
+	"\x9c\x84\x0a\x83\x0a[\xd7\xa3\xb0?u\x15vc\xe3\x8c" +
+	"\xe6\x1e\x19]\xde\xbaMQ;\xcf%\xa2\x81\xe9\x84\x8a" +
+	"\x90\x97\x1em\xbe\xb80\xb9\xda\x1dP\x84\xce\x1dF\x96" +
+	"\x91\x16~\x938z\xb6V<\xfc\xc7\xc0\x13\xa8'\xb7" +
+	"\xc3z\xa3\xe6\xbeT\x99n'\xe4x]\x06\x9d\x86\x7f" +
+	"m\xbc#\xaf\xb4\x1a\xe5k2\x18/W+\xb2\x1e\xe4" +
+	"\xcan\xb3\xde<\xf5\xac\xbcr!:>\x13\x9d\x12\x95" +
+	"\x001\xc4\xf5\x01\x0f\xa8/~\xd5q\xde\x9dz\xc7\x9a" +
+	"\xc8\x13\xb3F\x0d\xa0w5\xe2\xb7\xb7\xee\xce\x12\xb3\x92" +
+	"F\xba\xe3W\x02Y\x80\xe95\xea\xb2\x00\xa1\x01\xa1s" +
+	"\xd5\x9f\xbd\xc7Z\x7f\x93\x88zd\xfa\xbf\x92\x9d\x97e" +
+	"Y\xb9.\xe1)\xa2a\xae\x11i \xb2\x8a\xa7\x88D" +
+	"\x81C<\xcd\x90D\x18\xa6\x94W\xeb\\\x96H<\xce" +
+	"!J\x0cI\xf6W\x88\x81\x96\xac\xc9<\xb1\xd3\xad\xc0" +
+	"\x0d\xda-\x98\xe1\x0b\xaf\xcc/\xde\xfb\xc4{\xb7\x89\x00" +
+	"\x93`V\xbc\xaa\xa4D\xfa\xaa\xef\xd6\xe4\xfe\xe2Z\xd2" +
+	"\xbf.\xfd\x9d\xe2.D\xa7\x83\xe2\xe2Jw\x13\x17\xb7" +
+	"\x89x3\xf6\x10W\x02z0\xc6A[\xccEY\x99" +
+	"R\xda\xf5\xddZK\x0c\xf5\xe4\x8d=I$\x8er\x88" +
+	"\x87\x18,\xa0\xebn\"O$\x1e\xe4\x10'\x18BY" +
+	"\xf7\x9a\x8d\x8aZ\x04\xc201\x0c\x13\xbadH\x12C" +
+	"\x92p\x80\xdd\xdaj\xd0\xcbEn\xa9[b\x0aL\xb5" +
+	"\x98\xed\xb7\x18\x81pU\xe2\xf3D\xe2,\x87\xb8\xc8`" +
+	"1\x96\x82Fd\x09\x85\\\xe2\x10\x97\x19L_\xba^" +
+	"\x0f\xc4\xdf\x8a'\xfeX\x10\xb3\xee\xc6\xbf\xbf\xc7\xfdJ" +
+	"\xcd\xa9.2\xe7e\xba\xd5\xae\x06\xdb<\xaa%\xccp" +
+	"\x88\xe3\x0c\xb1\xc6c\x0f\xf4\xdd\xee\xb9mF\xa3\x1d\xfc" +
+	"\xc3\xe4\xc1\xb9\xb6\xf7;\xf0q\xec\xd4\xba\xf3\xdb\x88\xb4" +
+	"\xaa\x02&\xb3}\xd7\xa6\xe7\x06nLe\xba\x9e\xe7\xc7" +
+	"\xea\xcc\xa6\x1b\xbc\xfc\x7fy,\xb9\xa6\xc2\xfd\x0fk=" +
+	"\x18\xf3w\x00\x00\x00\xff\xff\x8c\x8c\xc2;"
 
 func RegisterSchema(reg *schemas.Registry) {
 	reg.Register(&schemas.Schema{
 		String: schema_91d758a99e924524,
 		Nodes: []uint64{
 			0x844bcbce5f3d8e12,
+			0xa47cf8178fe76d4e,
 			0xa5205f12acc986ec,
 			0xaee2b35cc1f81693,
-			0xaf16d46db01c1670,
+			0xc1012e71a026def8,
 			0xc5248e7e1427256c,
 			0xc52527610443e77e,
 			0xd54da560703e5865,

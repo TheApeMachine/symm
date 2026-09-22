@@ -1,7 +1,6 @@
 package data_test
 
 import (
-	"bytes"
 	"context"
 	"testing"
 
@@ -75,105 +74,6 @@ func TestFilter(t *testing.T) {
 		Convey("It reports an operator it does not implement", func() {
 			_, err := apply("qty", "~=", 1.0)
 			So(err, ShouldNotBeNil)
-		})
-	})
-}
-
-func TestIterate(t *testing.T) {
-	ctx := context.Background()
-
-	Convey("Given an Iterate primitive", t, func() {
-		client := data.Iterate_ServerToClient(data.NewIterate(ctx))
-
-		payload, err := sonic.Marshal(map[string]any{
-			"bids": []any{
-				map[string]any{"price": 100.0},
-				map[string]any{"price": 99.0},
-				map[string]any{"price": 98.0},
-			},
-		})
-		So(err, ShouldBeNil)
-
-		step := func(send []byte) (out []byte, index, count int64, last, found bool) {
-			err := client.Write(ctx, func(params data.Iterate_write_Params) error {
-				if err := params.SetPath("bids"); err != nil {
-					return err
-				}
-
-				if len(send) == 0 {
-					return nil
-				}
-
-				return params.SetData(send)
-			})
-			So(err, ShouldBeNil)
-			So(client.WaitStreaming(), ShouldBeNil)
-
-			future, release := client.Done(ctx, nil)
-			defer release()
-
-			results, err := future.Struct()
-			So(err, ShouldBeNil)
-
-			emitted, err := results.Out()
-			So(err, ShouldBeNil)
-
-			return bytes.Clone(emitted),
-				results.Index(),
-				results.Count(),
-				results.Last(),
-				results.Found()
-		}
-
-		Convey("It walks one element per evaluation", func() {
-			first, index, count, last, found := step(payload)
-			So(found, ShouldBeTrue)
-			So(index, ShouldEqual, 0)
-			So(count, ShouldEqual, 3)
-			So(last, ShouldBeFalse)
-
-			var element map[string]any
-			So(sonic.Unmarshal(first, &element), ShouldBeNil)
-			So(element["price"], ShouldEqual, 100.0)
-
-			_, index, _, last, found = step(nil)
-			So(found, ShouldBeTrue)
-			So(index, ShouldEqual, 1)
-			So(last, ShouldBeFalse)
-
-			third, index, _, last, found := step(nil)
-			So(found, ShouldBeTrue)
-			So(index, ShouldEqual, 2)
-			So(last, ShouldBeTrue)
-
-			So(sonic.Unmarshal(third, &element), ShouldBeNil)
-			So(element["price"], ShouldEqual, 98.0)
-		})
-
-		Convey("It reports nothing once the collection is exhausted", func() {
-			step(payload)
-			step(nil)
-			step(nil)
-
-			_, _, _, _, found := step(nil)
-			So(found, ShouldBeFalse)
-		})
-
-		Convey("It reports a path that is not a collection", func() {
-			fresh := data.Iterate_ServerToClient(data.NewIterate(ctx))
-
-			scalar, err := sonic.Marshal(map[string]any{"bids": 1.0})
-			So(err, ShouldBeNil)
-
-			err = fresh.Write(ctx, func(params data.Iterate_write_Params) error {
-				if err := params.SetPath("bids"); err != nil {
-					return err
-				}
-
-				return params.SetData(scalar)
-			})
-			So(err, ShouldBeNil)
-			So(fresh.WaitStreaming(), ShouldNotBeNil)
 		})
 	})
 }

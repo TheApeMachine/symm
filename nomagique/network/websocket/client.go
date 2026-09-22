@@ -118,25 +118,25 @@ func (server *WebSocketClientServer) Done(ctx context.Context, call WebSocketCli
 
 	results.SetStatus(runtime.Status(server.Status()))
 
-	if server.Status() != runtime.READY {
-		return nil
-	}
-
 	msg, ok := server.incoming.Dequeue()
 
 	if !ok {
+		results.SetIdle()
 		return nil
 	}
 
-	if err := results.SetReceivedAt(msg.at.UTC().Format(time.RFC3339Nano)); err != nil {
+	results.SetFrame()
+	frame := results.Frame()
+
+	if err := frame.SetReceivedAt(msg.at.UTC().Format(time.RFC3339Nano)); err != nil {
 		return errnie.Error(errnie.Err(errnie.Internal, "websocket: set receive time", err))
 	}
 
-	if err := results.SetEndpoint(msg.endpoint); err != nil {
+	if err := frame.SetEndpoint(msg.endpoint); err != nil {
 		return errnie.Error(errnie.Err(errnie.Internal, "websocket: set receive endpoint", err))
 	}
 
-	return results.SetRead(msg.payload)
+	return frame.SetRead(msg.payload)
 }
 
 /*

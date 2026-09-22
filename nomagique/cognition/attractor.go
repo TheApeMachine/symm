@@ -37,76 +37,26 @@ func NewAttractor(ctx context.Context) *AttractorServer {
 Write walks the basin and settles on the class carrying the most weight.
 */
 func (server *AttractorServer) Write(ctx context.Context, call Attractor_write) error {
-	contextBytes, err := call.Args().ContextBytes()
-
-	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.BadRequest,
-			"[cognition.attractor.Write] failed to read context argument",
-			err,
-		))
-	}
-
 	server.class = nil
 	server.prob = 0
 	server.count = 0
-
-	if len(contextBytes) == 0 {
-		return nil
-	}
-
-	memory := call.Args().Memory()
-
-	// A node that reads what was learned has to be told where the learning
-	// is. Walking a structure of its own would answer every question with
-	// silence while the system ran perfectly.
-	if !memory.IsValid() {
-		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"[cognition.attractor.Write] no learned memory is wired to this node",
-			nil,
-		))
-	}
-
-	prefix := BasinPrefixOf(basinOf(contextBytes))
-
-	future, release := memory.Basin(ctx, func(params Memory_basin_Params) error {
-		return params.SetPrefix(prefix)
-	})
-	defer release()
-
-	basin, err := future.Struct()
+	classes, err := call.Args().Classes()
 
 	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.Internal,
-			"[cognition.attractor.Write] failed to read the basin",
-			err,
-		))
+		return errnie.Error(errnie.Err(errnie.Validation, "attractor: classes", err))
 	}
-
-	classes, err := basin.Classes()
+	weights, err := call.Args().Weights()
 
 	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.Internal,
-			"[cognition.attractor.Write] failed to read the observed classes",
-			err,
-		))
+		return errnie.Error(errnie.Err(errnie.Validation, "attractor: weights", err))
 	}
 
-	weights, err := basin.Weights()
-
-	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.Internal,
-			"[cognition.attractor.Write] failed to read what each class carries",
-			err,
-		))
+	if classes.Len() != weights.Len() {
+		return errnie.Error(errnie.Err(errnie.Validation, "attractor: class and weight lengths differ", nil))
 	}
-
 	var winner []byte
 	var winning, total uint64
+	tied := false
 
 	for index := range classes.Len() {
 		class, err := classes.At(index)
@@ -123,7 +73,12 @@ func (server *AttractorServer) Write(ctx context.Context, call Attractor_write) 
 		total += weight
 		server.count++
 
+		if weight == winning {
+			tied = true
+		}
+
 		if weight > winning {
+			tied = false
 			winning = weight
 			winner = bytes.Clone(class)
 		}
@@ -133,7 +88,9 @@ func (server *AttractorServer) Write(ctx context.Context, call Attractor_write) 
 		return nil
 	}
 
-	server.class = winner
+	if !tied {
+		server.class = winner
+	}
 	server.prob = float64(winning) / float64(total)
 
 	return nil
@@ -171,23 +128,4 @@ func (server *AttractorServer) Done(ctx context.Context, call Attractor_done) er
 
 	server.class = nil
 	return nil
-}
-
-/*
-basinOf reads the context out of a basin key, so a key emitted by a writer can
-be handed straight back as the context to look up.
-*/
-func basinOf(contextBytes []byte) []byte {
-	if !bytes.HasPrefix(contextBytes, []byte("b/")) {
-		return contextBytes
-	}
-
-	trimmed := contextBytes[2:]
-	cut := bytes.LastIndexByte(trimmed, '/')
-
-	if cut < 0 {
-		return trimmed
-	}
-
-	return trimmed[:cut]
 }

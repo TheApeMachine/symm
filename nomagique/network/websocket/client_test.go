@@ -69,14 +69,15 @@ func TestWebSocketClient(t *testing.T) {
 			results, err := future.Struct()
 			So(err, ShouldBeNil)
 			So(results.Status(), ShouldEqual, runtime.Status_ready)
+			So(results.Which(), ShouldEqual, Received_Which_frame)
 
-			readData, err := results.Read()
+			readData, err := results.Frame().Read()
 			So(err, ShouldBeNil)
 			So(string(readData), ShouldEqual, "echo:hello")
-			endpoint, err := results.Endpoint()
+			endpoint, err := results.Frame().Endpoint()
 			So(err, ShouldBeNil)
 			So(endpoint, ShouldEqual, wsURL)
-			receivedAt, err := results.ReceivedAt()
+			receivedAt, err := results.Frame().ReceivedAt()
 			So(err, ShouldBeNil)
 			instant, err := time.Parse(time.RFC3339Nano, receivedAt)
 			So(err, ShouldBeNil)
@@ -84,6 +85,41 @@ func TestWebSocketClient(t *testing.T) {
 			So(instant.After(time.Now()), ShouldBeFalse)
 
 			client.Close()
+		})
+	})
+}
+
+func TestWebSocketClientDone(t *testing.T) {
+	Convey("Given a disconnected source with accepted frames", t, func() {
+		ctx := context.Background()
+		server := NewWebSocketClient(ctx)
+		server.Transition(runtime.WAITING)
+		client := WebSocketClient_ServerToClient(server)
+		defer client.Release()
+		instant := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+		server.incoming.Enqueue(receivedFrame{payload: []byte("first"), at: instant, endpoint: "ws://capture"})
+		server.incoming.Enqueue(receivedFrame{payload: []byte("second"), at: instant.Add(time.Second), endpoint: "ws://capture"})
+
+		Convey("Then Done drains in order regardless of connection status and becomes idle", func() {
+			for index, expected := range []string{"first", "second"} {
+				future, release := client.Done(ctx, nil)
+				result, err := future.Struct()
+				So(err, ShouldBeNil)
+				So(result.Which(), ShouldEqual, Received_Which_frame)
+				payload, err := result.Frame().Read()
+				So(err, ShouldBeNil)
+				So(string(payload), ShouldEqual, expected)
+				receivedAt, err := result.Frame().ReceivedAt()
+				So(err, ShouldBeNil)
+				So(receivedAt, ShouldEqual, instant.Add(time.Duration(index)*time.Second).Format(time.RFC3339Nano))
+				release()
+			}
+
+			future, release := client.Done(ctx, nil)
+			defer release()
+			result, err := future.Struct()
+			So(err, ShouldBeNil)
+			So(result.Which(), ShouldEqual, Received_Which_idle)
 		})
 	})
 }

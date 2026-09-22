@@ -1,96 +1,142 @@
 package hawkes
 
+import (
+	"context"
+	"math"
+
+	capnp "capnproto.org/go/capnp/v3"
+	"github.com/theapemachine/errnie"
+)
+
 /*
-excitationState tracks running Hawkes excitation sums while walking marked
-events in chronological order.
+ExcitationServer evaluates the exponential kernel's support at the horizon:
+for each component, the sum of exp(-decay * age) over that component's
+arrivals, where age is how long ago the arrival happened.
+
+An arrival exactly at the horizon contributes nothing. The conditional
+intensity has to be predictable, meaning it is determined by what happened
+strictly before the instant it describes; letting an arrival excite its own
+instant would make the likelihood count it twice.
 */
-type excitationState struct {
-	buySupport  float64
-	sellSupport float64
-	lastTimeSec float64
-	haveLast    bool
+type ExcitationServer struct {
+	support []float64
+}
+
+func NewExcitation() *ExcitationServer {
+	return &ExcitationServer{}
+}
+
+func (server *ExcitationServer) Write(ctx context.Context, call Excitation_write) error {
+	args := call.Args()
+	times, err := server.readTimes(args.Times())
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"hawkes excitation: failed to read times",
+			err,
+		))
+	}
+
+	components, err := server.readComponents(args.Components())
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"hawkes excitation: failed to read components",
+			err,
+		))
+	}
+
+	horizon := args.Horizon()
+	decay := args.Decay()
+	dimension := int(args.Dimension())
+
+	if decay <= 0 || dimension <= 0 {
+		server.support = nil
+		return nil
+	}
+
+	support := make([]float64, dimension)
+
+	for index, eventTime := range times {
+		age := horizon - eventTime
+
+		if age <= 0 || index >= len(components) {
+			continue
+		}
+
+		component := int(components[index])
+
+		if component < 0 || component >= dimension {
+			continue
+		}
+
+		support[component] += math.Exp(-decay * age)
+	}
+
+	server.support = support
+	return nil
 }
 
 /*
-decayTo advances excitation sums to eventTimeSec under exponential decay.
+readTimes copies a Cap'n Proto float list into caller-owned storage.
 */
-func (excitationState *excitationState) decayTo(eventTimeSec float64, beta float64) {
-	if !excitationState.haveLast || eventTimeSec <= excitationState.lastTimeSec {
-		return
+func (server *ExcitationServer) readTimes(list capnp.Float64List, err error) ([]float64, error) {
+	if err != nil {
+		return nil, err
 	}
 
-	decayFactor := expNeg(beta, eventTimeSec-excitationState.lastTimeSec)
-	excitationState.buySupport *= decayFactor
-	excitationState.sellSupport *= decayFactor
-	excitationState.lastTimeSec = eventTimeSec
+	values := make([]float64, list.Len())
+
+	for index := range values {
+		values[index] = list.At(index)
+	}
+
+	return values, nil
 }
 
 /*
-logLikelihoodSum accumulates log intensities across marked events strictly
-after origin and at or before horizon.
+readComponents copies a Cap'n Proto float list into caller-owned storage.
 */
-func (excitationState *excitationState) logLikelihoodSum(
-	marked []markedEvent,
-	originSec, horizonSec float64,
-	muBuy, muSell, alphaBB, alphaBS, alphaSB, alphaSS, beta float64,
-) (float64, bool) {
-	if len(marked) == 0 {
-		return 0, false
+func (server *ExcitationServer) readComponents(list capnp.Float64List, err error) ([]float64, error) {
+	if err != nil {
+		return nil, err
 	}
 
-	excitationState.lastTimeSec = marked[0].atSec
-	excitationState.haveLast = true
-	logSum := 0.0
+	values := make([]float64, list.Len())
 
-	for index := 0; index < len(marked); {
-		eventTime := marked[index].atSec
-
-		if eventTime > horizonSec {
-			break
-		}
-
-		excitationState.decayTo(eventTime, beta)
-
-		end := index
-
-		for end < len(marked) && marked[end].atSec == eventTime {
-			end++
-		}
-
-		if eventTime > originSec {
-			for _, event := range marked[index:end] {
-				switch event.side {
-				case sideBuy:
-					lambda := muBuy + alphaBB*excitationState.buySupport + alphaBS*excitationState.sellSupport
-
-					if lambda <= 0 {
-						return 0, false
-					}
-
-					logSum += logPositive(lambda)
-				case sideSell:
-					lambda := muSell + alphaSB*excitationState.buySupport + alphaSS*excitationState.sellSupport
-
-					if lambda <= 0 {
-						return 0, false
-					}
-
-					logSum += logPositive(lambda)
-				}
-			}
-		}
-
-		for _, event := range marked[index:end] {
-			switch event.side {
-			case sideBuy:
-				excitationState.buySupport += 1
-			case sideSell:
-				excitationState.sellSupport += 1
-			}
-		}
-
-		index = end
+	for index := range values {
+		values[index] = list.At(index)
 	}
 
-	return logSum, true
+	return values, nil
+}
+
+func (server *ExcitationServer) Done(ctx context.Context, call Excitation_done) error {
+	results, err := call.AllocResults()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"hawkes excitation: failed to allocate results",
+			err,
+		))
+	}
+
+	list, err := results.NewSupport(int32(len(server.support)))
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"hawkes excitation: failed to allocate support list",
+			err,
+		))
+	}
+
+	for index, value := range server.support {
+		list.Set(index, value)
+	}
+
+	return nil
 }

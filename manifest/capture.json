@@ -13,19 +13,19 @@
       "connections": {
         "inputs": {},
         "outputs": {
-          "read": [
+          "frame.read": [
             {
               "nodeId": "envelope",
               "portName": "payload"
             }
           ],
-          "endpoint": [
+          "frame.endpoint": [
             {
               "nodeId": "envelope",
               "portName": "endpoint"
             }
           ],
-          "receivedAt": [
+          "frame.receivedAt": [
             {
               "nodeId": "envelope",
               "portName": "receivedAt"
@@ -42,19 +42,19 @@
           "payload": [
             {
               "nodeId": "feed",
-              "portName": "read"
+              "portName": "frame.read"
             }
           ],
           "endpoint": [
             {
               "nodeId": "feed",
-              "portName": "endpoint"
+              "portName": "frame.endpoint"
             }
           ],
           "receivedAt": [
             {
               "nodeId": "feed",
-              "portName": "receivedAt"
+              "portName": "frame.receivedAt"
             }
           ]
         },
@@ -73,7 +73,7 @@
       "type": "tables.IcebergTable",
       "inputData": {
         "config": {
-          "value": "{\"namespace\":\"symm\",\"table\":\"raw_frames_v2\",\"fields\":[{\"id\":1,\"name\":\"received_at\",\"type\":\"timestamp\",\"required\":true},{\"id\":2,\"name\":\"endpoint\",\"type\":\"string\",\"required\":true},{\"id\":3,\"name\":\"symbol\",\"type\":\"string\",\"required\":false},{\"id\":4,\"name\":\"kind\",\"type\":\"string\",\"required\":false},{\"id\":5,\"name\":\"payload\",\"type\":\"binary\",\"required\":true},{\"id\":6,\"name\":\"capture_id\",\"type\":\"string\",\"required\":true}]}"
+          "value": "{\"namespace\":\"symm\",\"table\":\"raw_frames_v3\",\"fields\":[{\"id\":1,\"name\":\"received_at\",\"type\":\"timestamp\",\"required\":true},{\"id\":2,\"name\":\"endpoint\",\"type\":\"string\",\"required\":true},{\"id\":3,\"name\":\"symbol\",\"type\":\"string\",\"required\":false},{\"id\":4,\"name\":\"kind\",\"type\":\"string\",\"required\":false},{\"id\":5,\"name\":\"payload\",\"type\":\"binary\",\"required\":true},{\"id\":6,\"name\":\"capture_id\",\"type\":\"string\",\"required\":true},{\"id\":7,\"name\":\"capture_session\",\"type\":\"string\",\"required\":true},{\"id\":8,\"name\":\"capture_sequence\",\"type\":\"long\",\"required\":true},{\"id\":9,\"name\":\"received_time\",\"type\":\"string\",\"required\":true}]}"
         }
       },
       "connections": {

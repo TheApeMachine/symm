@@ -1,0 +1,3112 @@
+{
+  "id": "training:grade",
+  "name": "Resolved excursion truth",
+  "nodes": {
+    "input": {
+      "id": "input",
+      "type": "transport.Fan",
+      "inputData": {},
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "confirmed",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 0,
+      "y": 0
+    },
+    "confirmed": {
+      "id": "confirmed",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "event.d.sequence,event.d.record"
+        },
+        "operator": {
+          "value": ">="
+        },
+        "threshold": {
+          "value": 0
+        },
+        "referencePath": {
+          "value": "event.c.sequence,event.c.record"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "input",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "within_fragment",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 290,
+      "y": 0
+    },
+    "within_fragment": {
+      "id": "within_fragment",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "cursor.sequence,cursor.record"
+        },
+        "operator": {
+          "value": "<="
+        },
+        "threshold": {
+          "value": 0
+        },
+        "referencePath": {
+          "value": "event.c.sequence,event.c.record"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "confirmed",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sampled_precursor",
+              "portName": "data"
+            },
+            {
+              "nodeId": "unsampled_precursor",
+              "portName": "data"
+            },
+            {
+              "nodeId": "flat",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 580,
+      "y": 0
+    },
+    "sampled_precursor": {
+      "id": "sampled_precursor",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "event.a"
+        },
+        "operator": {
+          "value": "exists"
+        },
+        "threshold": {
+          "value": 0
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "within_fragment",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sampled_start",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 870,
+      "y": 0
+    },
+    "sampled_start": {
+      "id": "sampled_start",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "cursor.sequence,cursor.record"
+        },
+        "operator": {
+          "value": ">="
+        },
+        "threshold": {
+          "value": 0
+        },
+        "referencePath": {
+          "value": "event.a.sequence,event.a.record"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "sampled_precursor",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sampled_rise_wait_direction",
+              "portName": "data"
+            },
+            {
+              "nodeId": "sampled_rise_enter_direction",
+              "portName": "data"
+            },
+            {
+              "nodeId": "sampled_rise_hold_direction",
+              "portName": "data"
+            },
+            {
+              "nodeId": "sampled_rise_exit_direction",
+              "portName": "data"
+            },
+            {
+              "nodeId": "sampled_fall_hold_direction",
+              "portName": "data"
+            },
+            {
+              "nodeId": "sampled_fall_exit_direction",
+              "portName": "data"
+            },
+            {
+              "nodeId": "sampled_fall_wait_direction",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 1160,
+      "y": 0
+    },
+    "unsampled_precursor": {
+      "id": "unsampled_precursor",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "event.a"
+        },
+        "operator": {
+          "value": "absent"
+        },
+        "threshold": {
+          "value": 0
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "within_fragment",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "unsampled_start",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 1450,
+      "y": 0
+    },
+    "unsampled_start": {
+      "id": "unsampled_start",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "cursor.sequence,cursor.record"
+        },
+        "operator": {
+          "value": ">="
+        },
+        "threshold": {
+          "value": 0
+        },
+        "referencePath": {
+          "value": "event.precursor.sequence,event.precursor.record"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "unsampled_precursor",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "unsampled_rise_wait_direction",
+              "portName": "data"
+            },
+            {
+              "nodeId": "unsampled_rise_enter_direction",
+              "portName": "data"
+            },
+            {
+              "nodeId": "unsampled_rise_hold_direction",
+              "portName": "data"
+            },
+            {
+              "nodeId": "unsampled_rise_exit_direction",
+              "portName": "data"
+            },
+            {
+              "nodeId": "unsampled_fall_hold_direction",
+              "portName": "data"
+            },
+            {
+              "nodeId": "unsampled_fall_exit_direction",
+              "portName": "data"
+            },
+            {
+              "nodeId": "unsampled_fall_wait_direction",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 1740,
+      "y": 0
+    },
+    "labels": {
+      "id": "labels",
+      "type": "data.Iterate",
+      "inputData": {
+        "path": {
+          "value": ""
+        },
+        "envelope": {
+          "value": false
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "sampled_rise_wait_batch",
+              "portName": "out"
+            },
+            {
+              "nodeId": "sampled_rise_enter_batch",
+              "portName": "out"
+            },
+            {
+              "nodeId": "sampled_rise_hold_batch",
+              "portName": "out"
+            },
+            {
+              "nodeId": "sampled_rise_exit_batch",
+              "portName": "out"
+            },
+            {
+              "nodeId": "sampled_fall_hold_batch",
+              "portName": "out"
+            },
+            {
+              "nodeId": "sampled_fall_exit_batch",
+              "portName": "out"
+            },
+            {
+              "nodeId": "sampled_fall_wait_batch",
+              "portName": "out"
+            },
+            {
+              "nodeId": "unsampled_rise_wait_batch",
+              "portName": "out"
+            },
+            {
+              "nodeId": "unsampled_rise_enter_batch",
+              "portName": "out"
+            },
+            {
+              "nodeId": "unsampled_rise_hold_batch",
+              "portName": "out"
+            },
+            {
+              "nodeId": "unsampled_rise_exit_batch",
+              "portName": "out"
+            },
+            {
+              "nodeId": "unsampled_fall_hold_batch",
+              "portName": "out"
+            },
+            {
+              "nodeId": "unsampled_fall_exit_batch",
+              "portName": "out"
+            },
+            {
+              "nodeId": "unsampled_fall_wait_batch",
+              "portName": "out"
+            },
+            {
+              "nodeId": "flat_batch",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      },
+      "x": 2030,
+      "y": 0
+    },
+    "sampled_rise_wait_direction": {
+      "id": "sampled_rise_wait_direction",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "event.excursion"
+        },
+        "operator": {
+          "value": ">"
+        },
+        "threshold": {
+          "value": 0
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "sampled_start",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sampled_rise_wait_leg",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 0,
+      "y": 210
+    },
+    "sampled_rise_wait_leg": {
+      "id": "sampled_rise_wait_leg",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "event.c.sequence,event.c.record"
+        },
+        "operator": {
+          "value": ">"
+        },
+        "threshold": {
+          "value": 0
+        },
+        "referencePath": {
+          "value": "event.b.sequence,event.b.record"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "sampled_rise_wait_direction",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sampled_rise_wait_cursor_0",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 290,
+      "y": 210
+    },
+    "sampled_rise_wait_cursor_0": {
+      "id": "sampled_rise_wait_cursor_0",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "cursor.sequence,cursor.record"
+        },
+        "operator": {
+          "value": "<"
+        },
+        "threshold": {
+          "value": 0
+        },
+        "referencePath": {
+          "value": "event.b.sequence,event.b.record"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "sampled_rise_wait_leg",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sampled_rise_wait_truth",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 580,
+      "y": 210
+    },
+    "sampled_rise_wait_truth": {
+      "id": "sampled_rise_wait_truth",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "truth"
+        },
+        "json": {
+          "value": "{\"action\":\"WAIT\",\"holding\":false}"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "sampled_rise_wait_cursor_0",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sampled_rise_wait_batch",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 870,
+      "y": 210
+    },
+    "sampled_rise_wait_batch": {
+      "id": "sampled_rise_wait_batch",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "0"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "sampled_rise_wait_truth",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "labels",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 1160,
+      "y": 210
+    },
+    "sampled_rise_enter_direction": {
+      "id": "sampled_rise_enter_direction",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "event.excursion"
+        },
+        "operator": {
+          "value": ">"
+        },
+        "threshold": {
+          "value": 0
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "sampled_start",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sampled_rise_enter_leg",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 1450,
+      "y": 210
+    },
+    "sampled_rise_enter_leg": {
+      "id": "sampled_rise_enter_leg",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "event.c.sequence,event.c.record"
+        },
+        "operator": {
+          "value": ">"
+        },
+        "threshold": {
+          "value": 0
+        },
+        "referencePath": {
+          "value": "event.b.sequence,event.b.record"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "sampled_rise_enter_direction",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sampled_rise_enter_cursor_0",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 1740,
+      "y": 210
+    },
+    "sampled_rise_enter_cursor_0": {
+      "id": "sampled_rise_enter_cursor_0",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "cursor.sequence,cursor.record"
+        },
+        "operator": {
+          "value": "=="
+        },
+        "threshold": {
+          "value": 0
+        },
+        "referencePath": {
+          "value": "event.b.sequence,event.b.record"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "sampled_rise_enter_leg",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sampled_rise_enter_truth",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 2030,
+      "y": 210
+    },
+    "sampled_rise_enter_truth": {
+      "id": "sampled_rise_enter_truth",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "truth"
+        },
+        "json": {
+          "value": "{\"action\":\"ENTER\",\"holding\":false}"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "sampled_rise_enter_cursor_0",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sampled_rise_enter_batch",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 0,
+      "y": 420
+    },
+    "sampled_rise_enter_batch": {
+      "id": "sampled_rise_enter_batch",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "0"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "sampled_rise_enter_truth",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "labels",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 290,
+      "y": 420
+    },
+    "sampled_rise_hold_direction": {
+      "id": "sampled_rise_hold_direction",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "event.excursion"
+        },
+        "operator": {
+          "value": ">"
+        },
+        "threshold": {
+          "value": 0
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "sampled_start",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sampled_rise_hold_leg",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 580,
+      "y": 420
+    },
+    "sampled_rise_hold_leg": {
+      "id": "sampled_rise_hold_leg",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "event.c.sequence,event.c.record"
+        },
+        "operator": {
+          "value": ">"
+        },
+        "threshold": {
+          "value": 0
+        },
+        "referencePath": {
+          "value": "event.b.sequence,event.b.record"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "sampled_rise_hold_direction",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sampled_rise_hold_cursor_0",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 870,
+      "y": 420
+    },
+    "sampled_rise_hold_cursor_0": {
+      "id": "sampled_rise_hold_cursor_0",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "cursor.sequence,cursor.record"
+        },
+        "operator": {
+          "value": ">"
+        },
+        "threshold": {
+          "value": 0
+        },
+        "referencePath": {
+          "value": "event.b.sequence,event.b.record"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "sampled_rise_hold_leg",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sampled_rise_hold_cursor_1",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 1160,
+      "y": 420
+    },
+    "sampled_rise_hold_cursor_1": {
+      "id": "sampled_rise_hold_cursor_1",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "cursor.sequence,cursor.record"
+        },
+        "operator": {
+          "value": "<"
+        },
+        "threshold": {
+          "value": 0
+        },
+        "referencePath": {
+          "value": "event.c.sequence,event.c.record"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "sampled_rise_hold_cursor_0",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sampled_rise_hold_truth",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 1450,
+      "y": 420
+    },
+    "sampled_rise_hold_truth": {
+      "id": "sampled_rise_hold_truth",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "truth"
+        },
+        "json": {
+          "value": "{\"action\":\"WAIT\",\"holding\":true}"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "sampled_rise_hold_cursor_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sampled_rise_hold_batch",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 1740,
+      "y": 420
+    },
+    "sampled_rise_hold_batch": {
+      "id": "sampled_rise_hold_batch",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "0"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "sampled_rise_hold_truth",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "labels",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 2030,
+      "y": 420
+    },
+    "sampled_rise_exit_direction": {
+      "id": "sampled_rise_exit_direction",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "event.excursion"
+        },
+        "operator": {
+          "value": ">"
+        },
+        "threshold": {
+          "value": 0
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "sampled_start",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sampled_rise_exit_leg",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 0,
+      "y": 630
+    },
+    "sampled_rise_exit_leg": {
+      "id": "sampled_rise_exit_leg",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "event.c.sequence,event.c.record"
+        },
+        "operator": {
+          "value": ">"
+        },
+        "threshold": {
+          "value": 0
+        },
+        "referencePath": {
+          "value": "event.b.sequence,event.b.record"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "sampled_rise_exit_direction",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sampled_rise_exit_cursor_0",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 290,
+      "y": 630
+    },
+    "sampled_rise_exit_cursor_0": {
+      "id": "sampled_rise_exit_cursor_0",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "cursor.sequence,cursor.record"
+        },
+        "operator": {
+          "value": "=="
+        },
+        "threshold": {
+          "value": 0
+        },
+        "referencePath": {
+          "value": "event.c.sequence,event.c.record"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "sampled_rise_exit_leg",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sampled_rise_exit_truth",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 580,
+      "y": 630
+    },
+    "sampled_rise_exit_truth": {
+      "id": "sampled_rise_exit_truth",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "truth"
+        },
+        "json": {
+          "value": "{\"action\":\"EXIT\",\"holding\":true}"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "sampled_rise_exit_cursor_0",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sampled_rise_exit_batch",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 870,
+      "y": 630
+    },
+    "sampled_rise_exit_batch": {
+      "id": "sampled_rise_exit_batch",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "0"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "sampled_rise_exit_truth",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "labels",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 1160,
+      "y": 630
+    },
+    "sampled_fall_hold_direction": {
+      "id": "sampled_fall_hold_direction",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "event.excursion"
+        },
+        "operator": {
+          "value": "<"
+        },
+        "threshold": {
+          "value": 0
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "sampled_start",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sampled_fall_hold_leg",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 1450,
+      "y": 630
+    },
+    "sampled_fall_hold_leg": {
+      "id": "sampled_fall_hold_leg",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "event.c.sequence,event.c.record"
+        },
+        "operator": {
+          "value": ">"
+        },
+        "threshold": {
+          "value": 0
+        },
+        "referencePath": {
+          "value": "event.b.sequence,event.b.record"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "sampled_fall_hold_direction",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sampled_fall_hold_cursor_0",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 1740,
+      "y": 630
+    },
+    "sampled_fall_hold_cursor_0": {
+      "id": "sampled_fall_hold_cursor_0",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "cursor.sequence,cursor.record"
+        },
+        "operator": {
+          "value": "<"
+        },
+        "threshold": {
+          "value": 0
+        },
+        "referencePath": {
+          "value": "event.b.sequence,event.b.record"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "sampled_fall_hold_leg",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sampled_fall_hold_truth",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 2030,
+      "y": 630
+    },
+    "sampled_fall_hold_truth": {
+      "id": "sampled_fall_hold_truth",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "truth"
+        },
+        "json": {
+          "value": "{\"action\":\"WAIT\",\"holding\":true}"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "sampled_fall_hold_cursor_0",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sampled_fall_hold_batch",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 0,
+      "y": 840
+    },
+    "sampled_fall_hold_batch": {
+      "id": "sampled_fall_hold_batch",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "0"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "sampled_fall_hold_truth",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "labels",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 290,
+      "y": 840
+    },
+    "sampled_fall_exit_direction": {
+      "id": "sampled_fall_exit_direction",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "event.excursion"
+        },
+        "operator": {
+          "value": "<"
+        },
+        "threshold": {
+          "value": 0
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "sampled_start",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sampled_fall_exit_leg",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 580,
+      "y": 840
+    },
+    "sampled_fall_exit_leg": {
+      "id": "sampled_fall_exit_leg",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "event.c.sequence,event.c.record"
+        },
+        "operator": {
+          "value": ">"
+        },
+        "threshold": {
+          "value": 0
+        },
+        "referencePath": {
+          "value": "event.b.sequence,event.b.record"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "sampled_fall_exit_direction",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sampled_fall_exit_cursor_0",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 870,
+      "y": 840
+    },
+    "sampled_fall_exit_cursor_0": {
+      "id": "sampled_fall_exit_cursor_0",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "cursor.sequence,cursor.record"
+        },
+        "operator": {
+          "value": "=="
+        },
+        "threshold": {
+          "value": 0
+        },
+        "referencePath": {
+          "value": "event.b.sequence,event.b.record"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "sampled_fall_exit_leg",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sampled_fall_exit_truth",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 1160,
+      "y": 840
+    },
+    "sampled_fall_exit_truth": {
+      "id": "sampled_fall_exit_truth",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "truth"
+        },
+        "json": {
+          "value": "{\"action\":\"EXIT\",\"holding\":true}"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "sampled_fall_exit_cursor_0",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sampled_fall_exit_batch",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 1450,
+      "y": 840
+    },
+    "sampled_fall_exit_batch": {
+      "id": "sampled_fall_exit_batch",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "0"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "sampled_fall_exit_truth",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "labels",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 1740,
+      "y": 840
+    },
+    "sampled_fall_wait_direction": {
+      "id": "sampled_fall_wait_direction",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "event.excursion"
+        },
+        "operator": {
+          "value": "<"
+        },
+        "threshold": {
+          "value": 0
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "sampled_start",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sampled_fall_wait_leg",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 2030,
+      "y": 840
+    },
+    "sampled_fall_wait_leg": {
+      "id": "sampled_fall_wait_leg",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "event.c.sequence,event.c.record"
+        },
+        "operator": {
+          "value": ">"
+        },
+        "threshold": {
+          "value": 0
+        },
+        "referencePath": {
+          "value": "event.b.sequence,event.b.record"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "sampled_fall_wait_direction",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sampled_fall_wait_cursor_0",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 0,
+      "y": 1050
+    },
+    "sampled_fall_wait_cursor_0": {
+      "id": "sampled_fall_wait_cursor_0",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "cursor.sequence,cursor.record"
+        },
+        "operator": {
+          "value": ">"
+        },
+        "threshold": {
+          "value": 0
+        },
+        "referencePath": {
+          "value": "event.b.sequence,event.b.record"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "sampled_fall_wait_leg",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sampled_fall_wait_cursor_1",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 290,
+      "y": 1050
+    },
+    "sampled_fall_wait_cursor_1": {
+      "id": "sampled_fall_wait_cursor_1",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "cursor.sequence,cursor.record"
+        },
+        "operator": {
+          "value": "<"
+        },
+        "threshold": {
+          "value": 0
+        },
+        "referencePath": {
+          "value": "event.c.sequence,event.c.record"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "sampled_fall_wait_cursor_0",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sampled_fall_wait_truth",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 580,
+      "y": 1050
+    },
+    "sampled_fall_wait_truth": {
+      "id": "sampled_fall_wait_truth",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "truth"
+        },
+        "json": {
+          "value": "{\"action\":\"WAIT\",\"holding\":false}"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "sampled_fall_wait_cursor_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sampled_fall_wait_batch",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 870,
+      "y": 1050
+    },
+    "sampled_fall_wait_batch": {
+      "id": "sampled_fall_wait_batch",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "0"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "sampled_fall_wait_truth",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "labels",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 1160,
+      "y": 1050
+    },
+    "unsampled_rise_wait_direction": {
+      "id": "unsampled_rise_wait_direction",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "event.excursion"
+        },
+        "operator": {
+          "value": ">"
+        },
+        "threshold": {
+          "value": 0
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "unsampled_start",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "unsampled_rise_wait_leg",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 1450,
+      "y": 1050
+    },
+    "unsampled_rise_wait_leg": {
+      "id": "unsampled_rise_wait_leg",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "event.c.sequence,event.c.record"
+        },
+        "operator": {
+          "value": ">"
+        },
+        "threshold": {
+          "value": 0
+        },
+        "referencePath": {
+          "value": "event.b.sequence,event.b.record"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "unsampled_rise_wait_direction",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "unsampled_rise_wait_cursor_0",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 1740,
+      "y": 1050
+    },
+    "unsampled_rise_wait_cursor_0": {
+      "id": "unsampled_rise_wait_cursor_0",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "cursor.sequence,cursor.record"
+        },
+        "operator": {
+          "value": "<"
+        },
+        "threshold": {
+          "value": 0
+        },
+        "referencePath": {
+          "value": "event.b.sequence,event.b.record"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "unsampled_rise_wait_leg",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "unsampled_rise_wait_truth",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 2030,
+      "y": 1050
+    },
+    "unsampled_rise_wait_truth": {
+      "id": "unsampled_rise_wait_truth",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "truth"
+        },
+        "json": {
+          "value": "{\"action\":\"WAIT\",\"holding\":false}"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "unsampled_rise_wait_cursor_0",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "unsampled_rise_wait_batch",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 0,
+      "y": 1260
+    },
+    "unsampled_rise_wait_batch": {
+      "id": "unsampled_rise_wait_batch",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "0"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "unsampled_rise_wait_truth",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "labels",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 290,
+      "y": 1260
+    },
+    "unsampled_rise_enter_direction": {
+      "id": "unsampled_rise_enter_direction",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "event.excursion"
+        },
+        "operator": {
+          "value": ">"
+        },
+        "threshold": {
+          "value": 0
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "unsampled_start",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "unsampled_rise_enter_leg",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 580,
+      "y": 1260
+    },
+    "unsampled_rise_enter_leg": {
+      "id": "unsampled_rise_enter_leg",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "event.c.sequence,event.c.record"
+        },
+        "operator": {
+          "value": ">"
+        },
+        "threshold": {
+          "value": 0
+        },
+        "referencePath": {
+          "value": "event.b.sequence,event.b.record"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "unsampled_rise_enter_direction",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "unsampled_rise_enter_cursor_0",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 870,
+      "y": 1260
+    },
+    "unsampled_rise_enter_cursor_0": {
+      "id": "unsampled_rise_enter_cursor_0",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "cursor.sequence,cursor.record"
+        },
+        "operator": {
+          "value": "=="
+        },
+        "threshold": {
+          "value": 0
+        },
+        "referencePath": {
+          "value": "event.b.sequence,event.b.record"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "unsampled_rise_enter_leg",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "unsampled_rise_enter_truth",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 1160,
+      "y": 1260
+    },
+    "unsampled_rise_enter_truth": {
+      "id": "unsampled_rise_enter_truth",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "truth"
+        },
+        "json": {
+          "value": "{\"action\":\"ENTER\",\"holding\":false}"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "unsampled_rise_enter_cursor_0",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "unsampled_rise_enter_batch",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 1450,
+      "y": 1260
+    },
+    "unsampled_rise_enter_batch": {
+      "id": "unsampled_rise_enter_batch",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "0"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "unsampled_rise_enter_truth",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "labels",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 1740,
+      "y": 1260
+    },
+    "unsampled_rise_hold_direction": {
+      "id": "unsampled_rise_hold_direction",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "event.excursion"
+        },
+        "operator": {
+          "value": ">"
+        },
+        "threshold": {
+          "value": 0
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "unsampled_start",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "unsampled_rise_hold_leg",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 2030,
+      "y": 1260
+    },
+    "unsampled_rise_hold_leg": {
+      "id": "unsampled_rise_hold_leg",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "event.c.sequence,event.c.record"
+        },
+        "operator": {
+          "value": ">"
+        },
+        "threshold": {
+          "value": 0
+        },
+        "referencePath": {
+          "value": "event.b.sequence,event.b.record"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "unsampled_rise_hold_direction",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "unsampled_rise_hold_cursor_0",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 0,
+      "y": 1470
+    },
+    "unsampled_rise_hold_cursor_0": {
+      "id": "unsampled_rise_hold_cursor_0",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "cursor.sequence,cursor.record"
+        },
+        "operator": {
+          "value": ">"
+        },
+        "threshold": {
+          "value": 0
+        },
+        "referencePath": {
+          "value": "event.b.sequence,event.b.record"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "unsampled_rise_hold_leg",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "unsampled_rise_hold_cursor_1",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 290,
+      "y": 1470
+    },
+    "unsampled_rise_hold_cursor_1": {
+      "id": "unsampled_rise_hold_cursor_1",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "cursor.sequence,cursor.record"
+        },
+        "operator": {
+          "value": "<"
+        },
+        "threshold": {
+          "value": 0
+        },
+        "referencePath": {
+          "value": "event.c.sequence,event.c.record"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "unsampled_rise_hold_cursor_0",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "unsampled_rise_hold_truth",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 580,
+      "y": 1470
+    },
+    "unsampled_rise_hold_truth": {
+      "id": "unsampled_rise_hold_truth",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "truth"
+        },
+        "json": {
+          "value": "{\"action\":\"WAIT\",\"holding\":true}"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "unsampled_rise_hold_cursor_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "unsampled_rise_hold_batch",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 870,
+      "y": 1470
+    },
+    "unsampled_rise_hold_batch": {
+      "id": "unsampled_rise_hold_batch",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "0"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "unsampled_rise_hold_truth",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "labels",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 1160,
+      "y": 1470
+    },
+    "unsampled_rise_exit_direction": {
+      "id": "unsampled_rise_exit_direction",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "event.excursion"
+        },
+        "operator": {
+          "value": ">"
+        },
+        "threshold": {
+          "value": 0
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "unsampled_start",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "unsampled_rise_exit_leg",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 1450,
+      "y": 1470
+    },
+    "unsampled_rise_exit_leg": {
+      "id": "unsampled_rise_exit_leg",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "event.c.sequence,event.c.record"
+        },
+        "operator": {
+          "value": ">"
+        },
+        "threshold": {
+          "value": 0
+        },
+        "referencePath": {
+          "value": "event.b.sequence,event.b.record"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "unsampled_rise_exit_direction",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "unsampled_rise_exit_cursor_0",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 1740,
+      "y": 1470
+    },
+    "unsampled_rise_exit_cursor_0": {
+      "id": "unsampled_rise_exit_cursor_0",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "cursor.sequence,cursor.record"
+        },
+        "operator": {
+          "value": "=="
+        },
+        "threshold": {
+          "value": 0
+        },
+        "referencePath": {
+          "value": "event.c.sequence,event.c.record"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "unsampled_rise_exit_leg",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "unsampled_rise_exit_truth",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 2030,
+      "y": 1470
+    },
+    "unsampled_rise_exit_truth": {
+      "id": "unsampled_rise_exit_truth",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "truth"
+        },
+        "json": {
+          "value": "{\"action\":\"EXIT\",\"holding\":true}"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "unsampled_rise_exit_cursor_0",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "unsampled_rise_exit_batch",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 0,
+      "y": 1680
+    },
+    "unsampled_rise_exit_batch": {
+      "id": "unsampled_rise_exit_batch",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "0"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "unsampled_rise_exit_truth",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "labels",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 290,
+      "y": 1680
+    },
+    "unsampled_fall_hold_direction": {
+      "id": "unsampled_fall_hold_direction",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "event.excursion"
+        },
+        "operator": {
+          "value": "<"
+        },
+        "threshold": {
+          "value": 0
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "unsampled_start",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "unsampled_fall_hold_leg",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 580,
+      "y": 1680
+    },
+    "unsampled_fall_hold_leg": {
+      "id": "unsampled_fall_hold_leg",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "event.c.sequence,event.c.record"
+        },
+        "operator": {
+          "value": ">"
+        },
+        "threshold": {
+          "value": 0
+        },
+        "referencePath": {
+          "value": "event.b.sequence,event.b.record"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "unsampled_fall_hold_direction",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "unsampled_fall_hold_cursor_0",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 870,
+      "y": 1680
+    },
+    "unsampled_fall_hold_cursor_0": {
+      "id": "unsampled_fall_hold_cursor_0",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "cursor.sequence,cursor.record"
+        },
+        "operator": {
+          "value": "<"
+        },
+        "threshold": {
+          "value": 0
+        },
+        "referencePath": {
+          "value": "event.b.sequence,event.b.record"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "unsampled_fall_hold_leg",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "unsampled_fall_hold_truth",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 1160,
+      "y": 1680
+    },
+    "unsampled_fall_hold_truth": {
+      "id": "unsampled_fall_hold_truth",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "truth"
+        },
+        "json": {
+          "value": "{\"action\":\"WAIT\",\"holding\":true}"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "unsampled_fall_hold_cursor_0",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "unsampled_fall_hold_batch",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 1450,
+      "y": 1680
+    },
+    "unsampled_fall_hold_batch": {
+      "id": "unsampled_fall_hold_batch",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "0"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "unsampled_fall_hold_truth",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "labels",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 1740,
+      "y": 1680
+    },
+    "unsampled_fall_exit_direction": {
+      "id": "unsampled_fall_exit_direction",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "event.excursion"
+        },
+        "operator": {
+          "value": "<"
+        },
+        "threshold": {
+          "value": 0
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "unsampled_start",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "unsampled_fall_exit_leg",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 2030,
+      "y": 1680
+    },
+    "unsampled_fall_exit_leg": {
+      "id": "unsampled_fall_exit_leg",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "event.c.sequence,event.c.record"
+        },
+        "operator": {
+          "value": ">"
+        },
+        "threshold": {
+          "value": 0
+        },
+        "referencePath": {
+          "value": "event.b.sequence,event.b.record"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "unsampled_fall_exit_direction",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "unsampled_fall_exit_cursor_0",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 0,
+      "y": 1890
+    },
+    "unsampled_fall_exit_cursor_0": {
+      "id": "unsampled_fall_exit_cursor_0",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "cursor.sequence,cursor.record"
+        },
+        "operator": {
+          "value": "=="
+        },
+        "threshold": {
+          "value": 0
+        },
+        "referencePath": {
+          "value": "event.b.sequence,event.b.record"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "unsampled_fall_exit_leg",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "unsampled_fall_exit_truth",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 290,
+      "y": 1890
+    },
+    "unsampled_fall_exit_truth": {
+      "id": "unsampled_fall_exit_truth",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "truth"
+        },
+        "json": {
+          "value": "{\"action\":\"EXIT\",\"holding\":true}"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "unsampled_fall_exit_cursor_0",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "unsampled_fall_exit_batch",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 580,
+      "y": 1890
+    },
+    "unsampled_fall_exit_batch": {
+      "id": "unsampled_fall_exit_batch",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "0"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "unsampled_fall_exit_truth",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "labels",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 870,
+      "y": 1890
+    },
+    "unsampled_fall_wait_direction": {
+      "id": "unsampled_fall_wait_direction",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "event.excursion"
+        },
+        "operator": {
+          "value": "<"
+        },
+        "threshold": {
+          "value": 0
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "unsampled_start",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "unsampled_fall_wait_leg",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 1160,
+      "y": 1890
+    },
+    "unsampled_fall_wait_leg": {
+      "id": "unsampled_fall_wait_leg",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "event.c.sequence,event.c.record"
+        },
+        "operator": {
+          "value": ">"
+        },
+        "threshold": {
+          "value": 0
+        },
+        "referencePath": {
+          "value": "event.b.sequence,event.b.record"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "unsampled_fall_wait_direction",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "unsampled_fall_wait_cursor_0",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 1450,
+      "y": 1890
+    },
+    "unsampled_fall_wait_cursor_0": {
+      "id": "unsampled_fall_wait_cursor_0",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "cursor.sequence,cursor.record"
+        },
+        "operator": {
+          "value": ">"
+        },
+        "threshold": {
+          "value": 0
+        },
+        "referencePath": {
+          "value": "event.b.sequence,event.b.record"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "unsampled_fall_wait_leg",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "unsampled_fall_wait_cursor_1",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 1740,
+      "y": 1890
+    },
+    "unsampled_fall_wait_cursor_1": {
+      "id": "unsampled_fall_wait_cursor_1",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "cursor.sequence,cursor.record"
+        },
+        "operator": {
+          "value": "<"
+        },
+        "threshold": {
+          "value": 0
+        },
+        "referencePath": {
+          "value": "event.c.sequence,event.c.record"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "unsampled_fall_wait_cursor_0",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "unsampled_fall_wait_truth",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 2030,
+      "y": 1890
+    },
+    "unsampled_fall_wait_truth": {
+      "id": "unsampled_fall_wait_truth",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "truth"
+        },
+        "json": {
+          "value": "{\"action\":\"WAIT\",\"holding\":false}"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "unsampled_fall_wait_cursor_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "unsampled_fall_wait_batch",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 0,
+      "y": 2100
+    },
+    "unsampled_fall_wait_batch": {
+      "id": "unsampled_fall_wait_batch",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "0"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "unsampled_fall_wait_truth",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "labels",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 290,
+      "y": 2100
+    },
+    "flat": {
+      "id": "flat",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "event.excursion"
+        },
+        "operator": {
+          "value": "=="
+        },
+        "threshold": {
+          "value": 0
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "within_fragment",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "flat_resolved",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 580,
+      "y": 2100
+    },
+    "flat_resolved": {
+      "id": "flat_resolved",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "event.resolved"
+        },
+        "operator": {
+          "value": "=="
+        },
+        "threshold": {
+          "value": 1
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "flat",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "flat_start",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 870,
+      "y": 2100
+    },
+    "flat_start": {
+      "id": "flat_start",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "cursor.sequence,cursor.record"
+        },
+        "operator": {
+          "value": ">="
+        },
+        "threshold": {
+          "value": 0
+        },
+        "referencePath": {
+          "value": "event.precursor.sequence,event.precursor.record"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "flat_resolved",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "flat_truth",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 1160,
+      "y": 2100
+    },
+    "flat_truth": {
+      "id": "flat_truth",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "truth"
+        },
+        "json": {
+          "value": "{\"action\":\"WAIT\",\"holding\":false}"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "flat_start",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "flat_batch",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 1450,
+      "y": 2100
+    },
+    "flat_batch": {
+      "id": "flat_batch",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "0"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "flat_truth",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "labels",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 1740,
+      "y": 2100
+    }
+  }
+}

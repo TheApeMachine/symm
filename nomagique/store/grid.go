@@ -362,6 +362,12 @@ func walkInterest(document any, segments []string) (any, bool) {
 			return nil, false
 		}
 
+		// A channel-tagged record has the same declared path as its named
+		// envelope: ticker.data.last addresses channel=ticker, data.last.
+		if channel, tagged := object["channel"].(string); tagged && channel == segment {
+			continue
+		}
+
 		current, ok = object[segment]
 
 		if !ok {

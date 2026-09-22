@@ -7,5 +7,5 @@ $Go.import("github.com/theapemachine/symm/nomagique/store");
 # Symbol/kind are optional metadata; absence is not replaced with an invented value.
 interface Capture {
   write @0 (payload :Data, endpoint :Text, receivedAt :Text, symbol :Text, kind :Text) -> stream;
-  done @1 () -> (out :Data);
+  done @1 () -> (out :Data, payload :Data, session :Text, sequence :Int64, endpoint :Text);
 }

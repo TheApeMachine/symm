@@ -10,7 +10,14 @@ interface Filter {
     data      :Data,
     path      :Text,
     operator  :Text,
-    threshold :Float64
+    threshold :Float64,
+    referencePath :Text
   ) -> stream;
-  done @1 () -> (out :Data, passed :Bool, status :Status);
+  done @1 () -> Filtered;
+}
+
+struct Filtered {
+  union { out @0 :Data; rejected @3 :Void; }
+  passed @1 :Bool;
+  status @2 :Status;
 }

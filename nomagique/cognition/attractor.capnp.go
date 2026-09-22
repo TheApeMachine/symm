@@ -269,35 +269,51 @@ func (s Attractor_write_Params) Message() *capnp.Message {
 func (s Attractor_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Attractor_write_Params) ContextBytes() ([]byte, error) {
+func (s Attractor_write_Params) Classes() (capnp.DataList, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return []byte(p.Data()), err
+	return capnp.DataList(p.List()), err
 }
 
-func (s Attractor_write_Params) HasContextBytes() bool {
+func (s Attractor_write_Params) HasClasses() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s Attractor_write_Params) SetContextBytes(v []byte) error {
-	return capnp.Struct(s).SetData(0, v)
+func (s Attractor_write_Params) SetClasses(v capnp.DataList) error {
+	return capnp.Struct(s).SetPtr(0, v.ToPtr())
 }
 
-func (s Attractor_write_Params) Memory() Memory {
-	p, _ := capnp.Struct(s).Ptr(1)
-	return Memory(p.Interface().Client())
+// NewClasses sets the classes field to a newly
+// allocated capnp.DataList, preferring placement in s's segment.
+func (s Attractor_write_Params) NewClasses(n int32) (capnp.DataList, error) {
+	l, err := capnp.NewDataList(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return capnp.DataList{}, err
+	}
+	err = capnp.Struct(s).SetPtr(0, l.ToPtr())
+	return l, err
+}
+func (s Attractor_write_Params) Weights() (capnp.UInt64List, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return capnp.UInt64List(p.List()), err
 }
 
-func (s Attractor_write_Params) HasMemory() bool {
+func (s Attractor_write_Params) HasWeights() bool {
 	return capnp.Struct(s).HasPtr(1)
 }
 
-func (s Attractor_write_Params) SetMemory(v Memory) error {
-	if !v.IsValid() {
-		return capnp.Struct(s).SetPtr(1, capnp.Ptr{})
+func (s Attractor_write_Params) SetWeights(v capnp.UInt64List) error {
+	return capnp.Struct(s).SetPtr(1, v.ToPtr())
+}
+
+// NewWeights sets the weights field to a newly
+// allocated capnp.UInt64List, preferring placement in s's segment.
+func (s Attractor_write_Params) NewWeights(n int32) (capnp.UInt64List, error) {
+	l, err := capnp.NewUInt64List(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return capnp.UInt64List{}, err
 	}
-	seg := s.Segment()
-	in := capnp.NewInterface(seg, seg.Message().CapTable().Add(capnp.Client(v)))
-	return capnp.Struct(s).SetPtr(1, in.ToPtr())
+	err = capnp.Struct(s).SetPtr(1, l.ToPtr())
+	return l, err
 }
 
 // Attractor_write_Params_List is a list of Attractor_write_Params.
@@ -315,9 +331,6 @@ type Attractor_write_Params_Future struct{ *capnp.Future }
 func (f Attractor_write_Params_Future) Struct() (Attractor_write_Params, error) {
 	p, err := f.Future.Ptr()
 	return Attractor_write_Params(p.Struct()), err
-}
-func (p Attractor_write_Params_Future) Memory() Memory {
-	return Memory(p.Future.Field(1, nil).Client())
 }
 
 type Attractor_done_Params capnp.Struct

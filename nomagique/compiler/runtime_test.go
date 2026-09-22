@@ -2,7 +2,10 @@ package compiler_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/nomagique/store/tables"
 	"sync"
 	"testing"
 
@@ -179,4 +182,67 @@ func TestRuntimeConcurrentQuiescentBarrier(t *testing.T) {
 		err = rt.Execute(context.Background(), nil)
 		So(err, ShouldBeNil)
 	})
+}
+
+// retirementWriter models the durable acknowledgement boundary, including retry.
+type retirementWriter struct {
+	tables.IcebergTableServer
+	failure error
+	calls   int
+}
+
+func (owner *retirementWriter) Flush(ctx context.Context, call runtime.Durable_flush) error {
+	owner.calls++
+	return owner.failure
+}
+
+func TestRuntimeRecompile(t *testing.T) {
+	Convey("Given an active graph holding uncommitted durable state", t, func() {
+		owner := &retirementWriter{failure: errors.New("archive unavailable")}
+		registry := compiler.NewRegistry()
+		registry.Register("test.Writer", compiler.Factory{
+			InterfaceID: tables.IcebergTable_TypeID,
+			New: func(ctx context.Context, config []byte) (capnp.Client, error) {
+				return capnp.Client(tables.IcebergTable_ServerToClient(owner)), nil
+			},
+		})
+		active, err := compiler.CompileJSON([]byte(`{"nodes":{"writer":{"id":"writer","type":"test.Writer"}}}`), registry)
+		So(err, ShouldBeNil)
+		manager := compiler.NewRuntime(active, registry, nil)
+		defer func() { manager.Active().Release() }()
+
+		Convey("When retirement fails, the active owner survives and can retry", func() {
+			candidate, err := manager.Recompile(context.Background(), compiler.Graph{})
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "archive unavailable")
+			So(candidate, ShouldBeNil)
+			So(manager.Active(), ShouldEqual, active)
+			So(owner.calls, ShouldEqual, 1)
+
+			owner.failure = nil
+			candidate, err = manager.Recompile(context.Background(), compiler.Graph{})
+			So(err, ShouldBeNil)
+			So(manager.Active(), ShouldEqual, candidate)
+			So(manager.Active(), ShouldNotEqual, active)
+			So(owner.calls, ShouldEqual, 2)
+		})
+	})
+}
+
+func BenchmarkRuntimeRecompile(b *testing.B) {
+	graph, err := compiler.ParseGraph([]byte(`{"nodes":{"add":{"id":"add","type":"arithmetic.Add","inputData":{"a":{"value":2},"b":{"value":3}}}}}`))
+
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	manager := compiler.NewRuntime(nil, nil, nil)
+	defer func() { manager.Active().Release() }()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		if _, err := manager.Recompile(context.Background(), graph); err != nil {
+			b.Fatal(err)
+		}
+	}
 }

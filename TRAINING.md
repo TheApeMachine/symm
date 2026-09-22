@@ -1,10 +1,10 @@
 # TRAINING.md
 
-Implementation/design boundary: the current `training.json` performs offline
-single-series excursion mining only. It does not train a model. The unsafe
-self-reinforcement and RLS/ledger paths have been removed. Capture is a separate
-program. See [the repair design](docs/TRAINING-REPAIR-DESIGN.md) for the proposed
-remapper, truth labels, bootstrap, and remaining causal-ordering requirements.
+The current `training.json` executes archive scan → ordered capture tape →
+per-symbol excursion mining → persisted event batches. Capture records retain
+explicit session/sequence cursors and lossless receive times. Confirmed events
+record B/C/D and sample A from actual precursor observations. The remapper,
+truth reinforcement, and paper process remain the next implementation stages.
 
 How the system learns. Read `ARCHITECTURE.md` first for how the graph is built
 and run; this describes what is built on top of it.
@@ -164,12 +164,14 @@ be kept.
 received. `nomagique/store/tables/table.capnp` has `IcebergTable` and
 `IcebergScan`; `store.Capture` now supplies a byte-preserving envelope and `manifest/capture.json`
 connects socket receipt metadata to it. A local Iceberg round trip is tested.
-Live subscriptions and protocol metadata extraction still need deployment
-configuration; archive ordering/deduplication remains required before training.
+The `raw_frames_v3` schema stores explicit capture sessions and numeric sequences.
+`store.Tape` orders each session and deduplicates identities before mining.
+Live subscriptions and authenticated feeds still require deployment configuration.
 
-**Step two — compute excursions.** An excursion is a move the tape actually
-made: a missed opportunity. Mining these from the stored capture gives the
-episodes worth learning from.
+**Step two — compute excursions.** `temporal.Mine` processes every record in the
+configured channel and keeps separate state per session, endpoint, and symbol.
+It uses the canonical `Excursion` calculation and persists confirmed event batches
+in `excursion_fragments_v1`. The manifest selects ticker records and `last`.
 
 **Step three — retrieve the fragments** that contain those excursions.
 
@@ -231,8 +233,9 @@ Paper versus real is a deployment setting, not a stage of learning.
 | Remapper and settling gate | not built |
 | Region tokens | not built |
 | Radix trie | partly built (`nomagique/cognition`) |
-| Raw capture into Iceberg | envelope and local round trip built; subscriptions and chronological replay pending |
-| Excursion mining and fragment retrieval | not built |
+| Raw capture into Iceberg | explicit cursors and ordered deduplicated replay built; deployment subscriptions pending |
+| Excursion mining | per-symbol mining and persisted event cursors built |
+| Fragment retrieval | A selection and B/C/D references built; full fragment replay pending |
 | A/B/C grading | not built |
 | Fragment training loop | not built |
 | Live paper process | not built |

@@ -8,10 +8,13 @@ import { Typography } from "#/components/ui/typography";
 import { Tabs } from "#/components/ui/tabs";
 import { renderValue } from "#/lib/utils";
 import type { WireMeasurement } from "#/types/capnp/measurement";
-import { basis, percent } from "./format";
-import { ForwardView } from "./forward-view";
-import { type ActivityRow, RecognitionView } from "./recognition-view";
-import { TrieView } from "./trie-view";
+import { basis, percent } from "#/components/ui/learning-format";
+import { ForwardView } from "#/components/ui/forward-view";
+import {
+	type ActivityRow,
+	RecognitionView,
+} from "#/components/ui/recognition-view";
+import { TrieView } from "#/components/ui/trie-view";
 
 type Tab = "forward" | "trie" | "impulse" | "recognition";
 
@@ -47,7 +50,8 @@ export const LearningDashboard = () => {
 				for (const m of measurement.metrics ?? []) {
 					if (!m?.name) continue;
 					const name = String(m.name);
-					const raw = m.raw ?? 0;
+					const raw = m.raw;
+					if (raw === undefined) continue;
 					metricMap[name] = raw;
 
 					const els = root.querySelectorAll(`[data-metric="${name}"]`);
@@ -105,7 +109,7 @@ export const LearningDashboard = () => {
 					const timeStr =
 						atNs > 0n
 							? new Date(Number(atNs / 1_000_000n)).toLocaleTimeString()
-							: new Date().toLocaleTimeString();
+							: "Timestamp unavailable";
 
 					const actStr =
 						actionVal === 1
@@ -114,12 +118,15 @@ export const LearningDashboard = () => {
 								? "EXIT"
 								: actionVal === 3
 									? "RETREAT"
-									: "WAIT";
+									: actionVal === 0
+										? "WAIT"
+										: "Action unavailable";
 
 					const edgeStr = edgeVal === undefined ? "—" : basis(edgeVal);
 
 					setRecentActivity((prev) => [
 						{
+							id: `${measurement.id}:${measurement.at}:${measurement.tick}`,
 							time: timeStr,
 							actionStr: `policy ${actStr}`,
 							edgeStr,
@@ -269,13 +276,7 @@ export const LearningDashboard = () => {
 
 			{/* Main Surface: Zero-scroll Tabbed Views */}
 			<main className="relative flex flex-1 min-h-0 w-full flex-col overflow-hidden">
-				{tab === "forward" && (
-					<ForwardView
-						liveEdge={liveMetricMap.edge}
-						liveDecisions={liveMetricMap.decisions}
-						liveAccuracy={liveMetricMap.accuracy}
-					/>
-				)}
+				{tab === "forward" && <ForwardView summary={liveMetricMap} />}
 				{tab === "trie" && <TrieView />}
 				{tab === "impulse" && (
 					<Flex.Column className="p-6" gap={3}>

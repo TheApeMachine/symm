@@ -6,13 +6,15 @@ $Go.import("github.com/theapemachine/symm/nomagique/data");
 using import "../runtime/status.capnp".Status;
 
 interface Iterate {
-  write @0 (data :Data, path :Text) -> stream;
+  write @0 (data :List(Data), path :Text, envelope :Bool) -> stream;
   done @1 () -> (
     out    :Data,
     index  :Int64,
     count  :Int64,
     last   :Bool,
     found  :Bool,
+    pending :UInt64,
+    ignored :UInt64,
     status :Status
   );
 }

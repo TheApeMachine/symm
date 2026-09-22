@@ -8,17 +8,16 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/apache/arrow-go/v18/arrow/array"
-	"github.com/apache/arrow-go/v18/arrow/memory"
 	"github.com/apache/iceberg-go"
 	sqlcat "github.com/apache/iceberg-go/catalog/sql"
 	_ "github.com/mattn/go-sqlite3"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/store"
 )
 
-const captureDeclaration = `{"namespace":"test","table":"frames","fields":[{"id":1,"name":"received_at","type":"timestamp","required":true},{"id":2,"name":"endpoint","type":"string","required":true},{"id":3,"name":"symbol","type":"string"},{"id":4,"name":"kind","type":"string"},{"id":5,"name":"payload","type":"binary","required":true},{"id":6,"name":"capture_id","type":"string","required":true}]}`
+const captureDeclaration = `{"namespace":"test","table":"frames","fields":[{"id":1,"name":"received_at","type":"timestamp","required":true},{"id":2,"name":"endpoint","type":"string","required":true},{"id":3,"name":"symbol","type":"string"},{"id":4,"name":"kind","type":"string"},{"id":5,"name":"payload","type":"binary","required":true},{"id":6,"name":"capture_id","type":"string","required":true},{"id":7,"name":"capture_session","type":"string","required":true},{"id":8,"name":"capture_sequence","type":"long","required":true},{"id":9,"name":"received_time","type":"string","required":true}]}`
 
 /* captureRow exercises the actual capture capability, not a hand-built envelope. */
 func captureRow(t testing.TB, payload []byte) []byte {
@@ -78,7 +77,7 @@ func TestIcebergTableFlush(t *testing.T) {
 		So(err, ShouldBeNil)
 		So(catalog.CreateNamespace(ctx, []string{"test"}, nil), ShouldBeNil)
 		writer := NewIcebergTable()
-		writer.catalog = Wrap(catalog)
+		writer.Catalog = catalog
 		client := IcebergTable_ServerToClient(writer)
 		defer client.Release()
 		payloads := [][]byte{[]byte(" {\"channel\":\"ticker\", \"data\":[{\"last\":123}]}\n"), {0, 1, 255, 2}}
@@ -104,18 +103,43 @@ func TestIcebergTableFlush(t *testing.T) {
 			So(writer.pending, ShouldBeEmpty)
 			So(writer.committed, ShouldEqual, 2)
 			scanner := NewIcebergScan()
-			scanner.catalog = writer.catalog
+			metadata, err := json.Marshal(writer.table.Metadata())
+			So(err, ShouldBeNil)
 			reader := IcebergScan_ServerToClient(scanner)
 			defer reader.Release()
-			So(reader.Write(ctx, func(params IcebergScan_write_Params) error { return params.SetConfig(captureDeclaration) }), ShouldBeNil)
+			So(reader.Write(ctx, func(params IcebergScan_write_Params) error {
+				if err := params.SetProperties([]byte(`{}`)); err != nil {
+					return err
+				}
+				arrivals, err := params.NewMetadata(1)
+				if err != nil {
+					return err
+				}
+				return arrivals.Set(0, metadata)
+			}), ShouldBeNil)
 			So(reader.WaitStreaming(), ShouldBeNil)
 
 			for _, payload := range payloads {
 				future, release := reader.Done(ctx, nil)
 				result, err := future.Struct()
 				So(err, ShouldBeNil)
-				frame, err := result.Out()
+				ipc, err := result.Out()
 				So(err, ShouldBeNil)
+				projection := data.Arrow_ServerToClient(data.NewArrow())
+				So(projection.Write(ctx, func(args data.Arrow_write_Params) error { return args.SetData(ipc) }), ShouldBeNil)
+				So(projection.WaitStreaming(), ShouldBeNil)
+				projected, releaseProjection := projection.Done(ctx, nil)
+				projectedResult, err := projected.Struct()
+				So(err, ShouldBeNil)
+				row, err := projectedResult.Out()
+				So(err, ShouldBeNil)
+				defer releaseProjection()
+				defer projection.Release()
+				var record store.CaptureRecord
+				So(json.Unmarshal(row, &record), ShouldBeNil)
+				frame := record.Payload
+				So(record.ReceivedTime, ShouldEqual, "2026-09-22T12:00:00.123456789Z")
+				So(record.Session, ShouldNotBeEmpty)
 				So(frame, ShouldResemble, payload)
 				if json.Valid(frame) {
 					grid := store.Grid_ServerToClient(store.NewGrid(ctx))
@@ -151,66 +175,46 @@ func TestIcebergTableFlush(t *testing.T) {
 	})
 }
 
-func TestFillRow(t *testing.T) {
-	Convey("Given a declared capture row", t, func() {
-		schema, err := SchemaFromJSON(captureDeclaration)
-		So(err, ShouldBeNil)
-		converted, err := arrowSchemaFor(schema)
-		So(err, ShouldBeNil)
-		builder := array.NewRecordBuilder(memory.DefaultAllocator, converted)
-		defer builder.Release()
-		declared, err := ConfigFromJSON(captureDeclaration)
-		So(err, ShouldBeNil)
-		raw := []byte(`{"channel":"ticker"}`)
-		row := captureRow(t, raw)
-		So(fillRow(builder, declared, row), ShouldBeNil)
-		record := builder.NewRecordBatch()
-		defer record.Release()
-		So(record.Column(4).(*array.Binary).Value(0), ShouldResemble, raw)
-		So(record.Column(2).IsNull(0), ShouldBeTrue)
+/*
+Every append is a snapshot plus a metadata write. Committing on every
+evaluation makes one snapshot per observation and turns the catalog into the
+clock, which is what the byte budget and the explicit signal exist to stop.
+*/
+func TestWorthSending(t *testing.T) {
+	Convey("Given a writer holding rows", t, func() {
+		server := NewIcebergTable()
+		server.appendBytes = 64
 
-		Convey("Missing required fields and malformed binary are explicit errors", func() {
-			So(fillRow(builder, declared, raw), ShouldNotBeNil)
-			var malformed map[string]any
-			So(json.Unmarshal(row, &malformed), ShouldBeNil)
-			malformed["payload"] = "not base64!"
-			encoded, err := json.Marshal(malformed)
-			So(err, ShouldBeNil)
-			So(fillRow(builder, declared, encoded), ShouldNotBeNil)
+		Convey("It waits while what it holds is not worth a snapshot", func() {
+			server.pending = [][]byte{make([]byte, 16)}
+			server.held = 16
+
+			So(server.worthSending(), ShouldBeFalse)
+		})
+
+		Convey("It sends once the rows add up to what an append is sized for", func() {
+			server.pending = [][]byte{make([]byte, 40), make([]byte, 40)}
+			server.held = 80
+
+			So(server.worthSending(), ShouldBeTrue)
+		})
+
+		// A caller that knows the run is ending must be able to say so, or
+		// the last rows sit in memory and the tape loses its tail.
+		Convey("It sends when a caller says now, whatever it holds", func() {
+			server.pending = [][]byte{make([]byte, 1)}
+			server.held = 1
+			server.asked = true
+
+			So(server.worthSending(), ShouldBeTrue)
+		})
+
+		Convey("An unbounded budget never sends on size alone", func() {
+			server.appendBytes = 0
+			server.pending = [][]byte{make([]byte, 1<<20)}
+			server.held = 1 << 20
+
+			So(server.worthSending(), ShouldBeFalse)
 		})
 	})
-}
-
-func BenchmarkFillRow(b *testing.B) {
-	row := captureRow(b, []byte(`{"channel":"ticker","data":[{"last":123.45,"symbol":"BTC/USD"}]}`))
-	declared, err := ConfigFromJSON(captureDeclaration)
-
-	if err != nil {
-		b.Fatal(err)
-	}
-
-	schema, err := SchemaFromJSON(captureDeclaration)
-
-	if err != nil {
-		b.Fatal(err)
-	}
-
-	converted, err := arrowSchemaFor(schema)
-
-	if err != nil {
-		b.Fatal(err)
-	}
-
-	builder := array.NewRecordBuilder(memory.DefaultAllocator, converted)
-	defer builder.Release()
-	b.ReportAllocs()
-
-	for b.Loop() {
-		if err := fillRow(builder, declared, row); err != nil {
-			b.Fatal(err)
-		}
-
-		record := builder.NewRecordBatch()
-		record.Release()
-	}
 }

@@ -1008,6 +1008,160 @@
       }
     ]
   },
+  "EpisodeTape": {
+    "name": "EpisodeTape",
+    "exportName": "EpisodeTape",
+    "hasChildren": false,
+    "props": [
+      {
+        "name": "title",
+        "type": "string",
+        "optional": true
+      },
+      {
+        "name": "className",
+        "type": "string",
+        "optional": true
+      },
+      {
+        "name": "justify",
+        "type": "select",
+        "options": [
+          "center",
+          "start",
+          "end",
+          "between",
+          "around",
+          "evenly",
+          "stretch"
+        ],
+        "optional": true
+      },
+      {
+        "name": "align",
+        "type": "select",
+        "options": [
+          "center",
+          "start",
+          "end",
+          "stretch",
+          "baseline"
+        ],
+        "optional": true
+      },
+      {
+        "name": "wrap",
+        "type": "select",
+        "options": [
+          "wrap",
+          "wrapReverse",
+          "nowrap"
+        ],
+        "optional": true
+      },
+      {
+        "name": "gap",
+        "type": "select",
+        "options": [
+          "1",
+          "2",
+          "3",
+          "4",
+          "5",
+          "6",
+          "7",
+          "8",
+          "9",
+          "10",
+          "11",
+          "12"
+        ],
+        "optional": true
+      },
+      {
+        "name": "padding",
+        "type": "select",
+        "options": [
+          "1",
+          "2",
+          "3",
+          "4",
+          "5",
+          "6",
+          "7",
+          "8",
+          "9",
+          "10",
+          "11",
+          "12"
+        ],
+        "optional": true
+      },
+      {
+        "name": "margin",
+        "type": "select",
+        "options": [
+          "1",
+          "2",
+          "3",
+          "4",
+          "5",
+          "6",
+          "7",
+          "8",
+          "9",
+          "10",
+          "11",
+          "12"
+        ],
+        "optional": true
+      },
+      {
+        "name": "grow",
+        "type": "select",
+        "options": [
+          "grow",
+          "shrink",
+          "growShrink",
+          "growShrinkGrow",
+          "growShrinkShrink"
+        ],
+        "optional": true
+      },
+      {
+        "name": "fullHeight",
+        "type": "boolean",
+        "optional": true
+      },
+      {
+        "name": "fullWidth",
+        "type": "boolean",
+        "optional": true
+      },
+      {
+        "name": "appear",
+        "type": "select",
+        "options": [
+          "panelBottomRight",
+          "panelCenter",
+          "fade",
+          "fadeUp",
+          "fadeDown",
+          "slideRight",
+          "slideLeft",
+          "scaleIn",
+          "wiggleIdle",
+          "press"
+        ],
+        "optional": true
+      },
+      {
+        "name": "episode",
+        "type": "data",
+        "optional": true
+      }
+    ]
+  },
   "EvidenceGraph": {
     "name": "EvidenceGraph",
     "exportName": "EvidenceGraph",
@@ -1636,6 +1790,175 @@
           "wiggleIdle",
           "press"
         ],
+        "optional": true
+      }
+    ]
+  },
+  "ForwardView": {
+    "name": "ForwardView",
+    "exportName": "ForwardView",
+    "hasChildren": false,
+    "props": [
+      {
+        "name": "title",
+        "type": "string",
+        "optional": true
+      },
+      {
+        "name": "className",
+        "type": "string",
+        "optional": true
+      },
+      {
+        "name": "justify",
+        "type": "select",
+        "options": [
+          "center",
+          "start",
+          "end",
+          "between",
+          "around",
+          "evenly",
+          "stretch"
+        ],
+        "optional": true
+      },
+      {
+        "name": "align",
+        "type": "select",
+        "options": [
+          "center",
+          "start",
+          "end",
+          "stretch",
+          "baseline"
+        ],
+        "optional": true
+      },
+      {
+        "name": "wrap",
+        "type": "select",
+        "options": [
+          "wrap",
+          "wrapReverse",
+          "nowrap"
+        ],
+        "optional": true
+      },
+      {
+        "name": "gap",
+        "type": "select",
+        "options": [
+          "1",
+          "2",
+          "3",
+          "4",
+          "5",
+          "6",
+          "7",
+          "8",
+          "9",
+          "10",
+          "11",
+          "12"
+        ],
+        "optional": true
+      },
+      {
+        "name": "padding",
+        "type": "select",
+        "options": [
+          "1",
+          "2",
+          "3",
+          "4",
+          "5",
+          "6",
+          "7",
+          "8",
+          "9",
+          "10",
+          "11",
+          "12"
+        ],
+        "optional": true
+      },
+      {
+        "name": "margin",
+        "type": "select",
+        "options": [
+          "1",
+          "2",
+          "3",
+          "4",
+          "5",
+          "6",
+          "7",
+          "8",
+          "9",
+          "10",
+          "11",
+          "12"
+        ],
+        "optional": true
+      },
+      {
+        "name": "grow",
+        "type": "select",
+        "options": [
+          "grow",
+          "shrink",
+          "growShrink",
+          "growShrinkGrow",
+          "growShrinkShrink"
+        ],
+        "optional": true
+      },
+      {
+        "name": "fullHeight",
+        "type": "boolean",
+        "optional": true
+      },
+      {
+        "name": "fullWidth",
+        "type": "boolean",
+        "optional": true
+      },
+      {
+        "name": "appear",
+        "type": "select",
+        "options": [
+          "panelBottomRight",
+          "panelCenter",
+          "fade",
+          "fadeUp",
+          "fadeDown",
+          "slideRight",
+          "slideLeft",
+          "scaleIn",
+          "wiggleIdle",
+          "press"
+        ],
+        "optional": true
+      },
+      {
+        "name": "episode",
+        "type": "data",
+        "optional": true
+      },
+      {
+        "name": "branches",
+        "type": "data",
+        "optional": true
+      },
+      {
+        "name": "outcomeBins",
+        "type": "data",
+        "optional": true
+      },
+      {
+        "name": "summary",
+        "type": "data",
         "optional": true
       }
     ]
@@ -6649,6 +6972,165 @@
       }
     ]
   },
+  "OutcomeDistribution": {
+    "name": "OutcomeDistribution",
+    "exportName": "OutcomeDistribution",
+    "hasChildren": false,
+    "props": [
+      {
+        "name": "title",
+        "type": "string",
+        "optional": true
+      },
+      {
+        "name": "className",
+        "type": "string",
+        "optional": true
+      },
+      {
+        "name": "justify",
+        "type": "select",
+        "options": [
+          "center",
+          "start",
+          "end",
+          "between",
+          "around",
+          "evenly",
+          "stretch"
+        ],
+        "optional": true
+      },
+      {
+        "name": "align",
+        "type": "select",
+        "options": [
+          "center",
+          "start",
+          "end",
+          "stretch",
+          "baseline"
+        ],
+        "optional": true
+      },
+      {
+        "name": "wrap",
+        "type": "select",
+        "options": [
+          "wrap",
+          "wrapReverse",
+          "nowrap"
+        ],
+        "optional": true
+      },
+      {
+        "name": "gap",
+        "type": "select",
+        "options": [
+          "1",
+          "2",
+          "3",
+          "4",
+          "5",
+          "6",
+          "7",
+          "8",
+          "9",
+          "10",
+          "11",
+          "12"
+        ],
+        "optional": true
+      },
+      {
+        "name": "padding",
+        "type": "select",
+        "options": [
+          "1",
+          "2",
+          "3",
+          "4",
+          "5",
+          "6",
+          "7",
+          "8",
+          "9",
+          "10",
+          "11",
+          "12"
+        ],
+        "optional": true
+      },
+      {
+        "name": "margin",
+        "type": "select",
+        "options": [
+          "1",
+          "2",
+          "3",
+          "4",
+          "5",
+          "6",
+          "7",
+          "8",
+          "9",
+          "10",
+          "11",
+          "12"
+        ],
+        "optional": true
+      },
+      {
+        "name": "grow",
+        "type": "select",
+        "options": [
+          "grow",
+          "shrink",
+          "growShrink",
+          "growShrinkGrow",
+          "growShrinkShrink"
+        ],
+        "optional": true
+      },
+      {
+        "name": "fullHeight",
+        "type": "boolean",
+        "optional": true
+      },
+      {
+        "name": "fullWidth",
+        "type": "boolean",
+        "optional": true
+      },
+      {
+        "name": "appear",
+        "type": "select",
+        "options": [
+          "panelBottomRight",
+          "panelCenter",
+          "fade",
+          "fadeUp",
+          "fadeDown",
+          "slideRight",
+          "slideLeft",
+          "scaleIn",
+          "wiggleIdle",
+          "press"
+        ],
+        "optional": true
+      },
+      {
+        "name": "bins",
+        "type": "data",
+        "optional": true
+      },
+      {
+        "name": "unit",
+        "type": "string",
+        "optional": true
+      }
+    ]
+  },
   "Overlay": {
     "name": "Overlay",
     "exportName": "Overlay",
@@ -6920,6 +7402,160 @@
       {
         "name": "title",
         "type": "string",
+        "optional": true
+      }
+    ]
+  },
+  "PolicyBranches": {
+    "name": "PolicyBranches",
+    "exportName": "PolicyBranches",
+    "hasChildren": false,
+    "props": [
+      {
+        "name": "title",
+        "type": "string",
+        "optional": true
+      },
+      {
+        "name": "className",
+        "type": "string",
+        "optional": true
+      },
+      {
+        "name": "justify",
+        "type": "select",
+        "options": [
+          "center",
+          "start",
+          "end",
+          "between",
+          "around",
+          "evenly",
+          "stretch"
+        ],
+        "optional": true
+      },
+      {
+        "name": "align",
+        "type": "select",
+        "options": [
+          "center",
+          "start",
+          "end",
+          "stretch",
+          "baseline"
+        ],
+        "optional": true
+      },
+      {
+        "name": "wrap",
+        "type": "select",
+        "options": [
+          "wrap",
+          "wrapReverse",
+          "nowrap"
+        ],
+        "optional": true
+      },
+      {
+        "name": "gap",
+        "type": "select",
+        "options": [
+          "1",
+          "2",
+          "3",
+          "4",
+          "5",
+          "6",
+          "7",
+          "8",
+          "9",
+          "10",
+          "11",
+          "12"
+        ],
+        "optional": true
+      },
+      {
+        "name": "padding",
+        "type": "select",
+        "options": [
+          "1",
+          "2",
+          "3",
+          "4",
+          "5",
+          "6",
+          "7",
+          "8",
+          "9",
+          "10",
+          "11",
+          "12"
+        ],
+        "optional": true
+      },
+      {
+        "name": "margin",
+        "type": "select",
+        "options": [
+          "1",
+          "2",
+          "3",
+          "4",
+          "5",
+          "6",
+          "7",
+          "8",
+          "9",
+          "10",
+          "11",
+          "12"
+        ],
+        "optional": true
+      },
+      {
+        "name": "grow",
+        "type": "select",
+        "options": [
+          "grow",
+          "shrink",
+          "growShrink",
+          "growShrinkGrow",
+          "growShrinkShrink"
+        ],
+        "optional": true
+      },
+      {
+        "name": "fullHeight",
+        "type": "boolean",
+        "optional": true
+      },
+      {
+        "name": "fullWidth",
+        "type": "boolean",
+        "optional": true
+      },
+      {
+        "name": "appear",
+        "type": "select",
+        "options": [
+          "panelBottomRight",
+          "panelCenter",
+          "fade",
+          "fadeUp",
+          "fadeDown",
+          "slideRight",
+          "slideLeft",
+          "scaleIn",
+          "wiggleIdle",
+          "press"
+        ],
+        "optional": true
+      },
+      {
+        "name": "branches",
+        "type": "data",
         "optional": true
       }
     ]
@@ -7196,6 +7832,28 @@
       {
         "name": "meta",
         "type": "slot",
+        "optional": true
+      }
+    ]
+  },
+  "RecognitionView": {
+    "name": "RecognitionView",
+    "exportName": "RecognitionView",
+    "hasChildren": false,
+    "props": [
+      {
+        "name": "className",
+        "type": "string",
+        "optional": true
+      },
+      {
+        "name": "metricMap",
+        "type": "data",
+        "optional": true
+      },
+      {
+        "name": "recentActivity",
+        "type": "data",
         "optional": true
       }
     ]
@@ -7825,6 +8483,28 @@
       },
       {
         "name": "title",
+        "type": "string",
+        "optional": true
+      }
+    ]
+  },
+  "TrieView": {
+    "name": "TrieView",
+    "exportName": "TrieView",
+    "hasChildren": false,
+    "props": [
+      {
+        "name": "root",
+        "type": "data",
+        "optional": true
+      },
+      {
+        "name": "candidates",
+        "type": "data",
+        "optional": true
+      },
+      {
+        "name": "className",
         "type": "string",
         "optional": true
       }

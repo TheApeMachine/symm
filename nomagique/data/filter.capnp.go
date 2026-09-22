@@ -11,6 +11,7 @@ import (
 	context "context"
 	runtime "github.com/theapemachine/symm/nomagique/runtime"
 	math "math"
+	strconv "strconv"
 )
 
 type Filter capnp.Client
@@ -28,7 +29,7 @@ func (c Filter) Write(ctx context.Context, params func(Filter_write_Params) erro
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 8, PointerCount: 3}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 8, PointerCount: 4}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(Filter_write_Params(s)) }
 	}
 
@@ -36,7 +37,7 @@ func (c Filter) Write(ctx context.Context, params func(Filter_write_Params) erro
 
 }
 
-func (c Filter) Done(ctx context.Context, params func(Filter_done_Params) error) (Filter_done_Results_Future, capnp.ReleaseFunc) {
+func (c Filter) Done(ctx context.Context, params func(Filter_done_Params) error) (Filtered_Future, capnp.ReleaseFunc) {
 
 	s := capnp.Send{
 		Method: capnp.Method{
@@ -52,7 +53,7 @@ func (c Filter) Done(ctx context.Context, params func(Filter_done_Params) error)
 	}
 
 	ans, release := capnp.Client(c).SendCall(ctx, s)
-	return Filter_done_Results_Future{Future: ans.Future()}, release
+	return Filtered_Future{Future: ans.Future()}, release
 
 }
 
@@ -209,9 +210,9 @@ func (c Filter_done) Args() Filter_done_Params {
 }
 
 // AllocResults allocates the results struct.
-func (c Filter_done) AllocResults() (Filter_done_Results, error) {
+func (c Filter_done) AllocResults() (Filtered, error) {
 	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 1})
-	return Filter_done_Results(r), err
+	return Filtered(r), err
 }
 
 // Filter_List is a list of Filter.
@@ -229,12 +230,12 @@ type Filter_write_Params capnp.Struct
 const Filter_write_Params_TypeID = 0xdabadd3b92429007
 
 func NewFilter_write_Params(s *capnp.Segment) (Filter_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 3})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 4})
 	return Filter_write_Params(st), err
 }
 
 func NewRootFilter_write_Params(s *capnp.Segment) (Filter_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 3})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 4})
 	return Filter_write_Params(st), err
 }
 
@@ -327,12 +328,30 @@ func (s Filter_write_Params) SetThreshold(v float64) {
 	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
 }
 
+func (s Filter_write_Params) ReferencePath() (string, error) {
+	p, err := capnp.Struct(s).Ptr(3)
+	return p.Text(), err
+}
+
+func (s Filter_write_Params) HasReferencePath() bool {
+	return capnp.Struct(s).HasPtr(3)
+}
+
+func (s Filter_write_Params) ReferencePathBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(3)
+	return p.TextBytes(), err
+}
+
+func (s Filter_write_Params) SetReferencePath(v string) error {
+	return capnp.Struct(s).SetText(3, v)
+}
+
 // Filter_write_Params_List is a list of Filter_write_Params.
 type Filter_write_Params_List = capnp.StructList[Filter_write_Params]
 
 // NewFilter_write_Params creates a new list of Filter_write_Params.
 func NewFilter_write_Params_List(s *capnp.Segment, sz int32) (Filter_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 3}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 4}, sz)
 	return capnp.StructList[Filter_write_Params](l), err
 }
 
@@ -409,95 +428,129 @@ func (f Filter_done_Params_Future) Struct() (Filter_done_Params, error) {
 	return Filter_done_Params(p.Struct()), err
 }
 
-type Filter_done_Results capnp.Struct
+type Filtered capnp.Struct
+type Filtered_Which uint16
 
-// Filter_done_Results_TypeID is the unique identifier for the type Filter_done_Results.
-const Filter_done_Results_TypeID = 0x9e36650099ab8f61
+const (
+	Filtered_Which_out      Filtered_Which = 0
+	Filtered_Which_rejected Filtered_Which = 1
+)
 
-func NewFilter_done_Results(s *capnp.Segment) (Filter_done_Results, error) {
+func (w Filtered_Which) String() string {
+	const s = "outrejected"
+	switch w {
+	case Filtered_Which_out:
+		return s[0:3]
+	case Filtered_Which_rejected:
+		return s[3:11]
+
+	}
+	return "Filtered_Which(" + strconv.FormatUint(uint64(w), 10) + ")"
+}
+
+// Filtered_TypeID is the unique identifier for the type Filtered.
+const Filtered_TypeID = 0xdd66eed67d6c9fec
+
+func NewFiltered(s *capnp.Segment) (Filtered, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
-	return Filter_done_Results(st), err
+	return Filtered(st), err
 }
 
-func NewRootFilter_done_Results(s *capnp.Segment) (Filter_done_Results, error) {
+func NewRootFiltered(s *capnp.Segment) (Filtered, error) {
 	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
-	return Filter_done_Results(st), err
+	return Filtered(st), err
 }
 
-func ReadRootFilter_done_Results(msg *capnp.Message) (Filter_done_Results, error) {
+func ReadRootFiltered(msg *capnp.Message) (Filtered, error) {
 	root, err := msg.Root()
-	return Filter_done_Results(root.Struct()), err
+	return Filtered(root.Struct()), err
 }
 
-func (s Filter_done_Results) String() string {
-	str, _ := text.Marshal(0x9e36650099ab8f61, capnp.Struct(s))
+func (s Filtered) String() string {
+	str, _ := text.Marshal(0xdd66eed67d6c9fec, capnp.Struct(s))
 	return str
 }
 
-func (s Filter_done_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+func (s Filtered) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
 	return capnp.Struct(s).EncodeAsPtr(seg)
 }
 
-func (Filter_done_Results) DecodeFromPtr(p capnp.Ptr) Filter_done_Results {
-	return Filter_done_Results(capnp.Struct{}.DecodeFromPtr(p))
+func (Filtered) DecodeFromPtr(p capnp.Ptr) Filtered {
+	return Filtered(capnp.Struct{}.DecodeFromPtr(p))
 }
 
-func (s Filter_done_Results) ToPtr() capnp.Ptr {
+func (s Filtered) ToPtr() capnp.Ptr {
 	return capnp.Struct(s).ToPtr()
 }
-func (s Filter_done_Results) IsValid() bool {
+
+func (s Filtered) Which() Filtered_Which {
+	return Filtered_Which(capnp.Struct(s).Uint16(4))
+}
+func (s Filtered) IsValid() bool {
 	return capnp.Struct(s).IsValid()
 }
 
-func (s Filter_done_Results) Message() *capnp.Message {
+func (s Filtered) Message() *capnp.Message {
 	return capnp.Struct(s).Message()
 }
 
-func (s Filter_done_Results) Segment() *capnp.Segment {
+func (s Filtered) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Filter_done_Results) Out() ([]byte, error) {
+func (s Filtered) Out() ([]byte, error) {
+	if capnp.Struct(s).Uint16(4) != 0 {
+		panic("Which() != out")
+	}
 	p, err := capnp.Struct(s).Ptr(0)
 	return []byte(p.Data()), err
 }
 
-func (s Filter_done_Results) HasOut() bool {
+func (s Filtered) HasOut() bool {
+	if capnp.Struct(s).Uint16(4) != 0 {
+		return false
+	}
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s Filter_done_Results) SetOut(v []byte) error {
+func (s Filtered) SetOut(v []byte) error {
+	capnp.Struct(s).SetUint16(4, 0)
 	return capnp.Struct(s).SetData(0, v)
 }
 
-func (s Filter_done_Results) Passed() bool {
+func (s Filtered) SetRejected() {
+	capnp.Struct(s).SetUint16(4, 1)
+
+}
+
+func (s Filtered) Passed() bool {
 	return capnp.Struct(s).Bit(0)
 }
 
-func (s Filter_done_Results) SetPassed(v bool) {
+func (s Filtered) SetPassed(v bool) {
 	capnp.Struct(s).SetBit(0, v)
 }
 
-func (s Filter_done_Results) Status() runtime.Status {
+func (s Filtered) Status() runtime.Status {
 	return runtime.Status(capnp.Struct(s).Uint16(2))
 }
 
-func (s Filter_done_Results) SetStatus(v runtime.Status) {
+func (s Filtered) SetStatus(v runtime.Status) {
 	capnp.Struct(s).SetUint16(2, uint16(v))
 }
 
-// Filter_done_Results_List is a list of Filter_done_Results.
-type Filter_done_Results_List = capnp.StructList[Filter_done_Results]
+// Filtered_List is a list of Filtered.
+type Filtered_List = capnp.StructList[Filtered]
 
-// NewFilter_done_Results creates a new list of Filter_done_Results.
-func NewFilter_done_Results_List(s *capnp.Segment, sz int32) (Filter_done_Results_List, error) {
+// NewFiltered creates a new list of Filtered.
+func NewFiltered_List(s *capnp.Segment, sz int32) (Filtered_List, error) {
 	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1}, sz)
-	return capnp.StructList[Filter_done_Results](l), err
+	return capnp.StructList[Filtered](l), err
 }
 
-// Filter_done_Results_Future is a wrapper for a Filter_done_Results promised by a client call.
-type Filter_done_Results_Future struct{ *capnp.Future }
+// Filtered_Future is a wrapper for a Filtered promised by a client call.
+type Filtered_Future struct{ *capnp.Future }
 
-func (f Filter_done_Results_Future) Struct() (Filter_done_Results, error) {
+func (f Filtered_Future) Struct() (Filtered, error) {
 	p, err := f.Future.Ptr()
-	return Filter_done_Results(p.Struct()), err
+	return Filtered(p.Struct()), err
 }

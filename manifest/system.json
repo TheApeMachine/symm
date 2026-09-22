@@ -91,7 +91,7 @@
           ]
         },
         "outputs": {
-          "read": [
+          "frame.read": [
             {
               "nodeId": "grid",
               "portName": "data"
@@ -189,7 +189,7 @@
           ]
         },
         "outputs": {
-          "read": [
+          "frame.read": [
             {
               "nodeId": "grid",
               "portName": "data_1"
@@ -287,7 +287,7 @@
           ]
         },
         "outputs": {
-          "read": [
+          "frame.read": [
             {
               "nodeId": "grid",
               "portName": "data_2"
@@ -385,7 +385,7 @@
           ]
         },
         "outputs": {
-          "read": [
+          "frame.read": [
             {
               "nodeId": "grid",
               "portName": "data_3"
@@ -3848,25 +3848,25 @@
           "data": [
             {
               "nodeId": "1b06e22b-00b8-402d-9eba-454ae57daabd",
-              "portName": "read"
+              "portName": "frame.read"
             }
           ],
           "data_1": [
             {
               "nodeId": "2a01e001-0002-4000-8000-000000000003",
-              "portName": "read"
+              "portName": "frame.read"
             }
           ],
           "data_2": [
             {
               "nodeId": "3b01e001-0003-4000-8000-000000000003",
-              "portName": "read"
+              "portName": "frame.read"
             }
           ],
           "data_3": [
             {
               "nodeId": "4c01e001-0004-4000-8000-000000000003",
-              "portName": "read"
+              "portName": "frame.read"
             }
           ],
           "metrics": [

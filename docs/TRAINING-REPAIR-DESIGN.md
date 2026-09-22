@@ -20,9 +20,10 @@ is removed. Anchor remains an event-mining boundary; it is not training point A.
 Capture and offline mining now have separate manifests. The previous training
 manifest no longer reinforces predicted winners or runs TaskLearner,
 TemporalLedger, Surprisal, Window/PageRank, or a four-rank token surrogate.
-It mines single-series excursions only (`data.0.last` on a ticker frame); it is
-not a multi-symbol miner. Symbol partitioning and all-record expansion are still
-required. There is no claim that an absent remapper has settled.
+`store.Tape` now orders and deduplicates the archive by explicit session and
+numeric sequence. `temporal.Mine` expands every record in the selected channel,
+partitions by session/endpoint/symbol, and persists confirmed B/C/D cursors with
+uniformly sampled precursor A and its random seed. It reuses `Excursion` math.
 The paper process must not be advertised as implemented until model publication,
 position accounting, and the causal evaluation tests below exist.
 
@@ -35,7 +36,7 @@ field into Arrow Binary. It must never store the envelope as the raw frame.
 Metadata absent from the producer stays absent. A frame may contain multiple
 symbols or be a control response; do not assign it an invented single symbol.
 
-The repaired capture manifest uses `raw_frames_v2`: existing null-payload rows
+The repaired capture manifest uses `raw_frames_v3`: existing null-payload rows
 cannot be recovered by changing the reader. It requires receive time, endpoint,
 frame identity, and payload. Symbol and kind remain optional until a
 protocol-owned metadata extractor supplies them. No frame is discarded because
@@ -45,13 +46,10 @@ Storage owns append cadence through its byte budget. Explicit `Durable.flush`
 persists the tail before release, using a context independent of stop signals.
 An ambiguous append retains its rows. Shutdown currently flushes rows already
 accepted by storage; ingress stop/drain coordination is still required to cover
-frames queued in the socket when cancellation occurs. Before archive training, scan must order
-by an explicit tape cursor and deduplicate matching capture identities; scan
-file order is not a global market order. Conflicting duplicate identities must
-fail, not select one payload. Receive time currently stored as Iceberg timestamp
-has microsecond resolution; add a lossless receive-time/cursor field before
-merging independently captured streams. Do not pretend timestamp ties establish
-causal order.
+frames queued in the socket when cancellation occurs. `IcebergScan` preserves complete rows. `store.Tape` orders numeric sequences
+within each capture session, rejects conflicting duplicates, and preserves the
+lossless `received_time` field. Independent sessions remain separate tapes;
+their lexical presentation order is not a global causal clock.
 
 Subscription configuration belongs to ingress. A subscription must be sent once
 per connection and restored on reconnect, not sent on every graph evaluation.

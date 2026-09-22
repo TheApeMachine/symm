@@ -9,5 +9,17 @@ using import "../../runtime/status.capnp".Source;
 
 interface WebSocketClient extends(Source) {
   write @0 (endpoint :Text, write :Data) -> stream;
-  done @1 () -> (status: Status, read :Data, receivedAt :Text, endpoint :Text);
+  done @1 () -> Received;
+}
+
+struct Received {
+  status @0 :Status;
+  union {
+    idle @1 :Void;
+    frame :group {
+      read @2 :Data;
+      receivedAt @3 :Text;
+      endpoint @4 :Text;
+    }
+  }
 }

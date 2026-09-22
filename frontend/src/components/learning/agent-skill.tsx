@@ -6,7 +6,7 @@ import { Flex } from "#/components/ui/flex";
 import { Typography } from "#/components/ui/typography";
 import { memoizedQuery } from "#/lib/utils";
 import type { WireMeasurement } from "#/types/capnp/measurement";
-import { basis, percent } from "./format";
+import { basis, percent } from "#/components/ui/learning-format";
 
 export const AgentSkill = () => {
 	const symbol = useSelector(focusAtom, (s) => s);

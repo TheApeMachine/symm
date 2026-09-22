@@ -27,7 +27,7 @@ func (c LBFGS) Write(ctx context.Context, params func(LBFGS_write_Params) error)
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 8, PointerCount: 3}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 24, PointerCount: 2}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(LBFGS_write_Params(s)) }
 	}
 
@@ -228,12 +228,12 @@ type LBFGS_write_Params capnp.Struct
 const LBFGS_write_Params_TypeID = 0xb6e890e4b7a59716
 
 func NewLBFGS_write_Params(s *capnp.Segment) (LBFGS_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 3})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 2})
 	return LBFGS_write_Params(st), err
 }
 
 func NewRootLBFGS_write_Params(s *capnp.Segment) (LBFGS_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 3})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 2})
 	return LBFGS_write_Params(st), err
 }
 
@@ -269,22 +269,30 @@ func (s LBFGS_write_Params) Message() *capnp.Message {
 func (s LBFGS_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s LBFGS_write_Params) InitX() (capnp.Float64List, error) {
+func (s LBFGS_write_Params) FVal() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(0))
+}
+
+func (s LBFGS_write_Params) SetFVal(v float64) {
+	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
+}
+
+func (s LBFGS_write_Params) Gradient() (capnp.Float64List, error) {
 	p, err := capnp.Struct(s).Ptr(0)
 	return capnp.Float64List(p.List()), err
 }
 
-func (s LBFGS_write_Params) HasInitX() bool {
+func (s LBFGS_write_Params) HasGradient() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s LBFGS_write_Params) SetInitX(v capnp.Float64List) error {
+func (s LBFGS_write_Params) SetGradient(v capnp.Float64List) error {
 	return capnp.Struct(s).SetPtr(0, v.ToPtr())
 }
 
-// NewInitX sets the initX field to a newly
+// NewGradient sets the gradient field to a newly
 // allocated capnp.Float64List, preferring placement in s's segment.
-func (s LBFGS_write_Params) NewInitX(n int32) (capnp.Float64List, error) {
+func (s LBFGS_write_Params) NewGradient(n int32) (capnp.Float64List, error) {
 	l, err := capnp.NewFloat64List(capnp.Struct(s).Segment(), n)
 	if err != nil {
 		return capnp.Float64List{}, err
@@ -292,22 +300,22 @@ func (s LBFGS_write_Params) NewInitX(n int32) (capnp.Float64List, error) {
 	err = capnp.Struct(s).SetPtr(0, l.ToPtr())
 	return l, err
 }
-func (s LBFGS_write_Params) MatrixA() (capnp.Float64List, error) {
+func (s LBFGS_write_Params) Seed() (capnp.Float64List, error) {
 	p, err := capnp.Struct(s).Ptr(1)
 	return capnp.Float64List(p.List()), err
 }
 
-func (s LBFGS_write_Params) HasMatrixA() bool {
+func (s LBFGS_write_Params) HasSeed() bool {
 	return capnp.Struct(s).HasPtr(1)
 }
 
-func (s LBFGS_write_Params) SetMatrixA(v capnp.Float64List) error {
+func (s LBFGS_write_Params) SetSeed(v capnp.Float64List) error {
 	return capnp.Struct(s).SetPtr(1, v.ToPtr())
 }
 
-// NewMatrixA sets the matrixA field to a newly
+// NewSeed sets the seed field to a newly
 // allocated capnp.Float64List, preferring placement in s's segment.
-func (s LBFGS_write_Params) NewMatrixA(n int32) (capnp.Float64List, error) {
+func (s LBFGS_write_Params) NewSeed(n int32) (capnp.Float64List, error) {
 	l, err := capnp.NewFloat64List(capnp.Struct(s).Segment(), n)
 	if err != nil {
 		return capnp.Float64List{}, err
@@ -315,35 +323,20 @@ func (s LBFGS_write_Params) NewMatrixA(n int32) (capnp.Float64List, error) {
 	err = capnp.Struct(s).SetPtr(1, l.ToPtr())
 	return l, err
 }
-func (s LBFGS_write_Params) VectorB() (capnp.Float64List, error) {
-	p, err := capnp.Struct(s).Ptr(2)
-	return capnp.Float64List(p.List()), err
+func (s LBFGS_write_Params) Memory() int32 {
+	return int32(capnp.Struct(s).Uint32(8))
 }
 
-func (s LBFGS_write_Params) HasVectorB() bool {
-	return capnp.Struct(s).HasPtr(2)
+func (s LBFGS_write_Params) SetMemory(v int32) {
+	capnp.Struct(s).SetUint32(8, uint32(v))
 }
 
-func (s LBFGS_write_Params) SetVectorB(v capnp.Float64List) error {
-	return capnp.Struct(s).SetPtr(2, v.ToPtr())
+func (s LBFGS_write_Params) Tolerance() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(16))
 }
 
-// NewVectorB sets the vectorB field to a newly
-// allocated capnp.Float64List, preferring placement in s's segment.
-func (s LBFGS_write_Params) NewVectorB(n int32) (capnp.Float64List, error) {
-	l, err := capnp.NewFloat64List(capnp.Struct(s).Segment(), n)
-	if err != nil {
-		return capnp.Float64List{}, err
-	}
-	err = capnp.Struct(s).SetPtr(2, l.ToPtr())
-	return l, err
-}
-func (s LBFGS_write_Params) Dim() int32 {
-	return int32(capnp.Struct(s).Uint32(0))
-}
-
-func (s LBFGS_write_Params) SetDim(v int32) {
-	capnp.Struct(s).SetUint32(0, uint32(v))
+func (s LBFGS_write_Params) SetTolerance(v float64) {
+	capnp.Struct(s).SetUint64(16, math.Float64bits(v))
 }
 
 // LBFGS_write_Params_List is a list of LBFGS_write_Params.
@@ -351,7 +344,7 @@ type LBFGS_write_Params_List = capnp.StructList[LBFGS_write_Params]
 
 // NewLBFGS_write_Params creates a new list of LBFGS_write_Params.
 func NewLBFGS_write_Params_List(s *capnp.Segment, sz int32) (LBFGS_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 3}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 24, PointerCount: 2}, sz)
 	return capnp.StructList[LBFGS_write_Params](l), err
 }
 
@@ -512,6 +505,14 @@ func (s LBFGS_done_Results) Iterations() int32 {
 
 func (s LBFGS_done_Results) SetIterations(v int32) {
 	capnp.Struct(s).SetUint32(8, uint32(v))
+}
+
+func (s LBFGS_done_Results) Converged() bool {
+	return capnp.Struct(s).Bit(96)
+}
+
+func (s LBFGS_done_Results) SetConverged(v bool) {
+	capnp.Struct(s).SetBit(96, v)
 }
 
 // LBFGS_done_Results_List is a list of LBFGS_done_Results.

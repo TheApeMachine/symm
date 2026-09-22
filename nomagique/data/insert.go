@@ -1,7 +1,9 @@
 package data
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"strconv"
 	"strings"
 
@@ -11,8 +13,8 @@ import (
 )
 
 /*
-InsertServer names a scalar into a structure at a dotted path, and is the
-exact inverse of ExtractServer. Chaining inserts accumulates many named
+InsertServer places a number or JSON value at a dotted path. Chaining
+inserts accumulates many named
 values into one structure, which is how a composed graph builds up a result
 without any node needing to know what the values mean.
 
@@ -22,9 +24,8 @@ structure can be built from nothing by inserting into an empty payload.
 */
 type InsertServer struct {
 	*runtime.System
-	path     string
-	document any
-	out      []byte
+	path string
+	out  []byte
 }
 
 func NewInsert(ctx context.Context) *InsertServer {
@@ -51,9 +52,7 @@ func (server *InsertServer) Write(ctx context.Context, call Insert_write) error 
 		))
 	}
 
-	if len(path) > 0 {
-		server.path = path
-	}
+	server.path = path
 
 	if server.path == "" {
 		return errnie.Error(errnie.Err(
@@ -79,7 +78,22 @@ func (server *InsertServer) Write(ctx context.Context, call Insert_write) error 
 		return err
 	}
 
-	document, err = insertAt(document, strings.Split(server.path, "."), call.Args().Value())
+	var value any = call.Args().Value()
+
+	if call.Args().HasJson() {
+		raw, err := call.Args().Json()
+
+		if err != nil {
+			return errnie.Error(errnie.Err(errnie.Validation, "insert: JSON value", err))
+		}
+		decoder := json.NewDecoder(bytes.NewReader(raw))
+		decoder.UseNumber()
+
+		if err := decoder.Decode(&value); err != nil {
+			return errnie.Error(errnie.Err(errnie.Validation, "insert: invalid JSON value", err))
+		}
+	}
+	document, err = insertAt(document, strings.Split(server.path, "."), value)
 
 	if err != nil {
 		return err
@@ -95,7 +109,6 @@ func (server *InsertServer) Write(ctx context.Context, call Insert_write) error 
 		))
 	}
 
-	server.document = document
 	server.out = encoded
 
 	return nil
@@ -134,17 +147,19 @@ func (server *InsertServer) Done(ctx context.Context, call Insert_done) error {
 }
 
 /*
-decode reads the inbound payload, falling back to the structure retained from
-the previous observation so that chained inserts accumulate.
+decode reads only this evaluation. An empty payload starts a new structure.
 */
 func (server *InsertServer) decode(payload []byte) (any, error) {
 	if len(payload) == 0 {
-		return server.document, nil
+		return nil, nil
 	}
 
 	var document any
 
-	if err := sonic.Unmarshal(payload, &document); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.UseNumber()
+
+	if err := decoder.Decode(&document); err != nil {
 		return nil, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"[data.insert.decode] inbound payload is not a structure",
@@ -159,7 +174,7 @@ func (server *InsertServer) decode(payload []byte) (any, error) {
 insertAt places value into document at segments, creating the objects and
 arrays the path implies.
 */
-func insertAt(document any, segments []string, value float64) (any, error) {
+func insertAt(document any, segments []string, value any) (any, error) {
 	segment := segments[0]
 	index, indexed := arrayIndex(segment)
 
@@ -197,7 +212,7 @@ func insertAt(document any, segments []string, value float64) (any, error) {
 }
 
 func insertIntoArray(
-	document any, segments []string, index int, value float64,
+	document any, segments []string, index int, value any,
 ) (any, error) {
 	elements, ok := document.([]any)
 

@@ -10,6 +10,7 @@ import (
 	server "capnproto.org/go/capnp/v3/server"
 	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
 	context "context"
+	strconv "strconv"
 )
 
 type Grid capnp.Client
@@ -27,7 +28,7 @@ func (c Grid) Write(ctx context.Context, params func(Grid_write_Params) error) e
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 1}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 8, PointerCount: 2}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(Grid_write_Params(s)) }
 	}
 
@@ -35,7 +36,7 @@ func (c Grid) Write(ctx context.Context, params func(Grid_write_Params) error) e
 
 }
 
-func (c Grid) Done(ctx context.Context, params func(Grid_done_Params) error) (Grid_done_Results_Future, capnp.ReleaseFunc) {
+func (c Grid) Done(ctx context.Context, params func(Grid_done_Params) error) (Remapped_Future, capnp.ReleaseFunc) {
 
 	s := capnp.Send{
 		Method: capnp.Method{
@@ -51,7 +52,7 @@ func (c Grid) Done(ctx context.Context, params func(Grid_done_Params) error) (Gr
 	}
 
 	ans, release := capnp.Client(c).SendCall(ctx, s)
-	return Grid_done_Results_Future{Future: ans.Future()}, release
+	return Remapped_Future{Future: ans.Future()}, release
 
 }
 
@@ -208,9 +209,9 @@ func (c Grid_done) Args() Grid_done_Params {
 }
 
 // AllocResults allocates the results struct.
-func (c Grid_done) AllocResults() (Grid_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return Grid_done_Results(r), err
+func (c Grid_done) AllocResults() (Remapped, error) {
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 2})
+	return Remapped(r), err
 }
 
 // Grid_List is a list of Grid.
@@ -228,12 +229,12 @@ type Grid_write_Params capnp.Struct
 const Grid_write_Params_TypeID = 0x8b7ee3c2fab6a588
 
 func NewGrid_write_Params(s *capnp.Segment) (Grid_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 2})
 	return Grid_write_Params(st), err
 }
 
 func NewRootGrid_write_Params(s *capnp.Segment) (Grid_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 2})
 	return Grid_write_Params(st), err
 }
 
@@ -282,12 +283,41 @@ func (s Grid_write_Params) SetData(v []byte) error {
 	return capnp.Struct(s).SetData(0, v)
 }
 
+func (s Grid_write_Params) Width() uint32 {
+	return capnp.Struct(s).Uint32(0)
+}
+
+func (s Grid_write_Params) SetWidth(v uint32) {
+	capnp.Struct(s).SetUint32(0, v)
+}
+
+func (s Grid_write_Params) Height() uint32 {
+	return capnp.Struct(s).Uint32(4)
+}
+
+func (s Grid_write_Params) SetHeight(v uint32) {
+	capnp.Struct(s).SetUint32(4, v)
+}
+
+func (s Grid_write_Params) Frozen() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return []byte(p.Data()), err
+}
+
+func (s Grid_write_Params) HasFrozen() bool {
+	return capnp.Struct(s).HasPtr(1)
+}
+
+func (s Grid_write_Params) SetFrozen(v []byte) error {
+	return capnp.Struct(s).SetData(1, v)
+}
+
 // Grid_write_Params_List is a list of Grid_write_Params.
 type Grid_write_Params_List = capnp.StructList[Grid_write_Params]
 
 // NewGrid_write_Params creates a new list of Grid_write_Params.
 func NewGrid_write_Params_List(s *capnp.Segment, sz int32) (Grid_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 2}, sz)
 	return capnp.StructList[Grid_write_Params](l), err
 }
 
@@ -364,114 +394,195 @@ func (f Grid_done_Params_Future) Struct() (Grid_done_Params, error) {
 	return Grid_done_Params(p.Struct()), err
 }
 
-type Grid_done_Results capnp.Struct
+type Remapped capnp.Struct
+type Remapped_settled Remapped
+type Remapped_Which uint16
 
-// Grid_done_Results_TypeID is the unique identifier for the type Grid_done_Results.
-const Grid_done_Results_TypeID = 0x8dfbe712fe5112e6
+const (
+	Remapped_Which_unsettled Remapped_Which = 0
+	Remapped_Which_settled   Remapped_Which = 1
+)
 
-func NewGrid_done_Results(s *capnp.Segment) (Grid_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return Grid_done_Results(st), err
+func (w Remapped_Which) String() string {
+	const s = "unsettledsettled"
+	switch w {
+	case Remapped_Which_unsettled:
+		return s[0:9]
+	case Remapped_Which_settled:
+		return s[9:16]
+
+	}
+	return "Remapped_Which(" + strconv.FormatUint(uint64(w), 10) + ")"
 }
 
-func NewRootGrid_done_Results(s *capnp.Segment) (Grid_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return Grid_done_Results(st), err
+// Remapped_TypeID is the unique identifier for the type Remapped.
+const Remapped_TypeID = 0xb7cfec43c3dbf75d
+
+func NewRemapped(s *capnp.Segment) (Remapped, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 2})
+	return Remapped(st), err
 }
 
-func ReadRootGrid_done_Results(msg *capnp.Message) (Grid_done_Results, error) {
+func NewRootRemapped(s *capnp.Segment) (Remapped, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 2})
+	return Remapped(st), err
+}
+
+func ReadRootRemapped(msg *capnp.Message) (Remapped, error) {
 	root, err := msg.Root()
-	return Grid_done_Results(root.Struct()), err
+	return Remapped(root.Struct()), err
 }
 
-func (s Grid_done_Results) String() string {
-	str, _ := text.Marshal(0x8dfbe712fe5112e6, capnp.Struct(s))
+func (s Remapped) String() string {
+	str, _ := text.Marshal(0xb7cfec43c3dbf75d, capnp.Struct(s))
 	return str
 }
 
-func (s Grid_done_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+func (s Remapped) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
 	return capnp.Struct(s).EncodeAsPtr(seg)
 }
 
-func (Grid_done_Results) DecodeFromPtr(p capnp.Ptr) Grid_done_Results {
-	return Grid_done_Results(capnp.Struct{}.DecodeFromPtr(p))
+func (Remapped) DecodeFromPtr(p capnp.Ptr) Remapped {
+	return Remapped(capnp.Struct{}.DecodeFromPtr(p))
 }
 
-func (s Grid_done_Results) ToPtr() capnp.Ptr {
+func (s Remapped) ToPtr() capnp.Ptr {
 	return capnp.Struct(s).ToPtr()
 }
-func (s Grid_done_Results) IsValid() bool {
+
+func (s Remapped) Which() Remapped_Which {
+	return Remapped_Which(capnp.Struct(s).Uint16(0))
+}
+func (s Remapped) IsValid() bool {
 	return capnp.Struct(s).IsValid()
 }
 
-func (s Grid_done_Results) Message() *capnp.Message {
+func (s Remapped) Message() *capnp.Message {
 	return capnp.Struct(s).Message()
 }
 
-func (s Grid_done_Results) Segment() *capnp.Segment {
+func (s Remapped) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Grid_done_Results) Out() ([]byte, error) {
+func (s Remapped) Model() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(0)
 	return []byte(p.Data()), err
 }
 
-func (s Grid_done_Results) HasOut() bool {
+func (s Remapped) HasModel() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s Grid_done_Results) SetOut(v []byte) error {
+func (s Remapped) SetModel(v []byte) error {
 	return capnp.Struct(s).SetData(0, v)
 }
 
-// Grid_done_Results_List is a list of Grid_done_Results.
-type Grid_done_Results_List = capnp.StructList[Grid_done_Results]
+func (s Remapped) SetUnsettled() {
+	capnp.Struct(s).SetUint16(0, 0)
 
-// NewGrid_done_Results creates a new list of Grid_done_Results.
-func NewGrid_done_Results_List(s *capnp.Segment, sz int32) (Grid_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[Grid_done_Results](l), err
 }
 
-// Grid_done_Results_Future is a wrapper for a Grid_done_Results promised by a client call.
-type Grid_done_Results_Future struct{ *capnp.Future }
+func (s Remapped) Settled() Remapped_settled { return Remapped_settled(s) }
 
-func (f Grid_done_Results_Future) Struct() (Grid_done_Results, error) {
+func (s Remapped) SetSettled() {
+	capnp.Struct(s).SetUint16(0, 1)
+}
+
+func (s Remapped_settled) IsValid() bool {
+	return capnp.Struct(s).IsValid()
+}
+
+func (s Remapped_settled) Message() *capnp.Message {
+	return capnp.Struct(s).Message()
+}
+
+func (s Remapped_settled) Segment() *capnp.Segment {
+	return capnp.Struct(s).Segment()
+}
+func (s Remapped_settled) Out() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return []byte(p.Data()), err
+}
+
+func (s Remapped_settled) HasOut() bool {
+	return capnp.Struct(s).HasPtr(1)
+}
+
+func (s Remapped_settled) SetOut(v []byte) error {
+	return capnp.Struct(s).SetData(1, v)
+}
+
+// Remapped_List is a list of Remapped.
+type Remapped_List = capnp.StructList[Remapped]
+
+// NewRemapped creates a new list of Remapped.
+func NewRemapped_List(s *capnp.Segment, sz int32) (Remapped_List, error) {
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 2}, sz)
+	return capnp.StructList[Remapped](l), err
+}
+
+// Remapped_Future is a wrapper for a Remapped promised by a client call.
+type Remapped_Future struct{ *capnp.Future }
+
+func (f Remapped_Future) Struct() (Remapped, error) {
 	p, err := f.Future.Ptr()
-	return Grid_done_Results(p.Struct()), err
+	return Remapped(p.Struct()), err
+}
+func (p Remapped_Future) Settled() Remapped_settled_Future { return Remapped_settled_Future{p.Future} }
+
+// Remapped_settled_Future is a wrapper for a Remapped_settled promised by a client call.
+type Remapped_settled_Future struct{ *capnp.Future }
+
+func (f Remapped_settled_Future) Struct() (Remapped_settled, error) {
+	p, err := f.Future.Ptr()
+	return Remapped_settled(p.Struct()), err
 }
 
-const schema_c8d7a12b3e4f568a = "x\xda\x12x\xec\xc0b\xc8\xab\xce\xc2\xc0\x14h\xc0\xca" +
-	"\xf6\xbfc\xe9\xb6_\x87\x1e\xd7u3\x08\x9a120" +
-	"\xb02\xb230\x18\xffd\x94bb`\x14\x16d\xb2" +
-	"g`\xfc\xffL(\xf0\x9f\xd0\xf3\xdf\xbd\xc8\x0a\x0c\x99" +
-	"\xc0\x0a<\xc1\x0a\x96\x9e\xcd\xbek\xd4\xb9{9\x83\xa0" +
-	"!\xf3\xff\xae0\x7f;\xed\x85\xd7O000\x1ag" +
-	"2mb\x14ndbg`\x10\xaeej\x17>\x0b" +
-	"b\xfd7\xd2\x0e\x95\xb4\xcc\xbb\xbb\x01b\x1c\x0b\xc8\xb4" +
-	"\xadLBL\x0c1\xff\xf3\xf2s\x13\xd33\x0bK\xd9" +
-	"S\xf5sR\x13\x8b\xf22\xf3\xd2\xf5\x13\x8b\x8b\xf3\x93" +
-	"3\x13K2\xcbR\x91\xd9z\xc9\x89\x05y\x05V\xee" +
-	"E\x99)z\xe5E\x99%\xa9*\x01\x89E\x89\xcc\xb9" +
-	"\xc5\x81,\xcc,\x0c\x0c,\x8c\x0c\x0c\x82\xbcZ\x0c\x0c" +
-	"\x81\x1c\xcc\x8c\x81\"L\x8c\xfc)\x89%\x89\x8c\xbc\x0c" +
-	"L\x8c\xbc\x0c\x8c\xe4Z\x94\x92\x9f\x97\xaa\x12\x94Z\\" +
-	"\x9a\xc3\\\x82b\x91\x12\xc2\"\xf6\xfc\xd2\x12\x0c{X" +
-	"\x89\xb5G\x1elQ\x00#c \x073+\x03\x03<" +
-	"n\x18\xf36\x1e(7\x9e\x15?S\xd0\xd0\x88\x81I" +
-	"P\x95\x9d\x91\x11\x1e\x8e\x8c\xb0\xf8\x11\x94\xd4b`\x12" +
-	"\xe4e\x97\x07\x07\x88\x03#?\xc8\xbd\x0e\x8c\x01\x8c\x94" +
-	"y\x18\x14\xb0\xb9\x8c\xc5\x80\x00\x00\x00\xff\xff%\xbf\xac" +
-	"\x8d"
+const schema_c8d7a12b3e4f568a = "x\xda\x9c\x93?h\x14A\x18\xc5\xdf\x9b\xd9\xcb^\xe1" +
+	"r;\xde\x05\x8c\xcd\x81(H\x02\x89w\x07\x01S\x98" +
+	"C\x09**\xc9\xc4?\x95\x12\x97\xec\x98[\xbc\xdb;" +
+	"\xef6\x06-\xb4\xf4\x1f\x16V\xa2\x9dE\xb4\xd4((" +
+	"h#\x8a\xa0\x85\x08\x16ZH*\x0b\x1b[\x11\x04]" +
+	"\xd9;\xb3\x09\xd8h\xd8\xe6\xdb\xe1\xe3\xbd\xf9\xde\xef\x9b" +
+	"\x1dw\xad\xaaUr&\x8b\x10\x87\xeb\xcc\xf4\xc5\x97\x17" +
+	"\x1f\xffx\xf1\xf9\xc25\xe8Q\x12\xc8\x08\x1b\xa8\\\xcf" +
+	"m\x16`~1\xf7\x05\x8cg>\x1c8\xb4\xfd\xe9\xa6" +
+	"\x9b\xd0cd|\xe2\xfb\xa7\x97{\xbe\xbe{\x82~a" +
+	"\x13\xa8\x9cs7&\xad7\xdcq0^|{z\xb9" +
+	"|\xe5\xd9=\xa8\x92\x8c\xaf\x1e\x9b\xdc5t\xe7\xe3k" +
+	"\x80\x95%\xf7!\xf3o\\\x1b\xc8\xbfr/\xe5\xfb\x95" +
+	"\x0d\xc4\xe5\xa1\xa3\x03;\xc3\xe5\x07P\xa3\x04\xac\xc4\xf8" +
+	"g\xa2f\xad\x9a\xe8\x12\xb9*4!l\x01T\xbe\xb9" +
+	"\xef\x99W\x89D\xdeQ\xf7\x11w\xbfGq\xd8lx" +
+	"s\xc1\x99y\xdb\x8c\xd4\x8d\xd7\x0e\x83pn\xc4\xebt" +
+	"\x9a\xb3\x81\x17\x05g\xcd\xdazx\xd6k\x85\xad\xb1\xbd" +
+	"\xed\xc0\x1f^h\x07\x91\xd9:\xe5\xb5=\xd9\xe8hW" +
+	"Z\x80E@y\x83\x80>.\xa9k\x82d!\x09G" +
+	"\x992\xa0OJ\xea\xba\xa0\x12,P\x00*\x18\x03\xb4" +
+	"/\xa9[\x82J\xb2@\x09\xa8FrX\x93\xd4\x91`" +
+	"\xce\xf7\"\x8f\x0e\x04\x1d\xb0\xb8\x10\xf8Q\x8dY\x08f" +
+	"\xc1\xf1\x9a\x09\xe6jQ\xfa{\xaa\xdd<o\xc2\x95\xde" +
+	"u\x8c4m\x1a^\xabe\xfc\xe1\x8e\x89\xa2\xba\xa1\xaf" +
+	"-i\xb9\x7fn\xeal\x01tVR\x17\x04\xed\xe6|" +
+	"\xf4\x97O\xe6_}\x8a\xdd\xec\xa6H\x9d\x95\x19 \xdd" +
+	"\"\x86K\xcf\x17*\xb7gn\xa9R\x19Bm\xb3\xc9" +
+	"\x143W\xa8\xaa\x81A\x08\xe5\xd8\xc5n\xf4U\xe6\xfc" +
+	"fh\xaa\x9c\"\xd7\xcb0\x11\xe8\"l\xb0\x93j\xf4" +
+	"\xfdoh\xec\x0e\xb4!\xdd\x80\x89\x84vUR\x1f\x14" +
+	"t\x18\xc7\xbd\x1d\xd8?\x0d\xe8}\x92\xfa\x88\xa0#~" +
+	"\xc5\\\xf3B\x94\xde\x0dQl4}SO\xb3\x9d\x0f" +
+	"{(@\x1f}\x17{\xb5\xff;\x00\x00\xff\xff3\xfd" +
+	"\x08\xa3"
 
 func RegisterSchema(reg *schemas.Registry) {
 	reg.Register(&schemas.Schema{
 		String: schema_c8d7a12b3e4f568a,
 		Nodes: []uint64{
 			0x8b7ee3c2fab6a588,
-			0x8dfbe712fe5112e6,
+			0x9718ba284d4bd65f,
 			0xa7bb8932dd6bcda5,
 			0xb0dd6e3919552b32,
+			0xb7cfec43c3dbf75d,
 		},
 		Compressed: true,
 	})

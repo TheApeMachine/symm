@@ -1,20 +1,1047 @@
 {
   "id": "training",
-  "name": "offline excursion mining (training disabled: settled regions and truth grader required)",
+  "name": "Archived replay, signal observations and excursion truth",
   "nodes": {
+    "replay": {
+      "id": "replay",
+      "type": "tables.IcebergScan",
+      "inputData": {
+        "config": {
+          "value": "{\"namespace\":\"symm\",\"table\":\"raw_frames_v3\",\"fields\":[{\"id\":1,\"name\":\"received_at\",\"type\":\"timestamp\",\"required\":true},{\"id\":2,\"name\":\"endpoint\",\"type\":\"string\",\"required\":true},{\"id\":3,\"name\":\"symbol\",\"type\":\"string\",\"required\":false},{\"id\":4,\"name\":\"kind\",\"type\":\"string\",\"required\":false},{\"id\":5,\"name\":\"payload\",\"type\":\"binary\",\"required\":true},{\"id\":6,\"name\":\"capture_id\",\"type\":\"string\",\"required\":true},{\"id\":7,\"name\":\"capture_session\",\"type\":\"string\",\"required\":true},{\"id\":8,\"name\":\"capture_sequence\",\"type\":\"long\",\"required\":true},{\"id\":9,\"name\":\"received_time\",\"type\":\"string\",\"required\":true}]}"
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "tape",
+              "portName": "row"
+            }
+          ],
+          "exhausted": [
+            {
+              "nodeId": "tape",
+              "portName": "exhausted"
+            }
+          ]
+        }
+      }
+    },
+    "tape": {
+      "id": "tape",
+      "type": "store.Tape",
+      "connections": {
+        "inputs": {
+          "row": [
+            {
+              "nodeId": "replay",
+              "portName": "out"
+            }
+          ],
+          "exhausted": [
+            {
+              "nodeId": "replay",
+              "portName": "exhausted"
+            }
+          ]
+        },
+        "outputs": {
+          "frame.payload": [
+            {
+              "nodeId": "mine",
+              "portName": "payload"
+            },
+            {
+              "nodeId": "records",
+              "portName": "data"
+            }
+          ],
+          "frame.session": [
+            {
+              "nodeId": "mine",
+              "portName": "session"
+            }
+          ],
+          "frame.sequence": [
+            {
+              "nodeId": "mine",
+              "portName": "sequence"
+            }
+          ],
+          "frame.endpoint": [
+            {
+              "nodeId": "mine",
+              "portName": "endpoint"
+            }
+          ]
+        }
+      }
+    },
+    "mine": {
+      "id": "mine",
+      "type": "temporal.Mine",
+      "inputData": {
+        "channel": {
+          "value": "ticker"
+        },
+        "priceField": {
+          "value": "last"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "payload": [
+            {
+              "nodeId": "tape",
+              "portName": "frame.payload"
+            }
+          ],
+          "session": [
+            {
+              "nodeId": "tape",
+              "portName": "frame.session"
+            }
+          ],
+          "sequence": [
+            {
+              "nodeId": "tape",
+              "portName": "frame.sequence"
+            }
+          ],
+          "endpoint": [
+            {
+              "nodeId": "tape",
+              "portName": "frame.endpoint"
+            }
+          ]
+        },
+        "outputs": {
+          "events.out": [
+            {
+              "nodeId": "events",
+              "portName": "payload"
+            }
+          ]
+        }
+      }
+    },
+    "events": {
+      "id": "events",
+      "type": "tables.IcebergTable",
+      "inputData": {
+        "config": {
+          "value": "{\"namespace\":\"symm\",\"table\":\"excursion_fragments_v1\",\"fields\":[{\"id\":1,\"name\":\"capture_id\",\"type\":\"string\",\"required\":true},{\"id\":2,\"name\":\"capture_session\",\"type\":\"string\",\"required\":true},{\"id\":3,\"name\":\"capture_sequence\",\"type\":\"long\",\"required\":true},{\"id\":4,\"name\":\"endpoint\",\"type\":\"string\",\"required\":true},{\"id\":5,\"name\":\"channel\",\"type\":\"string\",\"required\":true},{\"id\":6,\"name\":\"payload\",\"type\":\"binary\",\"required\":true},{\"id\":7,\"name\":\"event_count\",\"type\":\"long\",\"required\":true}]}"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "payload": [
+            {
+              "nodeId": "mine",
+              "portName": "events.out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "definition-correlation_ticker": {
+      "id": "definition-correlation_ticker",
+      "type": "definition:correlation_ticker",
+      "width": 320,
+      "height": 280,
+      "x": 900.0,
+      "y": -280.0,
+      "connections": {
+        "inputs": {
+          "hy.boundsEnd1": [
+            {
+              "nodeId": "grid",
+              "portName": "values_0"
+            }
+          ],
+          "hy.boundsEnd2": [
+            {
+              "nodeId": "grid",
+              "portName": "values_0"
+            }
+          ],
+          "prevReferenceTimestamp.value": [
+            {
+              "nodeId": "grid",
+              "portName": "values_0"
+            }
+          ],
+          "prevTimestamp.value": [
+            {
+              "nodeId": "grid",
+              "portName": "values_0"
+            }
+          ],
+          "referenceReturns.value": [
+            {
+              "nodeId": "grid",
+              "portName": "values_1"
+            }
+          ],
+          "returns.value": [
+            {
+              "nodeId": "grid",
+              "portName": "values_1"
+            }
+          ],
+          "velocity.ts": [
+            {
+              "nodeId": "grid",
+              "portName": "values_0"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "definition-cvd_trade": {
+      "id": "definition-cvd_trade",
+      "type": "definition:cvd_trade",
+      "width": 320,
+      "height": 280,
+      "x": 1320.0,
+      "y": -280.0,
+      "connections": {
+        "inputs": {
+          "buyQuantity.a": [
+            {
+              "nodeId": "grid",
+              "portName": "values_2"
+            }
+          ],
+          "buyShare.a": [
+            {
+              "nodeId": "grid",
+              "portName": "values_3"
+            }
+          ],
+          "midpoint_log_return.value": [
+            {
+              "nodeId": "grid",
+              "portName": "values_4"
+            }
+          ],
+          "net_notional_rate_velocity.ts": [
+            {
+              "nodeId": "grid",
+              "portName": "values_5"
+            }
+          ],
+          "sellQuantity.a": [
+            {
+              "nodeId": "grid",
+              "portName": "values_2"
+            }
+          ],
+          "sellShare.b": [
+            {
+              "nodeId": "grid",
+              "portName": "values_3"
+            }
+          ],
+          "tradeNotional.a": [
+            {
+              "nodeId": "grid",
+              "portName": "values_2"
+            }
+          ],
+          "tradeNotional.b": [
+            {
+              "nodeId": "grid",
+              "portName": "values_4"
+            }
+          ],
+          "trade_count.value": [
+            {
+              "nodeId": "grid",
+              "portName": "values_2"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "definition-depthflow_level3": {
+      "id": "definition-depthflow_level3",
+      "type": "definition:depthflow_level3",
+      "width": 320,
+      "height": 280,
+      "x": 1740.0,
+      "y": -280.0,
+      "connections": {
+        "inputs": {
+          "mutation_count.a": [
+            {
+              "nodeId": "grid",
+              "portName": "values_9"
+            }
+          ],
+          "mutation_count.b": [
+            {
+              "nodeId": "grid",
+              "portName": "values_8"
+            }
+          ],
+          "mutation_count_diff.a": [
+            {
+              "nodeId": "grid",
+              "portName": "values_9"
+            }
+          ],
+          "mutation_count_diff.b": [
+            {
+              "nodeId": "grid",
+              "portName": "values_8"
+            }
+          ],
+          "observed_notional.a": [
+            {
+              "nodeId": "grid",
+              "portName": "values_7"
+            }
+          ],
+          "observed_notional.b": [
+            {
+              "nodeId": "grid",
+              "portName": "values_6"
+            }
+          ],
+          "observed_notional_diff.a": [
+            {
+              "nodeId": "grid",
+              "portName": "values_7"
+            }
+          ],
+          "observed_notional_diff.b": [
+            {
+              "nodeId": "grid",
+              "portName": "values_6"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "definition-derivatives_ticker": {
+      "id": "definition-derivatives_ticker",
+      "type": "definition:derivatives_ticker",
+      "width": 320,
+      "height": 280,
+      "x": 900.0,
+      "y": 80.0,
+      "connections": {
+        "inputs": {
+          "basis.b": [
+            {
+              "nodeId": "grid",
+              "portName": "values_10"
+            }
+          ],
+          "basisDifference.a": [
+            {
+              "nodeId": "grid",
+              "portName": "values_1"
+            }
+          ],
+          "basisDifference.b": [
+            {
+              "nodeId": "grid",
+              "portName": "values_10"
+            }
+          ],
+          "derivativeIndexRatio.a": [
+            {
+              "nodeId": "grid",
+              "portName": "values_1"
+            }
+          ],
+          "derivativeIndexRatio.b": [
+            {
+              "nodeId": "grid",
+              "portName": "values_10"
+            }
+          ],
+          "derivativeSpotRatio.a": [
+            {
+              "nodeId": "grid",
+              "portName": "values_1"
+            }
+          ],
+          "derivativeSpotRatio.b": [
+            {
+              "nodeId": "grid",
+              "portName": "values_11"
+            }
+          ],
+          "derivative_log_return.value": [
+            {
+              "nodeId": "grid",
+              "portName": "values_1"
+            }
+          ],
+          "indexSpotRatio.a": [
+            {
+              "nodeId": "grid",
+              "portName": "values_10"
+            }
+          ],
+          "indexSpotRatio.b": [
+            {
+              "nodeId": "grid",
+              "portName": "values_11"
+            }
+          ],
+          "open_interest_change.value": [
+            {
+              "nodeId": "grid",
+              "portName": "values_12"
+            }
+          ],
+          "open_interest_log_change.value": [
+            {
+              "nodeId": "grid",
+              "portName": "values_12"
+            }
+          ],
+          "reference_log_return.value": [
+            {
+              "nodeId": "grid",
+              "portName": "values_10"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "definition-derivatives_trade": {
+      "id": "definition-derivatives_trade",
+      "type": "definition:derivatives_trade",
+      "width": 320,
+      "height": 280,
+      "x": 1320.0,
+      "y": 80.0,
+      "connections": {
+        "inputs": {
+          "buyShare.a": [
+            {
+              "nodeId": "grid",
+              "portName": "values_3"
+            }
+          ],
+          "sellShare.b": [
+            {
+              "nodeId": "grid",
+              "portName": "values_3"
+            }
+          ],
+          "tradeNotional.a": [
+            {
+              "nodeId": "grid",
+              "portName": "values_2"
+            }
+          ],
+          "tradeNotional.b": [
+            {
+              "nodeId": "grid",
+              "portName": "values_4"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "definition-hawkes_trade": {
+      "id": "definition-hawkes_trade",
+      "type": "definition:hawkes_trade",
+      "width": 320,
+      "height": 280,
+      "x": 1740.0,
+      "y": 80.0,
+      "connections": {
+        "inputs": {
+          "process.time": [
+            {
+              "nodeId": "grid",
+              "portName": "values_5"
+            }
+          ],
+          "markScaled.a": [
+            {
+              "nodeId": "grid",
+              "portName": "values_3"
+            }
+          ],
+          "conditional_intensity_velocity.ts": [
+            {
+              "nodeId": "grid",
+              "portName": "values_5"
+            }
+          ],
+          "spectral_radius_velocity.ts": [
+            {
+              "nodeId": "grid",
+              "portName": "values_5"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "definition-leadlag_ticker": {
+      "id": "definition-leadlag_ticker",
+      "type": "definition:leadlag_ticker",
+      "width": 320,
+      "height": 280,
+      "x": 900.0,
+      "y": 440.0,
+      "connections": {
+        "inputs": {
+          "candidate_0.boundsEnd1": [
+            {
+              "nodeId": "grid",
+              "portName": "values_0"
+            }
+          ],
+          "candidate_1.boundsEnd1": [
+            {
+              "nodeId": "grid",
+              "portName": "values_0"
+            }
+          ],
+          "candidate_2.boundsEnd1": [
+            {
+              "nodeId": "grid",
+              "portName": "values_0"
+            }
+          ],
+          "candidate_3.boundsEnd1": [
+            {
+              "nodeId": "grid",
+              "portName": "values_0"
+            }
+          ],
+          "candidate_4.boundsEnd1": [
+            {
+              "nodeId": "grid",
+              "portName": "values_0"
+            }
+          ],
+          "candidate_5.boundsEnd1": [
+            {
+              "nodeId": "grid",
+              "portName": "values_0"
+            }
+          ],
+          "candidate_6.boundsEnd1": [
+            {
+              "nodeId": "grid",
+              "portName": "values_0"
+            }
+          ],
+          "candidate_7.boundsEnd1": [
+            {
+              "nodeId": "grid",
+              "portName": "values_0"
+            }
+          ],
+          "candidate_8.boundsEnd1": [
+            {
+              "nodeId": "grid",
+              "portName": "values_0"
+            }
+          ],
+          "previousReferenceTimestamp.value": [
+            {
+              "nodeId": "grid",
+              "portName": "values_0"
+            }
+          ],
+          "previousTimestamp.value": [
+            {
+              "nodeId": "grid",
+              "portName": "values_0"
+            }
+          ],
+          "referenceReturns.value": [
+            {
+              "nodeId": "grid",
+              "portName": "values_1"
+            }
+          ],
+          "returns.value": [
+            {
+              "nodeId": "grid",
+              "portName": "values_1"
+            }
+          ],
+          "shiftEnd_0.a": [
+            {
+              "nodeId": "grid",
+              "portName": "values_0"
+            }
+          ],
+          "shiftEnd_1.a": [
+            {
+              "nodeId": "grid",
+              "portName": "values_0"
+            }
+          ],
+          "shiftEnd_2.a": [
+            {
+              "nodeId": "grid",
+              "portName": "values_0"
+            }
+          ],
+          "shiftEnd_3.a": [
+            {
+              "nodeId": "grid",
+              "portName": "values_0"
+            }
+          ],
+          "shiftEnd_4.a": [
+            {
+              "nodeId": "grid",
+              "portName": "values_0"
+            }
+          ],
+          "shiftEnd_5.a": [
+            {
+              "nodeId": "grid",
+              "portName": "values_0"
+            }
+          ],
+          "shiftEnd_6.a": [
+            {
+              "nodeId": "grid",
+              "portName": "values_0"
+            }
+          ],
+          "shiftEnd_7.a": [
+            {
+              "nodeId": "grid",
+              "portName": "values_0"
+            }
+          ],
+          "shiftEnd_8.a": [
+            {
+              "nodeId": "grid",
+              "portName": "values_0"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "definition-liquidity_ticker": {
+      "id": "definition-liquidity_ticker",
+      "type": "definition:liquidity_ticker",
+      "width": 320,
+      "height": 280,
+      "x": 1320.0,
+      "y": 440.0,
+      "connections": {
+        "inputs": {
+          "divergence_velocity:ask.ts": [
+            {
+              "nodeId": "grid",
+              "portName": "values_13"
+            }
+          ],
+          "divergence_velocity:bid.ts": [
+            {
+              "nodeId": "grid",
+              "portName": "values_14"
+            }
+          ],
+          "midpointSum.a": [
+            {
+              "nodeId": "grid",
+              "portName": "values_13"
+            }
+          ],
+          "midpointSum.b": [
+            {
+              "nodeId": "grid",
+              "portName": "values_14"
+            }
+          ],
+          "spread.a": [
+            {
+              "nodeId": "grid",
+              "portName": "values_13"
+            }
+          ],
+          "spread.b": [
+            {
+              "nodeId": "grid",
+              "portName": "values_14"
+            }
+          ],
+          "spread_divergence_velocity.ts": [
+            {
+              "nodeId": "grid",
+              "portName": "values_14"
+            }
+          ],
+          "touch_notional:ask.a": [
+            {
+              "nodeId": "grid",
+              "portName": "values_13"
+            }
+          ],
+          "touch_notional:ask.b": [
+            {
+              "nodeId": "grid",
+              "portName": "values_15"
+            }
+          ],
+          "touch_notional:bid.a": [
+            {
+              "nodeId": "grid",
+              "portName": "values_14"
+            }
+          ],
+          "touch_notional:bid.b": [
+            {
+              "nodeId": "grid",
+              "portName": "values_16"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "definition-morphology_level3": {
+      "id": "definition-morphology_level3",
+      "type": "definition:morphology_level3",
+      "width": 320,
+      "height": 280,
+      "x": 1740.0,
+      "y": 440.0,
+      "connections": {
+        "inputs": {
+          "book_shape_distance.value": [
+            {
+              "nodeId": "grid",
+              "portName": "values_17"
+            }
+          ],
+          "book_shape_ks.value": [
+            {
+              "nodeId": "grid",
+              "portName": "values_17"
+            }
+          ],
+          "concentration:ask.value": [
+            {
+              "nodeId": "grid",
+              "portName": "values_18"
+            }
+          ],
+          "concentration:bid.value": [
+            {
+              "nodeId": "grid",
+              "portName": "values_17"
+            }
+          ],
+          "entropy:ask.value": [
+            {
+              "nodeId": "grid",
+              "portName": "values_18"
+            }
+          ],
+          "entropy:bid.value": [
+            {
+              "nodeId": "grid",
+              "portName": "values_17"
+            }
+          ],
+          "morphology_change.prev": [
+            {
+              "nodeId": "grid",
+              "portName": "values_17"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "definition-pumpdump_level3": {
+      "id": "definition-pumpdump_level3",
+      "type": "definition:pumpdump_level3",
+      "width": 320,
+      "height": 280,
+      "x": 900.0,
+      "y": 800.0,
+      "connections": {
+        "inputs": {
+          "midpointSum.a": [
+            {
+              "nodeId": "grid",
+              "portName": "values_6"
+            }
+          ],
+          "midpointSum.b": [
+            {
+              "nodeId": "grid",
+              "portName": "values_7"
+            }
+          ],
+          "spread.a": [
+            {
+              "nodeId": "grid",
+              "portName": "values_6"
+            }
+          ],
+          "spread.b": [
+            {
+              "nodeId": "grid",
+              "portName": "values_7"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "definition-pumpdump_ticker": {
+      "id": "definition-pumpdump_ticker",
+      "type": "definition:pumpdump_ticker",
+      "width": 320,
+      "height": 280,
+      "x": 1320.0,
+      "y": 800.0,
+      "connections": {
+        "inputs": {
+          "midpointSum.a": [
+            {
+              "nodeId": "grid",
+              "portName": "values_13"
+            }
+          ],
+          "midpointSum.b": [
+            {
+              "nodeId": "grid",
+              "portName": "values_14"
+            }
+          ],
+          "spread.a": [
+            {
+              "nodeId": "grid",
+              "portName": "values_13"
+            }
+          ],
+          "spread.b": [
+            {
+              "nodeId": "grid",
+              "portName": "values_14"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "definition-pumpdump_trade": {
+      "id": "definition-pumpdump_trade",
+      "type": "definition:pumpdump_trade",
+      "width": 320,
+      "height": 280,
+      "x": 1740.0,
+      "y": 800.0,
+      "connections": {
+        "inputs": {
+          "midpoint_log_return.value": [
+            {
+              "nodeId": "grid",
+              "portName": "values_4"
+            }
+          ],
+          "trade_notional.a": [
+            {
+              "nodeId": "grid",
+              "portName": "values_2"
+            }
+          ],
+          "trade_notional.b": [
+            {
+              "nodeId": "grid",
+              "portName": "values_4"
+            }
+          ],
+          "volume_bar_quantity.value": [
+            {
+              "nodeId": "grid",
+              "portName": "values_2"
+            }
+          ],
+          "volume_bar_trade_count.value": [
+            {
+              "nodeId": "grid",
+              "portName": "values_2"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "definition-sentiment_ticker": {
+      "id": "definition-sentiment_ticker",
+      "type": "definition:sentiment_ticker",
+      "width": 320,
+      "height": 280,
+      "x": 900.0,
+      "y": 1160.0,
+      "connections": {
+        "inputs": {
+          "return.value": [
+            {
+              "nodeId": "grid",
+              "portName": "values_1"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "definition-toxicity_level3": {
+      "id": "definition-toxicity_level3",
+      "type": "definition:toxicity_level3",
+      "width": 320,
+      "height": 280,
+      "x": 1320.0,
+      "y": 1160.0,
+      "connections": {
+        "inputs": {
+          "previous_best_price:ask.value": [
+            {
+              "nodeId": "grid",
+              "portName": "values_6"
+            }
+          ],
+          "previous_best_price:bid.value": [
+            {
+              "nodeId": "grid",
+              "portName": "values_7"
+            }
+          ],
+          "previous_touch_quantity:ask.value": [
+            {
+              "nodeId": "grid",
+              "portName": "values_8"
+            }
+          ],
+          "previous_touch_quantity:bid.value": [
+            {
+              "nodeId": "grid",
+              "portName": "values_9"
+            }
+          ],
+          "quantityChange:ask.b": [
+            {
+              "nodeId": "grid",
+              "portName": "values_8"
+            }
+          ],
+          "quantityChange:bid.b": [
+            {
+              "nodeId": "grid",
+              "portName": "values_9"
+            }
+          ],
+          "touch_price_log_change:ask.value": [
+            {
+              "nodeId": "grid",
+              "portName": "values_6"
+            }
+          ],
+          "touch_price_log_change:bid.value": [
+            {
+              "nodeId": "grid",
+              "portName": "values_7"
+            }
+          ],
+          "unfilled_residual_quantity:ask.a": [
+            {
+              "nodeId": "grid",
+              "portName": "values_8"
+            }
+          ],
+          "unfilled_residual_quantity:ask.b": [
+            {
+              "nodeId": "grid",
+              "portName": "values_8"
+            }
+          ],
+          "unfilled_residual_quantity:bid.a": [
+            {
+              "nodeId": "grid",
+              "portName": "values_9"
+            }
+          ],
+          "unfilled_residual_quantity:bid.b": [
+            {
+              "nodeId": "grid",
+              "portName": "values_9"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "definition-toxicity_trade": {
+      "id": "definition-toxicity_trade",
+      "type": "definition:toxicity_trade",
+      "width": 320,
+      "height": 280,
+      "x": 1740.0,
+      "y": 1160.0,
+      "connections": {
+        "inputs": {
+          "bracket_trade_quantity.value": [
+            {
+              "nodeId": "grid",
+              "portName": "values_2"
+            }
+          ],
+          "matched_touch_trade_quantity:ask.value": [
+            {
+              "nodeId": "grid",
+              "portName": "values_2"
+            }
+          ],
+          "matched_touch_trade_quantity:bid.value": [
+            {
+              "nodeId": "grid",
+              "portName": "values_2"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
     "grid": {
       "id": "grid",
       "type": "store.Grid",
+      "width": 340,
+      "height": 240,
+      "x": 2600.0,
+      "y": 0.0,
       "inputData": {
         "interests": {
-          "value": "data.0.last"
+          "value": "ticker.data.timestamp,ticker.data.last,trade.data.qty,trade.data.side=sell,trade.data.price,trade.data.timestamp,level3.data.ask,level3.data.bid,level3.data.ask_qty,level3.data.bid_qty,ticker.data.index,ticker.data.mark,ticker.data.openInterest,ticker.data.ask,ticker.data.bid,ticker.data.ask_qty,ticker.data.bid_qty,level3.data.bids,level3.data.asks"
         }
       },
       "connections": {
         "inputs": {
           "data": [
             {
-              "nodeId": "replay",
+              "nodeId": "records",
               "portName": "out"
             }
           ]
@@ -22,23 +1049,521 @@
         "outputs": {
           "values_0": [
             {
-              "nodeId": "excursion",
-              "portName": "value"
+              "nodeId": "definition-correlation_ticker",
+              "portName": "hy.boundsEnd1"
+            },
+            {
+              "nodeId": "definition-correlation_ticker",
+              "portName": "hy.boundsEnd2"
+            },
+            {
+              "nodeId": "definition-correlation_ticker",
+              "portName": "prevReferenceTimestamp.value"
+            },
+            {
+              "nodeId": "definition-correlation_ticker",
+              "portName": "prevTimestamp.value"
+            },
+            {
+              "nodeId": "definition-correlation_ticker",
+              "portName": "velocity.ts"
+            },
+            {
+              "nodeId": "definition-leadlag_ticker",
+              "portName": "candidate_0.boundsEnd1"
+            },
+            {
+              "nodeId": "definition-leadlag_ticker",
+              "portName": "candidate_1.boundsEnd1"
+            },
+            {
+              "nodeId": "definition-leadlag_ticker",
+              "portName": "candidate_2.boundsEnd1"
+            },
+            {
+              "nodeId": "definition-leadlag_ticker",
+              "portName": "candidate_3.boundsEnd1"
+            },
+            {
+              "nodeId": "definition-leadlag_ticker",
+              "portName": "candidate_4.boundsEnd1"
+            },
+            {
+              "nodeId": "definition-leadlag_ticker",
+              "portName": "candidate_5.boundsEnd1"
+            },
+            {
+              "nodeId": "definition-leadlag_ticker",
+              "portName": "candidate_6.boundsEnd1"
+            },
+            {
+              "nodeId": "definition-leadlag_ticker",
+              "portName": "candidate_7.boundsEnd1"
+            },
+            {
+              "nodeId": "definition-leadlag_ticker",
+              "portName": "candidate_8.boundsEnd1"
+            },
+            {
+              "nodeId": "definition-leadlag_ticker",
+              "portName": "previousReferenceTimestamp.value"
+            },
+            {
+              "nodeId": "definition-leadlag_ticker",
+              "portName": "previousTimestamp.value"
+            },
+            {
+              "nodeId": "definition-leadlag_ticker",
+              "portName": "shiftEnd_0.a"
+            },
+            {
+              "nodeId": "definition-leadlag_ticker",
+              "portName": "shiftEnd_1.a"
+            },
+            {
+              "nodeId": "definition-leadlag_ticker",
+              "portName": "shiftEnd_2.a"
+            },
+            {
+              "nodeId": "definition-leadlag_ticker",
+              "portName": "shiftEnd_3.a"
+            },
+            {
+              "nodeId": "definition-leadlag_ticker",
+              "portName": "shiftEnd_4.a"
+            },
+            {
+              "nodeId": "definition-leadlag_ticker",
+              "portName": "shiftEnd_5.a"
+            },
+            {
+              "nodeId": "definition-leadlag_ticker",
+              "portName": "shiftEnd_6.a"
+            },
+            {
+              "nodeId": "definition-leadlag_ticker",
+              "portName": "shiftEnd_7.a"
+            },
+            {
+              "nodeId": "definition-leadlag_ticker",
+              "portName": "shiftEnd_8.a"
+            }
+          ],
+          "values_1": [
+            {
+              "nodeId": "definition-correlation_ticker",
+              "portName": "referenceReturns.value"
+            },
+            {
+              "nodeId": "definition-correlation_ticker",
+              "portName": "returns.value"
+            },
+            {
+              "nodeId": "definition-derivatives_ticker",
+              "portName": "basisDifference.a"
+            },
+            {
+              "nodeId": "definition-derivatives_ticker",
+              "portName": "derivativeIndexRatio.a"
+            },
+            {
+              "nodeId": "definition-derivatives_ticker",
+              "portName": "derivativeSpotRatio.a"
+            },
+            {
+              "nodeId": "definition-derivatives_ticker",
+              "portName": "derivative_log_return.value"
+            },
+            {
+              "nodeId": "definition-leadlag_ticker",
+              "portName": "referenceReturns.value"
+            },
+            {
+              "nodeId": "definition-leadlag_ticker",
+              "portName": "returns.value"
+            },
+            {
+              "nodeId": "definition-sentiment_ticker",
+              "portName": "return.value"
+            }
+          ],
+          "values_2": [
+            {
+              "nodeId": "definition-cvd_trade",
+              "portName": "buyQuantity.a"
+            },
+            {
+              "nodeId": "definition-cvd_trade",
+              "portName": "sellQuantity.a"
+            },
+            {
+              "nodeId": "definition-cvd_trade",
+              "portName": "tradeNotional.a"
+            },
+            {
+              "nodeId": "definition-cvd_trade",
+              "portName": "trade_count.value"
+            },
+            {
+              "nodeId": "definition-derivatives_trade",
+              "portName": "tradeNotional.a"
+            },
+            {
+              "nodeId": "definition-pumpdump_trade",
+              "portName": "trade_notional.a"
+            },
+            {
+              "nodeId": "definition-pumpdump_trade",
+              "portName": "volume_bar_quantity.value"
+            },
+            {
+              "nodeId": "definition-pumpdump_trade",
+              "portName": "volume_bar_trade_count.value"
+            },
+            {
+              "nodeId": "definition-toxicity_trade",
+              "portName": "bracket_trade_quantity.value"
+            },
+            {
+              "nodeId": "definition-toxicity_trade",
+              "portName": "matched_touch_trade_quantity:ask.value"
+            },
+            {
+              "nodeId": "definition-toxicity_trade",
+              "portName": "matched_touch_trade_quantity:bid.value"
+            }
+          ],
+          "values_3": [
+            {
+              "nodeId": "definition-cvd_trade",
+              "portName": "buyShare.a"
+            },
+            {
+              "nodeId": "definition-cvd_trade",
+              "portName": "sellShare.b"
+            },
+            {
+              "nodeId": "definition-derivatives_trade",
+              "portName": "buyShare.a"
+            },
+            {
+              "nodeId": "definition-derivatives_trade",
+              "portName": "sellShare.b"
+            },
+            {
+              "nodeId": "definition-hawkes_trade",
+              "portName": "markScaled.a"
+            }
+          ],
+          "values_4": [
+            {
+              "nodeId": "definition-cvd_trade",
+              "portName": "midpoint_log_return.value"
+            },
+            {
+              "nodeId": "definition-cvd_trade",
+              "portName": "tradeNotional.b"
+            },
+            {
+              "nodeId": "definition-derivatives_trade",
+              "portName": "tradeNotional.b"
+            },
+            {
+              "nodeId": "definition-pumpdump_trade",
+              "portName": "midpoint_log_return.value"
+            },
+            {
+              "nodeId": "definition-pumpdump_trade",
+              "portName": "trade_notional.b"
+            }
+          ],
+          "values_5": [
+            {
+              "nodeId": "definition-cvd_trade",
+              "portName": "net_notional_rate_velocity.ts"
+            },
+            {
+              "nodeId": "definition-hawkes_trade",
+              "portName": "process.time"
+            },
+            {
+              "nodeId": "definition-hawkes_trade",
+              "portName": "conditional_intensity_velocity.ts"
+            },
+            {
+              "nodeId": "definition-hawkes_trade",
+              "portName": "spectral_radius_velocity.ts"
+            }
+          ],
+          "values_6": [
+            {
+              "nodeId": "definition-depthflow_level3",
+              "portName": "observed_notional.b"
+            },
+            {
+              "nodeId": "definition-depthflow_level3",
+              "portName": "observed_notional_diff.b"
+            },
+            {
+              "nodeId": "definition-pumpdump_level3",
+              "portName": "midpointSum.a"
+            },
+            {
+              "nodeId": "definition-pumpdump_level3",
+              "portName": "spread.a"
+            },
+            {
+              "nodeId": "definition-toxicity_level3",
+              "portName": "previous_best_price:ask.value"
+            },
+            {
+              "nodeId": "definition-toxicity_level3",
+              "portName": "touch_price_log_change:ask.value"
+            }
+          ],
+          "values_7": [
+            {
+              "nodeId": "definition-depthflow_level3",
+              "portName": "observed_notional.a"
+            },
+            {
+              "nodeId": "definition-depthflow_level3",
+              "portName": "observed_notional_diff.a"
+            },
+            {
+              "nodeId": "definition-pumpdump_level3",
+              "portName": "midpointSum.b"
+            },
+            {
+              "nodeId": "definition-pumpdump_level3",
+              "portName": "spread.b"
+            },
+            {
+              "nodeId": "definition-toxicity_level3",
+              "portName": "previous_best_price:bid.value"
+            },
+            {
+              "nodeId": "definition-toxicity_level3",
+              "portName": "touch_price_log_change:bid.value"
+            }
+          ],
+          "values_8": [
+            {
+              "nodeId": "definition-depthflow_level3",
+              "portName": "mutation_count.b"
+            },
+            {
+              "nodeId": "definition-depthflow_level3",
+              "portName": "mutation_count_diff.b"
+            },
+            {
+              "nodeId": "definition-toxicity_level3",
+              "portName": "previous_touch_quantity:ask.value"
+            },
+            {
+              "nodeId": "definition-toxicity_level3",
+              "portName": "quantityChange:ask.b"
+            },
+            {
+              "nodeId": "definition-toxicity_level3",
+              "portName": "unfilled_residual_quantity:ask.a"
+            },
+            {
+              "nodeId": "definition-toxicity_level3",
+              "portName": "unfilled_residual_quantity:ask.b"
+            }
+          ],
+          "values_9": [
+            {
+              "nodeId": "definition-depthflow_level3",
+              "portName": "mutation_count.a"
+            },
+            {
+              "nodeId": "definition-depthflow_level3",
+              "portName": "mutation_count_diff.a"
+            },
+            {
+              "nodeId": "definition-toxicity_level3",
+              "portName": "previous_touch_quantity:bid.value"
+            },
+            {
+              "nodeId": "definition-toxicity_level3",
+              "portName": "quantityChange:bid.b"
+            },
+            {
+              "nodeId": "definition-toxicity_level3",
+              "portName": "unfilled_residual_quantity:bid.a"
+            },
+            {
+              "nodeId": "definition-toxicity_level3",
+              "portName": "unfilled_residual_quantity:bid.b"
+            }
+          ],
+          "values_10": [
+            {
+              "nodeId": "definition-derivatives_ticker",
+              "portName": "basis.b"
+            },
+            {
+              "nodeId": "definition-derivatives_ticker",
+              "portName": "basisDifference.b"
+            },
+            {
+              "nodeId": "definition-derivatives_ticker",
+              "portName": "derivativeIndexRatio.b"
+            },
+            {
+              "nodeId": "definition-derivatives_ticker",
+              "portName": "indexSpotRatio.a"
+            },
+            {
+              "nodeId": "definition-derivatives_ticker",
+              "portName": "reference_log_return.value"
+            }
+          ],
+          "values_11": [
+            {
+              "nodeId": "definition-derivatives_ticker",
+              "portName": "derivativeSpotRatio.b"
+            },
+            {
+              "nodeId": "definition-derivatives_ticker",
+              "portName": "indexSpotRatio.b"
+            }
+          ],
+          "values_12": [
+            {
+              "nodeId": "definition-derivatives_ticker",
+              "portName": "open_interest_change.value"
+            },
+            {
+              "nodeId": "definition-derivatives_ticker",
+              "portName": "open_interest_log_change.value"
+            }
+          ],
+          "values_13": [
+            {
+              "nodeId": "definition-liquidity_ticker",
+              "portName": "divergence_velocity:ask.ts"
+            },
+            {
+              "nodeId": "definition-liquidity_ticker",
+              "portName": "midpointSum.a"
+            },
+            {
+              "nodeId": "definition-liquidity_ticker",
+              "portName": "spread.a"
+            },
+            {
+              "nodeId": "definition-liquidity_ticker",
+              "portName": "touch_notional:ask.a"
+            },
+            {
+              "nodeId": "definition-pumpdump_ticker",
+              "portName": "midpointSum.a"
+            },
+            {
+              "nodeId": "definition-pumpdump_ticker",
+              "portName": "spread.a"
+            }
+          ],
+          "values_14": [
+            {
+              "nodeId": "definition-liquidity_ticker",
+              "portName": "divergence_velocity:bid.ts"
+            },
+            {
+              "nodeId": "definition-liquidity_ticker",
+              "portName": "midpointSum.b"
+            },
+            {
+              "nodeId": "definition-liquidity_ticker",
+              "portName": "spread.b"
+            },
+            {
+              "nodeId": "definition-liquidity_ticker",
+              "portName": "spread_divergence_velocity.ts"
+            },
+            {
+              "nodeId": "definition-liquidity_ticker",
+              "portName": "touch_notional:bid.a"
+            },
+            {
+              "nodeId": "definition-pumpdump_ticker",
+              "portName": "midpointSum.b"
+            },
+            {
+              "nodeId": "definition-pumpdump_ticker",
+              "portName": "spread.b"
+            }
+          ],
+          "values_15": [
+            {
+              "nodeId": "definition-liquidity_ticker",
+              "portName": "touch_notional:ask.b"
+            }
+          ],
+          "values_16": [
+            {
+              "nodeId": "definition-liquidity_ticker",
+              "portName": "touch_notional:bid.b"
+            }
+          ],
+          "values_17": [
+            {
+              "nodeId": "definition-morphology_level3",
+              "portName": "book_shape_distance.value"
+            },
+            {
+              "nodeId": "definition-morphology_level3",
+              "portName": "book_shape_ks.value"
+            },
+            {
+              "nodeId": "definition-morphology_level3",
+              "portName": "concentration:bid.value"
+            },
+            {
+              "nodeId": "definition-morphology_level3",
+              "portName": "entropy:bid.value"
+            },
+            {
+              "nodeId": "definition-morphology_level3",
+              "portName": "morphology_change.prev"
+            }
+          ],
+          "values_18": [
+            {
+              "nodeId": "definition-morphology_level3",
+              "portName": "concentration:ask.value"
+            },
+            {
+              "nodeId": "definition-morphology_level3",
+              "portName": "entropy:ask.value"
             }
           ]
         }
       }
     },
-    "replay": {
-      "id": "replay",
-      "type": "tables.IcebergScan",
+    "records": {
+      "id": "records",
+      "type": "data.Iterate",
       "inputData": {
-        "config": {
-          "value": "{\"namespace\":\"symm\",\"table\":\"raw_frames_v2\",\"fields\":[{\"id\":1,\"name\":\"received_at\",\"type\":\"timestamp\",\"required\":true},{\"id\":2,\"name\":\"endpoint\",\"type\":\"string\",\"required\":true},{\"id\":3,\"name\":\"symbol\",\"type\":\"string\",\"required\":false},{\"id\":4,\"name\":\"kind\",\"type\":\"string\",\"required\":false},{\"id\":5,\"name\":\"payload\",\"type\":\"binary\",\"required\":true},{\"id\":6,\"name\":\"capture_id\",\"type\":\"string\",\"required\":true}]}"
+        "path": {
+          "value": "data"
+        },
+        "envelope": {
+          "value": true
         }
       },
       "connections": {
-        "inputs": {},
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "tape",
+              "portName": "frame.payload"
+            }
+          ]
+        },
         "outputs": {
           "out": [
             {
@@ -47,21 +1572,6 @@
             }
           ]
         }
-      }
-    },
-    "excursion": {
-      "id": "excursion",
-      "type": "temporal.Excursion",
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "grid",
-              "portName": "values_0"
-            }
-          ]
-        },
-        "outputs": {}
       }
     }
   }

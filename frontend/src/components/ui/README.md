@@ -132,3 +132,32 @@ provided values; empty data produces no line.
 The remaining application-specific routes and feed-bound components have not
 all been migrated. They must be converted to graph-authored composition and
 prop-driven library views before their existing implementations are removed.
+
+
+### Learning view extraction
+
+The existing learning route and `/dynamic` now share the same exported views:
+
+| Graph node | Supplied data |
+| --- | --- |
+| `ui.EpisodeTape` | `episode`: observations and optional producer annotations |
+| `ui.PolicyBranches` | `branches`: signatures, visits, measured confidence and policy |
+| `ui.OutcomeDistribution` | `bins`: explicit bounds and observed counts |
+| `ui.ForwardView` | The three inputs above plus a measured `summary` record |
+| `ui.RecognitionView` | `metricMap` and `recentActivity` with stable row IDs |
+| `ui.TrieView` | `root`: the recorded tree; `candidates`: producer-ranked actions |
+
+These props become generated data ports. Connect a matching backend output to the
+prop's port and include the component in the authored UI graph. The dynamic route
+uses results from the current graph revision. It displays empty states until a
+producer supplies the data; it does not synthesize episodes, trees, outcomes,
+activity, timestamps, or probability classifications. Tape coordinates are scaled
+for display, but labels and action markers must come from the producer. Outcome
+bins are rendered as observed counts, without inventing a fitted distribution.
+
+Trie projection, zoom, pan, collapse, hover, and the optional highest-probability
+path filter are display controls. They do not mutate the supplied tree or select
+backend policy actions. The existing learning page remains available and uses
+these library components. Its current scalar feed does not carry episode tapes,
+trie snapshots, branch records, or outcome bins, so those panels are explicitly
+empty until those inputs are wired. Other application pages have not been removed.

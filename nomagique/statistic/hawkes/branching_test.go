@@ -1,82 +1,82 @@
-package hawkes
+package hawkes_test
 
 import (
-	"math"
+	"context"
 	"testing"
 
-	"github.com/theapemachine/symm/nomagique/core"
+	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique/statistic/hawkes"
 )
 
-func TestSpectralRadiusDiagonalMatrix(testingT *testing.T) {
-	matrix := [2][2]float64{{0.3, 0}, {0, 0.6}}
+/*
+branchingOf drives the Branching node over one excitation matrix.
+*/
+func branchingOf(t *testing.T, excitation []float64, decay float64, dimension int) []float64 {
+	t.Helper()
+	ctx := context.Background()
+	client := hawkes.Branching_ServerToClient(hawkes.NewBranching())
 
-	if got := spectralRadius(matrix); math.Abs(got-0.6) > 1e-9 {
-		testingT.Fatalf("expected spectral radius 0.6, got %v", got)
+	err := client.Write(ctx, func(params hawkes.Branching_write_Params) error {
+		if err := writeFloats(params.NewExcitation, excitation); err != nil {
+			return err
+		}
+
+		params.SetDecay(decay)
+		params.SetDimension(int32(dimension))
+		return nil
+	})
+
+	if err != nil {
+		t.Fatalf("branching write: %v", err)
 	}
+
+	if err := client.WaitStreaming(); err != nil {
+		t.Fatalf("branching stream: %v", err)
+	}
+
+	future, release := client.Done(ctx, nil)
+	defer release()
+	results, err := future.Struct()
+
+	if err != nil {
+		t.Fatalf("branching done: %v", err)
+	}
+
+	list, err := results.Branching()
+
+	if err != nil {
+		t.Fatalf("branching list: %v", err)
+	}
+
+	return readList(list.Len(), list.At)
 }
 
-func TestSpectralRadiusComplexEigenvalues(testingT *testing.T) {
-	matrix := [2][2]float64{{0, 0.5}, {-0.5, 0}}
-	got := spectralRadius(matrix)
+func TestBranchingServer_Write(t *testing.T) {
+	Convey("Given an excitation matrix and a decay rate", t, func() {
+		excitation := []float64{0.8, 0.2, 0.4, 0.6}
 
-	if math.Abs(got-0.5) > 1e-9 {
-		testingT.Fatalf("expected modulus 0.5 for complex eigenvalues, got %v", got)
-	}
-}
+		Convey("When the branching matrix is formed", func() {
+			branching := branchingOf(t, excitation, 2.0, 2)
 
-func TestMeanIntensityMatchesClosedForm(testingT *testing.T) {
-	lambdaX, lambdaY, ok := meanIntensity(1, 1, 0.2, 0.1, 0.1, 0.2, 1)
+			Convey("Then each entry is its excitation integrated over all future time", func() {
+				So(branching, ShouldResemble, []float64{0.4, 0.1, 0.2, 0.3})
+			})
+		})
 
-	if !ok {
-		testingT.Fatal("expected meanIntensity to succeed for a subcritical process")
-	}
+		Convey("When the decay rate is not positive", func() {
+			branching := branchingOf(t, excitation, 0, 2)
 
-	if lambdaX <= 0 || lambdaY <= 0 {
-		testingT.Fatalf("expected positive mean intensities, got lambdaX=%v lambdaY=%v", lambdaX, lambdaY)
-	}
-}
+			Convey("Then the kernel never decays, so no finite branching exists", func() {
+				So(branching, ShouldBeEmpty)
+			})
+		})
 
-func TestMeanIntensityRejectsNonPositiveBeta(testingT *testing.T) {
-	if _, _, ok := meanIntensity(1, 1, 0.2, 0.1, 0.1, 0.2, 0); ok {
-		testingT.Fatal("expected meanIntensity to fail for beta <= 0")
-	}
-}
+		Convey("When the matrix is smaller than the stated dimension", func() {
+			branching := branchingOf(t, []float64{0.5}, 2.0, 2)
 
-func TestImmediateOffspringSumsColumns(testingT *testing.T) {
-	buyParent, sellParent, ok := immediateOffspring(0.2, 0.1, 0.1, 0.2, 1)
-
-	if !ok {
-		testingT.Fatal("expected immediateOffspring to succeed")
-	}
-
-	if math.Abs(buyParent-0.3) > 1e-9 || math.Abs(sellParent-0.3) > 1e-9 {
-		testingT.Fatalf("expected buyParent=sellParent=0.3, got %v %v", buyParent, sellParent)
-	}
-}
-
-func TestTotalDescendantsExceedsImmediateOffspring(testingT *testing.T) {
-	immediateBuy, immediateSell, ok := immediateOffspring(0.3, 0.1, 0.1, 0.3, 1)
-
-	if !ok {
-		testingT.Fatal("expected immediateOffspring to succeed")
-	}
-
-	totalBuy, totalSell, ok := totalDescendants(0.3, 0.1, 0.1, 0.3, 1)
-
-	if !ok {
-		testingT.Fatal("expected totalDescendants to succeed")
-	}
-
-	if totalBuy < immediateBuy || totalSell < immediateSell {
-		testingT.Fatalf(
-			"expected total descendants to be at least immediate offspring: total=(%v,%v) immediate=(%v,%v)",
-			totalBuy, totalSell, immediateBuy, immediateSell,
-		)
-	}
-}
-
-func TestTotalDescendantsRejectsSupercriticalProcess(testingT *testing.T) {
-	if _, _, ok := totalDescendants(core.Unit, 0.1, 0.1, core.Unit, 1); ok {
-		testingT.Fatal("expected totalDescendants to fail for a supercritical process")
-	}
+			Convey("Then nothing is reported rather than a padded matrix", func() {
+				So(branching, ShouldBeEmpty)
+			})
+		})
+	})
 }

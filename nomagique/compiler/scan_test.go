@@ -4,13 +4,13 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique/cognition"
+	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/store"
 )
 
 func TestReflectPorts(t *testing.T) {
-	Convey("Given a capability-only Memory resource", t, func() {
-		inputs, outputs, _, found := reflectPorts(cognition.Memory_TypeID)
+	Convey("Given a capability-only Transform resource", t, func() {
+		inputs, outputs, _, found := reflectPorts(data.Transform_TypeID)
 		So(found, ShouldBeTrue)
 		So(inputs, ShouldBeEmpty)
 		So(outputs, ShouldHaveLength, 1)

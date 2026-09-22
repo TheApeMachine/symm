@@ -43,7 +43,11 @@ func TestDataPrimitives(t *testing.T) {
 				results, err := future.Struct()
 				So(err, ShouldBeNil)
 
-				return results.Out(), results.Found()
+				if !results.Found() {
+					So(results.Which(), ShouldEqual, data.Extracted_Which_missing)
+					return 0, false
+				}
+				return results.Out(), true
 			}
 
 			Convey("It resolves a nested path", func() {

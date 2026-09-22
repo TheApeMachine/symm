@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/theapemachine/errnie"
@@ -13,8 +14,9 @@ import (
 /* CaptureServer owns one capture session and assigns each ingress frame an identity. */
 type CaptureServer struct {
 	session  string
-	sequence uint64
+	sequence int64
 	out      []byte
+	record   CaptureRecord
 }
 
 /* NewCapture creates an idle capture session; no frame exists until Write. */
@@ -63,14 +65,16 @@ func (server *CaptureServer) Write(ctx context.Context, call Capture_write) erro
 		return errnie.Error(errnie.Err(errnie.Validation, "capture: read kind", err))
 	}
 
-	row := struct {
-		ID         string `json:"capture_id"`
-		ReceivedAt string `json:"received_at"`
-		Endpoint   string `json:"endpoint"`
-		Symbol     string `json:"symbol,omitempty"`
-		Kind       string `json:"kind,omitempty"`
-		Payload    []byte `json:"payload"`
-	}{fmt.Sprintf("%s:%d", server.session, server.sequence), receivedAt, endpoint, symbol, kind, payload}
+	if server.sequence == math.MaxInt64 {
+		return errnie.Error(errnie.Err(errnie.Validation, "capture: session sequence exhausted", nil))
+	}
+
+	row := CaptureRecord{
+		ID:      fmt.Sprintf("%s:%d", server.session, server.sequence),
+		Session: server.session, Sequence: server.sequence,
+		ReceivedAt: receivedAt, ReceivedTime: receivedAt, Endpoint: endpoint,
+		Symbol: symbol, Kind: kind, Payload: payload,
+	}
 	encoded, err := json.Marshal(row)
 
 	if err != nil {
@@ -79,6 +83,7 @@ func (server *CaptureServer) Write(ctx context.Context, call Capture_write) erro
 
 	server.sequence++
 	server.out = encoded
+	server.record = row
 	return nil
 }
 
@@ -94,6 +99,30 @@ func (server *CaptureServer) Done(ctx context.Context, call Capture_done) error 
 		return errnie.Error(errnie.Err(errnie.Internal, "capture: set row", err))
 	}
 
+	results.SetSequence(server.record.Sequence)
+	for _, err := range []error{results.SetPayload(server.record.Payload), results.SetSession(server.record.Session), results.SetEndpoint(server.record.Endpoint)} {
+		if err != nil {
+			return errnie.Error(errnie.Err(errnie.Internal, "capture: frame metadata", err))
+		}
+	}
+	server.record = CaptureRecord{}
 	server.out = nil
 	return nil
+}
+
+/*
+	CaptureRecord preserves ingress bytes and the cursor assigned by one capture owner.
+
+ReceivedTime retains nanoseconds independently of Iceberg's timestamp precision.
+*/
+type CaptureRecord struct {
+	ID           string `json:"capture_id"`
+	Session      string `json:"capture_session"`
+	Sequence     int64  `json:"capture_sequence"`
+	ReceivedAt   string `json:"received_at"`
+	ReceivedTime string `json:"received_time"`
+	Endpoint     string `json:"endpoint"`
+	Symbol       string `json:"symbol,omitempty"`
+	Kind         string `json:"kind,omitempty"`
+	Payload      []byte `json:"payload"`
 }

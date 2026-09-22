@@ -25,6 +25,11 @@ type ExcursionServer struct {
 	// The path, held as the three positions a move is made of rather than as
 	// the steps between them. History is not retained: a leg is summarised by
 	// where it began and how far it got.
+	anchorIndex   int
+	ignitionIndex int
+	extremumIndex int
+	observations  int
+
 	anchor   float64
 	ignition float64
 	extremum float64
@@ -49,13 +54,16 @@ type ExcursionServer struct {
 	legSquares float64
 
 	reported struct {
-		anchor     float64
-		ignition   float64
-		extremum   float64
-		excursion  float64
-		qualifying float64
-		confirmed  bool
-		found      bool
+		anchorIndex   int
+		ignitionIndex int
+		extremumIndex int
+		anchor        float64
+		ignition      float64
+		extremum      float64
+		excursion     float64
+		qualifying    float64
+		confirmed     bool
+		found         bool
 	}
 }
 
@@ -73,8 +81,11 @@ func NewExcursion(ctx context.Context) *ExcursionServer {
 Write advances the path by one step.
 */
 func (server *ExcursionServer) Write(ctx context.Context, call Excursion_write) error {
-	args := call.Args()
-	value := args.Value()
+	return server.Step(call.Args().Value())
+}
+
+/* Step advances the canonical excursion calculation with one positive observation. */
+func (server *ExcursionServer) Step(value float64) error {
 
 	// A path is walked as proportions of where it stands, so a step at or
 	// below zero has no proportion to be read against.
@@ -86,6 +97,7 @@ func (server *ExcursionServer) Write(ctx context.Context, call Excursion_write) 
 		))
 	}
 
+	server.observations++
 	server.observe(value)
 
 	if !server.opened {
@@ -182,11 +194,13 @@ func (server *ExcursionServer) step(value, confirm, qualifying float64) {
 
 	if server.rising && travelled >= 0 {
 		server.extremum = value
+		server.extremumIndex = server.observations - 1
 		return
 	}
 
 	if !server.rising && travelled <= 0 {
 		server.extremum = value
+		server.extremumIndex = server.observations - 1
 		return
 	}
 
@@ -196,6 +210,9 @@ func (server *ExcursionServer) step(value, confirm, qualifying float64) {
 
 	server.close(qualifying)
 
+	server.anchorIndex = server.ignitionIndex
+	server.ignitionIndex = server.extremumIndex
+	server.extremumIndex = server.observations - 1
 	server.anchor = server.ignition
 	server.ignition = server.extremum
 	server.extremum = value
@@ -216,6 +233,9 @@ func (server *ExcursionServer) close(qualifying float64) {
 		return
 	}
 
+	server.reported.anchorIndex = server.anchorIndex
+	server.reported.ignitionIndex = server.ignitionIndex
+	server.reported.extremumIndex = server.extremumIndex
 	server.reported.anchor = server.anchor
 	server.reported.ignition = server.ignition
 	server.reported.extremum = server.extremum

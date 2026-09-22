@@ -1,122 +1,12 @@
 {
   "id": "logic:stage",
-  "name": "logic:stage",
+  "name": "Training truth",
   "nodes": {
-    "associative_grid": {
-      "id": "associative_grid",
-      "type": "associative.Grid",
+    "truth": {
+      "id": "truth",
+      "type": "definition:training_grade",
       "connections": {
         "inputs": {},
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "temporal_transition",
-              "portName": "data"
-            }
-          ]
-        }
-      }
-    },
-    "temporal_transition": {
-      "id": "temporal_transition",
-      "type": "temporal.Transition",
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "associative_grid",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "cognition_associate",
-              "portName": "current"
-            }
-          ]
-        }
-      }
-    },
-    "cognition_associate": {
-      "id": "cognition_associate",
-      "type": "cognition.Associate",
-      "connections": {
-        "inputs": {
-          "current": [
-            {
-              "nodeId": "temporal_transition",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "current": [
-            {
-              "nodeId": "cognition_reinforce",
-              "portName": "classBytes"
-            }
-          ]
-        }
-      }
-    },
-    "cognition_reinforce": {
-      "id": "cognition_reinforce",
-      "type": "cognition.Reinforce",
-      "connections": {
-        "inputs": {
-          "classBytes": [
-            {
-              "nodeId": "cognition_associate",
-              "portName": "current"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "cognition_attractor",
-              "portName": "contextBytes"
-            }
-          ]
-        }
-      }
-    },
-    "cognition_attractor": {
-      "id": "cognition_attractor",
-      "type": "cognition.Attractor",
-      "connections": {
-        "inputs": {
-          "contextBytes": [
-            {
-              "nodeId": "cognition_reinforce",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "class": [
-            {
-              "nodeId": "cognition_classification",
-              "portName": "class"
-            }
-          ]
-        }
-      }
-    },
-    "cognition_classification": {
-      "id": "cognition_classification",
-      "type": "cognition.Classification",
-      "connections": {
-        "inputs": {
-          "class": [
-            {
-              "nodeId": "cognition_attractor",
-              "portName": "class"
-            }
-          ]
-        },
         "outputs": {}
       }
     }

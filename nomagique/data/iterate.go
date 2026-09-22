@@ -1,7 +1,9 @@
 package data
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"strings"
 
 	"github.com/bytedance/sonic"
@@ -10,28 +12,21 @@ import (
 )
 
 /*
-IterateServer walks the array at a path one element per evaluation, so that
-whatever a graph wires downstream of it is applied to every element in turn.
-Composing it with the rest of the vocabulary is how a graph maps, filters or
-reduces a collection without any node taking a function.
-
-The graph is a directed acyclic graph, so an element cannot be fanned out
-into repeated passes of the same nodes within one evaluation. Iterate is
-therefore a cursor rather than a loop: it holds the collection it was given
-and advances through it, publishing index, count and last so downstream
-nodes can tell where in the collection they are, and re-reads only once the
-collection is exhausted.
+IterateServer queues incoming collections and emits one element per evaluation.
+Every arrival is retained, including arrivals while an earlier collection drains.
+Envelope mode retains the enclosing document and replaces the collection with
+its current element, so graph consumers keep the record's channel metadata.
 */
 type IterateServer struct {
 	*runtime.System
-	path     string
-	elements [][]byte
-	cursor   int
-	out      []byte
-	index    int64
-	count    int64
-	last     bool
-	found    bool
+	path         string
+	envelope     bool
+	pending      [][][]byte
+	cursor       int
+	out          []byte
+	index, count int64
+	last, found  bool
+	ignored      uint64
 }
 
 func NewIterate(ctx context.Context) *IterateServer {
@@ -43,41 +38,32 @@ func NewIterate(ctx context.Context) *IterateServer {
 	return server
 }
 
-/*
-Write loads a collection when the previous one is exhausted, then advances
-the cursor by one element.
-*/
+/* Write admits every arriving collection, then advances one record. */
 func (server *IterateServer) Write(ctx context.Context, call Iterate_write) error {
 	path, err := call.Args().Path()
-
 	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.BadRequest,
-			"[data.iterate.Write] failed to read path argument",
-			err,
-		))
+		return errnie.Error(errnie.Err(errnie.Validation, "iterate: path", err))
 	}
-
-	if len(path) > 0 {
-		server.path = path
+	if len(server.pending) > 0 && (path != server.path || call.Args().Envelope() != server.envelope) {
+		return errnie.Error(errnie.Err(errnie.Validation, "iterate: cannot change projection while collections are pending", nil))
 	}
-
-	payload, err := call.Args().Data()
-
+	server.path, server.envelope = path, call.Args().Envelope()
+	arrivals, err := call.Args().Data()
 	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.BadRequest,
-			"[data.iterate.Write] failed to read data argument",
-			err,
-		))
+		return errnie.Error(errnie.Err(errnie.Validation, "iterate: collections", err))
 	}
-
-	if server.cursor >= len(server.elements) && len(payload) > 0 {
+	for index := 0; index < arrivals.Len(); index++ {
+		payload, err := arrivals.At(index)
+		if err != nil {
+			return errnie.Error(errnie.Err(errnie.Validation, "iterate: collection", err))
+		}
+		if len(payload) == 0 {
+			continue
+		}
 		if err := server.load(payload); err != nil {
 			return err
 		}
 	}
-
 	return server.advance()
 }
 
@@ -96,6 +82,8 @@ func (server *IterateServer) Done(ctx context.Context, call Iterate_done) error 
 	}
 
 	results.SetStatus(runtime.Status(server.Status()))
+	results.SetPending(uint64(len(server.pending)))
+	results.SetIgnored(server.ignored)
 	results.SetFound(server.found)
 	results.SetIndex(server.index)
 	results.SetCount(server.count)
@@ -120,13 +108,15 @@ func (server *IterateServer) Done(ctx context.Context, call Iterate_done) error 
 }
 
 /*
-load decodes the collection at the configured path, replacing whatever the
-cursor had left.
+load decodes and queues a collection without replacing an unfinished arrival.
 */
 func (server *IterateServer) load(payload []byte) error {
 	var document any
 
-	if err := sonic.Unmarshal(payload, &document); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.UseNumber()
+
+	if err := decoder.Decode(&document); err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
 			"[data.iterate.load] payload is not a structure",
@@ -140,8 +130,7 @@ func (server *IterateServer) load(payload []byte) error {
 		resolved, found := walk(document, strings.Split(server.path, "."))
 
 		if !found {
-			server.elements = nil
-			server.cursor = 0
+			server.ignored++
 			return nil
 		}
 
@@ -158,10 +147,27 @@ func (server *IterateServer) load(payload []byte) error {
 		))
 	}
 
-	server.elements = make([][]byte, 0, len(elements))
+	encodedElements := make([][]byte, 0, len(elements))
 
 	for _, element := range elements {
-		encoded, err := sonic.Marshal(element)
+		projected := element
+		if server.envelope && server.path != "" {
+			parent := document
+			segments := strings.Split(server.path, ".")
+			if len(segments) > 1 {
+				parent, _ = walk(document, segments[:len(segments)-1])
+			}
+			name := segments[len(segments)-1]
+			position, indexed := arrayIndex(name)
+			if indexed {
+				parent.([]any)[position] = element
+			}
+			if !indexed {
+				parent.(map[string]any)[name] = element
+			}
+			projected = document
+		}
+		encoded, err := sonic.Marshal(projected)
 
 		if err != nil {
 			return errnie.Error(errnie.Err(
@@ -171,10 +177,12 @@ func (server *IterateServer) load(payload []byte) error {
 			))
 		}
 
-		server.elements = append(server.elements, encoded)
+		encodedElements = append(encodedElements, encoded)
 	}
 
-	server.cursor = 0
+	if len(encodedElements) > 0 {
+		server.pending = append(server.pending, encodedElements)
+	}
 	return nil
 }
 
@@ -182,20 +190,22 @@ func (server *IterateServer) load(payload []byte) error {
 advance moves the cursor onto the next element.
 */
 func (server *IterateServer) advance() error {
-	server.found = false
-	server.count = int64(len(server.elements))
-
-	if server.cursor >= len(server.elements) {
-		server.last = false
+	server.found, server.last = false, false
+	if len(server.pending) == 0 {
 		return nil
 	}
-
-	server.out = server.elements[server.cursor]
-	server.index = int64(server.cursor)
+	collection := server.pending[0]
+	server.out = collection[server.cursor]
+	collection[server.cursor] = nil
+	server.index, server.count = int64(server.cursor), int64(len(collection))
 	server.found = true
 	server.cursor++
-	server.last = server.cursor >= len(server.elements)
-
+	server.last = server.cursor == len(collection)
+	if server.last {
+		server.pending[0] = nil
+		server.pending = server.pending[1:]
+		server.cursor = 0
+	}
 	return nil
 }
 

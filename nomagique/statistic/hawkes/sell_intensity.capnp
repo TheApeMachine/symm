@@ -1,9 +1,0 @@
-using Go = import "/go.capnp";
-@0xf017a47b19b7d519;
-$Go.package("hawkes");
-$Go.import("github.com/theapemachine/symm/nomagique/statistic/hawkes");
-
-interface SellIntensity {
-  write @0 (value :Float64) -> stream;
-  done @1 () -> (out :Float64);
-}

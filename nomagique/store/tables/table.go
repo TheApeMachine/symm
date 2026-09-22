@@ -3,13 +3,19 @@ package tables
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
-	"fmt"
+	"errors"
+	"math"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/array"
+	"github.com/apache/arrow-go/v18/arrow/memory"
+	"github.com/apache/iceberg-go"
+	"github.com/apache/iceberg-go/catalog"
+	_ "github.com/apache/iceberg-go/catalog/rest"
 	icetable "github.com/apache/iceberg-go/table"
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
@@ -25,15 +31,23 @@ been acknowledged: a commit that fails leaves its rows here, and the next read
 sends them again. Rows are never dropped to keep the node moving — a tape with
 a hole in it cannot be replayed against.
 
-The table is declared by config, a TableConfig as JSON. What the columns are
+The table is declared by config using Iceberg field types as JSON. What the columns are
 and what they are called is the caller's declaration, not this node's
 knowledge.
 */
 type IcebergTableServer struct {
 	mutex   sync.Mutex
-	catalog *Catalog
-	opened  TableConfig
-	table   *icetable.Table
+	Catalog catalog.Catalog
+	opened  struct {
+		Namespace   string                `json:"namespace"`
+		Table       string                `json:"table"`
+		Catalog     string                `json:"catalog"`
+		Properties  iceberg.Properties    `json:"properties"`
+		Fields      []iceberg.NestedField `json:"fields"`
+		AppendBytes int                   `json:"appendBytes"`
+	}
+	declaration string
+	table       *icetable.Table
 
 	pending     [][]byte
 	held        int
@@ -44,7 +58,8 @@ type IcebergTableServer struct {
 
 func NewIcebergTable() *IcebergTableServer {
 	return &IcebergTableServer{
-		appendBytes: DefaultStorageConfig().Iceberg.AppendBytes,
+		// Arrow binary offsets are signed 32-bit; a batch cannot exceed them.
+		appendBytes: math.MaxInt32,
 	}
 }
 
@@ -132,40 +147,49 @@ func (server *IcebergTableServer) open(ctx context.Context, config string) error
 	server.mutex.Lock()
 	defer server.mutex.Unlock()
 
-	if server.table != nil && server.opened.declaration == config {
+	if server.table != nil && server.declaration == config {
 		return nil
 	}
 
-	declared, err := ConfigFromJSON(config)
-
+	if server.table != nil {
+		return errnie.Error(errnie.Err(errnie.Validation, "iceberg: cannot change the declaration of an open table", nil))
+	}
+	if err := json.Unmarshal([]byte(config), &server.opened); err != nil {
+		return errnie.Error(errnie.Err(errnie.Validation, "iceberg: invalid table declaration", err))
+	}
+	if server.opened.Namespace == "" || server.opened.Table == "" || len(server.opened.Fields) == 0 {
+		return errnie.Error(errnie.Err(errnie.Validation, "iceberg: namespace, table and fields are required", nil))
+	}
+	if server.opened.AppendBytes < 0 || server.opened.AppendBytes > math.MaxInt32 {
+		return errnie.Error(errnie.Err(errnie.Validation, "iceberg: appendBytes exceeds Arrow's binary offset domain", nil))
+	}
+	if server.opened.AppendBytes > 0 {
+		server.appendBytes = server.opened.AppendBytes
+	}
+	var err error
+	if server.Catalog == nil {
+		server.Catalog, err = catalog.Load(ctx, server.opened.Catalog, server.opened.Properties)
+		if err != nil {
+			return errnie.Error(errnie.Err(errnie.IO, "iceberg: open catalog", err))
+		}
+	}
+	namespace := strings.Split(server.opened.Namespace, ".")
+	if err := server.Catalog.CreateNamespace(ctx, namespace, nil); err != nil && !errors.Is(err, catalog.ErrNamespaceAlreadyExists) {
+		return errnie.Error(errnie.Err(errnie.IO, "iceberg: create namespace", err))
+	}
+	identifier := append(namespace, server.opened.Table)
+	loaded, err := server.Catalog.LoadTable(ctx, identifier)
+	if errors.Is(err, catalog.ErrNoSuchTable) {
+		loaded, err = server.Catalog.CreateTable(ctx, identifier, iceberg.NewSchema(0, server.opened.Fields...))
+	}
 	if err != nil {
-		return err
+		return errnie.Error(errnie.Err(errnie.IO, "iceberg: open table", err))
 	}
-
-	schema, err := SchemaFromJSON(config)
-
-	if err != nil {
-		return err
+	if !loaded.Schema().Equals(iceberg.NewSchema(loaded.Schema().ID, server.opened.Fields...)) {
+		return errnie.Error(errnie.Err(errnie.Validation, "iceberg: declaration differs from stored schema", nil))
 	}
-
-	if server.catalog == nil {
-		server.catalog = Open(ctx)
-	}
-
-	if server.catalog == nil {
-		return errnie.Error(errnie.Err(errnie.Validation, "iceberg: catalog is not configured", nil))
-	}
-
-	loaded, err := server.catalog.CreateTable(
-		ctx, declared.Namespace, declared.Table, schema,
-	)
-
-	if err != nil {
-		return err
-	}
-
-	server.opened = declared
 	server.table = loaded
+	server.declaration = config
 
 	return nil
 }
@@ -263,13 +287,14 @@ func (server *IcebergTableServer) commit(ctx context.Context) error {
 	sent := 0
 
 	for sent < len(rows) {
-		end, _, err := span(sent, len(rows), server.appendBytes, func(index int) int {
-			return len(rows[index])
-		})
-
-		if err != nil {
+		end, held := sent, 0
+		for end < len(rows) && len(rows[end]) <= server.appendBytes-held {
+			held += len(rows[end])
+			end++
+		}
+		if end == sent {
 			server.restore(rows[sent:])
-			return err
+			return errnie.Error(errnie.Err(errnie.Validation, "iceberg: row exceeds declared append byte budget", nil))
 		}
 
 		if err := server.appendRange(ctx, table, rows, sent, end); err != nil {
@@ -308,21 +333,50 @@ appendRange sends one snapshot.
 func (server *IcebergTableServer) appendRange(
 	ctx context.Context, table *icetable.Table, rows [][]byte, start, end int,
 ) error {
-	reader, err := records(
-		table.Schema(), end-start,
-		func(index int) int { return len(rows[start+index]) },
-		func(builder *array.RecordBuilder, from, to int) error {
-			for index := from; index < to; index++ {
-				if err := fillRow(builder, server.opened, rows[start+index]); err != nil {
-					return err
-				}
-			}
-			return nil
-		},
-	)
-
+	converted, err := icetable.SchemaToArrowSchema(table.Schema(), nil, true, false)
 	if err != nil {
-		return err
+		return errnie.Error(errnie.Err(errnie.Validation, "iceberg: Arrow schema", err))
+	}
+	builder := array.NewRecordBuilder(memory.DefaultAllocator, converted)
+	defer builder.Release()
+	for _, row := range rows[start:end] {
+		var values map[string]json.RawMessage
+		if err := json.Unmarshal(row, &values); err != nil {
+			return errnie.Error(errnie.Err(errnie.Validation, "iceberg: invalid row", err))
+		}
+		for index, field := range converted.Fields() {
+			value, exists := values[field.Name]
+			if !exists || bytes.Equal(value, []byte("null")) {
+				builder.Field(index).AppendNull()
+				continue
+			}
+			if timestamp, ok := builder.Field(index).(*array.TimestampBuilder); ok {
+				var instant time.Time
+				if err := json.Unmarshal(value, &instant); err != nil {
+					return errnie.Error(errnie.Err(errnie.Validation, "iceberg: invalid timestamp "+field.Name, err))
+				}
+				converted, err := arrow.TimestampFromTime(instant, timestamp.Type().(*arrow.TimestampType).Unit)
+				if err != nil {
+					return errnie.Error(errnie.Err(errnie.Validation, "iceberg: timestamp conversion", err))
+				}
+				timestamp.Append(converted)
+				continue
+			}
+			if err := builder.Field(index).UnmarshalJSON(append(append([]byte("["), value...), ']')); err != nil {
+				return errnie.Error(errnie.Err(errnie.Validation, "iceberg: invalid column "+field.Name, err))
+			}
+		}
+	}
+	record := builder.NewRecordBatch()
+	defer record.Release()
+	for index, field := range converted.Fields() {
+		if !field.Nullable && record.Column(index).NullN() > 0 {
+			return errnie.Error(errnie.Err(errnie.Validation, "iceberg: missing required column "+field.Name, nil))
+		}
+	}
+	reader, err := array.NewRecordReader(converted, []arrow.RecordBatch{record})
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.Validation, "iceberg: record reader", err))
 	}
 
 	defer reader.Release()
@@ -340,328 +394,6 @@ func (server *IcebergTableServer) appendRange(
 	server.mutex.Lock()
 	server.table = updated
 	server.mutex.Unlock()
-
-	return nil
-}
-
-/*
-fillRow writes one payload into the builder, column by declared column.
-
-A field the payload does not carry is written as null rather than as a zero:
-"not in this record" and "recorded as zero" are different readings and must
-not share a representation.
-*/
-func fillRow(builder *array.RecordBuilder, declared TableConfig, payload []byte) error {
-	var held map[string]json.RawMessage
-
-	if err := json.Unmarshal(payload, &held); err != nil {
-		return errnie.Error(errnie.Err(errnie.Validation, "iceberg: row must be a JSON object", err))
-	}
-
-	if len(declared.Fields) != len(builder.Fields()) {
-		return errnie.Error(errnie.Err(errnie.Validation, "iceberg: declared columns differ from table schema", nil))
-	}
-
-	for index, field := range declared.Fields {
-		if builder.Schema().Field(index).Name != field.Name {
-			return errnie.Error(errnie.Err(errnie.Validation, "iceberg: declared column order differs from table schema", nil))
-		}
-
-		value, carried := held[field.Name]
-
-		if !carried || bytes.Equal(value, []byte("null")) {
-			if field.Required || !builder.Schema().Field(index).Nullable {
-				return errnie.Error(errnie.Err(errnie.Validation, "iceberg: missing required column "+field.Name, nil))
-			}
-
-			builder.Field(index).AppendNull()
-			continue
-		}
-
-		if err := appendValue(builder, index, value); err != nil {
-			return errnie.Error(errnie.Err(errnie.Validation, "iceberg: invalid column "+field.Name, err))
-		}
-	}
-
-	return nil
-}
-
-/* appendValue decodes the declared field, never substitutes the entire input row. */
-func appendValue(builder *array.RecordBuilder, index int, value json.RawMessage) error {
-	switch target := builder.Field(index).(type) {
-	case *array.StringBuilder:
-		var text string
-
-		if err := json.Unmarshal(value, &text); err != nil {
-			return errnie.Error(errnie.Err(errnie.Validation, "expected text", err))
-		}
-
-		target.Append(text)
-	case *array.Int64Builder:
-		var number int64
-
-		if err := json.Unmarshal(value, &number); err != nil {
-			return errnie.Error(errnie.Err(errnie.Validation, "expected int64", err))
-		}
-
-		target.Append(number)
-	case *array.Float64Builder:
-		var number float64
-
-		if err := json.Unmarshal(value, &number); err != nil {
-			return errnie.Error(errnie.Err(errnie.Validation, "expected float64", err))
-		}
-
-		target.Append(number)
-	case *array.BooleanBuilder:
-		var flag bool
-
-		if err := json.Unmarshal(value, &flag); err != nil {
-			return errnie.Error(errnie.Err(errnie.Validation, "expected boolean", err))
-		}
-
-		target.Append(flag)
-	case *array.TimestampBuilder:
-		var instant time.Time
-
-		if err := json.Unmarshal(value, &instant); err != nil {
-			return errnie.Error(errnie.Err(errnie.Validation, "expected RFC3339 timestamp", err))
-		}
-
-		timestamp(target, instant)
-	case *array.BinaryBuilder:
-		var binary []byte
-
-		if err := json.Unmarshal(value, &binary); err != nil {
-			return errnie.Error(errnie.Err(errnie.Validation, "expected base64 binary", err))
-		}
-
-		target.Append(binary)
-	default:
-		return errnie.Error(errnie.Err(errnie.Validation, fmt.Sprintf("iceberg: unsupported column type %s", target.Type()), nil))
-	}
-
-	return nil
-}
-
-/*
-IcebergScanServer reads rows back out of an Iceberg table.
-
-This is the other end of the record: what was captured is what gets replayed,
-so a fragment comes back out of the same table the tape went into.
-*/
-type IcebergScanServer struct {
-	catalog  *Catalog
-	payloads [][]byte
-	cursor   int
-	loaded   string
-}
-
-func NewIcebergScan() *IcebergScanServer {
-	return &IcebergScanServer{}
-}
-
-/*
-Write reads the declared table and holds what it carries.
-*/
-func (server *IcebergScanServer) Write(ctx context.Context, call IcebergScan_write) error {
-	config, err := call.Args().Config()
-
-	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.BadRequest,
-			"[iceberg] failed to read the table declaration",
-			err,
-		))
-	}
-
-	if config == "" {
-		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"[iceberg] a table has to be declared before it can be read",
-			nil,
-		))
-	}
-
-	declared, err := ConfigFromJSON(config)
-
-	if err != nil {
-		return err
-	}
-
-	if server.catalog == nil {
-		server.catalog = Open(ctx)
-	}
-
-	if server.catalog == nil {
-		return errnie.Error(errnie.Err(errnie.Validation, "iceberg: catalog is not configured", nil))
-	}
-
-	loaded, err := server.catalog.Load(ctx, declared.Namespace, declared.Table)
-
-	if err != nil {
-		return err
-	}
-
-	// The table is read once and then handed back a frame at a time. Reading
-	// it again on every evaluation would replay the beginning forever.
-	if server.loaded == declared.declaration {
-		return nil
-	}
-
-	held, err := server.read(ctx, loaded, declared)
-
-	if err != nil {
-		return err
-	}
-
-	server.payloads = held
-	server.cursor = 0
-	server.loaded = declared.declaration
-
-	return nil
-}
-
-/*
-read walks the table's current snapshot and collects the frames it holds.
-
-What comes back is what went in: the payload column carries each frame
-exactly as it arrived, so replaying the table is the same thing happening
-again rather than a summary of it being described. Anything that reads a
-replayed frame cannot tell it from a live one, which is the only way a
-decision made against the archive means anything about the market.
-*/
-func (server *IcebergScanServer) read(
-	ctx context.Context, loaded *icetable.Table, declared TableConfig,
-) ([][]byte, error) {
-	scan := loaded.Scan()
-	_, batches, err := scan.ToArrowRecords(ctx)
-
-	if err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.BadGateway,
-			"[iceberg] failed to scan "+declared.Table,
-			err,
-		))
-	}
-
-	collected := make([][]byte, 0)
-
-	for batch, err := range batches {
-		if err != nil {
-			return nil, errnie.Error(errnie.Err(
-				errnie.BadGateway,
-				"[iceberg] failed to read a batch of "+declared.Table,
-				err,
-			))
-		}
-
-		column := -1
-
-		for index := range int(batch.NumCols()) {
-			if batch.Schema().Field(index).Name == payloadColumn {
-				column = index
-				break
-			}
-		}
-
-		if column < 0 {
-			batch.Release()
-
-			return nil, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"[iceberg] "+declared.Table+" holds no "+payloadColumn+
-					" column, so there is nothing to replay",
-				nil,
-			))
-		}
-
-		for row := range int(batch.NumRows()) {
-			frame, carried := frameBytes(
-				batch.Column(column).GetOneForMarshal(row),
-			)
-
-			// A row whose frame is missing is not an empty frame. Replaying
-			// it as one would put a reading into the tape that never
-			// happened.
-			if !carried {
-				batch.Release()
-				return nil, errnie.Error(errnie.Err(errnie.Validation, "iceberg: replay row has missing or malformed payload", nil))
-			}
-
-			collected = append(collected, frame)
-		}
-
-		batch.Release()
-	}
-
-	return collected, nil
-}
-
-// payloadColumn is where a frame is kept, exactly as it arrived.
-const payloadColumn = "payload"
-
-/*
-frameBytes reads one archived frame, whichever way Arrow handed it over.
-*/
-func frameBytes(held any) ([]byte, bool) {
-	switch value := held.(type) {
-	case []byte:
-		if len(value) == 0 {
-			return nil, false
-		}
-
-		return value, true
-
-	case string:
-		if value == "" {
-			return nil, false
-		}
-
-		decoded, err := base64.StdEncoding.DecodeString(value)
-
-		if err == nil {
-			return decoded, true
-		}
-
-		return nil, false
-	}
-
-	return nil, false
-}
-
-/*
-Done hands back the next frame.
-
-One frame per evaluation, in table scan order. Callers must establish capture
-ordering before treating a multi-file scan as a chronological tape. Handing back the whole table at once would present
-an array where every reader downstream expects one record.
-*/
-func (server *IcebergScanServer) Done(ctx context.Context, call IcebergScan_done) error {
-	results, err := call.AllocResults()
-
-	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.Internal,
-			"[iceberg] failed to allocate results",
-			err,
-		))
-	}
-
-	if server.cursor >= len(server.payloads) {
-		return nil
-	}
-
-	frame := server.payloads[server.cursor]
-	server.cursor++
-
-	if err := results.SetOut(frame); err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.Internal,
-			"[iceberg] failed to set out",
-			err,
-		))
-	}
 
 	return nil
 }

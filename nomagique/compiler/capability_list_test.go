@@ -20,7 +20,7 @@ func TestCompileFanIn(t *testing.T) {
 				Type: "websocket.WebSocketClient",
 				Connections: Connections{
 					Outputs: map[string][]ConnectionTarget{
-						"read": {{NodeID: "grid", PortName: port}},
+						"frame.read": {{NodeID: "grid", PortName: port}},
 					},
 				},
 			}
@@ -37,9 +37,9 @@ func TestCompileFanIn(t *testing.T) {
 					Type: "store.Grid",
 					Connections: Connections{
 						Inputs: map[string][]ConnectionTarget{
-							"data":   {{NodeID: "first", PortName: "read"}},
-							"data_1": {{NodeID: "second", PortName: "read"}},
-							"data_2": {{NodeID: "third", PortName: "read"}},
+							"data":   {{NodeID: "first", PortName: "frame.read"}},
+							"data_1": {{NodeID: "second", PortName: "frame.read"}},
+							"data_2": {{NodeID: "third", PortName: "frame.read"}},
 						},
 					},
 				},

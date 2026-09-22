@@ -225,3 +225,39 @@ export {
 	type ImpulseContour,
 	type ImpulseConnection,
 } from "./impulse-map";
+
+export {
+	EpisodeTape,
+	type EpisodeTapeProps,
+	type TrainingEpisode,
+	type TapePoint,
+	type TapeMarker,
+} from "./episode-tape";
+export {
+	PolicyBranches,
+	type PolicyBranchesProps,
+	type PolicyBranch,
+} from "./policy-branches";
+export {
+	OutcomeDistribution,
+	type OutcomeDistributionProps,
+	type OutcomeBin,
+} from "./outcome-distribution";
+export {
+	ForwardView,
+	type ForwardViewProps,
+	type ForwardSummary,
+} from "./forward-view";
+export {
+	RecognitionView,
+	type RecognitionViewProps,
+	type RecognitionMetrics,
+	type ActivityRow,
+} from "./recognition-view";
+
+export {
+	TrieView,
+	type TrieViewProps,
+	type TrieNode,
+	type TrieCandidate,
+} from "./trie-view";

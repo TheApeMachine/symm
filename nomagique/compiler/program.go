@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"sync"
 	"time"
 
@@ -265,6 +266,10 @@ func (p *Program) carriedPayload() bool {
 				continue
 			}
 
+			if field.InUnion && result.Uint16(capnp.DataOffset(field.DiscriminantOffset*2)) != field.DiscriminantValue {
+				continue
+			}
+
 			pointer, err := result.Ptr(uint16(field.Offset))
 
 			if err == nil && pointer.IsValid() && len(pointer.Data()) > 0 {
@@ -476,6 +481,10 @@ func (p *Program) Execute(
 
 	// 4. Execute DAG topologically
 	for len(queue) > 0 {
+		// Fan-in nodes can drain without a current arrival. Run every ready
+		// predecessor first so a newly queued producer is not overtaken by
+		// a gathering node that was already runnable at the start.
+		slices.Sort(queue)
 		currIdx := queue[0]
 		queue = queue[1:]
 

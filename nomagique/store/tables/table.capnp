@@ -15,8 +15,3 @@ interface IcebergTable extends(Durable) {
   write @0 (config :Text, payload :Data, commit :Bool) -> stream;
   done @1 () -> (out :Data, pending :Int64, committed :Int64, bytes :Int64);
 }
-
-interface IcebergScan {
-  write @0 (config :Text, query :Data) -> stream;
-  done @1 () -> (out :Data);
-}

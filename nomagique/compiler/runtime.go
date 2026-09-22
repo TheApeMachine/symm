@@ -15,10 +15,11 @@ Editing a graph compiles a candidate Program while the current Program runs.
 The active Program is only swapped at a quiescent boundary after validation succeeds.
 */
 type Runtime struct {
-	active   atomic.Pointer[Program]
-	registry *Registry
-	repo     DefinitionRepository
-	mu       sync.RWMutex // quiescent swap and admission barrier
+	active    atomic.Pointer[Program]
+	registry  *Registry
+	repo      DefinitionRepository
+	recompile sync.Mutex   // serializes candidates and protects reused capability ownership
+	mu        sync.RWMutex // quiescent swap and admission barrier
 }
 
 func NewRuntime(initial *Program, reg *Registry, repo DefinitionRepository) *Runtime {
@@ -77,9 +78,13 @@ func (r *Runtime) Execute(ctx context.Context, initialInputs map[NodeID]capnp.St
 Recompile compiles a candidate Program from doc while the active Program runs.
 If candidate compilation fails, the active Program remains completely untouched.
 If candidate compilation succeeds, it atomically swaps in the new Program at a
-quiescent boundary and retires the old program.
+quiescent boundary after persisting durable owners. A failed flush leaves the
+old program active with its pending state available for retry.
 */
 func (r *Runtime) Recompile(ctx context.Context, doc Graph) (*Program, error) {
+	r.recompile.Lock()
+	defer r.recompile.Unlock()
+
 	prev := r.Active()
 	candidate, err := CompileWithPrevious(doc, r.registry, prev, r.repo)
 	if err != nil {
@@ -90,9 +95,17 @@ func (r *Runtime) Recompile(ctx context.Context, doc Graph) (*Program, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	oldProg := r.active.Swap(candidate)
-	if oldProg != nil {
-		oldProg.Release()
+	if prev != nil {
+		if err := prev.Flush(ctx); err != nil {
+			candidate.Release()
+			return nil, err
+		}
+	}
+
+	r.active.Store(candidate)
+
+	if prev != nil {
+		prev.Release()
 	}
 
 	return candidate, nil

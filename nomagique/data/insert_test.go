@@ -3,6 +3,7 @@ package data_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/bytedance/sonic"
@@ -158,4 +159,72 @@ func TestInsert(t *testing.T) {
 			So(results.Status(), ShouldEqual, runtime.Status(runtime.READY))
 		})
 	})
+}
+
+/* TestInsertWrite preserves graph-carried values without retaining a prior document. */
+func TestInsertWrite(t *testing.T) {
+	Convey("Given a node inserting structured truth into capture records", t, func() {
+		ctx := context.Background()
+		client := data.Insert_ServerToClient(data.NewInsert(ctx))
+		defer client.Release()
+		for _, fixture := range []struct{ document, value, expected string }{
+			{`{"sequence":18446744073709551615}`, `{"action":"ENTER","holding":false}`, `{"sequence":18446744073709551615,"truth":{"action":"ENTER","holding":false}}`},
+			{``, `{"action":"EXIT","holding":true}`, `{"truth":{"action":"EXIT","holding":true}}`},
+		} {
+			So(client.Write(ctx, func(args data.Insert_write_Params) error {
+				if err := args.SetPath("truth"); err != nil {
+					return err
+				}
+				if err := args.SetData([]byte(fixture.document)); err != nil {
+					return err
+				}
+				return args.SetJson([]byte(fixture.value))
+			}), ShouldBeNil)
+			So(client.WaitStreaming(), ShouldBeNil)
+			future, release := client.Done(ctx, nil)
+			result, err := future.Struct()
+			So(err, ShouldBeNil)
+			raw, err := result.Out()
+			So(err, ShouldBeNil)
+			var actual, expected any
+			actualDecoder := json.NewDecoder(bytes.NewReader(raw))
+			actualDecoder.UseNumber()
+			expectedDecoder := json.NewDecoder(bytes.NewReader([]byte(fixture.expected)))
+			expectedDecoder.UseNumber()
+			So(actualDecoder.Decode(&actual), ShouldBeNil)
+			So(expectedDecoder.Decode(&expected), ShouldBeNil)
+			So(actual, ShouldResemble, expected)
+			release()
+		}
+	})
+}
+
+/* BenchmarkInsertWrite measures structured insertion through the node protocol. */
+func BenchmarkInsertWrite(b *testing.B) {
+	ctx := context.Background()
+	client := data.Insert_ServerToClient(data.NewInsert(ctx))
+	defer client.Release()
+	b.ReportAllocs()
+	for b.Loop() {
+		if err := client.Write(ctx, func(args data.Insert_write_Params) error {
+			if err := args.SetPath("truth"); err != nil {
+				return err
+			}
+			if err := args.SetData([]byte(`{"sequence":18446744073709551615}`)); err != nil {
+				return err
+			}
+			return args.SetJson([]byte(`{"action":"ENTER","holding":false}`))
+		}); err != nil {
+			b.Fatal(err)
+		}
+		if err := client.WaitStreaming(); err != nil {
+			b.Fatal(err)
+		}
+		future, release := client.Done(ctx, nil)
+		_, err := future.Struct()
+		release()
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
 }

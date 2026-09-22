@@ -1,7 +1,9 @@
 package data
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"strconv"
 	"strings"
 
@@ -12,8 +14,7 @@ import (
 )
 
 /*
-ExtractServer reads one scalar out of a structure at a dotted path, and is the
-exact inverse of InsertServer. A path segment that parses as an integer
+ExtractServer projects a number, JSON value, or text from a dotted path. A path segment that parses as an integer
 indexes an array; every other segment keys an object.
 
 An absent path is reported as found=false rather than as a zero, so that a
@@ -22,9 +23,12 @@ carries as zero.
 */
 type ExtractServer struct {
 	*runtime.System
-	path  string
-	out   float64
-	found bool
+	path     string
+	out      float64
+	found    bool
+	raw      []byte
+	text     string
+	encoding string
 }
 
 func NewExtract(ctx context.Context) *ExtractServer {
@@ -50,9 +54,7 @@ func (server *ExtractServer) Write(ctx context.Context, call Extract_write) erro
 		))
 	}
 
-	if len(path) > 0 {
-		server.path = path
-	}
+	server.path = path
 
 	if server.path == "" {
 		return errnie.Error(errnie.Err(
@@ -77,6 +79,20 @@ func (server *ExtractServer) Write(ctx context.Context, call Extract_write) erro
 		return nil
 	}
 
+	encoding, err := call.Args().Encoding()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.Validation, "extract: encoding", err))
+	}
+	server.encoding = encoding
+
+	if encoding == "json" || encoding == "text" {
+		return server.project(payload)
+	}
+
+	if encoding != "" && encoding != "number" {
+		return errnie.Error(errnie.Err(errnie.Validation, "extract: unsupported encoding", nil))
+	}
 	value, found, err := server.read(payload)
 
 	if err != nil {
@@ -106,11 +122,25 @@ func (server *ExtractServer) Done(ctx context.Context, call Extract_done) error 
 	results.SetStatus(runtime.Status(server.Status()))
 	results.SetFound(server.found)
 
+	results.SetMissing()
+
 	if server.found {
-		results.SetOut(server.out)
+		switch server.encoding {
+		case "json":
+			err = results.SetJson(server.raw)
+		case "text":
+			err = results.SetText(server.text)
+		default:
+			results.SetOut(server.out)
+		}
+
+		if err != nil {
+			return errnie.Error(errnie.Err(errnie.Internal, "extract: output", err))
+		}
 	}
 
 	server.found = false
+	server.out, server.raw, server.text = 0, nil, ""
 	return nil
 }
 
@@ -247,4 +277,38 @@ func numeric(value any) (float64, bool) {
 	}
 
 	return 0, false
+}
+
+/* project preserves structured values and exact integers at a declared JSON path. */
+func (server *ExtractServer) project(payload []byte) error {
+	var document any
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.UseNumber()
+
+	if err := decoder.Decode(&document); err != nil {
+		return errnie.Error(errnie.Err(errnie.Validation, "extract: JSON document", err))
+	}
+	value, found := walk(document, strings.Split(server.path, "."))
+	server.found = found
+
+	if !found {
+		return nil
+	}
+
+	if server.encoding == "text" {
+		text, valid := value.(string)
+
+		if !valid {
+			return errnie.Error(errnie.Err(errnie.Validation, "extract: selected value is not text", nil))
+		}
+		server.text = text
+		return nil
+	}
+	raw, err := json.Marshal(value)
+
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.Internal, "extract: encode value", err))
+	}
+	server.raw = raw
+	return nil
 }

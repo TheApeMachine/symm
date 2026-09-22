@@ -11,6 +11,7 @@ import (
 	context "context"
 	runtime "github.com/theapemachine/symm/nomagique/runtime"
 	math "math"
+	strconv "strconv"
 )
 
 type Extract capnp.Client
@@ -28,7 +29,7 @@ func (c Extract) Write(ctx context.Context, params func(Extract_write_Params) er
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 2}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 3}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(Extract_write_Params(s)) }
 	}
 
@@ -36,7 +37,7 @@ func (c Extract) Write(ctx context.Context, params func(Extract_write_Params) er
 
 }
 
-func (c Extract) Done(ctx context.Context, params func(Extract_done_Params) error) (Extract_done_Results_Future, capnp.ReleaseFunc) {
+func (c Extract) Done(ctx context.Context, params func(Extract_done_Params) error) (Extracted_Future, capnp.ReleaseFunc) {
 
 	s := capnp.Send{
 		Method: capnp.Method{
@@ -52,7 +53,7 @@ func (c Extract) Done(ctx context.Context, params func(Extract_done_Params) erro
 	}
 
 	ans, release := capnp.Client(c).SendCall(ctx, s)
-	return Extract_done_Results_Future{Future: ans.Future()}, release
+	return Extracted_Future{Future: ans.Future()}, release
 
 }
 
@@ -209,9 +210,9 @@ func (c Extract_done) Args() Extract_done_Params {
 }
 
 // AllocResults allocates the results struct.
-func (c Extract_done) AllocResults() (Extract_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 16, PointerCount: 0})
-	return Extract_done_Results(r), err
+func (c Extract_done) AllocResults() (Extracted, error) {
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 16, PointerCount: 1})
+	return Extracted(r), err
 }
 
 // Extract_List is a list of Extract.
@@ -229,12 +230,12 @@ type Extract_write_Params capnp.Struct
 const Extract_write_Params_TypeID = 0xac545d062c530bb3
 
 func NewExtract_write_Params(s *capnp.Segment) (Extract_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 3})
 	return Extract_write_Params(st), err
 }
 
 func NewRootExtract_write_Params(s *capnp.Segment) (Extract_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 3})
 	return Extract_write_Params(st), err
 }
 
@@ -301,12 +302,30 @@ func (s Extract_write_Params) SetPath(v string) error {
 	return capnp.Struct(s).SetText(1, v)
 }
 
+func (s Extract_write_Params) Encoding() (string, error) {
+	p, err := capnp.Struct(s).Ptr(2)
+	return p.Text(), err
+}
+
+func (s Extract_write_Params) HasEncoding() bool {
+	return capnp.Struct(s).HasPtr(2)
+}
+
+func (s Extract_write_Params) EncodingBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(2)
+	return p.TextBytes(), err
+}
+
+func (s Extract_write_Params) SetEncoding(v string) error {
+	return capnp.Struct(s).SetText(2, v)
+}
+
 // Extract_write_Params_List is a list of Extract_write_Params.
 type Extract_write_Params_List = capnp.StructList[Extract_write_Params]
 
 // NewExtract_write_Params creates a new list of Extract_write_Params.
 func NewExtract_write_Params_List(s *capnp.Segment, sz int32) (Extract_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 3}, sz)
 	return capnp.StructList[Extract_write_Params](l), err
 }
 
@@ -383,90 +402,172 @@ func (f Extract_done_Params_Future) Struct() (Extract_done_Params, error) {
 	return Extract_done_Params(p.Struct()), err
 }
 
-type Extract_done_Results capnp.Struct
+type Extracted capnp.Struct
+type Extracted_Which uint16
 
-// Extract_done_Results_TypeID is the unique identifier for the type Extract_done_Results.
-const Extract_done_Results_TypeID = 0x954b77900115ea55
+const (
+	Extracted_Which_out     Extracted_Which = 0
+	Extracted_Which_json    Extracted_Which = 1
+	Extracted_Which_text    Extracted_Which = 2
+	Extracted_Which_missing Extracted_Which = 3
+)
 
-func NewExtract_done_Results(s *capnp.Segment) (Extract_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 0})
-	return Extract_done_Results(st), err
+func (w Extracted_Which) String() string {
+	const s = "outjsontextmissing"
+	switch w {
+	case Extracted_Which_out:
+		return s[0:3]
+	case Extracted_Which_json:
+		return s[3:7]
+	case Extracted_Which_text:
+		return s[7:11]
+	case Extracted_Which_missing:
+		return s[11:18]
+
+	}
+	return "Extracted_Which(" + strconv.FormatUint(uint64(w), 10) + ")"
 }
 
-func NewRootExtract_done_Results(s *capnp.Segment) (Extract_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 0})
-	return Extract_done_Results(st), err
+// Extracted_TypeID is the unique identifier for the type Extracted.
+const Extracted_TypeID = 0xea064c53a0e98975
+
+func NewExtracted(s *capnp.Segment) (Extracted, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 1})
+	return Extracted(st), err
 }
 
-func ReadRootExtract_done_Results(msg *capnp.Message) (Extract_done_Results, error) {
+func NewRootExtracted(s *capnp.Segment) (Extracted, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 1})
+	return Extracted(st), err
+}
+
+func ReadRootExtracted(msg *capnp.Message) (Extracted, error) {
 	root, err := msg.Root()
-	return Extract_done_Results(root.Struct()), err
+	return Extracted(root.Struct()), err
 }
 
-func (s Extract_done_Results) String() string {
-	str, _ := text.Marshal(0x954b77900115ea55, capnp.Struct(s))
+func (s Extracted) String() string {
+	str, _ := text.Marshal(0xea064c53a0e98975, capnp.Struct(s))
 	return str
 }
 
-func (s Extract_done_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+func (s Extracted) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
 	return capnp.Struct(s).EncodeAsPtr(seg)
 }
 
-func (Extract_done_Results) DecodeFromPtr(p capnp.Ptr) Extract_done_Results {
-	return Extract_done_Results(capnp.Struct{}.DecodeFromPtr(p))
+func (Extracted) DecodeFromPtr(p capnp.Ptr) Extracted {
+	return Extracted(capnp.Struct{}.DecodeFromPtr(p))
 }
 
-func (s Extract_done_Results) ToPtr() capnp.Ptr {
+func (s Extracted) ToPtr() capnp.Ptr {
 	return capnp.Struct(s).ToPtr()
 }
-func (s Extract_done_Results) IsValid() bool {
+
+func (s Extracted) Which() Extracted_Which {
+	return Extracted_Which(capnp.Struct(s).Uint16(12))
+}
+func (s Extracted) IsValid() bool {
 	return capnp.Struct(s).IsValid()
 }
 
-func (s Extract_done_Results) Message() *capnp.Message {
+func (s Extracted) Message() *capnp.Message {
 	return capnp.Struct(s).Message()
 }
 
-func (s Extract_done_Results) Segment() *capnp.Segment {
+func (s Extracted) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Extract_done_Results) Out() float64 {
+func (s Extracted) Out() float64 {
+	if capnp.Struct(s).Uint16(12) != 0 {
+		panic("Which() != out")
+	}
 	return math.Float64frombits(capnp.Struct(s).Uint64(0))
 }
 
-func (s Extract_done_Results) SetOut(v float64) {
+func (s Extracted) SetOut(v float64) {
+	capnp.Struct(s).SetUint16(12, 0)
 	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
 }
 
-func (s Extract_done_Results) Found() bool {
+func (s Extracted) Json() ([]byte, error) {
+	if capnp.Struct(s).Uint16(12) != 1 {
+		panic("Which() != json")
+	}
+	p, err := capnp.Struct(s).Ptr(0)
+	return []byte(p.Data()), err
+}
+
+func (s Extracted) HasJson() bool {
+	if capnp.Struct(s).Uint16(12) != 1 {
+		return false
+	}
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s Extracted) SetJson(v []byte) error {
+	capnp.Struct(s).SetUint16(12, 1)
+	return capnp.Struct(s).SetData(0, v)
+}
+
+func (s Extracted) Text() (string, error) {
+	if capnp.Struct(s).Uint16(12) != 2 {
+		panic("Which() != text")
+	}
+	p, err := capnp.Struct(s).Ptr(0)
+	return p.Text(), err
+}
+
+func (s Extracted) HasText() bool {
+	if capnp.Struct(s).Uint16(12) != 2 {
+		return false
+	}
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s Extracted) TextBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return p.TextBytes(), err
+}
+
+func (s Extracted) SetText(v string) error {
+	capnp.Struct(s).SetUint16(12, 2)
+	return capnp.Struct(s).SetText(0, v)
+}
+
+func (s Extracted) SetMissing() {
+	capnp.Struct(s).SetUint16(12, 3)
+
+}
+
+func (s Extracted) Found() bool {
 	return capnp.Struct(s).Bit(64)
 }
 
-func (s Extract_done_Results) SetFound(v bool) {
+func (s Extracted) SetFound(v bool) {
 	capnp.Struct(s).SetBit(64, v)
 }
 
-func (s Extract_done_Results) Status() runtime.Status {
+func (s Extracted) Status() runtime.Status {
 	return runtime.Status(capnp.Struct(s).Uint16(10))
 }
 
-func (s Extract_done_Results) SetStatus(v runtime.Status) {
+func (s Extracted) SetStatus(v runtime.Status) {
 	capnp.Struct(s).SetUint16(10, uint16(v))
 }
 
-// Extract_done_Results_List is a list of Extract_done_Results.
-type Extract_done_Results_List = capnp.StructList[Extract_done_Results]
+// Extracted_List is a list of Extracted.
+type Extracted_List = capnp.StructList[Extracted]
 
-// NewExtract_done_Results creates a new list of Extract_done_Results.
-func NewExtract_done_Results_List(s *capnp.Segment, sz int32) (Extract_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 16, PointerCount: 0}, sz)
-	return capnp.StructList[Extract_done_Results](l), err
+// NewExtracted creates a new list of Extracted.
+func NewExtracted_List(s *capnp.Segment, sz int32) (Extracted_List, error) {
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 16, PointerCount: 1}, sz)
+	return capnp.StructList[Extracted](l), err
 }
 
-// Extract_done_Results_Future is a wrapper for a Extract_done_Results promised by a client call.
-type Extract_done_Results_Future struct{ *capnp.Future }
+// Extracted_Future is a wrapper for a Extracted promised by a client call.
+type Extracted_Future struct{ *capnp.Future }
 
-func (f Extract_done_Results_Future) Struct() (Extract_done_Results, error) {
+func (f Extracted_Future) Struct() (Extracted, error) {
 	p, err := f.Future.Ptr()
-	return Extract_done_Results(p.Struct()), err
+	return Extracted(p.Struct()), err
 }

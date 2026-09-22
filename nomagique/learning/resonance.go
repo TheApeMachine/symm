@@ -16,9 +16,7 @@ import (
 	"math"
 	"math/rand"
 
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/algo"
-	"github.com/theapemachine/symm/nomagique/types"
 
 	"gonum.org/v1/gonum/floats"
 	"gonum.org/v1/gonum/mat"
@@ -188,8 +186,8 @@ type ResonanceManifoldServer struct {
 	settleAdvancedTemporal bool
 	lastInferenceSteps     int
 
-	settlePipeline types.Value[*ResonanceManifoldServer, *ResonanceManifoldServer]
-	learnPipeline  types.Value[*ResonanceManifoldServer, *ResonanceManifoldServer]
+	settlePipeline func(*ResonanceManifoldServer) *ResonanceManifoldServer
+	learnPipeline  func(*ResonanceManifoldServer) *ResonanceManifoldServer
 	err            error
 }
 
@@ -503,14 +501,6 @@ func (m *ResonanceManifoldServer) Execute(cmd ManifoldCommand) (ManifoldReading,
 	}
 
 	return m.snapshot(), nil
-}
-
-// AsValue returns a types.Value closure for executing commands.
-func (m *ResonanceManifoldServer) AsValue() types.Value[ManifoldCommand, ManifoldReading] {
-	return func(cmd ManifoldCommand) ManifoldReading {
-		reading, _ := m.Execute(cmd)
-		return reading
-	}
 }
 
 // Error returns any errors encountered during processing.
@@ -1310,10 +1300,9 @@ func taskCoefficients(reading algo.RLSPosterior, destination []float64) (float64
 
 /*
 buildSettlePipeline constructs the pure algebraic pipeline for settling the manifold.
-It leverages nomagique.IterateUntil to replace manual for loops, preserving the
-zero-allocation Gonum workspace performance.
+It reuses the node's Gonum workspace for each inference step.
 */
-func (resonanceManifold *ResonanceManifoldServer) buildSettlePipeline() types.Value[*ResonanceManifoldServer, *ResonanceManifoldServer] {
+func (resonanceManifold *ResonanceManifoldServer) buildSettlePipeline() func(*ResonanceManifoldServer) *ResonanceManifoldServer {
 	var settledEnergy float64
 	var stableSteps int
 
@@ -1374,24 +1363,24 @@ func (resonanceManifold *ResonanceManifoldServer) buildSettlePipeline() types.Va
 		return lineSearch(m)
 	}
 
-	condition := types.Value[*ResonanceManifoldServer, bool](func(m *ResonanceManifoldServer) bool {
-		return stableSteps >= m.cfg.EarlyStopPatience
-	})
-
-	iterate := nomagique.IterateUntil(resonanceManifold.cfg.MaxInferenceSteps, condition, stepPipeline)
-
 	return func(m *ResonanceManifoldServer) *ResonanceManifoldServer {
 		settledEnergy = m.energy()
 		stableSteps = 0
 		m.lastInferenceSteps = 0
-		return iterate(m)
+		for iteration := 0; iteration < m.cfg.MaxInferenceSteps; iteration++ {
+			if stableSteps >= m.cfg.EarlyStopPatience {
+				break
+			}
+			m = stepPipeline(m)
+		}
+		return m
 	}
 }
 
 /*
 buildLearnPipeline constructs the pure algebraic pipeline for weight updates.
 */
-func (resonanceManifold *ResonanceManifoldServer) buildLearnPipeline() types.Value[*ResonanceManifoldServer, *ResonanceManifoldServer] {
+func (resonanceManifold *ResonanceManifoldServer) buildLearnPipeline() func(*ResonanceManifoldServer) *ResonanceManifoldServer {
 	var predictions, layerErrors []*mat.VecDense
 
 	predict := func(m *ResonanceManifoldServer) *ResonanceManifoldServer {
@@ -1539,15 +1528,15 @@ func (resonanceManifold *ResonanceManifoldServer) buildLearnPipeline() types.Val
 		return m
 	}
 
-	return types.Value[*ResonanceManifoldServer, *ResonanceManifoldServer](nomagique.NewNumber(
-		types.Value[*ResonanceManifoldServer, *ResonanceManifoldServer](predict),
-		types.Value[*ResonanceManifoldServer, *ResonanceManifoldServer](generativeUpdate),
-		types.Value[*ResonanceManifoldServer, *ResonanceManifoldServer](recognitionUpdate),
-		types.Value[*ResonanceManifoldServer, *ResonanceManifoldServer](temporalUpdate),
-		types.Value[*ResonanceManifoldServer, *ResonanceManifoldServer](taskUpdate),
-		types.Value[*ResonanceManifoldServer, *ResonanceManifoldServer](precisionUpdate),
-		types.Value[*ResonanceManifoldServer, *ResonanceManifoldServer](advance),
-	))
+	return func(m *ResonanceManifoldServer) *ResonanceManifoldServer {
+		m = predict(m)
+		m = generativeUpdate(m)
+		m = recognitionUpdate(m)
+		m = temporalUpdate(m)
+		m = taskUpdate(m)
+		m = precisionUpdate(m)
+		return advance(m)
+	}
 }
 
 func NewResonanceManifold() *ResonanceManifoldServer {

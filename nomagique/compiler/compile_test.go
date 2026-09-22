@@ -1,15 +1,26 @@
 package compiler_test
 
 import (
+	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"math"
+	"os"
+	"path/filepath"
 	"testing"
 
 	capnp "capnproto.org/go/capnp/v3"
 	"capnproto.org/go/capnp/v3/std/capnp/schema"
+	"github.com/apache/iceberg-go"
+	sqlcat "github.com/apache/iceberg-go/catalog/sql"
+	_ "github.com/mattn/go-sqlite3"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/compiler"
+	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/nomagique/store/tables"
+	"github.com/theapemachine/symm/nomagique/temporal"
 	crypto "github.com/theapemachine/symm/nomagique/transport/crypto"
 )
 
@@ -525,10 +536,10 @@ func TestCompileTraining(t *testing.T) {
 				continue
 			}
 
-			So(program.Nodes, ShouldHaveLength, 3)
-			So(program.Roots, ShouldHaveLength, 2)
-			So(program.Nodes[program.Roots[0]].ID, ShouldEqual, "excursion")
-			So(program.Nodes[program.Roots[1]].ID, ShouldEqual, "replay")
+			_, signalPresent := program.NodeMap["definition-sentiment_ticker__return"]
+			So(signalPresent, ShouldBeTrue)
+			_, replacementPresent := program.NodeMap["measure"]
+			So(replacementPresent, ShouldBeFalse)
 
 			for _, node := range program.Nodes {
 				So(node.Identity.Type, ShouldNotEqual, "cognition.Reinforce")
@@ -596,5 +607,168 @@ func TestParseGraphAgreement(t *testing.T) {
 
 			So(err, ShouldBeNil)
 		})
+	})
+}
+
+func TestCompile(t *testing.T) {
+	Convey("Given the training manifest and a real multi-file Iceberg archive", t, func() {
+		ctx := context.Background()
+		directory := t.TempDir()
+		database, err := sql.Open("sqlite3", filepath.Join(directory, "catalog.db"))
+		So(err, ShouldBeNil)
+		t.Cleanup(func() {
+			if err := database.Close(); err != nil {
+				t.Error(err)
+			}
+		})
+		underlying, err := sqlcat.NewCatalog("test", database, sqlcat.SQLite, iceberg.Properties{"warehouse": "file://" + directory})
+		So(err, ShouldBeNil)
+		So(underlying.CreateNamespace(ctx, []string{"symm"}, nil), ShouldBeNil)
+		catalog := underlying
+		source, err := os.ReadFile("../../manifest/training.json")
+		So(err, ShouldBeNil)
+		graph, err := compiler.ParseGraph(source)
+		So(err, ShouldBeNil)
+		declaration := func(node string) string {
+			var value struct {
+				Value string `json:"value"`
+			}
+			So(json.Unmarshal(graph.Nodes[node].InputData["config"], &value), ShouldBeNil)
+			return value.Value
+		}
+		inputConfig := declaration("replay")
+		outputConfig := declaration("events")
+		capture := store.Capture_ServerToClient(store.NewCapture())
+		defer capture.Release()
+		rows := make([][]byte, 0, 180)
+
+		// The first record is flat; only the second symbol traverses three sustained legs.
+		for index := 0; index < 180; index++ {
+			offset := index % 60
+
+			exponent := float64(offset) * 0.005
+
+			if index/60 == 1 {
+				exponent = 59*0.005 - float64(offset)*0.008
+			}
+
+			if index/60 == 2 {
+				exponent = 59*0.005 - 59*0.008 + float64(offset)*0.008
+			}
+			payload, err := json.Marshal(map[string]any{"channel": "ticker", "data": []map[string]any{{"symbol": "FLAT/USD", "last": 200, "bid": 199, "ask": 201}, {"symbol": "MOVE/USD", "last": 100 * math.Exp(exponent), "bid": 100 * math.Exp(exponent), "ask": 100*math.Exp(exponent) + 3}}})
+			So(err, ShouldBeNil)
+			So(capture.Write(ctx, func(params store.Capture_write_Params) error {
+				for _, err := range []error{params.SetEndpoint("wss://fixture"), params.SetReceivedAt("2026-09-22T12:00:00.123456789Z"), params.SetPayload(payload)} {
+					if err != nil {
+						return err
+					}
+				}
+				return nil
+			}), ShouldBeNil)
+			So(capture.WaitStreaming(), ShouldBeNil)
+			future, release := capture.Done(ctx, nil)
+			result, err := future.Struct()
+			So(err, ShouldBeNil)
+			row, err := result.Out()
+			So(err, ShouldBeNil)
+			rows = append(rows, bytes.Clone(row))
+			release()
+		}
+		archive := tables.NewIcebergTable()
+		archive.Catalog = catalog
+		writer := tables.IcebergTable_ServerToClient(archive)
+		defer writer.Release()
+		// Reverse storage order and repeat an identity across separate committed files.
+		rows = append(rows, rows[10])
+
+		for index := len(rows) - 1; index >= 0; index-- {
+			So(writer.Write(ctx, func(params tables.IcebergTable_write_Params) error {
+				params.SetCommit(index%30 == 0)
+
+				if err := params.SetConfig(inputConfig); err != nil {
+					return err
+				}
+				return params.SetPayload(rows[index])
+			}), ShouldBeNil)
+			So(writer.WaitStreaming(), ShouldBeNil)
+		}
+		future, release := runtime.Durable(writer).Flush(ctx, nil)
+		_, err = future.Struct()
+		release()
+		So(err, ShouldBeNil)
+
+		registry := compiler.DefaultRegistry()
+		registry.Register("tables.IcebergScan", compiler.Factory{InterfaceID: tables.IcebergScan_TypeID, New: func(ctx context.Context, config []byte) (capnp.Client, error) {
+			scanner := tables.NewIcebergScan()
+			scanner.Catalog = catalog
+			return capnp.Client(tables.IcebergScan_ServerToClient(scanner)), nil
+		}})
+		registry.Register("tables.IcebergTable", compiler.Factory{InterfaceID: tables.IcebergTable_TypeID, New: func(ctx context.Context, config []byte) (capnp.Client, error) {
+			writer := tables.NewIcebergTable()
+			writer.Catalog = catalog
+			return capnp.Client(tables.IcebergTable_ServerToClient(writer)), nil
+		}})
+		program, err := compiler.Compile(graph, registry, compiler.DefaultRepository())
+		So(err, ShouldBeNil)
+		defer program.Release()
+
+		spreads := make([]float64, 0, 360)
+		for observation := 0; observation < len(rows)+360+1; observation++ {
+			So(program.Execute(ctx, nil), ShouldBeNil)
+			const spreadNode = "definition-liquidity_ticker__spread"
+			if _, produced := program.Result(spreadNode); produced {
+				spread, err := program.Float64Result(spreadNode, "out")
+				So(err, ShouldBeNil)
+				spreads = append(spreads, spread)
+			}
+		}
+		So(spreads, ShouldHaveLength, 360)
+		for index, spread := range spreads {
+			So(spread, ShouldAlmostEqual, 2+index%2)
+		}
+
+		So(program.Flush(ctx), ShouldBeNil)
+
+		scanner := tables.NewIcebergScan()
+		scanner.Catalog = catalog
+		reader := tables.IcebergScan_ServerToClient(scanner)
+		defer reader.Release()
+		So(reader.Write(ctx, func(params tables.IcebergScan_write_Params) error { return params.SetConfig(outputConfig) }), ShouldBeNil)
+		So(reader.WaitStreaming(), ShouldBeNil)
+		events := make([]temporal.MinedEvent, 0)
+
+		for {
+			future, release := reader.Done(ctx, nil)
+			result, err := future.Struct()
+			So(err, ShouldBeNil)
+
+			if result.Exhausted() {
+				release()
+				break
+			}
+			row, err := result.Out()
+			So(err, ShouldBeNil)
+			var archived struct {
+				Payload []byte `json:"payload"`
+			}
+			So(json.Unmarshal(row, &archived), ShouldBeNil)
+			var batch []temporal.MinedEvent
+			So(json.Unmarshal(archived.Payload, &batch), ShouldBeNil)
+			events = append(events, batch...)
+			release()
+		}
+		So(events, ShouldHaveLength, 2)
+
+		for _, event := range events {
+			So(event.Symbol, ShouldEqual, "MOVE/USD")
+			So(event.B.Record, ShouldEqual, 1)
+			So(event.C.Sequence, ShouldBeGreaterThan, event.B.Sequence)
+			So(event.D.Sequence, ShouldBeGreaterThan, event.C.Sequence)
+		}
+		So(events[0].Excursion, ShouldBeGreaterThan, 0)
+		So(events[0].A, ShouldBeNil)
+		So(events[1].Excursion, ShouldBeLessThan, 0)
+		So(events[1].A, ShouldNotBeNil)
+		So(events[1].A.Sequence, ShouldBeLessThan, events[1].B.Sequence)
 	})
 }
