@@ -19,6 +19,7 @@ struct TapeResult {
    sequence @3 :Int64;
    receivedAt @4 :Text;
    endpoint @5 :Text;
+   row @8 :Data;
   }
   exhausted @6 :Void;
  }

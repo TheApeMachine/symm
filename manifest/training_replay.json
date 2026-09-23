@@ -1,0 +1,752 @@
+{
+  "id": "training_replay",
+  "name": "Causal tape traversal and fragment selection",
+  "nodes": {
+    "record": {
+      "id": "record",
+      "type": "transport.Fan",
+      "inputData": {},
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "frames",
+              "portName": "append"
+            }
+          ]
+        }
+      }
+    },
+    "event": {
+      "id": "event",
+      "type": "transport.Fan",
+      "inputData": {},
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "events",
+              "portName": "append"
+            }
+          ]
+        }
+      }
+    },
+    "ready": {
+      "id": "ready",
+      "type": "transport.Fan",
+      "inputData": {},
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "ready_flag",
+              "portName": "data"
+            }
+          ]
+        }
+      }
+    },
+    "cursor": {
+      "id": "cursor",
+      "type": "store.Radix",
+      "inputData": {
+        "key": {
+          "value": "[\"replay\"]"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value_0": [
+            {
+              "nodeId": "commit",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out_0": [
+            {
+              "nodeId": "position",
+              "portName": "yes"
+            }
+          ],
+          "found_0": [
+            {
+              "nodeId": "position",
+              "portName": "test"
+            }
+          ]
+        }
+      }
+    },
+    "position": {
+      "id": "position",
+      "type": "controlflow.Select",
+      "inputData": {
+        "no": {
+          "value": "[\"{\\\"frame\\\":0,\\\"event\\\":0}\"]"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "yes": [
+            {
+              "nodeId": "cursor",
+              "portName": "out_0"
+            }
+          ],
+          "test": [
+            {
+              "nodeId": "cursor",
+              "portName": "found_0"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "frame_index",
+              "portName": "data"
+            },
+            {
+              "nodeId": "event_index",
+              "portName": "data"
+            },
+            {
+              "nodeId": "ready_position",
+              "portName": "json"
+            },
+            {
+              "nodeId": "next_event",
+              "portName": "data"
+            }
+          ]
+        }
+      }
+    },
+    "frame_index": {
+      "id": "frame_index",
+      "type": "data.Extract",
+      "inputData": {
+        "path": {
+          "value": "frame"
+        },
+        "encoding": {
+          "value": "uint64"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "position",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "unsigned": [
+            {
+              "nodeId": "frames",
+              "portName": "index"
+            }
+          ]
+        }
+      }
+    },
+    "frames": {
+      "id": "frames",
+      "type": "store.Sequence",
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "index": [
+            {
+              "nodeId": "frame_index",
+              "portName": "unsigned"
+            }
+          ],
+          "append": [
+            {
+              "nodeId": "record",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "item.out": [
+            {
+              "nodeId": "new_record",
+              "portName": "json"
+            },
+            {
+              "nodeId": "held_record",
+              "portName": "json"
+            }
+          ],
+          "item.next": [
+            {
+              "nodeId": "next_frame",
+              "portName": "unsigned"
+            }
+          ],
+          "found": [
+            {
+              "nodeId": "available",
+              "portName": "test"
+            }
+          ]
+        }
+      }
+    },
+    "event_index": {
+      "id": "event_index",
+      "type": "data.Extract",
+      "inputData": {
+        "path": {
+          "value": "event"
+        },
+        "encoding": {
+          "value": "uint64"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "position",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "unsigned": [
+            {
+              "nodeId": "events",
+              "portName": "index"
+            }
+          ]
+        }
+      }
+    },
+    "events": {
+      "id": "events",
+      "type": "store.Sequence",
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "index": [
+            {
+              "nodeId": "event_index",
+              "portName": "unsigned"
+            }
+          ],
+          "append": [
+            {
+              "nodeId": "event",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "item.out": [
+            {
+              "nodeId": "fragment",
+              "portName": "fragment.data"
+            }
+          ],
+          "item.next": [
+            {
+              "nodeId": "next_event",
+              "portName": "unsigned"
+            }
+          ],
+          "found": [
+            {
+              "nodeId": "advance",
+              "portName": "test"
+            }
+          ]
+        }
+      }
+    },
+    "ready_position": {
+      "id": "ready_position",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "position"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "ready_flag",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "position",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "first_event",
+              "portName": "data"
+            }
+          ]
+        }
+      }
+    },
+    "first_event": {
+      "id": "first_event",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "position.event"
+        },
+        "operator": {
+          "value": "=="
+        },
+        "threshold": {
+          "value": 0
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "ready_position",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "new_record",
+              "portName": "data"
+            }
+          ]
+        }
+      }
+    },
+    "new_record": {
+      "id": "new_record",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "record"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "first_event",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "frames",
+              "portName": "item.out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "observation",
+              "portName": "data"
+            }
+          ]
+        }
+      }
+    },
+    "observation": {
+      "id": "observation",
+      "type": "data.Extract",
+      "inputData": {
+        "path": {
+          "value": "record"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "new_record",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "market",
+              "portName": "data"
+            }
+          ]
+        }
+      }
+    },
+    "market": {
+      "id": "market",
+      "type": "data.Extract",
+      "inputData": {
+        "path": {
+          "value": "market"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "observation",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "held_record": {
+      "id": "held_record",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "record"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "ready_flag",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "frames",
+              "portName": "item.out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "record_for_grade",
+              "portName": "data"
+            }
+          ]
+        }
+      }
+    },
+    "record_for_grade": {
+      "id": "record_for_grade",
+      "type": "data.Extract",
+      "inputData": {
+        "path": {
+          "value": "record"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "held_record",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "fragment",
+              "portName": "record.data"
+            }
+          ]
+        }
+      }
+    },
+    "fragment": {
+      "id": "fragment",
+      "type": "definition:training_fragment",
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "record.data": [
+            {
+              "nodeId": "record_for_grade",
+              "portName": "json"
+            }
+          ],
+          "fragment.data": [
+            {
+              "nodeId": "events",
+              "portName": "item.out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "next_event": {
+      "id": "next_event",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "event"
+        },
+        "encoding": {
+          "value": "uint64"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "position",
+              "portName": "out"
+            }
+          ],
+          "unsigned": [
+            {
+              "nodeId": "events",
+              "portName": "item.next"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "advance",
+              "portName": "yes"
+            }
+          ]
+        }
+      }
+    },
+    "next_frame": {
+      "id": "next_frame",
+      "type": "data.Insert",
+      "inputData": {
+        "data": {
+          "value": "{\"event\":0}"
+        },
+        "path": {
+          "value": "frame"
+        },
+        "encoding": {
+          "value": "uint64"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "unsigned": [
+            {
+              "nodeId": "frames",
+              "portName": "item.next"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "advance",
+              "portName": "no"
+            }
+          ]
+        }
+      }
+    },
+    "advance": {
+      "id": "advance",
+      "type": "controlflow.Select",
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "test": [
+            {
+              "nodeId": "events",
+              "portName": "found"
+            }
+          ],
+          "yes": [
+            {
+              "nodeId": "next_event",
+              "portName": "out"
+            }
+          ],
+          "no": [
+            {
+              "nodeId": "next_frame",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "admitted",
+              "portName": "json"
+            }
+          ]
+        }
+      }
+    },
+    "admitted": {
+      "id": "admitted",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "position"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "ready_flag",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "advance",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "available",
+              "portName": "yes"
+            }
+          ]
+        }
+      }
+    },
+    "available": {
+      "id": "available",
+      "type": "controlflow.Select",
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "test": [
+            {
+              "nodeId": "frames",
+              "portName": "found"
+            }
+          ],
+          "yes": [
+            {
+              "nodeId": "admitted",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "commit",
+              "portName": "data"
+            }
+          ]
+        }
+      }
+    },
+    "commit": {
+      "id": "commit",
+      "type": "data.Extract",
+      "inputData": {
+        "path": {
+          "value": "position"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "available",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "cursor",
+              "portName": "value_0"
+            }
+          ]
+        }
+      }
+    },
+    "ready_flag": {
+      "id": "ready_flag",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "ready"
+        },
+        "operator": {
+          "value": "=="
+        },
+        "threshold": {
+          "value": 1
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "ready",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "ready_position",
+              "portName": "data"
+            },
+            {
+              "nodeId": "held_record",
+              "portName": "data"
+            },
+            {
+              "nodeId": "admitted",
+              "portName": "data"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

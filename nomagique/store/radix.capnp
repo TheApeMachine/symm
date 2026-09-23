@@ -3,21 +3,19 @@ using Go = import "/go.capnp";
 $Go.package("store");
 $Go.import("github.com/theapemachine/symm/nomagique/store");
 
-# Retained marks a primitive that hands back what it held before this
-# evaluation began.
-#
-# Reading one is not a dependency on whatever writes it: the value is already
-# there. That is what gives a graph defined feedback — a node may read a store
-# it also writes, and the estimate it continues is the one it left behind.
+# Retained permits feedback writes after the evaluation has completed.
+# Non-feedback inputs select what is read in the current observation. Inputs
+# wired from descendants arrive in a second write after done; the retained
+# value they change is available to subsequent observations.
 interface Retained {
 }
 
-# Radix retains one value per key and reads it back, which is how a metric
-# keeps its own local state for each symbol it observes.
-#
-# A write carrying a value retains it. A write carrying query reads the key
-# back without retaining anything, so reading is never mistaken for observing.
+# Radix reads the requested keys from one immutable tree revision. An absent
+# value list is a read. A supplied value list replaces all requested keys in
+# one native radix transaction; its length must match and every slot must be
+# nonempty. Empty slots mean no arrival and cannot be committed as values.
+# The result always describes the revision before that write.
 interface Radix extends(Retained) {
-  write @0 (key :Text, value :Data, query :Bool) -> stream;
-  done @1 () -> (out :Data, found :Bool);
+  write @0 (key :List(Text), value :List(Data)) -> stream;
+  done @1 () -> (out :List(Data), found :List(Bool));
 }

@@ -1,4 +1,4 @@
-import { Flex } from "@/components/ui/flex";
+import { Flex } from "./flex";
 
 export const FluidLegend = () => (
 	<Flex.Row className="pointer-events-none absolute bottom-2.5 left-3 gap-3.5 font-mono text-[9px] text-(--f3)">

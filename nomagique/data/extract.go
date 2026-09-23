@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"strings"
 
-	capnp "capnproto.org/go/capnp/v3"
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/runtime"
@@ -29,6 +28,7 @@ type ExtractServer struct {
 	raw      []byte
 	text     string
 	encoding string
+	unsigned uint64
 }
 
 func NewExtract(ctx context.Context) *ExtractServer {
@@ -86,14 +86,14 @@ func (server *ExtractServer) Write(ctx context.Context, call Extract_write) erro
 	}
 	server.encoding = encoding
 
-	if encoding == "json" || encoding == "text" {
+	if encoding == "json" || encoding == "text" || encoding == "json-text" || encoding == "uint64" {
 		return server.project(payload)
 	}
 
 	if encoding != "" && encoding != "number" {
 		return errnie.Error(errnie.Err(errnie.Validation, "extract: unsupported encoding", nil))
 	}
-	value, found, err := server.read(payload)
+	value, found, err := readPath(payload, server.path)
 
 	if err != nil {
 		return err
@@ -128,8 +128,10 @@ func (server *ExtractServer) Done(ctx context.Context, call Extract_done) error 
 		switch server.encoding {
 		case "json":
 			err = results.SetJson(server.raw)
-		case "text":
+		case "text", "json-text":
 			err = results.SetText(server.text)
+		case "uint64":
+			results.SetUnsigned(server.unsigned)
 		default:
 			results.SetOut(server.out)
 		}
@@ -141,60 +143,8 @@ func (server *ExtractServer) Done(ctx context.Context, call Extract_done) error 
 
 	server.found = false
 	server.out, server.raw, server.text = 0, nil, ""
+	server.unsigned = 0
 	return nil
-}
-
-/*
-read resolves the path against a JSON structure, falling back to the wire
-measurement encoding the capture path emits.
-*/
-func (server *ExtractServer) read(payload []byte) (float64, bool, error) {
-	var document any
-
-	if err := sonic.Unmarshal(payload, &document); err == nil {
-		value, found := extractAt(document, strings.Split(server.path, "."))
-		return value, found, nil
-	}
-
-	msg, err := capnp.Unmarshal(payload)
-
-	if err != nil {
-		return 0, false, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"[data.extract.read] payload is neither a structure nor a measurement",
-			err,
-		))
-	}
-
-	measurement, err := ReadRootMeasurement(msg)
-
-	if err != nil {
-		return 0, false, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"[data.extract.read] payload is not a measurement",
-			err,
-		))
-	}
-
-	metrics, err := measurement.Metrics()
-
-	if err != nil {
-		return 0, false, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"[data.extract.read] measurement carries no metrics",
-			err,
-		))
-	}
-
-	// Metric carries no label, so a measurement's metrics are addressed
-	// positionally. Any other path cannot be resolved against this encoding.
-	index, indexed := arrayIndex(server.path)
-
-	if !indexed || index >= metrics.Len() {
-		return 0, false, nil
-	}
-
-	return metrics.At(index).Raw(), true, nil
 }
 
 /*
@@ -295,6 +245,21 @@ func (server *ExtractServer) project(payload []byte) error {
 		return nil
 	}
 
+	if server.encoding == "uint64" {
+		number, valid := value.(json.Number)
+
+		if !valid {
+			return errnie.Error(errnie.Err(errnie.Validation, "extract: selected value is not an unsigned integer", nil))
+		}
+		unsigned, err := strconv.ParseUint(number.String(), 10, 64)
+
+		if err != nil {
+			return errnie.Error(errnie.Err(errnie.Validation, "extract: selected value is not an unsigned integer", err))
+		}
+		server.unsigned = unsigned
+		return nil
+	}
+
 	if server.encoding == "text" {
 		text, valid := value.(string)
 
@@ -310,5 +275,10 @@ func (server *ExtractServer) project(payload []byte) error {
 		return errnie.Error(errnie.Err(errnie.Internal, "extract: encode value", err))
 	}
 	server.raw = raw
+
+	if server.encoding == "json-text" {
+		server.text = string(raw)
+	}
+
 	return nil
 }

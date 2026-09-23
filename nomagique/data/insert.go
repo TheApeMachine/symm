@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"reflect"
 	"strconv"
 	"strings"
 
@@ -24,8 +25,9 @@ structure can be built from nothing by inserting into an empty payload.
 */
 type InsertServer struct {
 	*runtime.System
-	path string
-	out  []byte
+	path     string
+	out      []byte
+	inserted bool
 }
 
 func NewInsert(ctx context.Context) *InsertServer {
@@ -79,6 +81,22 @@ func (server *InsertServer) Write(ctx context.Context, call Insert_write) error 
 	}
 
 	var value any = call.Args().Value()
+	encoding, err := call.Args().Encoding()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.Validation, "insert: encoding", err))
+	}
+
+	if encoding != "" && encoding != "uint64" {
+		return errnie.Error(errnie.Err(errnie.Validation, "insert: unsupported encoding", nil))
+	}
+
+	if encoding == "uint64" {
+		if call.Args().HasJson() {
+			return errnie.Error(errnie.Err(errnie.Validation, "insert: unsigned and JSON inputs are mutually exclusive", nil))
+		}
+		value = json.Number(strconv.FormatUint(call.Args().Unsigned(), 10))
+	}
 
 	if call.Args().HasJson() {
 		raw, err := call.Args().Json()
@@ -93,6 +111,18 @@ func (server *InsertServer) Write(ctx context.Context, call Insert_write) error 
 			return errnie.Error(errnie.Err(errnie.Validation, "insert: invalid JSON value", err))
 		}
 	}
+	server.inserted = true
+
+	if call.Args().Unique() {
+		previous, found := walk(document, strings.Split(server.path, "."))
+
+		if found && !reflect.DeepEqual(previous, value) {
+			return errnie.Error(errnie.Err(errnie.Validation, "insert: conflicting value at unique path "+server.path, nil))
+		}
+
+		server.inserted = !found
+	}
+
 	document, err = insertAt(document, strings.Split(server.path, "."), value)
 
 	if err != nil {
@@ -129,6 +159,7 @@ func (server *InsertServer) Done(ctx context.Context, call Insert_done) error {
 	}
 
 	results.SetStatus(runtime.Status(server.Status()))
+	results.SetInserted(server.inserted)
 
 	if len(server.out) == 0 {
 		return nil
@@ -143,6 +174,7 @@ func (server *InsertServer) Done(ctx context.Context, call Insert_done) error {
 	}
 
 	server.out = nil
+	server.inserted = false
 	return nil
 }
 

@@ -1,5 +1,5 @@
-import { Section } from "#/components/ui/section";
-import { Typography } from "#/components/ui/typography";
+import { Section } from "./section";
+import { Typography } from "./typography";
 
 export const KnowledgePanel = () => (
 	<Section fit="content">

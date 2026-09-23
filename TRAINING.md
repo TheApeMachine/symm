@@ -1,10 +1,13 @@
 # TRAINING.md
 
-The current `training.json` executes archive scan → ordered capture tape →
-per-symbol excursion mining → persisted event batches. Capture records retain
-explicit session/sequence cursors and lossless receive times. Confirmed events
-record B/C/D and sample A from actual precursor observations. The remapper,
-truth reinforcement, and paper process remain the next implementation stages.
+The current `training.json` scans the archive, orders capture records, mines
+excursions, and then traverses the captured records through the existing signal
+graphs and A/B/C grader. `training_replay.json` owns replay advancement in JSON;
+`training_fragment.json` separates causal observations from future event labels.
+Overlapping fragments do not deliver the same record to the signals twice.
+The pair-evidence stage of the remapper is composed in `training_pair.json` and
+`training_pair_step.json`. Spatial settling, region tokens, and the connection
+to `training_reinforce.json` remain unimplemented.
 
 How the system learns. Read `ARCHITECTURE.md` first for how the graph is built
 and run; this describes what is built on top of it.
@@ -98,6 +101,27 @@ asymmetric and weighted by how much each cell has earned the right to pull.
 The third priority is what produces structure: hot spots of strong, agreeing
 cells, separated by a colder gradient.
 
+### Pair evidence
+
+`training_pair.json` accepts scoped metric-coordinate pairs, exact capture
+cursors, and two observed scalar values. It derives reactions between successive
+joint observations. Missing readings leave the anchor unchanged; the first joint
+reading establishes the anchor. Cursor identities and accumulated statistics are
+committed together in `store.Radix`. Duplicate readings do not add support;
+conflicting duplicates and new out-of-order readings fail the evaluation.
+
+`training_pair_step.json` contains the arithmetic. On active paired intervals,
+let `q = sign(left reaction) * sign(right reaction)`, `N` be support, `Q = sum(q)`,
+and `S = sum(q²)`. Consistency is `(Q²-S)/(N*(N-1))`: the average sign-product
+agreement over distinct intervals, defined only for `N > 1`. Joint quiet does
+not increase support. Observed one-sided nonresponse contributes a separate
+repulsion rate. Magnitude match is `sum(abs(left*right)) / sqrt(sum(left²)*sum(right²))`
+over the same paired support. It is scale invariant and exists only when both
+sides have observed energy. Sympathy adds consistency-weighted magnitude match
+to consistency minus nonresponse rate. These are empirical relationship
+statistics, not probabilities or confidence claims. The graph publishes the
+underlying sufficient statistics alongside them.
+
 ### Regions
 
 Regions fall out of the third priority. Their borders lie where the weakest
@@ -140,7 +164,10 @@ Once settled, it emits the N hottest regions as the **region token**.
 
 ## 3. The radix trie
 
-**Status: partly built.** `nomagique/cognition/trie.go`, `store.Radix`.
+**Status: prediction and truth reinforcement implemented in**
+`manifest/training_reinforce.json`, using `store.Radix`, `statistic.Tally`, and
+`cognition.Attractor`. The archive graph still needs settled remapper tokens
+before it can use this stage.
 
 The predictive structure.
 
@@ -155,7 +182,9 @@ The trie is the whole decision mechanism. There is no second path.
 
 ## 4. Ground truth
 
-**Status: not built. This is the first thing to reinstate.**
+**Status: capture, excursion mining, record replay, and A/B/C grading are wired
+in the training graph.** Flat, resolved non-event fragments are not yet emitted
+by the archive replay path.
 
 Training needs to know what actually happened, which means the raw tape has to
 be kept.
@@ -174,6 +203,10 @@ It uses the canonical `Excursion` calculation and persists confirmed event batch
 in `excursion_fragments_v1`. The manifest selects ticker records and `last`.
 
 **Step three — retrieve the fragments** that contain those excursions.
+`store.Sequence` retains the ordered records and confirmed events; the JSON
+replay cursor visits each record and selects its applicable fragments. Signal
+state advances once per record, in tape order. This implementation retains the
+offline snapshot in memory and compares each record with every event.
 
 **Step four — mark the three points.** Every fragment carries:
 
@@ -235,9 +268,9 @@ Paper versus real is a deployment setting, not a stage of learning.
 | Radix trie | partly built (`nomagique/cognition`) |
 | Raw capture into Iceberg | explicit cursors and ordered deduplicated replay built; deployment subscriptions pending |
 | Excursion mining | per-symbol mining and persisted event cursors built |
-| Fragment retrieval | A selection and B/C/D references built; full fragment replay pending |
-| A/B/C grading | not built |
-| Fragment training loop | not built |
+| Fragment retrieval | ordered archive traversal and A–C fragment selection implemented in JSON |
+| A/B/C grading | `training_grade.json`, connected to archive fragment replay |
+| Fragment training loop | archive → signals and truth grading wired; remapper/token/reinforcement connection pending |
 | Live paper process | not built |
 
 The capture is the dependency everything else waits on: without the stored tape

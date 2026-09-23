@@ -17,7 +17,7 @@ export {
 	paintTerminalResonanceChart,
 	TerminalResonanceChart,
 } from "#/components/charts/resonance";
-export { TerminalSignalHeatmap } from "#/components/charts/signal-heatmap";
+export { TerminalSignalHeatmap } from "#/components/ui/signal-heatmap";
 export {
 	fluidGridDimensions,
 	phaseColumnsFromScan,

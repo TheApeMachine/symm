@@ -2,26 +2,191 @@
   "id": "hawkes_trade",
   "name": "hawkes:trade",
   "nodes": {
-    "process": {
-      "id": "process",
-      "type": "hawkes.Process",
+    "events": {
+      "id": "events",
+      "type": "hawkes.Events",
       "width": 280,
       "height": 172,
-      "x": -560.0,
+      "x": 0.0,
       "y": 0.0,
-      "connections": {
-        "inputs": {
-          "mark": [
-            {
-              "nodeId": "markFromSide",
-              "portName": "out"
-            }
-          ]
+      "inputData": {
+        "dimension": {
+          "value": 2
         },
+        "capacity": {
+          "value": 4096
+        }
+      },
+      "connections": {
+        "inputs": {},
         "outputs": {
-          "eventCount": [
+          "times": [
             {
-              "nodeId": "log_likelihood_per_event:hawkes",
+              "nodeId": "domain",
+              "portName": "times"
+            },
+            {
+              "nodeId": "integral",
+              "portName": "times"
+            },
+            {
+              "nodeId": "likelihood",
+              "portName": "times"
+            },
+            {
+              "nodeId": "domain_uncoupled",
+              "portName": "times"
+            },
+            {
+              "nodeId": "integral_uncoupled",
+              "portName": "times"
+            },
+            {
+              "nodeId": "likelihood_uncoupled",
+              "portName": "times"
+            },
+            {
+              "nodeId": "excitation",
+              "portName": "times"
+            }
+          ],
+          "components": [
+            {
+              "nodeId": "domain",
+              "portName": "components"
+            },
+            {
+              "nodeId": "integral",
+              "portName": "components"
+            },
+            {
+              "nodeId": "likelihood",
+              "portName": "components"
+            },
+            {
+              "nodeId": "domain_uncoupled",
+              "portName": "components"
+            },
+            {
+              "nodeId": "integral_uncoupled",
+              "portName": "components"
+            },
+            {
+              "nodeId": "likelihood_uncoupled",
+              "portName": "components"
+            },
+            {
+              "nodeId": "excitation",
+              "portName": "components"
+            }
+          ],
+          "origin": [
+            {
+              "nodeId": "domain",
+              "portName": "origin"
+            },
+            {
+              "nodeId": "integral",
+              "portName": "origin"
+            },
+            {
+              "nodeId": "likelihood",
+              "portName": "origin"
+            },
+            {
+              "nodeId": "domain_uncoupled",
+              "portName": "origin"
+            },
+            {
+              "nodeId": "integral_uncoupled",
+              "portName": "origin"
+            },
+            {
+              "nodeId": "likelihood_uncoupled",
+              "portName": "origin"
+            }
+          ],
+          "horizon": [
+            {
+              "nodeId": "domain",
+              "portName": "horizon"
+            },
+            {
+              "nodeId": "integral",
+              "portName": "horizon"
+            },
+            {
+              "nodeId": "likelihood",
+              "portName": "horizon"
+            },
+            {
+              "nodeId": "domain_uncoupled",
+              "portName": "horizon"
+            },
+            {
+              "nodeId": "integral_uncoupled",
+              "portName": "horizon"
+            },
+            {
+              "nodeId": "likelihood_uncoupled",
+              "portName": "horizon"
+            },
+            {
+              "nodeId": "excitation",
+              "portName": "horizon"
+            }
+          ],
+          "span": [
+            {
+              "nodeId": "compensator",
+              "portName": "span"
+            },
+            {
+              "nodeId": "arrival_rate",
+              "portName": "b"
+            },
+            {
+              "nodeId": "rate:buy",
+              "portName": "b"
+            },
+            {
+              "nodeId": "baseline_mass:buy",
+              "portName": "b"
+            },
+            {
+              "nodeId": "rate:sell",
+              "portName": "b"
+            },
+            {
+              "nodeId": "baseline_mass:sell",
+              "portName": "b"
+            }
+          ],
+          "counts": [
+            {
+              "nodeId": "count:buy",
+              "portName": "values"
+            },
+            {
+              "nodeId": "count:sell",
+              "portName": "values"
+            }
+          ],
+          "count": [
+            {
+              "nodeId": "arrival_rate",
+              "portName": "a"
+            },
+            {
+              "nodeId": "fraction:buy",
+              "portName": "b"
+            },
+            {
+              "nodeId": "fraction:sell",
+              "portName": "b"
+            },
+            {
+              "nodeId": "log_likelihood_per_event",
               "portName": "b"
             },
             {
@@ -32,38 +197,1756 @@
               "nodeId": "log_likelihood_gain_per_event_vs_self_only",
               "portName": "b"
             }
+          ]
+        }
+      }
+    },
+    "domain": {
+      "id": "domain",
+      "type": "hawkes.Domain",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 0.0,
+      "inputData": {
+        "dimension": {
+          "value": 2
+        },
+        "coupled": {
+          "value": 1
+        }
+      },
+      "connections": {
+        "inputs": {
+          "times": [
+            {
+              "nodeId": "events",
+              "portName": "times"
+            }
           ],
-          "buyCount": [
+          "components": [
+            {
+              "nodeId": "events",
+              "portName": "components"
+            }
+          ],
+          "origin": [
+            {
+              "nodeId": "events",
+              "portName": "origin"
+            }
+          ],
+          "horizon": [
+            {
+              "nodeId": "events",
+              "portName": "horizon"
+            }
+          ]
+        },
+        "outputs": {
+          "seed": [
+            {
+              "nodeId": "stepper",
+              "portName": "seed"
+            }
+          ],
+          "lower": [
+            {
+              "nodeId": "parameters",
+              "portName": "lower"
+            }
+          ],
+          "upper": [
+            {
+              "nodeId": "parameters",
+              "portName": "upper"
+            }
+          ]
+        }
+      }
+    },
+    "stepper": {
+      "id": "stepper",
+      "type": "optimization.LBFGS",
+      "width": 280,
+      "height": 172,
+      "x": 680.0,
+      "y": 0.0,
+      "inputData": {
+        "memory": {
+          "value": 8
+        },
+        "tolerance": {
+          "value": 1e-08
+        }
+      },
+      "connections": {
+        "inputs": {
+          "seed": [
+            {
+              "nodeId": "domain",
+              "portName": "seed"
+            }
+          ],
+          "fVal": [
+            {
+              "nodeId": "objective",
+              "portName": "fVal"
+            }
+          ],
+          "gradient": [
+            {
+              "nodeId": "objective",
+              "portName": "gradient"
+            }
+          ]
+        },
+        "outputs": {
+          "x": [
+            {
+              "nodeId": "parameters",
+              "portName": "coordinates"
+            }
+          ]
+        }
+      }
+    },
+    "parameters": {
+      "id": "parameters",
+      "type": "hawkes.Parameters",
+      "width": 280,
+      "height": 172,
+      "x": 1020.0,
+      "y": 0.0,
+      "inputData": {
+        "dimension": {
+          "value": 2
+        }
+      },
+      "connections": {
+        "inputs": {
+          "coordinates": [
+            {
+              "nodeId": "stepper",
+              "portName": "x"
+            }
+          ],
+          "lower": [
+            {
+              "nodeId": "domain",
+              "portName": "lower"
+            }
+          ],
+          "upper": [
+            {
+              "nodeId": "domain",
+              "portName": "upper"
+            }
+          ]
+        },
+        "outputs": {
+          "decay": [
+            {
+              "nodeId": "integral",
+              "portName": "decay"
+            },
+            {
+              "nodeId": "likelihood",
+              "portName": "decay"
+            },
+            {
+              "nodeId": "excitation",
+              "portName": "decay"
+            },
+            {
+              "nodeId": "compensator",
+              "portName": "decay"
+            },
+            {
+              "nodeId": "branching",
+              "portName": "decay"
+            },
+            {
+              "nodeId": "timescale",
+              "portName": "b"
+            }
+          ],
+          "baseline": [
+            {
+              "nodeId": "likelihood",
+              "portName": "baseline"
+            },
+            {
+              "nodeId": "intensity",
+              "portName": "baseline"
+            },
+            {
+              "nodeId": "compensator",
+              "portName": "baseline"
+            },
+            {
+              "nodeId": "baseline:buy",
+              "portName": "values"
+            },
+            {
+              "nodeId": "baseline:sell",
+              "portName": "values"
+            }
+          ],
+          "excitation": [
+            {
+              "nodeId": "likelihood",
+              "portName": "excitation"
+            },
+            {
+              "nodeId": "intensity",
+              "portName": "excitation"
+            },
+            {
+              "nodeId": "compensator",
+              "portName": "excitation"
+            },
+            {
+              "nodeId": "branching",
+              "portName": "excitation"
+            },
+            {
+              "nodeId": "alpha:buybuy",
+              "portName": "values"
+            },
+            {
+              "nodeId": "alpha:buysell",
+              "portName": "values"
+            },
+            {
+              "nodeId": "alpha:sellbuy",
+              "portName": "values"
+            },
+            {
+              "nodeId": "alpha:sellsell",
+              "portName": "values"
+            }
+          ],
+          "jacobian": [
+            {
+              "nodeId": "objective",
+              "portName": "jacobian"
+            }
+          ]
+        }
+      }
+    },
+    "integral": {
+      "id": "integral",
+      "type": "hawkes.KernelIntegral",
+      "width": 280,
+      "height": 172,
+      "x": 1360.0,
+      "y": 0.0,
+      "inputData": {
+        "dimension": {
+          "value": 2
+        }
+      },
+      "connections": {
+        "inputs": {
+          "times": [
+            {
+              "nodeId": "events",
+              "portName": "times"
+            }
+          ],
+          "components": [
+            {
+              "nodeId": "events",
+              "portName": "components"
+            }
+          ],
+          "origin": [
+            {
+              "nodeId": "events",
+              "portName": "origin"
+            }
+          ],
+          "horizon": [
+            {
+              "nodeId": "events",
+              "portName": "horizon"
+            }
+          ],
+          "decay": [
+            {
+              "nodeId": "parameters",
+              "portName": "decay"
+            }
+          ]
+        },
+        "outputs": {
+          "support": [
+            {
+              "nodeId": "likelihood",
+              "portName": "integral"
+            },
+            {
+              "nodeId": "compensator",
+              "portName": "support"
+            }
+          ],
+          "decayDerivative": [
+            {
+              "nodeId": "likelihood",
+              "portName": "integralDecayDerivative"
+            }
+          ]
+        }
+      }
+    },
+    "likelihood": {
+      "id": "likelihood",
+      "type": "hawkes.LogLikelihood",
+      "width": 280,
+      "height": 172,
+      "x": 1700.0,
+      "y": 0.0,
+      "inputData": {
+        "dimension": {
+          "value": 2
+        }
+      },
+      "connections": {
+        "inputs": {
+          "times": [
+            {
+              "nodeId": "events",
+              "portName": "times"
+            }
+          ],
+          "components": [
+            {
+              "nodeId": "events",
+              "portName": "components"
+            }
+          ],
+          "origin": [
+            {
+              "nodeId": "events",
+              "portName": "origin"
+            }
+          ],
+          "horizon": [
+            {
+              "nodeId": "events",
+              "portName": "horizon"
+            }
+          ],
+          "baseline": [
+            {
+              "nodeId": "parameters",
+              "portName": "baseline"
+            }
+          ],
+          "excitation": [
+            {
+              "nodeId": "parameters",
+              "portName": "excitation"
+            }
+          ],
+          "decay": [
+            {
+              "nodeId": "parameters",
+              "portName": "decay"
+            }
+          ],
+          "integral": [
+            {
+              "nodeId": "integral",
+              "portName": "support"
+            }
+          ],
+          "integralDecayDerivative": [
+            {
+              "nodeId": "integral",
+              "portName": "decayDerivative"
+            }
+          ]
+        },
+        "outputs": {
+          "value": [
+            {
+              "nodeId": "objective",
+              "portName": "value"
+            },
+            {
+              "nodeId": "log_likelihood_gain_vs_poisson",
+              "portName": "a"
+            },
+            {
+              "nodeId": "log_likelihood_gain_vs_self_only",
+              "portName": "a"
+            },
+            {
+              "nodeId": "log_likelihood_per_event",
+              "portName": "a"
+            }
+          ],
+          "gradient": [
+            {
+              "nodeId": "objective",
+              "portName": "gradient"
+            }
+          ]
+        }
+      }
+    },
+    "objective": {
+      "id": "objective",
+      "type": "optimization.Objective",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 0.0,
+      "inputData": {
+        "sense": {
+          "value": -1
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "likelihood",
+              "portName": "value"
+            }
+          ],
+          "gradient": [
+            {
+              "nodeId": "likelihood",
+              "portName": "gradient"
+            }
+          ],
+          "jacobian": [
+            {
+              "nodeId": "parameters",
+              "portName": "jacobian"
+            }
+          ]
+        },
+        "outputs": {
+          "fVal": [
+            {
+              "nodeId": "stepper",
+              "portName": "fVal"
+            }
+          ],
+          "gradient": [
+            {
+              "nodeId": "stepper",
+              "portName": "gradient"
+            }
+          ]
+        }
+      }
+    },
+    "domain_uncoupled": {
+      "id": "domain_uncoupled",
+      "type": "hawkes.Domain",
+      "width": 280,
+      "height": 172,
+      "x": 2380.0,
+      "y": 0.0,
+      "inputData": {
+        "dimension": {
+          "value": 2
+        },
+        "coupled": {
+          "value": 0
+        }
+      },
+      "connections": {
+        "inputs": {
+          "times": [
+            {
+              "nodeId": "events",
+              "portName": "times"
+            }
+          ],
+          "components": [
+            {
+              "nodeId": "events",
+              "portName": "components"
+            }
+          ],
+          "origin": [
+            {
+              "nodeId": "events",
+              "portName": "origin"
+            }
+          ],
+          "horizon": [
+            {
+              "nodeId": "events",
+              "portName": "horizon"
+            }
+          ]
+        },
+        "outputs": {
+          "seed": [
+            {
+              "nodeId": "stepper_uncoupled",
+              "portName": "seed"
+            }
+          ],
+          "lower": [
+            {
+              "nodeId": "parameters_uncoupled",
+              "portName": "lower"
+            }
+          ],
+          "upper": [
+            {
+              "nodeId": "parameters_uncoupled",
+              "portName": "upper"
+            }
+          ]
+        }
+      }
+    },
+    "stepper_uncoupled": {
+      "id": "stepper_uncoupled",
+      "type": "optimization.LBFGS",
+      "width": 280,
+      "height": 172,
+      "x": 0.0,
+      "y": 220.0,
+      "inputData": {
+        "memory": {
+          "value": 8
+        },
+        "tolerance": {
+          "value": 1e-08
+        }
+      },
+      "connections": {
+        "inputs": {
+          "seed": [
+            {
+              "nodeId": "domain_uncoupled",
+              "portName": "seed"
+            }
+          ],
+          "fVal": [
+            {
+              "nodeId": "objective_uncoupled",
+              "portName": "fVal"
+            }
+          ],
+          "gradient": [
+            {
+              "nodeId": "objective_uncoupled",
+              "portName": "gradient"
+            }
+          ]
+        },
+        "outputs": {
+          "x": [
+            {
+              "nodeId": "parameters_uncoupled",
+              "portName": "coordinates"
+            }
+          ]
+        }
+      }
+    },
+    "parameters_uncoupled": {
+      "id": "parameters_uncoupled",
+      "type": "hawkes.Parameters",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 220.0,
+      "inputData": {
+        "dimension": {
+          "value": 2
+        }
+      },
+      "connections": {
+        "inputs": {
+          "coordinates": [
+            {
+              "nodeId": "stepper_uncoupled",
+              "portName": "x"
+            }
+          ],
+          "lower": [
+            {
+              "nodeId": "domain_uncoupled",
+              "portName": "lower"
+            }
+          ],
+          "upper": [
+            {
+              "nodeId": "domain_uncoupled",
+              "portName": "upper"
+            }
+          ]
+        },
+        "outputs": {
+          "decay": [
+            {
+              "nodeId": "integral_uncoupled",
+              "portName": "decay"
+            },
+            {
+              "nodeId": "likelihood_uncoupled",
+              "portName": "decay"
+            }
+          ],
+          "baseline": [
+            {
+              "nodeId": "likelihood_uncoupled",
+              "portName": "baseline"
+            }
+          ],
+          "excitation": [
+            {
+              "nodeId": "likelihood_uncoupled",
+              "portName": "excitation"
+            }
+          ],
+          "jacobian": [
+            {
+              "nodeId": "objective_uncoupled",
+              "portName": "jacobian"
+            }
+          ]
+        }
+      }
+    },
+    "integral_uncoupled": {
+      "id": "integral_uncoupled",
+      "type": "hawkes.KernelIntegral",
+      "width": 280,
+      "height": 172,
+      "x": 680.0,
+      "y": 220.0,
+      "inputData": {
+        "dimension": {
+          "value": 2
+        }
+      },
+      "connections": {
+        "inputs": {
+          "times": [
+            {
+              "nodeId": "events",
+              "portName": "times"
+            }
+          ],
+          "components": [
+            {
+              "nodeId": "events",
+              "portName": "components"
+            }
+          ],
+          "origin": [
+            {
+              "nodeId": "events",
+              "portName": "origin"
+            }
+          ],
+          "horizon": [
+            {
+              "nodeId": "events",
+              "portName": "horizon"
+            }
+          ],
+          "decay": [
+            {
+              "nodeId": "parameters_uncoupled",
+              "portName": "decay"
+            }
+          ]
+        },
+        "outputs": {
+          "support": [
+            {
+              "nodeId": "likelihood_uncoupled",
+              "portName": "integral"
+            }
+          ],
+          "decayDerivative": [
+            {
+              "nodeId": "likelihood_uncoupled",
+              "portName": "integralDecayDerivative"
+            }
+          ]
+        }
+      }
+    },
+    "likelihood_uncoupled": {
+      "id": "likelihood_uncoupled",
+      "type": "hawkes.LogLikelihood",
+      "width": 280,
+      "height": 172,
+      "x": 1020.0,
+      "y": 220.0,
+      "inputData": {
+        "dimension": {
+          "value": 2
+        }
+      },
+      "connections": {
+        "inputs": {
+          "times": [
+            {
+              "nodeId": "events",
+              "portName": "times"
+            }
+          ],
+          "components": [
+            {
+              "nodeId": "events",
+              "portName": "components"
+            }
+          ],
+          "origin": [
+            {
+              "nodeId": "events",
+              "portName": "origin"
+            }
+          ],
+          "horizon": [
+            {
+              "nodeId": "events",
+              "portName": "horizon"
+            }
+          ],
+          "baseline": [
+            {
+              "nodeId": "parameters_uncoupled",
+              "portName": "baseline"
+            }
+          ],
+          "excitation": [
+            {
+              "nodeId": "parameters_uncoupled",
+              "portName": "excitation"
+            }
+          ],
+          "decay": [
+            {
+              "nodeId": "parameters_uncoupled",
+              "portName": "decay"
+            }
+          ],
+          "integral": [
+            {
+              "nodeId": "integral_uncoupled",
+              "portName": "support"
+            }
+          ],
+          "integralDecayDerivative": [
+            {
+              "nodeId": "integral_uncoupled",
+              "portName": "decayDerivative"
+            }
+          ]
+        },
+        "outputs": {
+          "value": [
+            {
+              "nodeId": "objective_uncoupled",
+              "portName": "value"
+            },
+            {
+              "nodeId": "log_likelihood_gain_vs_self_only",
+              "portName": "b"
+            }
+          ],
+          "gradient": [
+            {
+              "nodeId": "objective_uncoupled",
+              "portName": "gradient"
+            }
+          ]
+        }
+      }
+    },
+    "objective_uncoupled": {
+      "id": "objective_uncoupled",
+      "type": "optimization.Objective",
+      "width": 280,
+      "height": 172,
+      "x": 1360.0,
+      "y": 220.0,
+      "inputData": {
+        "sense": {
+          "value": -1
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "likelihood_uncoupled",
+              "portName": "value"
+            }
+          ],
+          "gradient": [
+            {
+              "nodeId": "likelihood_uncoupled",
+              "portName": "gradient"
+            }
+          ],
+          "jacobian": [
+            {
+              "nodeId": "parameters_uncoupled",
+              "portName": "jacobian"
+            }
+          ]
+        },
+        "outputs": {
+          "fVal": [
+            {
+              "nodeId": "stepper_uncoupled",
+              "portName": "fVal"
+            }
+          ],
+          "gradient": [
+            {
+              "nodeId": "stepper_uncoupled",
+              "portName": "gradient"
+            }
+          ]
+        }
+      }
+    },
+    "excitation": {
+      "id": "excitation",
+      "type": "hawkes.Excitation",
+      "width": 280,
+      "height": 172,
+      "x": 1700.0,
+      "y": 220.0,
+      "inputData": {
+        "dimension": {
+          "value": 2
+        }
+      },
+      "connections": {
+        "inputs": {
+          "times": [
+            {
+              "nodeId": "events",
+              "portName": "times"
+            }
+          ],
+          "components": [
+            {
+              "nodeId": "events",
+              "portName": "components"
+            }
+          ],
+          "horizon": [
+            {
+              "nodeId": "events",
+              "portName": "horizon"
+            }
+          ],
+          "decay": [
+            {
+              "nodeId": "parameters",
+              "portName": "decay"
+            }
+          ]
+        },
+        "outputs": {
+          "support": [
+            {
+              "nodeId": "intensity",
+              "portName": "support"
+            }
+          ]
+        }
+      }
+    },
+    "intensity": {
+      "id": "intensity",
+      "type": "hawkes.Intensity",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 220.0,
+      "inputData": {
+        "dimension": {
+          "value": 2
+        }
+      },
+      "connections": {
+        "inputs": {
+          "baseline": [
+            {
+              "nodeId": "parameters",
+              "portName": "baseline"
+            }
+          ],
+          "excitation": [
+            {
+              "nodeId": "parameters",
+              "portName": "excitation"
+            }
+          ],
+          "support": [
+            {
+              "nodeId": "excitation",
+              "portName": "support"
+            }
+          ]
+        },
+        "outputs": {
+          "intensity": [
+            {
+              "nodeId": "lambda:buy",
+              "portName": "values"
+            },
+            {
+              "nodeId": "lambda:sell",
+              "portName": "values"
+            }
+          ]
+        }
+      }
+    },
+    "compensator": {
+      "id": "compensator",
+      "type": "hawkes.Compensator",
+      "width": 280,
+      "height": 172,
+      "x": 2380.0,
+      "y": 220.0,
+      "inputData": {
+        "dimension": {
+          "value": 2
+        }
+      },
+      "connections": {
+        "inputs": {
+          "baseline": [
+            {
+              "nodeId": "parameters",
+              "portName": "baseline"
+            }
+          ],
+          "excitation": [
+            {
+              "nodeId": "parameters",
+              "portName": "excitation"
+            }
+          ],
+          "support": [
+            {
+              "nodeId": "integral",
+              "portName": "support"
+            }
+          ],
+          "span": [
+            {
+              "nodeId": "events",
+              "portName": "span"
+            }
+          ],
+          "decay": [
+            {
+              "nodeId": "parameters",
+              "portName": "decay"
+            }
+          ]
+        },
+        "outputs": {
+          "compensator": [
+            {
+              "nodeId": "compensator:buy",
+              "portName": "values"
+            },
+            {
+              "nodeId": "compensator:sell",
+              "portName": "values"
+            }
+          ]
+        }
+      }
+    },
+    "branching": {
+      "id": "branching",
+      "type": "hawkes.Branching",
+      "width": 280,
+      "height": 172,
+      "x": 0.0,
+      "y": 440.0,
+      "inputData": {
+        "dimension": {
+          "value": 2
+        }
+      },
+      "connections": {
+        "inputs": {
+          "excitation": [
+            {
+              "nodeId": "parameters",
+              "portName": "excitation"
+            }
+          ],
+          "decay": [
+            {
+              "nodeId": "parameters",
+              "portName": "decay"
+            }
+          ]
+        },
+        "outputs": {
+          "branching": [
+            {
+              "nodeId": "radius",
+              "portName": "matrix"
+            },
+            {
+              "nodeId": "descendants",
+              "portName": "branching"
+            },
+            {
+              "nodeId": "offspring:buybuy",
+              "portName": "values"
+            },
+            {
+              "nodeId": "offspring:buysell",
+              "portName": "values"
+            },
+            {
+              "nodeId": "offspring:sellbuy",
+              "portName": "values"
+            },
+            {
+              "nodeId": "offspring:sellsell",
+              "portName": "values"
+            }
+          ]
+        }
+      }
+    },
+    "radius": {
+      "id": "radius",
+      "type": "hawkes.SpectralRadius",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 440.0,
+      "inputData": {
+        "dimension": {
+          "value": 2
+        }
+      },
+      "connections": {
+        "inputs": {
+          "matrix": [
+            {
+              "nodeId": "branching",
+              "portName": "branching"
+            }
+          ]
+        },
+        "outputs": {
+          "radius": [
+            {
+              "nodeId": "descendants_remainder",
+              "portName": "b"
+            },
+            {
+              "nodeId": "expected_descendants",
+              "portName": "a"
+            },
+            {
+              "nodeId": "spectral_radius_velocity",
+              "portName": "val"
+            }
+          ]
+        }
+      }
+    },
+    "descendants": {
+      "id": "descendants",
+      "type": "hawkes.Descendants",
+      "width": 280,
+      "height": 172,
+      "x": 680.0,
+      "y": 440.0,
+      "inputData": {
+        "dimension": {
+          "value": 2
+        }
+      },
+      "connections": {
+        "inputs": {
+          "branching": [
+            {
+              "nodeId": "branching",
+              "portName": "branching"
+            }
+          ]
+        },
+        "outputs": {
+          "descendants": [
+            {
+              "nodeId": "descendants:buy",
+              "portName": "values"
+            },
+            {
+              "nodeId": "descendants:sell",
+              "portName": "values"
+            }
+          ]
+        }
+      }
+    },
+    "count:buy": {
+      "id": "count:buy",
+      "type": "data.Element",
+      "width": 280,
+      "height": 172,
+      "x": 1020.0,
+      "y": 440.0,
+      "inputData": {
+        "index": {
+          "value": 0
+        }
+      },
+      "connections": {
+        "inputs": {
+          "values": [
+            {
+              "nodeId": "events",
+              "portName": "counts"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "rate:buy",
+              "portName": "a"
+            },
+            {
+              "nodeId": "fraction:buy",
+              "portName": "a"
+            },
             {
               "nodeId": "count_innovation:buy",
               "portName": "a"
+            },
+            {
+              "nodeId": "poisson_mass:buy",
+              "portName": "a"
+            },
+            {
+              "nodeId": "poisson_term:buy",
+              "portName": "b"
             }
-          ],
-          "sellCount": [
+          ]
+        }
+      }
+    },
+    "baseline:buy": {
+      "id": "baseline:buy",
+      "type": "data.Element",
+      "width": 280,
+      "height": 172,
+      "x": 1360.0,
+      "y": 440.0,
+      "inputData": {
+        "index": {
+          "value": 0
+        }
+      },
+      "connections": {
+        "inputs": {
+          "values": [
+            {
+              "nodeId": "parameters",
+              "portName": "baseline"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "excess:buy",
+              "portName": "b"
+            },
+            {
+              "nodeId": "baseline_mass:buy",
+              "portName": "a"
+            }
+          ]
+        }
+      }
+    },
+    "lambda:buy": {
+      "id": "lambda:buy",
+      "type": "data.Element",
+      "width": 280,
+      "height": 172,
+      "x": 1700.0,
+      "y": 440.0,
+      "inputData": {
+        "index": {
+          "value": 0
+        }
+      },
+      "connections": {
+        "inputs": {
+          "values": [
+            {
+              "nodeId": "intensity",
+              "portName": "intensity"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "lambda",
+              "portName": "a"
+            },
+            {
+              "nodeId": "excitation_intensity:buy",
+              "portName": "a"
+            },
+            {
+              "nodeId": "excitation_share:buy",
+              "portName": "b"
+            },
+            {
+              "nodeId": "excess:buy",
+              "portName": "a"
+            },
+            {
+              "nodeId": "excitation_fraction:buy",
+              "portName": "b"
+            }
+          ]
+        }
+      }
+    },
+    "compensator:buy": {
+      "id": "compensator:buy",
+      "type": "data.Element",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 440.0,
+      "inputData": {
+        "index": {
+          "value": 0
+        }
+      },
+      "connections": {
+        "inputs": {
+          "values": [
+            {
+              "nodeId": "compensator",
+              "portName": "compensator"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "count_innovation:buy",
+              "portName": "b"
+            },
+            {
+              "nodeId": "compensator_root:buy",
+              "portName": "value"
+            },
+            {
+              "nodeId": "excess_mass:buy",
+              "portName": "a"
+            },
+            {
+              "nodeId": "noise_ratio:buy",
+              "portName": "b"
+            }
+          ]
+        }
+      }
+    },
+    "descendants:buy": {
+      "id": "descendants:buy",
+      "type": "data.Element",
+      "width": 280,
+      "height": 172,
+      "x": 2380.0,
+      "y": 440.0,
+      "inputData": {
+        "index": {
+          "value": 0
+        }
+      },
+      "connections": {
+        "inputs": {
+          "values": [
+            {
+              "nodeId": "descendants",
+              "portName": "descendants"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "alpha:buybuy": {
+      "id": "alpha:buybuy",
+      "type": "data.Element",
+      "width": 280,
+      "height": 172,
+      "x": 0.0,
+      "y": 660.0,
+      "inputData": {
+        "index": {
+          "value": 0
+        }
+      },
+      "connections": {
+        "inputs": {
+          "values": [
+            {
+              "nodeId": "parameters",
+              "portName": "excitation"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "offspring:buybuy": {
+      "id": "offspring:buybuy",
+      "type": "data.Element",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 660.0,
+      "inputData": {
+        "index": {
+          "value": 0
+        }
+      },
+      "connections": {
+        "inputs": {
+          "values": [
+            {
+              "nodeId": "branching",
+              "portName": "branching"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "alpha:buysell": {
+      "id": "alpha:buysell",
+      "type": "data.Element",
+      "width": 280,
+      "height": 172,
+      "x": 680.0,
+      "y": 660.0,
+      "inputData": {
+        "index": {
+          "value": 1
+        }
+      },
+      "connections": {
+        "inputs": {
+          "values": [
+            {
+              "nodeId": "parameters",
+              "portName": "excitation"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "offspring:buysell": {
+      "id": "offspring:buysell",
+      "type": "data.Element",
+      "width": 280,
+      "height": 172,
+      "x": 1020.0,
+      "y": 660.0,
+      "inputData": {
+        "index": {
+          "value": 1
+        }
+      },
+      "connections": {
+        "inputs": {
+          "values": [
+            {
+              "nodeId": "branching",
+              "portName": "branching"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "count:sell": {
+      "id": "count:sell",
+      "type": "data.Element",
+      "width": 280,
+      "height": 172,
+      "x": 1360.0,
+      "y": 660.0,
+      "inputData": {
+        "index": {
+          "value": 1
+        }
+      },
+      "connections": {
+        "inputs": {
+          "values": [
+            {
+              "nodeId": "events",
+              "portName": "counts"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "rate:sell",
+              "portName": "a"
+            },
+            {
+              "nodeId": "fraction:sell",
+              "portName": "a"
+            },
             {
               "nodeId": "count_innovation:sell",
               "portName": "a"
+            },
+            {
+              "nodeId": "poisson_mass:sell",
+              "portName": "a"
+            },
+            {
+              "nodeId": "poisson_term:sell",
+              "portName": "b"
+            }
+          ]
+        }
+      }
+    },
+    "baseline:sell": {
+      "id": "baseline:sell",
+      "type": "data.Element",
+      "width": 280,
+      "height": 172,
+      "x": 1700.0,
+      "y": 660.0,
+      "inputData": {
+        "index": {
+          "value": 1
+        }
+      },
+      "connections": {
+        "inputs": {
+          "values": [
+            {
+              "nodeId": "parameters",
+              "portName": "baseline"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "excess:sell",
+              "portName": "b"
+            },
+            {
+              "nodeId": "baseline_mass:sell",
+              "portName": "a"
+            }
+          ]
+        }
+      }
+    },
+    "lambda:sell": {
+      "id": "lambda:sell",
+      "type": "data.Element",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 660.0,
+      "inputData": {
+        "index": {
+          "value": 1
+        }
+      },
+      "connections": {
+        "inputs": {
+          "values": [
+            {
+              "nodeId": "intensity",
+              "portName": "intensity"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "lambda",
+              "portName": "b"
+            },
+            {
+              "nodeId": "excitation_intensity:sell",
+              "portName": "a"
+            },
+            {
+              "nodeId": "excitation_share:sell",
+              "portName": "b"
+            },
+            {
+              "nodeId": "excess:sell",
+              "portName": "a"
+            },
+            {
+              "nodeId": "excitation_fraction:sell",
+              "portName": "b"
+            }
+          ]
+        }
+      }
+    },
+    "compensator:sell": {
+      "id": "compensator:sell",
+      "type": "data.Element",
+      "width": 280,
+      "height": 172,
+      "x": 2380.0,
+      "y": 660.0,
+      "inputData": {
+        "index": {
+          "value": 1
+        }
+      },
+      "connections": {
+        "inputs": {
+          "values": [
+            {
+              "nodeId": "compensator",
+              "portName": "compensator"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "count_innovation:sell",
+              "portName": "b"
+            },
+            {
+              "nodeId": "compensator_root:sell",
+              "portName": "value"
+            },
+            {
+              "nodeId": "excess_mass:sell",
+              "portName": "a"
+            },
+            {
+              "nodeId": "noise_ratio:sell",
+              "portName": "b"
+            }
+          ]
+        }
+      }
+    },
+    "descendants:sell": {
+      "id": "descendants:sell",
+      "type": "data.Element",
+      "width": 280,
+      "height": 172,
+      "x": 0.0,
+      "y": 880.0,
+      "inputData": {
+        "index": {
+          "value": 1
+        }
+      },
+      "connections": {
+        "inputs": {
+          "values": [
+            {
+              "nodeId": "descendants",
+              "portName": "descendants"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "alpha:sellbuy": {
+      "id": "alpha:sellbuy",
+      "type": "data.Element",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 880.0,
+      "inputData": {
+        "index": {
+          "value": 2
+        }
+      },
+      "connections": {
+        "inputs": {
+          "values": [
+            {
+              "nodeId": "parameters",
+              "portName": "excitation"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "offspring:sellbuy": {
+      "id": "offspring:sellbuy",
+      "type": "data.Element",
+      "width": 280,
+      "height": 172,
+      "x": 680.0,
+      "y": 880.0,
+      "inputData": {
+        "index": {
+          "value": 2
+        }
+      },
+      "connections": {
+        "inputs": {
+          "values": [
+            {
+              "nodeId": "branching",
+              "portName": "branching"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "alpha:sellsell": {
+      "id": "alpha:sellsell",
+      "type": "data.Element",
+      "width": 280,
+      "height": 172,
+      "x": 1020.0,
+      "y": 880.0,
+      "inputData": {
+        "index": {
+          "value": 3
+        }
+      },
+      "connections": {
+        "inputs": {
+          "values": [
+            {
+              "nodeId": "parameters",
+              "portName": "excitation"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "offspring:sellsell": {
+      "id": "offspring:sellsell",
+      "type": "data.Element",
+      "width": 280,
+      "height": 172,
+      "x": 1360.0,
+      "y": 880.0,
+      "inputData": {
+        "index": {
+          "value": 3
+        }
+      },
+      "connections": {
+        "inputs": {
+          "values": [
+            {
+              "nodeId": "branching",
+              "portName": "branching"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "arrival_rate": {
+      "id": "arrival_rate",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": 1700.0,
+      "y": 880.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "events",
+              "portName": "count"
             }
           ],
-          "arrivalRate": [
+          "b": [
+            {
+              "nodeId": "events",
+              "portName": "span"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
             {
               "nodeId": "excitation_intensity",
               "portName": "b"
             }
-          ],
-          "buyRate": [
+          ]
+        }
+      }
+    },
+    "lambda": {
+      "id": "lambda",
+      "type": "arithmetic.Add",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 880.0,
+      "connections": {
+        "inputs": {
+          "a": [
             {
-              "nodeId": "excitation_intensity:buy",
-              "portName": "b"
+              "nodeId": "lambda:buy",
+              "portName": "out"
             }
           ],
-          "sellRate": [
+          "b": [
             {
-              "nodeId": "excitation_intensity:sell",
-              "portName": "b"
+              "nodeId": "lambda:sell",
+              "portName": "out"
             }
-          ],
-          "lambda": [
+          ]
+        },
+        "outputs": {
+          "out": [
             {
               "nodeId": "excitation_intensity",
               "portName": "a"
@@ -76,76 +1959,69 @@
               "nodeId": "conditional_intensity_velocity",
               "portName": "val"
             }
+          ]
+        }
+      }
+    },
+    "rate:buy": {
+      "id": "rate:buy",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": 2380.0,
+      "y": 880.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "count:buy",
+              "portName": "out"
+            }
           ],
-          "lambdaBuy": [
+          "b": [
+            {
+              "nodeId": "events",
+              "portName": "span"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
             {
               "nodeId": "excitation_intensity:buy",
-              "portName": "a"
-            },
-            {
-              "nodeId": "excitation_share:buy",
               "portName": "b"
             },
             {
-              "nodeId": "compensator:buy",
-              "portName": "a"
-            }
-          ],
-          "lambdaSell": [
-            {
-              "nodeId": "excitation_intensity:sell",
-              "portName": "a"
-            },
-            {
-              "nodeId": "excitation_share:sell",
-              "portName": "b"
-            },
-            {
-              "nodeId": "compensator:sell",
-              "portName": "a"
-            }
-          ],
-          "spectralRadius": [
-            {
-              "nodeId": "expected_descendants",
-              "portName": "a"
-            },
-            {
-              "nodeId": "descendantsRemainder",
-              "portName": "b"
-            },
-            {
-              "nodeId": "spectral_radius_velocity",
-              "portName": "val"
-            }
-          ],
-          "logLikelihoodHawkes": [
-            {
-              "nodeId": "log_likelihood_gain_vs_poisson",
-              "portName": "a"
-            },
-            {
-              "nodeId": "log_likelihood_gain_vs_self_only",
-              "portName": "a"
-            },
-            {
-              "nodeId": "log_likelihood_per_event:hawkes",
-              "portName": "a"
-            }
-          ],
-          "logLikelihoodPoisson": [
-            {
-              "nodeId": "log_likelihood_gain_vs_poisson",
-              "portName": "b"
-            }
-          ],
-          "logLikelihoodSelfOnly": [
-            {
-              "nodeId": "log_likelihood_gain_vs_self_only",
-              "portName": "b"
+              "nodeId": "log_rate:buy",
+              "portName": "value"
             }
           ]
         }
+      }
+    },
+    "fraction:buy": {
+      "id": "fraction:buy",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": 0.0,
+      "y": 1100.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "count:buy",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "events",
+              "portName": "count"
+            }
+          ]
+        },
+        "outputs": {}
       }
     },
     "excitation_intensity:buy": {
@@ -153,20 +2029,20 @@
       "type": "arithmetic.Subtract",
       "width": 280,
       "height": 172,
-      "x": -200.0,
-      "y": 0.0,
+      "x": 340.0,
+      "y": 1100.0,
       "connections": {
         "inputs": {
           "a": [
             {
-              "nodeId": "process",
-              "portName": "lambdaBuy"
+              "nodeId": "lambda:buy",
+              "portName": "out"
             }
           ],
           "b": [
             {
-              "nodeId": "process",
-              "portName": "buyRate"
+              "nodeId": "rate:buy",
+              "portName": "out"
             }
           ]
         },
@@ -185,8 +2061,8 @@
       "type": "arithmetic.Divide",
       "width": 280,
       "height": 172,
-      "x": 140.0,
-      "y": 0.0,
+      "x": 680.0,
+      "y": 1100.0,
       "connections": {
         "inputs": {
           "a": [
@@ -197,255 +2073,69 @@
           ],
           "b": [
             {
-              "nodeId": "process",
-              "portName": "lambdaBuy"
+              "nodeId": "lambda:buy",
+              "portName": "out"
             }
           ]
         },
         "outputs": {}
       }
     },
-    "excitation_intensity:sell": {
-      "id": "excitation_intensity:sell",
+    "excess:buy": {
+      "id": "excess:buy",
       "type": "arithmetic.Subtract",
       "width": 280,
       "height": 172,
-      "x": -200.0,
-      "y": 300.0,
+      "x": 1020.0,
+      "y": 1100.0,
       "connections": {
         "inputs": {
           "a": [
             {
-              "nodeId": "process",
-              "portName": "lambdaSell"
+              "nodeId": "lambda:buy",
+              "portName": "out"
             }
           ],
           "b": [
             {
-              "nodeId": "process",
-              "portName": "sellRate"
+              "nodeId": "baseline:buy",
+              "portName": "out"
             }
           ]
         },
         "outputs": {
           "out": [
             {
-              "nodeId": "excitation_share:sell",
+              "nodeId": "excitation_fraction:buy",
               "portName": "a"
             }
           ]
         }
       }
     },
-    "excitation_share:sell": {
-      "id": "excitation_share:sell",
+    "excitation_fraction:buy": {
+      "id": "excitation_fraction:buy",
       "type": "arithmetic.Divide",
       "width": 280,
       "height": 172,
-      "x": 140.0,
-      "y": 300.0,
+      "x": 1360.0,
+      "y": 1100.0,
       "connections": {
         "inputs": {
           "a": [
             {
-              "nodeId": "excitation_intensity:sell",
+              "nodeId": "excess:buy",
               "portName": "out"
             }
           ],
           "b": [
             {
-              "nodeId": "process",
-              "portName": "lambdaSell"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "excitation_intensity": {
-      "id": "excitation_intensity",
-      "type": "arithmetic.Subtract",
-      "width": 280,
-      "height": 172,
-      "x": -200.0,
-      "y": 600.0,
-      "connections": {
-        "inputs": {
-          "a": [
-            {
-              "nodeId": "process",
-              "portName": "lambda"
-            }
-          ],
-          "b": [
-            {
-              "nodeId": "process",
-              "portName": "arrivalRate"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "excitation_share",
-              "portName": "a"
-            }
-          ]
-        }
-      }
-    },
-    "excitation_share": {
-      "id": "excitation_share",
-      "type": "arithmetic.Divide",
-      "width": 280,
-      "height": 172,
-      "x": 140.0,
-      "y": 600.0,
-      "connections": {
-        "inputs": {
-          "a": [
-            {
-              "nodeId": "excitation_intensity",
-              "portName": "out"
-            }
-          ],
-          "b": [
-            {
-              "nodeId": "process",
-              "portName": "lambda"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "expected_descendants": {
-      "id": "expected_descendants",
-      "type": "arithmetic.Divide",
-      "width": 280,
-      "height": 172,
-      "x": 480.0,
-      "y": 600.0,
-      "connections": {
-        "inputs": {
-          "a": [
-            {
-              "nodeId": "process",
-              "portName": "spectralRadius"
-            }
-          ],
-          "b": [
-            {
-              "nodeId": "descendantsRemainder",
+              "nodeId": "lambda:buy",
               "portName": "out"
             }
           ]
         },
         "outputs": {}
-      }
-    },
-    "descendantsRemainder": {
-      "id": "descendantsRemainder",
-      "type": "arithmetic.Subtract",
-      "width": 280,
-      "height": 172,
-      "x": 140.0,
-      "y": 750.0,
-      "inputData": {
-        "a": {
-          "value": 1
-        }
-      },
-      "connections": {
-        "inputs": {
-          "b": [
-            {
-              "nodeId": "process",
-              "portName": "spectralRadius"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "expected_descendants",
-              "portName": "b"
-            }
-          ]
-        }
-      }
-    },
-    "conditional_intensity_velocity": {
-      "id": "conditional_intensity_velocity",
-      "type": "temporal.Velocity",
-      "width": 280,
-      "height": 172,
-      "x": 480.0,
-      "y": 900.0,
-      "connections": {
-        "inputs": {
-          "val": [
-            {
-              "nodeId": "process",
-              "portName": "lambda"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "spectral_radius_velocity": {
-      "id": "spectral_radius_velocity",
-      "type": "temporal.Velocity",
-      "width": 280,
-      "height": 172,
-      "x": 480.0,
-      "y": 1050.0,
-      "connections": {
-        "inputs": {
-          "val": [
-            {
-              "nodeId": "process",
-              "portName": "spectralRadius"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "compensator:buy": {
-      "id": "compensator:buy",
-      "type": "arithmetic.Add",
-      "width": 280,
-      "height": 172,
-      "x": 820.0,
-      "y": 0.0,
-      "inputData": {
-        "b": {
-          "value": 0
-        }
-      },
-      "connections": {
-        "inputs": {
-          "a": [
-            {
-              "nodeId": "process",
-              "portName": "lambdaBuy"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "count_innovation:buy",
-              "portName": "b"
-            },
-            {
-              "nodeId": "compensator:buyRoot",
-              "portName": "value"
-            }
-          ]
-        }
       }
     },
     "count_innovation:buy": {
@@ -453,14 +2143,14 @@
       "type": "arithmetic.Subtract",
       "width": 280,
       "height": 172,
-      "x": 1160.0,
-      "y": 0.0,
+      "x": 1700.0,
+      "y": 1100.0,
       "connections": {
         "inputs": {
           "a": [
             {
-              "nodeId": "process",
-              "portName": "buyCount"
+              "nodeId": "count:buy",
+              "portName": "out"
             }
           ],
           "b": [
@@ -480,13 +2170,13 @@
         }
       }
     },
-    "compensator:buyRoot": {
-      "id": "compensator:buyRoot",
+    "compensator_root:buy": {
+      "id": "compensator_root:buy",
       "type": "calculus.Sqrt",
       "width": 280,
       "height": 172,
-      "x": 1160.0,
-      "y": 150.0,
+      "x": 2040.0,
+      "y": 1100.0,
       "connections": {
         "inputs": {
           "value": [
@@ -511,8 +2201,8 @@
       "type": "arithmetic.Divide",
       "width": 280,
       "height": 172,
-      "x": 1500.0,
-      "y": 150.0,
+      "x": 2380.0,
+      "y": 1100.0,
       "connections": {
         "inputs": {
           "a": [
@@ -523,7 +2213,7 @@
           ],
           "b": [
             {
-              "nodeId": "compensator:buyRoot",
+              "nodeId": "compensator_root:buy",
               "portName": "out"
             }
           ]
@@ -531,39 +2221,391 @@
         "outputs": {}
       }
     },
-    "compensator:sell": {
-      "id": "compensator:sell",
-      "type": "arithmetic.Add",
+    "baseline_mass:buy": {
+      "id": "baseline_mass:buy",
+      "type": "arithmetic.Multiply",
       "width": 280,
       "height": 172,
-      "x": 820.0,
-      "y": 450.0,
-      "inputData": {
-        "b": {
-          "value": 0
-        }
-      },
+      "x": 0.0,
+      "y": 1320.0,
       "connections": {
         "inputs": {
           "a": [
             {
-              "nodeId": "process",
-              "portName": "lambdaSell"
+              "nodeId": "baseline:buy",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "events",
+              "portName": "span"
             }
           ]
         },
         "outputs": {
           "out": [
             {
-              "nodeId": "count_innovation:sell",
+              "nodeId": "excess_mass:buy",
               "portName": "b"
-            },
+            }
+          ]
+        }
+      }
+    },
+    "excess_mass:buy": {
+      "id": "excess_mass:buy",
+      "type": "arithmetic.Subtract",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 1320.0,
+      "connections": {
+        "inputs": {
+          "a": [
             {
-              "nodeId": "compensator:sellRoot",
+              "nodeId": "compensator:buy",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "baseline_mass:buy",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "excess_mass_squared:buy",
               "portName": "value"
             }
           ]
         }
+      }
+    },
+    "excess_mass_squared:buy": {
+      "id": "excess_mass_squared:buy",
+      "type": "calculus.Square",
+      "width": 280,
+      "height": 172,
+      "x": 680.0,
+      "y": 1320.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "excess_mass:buy",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "noise_ratio:buy",
+              "portName": "a"
+            }
+          ]
+        }
+      }
+    },
+    "noise_ratio:buy": {
+      "id": "noise_ratio:buy",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": 1020.0,
+      "y": 1320.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "excess_mass_squared:buy",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "compensator:buy",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "noise_sum",
+              "portName": "a"
+            }
+          ]
+        }
+      }
+    },
+    "log_rate:buy": {
+      "id": "log_rate:buy",
+      "type": "calculus.Log",
+      "width": 280,
+      "height": 172,
+      "x": 1360.0,
+      "y": 1320.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "rate:buy",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "poisson_mass:buy",
+              "portName": "b"
+            }
+          ]
+        }
+      }
+    },
+    "poisson_mass:buy": {
+      "id": "poisson_mass:buy",
+      "type": "arithmetic.Multiply",
+      "width": 280,
+      "height": 172,
+      "x": 1700.0,
+      "y": 1320.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "count:buy",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "log_rate:buy",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "poisson_term:buy",
+              "portName": "a"
+            }
+          ]
+        }
+      }
+    },
+    "poisson_term:buy": {
+      "id": "poisson_term:buy",
+      "type": "arithmetic.Subtract",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 1320.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "poisson_mass:buy",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "count:buy",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "log_likelihood_poisson",
+              "portName": "a"
+            }
+          ]
+        }
+      }
+    },
+    "rate:sell": {
+      "id": "rate:sell",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": 2380.0,
+      "y": 1320.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "count:sell",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "events",
+              "portName": "span"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "excitation_intensity:sell",
+              "portName": "b"
+            },
+            {
+              "nodeId": "log_rate:sell",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "fraction:sell": {
+      "id": "fraction:sell",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": 0.0,
+      "y": 1540.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "count:sell",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "events",
+              "portName": "count"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "excitation_intensity:sell": {
+      "id": "excitation_intensity:sell",
+      "type": "arithmetic.Subtract",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 1540.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "lambda:sell",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "rate:sell",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "excitation_share:sell",
+              "portName": "a"
+            }
+          ]
+        }
+      }
+    },
+    "excitation_share:sell": {
+      "id": "excitation_share:sell",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": 680.0,
+      "y": 1540.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "excitation_intensity:sell",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "lambda:sell",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "excess:sell": {
+      "id": "excess:sell",
+      "type": "arithmetic.Subtract",
+      "width": 280,
+      "height": 172,
+      "x": 1020.0,
+      "y": 1540.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "lambda:sell",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "baseline:sell",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "excitation_fraction:sell",
+              "portName": "a"
+            }
+          ]
+        }
+      }
+    },
+    "excitation_fraction:sell": {
+      "id": "excitation_fraction:sell",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": 1360.0,
+      "y": 1540.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "excess:sell",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "lambda:sell",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
       }
     },
     "count_innovation:sell": {
@@ -571,14 +2613,14 @@
       "type": "arithmetic.Subtract",
       "width": 280,
       "height": 172,
-      "x": 1160.0,
-      "y": 450.0,
+      "x": 1700.0,
+      "y": 1540.0,
       "connections": {
         "inputs": {
           "a": [
             {
-              "nodeId": "process",
-              "portName": "sellCount"
+              "nodeId": "count:sell",
+              "portName": "out"
             }
           ],
           "b": [
@@ -598,13 +2640,13 @@
         }
       }
     },
-    "compensator:sellRoot": {
-      "id": "compensator:sellRoot",
+    "compensator_root:sell": {
+      "id": "compensator_root:sell",
       "type": "calculus.Sqrt",
       "width": 280,
       "height": 172,
-      "x": 1160.0,
-      "y": 600.0,
+      "x": 2040.0,
+      "y": 1540.0,
       "connections": {
         "inputs": {
           "value": [
@@ -629,8 +2671,8 @@
       "type": "arithmetic.Divide",
       "width": 280,
       "height": 172,
-      "x": 1500.0,
-      "y": 600.0,
+      "x": 2380.0,
+      "y": 1540.0,
       "connections": {
         "inputs": {
           "a": [
@@ -641,7 +2683,7 @@
           ],
           "b": [
             {
-              "nodeId": "compensator:sellRoot",
+              "nodeId": "compensator_root:sell",
               "portName": "out"
             }
           ]
@@ -649,25 +2691,500 @@
         "outputs": {}
       }
     },
+    "baseline_mass:sell": {
+      "id": "baseline_mass:sell",
+      "type": "arithmetic.Multiply",
+      "width": 280,
+      "height": 172,
+      "x": 0.0,
+      "y": 1760.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "baseline:sell",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "events",
+              "portName": "span"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "excess_mass:sell",
+              "portName": "b"
+            }
+          ]
+        }
+      }
+    },
+    "excess_mass:sell": {
+      "id": "excess_mass:sell",
+      "type": "arithmetic.Subtract",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 1760.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "compensator:sell",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "baseline_mass:sell",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "excess_mass_squared:sell",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "excess_mass_squared:sell": {
+      "id": "excess_mass_squared:sell",
+      "type": "calculus.Square",
+      "width": 280,
+      "height": 172,
+      "x": 680.0,
+      "y": 1760.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "excess_mass:sell",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "noise_ratio:sell",
+              "portName": "a"
+            }
+          ]
+        }
+      }
+    },
+    "noise_ratio:sell": {
+      "id": "noise_ratio:sell",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": 1020.0,
+      "y": 1760.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "excess_mass_squared:sell",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "compensator:sell",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "noise_sum",
+              "portName": "b"
+            }
+          ]
+        }
+      }
+    },
+    "log_rate:sell": {
+      "id": "log_rate:sell",
+      "type": "calculus.Log",
+      "width": 280,
+      "height": 172,
+      "x": 1360.0,
+      "y": 1760.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "rate:sell",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "poisson_mass:sell",
+              "portName": "b"
+            }
+          ]
+        }
+      }
+    },
+    "poisson_mass:sell": {
+      "id": "poisson_mass:sell",
+      "type": "arithmetic.Multiply",
+      "width": 280,
+      "height": 172,
+      "x": 1700.0,
+      "y": 1760.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "count:sell",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "log_rate:sell",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "poisson_term:sell",
+              "portName": "a"
+            }
+          ]
+        }
+      }
+    },
+    "poisson_term:sell": {
+      "id": "poisson_term:sell",
+      "type": "arithmetic.Subtract",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 1760.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "poisson_mass:sell",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "count:sell",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "log_likelihood_poisson",
+              "portName": "b"
+            }
+          ]
+        }
+      }
+    },
+    "excitation_intensity": {
+      "id": "excitation_intensity",
+      "type": "arithmetic.Subtract",
+      "width": 280,
+      "height": 172,
+      "x": 2380.0,
+      "y": 1760.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "lambda",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "arrival_rate",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "excitation_share",
+              "portName": "a"
+            }
+          ]
+        }
+      }
+    },
+    "excitation_share": {
+      "id": "excitation_share",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": 0.0,
+      "y": 1980.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "excitation_intensity",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "lambda",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "noise_sum": {
+      "id": "noise_sum",
+      "type": "arithmetic.Add",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 1980.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "noise_ratio:buy",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "noise_ratio:sell",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "snr",
+              "portName": "a"
+            }
+          ]
+        }
+      }
+    },
+    "snr": {
+      "id": "snr",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": 680.0,
+      "y": 1980.0,
+      "inputData": {
+        "b": {
+          "value": 2.0
+        }
+      },
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "noise_sum",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "timescale": {
+      "id": "timescale",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": 1020.0,
+      "y": 1980.0,
+      "inputData": {
+        "a": {
+          "value": 1.0
+        }
+      },
+      "connections": {
+        "inputs": {
+          "b": [
+            {
+              "nodeId": "parameters",
+              "portName": "decay"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "descendants_remainder": {
+      "id": "descendants_remainder",
+      "type": "arithmetic.Subtract",
+      "width": 280,
+      "height": 172,
+      "x": 1360.0,
+      "y": 1980.0,
+      "inputData": {
+        "a": {
+          "value": 1.0
+        }
+      },
+      "connections": {
+        "inputs": {
+          "b": [
+            {
+              "nodeId": "radius",
+              "portName": "radius"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "expected_descendants",
+              "portName": "b"
+            }
+          ]
+        }
+      }
+    },
+    "expected_descendants": {
+      "id": "expected_descendants",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": 1700.0,
+      "y": 1980.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "radius",
+              "portName": "radius"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "descendants_remainder",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "conditional_intensity_velocity": {
+      "id": "conditional_intensity_velocity",
+      "type": "temporal.Velocity",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 1980.0,
+      "connections": {
+        "inputs": {
+          "val": [
+            {
+              "nodeId": "lambda",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "spectral_radius_velocity": {
+      "id": "spectral_radius_velocity",
+      "type": "temporal.Velocity",
+      "width": 280,
+      "height": 172,
+      "x": 2380.0,
+      "y": 1980.0,
+      "connections": {
+        "inputs": {
+          "val": [
+            {
+              "nodeId": "radius",
+              "portName": "radius"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "log_likelihood_poisson": {
+      "id": "log_likelihood_poisson",
+      "type": "arithmetic.Add",
+      "width": 280,
+      "height": 172,
+      "x": 0.0,
+      "y": 2200.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "poisson_term:buy",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "poisson_term:sell",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "log_likelihood_gain_vs_poisson",
+              "portName": "b"
+            }
+          ]
+        }
+      }
+    },
     "log_likelihood_gain_vs_poisson": {
       "id": "log_likelihood_gain_vs_poisson",
       "type": "arithmetic.Subtract",
       "width": 280,
       "height": 172,
-      "x": 2600.0,
-      "y": 9450.0,
+      "x": 340.0,
+      "y": 2200.0,
       "connections": {
         "inputs": {
           "a": [
             {
-              "nodeId": "process",
-              "portName": "logLikelihoodHawkes"
+              "nodeId": "likelihood",
+              "portName": "value"
             }
           ],
           "b": [
             {
-              "nodeId": "process",
-              "portName": "logLikelihoodPoisson"
+              "nodeId": "log_likelihood_poisson",
+              "portName": "out"
             }
           ]
         },
@@ -686,20 +3203,20 @@
       "type": "arithmetic.Subtract",
       "width": 280,
       "height": 172,
-      "x": 2600.0,
-      "y": 9600.0,
+      "x": 680.0,
+      "y": 2200.0,
       "connections": {
         "inputs": {
           "a": [
             {
-              "nodeId": "process",
-              "portName": "logLikelihoodHawkes"
+              "nodeId": "likelihood",
+              "portName": "value"
             }
           ],
           "b": [
             {
-              "nodeId": "process",
-              "portName": "logLikelihoodSelfOnly"
+              "nodeId": "likelihood_uncoupled",
+              "portName": "value"
             }
           ]
         },
@@ -713,25 +3230,25 @@
         }
       }
     },
-    "log_likelihood_per_event:hawkes": {
-      "id": "log_likelihood_per_event:hawkes",
+    "log_likelihood_per_event": {
+      "id": "log_likelihood_per_event",
       "type": "arithmetic.Divide",
       "width": 280,
       "height": 172,
-      "x": 2940.0,
-      "y": 9750.0,
+      "x": 1020.0,
+      "y": 2200.0,
       "connections": {
         "inputs": {
           "a": [
             {
-              "nodeId": "process",
-              "portName": "logLikelihoodHawkes"
+              "nodeId": "likelihood",
+              "portName": "value"
             }
           ],
           "b": [
             {
-              "nodeId": "process",
-              "portName": "eventCount"
+              "nodeId": "events",
+              "portName": "count"
             }
           ]
         },
@@ -743,8 +3260,8 @@
       "type": "arithmetic.Divide",
       "width": 280,
       "height": 172,
-      "x": 2940.0,
-      "y": 9900.0,
+      "x": 1360.0,
+      "y": 2200.0,
       "connections": {
         "inputs": {
           "a": [
@@ -755,8 +3272,8 @@
           ],
           "b": [
             {
-              "nodeId": "process",
-              "portName": "eventCount"
+              "nodeId": "events",
+              "portName": "count"
             }
           ]
         },
@@ -768,8 +3285,8 @@
       "type": "arithmetic.Divide",
       "width": 280,
       "height": 172,
-      "x": 2940.0,
-      "y": 10050.0,
+      "x": 1700.0,
+      "y": 2200.0,
       "connections": {
         "inputs": {
           "a": [
@@ -780,59 +3297,12 @@
           ],
           "b": [
             {
-              "nodeId": "process",
-              "portName": "eventCount"
+              "nodeId": "events",
+              "portName": "count"
             }
           ]
         },
         "outputs": {}
-      }
-    },
-    "markScaled": {
-      "id": "markScaled",
-      "type": "arithmetic.Multiply",
-      "inputData": {
-        "b": {
-          "value": 2.0
-        }
-      },
-      "connections": {
-        "inputs": {},
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "markFromSide",
-              "portName": "b"
-            }
-          ]
-        }
-      }
-    },
-    "markFromSide": {
-      "id": "markFromSide",
-      "type": "arithmetic.Subtract",
-      "inputData": {
-        "a": {
-          "value": 1.0
-        }
-      },
-      "connections": {
-        "inputs": {
-          "b": [
-            {
-              "nodeId": "markScaled",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "process",
-              "portName": "mark"
-            }
-          ]
-        }
       }
     }
   }

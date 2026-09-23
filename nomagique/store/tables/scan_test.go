@@ -28,6 +28,7 @@ func TestIcebergScanWrite(t *testing.T) {
 			{"null properties", "null", false},
 			{"malformed properties", "{", false},
 			{"wrong property shape", "[]", false},
+			{"null property value", `{"warehouse":null}`, false},
 			{"explicit empty local filesystem properties", "{}", true},
 		} {
 			Convey(fixture.name, func() {

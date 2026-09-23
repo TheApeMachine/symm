@@ -4,22 +4,17 @@
   "nodes": {
     "replay": {
       "id": "replay",
-      "type": "tables.IcebergScan",
-      "inputData": {
-        "config": {
-          "value": "{\"namespace\":\"symm\",\"table\":\"raw_frames_v3\",\"fields\":[{\"id\":1,\"name\":\"received_at\",\"type\":\"timestamp\",\"required\":true},{\"id\":2,\"name\":\"endpoint\",\"type\":\"string\",\"required\":true},{\"id\":3,\"name\":\"symbol\",\"type\":\"string\",\"required\":false},{\"id\":4,\"name\":\"kind\",\"type\":\"string\",\"required\":false},{\"id\":5,\"name\":\"payload\",\"type\":\"binary\",\"required\":true},{\"id\":6,\"name\":\"capture_id\",\"type\":\"string\",\"required\":true},{\"id\":7,\"name\":\"capture_session\",\"type\":\"string\",\"required\":true},{\"id\":8,\"name\":\"capture_sequence\",\"type\":\"long\",\"required\":true},{\"id\":9,\"name\":\"received_time\",\"type\":\"string\",\"required\":true}]}"
-        }
-      },
+      "type": "definition:archive_scan",
       "connections": {
         "inputs": {},
         "outputs": {
-          "out": [
+          "project.out": [
             {
               "nodeId": "tape",
               "portName": "row"
             }
           ],
-          "exhausted": [
+          "scan.exhausted": [
             {
               "nodeId": "tape",
               "portName": "exhausted"
@@ -36,13 +31,13 @@
           "row": [
             {
               "nodeId": "replay",
-              "portName": "out"
+              "portName": "project.out"
             }
           ],
           "exhausted": [
             {
               "nodeId": "replay",
-              "portName": "exhausted"
+              "portName": "scan.exhausted"
             }
           ]
         },
@@ -54,7 +49,7 @@
             },
             {
               "nodeId": "records",
-              "portName": "data"
+              "portName": "frame.data"
             }
           ],
           "frame.session": [
@@ -73,6 +68,18 @@
             {
               "nodeId": "mine",
               "portName": "endpoint"
+            }
+          ],
+          "frame.row": [
+            {
+              "nodeId": "records",
+              "portName": "row.data"
+            }
+          ],
+          "finished": [
+            {
+              "nodeId": "snapshot_ready",
+              "portName": "test"
             }
           ]
         }
@@ -121,6 +128,12 @@
             {
               "nodeId": "events",
               "portName": "payload"
+            }
+          ],
+          "batch": [
+            {
+              "nodeId": "fragments",
+              "portName": "data"
             }
           ]
         }
@@ -466,18 +479,6 @@
       "y": 80.0,
       "connections": {
         "inputs": {
-          "process.time": [
-            {
-              "nodeId": "grid",
-              "portName": "values_5"
-            }
-          ],
-          "markScaled.a": [
-            {
-              "nodeId": "grid",
-              "portName": "values_3"
-            }
-          ],
           "conditional_intensity_velocity.ts": [
             {
               "nodeId": "grid",
@@ -488,6 +489,18 @@
             {
               "nodeId": "grid",
               "portName": "values_5"
+            }
+          ],
+          "events.time": [
+            {
+              "nodeId": "grid",
+              "portName": "values_5"
+            }
+          ],
+          "events.component": [
+            {
+              "nodeId": "grid",
+              "portName": "values_3"
             }
           ]
         },
@@ -1041,8 +1054,8 @@
         "inputs": {
           "data": [
             {
-              "nodeId": "records",
-              "portName": "out"
+              "nodeId": "learning_replay",
+              "portName": "market.json"
             }
           ]
         },
@@ -1252,7 +1265,7 @@
             },
             {
               "nodeId": "definition-hawkes_trade",
-              "portName": "markScaled.a"
+              "portName": "events.component"
             }
           ],
           "values_4": [
@@ -1284,15 +1297,15 @@
             },
             {
               "nodeId": "definition-hawkes_trade",
-              "portName": "process.time"
-            },
-            {
-              "nodeId": "definition-hawkes_trade",
               "portName": "conditional_intensity_velocity.ts"
             },
             {
               "nodeId": "definition-hawkes_trade",
               "portName": "spectral_radius_velocity.ts"
+            },
+            {
+              "nodeId": "definition-hawkes_trade",
+              "portName": "events.time"
             }
           ],
           "values_6": [
@@ -1546,10 +1559,45 @@
     },
     "records": {
       "id": "records",
+      "type": "definition:archive_records",
+      "connections": {
+        "inputs": {
+          "row.data": [
+            {
+              "nodeId": "tape",
+              "portName": "frame.row"
+            }
+          ],
+          "frame.data": [
+            {
+              "nodeId": "tape",
+              "portName": "frame.payload"
+            }
+          ]
+        },
+        "outputs": {
+          "market.json": [],
+          "records.out": [
+            {
+              "nodeId": "learning_replay",
+              "portName": "record.data"
+            }
+          ],
+          "records.pending": [
+            {
+              "nodeId": "record_pending",
+              "portName": "unsigned"
+            }
+          ]
+        }
+      }
+    },
+    "fragments": {
+      "id": "fragments",
       "type": "data.Iterate",
       "inputData": {
         "path": {
-          "value": "data"
+          "value": "Events"
         },
         "envelope": {
           "value": true
@@ -1559,19 +1607,436 @@
         "inputs": {
           "data": [
             {
-              "nodeId": "tape",
-              "portName": "frame.payload"
+              "nodeId": "mine",
+              "portName": "batch"
             }
           ]
         },
         "outputs": {
           "out": [
             {
-              "nodeId": "grid",
+              "nodeId": "event_session",
+              "portName": "data"
+            },
+            {
+              "nodeId": "event_endpoint",
+              "portName": "data"
+            },
+            {
+              "nodeId": "event_truth",
+              "portName": "data"
+            }
+          ],
+          "pending": [
+            {
+              "nodeId": "event_pending",
+              "portName": "unsigned"
+            }
+          ]
+        }
+      }
+    },
+    "event_session": {
+      "id": "event_session",
+      "type": "data.Extract",
+      "inputData": {
+        "path": {
+          "value": "Session"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "fragments",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "with_event_session",
+              "portName": "json"
+            }
+          ]
+        }
+      }
+    },
+    "with_event_session": {
+      "id": "with_event_session",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "capture.session"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "event_session",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "with_event_endpoint",
               "portName": "data"
             }
           ]
         }
+      }
+    },
+    "event_endpoint": {
+      "id": "event_endpoint",
+      "type": "data.Extract",
+      "inputData": {
+        "path": {
+          "value": "Endpoint"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "fragments",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "with_event_endpoint",
+              "portName": "json"
+            }
+          ]
+        }
+      }
+    },
+    "with_event_endpoint": {
+      "id": "with_event_endpoint",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "capture.endpoint"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "event_endpoint",
+              "portName": "json"
+            }
+          ],
+          "data": [
+            {
+              "nodeId": "with_event_session",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "with_event_truth",
+              "portName": "data"
+            }
+          ]
+        }
+      }
+    },
+    "event_truth": {
+      "id": "event_truth",
+      "type": "data.Extract",
+      "inputData": {
+        "path": {
+          "value": "Events"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "fragments",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "with_event_truth",
+              "portName": "json"
+            }
+          ]
+        }
+      }
+    },
+    "with_event_truth": {
+      "id": "with_event_truth",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "event"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "event_truth",
+              "portName": "json"
+            }
+          ],
+          "data": [
+            {
+              "nodeId": "with_event_endpoint",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "learning_replay",
+              "portName": "event.data"
+            }
+          ]
+        }
+      }
+    },
+    "learning_replay": {
+      "id": "learning_replay",
+      "type": "definition:training_replay",
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "record.data": [
+            {
+              "nodeId": "records",
+              "portName": "records.out"
+            }
+          ],
+          "event.data": [
+            {
+              "nodeId": "with_event_truth",
+              "portName": "out"
+            }
+          ],
+          "ready.data": [
+            {
+              "nodeId": "snapshot_ready",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "market.json": [
+            {
+              "nodeId": "grid",
+              "portName": "data"
+            }
+          ],
+          "fragment.truth.out": [
+            {
+              "nodeId": "grade",
+              "portName": "input.data"
+            }
+          ]
+        }
+      }
+    },
+    "record_pending": {
+      "id": "record_pending",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "records"
+        },
+        "encoding": {
+          "value": "uint64"
+        },
+        "data": {
+          "value": "{\"ready\":1}"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "unsigned": [
+            {
+              "nodeId": "records",
+              "portName": "records.pending"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "event_pending",
+              "portName": "data"
+            }
+          ]
+        }
+      }
+    },
+    "event_pending": {
+      "id": "event_pending",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "events"
+        },
+        "encoding": {
+          "value": "uint64"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "unsigned": [
+            {
+              "nodeId": "fragments",
+              "portName": "pending"
+            }
+          ],
+          "data": [
+            {
+              "nodeId": "record_pending",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "records_drained",
+              "portName": "data"
+            }
+          ]
+        }
+      }
+    },
+    "records_drained": {
+      "id": "records_drained",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "records"
+        },
+        "operator": {
+          "value": "=="
+        },
+        "threshold": {
+          "value": 0
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "event_pending",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "events_drained",
+              "portName": "data"
+            }
+          ]
+        }
+      }
+    },
+    "events_drained": {
+      "id": "events_drained",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "events"
+        },
+        "operator": {
+          "value": "=="
+        },
+        "threshold": {
+          "value": 0
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "records_drained",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "snapshot_ready",
+              "portName": "yes"
+            }
+          ]
+        }
+      }
+    },
+    "snapshot_ready": {
+      "id": "snapshot_ready",
+      "type": "controlflow.Select",
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "test": [
+            {
+              "nodeId": "tape",
+              "portName": "finished"
+            }
+          ],
+          "yes": [
+            {
+              "nodeId": "events_drained",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "learning_replay",
+              "portName": "ready.data"
+            }
+          ]
+        }
+      }
+    },
+    "grade": {
+      "id": "grade",
+      "type": "definition:training_grade",
+      "connections": {
+        "inputs": {
+          "input.data": [
+            {
+              "nodeId": "learning_replay",
+              "portName": "fragment.truth.out"
+            }
+          ]
+        },
+        "outputs": {}
       }
     }
   }

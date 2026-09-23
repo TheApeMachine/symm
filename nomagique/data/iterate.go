@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"strconv"
 	"strings"
 
 	"github.com/bytedance/sonic"
@@ -20,6 +21,7 @@ its current element, so graph consumers keep the record's channel metadata.
 type IterateServer struct {
 	*runtime.System
 	path         string
+	indexPath    string
 	envelope     bool
 	pending      [][][]byte
 	cursor       int
@@ -44,10 +46,21 @@ func (server *IterateServer) Write(ctx context.Context, call Iterate_write) erro
 	if err != nil {
 		return errnie.Error(errnie.Err(errnie.Validation, "iterate: path", err))
 	}
-	if len(server.pending) > 0 && (path != server.path || call.Args().Envelope() != server.envelope) {
+	indexPath, err := call.Args().IndexPath()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.Validation, "iterate: index path", err))
+	}
+
+	if indexPath != "" && (!call.Args().Envelope() || path == "") {
+		return errnie.Error(errnie.Err(errnie.Validation, "iterate: index path requires envelope projection", nil))
+	}
+
+	if len(server.pending) > 0 && (path != server.path || call.Args().Envelope() != server.envelope || indexPath != server.indexPath) {
 		return errnie.Error(errnie.Err(errnie.Validation, "iterate: cannot change projection while collections are pending", nil))
 	}
 	server.path, server.envelope = path, call.Args().Envelope()
+	server.indexPath = indexPath
 	arrivals, err := call.Args().Data()
 	if err != nil {
 		return errnie.Error(errnie.Err(errnie.Validation, "iterate: collections", err))
@@ -149,7 +162,15 @@ func (server *IterateServer) load(payload []byte) error {
 
 	encodedElements := make([][]byte, 0, len(elements))
 
-	for _, element := range elements {
+	if server.indexPath != "" {
+		_, found := walk(document, strings.Split(server.indexPath, "."))
+
+		if found || server.indexPath == server.path || strings.HasPrefix(server.path, server.indexPath+".") || strings.HasPrefix(server.indexPath, server.path+".") {
+			return errnie.Error(errnie.Err(errnie.Validation, "iterate: index path would overwrite input", nil))
+		}
+	}
+
+	for index, element := range elements {
 		projected := element
 		if server.envelope && server.path != "" {
 			parent := document
@@ -167,6 +188,16 @@ func (server *IterateServer) load(payload []byte) error {
 			}
 			projected = document
 		}
+
+		if server.indexPath != "" {
+			indexed, err := insertAt(projected, strings.Split(server.indexPath, "."), json.Number(strconv.Itoa(index)))
+
+			if err != nil {
+				return err
+			}
+			projected = indexed
+		}
+
 		encoded, err := sonic.Marshal(projected)
 
 		if err != nil {

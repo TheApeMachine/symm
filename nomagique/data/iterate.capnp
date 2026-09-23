@@ -5,8 +5,10 @@ $Go.import("github.com/theapemachine/symm/nomagique/data");
 
 using import "../runtime/status.capnp".Status;
 
+# indexPath optionally inserts the original zero-based collection index into
+# each projected document. It requires envelope mode and an unoccupied path.
 interface Iterate {
-  write @0 (data :List(Data), path :Text, envelope :Bool) -> stream;
+  write @0 (data :List(Data), path :Text, envelope :Bool, indexPath :Text) -> stream;
   done @1 () -> (
     out    :Data,
     index  :Int64,

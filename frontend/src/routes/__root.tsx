@@ -61,7 +61,7 @@ const SURFACE_PATHS: Record<TerminalSurface, string> = {
 	hindsight: "/hindsight",
 	workbench: "/workbench",
 	pipeline: "/pipeline",
-	dynamic: "/ui-graph"
+	dynamic: "/dynamic"
 };
 
 export const parseSurface = (path: unknown): TerminalSurface => {

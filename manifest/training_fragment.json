@@ -1,0 +1,636 @@
+{
+  "id": "training_fragment",
+  "name": "Causal fragment records and separate truth",
+  "nodes": {
+    "record": {
+      "id": "record",
+      "type": "transport.Fan",
+      "inputData": {},
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "joined",
+              "portName": "data"
+            }
+          ]
+        }
+      }
+    },
+    "fragment": {
+      "id": "fragment",
+      "type": "transport.Fan",
+      "inputData": {},
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "joined",
+              "portName": "json"
+            }
+          ]
+        }
+      }
+    },
+    "joined": {
+      "id": "joined",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "fragment"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "record",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "fragment",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "session",
+              "portName": "data"
+            }
+          ]
+        }
+      }
+    },
+    "session": {
+      "id": "session",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "capture.session"
+        },
+        "operator": {
+          "value": "=="
+        },
+        "referencePath": {
+          "value": "fragment.capture.session"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "joined",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "precursor",
+              "portName": "data"
+            }
+          ]
+        }
+      }
+    },
+    "precursor": {
+      "id": "precursor",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "fragment.event.a.sequence,fragment.event.a.record"
+        },
+        "operator": {
+          "value": "<"
+        },
+        "referencePath": {
+          "value": "fragment.event.b.sequence,fragment.event.b.record"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "session",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "order",
+              "portName": "data"
+            }
+          ]
+        }
+      }
+    },
+    "order": {
+      "id": "order",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "fragment.event.b.sequence,fragment.event.b.record"
+        },
+        "operator": {
+          "value": "<"
+        },
+        "referencePath": {
+          "value": "fragment.event.c.sequence,fragment.event.c.record"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "precursor",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "confirmed",
+              "portName": "data"
+            }
+          ]
+        }
+      }
+    },
+    "confirmed": {
+      "id": "confirmed",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "fragment.event.c.sequence,fragment.event.c.record"
+        },
+        "operator": {
+          "value": "<="
+        },
+        "referencePath": {
+          "value": "fragment.event.d.sequence,fragment.event.d.record"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "order",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "from",
+              "portName": "data"
+            }
+          ]
+        }
+      }
+    },
+    "from": {
+      "id": "from",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "cursor.sequence,cursor.record"
+        },
+        "operator": {
+          "value": ">="
+        },
+        "referencePath": {
+          "value": "fragment.event.a.sequence,fragment.event.a.record"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "confirmed",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "through",
+              "portName": "data"
+            }
+          ]
+        }
+      }
+    },
+    "through": {
+      "id": "through",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "cursor.sequence,cursor.record"
+        },
+        "operator": {
+          "value": "<="
+        },
+        "referencePath": {
+          "value": "fragment.event.c.sequence,fragment.event.c.record"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "from",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "causal_capture",
+              "portName": "data"
+            },
+            {
+              "nodeId": "causal_cursor",
+              "portName": "data"
+            },
+            {
+              "nodeId": "causal_market",
+              "portName": "data"
+            },
+            {
+              "nodeId": "endpoint",
+              "portName": "data"
+            }
+          ]
+        }
+      }
+    },
+    "causal_capture": {
+      "id": "causal_capture",
+      "type": "data.Extract",
+      "inputData": {
+        "path": {
+          "value": "capture"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "through",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "with_capture",
+              "portName": "json"
+            }
+          ]
+        }
+      }
+    },
+    "with_capture": {
+      "id": "with_capture",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "capture"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "causal_capture",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "with_cursor",
+              "portName": "data"
+            }
+          ]
+        }
+      }
+    },
+    "causal_cursor": {
+      "id": "causal_cursor",
+      "type": "data.Extract",
+      "inputData": {
+        "path": {
+          "value": "cursor"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "through",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "with_cursor",
+              "portName": "json"
+            }
+          ]
+        }
+      }
+    },
+    "with_cursor": {
+      "id": "with_cursor",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "cursor"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "causal_cursor",
+              "portName": "json"
+            }
+          ],
+          "data": [
+            {
+              "nodeId": "with_capture",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "with_market",
+              "portName": "data"
+            }
+          ]
+        }
+      }
+    },
+    "causal_market": {
+      "id": "causal_market",
+      "type": "data.Extract",
+      "inputData": {
+        "path": {
+          "value": "market"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "through",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "with_market",
+              "portName": "json"
+            }
+          ]
+        }
+      }
+    },
+    "with_market": {
+      "id": "with_market",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "market"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "causal_market",
+              "portName": "json"
+            }
+          ],
+          "data": [
+            {
+              "nodeId": "with_cursor",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "observation",
+              "portName": "data"
+            }
+          ]
+        }
+      }
+    },
+    "observation": {
+      "id": "observation",
+      "type": "transport.Fan",
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "with_market",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "market",
+              "portName": "data"
+            },
+            {
+              "nodeId": "truth",
+              "portName": "data"
+            }
+          ]
+        }
+      }
+    },
+    "market": {
+      "id": "market",
+      "type": "data.Extract",
+      "inputData": {
+        "path": {
+          "value": "market"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "observation",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "endpoint": {
+      "id": "endpoint",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "capture.endpoint"
+        },
+        "operator": {
+          "value": "=="
+        },
+        "referencePath": {
+          "value": "fragment.capture.endpoint"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "through",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "symbol",
+              "portName": "data"
+            }
+          ]
+        }
+      }
+    },
+    "symbol": {
+      "id": "symbol",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "market.data.symbol"
+        },
+        "operator": {
+          "value": "=="
+        },
+        "referencePath": {
+          "value": "fragment.event.symbol"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "endpoint",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "event",
+              "portName": "data"
+            }
+          ]
+        }
+      }
+    },
+    "event": {
+      "id": "event",
+      "type": "data.Extract",
+      "inputData": {
+        "path": {
+          "value": "fragment.event"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "symbol",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "truth",
+              "portName": "json"
+            }
+          ]
+        }
+      }
+    },
+    "truth": {
+      "id": "truth",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "event"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "observation",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "event",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    }
+  }
+}

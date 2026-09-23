@@ -1,0 +1,385 @@
+{
+  "id": "archive_records",
+  "name": "Ordered records with capture identity",
+  "nodes": {
+    "row": {
+      "id": "row",
+      "type": "transport.Fan",
+      "inputData": {},
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "session",
+              "portName": "data"
+            },
+            {
+              "nodeId": "endpoint",
+              "portName": "data"
+            },
+            {
+              "nodeId": "received",
+              "portName": "data"
+            },
+            {
+              "nodeId": "sequence",
+              "portName": "data"
+            }
+          ]
+        }
+      }
+    },
+    "frame": {
+      "id": "frame",
+      "type": "transport.Fan",
+      "inputData": {},
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "envelope",
+              "portName": "json"
+            }
+          ]
+        }
+      }
+    },
+    "session": {
+      "id": "session",
+      "type": "data.Extract",
+      "inputData": {
+        "path": {
+          "value": "capture_session"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "row",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "with_session",
+              "portName": "json"
+            }
+          ]
+        }
+      }
+    },
+    "with_session": {
+      "id": "with_session",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "capture.session"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "session",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "with_endpoint",
+              "portName": "data"
+            }
+          ]
+        }
+      }
+    },
+    "endpoint": {
+      "id": "endpoint",
+      "type": "data.Extract",
+      "inputData": {
+        "path": {
+          "value": "endpoint"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "row",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "with_endpoint",
+              "portName": "json"
+            }
+          ]
+        }
+      }
+    },
+    "with_endpoint": {
+      "id": "with_endpoint",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "capture.endpoint"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "endpoint",
+              "portName": "json"
+            }
+          ],
+          "data": [
+            {
+              "nodeId": "with_session",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "with_received",
+              "portName": "data"
+            }
+          ]
+        }
+      }
+    },
+    "received": {
+      "id": "received",
+      "type": "data.Extract",
+      "inputData": {
+        "path": {
+          "value": "received_time"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "row",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "with_received",
+              "portName": "json"
+            }
+          ]
+        }
+      }
+    },
+    "with_received": {
+      "id": "with_received",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "capture.receivedAt"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "received",
+              "portName": "json"
+            }
+          ],
+          "data": [
+            {
+              "nodeId": "with_endpoint",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "with_sequence",
+              "portName": "data"
+            }
+          ]
+        }
+      }
+    },
+    "sequence": {
+      "id": "sequence",
+      "type": "data.Extract",
+      "inputData": {
+        "path": {
+          "value": "capture_sequence"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "row",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "with_sequence",
+              "portName": "json"
+            }
+          ]
+        }
+      }
+    },
+    "with_sequence": {
+      "id": "with_sequence",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "cursor.sequence"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "sequence",
+              "portName": "json"
+            }
+          ],
+          "data": [
+            {
+              "nodeId": "with_received",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "envelope",
+              "portName": "data"
+            }
+          ]
+        }
+      }
+    },
+    "envelope": {
+      "id": "envelope",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "market"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "with_sequence",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "frame",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "records",
+              "portName": "data"
+            }
+          ]
+        }
+      }
+    },
+    "records": {
+      "id": "records",
+      "type": "data.Iterate",
+      "inputData": {
+        "path": {
+          "value": "market.data"
+        },
+        "envelope": {
+          "value": true
+        },
+        "indexPath": {
+          "value": "cursor.record"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "envelope",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "market",
+              "portName": "data"
+            }
+          ]
+        }
+      }
+    },
+    "market": {
+      "id": "market",
+      "type": "data.Extract",
+      "inputData": {
+        "path": {
+          "value": "market"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "records",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    }
+  }
+}

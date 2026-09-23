@@ -54,6 +54,13 @@ func TestTapeWrite(t *testing.T) {
 				received, err := result.Frame().ReceivedAt()
 				So(err, ShouldBeNil)
 				So(received, ShouldEqual, "2026-09-22T12:00:00.123456789Z")
+				row, err := result.Frame().Row()
+				So(err, ShouldBeNil)
+				var record CaptureRecord
+				So(json.Unmarshal(row, &record), ShouldBeNil)
+				So(record.Sequence, ShouldEqual, result.Frame().Sequence())
+				So(record.ReceivedTime, ShouldEqual, received)
+				So(string(record.Payload), ShouldEqual, expected)
 				release()
 			}
 			future, release := client.Done(ctx, nil)

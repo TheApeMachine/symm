@@ -1,8 +1,26 @@
-import React from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import {
 	type UIComponentName,
 	uiComponents,
 } from "./ui-component-registry.generated";
+
+/*
+StateBinding names a piece of route state and the value a node cares about.
+*/
+export interface StateBinding {
+	key: string;
+	value: unknown;
+}
+
+/*
+RouteState is the choice a surface is currently showing, and the way to change
+it. A graph-drawn surface holds no state of its own; the route holds it, and
+nodes read and write it by name.
+*/
+export interface RouteState {
+	values: Record<string, unknown>;
+	select: (key: string, value: unknown) => void;
+}
 
 /*
 CompiledUINode represents one node in a compiled UI subgraph.
@@ -14,6 +32,10 @@ export interface CompiledUINode {
 	className?: string;
 	props?: Record<string, any>;
 	children?: CompiledUINode[];
+	/* Clicking this node makes this choice. */
+	selects?: StateBinding;
+	/* This node is drawn only while this choice stands. */
+	visibleWhen?: StateBinding;
 }
 
 /*
@@ -23,6 +45,8 @@ export interface CompiledUIRoute {
 	path: string;
 	title?: string;
 	components: CompiledUINode[];
+	/* The choices this surface starts on, declared by its state nodes. */
+	state?: Record<string, unknown>;
 }
 
 /*
@@ -33,6 +57,8 @@ If the prop value is a CompiledUINode (such as a structural slot), it renders it
 export const resolveBindings = (
 	props: Record<string, any>,
 	observableState?: Record<string, any>,
+	sources?: Record<string, unknown>,
+	state?: RouteState,
 ): Record<string, any> => {
 	const resolved: Record<string, any> = {};
 
@@ -44,9 +70,22 @@ export const resolveBindings = (
 			typeof val.binding === "object" &&
 			val.binding !== null
 		) {
-			const b = val.binding as { node: string; port?: string; field?: string };
+			const b = val.binding as {
+				node?: string;
+				port?: string;
+				field?: string;
+				source?: string;
+			};
+
+			// A source is live data the surface was handed, named by the
+			// graph rather than produced inside it.
+			if (b.source) {
+				resolved[key] = sources?.[b.source];
+				continue;
+			}
+
 			const fieldKey = b.port ?? b.field ?? "out";
-			const liveVal = observableState?.[b.node]?.[fieldKey];
+			const liveVal = observableState?.[b.node ?? ""]?.[fieldKey];
 			resolved[key] = liveVal !== undefined ? liveVal : undefined;
 			continue;
 		}
@@ -58,7 +97,13 @@ export const resolveBindings = (
 			typeof val.name === "string" &&
 			val.name in uiComponents
 		) {
-			resolved[key] = renderNode(val as CompiledUINode, key, observableState);
+			resolved[key] = renderNode(
+				val as CompiledUINode,
+				key,
+				observableState,
+				sources,
+				state,
+			);
 			continue;
 		}
 
@@ -82,7 +127,18 @@ export const renderNode = (
 	node: CompiledUINode,
 	key?: string | number,
 	observableState?: Record<string, any>,
+	sources?: Record<string, unknown>,
+	state?: RouteState,
 ): React.ReactNode => {
+	// A node that appears under a choice is not drawn while another choice
+	// stands. It is left out entirely rather than hidden, so nothing it holds
+	// is mounted or subscribed behind a panel nobody is looking at.
+	if (node.visibleWhen && state) {
+		if (state.values[node.visibleWhen.key] !== node.visibleWhen.value) {
+			return null;
+		}
+	}
+
 	const Component = uiComponents[node.name as UIComponentName];
 
 	if (!Component) {
@@ -94,7 +150,16 @@ export const renderNode = (
 	let resolvedProps: Record<string, any> = {};
 
 	if (node.props) {
-		resolvedProps = resolveBindings(node.props, observableState);
+		resolvedProps = resolveBindings(node.props, observableState, sources, state);
+	}
+
+	// A node that makes a choice answers a click with it, and reports whether
+	// its own choice is the one standing. Components that carry an `active`
+	// prop show that without being told twice.
+	if (node.selects && state) {
+		const { key: stateKey, value } = node.selects;
+		resolvedProps.onClick = () => state.select(stateKey, value);
+		resolvedProps.active = state.values[stateKey] === value;
 	}
 
 	if (node.className) {
@@ -111,6 +176,8 @@ export const renderNode = (
 						child,
 						key !== undefined ? `${key}-${index}` : index,
 						observableState,
+						sources,
+						state,
 					),
 				)
 			: undefined;
@@ -127,17 +194,59 @@ export const renderNode = (
 };
 
 /*
+UIRouteView draws a route and holds the choices it is currently showing.
+
+The state lives here rather than in any component because no component drawn
+from a graph owns it: a tab strip and the pane it reveals are separate nodes
+that only have the choice in common, and the route is the one thing they are
+both inside.
+*/
+export const UIRouteView = ({
+	route,
+	observableState,
+	sources,
+}: {
+	route: CompiledUIRoute;
+	observableState?: Record<string, any>;
+	sources?: Record<string, unknown>;
+}) => {
+	const [values, setValues] = useState<Record<string, unknown>>(
+		() => route.state ?? {},
+	);
+
+	const select = useCallback((key: string, value: unknown) => {
+		setValues((current) =>
+			current[key] === value ? current : { ...current, [key]: value },
+		);
+	}, []);
+
+	const state = useMemo<RouteState>(
+		() => ({ values, select }),
+		[values, select],
+	);
+
+	const nodes = route.components ?? [];
+
+	return (
+		<div className="flex h-full w-full flex-col" data-route-path={route.path}>
+			{nodes.map((node, index) =>
+				renderNode(node, index, observableState, sources, state),
+			)}
+		</div>
+	);
+};
+
+/*
 renderUIRoute renders a route's complete component tree.
 */
 export const renderUIRoute = (
 	route: CompiledUIRoute,
 	observableState?: Record<string, any>,
-): React.ReactNode => {
-	const nodes = route.components ?? [];
-
-	return (
-		<div className="flex h-full w-full flex-col" data-route-path={route.path}>
-			{nodes.map((node, index) => renderNode(node, index, observableState))}
-		</div>
-	);
-};
+	sources?: Record<string, unknown>,
+): React.ReactNode => (
+	<UIRouteView
+		route={route}
+		observableState={observableState}
+		sources={sources}
+	/>
+);

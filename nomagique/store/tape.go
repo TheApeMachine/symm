@@ -135,11 +135,17 @@ func (server *TapeServer) Done(ctx context.Context, call Tape_done) error {
 	}
 
 	record := server.ordered[server.cursor]
+	row, err := json.Marshal(record)
+
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.Internal, "tape: encode capture row", err))
+	}
+
 	results.SetFrame()
 	frame := results.Frame()
 	frame.SetSequence(record.Sequence)
 
-	for _, err := range []error{frame.SetPayload(record.Payload), frame.SetSession(record.Session), frame.SetReceivedAt(record.ReceivedTime), frame.SetEndpoint(record.Endpoint)} {
+	for _, err := range []error{frame.SetRow(row), frame.SetPayload(record.Payload), frame.SetSession(record.Session), frame.SetReceivedAt(record.ReceivedTime), frame.SetEndpoint(record.Endpoint)} {
 		if err != nil {
 			return errnie.Error(errnie.Err(errnie.Internal, "tape: set frame", err))
 		}

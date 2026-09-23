@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"sort"
 	"strconv"
@@ -100,6 +101,44 @@ func CompileWithPrevious(
 		}, nil
 	}
 
+	// A feedback edge writes a retained node from one of its descendants.
+	// Cut that write dependency, not the store's read dependency: a dynamic
+	// key must arrive before its state is read. Feedback commits after the
+	// observation has finished, so no truth update can alter its prediction.
+	feedback := make(map[string]map[string]bool)
+
+	for retainedID, retained := range backendNodes {
+		if !holdsRetained(registry, retained) {
+			continue
+		}
+
+		reachable := make(map[string]bool)
+		pending := []string{retainedID}
+
+		for len(pending) > 0 {
+			current := pending[0]
+			pending = pending[1:]
+
+			if reachable[current] {
+				continue
+			}
+
+			reachable[current] = true
+
+			for _, targets := range backendNodes[current].Connections.Outputs {
+				for _, target := range targets {
+					consumer, exists := backendNodes[target.NodeID]
+
+					if exists && !carriesCapability(registry, consumer, target.PortName) {
+						pending = append(pending, target.NodeID)
+					}
+				}
+			}
+		}
+
+		feedback[retainedID] = reachable
+	}
+
 	// 2. Phase 8: Topological ordering and cycle detection
 	inDegree := make(map[string]int, len(backendNodes))
 	adjacency := make(map[string][]string, len(backendNodes))
@@ -125,11 +164,7 @@ func CompileWithPrevious(
 					continue
 				}
 
-				// Reading what a store held before this evaluation is not a
-				// dependency either: the value is already there. That is what
-				// lets a node continue the estimate it left behind without the
-				// graph closing a cycle around it.
-				if holdsRetained(registry, node) {
+				if feedback[target.NodeID][id] {
 					continue
 				}
 
@@ -505,7 +540,11 @@ func CompileWithPrevious(
 				// A gathering port holds every producer that lands on it, so
 				// its slots are handed out once they are all known.
 				if toField.ValueList {
+					presence, carried := resolveOutputField(uSchema, presencePort)
 					fanInEdges = append(fanInEdges, fanInEdge{
+						fromPort:  outPort,
+						presence:  presence,
+						carried:   carried,
 						fromNode:  NodeID(uIdx),
 						fromField: fromFieldID,
 						fromInfo:  fromField,
@@ -610,6 +649,16 @@ func CompileWithPrevious(
 	}
 
 	routes = append(routes, gathered...)
+
+	for index := range routes {
+		route := &routes[index]
+		destination := &compiledNodes[route.ToNode]
+
+		if feedback[destination.ID][compiledNodes[route.FromNode].ID] {
+			route.Deferred = true
+			destination.RequiredMask &^= 1 << route.ToField
+		}
+	}
 
 	if err := bindCapabilities(compiledNodes, capabilityEdges); err != nil {
 		return nil, err
@@ -952,7 +1001,7 @@ func expandDefinitions(
 			namespacedNode := Node{
 				ID:        prefix + cid,
 				Type:      cnode.Type,
-				InputData: cnode.InputData,
+				InputData: maps.Clone(cnode.InputData),
 				Connections: Connections{
 					Inputs:  make(map[string][]ConnectionTarget),
 					Outputs: make(map[string][]ConnectionTarget),
@@ -1169,6 +1218,23 @@ func wireDefinitionPorts(
 	ingress map[string][]ConnectionTarget,
 	egress map[string][]ConnectionTarget,
 ) error {
+	// Definition controls address the same child fields as edges.
+	for port, value := range defNode.InputData {
+		childID, field, addressed := strings.Cut(port, ".")
+		if !addressed || field == "" {
+			return errnie.Error(errnie.Err(errnie.Validation, fmt.Sprintf("compiler: definition %q static input %q must name <node>.<field>", defID, port), nil))
+		}
+		child, known := graph.Nodes[prefix+childID]
+		if !known {
+			return errnie.Error(errnie.Err(errnie.Validation, fmt.Sprintf("compiler: definition %q static input %q names unknown child %q", defID, port, childID), nil))
+		}
+		if child.InputData == nil {
+			child.InputData = make(map[string]json.RawMessage)
+		}
+		child.InputData[field] = value
+		graph.Nodes[prefix+childID] = child
+	}
+
 	for port, targets := range defNode.Connections.Inputs {
 		childID, field, addressed := strings.Cut(port, ".")
 
@@ -1261,6 +1327,9 @@ func wireDefinitionPorts(
 fanInEdge records a wire landing on a port that gathers several producers.
 */
 type fanInEdge struct {
+	fromPort  string
+	presence  FieldInfo
+	carried   bool
 	fromNode  NodeID
 	fromField FieldID
 	fromInfo  FieldInfo
@@ -1312,7 +1381,8 @@ func compileFanIn(edges []fanInEdge) ([]Route, error) {
 		// carry the whole list: a grid handing over every value it delivered
 		// is one wire, not one wire per value. Gathering that into a list of
 		// lists would bury it a level deeper than the consumer reads.
-		if len(group) == 1 && group[0].fromInfo.ValueList &&
+		_, indexed := outputSlot(group[0].fromPort)
+		if len(group) == 1 && !indexed && group[0].fromInfo.ValueList &&
 			group[0].fromInfo.ElementWhich == group[0].toInfo.ElementWhich {
 			edge := group[0]
 			copier, err := CompileCopier(
@@ -1351,7 +1421,19 @@ func compileFanIn(edges []fanInEdge) ([]Route, error) {
 		}
 
 		for index, edge := range group {
-			copier, err := CompileFanInCopier(edge.fromInfo, edge.toInfo, index, len(group))
+			var copier Copier
+			var err error
+			var delivered func(capnp.Struct) bool
+			sourceIndex, indexed := outputSlot(edge.fromPort)
+
+			if edge.fromInfo.ValueList && indexed {
+				copier, err = CompileFanInSlotCopier(edge.fromInfo, edge.toInfo, sourceIndex, index, len(group))
+				delivered = CompileFanOutDelivery(edge.fromInfo, sourceIndex, edge.presence, edge.carried)
+			}
+
+			if !edge.fromInfo.ValueList || !indexed {
+				copier, err = CompileFanInCopier(edge.fromInfo, edge.toInfo, index, len(group))
+			}
 
 			if err != nil {
 				return nil, errnie.Error(errnie.Err(
@@ -1370,6 +1452,7 @@ func compileFanIn(edges []fanInEdge) ([]Route, error) {
 				ToNode:         edge.toNode,
 				ToField:        edge.toField,
 				Copy:           copier,
+				Delivered:      delivered,
 				FromInUnion:    edge.fromInfo.InUnion,
 				FromDiscVal:    edge.fromInfo.DiscriminantValue,
 				FromDiscOffset: edge.fromInfo.DiscriminantOffset,

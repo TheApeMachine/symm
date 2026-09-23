@@ -366,11 +366,36 @@ export class WireMeasurementReader {
 	}
 }
 
+/*
+The smallest thing that can be a Cap'n Proto message: a one-entry segment table
+and a root pointer. Anything shorter is not a truncated measurement, it is a
+different kind of frame.
+*/
+const MINIMUM_MESSAGE_BYTES = 12;
+
 export function readWireMeasurement(
 	buffer: ArrayBuffer | Uint8Array,
 ): WireMeasurement {
+	const size = buffer instanceof Uint8Array ? buffer.byteLength : buffer.byteLength;
+
+	// Without this the frame reaches the segment table, finds nothing there,
+	// and fails inside the reader as a missing `getWord` — which says nothing
+	// about what actually arrived. Whoever looks next needs the size.
+	if (size < MINIMUM_MESSAGE_BYTES) {
+		throw new Error(
+			`measurement frame is ${size} bytes, too short to be a Cap'n Proto message`,
+		);
+	}
+
 	const message = new MessageReader(buffer);
 	const root = message.getRoot(7, 4);
+
+	if (!root) {
+		throw new Error(
+			`measurement frame of ${size} bytes carries no root struct`,
+		);
+	}
+
 	const reader = new WireMeasurementReader(root);
 	return reader.toMeasurement();
 }

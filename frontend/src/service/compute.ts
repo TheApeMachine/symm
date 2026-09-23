@@ -127,6 +127,31 @@ export function usePrimitives(): PrimitiveCatalog {
 	return state;
 }
 
+/*
+fetchDefinition reads one graph the hub holds, by the name it is filed under.
+
+It answers the raw manifest, because a graph is compiled on this side: what the
+hub stores is the drawing, and what a surface needs is whatever the current
+compiler makes of it.
+*/
+export const fetchDefinition = async (
+	id: string,
+): Promise<{ nodes?: Record<string, unknown> }> => {
+	const response = await fetch(
+		`${hubBaseUrl()}/workbench/signals/${encodeURIComponent(id)}`,
+	);
+
+	if (!response.ok) {
+		throw new Error(
+			response.status === 404
+				? `No graph named "${id}" is registered with the hub.`
+				: `Failed to read graph "${id}" (${response.status})`,
+		);
+	}
+
+	return response.json();
+};
+
 export const fetchDefinitions = async (): Promise<string[]> => {
 	const response = await fetch(`${hubBaseUrl()}/workbench/signals`);
 	if (!response.ok) {

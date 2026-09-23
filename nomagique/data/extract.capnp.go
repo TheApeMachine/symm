@@ -406,14 +406,15 @@ type Extracted capnp.Struct
 type Extracted_Which uint16
 
 const (
-	Extracted_Which_out     Extracted_Which = 0
-	Extracted_Which_json    Extracted_Which = 1
-	Extracted_Which_text    Extracted_Which = 2
-	Extracted_Which_missing Extracted_Which = 3
+	Extracted_Which_out      Extracted_Which = 0
+	Extracted_Which_json     Extracted_Which = 1
+	Extracted_Which_text     Extracted_Which = 2
+	Extracted_Which_missing  Extracted_Which = 3
+	Extracted_Which_unsigned Extracted_Which = 4
 )
 
 func (w Extracted_Which) String() string {
-	const s = "outjsontextmissing"
+	const s = "outjsontextmissingunsigned"
 	switch w {
 	case Extracted_Which_out:
 		return s[0:3]
@@ -423,6 +424,8 @@ func (w Extracted_Which) String() string {
 		return s[7:11]
 	case Extracted_Which_missing:
 		return s[11:18]
+	case Extracted_Which_unsigned:
+		return s[18:26]
 
 	}
 	return "Extracted_Which(" + strconv.FormatUint(uint64(w), 10) + ")"
@@ -537,6 +540,18 @@ func (s Extracted) SetText(v string) error {
 func (s Extracted) SetMissing() {
 	capnp.Struct(s).SetUint16(12, 3)
 
+}
+
+func (s Extracted) Unsigned() uint64 {
+	if capnp.Struct(s).Uint16(12) != 4 {
+		panic("Which() != unsigned")
+	}
+	return capnp.Struct(s).Uint64(0)
+}
+
+func (s Extracted) SetUnsigned(v uint64) {
+	capnp.Struct(s).SetUint16(12, 4)
+	capnp.Struct(s).SetUint64(0, v)
 }
 
 func (s Extracted) Found() bool {

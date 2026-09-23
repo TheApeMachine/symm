@@ -1,0 +1,1217 @@
+{
+  "id": "training_reinforce",
+  "name": "Prediction and truth reinforcement",
+  "nodes": {
+    "input": {
+      "id": "input",
+      "type": "transport.Fan",
+      "inputData": {},
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "grade",
+              "portName": "input.data"
+            },
+            {
+              "nodeId": "token_available",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 0,
+      "y": 0
+    },
+    "context": {
+      "id": "context",
+      "type": "data.Extract",
+      "inputData": {
+        "path": {
+          "value": "key"
+        },
+        "encoding": {
+          "value": "json-text"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "key_holding",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "text": [
+            {
+              "nodeId": "memory",
+              "portName": "key_0"
+            }
+          ]
+        }
+      },
+      "x": 310,
+      "y": 0
+    },
+    "memory": {
+      "id": "memory",
+      "type": "store.Radix",
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "key_0": [
+            {
+              "nodeId": "context",
+              "portName": "text"
+            }
+          ],
+          "key_1": [
+            {
+              "nodeId": "identity",
+              "portName": "text"
+            }
+          ],
+          "value_0": [
+            {
+              "nodeId": "reinforce",
+              "portName": "counts"
+            }
+          ],
+          "value_1": [
+            {
+              "nodeId": "commit_example",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out_0": [
+            {
+              "nodeId": "prior",
+              "portName": "yes"
+            }
+          ],
+          "found_0": [
+            {
+              "nodeId": "prior",
+              "portName": "test"
+            }
+          ],
+          "out_1": [
+            {
+              "nodeId": "prior_example",
+              "portName": "yes"
+            }
+          ],
+          "found_1": [
+            {
+              "nodeId": "prior_example",
+              "portName": "test"
+            }
+          ]
+        }
+      },
+      "x": 620,
+      "y": 0
+    },
+    "prior": {
+      "id": "prior",
+      "type": "controlflow.Select",
+      "inputData": {
+        "no": {
+          "value": "[\"{}\"]"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "test": [
+            {
+              "nodeId": "memory",
+              "portName": "found_0"
+            }
+          ],
+          "yes": [
+            {
+              "nodeId": "memory",
+              "portName": "out_0"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "observed",
+              "portName": "counts"
+            },
+            {
+              "nodeId": "reinforce",
+              "portName": "counts"
+            }
+          ]
+        }
+      },
+      "x": 930,
+      "y": 0
+    },
+    "observed": {
+      "id": "observed",
+      "type": "statistic.Tally",
+      "inputData": {
+        "query": {
+          "value": true
+        }
+      },
+      "connections": {
+        "inputs": {
+          "counts": [
+            {
+              "nodeId": "prior",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "categories": [
+            {
+              "nodeId": "prediction",
+              "portName": "classes"
+            }
+          ],
+          "weights": [
+            {
+              "nodeId": "prediction",
+              "portName": "weights"
+            }
+          ]
+        }
+      },
+      "x": 1550,
+      "y": 0
+    },
+    "prediction": {
+      "id": "prediction",
+      "type": "cognition.Attractor",
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "classes": [
+            {
+              "nodeId": "observed",
+              "portName": "categories"
+            }
+          ],
+          "weights": [
+            {
+              "nodeId": "observed",
+              "portName": "weights"
+            }
+          ]
+        },
+        "outputs": {}
+      },
+      "x": 0,
+      "y": 230
+    },
+    "grade": {
+      "id": "grade",
+      "type": "definition:training_grade",
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "input.data": [
+            {
+              "nodeId": "input",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "labels.out": [
+            {
+              "nodeId": "inventory",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 310,
+      "y": 230
+    },
+    "identity": {
+      "id": "identity",
+      "type": "data.Extract",
+      "inputData": {
+        "path": {
+          "value": "key"
+        },
+        "encoding": {
+          "value": "json-text"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "id_vocabulary",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "text": [
+            {
+              "nodeId": "memory",
+              "portName": "key_1"
+            }
+          ]
+        }
+      },
+      "x": 620,
+      "y": 230
+    },
+    "truth": {
+      "id": "truth",
+      "type": "data.Extract",
+      "inputData": {
+        "path": {
+          "value": "truth"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "inventory",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "fact",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 930,
+      "y": 230
+    },
+    "deduplicate": {
+      "id": "deduplicate",
+      "type": "data.Insert",
+      "inputData": {
+        "unique": {
+          "value": true
+        },
+        "path": {
+          "value": "example"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "prior_example",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "fact",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "inserted": [
+            {
+              "nodeId": "novel",
+              "portName": "test"
+            }
+          ]
+        }
+      },
+      "x": 1550,
+      "y": 230
+    },
+    "novel": {
+      "id": "novel",
+      "type": "controlflow.Select",
+      "inputData": {
+        "no": {
+          "value": "[\"\"]"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "test": [
+            {
+              "nodeId": "deduplicate",
+              "portName": "inserted"
+            }
+          ],
+          "yes": [
+            {
+              "nodeId": "inventory",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "action",
+              "portName": "data"
+            },
+            {
+              "nodeId": "novel_truth",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 0,
+      "y": 460
+    },
+    "action": {
+      "id": "action",
+      "type": "data.Extract",
+      "inputData": {
+        "path": {
+          "value": "truth.action"
+        },
+        "encoding": {
+          "value": "text"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "novel",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "text": [
+            {
+              "nodeId": "reinforce",
+              "portName": "category"
+            }
+          ]
+        }
+      },
+      "x": 310,
+      "y": 460
+    },
+    "reinforce": {
+      "id": "reinforce",
+      "type": "statistic.Tally",
+      "inputData": {
+        "query": {
+          "value": false
+        }
+      },
+      "connections": {
+        "inputs": {
+          "category": [
+            {
+              "nodeId": "action",
+              "portName": "text"
+            }
+          ],
+          "counts": [
+            {
+              "nodeId": "prior",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "counts": [
+            {
+              "nodeId": "memory",
+              "portName": "value_0"
+            }
+          ]
+        }
+      },
+      "x": 620,
+      "y": 460
+    },
+    "vocabulary": {
+      "id": "vocabulary",
+      "type": "data.Extract",
+      "inputData": {
+        "path": {
+          "value": "settled.vocabulary"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "token_available",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "key_vocabulary",
+              "portName": "json"
+            },
+            {
+              "nodeId": "id_vocabulary",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 1550,
+      "y": 460
+    },
+    "key_vocabulary": {
+      "id": "key_vocabulary",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "key.vocabulary"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "vocabulary",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "key_tokens",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 0,
+      "y": 690
+    },
+    "tokens": {
+      "id": "tokens",
+      "type": "data.Extract",
+      "inputData": {
+        "path": {
+          "value": "settled.tokens"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "token_available",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "key_tokens",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 310,
+      "y": 690
+    },
+    "key_tokens": {
+      "id": "key_tokens",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "key.tokens"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "tokens",
+              "portName": "json"
+            }
+          ],
+          "data": [
+            {
+              "nodeId": "key_vocabulary",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "key_holding",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 620,
+      "y": 690
+    },
+    "holding": {
+      "id": "holding",
+      "type": "data.Extract",
+      "inputData": {
+        "path": {
+          "value": "holding"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "token_available",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "key_holding",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 930,
+      "y": 690
+    },
+    "key_holding": {
+      "id": "key_holding",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "key.holding"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "holding",
+              "portName": "json"
+            }
+          ],
+          "data": [
+            {
+              "nodeId": "key_tokens",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "context",
+              "portName": "data"
+            },
+            {
+              "nodeId": "fact",
+              "portName": "data"
+            },
+            {
+              "nodeId": "novel_fact",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 1240,
+      "y": 690
+    },
+    "session": {
+      "id": "session",
+      "type": "data.Extract",
+      "inputData": {
+        "path": {
+          "value": "capture.session"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "token_available",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "id_session",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 1550,
+      "y": 690
+    },
+    "id_session": {
+      "id": "id_session",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "key.session"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "session",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "id_endpoint",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 0,
+      "y": 920
+    },
+    "endpoint": {
+      "id": "endpoint",
+      "type": "data.Extract",
+      "inputData": {
+        "path": {
+          "value": "capture.endpoint"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "token_available",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "id_endpoint",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 310,
+      "y": 920
+    },
+    "id_endpoint": {
+      "id": "id_endpoint",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "key.endpoint"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "endpoint",
+              "portName": "json"
+            }
+          ],
+          "data": [
+            {
+              "nodeId": "id_session",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "id_sequence",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 620,
+      "y": 920
+    },
+    "sequence": {
+      "id": "sequence",
+      "type": "data.Extract",
+      "inputData": {
+        "path": {
+          "value": "cursor.sequence"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "token_available",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "id_sequence",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 930,
+      "y": 920
+    },
+    "id_sequence": {
+      "id": "id_sequence",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "key.sequence"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "sequence",
+              "portName": "json"
+            }
+          ],
+          "data": [
+            {
+              "nodeId": "id_endpoint",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "id_record",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 1240,
+      "y": 920
+    },
+    "record": {
+      "id": "record",
+      "type": "data.Extract",
+      "inputData": {
+        "path": {
+          "value": "cursor.record"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "token_available",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "id_record",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 1550,
+      "y": 920
+    },
+    "id_record": {
+      "id": "id_record",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "key.record"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "record",
+              "portName": "json"
+            }
+          ],
+          "data": [
+            {
+              "nodeId": "id_sequence",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "id_vocabulary",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 0,
+      "y": 1150
+    },
+    "inventory": {
+      "id": "inventory",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "truth.holding"
+        },
+        "referencePath": {
+          "value": "holding"
+        },
+        "operator": {
+          "value": "=="
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "grade",
+              "portName": "labels.out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "truth",
+              "portName": "data"
+            },
+            {
+              "nodeId": "novel",
+              "portName": "yes"
+            }
+          ]
+        }
+      },
+      "x": 310,
+      "y": 1150
+    },
+    "token_available": {
+      "id": "token_available",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "settled.tokens.0"
+        },
+        "operator": {
+          "value": "exists"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "input",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "vocabulary",
+              "portName": "data"
+            },
+            {
+              "nodeId": "tokens",
+              "portName": "data"
+            },
+            {
+              "nodeId": "holding",
+              "portName": "data"
+            },
+            {
+              "nodeId": "session",
+              "portName": "data"
+            },
+            {
+              "nodeId": "endpoint",
+              "portName": "data"
+            },
+            {
+              "nodeId": "sequence",
+              "portName": "data"
+            },
+            {
+              "nodeId": "record",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 310,
+      "y": 0
+    },
+    "id_vocabulary": {
+      "id": "id_vocabulary",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "key.vocabulary"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "id_record",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "vocabulary",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "identity",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 1550,
+      "y": 920
+    },
+    "prior_example": {
+      "id": "prior_example",
+      "type": "controlflow.Select",
+      "inputData": {
+        "no": {
+          "value": "[\"{}\"]"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "yes": [
+            {
+              "nodeId": "memory",
+              "portName": "out_1"
+            }
+          ],
+          "test": [
+            {
+              "nodeId": "memory",
+              "portName": "found_1"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "deduplicate",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 0,
+      "y": 1150
+    },
+    "fact": {
+      "id": "fact",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "truth"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "key_holding",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "truth",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "deduplicate",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 310,
+      "y": 1150
+    },
+    "novel_truth": {
+      "id": "novel_truth",
+      "type": "data.Extract",
+      "inputData": {
+        "path": {
+          "value": "truth"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "novel",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "novel_fact",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 620,
+      "y": 1150
+    },
+    "novel_fact": {
+      "id": "novel_fact",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "truth"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "key_holding",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "novel_truth",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "commit_example",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 930,
+      "y": 1150
+    },
+    "commit_example": {
+      "id": "commit_example",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "example"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "novel_fact",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "memory",
+              "portName": "value_1"
+            }
+          ]
+        }
+      },
+      "x": 1240,
+      "y": 1150
+    }
+  }
+}

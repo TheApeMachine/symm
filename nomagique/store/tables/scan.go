@@ -68,12 +68,19 @@ func (server *IcebergScanServer) Write(ctx context.Context, call IcebergScan_wri
 	if err != nil {
 		return errnie.Error(errnie.Err(errnie.Validation, "scan: invalid Iceberg metadata", err))
 	}
-	var settings iceberg.Properties
-	if err := json.Unmarshal(properties, &settings); err != nil {
+	var declared map[string]*string
+	if err := json.Unmarshal(properties, &declared); err != nil {
 		return errnie.Error(errnie.Err(errnie.Validation, "scan: explicit I/O properties object is required", err))
 	}
-	if settings == nil {
+	if declared == nil {
 		return errnie.Error(errnie.Err(errnie.Validation, "scan: I/O properties must be an object, not null", nil))
+	}
+	settings := make(iceberg.Properties, len(declared))
+	for name, value := range declared {
+		if value == nil {
+			return errnie.Error(errnie.Err(errnie.Validation, "scan: I/O properties require text values: "+name, nil))
+		}
+		settings[name] = *value
 	}
 	source := table.New(nil, snapshot, "", icebergio.LoadFSFunc(settings, snapshot.Location()), nil)
 	_, batches, err := source.Scan().ToArrowRecords(ctx)

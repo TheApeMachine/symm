@@ -95,7 +95,7 @@
           "state": [
             {
               "nodeId": "pairHistory",
-              "portName": "out"
+              "portName": "out_0"
             }
           ]
         },
@@ -372,7 +372,7 @@
           ]
         },
         "outputs": {
-          "out": [
+          "out_0": [
             {
               "nodeId": "hy",
               "portName": "state"
@@ -382,10 +382,7 @@
       },
       "inputData": {
         "key": {
-          "value": "correlation:ticker"
-        },
-        "query": {
-          "value": false
+          "value": "[\"correlation:ticker\"]"
         }
       }
     },

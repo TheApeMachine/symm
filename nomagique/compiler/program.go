@@ -76,6 +76,7 @@ type CompiledNode struct {
 Route connects a source node result field to a destination node argument field.
 */
 type Route struct {
+	Deferred       bool // Feedback is committed to an explicit store after evaluation.
 	FromNode       NodeID
 	FromField      FieldID
 	ToNode         NodeID
@@ -479,6 +480,8 @@ func (p *Program) Execute(
 		}
 	}
 
+	var deferred []Route
+
 	// 4. Execute DAG topologically
 	for len(queue) > 0 {
 		// Fan-in nodes can drain without a current arrival. Run every ready
@@ -593,6 +596,14 @@ func (p *Program) Execute(
 						}
 					}
 
+					if r.Deferred {
+						if r.Delivered == nil || r.Delivered(resStruct) {
+							deferred = append(deferred, r)
+						}
+
+						continue
+					}
+
 					if r.Copy != nil {
 						destArgs, err := p.arguments(frames, destIdx)
 
@@ -649,6 +660,11 @@ func (p *Program) Execute(
 						}
 					}
 
+					if r.Deferred {
+						deferred = append(deferred, r)
+						continue
+					}
+
 					destArgs, err := p.arguments(frames, destIdx)
 
 					if err != nil {
@@ -672,6 +688,48 @@ func (p *Program) Execute(
 		}
 
 		frames[currIdx].executed = true
+	}
+
+	// Feedback only changes persistent storage after every consumer has seen
+	// the prior state. No extra result is published during the commit phase.
+	commits := make([]bool, nodeCount)
+
+	for _, route := range deferred {
+		destination := &p.Nodes[route.ToNode]
+
+		if !frames[route.ToNode].executed {
+			return errnie.Error(errnie.Err(errnie.Validation,
+				"compiler: feedback destination did not receive its read inputs: "+destination.ID, nil))
+		}
+
+		if err := route.Copy(p.results[p.Nodes[route.FromNode].ID], frames[route.ToNode].args); err != nil {
+			return errnie.Error(errnie.Err(errnie.Internal, "compiler: copy feedback to "+destination.ID, err))
+		}
+
+		commits[route.ToNode] = true
+	}
+
+	for index, commit := range commits {
+		if !commit {
+			continue
+		}
+
+		node := &p.Nodes[index]
+		err := node.Client.SendStreamCall(ctx, capnp.Send{
+			Method:   capnp.Method{InterfaceID: node.Write.InterfaceID, MethodID: node.Write.MethodID},
+			ArgsSize: node.Write.ParamsSize,
+			PlaceArgs: func(arguments capnp.Struct) error {
+				return arguments.CopyFrom(frames[index].args)
+			},
+		})
+
+		if err != nil {
+			return errnie.Error(errnie.Err(errnie.IO, "compiler: feedback write failed on "+node.ID, err))
+		}
+
+		if err := node.Client.WaitStreaming(); err != nil {
+			return errnie.Error(errnie.Err(errnie.IO, "compiler: feedback fence failed on "+node.ID, err))
+		}
 	}
 
 	return nil

@@ -1,4 +1,4 @@
-import { Icon } from "#/components/ui/icon";
+import { Icon } from "./icon";
 
 /*
 Explain is the prose that used to sit under a plot, folded into the one place a

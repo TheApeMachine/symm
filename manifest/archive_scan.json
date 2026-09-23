@@ -1,0 +1,511 @@
+{
+  "id": "archive:scan",
+  "name": "Load catalog, load table, scan snapshot, project row",
+  "nodes": {
+    "input": {
+      "id": "input",
+      "type": "controlflow.Once",
+      "inputData": {
+        "trigger": {
+          "value": true
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "catalog_url",
+              "portName": "data"
+            },
+            {
+              "nodeId": "loaded_catalog",
+              "portName": "data"
+            },
+            {
+              "nodeId": "properties",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 0,
+      "y": 0
+    },
+    "catalog_url": {
+      "id": "catalog_url",
+      "type": "data.Extract",
+      "inputData": {
+        "path": {
+          "value": "catalogUrl"
+        },
+        "encoding": {
+          "value": "text"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "input",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "text": [
+            {
+              "nodeId": "catalog",
+              "portName": "url"
+            }
+          ]
+        }
+      },
+      "x": 260,
+      "y": 0
+    },
+    "catalog": {
+      "id": "catalog",
+      "type": "http.HTTPClient",
+      "inputData": {
+        "method": {
+          "value": "GET"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "url": [
+            {
+              "nodeId": "catalog_url",
+              "portName": "text"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "loaded_catalog",
+              "portName": "json"
+            },
+            {
+              "nodeId": "defaults",
+              "portName": "data"
+            },
+            {
+              "nodeId": "overrides",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 520,
+      "y": 0
+    },
+    "loaded_catalog": {
+      "id": "loaded_catalog",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "catalog"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "input",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "catalog",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "table_url",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 780,
+      "y": 0
+    },
+    "table_url": {
+      "id": "table_url",
+      "type": "data.Extract",
+      "inputData": {
+        "path": {
+          "value": "tableUrl"
+        },
+        "encoding": {
+          "value": "text"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "loaded_catalog",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "text": [
+            {
+              "nodeId": "table",
+              "portName": "url"
+            }
+          ]
+        }
+      },
+      "x": 1040,
+      "y": 0
+    },
+    "table": {
+      "id": "table",
+      "type": "http.HTTPClient",
+      "inputData": {
+        "method": {
+          "value": "GET"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "url": [
+            {
+              "nodeId": "table_url",
+              "portName": "text"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "table_properties",
+              "portName": "data"
+            },
+            {
+              "nodeId": "metadata",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 1300,
+      "y": 0
+    },
+    "defaults": {
+      "id": "defaults",
+      "type": "data.Extract",
+      "inputData": {
+        "path": {
+          "value": "defaults"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "catalog",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "configured",
+              "portName": "base"
+            }
+          ]
+        }
+      },
+      "x": 1560,
+      "y": 0
+    },
+    "properties": {
+      "id": "properties",
+      "type": "data.Extract",
+      "inputData": {
+        "path": {
+          "value": "properties"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "input",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "configured",
+              "portName": "overlay"
+            }
+          ]
+        }
+      },
+      "x": 1820,
+      "y": 0
+    },
+    "overrides": {
+      "id": "overrides",
+      "type": "data.Extract",
+      "inputData": {
+        "path": {
+          "value": "overrides"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "catalog",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "overridden",
+              "portName": "overlay"
+            }
+          ]
+        }
+      },
+      "x": 2080,
+      "y": 0
+    },
+    "configured": {
+      "id": "configured",
+      "type": "data.Merge",
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "base": [
+            {
+              "nodeId": "defaults",
+              "portName": "json"
+            }
+          ],
+          "overlay": [
+            {
+              "nodeId": "properties",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "overridden",
+              "portName": "base"
+            }
+          ]
+        }
+      },
+      "x": 2340,
+      "y": 0
+    },
+    "overridden": {
+      "id": "overridden",
+      "type": "data.Merge",
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "base": [
+            {
+              "nodeId": "configured",
+              "portName": "out"
+            }
+          ],
+          "overlay": [
+            {
+              "nodeId": "overrides",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "file_properties",
+              "portName": "base"
+            }
+          ]
+        }
+      },
+      "x": 2600,
+      "y": 0
+    },
+    "table_properties": {
+      "id": "table_properties",
+      "type": "data.Extract",
+      "inputData": {
+        "path": {
+          "value": "config"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "table",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "file_properties",
+              "portName": "overlay"
+            }
+          ]
+        }
+      },
+      "x": 2860,
+      "y": 0
+    },
+    "file_properties": {
+      "id": "file_properties",
+      "type": "data.Merge",
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "base": [
+            {
+              "nodeId": "overridden",
+              "portName": "out"
+            }
+          ],
+          "overlay": [
+            {
+              "nodeId": "table_properties",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "scan",
+              "portName": "properties"
+            }
+          ]
+        }
+      },
+      "x": 3120,
+      "y": 0
+    },
+    "metadata": {
+      "id": "metadata",
+      "type": "data.Extract",
+      "inputData": {
+        "path": {
+          "value": "metadata"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "table",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "scan",
+              "portName": "metadata"
+            }
+          ]
+        }
+      },
+      "x": 3380,
+      "y": 0
+    },
+    "scan": {
+      "id": "scan",
+      "type": "tables.IcebergScan",
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "metadata": [
+            {
+              "nodeId": "metadata",
+              "portName": "json"
+            }
+          ],
+          "properties": [
+            {
+              "nodeId": "file_properties",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "project",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 3640,
+      "y": 0
+    },
+    "project": {
+      "id": "project",
+      "type": "data.Arrow",
+      "inputData": {
+        "row": {
+          "value": 0
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "scan",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      },
+      "x": 3900,
+      "y": 0
+    }
+  }
+}

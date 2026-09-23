@@ -16,7 +16,12 @@ func NewFan() *FanServer {
 }
 
 func (server *FanServer) Write(ctx context.Context, call Fan_write) error {
-	data, _ := call.Args().Data()
+	data, err := call.Args().Data()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.Validation, "fan: read data", err))
+	}
+
 	server.out = bytes.Clone(data)
 	return nil
 }

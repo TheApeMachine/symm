@@ -58,6 +58,11 @@ func TestFilterWrite(t *testing.T) {
 			So(evaluate(`{}`, "a", "", "exists", 0), ShouldBeFalse)
 			So(evaluate(`{}`, "a", "", "absent", 0), ShouldBeTrue)
 		})
+		Convey("Capture and instrument identities compare as text without numeric coercion", func() {
+			So(evaluate(`{"session":"capture","reference":"capture"}`, "session", "reference", "==", 0), ShouldBeTrue)
+			So(evaluate(`{"session":"capture","reference":"other"}`, "session", "reference", "==", 0), ShouldBeFalse)
+			So(evaluate(`{"session":"01","reference":"1"}`, "session", "reference", "!=", 0), ShouldBeTrue)
+		})
 		Convey("Zero replaces the preceding threshold", func() {
 			So(evaluate(`{"value":1}`, "value", "", ">", 2), ShouldBeFalse)
 			So(evaluate(`{"value":1}`, "value", "", ">", 0), ShouldBeTrue)

@@ -1,7 +1,7 @@
-import { Flex } from "#/components/ui/flex";
-import { Section } from "#/components/ui/section";
-import { Stat } from "#/components/ui/stat";
-import { Typography } from "#/components/ui/typography";
+import { Flex } from "./flex";
+import { Section } from "./section";
+import { Stat } from "./stat";
+import { Typography } from "./typography";
 
 export const RecognitionPanel = () => (
 	<Flex.Column className="gap-3 p-3">

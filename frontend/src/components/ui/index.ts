@@ -261,3 +261,21 @@ export {
 	type TrieNode,
 	type TrieCandidate,
 } from "./trie-view";
+
+export { Explain } from "./explain";
+export { KnowledgePanel } from "./knowledge-panel";
+export { RecognitionPanel } from "./recognition-panel";
+export { LearningPerformanceBanner } from "./performance-banner";
+export { TerminalSignalHeatmap } from "./signal-heatmap";
+export { FluidLegend } from "./fluid-legend";
+export { Text, type TextProps } from "./text";
+export {
+	PositionList,
+	type PositionListProps,
+	type OpenPosition,
+} from "./position-list";
+export {
+	DecisionList,
+	type DecisionListProps,
+	type DecisionRow,
+} from "./decision-list";

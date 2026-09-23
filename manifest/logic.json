@@ -1,10 +1,10 @@
 {
   "id": "logic:stage",
-  "name": "Training truth",
+  "name": "Prediction and truth reinforcement",
   "nodes": {
-    "truth": {
-      "id": "truth",
-      "type": "definition:training_grade",
+    "learner": {
+      "id": "learner",
+      "type": "definition:training_reinforce",
       "connections": {
         "inputs": {},
         "outputs": {}

@@ -27,7 +27,7 @@ func (c Iterate) Write(ctx context.Context, params func(Iterate_write_Params) er
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 8, PointerCount: 2}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 8, PointerCount: 3}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(Iterate_write_Params(s)) }
 	}
 
@@ -228,12 +228,12 @@ type Iterate_write_Params capnp.Struct
 const Iterate_write_Params_TypeID = 0xb43bd41ce7ba5806
 
 func NewIterate_write_Params(s *capnp.Segment) (Iterate_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 2})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 3})
 	return Iterate_write_Params(st), err
 }
 
 func NewRootIterate_write_Params(s *capnp.Segment) (Iterate_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 2})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 3})
 	return Iterate_write_Params(st), err
 }
 
@@ -318,12 +318,30 @@ func (s Iterate_write_Params) SetEnvelope(v bool) {
 	capnp.Struct(s).SetBit(0, v)
 }
 
+func (s Iterate_write_Params) IndexPath() (string, error) {
+	p, err := capnp.Struct(s).Ptr(2)
+	return p.Text(), err
+}
+
+func (s Iterate_write_Params) HasIndexPath() bool {
+	return capnp.Struct(s).HasPtr(2)
+}
+
+func (s Iterate_write_Params) IndexPathBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(2)
+	return p.TextBytes(), err
+}
+
+func (s Iterate_write_Params) SetIndexPath(v string) error {
+	return capnp.Struct(s).SetText(2, v)
+}
+
 // Iterate_write_Params_List is a list of Iterate_write_Params.
 type Iterate_write_Params_List = capnp.StructList[Iterate_write_Params]
 
 // NewIterate_write_Params creates a new list of Iterate_write_Params.
 func NewIterate_write_Params_List(s *capnp.Segment, sz int32) (Iterate_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 2}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 3}, sz)
 	return capnp.StructList[Iterate_write_Params](l), err
 }
 

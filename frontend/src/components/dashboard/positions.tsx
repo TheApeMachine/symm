@@ -2,13 +2,13 @@ import { useSelector } from "@tanstack/react-store";
 import { useEffect, useState } from "react";
 import { signals } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
-import { Flex } from "#/components/ui/flex";
-import { List } from "#/components/ui/list";
-import { Typography } from "#/components/ui/typography";
+import {
+	type OpenPosition,
+	PositionList,
+} from "#/components/ui/position-list";
 import { Holding } from "#/providers/telemetry/telemetry/holding";
 import { Position } from "#/providers/telemetry/telemetry/position";
 import { sendPositionExit } from "#/providers/websocket";
-import { cn } from "@/lib/utils";
 
 const formatValue = (value: unknown, digits: number): string => {
 	if (typeof value === "number") {
@@ -26,32 +26,10 @@ const formatValue = (value: unknown, digits: number): string => {
 	return String(value ?? "—");
 };
 
-const pnlTone = (value: number): "up" | "down" | "f3" => {
-	if (value > 0) {
-		return "up";
-	}
-
-	if (value < 0) {
-		return "down";
-	}
-
-	return "f3";
-};
-
 const positionObject = new Position();
 const holdingObject = new Holding();
 
-type PositionCardData = {
-	symbol: string;
-	status: string;
-	pnl: string;
-	pnlValue: number;
-	entryPrice: string;
-	mark: string;
-	returnPct: string;
-};
-
-const selectPositions = (state: any): PositionCardData[] => {
+export const selectPositions = (state: any): OpenPosition[] => {
 	const latestFrame =
 		typeof state?.findLast === "function"
 			? state.findLast(() => true)
@@ -62,7 +40,7 @@ const selectPositions = (state: any): PositionCardData[] => {
 		return [];
 	}
 
-	const fallbackPositions: PositionCardData[] = [];
+	const fallbackPositions: OpenPosition[] = [];
 
 	for (let rowIndex = 0; rowIndex < latestFrame.rowsLength(); rowIndex++) {
 		const currentPosition = latestFrame.rows(rowIndex, positionObject);
@@ -110,9 +88,9 @@ const selectPositions = (state: any): PositionCardData[] => {
 	);
 };
 
-const positionsEqual = (
-	left: PositionCardData[],
-	right: PositionCardData[],
+export const positionsEqual = (
+	left: OpenPosition[],
+	right: OpenPosition[],
 ): boolean => {
 	if (left === right) return true;
 	if (left.length !== right.length) return false;
@@ -134,6 +112,10 @@ const positionsEqual = (
 	return true;
 };
 
+/*
+Positions binds the desk to the list that draws it. The lots, which of them are
+on their way out, and what a click means all live here; the drawing does not.
+*/
 export const Positions = () => {
 	const positions = useSelector(signals.position, selectPositions, {
 		compare: positionsEqual,
@@ -179,88 +161,11 @@ export const Positions = () => {
 	};
 
 	return (
-		<List className="min-h-0 flex-1 p-1.5">
-			{positions.length === 0 ? (
-				<div className="px-3 py-6 text-center font-mono text-[11px] text-(--f4)">
-					no open positions
-				</div>
-			) : (
-				positions.map((pos) => {
-					const tone = pnlTone(pos.pnlValue);
-					return (
-						// biome-ignore lint/a11y/useSemanticElements: a <button> can't legally nest the EXIT <button>.
-						<div
-							role="button"
-							tabIndex={0}
-							data-pos={pos.symbol}
-							data-position-card
-							key={pos.symbol}
-							onClick={() => terminalStore.actions.openThesis(pos.symbol)}
-							onKeyDown={(event) => {
-								if (event.key === "Enter" || event.key === " ") {
-									event.preventDefault();
-									terminalStore.actions.openThesis(pos.symbol);
-								}
-							}}
-							title="Inspect this lot"
-							className="mb-1.25 block w-full cursor-pointer rounded-[3px] border border-(--line) bg-(--sunken) px-2 py-1.5 text-left font-mono text-[11px] transition-colors hover:border-[color-mix(in_srgb,var(--acc)_35%,transparent)]"
-						>
-							<Flex.Column className="gap-0">
-								<Flex.Row className="items-center justify-between gap-2">
-									<Flex.Row className="min-w-0 items-center gap-1.5">
-										<Typography.Span className="font-semibold text-[11.5px] text-(--f1)">
-											{pos.symbol}
-										</Typography.Span>
-										<Typography.Span className="rounded-xs border border-(--line) px-1 py-px text-[8px] uppercase tracking-wide">
-											{pos.status}
-										</Typography.Span>
-									</Flex.Row>
-									<Flex.Row className="items-center gap-1.5">
-										<Typography.Span
-											className={cn(
-												"text-right font-semibold text-[11.5px]",
-												tone === "up" && "text-(--up)",
-												tone === "down" && "text-(--down)",
-												tone === "f3" && "text-(--f2)",
-											)}
-										>
-											{pos.pnl}
-										</Typography.Span>
-										<button
-											type="button"
-											disabled={pendingExits.has(pos.symbol)}
-											onClick={(event) => {
-												event.preventDefault();
-												event.stopPropagation();
-												requestExit(pos.symbol);
-											}}
-											title="Exit this position immediately"
-											className="rounded-xs border border-(--down) px-1.5 py-px text-[8px] font-semibold text-(--down) uppercase tracking-wide hover:bg-[color-mix(in_srgb,var(--down)_12%,transparent)] disabled:cursor-wait disabled:opacity-60"
-										>
-											{pendingExits.has(pos.symbol) ? "EXITING" : "EXIT"}
-										</button>
-									</Flex.Row>
-								</Flex.Row>
-
-								<Flex.Row className="mt-0.75 items-center justify-between gap-3 text-[9.5px] text-(--f4)">
-									<Typography.Span>
-										entry {pos.entryPrice} / mark {pos.mark}
-									</Typography.Span>
-									<Typography.Span
-										className={cn(
-											tone === "up" && "text-(--up)",
-											tone === "down" && "text-(--down)",
-											tone === "f3" && "text-(--f2)",
-										)}
-									>
-										{pos.returnPct}
-									</Typography.Span>
-								</Flex.Row>
-							</Flex.Column>
-						</div>
-					);
-				})
-			)}
-		</List>
+		<PositionList
+			positions={positions}
+			exiting={[...pendingExits]}
+			onInspect={(symbol) => terminalStore.actions.openThesis(symbol)}
+			onExit={requestExit}
+		/>
 	);
 };

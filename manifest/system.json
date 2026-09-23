@@ -1534,18 +1534,6 @@
       "y": 80.0,
       "connections": {
         "inputs": {
-          "process.time": [
-            {
-              "nodeId": "grid",
-              "portName": "values_5"
-            }
-          ],
-          "markScaled.a": [
-            {
-              "nodeId": "grid",
-              "portName": "values_3"
-            }
-          ],
           "conditional_intensity_velocity.ts": [
             {
               "nodeId": "grid",
@@ -1557,93 +1545,21 @@
               "nodeId": "grid",
               "portName": "values_5"
             }
+          ],
+          "events.time": [
+            {
+              "nodeId": "grid",
+              "portName": "values_5"
+            }
+          ],
+          "events.component": [
+            {
+              "nodeId": "grid",
+              "portName": "values_3"
+            }
           ]
         },
         "outputs": {
-          "process.eventCount": [
-            {
-              "nodeId": "grid",
-              "portName": "metrics_117"
-            }
-          ],
-          "process.buyCount": [
-            {
-              "nodeId": "grid",
-              "portName": "metrics_118"
-            }
-          ],
-          "process.sellCount": [
-            {
-              "nodeId": "grid",
-              "portName": "metrics_119"
-            }
-          ],
-          "process.buyFraction": [
-            {
-              "nodeId": "grid",
-              "portName": "metrics_120"
-            }
-          ],
-          "process.sellFraction": [
-            {
-              "nodeId": "grid",
-              "portName": "metrics_121"
-            }
-          ],
-          "process.arrivalRate": [
-            {
-              "nodeId": "grid",
-              "portName": "metrics_122"
-            },
-            {
-              "nodeId": "grid",
-              "portName": "metrics_136"
-            }
-          ],
-          "process.buyRate": [
-            {
-              "nodeId": "grid",
-              "portName": "metrics_123"
-            },
-            {
-              "nodeId": "grid",
-              "portName": "metrics_131"
-            }
-          ],
-          "process.sellRate": [
-            {
-              "nodeId": "grid",
-              "portName": "metrics_124"
-            },
-            {
-              "nodeId": "grid",
-              "portName": "metrics_134"
-            }
-          ],
-          "process.lambda": [
-            {
-              "nodeId": "grid",
-              "portName": "metrics_125"
-            }
-          ],
-          "process.lambdaBuy": [
-            {
-              "nodeId": "grid",
-              "portName": "metrics_126"
-            }
-          ],
-          "process.lambdaSell": [
-            {
-              "nodeId": "grid",
-              "portName": "metrics_127"
-            }
-          ],
-          "process.spectralRadius": [
-            {
-              "nodeId": "grid",
-              "portName": "metrics_128"
-            }
-          ],
           "excitation_intensity:buy.out": [
             {
               "nodeId": "grid",
@@ -1732,55 +1648,157 @@
               "portName": "metrics_146"
             }
           ],
-          "process.excessBuy": [
+          "log_likelihood_gain_vs_poisson.out": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_173"
+            }
+          ],
+          "log_likelihood_gain_vs_self_only.out": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_174"
+            }
+          ],
+          "log_likelihood_gain_per_event_vs_poisson.out": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_176"
+            }
+          ],
+          "log_likelihood_gain_per_event_vs_self_only.out": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_177"
+            }
+          ],
+          "events.count": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_117"
+            }
+          ],
+          "count:buy.out": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_118"
+            }
+          ],
+          "count:sell.out": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_119"
+            }
+          ],
+          "fraction:buy.out": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_120"
+            }
+          ],
+          "fraction:sell.out": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_121"
+            }
+          ],
+          "arrival_rate.out": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_122"
+            },
+            {
+              "nodeId": "grid",
+              "portName": "metrics_136"
+            }
+          ],
+          "rate:buy.out": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_123"
+            },
+            {
+              "nodeId": "grid",
+              "portName": "metrics_131"
+            }
+          ],
+          "rate:sell.out": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_124"
+            },
+            {
+              "nodeId": "grid",
+              "portName": "metrics_134"
+            }
+          ],
+          "lambda.out": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_125"
+            }
+          ],
+          "lambda:buy.out": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_126"
+            }
+          ],
+          "lambda:sell.out": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_127"
+            }
+          ],
+          "excess:buy.out": [
             {
               "nodeId": "grid",
               "portName": "metrics_147"
             }
           ],
-          "process.excessSell": [
+          "excess:sell.out": [
             {
               "nodeId": "grid",
               "portName": "metrics_148"
             }
           ],
-          "process.excitationBuy": [
+          "excitation_fraction:buy.out": [
             {
               "nodeId": "grid",
               "portName": "metrics_149"
             }
           ],
-          "process.excitationSell": [
+          "excitation_fraction:sell.out": [
             {
               "nodeId": "grid",
               "portName": "metrics_150"
             }
           ],
-          "process.alphaBuyBuy": [
+          "alpha:buybuy.out": [
             {
               "nodeId": "grid",
               "portName": "metrics_151"
             }
           ],
-          "process.alphaBuySell": [
+          "alpha:buysell.out": [
             {
               "nodeId": "grid",
               "portName": "metrics_152"
             }
           ],
-          "process.alphaSellBuy": [
+          "alpha:sellbuy.out": [
             {
               "nodeId": "grid",
               "portName": "metrics_153"
             }
           ],
-          "process.alphaSellSell": [
+          "alpha:sellsell.out": [
             {
               "nodeId": "grid",
               "portName": "metrics_154"
             }
           ],
-          "process.beta": [
+          "parameters.decay": [
             {
               "nodeId": "grid",
               "portName": "metrics_155"
@@ -1802,7 +1820,7 @@
               "portName": "metrics_168"
             }
           ],
-          "process.timescale": [
+          "timescale.out": [
             {
               "nodeId": "grid",
               "portName": "metrics_156"
@@ -1824,82 +1842,64 @@
               "portName": "metrics_169"
             }
           ],
-          "process.offspringBuyBuy": [
+          "offspring:buybuy.out": [
             {
               "nodeId": "grid",
               "portName": "metrics_157"
             }
           ],
-          "process.offspringBuySell": [
+          "offspring:buysell.out": [
             {
               "nodeId": "grid",
               "portName": "metrics_158"
             }
           ],
-          "process.offspringSellBuy": [
+          "offspring:sellbuy.out": [
             {
               "nodeId": "grid",
               "portName": "metrics_159"
             }
           ],
-          "process.offspringSellSell": [
+          "offspring:sellsell.out": [
             {
               "nodeId": "grid",
               "portName": "metrics_160"
             }
           ],
-          "process.snr": [
+          "radius.radius": [
+            {
+              "nodeId": "grid",
+              "portName": "metrics_128"
+            }
+          ],
+          "snr.out": [
             {
               "nodeId": "grid",
               "portName": "metrics_161"
             }
           ],
-          "process.logLikelihoodHawkes": [
+          "likelihood.value": [
             {
               "nodeId": "grid",
               "portName": "metrics_170"
             }
           ],
-          "process.logLikelihoodPoisson": [
+          "log_likelihood_poisson.out": [
             {
               "nodeId": "grid",
               "portName": "metrics_171"
             }
           ],
-          "process.logLikelihoodSelfOnly": [
+          "likelihood_uncoupled.value": [
             {
               "nodeId": "grid",
               "portName": "metrics_172"
             }
           ],
-          "log_likelihood_gain_vs_poisson.out": [
-            {
-              "nodeId": "grid",
-              "portName": "metrics_173"
-            }
-          ],
-          "log_likelihood_gain_vs_self_only.out": [
-            {
-              "nodeId": "grid",
-              "portName": "metrics_174"
-            }
-          ],
-          "log_likelihood_per_event:hawkes.out": [
+          "log_likelihood_per_event.out": [
             {
               "nodeId": "grid",
               "portName": "metrics_175"
-            }
-          ],
-          "log_likelihood_gain_per_event_vs_poisson.out": [
-            {
-              "nodeId": "grid",
-              "portName": "metrics_176"
-            }
-          ],
-          "log_likelihood_gain_per_event_vs_self_only.out": [
-            {
-              "nodeId": "grid",
-              "portName": "metrics_177"
             }
           ]
         }
@@ -4574,73 +4574,73 @@
           "metrics_117": [
             {
               "nodeId": "definition-hawkes_trade",
-              "portName": "process.eventCount"
+              "portName": "events.count"
             }
           ],
           "metrics_118": [
             {
               "nodeId": "definition-hawkes_trade",
-              "portName": "process.buyCount"
+              "portName": "count:buy.out"
             }
           ],
           "metrics_119": [
             {
               "nodeId": "definition-hawkes_trade",
-              "portName": "process.sellCount"
+              "portName": "count:sell.out"
             }
           ],
           "metrics_120": [
             {
               "nodeId": "definition-hawkes_trade",
-              "portName": "process.buyFraction"
+              "portName": "fraction:buy.out"
             }
           ],
           "metrics_121": [
             {
               "nodeId": "definition-hawkes_trade",
-              "portName": "process.sellFraction"
+              "portName": "fraction:sell.out"
             }
           ],
           "metrics_122": [
             {
               "nodeId": "definition-hawkes_trade",
-              "portName": "process.arrivalRate"
+              "portName": "arrival_rate.out"
             }
           ],
           "metrics_123": [
             {
               "nodeId": "definition-hawkes_trade",
-              "portName": "process.buyRate"
+              "portName": "rate:buy.out"
             }
           ],
           "metrics_124": [
             {
               "nodeId": "definition-hawkes_trade",
-              "portName": "process.sellRate"
+              "portName": "rate:sell.out"
             }
           ],
           "metrics_125": [
             {
               "nodeId": "definition-hawkes_trade",
-              "portName": "process.lambda"
+              "portName": "lambda.out"
             }
           ],
           "metrics_126": [
             {
               "nodeId": "definition-hawkes_trade",
-              "portName": "process.lambdaBuy"
+              "portName": "lambda:buy.out"
             }
           ],
           "metrics_127": [
             {
               "nodeId": "definition-hawkes_trade",
-              "portName": "process.lambdaSell"
+              "portName": "lambda:sell.out"
             }
           ],
           "metrics_128": [
             {
               "nodeId": "definition-hawkes_trade",
-              "portName": "process.spectralRadius"
+              "portName": "radius.radius"
             }
           ],
           "metrics_129": [
@@ -4658,7 +4658,7 @@
           "metrics_131": [
             {
               "nodeId": "definition-hawkes_trade",
-              "portName": "process.buyRate"
+              "portName": "rate:buy.out"
             }
           ],
           "metrics_132": [
@@ -4676,7 +4676,7 @@
           "metrics_134": [
             {
               "nodeId": "definition-hawkes_trade",
-              "portName": "process.sellRate"
+              "portName": "rate:sell.out"
             }
           ],
           "metrics_135": [
@@ -4688,7 +4688,7 @@
           "metrics_136": [
             {
               "nodeId": "definition-hawkes_trade",
-              "portName": "process.arrivalRate"
+              "portName": "arrival_rate.out"
             }
           ],
           "metrics_137": [
@@ -4754,157 +4754,157 @@
           "metrics_147": [
             {
               "nodeId": "definition-hawkes_trade",
-              "portName": "process.excessBuy"
+              "portName": "excess:buy.out"
             }
           ],
           "metrics_148": [
             {
               "nodeId": "definition-hawkes_trade",
-              "portName": "process.excessSell"
+              "portName": "excess:sell.out"
             }
           ],
           "metrics_149": [
             {
               "nodeId": "definition-hawkes_trade",
-              "portName": "process.excitationBuy"
+              "portName": "excitation_fraction:buy.out"
             }
           ],
           "metrics_150": [
             {
               "nodeId": "definition-hawkes_trade",
-              "portName": "process.excitationSell"
+              "portName": "excitation_fraction:sell.out"
             }
           ],
           "metrics_151": [
             {
               "nodeId": "definition-hawkes_trade",
-              "portName": "process.alphaBuyBuy"
+              "portName": "alpha:buybuy.out"
             }
           ],
           "metrics_152": [
             {
               "nodeId": "definition-hawkes_trade",
-              "portName": "process.alphaBuySell"
+              "portName": "alpha:buysell.out"
             }
           ],
           "metrics_153": [
             {
               "nodeId": "definition-hawkes_trade",
-              "portName": "process.alphaSellBuy"
+              "portName": "alpha:sellbuy.out"
             }
           ],
           "metrics_154": [
             {
               "nodeId": "definition-hawkes_trade",
-              "portName": "process.alphaSellSell"
+              "portName": "alpha:sellsell.out"
             }
           ],
           "metrics_155": [
             {
               "nodeId": "definition-hawkes_trade",
-              "portName": "process.beta"
+              "portName": "parameters.decay"
             }
           ],
           "metrics_156": [
             {
               "nodeId": "definition-hawkes_trade",
-              "portName": "process.timescale"
+              "portName": "timescale.out"
             }
           ],
           "metrics_157": [
             {
               "nodeId": "definition-hawkes_trade",
-              "portName": "process.offspringBuyBuy"
+              "portName": "offspring:buybuy.out"
             }
           ],
           "metrics_158": [
             {
               "nodeId": "definition-hawkes_trade",
-              "portName": "process.offspringBuySell"
+              "portName": "offspring:buysell.out"
             }
           ],
           "metrics_159": [
             {
               "nodeId": "definition-hawkes_trade",
-              "portName": "process.offspringSellBuy"
+              "portName": "offspring:sellbuy.out"
             }
           ],
           "metrics_160": [
             {
               "nodeId": "definition-hawkes_trade",
-              "portName": "process.offspringSellSell"
+              "portName": "offspring:sellsell.out"
             }
           ],
           "metrics_161": [
             {
               "nodeId": "definition-hawkes_trade",
-              "portName": "process.snr"
+              "portName": "snr.out"
             }
           ],
           "metrics_162": [
             {
               "nodeId": "definition-hawkes_trade",
-              "portName": "process.beta"
+              "portName": "parameters.decay"
             }
           ],
           "metrics_163": [
             {
               "nodeId": "definition-hawkes_trade",
-              "portName": "process.timescale"
+              "portName": "timescale.out"
             }
           ],
           "metrics_164": [
             {
               "nodeId": "definition-hawkes_trade",
-              "portName": "process.beta"
+              "portName": "parameters.decay"
             }
           ],
           "metrics_165": [
             {
               "nodeId": "definition-hawkes_trade",
-              "portName": "process.timescale"
+              "portName": "timescale.out"
             }
           ],
           "metrics_166": [
             {
               "nodeId": "definition-hawkes_trade",
-              "portName": "process.beta"
+              "portName": "parameters.decay"
             }
           ],
           "metrics_167": [
             {
               "nodeId": "definition-hawkes_trade",
-              "portName": "process.timescale"
+              "portName": "timescale.out"
             }
           ],
           "metrics_168": [
             {
               "nodeId": "definition-hawkes_trade",
-              "portName": "process.beta"
+              "portName": "parameters.decay"
             }
           ],
           "metrics_169": [
             {
               "nodeId": "definition-hawkes_trade",
-              "portName": "process.timescale"
+              "portName": "timescale.out"
             }
           ],
           "metrics_170": [
             {
               "nodeId": "definition-hawkes_trade",
-              "portName": "process.logLikelihoodHawkes"
+              "portName": "likelihood.value"
             }
           ],
           "metrics_171": [
             {
               "nodeId": "definition-hawkes_trade",
-              "portName": "process.logLikelihoodPoisson"
+              "portName": "log_likelihood_poisson.out"
             }
           ],
           "metrics_172": [
             {
               "nodeId": "definition-hawkes_trade",
-              "portName": "process.logLikelihoodSelfOnly"
+              "portName": "likelihood_uncoupled.value"
             }
           ],
           "metrics_173": [
@@ -4922,7 +4922,7 @@
           "metrics_175": [
             {
               "nodeId": "definition-hawkes_trade",
-              "portName": "log_likelihood_per_event:hawkes.out"
+              "portName": "log_likelihood_per_event.out"
             }
           ],
           "metrics_176": [
@@ -6542,7 +6542,7 @@
             },
             {
               "nodeId": "definition-hawkes_trade",
-              "portName": "markScaled.a"
+              "portName": "events.component"
             }
           ],
           "values_4": [
@@ -6574,7 +6574,7 @@
             },
             {
               "nodeId": "definition-hawkes_trade",
-              "portName": "process.time"
+              "portName": "events.time"
             },
             {
               "nodeId": "definition-hawkes_trade",

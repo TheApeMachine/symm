@@ -122,6 +122,34 @@ function dispatchMeasurement(row: WireMeasurement) {
 	}));
 }
 
+/*
+What has already been said about frames this socket could not read. Keyed by
+size, because a peer sending the wrong thing sends the same wrong thing.
+*/
+const undecodable = new Map<number, number>();
+
+const reportUndecodableFrame = (bytes: number, err: unknown) => {
+	const seen = (undecodable.get(bytes) ?? 0) + 1;
+	undecodable.set(bytes, seen);
+
+	if (seen > 1) {
+		return;
+	}
+
+	console.error(
+		`WS: ignoring a ${bytes}-byte frame that is not a measurement (further ones of this size will be counted, not logged):`,
+		err,
+	);
+};
+
+/*
+undecodableFrameCounts reports what this socket has been unable to read, so a
+surface or a test can show that frames are arriving and being dropped rather
+than leaving it to whoever happens to have the console open.
+*/
+export const undecodableFrameCounts = (): ReadonlyMap<number, number> =>
+	new Map(undecodable);
+
 export const WsFeed = () => {
 	useEffect(() => {
 		const wsWorker = new Worker(new URL("./ws-worker.ts", import.meta.url), {
@@ -160,7 +188,12 @@ export const WsFeed = () => {
 						dispatchMeasurement(row);
 					});
 				} catch (err) {
-					console.error("WS message processing error:", err);
+					// A frame that cannot be read is reported once per shape
+					// rather than on every arrival: a peer sending something
+					// else on this socket would otherwise bury the console
+					// under one identical stack every few seconds, which is
+					// how this went unnoticed.
+					reportUndecodableFrame(data.buffer.byteLength, err);
 				}
 			}
 		});

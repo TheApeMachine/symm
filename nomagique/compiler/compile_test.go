@@ -6,8 +6,11 @@ import (
 	"database/sql"
 	"encoding/json"
 	"math"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 
 	capnp "capnproto.org/go/capnp/v3"
@@ -17,6 +20,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/compiler"
+	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/store/tables"
@@ -636,7 +640,13 @@ func TestCompile(t *testing.T) {
 			So(json.Unmarshal(graph.Nodes[node].InputData["config"], &value), ShouldBeNil)
 			return value.Value
 		}
-		inputConfig := declaration("replay")
+		captureGraph, err := compiler.DefaultRepository().Load("capture")
+		So(err, ShouldBeNil)
+		var captureConfig struct {
+			Value string `json:"value"`
+		}
+		So(json.Unmarshal(captureGraph.Nodes["capture"].InputData["config"], &captureConfig), ShouldBeNil)
+		inputConfig := captureConfig.Value
 		outputConfig := declaration("events")
 		capture := store.Capture_ServerToClient(store.NewCapture())
 		defer capture.Release()
@@ -698,11 +708,32 @@ func TestCompile(t *testing.T) {
 		So(err, ShouldBeNil)
 
 		registry := compiler.DefaultRegistry()
-		registry.Register("tables.IcebergScan", compiler.Factory{InterfaceID: tables.IcebergScan_TypeID, New: func(ctx context.Context, config []byte) (capnp.Client, error) {
-			scanner := tables.NewIcebergScan()
-			scanner.Catalog = catalog
-			return capnp.Client(tables.IcebergScan_ServerToClient(scanner)), nil
-		}})
+		archiveTable, err := catalog.LoadTable(ctx, []string{"symm", "raw_frames_v3"})
+		So(err, ShouldBeNil)
+		var catalogRequests, tableRequests atomic.Int64
+		endpoint := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+			response.Header().Set("Content-Type", "application/json")
+			if request.URL.Path == "/config" {
+				catalogRequests.Add(1)
+				if err := json.NewEncoder(response).Encode(map[string]any{"defaults": map[string]string{}, "overrides": map[string]string{}}); err != nil {
+					t.Error(err)
+				}
+				return
+			}
+			tableRequests.Add(1)
+			if err := json.NewEncoder(response).Encode(map[string]any{"metadata": archiveTable.Metadata(), "config": map[string]string{}}); err != nil {
+				t.Error(err)
+			}
+		}))
+		defer endpoint.Close()
+		input, err := json.Marshal(map[string]any{"catalogUrl": endpoint.URL + "/config", "tableUrl": endpoint.URL + "/table", "properties": map[string]string{}})
+		So(err, ShouldBeNil)
+		configured, err := json.Marshal(map[string]string{"value": string(input)})
+		So(err, ShouldBeNil)
+		replay := graph.Nodes["replay"]
+		replay.InputData = map[string]json.RawMessage{"input.through": configured}
+		graph.Nodes["replay"] = replay
+
 		registry.Register("tables.IcebergTable", compiler.Factory{InterfaceID: tables.IcebergTable_TypeID, New: func(ctx context.Context, config []byte) (capnp.Client, error) {
 			writer := tables.NewIcebergTable()
 			writer.Catalog = catalog
@@ -713,8 +744,30 @@ func TestCompile(t *testing.T) {
 		defer program.Release()
 
 		spreads := make([]float64, 0, 360)
-		for observation := 0; observation < len(rows)+360+1; observation++ {
+		graded := make([]temporal.TapeCursor, 0)
+		for observation := 0; observation < len(rows)+360+360*3+1; observation++ {
 			So(program.Execute(ctx, nil), ShouldBeNil)
+			if result, found := program.Result("grade__labels"); found && data.Iterate_done_Results(result).Found() {
+				payload, err := data.Iterate_done_Results(result).Out()
+				So(err, ShouldBeNil)
+				var label struct {
+					Cursor temporal.TapeCursor
+					Event  temporal.MinedEvent
+					Market struct{ Data struct{ Symbol string } }
+					Truth  struct {
+						Action  string
+						Holding bool
+					}
+				}
+				So(json.Unmarshal(payload, &label), ShouldBeNil)
+				So(label.Market.Data.Symbol, ShouldEqual, "MOVE/USD")
+				So(label.Event.A, ShouldNotBeNil)
+				So(label.Cursor.Compare(*label.Event.A), ShouldBeGreaterThanOrEqualTo, 0)
+				So(label.Cursor.Compare(label.Event.C), ShouldBeLessThan, 0)
+				So(label.Truth.Action, ShouldBeIn, "WAIT", "EXIT")
+				So(label.Truth.Holding, ShouldEqual, label.Cursor.Compare(label.Event.B) <= 0)
+				graded = append(graded, label.Cursor)
+			}
 			const spreadNode = "definition-liquidity_ticker__spread"
 			if _, produced := program.Result(spreadNode); produced {
 				spread, err := program.Float64Result(spreadNode, "out")
@@ -722,6 +775,8 @@ func TestCompile(t *testing.T) {
 				spreads = append(spreads, spread)
 			}
 		}
+		So(catalogRequests.Load(), ShouldEqual, 1)
+		So(tableRequests.Load(), ShouldEqual, 1)
 		So(spreads, ShouldHaveLength, 360)
 		for index, spread := range spreads {
 			So(spread, ShouldAlmostEqual, 2+index%2)
@@ -730,10 +785,28 @@ func TestCompile(t *testing.T) {
 		So(program.Flush(ctx), ShouldBeNil)
 
 		scanner := tables.NewIcebergScan()
-		scanner.Catalog = catalog
+		var eventDeclaration struct{ Namespace, Table string }
+		So(json.Unmarshal([]byte(outputConfig), &eventDeclaration), ShouldBeNil)
+		eventTable, err := catalog.LoadTable(ctx, []string{eventDeclaration.Namespace, eventDeclaration.Table})
+		So(err, ShouldBeNil)
+		eventMetadata, err := json.Marshal(eventTable.Metadata())
+		So(err, ShouldBeNil)
 		reader := tables.IcebergScan_ServerToClient(scanner)
 		defer reader.Release()
-		So(reader.Write(ctx, func(params tables.IcebergScan_write_Params) error { return params.SetConfig(outputConfig) }), ShouldBeNil)
+		So(reader.Write(ctx, func(params tables.IcebergScan_write_Params) error {
+			metadata, err := params.NewMetadata(1)
+			if err != nil {
+				return err
+			}
+			if err := metadata.Set(0, eventMetadata); err != nil {
+				return err
+			}
+			properties, err := params.NewProperties(1)
+			if err != nil {
+				return err
+			}
+			return properties.Set(0, []byte(`{}`))
+		}), ShouldBeNil)
 		So(reader.WaitStreaming(), ShouldBeNil)
 		events := make([]temporal.MinedEvent, 0)
 
@@ -746,8 +819,18 @@ func TestCompile(t *testing.T) {
 				release()
 				break
 			}
-			row, err := result.Out()
+			raw, err := result.Out()
 			So(err, ShouldBeNil)
+			projector := data.Arrow_ServerToClient(data.NewArrow())
+			So(projector.Write(ctx, func(args data.Arrow_write_Params) error { return args.SetData(raw) }), ShouldBeNil)
+			So(projector.WaitStreaming(), ShouldBeNil)
+			projected, releaseProjection := projector.Done(ctx, nil)
+			projection, err := projected.Struct()
+			So(err, ShouldBeNil)
+			row, err := projection.Out()
+			So(err, ShouldBeNil)
+			defer releaseProjection()
+			defer projector.Release()
 			var archived struct {
 				Payload []byte `json:"payload"`
 			}
@@ -770,5 +853,6 @@ func TestCompile(t *testing.T) {
 		So(events[1].Excursion, ShouldBeLessThan, 0)
 		So(events[1].A, ShouldNotBeNil)
 		So(events[1].A.Sequence, ShouldBeLessThan, events[1].B.Sequence)
+		So(len(graded), ShouldEqual, events[1].C.Sequence-events[1].A.Sequence)
 	})
 }

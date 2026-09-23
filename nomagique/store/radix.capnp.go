@@ -137,7 +137,7 @@ func (c Radix) Write(ctx context.Context, params func(Radix_write_Params) error)
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 8, PointerCount: 2}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 2}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(Radix_write_Params(s)) }
 	}
 
@@ -319,7 +319,7 @@ func (c Radix_done) Args() Radix_done_Params {
 
 // AllocResults allocates the results struct.
 func (c Radix_done) AllocResults() (Radix_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 1})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 2})
 	return Radix_done_Results(r), err
 }
 
@@ -338,12 +338,12 @@ type Radix_write_Params capnp.Struct
 const Radix_write_Params_TypeID = 0xa32c90c355cc8c09
 
 func NewRadix_write_Params(s *capnp.Segment) (Radix_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 2})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
 	return Radix_write_Params(st), err
 }
 
 func NewRootRadix_write_Params(s *capnp.Segment) (Radix_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 2})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
 	return Radix_write_Params(st), err
 }
 
@@ -379,43 +379,51 @@ func (s Radix_write_Params) Message() *capnp.Message {
 func (s Radix_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Radix_write_Params) Key() (string, error) {
+func (s Radix_write_Params) Key() (capnp.TextList, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return p.Text(), err
+	return capnp.TextList(p.List()), err
 }
 
 func (s Radix_write_Params) HasKey() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s Radix_write_Params) KeyBytes() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return p.TextBytes(), err
+func (s Radix_write_Params) SetKey(v capnp.TextList) error {
+	return capnp.Struct(s).SetPtr(0, v.ToPtr())
 }
 
-func (s Radix_write_Params) SetKey(v string) error {
-	return capnp.Struct(s).SetText(0, v)
+// NewKey sets the key field to a newly
+// allocated capnp.TextList, preferring placement in s's segment.
+func (s Radix_write_Params) NewKey(n int32) (capnp.TextList, error) {
+	l, err := capnp.NewTextList(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return capnp.TextList{}, err
+	}
+	err = capnp.Struct(s).SetPtr(0, l.ToPtr())
+	return l, err
 }
-
-func (s Radix_write_Params) Value() ([]byte, error) {
+func (s Radix_write_Params) Value() (capnp.DataList, error) {
 	p, err := capnp.Struct(s).Ptr(1)
-	return []byte(p.Data()), err
+	return capnp.DataList(p.List()), err
 }
 
 func (s Radix_write_Params) HasValue() bool {
 	return capnp.Struct(s).HasPtr(1)
 }
 
-func (s Radix_write_Params) SetValue(v []byte) error {
-	return capnp.Struct(s).SetData(1, v)
+func (s Radix_write_Params) SetValue(v capnp.DataList) error {
+	return capnp.Struct(s).SetPtr(1, v.ToPtr())
 }
 
-func (s Radix_write_Params) Query() bool {
-	return capnp.Struct(s).Bit(0)
-}
-
-func (s Radix_write_Params) SetQuery(v bool) {
-	capnp.Struct(s).SetBit(0, v)
+// NewValue sets the value field to a newly
+// allocated capnp.DataList, preferring placement in s's segment.
+func (s Radix_write_Params) NewValue(n int32) (capnp.DataList, error) {
+	l, err := capnp.NewDataList(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return capnp.DataList{}, err
+	}
+	err = capnp.Struct(s).SetPtr(1, l.ToPtr())
+	return l, err
 }
 
 // Radix_write_Params_List is a list of Radix_write_Params.
@@ -423,7 +431,7 @@ type Radix_write_Params_List = capnp.StructList[Radix_write_Params]
 
 // NewRadix_write_Params creates a new list of Radix_write_Params.
 func NewRadix_write_Params_List(s *capnp.Segment, sz int32) (Radix_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 2}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2}, sz)
 	return capnp.StructList[Radix_write_Params](l), err
 }
 
@@ -506,12 +514,12 @@ type Radix_done_Results capnp.Struct
 const Radix_done_Results_TypeID = 0xe40fb69e8e61ebd5
 
 func NewRadix_done_Results(s *capnp.Segment) (Radix_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
 	return Radix_done_Results(st), err
 }
 
 func NewRootRadix_done_Results(s *capnp.Segment) (Radix_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
 	return Radix_done_Results(st), err
 }
 
@@ -547,25 +555,51 @@ func (s Radix_done_Results) Message() *capnp.Message {
 func (s Radix_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Radix_done_Results) Out() ([]byte, error) {
+func (s Radix_done_Results) Out() (capnp.DataList, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return []byte(p.Data()), err
+	return capnp.DataList(p.List()), err
 }
 
 func (s Radix_done_Results) HasOut() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s Radix_done_Results) SetOut(v []byte) error {
-	return capnp.Struct(s).SetData(0, v)
+func (s Radix_done_Results) SetOut(v capnp.DataList) error {
+	return capnp.Struct(s).SetPtr(0, v.ToPtr())
 }
 
-func (s Radix_done_Results) Found() bool {
-	return capnp.Struct(s).Bit(0)
+// NewOut sets the out field to a newly
+// allocated capnp.DataList, preferring placement in s's segment.
+func (s Radix_done_Results) NewOut(n int32) (capnp.DataList, error) {
+	l, err := capnp.NewDataList(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return capnp.DataList{}, err
+	}
+	err = capnp.Struct(s).SetPtr(0, l.ToPtr())
+	return l, err
+}
+func (s Radix_done_Results) Found() (capnp.BitList, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return capnp.BitList(p.List()), err
 }
 
-func (s Radix_done_Results) SetFound(v bool) {
-	capnp.Struct(s).SetBit(0, v)
+func (s Radix_done_Results) HasFound() bool {
+	return capnp.Struct(s).HasPtr(1)
+}
+
+func (s Radix_done_Results) SetFound(v capnp.BitList) error {
+	return capnp.Struct(s).SetPtr(1, v.ToPtr())
+}
+
+// NewFound sets the found field to a newly
+// allocated capnp.BitList, preferring placement in s's segment.
+func (s Radix_done_Results) NewFound(n int32) (capnp.BitList, error) {
+	l, err := capnp.NewBitList(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return capnp.BitList{}, err
+	}
+	err = capnp.Struct(s).SetPtr(1, l.ToPtr())
+	return l, err
 }
 
 // Radix_done_Results_List is a list of Radix_done_Results.
@@ -573,7 +607,7 @@ type Radix_done_Results_List = capnp.StructList[Radix_done_Results]
 
 // NewRadix_done_Results creates a new list of Radix_done_Results.
 func NewRadix_done_Results_List(s *capnp.Segment, sz int32) (Radix_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2}, sz)
 	return capnp.StructList[Radix_done_Results](l), err
 }
 

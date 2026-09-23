@@ -204,7 +204,7 @@ func compare(value float64, operator string, threshold float64) (bool, error) {
 	))
 }
 
-/* comparePaths compares numeric tuples lexicographically without rounding capture identities. */
+/* comparePaths compares exact numeric tuples or one Boolean/text equality pair. */
 func (server *FilterServer) comparePaths(payload []byte, reference string) (bool, error) {
 	var document any
 	decoder := json.NewDecoder(bytes.NewReader(payload))
@@ -237,6 +237,29 @@ func (server *FilterServer) comparePaths(payload []byte, reference string) (bool
 		if !found || !otherFound {
 			return false, nil
 		}
+		leftBool, boolean := left.(bool)
+
+		if boolean {
+			rightBool, valid := right.(bool)
+
+			if !valid || len(paths) != 1 || (server.operator != "==" && server.operator != "!=") {
+				return false, errnie.Error(errnie.Err(errnie.Validation, "filter: Boolean comparison requires one Boolean pair and equality", nil))
+			}
+
+			return (leftBool == rightBool) == (server.operator == "=="), nil
+		}
+		leftText, textual := left.(string)
+
+		if textual {
+			rightText, valid := right.(string)
+
+			if !valid || len(paths) != 1 || (server.operator != "==" && server.operator != "!=") {
+				return false, errnie.Error(errnie.Err(errnie.Validation, "filter: text comparison requires one text pair and equality", nil))
+			}
+
+			return (leftText == rightText) == (server.operator == "=="), nil
+		}
+
 		leftNumber, leftOK := left.(json.Number)
 		rightNumber, rightOK := right.(json.Number)
 

@@ -28,7 +28,7 @@ func (c Insert) Write(ctx context.Context, params func(Insert_write_Params) erro
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 8, PointerCount: 3}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 24, PointerCount: 4}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(Insert_write_Params(s)) }
 	}
 
@@ -229,12 +229,12 @@ type Insert_write_Params capnp.Struct
 const Insert_write_Params_TypeID = 0xdfa5c32a01ac04ba
 
 func NewInsert_write_Params(s *capnp.Segment) (Insert_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 3})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 4})
 	return Insert_write_Params(st), err
 }
 
 func NewRootInsert_write_Params(s *capnp.Segment) (Insert_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 3})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 4})
 	return Insert_write_Params(st), err
 }
 
@@ -322,12 +322,46 @@ func (s Insert_write_Params) SetJson(v []byte) error {
 	return capnp.Struct(s).SetData(2, v)
 }
 
+func (s Insert_write_Params) Unique() bool {
+	return capnp.Struct(s).Bit(64)
+}
+
+func (s Insert_write_Params) SetUnique(v bool) {
+	capnp.Struct(s).SetBit(64, v)
+}
+
+func (s Insert_write_Params) Encoding() (string, error) {
+	p, err := capnp.Struct(s).Ptr(3)
+	return p.Text(), err
+}
+
+func (s Insert_write_Params) HasEncoding() bool {
+	return capnp.Struct(s).HasPtr(3)
+}
+
+func (s Insert_write_Params) EncodingBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(3)
+	return p.TextBytes(), err
+}
+
+func (s Insert_write_Params) SetEncoding(v string) error {
+	return capnp.Struct(s).SetText(3, v)
+}
+
+func (s Insert_write_Params) Unsigned() uint64 {
+	return capnp.Struct(s).Uint64(16)
+}
+
+func (s Insert_write_Params) SetUnsigned(v uint64) {
+	capnp.Struct(s).SetUint64(16, v)
+}
+
 // Insert_write_Params_List is a list of Insert_write_Params.
 type Insert_write_Params_List = capnp.StructList[Insert_write_Params]
 
 // NewInsert_write_Params creates a new list of Insert_write_Params.
 func NewInsert_write_Params_List(s *capnp.Segment, sz int32) (Insert_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 3}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 24, PointerCount: 4}, sz)
 	return capnp.StructList[Insert_write_Params](l), err
 }
 
@@ -470,6 +504,14 @@ func (s Insert_done_Results) Status() runtime.Status {
 
 func (s Insert_done_Results) SetStatus(v runtime.Status) {
 	capnp.Struct(s).SetUint16(0, uint16(v))
+}
+
+func (s Insert_done_Results) Inserted() bool {
+	return capnp.Struct(s).Bit(16)
+}
+
+func (s Insert_done_Results) SetInserted(v bool) {
+	capnp.Struct(s).SetBit(16, v)
 }
 
 // Insert_done_Results_List is a list of Insert_done_Results.

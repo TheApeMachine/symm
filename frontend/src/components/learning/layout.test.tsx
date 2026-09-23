@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { RecognitionPanel } from "./recognition-panel";
+import { RecognitionPanel } from "#/components/ui/recognition-panel";
 
 describe("learning surface scroll containment", () => {
 	it("does not open a scroller inside the column that already scrolls", () => {

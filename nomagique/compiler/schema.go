@@ -1,6 +1,7 @@
 package compiler
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"strconv"
@@ -403,6 +404,58 @@ func SetStaticField(target capnp.Struct, field FieldInfo, rawVal string) error {
 		target.SetUint16(capnp.DataOffset(field.Offset*2), uint16(u))
 		return nil
 
+	case schema.Type_Which_list:
+		if field.ElementWhich != schema.Type_Which_text && field.ElementWhich != schema.Type_Which_data {
+			return errnie.Error(errnie.Err(errnie.Validation, "compiler: static list element type is unsupported", nil))
+		}
+
+		var values []*string
+
+		if err := json.Unmarshal([]byte(rawVal), &values); err != nil {
+			return errnie.Error(errnie.Err(errnie.Validation, "compiler: static text list", err))
+		}
+
+		if values == nil {
+			return errnie.Error(errnie.Err(errnie.Validation, "compiler: static text list must be an explicit array", nil))
+		}
+
+		if field.ElementWhich == schema.Type_Which_data {
+			list, err := capnp.NewDataList(target.Segment(), int32(len(values)))
+
+			if err != nil {
+				return errnie.Error(errnie.Err(errnie.Internal, "compiler: allocate static data list", err))
+			}
+
+			for index, value := range values {
+				if value == nil {
+					return errnie.Error(errnie.Err(errnie.Validation, "compiler: static data list cannot contain null", nil))
+				}
+
+				if err := list.Set(index, []byte(*value)); err != nil {
+					return errnie.Error(errnie.Err(errnie.Internal, "compiler: set static data list", err))
+				}
+			}
+			return target.SetPtr(uint16(field.Offset), list.ToPtr())
+		}
+
+		list, err := capnp.NewTextList(target.Segment(), int32(len(values)))
+
+		if err != nil {
+			return errnie.Error(errnie.Err(errnie.Internal, "compiler: allocate static text list", err))
+		}
+
+		for index, value := range values {
+			if value == nil {
+				return errnie.Error(errnie.Err(errnie.Validation, "compiler: static text list cannot contain null", nil))
+			}
+
+			if err := list.Set(index, *value); err != nil {
+				return errnie.Error(errnie.Err(errnie.Internal, "compiler: set static text list", err))
+			}
+		}
+
+		return target.SetPtr(uint16(field.Offset), list.ToPtr())
+
 	case schema.Type_Which_text:
 		return target.SetText(uint16(field.Offset), rawVal)
 
@@ -666,8 +719,14 @@ func CompileFanOutCopier(
 		))
 	}
 
+	switch toField.Which {
+	case schema.Type_Which_float64, schema.Type_Which_uint64, schema.Type_Which_int64,
+		schema.Type_Which_bool, schema.Type_Which_text, schema.Type_Which_data:
+	default:
+		return nil, errnie.Error(errnie.Err(errnie.Validation, "compiler: unsupported list projection type", nil))
+	}
+
 	fromOffset := uint16(fromField.Offset)
-	toOffset := capnp.DataOffset(toField.Offset * 8)
 	filled := compileSlotPresence(presence, carried)
 
 	return func(src, dst capnp.Struct) error {
@@ -693,8 +752,24 @@ func CompileFanOutCopier(
 			return nil
 		}
 
-		dst.SetUint64(toOffset, math.Float64bits(handed.At(index)))
-		return nil
+		switch toField.Which {
+		case schema.Type_Which_float64, schema.Type_Which_uint64, schema.Type_Which_int64:
+			dst.SetUint64(capnp.DataOffset(toField.Offset*8), capnp.UInt64List(pointer.List()).At(index))
+			return nil
+		case schema.Type_Which_bool:
+			dst.SetBit(capnp.BitOffset(toField.Offset), capnp.BitList(pointer.List()).At(index))
+			return nil
+		case schema.Type_Which_text, schema.Type_Which_data:
+			value, err := capnp.PointerList(pointer.List()).At(index)
+
+			if err != nil {
+				return errnie.Error(errnie.Err(errnie.Internal, "compiler: read pointer list slot", err))
+			}
+
+			return dst.SetPtr(uint16(toField.Offset), value)
+		default:
+			return errnie.Error(errnie.Err(errnie.Validation, "compiler: unsupported list projection type", nil))
+		}
 	}, nil
 }
 
@@ -825,4 +900,29 @@ func reflectOutputFields(node schema.Node, nodes map[uint64]schema.Node, prefix 
 	}
 
 	return output, nil
+}
+
+/* CompileFanInSlotCopier projects one pointer-valued source slot into a gathered list. */
+func CompileFanInSlotCopier(from, to FieldInfo, sourceIndex, targetIndex, length int) (Copier, error) {
+	if from.ElementWhich != to.ElementWhich || (from.ElementWhich != schema.Type_Which_data && from.ElementWhich != schema.Type_Which_text) {
+		return nil, errnie.Error(errnie.Err(errnie.Validation, "compiler: indexed gathering requires matching Data or Text elements", nil))
+	}
+	return func(source, target capnp.Struct) error {
+		pointer, err := source.Ptr(uint16(from.Offset))
+		if err != nil {
+			return errnie.Error(errnie.Err(errnie.Internal, "compiler: read indexed gathering source", err))
+		}
+		value, err := capnp.PointerList(pointer.List()).At(sourceIndex)
+		if err != nil {
+			return errnie.Error(errnie.Err(errnie.Internal, "compiler: read gathered source slot", err))
+		}
+		list, err := fanInList(target, uint16(to.Offset), length)
+		if err != nil {
+			return err
+		}
+		if err := list.Set(targetIndex, value); err != nil {
+			return errnie.Error(errnie.Err(errnie.Internal, "compiler: set gathered slot", err))
+		}
+		return nil
+	}, nil
 }

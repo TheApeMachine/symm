@@ -20,6 +20,19 @@ export interface UIDiagnostic {
 	message: string;
 }
 
+/*
+StateBinding names a piece of route state and the value a node cares about.
+
+A surface drawn as nodes still has to answer a click. The graph says which
+state a node selects and which value it selects, and which state a node is
+visible under — that is the whole vocabulary, and it is enough for tabs,
+disclosure, and anything else that is one choice among several.
+*/
+export interface StateBinding {
+	key: string;
+	value: unknown;
+}
+
 export interface UICompilationResult {
 	routes: CompiledUIRoute[];
 	diagnostics: UIDiagnostic[];
@@ -80,6 +93,20 @@ function parseComponentsPortIndex(portName: string): number {
 }
 
 /*
+readInput reads one authored input value, tolerating the empty object a control
+that was never filled in is stored as.
+*/
+function readInput(node: FlumeGraphNode | undefined, name: string): unknown {
+	const raw = node?.inputData?.[name];
+
+	if (raw !== null && typeof raw === "object") {
+		return "value" in raw ? (raw as { value: unknown }).value : undefined;
+	}
+
+	return raw;
+}
+
+/*
 compileUI lowers an authored Flume graph into validated CompiledUIRoute structures.
 It:
 1. Discovers route roots (ui.UIRoute) or top-level UI components.
@@ -100,6 +127,22 @@ export function compileUI(
 	}
 
 	const nodes = graph.nodes;
+
+	/*
+		The name a state node is known by. A graph may hold several, and the
+		key is what a node selecting one and a node appearing under it have in
+		common.
+	*/
+	const stateKeyOf = (nodeId: string): string =>
+		String(readInput(nodes[nodeId], "key") ?? nodeId);
+
+	/* The live source a data node names. */
+	const sourceOf = (nodeId: string): string =>
+		String(readInput(nodes[nodeId], "source") ?? nodeId);
+
+	/* The value a node selects, or appears under. */
+	const authoredStateValue = (node: FlumeGraphNode): unknown =>
+		readInput(node, "stateValue");
 
 	// Helper to compile a single UI component node
 	function compileComponentNode(
@@ -144,6 +187,8 @@ export function compileUI(
 		const nextAncestors = new Set(ancestors).add(nodeId);
 		const props: Record<string, any> = {};
 		let className: string | undefined;
+		let selects: StateBinding | undefined;
+		let visibleWhen: StateBinding | undefined;
 
 		// 2. Validate and extract authored props from inputData
 		const allowedPropNames = new Set(meta?.props?.map((p) => p.name) ?? []);
@@ -155,6 +200,13 @@ export function compileUI(
 		const inputData = node.inputData ?? {};
 		for (const [propName, rawEntry] of Object.entries(inputData)) {
 			if (propName === "components" || propName.startsWith("components_")) {
+				continue;
+			}
+
+			// What a node selects, or appears under, is read from its
+			// connection to the state node rather than validated as a prop of
+			// the component it is drawn with.
+			if (propName === "stateValue") {
 				continue;
 			}
 
@@ -268,6 +320,32 @@ export function compileUI(
 				continue;
 			}
 
+			// A connection to a state node is not data the component reads;
+			// it is which choice this node makes, or which choice it appears
+			// under. Those are answered by the route, not by a producer.
+			if (sourceNode?.type === "ui.UIState") {
+				const key = stateKeyOf(firstTarget.nodeId);
+
+				if (portName === "selects") {
+					selects = { key, value: authoredStateValue(node) };
+					continue;
+				}
+
+				if (portName === "visibleWhen") {
+					visibleWhen = { key, value: authoredStateValue(node) };
+					continue;
+				}
+			}
+
+			// A connection to a data node names a live source the surface is
+			// given, rather than a value produced inside this graph.
+			if (sourceNode?.type === "ui.UIData") {
+				props[portName] = {
+					binding: { source: sourceOf(firstTarget.nodeId) },
+				};
+				continue;
+			}
+
 			// Otherwise, it's a cross-domain live data binding
 			props[portName] = {
 				binding: {
@@ -317,6 +395,8 @@ export function compileUI(
 		if (className) compiled.className = className;
 		if (Object.keys(props).length > 0) compiled.props = props;
 		if (children.length > 0) compiled.children = children;
+		if (selects) compiled.selects = selects;
+		if (visibleWhen) compiled.visibleWhen = visibleWhen;
 
 		return compiled;
 	}
@@ -350,10 +430,23 @@ export function compileUI(
 				}
 			}
 
+			// The choices this surface starts on. A state node declares one
+			// piece of state and what it holds before anything is clicked.
+			const state: Record<string, unknown> = {};
+
+			for (const [stateId, stateNode] of Object.entries(nodes)) {
+				if (stateNode.type !== "ui.UIState") {
+					continue;
+				}
+
+				state[stateKeyOf(stateId)] = readInput(stateNode, "initial");
+			}
+
 			routes.push({
 				path: String(pathVal),
 				title: titleVal ? String(titleVal) : undefined,
 				components,
+				state: Object.keys(state).length > 0 ? state : undefined,
 			});
 		}
 	} else {

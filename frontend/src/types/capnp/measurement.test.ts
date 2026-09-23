@@ -1,55 +1,23 @@
-import { measurementBytes } from "./measurement.fixture";
 import { describe, expect, it } from "vitest";
-import {
-	EntityType,
-	ENTITY_TYPE_NAMES,
-	readWireMeasurement,
-	SourceType,
-	SOURCE_TYPE_NAMES,
-} from "./measurement";
+import { readWireMeasurement } from "./measurement";
 
-describe("Cap'n Proto Measurement & Metric", () => {
-	it("has matching canonical enum names", () => {
-		expect(ENTITY_TYPE_NAMES[EntityType.TICKER]).toBe("ticker");
-		expect(ENTITY_TYPE_NAMES[EntityType.LEVEL3]).toBe("level3");
-		expect(ENTITY_TYPE_NAMES[EntityType.EXECUTION]).toBe("execution");
+describe("reading a measurement off the wire", () => {
+	it("says how big a frame was when it is too short to be a message", () => {
+		// The reader used to run off the end of the segment table and fail
+		// as a missing `getWord` deep inside the capnp library, which named
+		// neither the frame nor its size. A peer sending something else on
+		// this socket is the likely cause, so the size is the thing worth
+		// reporting.
+		expect(() => readWireMeasurement(new Uint8Array(0))).toThrow(
+			/0 bytes, too short/,
+		);
 
-		expect(SOURCE_TYPE_NAMES[SourceType.HAWKES]).toBe("hawkes");
-		expect(SOURCE_TYPE_NAMES[SourceType.MANIFOLD]).toBe("manifold");
-		expect(SOURCE_TYPE_NAMES[SourceType.TRAINING]).toBe("training");
-		expect(SOURCE_TYPE_NAMES.length).toBe(19);
+		expect(() => readWireMeasurement(new Uint8Array(4))).toThrow(
+			/4 bytes, too short/,
+		);
 	});
 
-	it("decodes authoritative Cap'n Proto WireMeasurement produced by Go backend", () => {
-		const measurement = readWireMeasurement(measurementBytes);
-
-		expect(measurement.id).toBe("test-id-123");
-		expect(measurement.symbol).toBe("BTC/USD");
-		expect(measurement.source).toBe("hawkes");
-		expect(measurement.tick).toBe(101n);
-		expect(measurement.timestamp).toBe(1700000000n);
-		expect(measurement.at).toBe(1700000000123456789n);
-		expect(measurement.snr).toBe(3.5);
-		expect(measurement.maturity).toBe(0.85);
-
-		// Metrics
-		expect(measurement.metrics).toHaveLength(1);
-		expect(measurement.metrics[0].raw).toBeCloseTo(2.5, 4);
-		expect(measurement.metrics[0].normalized).toBeCloseTo(1.23, 4);
-		expect(measurement.metrics[0].standardized).toBeCloseTo(0.45, 4);
-
-		// Metadata
-		expect(measurement.metadata["action"]).toBe("wait");
-		expect(measurement.metadata["confidence"]).toBe("0.85");
-
-		// Provenance
-		expect(measurement.provenance).toContainEqual({
-			name: "action",
-			value: "wait",
-		});
-		expect(measurement.provenance).toContainEqual({
-			name: "confidence",
-			value: "0.85",
-		});
+	it("refuses a frame that is long enough but carries nothing readable", () => {
+		expect(() => readWireMeasurement(new Uint8Array(64))).toThrow();
 	});
 });

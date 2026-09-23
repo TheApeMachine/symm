@@ -125,6 +125,9 @@ func TestIterateWrite(t *testing.T) {
 		step := func(payload string) (string, uint64, uint64) {
 			So(client.Write(ctx, func(args data.Iterate_write_Params) error {
 				args.SetEnvelope(true)
+				if err := args.SetIndexPath("cursor.record"); err != nil {
+					return err
+				}
 				if err := args.SetPath("data"); err != nil {
 					return err
 				}
@@ -156,6 +159,7 @@ func TestIterateWrite(t *testing.T) {
 		for index, raw := range []string{first, second, third} {
 			var record struct {
 				Channel string
+				Cursor  struct{ Record int }
 				Data    struct {
 					Symbol string
 					Last   int
@@ -163,6 +167,7 @@ func TestIterateWrite(t *testing.T) {
 			}
 			So(json.Unmarshal([]byte(raw), &record), ShouldBeNil)
 			So(record.Data.Last, ShouldEqual, index+1)
+			So(record.Cursor.Record, ShouldEqual, []int{0, 1, 0}[index])
 			if index < 2 {
 				So(record.Channel, ShouldEqual, "ticker")
 			}
@@ -177,6 +182,28 @@ func TestIterateWrite(t *testing.T) {
 		})
 		empty, _, _ := step("")
 		So(empty, ShouldBeEmpty)
+
+		Convey("Index projection cannot overwrite an existing cursor or collection", func() {
+			for _, path := range []string{"cursor.record", "data", "data.index"} {
+				fresh := data.Iterate_ServerToClient(data.NewIterate(ctx))
+				So(fresh.Write(ctx, func(args data.Iterate_write_Params) error {
+					args.SetEnvelope(true)
+					if err := args.SetIndexPath(path); err != nil {
+						return err
+					}
+					if err := args.SetPath("data"); err != nil {
+						return err
+					}
+					arrivals, err := args.NewData(1)
+					if err != nil {
+						return err
+					}
+					return arrivals.Set(0, []byte(`{"cursor":{"record":3},"data":[1,2]}`))
+				}), ShouldBeNil)
+				So(fresh.WaitStreaming(), ShouldNotBeNil)
+				fresh.Release()
+			}
+		})
 	})
 }
 
@@ -190,6 +217,9 @@ func BenchmarkIterateWrite(b *testing.B) {
 		for record := 0; record < 2; record++ {
 			if err := client.Write(ctx, func(args data.Iterate_write_Params) error {
 				args.SetEnvelope(true)
+				if err := args.SetIndexPath("cursor.record"); err != nil {
+					return err
+				}
 				if err := args.SetPath("data"); err != nil {
 					return err
 				}

@@ -5,107 +5,119 @@ import (
 	"context"
 	"sync/atomic"
 
+	capnp "capnproto.org/go/capnp/v3"
 	iradix "github.com/hashicorp/go-immutable-radix/v2"
 	"github.com/theapemachine/errnie"
 )
 
-/*
-RadixServer retains one value per key and reads it back. A metric composes it
-to keep its own local state for each symbol it observes, so the state belongs
-to the graph rather than hiding inside an operation.
-
-A key nothing has been retained under is reported as not found rather than as
-an empty value, so a symbol never observed stays distinguishable from one
-observed as empty.
-*/
+/* RadixServer owns one immutable key/value tree and atomic batch replacement. */
 type RadixServer struct {
 	root  atomic.Pointer[iradix.Tree[[]byte]]
-	out   []byte
-	found bool
+	out   [][]byte
+	found []bool
 }
 
 func NewRadix() *RadixServer {
 	server := &RadixServer{}
 	server.root.Store(iradix.New[[]byte]())
-
 	return server
 }
 
-/*
-Write retains a value under a key, or reads that key back when querying.
-*/
+/* Write selects prior values and atomically applies a complete supplied batch. */
 func (server *RadixServer) Write(ctx context.Context, call Radix_write) error {
-	key, err := call.Args().Key()
+	keys, err := call.Args().Key()
 
 	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.BadRequest,
-			"[store.radix.Write] failed to read key argument",
-			err,
-		))
+		return errnie.Error(errnie.Err(errnie.Validation, "radix: keys", err))
 	}
 
-	if key == "" {
-		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"[store.radix.Write] key is not defined",
-			nil,
-		))
-	}
-
-	if call.Args().Query() {
-		server.out, server.found = server.root.Load().Get([]byte(key))
-		return nil
-	}
-
-	value, err := call.Args().Value()
+	values, err := call.Args().Value()
 
 	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.BadRequest,
-			"[store.radix.Write] failed to read value argument",
-			err,
-		))
+		return errnie.Error(errnie.Err(errnie.Validation, "radix: values", err))
 	}
 
-	retained := bytes.Clone(value)
-	updated, _, _ := server.root.Load().Insert([]byte(key), retained)
-	server.root.Store(updated)
+	if call.Args().HasValue() && (keys.Len() == 0 || values.Len() != keys.Len()) {
+		return errnie.Error(errnie.Err(errnie.Validation, "radix: replacement batch must match all requested keys", nil))
+	}
 
-	server.out = retained
-	server.found = true
+	tree := server.root.Load()
+	var transaction *iradix.Txn[[]byte]
+
+	if call.Args().HasValue() {
+		transaction = tree.Txn()
+	}
+	seen := make(map[string]bool, keys.Len())
+	server.out = make([][]byte, keys.Len())
+	server.found = make([]bool, keys.Len())
+
+	for index := range keys.Len() {
+		key, err := keys.At(index)
+
+		if err != nil {
+			return errnie.Error(errnie.Err(errnie.Validation, "radix: key", err))
+		}
+
+		if key == "" || seen[key] {
+			return errnie.Error(errnie.Err(errnie.Validation, "radix: keys must be nonempty and distinct", nil))
+		}
+
+		seen[key] = true
+		server.out[index], server.found[index] = tree.Get([]byte(key))
+
+		if !call.Args().HasValue() {
+			continue
+		}
+
+		pointer, err := capnp.PointerList(values).At(index)
+
+		if err != nil {
+			return errnie.Error(errnie.Err(errnie.Validation, "radix: replacement pointer", err))
+		}
+
+		if len(pointer.Data()) == 0 {
+			return errnie.Error(errnie.Err(errnie.Validation, "radix: every replacement slot must be nonempty", nil))
+		}
+
+		transaction.Insert([]byte(key), bytes.Clone(pointer.Data()))
+	}
+
+	if call.Args().HasValue() {
+		server.root.Store(transaction.Commit())
+	}
 
 	return nil
 }
 
-/*
-Done emits the value resolved for the key and whether it was present.
-*/
+/* Done emits the selected revision and clears only the transient result. */
 func (server *RadixServer) Done(ctx context.Context, call Radix_done) error {
 	results, err := call.AllocResults()
 
 	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.Internal,
-			"[store.radix.Done] failed to allocate results",
-			err,
-		))
+		return errnie.Error(errnie.Err(errnie.Internal, "radix: allocate result", err))
 	}
 
-	results.SetFound(server.found)
+	values, err := results.NewOut(int32(len(server.out)))
 
-	if server.found && len(server.out) > 0 {
-		if err := results.SetOut(server.out); err != nil {
-			return errnie.Error(errnie.Err(
-				errnie.Internal,
-				"[store.radix.Done] failed to set out",
-				err,
-			))
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.Internal, "radix: allocate values", err))
+	}
+
+	found, err := results.NewFound(int32(len(server.found)))
+
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.Internal, "radix: allocate presence", err))
+	}
+
+	for index, value := range server.out {
+		found.Set(index, server.found[index])
+
+		if err := values.Set(index, value); err != nil {
+			return errnie.Error(errnie.Err(errnie.Internal, "radix: emit value", err))
 		}
 	}
 
 	server.out = nil
-	server.found = false
-
+	server.found = nil
 	return nil
 }

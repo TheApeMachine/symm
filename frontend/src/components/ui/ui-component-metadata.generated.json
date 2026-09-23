@@ -833,6 +833,33 @@
       }
     ]
   },
+  "DecisionList": {
+    "name": "DecisionList",
+    "exportName": "DecisionList",
+    "hasChildren": false,
+    "props": [
+      {
+        "name": "className",
+        "type": "string",
+        "optional": true
+      },
+      {
+        "name": "title",
+        "type": "string",
+        "optional": true
+      },
+      {
+        "name": "decisions",
+        "type": "data",
+        "optional": true
+      },
+      {
+        "name": "emptyLabel",
+        "type": "string",
+        "optional": true
+      }
+    ]
+  },
   "DistributionCurve": {
     "name": "DistributionCurve",
     "exportName": "DistributionCurve",
@@ -1183,6 +1210,12 @@
         "optional": true
       }
     ]
+  },
+  "Explain": {
+    "name": "Explain",
+    "exportName": "Explain",
+    "hasChildren": true,
+    "props": []
   },
   "Flex": {
     "name": "Flex",
@@ -1793,6 +1826,12 @@
         "optional": true
       }
     ]
+  },
+  "FluidLegend": {
+    "name": "FluidLegend",
+    "exportName": "FluidLegend",
+    "hasChildren": false,
+    "props": []
   },
   "ForwardView": {
     "name": "ForwardView",
@@ -6264,6 +6303,18 @@
       }
     ]
   },
+  "KnowledgePanel": {
+    "name": "KnowledgePanel",
+    "exportName": "KnowledgePanel",
+    "hasChildren": false,
+    "props": []
+  },
+  "LearningPerformanceBanner": {
+    "name": "LearningPerformanceBanner",
+    "exportName": "LearningPerformanceBanner",
+    "hasChildren": false,
+    "props": []
+  },
   "List": {
     "name": "List",
     "exportName": "List",
@@ -7560,6 +7611,33 @@
       }
     ]
   },
+  "PositionList": {
+    "name": "PositionList",
+    "exportName": "PositionList",
+    "hasChildren": false,
+    "props": [
+      {
+        "name": "className",
+        "type": "string",
+        "optional": true
+      },
+      {
+        "name": "positions",
+        "type": "data",
+        "optional": true
+      },
+      {
+        "name": "exiting",
+        "type": "data",
+        "optional": true
+      },
+      {
+        "name": "emptyLabel",
+        "type": "string",
+        "optional": true
+      }
+    ]
+  },
   "Radar": {
     "name": "Radar",
     "exportName": "Radar",
@@ -7835,6 +7913,12 @@
         "optional": true
       }
     ]
+  },
+  "RecognitionPanel": {
+    "name": "RecognitionPanel",
+    "exportName": "RecognitionPanel",
+    "hasChildren": false,
+    "props": []
   },
   "RecognitionView": {
     "name": "RecognitionView",
@@ -8412,6 +8496,34 @@
       {
         "name": "active",
         "type": "boolean",
+        "optional": true
+      }
+    ]
+  },
+  "TerminalSignalHeatmap": {
+    "name": "TerminalSignalHeatmap",
+    "exportName": "TerminalSignalHeatmap",
+    "hasChildren": false,
+    "props": []
+  },
+  "Text": {
+    "name": "Text",
+    "exportName": "Text",
+    "hasChildren": false,
+    "props": [
+      {
+        "name": "title",
+        "type": "string",
+        "optional": true
+      },
+      {
+        "name": "className",
+        "type": "string",
+        "optional": true
+      },
+      {
+        "name": "value",
+        "type": "string",
         "optional": true
       }
     ]

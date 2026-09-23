@@ -1,4 +1,4 @@
-import { Flex } from "../ui/flex";
+import { Flex } from "./flex";
 
 /*
 TerminalSignalHeatmap is the static canvas shell. The measurements store drives

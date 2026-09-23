@@ -1,7 +1,7 @@
-import { Badge } from "#/components/ui/badge";
-import { Flex } from "#/components/ui/flex";
-import { Section } from "#/components/ui/section";
-import { Typography } from "#/components/ui/typography";
+import { Badge } from "./badge";
+import { Flex } from "./flex";
+import { Section } from "./section";
+import { Typography } from "./typography";
 
 export const LearningPerformanceBanner = () => {
 	return (

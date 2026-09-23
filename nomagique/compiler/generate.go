@@ -569,6 +569,27 @@ own Cap'n Proto input fields, so a schema change is the only edit a new UI
 field requires. Component identity travels as a plain name resolved against the
 generated frontend registry, which is why no component catalog appears here.
 */
+
+/*
+emitPortListOpening writes the head of a node's input-port closure.
+
+A component that takes nothing still has to produce a port list, and an empty
+one written plainly is two TypeScript errors: the array's element type cannot
+be inferred, and the `ports` builder it never calls is an unused binding. Both
+are stated explicitly here rather than left for whoever next adds a component
+that happens to have no props.
+*/
+func emitPortListOpening(buf *strings.Builder, tail string, empty bool) {
+	if empty {
+		fmt.Fprintf(buf, "\t\tinputs: (_ports) => (%s) => {\n", tail)
+		buf.WriteString("\t\t\tconst dynamicPorts: never[] = [\n")
+		return
+	}
+
+	fmt.Fprintf(buf, "\t\tinputs: (ports) => (%s) => {\n", tail)
+	buf.WriteString("\t\t\tconst dynamicPorts = [\n")
+}
+
 func emitUINodeType(buf *strings.Builder, schema Schema) {
 	register := "addNodeType"
 
@@ -586,8 +607,15 @@ func emitUINodeType(buf *strings.Builder, schema Schema) {
 	}
 
 	buf.WriteString("\t\tinitialWidth: 280,\n")
-	buf.WriteString("\t\tinputs: (ports) => (_inputData, connections) => {\n")
-	buf.WriteString("\t\t\tconst dynamicPorts = [\n")
+	uiPortCount := 0
+
+	for _, input := range schema.Inputs {
+		if input.Name != uiChildrenPort {
+			uiPortCount++
+		}
+	}
+
+	emitPortListOpening(buf, "_inputData, connections", uiPortCount == 0)
 
 	for _, input := range schema.Inputs {
 		if input.Name == uiChildrenPort {
@@ -928,8 +956,9 @@ func emitUIComponentNodeTypes(buf *strings.Builder, uiMeta map[string]UIComponen
 		fmt.Fprintf(buf, "\t\tlabel: %q,\n", comp.Name)
 		buf.WriteString("\t\tcategory: \"UI Components\",\n")
 		buf.WriteString("\t\tinitialWidth: 280,\n")
-		buf.WriteString("\t\tinputs: (ports) => (_inputData, _connections) => {\n")
-		buf.WriteString("\t\t\tconst dynamicPorts = [\n")
+		// A component with no props still uses the builder when it takes
+		// children, since the child ports are pushed after the list opens.
+		emitPortListOpening(buf, "_inputData, _connections", len(comp.Props) == 0 && !comp.HasChildren)
 
 		for _, prop := range comp.Props {
 			switch prop.Type {

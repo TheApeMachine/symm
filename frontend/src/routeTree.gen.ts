@@ -22,7 +22,10 @@ import { Route as FluidRouteImport } from './routes/fluid'
 import { Route as DynamicRouteImport } from './routes/dynamic'
 import { Route as DiagnosticsRouteImport } from './routes/diagnostics'
 import { Route as CortexRouteImport } from './routes/cortex'
+import { Route as SplatRouteImport } from './routes/$'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as DynamicIndexRouteImport } from './routes/dynamic.index'
+import { Route as DynamicNameRouteImport } from './routes/dynamic.$name'
 
 const XrayRoute = XrayRouteImport.update({
   id: '/xray',
@@ -89,17 +92,33 @@ const CortexRoute = CortexRouteImport.update({
   path: '/cortex',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SplatRoute = SplatRouteImport.update({
+  id: '/$',
+  path: '/$',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DynamicIndexRoute = DynamicIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => DynamicRoute,
+} as any)
+const DynamicNameRoute = DynamicNameRouteImport.update({
+  id: '/$name',
+  path: '/$name',
+  getParentRoute: () => DynamicRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/$': typeof SplatRoute
   '/cortex': typeof CortexRoute
   '/diagnostics': typeof DiagnosticsRoute
-  '/dynamic': typeof DynamicRoute
+  '/dynamic': typeof DynamicRouteWithChildren
   '/fluid': typeof FluidRoute
   '/hindsight': typeof HindsightRoute
   '/influence': typeof InfluenceRoute
@@ -110,12 +129,14 @@ export interface FileRoutesByFullPath {
   '/signals': typeof SignalsRoute
   '/workbench': typeof WorkbenchRoute
   '/xray': typeof XrayRoute
+  '/dynamic/$name': typeof DynamicNameRoute
+  '/dynamic/': typeof DynamicIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/$': typeof SplatRoute
   '/cortex': typeof CortexRoute
   '/diagnostics': typeof DiagnosticsRoute
-  '/dynamic': typeof DynamicRoute
   '/fluid': typeof FluidRoute
   '/hindsight': typeof HindsightRoute
   '/influence': typeof InfluenceRoute
@@ -126,13 +147,16 @@ export interface FileRoutesByTo {
   '/signals': typeof SignalsRoute
   '/workbench': typeof WorkbenchRoute
   '/xray': typeof XrayRoute
+  '/dynamic/$name': typeof DynamicNameRoute
+  '/dynamic': typeof DynamicIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/$': typeof SplatRoute
   '/cortex': typeof CortexRoute
   '/diagnostics': typeof DiagnosticsRoute
-  '/dynamic': typeof DynamicRoute
+  '/dynamic': typeof DynamicRouteWithChildren
   '/fluid': typeof FluidRoute
   '/hindsight': typeof HindsightRoute
   '/influence': typeof InfluenceRoute
@@ -143,11 +167,14 @@ export interface FileRoutesById {
   '/signals': typeof SignalsRoute
   '/workbench': typeof WorkbenchRoute
   '/xray': typeof XrayRoute
+  '/dynamic/$name': typeof DynamicNameRoute
+  '/dynamic/': typeof DynamicIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/$'
     | '/cortex'
     | '/diagnostics'
     | '/dynamic'
@@ -161,12 +188,14 @@ export interface FileRouteTypes {
     | '/signals'
     | '/workbench'
     | '/xray'
+    | '/dynamic/$name'
+    | '/dynamic/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/$'
     | '/cortex'
     | '/diagnostics'
-    | '/dynamic'
     | '/fluid'
     | '/hindsight'
     | '/influence'
@@ -177,9 +206,12 @@ export interface FileRouteTypes {
     | '/signals'
     | '/workbench'
     | '/xray'
+    | '/dynamic/$name'
+    | '/dynamic'
   id:
     | '__root__'
     | '/'
+    | '/$'
     | '/cortex'
     | '/diagnostics'
     | '/dynamic'
@@ -193,13 +225,16 @@ export interface FileRouteTypes {
     | '/signals'
     | '/workbench'
     | '/xray'
+    | '/dynamic/$name'
+    | '/dynamic/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  SplatRoute: typeof SplatRoute
   CortexRoute: typeof CortexRoute
   DiagnosticsRoute: typeof DiagnosticsRoute
-  DynamicRoute: typeof DynamicRoute
+  DynamicRoute: typeof DynamicRouteWithChildren
   FluidRoute: typeof FluidRoute
   HindsightRoute: typeof HindsightRoute
   InfluenceRoute: typeof InfluenceRoute
@@ -305,6 +340,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CortexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/$': {
+      id: '/$'
+      path: '/$'
+      fullPath: '/$'
+      preLoaderRoute: typeof SplatRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
@@ -312,14 +354,42 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/dynamic/': {
+      id: '/dynamic/'
+      path: '/'
+      fullPath: '/dynamic/'
+      preLoaderRoute: typeof DynamicIndexRouteImport
+      parentRoute: typeof DynamicRoute
+    }
+    '/dynamic/$name': {
+      id: '/dynamic/$name'
+      path: '/$name'
+      fullPath: '/dynamic/$name'
+      preLoaderRoute: typeof DynamicNameRouteImport
+      parentRoute: typeof DynamicRoute
+    }
   }
 }
 
+interface DynamicRouteChildren {
+  DynamicNameRoute: typeof DynamicNameRoute
+  DynamicIndexRoute: typeof DynamicIndexRoute
+}
+
+const DynamicRouteChildren: DynamicRouteChildren = {
+  DynamicNameRoute: DynamicNameRoute,
+  DynamicIndexRoute: DynamicIndexRoute,
+}
+
+const DynamicRouteWithChildren =
+  DynamicRoute._addFileChildren(DynamicRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  SplatRoute: SplatRoute,
   CortexRoute: CortexRoute,
   DiagnosticsRoute: DiagnosticsRoute,
-  DynamicRoute: DynamicRoute,
+  DynamicRoute: DynamicRouteWithChildren,
   FluidRoute: FluidRoute,
   HindsightRoute: HindsightRoute,
   InfluenceRoute: InfluenceRoute,

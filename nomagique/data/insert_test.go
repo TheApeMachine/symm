@@ -228,3 +228,82 @@ func BenchmarkInsertWrite(b *testing.B) {
 		}
 	}
 }
+
+func TestInsertWriteUnique(t *testing.T) {
+	Convey("Given a unique insertion at an explicit path", t, func() {
+		for _, example := range []struct {
+			payload, value    string
+			inserted, invalid bool
+		}{
+			{`{}`, `{"action":"ENTER","holding":false}`, true, false},
+			{`{"example":{"action":"ENTER","holding":false}}`, `{"holding":false,"action":"ENTER"}`, false, false},
+			{`{"example":{"action":"ENTER","holding":false}}`, `{"action":"WAIT","holding":false}`, false, true},
+		} {
+			client := data.Insert_ServerToClient(data.NewInsert(context.Background()))
+			defer client.Release()
+			err := client.Write(context.Background(), func(params data.Insert_write_Params) error {
+				params.SetUnique(true)
+
+				if err := params.SetPath("example"); err != nil {
+					return err
+				}
+
+				if err := params.SetData([]byte(example.payload)); err != nil {
+					return err
+				}
+
+				return params.SetJson([]byte(example.value))
+			})
+
+			if err == nil {
+				err = client.WaitStreaming()
+			}
+
+			if example.invalid {
+				So(err, ShouldNotBeNil)
+				continue
+			}
+
+			So(err, ShouldBeNil)
+			future, release := client.Done(context.Background(), nil)
+			results, err := future.Struct()
+			So(err, ShouldBeNil)
+			So(results.Inserted(), ShouldEqual, example.inserted)
+			release()
+		}
+	})
+}
+
+func TestInsertWriteUnsigned(t *testing.T) {
+	Convey("Given an unsigned graph port encoded into a JSON document", t, func() {
+		ctx := context.Background()
+		client := data.Insert_ServerToClient(data.NewInsert(ctx))
+		defer client.Release()
+		for _, expected := range []uint64{0, 9007199254740993, ^uint64(0)} {
+			So(client.Write(ctx, func(args data.Insert_write_Params) error {
+				if err := args.SetPath("cursor.index"); err != nil {
+					return err
+				}
+				if err := args.SetEncoding("uint64"); err != nil {
+					return err
+				}
+				args.SetUnsigned(expected)
+				return args.SetData([]byte(`{"preserved":true}`))
+			}), ShouldBeNil)
+			So(client.WaitStreaming(), ShouldBeNil)
+			future, release := client.Done(ctx, nil)
+			result, err := future.Struct()
+			So(err, ShouldBeNil)
+			payload, err := result.Out()
+			So(err, ShouldBeNil)
+			var document struct {
+				Preserved bool
+				Cursor    struct{ Index uint64 }
+			}
+			So(json.Unmarshal(payload, &document), ShouldBeNil)
+			So(document.Preserved, ShouldBeTrue)
+			So(document.Cursor.Index == expected, ShouldBeTrue)
+			release()
+		}
+	})
+}

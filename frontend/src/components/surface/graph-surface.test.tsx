@@ -1,6 +1,5 @@
 // @vitest-environment jsdom
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
-import type { ComponentType } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	clearGraphResults,
@@ -42,18 +41,20 @@ const fixture = vi.hoisted(() => ({
 		producer: { id: "producer", type: "fixture.RecordedResults" },
 	},
 }));
-// Only persistence is substituted; this exercises the actual /dynamic component,
-// graph compiler, generated registry, result store, and extracted visualizations.
-vi.mock("#/collections/pipeline_graph_row", () => ({
-	usePipelineGraphRow: () => fixture,
+// Only the fetch is substituted; this exercises the real surface component,
+// graph compiler, generated registry, result store, and the extracted
+// visualizations the graph names.
+vi.mock("#/service/compute", () => ({
+	fetchDefinition: async () => fixture,
+	fetchDefinitions: async () => ["local-default"],
 }));
-import { Route } from "./dynamic";
+import { GraphSurface } from "#/components/surface/graph-surface";
 afterEach(() => {
 	cleanup();
 	clearGraphResults("local-default");
 });
 
-describe("UIGraphRouteComponent", () => {
+describe("a graph drawn as a surface", () => {
 	it("renders learning views through graph bindings and clears old results", async () => {
 		const config = createFlumeConfig();
 		for (const name of [
@@ -101,11 +102,7 @@ describe("UIGraphRouteComponent", () => {
 				trie: { id: "root", prefix: "Observed root", probability: 1 },
 			},
 		});
-		const Dynamic = Route.options.component as ComponentType & {
-			preload?: () => Promise<void>;
-		};
-		await Dynamic.preload?.();
-		render(<Dynamic />);
+		render(<GraphSurface name="local-default" />);
 		expect((await screen.findAllByText("Recorded episode"))[0]).toBeDefined();
 		expect(screen.getByText("9007199254740995")).toBeDefined();
 		expect(screen.getByText("Observed path")).toBeDefined();
