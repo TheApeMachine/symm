@@ -29,7 +29,7 @@ func (c WebSocketClient) Write(ctx context.Context, params func(WebSocketClient_
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 2}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 3}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(WebSocketClient_write_Params(s)) }
 	}
 
@@ -211,7 +211,7 @@ func (c WebSocketClient_done) Args() WebSocketClient_done_Params {
 
 // AllocResults allocates the results struct.
 func (c WebSocketClient_done) AllocResults() (Received, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 3})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 16, PointerCount: 3})
 	return Received(r), err
 }
 
@@ -230,12 +230,12 @@ type WebSocketClient_write_Params capnp.Struct
 const WebSocketClient_write_Params_TypeID = 0xaee2b35cc1f81693
 
 func NewWebSocketClient_write_Params(s *capnp.Segment) (WebSocketClient_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 3})
 	return WebSocketClient_write_Params(st), err
 }
 
 func NewRootWebSocketClient_write_Params(s *capnp.Segment) (WebSocketClient_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 3})
 	return WebSocketClient_write_Params(st), err
 }
 
@@ -289,17 +289,40 @@ func (s WebSocketClient_write_Params) SetEndpoint(v string) error {
 	return capnp.Struct(s).SetText(0, v)
 }
 
-func (s WebSocketClient_write_Params) Write() ([]byte, error) {
+func (s WebSocketClient_write_Params) Write() (capnp.DataList, error) {
 	p, err := capnp.Struct(s).Ptr(1)
-	return []byte(p.Data()), err
+	return capnp.DataList(p.List()), err
 }
 
 func (s WebSocketClient_write_Params) HasWrite() bool {
 	return capnp.Struct(s).HasPtr(1)
 }
 
-func (s WebSocketClient_write_Params) SetWrite(v []byte) error {
-	return capnp.Struct(s).SetData(1, v)
+func (s WebSocketClient_write_Params) SetWrite(v capnp.DataList) error {
+	return capnp.Struct(s).SetPtr(1, v.ToPtr())
+}
+
+// NewWrite sets the write field to a newly
+// allocated capnp.DataList, preferring placement in s's segment.
+func (s WebSocketClient_write_Params) NewWrite(n int32) (capnp.DataList, error) {
+	l, err := capnp.NewDataList(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return capnp.DataList{}, err
+	}
+	err = capnp.Struct(s).SetPtr(1, l.ToPtr())
+	return l, err
+}
+func (s WebSocketClient_write_Params) OnConnect() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(2)
+	return []byte(p.Data()), err
+}
+
+func (s WebSocketClient_write_Params) HasOnConnect() bool {
+	return capnp.Struct(s).HasPtr(2)
+}
+
+func (s WebSocketClient_write_Params) SetOnConnect(v []byte) error {
+	return capnp.Struct(s).SetData(2, v)
 }
 
 // WebSocketClient_write_Params_List is a list of WebSocketClient_write_Params.
@@ -307,7 +330,7 @@ type WebSocketClient_write_Params_List = capnp.StructList[WebSocketClient_write_
 
 // NewWebSocketClient_write_Params creates a new list of WebSocketClient_write_Params.
 func NewWebSocketClient_write_Params_List(s *capnp.Segment, sz int32) (WebSocketClient_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 3}, sz)
 	return capnp.StructList[WebSocketClient_write_Params](l), err
 }
 
@@ -409,12 +432,12 @@ func (w Received_Which) String() string {
 const Received_TypeID = 0xa47cf8178fe76d4e
 
 func NewReceived(s *capnp.Segment) (Received, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 3})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 3})
 	return Received(st), err
 }
 
 func NewRootReceived(s *capnp.Segment) (Received, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 3})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 3})
 	return Received(st), err
 }
 
@@ -533,12 +556,20 @@ func (s Received_frame) SetEndpoint(v string) error {
 	return capnp.Struct(s).SetText(2, v)
 }
 
+func (s Received_frame) Generation() uint64 {
+	return capnp.Struct(s).Uint64(8)
+}
+
+func (s Received_frame) SetGeneration(v uint64) {
+	capnp.Struct(s).SetUint64(8, v)
+}
+
 // Received_List is a list of Received.
 type Received_List = capnp.StructList[Received]
 
 // NewReceived creates a new list of Received.
 func NewReceived_List(s *capnp.Segment, sz int32) (Received_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 3}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 16, PointerCount: 3}, sz)
 	return capnp.StructList[Received](l), err
 }
 
@@ -559,55 +590,60 @@ func (f Received_frame_Future) Struct() (Received_frame, error) {
 	return Received_frame(p.Struct()), err
 }
 
-const schema_91d758a99e924524 = "x\xda\xac\x93Oh\x1cU\x1c\xc7\x7f\xdf\xf7fv\"" +
-	"d\x19\xa6\xb3\x1a\x04uE6m\xb3\xd8M\xb3\xa3\xd0" +
-	"\x16\xb4+u\xa5U#\xfb\xda\x82U*q\xba\xf3\xaa" +
-	"k\xf7_fg\xbb\x17\xe9\xc9\xdaz0\xc1xRQ" +
-	"#\x98\x83 J\xf0,\x18!\xa0\x11\x04\x0f\xc1\x93\x1e" +
-	"\x02!\x17=x\x10\xe2AG\xdelfw\x13\x93H" +
-	"\xd0\xdb\xf2\xe6\xb7\xdf\xf7\x99\xcf\xf77\xc7\x8f\xb1\x826" +
-	"\x91<m\x10\x13\x17\xf5Dxh\xe6\x91\xa9\xef\xbf{" +
-	"\xea5\xb2\xc6x\x98)\xce}\xf0\xc9\xa5\x1f\xdf\"\x82" +
-	"s\x93\xaf\xc0\xfe\x88\x1bD\xf6\xfb\xfc\x96\xfd+\x1f!" +
-	"\x0a\x9f\xa9m\xcc\x8el\xbe\xfa1\x891\xa0?^\xe4" +
-	"\x06\x03\x9c\x9f\xf8\x1c\xec\xdf\xa3\xbf\xfc\xc6?'\x84\xbf" +
-	"\xbc\xfe\xed\xa7\x87\xa6\xee_\x88\xc2G\xd6N|x\xdf" +
-	"\xb9\xa1\x1fTxM[\x81\xfd\x86\xa6&oj\xb7\xec" +
-	"U\xf5+|\xfb\xae\xcd\xa5\xcb_\xac}F\xd6I\x10" +
-	"\xe9\xcc r\xbe\xd4\xf2\x8c`\xafj\x1dB\xb8\xf9\xf3" +
-	"\xe1\xf9\xe9\x1c\x96H\xe4\x81>\xcb\x9d\xdc\x00\x91\xf3\xb0" +
-	"\xfe5\x08vQW7WG\x8f\xa4n\xccd\x96I" +
-	"\x9c\x84\x0a\x83\x0a[\xd7\xa3\xb0?u\x15vc\xe3\x8c" +
-	"\xe6\x1e\x19]\xde\xbaMQ;\xcf%\xa2\x81\xe9\x84\x8a" +
-	"\x90\x97\x1em\xbe\xb80\xb9\xda\x1dP\x84\xce\x1dF\x96" +
-	"\x91\x16~\x938z\xb6V<\xfc\xc7\xc0\x13\xa8'\xb7" +
-	"\xc3z\xa3\xe6\xbeT\x99n'\xe4x]\x06\x9d\x86\x7f" +
-	"m\xbc#\xaf\xb4\x1a\xe5k2\x18/W+\xb2\x1e\xe4" +
-	"\xcan\xb3\xde<\xf5\xac\xbcr!:>\x13\x9d\x12\x95" +
-	"\x001\xc4\xf5\x01\x0f\xa8/~\xd5q\xde\x9dz\xc7\x9a" +
-	"\xc8\x13\xb3F\x0d\xa0w5\xe2\xb7\xb7\xee\xce\x12\xb3\x92" +
-	"F\xba\xe3W\x02Y\x80\xe95\xea\xb2\x00\xa1\x01\xa1s" +
-	"\xd5\x9f\xbd\xc7Z\x7f\x93\x88zd\xfa\xbf\x92\x9d\x97e" +
-	"Y\xb9.\xe1)\xa2a\xae\x11i \xb2\x8a\xa7\x88D" +
-	"\x81C<\xcd\x90D\x18\xa6\x94W\xeb\\\x96H<\xce" +
-	"!J\x0cI\xf6W\x88\x81\x96\xac\xc9<\xb1\xd3\xad\xc0" +
-	"\x0d\xda-\x98\xe1\x0b\xaf\xcc/\xde\xfb\xc4{\xb7\x89\x00" +
-	"\x93`V\xbc\xaa\xa4D\xfa\xaa\xef\xd6\xe4\xfe\xe2Z\xd2" +
-	"\xbf.\xfd\x9d\xe2.D\xa7\x83\xe2\xe2Jw\x13\x17\xb7" +
-	"\x89x3\xf6\x10W\x02z0\xc6A[\xccEY\x99" +
-	"R\xda\xf5\xddZK\x0c\xf5\xe4\x8d=I$\x8er\x88" +
-	"\x87\x18,\xa0\xebn\"O$\x1e\xe4\x10'\x18BY" +
-	"\xf7\x9a\x8d\x8aZ\x04\xc201\x0c\x13\xbadH\x12C" +
-	"\x92p\x80\xdd\xdaj\xd0\xcbEn\xa9[b\x0aL\xb5" +
-	"\x98\xed\xb7\x18\x81pU\xe2\xf3D\xe2,\x87\xb8\xc8`" +
-	"1\x96\x82Fd\x09\x85\\\xe2\x10\x97\x19L_\xba^" +
-	"\x0f\xc4\xdf\x8a'\xfeX\x10\xb3\xee\xc6\xbf\xbf\xc7\xfdJ" +
-	"\xcd\xa9.2\xe7e\xba\xd5\xae\x06\xdb<\xaa%\xccp" +
-	"\x88\xe3\x0c\xb1\xc6c\x0f\xf4\xdd\xee\xb9mF\xa3\x1d\xfc" +
-	"\xc3\xe4\xc1\xb9\xb6\xf7;\xf0q\xec\xd4\xba\xf3\xdb\x88\xb4" +
-	"\xaa\x02&\xb3}\xd7\xa6\xe7\x06nLe\xba\x9e\xe7\xc7" +
-	"\xea\xcc\xa6\x1b\xbc\xfc\x7fy,\xb9\xa6\xc2\xfd\x0fk=" +
-	"\x18\xf3w\x00\x00\x00\xff\xff\x8c\x8c\xc2;"
+const schema_91d758a99e924524 = "x\xda\xa4\x93\xd1k\x1cU\x14\xc6\xcfw\xef\xccN\x0a" +
+	"Y\xd7\xdb\x8d\x16\xc1\x1a\x91M\xd3,\xb8iw-\xd8" +
+	"J5\x12W\x1a5\xb27U\x0c\x12I\xa7;\xb7\xed" +
+	"\xda\xdd\x99\xed\xecl\xb7\x0fR|\x10\xab\x88)\xd6'" +
+	"\x15j\x1f\xec\x83 J\xf1\x1fh\x85\x82F\x14|(" +
+	">\xe9C!\x04A\x11\x1f\x0a\xc9\x8bW\xeedg\xb3" +
+	"\xd8\xa6%\xe4m\xb8\xf7\xcc9\xbf\xf3}\xdf\xddSc" +
+	"\x13\xd6\xde\xf4\xdf\x0e19g\xa7\xf4\xf6\x85\x83\xf3?" +
+	"\xff\xf8\xe2;$\xc6\xb8\xce\x95/\\\xfcr\xf6\xd7\x8f" +
+	"\x88P\xfa\x8d/\"\xbb\xca\x1d\xa2\xec-~.[\xb6" +
+	"F\x89\xf4\xcb\x8d\xe5\xf3;V\xde\xfa\x82\xe4\x18\xd8z" +
+	"y\x99;\x0c(\x1d\xb4. \xfb\xaae~\x91\xd67" +
+	"\x04\xfd\xe7\xbb?|\xb5}\xfe\xd1\xcbq\xf3\x1d7\x9f" +
+	"\xfc\xfc\x91\xa9\x81_L\xf3\x9f\xacEd\xff\x88+\x97" +
+	"\xacs\xd9}\xb6C\xa4?~p\xe5\xda\xdc\xb77\xbf" +
+	"&\xb1\x1fD\xb6\x19]\xdai\x17\x19!\xbb\xcf6\xed" +
+	"V~\xdfu\xe9T\x01\xd7H\x16\xc1\xd6Y\x1e\xe0\x0e" +
+	"\x88JK\xf6w do\xd9\xcb\x04]\x1f\x19\x1d:" +
+	"\xbb\x90\xbbNr?L3\x98f7Rq\xb3\xbfR" +
+	"\x1d\x82>\xbb<i\xb9\xa3#\xd7\xfb\xa7M9q\x81" +
+	"\xeb\x98ij\xf6\xe9\xe6\x91\xcb\xd37\xd6\x0a\x0cki" +
+	"\xd5\xc93\xb2\xf4\xf7\xa9\xdd\x87\x1a\xe5]\xab}7\xff" +
+	"\x98\x9b\x8b\xda\x0f\x1a\xee\xf1\xda\xa9vJ\x8d\xfb*\xea" +
+	"\x04\xe1\xc9\xf1\x8e:\xda\x0a\xaa'U4^\xad\xd7\x94" +
+	"\x1f\x15\xaan\xd3o\x1exM\x1d=\x1c\x1fO\xc6\xa7" +
+	"D\x15@\x0ep\xbbO\x07\xf8W\xaevJ\x9f\xce\x7f" +
+	"\"\xf6\x16\x89\x89\x11\x07\xe8\x8dF\xb2\xbdx(OL" +
+	"\xa4\x9d\xe1NX\x8b\xd4\x042^\xe0\xab\x09\xc8\x01@" +
+	"\x97\x8e\x85\xe7\x1f\x16K\x1f\x12\x91\xbe\xfa\xd4\x99\xc5\x0f" +
+	"f\xdf_0\xdf\x09\xa5}O\xca\x19UU\xb5\xd3\x0a" +
+	"\x9e\xa1\x1b\xe4\x16\x91\x05\"Q>@$'8\xe4K" +
+	"\x0cih=d4\x16Sy\"\xf9\x1c\x87\xac0\xa4" +
+	"\xd9\xbf\x1a}\x8e\x89\xe9\"\xb1gZ\x91\x1b\xb5[\xc8" +
+	"\xe87\xde\xbcte\xe7\xf3\x9f\xbdG\x04d\x08\x99\x9a" +
+	"WW\x94\x1a>\x16\xba\x0duw\x11[*<\xad\xc2" +
+	"\xff\x8bx8>\xed\x171\xb1\xf7N\"&\xce\"I" +
+	"\xc9\x06\"V\x80\x1e\x8c\xb3YG\x0bq\xaf\\e\xd8" +
+	"\x0d\xddF\xab_\xbc\x17\xd6e\x12\xc0\x9av\xd3E\"" +
+	"y\x88Cz\x0c\x82\xb1!0\"\xe1\xce\x10\xc9#\x1c" +
+	"\xb2\xce\xa0\x95\xef5\x83\x9aI\x0aa\x90\x18\x06\x09k" +
+	"\xb8\xb8\x8fP\xe1@\x9a\x98\xf9\xd4\x81?\x19\xf8\xbe\xaa" +
+	"\x12\xa2\xf8,M\xd8D.\xbb\x8e{\x85\xd8\x0b\x92\xf7" +
+	"\x1b\xee.\x8e\xf1w\x8eC\x9e\xe8\x82s\"\xa1^'" +
+	"\x92\x1e\x87lv\xc1-\"\xd10+\xd69\xe4\x19\x06" +
+	"\xc11\x04\x9bH\xb4Me\xc4!\xdff\xc8\x84\xca\xf5" +
+	"ztaw&\xf1g\xa3d\xb7;\xed\xab\x8f+_" +
+	"\x85nT#\x1e\xf8\xd8F\x0c\xdb\xe8\x1e\x0e\xdd-." +
+	"\x05\xe3rnF\x0d\xb7\xda\xf5\xa8%\x07z\x0e\x8d\x99" +
+	"x\xe78\xe4\x1e\x86\xc4\xa0\xc7\x1f#\x92\xbb9\xe4\x13" +
+	"\x0c\x1b\xe6\xd8\x09\xda\xb7k\xbey\xae\x0d\x93\x93_\x7f" +
+	"v\xbd\xe4\xf4\xbf\xba^r\xa6\xf3\xdd8\xbd\xc2\x90\xf1" +
+	"\xdc\xc8M\xa82\xae\xe7\x85\x89\x9e\x99\xa6\x1b\x9d\xe8\x89" +
+	"\xbbE\x1d+n\xc6\xe0n\xe1\xc1\xf4\xb7\xf9/\x00\x00" +
+	"\xff\xff\x1bR\xdb\x0a"
 
 func RegisterSchema(reg *schemas.Registry) {
 	reg.Register(&schemas.Schema{

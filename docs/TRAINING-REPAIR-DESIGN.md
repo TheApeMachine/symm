@@ -2,9 +2,12 @@
 
 Status: proposed mathematical design, not an implemented learner. The runtime
 and capture repairs accompanying this document do not establish profitability.
-`TRAINING.md` remains the behavioral contract. Two choices below need review:
-lexicographic versus additive sympathy, and exact-event versus early-warning
-labels. Neither is concealed in an implementation constant.
+`TRAINING.md` remains the behavioral contract. One choice below needs review:
+lexicographic versus additive sympathy. The label question (exact-event versus
+early-warning) is settled: decisions are graded by executable PnL against the
+recorded Level 3 book through `paper.Exchange`, so an ENTER is right wherever
+the round trip it started made money, before B or not. The label contract
+below is superseded by that grade and kept only for its causal rules.
 
 ## Runtime repair boundary
 

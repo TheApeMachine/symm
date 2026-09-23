@@ -7,8 +7,12 @@ using import "../../runtime/status.capnp".Status;
 
 using import "../../runtime/status.capnp".Source;
 
-interface WebSocketClient extends(Source) {
-  write @0 (endpoint :Text, write :Data) -> stream;
+using import "../../store/radix.capnp".Retained;
+
+# onConnect is sent once on every physical connection before ordinary writes.
+# write gathers outbound frames; the JSON graph owns their protocol content.
+interface WebSocketClient extends(Source, Retained) {
+  write @0 (endpoint :Text, write :List(Data), onConnect :Data) -> stream;
   done @1 () -> Received;
 }
 
@@ -20,6 +24,7 @@ struct Received {
       read @2 :Data;
       receivedAt @3 :Text;
       endpoint @4 :Text;
+      generation @5 :UInt64;
     }
   }
 }

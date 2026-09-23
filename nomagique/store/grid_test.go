@@ -262,7 +262,7 @@ func TestGridDeclaresOnce(t *testing.T) {
 			spoken := 0
 
 			for _, entry := range server.Logs() {
-				if strings.Contains(entry.Message, "delivering") {
+				if strings.Contains(entry.Message, "registered") {
 					spoken++
 				}
 			}

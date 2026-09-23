@@ -627,6 +627,27 @@ func CompileFanInCopier(
 	fromOffset := uint16(fromField.Offset)
 	toOffset := uint16(toField.Offset)
 
+	if fromField.Which == schema.Type_Which_float64 {
+		return func(source, target capnp.Struct) error {
+			pointer, err := target.Ptr(toOffset)
+			if err != nil {
+				return errnie.Error(errnie.Err(errnie.Internal, "compiler: numeric gathering port", err))
+			}
+			values := capnp.Float64List(pointer.List())
+			if !values.IsValid() {
+				values, err = capnp.NewFloat64List(target.Segment(), int32(length))
+				if err != nil {
+					return errnie.Error(errnie.Err(errnie.Internal, "compiler: allocate numeric gathering port", err))
+				}
+				if err := target.SetPtr(toOffset, values.ToPtr()); err != nil {
+					return errnie.Error(errnie.Err(errnie.Internal, "compiler: attach numeric gathering port", err))
+				}
+			}
+			values.Set(index, math.Float64frombits(source.Uint64(capnp.DataOffset(fromField.Offset*8))))
+			return nil
+		}, nil
+	}
+
 	return func(src, dst capnp.Struct) error {
 		gathered, err := fanInList(dst, toOffset, length)
 

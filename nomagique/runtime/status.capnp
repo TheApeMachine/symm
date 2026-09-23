@@ -26,3 +26,7 @@ interface Source {}
 interface Durable {
   flush @0 () -> ();
 }
+
+# Queued owners report pending :UInt64 in done. A positive count means
+# admitted work remains runnable without a new external observation.
+interface Queued {}

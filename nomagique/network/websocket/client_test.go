@@ -54,7 +54,11 @@ func TestWebSocketClient(t *testing.T) {
 				if err := params.SetEndpoint(wsURL); err != nil {
 					return err
 				}
-				return params.SetWrite([]byte("hello"))
+				frames, err := params.NewWrite(1)
+				if err != nil {
+					return err
+				}
+				return frames.Set(0, []byte("hello"))
 			})
 			So(err, ShouldBeNil)
 
@@ -121,5 +125,88 @@ func TestWebSocketClientDone(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(result.Which(), ShouldEqual, Received_Which_idle)
 		})
+	})
+}
+
+func TestWebSocketClientWrite(t *testing.T) {
+	Convey("Given a graph-declared connection message and multiple outbound frames", t, func() {
+		received := make(chan string, 16)
+		failures := make(chan error, 16)
+		disconnected := make(chan struct{}, 1)
+		upgrader := gorillaws.Upgrader{}
+		venue := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			connection, err := upgrader.Upgrade(writer, request, nil)
+			if err != nil {
+				failures <- err
+				return
+			}
+			defer func() {
+				if err := connection.Close(); err != nil {
+					failures <- err
+				}
+			}()
+			for {
+				_, payload, err := connection.ReadMessage()
+				if err != nil {
+					return
+				}
+				received <- string(payload)
+				if string(payload) == "disconnect" {
+					disconnected <- struct{}{}
+					return
+				}
+			}
+		}))
+		defer venue.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		server := NewWebSocketClient(ctx)
+		client := WebSocketClient_ServerToClient(server)
+		defer client.Release()
+		write := func(payloads ...string) {
+			So(client.Write(ctx, func(params WebSocketClient_write_Params) error {
+				if err := params.SetEndpoint("ws" + strings.TrimPrefix(venue.URL, "http")); err != nil {
+					return err
+				}
+				if err := params.SetOnConnect([]byte("discover")); err != nil {
+					return err
+				}
+				frames, err := params.NewWrite(int32(len(payloads)))
+				if err != nil {
+					return err
+				}
+				for index, payload := range payloads {
+					if err := frames.Set(index, []byte(payload)); err != nil {
+						return err
+					}
+				}
+				return nil
+			}), ShouldBeNil)
+			So(client.WaitStreaming(), ShouldBeNil)
+		}
+		next := func(expected string) {
+			select {
+			case payload := <-received:
+				So(payload, ShouldEqual, expected)
+			case err := <-failures:
+				So(err, ShouldBeNil)
+			case <-ctx.Done():
+				t.Fatal("timed out waiting for " + expected)
+			}
+		}
+		write("ticker", "trade")
+		next("discover")
+		next("ticker")
+		next("trade")
+		write("ping")
+		next("ping")
+		write("disconnect")
+		next("disconnect")
+		<-disconnected
+		next("discover")
+		write("ticker", "trade")
+		next("ticker")
+		next("trade")
+		So(server.Close(), ShouldBeNil)
 	})
 }

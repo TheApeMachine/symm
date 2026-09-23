@@ -1,9 +1,12 @@
 package websocket
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"time"
 	"unicode/utf8"
@@ -15,194 +18,225 @@ import (
 )
 
 /*
-WebSocketClientServer owns the physical WebSocket connection lifecycle.
-It connects to a target URL, runs an asynchronous read pump into an
-internal ring buffer, handles thread-safe message transmission, and
-manages background reconnects on disconnects or network failures.
+	WebSocketClientServer owns a physical connection and its frame queues.
+
+The graph supplies all protocol messages, including the connection handshake.
 */
 type WebSocketClientServer struct {
 	*runtime.System
-	conn     *gorillaws.Conn
-	endpoint string
-	incoming *lf.Queue[receivedFrame]
-	// dialing admits a single reconnect loop. Without it every failed dial
-	// would start another one and the retries would double each round.
-	dialing atomic.Bool
+	mu         sync.Mutex
+	conn       *gorillaws.Conn
+	endpoint   string
+	onConnect  []byte
+	pending    [][]byte
+	incoming   *lf.Queue[receivedFrame]
+	dialing    atomic.Bool
+	generation uint64
+	writeErr   error
 }
 
 /* receivedFrame retains metadata at socket receipt, before graph scheduling. */
 type receivedFrame struct {
-	payload  []byte
-	at       time.Time
-	endpoint string
+	payload    []byte
+	at         time.Time
+	endpoint   string
+	generation uint64
 }
 
 func NewWebSocketClient(ctx context.Context) *WebSocketClientServer {
-	return &WebSocketClientServer{
-		System:   runtime.NewSystem(ctx, "websocket.client"),
-		incoming: lf.NewQueue[receivedFrame](),
-	}
+	return &WebSocketClientServer{System: runtime.NewSystem(ctx, "websocket.client"), incoming: lf.NewQueue[receivedFrame]()}
 }
 
-/*
-Write accepts an endpoint URL and/or an outbound message frame to transmit.
-*/
+/* Write configures the connection and admits every supplied outbound frame. */
 func (server *WebSocketClientServer) Write(ctx context.Context, call WebSocketClient_write) error {
-	endpointStr, err := call.Args().Endpoint()
+	endpoint, err := call.Args().Endpoint()
 
 	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.BadRequest,
-			"[network.websocket.client.Write] endpoint argument is required",
-			err,
-		))
+		return errnie.Error(errnie.Err(errnie.Validation, "websocket: endpoint", err))
 	}
-
-	if len(endpointStr) > 0 && endpointStr != server.endpoint {
-		server.endpoint = endpointStr
-		server.Transition(runtime.WAITING)
-	}
-
-	// The first attempt is made here so a write that carries both an endpoint
-	// and a frame still sends that frame. Once a dial loop is running, retrying
-	// belongs to it rather than to every write that arrives meanwhile.
-	if server.endpoint != "" && server.Status() != runtime.READY && !server.dialing.Load() {
-		if !server.connect() {
-			server.reconnect()
-		}
-	}
-
-	payload, err := call.Args().Write()
+	initial, err := call.Args().OnConnect()
 
 	if err != nil {
-		errnie.Error(errnie.Err(
-			errnie.IO,
-			fmt.Sprintf("websocket: failed to write frame to %s", server.endpoint),
-			err,
-		))
+		return errnie.Error(errnie.Err(errnie.Validation, "websocket: connection message", err))
+	}
+	frames, err := call.Args().Write()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.Validation, "websocket: outgoing frames", err))
+	}
+	server.mu.Lock()
+	defer server.mu.Unlock()
+
+	if server.writeErr != nil {
+		return server.writeErr
 	}
 
-	if len(payload) > 0 && server.conn != nil && server.Status() == runtime.READY {
-		msgType := gorillaws.TextMessage
+	if server.Context().Err() != nil {
+		return errnie.Error(errnie.Err(errnie.IO, "websocket: client is closed", server.Context().Err()))
+	}
 
-		if !utf8.Valid(payload) {
-			msgType = gorillaws.BinaryMessage
+	if endpoint != "" && server.endpoint != "" && endpoint != server.endpoint {
+		return errnie.Error(errnie.Err(errnie.Validation, "websocket: changing an active endpoint requires a new capability", nil))
+	}
+
+	if endpoint != "" {
+		server.endpoint = endpoint
+	}
+
+	if call.Args().HasOnConnect() {
+		server.onConnect = bytes.Clone(initial)
+	}
+	for index := range frames.Len() {
+		payload, err := frames.At(index)
+
+		if err != nil {
+			return errnie.Error(errnie.Err(errnie.Validation, "websocket: outgoing frame", err))
 		}
 
-		if err := server.conn.WriteMessage(msgType, payload); err != nil {
-			return errnie.Error(errnie.Err(
-				errnie.IO,
-				fmt.Sprintf("websocket: failed to write frame to %s", server.endpoint),
-				err,
-			))
+		if len(payload) > 0 {
+			server.pending = append(server.pending, bytes.Clone(payload))
 		}
 	}
 
-	return nil
+	if server.endpoint == "" {
+		return nil
+	}
+
+	if server.conn == nil {
+		server.reconnect()
+		return nil
+	}
+	return server.send()
 }
 
-/*
-Done returns the next queued message received from the WebSocket, along
-with the current connection status.
-*/
+/* Done drains received frames even while the transport reconnects. */
 func (server *WebSocketClientServer) Done(ctx context.Context, call WebSocketClient_done) error {
 	results, err := call.AllocResults()
 
 	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.Internal,
-			"websocket: failed to allocate done results",
-			err,
-		))
+		return errnie.Error(errnie.Err(errnie.Internal, "websocket: results", err))
 	}
-
 	results.SetStatus(runtime.Status(server.Status()))
+	message, found := server.incoming.Dequeue()
 
-	msg, ok := server.incoming.Dequeue()
-
-	if !ok {
+	if !found {
 		results.SetIdle()
 		return nil
 	}
-
 	results.SetFrame()
 	frame := results.Frame()
+	frame.SetGeneration(message.generation)
 
-	if err := frame.SetReceivedAt(msg.at.UTC().Format(time.RFC3339Nano)); err != nil {
-		return errnie.Error(errnie.Err(errnie.Internal, "websocket: set receive time", err))
+	if err := frame.SetReceivedAt(message.at.UTC().Format(time.RFC3339Nano)); err != nil {
+		return errnie.Error(errnie.Err(errnie.Internal, "websocket: receive timestamp", err))
 	}
 
-	if err := frame.SetEndpoint(msg.endpoint); err != nil {
-		return errnie.Error(errnie.Err(errnie.Internal, "websocket: set receive endpoint", err))
+	if err := frame.SetEndpoint(message.endpoint); err != nil {
+		return errnie.Error(errnie.Err(errnie.Internal, "websocket: receive endpoint", err))
 	}
 
-	return frame.SetRead(msg.payload)
+	if err := frame.SetRead(message.payload); err != nil {
+		return errnie.Error(errnie.Err(errnie.Internal, "websocket: received frame", err))
+	}
+	return nil
 }
 
-/*
-connect dials the endpoint once, reporting whether the connection is live. It
-never schedules its own retry: retrying belongs to the single loop that owns
-it, so a failed dial cannot multiply into more of them.
-*/
+/* connect sends the declared handshake before publishing the new connection. */
 func (server *WebSocketClientServer) connect() bool {
-	server.Info("connecting to %s", server.endpoint)
+	server.mu.Lock()
+	endpoint := server.endpoint
+	closed := server.Context().Err() != nil
+	connected := server.conn != nil
+	server.mu.Unlock()
 
-	dialer := &gorillaws.Dialer{
-		HandshakeTimeout: 5 * time.Second,
-		Proxy:            http.ProxyFromEnvironment,
-	}
-
-	conn, _, err := dialer.DialContext(server.Context(), server.endpoint, nil)
-
-	if err != nil {
-		server.Error(errnie.Err(
-			errnie.IO,
-			fmt.Sprintf("[network.websocket.client.connect] dial %s failed", server.endpoint),
-			err,
-		))
-
+	if closed {
 		return false
 	}
 
-	server.conn = conn
-	server.Transition(runtime.READY)
-	server.read()
+	if connected {
+		return true
+	}
+	server.Transition(runtime.WAITING)
+	server.Info("connecting to %s", endpoint)
+	dialer := gorillaws.Dialer{HandshakeTimeout: 5 * time.Second, Proxy: http.ProxyFromEnvironment}
+	connection, _, err := dialer.DialContext(server.Context(), endpoint, nil)
 
-	server.Info("connected to %s", server.endpoint)
+	if err != nil {
+		if server.Context().Err() == nil {
+			errnie.Error(errnie.Err(errnie.IO, "websocket: connect "+endpoint, err))
+		}
+		return false
+	}
+	server.mu.Lock()
+	defer server.mu.Unlock()
+
+	if server.Context().Err() != nil {
+		if err := connection.Close(); err != nil {
+			errnie.Error(errnie.Err(errnie.IO, "websocket: close cancelled connection", err))
+		}
+		return false
+	}
+	server.conn = connection
+
+	if len(server.onConnect) > 0 {
+		if err := connection.WriteMessage(gorillaws.TextMessage, server.onConnect); err != nil {
+			errnie.Error(errnie.Err(errnie.IO, "websocket: connection message", err))
+
+			if err := connection.Close(); err != nil {
+				errnie.Error(errnie.Err(errnie.IO, "websocket: close failed handshake", err))
+			}
+			server.conn = nil
+			return false
+		}
+	}
+	server.Transition(runtime.READY)
+	server.generation++
+	server.read(connection, endpoint, server.generation)
+
+	if err := server.send(); err != nil {
+		server.writeErr = err
+	}
+	server.Info("connected to %s", endpoint)
 	return true
 }
 
-/*
-reconnect keeps one dial loop running until the connection is live or the
-client is shut down. A second caller while a loop is already running is a no-op
-rather than another loop.
-*/
+/* send transmits each admitted frame once; an ambiguous write fails explicitly. */
+func (server *WebSocketClientServer) send() error {
+	for len(server.pending) > 0 {
+		payload := server.pending[0]
+		messageType := gorillaws.TextMessage
+
+		if !utf8.Valid(payload) {
+			messageType = gorillaws.BinaryMessage
+		}
+
+		if err := server.conn.WriteMessage(messageType, payload); err != nil {
+			return errnie.Error(errnie.Err(errnie.IO, fmt.Sprintf("websocket: write to %s failed", server.endpoint), err))
+		}
+		server.pending[0] = nil
+		server.pending = server.pending[1:]
+	}
+	return nil
+}
+
+/* reconnect admits one transport retry loop, bounded by the client context. */
 func (server *WebSocketClientServer) reconnect() {
 	if !server.dialing.CompareAndSwap(false, true) {
 		return
 	}
-
 	go func() {
 		defer server.dialing.Store(false)
-
 		backoff := 50 * time.Millisecond
-		maxBackoff := 2 * time.Second
-
-		for {
-			if server.Context().Err() != nil {
-				return
-			}
-
+		const maxBackoff = 2 * time.Second
+		for server.Context().Err() == nil {
 			if server.connect() {
 				return
 			}
-
 			select {
 			case <-server.Context().Done():
 				return
 			case <-time.After(backoff):
 			}
-
 			backoff *= 2
 
 			if backoff > maxBackoff {
@@ -212,63 +246,57 @@ func (server *WebSocketClientServer) reconnect() {
 	}()
 }
 
-func (server *WebSocketClientServer) read() {
-	endpoint := server.endpoint
-	connection := server.conn
+/* read preserves arrival order and cannot close a newer connection. */
+func (server *WebSocketClientServer) read(connection *gorillaws.Conn, endpoint string, generation uint64) {
 	go func() {
 		for {
-			select {
-			case <-server.Context().Done():
-				return
-			default:
-			}
-
-			if server.Status() != runtime.READY {
-				return
-			}
-
-			_, message, err := connection.ReadMessage()
+			_, payload, err := connection.ReadMessage()
 
 			if err != nil {
-				server.Error(errnie.Err(
-					errnie.IO,
-					fmt.Sprintf(
-						"[network.websocket.client.read] read message failed from %s",
-						server.endpoint,
-					),
-					err,
-				))
+				server.mu.Lock()
 
-				// A dropped connection is not the end of the client: close the
-				// socket and let the dial loop take it up again. Closing the
-				// client itself would cancel its context for good, and every
-				// later dial would fail as cancelled without ever waiting.
-				server.drop()
+				if server.conn == connection {
+					if err := connection.Close(); err != nil {
+						errnie.Error(errnie.Err(errnie.IO, "websocket: close dropped connection", err))
+					}
+					server.conn = nil
+				}
+				server.mu.Unlock()
+
+				if server.Context().Err() != nil {
+					return
+				}
+				errnie.Error(errnie.Err(errnie.IO, "websocket: read "+endpoint, err))
+				server.Transition(runtime.WAITING)
+				server.reconnect()
 				return
 			}
-
-			server.incoming.Enqueue(receivedFrame{payload: message, at: time.Now(), endpoint: endpoint})
+			server.incoming.Enqueue(receivedFrame{payload: payload, at: time.Now(), endpoint: endpoint, generation: generation})
 		}
 	}()
 }
 
-/*
-drop releases the current connection and marks the client as waiting, so the
-next write starts a fresh dial loop.
-*/
-func (server *WebSocketClientServer) drop() {
-	if server.conn != nil {
-		if err := server.conn.Close(); err != nil {
-			server.Error(errnie.Err(
-				errnie.IO,
-				fmt.Sprintf("[network.websocket.client.drop] close %s failed", server.endpoint),
-				err,
-			))
-		}
+/* Close cancels reconnects and releases the socket so its read pump exits. */
+func (server *WebSocketClientServer) Close() error {
+	closeErr := server.System.Close()
+	server.mu.Lock()
+	defer server.mu.Unlock()
 
-		server.conn = nil
+	if server.conn == nil {
+		return closeErr
 	}
+	err := server.conn.Close()
+	server.conn = nil
 
-	server.Transition(runtime.WAITING)
-	server.reconnect()
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.IO, "websocket: close", errors.Join(closeErr, err)))
+	}
+	return closeErr
+}
+
+/* Shutdown releases transport resources when the Cap'n Proto capability dies. */
+func (server *WebSocketClientServer) Shutdown() {
+	if err := server.Close(); err != nil {
+		errnie.Error(err)
+	}
 }

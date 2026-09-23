@@ -1,0 +1,916 @@
+{
+  "id": "live_spot",
+  "name": "Kraken USD spot discovery and market records",
+  "nodes": {
+    "socket": {
+      "id": "socket",
+      "type": "websocket.WebSocketClient",
+      "inputData": {
+        "endpoint": {
+          "value": "wss://ws.kraken.com/v2"
+        },
+        "onConnect": {
+          "value": "{\"method\":\"subscribe\",\"params\":{\"channel\":\"instrument\",\"snapshot\":true,\"include_tokenized_assets\":false}}"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "write_0": [
+            {
+              "nodeId": "ticker",
+              "portName": "out"
+            }
+          ],
+          "write_1": [
+            {
+              "nodeId": "trade",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "frame.read": [
+            {
+              "nodeId": "generation",
+              "portName": "data"
+            }
+          ],
+          "frame.generation": [
+            {
+              "nodeId": "generation",
+              "portName": "unsigned"
+            }
+          ]
+        }
+      },
+      "x": 0,
+      "y": 0
+    },
+    "generation": {
+      "id": "generation",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "_connection"
+        },
+        "encoding": {
+          "value": "uint64"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "socket",
+              "portName": "frame.read"
+            }
+          ],
+          "unsigned": [
+            {
+              "nodeId": "socket",
+              "portName": "frame.generation"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "pairs",
+              "portName": "data"
+            },
+            {
+              "nodeId": "channels",
+              "portName": "data"
+            },
+            {
+              "nodeId": "rejection",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 300,
+      "y": 0
+    },
+    "pairs": {
+      "id": "pairs",
+      "type": "data.Iterate",
+      "inputData": {
+        "path": {
+          "value": "data.pairs"
+        },
+        "envelope": {
+          "value": true
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "generation",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "selection",
+              "portName": "data"
+            }
+          ],
+          "last": [
+            {
+              "nodeId": "symbols",
+              "portName": "flush"
+            }
+          ]
+        }
+      },
+      "x": 600,
+      "y": 0
+    },
+    "selection": {
+      "id": "selection",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "_selection"
+        },
+        "json": {
+          "value": "{\"quote\":\"USD\",\"status\":\"online\"}"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "pairs",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "usd",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 900,
+      "y": 0
+    },
+    "usd": {
+      "id": "usd",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "data.pairs.quote"
+        },
+        "operator": {
+          "value": "=="
+        },
+        "threshold": {
+          "value": 0
+        },
+        "referencePath": {
+          "value": "_selection.quote"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "selection",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "online",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 1200,
+      "y": 0
+    },
+    "online": {
+      "id": "online",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "data.pairs.status"
+        },
+        "operator": {
+          "value": "=="
+        },
+        "threshold": {
+          "value": 0
+        },
+        "referencePath": {
+          "value": "_selection.status"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "usd",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "pair_symbol",
+              "portName": "data"
+            },
+            {
+              "nodeId": "connection",
+              "portName": "data"
+            },
+            {
+              "nodeId": "unrequested",
+              "portName": "no"
+            }
+          ]
+        }
+      },
+      "x": 1500,
+      "y": 0
+    },
+    "pair_symbol": {
+      "id": "pair_symbol",
+      "type": "data.Extract",
+      "inputData": {
+        "path": {
+          "value": "data.pairs.symbol"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "online",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "key_symbol",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 1800,
+      "y": 0
+    },
+    "connection": {
+      "id": "connection",
+      "type": "data.Extract",
+      "inputData": {
+        "path": {
+          "value": "_connection"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "online",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "key_generation",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 2100,
+      "y": 0
+    },
+    "key_symbol": {
+      "id": "key_symbol",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "symbol"
+        },
+        "data": {
+          "value": "{}"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "pair_symbol",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "key_generation",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 0,
+      "y": 200
+    },
+    "key_generation": {
+      "id": "key_generation",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "generation"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "key_symbol",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "connection",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "key_document",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 300,
+      "y": 200
+    },
+    "key_document": {
+      "id": "key_document",
+      "type": "data.Insert",
+      "inputData": {
+        "data": {
+          "value": "{}"
+        },
+        "path": {
+          "value": "key"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "key_generation",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "key",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 600,
+      "y": 200
+    },
+    "key": {
+      "id": "key",
+      "type": "data.Extract",
+      "inputData": {
+        "path": {
+          "value": "key"
+        },
+        "encoding": {
+          "value": "json-text"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "key_document",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "text": [
+            {
+              "nodeId": "requested",
+              "portName": "key_0"
+            }
+          ]
+        }
+      },
+      "x": 900,
+      "y": 200
+    },
+    "requested": {
+      "id": "requested",
+      "type": "store.Radix",
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "key_0": [
+            {
+              "nodeId": "key",
+              "portName": "text"
+            }
+          ],
+          "value_0": [
+            {
+              "nodeId": "remember",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "found_0": [
+            {
+              "nodeId": "unrequested",
+              "portName": "test"
+            }
+          ]
+        }
+      },
+      "x": 1200,
+      "y": 200
+    },
+    "unrequested": {
+      "id": "unrequested",
+      "type": "controlflow.Select",
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "test": [
+            {
+              "nodeId": "requested",
+              "portName": "found_0"
+            }
+          ],
+          "no": [
+            {
+              "nodeId": "online",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "symbol",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 1500,
+      "y": 200
+    },
+    "symbol": {
+      "id": "symbol",
+      "type": "data.Extract",
+      "inputData": {
+        "path": {
+          "value": "data.pairs.symbol"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "unrequested",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "symbols",
+              "portName": "data_0"
+            },
+            {
+              "nodeId": "remember",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 1800,
+      "y": 200
+    },
+    "ticker": {
+      "id": "ticker",
+      "type": "data.Insert",
+      "inputData": {
+        "data": {
+          "value": "{\"method\":\"subscribe\",\"params\":{\"channel\":\"ticker\",\"snapshot\":true,\"event_trigger\":\"bbo\"}}"
+        },
+        "path": {
+          "value": "params.symbol"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "symbols",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "socket",
+              "portName": "write_0"
+            }
+          ]
+        }
+      },
+      "x": 2100,
+      "y": 200
+    },
+    "trade": {
+      "id": "trade",
+      "type": "data.Insert",
+      "inputData": {
+        "data": {
+          "value": "{\"method\":\"subscribe\",\"params\":{\"channel\":\"trade\",\"snapshot\":false}}"
+        },
+        "path": {
+          "value": "params.symbol"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "symbols",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "socket",
+              "portName": "write_1"
+            }
+          ]
+        }
+      },
+      "x": 0,
+      "y": 400
+    },
+    "remember": {
+      "id": "remember",
+      "type": "data.Insert",
+      "inputData": {
+        "data": {
+          "value": "{}"
+        },
+        "path": {
+          "value": "symbol"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "symbol",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "requested",
+              "portName": "value_0"
+            }
+          ]
+        }
+      },
+      "x": 300,
+      "y": 400
+    },
+    "records": {
+      "id": "records",
+      "type": "data.Iterate",
+      "inputData": {
+        "path": {
+          "value": "data"
+        },
+        "envelope": {
+          "value": true
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data_ticker": [
+            {
+              "nodeId": "ticker_frames",
+              "portName": "out"
+            }
+          ],
+          "data_trade": [
+            {
+              "nodeId": "trade_frames",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      },
+      "x": 600,
+      "y": 400
+    },
+    "channels": {
+      "id": "channels",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "_channels"
+        },
+        "json": {
+          "value": "{\"ticker\":\"ticker\",\"trade\":\"trade\"}"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "generation",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "ticker_frames",
+              "portName": "data"
+            },
+            {
+              "nodeId": "trade_frames",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 900,
+      "y": 400
+    },
+    "ticker_frames": {
+      "id": "ticker_frames",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "channel"
+        },
+        "operator": {
+          "value": "=="
+        },
+        "threshold": {
+          "value": 0
+        },
+        "referencePath": {
+          "value": "_channels.ticker"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "channels",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "records",
+              "portName": "data_ticker"
+            }
+          ]
+        }
+      },
+      "x": 1200,
+      "y": 400
+    },
+    "trade_frames": {
+      "id": "trade_frames",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "channel"
+        },
+        "operator": {
+          "value": "=="
+        },
+        "threshold": {
+          "value": 0
+        },
+        "referencePath": {
+          "value": "_channels.trade"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "channels",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "records",
+              "portName": "data_trade"
+            }
+          ]
+        }
+      },
+      "x": 1500,
+      "y": 400
+    },
+    "rejection": {
+      "id": "rejection",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "success"
+        },
+        "operator": {
+          "value": "=="
+        },
+        "threshold": {
+          "value": 0
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "generation",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "reason",
+              "portName": "data"
+            },
+            {
+              "nodeId": "accepted",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 1800,
+      "y": 400
+    },
+    "reason": {
+      "id": "reason",
+      "type": "data.Extract",
+      "inputData": {
+        "path": {
+          "value": "error"
+        },
+        "encoding": {
+          "value": "text"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "rejection",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "text": [
+            {
+              "nodeId": "accepted",
+              "portName": "reason"
+            }
+          ]
+        }
+      },
+      "x": 2100,
+      "y": 400
+    },
+    "accepted": {
+      "id": "accepted",
+      "type": "controlflow.Require",
+      "inputData": {
+        "test": {
+          "value": false
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "rejection",
+              "portName": "out"
+            }
+          ],
+          "reason": [
+            {
+              "nodeId": "reason",
+              "portName": "text"
+            }
+          ]
+        },
+        "outputs": {}
+      },
+      "x": 0,
+      "y": 600
+    },
+    "symbols": {
+      "id": "symbols",
+      "type": "data.Collect",
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "data_0": [
+            {
+              "nodeId": "symbol",
+              "portName": "json"
+            }
+          ],
+          "flush": [
+            {
+              "nodeId": "pairs",
+              "portName": "last"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "ticker",
+              "portName": "json"
+            },
+            {
+              "nodeId": "trade",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 1900,
+      "y": 400
+    }
+  }
+}

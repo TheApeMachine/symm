@@ -59,6 +59,7 @@ It retains NO concrete Go server, NO server any, NO map[string]any.
 type CompiledNode struct {
 	Resource     bool // Constructed capability without the write/done evaluation protocol.
 	Source       bool
+	Queued       bool
 	ID           string
 	Index        NodeID
 	Client       capnp.Client
@@ -191,26 +192,26 @@ Start evaluates the compiled program continuously until the context is
 cancelled. Each pass is one observation through the graph: sources publish
 what they have, every node downstream of them steps once, and the pass ends.
 
-An evaluation that fails is reported and the run continues, because a single
-bad observation must not take the graph down; a cancelled context ends the
-run cleanly.
+An evaluation failure terminates the run and reaches the caller. Streaming
+capability failures cannot be cleared by repeating the same evaluation.
+A cancelled context ends the run cleanly.
 */
-func (p *Program) Start(ctx context.Context) {
+func (p *Program) Start(ctx context.Context) error {
 	var idle time.Duration
 
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			return nil
 		default:
 		}
 
 		if err := p.Execute(ctx, nil); err != nil {
 			if ctx.Err() != nil {
-				return
+				return nil
 			}
 
-			errnie.Error(errnie.Err(
+			return errnie.Error(errnie.Err(
 				errnie.Internal,
 				"compiler: graph evaluation failed",
 				err,
@@ -235,15 +236,15 @@ func (p *Program) Start(ctx context.Context) {
 
 		select {
 		case <-ctx.Done():
-			return
+			return nil
 		case <-time.After(idle):
 		}
 	}
 }
 
 /*
-carriedPayload reports whether the last evaluation moved any bytes out of a
-node that owns an external source.
+carriedPayload reports received source data or admitted work still queued
+inside a graph node. Recirculating values do not keep an idle graph spinning.
 */
 func (p *Program) carriedPayload() bool {
 	p.mu.Lock()
@@ -252,7 +253,7 @@ func (p *Program) carriedPayload() bool {
 	for index := range p.Nodes {
 		node := &p.Nodes[index]
 
-		if !node.Source || !node.Client.IsValid() {
+		if (!node.Source && !node.Queued) || !node.Client.IsValid() {
 			continue
 		}
 
@@ -262,6 +263,15 @@ func (p *Program) carriedPayload() bool {
 			continue
 		}
 
+		if node.Queued {
+			pending := node.Outputs["pending"]
+			if result.Uint64(capnp.DataOffset(pending.Offset*8)) > 0 {
+				return true
+			}
+		}
+		if !node.Source {
+			continue
+		}
 		for _, field := range node.Outputs {
 			if field.Which != schema.Type_Which_data {
 				continue

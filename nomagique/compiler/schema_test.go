@@ -1,6 +1,7 @@
 package compiler
 
 import (
+	"math"
 	"testing"
 
 	capnp "capnproto.org/go/capnp/v3"
@@ -113,4 +114,62 @@ func TestCompileFanInSlotCopier(t *testing.T) {
 			So(err, ShouldNotBeNil)
 		})
 	})
+}
+
+func TestCompileFanInCopier(t *testing.T) {
+	Convey("Given numeric signal results gathered by a typed list input", t, func() {
+		_, segment, err := capnp.NewMessage(capnp.SingleSegment(nil))
+		So(err, ShouldBeNil)
+		source, err := capnp.NewRootStruct(segment, capnp.ObjectSize{DataSize: 16})
+		So(err, ShouldBeNil)
+		target, err := capnp.NewStruct(segment, capnp.ObjectSize{PointerCount: 1})
+		So(err, ShouldBeNil)
+		from := FieldInfo{Which: schema.Type_Which_float64, Offset: 1}
+		to := FieldInfo{Which: schema.Type_Which_list, ElementWhich: schema.Type_Which_float64}
+		for index, value := range []float64{2.5, -7, 0, 19} {
+			source.SetUint64(8, math.Float64bits(value))
+			copy, err := CompileFanInCopier(from, to, index, 4)
+			So(err, ShouldBeNil)
+			So(copy(source, target), ShouldBeNil)
+		}
+		pointer, err := target.Ptr(0)
+		So(err, ShouldBeNil)
+		values := capnp.Float64List(pointer.List())
+		So(values.Len(), ShouldEqual, 4)
+		for index, value := range []float64{2.5, -7, 0, 19} {
+			So(values.At(index), ShouldEqual, value)
+		}
+	})
+}
+
+func BenchmarkCompileFanInCopier(b *testing.B) {
+	copy, err := CompileFanInCopier(FieldInfo{Which: schema.Type_Which_float64}, FieldInfo{Which: schema.Type_Which_list, ElementWhich: schema.Type_Which_float64}, 2, 411)
+	if err != nil {
+		b.Fatal(err)
+	}
+	_, segment, err := capnp.NewMessage(capnp.SingleSegment(nil))
+	if err != nil {
+		b.Fatal(err)
+	}
+	source, err := capnp.NewRootStruct(segment, capnp.ObjectSize{DataSize: 8})
+	if err != nil {
+		b.Fatal(err)
+	}
+	source.SetUint64(0, math.Float64bits(12.5))
+	b.ReportAllocs()
+	for b.Loop() {
+		// Each graph evaluation owns a fresh argument message and gathering list.
+		message, segment, err := capnp.NewMessage(capnp.SingleSegment(nil))
+		if err != nil {
+			b.Fatal(err)
+		}
+		target, err := capnp.NewRootStruct(segment, capnp.ObjectSize{PointerCount: 1})
+		if err != nil {
+			b.Fatal(err)
+		}
+		if err := copy(source, target); err != nil {
+			b.Fatal(err)
+		}
+		message.Release()
+	}
 }

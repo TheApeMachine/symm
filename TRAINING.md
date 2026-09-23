@@ -229,9 +229,20 @@ widened to fill an empty class.
 Fragments are replayed through the full pipeline — grid, impulse map, region
 token — and the trie predicts as it goes.
 
-Each prediction is graded against the fragment's own A/B/C points: not "was the
-price right" but **where did it call it** relative to where the turn actually
-was. Correct sequences are reinforced.
+Each decision is graded by **what it would actually have made or lost**. The
+tape holds the Level 3 book, so a decision is executed against it:
+`paper.Exchange` rebuilds each symbol's book order by order (verified against
+the exchange's checksum), rests the order until the next Level 3 frame for its
+symbol, and fills it by walking the queue, taker fee included. A/B/C select
+which stretches of tape are replayed; they are not the grade.
+
+The balance is part of what is learned. Each training universe carries its own
+account: every ENTER spends 20% of the cash not already committed, every EXIT
+sells the whole position, losses compound, and an account that has shrunk
+below the exchange's minimums finds its orders refused — a consequence it
+lives with, never a case that is skipped or resized. An entry and its exit
+share the PnL of the round trip they made together; a refusal the replay
+cannot judge (no book, no instrument rules) is unknown, not a loss.
 
 Because the fragment's ground truth is known in advance, this loop is fast and
 repeatable, and it can be run over the whole archive.
@@ -269,7 +280,8 @@ Paper versus real is a deployment setting, not a stage of learning.
 | Raw capture into Iceberg | explicit cursors and ordered deduplicated replay built; deployment subscriptions pending |
 | Excursion mining | per-symbol mining and persisted event cursors built |
 | Fragment retrieval | ordered archive traversal and A–C fragment selection implemented in JSON |
-| A/B/C grading | `training_grade.json`, connected to archive fragment replay |
+| A/B/C fragment selection | `training_grade.json`, connected to archive fragment replay |
+| PnL grading against the L3 book | `paper.Exchange` built and tested (book replay, causal fills, fees, account, round-trip PnL); not yet wired into `training.json`, and the archive holds no Level 3 or instrument frames until capture subscribes to them |
 | Fragment training loop | archive → signals and truth grading wired; remapper/token/reinforcement connection pending |
 | Live paper process | not built |
 

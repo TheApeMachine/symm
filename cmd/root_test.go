@@ -14,22 +14,22 @@ func TestExecute(t *testing.T) {
 		pipeline, err := compiler.CompileFile("../manifest/system.json", nil, compiler.DefaultRepository())
 		So(err, ShouldBeNil)
 		So(pipeline, ShouldNotBeNil)
+		defer pipeline.Release()
 
 		Convey("It executes gracefully on context cancellation", func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 			defer cancel()
 
-			done := make(chan struct{})
+			done := make(chan error, 1)
 			go func() {
-				pipeline.Start(ctx)
-				close(done)
+				done <- pipeline.Start(ctx)
 			}()
 
 			select {
-			case <-done:
-				// Succeeded cleanly
+			case err := <-done:
+				So(err, ShouldBeNil)
 			case <-time.After(500 * time.Millisecond):
-				cancel()
+				t.Fatal("system graph failed to stop after cancellation")
 			}
 		})
 	})

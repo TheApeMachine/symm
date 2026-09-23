@@ -125,6 +125,12 @@ func CompileWithPrevious(
 
 			reachable[current] = true
 
+			// Another retained owner ends this evaluation dependency. Walking
+			// through it would incorrectly turn upstream lookup keys into writes.
+			if current != retainedID && holdsRetained(registry, backendNodes[current]) {
+				continue
+			}
+
 			for _, targets := range backendNodes[current].Connections.Outputs {
 				for _, target := range targets {
 					consumer, exists := backendNodes[target.NodeID]
@@ -241,12 +247,19 @@ func CompileWithPrevious(
 			}
 		}
 
+		if Implements(factory.InterfaceID, runtime.Queued_TypeID) {
+			pending, found := ifaceSchema.Outputs["pending"]
+			if !found || pending.Which != schema.Type_Which_uint64 {
+				return nil, errnie.Error(errnie.Err(errnie.Validation, "compiler: queued node "+id+" must report pending as UInt64", nil))
+			}
+		}
 		schemasMap[i] = ifaceSchema
 
 		compiledNode := CompiledNode{
 			ID:           id,
 			Index:        NodeID(i),
 			Source:       Implements(factory.InterfaceID, runtime.Source_TypeID),
+			Queued:       Implements(factory.InterfaceID, runtime.Queued_TypeID),
 			Inputs:       make(map[string]CompiledField),
 			Outputs:      make(map[string]CompiledField),
 			InputIndices: make(map[string]FieldID),
@@ -1375,6 +1388,13 @@ func compileFanIn(edges []fanInEdge) ([]Route, error) {
 
 		sort.Slice(group, func(left, right int) bool {
 			return group[left].port < group[right].port
+		})
+
+		// Numbered ports represent numeric positions, not lexical labels.
+		sort.SliceStable(group, func(left, right int) bool {
+			first, _ := outputSlot(group[left].port)
+			second, _ := outputSlot(group[right].port)
+			return first < second
 		})
 
 		// A gathering port gathers producers, but one producer may already

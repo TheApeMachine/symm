@@ -559,35 +559,149 @@ func (f Durable_flush_Results_Future) Struct() (Durable_flush_Results, error) {
 	return Durable_flush_Results(p.Struct()), err
 }
 
-const schema_91d758a99e934525 = "x\xda\x94\x91?h\x14A\x18\xc5\xdf\xb73\x9b\xb5\x09" +
-	"\xcb\xb0\x82 \xca*\x18\xc4\x14\xf9s\xd7\xe85\x17%" +
-	"\x1a,\x84]m\"\x18d\x92\x9b\x8b\x1b\xf7vs\xb3" +
-	"\xbb\xca\x15A\xfcShq\x88\x04+AD\x82\xa0`" +
-	"\xa1\x9d\x95\x9d\x82`e!\x166\x82\x85\x88\xc4\xdaf" +
-	"ew\xd1\x8b\xc8\xa1)\x86o\x06\xde\xfb\xcd\xfbxS" +
-	"\x01\xcd\xf0\xe9\xd1M\x0b\x86\x7f\xce\x1c\xc9\x17V\x1e<" +
-	"\xdb{\xe2\xdeM\x08\xd7\xc8\xc7\x8e\xaf\xdf\x7f<\xff\xfe" +
-	"\x0e@\xf5\x8f\xacF\xce7f\x01\xce\x17\xf6\x1a\x94?" +
-	"\xbd\xaa\xde^{\xb3\xde\x87\xef\x12\x0d\xa4\xdc\x02\xea\xa7" +
-	"\xf8\x0a9\xb2\xb8:\x0b\xbc\x09\xca\xebm}{\x8f\xf8" +
-	"\xdc\x87p\xd9\x1f\xd85^#\xa7_*oq\xab8" +
-	"@\x1e\x1c\xfe\xf4h\xf3\xf9\xa5\x0d\x88\x83\x84\x8a\xd8\xe5" +
-	"\x0f\x09<\x9f\x1f\xdb\x98:\xffu\xd7\xbb\xbf8\x927" +
-	"\xc8\xe9\x96\x9c\x0e\x9fs\xee\x96\x9c\x1f/\xae\xcf\xbd\xba" +
-	"\xf1\xfd\xc3\x16\xce\x1a\x7fBx\x99GqG.\x07\xdd" +
-	"\x8c\xa9I\x9dEi\xd0Q\x93I*\xd3,\x99X\x92" +
-	"\xab\xd1j\xe3\x8c[\xbe<\"\x7f\x1f\x19\x808;\x0e" +
-	"\x10\x09\x7f7@\x868Y\x03\x88\x89\xa3\xc5\xe0\xe2H" +
-	"1L1]HF\xc4\xa1c\x00Yb\xff8`\x07" +
-	"Q\x90\xb2\xf8\xa2\xab\xb4\x8e\xb5\xdb\x96\xa9\x0c]\xadd" +
-	"\xabg/fI\xef\xcae\x19\xa4A\xb4l\xb7\xe2H" +
-	"\xfd\x8e\xc4\x87E\xaa\x12\xc9\x9e\x1d\xc6\xb2U$\xe3\x8c" +
-	"\x03\x9c\x001\xda\x00\xfc\x1d\x8c\xfc\x9d\x065+\x17\xd9" +
-	"\x83.Ad\x83\xfec\xe98\xd3K\xca#\xf2\x98\xe9" +
-	"\xd1\xc0`\x0e1\xccfZ.\x86j\xa2\x1df\xc9\x85" +
-	"\x03\x9e\xd4\x96\xec$\xff\xfcf\xb6Y\xd9\xaa\x15\xcc-" +
-	"}\xd3\xaf\xc2\x84\xa8\xc1\x10\xa6\xe5\x96\xe4\x19\xda~\x98" +
-	"\xd3*\xb1\xb30M~\x06\x00\x00\xff\xff\xb0V\xe3h"
+type Queued capnp.Client
+
+// Queued_TypeID is the unique identifier for the type Queued.
+const Queued_TypeID = 0x91e0d5a649d00ad3
+
+func (c Queued) WaitStreaming() error {
+	return capnp.Client(c).WaitStreaming()
+}
+
+// String returns a string that identifies this capability for debugging
+// purposes.  Its format should not be depended on: in particular, it
+// should not be used to compare clients.  Use IsSame to compare clients
+// for equality.
+func (c Queued) String() string {
+	return "Queued(" + capnp.Client(c).String() + ")"
+}
+
+// AddRef creates a new Client that refers to the same capability as c.
+// If c is nil or has resolved to null, then AddRef returns nil.
+func (c Queued) AddRef() Queued {
+	return Queued(capnp.Client(c).AddRef())
+}
+
+// Release releases a capability reference.  If this is the last
+// reference to the capability, then the underlying resources associated
+// with the capability will be released.
+//
+// Release will panic if c has already been released, but not if c is
+// nil or resolved to null.
+func (c Queued) Release() {
+	capnp.Client(c).Release()
+}
+
+// Resolve blocks until the capability is fully resolved or the Context
+// expires.
+func (c Queued) Resolve(ctx context.Context) error {
+	return capnp.Client(c).Resolve(ctx)
+}
+
+func (c Queued) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+	return capnp.Client(c).EncodeAsPtr(seg)
+}
+
+func (Queued) DecodeFromPtr(p capnp.Ptr) Queued {
+	return Queued(capnp.Client{}.DecodeFromPtr(p))
+}
+
+// IsValid reports whether c is a valid reference to a capability.
+// A reference is invalid if it is nil, has resolved to null, or has
+// been released.
+func (c Queued) IsValid() bool {
+	return capnp.Client(c).IsValid()
+}
+
+// IsSame reports whether c and other refer to a capability created by the
+// same call to NewClient.  This can return false negatives if c or other
+// are not fully resolved: use Resolve if this is an issue.  If either
+// c or other are released, then IsSame panics.
+func (c Queued) IsSame(other Queued) bool {
+	return capnp.Client(c).IsSame(capnp.Client(other))
+}
+
+// Update the flowcontrol.FlowLimiter used to manage flow control for
+// this client. This affects all future calls, but not calls already
+// waiting to send. Passing nil sets the value to flowcontrol.NopLimiter,
+// which is also the default.
+func (c Queued) SetFlowLimiter(lim fc.FlowLimiter) {
+	capnp.Client(c).SetFlowLimiter(lim)
+}
+
+// Get the current flowcontrol.FlowLimiter used to manage flow control
+// for this client.
+func (c Queued) GetFlowLimiter() fc.FlowLimiter {
+	return capnp.Client(c).GetFlowLimiter()
+}
+
+// A Queued_Server is a Queued with a local implementation.
+type Queued_Server interface {
+}
+
+// Queued_NewServer creates a new Server from an implementation of Queued_Server.
+func Queued_NewServer(s Queued_Server) *server.Server {
+	c, _ := s.(server.Shutdowner)
+	return server.New(Queued_Methods(nil, s), s, c)
+}
+
+// Queued_ServerToClient creates a new Client from an implementation of Queued_Server.
+// The caller is responsible for calling Release on the returned Client.
+func Queued_ServerToClient(s Queued_Server) Queued {
+	return Queued(capnp.NewClient(Queued_NewServer(s)))
+}
+
+// Queued_Methods appends Methods to a slice that invoke the methods on s.
+// This can be used to create a more complicated Server.
+func Queued_Methods(methods []server.Method, s Queued_Server) []server.Method {
+	if cap(methods) == 0 {
+		methods = make([]server.Method, 0, 0)
+	}
+
+	return methods
+}
+
+// Queued_List is a list of Queued.
+type Queued_List = capnp.CapList[Queued]
+
+// NewQueued_List creates a new list of Queued.
+func NewQueued_List(s *capnp.Segment, sz int32) (Queued_List, error) {
+	l, err := capnp.NewPointerList(s, sz)
+	return capnp.CapList[Queued](l), err
+}
+
+const schema_91d758a99e934525 = "x\xda\x94\x92=h\x14_\x14\xc5\xcf\x9d\x8f\xcc\x9f?" +
+	"\xc4\xe1\xb2\x82 \xca\xa8\x18\xc4\x14\xf9\xd8mt\x9b\x8d" +
+	"\x92\x18\xd2\xed\x18\x84X\x88\xbcd\xdf\xc6\x89\xbb3q" +
+	"f\x9e\xb2\x95\xf8Q\xd8\x04\x09\xb1\x13D$\x04\x14," +
+	"\x14,,\xc4J%\xca\x82\x10D\xb6\x13a\x0b\xb1P" +
+	"\x0b\x1b\x9b\x91\x99\x8d&\xb2\x84(\xc3\xe52\xf0;\xe7" +
+	"\x9e\xcb\xbbCo\x8c\x11c\xb8\xf7\xf9\x01h\x93\xb7\xc8" +
+	"\xecI\xce\xcc\xdd}\xb4\xf7\xc4\xed\x1b`GK\xfa\xc6" +
+	"\x96\xee\xdc\x9fz\xbf\x08Pa\x8c\xf3\x94;\xc5\x16\x90" +
+	"s\xf9\x15(yxE6\xaf\xbe^Z\x80\xeb\x10m" +
+	"\xa0\x86\x05\x14\x9e\xf0\x1c\xe5V3\xf8\x05\x97@I\xa1" +
+	"\x1a\xde\xdc\xc3\xed\x05\xb0\xa3\xffa\xdbNm\xbfg\xe4" +
+	"7\xb6\xd2\x02\x92\xb5\xff\xdfN\xac\xbc\xfb\xb0\xd8E\xb7" +
+	"R\xfaSF\xb7\xd9J\x0bH\xbc#\x1fW\xbe<\xbe" +
+	"\xb8\x0c>D\xe8\xcco\xf2=\x82\x91L\xf5-\x0f\x9d" +
+	"\xfd\xbck\xad\xcb\xe7\x19\x17)\xd7\xcc|Vy|}" +
+	"\xea\x8f\xa7\xd7\xc6_^\xff\xda\xda\xe4\xd3\xe2\x07\x84d" +
+	"\xfd\xdb\x91\xf8A]\xccz\x17\x94.\x07C\xe5\xc7^" +
+	"]\x0eF\xb1\x88U40#\xe6\xfd\xf9\xe2\xa4\x93\xfd" +
+	"\x95\x89\xdc}\xa4\x01|\xba\x1f bw7@\x1aO" +
+	"\xe4\x01\xd2\xf9X\xda\x0c>\x9a6\x93\x87S\xa4\x87\x0f" +
+	"\x1f\x07\xc8\xe2\xfd\xfd\x80\xed\xf9^\xac\x07\xe7\x1d\x19\x86" +
+	"A\xe8TE,jN(E\xa5aO\xab\xa8q\xf9" +
+	"\x92\xf0b\xcf\x9f\xb5+\x81/\x7fG2\xb6\x8a\xd4I" +
+	"$\x1av-\x10\x954\x99\xa1\x1b\x80A\x00\xf7\x16\x01" +
+	"\xf7?\x9d\xdc\x9d\x1a\x95:*\xb27.\x00D6\xe8" +
+	"/\x96\x0eT8#\xcbDe\xdd,\xd3\xf6\x02\xd7Q" +
+	"R\xc9J\xb7\xc0\xdcB0\xaaB1]\x93\x03\xd5\x9a" +
+	"\x8a\xce\x1d,\x8b\xd0\x12\xf5h\xdb1\xa3\xa5\x8e\xac\xb3" +
+	"\xb3\xb9\xe9P\xe8\xd7K3\xe7\xa1\xb1i9\x99\xf3\x08" +
+	"\xfd{\x98\x932\xb2U-\x8e~\x06\x00\x00\xff\xff;" +
+	"\x0f\x0b\xc0"
 
 func RegisterSchema(reg *schemas.Registry) {
 	reg.Register(&schemas.Schema{
@@ -596,6 +710,7 @@ func RegisterSchema(reg *schemas.Registry) {
 			0x889b461db1a06a5d,
 			0x8d93ca82cd6581ad,
 			0x8de5111c8f726633,
+			0x91e0d5a649d00ad3,
 			0xa476b2efa6e23869,
 			0xd317eb5f30a42558,
 			0xd9f084c64783b9fa,

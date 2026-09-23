@@ -4,12 +4,15 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	capnp "capnproto.org/go/capnp/v3"
 	"github.com/apache/arrow-go/v18/arrow"
@@ -18,12 +21,14 @@ import (
 	"github.com/apache/iceberg-go"
 	sqlcat "github.com/apache/iceberg-go/catalog/sql"
 	icetable "github.com/apache/iceberg-go/table"
+	gorillaws "github.com/gorilla/websocket"
 	_ "github.com/mattn/go-sqlite3"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/arithmetic"
 	"github.com/theapemachine/symm/nomagique/cognition"
 	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/network/websocket"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/store"
@@ -1353,5 +1358,286 @@ func TestProgramExecuteSignalPair(t *testing.T) {
 		So(evidence.Interval.End.Sequence == uint64(9007199254740996), ShouldBeTrue)
 		So(evidence.Evidence["support"], ShouldEqual, 3)
 		So(evidence.Evidence["sympathy"], ShouldAlmostEqual, 2)
+	})
+}
+
+func TestProgramExecuteLiveSpot(t *testing.T) {
+	Convey("Given the shipping system graph and a real WebSocket venue", t, func() {
+		failures := make(chan error, 16)
+		subscribed := make(chan string, 16)
+		upgrader := gorillaws.Upgrader{}
+		venue := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			connection, err := upgrader.Upgrade(writer, request, nil)
+			if err != nil {
+				failures <- err
+				return
+			}
+			defer func() {
+				if err := connection.Close(); err != nil {
+					failures <- err
+				}
+			}()
+			for {
+				_, payload, err := connection.ReadMessage()
+				if err != nil {
+					return
+				}
+				var command struct {
+					Method string `json:"method"`
+					Params struct {
+						Channel string   `json:"channel"`
+						Symbol  []string `json:"symbol"`
+					} `json:"params"`
+				}
+				if err := json.Unmarshal(payload, &command); err != nil {
+					failures <- err
+					return
+				}
+				if command.Method != "subscribe" {
+					failures <- fmt.Errorf("unexpected command: %s", payload)
+					return
+				}
+				if command.Params.Channel == "instrument" {
+					err = connection.WriteMessage(gorillaws.TextMessage, []byte(`{"channel":"instrument","type":"snapshot","data":{"pairs":[{"symbol":"BTC/USD","quote":"USD","status":"online"},{"symbol":"ETH/USD","quote":"USD","status":"online"},{"symbol":"BTC/EUR","quote":"EUR","status":"online"},{"symbol":"OLD/USD","quote":"USD","status":"delisted"}]}}`))
+					if err != nil {
+						failures <- err
+						return
+					}
+					continue
+				}
+				if len(command.Params.Symbol) != 2 {
+					failures <- fmt.Errorf("missing symbol: %s", payload)
+					return
+				}
+				for _, symbol := range command.Params.Symbol {
+					subscribed <- command.Params.Channel + ":" + symbol
+					if err := connection.WriteMessage(gorillaws.TextMessage, []byte(`{"method":"subscribe","success":true}`)); err != nil {
+						failures <- err
+						return
+					}
+					if command.Params.Channel != "ticker" {
+						continue
+					}
+					// A single venue frame deliberately contains two records. Both must run.
+					payload, err = json.Marshal(map[string]any{"channel": "ticker", "type": "update", "data": []map[string]any{{"symbol": symbol, "bid": 100, "ask": 102, "bid_qty": 2, "ask_qty": 3, "last": 101}, {"symbol": symbol, "bid": 100, "ask": 105, "bid_qty": 2, "ask_qty": 3, "last": 103}}})
+					if err != nil {
+						failures <- err
+						return
+					}
+					if err := connection.WriteMessage(gorillaws.TextMessage, payload); err != nil {
+						failures <- err
+						return
+					}
+				}
+			}
+		}))
+		defer venue.Close()
+		repository := NewRepository()
+		graph, err := repository.Load("system")
+		So(err, ShouldBeNil)
+		for id, node := range graph.Nodes {
+			if node.Type == "http.HTTPServer" {
+				delete(graph.Nodes, id)
+			}
+		}
+		spot := graph.Nodes["spot"]
+		endpoint, err := json.Marshal(map[string]string{"value": "ws" + strings.TrimPrefix(venue.URL, "http")})
+		So(err, ShouldBeNil)
+		spot.InputData = map[string]json.RawMessage{"socket.endpoint": endpoint}
+		graph.Nodes["spot"] = spot
+		program, err := Compile(graph, nil, repository)
+		So(err, ShouldBeNil)
+		defer program.Release()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		var spreads []float64
+		for len(spreads) < 4 && ctx.Err() == nil {
+			So(program.Execute(ctx, nil), ShouldBeNil)
+			if _, found := program.Result("definition-liquidity_ticker__spread"); found {
+				spread, err := program.Float64Result("definition-liquidity_ticker__spread", "out")
+				So(err, ShouldBeNil)
+				spreads = append(spreads, spread)
+			}
+			time.Sleep(time.Millisecond)
+		}
+		So(spreads, ShouldResemble, []float64{2, 5, 2, 5})
+		received := map[string]bool{}
+		for len(received) < 4 && ctx.Err() == nil {
+			select {
+			case err := <-failures:
+				So(err, ShouldBeNil)
+			case name := <-subscribed:
+				received[name] = true
+			case <-ctx.Done():
+			}
+		}
+		So(received, ShouldResemble, map[string]bool{"ticker:BTC/USD": true, "trade:BTC/USD": true, "ticker:ETH/USD": true, "trade:ETH/USD": true})
+		select {
+		case err := <-failures:
+			So(err, ShouldBeNil)
+		default:
+		}
+	})
+}
+
+func TestProgramStart(t *testing.T) {
+	Convey("Given a graph evaluation that cannot satisfy its precondition", t, func() {
+		program, err := CompileJSON([]byte(`{"nodes":{"required":{"id":"required","type":"controlflow.Require","inputData":{"data":{"value":"observation"},"test":{"value":false},"reason":{"value":"fixture: subscription rejected"}}}}}`), nil, nil)
+		So(err, ShouldBeNil)
+		defer program.Release()
+		err = program.Start(context.Background())
+		So(err, ShouldNotBeNil)
+		So(err.Error(), ShouldContainSubstring, "fixture: subscription rejected")
+	})
+}
+
+func TestProgramCarriedPayloadQueued(t *testing.T) {
+	Convey("Given a queued collection with no further external arrivals", t, func() {
+		program, err := CompileJSON([]byte(`{"nodes":{"records":{"id":"records","type":"data.Iterate"}}}`), nil, nil)
+		So(err, ShouldBeNil)
+		defer program.Release()
+		_, segment, err := capnp.NewMessage(capnp.SingleSegment(nil))
+		So(err, ShouldBeNil)
+		params, err := data.NewIterate_write_Params(segment)
+		So(err, ShouldBeNil)
+		arrivals, err := params.NewData(1)
+		So(err, ShouldBeNil)
+		So(arrivals.Set(0, []byte(`[1,2,3]`)), ShouldBeNil)
+		So(program.Execute(context.Background(), map[NodeID]capnp.Struct{program.NodeMap["records"]: capnp.Struct(params)}), ShouldBeNil)
+		So(program.carriedPayload(), ShouldBeTrue)
+		So(program.Execute(context.Background(), nil), ShouldBeNil)
+		So(program.carriedPayload(), ShouldBeTrue)
+		So(program.Execute(context.Background(), nil), ShouldBeNil)
+		So(program.carriedPayload(), ShouldBeFalse)
+	})
+}
+
+func TestProgramExecuteKraken(t *testing.T) {
+	if os.Getenv("SYMM_LIVE_VERIFY") != "1" {
+		t.Skip("set SYMM_LIVE_VERIFY=1 to verify the live Kraken graph")
+	}
+	Convey("Given the shipping graph connected to Kraken public spot", t, func() {
+		errnie.Apply(&errnie.Config{Level: "error"})
+		defer errnie.Apply(&errnie.Config{Level: "info"})
+		graph, err := NewRepository().Load("system")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for id, node := range graph.Nodes {
+			if node.Type == "http.HTTPServer" {
+				delete(graph.Nodes, id)
+			}
+		}
+		program, err := Compile(graph, nil, NewRepository())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer program.Release()
+		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+		defer cancel()
+		subscriptions := map[string]bool{}
+		symbols := map[string]bool{}
+		records, signals := 0, 0
+		discovered := false
+		expected := map[string]bool{}
+		for ctx.Err() == nil {
+			if err := program.Execute(ctx, nil); err != nil {
+				t.Fatal(err)
+			}
+			if result, found := program.Result("spot__socket"); found {
+				received := websocket.Received(result)
+				if received.Which() == websocket.Received_Which_frame {
+					payload, err := received.Frame().Read()
+					if err != nil {
+						t.Fatal(err)
+					}
+					var frame struct {
+						Channel string          `json:"channel"`
+						Data    json.RawMessage `json:"data"`
+						Success bool            `json:"success"`
+						Result  struct {
+							Channel string `json:"channel"`
+							Symbol  string `json:"symbol"`
+						} `json:"result"`
+					}
+					if err := json.Unmarshal(payload, &frame); err != nil {
+						t.Fatal(err)
+					}
+					if frame.Channel == "instrument" {
+						discovered = true
+						var instruments struct {
+							Pairs []struct {
+								Symbol string `json:"symbol"`
+								Quote  string `json:"quote"`
+								Status string `json:"status"`
+							} `json:"pairs"`
+						}
+						So(json.Unmarshal(frame.Data, &instruments), ShouldBeNil)
+						for _, pair := range instruments.Pairs {
+							if pair.Quote == "USD" && pair.Status == "online" {
+								expected["ticker:"+pair.Symbol] = true
+								expected["trade:"+pair.Symbol] = true
+							}
+						}
+					}
+					if frame.Success && frame.Result.Symbol != "" {
+						subscriptions[frame.Result.Channel+":"+frame.Result.Symbol] = true
+					}
+				}
+			}
+			if result, found := program.Result("spot__records"); found && data.Iterate_done_Results(result).Found() {
+				records++
+				payload, err := data.Iterate_done_Results(result).Out()
+				if err != nil {
+					t.Fatal(err)
+				}
+				var record struct {
+					Data struct {
+						Symbol string `json:"symbol"`
+					} `json:"data"`
+				}
+				if err := json.Unmarshal(payload, &record); err != nil {
+					t.Fatal(err)
+				}
+				symbols[record.Data.Symbol] = true
+			}
+			if _, found := program.Result("definition-liquidity_ticker__spread"); found {
+				signals++
+			}
+			if discovered && len(expected) > 0 && len(subscriptions) == len(expected) && len(symbols) >= 10 && signals >= 20 {
+				break
+			}
+			if !program.carriedPayload() {
+				time.Sleep(time.Millisecond)
+			}
+		}
+		if !discovered || len(expected) == 0 || len(subscriptions) != len(expected) || len(symbols) < 10 || signals < 20 {
+			t.Fatalf("live delivery incomplete: discovery=%v subscriptions=%d symbols=%d records=%d signals=%d", discovered, len(subscriptions), len(symbols), records, signals)
+		}
+		So(subscriptions, ShouldResemble, expected)
+		t.Logf("live Kraken: all eligible USD spot pairs subscribed; %d acknowledged subscriptions; %d symbols; %d records; %d liquidity signal evaluations", len(subscriptions), len(symbols), records, signals)
+	})
+}
+
+func TestProgramExecuteFanIn(t *testing.T) {
+	Convey("Given twelve numbered numeric inputs", t, func() {
+		nodes := map[string]any{}
+		inputs := map[string]any{}
+		for index := range 12 {
+			id := fmt.Sprintf("number%d", index)
+			port := fmt.Sprintf("values_%d", index)
+			nodes[id] = map[string]any{"id": id, "type": "arithmetic.Add", "inputData": map[string]any{"a": map[string]any{"value": index}}, "connections": map[string]any{"outputs": map[string]any{"out": []any{map[string]any{"nodeId": "element", "portName": port}}}}}
+			inputs[port] = []any{map[string]any{"nodeId": id, "portName": "out"}}
+		}
+		nodes["element"] = map[string]any{"id": "element", "type": "data.Element", "inputData": map[string]any{"index": map[string]any{"value": 10}}, "connections": map[string]any{"inputs": inputs}}
+		raw, err := json.Marshal(map[string]any{"nodes": nodes})
+		So(err, ShouldBeNil)
+		program, err := CompileJSON(raw, nil, nil)
+		So(err, ShouldBeNil)
+		defer program.Release()
+		So(program.Execute(context.Background(), nil), ShouldBeNil)
+		actual, err := program.Float64Result("element", "out")
+		So(err, ShouldBeNil)
+		So(actual, ShouldEqual, 10)
 	})
 }

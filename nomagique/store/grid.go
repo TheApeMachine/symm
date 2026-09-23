@@ -186,7 +186,7 @@ func (server *GridServer) declare(interests string) {
 
 	server.interests = fields
 	server.declared = interests
-	server.Info("delivering %d fields to %d metrics", len(fields), server.metrics.Len())
+	server.Info("registered %d field interests", len(fields))
 }
 
 /*
