@@ -51,6 +51,8 @@ func TestTapeWrite(t *testing.T) {
 				So(err, ShouldBeNil)
 				So(string(payload), ShouldEqual, expected)
 				So(result.Frame().Sequence(), ShouldEqual, []int64{2, 10, 0}[index])
+				// The frames still to replay keep an otherwise quiet graph running.
+				So(result.Pending(), ShouldEqual, uint64(2-index))
 				received, err := result.Frame().ReceivedAt()
 				So(err, ShouldBeNil)
 				So(received, ShouldEqual, "2026-09-22T12:00:00.123456789Z")
@@ -68,6 +70,7 @@ func TestTapeWrite(t *testing.T) {
 			result, err := future.Struct()
 			So(err, ShouldBeNil)
 			So(result.Which(), ShouldEqual, TapeResult_Which_exhausted)
+			So(result.Pending(), ShouldEqual, 0)
 		})
 	})
 }

@@ -9,6 +9,18 @@ type Graph struct {
 	ID    string          `json:"id"`
 	Name  string          `json:"name"`
 	Nodes map[string]Node `json:"nodes"`
+	// Origins names, for every node a definition brought in, the definition
+	// and the id it has there, so a surface drawing that definition can find
+	// its own node again after expansion prefixed it.
+	Origins map[string]Origin `json:"-"`
+}
+
+/*
+Origin is where an expanded node was authored.
+*/
+type Origin struct {
+	Definition string
+	Node       string
 }
 
 /*

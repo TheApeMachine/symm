@@ -124,7 +124,7 @@ func (server *MineServer) Write(ctx context.Context, call Mine_write) error {
 	}
 	events := make([]MinedEvent, 0)
 
-	for index, reading := range readings {
+	for _, reading := range readings {
 		key := miningSymbol{stream, reading.symbol}
 		path := server.paths[key]
 
@@ -132,7 +132,7 @@ func (server *MineServer) Write(ctx context.Context, call Mine_write) error {
 			path = &minedPath{excursion: NewExcursion(ctx)}
 			server.paths[key] = path
 		}
-		cursor := TapeCursor{args.Sequence(), index}
+		cursor := TapeCursor{args.Sequence(), reading.record}
 		path.cursors = append(path.cursors, cursor)
 
 		if err := path.excursion.Step(reading.value); err != nil {

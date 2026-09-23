@@ -209,7 +209,7 @@ func (c Tape_done) Args() Tape_done_Params {
 
 // AllocResults allocates the results struct.
 func (c Tape_done) AllocResults() (TapeResult, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 16, PointerCount: 5})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 24, PointerCount: 5})
 	return TapeResult(r), err
 }
 
@@ -400,12 +400,12 @@ func (w TapeResult_Which) String() string {
 const TapeResult_TypeID = 0xfc1e4f015b2afcb1
 
 func NewTapeResult(s *capnp.Segment) (TapeResult, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 5})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 5})
 	return TapeResult(st), err
 }
 
 func NewRootTapeResult(s *capnp.Segment) (TapeResult, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 5})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 5})
 	return TapeResult(st), err
 }
 
@@ -451,6 +451,14 @@ func (s TapeResult) Finished() bool {
 
 func (s TapeResult) SetFinished(v bool) {
 	capnp.Struct(s).SetBit(16, v)
+}
+
+func (s TapeResult) Pending() uint64 {
+	return capnp.Struct(s).Uint64(16)
+}
+
+func (s TapeResult) SetPending(v uint64) {
+	capnp.Struct(s).SetUint64(16, v)
 }
 
 func (s TapeResult) SetIdle() {
@@ -573,7 +581,7 @@ type TapeResult_List = capnp.StructList[TapeResult]
 
 // NewTapeResult creates a new list of TapeResult.
 func NewTapeResult_List(s *capnp.Segment, sz int32) (TapeResult_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 16, PointerCount: 5}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 24, PointerCount: 5}, sz)
 	return capnp.StructList[TapeResult](l), err
 }
 

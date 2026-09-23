@@ -1,622 +1,1192 @@
 {
-  "id": "ui_dashboard",
-  "name": "ui:dashboard",
-  "nodes": {
-    "route": {
-      "id": "route",
-      "type": "ui.UIRoute",
-      "connections": {
-        "inputs": {
-          "components": [
-            {
-              "nodeId": "page",
-              "portName": "self"
-            }
-          ]
-        },
-        "outputs": {}
-      },
-      "inputData": {
-        "path": {
-          "value": "/"
-        },
-        "title": {
-          "value": "Overview"
-        }
-      },
-      "width": 280,
-      "height": 172,
-      "x": 0.0,
-      "y": 0.0
+ "id": "ui_dashboard",
+ "name": "ui:dashboard",
+ "nodes": {
+  "route": {
+   "id": "route",
+   "type": "ui.UIRoute",
+   "connections": {
+    "inputs": {
+     "components": [
+      {
+       "nodeId": "page",
+       "portName": "self"
+      }
+     ]
     },
-    "page": {
-      "id": "page",
-      "type": "ui.Flex.Column",
-      "connections": {
-        "inputs": {
-          "components": [
-            {
-              "nodeId": "grid",
-              "portName": "self"
-            }
-          ]
-        },
-        "outputs": {
-          "self": [
-            {
-              "nodeId": "route",
-              "portName": "components"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "className": {
-          "value": "h-full min-h-0 w-full bg-(--bg) text-(--f1)"
-        }
-      },
-      "width": 280,
-      "height": 172,
-      "x": 340.0,
-      "y": 0.0
+    "outputs": {}
+   },
+   "inputData": {
+    "path": {
+     "value": "/"
     },
-    "grid": {
-      "id": "grid",
-      "type": "ui.Grid",
-      "connections": {
-        "inputs": {
-          "components": [
-            {
-              "nodeId": "kernels",
-              "portName": "self"
-            }
-          ],
-          "components_1": [
-            {
-              "nodeId": "centre",
-              "portName": "self"
-            }
-          ],
-          "components_2": [
-            {
-              "nodeId": "right",
-              "portName": "self"
-            }
-          ]
-        },
-        "outputs": {
-          "self": [
-            {
-              "nodeId": "page",
-              "portName": "components"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "className": {
-          "value": "h-full min-h-0 min-w-0 flex-1 grid-cols-[282px_minmax(360px,1fr)_332px]"
-        }
-      },
-      "width": 280,
-      "height": 172,
-      "x": 680.0,
-      "y": 0.0
-    },
-    "kernels": {
-      "id": "kernels",
-      "type": "ui.Section",
-      "connections": {
-        "inputs": {
-          "components": [
-            {
-              "nodeId": "kernelsHeader",
-              "portName": "self"
-            }
-          ],
-          "components_1": [
-            {
-              "nodeId": "kernelHeatmap",
-              "portName": "self"
-            }
-          ]
-        },
-        "outputs": {
-          "self": [
-            {
-              "nodeId": "grid",
-              "portName": "components"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "className": {
-          "value": "min-h-0 border-(--line) border-r"
-        },
-        "fit": {
-          "value": "pane"
-        }
-      },
-      "width": 280,
-      "height": 172,
-      "x": 1020.0,
-      "y": 0.0
-    },
-    "kernelsHeader": {
-      "id": "kernelsHeader",
-      "type": "ui.Section.Header",
-      "connections": {
-        "inputs": {},
-        "outputs": {
-          "self": [
-            {
-              "nodeId": "kernels",
-              "portName": "components"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "title": {
-          "value": "Signal kernels"
-        },
-        "sticky": {
-          "value": true
-        }
-      },
-      "width": 280,
-      "height": 172,
-      "x": 1360.0,
-      "y": 0.0
-    },
-    "kernelHeatmap": {
-      "id": "kernelHeatmap",
-      "type": "ui.TerminalSignalHeatmap",
-      "connections": {
-        "inputs": {},
-        "outputs": {
-          "self": [
-            {
-              "nodeId": "kernels",
-              "portName": "components_1"
-            }
-          ]
-        }
-      },
-      "width": 280,
-      "height": 172,
-      "x": 1700.0,
-      "y": 0.0
-    },
-    "centre": {
-      "id": "centre",
-      "type": "ui.Flex.Column",
-      "connections": {
-        "inputs": {
-          "components": [
-            {
-              "nodeId": "predictive",
-              "portName": "self"
-            }
-          ],
-          "components_1": [
-            {
-              "nodeId": "resonance",
-              "portName": "self"
-            }
-          ]
-        },
-        "outputs": {
-          "self": [
-            {
-              "nodeId": "grid",
-              "portName": "components_1"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "className": {
-          "value": "min-h-0 border-(--line) border-r bg-(--sunken)"
-        }
-      },
-      "width": 280,
-      "height": 172,
-      "x": 0.0,
-      "y": 220.0
-    },
-    "predictive": {
-      "id": "predictive",
-      "type": "ui.Canvas",
-      "connections": {
-        "inputs": {
-          "components": [
-            {
-              "nodeId": "impulse",
-              "portName": "self"
-            }
-          ]
-        },
-        "outputs": {
-          "self": [
-            {
-              "nodeId": "centre",
-              "portName": "components"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "title": {
-          "value": "Predictive coding"
-        },
-        "className": {
-          "value": "flex-1"
-        },
-        "scanlines": {
-          "value": true
-        }
-      },
-      "width": 280,
-      "height": 172,
-      "x": 340.0,
-      "y": 220.0
-    },
-    "impulse": {
-      "id": "impulse",
-      "type": "ui.ImpulseMap",
-      "connections": {
-        "inputs": {},
-        "outputs": {
-          "self": [
-            {
-              "nodeId": "predictive",
-              "portName": "components"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "fullHeight": {
-          "value": true
-        }
-      },
-      "width": 280,
-      "height": 172,
-      "x": 680.0,
-      "y": 220.0
-    },
-    "resonance": {
-      "id": "resonance",
-      "type": "ui.Panel",
-      "connections": {
-        "inputs": {
-          "components": [
-            {
-              "nodeId": "resonanceHeader",
-              "portName": "self"
-            }
-          ],
-          "components_1": [
-            {
-              "nodeId": "resonanceMeter",
-              "portName": "self"
-            }
-          ]
-        },
-        "outputs": {
-          "self": [
-            {
-              "nodeId": "centre",
-              "portName": "components_1"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "className": {
-          "value": "shrink-0 border-(--line) border-t"
-        }
-      },
-      "width": 280,
-      "height": 172,
-      "x": 1020.0,
-      "y": 220.0
-    },
-    "resonanceHeader": {
-      "id": "resonanceHeader",
-      "type": "ui.Panel.Header",
-      "connections": {
-        "inputs": {},
-        "outputs": {
-          "self": [
-            {
-              "nodeId": "resonance",
-              "portName": "components"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "title": {
-          "value": "Resonance"
-        }
-      },
-      "width": 280,
-      "height": 172,
-      "x": 1360.0,
-      "y": 220.0
-    },
-    "resonanceMeter": {
-      "id": "resonanceMeter",
-      "type": "ui.Meter",
-      "connections": {
-        "inputs": {},
-        "outputs": {
-          "self": [
-            {
-              "nodeId": "resonance",
-              "portName": "components_1"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "label": {
-          "value": "settled latent state"
-        }
-      },
-      "width": 280,
-      "height": 172,
-      "x": 1700.0,
-      "y": 220.0
-    },
-    "right": {
-      "id": "right",
-      "type": "ui.Flex.Column",
-      "connections": {
-        "inputs": {
-          "components": [
-            {
-              "nodeId": "decisions",
-              "portName": "self"
-            }
-          ],
-          "components_1": [
-            {
-              "nodeId": "positions",
-              "portName": "self"
-            }
-          ]
-        },
-        "outputs": {
-          "self": [
-            {
-              "nodeId": "grid",
-              "portName": "components_2"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "className": {
-          "value": "min-h-0 overflow-hidden bg-(--surface)"
-        }
-      },
-      "width": 280,
-      "height": 172,
-      "x": 0.0,
-      "y": 440.0
-    },
-    "decisions": {
-      "id": "decisions",
-      "type": "ui.DecisionList",
-      "connections": {
-        "inputs": {
-          "decisions": [
-            {
-              "nodeId": "decisionSource",
-              "portName": "value"
-            }
-          ],
-          "onInspect": [
-            {
-              "nodeId": "inspectSource",
-              "portName": "value"
-            }
-          ]
-        },
-        "outputs": {
-          "self": [
-            {
-              "nodeId": "right",
-              "portName": "components"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "className": {
-          "value": "min-h-0 flex-[1.15] border-(--line) border-b"
-        },
-        "title": {
-          "value": "DECISIONS"
-        }
-      },
-      "width": 280,
-      "height": 172,
-      "x": 340.0,
-      "y": 440.0
-    },
-    "positions": {
-      "id": "positions",
-      "type": "ui.Section",
-      "connections": {
-        "inputs": {
-          "components": [
-            {
-              "nodeId": "positionsHeader",
-              "portName": "self"
-            }
-          ],
-          "components_1": [
-            {
-              "nodeId": "positionList",
-              "portName": "self"
-            }
-          ]
-        },
-        "outputs": {
-          "self": [
-            {
-              "nodeId": "right",
-              "portName": "components_1"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "className": {
-          "value": "min-h-0 flex-1 overflow-auto border-(--line) border-b"
-        }
-      },
-      "width": 280,
-      "height": 172,
-      "x": 680.0,
-      "y": 440.0
-    },
-    "positionsHeader": {
-      "id": "positionsHeader",
-      "type": "ui.Section.Header",
-      "connections": {
-        "inputs": {},
-        "outputs": {
-          "self": [
-            {
-              "nodeId": "positions",
-              "portName": "components"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "title": {
-          "value": "Open positions"
-        }
-      },
-      "width": 280,
-      "height": 172,
-      "x": 1020.0,
-      "y": 440.0
-    },
-    "positionList": {
-      "id": "positionList",
-      "type": "ui.PositionList",
-      "connections": {
-        "inputs": {
-          "positions": [
-            {
-              "nodeId": "positionSource",
-              "portName": "value"
-            }
-          ],
-          "onInspect": [
-            {
-              "nodeId": "inspectSource",
-              "portName": "value"
-            }
-          ]
-        },
-        "outputs": {
-          "self": [
-            {
-              "nodeId": "positions",
-              "portName": "components_1"
-            }
-          ]
-        }
-      },
-      "width": 280,
-      "height": 172,
-      "x": 1360.0,
-      "y": 440.0
-    },
-    "decisionSource": {
-      "id": "decisionSource",
-      "type": "ui.UIData",
-      "inputData": {
-        "source": {
-          "value": "decisions"
-        }
-      },
-      "connections": {
-        "inputs": {},
-        "outputs": {
-          "value": [
-            {
-              "nodeId": "decisions",
-              "portName": "decisions"
-            }
-          ]
-        }
-      },
-      "width": 280,
-      "height": 172,
-      "x": 1700.0,
-      "y": 440.0
-    },
-    "positionSource": {
-      "id": "positionSource",
-      "type": "ui.UIData",
-      "inputData": {
-        "source": {
-          "value": "positions"
-        }
-      },
-      "connections": {
-        "inputs": {},
-        "outputs": {
-          "value": [
-            {
-              "nodeId": "positionList",
-              "portName": "positions"
-            }
-          ]
-        }
-      },
-      "width": 280,
-      "height": 172,
-      "x": 0.0,
-      "y": 660.0
-    },
-    "inspectSource": {
-      "id": "inspectSource",
-      "type": "ui.UIData",
-      "inputData": {
-        "source": {
-          "value": "inspectSymbol"
-        }
-      },
-      "connections": {
-        "inputs": {},
-        "outputs": {
-          "value": [
-            {
-              "nodeId": "decisions",
-              "portName": "onInspect"
-            },
-            {
-              "nodeId": "positionList",
-              "portName": "onInspect"
-            }
-          ]
-        }
-      },
-      "width": 280,
-      "height": 172,
-      "x": 340.0,
-      "y": 660.0
+    "title": {
+     "value": "Overview"
     }
+   },
+   "width": 280,
+   "height": 172,
+   "x": 0.0,
+   "y": 0.0
+  },
+  "page": {
+   "id": "page",
+   "type": "ui.Flex.Column",
+   "connections": {
+    "inputs": {
+     "components": [
+      {
+       "nodeId": "grid",
+       "portName": "self"
+      }
+     ]
+    },
+    "outputs": {
+     "self": [
+      {
+       "nodeId": "route",
+       "portName": "components"
+      }
+     ]
+    }
+   },
+   "inputData": {
+    "className": {
+     "value": "h-full min-h-0 w-full bg-(--bg) text-(--f1)"
+    }
+   },
+   "width": 280,
+   "height": 172,
+   "x": 340.0,
+   "y": 0.0
+  },
+  "grid": {
+   "id": "grid",
+   "type": "ui.Grid",
+   "connections": {
+    "inputs": {
+     "components": [
+      {
+       "nodeId": "kernels",
+       "portName": "self"
+      }
+     ],
+     "components_1": [
+      {
+       "nodeId": "centre",
+       "portName": "self"
+      }
+     ],
+     "components_2": [
+      {
+       "nodeId": "right",
+       "portName": "self"
+      }
+     ]
+    },
+    "outputs": {
+     "self": [
+      {
+       "nodeId": "page",
+       "portName": "components"
+      }
+     ]
+    }
+   },
+   "inputData": {
+    "className": {
+     "value": "h-full min-h-0 min-w-0 flex-1 grid-cols-[282px_minmax(360px,1fr)_332px]"
+    }
+   },
+   "width": 280,
+   "height": 172,
+   "x": 680.0,
+   "y": 0.0
+  },
+  "kernels": {
+   "id": "kernels",
+   "type": "ui.Section",
+   "connections": {
+    "inputs": {
+     "components": [
+      {
+       "nodeId": "kernelsHeader",
+       "portName": "self"
+      }
+     ],
+     "components_1": [
+      {
+       "nodeId": "kernelRows",
+       "portName": "self"
+      }
+     ]
+    },
+    "outputs": {
+     "self": [
+      {
+       "nodeId": "grid",
+       "portName": "components"
+      }
+     ]
+    }
+   },
+   "inputData": {
+    "className": {
+     "value": "min-h-0 border-(--line) border-r"
+    },
+    "fit": {
+     "value": "pane"
+    }
+   },
+   "width": 280,
+   "height": 172,
+   "x": 1020.0,
+   "y": 0.0
+  },
+  "kernelsHeader": {
+   "id": "kernelsHeader",
+   "type": "ui.Section.Header",
+   "connections": {
+    "inputs": {},
+    "outputs": {
+     "self": [
+      {
+       "nodeId": "kernels",
+       "portName": "components"
+      }
+     ]
+    }
+   },
+   "inputData": {
+    "title": {
+     "value": "Signal kernels"
+    },
+    "sticky": {
+     "value": true
+    }
+   },
+   "width": 280,
+   "height": 172,
+   "x": 1360.0,
+   "y": 0.0
+  },
+  "centre": {
+   "id": "centre",
+   "type": "ui.Flex.Column",
+   "connections": {
+    "inputs": {
+     "components": [
+      {
+       "nodeId": "predictive",
+       "portName": "self"
+      }
+     ],
+     "components_1": [
+      {
+       "nodeId": "resonance",
+       "portName": "self"
+      }
+     ]
+    },
+    "outputs": {
+     "self": [
+      {
+       "nodeId": "grid",
+       "portName": "components_1"
+      }
+     ]
+    }
+   },
+   "inputData": {
+    "className": {
+     "value": "min-h-0 border-(--line) border-r bg-(--sunken)"
+    }
+   },
+   "width": 280,
+   "height": 172,
+   "x": 0.0,
+   "y": 220.0
+  },
+  "predictive": {
+   "id": "predictive",
+   "type": "ui.Canvas",
+   "connections": {
+    "inputs": {
+     "components": [
+      {
+       "nodeId": "impulse",
+       "portName": "self"
+      }
+     ]
+    },
+    "outputs": {
+     "self": [
+      {
+       "nodeId": "centre",
+       "portName": "components"
+      }
+     ]
+    }
+   },
+   "inputData": {
+    "title": {
+     "value": "Predictive coding"
+    },
+    "className": {
+     "value": "flex-1"
+    },
+    "scanlines": {
+     "value": true
+    }
+   },
+   "width": 280,
+   "height": 172,
+   "x": 340.0,
+   "y": 220.0
+  },
+  "impulse": {
+   "id": "impulse",
+   "type": "ui.ImpulseMap",
+   "connections": {
+    "inputs": {},
+    "outputs": {
+     "self": [
+      {
+       "nodeId": "predictive",
+       "portName": "components"
+      }
+     ]
+    }
+   },
+   "inputData": {
+    "fullHeight": {
+     "value": true
+    }
+   },
+   "width": 280,
+   "height": 172,
+   "x": 680.0,
+   "y": 220.0
+  },
+  "resonance": {
+   "id": "resonance",
+   "type": "ui.Panel",
+   "connections": {
+    "inputs": {
+     "components": [
+      {
+       "nodeId": "resonanceHeader",
+       "portName": "self"
+      }
+     ],
+     "components_1": [
+      {
+       "nodeId": "resonanceMeter",
+       "portName": "self"
+      }
+     ]
+    },
+    "outputs": {
+     "self": [
+      {
+       "nodeId": "centre",
+       "portName": "components_1"
+      }
+     ]
+    }
+   },
+   "inputData": {
+    "className": {
+     "value": "shrink-0 border-(--line) border-t"
+    }
+   },
+   "width": 280,
+   "height": 172,
+   "x": 1020.0,
+   "y": 220.0
+  },
+  "resonanceHeader": {
+   "id": "resonanceHeader",
+   "type": "ui.Panel.Header",
+   "connections": {
+    "inputs": {},
+    "outputs": {
+     "self": [
+      {
+       "nodeId": "resonance",
+       "portName": "components"
+      }
+     ]
+    }
+   },
+   "inputData": {
+    "title": {
+     "value": "Resonance"
+    }
+   },
+   "width": 280,
+   "height": 172,
+   "x": 1360.0,
+   "y": 220.0
+  },
+  "resonanceMeter": {
+   "id": "resonanceMeter",
+   "type": "ui.Meter",
+   "connections": {
+    "inputs": {},
+    "outputs": {
+     "self": [
+      {
+       "nodeId": "resonance",
+       "portName": "components_1"
+      }
+     ]
+    }
+   },
+   "inputData": {
+    "label": {
+     "value": "settled latent state"
+    }
+   },
+   "width": 280,
+   "height": 172,
+   "x": 1700.0,
+   "y": 220.0
+  },
+  "right": {
+   "id": "right",
+   "type": "ui.Flex.Column",
+   "connections": {
+    "inputs": {
+     "components": [
+      {
+       "nodeId": "decisions",
+       "portName": "self"
+      }
+     ],
+     "components_1": [
+      {
+       "nodeId": "positions",
+       "portName": "self"
+      }
+     ]
+    },
+    "outputs": {
+     "self": [
+      {
+       "nodeId": "grid",
+       "portName": "components_2"
+      }
+     ]
+    }
+   },
+   "inputData": {
+    "className": {
+     "value": "min-h-0 overflow-hidden bg-(--surface)"
+    }
+   },
+   "width": 280,
+   "height": 172,
+   "x": 0.0,
+   "y": 440.0
+  },
+  "decisions": {
+   "id": "decisions",
+   "type": "ui.DecisionList",
+   "connections": {
+    "inputs": {
+     "decisions": [
+      {
+       "nodeId": "decisionSource",
+       "portName": "value"
+      }
+     ],
+     "onInspect": [
+      {
+       "nodeId": "inspectSource",
+       "portName": "value"
+      }
+     ]
+    },
+    "outputs": {
+     "self": [
+      {
+       "nodeId": "right",
+       "portName": "components"
+      }
+     ]
+    }
+   },
+   "inputData": {
+    "className": {
+     "value": "min-h-0 flex-[1.15] border-(--line) border-b"
+    },
+    "title": {
+     "value": "DECISIONS"
+    }
+   },
+   "width": 280,
+   "height": 172,
+   "x": 340.0,
+   "y": 440.0
+  },
+  "positions": {
+   "id": "positions",
+   "type": "ui.Section",
+   "connections": {
+    "inputs": {
+     "components": [
+      {
+       "nodeId": "positionsHeader",
+       "portName": "self"
+      }
+     ],
+     "components_1": [
+      {
+       "nodeId": "positionList",
+       "portName": "self"
+      }
+     ]
+    },
+    "outputs": {
+     "self": [
+      {
+       "nodeId": "right",
+       "portName": "components_1"
+      }
+     ]
+    }
+   },
+   "inputData": {
+    "className": {
+     "value": "min-h-0 flex-1 overflow-auto border-(--line) border-b"
+    }
+   },
+   "width": 280,
+   "height": 172,
+   "x": 680.0,
+   "y": 440.0
+  },
+  "positionsHeader": {
+   "id": "positionsHeader",
+   "type": "ui.Section.Header",
+   "connections": {
+    "inputs": {},
+    "outputs": {
+     "self": [
+      {
+       "nodeId": "positions",
+       "portName": "components"
+      }
+     ]
+    }
+   },
+   "inputData": {
+    "title": {
+     "value": "Open positions"
+    }
+   },
+   "width": 280,
+   "height": 172,
+   "x": 1020.0,
+   "y": 440.0
+  },
+  "positionList": {
+   "id": "positionList",
+   "type": "ui.PositionList",
+   "connections": {
+    "inputs": {
+     "positions": [
+      {
+       "nodeId": "positionSource",
+       "portName": "value"
+      }
+     ],
+     "onInspect": [
+      {
+       "nodeId": "inspectSource",
+       "portName": "value"
+      }
+     ]
+    },
+    "outputs": {
+     "self": [
+      {
+       "nodeId": "positions",
+       "portName": "components_1"
+      }
+     ]
+    }
+   },
+   "width": 280,
+   "height": 172,
+   "x": 1360.0,
+   "y": 440.0
+  },
+  "decisionSource": {
+   "id": "decisionSource",
+   "type": "ui.UIData",
+   "inputData": {
+    "source": {
+     "value": "decisions"
+    }
+   },
+   "connections": {
+    "inputs": {},
+    "outputs": {
+     "value": [
+      {
+       "nodeId": "decisions",
+       "portName": "decisions"
+      }
+     ]
+    }
+   },
+   "width": 280,
+   "height": 172,
+   "x": 1700.0,
+   "y": 440.0
+  },
+  "positionSource": {
+   "id": "positionSource",
+   "type": "ui.UIData",
+   "inputData": {
+    "source": {
+     "value": "positions"
+    }
+   },
+   "connections": {
+    "inputs": {},
+    "outputs": {
+     "value": [
+      {
+       "nodeId": "positionList",
+       "portName": "positions"
+      }
+     ]
+    }
+   },
+   "width": 280,
+   "height": 172,
+   "x": 0.0,
+   "y": 660.0
+  },
+  "inspectSource": {
+   "id": "inspectSource",
+   "type": "ui.UIData",
+   "inputData": {
+    "source": {
+     "value": "inspectSymbol"
+    }
+   },
+   "connections": {
+    "inputs": {},
+    "outputs": {
+     "value": [
+      {
+       "nodeId": "decisions",
+       "portName": "onInspect"
+      },
+      {
+       "nodeId": "positionList",
+       "portName": "onInspect"
+      }
+     ]
+    }
+   },
+   "width": 280,
+   "height": 172,
+   "x": 340.0,
+   "y": 660.0
+  },
+  "marketSymbol": {
+   "id": "marketSymbol",
+   "type": "ui.DataRow",
+   "width": 280,
+   "height": 120,
+   "x": 0,
+   "y": 0,
+   "inputData": {
+    "label": {
+     "value": "symbol"
+    },
+    "size": {
+     "value": "s"
+    }
+   },
+   "connections": {
+    "inputs": {},
+    "outputs": {
+     "self": [
+      {
+       "nodeId": "kernelRows",
+       "portName": "components"
+      }
+     ]
+    }
+   }
+  },
+  "marketPrice": {
+   "id": "marketPrice",
+   "type": "ui.DataRow",
+   "width": 280,
+   "height": 120,
+   "x": 0,
+   "y": 0,
+   "inputData": {
+    "label": {
+     "value": "last"
+    },
+    "size": {
+     "value": "s"
+    }
+   },
+   "connections": {
+    "inputs": {},
+    "outputs": {
+     "self": [
+      {
+       "nodeId": "kernelRows",
+       "portName": "components_1"
+      }
+     ]
+    }
+   }
+  },
+  "kernel_correlation": {
+   "id": "kernel_correlation",
+   "type": "ui.DataRow",
+   "width": 280,
+   "height": 120,
+   "x": 0,
+   "y": 0,
+   "inputData": {
+    "label": {
+     "value": "correlation"
+    },
+    "size": {
+     "value": "s"
+    }
+   },
+   "connections": {
+    "inputs": {},
+    "outputs": {
+     "self": [
+      {
+       "nodeId": "kernelRows",
+       "portName": "components_2"
+      }
+     ]
+    }
+   }
+  },
+  "kernel_cvd": {
+   "id": "kernel_cvd",
+   "type": "ui.DataRow",
+   "width": 280,
+   "height": 120,
+   "x": 0,
+   "y": 0,
+   "inputData": {
+    "label": {
+     "value": "cvd"
+    },
+    "size": {
+     "value": "s"
+    }
+   },
+   "connections": {
+    "inputs": {},
+    "outputs": {
+     "self": [
+      {
+       "nodeId": "kernelRows",
+       "portName": "components_3"
+      }
+     ]
+    }
+   }
+  },
+  "kernel_depthflow": {
+   "id": "kernel_depthflow",
+   "type": "ui.DataRow",
+   "width": 280,
+   "height": 120,
+   "x": 0,
+   "y": 0,
+   "inputData": {
+    "label": {
+     "value": "depthflow"
+    },
+    "size": {
+     "value": "s"
+    }
+   },
+   "connections": {
+    "inputs": {},
+    "outputs": {
+     "self": [
+      {
+       "nodeId": "kernelRows",
+       "portName": "components_4"
+      }
+     ]
+    }
+   }
+  },
+  "kernel_derivatives": {
+   "id": "kernel_derivatives",
+   "type": "ui.DataRow",
+   "width": 280,
+   "height": 120,
+   "x": 0,
+   "y": 0,
+   "inputData": {
+    "label": {
+     "value": "derivatives"
+    },
+    "size": {
+     "value": "s"
+    }
+   },
+   "connections": {
+    "inputs": {},
+    "outputs": {
+     "self": [
+      {
+       "nodeId": "kernelRows",
+       "portName": "components_5"
+      }
+     ]
+    }
+   }
+  },
+  "kernel_liquidations": {
+   "id": "kernel_liquidations",
+   "type": "ui.DataRow",
+   "width": 280,
+   "height": 120,
+   "x": 0,
+   "y": 0,
+   "inputData": {
+    "label": {
+     "value": "liquidations"
+    },
+    "size": {
+     "value": "s"
+    }
+   },
+   "connections": {
+    "inputs": {},
+    "outputs": {
+     "self": [
+      {
+       "nodeId": "kernelRows",
+       "portName": "components_6"
+      }
+     ]
+    }
+   }
+  },
+  "kernel_hawkes": {
+   "id": "kernel_hawkes",
+   "type": "ui.DataRow",
+   "width": 280,
+   "height": 120,
+   "x": 0,
+   "y": 0,
+   "inputData": {
+    "label": {
+     "value": "hawkes"
+    },
+    "size": {
+     "value": "s"
+    }
+   },
+   "connections": {
+    "inputs": {},
+    "outputs": {
+     "self": [
+      {
+       "nodeId": "kernelRows",
+       "portName": "components_7"
+      }
+     ]
+    }
+   }
+  },
+  "kernel_leadlag": {
+   "id": "kernel_leadlag",
+   "type": "ui.DataRow",
+   "width": 280,
+   "height": 120,
+   "x": 0,
+   "y": 0,
+   "inputData": {
+    "label": {
+     "value": "leadlag"
+    },
+    "size": {
+     "value": "s"
+    }
+   },
+   "connections": {
+    "inputs": {},
+    "outputs": {
+     "self": [
+      {
+       "nodeId": "kernelRows",
+       "portName": "components_8"
+      }
+     ]
+    }
+   }
+  },
+  "kernel_liquidity": {
+   "id": "kernel_liquidity",
+   "type": "ui.DataRow",
+   "width": 280,
+   "height": 120,
+   "x": 0,
+   "y": 0,
+   "inputData": {
+    "label": {
+     "value": "liquidity"
+    },
+    "size": {
+     "value": "s"
+    }
+   },
+   "connections": {
+    "inputs": {},
+    "outputs": {
+     "self": [
+      {
+       "nodeId": "kernelRows",
+       "portName": "components_9"
+      }
+     ]
+    }
+   }
+  },
+  "kernel_morphology": {
+   "id": "kernel_morphology",
+   "type": "ui.DataRow",
+   "width": 280,
+   "height": 120,
+   "x": 0,
+   "y": 0,
+   "inputData": {
+    "label": {
+     "value": "morphology"
+    },
+    "size": {
+     "value": "s"
+    }
+   },
+   "connections": {
+    "inputs": {},
+    "outputs": {
+     "self": [
+      {
+       "nodeId": "kernelRows",
+       "portName": "components_10"
+      }
+     ]
+    }
+   }
+  },
+  "kernel_pumpdump_book": {
+   "id": "kernel_pumpdump_book",
+   "type": "ui.DataRow",
+   "width": 280,
+   "height": 120,
+   "x": 0,
+   "y": 0,
+   "inputData": {
+    "label": {
+     "value": "pumpdump book"
+    },
+    "size": {
+     "value": "s"
+    }
+   },
+   "connections": {
+    "inputs": {},
+    "outputs": {
+     "self": [
+      {
+       "nodeId": "kernelRows",
+       "portName": "components_11"
+      }
+     ]
+    }
+   }
+  },
+  "kernel_pumpdump_ticker": {
+   "id": "kernel_pumpdump_ticker",
+   "type": "ui.DataRow",
+   "width": 280,
+   "height": 120,
+   "x": 0,
+   "y": 0,
+   "inputData": {
+    "label": {
+     "value": "pumpdump ticker"
+    },
+    "size": {
+     "value": "s"
+    }
+   },
+   "connections": {
+    "inputs": {},
+    "outputs": {
+     "self": [
+      {
+       "nodeId": "kernelRows",
+       "portName": "components_12"
+      }
+     ]
+    }
+   }
+  },
+  "kernel_pumpdump_trade": {
+   "id": "kernel_pumpdump_trade",
+   "type": "ui.DataRow",
+   "width": 280,
+   "height": 120,
+   "x": 0,
+   "y": 0,
+   "inputData": {
+    "label": {
+     "value": "pumpdump trade"
+    },
+    "size": {
+     "value": "s"
+    }
+   },
+   "connections": {
+    "inputs": {},
+    "outputs": {
+     "self": [
+      {
+       "nodeId": "kernelRows",
+       "portName": "components_13"
+      }
+     ]
+    }
+   }
+  },
+  "kernel_sentiment": {
+   "id": "kernel_sentiment",
+   "type": "ui.DataRow",
+   "width": 280,
+   "height": 120,
+   "x": 0,
+   "y": 0,
+   "inputData": {
+    "label": {
+     "value": "sentiment"
+    },
+    "size": {
+     "value": "s"
+    }
+   },
+   "connections": {
+    "inputs": {},
+    "outputs": {
+     "self": [
+      {
+       "nodeId": "kernelRows",
+       "portName": "components_14"
+      }
+     ]
+    }
+   }
+  },
+  "kernel_toxicity_book": {
+   "id": "kernel_toxicity_book",
+   "type": "ui.DataRow",
+   "width": 280,
+   "height": 120,
+   "x": 0,
+   "y": 0,
+   "inputData": {
+    "label": {
+     "value": "toxicity book"
+    },
+    "size": {
+     "value": "s"
+    }
+   },
+   "connections": {
+    "inputs": {},
+    "outputs": {
+     "self": [
+      {
+       "nodeId": "kernelRows",
+       "portName": "components_15"
+      }
+     ]
+    }
+   }
+  },
+  "kernel_toxicity_trade": {
+   "id": "kernel_toxicity_trade",
+   "type": "ui.DataRow",
+   "width": 280,
+   "height": 120,
+   "x": 0,
+   "y": 0,
+   "inputData": {
+    "label": {
+     "value": "toxicity trade"
+    },
+    "size": {
+     "value": "s"
+    }
+   },
+   "connections": {
+    "inputs": {},
+    "outputs": {
+     "self": [
+      {
+       "nodeId": "kernelRows",
+       "portName": "components_16"
+      }
+     ]
+    }
+   }
+  },
+  "kernelRows": {
+   "id": "kernelRows",
+   "type": "ui.Flex.Column",
+   "width": 280,
+   "height": 120,
+   "x": 0,
+   "y": 0,
+   "inputData": {
+    "className": {
+     "value": "min-h-0 overflow-auto px-3 py-2"
+    },
+    "gap": {
+     "value": "xs"
+    }
+   },
+   "connections": {
+    "inputs": {
+     "components": [
+      {
+       "nodeId": "marketSymbol",
+       "portName": "self"
+      }
+     ],
+     "components_1": [
+      {
+       "nodeId": "marketPrice",
+       "portName": "self"
+      }
+     ],
+     "components_2": [
+      {
+       "nodeId": "kernel_correlation",
+       "portName": "self"
+      }
+     ],
+     "components_3": [
+      {
+       "nodeId": "kernel_cvd",
+       "portName": "self"
+      }
+     ],
+     "components_4": [
+      {
+       "nodeId": "kernel_depthflow",
+       "portName": "self"
+      }
+     ],
+     "components_5": [
+      {
+       "nodeId": "kernel_derivatives",
+       "portName": "self"
+      }
+     ],
+     "components_6": [
+      {
+       "nodeId": "kernel_liquidations",
+       "portName": "self"
+      }
+     ],
+     "components_7": [
+      {
+       "nodeId": "kernel_hawkes",
+       "portName": "self"
+      }
+     ],
+     "components_8": [
+      {
+       "nodeId": "kernel_leadlag",
+       "portName": "self"
+      }
+     ],
+     "components_9": [
+      {
+       "nodeId": "kernel_liquidity",
+       "portName": "self"
+      }
+     ],
+     "components_10": [
+      {
+       "nodeId": "kernel_morphology",
+       "portName": "self"
+      }
+     ],
+     "components_11": [
+      {
+       "nodeId": "kernel_pumpdump_book",
+       "portName": "self"
+      }
+     ],
+     "components_12": [
+      {
+       "nodeId": "kernel_pumpdump_ticker",
+       "portName": "self"
+      }
+     ],
+     "components_13": [
+      {
+       "nodeId": "kernel_pumpdump_trade",
+       "portName": "self"
+      }
+     ],
+     "components_14": [
+      {
+       "nodeId": "kernel_sentiment",
+       "portName": "self"
+      }
+     ],
+     "components_15": [
+      {
+       "nodeId": "kernel_toxicity_book",
+       "portName": "self"
+      }
+     ],
+     "components_16": [
+      {
+       "nodeId": "kernel_toxicity_trade",
+       "portName": "self"
+      }
+     ]
+    },
+    "outputs": {
+     "self": [
+      {
+       "nodeId": "kernels",
+       "portName": "components_1"
+      }
+     ]
+    }
+   }
   }
+ }
 }

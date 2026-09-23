@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	nethttp "github.com/theapemachine/symm/nomagique/network/http"
 	"log"
 	"os"
 	"os/signal"
@@ -58,6 +59,11 @@ var (
 			}
 
 			defer graph.Release()
+
+			// Values reaching the graph's component ports are what its
+			// surfaces draw.
+			graph.Publish = nethttp.Broadcast
+			nethttp.OnJoin(graph.Refresh)
 
 			errnie.Info("[root] system ready; running graph")
 			runErr := graph.Start(ctx)

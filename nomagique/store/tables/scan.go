@@ -140,6 +140,8 @@ func (server *IcebergScanServer) Done(ctx context.Context, call IcebergScan_done
 		return errnie.Error(errnie.Err(errnie.Internal, "scan: output", err))
 	}
 	server.row++
+	// The rows left in this batch, and the read that finds the rest or the end.
+	result.SetPending(uint64(server.batch.NumRows()-server.row) + 1)
 	return nil
 }
 

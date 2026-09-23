@@ -1,7 +1,6 @@
 package compiler
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -149,11 +148,12 @@ func (repo *Repository) Load(name string) (Graph, error) {
 		))
 	}
 
-	var graph Graph
-	if err := json.Unmarshal(data, &graph); err != nil {
+	// Definitions are authored JSON too, so they pass the same edge agreement.
+	graph, err := ParseGraph(data)
+	if err != nil {
 		return Graph{}, errnie.Error(errnie.Err(
 			errnie.Validation,
-			fmt.Sprintf("compiler: invalid json for definition %s", name),
+			fmt.Sprintf("compiler: invalid definition %s", name),
 			err,
 		))
 	}

@@ -7,6 +7,7 @@ import (
 	stdhttp "net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
@@ -88,8 +89,49 @@ func NewHTTPServer(ctx context.Context) *HTTPServerServer {
 		_ = server.httpServer.Close()
 	}()
 
+	live.Store(server, struct{}{})
+
+	if join, set := joined.Load().(func()); set {
+		server.wsServer.OnJoin(join)
+	}
+
+	go func() {
+		<-server.Context().Done()
+		live.Delete(server)
+	}()
+
 	server.Transition(runtime.READY)
 	return server
+}
+
+/*
+live holds every running HTTP server, so what the program publishes reaches
+whichever server the graph holds without the program knowing its node.
+*/
+var live sync.Map
+
+/*
+OnJoin runs join whenever a client connects to any running server.
+*/
+func OnJoin(join func()) {
+	joined.Store(join)
+	live.Range(func(key, _ any) bool {
+		key.(*HTTPServerServer).wsServer.OnJoin(join)
+		return true
+	})
+}
+
+var joined atomic.Value
+
+/*
+Broadcast sends a binary frame to every client of every running server.
+*/
+func Broadcast(data []byte) {
+	live.Range(func(key, _ any) bool {
+		server := key.(*HTTPServerServer)
+		server.wsServer.Broadcast(data)
+		return true
+	})
 }
 
 /*

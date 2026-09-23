@@ -314,9 +314,9 @@ func TestProgramExecuteSignals(t *testing.T) {
 		Convey("Then every record reaches the existing liquidity graph", func() {
 			So(replay(DefaultRepository()), ShouldResemble, []float64{2, 3, 4})
 		})
-		Convey("When one training connection is changed from ask to last in JSON", func() {
+		Convey("When one signal connection is changed from ask to last in JSON", func() {
 			repository := NewRepository()
-			graph, err := repository.Load("training")
+			graph, err := repository.Load("signals")
 			So(err, ShouldBeNil)
 			signal := graph.Nodes["definition-liquidity_ticker"]
 			signal.Connections.Inputs["spread.a"] = []ConnectionTarget{{NodeID: "grid", PortName: "values_1"}}
@@ -334,7 +334,7 @@ func TestProgramExecuteSignals(t *testing.T) {
 			grid.Connections.Outputs["values_1"] = append(grid.Connections.Outputs["values_1"], ConnectionTarget{NodeID: signal.ID, PortName: "spread.a"})
 			encoded, err := json.Marshal(graph)
 			So(err, ShouldBeNil)
-			So(repository.Save("training", encoded), ShouldBeNil)
+			So(repository.Save("signals", encoded), ShouldBeNil)
 			So(replay(repository), ShouldResemble, []float64{1, 1, 2})
 		})
 	})
@@ -375,17 +375,12 @@ func BenchmarkProgramExecuteSignals(b *testing.B) {
 	}
 }
 
-/* trainingSignals keeps the real training computation and injects its I/O boundary. */
+/* trainingSignals is the shared signal stage with its record boundary injected. */
 func trainingSignals(t testing.TB, repository DefinitionRepository) Graph {
 	t.Helper()
-	graph, err := repository.Load("training")
+	graph, err := repository.Load("signals")
 	if err != nil {
 		t.Fatal(err)
-	}
-	for id := range graph.Nodes {
-		if id != "grid" && !strings.HasPrefix(id, "definition-") {
-			delete(graph.Nodes, id)
-		}
 	}
 	graph.Nodes["records"] = Node{ID: "records", Type: "data.Iterate", Connections: Connections{
 		Outputs: map[string][]ConnectionTarget{"out": {{NodeID: "grid", PortName: "data"}}},
@@ -959,38 +954,38 @@ func TestProgramExecuteReplay(t *testing.T) {
 			}
 			So(program.Execute(context.Background(), inputs), ShouldBeNil)
 		}
+		// Two instruments share the tape; both fragments are BTC/USD's, so ETH/USD is never replayed.
 		for sequence := 0; sequence < 6; sequence++ {
-			record, err := json.Marshal(map[string]any{"capture": map[string]string{"session": "capture", "endpoint": "spot"}, "cursor": map[string]int{"sequence": sequence, "record": 0}, "market": map[string]any{"channel": "ticker", "data": map[string]any{"symbol": "BTC/USD", "last": 100 + sequence}}})
-			So(err, ShouldBeNil)
-			var event []byte
-			if sequence < 2 {
-				cursor := func(offset int) map[string]int { return map[string]int{"sequence": offset + sequence, "record": 0} }
-				event, err = json.Marshal(map[string]any{"capture": map[string]string{"session": "capture", "endpoint": "spot"}, "event": map[string]any{"symbol": "BTC/USD", "a": cursor(0), "b": cursor(2), "c": cursor(4), "d": cursor(5), "excursion": 1}})
+			for _, symbol := range []string{"BTC/USD", "ETH/USD"} {
+				record, err := json.Marshal(map[string]any{"capture": map[string]string{"session": "capture", "endpoint": "spot"}, "cursor": map[string]int{"sequence": sequence, "record": map[string]int{"BTC/USD": 0, "ETH/USD": 1}[symbol]}, "market": map[string]any{"channel": "ticker", "data": map[string]any{"symbol": symbol, "last": 100 + sequence}}})
 				So(err, ShouldBeNil)
-			}
-			execute(record, event, false)
-			_, observed := program.Result("observation")
-			So(observed, ShouldBeFalse)
-			_, graded := program.Result("fragment__truth")
-			So(graded, ShouldBeFalse)
-		}
-		observations := make([]int, 0, 6)
-		grades := 0
-		// Each of six records visits two fragment slots and one end-of-list slot.
-		for iteration := range 6*3 + 1 {
-			if iteration%3 == 1 {
-				execute(nil, nil, false)
+				var event []byte
+				if sequence < 2 && symbol == "BTC/USD" {
+					cursor := func(offset int) map[string]int { return map[string]int{"sequence": offset + sequence, "record": 0} }
+					event, err = json.Marshal(map[string]any{"capture": map[string]string{"session": "capture", "endpoint": "spot"}, "event": map[string]any{"symbol": "BTC/USD", "a": cursor(0), "b": cursor(2), "c": cursor(3), "d": cursor(4), "excursion": 1}})
+					So(err, ShouldBeNil)
+				}
+				execute(record, event, false)
 				_, observed := program.Result("observation")
 				So(observed, ShouldBeFalse)
 				_, graded := program.Result("fragment__truth")
 				So(graded, ShouldBeFalse)
 			}
+		}
+		observations := make([]int, 0, 10)
+		grades := 0
+		// Each fragment is one seek, then one evaluation per record from A through D.
+		for range 2*(1+5) + 2 {
 			execute(nil, nil, true)
 			if result, observed := program.Result("observation"); observed {
 				payload, err := data.Extracted(result).Json()
 				So(err, ShouldBeNil)
-				var observation struct{ Cursor struct{ Sequence int } }
+				var observation struct {
+					Cursor struct{ Sequence int }
+					Market struct{ Data struct{ Symbol string } }
+				}
 				So(json.Unmarshal(payload, &observation), ShouldBeNil)
+				So(observation.Market.Data.Symbol, ShouldEqual, "BTC/USD")
 				observations = append(observations, observation.Cursor.Sequence)
 				So(string(payload), ShouldNotContainSubstring, `"event"`)
 			}
@@ -998,11 +993,20 @@ func TestProgramExecuteReplay(t *testing.T) {
 				grades++
 			}
 		}
-		So(observations, ShouldResemble, []int{0, 1, 2, 3, 4, 5})
-		So(grades, ShouldEqual, 10)
-		result, found := program.Result("frames")
-		So(found, ShouldBeTrue)
-		So(store.Item(result).Found(), ShouldBeFalse)
+
+		Convey("Then each fragment walks only its own instrument's records, A through D", func() {
+			So(observations, ShouldResemble, []int{0, 1, 2, 3, 4, 1, 2, 3, 4, 5})
+		})
+
+		Convey("Then only records between A and C are graded against their fragment", func() {
+			So(grades, ShouldEqual, 8)
+		})
+
+		Convey("Then nothing is replayed before the tape is ready", func() {
+			execute(nil, nil, false)
+			_, observed := program.Result("observation")
+			So(observed, ShouldBeFalse)
+		})
 	})
 }
 
@@ -1453,8 +1457,8 @@ func TestProgramExecuteLiveSpot(t *testing.T) {
 		var spreads []float64
 		for len(spreads) < 4 && ctx.Err() == nil {
 			So(program.Execute(ctx, nil), ShouldBeNil)
-			if _, found := program.Result("definition-liquidity_ticker__spread"); found {
-				spread, err := program.Float64Result("definition-liquidity_ticker__spread", "out")
+			if _, found := program.Result("signals__definition-liquidity_ticker__spread"); found {
+				spread, err := program.Float64Result("signals__definition-liquidity_ticker__spread", "out")
 				So(err, ShouldBeNil)
 				spreads = append(spreads, spread)
 			}
@@ -1601,7 +1605,7 @@ func TestProgramExecuteKraken(t *testing.T) {
 				}
 				symbols[record.Data.Symbol] = true
 			}
-			if _, found := program.Result("definition-liquidity_ticker__spread"); found {
+			if _, found := program.Result("signals__definition-liquidity_ticker__spread"); found {
 				signals++
 			}
 			if discovered && len(expected) > 0 && len(subscriptions) == len(expected) && len(symbols) >= 10 && signals >= 20 {

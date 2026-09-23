@@ -389,6 +389,7 @@ export function compileUI(
 		}
 
 		const compiled: CompiledUINode = {
+			id: nodeId,
 			name: compName as UIComponentName,
 		};
 

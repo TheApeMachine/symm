@@ -2,8 +2,6 @@ package compiler
 
 import (
 	"os"
-
-	"github.com/bytedance/sonic"
 )
 
 /*
@@ -20,8 +18,8 @@ func NewBuilder(jsonPath string) (*Builder, error) {
 		return nil, err
 	}
 
-	var graph Graph
-	if err := sonic.Unmarshal(data, &graph); err != nil {
+	graph, err := ParseGraph(data)
+	if err != nil {
 		return nil, err
 	}
 

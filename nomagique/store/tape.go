@@ -153,5 +153,6 @@ func (server *TapeServer) Done(ctx context.Context, call Tape_done) error {
 
 	server.ordered[server.cursor] = CaptureRecord{}
 	server.cursor++
+	results.SetPending(uint64(len(server.ordered) - server.cursor))
 	return nil
 }

@@ -5697,6 +5697,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.int64({ name: "frame.sequence", label: "frame.sequence" }),
 			ports.string({ name: "frame.session", label: "frame.session" }),
 			ports.int64({ name: "idle", label: "idle" }),
+			ports.int64({ name: "pending", label: "pending" }),
 		],
 	});
 	config.addNodeType({
@@ -5878,6 +5879,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.bool({ name: "exhausted", label: "exhausted" }),
 			ports.int64({ name: "idle", label: "idle" }),
 			ports["[]byte"]({ name: "out", label: "out" }),
+			ports.int64({ name: "pending", label: "pending" }),
 		],
 	});
 
@@ -7334,6 +7336,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.int64({ name: "properties.unsigned", label: "properties.unsigned" }),
 			ports.bool({ name: "scan.exhausted", label: "scan.exhausted" }),
 			ports.int64({ name: "scan.idle", label: "scan.idle" }),
+			ports.int64({ name: "scan.pending", label: "scan.pending" }),
 			ports.int64({ name: "table.status", label: "table.status" }),
 			ports.bool({ name: "table_properties.found", label: "table_properties.found" }),
 			ports.int64({ name: "table_properties.missing", label: "table_properties.missing" }),
@@ -9028,8 +9031,6 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		initialWidth: 320,
 		inputs: (ports) => (_inputData, _connections) => [
 			ports["[]byte"]({ name: "grid.data", label: "grid.data" }),
-			ports.string({ name: "grid.interests", label: "grid.interests" }),
-			ports.float64({ name: "grid.metrics", label: "grid.metrics" }),
 		],
 		outputs: (ports) => (_inputData, _connections) => [
 			ports.int64({ name: "grid.delivered", label: "grid.delivered" }),
@@ -9145,7 +9146,6 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.bool({ name: "events.commit", label: "events.commit" }),
 			ports.string({ name: "events_drained.referencePath", label: "events_drained.referencePath" }),
 			ports.string({ name: "fragments.indexPath", label: "fragments.indexPath" }),
-			ports.float64({ name: "grid.metrics", label: "grid.metrics" }),
 			ports.float64({ name: "paper_at_extremum.threshold", label: "paper_at_extremum.threshold" }),
 			ports.float64({ name: "paper_at_ignition.threshold", label: "paper_at_ignition.threshold" }),
 			ports.string({ name: "paper_enter_symbol.encoding", label: "paper_enter_symbol.encoding" }),
@@ -9272,12 +9272,6 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.int64({ name: "fragments.ignored", label: "fragments.ignored" }),
 			ports.int64({ name: "fragments.index", label: "fragments.index" }),
 			ports.bool({ name: "fragments.last", label: "fragments.last" }),
-			ports.int64({ name: "grid.delivered", label: "grid.delivered" }),
-			ports.int64({ name: "grid.metrics", label: "grid.metrics" }),
-			ports["[]byte"]({ name: "grid.out", label: "grid.out" }),
-			ports.data({ name: "grid.present", label: "grid.present" }),
-			ports.data({ name: "grid.values", label: "grid.values" }),
-			ports.Capability({ name: "grid.self", label: "grid.self" }),
 			ports.int64({ name: "mine.none", label: "mine.none" }),
 			ports.bool({ name: "paper_at_extremum.passed", label: "paper_at_extremum.passed" }),
 			ports.int64({ name: "paper_at_extremum.rejected", label: "paper_at_extremum.rejected" }),
@@ -9394,6 +9388,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.int64({ name: "tape.exhausted", label: "tape.exhausted" }),
 			ports.string({ name: "tape.frame.receivedAt", label: "tape.frame.receivedAt" }),
 			ports.int64({ name: "tape.idle", label: "tape.idle" }),
+			ports.int64({ name: "tape.pending", label: "tape.pending" }),
 			ports.bool({ name: "with_event_endpoint.inserted", label: "with_event_endpoint.inserted" }),
 			ports.bool({ name: "with_event_session.inserted", label: "with_event_session.inserted" }),
 			ports.bool({ name: "with_event_truth.inserted", label: "with_event_truth.inserted" }),

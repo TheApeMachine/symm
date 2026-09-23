@@ -113,7 +113,7 @@
           "value": "_const"
         },
         "json": {
-          "value": "{\"heartbeat\": \"heartbeat\", \"status\": \"status\", \"subscribe\": \"subscribe\", \"refused\": false, \"accepted\": true, \"limit\": \"Rate limit\"}"
+          "value": "{\"heartbeat\": \"heartbeat\", \"status\": \"status\", \"subscribe\": \"subscribe\", \"refused\": false, \"accepted\": true, \"limit\": \"Rate limit\", \"level3\": \"level3\"}"
         }
       },
       "connections": {
@@ -137,6 +137,10 @@
             },
             {
               "nodeId": "answered",
+              "portName": "data"
+            },
+            {
+              "nodeId": "books",
               "portName": "data"
             },
             {
@@ -375,6 +379,70 @@
       "x": 3060.0,
       "y": 0.0
     },
+    "books": {
+      "id": "books",
+      "type": "data.Filter",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "channel"
+        },
+        "operator": {
+          "value": "=="
+        },
+        "referencePath": {
+          "value": "_const.level3"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "classified",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "records",
+              "portName": "data_0"
+            }
+          ]
+        }
+      },
+      "x": 3400.0,
+      "y": 0.0
+    },
+    "records": {
+      "id": "records",
+      "type": "data.Iterate",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "data"
+        },
+        "envelope": {
+          "value": true
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data_0": [
+            {
+              "nodeId": "books",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      },
+      "x": 3740.0,
+      "y": 0.0
+    },
     "refused_symbol": {
       "id": "refused_symbol",
       "type": "data.Extract",
@@ -406,8 +474,8 @@
           ]
         }
       },
-      "x": 3400.0,
-      "y": 0.0
+      "x": 0.0,
+      "y": 220.0
     },
     "retried": {
       "id": "retried",
@@ -440,8 +508,8 @@
           ]
         }
       },
-      "x": 3740.0,
-      "y": 0.0
+      "x": 340.0,
+      "y": 220.0
     },
     "retry": {
       "id": "retry",
@@ -474,7 +542,7 @@
           ]
         }
       },
-      "x": 0.0,
+      "x": 680.0,
       "y": 220.0
     },
     "admission": {
@@ -531,7 +599,7 @@
           ]
         }
       },
-      "x": 340.0,
+      "x": 1020.0,
       "y": 220.0
     },
     "connection_generation": {
@@ -568,7 +636,7 @@
           ]
         }
       },
-      "x": 680.0,
+      "x": 1360.0,
       "y": 220.0
     },
     "connection_document": {
@@ -602,7 +670,7 @@
           ]
         }
       },
-      "x": 1020.0,
+      "x": 1700.0,
       "y": 220.0
     },
     "connection_key": {
@@ -636,7 +704,7 @@
           ]
         }
       },
-      "x": 1360.0,
+      "x": 2040.0,
       "y": 220.0
     },
     "token": {
@@ -678,7 +746,7 @@
           ]
         }
       },
-      "x": 1700.0,
+      "x": 2380.0,
       "y": 220.0
     },
     "tokens": {
@@ -721,7 +789,7 @@
           ]
         }
       },
-      "x": 2040.0,
+      "x": 2720.0,
       "y": 220.0
     },
     "current_token": {
@@ -754,7 +822,7 @@
           ]
         }
       },
-      "x": 2380.0,
+      "x": 3060.0,
       "y": 220.0
     },
     "tokenless": {
@@ -795,7 +863,7 @@
           ]
         }
       },
-      "x": 2720.0,
+      "x": 3400.0,
       "y": 220.0
     },
     "nonce": {
@@ -830,7 +898,7 @@
           ]
         }
       },
-      "x": 3060.0,
+      "x": 3740.0,
       "y": 220.0
     },
     "post": {
@@ -865,8 +933,8 @@
           ]
         }
       },
-      "x": 3400.0,
-      "y": 220.0
+      "x": 0.0,
+      "y": 440.0
     },
     "nonced_post": {
       "id": "nonced_post",
@@ -902,8 +970,8 @@
           ]
         }
       },
-      "x": 3740.0,
-      "y": 220.0
+      "x": 340.0,
+      "y": 440.0
     },
     "digest": {
       "id": "digest",
@@ -929,7 +997,7 @@
           ]
         }
       },
-      "x": 0.0,
+      "x": 680.0,
       "y": 440.0
     },
     "signed_path": {
@@ -960,7 +1028,7 @@
           ]
         }
       },
-      "x": 340.0,
+      "x": 1020.0,
       "y": 440.0
     },
     "api_secret": {
@@ -991,7 +1059,7 @@
           ]
         }
       },
-      "x": 680.0,
+      "x": 1360.0,
       "y": 440.0
     },
     "secret_key": {
@@ -1018,7 +1086,7 @@
           ]
         }
       },
-      "x": 1020.0,
+      "x": 1700.0,
       "y": 440.0
     },
     "signature": {
@@ -1051,7 +1119,7 @@
           ]
         }
       },
-      "x": 1360.0,
+      "x": 2040.0,
       "y": 440.0
     },
     "encoded_signature": {
@@ -1078,7 +1146,7 @@
           ]
         }
       },
-      "x": 1700.0,
+      "x": 2380.0,
       "y": 440.0
     },
     "api_key": {
@@ -1109,7 +1177,7 @@
           ]
         }
       },
-      "x": 2040.0,
+      "x": 2720.0,
       "y": 440.0
     },
     "key_header": {
@@ -1140,7 +1208,7 @@
           ]
         }
       },
-      "x": 2380.0,
+      "x": 3060.0,
       "y": 440.0
     },
     "sign_header": {
@@ -1171,7 +1239,7 @@
           ]
         }
       },
-      "x": 2720.0,
+      "x": 3400.0,
       "y": 440.0
     },
     "form_header": {
@@ -1202,7 +1270,7 @@
           ]
         }
       },
-      "x": 3060.0,
+      "x": 3740.0,
       "y": 440.0
     },
     "token_response": {
@@ -1258,8 +1326,8 @@
           ]
         }
       },
-      "x": 3400.0,
-      "y": 440.0
+      "x": 0.0,
+      "y": 660.0
     },
     "token_rejected": {
       "id": "token_rejected",
@@ -1296,8 +1364,8 @@
           ]
         }
       },
-      "x": 3740.0,
-      "y": 440.0
+      "x": 340.0,
+      "y": 660.0
     },
     "token_error": {
       "id": "token_error",
@@ -1330,7 +1398,7 @@
           ]
         }
       },
-      "x": 0.0,
+      "x": 680.0,
       "y": 660.0
     },
     "token_accepted": {
@@ -1360,7 +1428,7 @@
         },
         "outputs": {}
       },
-      "x": 340.0,
+      "x": 1020.0,
       "y": 660.0
     },
     "subscription_symbol": {
@@ -1394,7 +1462,7 @@
           ]
         }
       },
-      "x": 680.0,
+      "x": 1360.0,
       "y": 660.0
     },
     "subscription_token": {
@@ -1431,7 +1499,7 @@
           ]
         }
       },
-      "x": 1020.0,
+      "x": 1700.0,
       "y": 660.0
     },
     "subscription": {
@@ -1468,7 +1536,7 @@
           ]
         }
       },
-      "x": 1360.0,
+      "x": 2040.0,
       "y": 660.0
     }
   }

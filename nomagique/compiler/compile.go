@@ -722,11 +722,13 @@ func CompileFile(
 		))
 	}
 
-	var graph Graph
-	if err := sonic.Unmarshal(data, &graph); err != nil {
+	// A graph file is authored JSON; it passes the same edge agreement as
+	// every other document parsed into a graph.
+	graph, err := ParseGraph(data)
+	if err != nil {
 		return nil, errnie.Error(errnie.Err(
 			errnie.Validation,
-			fmt.Sprintf("compiler: unmarshal %s", jsonPath),
+			fmt.Sprintf("compiler: parse %s", jsonPath),
 			err,
 		))
 	}
@@ -1011,6 +1013,14 @@ func expandDefinitions(
 		}
 
 		prefix := defID + "__"
+
+		if graph.Origins == nil {
+			graph.Origins = make(map[string]Origin)
+		}
+
+		for cid := range childGraph.Nodes {
+			graph.Origins[prefix+cid] = Origin{Definition: defName, Node: cid}
+		}
 
 		childIngressTargets := make(map[string][]ConnectionTarget)
 		childEgressSources := make(map[string][]ConnectionTarget)
@@ -1532,11 +1542,19 @@ func lowerUIAndBindings(graph Graph) (*UIPlan, *BindingPlan) {
 				}
 
 				if strings.HasPrefix(consumer.Type, "ui.") {
+					origin, expanded := graph.Origins[target.NodeID]
+
+					if !expanded {
+						origin = Origin{Definition: graph.ID, Node: target.NodeID}
+					}
+
 					bindings = append(bindings, BindingEntry{
-						SourceNode: id,
-						SourcePort: outPort,
-						TargetNode: target.NodeID,
-						TargetProp: target.PortName,
+						SourceNode:      id,
+						SourcePort:      outPort,
+						TargetNode:      target.NodeID,
+						TargetProp:      target.PortName,
+						TargetGraph:     origin.Definition,
+						TargetComponent: origin.Node,
 					})
 				}
 			}

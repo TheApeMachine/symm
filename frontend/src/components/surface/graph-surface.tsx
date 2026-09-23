@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
+import { useSelector } from "@tanstack/react-store";
+import { boundAtom } from "#/collections/app";
 import { useGraphResults } from "#/components/flume/graph-results.store";
 import type { FlumeNode } from "#/components/flume/types";
 import { Alert } from "#/components/ui/alert";
@@ -196,6 +198,7 @@ export const GraphSurface = ({ name }: { name: string }) => {
 	const nodes = graph.status === "loaded" ? graph.nodes : undefined;
 	const results = useGraphResults(name, JSON.stringify(nodes ?? {}));
 	const sources = useLiveSources();
+	const bound = useSelector(boundAtom, (graphs) => graphs[name]);
 
 	const compilation = useMemo(() => {
 		if (!nodes || Object.keys(nodes).length === 0) {
@@ -255,7 +258,7 @@ export const GraphSurface = ({ name }: { name: string }) => {
 					</Alert>
 				</div>
 			)}
-			{renderUIRoute(compilation.routes[0], results, sources)}
+			{renderUIRoute(compilation.routes[0], results, sources, bound)}
 		</div>
 	);
 };

@@ -151,7 +151,7 @@ func TestSystemGridServesPublishedMetrics(t *testing.T) {
 		So(err, ShouldBeNil)
 
 		Convey("When it is compiled", func() {
-			index, known := program.NodeMap["grid"]
+			index, known := program.NodeMap["signals__grid"]
 			So(known, ShouldBeTrue)
 
 			grid := program.Nodes[index]
@@ -175,7 +175,7 @@ func TestSystemGridServesPublishedMetrics(t *testing.T) {
 				// A sub-graph groups a signal's metrics for the editor. It is
 				// expanded away at compile time, so the operation that
 				// produced a metric is a node like any other in the program.
-				_, published := program.NodeMap["definition-correlation_ticker__zscore"]
+				_, published := program.NodeMap["signals__definition-correlation_ticker__zscore"]
 				So(published, ShouldBeTrue)
 			})
 		})

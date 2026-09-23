@@ -136,6 +136,10 @@ type BindingEntry struct {
 	SourcePort string `json:"sourcePort"`
 	TargetNode string `json:"targetNode"`
 	TargetProp string `json:"targetProp"`
+	// TargetGraph and TargetComponent name the component where it was
+	// authored, which is how the surface drawing that graph addresses it.
+	TargetGraph     string `json:"targetGraph"`
+	TargetComponent string `json:"targetComponent"`
 }
 
 /*
@@ -149,8 +153,13 @@ type Program struct {
 	NodeMap  map[string]NodeID
 	UI       *UIPlan
 	Bindings *BindingPlan
-	results  map[string]capnp.Struct
-	mu       sync.Mutex // ensures one graph evaluation at a time per program
+	// Publish receives the values that reached component ports after every
+	// evaluation Start runs, encoded as ui.Bindings.
+	Publish func([]byte)
+	// published is what each binding last delivered.
+	published []string
+	results   map[string]capnp.Struct
+	mu        sync.Mutex // ensures one graph evaluation at a time per program
 }
 
 /*
@@ -216,6 +225,18 @@ func (p *Program) Start(ctx context.Context) error {
 				"compiler: graph evaluation failed",
 				err,
 			))
+		}
+
+		if p.Publish != nil {
+			frame, err := p.bindings()
+
+			if err != nil {
+				return err
+			}
+
+			if frame != nil {
+				p.Publish(frame)
+			}
 		}
 
 		// A node that owns external I/O reports what it has without blocking,

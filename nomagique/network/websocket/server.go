@@ -5,6 +5,7 @@ import (
 	"context"
 	"net/http"
 	"sync"
+	"sync/atomic"
 
 	"github.com/bytedance/sonic"
 	gorillaws "github.com/gorilla/websocket"
@@ -21,6 +22,8 @@ type WebSocketServerServer struct {
 	*runtime.System
 	upgrader  gorillaws.Upgrader
 	clients   sync.Map
+	writing   sync.Mutex
+	joined    atomic.Value
 	incoming  *lf.Queue[[]byte]
 	focusChan chan string
 	out       []byte
@@ -60,6 +63,10 @@ func (server *WebSocketServerServer) UpgradeHandler() http.HandlerFunc {
 
 		server.clients.Store(conn, struct{}{})
 
+		if joined, set := server.joined.Load().(func()); set {
+			joined()
+		}
+
 		go func() {
 			defer func() {
 				server.clients.Delete(conn)
@@ -82,7 +89,7 @@ func (server *WebSocketServerServer) UpgradeHandler() http.HandlerFunc {
 				var msg map[string]any
 
 				if err := sonic.Unmarshal(messageBytes, &msg); err == nil {
-					if typ, ok := msg["type"].(string); ok && typ == "FOCUS" {
+					if typ, ok := msg["type"].(string); ok && typ == "focus" {
 						if symbol, ok := msg["symbol"].(string); ok && symbol != "" {
 							select {
 							case server.focusChan <- symbol:
@@ -121,9 +128,20 @@ func (server *WebSocketServerServer) Write(ctx context.Context, call WebSocketSe
 }
 
 /*
+OnJoin runs join every time a client connects.
+*/
+func (server *WebSocketServerServer) OnJoin(join func()) {
+	server.joined.Store(join)
+}
+
+/*
 Broadcast writes a binary frame to all currently connected WebSocket peers.
 */
 func (server *WebSocketServerServer) Broadcast(data []byte) {
+	// A connection takes one writer at a time.
+	server.writing.Lock()
+	defer server.writing.Unlock()
+
 	server.clients.Range(func(key, _ any) bool {
 		conn, ok := key.(*gorillaws.Conn)
 

@@ -28,6 +28,31 @@ func TestMineWrite(t *testing.T) {
 		So(server.paths, ShouldBeEmpty)
 		So(server.sequences, ShouldBeEmpty)
 	})
+
+	Convey("Given a ticker frame where one pair has never traded", t, func() {
+		server := NewMine()
+		client := Mine_ServerToClient(server)
+		defer client.Release()
+		So(client.Write(context.Background(), func(params Mine_write_Params) error {
+			for _, err := range []error{params.SetSession("test"), params.SetEndpoint("fixture"), params.SetChannel("ticker"), params.SetPriceField("last")} {
+				if err != nil {
+					return err
+				}
+			}
+			// Kraken reports last 0 for a pair with no trades (CORN/USD, captured 2026-09-23).
+			return params.SetPayload([]byte(`{"channel":"ticker","data":[{"symbol":"CORN/USD","last":0,"trades":0},{"symbol":"BTC/USD","last":100}]}`))
+		}), ShouldBeNil)
+
+		Convey("Then the unpriced pair is absent and the priced one keeps its record position", func() {
+			So(client.WaitStreaming(), ShouldBeNil)
+			So(server.paths, ShouldHaveLength, 1)
+
+			for key, path := range server.paths {
+				So(key.symbol, ShouldEqual, "BTC/USD")
+				So(path.cursors, ShouldResemble, []TapeCursor{{Sequence: 0, Record: 1}})
+			}
+		})
+	})
 }
 
 func TestMinedPathEvent(t *testing.T) {

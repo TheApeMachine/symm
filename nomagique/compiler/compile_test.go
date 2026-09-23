@@ -554,8 +554,21 @@ func TestCompileTraining(t *testing.T) {
 				continue
 			}
 
-			_, signalPresent := program.NodeMap["definition-sentiment_ticker__return"]
+			_, signalPresent := program.NodeMap["signals__definition-sentiment_ticker__return"]
 			So(signalPresent, ShouldBeTrue)
+
+			// Training measures through the same signal stage as the live system,
+			// so every published metric lands on its grid.
+			grid, found := program.NodeMap["signals__grid"]
+			So(found, ShouldBeTrue)
+			landing := 0
+
+			for _, route := range program.Routes {
+				if route.ToNode == grid {
+					landing++
+				}
+			}
+			So(landing, ShouldBeGreaterThan, 400)
 			_, replacementPresent := program.NodeMap["measure"]
 			So(replacementPresent, ShouldBeFalse)
 
@@ -794,7 +807,7 @@ func TestCompile(t *testing.T) {
 				So(label.Truth.Holding, ShouldEqual, label.Cursor.Compare(label.Event.B) <= 0)
 				graded = append(graded, label.Cursor)
 			}
-			const spreadNode = "definition-liquidity_ticker__spread"
+			const spreadNode = "signals__definition-liquidity_ticker__spread"
 			if _, produced := program.Result(spreadNode); produced {
 				spread, err := program.Float64Result(spreadNode, "out")
 				So(err, ShouldBeNil)
@@ -803,10 +816,6 @@ func TestCompile(t *testing.T) {
 		}
 		So(catalogRequests.Load(), ShouldEqual, 1)
 		So(tableRequests.Load(), ShouldEqual, 1)
-		So(spreads, ShouldHaveLength, 360)
-		for index, spread := range spreads {
-			So(spread, ShouldAlmostEqual, 2+index%2)
-		}
 
 		So(program.Flush(ctx), ShouldBeNil)
 
@@ -880,6 +889,13 @@ func TestCompile(t *testing.T) {
 		So(events[1].A, ShouldNotBeNil)
 		So(events[1].A.Sequence, ShouldBeLessThan, events[1].B.Sequence)
 		So(len(graded), ShouldEqual, events[1].C.Sequence-events[1].A.Sequence)
+
+		// Only fragments are replayed: the one move with a precursor, walked on
+		// its own instrument from A through D. The flat symbol is never replayed.
+		So(spreads, ShouldHaveLength, events[1].D.Sequence-events[1].A.Sequence+1)
+		for _, spread := range spreads {
+			So(spread, ShouldAlmostEqual, 3)
+		}
 	})
 }
 

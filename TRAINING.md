@@ -1,10 +1,10 @@
 # TRAINING.md
 
 The current `training.json` scans the archive, orders capture records, mines
-excursions, and then traverses the captured records through the existing signal
-graphs and A/B/C grader. `training_replay.json` owns replay advancement in JSON;
-`training_fragment.json` separates causal observations from future event labels.
-Overlapping fragments do not deliver the same record to the signals twice.
+excursions, and then replays each mined fragment through the signal graphs, the
+A/B/C grader and the paper exchange. `training_replay.json` owns replay
+advancement in JSON; `training_fragment.json` separates causal observations from
+future event labels. Only fragments are replayed, never the whole tape.
 The pair-evidence stage of the remapper is composed in `training_pair.json` and
 `training_pair_step.json`. Spatial settling, region tokens, and the connection
 to `training_reinforce.json` remain unimplemented.
@@ -202,11 +202,16 @@ configured channel and keeps separate state per session, endpoint, and symbol.
 It uses the canonical `Excursion` calculation and persists confirmed event batches
 in `excursion_fragments_v1`. The manifest selects ticker records and `last`.
 
-**Step three — retrieve the fragments** that contain those excursions.
-`store.Sequence` retains the ordered records and confirmed events; the JSON
-replay cursor visits each record and selects its applicable fragments. Signal
-state advances once per record, in tape order. This implementation retains the
-offline snapshot in memory and compares each record with every event.
+**Step three — retrieve the fragments** that contain those excursions, the way
+hindsight's `RunIndex` did. The tape is streamed once into `store.Index`, one
+list per (capture session, instrument) in capture order. Each confirmed event is
+then one contiguous range of its own instrument's list: seek the last Level 3
+snapshot at or before A (the book is only defined from a snapshot; without one
+the range starts at A), walk to D, one record per evaluation, then take the next
+event. Records before A only rebuild the book and warm the signals; A..C is the
+graded window; C..D gives the exit a book to fill against. Events without a
+precursor are passed over. Cost is one pass per archived record for the tape
+plus one per record inside a fragment — never records × events.
 
 **Step four — mark the three points.** Every fragment carries:
 
@@ -226,23 +231,42 @@ widened to fill an empty class.
 
 ## 5. Training on fragments
 
-Fragments are replayed through the full pipeline — grid, impulse map, region
-token — and the trie predicts as it goes.
+The loop, in five steps:
 
-Each decision is graded by **what it would actually have made or lost**. The
-tape holds the Level 3 book, so a decision is executed against it:
-`paper_exchange.json` rebuilds each symbol's book order by order (verified against
-the exchange's checksum), rests the order until the next Level 3 frame for its
-symbol, and fills it by walking the queue, taker fee included. A/B/C select
-which stretches of tape are replayed; they are not the grade.
+1. **Ground truth is known before the fragment is trained on.** Every fragment
+   is one of four types:
+   - upward movement that clears friction (order book and fees);
+   - upward movement that does not clear friction;
+   - stagnant or choppy movement;
+   - downward movement.
 
-The balance is part of what is learned. Each training universe carries its own
-account: every ENTER spends 20% of the cash not already committed, every EXIT
-sells the whole position, losses compound, and an account that has shrunk
-below the exchange's minimums finds its orders refused — a consequence it
-lives with, never a case that is skipped or resized. An entry and its exit
-share the PnL of the round trip they made together; a refusal the replay
-cannot judge (no book, no instrument rules) is unknown, not a loss.
+   Direction is the mined excursion's sign. Friction is measured, not assumed:
+   `paper_exchange.json` executes ENTER at B and EXIT at C against the recorded
+   Level 3 book (order by order, checksum-verified, fills walking the queue,
+   taker fee included). A positive round trip clears friction. Stagnant
+   fragments are resolved stretches with no event.
+2. **B and C are known; A is random.** B is ignition, C is stagnation,
+   exhaustion or reversal. A is drawn uniformly before B, with its seed
+   recorded, so the system cannot learn a fixed offset to the event.
+3. **The prediction comes from the region sequence**, prior and current: the
+   path of region tokens that led here, not only the latest one.
+4. **Evaluation knows the fragment type.** On an upward fragment that clears
+   friction, the ENTER prediction is too early, too late or about right
+   relative to B, and the EXIT prediction likewise relative to C. "About right"
+   is not a tolerance someone chose: a predicted point is right when the round
+   trip it produces through the same book still clears friction, early or late
+   when it does not. On any other fragment type, an ENTER is wrong.
+5. **The model is adjusted accordingly.**
+
+Profitability is how a predicted entry or exit is judged, never a substitute
+for the precursor truth the model learns from.
+
+The balance is part of the simulation. The account carries across fragments:
+every ENTER spends 20% of the cash not already committed, every EXIT sells the
+whole position, losses compound, and an account that has shrunk below the
+exchange's minimums finds its orders refused — a consequence it lives with,
+never a case that is skipped or resized. A refusal the replay cannot judge (no
+book, no instrument rules) is unknown, not a loss.
 
 Because the fragment's ground truth is known in advance, this loop is fast and
 repeatable, and it can be run over the whole archive.
@@ -280,10 +304,11 @@ Paper versus real is a deployment setting, not a stage of learning.
 | Raw capture into Iceberg | explicit cursors and ordered deduplicated replay built; deployment subscriptions pending |
 | Excursion mining | per-symbol mining and persisted event cursors built |
 | Fragment retrieval | ordered archive traversal and A–C fragment selection implemented in JSON |
-| A/B/C fragment selection | `training_grade.json`, connected to archive fragment replay |
+| Fragment replay | `training_replay.json` over `store.Index`: tape once, then each event walks its instrument from the book's snapshot through D (`TestProgramExecuteReplay`, `TestCompile`) |
+| A/B/C fragment selection | `training_grade.json`, fed by the fragment replay |
 | PnL grading against the L3 book | `paper_exchange.json` wired into `training.json`: replayed records and, until the trie decides, the fragments' own ENTER at B / EXIT at C are one ordered event stream; closed round trips go to `paper_round_trips_v1`. Proven end to end by `TestCompileTrainingPaper` (archive → mining → fills against recorded L3 → positive round trip archived). Fee is the account's measured 0.80% taker as a visible constant |
 | Level 3 capture | `capture.json` verified live: 603 L3 symbols admitted in minutes (rate-limited ones retried), instrument/ticker/trade/L3 in one session in `symmtables/symm/raw_frames_v3` |
-| Throughput | measured on a live archive: ~909 graph passes/s, 97% of CPU in goroutine park/wake (one Cap'n Proto server hand-off per node call), and the replay loops every mined event per record. A few minutes of full L3 capture (~620k frames) cannot be replayed in useful time yet |
+| Throughput | measured on a live archive: ~909 graph passes/s, 97% of CPU in goroutine park/wake (one Cap'n Proto server hand-off per node call). The tape still costs one pass per archived row to scan and index |
 | Fragment training loop | archive → signals and truth grading wired; remapper/token/reinforcement connection pending |
 | Live paper process | not built |
 

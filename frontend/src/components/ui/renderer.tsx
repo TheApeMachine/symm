@@ -20,6 +20,8 @@ nodes read and write it by name.
 export interface RouteState {
 	values: Record<string, unknown>;
 	select: (key: string, value: unknown) => void;
+	/* What the running program last delivered to each node's ports, by node id. */
+	bound?: Record<string, Record<string, unknown>>;
 }
 
 /*
@@ -28,6 +30,8 @@ Layout is expressed strictly through standard structural components (Flex, Panel
 and normal className styling; no bespoke positioning matrices exist.
 */
 export interface CompiledUINode {
+	/* The node id the component was authored with. */
+	id?: string;
 	name: UIComponentName | string;
 	className?: string;
 	props?: Record<string, any>;
@@ -153,6 +157,13 @@ export const renderNode = (
 		resolvedProps = resolveBindings(node.props, observableState, sources, state);
 	}
 
+	// A port wired to a producer in the running program shows what arrived.
+	const delivered = node.id ? state?.bound?.[node.id] : undefined;
+
+	if (delivered) {
+		resolvedProps = { ...resolvedProps, ...delivered };
+	}
+
 	// A node that makes a choice answers a click with it, and reports whether
 	// its own choice is the one standing. Components that carry an `active`
 	// prop show that without being told twice.
@@ -205,10 +216,12 @@ export const UIRouteView = ({
 	route,
 	observableState,
 	sources,
+	bound,
 }: {
 	route: CompiledUIRoute;
 	observableState?: Record<string, any>;
 	sources?: Record<string, unknown>;
+	bound?: Record<string, Record<string, unknown>>;
 }) => {
 	const [values, setValues] = useState<Record<string, unknown>>(
 		() => route.state ?? {},
@@ -221,8 +234,8 @@ export const UIRouteView = ({
 	}, []);
 
 	const state = useMemo<RouteState>(
-		() => ({ values, select }),
-		[values, select],
+		() => ({ values, select, bound }),
+		[values, select, bound],
 	);
 
 	const nodes = route.components ?? [];
@@ -243,10 +256,12 @@ export const renderUIRoute = (
 	route: CompiledUIRoute,
 	observableState?: Record<string, any>,
 	sources?: Record<string, unknown>,
+	bound?: Record<string, Record<string, unknown>>,
 ): React.ReactNode => (
 	<UIRouteView
 		route={route}
 		observableState={observableState}
 		sources={sources}
+		bound={bound}
 	/>
 );

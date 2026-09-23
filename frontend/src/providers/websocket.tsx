@@ -1,22 +1,14 @@
 import { batch as storeBatch } from "@tanstack/react-store";
 import { useEffect } from "react";
 import {
+	boundAtom,
 	evictStaleSymbols,
 	evictSymbol,
 	focusAtom,
 	onlineAtom,
-	RingBuffer,
 	routeAtom,
-	signals,
-	symbolsAtom,
-	tickCountAtom,
-	updateClock,
-	updateEquity,
 } from "#/collections/app";
-import {
-	readWireMeasurement,
-	type WireMeasurement,
-} from "#/types/capnp/measurement";
+import { type Bound, readBindings } from "#/types/capnp/bindings";
 
 let globalWsWorker: Worker | null = null;
 
@@ -43,83 +35,29 @@ const defaultWsUrl = () => {
 	return `${protocol}//${host}:8765/ws`;
 };
 
-function dispatchMeasurement(row: WireMeasurement) {
-	const symbolStr = row.symbol || "";
-	const source = row.source || "";
-	if (symbolStr && !symbolsAtom.get().includes(symbolStr)) {
-		symbolsAtom.set(Array.from(new Set([...symbolsAtom.get(), symbolStr])));
-	}
-
-	if (row.at > 0n) {
-		updateClock(row.at);
-	}
-	if (row.tick > 0n) {
-		tickCountAtom.set(Number(row.tick));
-	}
-
-	if (source === "manifold") {
-		signals.manifold.setState((prev: any) => ({
-			...prev,
-			[symbolStr]: row,
-		}));
-		signals.manifold.setState((prev: any) => ({ ...prev }));
+/*
+dispatchBindings lands the values that reached component ports in the running
+program on the components they were wired to.
+*/
+function dispatchBindings(values: Bound[]) {
+	if (values.length === 0) {
 		return;
 	}
 
-	if (source === "decision" || source === "strategy") {
-		const meta = row.metadata || {};
-		const action = String(meta["action"] || "wait");
-		const reason = String(meta["reason"] || "attractor transition basin");
-		const confidence =
-			meta["confidence"] !== undefined ? Number(meta["confidence"]) : row.snr;
+	boundAtom.set((previous) => {
+		const next = { ...previous };
 
-		signals.strategy.setState(() => [
-			{
-				decisions: [
-					{
-						id: `dec-${symbolStr}`,
-						symbol: symbolStr,
-						action,
-						confidence,
-						reason,
-					},
-				],
-			},
-		]);
-		return;
-	}
+		for (const bound of values) {
+			const graph = { ...(next[bound.graph] ?? {}) };
+			graph[bound.component] = {
+				...(graph[bound.component] ?? {}),
+				[bound.prop]: bound.value,
+			};
+			next[bound.graph] = graph;
+		}
 
-	if (source === "equity" || source === "balance") {
-		const meta = row.metadata || {};
-		const cashVal = String(meta["cash"] || "");
-		const unrealizedVal = String(meta["unrealized"] || "");
-		const equityVal = String(meta["equity"] || "");
-		updateEquity(cashVal, unrealizedVal, equityVal);
-		return;
-	}
-
-	const signalStore = signals[source as keyof typeof signals];
-	if (!signalStore) {
-		return;
-	}
-
-	let ring = signalStore.state[symbolStr];
-
-	if (!ring) {
-		ring = new RingBuffer<WireMeasurement>(50);
-		signalStore.state[symbolStr] = ring;
-	}
-
-	ring.add(row);
-
-	if (source === "training") {
-		signalStore.state[""] = ring;
-		signalStore.state["learner"] = ring;
-	}
-
-	signals[source as keyof typeof signals]?.setState((prev: any) => ({
-		...prev,
-	}));
+		return next;
+	});
 }
 
 /*
@@ -137,7 +75,7 @@ const reportUndecodableFrame = (bytes: number, err: unknown) => {
 	}
 
 	console.error(
-		`WS: ignoring a ${bytes}-byte frame that is not a measurement (further ones of this size will be counted, not logged):`,
+		`WS: ignoring a ${bytes}-byte frame that is not a bindings frame (further ones of this size will be counted, not logged):`,
 		err,
 	);
 };
@@ -183,9 +121,9 @@ export const WsFeed = () => {
 
 			if (data.type === "BATCH" && data.buffer instanceof ArrayBuffer) {
 				try {
-					const row = readWireMeasurement(data.buffer);
+					const values = readBindings(data.buffer);
 					storeBatch(() => {
-						dispatchMeasurement(row);
+						dispatchBindings(values);
 					});
 				} catch (err) {
 					// A frame that cannot be read is reported once per shape

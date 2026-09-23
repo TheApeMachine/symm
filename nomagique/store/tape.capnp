@@ -3,14 +3,18 @@ using Go = import "/go.capnp";
 $Go.package("store");
 $Go.import("github.com/theapemachine/symm/nomagique/store");
 
+using import "../runtime/status.capnp".Queued;
+
 # Collect a snapshot, deduplicate capture identities, then replay each session
 # by numeric sequence. Sessions are independent tapes, not a global clock.
-interface Tape {
+# Once sealed, pending counts the frames still to replay.
+interface Tape extends(Queued) {
  write @0 (row :Data, exhausted :Bool) -> stream;
  done @1 () -> TapeResult;
 }
 struct TapeResult {
  finished @7 :Bool;
+ pending @9 :UInt64;
  union {
   idle @0 :Void;
   frame :group {

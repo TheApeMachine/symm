@@ -49,6 +49,13 @@ export const updateClock = (at: number | bigint | null | undefined) => {
 };
 
 export const tickCountAtom = createAtom<number>(0);
+/*
+The values the running program last delivered to each component port, keyed
+by the graph the component was authored in, its node id there, and the prop.
+*/
+export const boundAtom = createAtom<
+	Record<string, Record<string, Record<string, unknown>>>
+>({});
 export const phaseAtom = createAtom<string>("—");
 export const candidatesAtom = createAtom<number>(0);
 export const positionCountAtom = createAtom<number>(0);
