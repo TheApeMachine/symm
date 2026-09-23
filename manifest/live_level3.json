@@ -1,0 +1,1475 @@
+{
+  "id": "live_level3",
+  "name": "Kraken level 3: token per connection, one subscription per heartbeat",
+  "nodes": {
+    "symbols": {
+      "id": "symbols",
+      "type": "transport.Fan",
+      "width": 280,
+      "height": 172,
+      "inputData": {},
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "admission",
+              "portName": "offer_0"
+            }
+          ]
+        }
+      },
+      "x": 0.0,
+      "y": 0.0
+    },
+    "socket": {
+      "id": "socket",
+      "type": "websocket.WebSocketClient",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "endpoint": {
+          "value": "wss://ws-l3.kraken.com/v2"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "write_0": [
+            {
+              "nodeId": "subscription",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "frame.read": [
+            {
+              "nodeId": "frame",
+              "portName": "data"
+            }
+          ],
+          "frame.generation": [
+            {
+              "nodeId": "frame",
+              "portName": "unsigned"
+            },
+            {
+              "nodeId": "connection_generation",
+              "portName": "unsigned"
+            }
+          ]
+        }
+      },
+      "x": 340.0,
+      "y": 0.0
+    },
+    "frame": {
+      "id": "frame",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "_generation"
+        },
+        "encoding": {
+          "value": "uint64"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "socket",
+              "portName": "frame.read"
+            }
+          ],
+          "unsigned": [
+            {
+              "nodeId": "socket",
+              "portName": "frame.generation"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "classified",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 680.0,
+      "y": 0.0
+    },
+    "classified": {
+      "id": "classified",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "_const"
+        },
+        "json": {
+          "value": "{\"heartbeat\": \"heartbeat\", \"status\": \"status\", \"subscribe\": \"subscribe\", \"refused\": false, \"accepted\": true, \"limit\": \"Rate limit\"}"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "frame",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "heartbeat",
+              "portName": "data"
+            },
+            {
+              "nodeId": "status",
+              "portName": "data"
+            },
+            {
+              "nodeId": "answered",
+              "portName": "data"
+            },
+            {
+              "nodeId": "tokenless",
+              "portName": "no_0"
+            }
+          ]
+        }
+      },
+      "x": 1020.0,
+      "y": 0.0
+    },
+    "heartbeat": {
+      "id": "heartbeat",
+      "type": "data.Filter",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "channel"
+        },
+        "operator": {
+          "value": "=="
+        },
+        "referencePath": {
+          "value": "_const.heartbeat"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "classified",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "admission",
+              "portName": "release_0"
+            }
+          ]
+        }
+      },
+      "x": 1360.0,
+      "y": 0.0
+    },
+    "status": {
+      "id": "status",
+      "type": "data.Filter",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "channel"
+        },
+        "operator": {
+          "value": "=="
+        },
+        "referencePath": {
+          "value": "_const.status"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "classified",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "admission",
+              "portName": "rewind_0"
+            }
+          ]
+        }
+      },
+      "x": 1700.0,
+      "y": 0.0
+    },
+    "answered": {
+      "id": "answered",
+      "type": "data.Filter",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "method"
+        },
+        "operator": {
+          "value": "=="
+        },
+        "referencePath": {
+          "value": "_const.subscribe"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "classified",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "refused",
+              "portName": "data"
+            },
+            {
+              "nodeId": "accepted",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 2040.0,
+      "y": 0.0
+    },
+    "refused": {
+      "id": "refused",
+      "type": "data.Filter",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "success"
+        },
+        "operator": {
+          "value": "=="
+        },
+        "referencePath": {
+          "value": "_const.refused"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "answered",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "rate_limited",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 2380.0,
+      "y": 0.0
+    },
+    "accepted": {
+      "id": "accepted",
+      "type": "data.Filter",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "success"
+        },
+        "operator": {
+          "value": "=="
+        },
+        "referencePath": {
+          "value": "_const.accepted"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "answered",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "admission",
+              "portName": "release_1"
+            }
+          ]
+        }
+      },
+      "x": 2720.0,
+      "y": 0.0
+    },
+    "rate_limited": {
+      "id": "rate_limited",
+      "type": "data.Filter",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "error"
+        },
+        "operator": {
+          "value": "contains"
+        },
+        "referencePath": {
+          "value": "_const.limit"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "refused",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "refused_symbol",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 3060.0,
+      "y": 0.0
+    },
+    "refused_symbol": {
+      "id": "refused_symbol",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "symbol"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "rate_limited",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "retried",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 3400.0,
+      "y": 0.0
+    },
+    "retried": {
+      "id": "retried",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "symbols.0"
+        },
+        "data": {
+          "value": "{\"symbols\":[]}"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "refused_symbol",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "retry",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 3740.0,
+      "y": 0.0
+    },
+    "retry": {
+      "id": "retry",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "symbols"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "retried",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "admission",
+              "portName": "retry_0"
+            }
+          ]
+        }
+      },
+      "x": 0.0,
+      "y": 220.0
+    },
+    "admission": {
+      "id": "admission",
+      "type": "store.Queue",
+      "width": 280,
+      "height": 172,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "offer_0": [
+            {
+              "nodeId": "symbols",
+              "portName": "out"
+            }
+          ],
+          "retry_0": [
+            {
+              "nodeId": "retry",
+              "portName": "json"
+            }
+          ],
+          "rewind_0": [
+            {
+              "nodeId": "status",
+              "portName": "out"
+            }
+          ],
+          "release_0": [
+            {
+              "nodeId": "heartbeat",
+              "portName": "out"
+            }
+          ],
+          "release_1": [
+            {
+              "nodeId": "accepted",
+              "portName": "out"
+            }
+          ],
+          "release_2": [
+            {
+              "nodeId": "token",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "subscription_symbol",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 340.0,
+      "y": 220.0
+    },
+    "connection_generation": {
+      "id": "connection_generation",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "generation"
+        },
+        "data": {
+          "value": "{}"
+        },
+        "encoding": {
+          "value": "uint64"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "unsigned": [
+            {
+              "nodeId": "socket",
+              "portName": "frame.generation"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "connection_document",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 680.0,
+      "y": 220.0
+    },
+    "connection_document": {
+      "id": "connection_document",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "key"
+        },
+        "data": {
+          "value": "{}"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "connection_generation",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "connection_key",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 1020.0,
+      "y": 220.0
+    },
+    "connection_key": {
+      "id": "connection_key",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "key"
+        },
+        "encoding": {
+          "value": "json-text"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "connection_document",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "text": [
+            {
+              "nodeId": "tokens",
+              "portName": "key_0"
+            }
+          ]
+        }
+      },
+      "x": 1360.0,
+      "y": 220.0
+    },
+    "token": {
+      "id": "token",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "result.token"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "token_response",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "admission",
+              "portName": "release_2"
+            },
+            {
+              "nodeId": "tokens",
+              "portName": "value_0"
+            },
+            {
+              "nodeId": "subscription_token",
+              "portName": "yes_1"
+            }
+          ]
+        }
+      },
+      "x": 1700.0,
+      "y": 220.0
+    },
+    "tokens": {
+      "id": "tokens",
+      "type": "store.Radix",
+      "width": 280,
+      "height": 172,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "key_0": [
+            {
+              "nodeId": "connection_key",
+              "portName": "text"
+            }
+          ],
+          "value_0": [
+            {
+              "nodeId": "token",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "found_0": [
+            {
+              "nodeId": "current_token",
+              "portName": "test"
+            },
+            {
+              "nodeId": "tokenless",
+              "portName": "test"
+            }
+          ],
+          "out_0": [
+            {
+              "nodeId": "current_token",
+              "portName": "yes"
+            }
+          ]
+        }
+      },
+      "x": 2040.0,
+      "y": 220.0
+    },
+    "current_token": {
+      "id": "current_token",
+      "type": "controlflow.Select",
+      "width": 280,
+      "height": 172,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "test": [
+            {
+              "nodeId": "tokens",
+              "portName": "found_0"
+            }
+          ],
+          "yes": [
+            {
+              "nodeId": "tokens",
+              "portName": "out_0"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "subscription_token",
+              "portName": "yes_0"
+            }
+          ]
+        }
+      },
+      "x": 2380.0,
+      "y": 220.0
+    },
+    "tokenless": {
+      "id": "tokenless",
+      "type": "controlflow.Select",
+      "width": 280,
+      "height": 172,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "test": [
+            {
+              "nodeId": "tokens",
+              "portName": "found_0"
+            }
+          ],
+          "no_0": [
+            {
+              "nodeId": "classified",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "nonce",
+              "portName": "trigger"
+            },
+            {
+              "nodeId": "api_secret",
+              "portName": "trigger"
+            },
+            {
+              "nodeId": "api_key",
+              "portName": "trigger"
+            }
+          ]
+        }
+      },
+      "x": 2720.0,
+      "y": 220.0
+    },
+    "nonce": {
+      "id": "nonce",
+      "type": "crypto.Nonce",
+      "width": 280,
+      "height": 172,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "trigger": [
+            {
+              "nodeId": "tokenless",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "post",
+              "portName": "values_0"
+            },
+            {
+              "nodeId": "nonced_post",
+              "portName": "values_0"
+            },
+            {
+              "nodeId": "form_header",
+              "portName": "values_0"
+            }
+          ]
+        }
+      },
+      "x": 3060.0,
+      "y": 220.0
+    },
+    "post": {
+      "id": "post",
+      "type": "data.Format",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "template": {
+          "value": "nonce={0}"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "values_0": [
+            {
+              "nodeId": "nonce",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "nonced_post",
+              "portName": "values_1"
+            },
+            {
+              "nodeId": "token_response",
+              "portName": "body"
+            }
+          ]
+        }
+      },
+      "x": 3400.0,
+      "y": 220.0
+    },
+    "nonced_post": {
+      "id": "nonced_post",
+      "type": "data.Format",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "template": {
+          "value": "{0}{1}"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "values_0": [
+            {
+              "nodeId": "nonce",
+              "portName": "out"
+            }
+          ],
+          "values_1": [
+            {
+              "nodeId": "post",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "digest",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 3740.0,
+      "y": 220.0
+    },
+    "digest": {
+      "id": "digest",
+      "type": "crypto.SHA256",
+      "width": 280,
+      "height": 172,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "nonced_post",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "signed_path",
+              "portName": "values_0"
+            }
+          ]
+        }
+      },
+      "x": 0.0,
+      "y": 440.0
+    },
+    "signed_path": {
+      "id": "signed_path",
+      "type": "data.Format",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "template": {
+          "value": "/0/private/GetWebSocketsToken{0}"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "values_0": [
+            {
+              "nodeId": "digest",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "signature",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 340.0,
+      "y": 440.0
+    },
+    "api_secret": {
+      "id": "api_secret",
+      "type": "crypto.Secret",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "name": {
+          "value": "L3_API_SECRET"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "trigger": [
+            {
+              "nodeId": "tokenless",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "secret_key",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 680.0,
+      "y": 440.0
+    },
+    "secret_key": {
+      "id": "secret_key",
+      "type": "crypto.Base64Decode",
+      "width": 280,
+      "height": 172,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "api_secret",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "signature",
+              "portName": "key"
+            }
+          ]
+        }
+      },
+      "x": 1020.0,
+      "y": 440.0
+    },
+    "signature": {
+      "id": "signature",
+      "type": "crypto.HMACSHA512",
+      "width": 280,
+      "height": 172,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "signed_path",
+              "portName": "out"
+            }
+          ],
+          "key": [
+            {
+              "nodeId": "secret_key",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "encoded_signature",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 1360.0,
+      "y": 440.0
+    },
+    "encoded_signature": {
+      "id": "encoded_signature",
+      "type": "crypto.Base64Encode",
+      "width": 280,
+      "height": 172,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "signature",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sign_header",
+              "portName": "values_0"
+            }
+          ]
+        }
+      },
+      "x": 1700.0,
+      "y": 440.0
+    },
+    "api_key": {
+      "id": "api_key",
+      "type": "crypto.Secret",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "name": {
+          "value": "L3_API_KEY"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "trigger": [
+            {
+              "nodeId": "tokenless",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "key_header",
+              "portName": "values_0"
+            }
+          ]
+        }
+      },
+      "x": 2040.0,
+      "y": 440.0
+    },
+    "key_header": {
+      "id": "key_header",
+      "type": "data.Format",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "template": {
+          "value": "API-Key: {0}"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "values_0": [
+            {
+              "nodeId": "api_key",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "token_response",
+              "portName": "headers_0"
+            }
+          ]
+        }
+      },
+      "x": 2380.0,
+      "y": 440.0
+    },
+    "sign_header": {
+      "id": "sign_header",
+      "type": "data.Format",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "template": {
+          "value": "API-Sign: {0}"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "values_0": [
+            {
+              "nodeId": "encoded_signature",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "token_response",
+              "portName": "headers_1"
+            }
+          ]
+        }
+      },
+      "x": 2720.0,
+      "y": 440.0
+    },
+    "form_header": {
+      "id": "form_header",
+      "type": "data.Format",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "template": {
+          "value": "Content-Type: application/x-www-form-urlencoded"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "values_0": [
+            {
+              "nodeId": "nonce",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "token_response",
+              "portName": "headers_2"
+            }
+          ]
+        }
+      },
+      "x": 3060.0,
+      "y": 440.0
+    },
+    "token_response": {
+      "id": "token_response",
+      "type": "http.HTTPClient",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "url": {
+          "value": "https://api.kraken.com/0/private/GetWebSocketsToken"
+        },
+        "method": {
+          "value": "POST"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "headers_0": [
+            {
+              "nodeId": "key_header",
+              "portName": "out"
+            }
+          ],
+          "headers_1": [
+            {
+              "nodeId": "sign_header",
+              "portName": "out"
+            }
+          ],
+          "headers_2": [
+            {
+              "nodeId": "form_header",
+              "portName": "out"
+            }
+          ],
+          "body": [
+            {
+              "nodeId": "post",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "token",
+              "portName": "data"
+            },
+            {
+              "nodeId": "token_rejected",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 3400.0,
+      "y": 440.0
+    },
+    "token_rejected": {
+      "id": "token_rejected",
+      "type": "data.Filter",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "error.0"
+        },
+        "operator": {
+          "value": "exists"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "token_response",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "token_error",
+              "portName": "data"
+            },
+            {
+              "nodeId": "token_accepted",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 3740.0,
+      "y": 440.0
+    },
+    "token_error": {
+      "id": "token_error",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "error.0"
+        },
+        "encoding": {
+          "value": "text"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "token_rejected",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "text": [
+            {
+              "nodeId": "token_accepted",
+              "portName": "reason"
+            }
+          ]
+        }
+      },
+      "x": 0.0,
+      "y": 660.0
+    },
+    "token_accepted": {
+      "id": "token_accepted",
+      "type": "controlflow.Require",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "test": {
+          "value": false
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "token_rejected",
+              "portName": "out"
+            }
+          ],
+          "reason": [
+            {
+              "nodeId": "token_error",
+              "portName": "text"
+            }
+          ]
+        },
+        "outputs": {}
+      },
+      "x": 340.0,
+      "y": 660.0
+    },
+    "subscription_symbol": {
+      "id": "subscription_symbol",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "params.symbol.0"
+        },
+        "data": {
+          "value": "{\"method\": \"subscribe\", \"params\": {\"channel\": \"level3\", \"depth\": 10, \"snapshot\": true, \"symbol\": []}}"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "admission",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "subscription",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 680.0,
+      "y": 660.0
+    },
+    "subscription_token": {
+      "id": "subscription_token",
+      "type": "controlflow.Select",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "test": {
+          "value": true
+        }
+      },
+      "connections": {
+        "inputs": {
+          "yes_0": [
+            {
+              "nodeId": "current_token",
+              "portName": "out"
+            }
+          ],
+          "yes_1": [
+            {
+              "nodeId": "token",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "subscription",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 1020.0,
+      "y": 660.0
+    },
+    "subscription": {
+      "id": "subscription",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "params.token"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "subscription_symbol",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "subscription_token",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "socket",
+              "portName": "write_0"
+            }
+          ]
+        }
+      },
+      "x": 1360.0,
+      "y": 660.0
+    }
+  }
+}

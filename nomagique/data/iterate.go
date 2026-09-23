@@ -152,6 +152,12 @@ func (server *IterateServer) load(payload []byte) error {
 
 	elements, ok := collection.([]any)
 
+	// A frame whose data is one object (an instrument catalogue, a single
+	// book) is one record, not a malformed collection.
+	if object, single := collection.(map[string]any); !ok && single {
+		elements, ok = []any{object}, true
+	}
+
 	if !ok {
 		return errnie.Error(errnie.Err(
 			errnie.Validation,

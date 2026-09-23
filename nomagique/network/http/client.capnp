@@ -3,10 +3,10 @@ using Go = import "/go.capnp";
 $Go.package("http");
 $Go.import("github.com/theapemachine/symm/nomagique/network/http");
 
-struct Header { name @0 :Text; value @1 :Text; }
-
 # One HTTP exchange. Method, address, headers and body are graph inputs.
+# Each header is one "Name: value" line, gathered from whatever computed it, so
+# a signature produced earlier in the graph is a header like any other.
 interface HTTPClient {
-  write @0 (url :Text, method :Text, headers :List(Header), body :Data) -> stream;
+  write @0 (url :Text, method :Text, headers :List(Data), body :Data) -> stream;
   done @1 () -> (out :Data, status :UInt16);
 }

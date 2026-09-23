@@ -1,34 +1,79 @@
 {
   "id": "capture",
-  "name": "capture (subscription configuration required)",
+  "name": "capture: public spot and level 3 frames, one session",
   "nodes": {
-    "feed": {
-      "id": "feed",
-      "type": "websocket.WebSocketClient",
-      "inputData": {
-        "endpoint": {
-          "value": "wss://ws.kraken.com/v2"
-        }
-      },
+    "spot": {
+      "id": "spot",
+      "type": "definition:live_spot",
+      "width": 320,
+      "height": 280,
+      "x": 0.0,
+      "y": 0.0,
+      "inputData": {},
       "connections": {
         "inputs": {},
         "outputs": {
-          "frame.read": [
+          "symbols.out": [
             {
-              "nodeId": "envelope",
-              "portName": "payload"
+              "nodeId": "level3",
+              "portName": "symbols.data"
             }
           ],
-          "frame.endpoint": [
+          "socket.frame.read": [
             {
               "nodeId": "envelope",
-              "portName": "endpoint"
+              "portName": "payload_0"
             }
           ],
-          "frame.receivedAt": [
+          "socket.frame.endpoint": [
             {
               "nodeId": "envelope",
-              "portName": "receivedAt"
+              "portName": "endpoint_0"
+            }
+          ],
+          "socket.frame.receivedAt": [
+            {
+              "nodeId": "envelope",
+              "portName": "receivedAt_0"
+            }
+          ]
+        }
+      }
+    },
+    "level3": {
+      "id": "level3",
+      "type": "definition:live_level3",
+      "width": 320,
+      "height": 280,
+      "x": 0.0,
+      "y": 400.0,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "symbols.data": [
+            {
+              "nodeId": "spot",
+              "portName": "symbols.out"
+            }
+          ]
+        },
+        "outputs": {
+          "socket.frame.read": [
+            {
+              "nodeId": "envelope",
+              "portName": "payload_1"
+            }
+          ],
+          "socket.frame.endpoint": [
+            {
+              "nodeId": "envelope",
+              "portName": "endpoint_1"
+            }
+          ],
+          "socket.frame.receivedAt": [
+            {
+              "nodeId": "envelope",
+              "portName": "receivedAt_1"
             }
           ]
         }
@@ -37,29 +82,52 @@
     "envelope": {
       "id": "envelope",
       "type": "store.Capture",
+      "width": 320,
+      "height": 280,
+      "x": 500.0,
+      "y": 200.0,
+      "inputData": {},
       "connections": {
         "inputs": {
-          "payload": [
+          "payload_0": [
             {
-              "nodeId": "feed",
-              "portName": "frame.read"
+              "nodeId": "spot",
+              "portName": "socket.frame.read"
             }
           ],
-          "endpoint": [
+          "endpoint_0": [
             {
-              "nodeId": "feed",
-              "portName": "frame.endpoint"
+              "nodeId": "spot",
+              "portName": "socket.frame.endpoint"
             }
           ],
-          "receivedAt": [
+          "receivedAt_0": [
             {
-              "nodeId": "feed",
-              "portName": "frame.receivedAt"
+              "nodeId": "spot",
+              "portName": "socket.frame.receivedAt"
+            }
+          ],
+          "payload_1": [
+            {
+              "nodeId": "level3",
+              "portName": "socket.frame.read"
+            }
+          ],
+          "endpoint_1": [
+            {
+              "nodeId": "level3",
+              "portName": "socket.frame.endpoint"
+            }
+          ],
+          "receivedAt_1": [
+            {
+              "nodeId": "level3",
+              "portName": "socket.frame.receivedAt"
             }
           ]
         },
         "outputs": {
-          "out": [
+          "row.out": [
             {
               "nodeId": "capture",
               "portName": "payload"
@@ -71,9 +139,13 @@
     "capture": {
       "id": "capture",
       "type": "tables.IcebergTable",
+      "width": 320,
+      "height": 280,
+      "x": 900.0,
+      "y": 200.0,
       "inputData": {
         "config": {
-          "value": "{\"namespace\":\"symm\",\"table\":\"raw_frames_v3\",\"fields\":[{\"id\":1,\"name\":\"received_at\",\"type\":\"timestamp\",\"required\":true},{\"id\":2,\"name\":\"endpoint\",\"type\":\"string\",\"required\":true},{\"id\":3,\"name\":\"symbol\",\"type\":\"string\",\"required\":false},{\"id\":4,\"name\":\"kind\",\"type\":\"string\",\"required\":false},{\"id\":5,\"name\":\"payload\",\"type\":\"binary\",\"required\":true},{\"id\":6,\"name\":\"capture_id\",\"type\":\"string\",\"required\":true},{\"id\":7,\"name\":\"capture_session\",\"type\":\"string\",\"required\":true},{\"id\":8,\"name\":\"capture_sequence\",\"type\":\"long\",\"required\":true},{\"id\":9,\"name\":\"received_time\",\"type\":\"string\",\"required\":true}]}"
+          "value": "{\"namespace\": \"symm\", \"table\": \"raw_frames_v3\", \"fields\": [{\"id\": 1, \"name\": \"received_at\", \"type\": \"timestamp\", \"required\": true}, {\"id\": 2, \"name\": \"endpoint\", \"type\": \"string\", \"required\": true}, {\"id\": 3, \"name\": \"symbol\", \"type\": \"string\", \"required\": false}, {\"id\": 4, \"name\": \"kind\", \"type\": \"string\", \"required\": false}, {\"id\": 5, \"name\": \"payload\", \"type\": \"binary\", \"required\": true}, {\"id\": 6, \"name\": \"capture_id\", \"type\": \"string\", \"required\": true}, {\"id\": 7, \"name\": \"capture_session\", \"type\": \"string\", \"required\": true}, {\"id\": 8, \"name\": \"capture_sequence\", \"type\": \"long\", \"required\": true}, {\"id\": 9, \"name\": \"received_time\", \"type\": \"string\", \"required\": true}], \"catalog\": \"symmtables\", \"properties\": {\"type\": \"rest\", \"uri\": \"http://iceberg.seaweed.home.arpa\", \"warehouse\": \"s3://symmtables/\", \"s3.endpoint\": \"http://s3.seaweed.home.arpa\", \"s3.region\": \"us-east-1\", \"s3.access-key-id\": \"anonymous\", \"s3.secret-access-key\": \"anonymous\"}}"
         }
       },
       "connections": {
@@ -81,7 +153,7 @@
           "payload": [
             {
               "nodeId": "envelope",
-              "portName": "out"
+              "portName": "row.out"
             }
           ]
         },

@@ -50,10 +50,7 @@ func TestHTTPClientWrite(t *testing.T) {
 					if err != nil {
 						return err
 					}
-					if err := headers.At(0).SetName("X-Fixture"); err != nil {
-						return err
-					}
-					if err := headers.At(0).SetValue("graph"); err != nil {
+					if err := headers.Set(0, []byte("X-Fixture: graph")); err != nil {
 						return err
 					}
 					return args.SetBody([]byte("exact payload\x00"))

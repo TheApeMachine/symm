@@ -5,18 +5,23 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	capnp "capnproto.org/go/capnp/v3"
 	"capnproto.org/go/capnp/v3/std/capnp/schema"
 	"github.com/apache/iceberg-go"
 	sqlcat "github.com/apache/iceberg-go/catalog/sql"
+	krakenbook "github.com/krakenfx/api-go/v2/pkg/book"
+	krakendecimal "github.com/krakenfx/api-go/v2/pkg/decimal"
 	_ "github.com/mattn/go-sqlite3"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/compiler"
@@ -534,9 +539,18 @@ func TestCompileTraining(t *testing.T) {
 			defer program.Release()
 
 			if name == "capture" {
-				So(program.Nodes, ShouldHaveLength, 3)
-				So(program.Routes, ShouldHaveLength, 4)
-				So(program.Nodes[program.Roots[0]].ID, ShouldEqual, "feed")
+				// Both sockets record into one session and one table, and nothing
+				// that grades or learns runs inside capture.
+				kinds := map[string]int{}
+
+				for _, node := range program.Nodes {
+					kinds[node.Identity.Type]++
+					So(node.Identity.Type, ShouldNotStartWith, "paper.")
+					So(node.Identity.Type, ShouldNotStartWith, "cognition.")
+				}
+				So(kinds["store.Capture"], ShouldEqual, 1)
+				So(kinds["tables.IcebergTable"], ShouldEqual, 1)
+				So(kinds["websocket.WebSocketClient"], ShouldEqual, 2)
 				continue
 			}
 
@@ -648,7 +662,7 @@ func TestCompile(t *testing.T) {
 		So(json.Unmarshal(captureGraph.Nodes["capture"].InputData["config"], &captureConfig), ShouldBeNil)
 		inputConfig := captureConfig.Value
 		outputConfig := declaration("events")
-		capture := store.Capture_ServerToClient(store.NewCapture())
+		capture := store.Capture_ServerToClient(store.NewCapture(context.Background()))
 		defer capture.Release()
 		rows := make([][]byte, 0, 180)
 
@@ -668,7 +682,19 @@ func TestCompile(t *testing.T) {
 			payload, err := json.Marshal(map[string]any{"channel": "ticker", "data": []map[string]any{{"symbol": "FLAT/USD", "last": 200, "bid": 199, "ask": 201}, {"symbol": "MOVE/USD", "last": 100 * math.Exp(exponent), "bid": 100 * math.Exp(exponent), "ask": 100*math.Exp(exponent) + 3}}})
 			So(err, ShouldBeNil)
 			So(capture.Write(ctx, func(params store.Capture_write_Params) error {
-				for _, err := range []error{params.SetEndpoint("wss://fixture"), params.SetReceivedAt("2026-09-22T12:00:00.123456789Z"), params.SetPayload(payload)} {
+				endpoints, err := params.NewEndpoint(1)
+				if err != nil {
+					return err
+				}
+				times, err := params.NewReceivedAt(1)
+				if err != nil {
+					return err
+				}
+				payloads, err := params.NewPayload(1)
+				if err != nil {
+					return err
+				}
+				for _, err := range []error{endpoints.Set(0, "wss://fixture"), times.Set(0, "2026-09-22T12:00:00.123456789Z"), payloads.Set(0, payload)} {
 					if err != nil {
 						return err
 					}
@@ -679,7 +705,7 @@ func TestCompile(t *testing.T) {
 			future, release := capture.Done(ctx, nil)
 			result, err := future.Struct()
 			So(err, ShouldBeNil)
-			row, err := result.Out()
+			row, err := result.Row().Out()
 			So(err, ShouldBeNil)
 			rows = append(rows, bytes.Clone(row))
 			release()
@@ -854,5 +880,192 @@ func TestCompile(t *testing.T) {
 		So(events[1].A, ShouldNotBeNil)
 		So(events[1].A.Sequence, ShouldBeLessThan, events[1].B.Sequence)
 		So(len(graded), ShouldEqual, events[1].C.Sequence-events[1].A.Sequence)
+	})
+}
+
+/* l3Snapshot renders a level3 snapshot around price with the checksum the exchange would send. */
+func l3Snapshot(symbol string, price float64) []byte {
+	bid, ask := fmt.Sprintf("%.4f", price*0.999), fmt.Sprintf("%.4f", price*1.001)
+	replica := krakenbook.New()
+	at := time.Date(2026, 9, 23, 9, 0, 0, 0, time.UTC)
+	orders := map[krakenbook.BookDirection][]map[string]any{}
+
+	for direction, level := range map[krakenbook.BookDirection]string{krakenbook.Bid: bid, krakenbook.Ask: ask} {
+		limit, err := krakendecimal.NewFromString(level)
+		So(err, ShouldBeNil)
+		quantity, err := krakendecimal.NewFromString("100")
+		So(err, ShouldBeNil)
+		identity := string(direction) + level
+		replica.Update(&krakenbook.UpdateOptions{Direction: direction, ID: identity, Price: limit, Quantity: quantity, Timestamp: at})
+		orders[direction] = []map[string]any{{
+			"order_id": identity, "limit_price": json.Number(level), "order_qty": json.Number("100"), "timestamp": at.Format(time.RFC3339),
+		}}
+	}
+	frame, err := json.Marshal(map[string]any{"channel": "level3", "type": "snapshot", "data": []any{map[string]any{
+		"symbol": symbol, "bids": orders[krakenbook.Bid], "asks": orders[krakenbook.Ask],
+		"checksum": json.Number(replica.L3Checksum("").LocalChecksum),
+	}}})
+	So(err, ShouldBeNil)
+	return frame
+}
+
+/*
+TestCompileTrainingPaper replays a captured archive through training.json and
+checks that the fragments' own decisions are graded by the paper exchange
+against the recorded level 3 book, and that the round trip is archived.
+*/
+func TestCompileTrainingPaper(t *testing.T) {
+	Convey("Given an archive with instrument, ticker and level 3 frames of a rise with a precursor", t, func() {
+		ctx := context.Background()
+		directory := t.TempDir()
+		database, err := sql.Open("sqlite3", filepath.Join(directory, "catalog.db"))
+		So(err, ShouldBeNil)
+		t.Cleanup(func() {
+			if err := database.Close(); err != nil {
+				t.Error(err)
+			}
+		})
+		catalog, err := sqlcat.NewCatalog("test", database, sqlcat.SQLite, iceberg.Properties{"warehouse": "file://" + directory})
+		So(err, ShouldBeNil)
+		So(catalog.CreateNamespace(ctx, []string{"symm"}, nil), ShouldBeNil)
+		captureGraph, err := compiler.DefaultRepository().Load("capture")
+		So(err, ShouldBeNil)
+		var captureConfig struct {
+			Value string `json:"value"`
+		}
+		So(json.Unmarshal(captureGraph.Nodes["capture"].InputData["config"], &captureConfig), ShouldBeNil)
+
+		frames := [][]byte{[]byte(`{"channel":"instrument","type":"snapshot","data":{"pairs":[{"symbol":"MOVE/USD","quote":"USD","status":"online",` +
+			`"cost_precision":5,"qty_min":0.0001,"cost_min":0.5,"qty_increment":0.0001}]}}`)}
+		// Up, down, up, down: the second rise has a precursor, so its fragment decides.
+		exponent := 0.0
+
+		for index := 0; index < 240; index++ {
+			if index > 0 {
+				exponent += map[int]float64{0: 0.005, 1: -0.008, 2: 0.008, 3: -0.008}[index/60]
+			}
+			price := 100 * math.Exp(exponent)
+			ticker, err := json.Marshal(map[string]any{"channel": "ticker", "data": []map[string]any{{
+				"symbol": "MOVE/USD", "last": price, "bid": price * 0.999, "ask": price * 1.001,
+			}}})
+			So(err, ShouldBeNil)
+			frames = append(frames, ticker, l3Snapshot("MOVE/USD", price))
+		}
+
+		capture := store.Capture_ServerToClient(store.NewCapture(ctx))
+		defer capture.Release()
+		archive := tables.NewIcebergTable()
+		archive.Catalog = catalog
+		writer := tables.IcebergTable_ServerToClient(archive)
+		defer writer.Release()
+
+		for index, frame := range frames {
+			So(capture.Write(ctx, func(params store.Capture_write_Params) error {
+				endpoints, err := params.NewEndpoint(1)
+				if err != nil {
+					return err
+				}
+				times, err := params.NewReceivedAt(1)
+				if err != nil {
+					return err
+				}
+				payloads, err := params.NewPayload(1)
+				if err != nil {
+					return err
+				}
+				received := time.Date(2026, 9, 23, 10, 0, 0, 0, time.UTC).Add(time.Duration(index) * time.Second).Format(time.RFC3339Nano)
+				for _, err := range []error{endpoints.Set(0, "wss://fixture"), times.Set(0, received), payloads.Set(0, frame)} {
+					if err != nil {
+						return err
+					}
+				}
+				return nil
+			}), ShouldBeNil)
+			So(capture.WaitStreaming(), ShouldBeNil)
+			future, release := capture.Done(ctx, nil)
+			result, err := future.Struct()
+			So(err, ShouldBeNil)
+			row, err := result.Row().Out()
+			So(err, ShouldBeNil)
+			So(writer.Write(ctx, func(params tables.IcebergTable_write_Params) error {
+				if err := params.SetConfig(captureConfig.Value); err != nil {
+					return err
+				}
+				return params.SetPayload(bytes.Clone(row))
+			}), ShouldBeNil)
+			So(writer.WaitStreaming(), ShouldBeNil)
+			release()
+		}
+		flushed, release := runtime.Durable(writer).Flush(ctx, nil)
+		_, err = flushed.Struct()
+		release()
+		So(err, ShouldBeNil)
+
+		archiveTable, err := catalog.LoadTable(ctx, []string{"symm", "raw_frames_v3"})
+		So(err, ShouldBeNil)
+		endpoint := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+			response.Header().Set("Content-Type", "application/json")
+			if request.URL.Path == "/config" {
+				if err := json.NewEncoder(response).Encode(map[string]any{"defaults": map[string]string{}, "overrides": map[string]string{}}); err != nil {
+					t.Error(err)
+				}
+				return
+			}
+			if err := json.NewEncoder(response).Encode(map[string]any{"metadata": archiveTable.Metadata(), "config": map[string]string{}}); err != nil {
+				t.Error(err)
+			}
+		}))
+		defer endpoint.Close()
+
+		source, err := os.ReadFile("../../manifest/training.json")
+		So(err, ShouldBeNil)
+		graph, err := compiler.ParseGraph(source)
+		So(err, ShouldBeNil)
+		input, err := json.Marshal(map[string]any{"catalogUrl": endpoint.URL + "/config", "tableUrl": endpoint.URL + "/table", "properties": map[string]string{}})
+		So(err, ShouldBeNil)
+		configured, err := json.Marshal(map[string]string{"value": string(input)})
+		So(err, ShouldBeNil)
+		replay := graph.Nodes["replay"]
+		replay.InputData = map[string]json.RawMessage{"input.through": configured}
+		graph.Nodes["replay"] = replay
+		registry := compiler.DefaultRegistry()
+		registry.Register("tables.IcebergTable", compiler.Factory{InterfaceID: tables.IcebergTable_TypeID, New: func(ctx context.Context, config []byte) (capnp.Client, error) {
+			writer := tables.NewIcebergTable()
+			writer.Catalog = catalog
+			return capnp.Client(tables.IcebergTable_ServerToClient(writer)), nil
+		}})
+		program, err := compiler.Compile(graph, registry, compiler.DefaultRepository())
+		So(err, ShouldBeNil)
+		defer program.Release()
+
+		var trips []map[string]any
+
+		for pass := 0; pass < 200000 && len(trips) == 0; pass++ {
+			So(program.Execute(ctx, nil), ShouldBeNil)
+
+			if result, found := program.Result("paper_closed"); found && data.Extracted(result).Which() == data.Extracted_Which_json {
+				payload, err := data.Extracted(result).Json()
+				So(err, ShouldBeNil)
+				var trip map[string]any
+				So(json.Unmarshal(payload, &trip), ShouldBeNil)
+				trips = append(trips, trip)
+			}
+		}
+
+		Convey("Then the rise is entered at ignition, left at its extremum, and made money after fees", func() {
+			So(trips, ShouldHaveLength, 1)
+			So(trips[0]["symbol"], ShouldEqual, "MOVE/USD")
+			pnl, err := strconv.ParseFloat(fmt.Sprint(trips[0]["pnl"]), 64)
+			So(err, ShouldBeNil)
+			So(pnl, ShouldBeGreaterThan, 0)
+
+			Convey("And the round trip is archived", func() {
+				So(program.Flush(ctx), ShouldBeNil)
+				archived, err := catalog.LoadTable(ctx, []string{"symm", "paper_round_trips_v1"})
+				So(err, ShouldBeNil)
+				So(archived.CurrentSnapshot(), ShouldNotBeNil)
+				So(archived.CurrentSnapshot().Summary.Properties["total-records"], ShouldEqual, "1")
+			})
+		})
 	})
 }

@@ -231,7 +231,7 @@ token — and the trie predicts as it goes.
 
 Each decision is graded by **what it would actually have made or lost**. The
 tape holds the Level 3 book, so a decision is executed against it:
-`paper.Exchange` rebuilds each symbol's book order by order (verified against
+`paper_exchange.json` rebuilds each symbol's book order by order (verified against
 the exchange's checksum), rests the order until the next Level 3 frame for its
 symbol, and fills it by walking the queue, taker fee included. A/B/C select
 which stretches of tape are replayed; they are not the grade.
@@ -281,7 +281,9 @@ Paper versus real is a deployment setting, not a stage of learning.
 | Excursion mining | per-symbol mining and persisted event cursors built |
 | Fragment retrieval | ordered archive traversal and A–C fragment selection implemented in JSON |
 | A/B/C fragment selection | `training_grade.json`, connected to archive fragment replay |
-| PnL grading against the L3 book | `paper.Exchange` built and tested (book replay, causal fills, fees, account, round-trip PnL); not yet wired into `training.json`, and the archive holds no Level 3 or instrument frames until capture subscribes to them |
+| PnL grading against the L3 book | `paper_exchange.json` wired into `training.json`: replayed records and, until the trie decides, the fragments' own ENTER at B / EXIT at C are one ordered event stream; closed round trips go to `paper_round_trips_v1`. Proven end to end by `TestCompileTrainingPaper` (archive → mining → fills against recorded L3 → positive round trip archived). Fee is the account's measured 0.80% taker as a visible constant |
+| Level 3 capture | `capture.json` verified live: 603 L3 symbols admitted in minutes (rate-limited ones retried), instrument/ticker/trade/L3 in one session in `symmtables/symm/raw_frames_v3` |
+| Throughput | measured on a live archive: ~909 graph passes/s, 97% of CPU in goroutine park/wake (one Cap'n Proto server hand-off per node call), and the replay loops every mined event per record. A few minutes of full L3 capture (~620k frames) cannot be replayed in useful time yet |
 | Fragment training loop | archive → signals and truth grading wired; remapper/token/reinforcement connection pending |
 | Live paper process | not built |
 

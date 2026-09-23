@@ -12,106 +12,6 @@ import (
 	context "context"
 )
 
-type Header capnp.Struct
-
-// Header_TypeID is the unique identifier for the type Header.
-const Header_TypeID = 0xc2ed0ae6f22f95c1
-
-func NewHeader(s *capnp.Segment) (Header, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
-	return Header(st), err
-}
-
-func NewRootHeader(s *capnp.Segment) (Header, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
-	return Header(st), err
-}
-
-func ReadRootHeader(msg *capnp.Message) (Header, error) {
-	root, err := msg.Root()
-	return Header(root.Struct()), err
-}
-
-func (s Header) String() string {
-	str, _ := text.Marshal(0xc2ed0ae6f22f95c1, capnp.Struct(s))
-	return str
-}
-
-func (s Header) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (Header) DecodeFromPtr(p capnp.Ptr) Header {
-	return Header(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s Header) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s Header) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s Header) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s Header) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s Header) Name() (string, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return p.Text(), err
-}
-
-func (s Header) HasName() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s Header) NameBytes() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return p.TextBytes(), err
-}
-
-func (s Header) SetName(v string) error {
-	return capnp.Struct(s).SetText(0, v)
-}
-
-func (s Header) Value() (string, error) {
-	p, err := capnp.Struct(s).Ptr(1)
-	return p.Text(), err
-}
-
-func (s Header) HasValue() bool {
-	return capnp.Struct(s).HasPtr(1)
-}
-
-func (s Header) ValueBytes() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(1)
-	return p.TextBytes(), err
-}
-
-func (s Header) SetValue(v string) error {
-	return capnp.Struct(s).SetText(1, v)
-}
-
-// Header_List is a list of Header.
-type Header_List = capnp.StructList[Header]
-
-// NewHeader creates a new list of Header.
-func NewHeader_List(s *capnp.Segment, sz int32) (Header_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2}, sz)
-	return capnp.StructList[Header](l), err
-}
-
-// Header_Future is a wrapper for a Header promised by a client call.
-type Header_Future struct{ *capnp.Future }
-
-func (f Header_Future) Struct() (Header, error) {
-	p, err := f.Future.Ptr()
-	return Header(p.Struct()), err
-}
-
 type HTTPClient capnp.Client
 
 // HTTPClient_TypeID is the unique identifier for the type HTTPClient.
@@ -405,25 +305,25 @@ func (s HTTPClient_write_Params) SetMethod(v string) error {
 	return capnp.Struct(s).SetText(1, v)
 }
 
-func (s HTTPClient_write_Params) Headers() (Header_List, error) {
+func (s HTTPClient_write_Params) Headers() (capnp.DataList, error) {
 	p, err := capnp.Struct(s).Ptr(2)
-	return Header_List(p.List()), err
+	return capnp.DataList(p.List()), err
 }
 
 func (s HTTPClient_write_Params) HasHeaders() bool {
 	return capnp.Struct(s).HasPtr(2)
 }
 
-func (s HTTPClient_write_Params) SetHeaders(v Header_List) error {
+func (s HTTPClient_write_Params) SetHeaders(v capnp.DataList) error {
 	return capnp.Struct(s).SetPtr(2, v.ToPtr())
 }
 
 // NewHeaders sets the headers field to a newly
-// allocated Header_List, preferring placement in s's segment.
-func (s HTTPClient_write_Params) NewHeaders(n int32) (Header_List, error) {
-	l, err := NewHeader_List(capnp.Struct(s).Segment(), n)
+// allocated capnp.DataList, preferring placement in s's segment.
+func (s HTTPClient_write_Params) NewHeaders(n int32) (capnp.DataList, error) {
+	l, err := capnp.NewDataList(capnp.Struct(s).Segment(), n)
 	if err != nil {
-		return Header_List{}, err
+		return capnp.DataList{}, err
 	}
 	err = capnp.Struct(s).SetPtr(2, l.ToPtr())
 	return l, err
@@ -608,53 +508,49 @@ func (f HTTPClient_done_Results_Future) Struct() (HTTPClient_done_Results, error
 	return HTTPClient_done_Results(p.Struct()), err
 }
 
-const schema_8f84eb0b54c7b86e = "x\xda\x9c\x94OH\x14a\x18\xc6\xdf\xf7\xfbfv\xa4" +
-	"\xdc\xd6q\xed\xe0!\x04\xd9 \xa5Zu\xeb\xe0vp" +
-	")\x0d\x17\x14\xe6\xcb%(\x8a\x9a\xdc\xa9\xdd\xda\x9d]" +
-	"gf]\x13\xa4\x02A\xfbC%e`]\x82\xb0[" +
-	"\x85\x97\xf0heE\x87n\x19\xb4 \xb1\x15Y\x84\x97" +
-	"NE\x87\x89\x99uvW\xd2Do;\xef<\xef\xce" +
-	"\xefy\xdf\xe7\xfb\x9a\xeaH\x88kv/\xb8\x800\x89" +
-	"w\x99\xf5\x0f_\x0e\xcc\x04\x1f\x0d\x03\xf3#\x02\xf0(" +
-	"\x00\x04\x8e\xd0O\x08\xe8M\xd2,\xa099\xf7%\xb7" +
-	"\xb3\xfa\xf6\xe5e\x8a7\x05\xc5\xbc\xad\xb8\x95kx\xfa" +
-	".\xfe\xe7:\x88>j\xaa\xd3\xaf#\x9b\x7f\x0c\xdf\x00" +
-	"\xc0@+7\x88\xdenN\x00\xf0\x86\xb9\x11\xef\x84\xf5" +
-	"\xcbd\x1d=\xefG\x07\x1eO\xdb\xea\xc5Z!5\xbb" +
-	"\x95~\xb4\xd4\x97,\xf5\xb8\xad\x1e\xe3F\xbcy[\xfd" +
-	"l\xdc\xff\xf3\xeb\xa6\xc5\xe7 \xfa\xb0\xf4\xdf<\xb1!" +
-	"\xb8\xa3\xe8\x9d\xb7\x1b>p\x16\xc8\x83\xd6\xc3W\xef\xf4" +
-	"\xfdz\xe1\xa0\xda\xaa\xbd\xbc\x8d\x1a\xe6\x9f\x00\x9a\xe1\xc1" +
-	"\xcf}\xb3c\xd2+\x10\xfd\x08`\xb5\x06\xf2|\x0e\x81" +
-	"3O\xcf\x8f\xb7_\x99\xac\xce\x17\xde\xf0\xf6\xab\xb9B" +
-	"\xebw~\x01\xd0\xec\xdaw\xcd\xfb\xfb\xdb\xcd|Y\xeb" +
-	"[W\x0ea\xc8TSI\xf9L\xbc/\xe3R\xfc\xaa" +
-	"bdS\xda9\x7f\xcc0\xd2~]\xd1\xfa\x15mw" +
-	"\xaf\x9cV\xd3\xc1\xceHD\xea)\x14\xa2)U\xf1\x1d" +
-	"R\xf4\x8c\x900tVA9\x00\x0e\x01\xc4\x86 \x00" +
-	"\xf3QdM\x04\x11k,\x0b\xe2\xaez\x00\xb6\x83\"" +
-	"\xdbC\xb0M7d#\xa3\xa3\xc7<~\xf6\xfe\xd4\xb6" +
-	"\x83\xf7F\x01\x10=\x80B*c\xa0\x1b\x08\xba\x01W" +
-	"\xa5\xe9M\xc4\x15\xd5(\xa39P(\xacJS\xbf\x02" +
-	"M\xb0DS\xfeQ\x87L\x00\x82B\x19\x03\xb7\x16C" +
-	"[\x01BBd\x15\x94\x07(\xae\x01\xd5\xa9\x99l\xe0" +
-	"\xee\x89\x09\xb1\xb9\x05\x88\xb8]\xc0\xd2\xf2\xd0\x89\xa4X" +
-	"\xdb\x08Dt\x0buY-n(!\xf4X^B(" +
-	"\xe1\xea\x04\xff\xec\xa4\xad\xb0\x94\x12\x81\x13\xa2\x95\x08\x9c" +
-	"\x0c\xa0sl6@\xb0|\x06\x8a\x1c\xa5\xce\xd7\x8b\x93" +
-	"o,M^,\x8e\xbe\xa54z\x8f*'\x15\xac\x04" +
-	"\x82\x95\x80u\xfdr\"S|Zw\x18mp\x9f$" +
-	"k\x82\x9c\xd4Ye\x11\xa2\xc3\x82\x08Qd]e\x10" +
-	"a\xab\xd8N\x91I\x04\x91\xd4 \x01\x10\xbb\xadLt" +
-	"Rd\x11\x82\x9e\xa8l\xc8N(<i\xd9\x889\\" +
-	"NB8 \xc8m4\xa5\x92\xac\xc94\xa9\xaf\xbby" +
-	"\xb9\xc7\xaa\xa2G\xd9\x8a\xf81\x8a,V\xe6Q\xb1\xfc" +
-	"\x9c\xa4\xc8\x12\x04E\xb2d2\xbe\x1f\x80E)\xb2\x8b" +
-	"\x04EJk\x90\x02\x88C\xd64\x06(\xb2a\x82B" +
-	"FK\x14\xbd&\x15#\x96\x8a:\x8f\x17b\x8a\x1cU" +
-	"4\x1d\xb7\x00J\x14\xb1\xaat\xa9\x01ZE\xcf\xa9T" +
-	"\xf4\xfc\x9a\xe7\xf7\xbf\xb7\xc9\xd2d\xfe\x06\x00\x00\xff\xff" +
-	"\xe40\x9c\xe9"
+const schema_8f84eb0b54c7b86e = "x\xda\x9c\x93\xcdk\x13[\x18\xc6\xdf\xe7\x9cI\xa6p" +
+	"\x9b\xe6N\xd3\xbb\xe8\xa2\\n\xc9\x85\xdbr{\xd3\xde" +
+	"\xdc\xbb0\"\x8d\xdaJ\x0b\x15\xe6\xd8\xe8J\xd1\xb1\x19" +
+	"M4_\x9d\x99\x98Z(\xba(\xb4~`\x15?@" +
+	"E\x10\xa4\xeeT\xbaP\xba,X\xf5\x1fP\x17\x01\x91" +
+	"\xaa\xa0 \xbaV\\\x8c\xcc\xa4\x93\xa4\xd8\xda\xea.9" +
+	"\xe7y\xe7\xfd=\xe7y\xdf\xee\x8f\x88K=\x81\x19?" +
+	"11\xe4\xf3\xdb\xed\xb7\x1f\x8d-\xc4\xeeL\x92\x88\x00" +
+	"D>\xc8D\xd1.\xfe\x0a\x84\xd0V^\"\xd8\xb3\xcf" +
+	"\xde\x94\xffn\xbetj\x85\xe2FE1\xe7*.\x96" +
+	";\x1e<M\x7f9GJ\x98\xdb\xb9\xf9'\x89_\xde" +
+	"O\xce\x10!\x1a\x90\xc6\x11\xfaC\x92\x89Bm\xd2T" +
+	"(\xeb\xfc\xb2E\xff\xf0\xf3\xe9\xb1\xbb\xf3\xae\xfaC\xab" +
+	"\x9c_\xfc\x8d\xbft\xd4\xbb\x1du\xdaU\xeb\xd2T\xe8" +
+	"\xbe\xab\xbe\xb5i\xcf\x99+\xa3\x9f\x1ez\xdd\x99\xdb]" +
+	"\xaat\x97\xee\x11\xec\xc1\xf1\xd7\xa3\x8b\x17\xd4\xc7\xa4D" +
+	"@\xe4\x14E\x07}e\x90d\x1fzq\xb9\xef\xf4l" +
+	"\xf3R\xe5\xc6\xe7^m\xf1\xb9\xa5\xc2\xf7\x96`\x0fm" +
+	">\x1b\xfa\xfc\xee\xfcR]\xe9\xff\xfe2h\xc2\xce\xe5" +
+	"\xb3\xda\xe1\xf4h\xd1\xafGr\xbaU\xca\x1bG#)" +
+	"\xcb*DL\xdd8\xa6\x1b\xff\x8ch\x85\\!6\x90" +
+	"H\xa8\xc3\x95\x83d>\xa7\x87w\xe9fQ\xceX\xa6" +
+	"h\xe0\x12\x91\x04\"\xa5#F$\xc2\x1c\xa2\x9b\x01h" +
+	"q,(]\xedD\xe2/\x0e\xf1\x1fC\xafiiV" +
+	"\xd1D\xd0\xdew\xe4\xe6\\\xdb\x8e\xeb\xd3D@\x90 " +
+	"\xe7\x8b\x16\x02\xc4\x10 \xacI3\x92I\xeb9\xab\x8e" +
+	"f{\xe5`M\x9a\xf6Uhb5\x9a\xfa\xa6\x1e\x99" +
+	"L\x0cr\x1d\x83\xb4\x1eCo\x05B\x05D\x03\xf7\x11" +
+	"Uc@nn\xa1\x14\xbd\xb6\xff\xaa\xd2\xf3/1\xe5" +
+	"O\x19\xb5\xf0\xe0M\x99\xd2\xdaIL\x09\xc8\xbf\x97\x8c" +
+	"\xb4\xa5\xc7\x11t\xbc\xc4\xa1bm\x82o2\xe9\xad\x84" +
+	"R#\xf0\x86h5\x02o\x06\xe0m\xc2\x06\x086:" +
+	"\x15\xee\x17\xc2\xaaf\xc8Z\xd6\x14\x8d\xd5\x1c\xfa;\x89" +
+	"D\x9cC\x0c1(^\x10\x83\xcea\x1f\x87P\x19\xc0" +
+	"Z\xc0\x88\x94\x9dN8\x03\x1c\"\xc1\x10Lj\x96\xe6" +
+	"\xa5\x13,hV\x0a\x8d\xc4\xd0X\x8bJ\"\x06\xe9g" +
+	"\xc7E\xd5\x0c\x8dg\xcd\x1f.^\xe9\xf1\xd7\xaaG\xcd" +
+	"\x99\xb5\xbd\x1c\"U\xe7Qw\xfc\x1c\xe0\x10\x19\x06\x85" +
+	"-\x9bLo#\x12I\x0eq\x92A\xe1\xbc\x05\x9cH" +
+	"\x99p^c\x8cCL2\xc8E#S\xf5\x9a\xd5\xad" +
+	"T>\xe9\xfd=\x91\xd2\xb5\xa4n\x98h\"\xa8\x1c\xee" +
+	"\xf34\x11\x82\x07\xf3\xc9\xe3\xeb\xae\xcfw\x97y\xf9=" +
+	"\xbe\x06\x00\x00\xff\xff\xe0\xabk\x01"
 
 func RegisterSchema(reg *schemas.Registry) {
 	reg.Register(&schemas.Schema{
@@ -664,7 +560,6 @@ func RegisterSchema(reg *schemas.Registry) {
 			0x8994122cdae4d5a5,
 			0x8efb69d4b629da93,
 			0xb8ae7888d6534551,
-			0xc2ed0ae6f22f95c1,
 			0xc3f871968b5639a3,
 			0xc65091c471e37a49,
 			0xe112a58a4495dd66,

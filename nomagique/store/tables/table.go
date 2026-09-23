@@ -20,6 +20,9 @@ import (
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/runtime"
+
+	// Registers the s3:// file IO the warehouse stores its metadata and data files behind.
+	_ "github.com/apache/iceberg-go/io/gocloud"
 )
 
 /*

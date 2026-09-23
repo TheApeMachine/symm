@@ -26,7 +26,7 @@ func (c HMACSHA256) Write(ctx context.Context, params func(HMACSHA256_write_Para
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 1}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 2}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(HMACSHA256_write_Params(s)) }
 	}
 
@@ -227,12 +227,12 @@ type HMACSHA256_write_Params capnp.Struct
 const HMACSHA256_write_Params_TypeID = 0xa270094360f7c0c3
 
 func NewHMACSHA256_write_Params(s *capnp.Segment) (HMACSHA256_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
 	return HMACSHA256_write_Params(st), err
 }
 
 func NewRootHMACSHA256_write_Params(s *capnp.Segment) (HMACSHA256_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
 	return HMACSHA256_write_Params(st), err
 }
 
@@ -281,12 +281,25 @@ func (s HMACSHA256_write_Params) SetData(v []byte) error {
 	return capnp.Struct(s).SetData(0, v)
 }
 
+func (s HMACSHA256_write_Params) Key() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return []byte(p.Data()), err
+}
+
+func (s HMACSHA256_write_Params) HasKey() bool {
+	return capnp.Struct(s).HasPtr(1)
+}
+
+func (s HMACSHA256_write_Params) SetKey(v []byte) error {
+	return capnp.Struct(s).SetData(1, v)
+}
+
 // HMACSHA256_write_Params_List is a list of HMACSHA256_write_Params.
 type HMACSHA256_write_Params_List = capnp.StructList[HMACSHA256_write_Params]
 
 // NewHMACSHA256_write_Params creates a new list of HMACSHA256_write_Params.
 func NewHMACSHA256_write_Params_List(s *capnp.Segment, sz int32) (HMACSHA256_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2}, sz)
 	return capnp.StructList[HMACSHA256_write_Params](l), err
 }
 

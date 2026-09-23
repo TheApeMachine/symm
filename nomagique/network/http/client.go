@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/theapemachine/errnie"
 )
@@ -47,15 +48,18 @@ func (server *HTTPClientServer) Write(ctx context.Context, call HTTPClient_write
 		return errnie.Error(errnie.Err(errnie.Validation, "http client: headers", err))
 	}
 	for index := 0; index < headers.Len(); index++ {
-		name, err := headers.At(index).Name()
+		line, err := headers.At(index)
+
 		if err != nil {
-			return errnie.Error(errnie.Err(errnie.Validation, "http client: header name", err))
+			return errnie.Error(errnie.Err(errnie.Validation, "http client: header", err))
 		}
-		value, err := headers.At(index).Value()
-		if err != nil {
-			return errnie.Error(errnie.Err(errnie.Validation, "http client: header value", err))
+		name, value, found := strings.Cut(string(line), ":")
+		name = strings.TrimSpace(name)
+
+		if !found || name == "" {
+			return errnie.Error(errnie.Err(errnie.Validation, "http client: header is not a \"Name: value\" line", nil))
 		}
-		request.Header.Add(name, value)
+		request.Header.Add(name, strings.TrimSpace(value))
 	}
 	response, err := server.client.Do(request)
 	if err != nil {

@@ -70,7 +70,7 @@ func BenchmarkSequenceWrite(b *testing.B) {
 	defer client.Release()
 	payload := []byte(`{"capture":{"session":"fixture","endpoint":"spot"},"cursor":{"sequence":9007199254740993,"record":1},"market":{"channel":"ticker","data":{"symbol":"BTC/USD","last":100}}}`)
 	b.ReportAllocs()
-	for index := 0; index < b.N; index++ {
+	for index := 0; b.Loop(); index++ {
 		if err := client.Write(ctx, func(args Sequence_write_Params) error {
 			args.SetIndex(uint64(index))
 			arrivals, err := args.NewAppend(1)

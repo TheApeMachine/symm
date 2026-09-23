@@ -253,8 +253,12 @@ func (server *FilterServer) comparePaths(payload []byte, reference string) (bool
 		if textual {
 			rightText, valid := right.(string)
 
-			if !valid || len(paths) != 1 || (server.operator != "==" && server.operator != "!=") {
-				return false, errnie.Error(errnie.Err(errnie.Validation, "filter: text comparison requires one text pair and equality", nil))
+			if !valid || len(paths) != 1 || (server.operator != "==" && server.operator != "!=" && server.operator != "contains") {
+				return false, errnie.Error(errnie.Err(errnie.Validation, "filter: text comparison requires one text pair and equality or contains", nil))
+			}
+
+			if server.operator == "contains" {
+				return strings.Contains(leftText, rightText), nil
 			}
 
 			return (leftText == rightText) == (server.operator == "=="), nil

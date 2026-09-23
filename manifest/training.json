@@ -21,6 +21,11 @@
             }
           ]
         }
+      },
+      "inputData": {
+        "input.through": {
+          "value": "{\"catalogUrl\": \"http://iceberg.seaweed.home.arpa/v1/config?warehouse=s3://symmtables/\", \"tableUrl\": \"http://iceberg.seaweed.home.arpa/v1/symmtables/namespaces/symm/tables/raw_frames_v3\", \"properties\": {\"s3.endpoint\": \"http://s3.seaweed.home.arpa\", \"s3.region\": \"us-east-1\", \"s3.access-key-id\": \"anonymous\", \"s3.secret-access-key\": \"anonymous\"}}"
+        }
       }
     },
     "tape": {
@@ -144,7 +149,7 @@
       "type": "tables.IcebergTable",
       "inputData": {
         "config": {
-          "value": "{\"namespace\":\"symm\",\"table\":\"excursion_fragments_v1\",\"fields\":[{\"id\":1,\"name\":\"capture_id\",\"type\":\"string\",\"required\":true},{\"id\":2,\"name\":\"capture_session\",\"type\":\"string\",\"required\":true},{\"id\":3,\"name\":\"capture_sequence\",\"type\":\"long\",\"required\":true},{\"id\":4,\"name\":\"endpoint\",\"type\":\"string\",\"required\":true},{\"id\":5,\"name\":\"channel\",\"type\":\"string\",\"required\":true},{\"id\":6,\"name\":\"payload\",\"type\":\"binary\",\"required\":true},{\"id\":7,\"name\":\"event_count\",\"type\":\"long\",\"required\":true}]}"
+          "value": "{\"namespace\": \"symm\", \"table\": \"excursion_fragments_v1\", \"fields\": [{\"id\": 1, \"name\": \"capture_id\", \"type\": \"string\", \"required\": true}, {\"id\": 2, \"name\": \"capture_session\", \"type\": \"string\", \"required\": true}, {\"id\": 3, \"name\": \"capture_sequence\", \"type\": \"long\", \"required\": true}, {\"id\": 4, \"name\": \"endpoint\", \"type\": \"string\", \"required\": true}, {\"id\": 5, \"name\": \"channel\", \"type\": \"string\", \"required\": true}, {\"id\": 6, \"name\": \"payload\", \"type\": \"binary\", \"required\": true}, {\"id\": 7, \"name\": \"event_count\", \"type\": \"long\", \"required\": true}], \"catalog\": \"symmtables\", \"properties\": {\"type\": \"rest\", \"uri\": \"http://iceberg.seaweed.home.arpa\", \"warehouse\": \"s3://symmtables/\", \"s3.endpoint\": \"http://s3.seaweed.home.arpa\", \"s3.region\": \"us-east-1\", \"s3.access-key-id\": \"anonymous\", \"s3.secret-access-key\": \"anonymous\"}}"
         }
       },
       "connections": {
@@ -1576,7 +1581,6 @@
           ]
         },
         "outputs": {
-          "market.json": [],
           "records.out": [
             {
               "nodeId": "learning_replay",
@@ -1855,6 +1859,20 @@
             {
               "nodeId": "grade",
               "portName": "input.data"
+            },
+            {
+              "nodeId": "paper_rise",
+              "portName": "data"
+            }
+          ],
+          "observation.json": [
+            {
+              "nodeId": "paper_record_market",
+              "portName": "data"
+            },
+            {
+              "nodeId": "paper_record_time",
+              "portName": "data"
             }
           ]
         }
@@ -2038,6 +2056,1504 @@
         },
         "outputs": {}
       }
+    },
+    "paper_record_market": {
+      "id": "paper_record_market",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "market"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "learning_replay",
+              "portName": "observation.json"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "paper_event_frame",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 2400.0,
+      "y": 3000.0
+    },
+    "paper_event_frame": {
+      "id": "paper_event_frame",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "frame"
+        },
+        "data": {
+          "value": "{}"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "paper_record_market",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "paper_event_time",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 2740.0,
+      "y": 3000.0
+    },
+    "paper_record_time": {
+      "id": "paper_record_time",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "capture.receivedAt"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "learning_replay",
+              "portName": "observation.json"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "paper_event_time",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 3080.0,
+      "y": 3000.0
+    },
+    "paper_event_time": {
+      "id": "paper_event_time",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "time"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "paper_event_frame",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "paper_record_time",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "paper_event_symbolled",
+              "portName": "data"
+            },
+            {
+              "nodeId": "paper_event_symbolled_not",
+              "portName": "no_0"
+            }
+          ]
+        }
+      },
+      "x": 3420.0,
+      "y": 3000.0
+    },
+    "paper_event_symbolled": {
+      "id": "paper_event_symbolled",
+      "type": "data.Filter",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "frame.data.symbol"
+        },
+        "operator": {
+          "value": "exists"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "paper_event_time",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "passed": [
+            {
+              "nodeId": "paper_event_symbolled_not",
+              "portName": "test"
+            }
+          ],
+          "out": [
+            {
+              "nodeId": "paper_record_symbol",
+              "portName": "data"
+            },
+            {
+              "nodeId": "paper_event_symbol",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 3760.0,
+      "y": 3000.0
+    },
+    "paper_event_symbolled_not": {
+      "id": "paper_event_symbolled_not",
+      "type": "controlflow.Select",
+      "width": 280,
+      "height": 172,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "test": [
+            {
+              "nodeId": "paper_event_symbolled",
+              "portName": "passed"
+            }
+          ],
+          "no_0": [
+            {
+              "nodeId": "paper_event_time",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "paper_observation",
+              "portName": "yes_1"
+            }
+          ]
+        }
+      },
+      "x": 4100.0,
+      "y": 3000.0
+    },
+    "paper_record_symbol": {
+      "id": "paper_record_symbol",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "frame.data.symbol"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "paper_event_symbolled",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "paper_event_symbol",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 4440.0,
+      "y": 3000.0
+    },
+    "paper_event_symbol": {
+      "id": "paper_event_symbol",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "symbol"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "paper_event_symbolled",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "paper_record_symbol",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "paper_observation",
+              "portName": "yes_0"
+            }
+          ]
+        }
+      },
+      "x": 4780.0,
+      "y": 3000.0
+    },
+    "paper_observation": {
+      "id": "paper_observation",
+      "type": "controlflow.Select",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "test": {
+          "value": true
+        }
+      },
+      "connections": {
+        "inputs": {
+          "yes_0": [
+            {
+              "nodeId": "paper_event_symbol",
+              "portName": "out"
+            }
+          ],
+          "yes_1": [
+            {
+              "nodeId": "paper_event_symbolled_not",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "paper_wrap_observation",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 2400.0,
+      "y": 3220.0
+    },
+    "paper_rise": {
+      "id": "paper_rise",
+      "type": "data.Filter",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "event.excursion"
+        },
+        "operator": {
+          "value": ">"
+        },
+        "threshold": {
+          "value": 0
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "learning_replay",
+              "portName": "fragment.truth.out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "paper_at_ignition",
+              "portName": "data"
+            },
+            {
+              "nodeId": "paper_at_extremum",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 2740.0,
+      "y": 3220.0
+    },
+    "paper_at_ignition": {
+      "id": "paper_at_ignition",
+      "type": "data.Filter",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "cursor.sequence,cursor.record"
+        },
+        "operator": {
+          "value": "=="
+        },
+        "referencePath": {
+          "value": "event.b.sequence,event.b.record"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "paper_rise",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "paper_enter_event_symbol",
+              "portName": "data"
+            },
+            {
+              "nodeId": "paper_enter_event_time",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 3080.0,
+      "y": 3220.0
+    },
+    "paper_at_extremum": {
+      "id": "paper_at_extremum",
+      "type": "data.Filter",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "cursor.sequence,cursor.record"
+        },
+        "operator": {
+          "value": "=="
+        },
+        "referencePath": {
+          "value": "event.c.sequence,event.c.record"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "paper_rise",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "paper_exit_event_symbol",
+              "portName": "data"
+            },
+            {
+              "nodeId": "paper_exit_event_time",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 3420.0,
+      "y": 3220.0
+    },
+    "paper_enter_event_symbol": {
+      "id": "paper_enter_event_symbol",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "event.symbol"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "paper_at_ignition",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "paper_enter_symbol",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 3760.0,
+      "y": 3220.0
+    },
+    "paper_enter_symbol": {
+      "id": "paper_enter_symbol",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "symbol"
+        },
+        "data": {
+          "value": "{\"action\": \"ENTER\"}"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "paper_enter_event_symbol",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "paper_enter_time",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 4100.0,
+      "y": 3220.0
+    },
+    "paper_enter_event_time": {
+      "id": "paper_enter_event_time",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "capture.receivedAt"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "paper_at_ignition",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "paper_enter_time",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 4440.0,
+      "y": 3220.0
+    },
+    "paper_enter_time": {
+      "id": "paper_enter_time",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "time"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "paper_enter_symbol",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "paper_enter_event_time",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "paper_wrap_enter",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 4780.0,
+      "y": 3220.0
+    },
+    "paper_exit_event_symbol": {
+      "id": "paper_exit_event_symbol",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "event.symbol"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "paper_at_extremum",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "paper_exit_symbol",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 2400.0,
+      "y": 3440.0
+    },
+    "paper_exit_symbol": {
+      "id": "paper_exit_symbol",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "symbol"
+        },
+        "data": {
+          "value": "{\"action\": \"EXIT\"}"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "paper_exit_event_symbol",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "paper_exit_time",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 2740.0,
+      "y": 3440.0
+    },
+    "paper_exit_event_time": {
+      "id": "paper_exit_event_time",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "capture.receivedAt"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "paper_at_extremum",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "paper_exit_time",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 3080.0,
+      "y": 3440.0
+    },
+    "paper_exit_time": {
+      "id": "paper_exit_time",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "time"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "paper_exit_symbol",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "paper_exit_event_time",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "paper_wrap_exit",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 3420.0,
+      "y": 3440.0
+    },
+    "paper_wrap_observation": {
+      "id": "paper_wrap_observation",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "events.0"
+        },
+        "data": {
+          "value": "{\"events\":[]}"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "paper_observation",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "paper_events",
+              "portName": "data_0"
+            }
+          ]
+        }
+      },
+      "x": 3760.0,
+      "y": 3440.0
+    },
+    "paper_wrap_enter": {
+      "id": "paper_wrap_enter",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "events.0"
+        },
+        "data": {
+          "value": "{\"events\":[]}"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "paper_enter_time",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "paper_events",
+              "portName": "data_1"
+            }
+          ]
+        }
+      },
+      "x": 4100.0,
+      "y": 3440.0
+    },
+    "paper_wrap_exit": {
+      "id": "paper_wrap_exit",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "events.0"
+        },
+        "data": {
+          "value": "{\"events\":[]}"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "paper_exit_time",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "paper_events",
+              "portName": "data_2"
+            }
+          ]
+        }
+      },
+      "x": 4440.0,
+      "y": 3440.0
+    },
+    "paper_events": {
+      "id": "paper_events",
+      "type": "data.Iterate",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "events"
+        },
+        "envelope": {
+          "value": false
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data_0": [
+            {
+              "nodeId": "paper_wrap_observation",
+              "portName": "out"
+            }
+          ],
+          "data_1": [
+            {
+              "nodeId": "paper_wrap_enter",
+              "portName": "out"
+            }
+          ],
+          "data_2": [
+            {
+              "nodeId": "paper_wrap_exit",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "paper_exchange",
+              "portName": "event.data"
+            }
+          ]
+        }
+      },
+      "x": 4780.0,
+      "y": 3440.0
+    },
+    "paper_exchange": {
+      "id": "paper_exchange",
+      "type": "definition:paper_exchange",
+      "width": 280,
+      "height": 172,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "event.data": [
+            {
+              "nodeId": "paper_events",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "state.out": [
+            {
+              "nodeId": "paper_closed",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 2400.0,
+      "y": 3660.0
+    },
+    "paper_closed": {
+      "id": "paper_closed",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "closed"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "paper_exchange",
+              "portName": "state.out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "paper_trip_symbol",
+              "portName": "data"
+            },
+            {
+              "nodeId": "paper_trip_opened",
+              "portName": "data"
+            },
+            {
+              "nodeId": "paper_trip_closed",
+              "portName": "data"
+            },
+            {
+              "nodeId": "paper_trip_basis",
+              "portName": "data"
+            },
+            {
+              "nodeId": "paper_trip_proceeds",
+              "portName": "data"
+            },
+            {
+              "nodeId": "paper_trip_pnl",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 2740.0,
+      "y": 3660.0
+    },
+    "paper_trip_symbol": {
+      "id": "paper_trip_symbol",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "symbol"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "paper_closed",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "paper_row_symbol",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 3080.0,
+      "y": 3660.0
+    },
+    "paper_row_symbol": {
+      "id": "paper_row_symbol",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "symbol"
+        },
+        "data": {
+          "value": "{}"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "paper_trip_symbol",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "paper_row_opened",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 3420.0,
+      "y": 3660.0
+    },
+    "paper_trip_opened": {
+      "id": "paper_trip_opened",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "opened"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "paper_closed",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "paper_row_opened",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 3760.0,
+      "y": 3660.0
+    },
+    "paper_row_opened": {
+      "id": "paper_row_opened",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "opened"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "paper_row_symbol",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "paper_trip_opened",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "paper_row_closed",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 4100.0,
+      "y": 3660.0
+    },
+    "paper_trip_closed": {
+      "id": "paper_trip_closed",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "closed"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "paper_closed",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "paper_row_closed",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 4440.0,
+      "y": 3660.0
+    },
+    "paper_row_closed": {
+      "id": "paper_row_closed",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "closed"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "paper_row_opened",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "paper_trip_closed",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "paper_row_basis",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 4780.0,
+      "y": 3660.0
+    },
+    "paper_trip_basis": {
+      "id": "paper_trip_basis",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "basis"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "paper_closed",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "paper_text_basis",
+              "portName": "values_0"
+            }
+          ]
+        }
+      },
+      "x": 2400.0,
+      "y": 3880.0
+    },
+    "paper_text_basis": {
+      "id": "paper_text_basis",
+      "type": "data.Format",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "template": {
+          "value": "\"{0}\""
+        }
+      },
+      "connections": {
+        "inputs": {
+          "values_0": [
+            {
+              "nodeId": "paper_trip_basis",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "paper_row_basis",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 2740.0,
+      "y": 3880.0
+    },
+    "paper_row_basis": {
+      "id": "paper_row_basis",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "basis"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "paper_row_closed",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "paper_text_basis",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "paper_row_proceeds",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 3080.0,
+      "y": 3880.0
+    },
+    "paper_trip_proceeds": {
+      "id": "paper_trip_proceeds",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "proceeds"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "paper_closed",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "paper_text_proceeds",
+              "portName": "values_0"
+            }
+          ]
+        }
+      },
+      "x": 3420.0,
+      "y": 3880.0
+    },
+    "paper_text_proceeds": {
+      "id": "paper_text_proceeds",
+      "type": "data.Format",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "template": {
+          "value": "\"{0}\""
+        }
+      },
+      "connections": {
+        "inputs": {
+          "values_0": [
+            {
+              "nodeId": "paper_trip_proceeds",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "paper_row_proceeds",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 3760.0,
+      "y": 3880.0
+    },
+    "paper_row_proceeds": {
+      "id": "paper_row_proceeds",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "proceeds"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "paper_row_basis",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "paper_text_proceeds",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "paper_row_pnl",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 4100.0,
+      "y": 3880.0
+    },
+    "paper_trip_pnl": {
+      "id": "paper_trip_pnl",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "pnl"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "paper_closed",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "paper_text_pnl",
+              "portName": "values_0"
+            }
+          ]
+        }
+      },
+      "x": 4440.0,
+      "y": 3880.0
+    },
+    "paper_text_pnl": {
+      "id": "paper_text_pnl",
+      "type": "data.Format",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "template": {
+          "value": "\"{0}\""
+        }
+      },
+      "connections": {
+        "inputs": {
+          "values_0": [
+            {
+              "nodeId": "paper_trip_pnl",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "paper_row_pnl",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 4780.0,
+      "y": 3880.0
+    },
+    "paper_row_pnl": {
+      "id": "paper_row_pnl",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "pnl"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "paper_row_proceeds",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "paper_text_pnl",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "paper_round_trips",
+              "portName": "payload"
+            }
+          ]
+        }
+      },
+      "x": 2400.0,
+      "y": 4100.0
+    },
+    "paper_round_trips": {
+      "id": "paper_round_trips",
+      "type": "tables.IcebergTable",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "config": {
+          "value": "{\"namespace\": \"symm\", \"table\": \"paper_round_trips_v1\", \"fields\": [{\"id\": 1, \"name\": \"symbol\", \"type\": \"string\", \"required\": true}, {\"id\": 2, \"name\": \"opened\", \"type\": \"timestamp\", \"required\": true}, {\"id\": 3, \"name\": \"closed\", \"type\": \"timestamp\", \"required\": true}, {\"id\": 4, \"name\": \"basis\", \"type\": \"string\", \"required\": true}, {\"id\": 5, \"name\": \"proceeds\", \"type\": \"string\", \"required\": true}, {\"id\": 6, \"name\": \"pnl\", \"type\": \"string\", \"required\": true}], \"catalog\": \"symmtables\", \"properties\": {\"type\": \"rest\", \"uri\": \"http://iceberg.seaweed.home.arpa\", \"warehouse\": \"s3://symmtables/\", \"s3.endpoint\": \"http://s3.seaweed.home.arpa\", \"s3.region\": \"us-east-1\", \"s3.access-key-id\": \"anonymous\", \"s3.secret-access-key\": \"anonymous\"}}"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "payload": [
+            {
+              "nodeId": "paper_row_pnl",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      },
+      "x": 2740.0,
+      "y": 4100.0
     }
   }
 }

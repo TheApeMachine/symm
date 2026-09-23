@@ -91,17 +91,23 @@ func (server *MineServer) Write(ctx context.Context, call Mine_write) error {
 		return errnie.Error(errnie.Err(errnie.Validation, "mine: session, endpoint, channel, price field and sequence are required", nil))
 	}
 
-	var frame struct {
-		Channel string                       `json:"channel"`
-		Data    []map[string]json.RawMessage `json:"data"`
+	var envelope struct {
+		Channel string          `json:"channel"`
+		Data    json.RawMessage `json:"data"`
 	}
 
-	if err := json.Unmarshal(payload, &frame); err != nil {
+	if err := json.Unmarshal(payload, &envelope); err != nil {
 		return errnie.Error(errnie.Err(errnie.Validation, "mine: decode frame", err))
 	}
 
-	if frame.Channel != channel {
+	// Other channels shape their data as they like; only the mined one is read.
+	if envelope.Channel != channel {
 		return nil
+	}
+	var frame struct{ Data []map[string]json.RawMessage }
+
+	if err := json.Unmarshal(envelope.Data, &frame.Data); err != nil {
+		return errnie.Error(errnie.Err(errnie.Validation, "mine: decode "+channel+" data", err))
 	}
 
 	stream := miningStream{session, endpoint, channel}

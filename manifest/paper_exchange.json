@@ -1,0 +1,6540 @@
+{
+  "id": "paper_exchange",
+  "name": "Paper exchange: L3 book fills, account and round-trip PnL",
+  "nodes": {
+    "event": {
+      "id": "event",
+      "type": "transport.Fan",
+      "width": 280,
+      "height": 172,
+      "inputData": {},
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "frame",
+              "portName": "data"
+            },
+            {
+              "nodeId": "symbol",
+              "portName": "data"
+            },
+            {
+              "nodeId": "state_cash",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 0.0,
+      "y": 0.0
+    },
+    "fee": {
+      "id": "fee",
+      "type": "store.Constant",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "data": {
+          "value": "0.008"
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "buy_fee",
+              "portName": "b"
+            },
+            {
+              "nodeId": "sell_fee",
+              "portName": "b"
+            },
+            {
+              "nodeId": "entry_gross",
+              "portName": "b"
+            }
+          ]
+        }
+      },
+      "x": 340.0,
+      "y": 0.0
+    },
+    "fraction": {
+      "id": "fraction",
+      "type": "store.Constant",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "data": {
+          "value": "0.2"
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "entry_budget",
+              "portName": "b"
+            }
+          ]
+        }
+      },
+      "x": 680.0,
+      "y": 0.0
+    },
+    "unit": {
+      "id": "unit",
+      "type": "store.Constant",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "data": {
+          "value": "1"
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "entry_gross",
+              "portName": "a"
+            }
+          ]
+        }
+      },
+      "x": 1020.0,
+      "y": 0.0
+    },
+    "frame": {
+      "id": "frame",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "frame"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "event",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "book",
+              "portName": "frame_0"
+            }
+          ]
+        }
+      },
+      "x": 1360.0,
+      "y": 0.0
+    },
+    "book": {
+      "id": "book",
+      "type": "paper.Book",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "depth": {
+          "value": 10
+        }
+      },
+      "connections": {
+        "inputs": {
+          "frame_0": [
+            {
+              "nodeId": "frame",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "state_book",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 1700.0,
+      "y": 0.0
+    },
+    "symbol": {
+      "id": "symbol",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "symbol"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "event",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "cash_key_document",
+              "portName": "json"
+            },
+            {
+              "nodeId": "holding_key_slot",
+              "portName": "json"
+            },
+            {
+              "nodeId": "order_key_slot",
+              "portName": "json"
+            },
+            {
+              "nodeId": "pair_key_slot",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 2040.0,
+      "y": 0.0
+    },
+    "cash_key_document": {
+      "id": "cash_key_document",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "symbol"
+        },
+        "data": {
+          "value": "{\"key\":{\"slot\":\"cash\"}}"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "symbol",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "cash_key",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 2380.0,
+      "y": 0.0
+    },
+    "cash_key": {
+      "id": "cash_key",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "key"
+        },
+        "encoding": {
+          "value": "json-text"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "cash_key_document",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "text": [
+            {
+              "nodeId": "account",
+              "portName": "key_0"
+            }
+          ]
+        }
+      },
+      "x": 2720.0,
+      "y": 0.0
+    },
+    "holding_key_slot": {
+      "id": "holding_key_slot",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "symbol"
+        },
+        "data": {
+          "value": "{\"slot\": \"holding\"}"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "symbol",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "holding_key_document",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 3060.0,
+      "y": 0.0
+    },
+    "holding_key_document": {
+      "id": "holding_key_document",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "key"
+        },
+        "data": {
+          "value": "{}"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "holding_key_slot",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "holding_key",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 3400.0,
+      "y": 0.0
+    },
+    "holding_key": {
+      "id": "holding_key",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "key"
+        },
+        "encoding": {
+          "value": "json-text"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "holding_key_document",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "text": [
+            {
+              "nodeId": "account",
+              "portName": "key_1"
+            }
+          ]
+        }
+      },
+      "x": 3740.0,
+      "y": 0.0
+    },
+    "order_key_slot": {
+      "id": "order_key_slot",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "symbol"
+        },
+        "data": {
+          "value": "{\"slot\": \"order\"}"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "symbol",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "order_key_document",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 0.0,
+      "y": 220.0
+    },
+    "order_key_document": {
+      "id": "order_key_document",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "key"
+        },
+        "data": {
+          "value": "{}"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "order_key_slot",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "order_key",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 340.0,
+      "y": 220.0
+    },
+    "order_key": {
+      "id": "order_key",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "key"
+        },
+        "encoding": {
+          "value": "json-text"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "order_key_document",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "text": [
+            {
+              "nodeId": "account",
+              "portName": "key_2"
+            }
+          ]
+        }
+      },
+      "x": 680.0,
+      "y": 220.0
+    },
+    "pair_key_slot": {
+      "id": "pair_key_slot",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "symbol"
+        },
+        "data": {
+          "value": "{\"slot\": \"pair\"}"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "symbol",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "pair_key_document",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 1020.0,
+      "y": 220.0
+    },
+    "pair_key_document": {
+      "id": "pair_key_document",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "key"
+        },
+        "data": {
+          "value": "{}"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "pair_key_slot",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "pair_key",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 1360.0,
+      "y": 220.0
+    },
+    "pair_key": {
+      "id": "pair_key",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "key"
+        },
+        "encoding": {
+          "value": "json-text"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "pair_key_document",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "text": [
+            {
+              "nodeId": "account",
+              "portName": "key_3"
+            }
+          ]
+        }
+      },
+      "x": 1700.0,
+      "y": 220.0
+    },
+    "account": {
+      "id": "account",
+      "type": "store.Radix",
+      "width": 280,
+      "height": 172,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "key_0": [
+            {
+              "nodeId": "cash_key",
+              "portName": "text"
+            }
+          ],
+          "key_1": [
+            {
+              "nodeId": "holding_key",
+              "portName": "text"
+            }
+          ],
+          "key_2": [
+            {
+              "nodeId": "order_key",
+              "portName": "text"
+            }
+          ],
+          "key_3": [
+            {
+              "nodeId": "pair_key",
+              "portName": "text"
+            }
+          ],
+          "value_0": [
+            {
+              "nodeId": "cash_value",
+              "portName": "json"
+            }
+          ],
+          "value_1": [
+            {
+              "nodeId": "holding_value",
+              "portName": "json"
+            }
+          ],
+          "value_2": [
+            {
+              "nodeId": "order_value",
+              "portName": "json"
+            }
+          ],
+          "value_3": [
+            {
+              "nodeId": "pair_value",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "found_0": [
+            {
+              "nodeId": "prior_cash",
+              "portName": "test"
+            }
+          ],
+          "out_0": [
+            {
+              "nodeId": "prior_cash",
+              "portName": "yes"
+            }
+          ],
+          "found_1": [
+            {
+              "nodeId": "prior_holding",
+              "portName": "test"
+            }
+          ],
+          "out_1": [
+            {
+              "nodeId": "prior_holding",
+              "portName": "yes"
+            }
+          ],
+          "found_2": [
+            {
+              "nodeId": "prior_order",
+              "portName": "test"
+            }
+          ],
+          "out_2": [
+            {
+              "nodeId": "prior_order",
+              "portName": "yes"
+            }
+          ],
+          "found_3": [
+            {
+              "nodeId": "prior_pair",
+              "portName": "test"
+            }
+          ],
+          "out_3": [
+            {
+              "nodeId": "prior_pair",
+              "portName": "yes"
+            }
+          ]
+        }
+      },
+      "x": 2040.0,
+      "y": 220.0
+    },
+    "prior_cash": {
+      "id": "prior_cash",
+      "type": "controlflow.Select",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "no": {
+          "value": "[\"1000\"]"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "test": [
+            {
+              "nodeId": "account",
+              "portName": "found_0"
+            }
+          ],
+          "yes": [
+            {
+              "nodeId": "account",
+              "portName": "out_0"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "state_cash",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 2380.0,
+      "y": 220.0
+    },
+    "prior_holding": {
+      "id": "prior_holding",
+      "type": "controlflow.Select",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "no": {
+          "value": "[\"{}\"]"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "test": [
+            {
+              "nodeId": "account",
+              "portName": "found_1"
+            }
+          ],
+          "yes": [
+            {
+              "nodeId": "account",
+              "portName": "out_1"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "state_holding",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 2720.0,
+      "y": 220.0
+    },
+    "prior_order": {
+      "id": "prior_order",
+      "type": "controlflow.Select",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "no": {
+          "value": "[\"{}\"]"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "test": [
+            {
+              "nodeId": "account",
+              "portName": "found_2"
+            }
+          ],
+          "yes": [
+            {
+              "nodeId": "account",
+              "portName": "out_2"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "state_order",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 3060.0,
+      "y": 220.0
+    },
+    "prior_pair": {
+      "id": "prior_pair",
+      "type": "controlflow.Select",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "no": {
+          "value": "[\"{}\"]"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "test": [
+            {
+              "nodeId": "account",
+              "portName": "found_3"
+            }
+          ],
+          "yes": [
+            {
+              "nodeId": "account",
+              "portName": "out_3"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "state_pair",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 3400.0,
+      "y": 220.0
+    },
+    "state_cash": {
+      "id": "state_cash",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "cash"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "event",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "prior_cash",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "state_holding",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 3740.0,
+      "y": 220.0
+    },
+    "state_holding": {
+      "id": "state_holding",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "holding"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "state_cash",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "prior_holding",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "state_order",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 0.0,
+      "y": 440.0
+    },
+    "state_order": {
+      "id": "state_order",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "order"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "state_holding",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "prior_order",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "state_pair",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 340.0,
+      "y": 440.0
+    },
+    "state_pair": {
+      "id": "state_pair",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "pair"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "state_order",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "prior_pair",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "state_book",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 680.0,
+      "y": 440.0
+    },
+    "state_book": {
+      "id": "state_book",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "book"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "state_pair",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "book",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "state_constants",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 1020.0,
+      "y": 440.0
+    },
+    "state_constants": {
+      "id": "state_constants",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "_const"
+        },
+        "json": {
+          "value": "{\"buy\": \"buy\", \"sell\": \"sell\", \"enter\": \"ENTER\", \"exit\": \"EXIT\", \"currency\": \"USD\"}"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "state_book",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "pair_book",
+              "portName": "data"
+            },
+            {
+              "nodeId": "pair_book_not",
+              "portName": "no_0"
+            }
+          ]
+        }
+      },
+      "x": 1360.0,
+      "y": 440.0
+    },
+    "pair_book": {
+      "id": "pair_book",
+      "type": "data.Filter",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "book.symbol"
+        },
+        "operator": {
+          "value": "=="
+        },
+        "referencePath": {
+          "value": "symbol"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "state_constants",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "passed": [
+            {
+              "nodeId": "pair_book_not",
+              "portName": "test"
+            }
+          ],
+          "out": [
+            {
+              "nodeId": "pair_record",
+              "portName": "data"
+            },
+            {
+              "nodeId": "pair_record_not",
+              "portName": "no_0"
+            }
+          ]
+        }
+      },
+      "x": 1700.0,
+      "y": 440.0
+    },
+    "pair_book_not": {
+      "id": "pair_book_not",
+      "type": "controlflow.Select",
+      "width": 280,
+      "height": 172,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "test": [
+            {
+              "nodeId": "pair_book",
+              "portName": "passed"
+            }
+          ],
+          "no_0": [
+            {
+              "nodeId": "state_constants",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "market",
+              "portName": "yes_1"
+            }
+          ]
+        }
+      },
+      "x": 2040.0,
+      "y": 440.0
+    },
+    "pair_record": {
+      "id": "pair_record",
+      "type": "data.Filter",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "book.pair"
+        },
+        "operator": {
+          "value": "exists"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "pair_book",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "passed": [
+            {
+              "nodeId": "pair_record_not",
+              "portName": "test"
+            }
+          ],
+          "out": [
+            {
+              "nodeId": "pair_latest",
+              "portName": "data"
+            },
+            {
+              "nodeId": "pair_refreshed",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 2380.0,
+      "y": 440.0
+    },
+    "pair_record_not": {
+      "id": "pair_record_not",
+      "type": "controlflow.Select",
+      "width": 280,
+      "height": 172,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "test": [
+            {
+              "nodeId": "pair_record",
+              "portName": "passed"
+            }
+          ],
+          "no_0": [
+            {
+              "nodeId": "pair_book",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "market",
+              "portName": "yes_2"
+            }
+          ]
+        }
+      },
+      "x": 2720.0,
+      "y": 440.0
+    },
+    "pair_latest": {
+      "id": "pair_latest",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "book.pair"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "pair_record",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "pair_refreshed",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 3060.0,
+      "y": 440.0
+    },
+    "pair_refreshed": {
+      "id": "pair_refreshed",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "pair"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "pair_record",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "pair_latest",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "market",
+              "portName": "yes_0"
+            }
+          ]
+        }
+      },
+      "x": 3400.0,
+      "y": 440.0
+    },
+    "market": {
+      "id": "market",
+      "type": "controlflow.Select",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "test": {
+          "value": true
+        }
+      },
+      "connections": {
+        "inputs": {
+          "yes_0": [
+            {
+              "nodeId": "pair_refreshed",
+              "portName": "out"
+            }
+          ],
+          "yes_1": [
+            {
+              "nodeId": "pair_book_not",
+              "portName": "out"
+            }
+          ],
+          "yes_2": [
+            {
+              "nodeId": "pair_record_not",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "fill_resting",
+              "portName": "data"
+            },
+            {
+              "nodeId": "fill_resting_not",
+              "portName": "no_0"
+            }
+          ]
+        }
+      },
+      "x": 3740.0,
+      "y": 440.0
+    },
+    "fill_resting": {
+      "id": "fill_resting",
+      "type": "data.Filter",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "order.side"
+        },
+        "operator": {
+          "value": "exists"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "market",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "passed": [
+            {
+              "nodeId": "fill_resting_not",
+              "portName": "test"
+            }
+          ],
+          "out": [
+            {
+              "nodeId": "fill_booked",
+              "portName": "data"
+            },
+            {
+              "nodeId": "fill_booked_not",
+              "portName": "no_0"
+            }
+          ]
+        }
+      },
+      "x": 0.0,
+      "y": 660.0
+    },
+    "fill_resting_not": {
+      "id": "fill_resting_not",
+      "type": "controlflow.Select",
+      "width": 280,
+      "height": 172,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "test": [
+            {
+              "nodeId": "fill_resting",
+              "portName": "passed"
+            }
+          ],
+          "no_0": [
+            {
+              "nodeId": "market",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "settled",
+              "portName": "yes_0"
+            }
+          ]
+        }
+      },
+      "x": 340.0,
+      "y": 660.0
+    },
+    "fill_booked": {
+      "id": "fill_booked",
+      "type": "data.Filter",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "book.symbol"
+        },
+        "operator": {
+          "value": "=="
+        },
+        "referencePath": {
+          "value": "symbol"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "fill_resting",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "passed": [
+            {
+              "nodeId": "fill_booked_not",
+              "portName": "test"
+            }
+          ],
+          "out": [
+            {
+              "nodeId": "fill_ruled",
+              "portName": "data"
+            },
+            {
+              "nodeId": "fill_ruled_not",
+              "portName": "no_0"
+            }
+          ]
+        }
+      },
+      "x": 680.0,
+      "y": 660.0
+    },
+    "fill_booked_not": {
+      "id": "fill_booked_not",
+      "type": "controlflow.Select",
+      "width": 280,
+      "height": 172,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "test": [
+            {
+              "nodeId": "fill_booked",
+              "portName": "passed"
+            }
+          ],
+          "no_0": [
+            {
+              "nodeId": "fill_resting",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "settled",
+              "portName": "yes_1"
+            }
+          ]
+        }
+      },
+      "x": 1020.0,
+      "y": 660.0
+    },
+    "fill_ruled": {
+      "id": "fill_ruled",
+      "type": "data.Filter",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "pair.qty_min"
+        },
+        "operator": {
+          "value": "exists"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "fill_booked",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "passed": [
+            {
+              "nodeId": "fill_ruled_not",
+              "portName": "test"
+            }
+          ],
+          "out": [
+            {
+              "nodeId": "fill_buy",
+              "portName": "data"
+            },
+            {
+              "nodeId": "fill_sell",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 1360.0,
+      "y": 660.0
+    },
+    "fill_ruled_not": {
+      "id": "fill_ruled_not",
+      "type": "controlflow.Select",
+      "width": 280,
+      "height": 172,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "test": [
+            {
+              "nodeId": "fill_ruled",
+              "portName": "passed"
+            }
+          ],
+          "no_0": [
+            {
+              "nodeId": "fill_booked",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "settled",
+              "portName": "yes_2"
+            }
+          ]
+        }
+      },
+      "x": 1700.0,
+      "y": 660.0
+    },
+    "fill_buy": {
+      "id": "fill_buy",
+      "type": "data.Filter",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "order.side"
+        },
+        "operator": {
+          "value": "=="
+        },
+        "referencePath": {
+          "value": "_const.buy"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "fill_ruled",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "buy_levels",
+              "portName": "data"
+            },
+            {
+              "nodeId": "buy_amount",
+              "portName": "data"
+            },
+            {
+              "nodeId": "buy_increment",
+              "portName": "data"
+            },
+            {
+              "nodeId": "buy_quantity",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 2040.0,
+      "y": 660.0
+    },
+    "fill_sell": {
+      "id": "fill_sell",
+      "type": "data.Filter",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "order.side"
+        },
+        "operator": {
+          "value": "=="
+        },
+        "referencePath": {
+          "value": "_const.sell"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "fill_ruled",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sell_levels",
+              "portName": "data"
+            },
+            {
+              "nodeId": "sell_amount",
+              "portName": "data"
+            },
+            {
+              "nodeId": "sell_increment",
+              "portName": "data"
+            },
+            {
+              "nodeId": "sell_quantity",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 2380.0,
+      "y": 660.0
+    },
+    "buy_levels": {
+      "id": "buy_levels",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "book.asks"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "fill_buy",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "buy_sweep",
+              "portName": "levels"
+            }
+          ]
+        }
+      },
+      "x": 2720.0,
+      "y": 660.0
+    },
+    "buy_amount": {
+      "id": "buy_amount",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "order.amount"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "fill_buy",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "buy_sweep",
+              "portName": "amount"
+            }
+          ]
+        }
+      },
+      "x": 3060.0,
+      "y": 660.0
+    },
+    "buy_increment": {
+      "id": "buy_increment",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "pair.qty_increment"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "fill_buy",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "buy_sweep",
+              "portName": "increment"
+            }
+          ]
+        }
+      },
+      "x": 3400.0,
+      "y": 660.0
+    },
+    "buy_sweep": {
+      "id": "buy_sweep",
+      "type": "paper.Sweep",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "spend": {
+          "value": true
+        }
+      },
+      "connections": {
+        "inputs": {
+          "levels": [
+            {
+              "nodeId": "buy_levels",
+              "portName": "json"
+            }
+          ],
+          "amount": [
+            {
+              "nodeId": "buy_amount",
+              "portName": "json"
+            }
+          ],
+          "increment": [
+            {
+              "nodeId": "buy_increment",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "quantity": [
+            {
+              "nodeId": "buy_quantity",
+              "portName": "json"
+            }
+          ],
+          "cost": [
+            {
+              "nodeId": "buy_cost",
+              "portName": "json"
+            }
+          ],
+          "unfilled": [
+            {
+              "nodeId": "buy_unfilled",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 3740.0,
+      "y": 660.0
+    },
+    "buy_quantity": {
+      "id": "buy_quantity",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "fill.quantity"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "fill_buy",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "buy_sweep",
+              "portName": "quantity"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "buy_cost",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 0.0,
+      "y": 880.0
+    },
+    "buy_cost": {
+      "id": "buy_cost",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "fill.cost"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "buy_quantity",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "buy_sweep",
+              "portName": "cost"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "buy_unfilled",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 340.0,
+      "y": 880.0
+    },
+    "buy_unfilled": {
+      "id": "buy_unfilled",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "fill.unfilled"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "buy_cost",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "buy_sweep",
+              "portName": "unfilled"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "buy_minimum_quantity",
+              "portName": "data"
+            },
+            {
+              "nodeId": "buy_minimum_quantity_not",
+              "portName": "no_0"
+            }
+          ]
+        }
+      },
+      "x": 680.0,
+      "y": 880.0
+    },
+    "buy_minimum_quantity": {
+      "id": "buy_minimum_quantity",
+      "type": "data.Filter",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "fill.quantity"
+        },
+        "operator": {
+          "value": ">="
+        },
+        "referencePath": {
+          "value": "pair.qty_min"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "buy_unfilled",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "passed": [
+            {
+              "nodeId": "buy_minimum_quantity_not",
+              "portName": "test"
+            }
+          ],
+          "out": [
+            {
+              "nodeId": "buy_minimum_cost",
+              "portName": "data"
+            },
+            {
+              "nodeId": "buy_minimum_cost_not",
+              "portName": "no_0"
+            }
+          ]
+        }
+      },
+      "x": 1020.0,
+      "y": 880.0
+    },
+    "buy_minimum_quantity_not": {
+      "id": "buy_minimum_quantity_not",
+      "type": "controlflow.Select",
+      "width": 280,
+      "height": 172,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "test": [
+            {
+              "nodeId": "buy_minimum_quantity",
+              "portName": "passed"
+            }
+          ],
+          "no_0": [
+            {
+              "nodeId": "buy_unfilled",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "buy_refused",
+              "portName": "yes_0"
+            }
+          ]
+        }
+      },
+      "x": 1360.0,
+      "y": 880.0
+    },
+    "buy_minimum_cost": {
+      "id": "buy_minimum_cost",
+      "type": "data.Filter",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "fill.cost"
+        },
+        "operator": {
+          "value": ">="
+        },
+        "referencePath": {
+          "value": "pair.cost_min"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "buy_minimum_quantity",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "passed": [
+            {
+              "nodeId": "buy_minimum_cost_not",
+              "portName": "test"
+            }
+          ],
+          "out": [
+            {
+              "nodeId": "buy_fill_cost",
+              "portName": "data"
+            },
+            {
+              "nodeId": "buy_reserved",
+              "portName": "data"
+            },
+            {
+              "nodeId": "buy_prior_cash",
+              "portName": "data"
+            },
+            {
+              "nodeId": "buy_fill_quantity",
+              "portName": "data"
+            },
+            {
+              "nodeId": "buy_time",
+              "portName": "data"
+            },
+            {
+              "nodeId": "buy_settled_cash",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 1700.0,
+      "y": 880.0
+    },
+    "buy_minimum_cost_not": {
+      "id": "buy_minimum_cost_not",
+      "type": "controlflow.Select",
+      "width": 280,
+      "height": 172,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "test": [
+            {
+              "nodeId": "buy_minimum_cost",
+              "portName": "passed"
+            }
+          ],
+          "no_0": [
+            {
+              "nodeId": "buy_minimum_quantity",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "buy_refused",
+              "portName": "yes_1"
+            }
+          ]
+        }
+      },
+      "x": 2040.0,
+      "y": 880.0
+    },
+    "buy_refused": {
+      "id": "buy_refused",
+      "type": "controlflow.Select",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "test": {
+          "value": true
+        }
+      },
+      "connections": {
+        "inputs": {
+          "yes_0": [
+            {
+              "nodeId": "buy_minimum_quantity_not",
+              "portName": "out"
+            }
+          ],
+          "yes_1": [
+            {
+              "nodeId": "buy_minimum_cost_not",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "refused_buy_cash",
+              "portName": "data"
+            },
+            {
+              "nodeId": "refused_buy_reserved",
+              "portName": "data"
+            },
+            {
+              "nodeId": "buy_refused_cash",
+              "portName": "data"
+            },
+            {
+              "nodeId": "buy_refused_symbol",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 2380.0,
+      "y": 880.0
+    },
+    "buy_fill_cost": {
+      "id": "buy_fill_cost",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "fill.cost"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "buy_minimum_cost",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "buy_fee",
+              "portName": "a"
+            },
+            {
+              "nodeId": "buy_outlay",
+              "portName": "a"
+            }
+          ]
+        }
+      },
+      "x": 2720.0,
+      "y": 880.0
+    },
+    "buy_fee": {
+      "id": "buy_fee",
+      "type": "arithmetic.DecimalMultiply",
+      "width": 280,
+      "height": 172,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "buy_fill_cost",
+              "portName": "json"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "fee",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "buy_outlay",
+              "portName": "b"
+            }
+          ]
+        }
+      },
+      "x": 3060.0,
+      "y": 880.0
+    },
+    "buy_outlay": {
+      "id": "buy_outlay",
+      "type": "arithmetic.DecimalAdd",
+      "width": 280,
+      "height": 172,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "buy_fill_cost",
+              "portName": "json"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "buy_fee",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "buy_refund",
+              "portName": "b"
+            },
+            {
+              "nodeId": "position_basis",
+              "portName": "json"
+            },
+            {
+              "nodeId": "position_spent",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 3400.0,
+      "y": 880.0
+    },
+    "buy_reserved": {
+      "id": "buy_reserved",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "order.reserved"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "buy_minimum_cost",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "buy_refund",
+              "portName": "a"
+            }
+          ]
+        }
+      },
+      "x": 3740.0,
+      "y": 880.0
+    },
+    "buy_refund": {
+      "id": "buy_refund",
+      "type": "arithmetic.DecimalSubtract",
+      "width": 280,
+      "height": 172,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "buy_reserved",
+              "portName": "json"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "buy_outlay",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "buy_cash",
+              "portName": "b"
+            }
+          ]
+        }
+      },
+      "x": 0.0,
+      "y": 1100.0
+    },
+    "buy_prior_cash": {
+      "id": "buy_prior_cash",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "cash"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "buy_minimum_cost",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "buy_cash",
+              "portName": "a"
+            }
+          ]
+        }
+      },
+      "x": 340.0,
+      "y": 1100.0
+    },
+    "buy_cash": {
+      "id": "buy_cash",
+      "type": "arithmetic.DecimalAdd",
+      "width": 280,
+      "height": 172,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "buy_prior_cash",
+              "portName": "json"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "buy_refund",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "buy_settled_cash",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 680.0,
+      "y": 1100.0
+    },
+    "buy_fill_quantity": {
+      "id": "buy_fill_quantity",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "fill.quantity"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "buy_minimum_cost",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "position_quantity",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 1020.0,
+      "y": 1100.0
+    },
+    "position_quantity": {
+      "id": "position_quantity",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "quantity"
+        },
+        "data": {
+          "value": "{\"proceeds\":0}"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "buy_fill_quantity",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "position_basis",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 1360.0,
+      "y": 1100.0
+    },
+    "position_basis": {
+      "id": "position_basis",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "basis"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "position_quantity",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "buy_outlay",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "position_spent",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 1700.0,
+      "y": 1100.0
+    },
+    "position_spent": {
+      "id": "position_spent",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "spent"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "position_basis",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "buy_outlay",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "position_opened",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 2040.0,
+      "y": 1100.0
+    },
+    "buy_time": {
+      "id": "buy_time",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "time"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "buy_minimum_cost",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "position_opened",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 2380.0,
+      "y": 1100.0
+    },
+    "position_opened": {
+      "id": "position_opened",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "opened"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "position_spent",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "buy_time",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "buy_settled_holding",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 2720.0,
+      "y": 1100.0
+    },
+    "buy_settled_cash": {
+      "id": "buy_settled_cash",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "cash"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "buy_minimum_cost",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "buy_cash",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "buy_settled_holding",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 3060.0,
+      "y": 1100.0
+    },
+    "buy_settled_holding": {
+      "id": "buy_settled_holding",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "holding"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "buy_settled_cash",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "position_opened",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "buy_settled_order",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 3400.0,
+      "y": 1100.0
+    },
+    "buy_settled_order": {
+      "id": "buy_settled_order",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "order"
+        },
+        "json": {
+          "value": "{}"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "buy_settled_holding",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "settled",
+              "portName": "yes_3"
+            }
+          ]
+        }
+      },
+      "x": 3740.0,
+      "y": 1100.0
+    },
+    "refused_buy_cash": {
+      "id": "refused_buy_cash",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "cash"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "buy_refused",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "buy_returned",
+              "portName": "a"
+            }
+          ]
+        }
+      },
+      "x": 0.0,
+      "y": 1320.0
+    },
+    "refused_buy_reserved": {
+      "id": "refused_buy_reserved",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "order.reserved"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "buy_refused",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "buy_returned",
+              "portName": "b"
+            }
+          ]
+        }
+      },
+      "x": 340.0,
+      "y": 1320.0
+    },
+    "buy_returned": {
+      "id": "buy_returned",
+      "type": "arithmetic.DecimalAdd",
+      "width": 280,
+      "height": 172,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "refused_buy_cash",
+              "portName": "json"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "refused_buy_reserved",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "buy_refused_cash",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 680.0,
+      "y": 1320.0
+    },
+    "buy_refused_cash": {
+      "id": "buy_refused_cash",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "cash"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "buy_refused",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "buy_returned",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "buy_refused_order",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 1020.0,
+      "y": 1320.0
+    },
+    "buy_refused_order": {
+      "id": "buy_refused_order",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "order"
+        },
+        "json": {
+          "value": "{}"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "buy_refused_cash",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "buy_refused_outcome",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 1360.0,
+      "y": 1320.0
+    },
+    "buy_refused_symbol": {
+      "id": "buy_refused_symbol",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "symbol"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "buy_refused",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "buy_refusal",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 1700.0,
+      "y": 1320.0
+    },
+    "buy_refusal": {
+      "id": "buy_refusal",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "symbol"
+        },
+        "data": {
+          "value": "{\"action\": \"ENTER\", \"reason\": \"below_minimum\"}"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "buy_refused_symbol",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "buy_refused_outcome",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 2040.0,
+      "y": 1320.0
+    },
+    "buy_refused_outcome": {
+      "id": "buy_refused_outcome",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "refused"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "buy_refused_order",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "buy_refusal",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "settled",
+              "portName": "yes_4"
+            }
+          ]
+        }
+      },
+      "x": 2380.0,
+      "y": 1320.0
+    },
+    "sell_levels": {
+      "id": "sell_levels",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "book.bids"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "fill_sell",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "sell_sweep",
+              "portName": "levels"
+            }
+          ]
+        }
+      },
+      "x": 2720.0,
+      "y": 1320.0
+    },
+    "sell_amount": {
+      "id": "sell_amount",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "order.amount"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "fill_sell",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "sell_sweep",
+              "portName": "amount"
+            }
+          ]
+        }
+      },
+      "x": 3060.0,
+      "y": 1320.0
+    },
+    "sell_increment": {
+      "id": "sell_increment",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "pair.qty_increment"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "fill_sell",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "sell_sweep",
+              "portName": "increment"
+            }
+          ]
+        }
+      },
+      "x": 3400.0,
+      "y": 1320.0
+    },
+    "sell_sweep": {
+      "id": "sell_sweep",
+      "type": "paper.Sweep",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "spend": {
+          "value": false
+        }
+      },
+      "connections": {
+        "inputs": {
+          "levels": [
+            {
+              "nodeId": "sell_levels",
+              "portName": "json"
+            }
+          ],
+          "amount": [
+            {
+              "nodeId": "sell_amount",
+              "portName": "json"
+            }
+          ],
+          "increment": [
+            {
+              "nodeId": "sell_increment",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "quantity": [
+            {
+              "nodeId": "sell_quantity",
+              "portName": "json"
+            }
+          ],
+          "cost": [
+            {
+              "nodeId": "sell_cost",
+              "portName": "json"
+            }
+          ],
+          "unfilled": [
+            {
+              "nodeId": "sell_unfilled",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 3740.0,
+      "y": 1320.0
+    },
+    "sell_quantity": {
+      "id": "sell_quantity",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "fill.quantity"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "fill_sell",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "sell_sweep",
+              "portName": "quantity"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sell_cost",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 0.0,
+      "y": 1540.0
+    },
+    "sell_cost": {
+      "id": "sell_cost",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "fill.cost"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "sell_quantity",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "sell_sweep",
+              "portName": "cost"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sell_unfilled",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 340.0,
+      "y": 1540.0
+    },
+    "sell_unfilled": {
+      "id": "sell_unfilled",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "fill.unfilled"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "sell_cost",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "sell_sweep",
+              "portName": "unfilled"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sell_minimum_quantity",
+              "portName": "data"
+            },
+            {
+              "nodeId": "sell_minimum_quantity_not",
+              "portName": "no_0"
+            }
+          ]
+        }
+      },
+      "x": 680.0,
+      "y": 1540.0
+    },
+    "sell_minimum_quantity": {
+      "id": "sell_minimum_quantity",
+      "type": "data.Filter",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "fill.quantity"
+        },
+        "operator": {
+          "value": ">="
+        },
+        "referencePath": {
+          "value": "pair.qty_min"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "sell_unfilled",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "passed": [
+            {
+              "nodeId": "sell_minimum_quantity_not",
+              "portName": "test"
+            }
+          ],
+          "out": [
+            {
+              "nodeId": "sell_minimum_cost",
+              "portName": "data"
+            },
+            {
+              "nodeId": "sell_minimum_cost_not",
+              "portName": "no_0"
+            }
+          ]
+        }
+      },
+      "x": 1020.0,
+      "y": 1540.0
+    },
+    "sell_minimum_quantity_not": {
+      "id": "sell_minimum_quantity_not",
+      "type": "controlflow.Select",
+      "width": 280,
+      "height": 172,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "test": [
+            {
+              "nodeId": "sell_minimum_quantity",
+              "portName": "passed"
+            }
+          ],
+          "no_0": [
+            {
+              "nodeId": "sell_unfilled",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sell_refused",
+              "portName": "yes_0"
+            }
+          ]
+        }
+      },
+      "x": 1360.0,
+      "y": 1540.0
+    },
+    "sell_minimum_cost": {
+      "id": "sell_minimum_cost",
+      "type": "data.Filter",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "fill.cost"
+        },
+        "operator": {
+          "value": ">="
+        },
+        "referencePath": {
+          "value": "pair.cost_min"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "sell_minimum_quantity",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "passed": [
+            {
+              "nodeId": "sell_minimum_cost_not",
+              "portName": "test"
+            }
+          ],
+          "out": [
+            {
+              "nodeId": "sell_fill_cost",
+              "portName": "data"
+            },
+            {
+              "nodeId": "sell_prior_proceeds",
+              "portName": "data"
+            },
+            {
+              "nodeId": "sell_prior_cash",
+              "portName": "data"
+            },
+            {
+              "nodeId": "sell_settled_cash",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 1700.0,
+      "y": 1540.0
+    },
+    "sell_minimum_cost_not": {
+      "id": "sell_minimum_cost_not",
+      "type": "controlflow.Select",
+      "width": 280,
+      "height": 172,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "test": [
+            {
+              "nodeId": "sell_minimum_cost",
+              "portName": "passed"
+            }
+          ],
+          "no_0": [
+            {
+              "nodeId": "sell_minimum_quantity",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sell_refused",
+              "portName": "yes_1"
+            }
+          ]
+        }
+      },
+      "x": 2040.0,
+      "y": 1540.0
+    },
+    "sell_refused": {
+      "id": "sell_refused",
+      "type": "controlflow.Select",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "test": {
+          "value": true
+        }
+      },
+      "connections": {
+        "inputs": {
+          "yes_0": [
+            {
+              "nodeId": "sell_minimum_quantity_not",
+              "portName": "out"
+            }
+          ],
+          "yes_1": [
+            {
+              "nodeId": "sell_minimum_cost_not",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sell_refused_order",
+              "portName": "data"
+            },
+            {
+              "nodeId": "sell_refused_symbol",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 2380.0,
+      "y": 1540.0
+    },
+    "sell_fill_cost": {
+      "id": "sell_fill_cost",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "fill.cost"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "sell_minimum_cost",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "sell_fee",
+              "portName": "a"
+            },
+            {
+              "nodeId": "sell_net",
+              "portName": "a"
+            }
+          ]
+        }
+      },
+      "x": 2720.0,
+      "y": 1540.0
+    },
+    "sell_fee": {
+      "id": "sell_fee",
+      "type": "arithmetic.DecimalMultiply",
+      "width": 280,
+      "height": 172,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "sell_fill_cost",
+              "portName": "json"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "fee",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sell_net",
+              "portName": "b"
+            }
+          ]
+        }
+      },
+      "x": 3060.0,
+      "y": 1540.0
+    },
+    "sell_net": {
+      "id": "sell_net",
+      "type": "arithmetic.DecimalSubtract",
+      "width": 280,
+      "height": 172,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "sell_fill_cost",
+              "portName": "json"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "sell_fee",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sell_proceeds",
+              "portName": "b"
+            },
+            {
+              "nodeId": "sell_cash",
+              "portName": "b"
+            }
+          ]
+        }
+      },
+      "x": 3400.0,
+      "y": 1540.0
+    },
+    "sell_prior_proceeds": {
+      "id": "sell_prior_proceeds",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "holding.proceeds"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "sell_minimum_cost",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "sell_proceeds",
+              "portName": "a"
+            }
+          ]
+        }
+      },
+      "x": 3740.0,
+      "y": 1540.0
+    },
+    "sell_proceeds": {
+      "id": "sell_proceeds",
+      "type": "arithmetic.DecimalAdd",
+      "width": 280,
+      "height": 172,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "sell_prior_proceeds",
+              "portName": "json"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "sell_net",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sell_settled_proceeds",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 0.0,
+      "y": 1760.0
+    },
+    "sell_prior_cash": {
+      "id": "sell_prior_cash",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "cash"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "sell_minimum_cost",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "sell_cash",
+              "portName": "a"
+            }
+          ]
+        }
+      },
+      "x": 340.0,
+      "y": 1760.0
+    },
+    "sell_cash": {
+      "id": "sell_cash",
+      "type": "arithmetic.DecimalAdd",
+      "width": 280,
+      "height": 172,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "sell_prior_cash",
+              "portName": "json"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "sell_net",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sell_settled_cash",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 680.0,
+      "y": 1760.0
+    },
+    "sell_settled_cash": {
+      "id": "sell_settled_cash",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "cash"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "sell_minimum_cost",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "sell_cash",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sell_settled_proceeds",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 1020.0,
+      "y": 1760.0
+    },
+    "sell_settled_proceeds": {
+      "id": "sell_settled_proceeds",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "holding.proceeds"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "sell_settled_cash",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "sell_proceeds",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sell_settled_order",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 1360.0,
+      "y": 1760.0
+    },
+    "sell_settled_order": {
+      "id": "sell_settled_order",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "order"
+        },
+        "json": {
+          "value": "{}"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "sell_settled_proceeds",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sell_closed",
+              "portName": "data"
+            },
+            {
+              "nodeId": "sell_closed_not",
+              "portName": "no_0"
+            }
+          ]
+        }
+      },
+      "x": 1700.0,
+      "y": 1760.0
+    },
+    "sell_closed": {
+      "id": "sell_closed",
+      "type": "data.Filter",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "fill.unfilled"
+        },
+        "operator": {
+          "value": "=="
+        },
+        "threshold": {
+          "value": 0
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "sell_settled_order",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "passed": [
+            {
+              "nodeId": "sell_closed_not",
+              "portName": "test"
+            }
+          ],
+          "out": [
+            {
+              "nodeId": "closing_proceeds",
+              "portName": "data"
+            },
+            {
+              "nodeId": "closing_spent",
+              "portName": "data"
+            },
+            {
+              "nodeId": "closing_symbol",
+              "portName": "data"
+            },
+            {
+              "nodeId": "closing_opened",
+              "portName": "data"
+            },
+            {
+              "nodeId": "closing_time",
+              "portName": "data"
+            },
+            {
+              "nodeId": "closing_basis",
+              "portName": "data"
+            },
+            {
+              "nodeId": "closing_trip_proceeds",
+              "portName": "data"
+            },
+            {
+              "nodeId": "sell_closed_holding",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 2040.0,
+      "y": 1760.0
+    },
+    "sell_closed_not": {
+      "id": "sell_closed_not",
+      "type": "controlflow.Select",
+      "width": 280,
+      "height": 172,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "test": [
+            {
+              "nodeId": "sell_closed",
+              "portName": "passed"
+            }
+          ],
+          "no_0": [
+            {
+              "nodeId": "sell_settled_order",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "partial_basis",
+              "portName": "data"
+            },
+            {
+              "nodeId": "partial_sold",
+              "portName": "data"
+            },
+            {
+              "nodeId": "partial_held",
+              "portName": "data"
+            },
+            {
+              "nodeId": "partial_places",
+              "portName": "data"
+            },
+            {
+              "nodeId": "partial_unfilled",
+              "portName": "data"
+            },
+            {
+              "nodeId": "sell_partial_quantity",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 2380.0,
+      "y": 1760.0
+    },
+    "closing_proceeds": {
+      "id": "closing_proceeds",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "holding.proceeds"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "sell_closed",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "round_trip_pnl",
+              "portName": "a"
+            }
+          ]
+        }
+      },
+      "x": 2720.0,
+      "y": 1760.0
+    },
+    "closing_spent": {
+      "id": "closing_spent",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "holding.spent"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "sell_closed",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "round_trip_pnl",
+              "portName": "b"
+            }
+          ]
+        }
+      },
+      "x": 3060.0,
+      "y": 1760.0
+    },
+    "round_trip_pnl": {
+      "id": "round_trip_pnl",
+      "type": "arithmetic.DecimalSubtract",
+      "width": 280,
+      "height": 172,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "closing_proceeds",
+              "portName": "json"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "closing_spent",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "trip_pnl",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 3400.0,
+      "y": 1760.0
+    },
+    "closing_symbol": {
+      "id": "closing_symbol",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "symbol"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "sell_closed",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "trip_symbol",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 3740.0,
+      "y": 1760.0
+    },
+    "trip_symbol": {
+      "id": "trip_symbol",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "symbol"
+        },
+        "data": {
+          "value": "{}"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "closing_symbol",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "trip_opened",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 0.0,
+      "y": 1980.0
+    },
+    "closing_opened": {
+      "id": "closing_opened",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "holding.opened"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "sell_closed",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "trip_opened",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 340.0,
+      "y": 1980.0
+    },
+    "trip_opened": {
+      "id": "trip_opened",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "opened"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "trip_symbol",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "closing_opened",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "trip_closed",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 680.0,
+      "y": 1980.0
+    },
+    "closing_time": {
+      "id": "closing_time",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "time"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "sell_closed",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "trip_closed",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 1020.0,
+      "y": 1980.0
+    },
+    "trip_closed": {
+      "id": "trip_closed",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "closed"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "trip_opened",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "closing_time",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "trip_basis",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 1360.0,
+      "y": 1980.0
+    },
+    "closing_basis": {
+      "id": "closing_basis",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "holding.spent"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "sell_closed",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "trip_basis",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 1700.0,
+      "y": 1980.0
+    },
+    "trip_basis": {
+      "id": "trip_basis",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "basis"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "trip_closed",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "closing_basis",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "trip_proceeds",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 2040.0,
+      "y": 1980.0
+    },
+    "closing_trip_proceeds": {
+      "id": "closing_trip_proceeds",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "holding.proceeds"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "sell_closed",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "trip_proceeds",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 2380.0,
+      "y": 1980.0
+    },
+    "trip_proceeds": {
+      "id": "trip_proceeds",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "proceeds"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "trip_basis",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "closing_trip_proceeds",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "trip_pnl",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 2720.0,
+      "y": 1980.0
+    },
+    "trip_pnl": {
+      "id": "trip_pnl",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "pnl"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "trip_proceeds",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "round_trip_pnl",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sell_closed_outcome",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 3060.0,
+      "y": 1980.0
+    },
+    "sell_closed_holding": {
+      "id": "sell_closed_holding",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "holding"
+        },
+        "json": {
+          "value": "{}"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "sell_closed",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sell_closed_outcome",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 3400.0,
+      "y": 1980.0
+    },
+    "sell_closed_outcome": {
+      "id": "sell_closed_outcome",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "closed"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "sell_closed_holding",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "trip_pnl",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "settled",
+              "portName": "yes_5"
+            }
+          ]
+        }
+      },
+      "x": 3740.0,
+      "y": 1980.0
+    },
+    "partial_basis": {
+      "id": "partial_basis",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "holding.basis"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "sell_closed_not",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "partial_share",
+              "portName": "a"
+            },
+            {
+              "nodeId": "partial_remaining",
+              "portName": "a"
+            }
+          ]
+        }
+      },
+      "x": 0.0,
+      "y": 2200.0
+    },
+    "partial_sold": {
+      "id": "partial_sold",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "fill.quantity"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "sell_closed_not",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "partial_share",
+              "portName": "b"
+            }
+          ]
+        }
+      },
+      "x": 340.0,
+      "y": 2200.0
+    },
+    "partial_share": {
+      "id": "partial_share",
+      "type": "arithmetic.DecimalMultiply",
+      "width": 280,
+      "height": 172,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "partial_basis",
+              "portName": "json"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "partial_sold",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "partial_allocated",
+              "portName": "a"
+            }
+          ]
+        }
+      },
+      "x": 680.0,
+      "y": 2200.0
+    },
+    "partial_held": {
+      "id": "partial_held",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "holding.quantity"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "sell_closed_not",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "partial_allocated",
+              "portName": "b"
+            }
+          ]
+        }
+      },
+      "x": 1020.0,
+      "y": 2200.0
+    },
+    "partial_places": {
+      "id": "partial_places",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "pair.cost_precision"
+        },
+        "encoding": {
+          "value": "uint64"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "sell_closed_not",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "unsigned": [
+            {
+              "nodeId": "partial_allocated",
+              "portName": "places"
+            }
+          ]
+        }
+      },
+      "x": 1360.0,
+      "y": 2200.0
+    },
+    "partial_allocated": {
+      "id": "partial_allocated",
+      "type": "arithmetic.DecimalQuotient",
+      "width": 280,
+      "height": 172,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "partial_share",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "partial_held",
+              "portName": "json"
+            }
+          ],
+          "places": [
+            {
+              "nodeId": "partial_places",
+              "portName": "unsigned"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "partial_remaining",
+              "portName": "b"
+            }
+          ]
+        }
+      },
+      "x": 1700.0,
+      "y": 2200.0
+    },
+    "partial_remaining": {
+      "id": "partial_remaining",
+      "type": "arithmetic.DecimalSubtract",
+      "width": 280,
+      "height": 172,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "partial_basis",
+              "portName": "json"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "partial_allocated",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sell_partial_basis",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 2040.0,
+      "y": 2200.0
+    },
+    "partial_unfilled": {
+      "id": "partial_unfilled",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "fill.unfilled"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "sell_closed_not",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "sell_partial_quantity",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 2380.0,
+      "y": 2200.0
+    },
+    "sell_partial_quantity": {
+      "id": "sell_partial_quantity",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "holding.quantity"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "sell_closed_not",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "partial_unfilled",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sell_partial_basis",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 2720.0,
+      "y": 2200.0
+    },
+    "sell_partial_basis": {
+      "id": "sell_partial_basis",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "holding.basis"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "sell_partial_quantity",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "partial_remaining",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "settled",
+              "portName": "yes_6"
+            }
+          ]
+        }
+      },
+      "x": 3060.0,
+      "y": 2200.0
+    },
+    "sell_refused_order": {
+      "id": "sell_refused_order",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "order"
+        },
+        "json": {
+          "value": "{}"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "sell_refused",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sell_refused_outcome",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 3400.0,
+      "y": 2200.0
+    },
+    "sell_refused_symbol": {
+      "id": "sell_refused_symbol",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "symbol"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "sell_refused",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "sell_refusal",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 3740.0,
+      "y": 2200.0
+    },
+    "sell_refusal": {
+      "id": "sell_refusal",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "symbol"
+        },
+        "data": {
+          "value": "{\"action\": \"EXIT\", \"reason\": \"below_minimum\"}"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "sell_refused_symbol",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sell_refused_outcome",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 0.0,
+      "y": 2420.0
+    },
+    "sell_refused_outcome": {
+      "id": "sell_refused_outcome",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "refused"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "sell_refused_order",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "sell_refusal",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "settled",
+              "portName": "yes_7"
+            }
+          ]
+        }
+      },
+      "x": 340.0,
+      "y": 2420.0
+    },
+    "settled": {
+      "id": "settled",
+      "type": "controlflow.Select",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "test": {
+          "value": true
+        }
+      },
+      "connections": {
+        "inputs": {
+          "yes_0": [
+            {
+              "nodeId": "fill_resting_not",
+              "portName": "out"
+            }
+          ],
+          "yes_1": [
+            {
+              "nodeId": "fill_booked_not",
+              "portName": "out"
+            }
+          ],
+          "yes_2": [
+            {
+              "nodeId": "fill_ruled_not",
+              "portName": "out"
+            }
+          ],
+          "yes_3": [
+            {
+              "nodeId": "buy_settled_order",
+              "portName": "out"
+            }
+          ],
+          "yes_4": [
+            {
+              "nodeId": "buy_refused_outcome",
+              "portName": "out"
+            }
+          ],
+          "yes_5": [
+            {
+              "nodeId": "sell_closed_outcome",
+              "portName": "out"
+            }
+          ],
+          "yes_6": [
+            {
+              "nodeId": "sell_partial_basis",
+              "portName": "out"
+            }
+          ],
+          "yes_7": [
+            {
+              "nodeId": "sell_refused_outcome",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "state",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 680.0,
+      "y": 2420.0
+    },
+    "state": {
+      "id": "state",
+      "type": "transport.Fan",
+      "width": 280,
+      "height": 172,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "settled",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "enter_action",
+              "portName": "data"
+            },
+            {
+              "nodeId": "enter_action_not",
+              "portName": "no_0"
+            }
+          ]
+        }
+      },
+      "x": 1020.0,
+      "y": 2420.0
+    },
+    "enter_action": {
+      "id": "enter_action",
+      "type": "data.Filter",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "action"
+        },
+        "operator": {
+          "value": "=="
+        },
+        "referencePath": {
+          "value": "_const.enter"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "state",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "passed": [
+            {
+              "nodeId": "enter_action_not",
+              "portName": "test"
+            }
+          ],
+          "out": [
+            {
+              "nodeId": "enter_flat",
+              "portName": "data"
+            },
+            {
+              "nodeId": "enter_flat_not",
+              "portName": "no_0"
+            }
+          ]
+        }
+      },
+      "x": 1360.0,
+      "y": 2420.0
+    },
+    "enter_action_not": {
+      "id": "enter_action_not",
+      "type": "controlflow.Select",
+      "width": 280,
+      "height": 172,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "test": [
+            {
+              "nodeId": "enter_action",
+              "portName": "passed"
+            }
+          ],
+          "no_0": [
+            {
+              "nodeId": "state",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "exit_action",
+              "portName": "data"
+            },
+            {
+              "nodeId": "exit_action_not",
+              "portName": "no_0"
+            }
+          ]
+        }
+      },
+      "x": 1700.0,
+      "y": 2420.0
+    },
+    "enter_flat": {
+      "id": "enter_flat",
+      "type": "data.Filter",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "holding.quantity"
+        },
+        "operator": {
+          "value": "absent"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "enter_action",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "passed": [
+            {
+              "nodeId": "enter_flat_not",
+              "portName": "test"
+            }
+          ],
+          "out": [
+            {
+              "nodeId": "enter_free",
+              "portName": "data"
+            },
+            {
+              "nodeId": "enter_free_not",
+              "portName": "no_0"
+            }
+          ]
+        }
+      },
+      "x": 2040.0,
+      "y": 2420.0
+    },
+    "enter_flat_not": {
+      "id": "enter_flat_not",
+      "type": "controlflow.Select",
+      "width": 280,
+      "height": 172,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "test": [
+            {
+              "nodeId": "enter_flat",
+              "portName": "passed"
+            }
+          ],
+          "no_0": [
+            {
+              "nodeId": "enter_action",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "committed",
+              "portName": "yes_1"
+            }
+          ]
+        }
+      },
+      "x": 2380.0,
+      "y": 2420.0
+    },
+    "enter_free": {
+      "id": "enter_free",
+      "type": "data.Filter",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "order.side"
+        },
+        "operator": {
+          "value": "absent"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "enter_flat",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "passed": [
+            {
+              "nodeId": "enter_free_not",
+              "portName": "test"
+            }
+          ],
+          "out": [
+            {
+              "nodeId": "enter_quoted",
+              "portName": "data"
+            },
+            {
+              "nodeId": "enter_quoted_not",
+              "portName": "no_0"
+            }
+          ]
+        }
+      },
+      "x": 2720.0,
+      "y": 2420.0
+    },
+    "enter_free_not": {
+      "id": "enter_free_not",
+      "type": "controlflow.Select",
+      "width": 280,
+      "height": 172,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "test": [
+            {
+              "nodeId": "enter_free",
+              "portName": "passed"
+            }
+          ],
+          "no_0": [
+            {
+              "nodeId": "enter_flat",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "committed",
+              "portName": "yes_2"
+            }
+          ]
+        }
+      },
+      "x": 3060.0,
+      "y": 2420.0
+    },
+    "enter_quoted": {
+      "id": "enter_quoted",
+      "type": "data.Filter",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "pair.quote"
+        },
+        "operator": {
+          "value": "=="
+        },
+        "referencePath": {
+          "value": "_const.currency"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "enter_free",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "passed": [
+            {
+              "nodeId": "enter_quoted_not",
+              "portName": "test"
+            }
+          ],
+          "out": [
+            {
+              "nodeId": "entry_cash",
+              "portName": "data"
+            },
+            {
+              "nodeId": "entry_places",
+              "portName": "data"
+            },
+            {
+              "nodeId": "entry_time",
+              "portName": "data"
+            },
+            {
+              "nodeId": "entered_cash",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 3400.0,
+      "y": 2420.0
+    },
+    "enter_quoted_not": {
+      "id": "enter_quoted_not",
+      "type": "controlflow.Select",
+      "width": 280,
+      "height": 172,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "test": [
+            {
+              "nodeId": "enter_quoted",
+              "portName": "passed"
+            }
+          ],
+          "no_0": [
+            {
+              "nodeId": "enter_free",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "committed",
+              "portName": "yes_3"
+            }
+          ]
+        }
+      },
+      "x": 3740.0,
+      "y": 2420.0
+    },
+    "entry_cash": {
+      "id": "entry_cash",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "cash"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "enter_quoted",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "entry_budget",
+              "portName": "a"
+            },
+            {
+              "nodeId": "entry_committed",
+              "portName": "a"
+            }
+          ]
+        }
+      },
+      "x": 0.0,
+      "y": 2640.0
+    },
+    "entry_budget": {
+      "id": "entry_budget",
+      "type": "arithmetic.DecimalMultiply",
+      "width": 280,
+      "height": 172,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "entry_cash",
+              "portName": "json"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "fraction",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "entry_notional",
+              "portName": "a"
+            },
+            {
+              "nodeId": "entry_reserved",
+              "portName": "json"
+            },
+            {
+              "nodeId": "entry_committed",
+              "portName": "b"
+            }
+          ]
+        }
+      },
+      "x": 340.0,
+      "y": 2640.0
+    },
+    "entry_gross": {
+      "id": "entry_gross",
+      "type": "arithmetic.DecimalAdd",
+      "width": 280,
+      "height": 172,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "unit",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "fee",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "entry_notional",
+              "portName": "b"
+            }
+          ]
+        }
+      },
+      "x": 680.0,
+      "y": 2640.0
+    },
+    "entry_places": {
+      "id": "entry_places",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "pair.cost_precision"
+        },
+        "encoding": {
+          "value": "uint64"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "enter_quoted",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "unsigned": [
+            {
+              "nodeId": "entry_notional",
+              "portName": "places"
+            }
+          ]
+        }
+      },
+      "x": 1020.0,
+      "y": 2640.0
+    },
+    "entry_notional": {
+      "id": "entry_notional",
+      "type": "arithmetic.DecimalQuotient",
+      "width": 280,
+      "height": 172,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "entry_budget",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "entry_gross",
+              "portName": "out"
+            }
+          ],
+          "places": [
+            {
+              "nodeId": "entry_places",
+              "portName": "unsigned"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "entry_amount",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 1360.0,
+      "y": 2640.0
+    },
+    "entry_amount": {
+      "id": "entry_amount",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "amount"
+        },
+        "data": {
+          "value": "{\"side\":\"buy\"}"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "entry_notional",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "entry_reserved",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 1700.0,
+      "y": 2640.0
+    },
+    "entry_reserved": {
+      "id": "entry_reserved",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "reserved"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "entry_amount",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "entry_budget",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "entry_placed",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 2040.0,
+      "y": 2640.0
+    },
+    "entry_time": {
+      "id": "entry_time",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "time"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "enter_quoted",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "entry_placed",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 2380.0,
+      "y": 2640.0
+    },
+    "entry_placed": {
+      "id": "entry_placed",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "placed"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "entry_reserved",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "entry_time",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "entered_order",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 2720.0,
+      "y": 2640.0
+    },
+    "entry_committed": {
+      "id": "entry_committed",
+      "type": "arithmetic.DecimalSubtract",
+      "width": 280,
+      "height": 172,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "entry_cash",
+              "portName": "json"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "entry_budget",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "entered_cash",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 3060.0,
+      "y": 2640.0
+    },
+    "entered_cash": {
+      "id": "entered_cash",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "cash"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "enter_quoted",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "entry_committed",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "entered_order",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 3400.0,
+      "y": 2640.0
+    },
+    "entered_order": {
+      "id": "entered_order",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "order"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "entered_cash",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "entry_placed",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "committed",
+              "portName": "yes_0"
+            }
+          ]
+        }
+      },
+      "x": 3740.0,
+      "y": 2640.0
+    },
+    "exit_action": {
+      "id": "exit_action",
+      "type": "data.Filter",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "action"
+        },
+        "operator": {
+          "value": "=="
+        },
+        "referencePath": {
+          "value": "_const.exit"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "enter_action_not",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "passed": [
+            {
+              "nodeId": "exit_action_not",
+              "portName": "test"
+            }
+          ],
+          "out": [
+            {
+              "nodeId": "exit_held",
+              "portName": "data"
+            },
+            {
+              "nodeId": "exit_held_not",
+              "portName": "no_0"
+            }
+          ]
+        }
+      },
+      "x": 0.0,
+      "y": 2860.0
+    },
+    "exit_action_not": {
+      "id": "exit_action_not",
+      "type": "controlflow.Select",
+      "width": 280,
+      "height": 172,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "test": [
+            {
+              "nodeId": "exit_action",
+              "portName": "passed"
+            }
+          ],
+          "no_0": [
+            {
+              "nodeId": "enter_action_not",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "committed",
+              "portName": "yes_5"
+            }
+          ]
+        }
+      },
+      "x": 340.0,
+      "y": 2860.0
+    },
+    "exit_held": {
+      "id": "exit_held",
+      "type": "data.Filter",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "holding.quantity"
+        },
+        "operator": {
+          "value": "exists"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "exit_action",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "passed": [
+            {
+              "nodeId": "exit_held_not",
+              "portName": "test"
+            }
+          ],
+          "out": [
+            {
+              "nodeId": "exit_free",
+              "portName": "data"
+            },
+            {
+              "nodeId": "exit_free_not",
+              "portName": "no_0"
+            }
+          ]
+        }
+      },
+      "x": 680.0,
+      "y": 2860.0
+    },
+    "exit_held_not": {
+      "id": "exit_held_not",
+      "type": "controlflow.Select",
+      "width": 280,
+      "height": 172,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "test": [
+            {
+              "nodeId": "exit_held",
+              "portName": "passed"
+            }
+          ],
+          "no_0": [
+            {
+              "nodeId": "exit_action",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "committed",
+              "portName": "yes_6"
+            }
+          ]
+        }
+      },
+      "x": 1020.0,
+      "y": 2860.0
+    },
+    "exit_free": {
+      "id": "exit_free",
+      "type": "data.Filter",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "order.side"
+        },
+        "operator": {
+          "value": "absent"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "exit_held",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "passed": [
+            {
+              "nodeId": "exit_free_not",
+              "portName": "test"
+            }
+          ],
+          "out": [
+            {
+              "nodeId": "exit_quantity",
+              "portName": "data"
+            },
+            {
+              "nodeId": "exit_time",
+              "portName": "data"
+            },
+            {
+              "nodeId": "exited_order",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 1360.0,
+      "y": 2860.0
+    },
+    "exit_free_not": {
+      "id": "exit_free_not",
+      "type": "controlflow.Select",
+      "width": 280,
+      "height": 172,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "test": [
+            {
+              "nodeId": "exit_free",
+              "portName": "passed"
+            }
+          ],
+          "no_0": [
+            {
+              "nodeId": "exit_held",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "committed",
+              "portName": "yes_7"
+            }
+          ]
+        }
+      },
+      "x": 1700.0,
+      "y": 2860.0
+    },
+    "exit_quantity": {
+      "id": "exit_quantity",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "holding.quantity"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "exit_free",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "exit_amount",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 2040.0,
+      "y": 2860.0
+    },
+    "exit_amount": {
+      "id": "exit_amount",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "amount"
+        },
+        "data": {
+          "value": "{\"side\":\"sell\",\"reserved\":0}"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "exit_quantity",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "exit_placed",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 2380.0,
+      "y": 2860.0
+    },
+    "exit_time": {
+      "id": "exit_time",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "time"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "exit_free",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "exit_placed",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 2720.0,
+      "y": 2860.0
+    },
+    "exit_placed": {
+      "id": "exit_placed",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "placed"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "exit_amount",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "exit_time",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "exited_order",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 3060.0,
+      "y": 2860.0
+    },
+    "exited_order": {
+      "id": "exited_order",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "order"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "exit_free",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "exit_placed",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "committed",
+              "portName": "yes_4"
+            }
+          ]
+        }
+      },
+      "x": 3400.0,
+      "y": 2860.0
+    },
+    "committed": {
+      "id": "committed",
+      "type": "controlflow.Select",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "test": {
+          "value": true
+        }
+      },
+      "connections": {
+        "inputs": {
+          "yes_0": [
+            {
+              "nodeId": "entered_order",
+              "portName": "out"
+            }
+          ],
+          "yes_1": [
+            {
+              "nodeId": "enter_flat_not",
+              "portName": "out"
+            }
+          ],
+          "yes_2": [
+            {
+              "nodeId": "enter_free_not",
+              "portName": "out"
+            }
+          ],
+          "yes_3": [
+            {
+              "nodeId": "enter_quoted_not",
+              "portName": "out"
+            }
+          ],
+          "yes_4": [
+            {
+              "nodeId": "exited_order",
+              "portName": "out"
+            }
+          ],
+          "yes_5": [
+            {
+              "nodeId": "exit_action_not",
+              "portName": "out"
+            }
+          ],
+          "yes_6": [
+            {
+              "nodeId": "exit_held_not",
+              "portName": "out"
+            }
+          ],
+          "yes_7": [
+            {
+              "nodeId": "exit_free_not",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "cash_value",
+              "portName": "data"
+            },
+            {
+              "nodeId": "holding_value",
+              "portName": "data"
+            },
+            {
+              "nodeId": "order_value",
+              "portName": "data"
+            },
+            {
+              "nodeId": "pair_value",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 3740.0,
+      "y": 2860.0
+    },
+    "cash_value": {
+      "id": "cash_value",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "cash"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "committed",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "account",
+              "portName": "value_0"
+            }
+          ]
+        }
+      },
+      "x": 0.0,
+      "y": 3080.0
+    },
+    "holding_value": {
+      "id": "holding_value",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "holding"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "committed",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "account",
+              "portName": "value_1"
+            }
+          ]
+        }
+      },
+      "x": 340.0,
+      "y": 3080.0
+    },
+    "order_value": {
+      "id": "order_value",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "order"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "committed",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "account",
+              "portName": "value_2"
+            }
+          ]
+        }
+      },
+      "x": 680.0,
+      "y": 3080.0
+    },
+    "pair_value": {
+      "id": "pair_value",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "pair"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "committed",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "account",
+              "portName": "value_3"
+            }
+          ]
+        }
+      },
+      "x": 1020.0,
+      "y": 3080.0
+    }
+  }
+}

@@ -22,19 +22,32 @@ const captureDeclaration = `{"namespace":"test","table":"frames","fields":[{"id"
 /* captureRow exercises the actual capture capability, not a hand-built envelope. */
 func captureRow(t testing.TB, payload []byte) []byte {
 	t.Helper()
-	client := store.Capture_ServerToClient(store.NewCapture())
+	client := store.Capture_ServerToClient(store.NewCapture(context.Background()))
 	defer client.Release()
 	ctx := context.Background()
 	err := client.Write(ctx, func(params store.Capture_write_Params) error {
-		if err := params.SetEndpoint("wss://fixture.test/feed"); err != nil {
+		endpoints, err := params.NewEndpoint(1)
+
+		if err != nil {
+			return err
+		}
+		times, err := params.NewReceivedAt(1)
+
+		if err != nil {
+			return err
+		}
+		payloads, err := params.NewPayload(1)
+
+		if err != nil {
 			return err
 		}
 
-		if err := params.SetReceivedAt("2026-09-22T12:00:00.123456789Z"); err != nil {
-			return err
+		for _, err := range []error{endpoints.Set(0, "wss://fixture.test/feed"), times.Set(0, "2026-09-22T12:00:00.123456789Z"), payloads.Set(0, payload)} {
+			if err != nil {
+				return err
+			}
 		}
-
-		return params.SetPayload(payload)
+		return nil
 	})
 
 	if err != nil {
@@ -53,7 +66,7 @@ func captureRow(t testing.TB, payload []byte) []byte {
 		t.Fatal(err)
 	}
 
-	out, err := result.Out()
+	out, err := result.Row().Out()
 
 	if err != nil {
 		t.Fatal(err)

@@ -267,11 +267,11 @@ func TestProgramExecuteIdleCapture(t *testing.T) {
 		So(err, ShouldBeNil)
 		defer program.Release()
 
-		Convey("Then repeated idle polls do not execute capture with empty data", func() {
+		Convey("Then repeated idle polls capture no row from empty data", func() {
 			for observation := 0; observation < 3; observation++ {
 				So(program.Execute(context.Background(), nil), ShouldBeNil)
-				_, captured := program.results["capture"]
-				So(captured, ShouldBeFalse)
+				result, captured := program.results["capture"]
+				So(captured && store.Captured(result).Which() == store.Captured_Which_row, ShouldBeFalse)
 				So(program.carriedPayload(), ShouldBeFalse)
 			}
 		})

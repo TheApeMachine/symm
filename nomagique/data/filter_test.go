@@ -53,6 +53,12 @@ func TestFilterWrite(t *testing.T) {
 			So(evaluate(payload, "cursor.sequence,cursor.record", "b.sequence,b.record", "<", 0), ShouldBeTrue)
 			So(evaluate(payload, "cursor.sequence,cursor.record", "b.sequence,b.record", ">=", 0), ShouldBeFalse)
 		})
+		Convey("Text containment compares against a referenced constant", func() {
+			payload := `{"error":"Rate limit for snapshot requests exceeded, when trying to subscribe to SOL/USD level3 snapshot","_const":{"limit":"Rate limit"}}`
+			So(evaluate(payload, "error", "_const.limit", "contains", 0), ShouldBeTrue)
+			unsupported := `{"error":"Currency pair not supported MKR/USD","_const":{"limit":"Rate limit"}}`
+			So(evaluate(unsupported, "error", "_const.limit", "contains", 0), ShouldBeFalse)
+		})
 		Convey("Missing boundaries cannot pass a comparison", func() {
 			So(evaluate(`{"cursor":{"sequence":1,"record":0}}`, "cursor.sequence,cursor.record", "b.sequence,b.record", "<", 0), ShouldBeFalse)
 			So(evaluate(`{}`, "a", "", "exists", 0), ShouldBeFalse)

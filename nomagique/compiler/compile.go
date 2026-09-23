@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"math"
 	"os"
 	"sort"
 	"strconv"
@@ -362,6 +363,11 @@ func CompileWithPrevious(
 				}
 			}
 
+			// The template is the program's own data, copied into every
+			// evaluation for as long as the program runs. The read budget
+			// guards against amplification in untrusted messages; spent on a
+			// template, it would stop a long-running graph mid-stream.
+			template.Message().ResetReadLimit(math.MaxUint64)
 			compiledNode.ArgsTemplate = template
 		}
 
