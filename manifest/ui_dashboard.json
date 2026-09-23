@@ -1070,7 +1070,7 @@
      "value": "min-h-0 overflow-auto px-3 py-2"
     },
     "gap": {
-     "value": "xs"
+     "value": 2
     }
    },
    "connections": {

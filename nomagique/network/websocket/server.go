@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -89,7 +90,7 @@ func (server *WebSocketServerServer) UpgradeHandler() http.HandlerFunc {
 				var msg map[string]any
 
 				if err := sonic.Unmarshal(messageBytes, &msg); err == nil {
-					if typ, ok := msg["type"].(string); ok && typ == "focus" {
+					if typ, ok := msg["type"].(string); ok && strings.EqualFold(typ, "focus") {
 						if symbol, ok := msg["symbol"].(string); ok && symbol != "" {
 							select {
 							case server.focusChan <- symbol:

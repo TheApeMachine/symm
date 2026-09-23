@@ -65,6 +65,10 @@ func TestCompileFlume(t *testing.T) {
 						ID:   "add",
 						Type: "arithmetic.Add",
 						Connections: compiler.Connections{
+							Inputs: map[string][]compiler.ConnectionTarget{
+								"a": {{NodeID: "left", PortName: "out"}},
+								"b": {{NodeID: "right", PortName: "out"}},
+							},
 							Outputs: map[string][]compiler.ConnectionTarget{
 								"out": {{NodeID: "collect", PortName: "value"}},
 							},
@@ -73,6 +77,11 @@ func TestCompileFlume(t *testing.T) {
 					"collect": {
 						ID:   "collect",
 						Type: "statistic.Mean",
+						Connections: compiler.Connections{
+							Inputs: map[string][]compiler.ConnectionTarget{
+								"value": {{NodeID: "add", PortName: "out"}},
+							},
+						},
 					},
 				},
 			}
@@ -152,6 +161,11 @@ func TestCompileFlume(t *testing.T) {
 					"add": {
 						ID:   "add",
 						Type: "arithmetic.Add",
+						Connections: compiler.Connections{
+							Inputs: map[string][]compiler.ConnectionTarget{
+								"a": {{NodeID: "textSrc", PortName: "out"}},
+							},
+						},
 					},
 				},
 			}
@@ -179,6 +193,9 @@ func TestCompileFlume(t *testing.T) {
 						ID:   "atanh",
 						Type: "calculus.Atanh",
 						Connections: compiler.Connections{
+							Inputs: map[string][]compiler.ConnectionTarget{
+								"value": {{NodeID: "src", PortName: "out"}},
+							},
 							Outputs: map[string][]compiler.ConnectionTarget{
 								"out": {{NodeID: "add", PortName: "a"}},
 							},
@@ -191,6 +208,9 @@ func TestCompileFlume(t *testing.T) {
 							"b": json.RawMessage(`{"float": 1.0}`),
 						},
 						Connections: compiler.Connections{
+							Inputs: map[string][]compiler.ConnectionTarget{
+								"a": {{NodeID: "atanh", PortName: "out"}},
+							},
 							Outputs: map[string][]compiler.ConnectionTarget{
 								"out": {{NodeID: "collect", PortName: "value"}},
 							},
@@ -199,6 +219,11 @@ func TestCompileFlume(t *testing.T) {
 					"collect": {
 						ID:   "collect",
 						Type: "statistic.Mean",
+						Connections: compiler.Connections{
+							Inputs: map[string][]compiler.ConnectionTarget{
+								"value": {{NodeID: "add", PortName: "out"}},
+							},
+						},
 					},
 				},
 			}
@@ -539,8 +564,9 @@ func TestCompileTraining(t *testing.T) {
 			defer program.Release()
 
 			if name == "capture" {
-				// Both sockets record into one session and one table, and nothing
-				// that grades or learns runs inside capture.
+				// All three sockets (spot, level3, futures) record into one
+				// session and one table, and nothing that grades or learns
+				// runs inside capture.
 				kinds := map[string]int{}
 
 				for _, node := range program.Nodes {
@@ -550,7 +576,7 @@ func TestCompileTraining(t *testing.T) {
 				}
 				So(kinds["store.Capture"], ShouldEqual, 1)
 				So(kinds["tables.IcebergTable"], ShouldEqual, 1)
-				So(kinds["websocket.WebSocketClient"], ShouldEqual, 2)
+				So(kinds["websocket.WebSocketClient"], ShouldEqual, 3)
 				continue
 			}
 
@@ -637,6 +663,32 @@ func TestParseGraphAgreement(t *testing.T) {
 			}`))
 
 			So(err, ShouldBeNil)
+		})
+
+		Convey("Direct Compile rejects asymmetric graph", func() {
+			disagreeGraph := compiler.Graph{
+				ID:   "disagree",
+				Name: "disagree",
+				Nodes: map[string]compiler.Node{
+					"a": {
+						ID:   "a",
+						Type: "arithmetic.Add",
+						Connections: compiler.Connections{
+							Outputs: map[string][]compiler.ConnectionTarget{
+								"out": {{NodeID: "b", PortName: "value"}},
+							},
+						},
+					},
+					"b": {
+						ID:   "b",
+						Type: "calculus.Square",
+					},
+				},
+			}
+
+			_, err := compiler.Compile(disagreeGraph, nil)
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "does not read it")
 		})
 	})
 }

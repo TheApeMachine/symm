@@ -170,17 +170,17 @@ describe("framing an imported graph", () => {
 	});
 });
 
-describe("laying out the system graph", () => {
+describe("laying out the signals graph", () => {
 	/*
 		The signal sub-graphs are the tallest nodes in the system and share one
 		rank. Given the same spacing as a websocket client they land on top of
 		each other.
 	*/
 	it("gives every node in a column room for its own ports", async () => {
-		const systemGraph = (await import("../../../../manifest/system.json"))
+		const signalsGraph = (await import("../../../../manifest/signals.json"))
 			.default as unknown as BackendGraph;
 
-		const nodes = convertJSONGraphToFlumeNodes(systemGraph);
+		const nodes = convertJSONGraphToFlumeNodes(signalsGraph);
 		const columns = new Map<number, string[]>();
 
 		for (const [id, node] of Object.entries(nodes)) {
@@ -215,7 +215,7 @@ describe("laying out the system graph", () => {
 		);
 
 		expect(signals).toHaveLength(15);
-		expect(new Set(signals.map((node) => node.x)).size).toBe(4);
+		expect(new Set(signals.map((node) => node.x)).size).toBe(5);
 
 		const tallest = Math.max(
 			...[...columns.values()].map((ids) => {
@@ -235,10 +235,10 @@ describe("a closed sub-graph", () => {
 		reserves hundreds of pixels it does not use.
 	*/
 	it("is given the room it actually takes up", async () => {
-		const systemGraph = (await import("../../../../manifest/system.json"))
+		const signalsGraph = (await import("../../../../manifest/signals.json"))
 			.default as unknown as BackendGraph;
 
-		const nodes = convertJSONGraphToFlumeNodes(systemGraph);
+		const nodes = convertJSONGraphToFlumeNodes(signalsGraph);
 		const wrappers = Object.values(nodes).filter((node) =>
 			node.type.startsWith("definition:"),
 		);

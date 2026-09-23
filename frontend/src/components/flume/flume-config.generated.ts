@@ -663,6 +663,44 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 	});
 	config.addNodeType({
+		type: "cognition.Remapper",
+		label: "Remapper",
+		category: "cognition",
+		initialWidth: 340,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports["[]byte"]({ name: "cursor", label: "cursor" }),
+				ports["[]byte"]({ name: "evidence", label: "evidence" }),
+				ports.bool({ name: "reset", label: "reset" }),
+			];
+			const wiredActivations = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("activations"));
+			for (let index = 0; index < Math.max(1, wiredActivations.length + 1); index++) {
+				const portName = index === 0 ? "activations" : `activations_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			const wiredAuthorities = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("authorities"));
+			for (let index = 0; index < Math.max(1, wiredAuthorities.length + 1); index++) {
+				const portName = index === 0 ? "authorities" : `authorities_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			const wiredIds = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("ids"));
+			for (let index = 0; index < Math.max(1, wiredIds.length + 1); index++) {
+				const portName = index === 0 ? "ids" : `ids_${index}`;
+				dynamicPorts.push(ports.string({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports["[]byte"]({ name: "out", label: "out" }),
+			ports["[]byte"]({ name: "regions", label: "regions" }),
+			ports.int64({ name: "revision", label: "revision" }),
+			ports.bool({ name: "settled", label: "settled" }),
+			ports.data({ name: "tokens", label: "tokens" }),
+			ports.string({ name: "vocabulary", label: "vocabulary" }),
+		],
+	});
+
+	config.addNodeType({
 		type: "cognition.SensoryKey",
 		label: "Sensory Key",
 		category: "cognition",
@@ -684,6 +722,23 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "out", label: "out" }),
+		],
+	});
+	config.addNodeType({
+		type: "cognition.TokenSequence",
+		label: "Token Sequence",
+		category: "cognition",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.bool({ name: "reset", label: "reset" }),
+			ports.string({ name: "scope", label: "scope" }),
+			ports.string({ name: "token", label: "token" }),
+		],
+		outputs: (ports) => [
+			ports.int64({ name: "depth", label: "depth" }),
+			ports["[]byte"]({ name: "out", label: "out" }),
+			ports.string({ name: "path", label: "path" }),
+			ports.data({ name: "sequence", label: "sequence" }),
 		],
 	});
 	config.addNodeType({
@@ -5538,6 +5593,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.int64({ name: "delivered", label: "delivered" }),
 			ports.int64({ name: "metrics", label: "metrics" }),
+			ports.data({ name: "observations", label: "observations" }),
 			ports["[]byte"]({ name: "out", label: "out" }),
 			ports.data({ name: "present", label: "present" }),
 			ports.Status({ name: "status", label: "status" }),
@@ -7899,6 +7955,24 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 	});
 	config.addNodeType({
+		type: "definition:live_futures",
+		label: "live_futures",
+		category: "Definitions",
+		description: "Sub-graph: live_futures",
+		initialWidth: 320,
+		inputs: (ports) => (_inputData, _connections) => [
+			ports["[]byte"]({ name: "socket.write", label: "socket.write" }),
+			ports["[]byte"]({ name: "trade_subscription.data", label: "trade_subscription.data" }),
+		],
+		outputs: (ports) => (_inputData, _connections) => [
+			ports.string({ name: "socket.frame.endpoint", label: "socket.frame.endpoint" }),
+			ports.int64({ name: "socket.frame.generation", label: "socket.frame.generation" }),
+			ports["[]byte"]({ name: "socket.frame.read", label: "socket.frame.read" }),
+			ports.string({ name: "socket.frame.receivedAt", label: "socket.frame.receivedAt" }),
+			ports.int64({ name: "socket.idle", label: "socket.idle" }),
+		],
+	});
+	config.addNodeType({
 		type: "definition:live_level3",
 		label: "live_level3",
 		category: "Definitions",
@@ -7911,6 +7985,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports["[]byte"]({ name: "admission.retry", label: "admission.retry" }),
 			ports["[]byte"]({ name: "admission.rewind", label: "admission.rewind" }),
 			ports.float64({ name: "answered.threshold", label: "answered.threshold" }),
+			ports.float64({ name: "books.threshold", label: "books.threshold" }),
 			ports.string({ name: "classified.encoding", label: "classified.encoding" }),
 			ports.bool({ name: "classified.unique", label: "classified.unique" }),
 			ports.int64({ name: "classified.unsigned", label: "classified.unsigned" }),
@@ -7932,6 +8007,8 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports["[]byte"]({ name: "nonced_post.values", label: "nonced_post.values" }),
 			ports["[]byte"]({ name: "post.values", label: "post.values" }),
 			ports.float64({ name: "rate_limited.threshold", label: "rate_limited.threshold" }),
+			ports["[]byte"]({ name: "records.data", label: "records.data" }),
+			ports.string({ name: "records.indexPath", label: "records.indexPath" }),
 			ports.float64({ name: "refused.threshold", label: "refused.threshold" }),
 			ports.string({ name: "retried.encoding", label: "retried.encoding" }),
 			ports.bool({ name: "retried.unique", label: "retried.unique" }),
@@ -7969,6 +8046,8 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.int64({ name: "admission.waiting", label: "admission.waiting" }),
 			ports.bool({ name: "answered.passed", label: "answered.passed" }),
 			ports.int64({ name: "answered.rejected", label: "answered.rejected" }),
+			ports.bool({ name: "books.passed", label: "books.passed" }),
+			ports.int64({ name: "books.rejected", label: "books.rejected" }),
 			ports.bool({ name: "classified.inserted", label: "classified.inserted" }),
 			ports.bool({ name: "connection_document.inserted", label: "connection_document.inserted" }),
 			ports.bool({ name: "connection_generation.inserted", label: "connection_generation.inserted" }),
@@ -7987,6 +8066,13 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.int64({ name: "post.idle", label: "post.idle" }),
 			ports.bool({ name: "rate_limited.passed", label: "rate_limited.passed" }),
 			ports.int64({ name: "rate_limited.rejected", label: "rate_limited.rejected" }),
+			ports.int64({ name: "records.count", label: "records.count" }),
+			ports.bool({ name: "records.found", label: "records.found" }),
+			ports.int64({ name: "records.ignored", label: "records.ignored" }),
+			ports.int64({ name: "records.index", label: "records.index" }),
+			ports.bool({ name: "records.last", label: "records.last" }),
+			ports["[]byte"]({ name: "records.out", label: "records.out" }),
+			ports.int64({ name: "records.pending", label: "records.pending" }),
 			ports.bool({ name: "refused.passed", label: "refused.passed" }),
 			ports.int64({ name: "refused.rejected", label: "refused.rejected" }),
 			ports.bool({ name: "refused_symbol.found", label: "refused_symbol.found" }),
@@ -9035,6 +9121,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => (_inputData, _connections) => [
 			ports.int64({ name: "grid.delivered", label: "grid.delivered" }),
 			ports.int64({ name: "grid.metrics", label: "grid.metrics" }),
+			ports.data({ name: "grid.observations", label: "grid.observations" }),
 			ports["[]byte"]({ name: "grid.out", label: "grid.out" }),
 			ports.data({ name: "grid.present", label: "grid.present" }),
 			ports.data({ name: "grid.values", label: "grid.values" }),

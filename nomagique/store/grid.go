@@ -4,7 +4,6 @@ import (
 	"context"
 	"strings"
 
-	capnp "capnproto.org/go/capnp/v3"
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/runtime"
@@ -26,7 +25,7 @@ type GridServer struct {
 	*runtime.System
 	interests []string
 	declared  string
-	metrics   capnp.Float64List
+	metrics   []float64
 	values    []float64
 	present   []bool
 	out       []byte
@@ -69,7 +68,11 @@ func (server *GridServer) Write(ctx context.Context, call Grid_write) error {
 	}
 
 	if metrics.IsValid() {
-		server.metrics = metrics
+		server.metrics = make([]float64, metrics.Len())
+
+		for index := range metrics.Len() {
+			server.metrics[index] = metrics.At(index)
+		}
 	}
 
 	feeds, err := call.Args().Data()
@@ -136,10 +139,26 @@ func (server *GridServer) Done(ctx context.Context, call Grid_done) error {
 
 	results.SetStatus(runtime.Status(server.Status()))
 	results.SetDelivered(server.delivered)
-	results.SetMetrics(int64(server.metrics.Len()))
+	results.SetMetrics(int64(len(server.metrics)))
 
 	if err := server.deliver(results); err != nil {
 		return err
+	}
+
+	if len(server.metrics) > 0 {
+		observations, err := results.NewObservations(int32(len(server.metrics)))
+
+		if err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.Internal,
+				"[store.grid.Done] failed to allocate observations",
+				err,
+			))
+		}
+
+		for index, value := range server.metrics {
+			observations.Set(index, value)
+		}
 	}
 
 	if len(server.out) == 0 {

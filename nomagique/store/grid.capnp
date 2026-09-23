@@ -38,11 +38,12 @@ interface Grid extends(Retained) {
     metrics   :List(Float64)
   ) -> stream;
   done @1 () -> (
-    values    :List(Float64),
-    present   :List(Bool),
-    out       :Data,
-    delivered :Int64,
-    metrics   :Int64,
-    status    :Status
+    values       :List(Float64),
+    present      :List(Bool),
+    out          :Data,
+    delivered    :Int64,
+    metrics      :Int64,
+    status       :Status,
+    observations :List(Float64)
   );
 }

@@ -27,7 +27,9 @@ func capabilityGraph(bodyProvider string) Graph {
 				Type:      "data.Map",
 				InputData: map[string]json.RawMessage{"path": json.RawMessage(`"sizes"`)},
 				Connections: Connections{
-					Inputs: map[string][]ConnectionTarget{},
+					Inputs: map[string][]ConnectionTarget{
+						"body": {{NodeID: "body", PortName: "self"}},
+					},
 					Outputs: map[string][]ConnectionTarget{
 						"out": {{NodeID: "collect", PortName: "data"}},
 					},
@@ -37,7 +39,9 @@ func capabilityGraph(bodyProvider string) Graph {
 				ID:   "collect",
 				Type: "store.Constant",
 				Connections: Connections{
-					Inputs:  map[string][]ConnectionTarget{},
+					Inputs: map[string][]ConnectionTarget{
+						"data": {{NodeID: "mapper", PortName: "out"}},
+					},
 					Outputs: map[string][]ConnectionTarget{},
 				},
 			},

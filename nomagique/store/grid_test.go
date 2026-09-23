@@ -235,6 +235,38 @@ func TestGridWrite(t *testing.T) {
 				So(results.Metrics(), ShouldEqual, 0)
 			})
 		})
+
+		Convey("When metrics are wired into the grid", func() {
+			err := client.Write(ctx, func(params store.Grid_write_Params) error {
+				metrics, err := params.NewMetrics(3)
+				if err != nil {
+					return err
+				}
+				metrics.Set(0, 1.25)
+				metrics.Set(1, -0.5)
+				metrics.Set(2, 3.75)
+				return nil
+			})
+			So(err, ShouldBeNil)
+			So(client.WaitStreaming(), ShouldBeNil)
+
+			future, release := client.Done(ctx, nil)
+			defer release()
+
+			results, err := future.Struct()
+			So(err, ShouldBeNil)
+
+			Convey("Then the grid reports metric count and observations", func() {
+				So(results.Metrics(), ShouldEqual, 3)
+
+				observations, err := results.Observations()
+				So(err, ShouldBeNil)
+				So(observations.Len(), ShouldEqual, 3)
+				So(observations.At(0), ShouldEqual, 1.25)
+				So(observations.At(1), ShouldEqual, -0.5)
+				So(observations.At(2), ShouldEqual, 3.75)
+			})
+		})
 	})
 }
 

@@ -79,6 +79,38 @@
         }
       }
     },
+    "futures": {
+      "id": "futures",
+      "type": "definition:live_futures",
+      "width": 320,
+      "height": 280,
+      "x": 0.0,
+      "y": 800.0,
+      "inputData": {},
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "socket.frame.read": [
+            {
+              "nodeId": "envelope",
+              "portName": "payload_2"
+            }
+          ],
+          "socket.frame.endpoint": [
+            {
+              "nodeId": "envelope",
+              "portName": "endpoint_2"
+            }
+          ],
+          "socket.frame.receivedAt": [
+            {
+              "nodeId": "envelope",
+              "portName": "receivedAt_2"
+            }
+          ]
+        }
+      }
+    },
     "envelope": {
       "id": "envelope",
       "type": "store.Capture",
@@ -122,6 +154,24 @@
           "receivedAt_1": [
             {
               "nodeId": "level3",
+              "portName": "socket.frame.receivedAt"
+            }
+          ],
+          "payload_2": [
+            {
+              "nodeId": "futures",
+              "portName": "socket.frame.read"
+            }
+          ],
+          "endpoint_2": [
+            {
+              "nodeId": "futures",
+              "portName": "socket.frame.endpoint"
+            }
+          ],
+          "receivedAt_2": [
+            {
+              "nodeId": "futures",
               "portName": "socket.frame.receivedAt"
             }
           ]

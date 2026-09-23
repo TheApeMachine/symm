@@ -49,25 +49,24 @@ describe("groupPorts", () => {
 	});
 });
 
-describe("the grid as the system graph wires it", () => {
+describe("the grid as the signals graph wires it", () => {
 	/*
 		The grid collects every metric in the system on one gathering port.
 		Drawn a row per slot it is four hundred rows tall, which is what made
 		the node unreadable.
 	*/
 	it("draws one row for a gathering port however many slots it has", async () => {
-		const systemGraph = (await import("../../../../manifest/system.json"))
+		const signalsGraph = (await import("../../../../manifest/signals.json"))
 			.default as unknown as {
 			nodes: Record<string, { connections?: { inputs?: Record<string, unknown> } }>;
 		};
 
-		const wired = Object.keys(systemGraph.nodes.grid.connections?.inputs ?? {});
+		const wired = Object.keys(signalsGraph.nodes.grid.connections?.inputs ?? {});
 		const groups = groupPorts(wired.map(port));
 
 		expect(wired.length).toBeGreaterThan(400);
-		// Four hundred and some wired slots, three ports.
+		// Four hundred and some wired slots under the metrics port family.
 		expect(groups.map((group) => group.base).sort()).toEqual([
-			"data",
 			"metrics",
 		]);
 

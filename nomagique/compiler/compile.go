@@ -50,6 +50,10 @@ func CompileWithPrevious(
 		repo = repos[0]
 	}
 
+	if err := agree(graph); err != nil {
+		return nil, err
+	}
+
 	// 1. Phase 2: Recursively expand nested definitions
 	expandedGraph, err := expandDefinitions(graph, repo)
 	if err != nil {

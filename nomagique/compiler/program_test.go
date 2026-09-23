@@ -634,7 +634,7 @@ func TestProgramExecuteReinforcement(t *testing.T) {
 			input := map[string]any{
 				"capture": map[string]string{"session": identity, "endpoint": "spot"},
 				"holding": holding,
-				"settled": map[string]any{"vocabulary": vocabulary, "tokens": []string{"A", "B"}},
+				"settled": map[string]any{"vocabulary": vocabulary, "tokens": []string{"A", "B"}, "sequence": "A/B"},
 				"cursor":  map[string]int{"sequence": offset + cursor, "record": 0},
 				"event": map[string]any{
 					"a": map[string]int{"sequence": offset + 1, "record": 0},
@@ -726,6 +726,46 @@ func TestProgramExecuteReinforcement(t *testing.T) {
 				So(err, ShouldNotBeNil)
 				So(err.Error(), ShouldContainSubstring, "conflicting value at unique path")
 			})
+
+			Convey("And two different precursor histories ending at the same current token remain separate", func() {
+				executeWithSeq := func(identity string, cursor int, vocabulary string, seq string, tokens []string) error {
+					input := map[string]any{
+						"capture": map[string]string{"session": identity, "endpoint": "spot"},
+						"holding": holding,
+						"settled": map[string]any{"vocabulary": vocabulary, "tokens": tokens, "sequence": seq},
+						"cursor":  map[string]int{"sequence": offset + cursor, "record": 0},
+						"event": map[string]any{
+							"a": map[string]int{"sequence": offset + 1, "record": 0},
+							"b": map[string]int{"sequence": offset + ignition, "record": 0},
+							"c": map[string]int{"sequence": offset + 5, "record": 0},
+							"d": map[string]int{"sequence": offset + 7, "record": 0}, "excursion": 1,
+						},
+					}
+
+					payload, err := json.Marshal(input)
+					So(err, ShouldBeNil)
+					_, segment, err := capnp.NewMessage(capnp.SingleSegment(nil))
+					So(err, ShouldBeNil)
+					params, err := transport.NewFan_write_Params(segment)
+					So(err, ShouldBeNil)
+					So(params.SetData(payload), ShouldBeNil)
+					return program.Execute(context.Background(), map[NodeID]capnp.Struct{program.NodeMap["input"]: capnp.Struct(params)})
+				}
+
+				// History 1: R1 -> R4 -> [R7,R9], ending at [R7,R9], trained to ENTER (cursor == ignition == 3)
+				So(executeWithSeq("hist-1", 3, "v1", "R1/R4/[R7,R9]", []string{"R7", "R9"}), ShouldBeNil)
+
+				// History 2: R3 -> R2 -> [R7,R9], ending at [R7,R9], trained to WAIT (cursor == 2 != ignition)
+				So(executeWithSeq("hist-2", 2, "v1", "R3/R2/[R7,R9]", []string{"R7", "R9"}), ShouldBeNil)
+
+				// Query History 1 (cursor == 2, so it doesn't train a conflicting ENTER on the same session)
+				So(executeWithSeq("query-1", 2, "v1", "R1/R4/[R7,R9]", []string{"R7", "R9"}), ShouldBeNil)
+				prediction("ENTER", 1)
+
+				// Query History 2 (cursor == 2)
+				So(executeWithSeq("query-2", 2, "v1", "R3/R2/[R7,R9]", []string{"R7", "R9"}), ShouldBeNil)
+				prediction("WAIT", 1)
+			})
 		})
 	})
 }
@@ -749,7 +789,7 @@ func BenchmarkProgramExecuteReinforcement(b *testing.B) {
 		payload, err := json.Marshal(map[string]any{
 			"capture": map[string]string{"session": "benchmark", "endpoint": "spot"},
 			"holding": false,
-			"settled": map[string]any{"vocabulary": "v1", "tokens": []string{"region-A", "region-B"}},
+			"settled": map[string]any{"vocabulary": "v1", "tokens": []string{"region-A", "region-B"}, "sequence": "region-A/region-B"},
 			"cursor":  map[string]int{"sequence": observation*4 + 1, "record": 0},
 			"event": map[string]any{
 				"a": map[string]int{"sequence": observation * 4, "record": 0},
@@ -1316,8 +1356,9 @@ func TestProgramExecuteSignalPair(t *testing.T) {
 		records := graph.Nodes["records"]
 		records.Connections.Outputs["out"] = append(records.Connections.Outputs["out"], ConnectionTarget{NodeID: "context", PortName: "data"})
 		signal := graph.Nodes["definition-liquidity_ticker"]
-		signal.Connections.Outputs["spread.out"] = []ConnectionTarget{{NodeID: "pair_left", PortName: "value"}}
-		signal.Connections.Outputs["two_sided_touch_notional.out"] = []ConnectionTarget{{NodeID: "pair_right", PortName: "value"}}
+		signal.Connections.Outputs["spread.out"] = append(signal.Connections.Outputs["spread.out"], ConnectionTarget{NodeID: "pair_left", PortName: "value"})
+		signal.Connections.Outputs["two_sided_touch_notional.out"] = append(signal.Connections.Outputs["two_sided_touch_notional.out"], ConnectionTarget{NodeID: "pair_right", PortName: "value"})
+		graph.Nodes["definition-liquidity_ticker"] = signal
 		program, err := Compile(graph, nil, repository)
 		So(err, ShouldBeNil)
 		defer program.Release()

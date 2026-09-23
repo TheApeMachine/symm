@@ -571,7 +571,7 @@
         "outputs": {
           "out": [
             {
-              "nodeId": "key_holding",
+              "nodeId": "key_sequence_history",
               "portName": "data"
             }
           ]
@@ -579,6 +579,73 @@
       },
       "x": 620,
       "y": 690
+    },
+    "sequence_history": {
+      "id": "sequence_history",
+      "type": "data.Extract",
+      "inputData": {
+        "path": {
+          "value": "settled.sequence"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "token_available",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "key_sequence_history",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 620,
+      "y": 800
+    },
+    "key_sequence_history": {
+      "id": "key_sequence_history",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "key.sequence"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "key_tokens",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "sequence_history",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "key_holding",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 780,
+      "y": 800
     },
     "holding": {
       "id": "holding",
@@ -630,7 +697,7 @@
           ],
           "data": [
             {
-              "nodeId": "key_tokens",
+              "nodeId": "key_sequence_history",
               "portName": "out"
             }
           ]
@@ -1004,6 +1071,10 @@
             },
             {
               "nodeId": "record",
+              "portName": "data"
+            },
+            {
+              "nodeId": "sequence_history",
               "portName": "data"
             }
           ]

@@ -459,6 +459,10 @@
             {
               "nodeId": "paper_rise",
               "portName": "data"
+            },
+            {
+              "nodeId": "with_settled",
+              "portName": "data"
             }
           ],
           "observation.json": [
@@ -2173,8 +2177,166 @@
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "grid.observations": [
+            {
+              "nodeId": "remapper",
+              "portName": "activations"
+            }
+          ]
+        }
       }
+    },
+    "remapper": {
+      "id": "remapper",
+      "type": "cognition.Remapper",
+      "width": 280,
+      "height": 172,
+      "connections": {
+        "inputs": {
+          "activations": [
+            {
+              "nodeId": "signals",
+              "portName": "grid.observations"
+            }
+          ]
+        },
+        "outputs": {
+          "tokens": [
+            {
+              "nodeId": "token_sequence",
+              "portName": "tokens"
+            }
+          ],
+          "out": [
+            {
+              "nodeId": "with_settled",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 1260.0,
+      "y": 0.0
+    },
+    "token_sequence": {
+      "id": "token_sequence",
+      "type": "cognition.TokenSequence",
+      "width": 280,
+      "height": 172,
+      "connections": {
+        "inputs": {
+          "tokens": [
+            {
+              "nodeId": "remapper",
+              "portName": "tokens"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "with_sequence",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 1600.0,
+      "y": 0.0
+    },
+    "with_settled": {
+      "id": "with_settled",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "settled"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "learning_replay",
+              "portName": "fragment.truth.out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "remapper",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "with_sequence",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 1940.0,
+      "y": 0.0
+    },
+    "with_sequence": {
+      "id": "with_sequence",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "inputData": {
+        "path": {
+          "value": "settled.sequence"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "with_settled",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "token_sequence",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "reinforce",
+              "portName": "input.data"
+            }
+          ]
+        }
+      },
+      "x": 2280.0,
+      "y": 0.0
+    },
+    "reinforce": {
+      "id": "reinforce",
+      "type": "definition:training_reinforce",
+      "width": 320,
+      "height": 280,
+      "connections": {
+        "inputs": {
+          "input.data": [
+            {
+              "nodeId": "with_sequence",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      },
+      "x": 2620.0,
+      "y": 0.0
     }
   }
 }
