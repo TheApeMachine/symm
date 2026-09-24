@@ -8,9 +8,9 @@ $Go.import("github.com/theapemachine/symm/nomagique/geometry");
 #
 # positions holds two numbers per point and authority one. fromNodes, toNodes
 # and strength are the relationships read now. prior and known are each
-# point's retained record, three numbers per point: the point it drains to (or
-# -1), the peak it drained to on the previous evaluation, and its peak in the
-# last partition that settled (or -1).
+# point's retained record, four numbers per point: the point it drains to (or
+# -1), the peaks it drained to on the previous two evaluations, and its peak
+# in the last partition that held (-1 wherever there is none yet).
 #
 # A point drains to a sympathetic neighbour of higher authority: one whose
 # relationship with it is attraction and that the arrangement has pulled
@@ -23,12 +23,15 @@ $Go.import("github.com/theapemachine/symm/nomagique/geometry");
 # Every point follows its links uphill to a peak. A region is everything that
 # drains to one peak, so regions are bounded where the weakest points meet.
 #
-# state and index are every point's updated record, to be written back. The
-# partition has settled when every point drains to the same peak it did on
-# the previous evaluation. Regions are always read from the last partition
-# that settled: until one has, nothing is published, and while the
-# arrangement moves again (as every impulse makes it do) the settled regions
-# stand rather than regions of a map in flight. settled names each point's
+# state and index are every point's updated record, to be written back.
+#
+# A partition has held when every point drained to the same peak on the two
+# evaluations before this one. Regions are only ever read from a partition
+# that held, as it stood when the evaluation began: what this evaluation's
+# relationships change takes effect on later evaluations, never on the regions
+# this one publishes. While the arrangement is moving, the last partition that
+# held stands; a partition in flight is never read. Until one has held,
+# moving is reported and nothing is published. settled names each point's
 # region by its peak's index, which is the peak's original coordinate.
 interface Peak {
   write @0 (

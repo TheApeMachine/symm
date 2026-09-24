@@ -112,27 +112,39 @@ lives in a `store.Vector` written back as feedback:
 1. `calculus.Change` against the previous reading (`previous`): a coordinate
    that did not report now has no movement, never zero; one that reported and
    did not move moved by exactly zero.
-2. `statistic.Authority` (`authority_state`): each movement divided by the
-   coordinate's own earlier root mean square, so zero stays zero; its signal
-   power standard²/(1+standard²); authority is summed power over the readings
-   of the most-read coordinate (maturity and SNR together); energy is
-   standard² × authority.
-3. `graph.Complete` over the coordinates that moved now, and
-   `statistic.Concordance` over those pairs (`pair_state`, read only for the
-   pairs present): alignment is the product of directions, so a consistent
-   inverse is as concordant as a direct pair; one moving while the other was
-   read still is an observed non-response and aligns zero. Strength is
-   |mean alignment| less its standard error plus consistency-weighted
+2. `statistic.Authority` (`authority_state`) uses `data.Quality`'s definitions
+   on each coordinate's own history: a reading's SNR is divergence² over noise
+   variance (its square over the coordinate's earlier mean square), maturity is
+   1 − 1/support, and authority is maturity × the mean SNR fraction
+   snr/(1+snr). Maturity and SNR are published beside it. The standardized
+   reading keeps zero as zero; energy is standard² × authority.
+3. `graph.Complete` (with `reach`) joins every coordinate that reported to
+   every other coordinate, and `statistic.Concordance` reads those pairs
+   (`pair_state`, read only for the pairs touched now): alignment is the
+   product of directions, so a consistent inverse is as concordant as a direct
+   pair. One moving while the other reported and did not is a non-response
+   (A0); one moving while the other did not report at all (A Nil) is a
+   non-response too, but only for a relationship already established, and the
+   silent end's value is never read — absence is not taken for zero. Strength
+   is |mean alignment| less its standard error plus consistency-weighted
    magnitude agreement, and a pair that just broke its orientation reads
    negative — the repulsion of the second priority.
 4. `geometry.Inversion` turns strength into a target distance (sympathy under
    one cell, repulsion over), and `geometry.Relaxation` (`positions`) takes one
-   stress step per pair, each end moving by the other end's share of their
-   authority: the weak cell travels to the strong one.
+   stress step per pair. Its pull is |strength| × the pair's combined
+   authority, so maturity and SNR power attraction, and each end moves by the
+   other end's share of that authority: the weak cell travels to the strong
+   one.
 5. `geometry.Peak` (`partition`) drains every coordinate to its highest
    sympathetic neighbour the arrangement has pulled within one cell, up to a
-   peak. The partition has settled when every coordinate drains to the same
-   peak as on the previous pass; only then are regions published.
+   peak. A partition has held when every coordinate drained to the same peak on
+   the two evaluations before. Regions are only ever read from a partition that
+   held, as it stood when the evaluation began, so an evaluation's own evidence
+   never changes the regions it is read against. While the arrangement moves,
+   the last partition that held stands — a map in flight is never read — and
+   until one has held nothing is published. Gating each pass instead would
+   silence exactly the passes that matter: the ignition and the extremum are
+   what move the arrangement.
 6. `statistic.GroupSum` of energy per settled region and `statistic.Otsu` over
    those sums: the regions lighting up now, named by their peak's original
    coordinate, are the region token.

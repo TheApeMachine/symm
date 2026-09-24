@@ -53,10 +53,22 @@ export const NodeLogs = ({
 		return c;
 	}, [logs]);
 
-	const filteredLogs = useMemo(() => {
-		if (filter === "all") return logs;
-		return logs.filter((l) => l.level === filter);
-	}, [logs, filter]);
+	// Logs arrive as whole snapshots without ids, so an entry's position in
+	// its node's log is its identity; filtering must not renumber it.
+	const positionedLogs = useMemo(
+		() => logs.map((entry, position) => ({ entry, position })),
+		[logs],
+	);
+
+	const filteredRows = useMemo(() => {
+		if (filter === "all") return positionedLogs;
+		return positionedLogs.filter((row) => row.entry.level === filter);
+	}, [positionedLogs, filter]);
+
+	const filteredLogs = useMemo(
+		() => filteredRows.map((row) => row.entry),
+		[filteredRows],
+	);
 
 	const handleCopy = () => {
 		const text = filteredLogs
@@ -179,9 +191,9 @@ export const NodeLogs = ({
 							No logs recorded yet
 						</div>
 					) : (
-						filteredLogs.map((entry, idx) => (
+						filteredRows.map(({ entry, position }) => (
 							<div
-								key={`${entry.timestamp}-${idx}`}
+								key={position}
 								className={cn(
 									"flex items-start gap-1.5 py-0.5 px-1 rounded hover:bg-(--raised)/40 break-all",
 									entry.level === "error" && "text-red-300 bg-red-950/20",
@@ -318,9 +330,9 @@ export const NodeLogs = ({
 									No logs recorded yet
 								</div>
 							) : (
-								filteredLogs.map((entry, idx) => (
+								filteredRows.map(({ entry, position }) => (
 									<div
-										key={`${entry.timestamp}-${idx}`}
+										key={position}
 										className={cn(
 											"flex items-start gap-2 py-1 px-1.5 rounded hover:bg-(--raised)/40 break-all",
 											entry.level === "error" && "text-red-300 bg-red-950/20",

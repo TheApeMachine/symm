@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 
+	capnp "capnproto.org/go/capnp/v3"
 	"github.com/theapemachine/errnie"
 )
 
@@ -56,6 +57,12 @@ func (server *ConcordanceServer) Write(ctx context.Context, call Concordance_wri
 		return errnie.Error(errnie.Err(errnie.Validation, "statistic.concordance: failed to read pairs", err))
 	}
 
+	defined, err := args.Defined()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.Validation, "statistic.concordance: failed to read defined", err))
+	}
+
 	prior, err := args.Prior()
 
 	if err != nil {
@@ -70,7 +77,8 @@ func (server *ConcordanceServer) Write(ctx context.Context, call Concordance_wri
 
 	count := pairs.Len()
 
-	if from.Len() != count || to.Len() != count || known.Len() != count || prior.Len() != count*concordanceWidth {
+	if from.Len() != count || to.Len() != count || known.Len() != count || prior.Len() != count*concordanceWidth ||
+		defined.Len() != value.Len() {
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
 			fmt.Sprintf(
@@ -105,7 +113,11 @@ func (server *ConcordanceServer) Write(ctx context.Context, call Concordance_wri
 			}
 		}
 
-		strength, orientation, active := concord(record, value.At(left), value.At(right))
+		strength, orientation, active, read := server.read(record, value, defined, left, right, known.At(pair))
+
+		if !read {
+			continue
+		}
 
 		if active {
 			server.index = append(server.index, pairs.At(pair))
@@ -126,24 +138,59 @@ func (server *ConcordanceServer) Write(ctx context.Context, call Concordance_wri
 }
 
 /*
-concord adds one paired movement to a pair's record and reads the pair.
+read reads one pair. Where both ends reported they are paired as they moved.
+Where only one did, an established pair hears a non-response from the silent
+end, whose value is never read; a pair with no history hears nothing.
 */
-func concord(record []float64, left, right float64) (float64, float64, bool) {
+func (server *ConcordanceServer) read(
+	record []float64, value capnp.Float64List, defined capnp.BitList, left, right int, established bool,
+) (float64, float64, bool, bool) {
+	if defined.At(left) && defined.At(right) {
+		strength, orientation, active := concord(record, value.At(left), value.At(right), true)
+		return strength, orientation, active, true
+	}
+
+	if !established || (!defined.At(left) && !defined.At(right)) {
+		return 0, 0, false, false
+	}
+
+	reporting := value.At(left)
+
+	if !defined.At(left) {
+		reporting = value.At(right)
+	}
+
+	strength, orientation, active := concord(record, reporting, 0, false)
+	return strength, orientation, active, true
+}
+
+/*
+concord adds one paired movement to a pair's record and reads the pair. When
+the pair is not joint, first is the reporting end's movement and second is not
+a reading: the pair is active if the reporting end moved, and it aligns zero
+with no magnitude agreement.
+*/
+func concord(record []float64, first, second float64, joint bool) (float64, float64, bool) {
 	prior := record[1]
 	alignment := 0.0
-	active := left != 0 || right != 0
+	agreement := 0.0
+	active := first != 0 || (joint && second != 0)
+
+	if active && joint {
+		agreement = 1 - math.Abs(math.Abs(first)-math.Abs(second))/(math.Abs(first)+math.Abs(second))
+	}
+
+	if active && joint && first != 0 && second != 0 {
+		alignment = math.Copysign(1, first) * math.Copysign(1, second)
+	}
 
 	if active {
-		if left != 0 && right != 0 {
-			alignment = math.Copysign(1, left) * math.Copysign(1, right)
-		}
-
 		record[0]++
 		record[1] += alignment
 		delta := alignment - record[2]
 		record[2] += delta / record[0]
 		record[3] += delta * (alignment - record[2])
-		record[4] += 1 - math.Abs(math.Abs(left)-math.Abs(right))/(math.Abs(left)+math.Abs(right))
+		record[4] += agreement
 	}
 
 	if record[0] == 0 {

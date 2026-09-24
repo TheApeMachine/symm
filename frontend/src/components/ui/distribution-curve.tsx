@@ -107,6 +107,7 @@ export const DistributionCurve = ({
 			className={cn("w-full h-full font-mono text-[9px]", className)}
 			{...props}
 		>
+			<title>{`Distribution: mean ${mean}, sd ${sd}${unit ? ` ${unit}` : ""}`}</title>
 			<defs>
 				<linearGradient id={fillId} x1="0" y1="0" x2="0" y2="1">
 					<stop offset="0%" stopColor={strokeColor} stopOpacity="0.25" />

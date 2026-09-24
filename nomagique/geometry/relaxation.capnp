@@ -12,11 +12,13 @@ $Go.import("github.com/theapemachine/symm/nomagique/geometry");
 # of that many points: (i mod width, i div width).
 #
 # Each relationship pulls or pushes its two points toward its target distance.
-# It corrects |s|/(1+|s|) of the residual, so a stronger relationship closes
-# more of it and none overshoots. The correction is split by authority: each
-# end moves by the other end's share of their combined authority, so a weak
-# point travels to a strong one rather than the other way round. Two points
-# with no authority between them have no evidence to move by.
+# Its pull is |s| times the pair's combined authority, and it corrects
+# pull/(1+pull) of the residual: a stronger relationship between better
+# evidenced points closes more of it, a weak one between immature points
+# barely moves them, and none overshoots. The correction is split by
+# authority: each end moves by the other end's share of their combined
+# authority, so a weak point travels to a strong one rather than the other way
+# round. Two points with no authority between them have no evidence to move by.
 #
 # positions and index are every point's new place, to be written back.
 interface Relaxation {

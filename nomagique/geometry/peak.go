@@ -11,19 +11,20 @@ import (
 
 /*
 peakWidth is the layout of one point's retained record: where it drains, the
-peak it reached on the previous evaluation, and its peak in the last settled
-partition.
+peaks it reached on the previous two evaluations, and its peak in the last
+partition that held.
 */
-const peakWidth = 3
+const peakWidth = 4
 
 /*
 PeakServer reads regions off an arranged landscape of points: the watershed
 basins of their authority, and whether that partition has settled.
 */
 type PeakServer struct {
-	uphill  []int
-	peak    []int
-	regions []int
+	uphill   []int
+	peak     []int
+	previous []int
+	regions  []int
 }
 
 func NewPeak() *PeakServer {
@@ -135,8 +136,9 @@ func (server *PeakServer) Write(ctx context.Context, call Peak_write) error {
 	}
 
 	server.peak = make([]int, count)
-	settled := count > 0 && known.Len() == count
-	standing := count > 0 && known.Len() == count
+	server.previous = make([]int, count)
+	held := count > 0 && known.Len() == count
+	standing := held
 
 	for point := range count {
 		peak := point
@@ -146,20 +148,28 @@ func (server *PeakServer) Write(ctx context.Context, call Peak_write) error {
 		}
 
 		server.peak[point] = peak
+		server.previous[point] = -1
 
-		if !settled || !known.At(point) || prior.At(point*peakWidth+1) != float64(peak) {
-			settled = false
+		if point >= known.Len() || !known.At(point) {
+			held, standing = false, false
+			continue
 		}
 
-		if !standing || !known.At(point) || prior.At(point*peakWidth+2) < 0 {
+		server.previous[point] = int(prior.At(point*peakWidth + 1))
+
+		if prior.At(point*peakWidth+1) < 0 || prior.At(point*peakWidth+1) != prior.At(point*peakWidth+2) {
+			held = false
+		}
+
+		if prior.At(point*peakWidth+3) < 0 {
 			standing = false
 		}
 	}
 
 	server.regions = nil
 
-	if settled {
-		server.regions = server.peak
+	if held {
+		server.regions = server.previous
 		return nil
 	}
 
@@ -170,7 +180,7 @@ func (server *PeakServer) Write(ctx context.Context, call Peak_write) error {
 	server.regions = make([]int, count)
 
 	for point := range count {
-		server.regions[point] = int(prior.At(point*peakWidth + 2))
+		server.regions[point] = int(prior.At(point*peakWidth + 3))
 	}
 
 	return nil
@@ -203,6 +213,17 @@ func (server *PeakServer) link(point, neighbour int, sympathetic bool, height fu
 	server.uphill[point] = neighbour
 }
 
+/*
+standing is a point's peak in the partition that stands, or -1 with none.
+*/
+func standing(regions []int, point int) int {
+	if regions == nil {
+		return -1
+	}
+
+	return regions[point]
+}
+
 func (server *PeakServer) Done(ctx context.Context, call Peak_done) error {
 	results, err := call.AllocResults()
 
@@ -223,15 +244,10 @@ func (server *PeakServer) Done(ctx context.Context, call Peak_done) error {
 	}
 
 	for point, summit := range server.peak {
-		standing := -1
-
-		if server.regions != nil {
-			standing = server.regions[point]
-		}
-
 		state.Set(point*peakWidth, float64(server.uphill[point]))
 		state.Set(point*peakWidth+1, float64(summit))
-		state.Set(point*peakWidth+2, float64(standing))
+		state.Set(point*peakWidth+2, float64(server.previous[point]))
+		state.Set(point*peakWidth+3, float64(standing(server.regions, point)))
 		index.Set(point, int64(point))
 	}
 
@@ -251,6 +267,6 @@ func (server *PeakServer) Done(ctx context.Context, call Peak_done) error {
 		}
 	}
 
-	server.uphill, server.peak, server.regions = nil, nil, nil
+	server.uphill, server.peak, server.previous, server.regions = nil, nil, nil, nil
 	return nil
 }

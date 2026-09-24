@@ -15,8 +15,10 @@ func TestComplete(t *testing.T) {
 		client := graph.Complete_ServerToClient(graph.NewComplete())
 		defer client.Release()
 
-		edges := func(present []bool) ([]int64, []int64, []int64) {
+		edges := func(present []bool, reach ...bool) ([]int64, []int64, []int64) {
 			So(client.Write(ctx, func(params graph.Complete_write_Params) error {
+				params.SetReach(len(reach) > 0 && reach[0])
+
 				flags, err := params.NewPresent(int32(len(present)))
 
 				if err != nil {
@@ -60,6 +62,12 @@ func TestComplete(t *testing.T) {
 			So(from, ShouldResemble, []int64{0, 0, 2})
 			So(to, ShouldResemble, []int64{2, 3, 3})
 			So(pairs, ShouldResemble, []int64{2, 3, 11})
+
+			Convey("And with reach, every present node is also joined to every absent one", func() {
+				from, to, _ := edges([]bool{true, false, false, true}, true)
+				So(from, ShouldResemble, []int64{0, 0, 0, 1, 2})
+				So(to, ShouldResemble, []int64{1, 2, 3, 3, 3})
+			})
 
 			Convey("And the next evaluation starts clean", func() {
 				from, _, _ := edges([]bool{true, false, false, false})

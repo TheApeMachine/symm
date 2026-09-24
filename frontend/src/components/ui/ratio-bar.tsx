@@ -70,14 +70,14 @@ export const RatioBar = ({
 			{...props}
 		>
 			{total > 0
-				? segments.map((seg, i) => {
+				? segments.map((seg) => {
 						if (seg.value <= 0) return null;
 						const pct = (seg.value / total) * 100;
 						const bgClass = TONE_BG_CLASS[seg.tone ?? "acc"] ?? "bg-(--acc)";
 
 						return (
 							<div
-								key={i}
+								key={seg.label ?? seg.tone ?? "acc"}
 								title={seg.label ? `${seg.label}: ${seg.value}` : undefined}
 								style={{ width: `${pct}%` }}
 								className={cn("h-full transition-[width] duration-300", bgClass)}

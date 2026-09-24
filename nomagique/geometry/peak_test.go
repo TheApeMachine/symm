@@ -85,13 +85,13 @@ func TestPeak(t *testing.T) {
 					prior.Set(offset, value)
 				}
 
-				known, err := params.NewKnown(int32(len(state) / 3))
+				known, err := params.NewKnown(int32(len(state) / 4))
 
 				if err != nil {
 					return err
 				}
 
-				for point := range len(state) / 3 {
+				for point := range len(state) / 4 {
 					known.Set(point, true)
 				}
 
@@ -136,36 +136,41 @@ func TestPeak(t *testing.T) {
 		Convey("With no previous partition the map is still moving and publishes no regions", func() {
 			So(drain(positions, heights, chain), ShouldBeNil)
 
-			Convey("Once the partition holds, every point drains to its peak and the border falls where the weakest points meet", func() {
-				So(drain(positions, heights, nil), ShouldResemble, []string{"0", "0", "0", "4", "4"})
+			Convey("A partition seen once has not yet held", func() {
+				So(drain(positions, heights, nil), ShouldBeNil)
+
+				Convey("Once it has held, every point drains to its peak and the border falls where the weakest points meet", func() {
+					So(drain(positions, heights, nil), ShouldResemble, []string{"0", "0", "0", "4", "4"})
+				})
 			})
 		})
 
 		Convey("Points that are near but not sympathetic do not drain into each other", func() {
 			drain(positions, heights, []edge{{0, 1, -1}, {1, 2, 1}, {2, 3, 1}, {3, 4, 1}})
+			drain(positions, heights, nil)
 			So(drain(positions, heights, nil), ShouldResemble, []string{"0", "1", "1", "4", "4"})
 		})
 
 		Convey("Sympathetic points the arrangement has left a cell apart do not drain into each other", func() {
 			spread := []float64{0, 0, 1, 0, 2, 0, 3, 0, 4, 0}
 			drain(spread, heights, chain)
+			drain(spread, heights, nil)
 			So(drain(spread, heights, nil), ShouldResemble, []string{"0", "1", "2", "3", "4"})
 		})
 
-		Convey("Once settled, the settled regions stand while the arrangement moves again", func() {
+		Convey("Regions are read from the partition in force when the evaluation begins", func() {
 			drain(positions, heights, chain)
+			drain(positions, heights, nil)
 			So(drain(positions, heights, nil), ShouldResemble, []string{"0", "0", "0", "4", "4"})
 			So(drain(positions, heights, []edge{{3, 4, -1}}), ShouldResemble, []string{"0", "0", "0", "4", "4"})
 
-			Convey("And the new partition takes over once it holds", func() {
-				So(drain(positions, heights, nil), ShouldResemble, []string{"0", "0", "0", "3", "4"})
-			})
-		})
+			Convey("And while the arrangement then moves, the partition that held stands", func() {
+				So(drain(positions, heights, nil), ShouldResemble, []string{"0", "0", "0", "4", "4"})
 
-		Convey("A link is withdrawn when the relationship turns to repulsion", func() {
-			drain(positions, heights, chain)
-			drain(positions, heights, []edge{{3, 4, -1}})
-			So(drain(positions, heights, nil), ShouldResemble, []string{"0", "0", "0", "3", "4"})
+				Convey("Until the new partition has held", func() {
+					So(drain(positions, heights, nil), ShouldResemble, []string{"0", "0", "0", "3", "4"})
+				})
+			})
 		})
 	})
 }

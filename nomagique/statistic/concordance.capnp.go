@@ -26,7 +26,7 @@ func (c Concordance) Write(ctx context.Context, params func(Concordance_write_Pa
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 6}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 7}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(Concordance_write_Params(s)) }
 	}
 
@@ -227,12 +227,12 @@ type Concordance_write_Params capnp.Struct
 const Concordance_write_Params_TypeID = 0xa76ed9d336a22bc1
 
 func NewConcordance_write_Params(s *capnp.Segment) (Concordance_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 6})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 7})
 	return Concordance_write_Params(st), err
 }
 
 func NewRootConcordance_write_Params(s *capnp.Segment) (Concordance_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 6})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 7})
 	return Concordance_write_Params(st), err
 }
 
@@ -360,17 +360,40 @@ func (s Concordance_write_Params) NewPairs(n int32) (capnp.Int64List, error) {
 	err = capnp.Struct(s).SetPtr(3, l.ToPtr())
 	return l, err
 }
-func (s Concordance_write_Params) Prior() (capnp.Float64List, error) {
+func (s Concordance_write_Params) Defined() (capnp.BitList, error) {
 	p, err := capnp.Struct(s).Ptr(4)
+	return capnp.BitList(p.List()), err
+}
+
+func (s Concordance_write_Params) HasDefined() bool {
+	return capnp.Struct(s).HasPtr(4)
+}
+
+func (s Concordance_write_Params) SetDefined(v capnp.BitList) error {
+	return capnp.Struct(s).SetPtr(4, v.ToPtr())
+}
+
+// NewDefined sets the defined field to a newly
+// allocated capnp.BitList, preferring placement in s's segment.
+func (s Concordance_write_Params) NewDefined(n int32) (capnp.BitList, error) {
+	l, err := capnp.NewBitList(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return capnp.BitList{}, err
+	}
+	err = capnp.Struct(s).SetPtr(4, l.ToPtr())
+	return l, err
+}
+func (s Concordance_write_Params) Prior() (capnp.Float64List, error) {
+	p, err := capnp.Struct(s).Ptr(5)
 	return capnp.Float64List(p.List()), err
 }
 
 func (s Concordance_write_Params) HasPrior() bool {
-	return capnp.Struct(s).HasPtr(4)
+	return capnp.Struct(s).HasPtr(5)
 }
 
 func (s Concordance_write_Params) SetPrior(v capnp.Float64List) error {
-	return capnp.Struct(s).SetPtr(4, v.ToPtr())
+	return capnp.Struct(s).SetPtr(5, v.ToPtr())
 }
 
 // NewPrior sets the prior field to a newly
@@ -380,20 +403,20 @@ func (s Concordance_write_Params) NewPrior(n int32) (capnp.Float64List, error) {
 	if err != nil {
 		return capnp.Float64List{}, err
 	}
-	err = capnp.Struct(s).SetPtr(4, l.ToPtr())
+	err = capnp.Struct(s).SetPtr(5, l.ToPtr())
 	return l, err
 }
 func (s Concordance_write_Params) Known() (capnp.BitList, error) {
-	p, err := capnp.Struct(s).Ptr(5)
+	p, err := capnp.Struct(s).Ptr(6)
 	return capnp.BitList(p.List()), err
 }
 
 func (s Concordance_write_Params) HasKnown() bool {
-	return capnp.Struct(s).HasPtr(5)
+	return capnp.Struct(s).HasPtr(6)
 }
 
 func (s Concordance_write_Params) SetKnown(v capnp.BitList) error {
-	return capnp.Struct(s).SetPtr(5, v.ToPtr())
+	return capnp.Struct(s).SetPtr(6, v.ToPtr())
 }
 
 // NewKnown sets the known field to a newly
@@ -403,7 +426,7 @@ func (s Concordance_write_Params) NewKnown(n int32) (capnp.BitList, error) {
 	if err != nil {
 		return capnp.BitList{}, err
 	}
-	err = capnp.Struct(s).SetPtr(5, l.ToPtr())
+	err = capnp.Struct(s).SetPtr(6, l.ToPtr())
 	return l, err
 }
 
@@ -412,7 +435,7 @@ type Concordance_write_Params_List = capnp.StructList[Concordance_write_Params]
 
 // NewConcordance_write_Params creates a new list of Concordance_write_Params.
 func NewConcordance_write_Params_List(s *capnp.Segment, sz int32) (Concordance_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 6}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 7}, sz)
 	return capnp.StructList[Concordance_write_Params](l), err
 }
 

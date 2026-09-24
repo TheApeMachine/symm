@@ -13,6 +13,7 @@ type CompleteServer struct {
 	from  []int64
 	to    []int64
 	pairs []int64
+	joint []bool
 }
 
 func NewComplete() *CompleteServer {
@@ -27,21 +28,21 @@ func (server *CompleteServer) Write(ctx context.Context, call Complete_write) er
 	}
 
 	count := int64(present.Len())
-	nodes := make([]int64, 0, count)
+	server.from, server.to, server.pairs, server.joint = server.from[:0], server.to[:0], server.pairs[:0], server.joint[:0]
 
-	for node := range present.Len() {
-		if present.At(node) {
-			nodes = append(nodes, int64(node))
-		}
-	}
+	for from := range count {
+		for to := from + 1; to < count; to++ {
+			both := present.At(int(from)) && present.At(int(to))
+			either := present.At(int(from)) || present.At(int(to))
 
-	server.from, server.to, server.pairs = server.from[:0], server.to[:0], server.pairs[:0]
+			if !both && !(either && call.Args().Reach()) {
+				continue
+			}
 
-	for position, from := range nodes {
-		for _, to := range nodes[position+1:] {
 			server.from = append(server.from, from)
 			server.to = append(server.to, to)
 			server.pairs = append(server.pairs, from*count+to)
+			server.joint = append(server.joint, both)
 		}
 	}
 
@@ -73,12 +74,19 @@ func (server *CompleteServer) Done(ctx context.Context, call Complete_done) erro
 		return errnie.Error(errnie.Err(errnie.Internal, "graph.complete: failed to allocate pairs", err))
 	}
 
+	joint, err := results.NewJoint(int32(len(server.joint)))
+
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.Internal, "graph.complete: failed to allocate joint", err))
+	}
+
 	for position := range server.from {
 		from.Set(position, server.from[position])
 		to.Set(position, server.to[position])
 		pairs.Set(position, server.pairs[position])
+		joint.Set(position, server.joint[position])
 	}
 
-	server.from, server.to, server.pairs = server.from[:0], server.to[:0], server.pairs[:0]
+	server.from, server.to, server.pairs, server.joint = server.from[:0], server.to[:0], server.pairs[:0], server.joint[:0]
 	return nil
 }

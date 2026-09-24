@@ -115,6 +115,15 @@ func TestRelaxation(t *testing.T) {
 			So(weak, ShouldAlmostEqual, 9*strong)
 		})
 
+		Convey("Better evidenced points are pulled harder by the same relationship", func() {
+			weak := relax(nil, nil, []float64{0.1, 0, 0, 0.1}, 1, 0.5)
+			strong := relax(nil, nil, []float64{0.9, 0, 0, 0.9}, 1, 0.5)
+			weakGap := math.Hypot(weak[6]-weak[0], weak[7]-weak[1])
+			strongGap := math.Hypot(strong[6]-strong[0], strong[7]-strong[1])
+			So(strongGap, ShouldBeLessThan, weakGap)
+			So(weakGap, ShouldBeLessThan, math.Sqrt2)
+		})
+
 		Convey("A repelling pair is pushed apart", func() {
 			positions := relax(nil, nil, []float64{0.5, 0, 0, 0.5}, -1, 2)
 			So(math.Hypot(positions[6]-positions[0], positions[7]-positions[1]), ShouldBeGreaterThan, math.Sqrt2)

@@ -133,8 +133,8 @@ func (server *RelaxationServer) relax(left, right int, leftAuthority, rightAutho
 		horizontal, vertical, current = math.Cos(angle), math.Sin(angle), 1
 	}
 
-	magnitude := math.Abs(strength)
-	correction := magnitude / (1 + magnitude) * residual / current
+	pull := math.Abs(strength) * combined
+	correction := pull / (1 + pull) * residual / current
 	leftShare := rightAuthority / combined
 	rightShare := leftAuthority / combined
 

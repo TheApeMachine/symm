@@ -74,7 +74,7 @@ export const RadarPanel = () => {
 				subscription.unsubscribe();
 			}
 		};
-	}, [focusSymbol]);
+	}, []);
 
 	return (
 		<Panel ref={root} size="lg" className="h-full">

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { hubBaseUrl } from "#/lib/hub";
 
 /*
@@ -170,7 +170,7 @@ export function useDefinitions(): {
 	const [isPending, setIsPending] = useState(true);
 	const [isError, setIsError] = useState(false);
 
-	const load = () => {
+	const load = useCallback(() => {
 		fetchDefinitions()
 			.then((defs) => {
 				setData(defs);
@@ -180,11 +180,11 @@ export function useDefinitions(): {
 				setIsError(true);
 				setIsPending(false);
 			});
-	};
+	}, []);
 
 	useEffect(() => {
 		load();
-	}, []);
+	}, [load]);
 
 	return { data, isPending, isError, refetch: load };
 }

@@ -11,10 +11,17 @@ $Go.import("github.com/theapemachine/symm/nomagique/statistic");
 # mean alignment, its second moment, and summed magnitude agreement. state and
 # index are the updated records, to be written back.
 #
-# A pair where neither element moved says nothing. Where both moved their
-# alignment is the product of their directions, so a consistent inverse pair
-# is as concordant as a direct one, only oppositely oriented. Where one moved
-# and the other did not, alignment is zero: an observed non-response.
+# defined says, per element, whether it reported now. A pair where
+# neither element moved says nothing. Where both moved their alignment is the
+# product of their directions, so a consistent inverse pair is as concordant
+# as a direct one, only oppositely oriented. Where one moved and the other
+# reported and did not, alignment is zero: an observed non-response.
+#
+# Where one moved and the other did not report at all, the pair is read only
+# if its relationship is already established: a relationship that exists and
+# gets no answer is a non-response too, with no magnitude agreement. The
+# silent end's value is never read; absence is not taken for a zero. A pair
+# with no history learns nothing from one end's silence.
 #
 # strength is |mean alignment| less its standard error, plus relative
 # magnitude agreement weighted by that consistency, so an uncertain or
@@ -28,6 +35,7 @@ interface Concordance {
     fromNodes :List(Int64),
     toNodes   :List(Int64),
     pairs     :List(Int64),
+    defined   :List(Bool),
     prior     :List(Float64),
     known     :List(Bool)
   ) -> stream;

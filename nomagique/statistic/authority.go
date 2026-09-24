@@ -10,7 +10,7 @@ import (
 
 /*
 authorityWidth is the layout of one element's retained state: reading count,
-summed square and summed signal power.
+summed square and summed SNR fraction.
 */
 const authorityWidth = 3
 
@@ -36,6 +36,8 @@ type AuthorityServer struct {
 	standard  []float64
 	defined   []bool
 	authority []float64
+	maturity  []float64
+	snr       []float64
 	energy    []float64
 	index     []int64
 	state     []float64
@@ -98,6 +100,8 @@ func (server *AuthorityServer) Write(ctx context.Context, call Authority_write) 
 	server.standard = make([]float64, count)
 	server.defined = make([]bool, count)
 	server.authority = make([]float64, count)
+	server.maturity = make([]float64, count)
+	server.snr = make([]float64, count)
 	server.energy = make([]float64, count)
 	server.index = server.index[:0]
 	server.state = server.state[:0]
@@ -110,18 +114,17 @@ func (server *AuthorityServer) Write(ctx context.Context, call Authority_write) 
 		server.observe(records[element*authorityWidth:(element+1)*authorityWidth], element, value.At(element))
 	}
 
-	mature := 0.0
-
 	for element := range count {
-		mature = math.Max(mature, records[element*authorityWidth])
-	}
+		support := records[element*authorityWidth]
 
-	if mature == 0 {
-		return nil
-	}
+		if support == 0 {
+			continue
+		}
 
-	for element := range count {
-		server.authority[element] = records[element*authorityWidth+2] / mature
+		// The same maturity data.Quality gives a measurement with support.
+		server.maturity[element] = 1 - 1/support
+		server.snr[element] = records[element*authorityWidth+2] / support
+		server.authority[element] = server.maturity[element] * server.snr[element]
 		server.energy[element] = server.standard[element] * server.standard[element] * server.authority[element]
 	}
 
@@ -130,7 +133,8 @@ func (server *AuthorityServer) Write(ctx context.Context, call Authority_write) 
 
 /*
 observe scales one reading against the element's history before it, then
-adds the reading to that history.
+adds the reading to that history. Its SNR is the reading's square over the
+element's earlier mean square.
 */
 func (server *AuthorityServer) observe(record []float64, element int, reading float64) {
 	if record[0] > 0 && record[1] > 0 {
@@ -160,6 +164,8 @@ func (server *AuthorityServer) Done(ctx context.Context, call Authority_done) er
 	}{
 		{server.standard, func(size int32) (listSetter, error) { return results.NewStandard(size) }},
 		{server.authority, func(size int32) (listSetter, error) { return results.NewAuthority(size) }},
+		{server.maturity, func(size int32) (listSetter, error) { return results.NewMaturity(size) }},
+		{server.snr, func(size int32) (listSetter, error) { return results.NewSnr(size) }},
 		{server.energy, func(size int32) (listSetter, error) { return results.NewEnergy(size) }},
 		{server.state, func(size int32) (listSetter, error) { return results.NewState(size) }},
 	}
@@ -197,6 +203,7 @@ func (server *AuthorityServer) Done(ctx context.Context, call Authority_done) er
 	}
 
 	server.standard, server.defined, server.authority, server.energy = nil, nil, nil, nil
+	server.maturity, server.snr = nil, nil
 	server.index, server.state = server.index[:0], server.state[:0]
 	return nil
 }

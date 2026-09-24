@@ -150,6 +150,7 @@ export function usePaintStore<
 	const localRef = useRef<TElement | null>(null);
 	const targetRef = forwardedRef ?? localRef;
 
+	// biome-ignore lint/correctness/useExhaustiveDependencies: the caller names what the mapper depends on through deps; the mapper and ref are read fresh on every update, so re-subscribing for their identity would only drop paints.
 	useEffect(() => {
 		if (!store) return;
 		const root = targetRef.current;
@@ -186,7 +187,6 @@ export function usePaintStore<
 				subscription.unsubscribe();
 			}
 		};
-		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [store, ...deps]);
 
 	return targetRef;

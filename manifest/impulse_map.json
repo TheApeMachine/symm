@@ -193,6 +193,10 @@
             {
               "nodeId": "activation",
               "portName": "present"
+            },
+            {
+              "nodeId": "concordance",
+              "portName": "defined"
             }
           ],
           "standard": [
@@ -259,6 +263,11 @@
               "portName": "toNodes"
             }
           ]
+        }
+      },
+      "inputData": {
+        "reach": {
+          "value": true
         }
       }
     },
@@ -354,6 +363,12 @@
             {
               "nodeId": "pair_state",
               "portName": "found"
+            }
+          ],
+          "defined": [
+            {
+              "nodeId": "authority",
+              "portName": "defined"
             }
           ]
         },
@@ -557,7 +572,7 @@
       "y": 0.0,
       "inputData": {
         "width": {
-          "value": 3
+          "value": 4
         }
       },
       "connections": {

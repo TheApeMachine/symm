@@ -86,9 +86,9 @@ export const Radar = ({
 			<title>{title}</title>
 
 			{/* Background grid concentric rings */}
-			{levels.map((level, index) => (
+			{levels.map((level) => (
 				<polygon
-					key={`level:${index}`}
+					key={`level:${level.radiusRatio}`}
 					points={computePolygonPoints(level.radiusRatio)}
 					fill="none"
 					stroke={level.stroke}

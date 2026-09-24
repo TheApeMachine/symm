@@ -21,8 +21,22 @@ func TestConcordance(t *testing.T) {
 		// read feeds one paired movement and carries the pair's state
 		// forward the way its store does, returning strength and orientation
 		// when the pair has support.
-		read := func(left, right float64) (float64, float64, bool) {
+		// silent names an end that did not report: its movement is left unread.
+		read := func(left, right float64, silent ...int) (float64, float64, bool) {
 			So(client.Write(ctx, func(params statistic.Concordance_write_Params) error {
+				defined, err := params.NewDefined(2)
+
+				if err != nil {
+					return err
+				}
+
+				defined.Set(0, true)
+				defined.Set(1, true)
+
+				for _, end := range silent {
+					defined.Set(end, false)
+				}
+
 				value, err := params.NewValue(2)
 
 				if err != nil {
@@ -110,6 +124,12 @@ func TestConcordance(t *testing.T) {
 			So(known, ShouldBeFalse)
 		})
 
+		Convey("A pair with no history learns nothing from one end's silence", func() {
+			_, _, emitted := read(1, 0, 1)
+			So(emitted, ShouldBeFalse)
+			So(known, ShouldBeFalse)
+		})
+
 		Convey("Consistently inverse movement attracts, oriented inverse", func() {
 			var strength, orientation float64
 
@@ -131,6 +151,12 @@ func TestConcordance(t *testing.T) {
 
 				So(strength, ShouldAlmostEqual, inverse)
 				So(orientation, ShouldEqual, 1)
+			})
+
+			Convey("And an end that does not report at all, while the other moves, is a non-response that repels", func() {
+				strength, _, emitted := read(1, 0, 1)
+				So(emitted, ShouldBeTrue)
+				So(strength, ShouldBeLessThan, 0)
 			})
 
 			Convey("And one observed non-response breaks it and repels", func() {

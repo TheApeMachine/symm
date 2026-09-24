@@ -26,7 +26,7 @@ func (c Complete) Write(ctx context.Context, params func(Complete_write_Params) 
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 1}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 8, PointerCount: 1}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(Complete_write_Params(s)) }
 	}
 
@@ -208,7 +208,7 @@ func (c Complete_done) Args() Complete_done_Params {
 
 // AllocResults allocates the results struct.
 func (c Complete_done) AllocResults() (Complete_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 3})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 4})
 	return Complete_done_Results(r), err
 }
 
@@ -227,12 +227,12 @@ type Complete_write_Params capnp.Struct
 const Complete_write_Params_TypeID = 0xf08dcd79a3a23ada
 
 func NewComplete_write_Params(s *capnp.Segment) (Complete_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
 	return Complete_write_Params(st), err
 }
 
 func NewRootComplete_write_Params(s *capnp.Segment) (Complete_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
 	return Complete_write_Params(st), err
 }
 
@@ -291,13 +291,20 @@ func (s Complete_write_Params) NewPresent(n int32) (capnp.BitList, error) {
 	err = capnp.Struct(s).SetPtr(0, l.ToPtr())
 	return l, err
 }
+func (s Complete_write_Params) Reach() bool {
+	return capnp.Struct(s).Bit(0)
+}
+
+func (s Complete_write_Params) SetReach(v bool) {
+	capnp.Struct(s).SetBit(0, v)
+}
 
 // Complete_write_Params_List is a list of Complete_write_Params.
 type Complete_write_Params_List = capnp.StructList[Complete_write_Params]
 
 // NewComplete_write_Params creates a new list of Complete_write_Params.
 func NewComplete_write_Params_List(s *capnp.Segment, sz int32) (Complete_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1}, sz)
 	return capnp.StructList[Complete_write_Params](l), err
 }
 
@@ -380,12 +387,12 @@ type Complete_done_Results capnp.Struct
 const Complete_done_Results_TypeID = 0xff33910b75a4b11a
 
 func NewComplete_done_Results(s *capnp.Segment) (Complete_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 3})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 4})
 	return Complete_done_Results(st), err
 }
 
 func NewRootComplete_done_Results(s *capnp.Segment) (Complete_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 3})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 4})
 	return Complete_done_Results(st), err
 }
 
@@ -490,13 +497,36 @@ func (s Complete_done_Results) NewPairs(n int32) (capnp.Int64List, error) {
 	err = capnp.Struct(s).SetPtr(2, l.ToPtr())
 	return l, err
 }
+func (s Complete_done_Results) Joint() (capnp.BitList, error) {
+	p, err := capnp.Struct(s).Ptr(3)
+	return capnp.BitList(p.List()), err
+}
+
+func (s Complete_done_Results) HasJoint() bool {
+	return capnp.Struct(s).HasPtr(3)
+}
+
+func (s Complete_done_Results) SetJoint(v capnp.BitList) error {
+	return capnp.Struct(s).SetPtr(3, v.ToPtr())
+}
+
+// NewJoint sets the joint field to a newly
+// allocated capnp.BitList, preferring placement in s's segment.
+func (s Complete_done_Results) NewJoint(n int32) (capnp.BitList, error) {
+	l, err := capnp.NewBitList(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return capnp.BitList{}, err
+	}
+	err = capnp.Struct(s).SetPtr(3, l.ToPtr())
+	return l, err
+}
 
 // Complete_done_Results_List is a list of Complete_done_Results.
 type Complete_done_Results_List = capnp.StructList[Complete_done_Results]
 
 // NewComplete_done_Results creates a new list of Complete_done_Results.
 func NewComplete_done_Results_List(s *capnp.Segment, sz int32) (Complete_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 3}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 4}, sz)
 	return capnp.StructList[Complete_done_Results](l), err
 }
 

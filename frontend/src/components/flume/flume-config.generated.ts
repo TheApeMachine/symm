@@ -2272,6 +2272,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		initialWidth: 340,
 		inputs: (ports) => (_inputData, connections) => {
 			const dynamicPorts = [
+				ports.bool({ name: "reach", label: "reach" }),
 			];
 			const wiredPresent = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("present"));
 			for (let index = 0; index < Math.max(1, wiredPresent.length + 1); index++) {
@@ -2282,6 +2283,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		},
 		outputs: (ports) => [
 			ports.data({ name: "fromNodes", label: "fromNodes" }),
+			ports.data({ name: "joint", label: "joint" }),
 			ports.data({ name: "pairs", label: "pairs" }),
 			ports.data({ name: "toNodes", label: "toNodes" }),
 		],
@@ -5054,6 +5056,8 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.data({ name: "defined", label: "defined" }),
 			ports.data({ name: "energy", label: "energy" }),
 			ports.data({ name: "index", label: "index" }),
+			ports.data({ name: "maturity", label: "maturity" }),
+			ports.data({ name: "snr", label: "snr" }),
 			ports.data({ name: "standard", label: "standard" }),
 			ports.data({ name: "state", label: "state" }),
 		],
@@ -5182,6 +5186,11 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		inputs: (ports) => (_inputData, connections) => {
 			const dynamicPorts = [
 			];
+			const wiredDefined = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("defined"));
+			for (let index = 0; index < Math.max(1, wiredDefined.length + 1); index++) {
+				const portName = index === 0 ? "defined" : `defined_${index}`;
+				dynamicPorts.push(ports.bool({ name: portName, label: portName }));
+			}
 			const wiredFromNodes = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("fromNodes"));
 			for (let index = 0; index < Math.max(1, wiredFromNodes.length + 1); index++) {
 				const portName = index === 0 ? "fromNodes" : `fromNodes_${index}`;
@@ -8220,6 +8229,8 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.string({ name: "previous.scope", label: "previous.scope" }),
 		],
 		outputs: (ports) => (_inputData, _connections) => [
+			ports.data({ name: "authority.maturity", label: "authority.maturity" }),
+			ports.data({ name: "authority.snr", label: "authority.snr" }),
 			ports.int64({ name: "authority_state.records", label: "authority_state.records" }),
 			ports.Capability({ name: "authority_state.self", label: "authority_state.self" }),
 			ports.int64({ name: "change.idle", label: "change.idle" }),
@@ -8229,6 +8240,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "hot.threshold", label: "hot.threshold" }),
 			ports.int64({ name: "pair_state.records", label: "pair_state.records" }),
 			ports.Capability({ name: "pair_state.self", label: "pair_state.self" }),
+			ports.data({ name: "pairs.joint", label: "pairs.joint" }),
 			ports.int64({ name: "partition.records", label: "partition.records" }),
 			ports.Capability({ name: "partition.self", label: "partition.self" }),
 			ports.int64({ name: "peak.moving", label: "peak.moving" }),
