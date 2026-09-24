@@ -364,6 +364,45 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 	});
 	config.addNodeType({
+		type: "calculus.Change",
+		label: "Change",
+		category: "calculus",
+		initialWidth: 340,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+			];
+			const wiredKnown = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("known"));
+			for (let index = 0; index < Math.max(1, wiredKnown.length + 1); index++) {
+				const portName = index === 0 ? "known" : `known_${index}`;
+				dynamicPorts.push(ports.bool({ name: portName, label: portName }));
+			}
+			const wiredPresent = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("present"));
+			for (let index = 0; index < Math.max(1, wiredPresent.length + 1); index++) {
+				const portName = index === 0 ? "present" : `present_${index}`;
+				dynamicPorts.push(ports.bool({ name: portName, label: portName }));
+			}
+			const wiredPrevious = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("previous"));
+			for (let index = 0; index < Math.max(1, wiredPrevious.length + 1); index++) {
+				const portName = index === 0 ? "previous" : `previous_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			const wiredValue = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("value"));
+			for (let index = 0; index < Math.max(1, wiredValue.length + 1); index++) {
+				const portName = index === 0 ? "value" : `value_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.data({ name: "change", label: "change" }),
+			ports.data({ name: "defined", label: "defined" }),
+			ports.int64({ name: "idle", label: "idle" }),
+			ports.data({ name: "read.index", label: "read.index" }),
+			ports.data({ name: "read.latest", label: "read.latest" }),
+		],
+	});
+
+	config.addNodeType({
 		type: "calculus.Erfc",
 		label: "Erfc",
 		category: "calculus",
@@ -663,44 +702,6 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 	});
 	config.addNodeType({
-		type: "cognition.Remapper",
-		label: "Remapper",
-		category: "cognition",
-		initialWidth: 340,
-		inputs: (ports) => (_inputData, connections) => {
-			const dynamicPorts = [
-				ports["[]byte"]({ name: "cursor", label: "cursor" }),
-				ports["[]byte"]({ name: "evidence", label: "evidence" }),
-				ports.bool({ name: "reset", label: "reset" }),
-			];
-			const wiredActivations = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("activations"));
-			for (let index = 0; index < Math.max(1, wiredActivations.length + 1); index++) {
-				const portName = index === 0 ? "activations" : `activations_${index}`;
-				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
-			}
-			const wiredAuthorities = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("authorities"));
-			for (let index = 0; index < Math.max(1, wiredAuthorities.length + 1); index++) {
-				const portName = index === 0 ? "authorities" : `authorities_${index}`;
-				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
-			}
-			const wiredIds = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("ids"));
-			for (let index = 0; index < Math.max(1, wiredIds.length + 1); index++) {
-				const portName = index === 0 ? "ids" : `ids_${index}`;
-				dynamicPorts.push(ports.string({ name: portName, label: portName }));
-			}
-			return dynamicPorts;
-		},
-		outputs: (ports) => [
-			ports["[]byte"]({ name: "out", label: "out" }),
-			ports["[]byte"]({ name: "regions", label: "regions" }),
-			ports.int64({ name: "revision", label: "revision" }),
-			ports.bool({ name: "settled", label: "settled" }),
-			ports.data({ name: "tokens", label: "tokens" }),
-			ports.string({ name: "vocabulary", label: "vocabulary" }),
-		],
-	});
-
-	config.addNodeType({
 		type: "cognition.SensoryKey",
 		label: "Sensory Key",
 		category: "cognition",
@@ -729,11 +730,19 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "Token Sequence",
 		category: "cognition",
 		initialWidth: 340,
-		inputs: (ports) => [
-			ports.bool({ name: "reset", label: "reset" }),
-			ports.string({ name: "scope", label: "scope" }),
-			ports.string({ name: "token", label: "token" }),
-		],
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.bool({ name: "reset", label: "reset" }),
+				ports.string({ name: "scope", label: "scope" }),
+				ports.string({ name: "token", label: "token" }),
+			];
+			const wiredTokens = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("tokens"));
+			for (let index = 0; index < Math.max(1, wiredTokens.length + 1); index++) {
+				const portName = index === 0 ? "tokens" : `tokens_${index}`;
+				dynamicPorts.push(ports.string({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
 		outputs: (ports) => [
 			ports.int64({ name: "depth", label: "depth" }),
 			ports["[]byte"]({ name: "out", label: "out" }),
@@ -741,6 +750,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.data({ name: "sequence", label: "sequence" }),
 		],
 	});
+
 	config.addNodeType({
 		type: "cognition.Weight",
 		label: "Weight",
@@ -1000,6 +1010,19 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 	});
 	config.addNodeType({
+		type: "data.CanonicalizeFutures",
+		label: "Canonicalize Futures",
+		category: "data",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports["[]byte"]({ name: "data", label: "data" }),
+		],
+		outputs: (ports) => [
+			ports["[]byte"]({ name: "out", label: "out" }),
+			ports.Status({ name: "status", label: "status" }),
+		],
+	});
+	config.addNodeType({
 		type: "data.Collect",
 		label: "Collect",
 		category: "data",
@@ -1114,6 +1137,32 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.int64({ name: "idle", label: "idle" }),
 			ports["[]byte"]({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "data.Gather",
+		label: "Gather",
+		category: "data",
+		initialWidth: 340,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+			];
+			const wiredPresent = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("present"));
+			for (let index = 0; index < Math.max(1, wiredPresent.length + 1); index++) {
+				const portName = index === 0 ? "present" : `present_${index}`;
+				dynamicPorts.push(ports.bool({ name: portName, label: portName }));
+			}
+			const wiredValues = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("values"));
+			for (let index = 0; index < Math.max(1, wiredValues.length + 1); index++) {
+				const portName = index === 0 ? "values" : `values_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.data({ name: "present", label: "present" }),
+			ports.data({ name: "values", label: "values" }),
 		],
 	});
 
@@ -1970,6 +2019,26 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 	});
 	config.addNodeType({
+		type: "geometry.Inversion",
+		label: "Inversion",
+		category: "geometry",
+		initialWidth: 340,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+			];
+			const wiredStrength = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("strength"));
+			for (let index = 0; index < Math.max(1, wiredStrength.length + 1); index++) {
+				const portName = index === 0 ? "strength" : `strength_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.data({ name: "distance", label: "distance" }),
+		],
+	});
+
+	config.addNodeType({
 		type: "geometry.Normalize",
 		label: "Normalize",
 		category: "geometry",
@@ -1990,6 +2059,59 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 	});
 	config.addNodeType({
+		type: "geometry.Peak",
+		label: "Peak",
+		category: "geometry",
+		initialWidth: 340,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+			];
+			const wiredAuthority = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("authority"));
+			for (let index = 0; index < Math.max(1, wiredAuthority.length + 1); index++) {
+				const portName = index === 0 ? "authority" : `authority_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			const wiredFromNodes = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("fromNodes"));
+			for (let index = 0; index < Math.max(1, wiredFromNodes.length + 1); index++) {
+				const portName = index === 0 ? "fromNodes" : `fromNodes_${index}`;
+				dynamicPorts.push(ports.int64({ name: portName, label: portName }));
+			}
+			const wiredKnown = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("known"));
+			for (let index = 0; index < Math.max(1, wiredKnown.length + 1); index++) {
+				const portName = index === 0 ? "known" : `known_${index}`;
+				dynamicPorts.push(ports.bool({ name: portName, label: portName }));
+			}
+			const wiredPositions = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("positions"));
+			for (let index = 0; index < Math.max(1, wiredPositions.length + 1); index++) {
+				const portName = index === 0 ? "positions" : `positions_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			const wiredPrior = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("prior"));
+			for (let index = 0; index < Math.max(1, wiredPrior.length + 1); index++) {
+				const portName = index === 0 ? "prior" : `prior_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			const wiredStrength = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("strength"));
+			for (let index = 0; index < Math.max(1, wiredStrength.length + 1); index++) {
+				const portName = index === 0 ? "strength" : `strength_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			const wiredToNodes = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("toNodes"));
+			for (let index = 0; index < Math.max(1, wiredToNodes.length + 1); index++) {
+				const portName = index === 0 ? "toNodes" : `toNodes_${index}`;
+				dynamicPorts.push(ports.int64({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.data({ name: "index", label: "index" }),
+			ports.int64({ name: "moving", label: "moving" }),
+			ports.data({ name: "settled", label: "settled" }),
+			ports.data({ name: "state", label: "state" }),
+		],
+	});
+
+	config.addNodeType({
 		type: "geometry.PhasePath",
 		label: "Phase Path",
 		category: "geometry",
@@ -1999,6 +2121,57 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
+	config.addNodeType({
+		type: "geometry.Relaxation",
+		label: "Relaxation",
+		category: "geometry",
+		initialWidth: 340,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+			];
+			const wiredAuthority = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("authority"));
+			for (let index = 0; index < Math.max(1, wiredAuthority.length + 1); index++) {
+				const portName = index === 0 ? "authority" : `authority_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			const wiredDistance = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("distance"));
+			for (let index = 0; index < Math.max(1, wiredDistance.length + 1); index++) {
+				const portName = index === 0 ? "distance" : `distance_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			const wiredFromNodes = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("fromNodes"));
+			for (let index = 0; index < Math.max(1, wiredFromNodes.length + 1); index++) {
+				const portName = index === 0 ? "fromNodes" : `fromNodes_${index}`;
+				dynamicPorts.push(ports.int64({ name: portName, label: portName }));
+			}
+			const wiredKnown = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("known"));
+			for (let index = 0; index < Math.max(1, wiredKnown.length + 1); index++) {
+				const portName = index === 0 ? "known" : `known_${index}`;
+				dynamicPorts.push(ports.bool({ name: portName, label: portName }));
+			}
+			const wiredPositions = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("positions"));
+			for (let index = 0; index < Math.max(1, wiredPositions.length + 1); index++) {
+				const portName = index === 0 ? "positions" : `positions_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			const wiredStrength = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("strength"));
+			for (let index = 0; index < Math.max(1, wiredStrength.length + 1); index++) {
+				const portName = index === 0 ? "strength" : `strength_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			const wiredToNodes = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("toNodes"));
+			for (let index = 0; index < Math.max(1, wiredToNodes.length + 1); index++) {
+				const portName = index === 0 ? "toNodes" : `toNodes_${index}`;
+				dynamicPorts.push(ports.int64({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.data({ name: "index", label: "index" }),
+			ports.data({ name: "positions", label: "positions" }),
+		],
+	});
+
 	config.addNodeType({
 		type: "graph.AllShortestPaths",
 		label: "All Shortest Paths",
@@ -2089,6 +2262,28 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.data({ name: "nodes", label: "nodes" }),
 			ports.data({ name: "scores", label: "scores" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "graph.Complete",
+		label: "Complete",
+		category: "graph",
+		initialWidth: 340,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+			];
+			const wiredPresent = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("present"));
+			for (let index = 0; index < Math.max(1, wiredPresent.length + 1); index++) {
+				const portName = index === 0 ? "present" : `present_${index}`;
+				dynamicPorts.push(ports.bool({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.data({ name: "fromNodes", label: "fromNodes" }),
+			ports.data({ name: "pairs", label: "pairs" }),
+			ports.data({ name: "toNodes", label: "toNodes" }),
 		],
 	});
 
@@ -4825,6 +5020,46 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 	});
 
 	config.addNodeType({
+		type: "statistic.Authority",
+		label: "Authority",
+		category: "statistic",
+		initialWidth: 340,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+			];
+			const wiredDefined = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("defined"));
+			for (let index = 0; index < Math.max(1, wiredDefined.length + 1); index++) {
+				const portName = index === 0 ? "defined" : `defined_${index}`;
+				dynamicPorts.push(ports.bool({ name: portName, label: portName }));
+			}
+			const wiredKnown = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("known"));
+			for (let index = 0; index < Math.max(1, wiredKnown.length + 1); index++) {
+				const portName = index === 0 ? "known" : `known_${index}`;
+				dynamicPorts.push(ports.bool({ name: portName, label: portName }));
+			}
+			const wiredPrior = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("prior"));
+			for (let index = 0; index < Math.max(1, wiredPrior.length + 1); index++) {
+				const portName = index === 0 ? "prior" : `prior_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			const wiredValue = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("value"));
+			for (let index = 0; index < Math.max(1, wiredValue.length + 1); index++) {
+				const portName = index === 0 ? "value" : `value_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.data({ name: "authority", label: "authority" }),
+			ports.data({ name: "defined", label: "defined" }),
+			ports.data({ name: "energy", label: "energy" }),
+			ports.data({ name: "index", label: "index" }),
+			ports.data({ name: "standard", label: "standard" }),
+			ports.data({ name: "state", label: "state" }),
+		],
+	});
+
+	config.addNodeType({
 		type: "statistic.Bhattacharyya",
 		label: "Bhattacharyya",
 		category: "statistic",
@@ -4882,6 +5117,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		category: "statistic",
 		initialWidth: 340,
 		inputs: (ports) => [
+			ports.string({ name: "scope", label: "scope" }),
 			ports.float64({ name: "value", label: "value" }),
 		],
 		outputs: (ports) => [
@@ -4894,6 +5130,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		category: "statistic",
 		initialWidth: 340,
 		inputs: (ports) => [
+			ports.string({ name: "scope", label: "scope" }),
 			ports.float64({ name: "value", label: "value" }),
 		],
 		outputs: (ports) => [
@@ -4937,6 +5174,56 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "meanAngle", label: "meanAngle" }),
 		],
 	});
+	config.addNodeType({
+		type: "statistic.Concordance",
+		label: "Concordance",
+		category: "statistic",
+		initialWidth: 340,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+			];
+			const wiredFromNodes = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("fromNodes"));
+			for (let index = 0; index < Math.max(1, wiredFromNodes.length + 1); index++) {
+				const portName = index === 0 ? "fromNodes" : `fromNodes_${index}`;
+				dynamicPorts.push(ports.int64({ name: portName, label: portName }));
+			}
+			const wiredKnown = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("known"));
+			for (let index = 0; index < Math.max(1, wiredKnown.length + 1); index++) {
+				const portName = index === 0 ? "known" : `known_${index}`;
+				dynamicPorts.push(ports.bool({ name: portName, label: portName }));
+			}
+			const wiredPairs = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("pairs"));
+			for (let index = 0; index < Math.max(1, wiredPairs.length + 1); index++) {
+				const portName = index === 0 ? "pairs" : `pairs_${index}`;
+				dynamicPorts.push(ports.int64({ name: portName, label: portName }));
+			}
+			const wiredPrior = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("prior"));
+			for (let index = 0; index < Math.max(1, wiredPrior.length + 1); index++) {
+				const portName = index === 0 ? "prior" : `prior_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			const wiredToNodes = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("toNodes"));
+			for (let index = 0; index < Math.max(1, wiredToNodes.length + 1); index++) {
+				const portName = index === 0 ? "toNodes" : `toNodes_${index}`;
+				dynamicPorts.push(ports.int64({ name: portName, label: portName }));
+			}
+			const wiredValue = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("value"));
+			for (let index = 0; index < Math.max(1, wiredValue.length + 1); index++) {
+				const portName = index === 0 ? "value" : `value_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.data({ name: "fromNodes", label: "fromNodes" }),
+			ports.data({ name: "index", label: "index" }),
+			ports.data({ name: "orientation", label: "orientation" }),
+			ports.data({ name: "state", label: "state" }),
+			ports.data({ name: "strength", label: "strength" }),
+			ports.data({ name: "toNodes", label: "toNodes" }),
+		],
+	});
+
 	config.addNodeType({
 		type: "statistic.Correlation",
 		label: "Correlation",
@@ -5066,6 +5353,37 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "geometricMean", label: "geometricMean" }),
 		],
 	});
+	config.addNodeType({
+		type: "statistic.GroupSum",
+		label: "Group Sum",
+		category: "statistic",
+		initialWidth: 340,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+			];
+			const wiredLabels = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("labels"));
+			for (let index = 0; index < Math.max(1, wiredLabels.length + 1); index++) {
+				const portName = index === 0 ? "labels" : `labels_${index}`;
+				dynamicPorts.push(ports.string({ name: portName, label: portName }));
+			}
+			const wiredPresent = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("present"));
+			for (let index = 0; index < Math.max(1, wiredPresent.length + 1); index++) {
+				const portName = index === 0 ? "present" : `present_${index}`;
+				dynamicPorts.push(ports.bool({ name: portName, label: portName }));
+			}
+			const wiredValues = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("values"));
+			for (let index = 0; index < Math.max(1, wiredValues.length + 1); index++) {
+				const portName = index === 0 ? "values" : `values_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.data({ name: "labels", label: "labels" }),
+			ports.data({ name: "sums", label: "sums" }),
+		],
+	});
+
 	config.addNodeType({
 		type: "statistic.HarmonicMean",
 		label: "Harmonic Mean",
@@ -5346,6 +5664,33 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 	});
 
 	config.addNodeType({
+		type: "statistic.Otsu",
+		label: "Otsu",
+		category: "statistic",
+		initialWidth: 340,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+			];
+			const wiredLabels = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("labels"));
+			for (let index = 0; index < Math.max(1, wiredLabels.length + 1); index++) {
+				const portName = index === 0 ? "labels" : `labels_${index}`;
+				dynamicPorts.push(ports.string({ name: portName, label: portName }));
+			}
+			const wiredValues = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("values"));
+			for (let index = 0; index < Math.max(1, wiredValues.length + 1); index++) {
+				const portName = index === 0 ? "values" : `values_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.data({ name: "hot", label: "hot" }),
+			ports["[]byte"]({ name: "out", label: "out" }),
+			ports.float64({ name: "threshold", label: "threshold" }),
+		],
+	});
+
+	config.addNodeType({
 		type: "statistic.Quantile",
 		label: "Quantile",
 		category: "statistic",
@@ -5588,14 +5933,26 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 				const portName = index === 0 ? "metrics" : `metrics_${index}`;
 				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
 			}
+			const wiredPresent = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("present"));
+			for (let index = 0; index < Math.max(1, wiredPresent.length + 1); index++) {
+				const portName = index === 0 ? "present" : `present_${index}`;
+				dynamicPorts.push(ports.bool({ name: portName, label: portName }));
+			}
+			const wiredScope = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("scope"));
+			for (let index = 0; index < Math.max(1, wiredScope.length + 1); index++) {
+				const portName = index === 0 ? "scope" : `scope_${index}`;
+				dynamicPorts.push(ports.string({ name: portName, label: portName }));
+			}
 			return dynamicPorts;
 		},
 		outputs: (ports) => [
 			ports.int64({ name: "delivered", label: "delivered" }),
 			ports.int64({ name: "metrics", label: "metrics" }),
 			ports.data({ name: "observations", label: "observations" }),
+			ports.data({ name: "observed", label: "observed" }),
 			ports["[]byte"]({ name: "out", label: "out" }),
 			ports.data({ name: "present", label: "present" }),
+			ports.string({ name: "scope", label: "scope" }),
 			ports.Status({ name: "status", label: "status" }),
 			ports.data({ name: "values", label: "values" }),
 			ports.Capability({ name: "self", label: "self" }),
@@ -5756,6 +6113,45 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.int64({ name: "pending", label: "pending" }),
 		],
 	});
+	config.addNodeType({
+		type: "store.Vector",
+		label: "Vector",
+		category: "store",
+		initialWidth: 340,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.int64({ name: "width", label: "width" }),
+			];
+			const wiredIndex = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("index"));
+			for (let index = 0; index < Math.max(1, wiredIndex.length + 1); index++) {
+				const portName = index === 0 ? "index" : `index_${index}`;
+				dynamicPorts.push(ports.int64({ name: portName, label: portName }));
+			}
+			const wiredRead = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("read"));
+			for (let index = 0; index < Math.max(1, wiredRead.length + 1); index++) {
+				const portName = index === 0 ? "read" : `read_${index}`;
+				dynamicPorts.push(ports.int64({ name: portName, label: portName }));
+			}
+			const wiredScope = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("scope"));
+			for (let index = 0; index < Math.max(1, wiredScope.length + 1); index++) {
+				const portName = index === 0 ? "scope" : `scope_${index}`;
+				dynamicPorts.push(ports.string({ name: portName, label: portName }));
+			}
+			const wiredValues = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("values"));
+			for (let index = 0; index < Math.max(1, wiredValues.length + 1); index++) {
+				const portName = index === 0 ? "values" : `values_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.data({ name: "found", label: "found" }),
+			ports.int64({ name: "records", label: "records" }),
+			ports.data({ name: "values", label: "values" }),
+			ports.Capability({ name: "self", label: "self" }),
+		],
+	});
+
 	config.addNodeType({
 		type: "strategy.ActionsToAnnotations",
 		label: "Actions To Annotations",
@@ -5962,6 +6358,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		category: "temporal",
 		initialWidth: 340,
 		inputs: (ports) => [
+			ports.string({ name: "scope", label: "scope" }),
 			ports.float64({ name: "value", label: "value" }),
 		],
 		outputs: (ports) => [
@@ -5974,6 +6371,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		category: "temporal",
 		initialWidth: 340,
 		inputs: (ports) => [
+			ports.string({ name: "scope", label: "scope" }),
 			ports.int64({ name: "timestamp", label: "timestamp" }),
 		],
 		outputs: (ports) => [
@@ -6009,6 +6407,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		category: "temporal",
 		initialWidth: 340,
 		inputs: (ports) => [
+			ports.string({ name: "scope", label: "scope" }),
 			ports.float64({ name: "value", label: "value" }),
 		],
 		outputs: (ports) => [
@@ -6052,6 +6451,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		category: "temporal",
 		initialWidth: 340,
 		inputs: (ports) => [
+			ports.string({ name: "scope", label: "scope" }),
 			ports.float64({ name: "ts", label: "ts" }),
 			ports.float64({ name: "val", label: "val" }),
 		],
@@ -7407,6 +7807,19 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 	});
 	config.addNodeType({
+		type: "definition:canonicalize_futures",
+		label: "canonicalize_futures",
+		category: "Definitions",
+		description: "Sub-graph: canonicalize_futures",
+		initialWidth: 320,
+		inputs: (ports) => (_inputData, _connections) => [
+			ports["[]byte"]({ name: "normalizer.data", label: "normalizer.data" }),
+		],
+		outputs: (ports) => (_inputData, _connections) => [
+			ports["[]byte"]({ name: "normalizer.out", label: "normalizer.out" }),
+		],
+	});
+	config.addNodeType({
 		type: "definition:capture",
 		label: "capture",
 		category: "Definitions",
@@ -7440,13 +7853,21 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		description: "Sub-graph: correlation_ticker",
 		initialWidth: 320,
 		inputs: (ports) => (_inputData, _connections) => [
+			ports.string({ name: "baseline.scope", label: "baseline.scope" }),
 			ports.float64({ name: "hy.boundsEnd1", label: "hy.boundsEnd1" }),
 			ports.float64({ name: "hy.boundsEnd2", label: "hy.boundsEnd2" }),
+			ports.string({ name: "prevReferenceTimestamp.scope", label: "prevReferenceTimestamp.scope" }),
 			ports.float64({ name: "prevReferenceTimestamp.value", label: "prevReferenceTimestamp.value" }),
+			ports.string({ name: "prevTimestamp.scope", label: "prevTimestamp.scope" }),
 			ports.float64({ name: "prevTimestamp.value", label: "prevTimestamp.value" }),
+			ports.string({ name: "referenceReturns.scope", label: "referenceReturns.scope" }),
 			ports.float64({ name: "referenceReturns.value", label: "referenceReturns.value" }),
+			ports.string({ name: "relativeBaseline.scope", label: "relativeBaseline.scope" }),
+			ports.string({ name: "relativeVelocity.scope", label: "relativeVelocity.scope" }),
 			ports.float64({ name: "relativeVelocity.ts", label: "relativeVelocity.ts" }),
+			ports.string({ name: "returns.scope", label: "returns.scope" }),
 			ports.float64({ name: "returns.value", label: "returns.value" }),
+			ports.string({ name: "velocity.scope", label: "velocity.scope" }),
 			ports.float64({ name: "velocity.ts", label: "velocity.ts" }),
 		],
 		outputs: (ports) => (_inputData, _connections) => [
@@ -7507,12 +7928,22 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.bool({ name: "aggressive_notional:sell.flush", label: "aggressive_notional:sell.flush" }),
 			ports.float64({ name: "buyQuantity.a", label: "buyQuantity.a" }),
 			ports.float64({ name: "buyShare.a", label: "buyShare.a" }),
+			ports.string({ name: "elapsed.scope", label: "elapsed.scope" }),
 			ports.int64({ name: "elapsed.timestamp", label: "elapsed.timestamp" }),
 			ports.bool({ name: "executed_quantity:buy.flush", label: "executed_quantity:buy.flush" }),
 			ports.bool({ name: "executed_quantity:sell.flush", label: "executed_quantity:sell.flush" }),
+			ports.string({ name: "fractionBaseline.scope", label: "fractionBaseline.scope" }),
+			ports.string({ name: "fractionVariance.scope", label: "fractionVariance.scope" }),
+			ports.string({ name: "grossRateMean.scope", label: "grossRateMean.scope" }),
+			ports.string({ name: "grossRateVar.scope", label: "grossRateVar.scope" }),
+			ports.string({ name: "gross_notional_rate_velocity.scope", label: "gross_notional_rate_velocity.scope" }),
 			ports.float64({ name: "gross_notional_rate_velocity.ts", label: "gross_notional_rate_velocity.ts" }),
+			ports.string({ name: "midpoint_log_return.scope", label: "midpoint_log_return.scope" }),
 			ports.float64({ name: "midpoint_log_return.value", label: "midpoint_log_return.value" }),
+			ports.string({ name: "net_notional_rate_velocity.scope", label: "net_notional_rate_velocity.scope" }),
 			ports.float64({ name: "net_notional_rate_velocity.ts", label: "net_notional_rate_velocity.ts" }),
+			ports.string({ name: "responseRateMean.scope", label: "responseRateMean.scope" }),
+			ports.string({ name: "responseRateVar.scope", label: "responseRateVar.scope" }),
 			ports.float64({ name: "sellQuantity.a", label: "sellQuantity.a" }),
 			ports.float64({ name: "sellShare.b", label: "sellShare.b" }),
 			ports.float64({ name: "tradeNotional.a", label: "tradeNotional.a" }),
@@ -7568,7 +7999,10 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		description: "Sub-graph: depthflow_level3",
 		initialWidth: 320,
 		inputs: (ports) => (_inputData, _connections) => [
+			ports.string({ name: "elapsed.scope", label: "elapsed.scope" }),
 			ports.int64({ name: "elapsed.timestamp", label: "elapsed.timestamp" }),
+			ports.string({ name: "imbalanceBaseline.scope", label: "imbalanceBaseline.scope" }),
+			ports.string({ name: "imbalanceVariance.scope", label: "imbalanceVariance.scope" }),
 			ports.float64({ name: "mutation_count.a", label: "mutation_count.a" }),
 			ports.float64({ name: "mutation_count.b", label: "mutation_count.b" }),
 			ports.float64({ name: "mutation_count_diff.a", label: "mutation_count_diff.a" }),
@@ -7577,6 +8011,8 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "observed_notional.b", label: "observed_notional.b" }),
 			ports.float64({ name: "observed_notional_diff.a", label: "observed_notional_diff.a" }),
 			ports.float64({ name: "observed_notional_diff.b", label: "observed_notional_diff.b" }),
+			ports.string({ name: "rateBaseline.scope", label: "rateBaseline.scope" }),
+			ports.string({ name: "rateVariance.scope", label: "rateVariance.scope" }),
 		],
 		outputs: (ports) => (_inputData, _connections) => [
 			ports.float64({ name: "mutation_activity_imbalance.out", label: "mutation_activity_imbalance.out" }),
@@ -7596,23 +8032,36 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		initialWidth: 320,
 		inputs: (ports) => (_inputData, _connections) => [
 			ports.float64({ name: "basis.b", label: "basis.b" }),
+			ports.string({ name: "basisBaseline.scope", label: "basisBaseline.scope" }),
 			ports.float64({ name: "basisDifference.a", label: "basisDifference.a" }),
 			ports.float64({ name: "basisDifference.b", label: "basisDifference.b" }),
+			ports.string({ name: "basisVariance.scope", label: "basisVariance.scope" }),
 			ports.float64({ name: "basis_change.prev", label: "basis_change.prev" }),
+			ports.string({ name: "basis_velocity.scope", label: "basis_velocity.scope" }),
 			ports.float64({ name: "basis_velocity.ts", label: "basis_velocity.ts" }),
 			ports.float64({ name: "derivativeIndexRatio.a", label: "derivativeIndexRatio.a" }),
 			ports.float64({ name: "derivativeIndexRatio.b", label: "derivativeIndexRatio.b" }),
 			ports.float64({ name: "derivativeSpotRatio.a", label: "derivativeSpotRatio.a" }),
 			ports.float64({ name: "derivativeSpotRatio.b", label: "derivativeSpotRatio.b" }),
+			ports.string({ name: "derivative_log_return.scope", label: "derivative_log_return.scope" }),
 			ports.float64({ name: "derivative_log_return.value", label: "derivative_log_return.value" }),
+			ports.string({ name: "elapsed.scope", label: "elapsed.scope" }),
 			ports.int64({ name: "elapsed.timestamp", label: "elapsed.timestamp" }),
+			ports.string({ name: "gapBaseline.scope", label: "gapBaseline.scope" }),
+			ports.string({ name: "gapVariance.scope", label: "gapVariance.scope" }),
+			ports.string({ name: "growthBaseline.scope", label: "growthBaseline.scope" }),
+			ports.string({ name: "growthVariance.scope", label: "growthVariance.scope" }),
 			ports.float64({ name: "indexSpotRatio.a", label: "indexSpotRatio.a" }),
 			ports.float64({ name: "indexSpotRatio.b", label: "indexSpotRatio.b" }),
 			ports.float64({ name: "open_interest_change.prev", label: "open_interest_change.prev" }),
 			ports.float64({ name: "open_interest_change.value", label: "open_interest_change.value" }),
+			ports.string({ name: "open_interest_growth_velocity.scope", label: "open_interest_growth_velocity.scope" }),
 			ports.float64({ name: "open_interest_growth_velocity.ts", label: "open_interest_growth_velocity.ts" }),
+			ports.string({ name: "open_interest_log_change.scope", label: "open_interest_log_change.scope" }),
 			ports.float64({ name: "open_interest_log_change.value", label: "open_interest_log_change.value" }),
+			ports.string({ name: "reference_log_return.scope", label: "reference_log_return.scope" }),
 			ports.float64({ name: "reference_log_return.value", label: "reference_log_return.value" }),
+			ports.string({ name: "return_gap_velocity.scope", label: "return_gap_velocity.scope" }),
 			ports.float64({ name: "return_gap_velocity.ts", label: "return_gap_velocity.ts" }),
 		],
 		outputs: (ports) => (_inputData, _connections) => [
@@ -7645,12 +8094,16 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		initialWidth: 320,
 		inputs: (ports) => (_inputData, _connections) => [
 			ports.float64({ name: "buyShare.a", label: "buyShare.a" }),
+			ports.string({ name: "elapsed.scope", label: "elapsed.scope" }),
 			ports.int64({ name: "elapsed.timestamp", label: "elapsed.timestamp" }),
 			ports.bool({ name: "gross_derivative_trade_notional.flush", label: "gross_derivative_trade_notional.flush" }),
 			ports.bool({ name: "liquidation_notional:buy.flush", label: "liquidation_notional:buy.flush" }),
 			ports.bool({ name: "liquidation_notional:sell.flush", label: "liquidation_notional:sell.flush" }),
+			ports.string({ name: "liquidation_share_velocity.scope", label: "liquidation_share_velocity.scope" }),
 			ports.float64({ name: "liquidation_share_velocity.ts", label: "liquidation_share_velocity.ts" }),
 			ports.float64({ name: "sellShare.b", label: "sellShare.b" }),
+			ports.string({ name: "shareBaseline.scope", label: "shareBaseline.scope" }),
+			ports.string({ name: "shareVariance.scope", label: "shareVariance.scope" }),
 			ports.float64({ name: "tradeNotional.a", label: "tradeNotional.a" }),
 			ports.float64({ name: "tradeNotional.b", label: "tradeNotional.b" }),
 		],
@@ -7677,9 +8130,11 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		description: "Sub-graph: hawkes_trade",
 		initialWidth: 320,
 		inputs: (ports) => (_inputData, _connections) => [
+			ports.string({ name: "conditional_intensity_velocity.scope", label: "conditional_intensity_velocity.scope" }),
 			ports.float64({ name: "conditional_intensity_velocity.ts", label: "conditional_intensity_velocity.ts" }),
 			ports.float64({ name: "events.component", label: "events.component" }),
 			ports.float64({ name: "events.time", label: "events.time" }),
+			ports.string({ name: "spectral_radius_velocity.scope", label: "spectral_radius_velocity.scope" }),
 			ports.float64({ name: "spectral_radius_velocity.ts", label: "spectral_radius_velocity.ts" }),
 		],
 		outputs: (ports) => (_inputData, _connections) => [
@@ -7746,12 +8201,52 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 	});
 	config.addNodeType({
+		type: "definition:impulse_map",
+		label: "impulse_map",
+		category: "Definitions",
+		description: "Sub-graph: impulse_map",
+		initialWidth: 320,
+		inputs: (ports) => (_inputData, _connections) => [
+			ports.int64({ name: "authority_state.read", label: "authority_state.read" }),
+			ports.string({ name: "authority_state.scope", label: "authority_state.scope" }),
+			ports.bool({ name: "change.present", label: "change.present" }),
+			ports.float64({ name: "change.value", label: "change.value" }),
+			ports.string({ name: "pair_state.scope", label: "pair_state.scope" }),
+			ports.int64({ name: "partition.read", label: "partition.read" }),
+			ports.string({ name: "partition.scope", label: "partition.scope" }),
+			ports.int64({ name: "positions.read", label: "positions.read" }),
+			ports.string({ name: "positions.scope", label: "positions.scope" }),
+			ports.int64({ name: "previous.read", label: "previous.read" }),
+			ports.string({ name: "previous.scope", label: "previous.scope" }),
+		],
+		outputs: (ports) => (_inputData, _connections) => [
+			ports.int64({ name: "authority_state.records", label: "authority_state.records" }),
+			ports.Capability({ name: "authority_state.self", label: "authority_state.self" }),
+			ports.int64({ name: "change.idle", label: "change.idle" }),
+			ports.data({ name: "concordance.orientation", label: "concordance.orientation" }),
+			ports.data({ name: "hot.hot", label: "hot.hot" }),
+			ports["[]byte"]({ name: "hot.out", label: "hot.out" }),
+			ports.float64({ name: "hot.threshold", label: "hot.threshold" }),
+			ports.int64({ name: "pair_state.records", label: "pair_state.records" }),
+			ports.Capability({ name: "pair_state.self", label: "pair_state.self" }),
+			ports.int64({ name: "partition.records", label: "partition.records" }),
+			ports.Capability({ name: "partition.self", label: "partition.self" }),
+			ports.int64({ name: "peak.moving", label: "peak.moving" }),
+			ports.int64({ name: "positions.records", label: "positions.records" }),
+			ports.Capability({ name: "positions.self", label: "positions.self" }),
+			ports.int64({ name: "previous.records", label: "previous.records" }),
+			ports.Capability({ name: "previous.self", label: "previous.self" }),
+		],
+	});
+	config.addNodeType({
 		type: "definition:leadlag_ticker",
 		label: "leadlag_ticker",
 		category: "Definitions",
 		description: "Sub-graph: leadlag_ticker",
 		initialWidth: 320,
 		inputs: (ports) => (_inputData, _connections) => [
+			ports.string({ name: "bestMean.scope", label: "bestMean.scope" }),
+			ports.string({ name: "bestVar.scope", label: "bestVar.scope" }),
 			ports.float64({ name: "candidate_0.boundsEnd1", label: "candidate_0.boundsEnd1" }),
 			ports["[]byte"]({ name: "candidate_0.state", label: "candidate_0.state" }),
 			ports.float64({ name: "candidate_1.boundsEnd1", label: "candidate_1.boundsEnd1" }),
@@ -7770,11 +8265,21 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports["[]byte"]({ name: "candidate_7.state", label: "candidate_7.state" }),
 			ports.float64({ name: "candidate_8.boundsEnd1", label: "candidate_8.boundsEnd1" }),
 			ports["[]byte"]({ name: "candidate_8.state", label: "candidate_8.state" }),
+			ports.string({ name: "correlation_gain_velocity.scope", label: "correlation_gain_velocity.scope" }),
 			ports.float64({ name: "correlation_gain_velocity.ts", label: "correlation_gain_velocity.ts" }),
+			ports.string({ name: "gainMean.scope", label: "gainMean.scope" }),
+			ports.string({ name: "gainVar.scope", label: "gainVar.scope" }),
+			ports.string({ name: "lagMean.scope", label: "lagMean.scope" }),
+			ports.string({ name: "lagVar.scope", label: "lagVar.scope" }),
+			ports.string({ name: "lag_velocity.scope", label: "lag_velocity.scope" }),
 			ports.float64({ name: "lag_velocity.ts", label: "lag_velocity.ts" }),
+			ports.string({ name: "previousReferenceTimestamp.scope", label: "previousReferenceTimestamp.scope" }),
 			ports.float64({ name: "previousReferenceTimestamp.value", label: "previousReferenceTimestamp.value" }),
+			ports.string({ name: "previousTimestamp.scope", label: "previousTimestamp.scope" }),
 			ports.float64({ name: "previousTimestamp.value", label: "previousTimestamp.value" }),
+			ports.string({ name: "referenceReturns.scope", label: "referenceReturns.scope" }),
 			ports.float64({ name: "referenceReturns.value", label: "referenceReturns.value" }),
+			ports.string({ name: "returns.scope", label: "returns.scope" }),
 			ports.float64({ name: "returns.value", label: "returns.value" }),
 			ports.float64({ name: "shiftEnd_0.a", label: "shiftEnd_0.a" }),
 			ports.float64({ name: "shiftEnd_1.a", label: "shiftEnd_1.a" }),
@@ -7921,12 +8426,21 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		description: "Sub-graph: liquidity_ticker",
 		initialWidth: 320,
 		inputs: (ports) => (_inputData, _connections) => [
+			ports.string({ name: "askBaselineLog.scope", label: "askBaselineLog.scope" }),
+			ports.string({ name: "askVariance.scope", label: "askVariance.scope" }),
+			ports.string({ name: "bidBaselineLog.scope", label: "bidBaselineLog.scope" }),
+			ports.string({ name: "bidVariance.scope", label: "bidVariance.scope" }),
+			ports.string({ name: "divergence_velocity:ask.scope", label: "divergence_velocity:ask.scope" }),
 			ports.float64({ name: "divergence_velocity:ask.ts", label: "divergence_velocity:ask.ts" }),
+			ports.string({ name: "divergence_velocity:bid.scope", label: "divergence_velocity:bid.scope" }),
 			ports.float64({ name: "divergence_velocity:bid.ts", label: "divergence_velocity:bid.ts" }),
 			ports.float64({ name: "midpointSum.a", label: "midpointSum.a" }),
 			ports.float64({ name: "midpointSum.b", label: "midpointSum.b" }),
 			ports.float64({ name: "spread.a", label: "spread.a" }),
 			ports.float64({ name: "spread.b", label: "spread.b" }),
+			ports.string({ name: "spreadHistoryBaselineLog.scope", label: "spreadHistoryBaselineLog.scope" }),
+			ports.string({ name: "spreadHistoryVariance.scope", label: "spreadHistoryVariance.scope" }),
+			ports.string({ name: "spread_divergence_velocity.scope", label: "spread_divergence_velocity.scope" }),
 			ports.float64({ name: "spread_divergence_velocity.ts", label: "spread_divergence_velocity.ts" }),
 			ports.float64({ name: "touch_notional:ask.a", label: "touch_notional:ask.a" }),
 			ports.float64({ name: "touch_notional:ask.b", label: "touch_notional:ask.b" }),
@@ -7962,12 +8476,11 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		initialWidth: 320,
 		inputs: (ports) => (_inputData, _connections) => [
 			ports["[]byte"]({ name: "socket.write", label: "socket.write" }),
-			ports["[]byte"]({ name: "trade_subscription.data", label: "trade_subscription.data" }),
 		],
 		outputs: (ports) => (_inputData, _connections) => [
+			ports["[]byte"]({ name: "records.out", label: "records.out" }),
 			ports.string({ name: "socket.frame.endpoint", label: "socket.frame.endpoint" }),
 			ports.int64({ name: "socket.frame.generation", label: "socket.frame.generation" }),
-			ports["[]byte"]({ name: "socket.frame.read", label: "socket.frame.read" }),
 			ports.string({ name: "socket.frame.receivedAt", label: "socket.frame.receivedAt" }),
 			ports.int64({ name: "socket.idle", label: "socket.idle" }),
 		],
@@ -8261,6 +8774,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "entropy:ask.value", label: "entropy:ask.value" }),
 			ports.float64({ name: "entropy:bid.value", label: "entropy:bid.value" }),
 			ports.float64({ name: "morphology_change.prev", label: "morphology_change.prev" }),
+			ports.string({ name: "morphology_change_baseline.scope", label: "morphology_change_baseline.scope" }),
 		],
 		outputs: (ports) => (_inputData, _connections) => [
 			ports.float64({ name: "book_shape_distance.ambiguity", label: "book_shape_distance.ambiguity" }),
@@ -8927,6 +9441,9 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "midpointSum.b", label: "midpointSum.b" }),
 			ports.float64({ name: "spread.a", label: "spread.a" }),
 			ports.float64({ name: "spread.b", label: "spread.b" }),
+			ports.string({ name: "spreadHistoryBaseline.scope", label: "spreadHistoryBaseline.scope" }),
+			ports.string({ name: "spreadHistoryVariance.scope", label: "spreadHistoryVariance.scope" }),
+			ports.string({ name: "spread_divergence_velocity.scope", label: "spread_divergence_velocity.scope" }),
 			ports.float64({ name: "spread_divergence_velocity.ts", label: "spread_divergence_velocity.ts" }),
 		],
 		outputs: (ports) => (_inputData, _connections) => [
@@ -8944,13 +9461,24 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		description: "Sub-graph: pumpdump_ticker",
 		initialWidth: 320,
 		inputs: (ports) => (_inputData, _connections) => [
+			ports.string({ name: "elapsed.scope", label: "elapsed.scope" }),
 			ports.int64({ name: "elapsed.timestamp", label: "elapsed.timestamp" }),
 			ports.float64({ name: "midpointSum.a", label: "midpointSum.a" }),
 			ports.float64({ name: "midpointSum.b", label: "midpointSum.b" }),
+			ports.string({ name: "midpoint_log_return.scope", label: "midpoint_log_return.scope" }),
+			ports.string({ name: "midpoint_return_rate_velocity.scope", label: "midpoint_return_rate_velocity.scope" }),
 			ports.float64({ name: "midpoint_return_rate_velocity.ts", label: "midpoint_return_rate_velocity.ts" }),
+			ports.string({ name: "midpoint_return_velocity.scope", label: "midpoint_return_velocity.scope" }),
 			ports.float64({ name: "midpoint_return_velocity.ts", label: "midpoint_return_velocity.ts" }),
+			ports.string({ name: "rateHistoryBaseline.scope", label: "rateHistoryBaseline.scope" }),
+			ports.string({ name: "rateHistoryVariance.scope", label: "rateHistoryVariance.scope" }),
+			ports.string({ name: "returnHistoryBaseline.scope", label: "returnHistoryBaseline.scope" }),
+			ports.string({ name: "returnHistoryVariance.scope", label: "returnHistoryVariance.scope" }),
 			ports.float64({ name: "spread.a", label: "spread.a" }),
 			ports.float64({ name: "spread.b", label: "spread.b" }),
+			ports.string({ name: "spreadHistoryBaseline.scope", label: "spreadHistoryBaseline.scope" }),
+			ports.string({ name: "spreadHistoryVariance.scope", label: "spreadHistoryVariance.scope" }),
+			ports.string({ name: "spread_divergence_velocity.scope", label: "spread_divergence_velocity.scope" }),
 			ports.float64({ name: "spread_divergence_velocity.ts", label: "spread_divergence_velocity.ts" }),
 		],
 		outputs: (ports) => (_inputData, _connections) => [
@@ -8980,9 +9508,17 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		description: "Sub-graph: pumpdump_trade",
 		initialWidth: 320,
 		inputs: (ports) => (_inputData, _connections) => [
+			ports.string({ name: "midpoint_log_return.scope", label: "midpoint_log_return.scope" }),
 			ports.float64({ name: "midpoint_log_return.value", label: "midpoint_log_return.value" }),
+			ports.string({ name: "midpoint_return_velocity.scope", label: "midpoint_return_velocity.scope" }),
 			ports.float64({ name: "midpoint_return_velocity.ts", label: "midpoint_return_velocity.ts" }),
+			ports.string({ name: "notionalHistoryBaseline.scope", label: "notionalHistoryBaseline.scope" }),
+			ports.string({ name: "notionalHistoryVariance.scope", label: "notionalHistoryVariance.scope" }),
+			ports.string({ name: "notional_rate_velocity.scope", label: "notional_rate_velocity.scope" }),
 			ports.float64({ name: "notional_rate_velocity.ts", label: "notional_rate_velocity.ts" }),
+			ports.string({ name: "returnHistoryBaseline.scope", label: "returnHistoryBaseline.scope" }),
+			ports.string({ name: "returnHistoryVariance.scope", label: "returnHistoryVariance.scope" }),
+			ports.string({ name: "trade_interval_seconds.scope", label: "trade_interval_seconds.scope" }),
 			ports.int64({ name: "trade_interval_seconds.timestamp", label: "trade_interval_seconds.timestamp" }),
 			ports.float64({ name: "trade_notional.a", label: "trade_notional.a" }),
 			ports.float64({ name: "trade_notional.b", label: "trade_notional.b" }),
@@ -9024,12 +9560,30 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		description: "Sub-graph: sentiment_ticker",
 		initialWidth: 320,
 		inputs: (ports) => (_inputData, _connections) => [
+			ports.string({ name: "breadthBaseline.scope", label: "breadthBaseline.scope" }),
+			ports.string({ name: "breadthVariance.scope", label: "breadthVariance.scope" }),
+			ports.string({ name: "breadth_velocity.scope", label: "breadth_velocity.scope" }),
 			ports.float64({ name: "breadth_velocity.ts", label: "breadth_velocity.ts" }),
+			ports.string({ name: "dispersionBaseline.scope", label: "dispersionBaseline.scope" }),
+			ports.string({ name: "dispersionVariance.scope", label: "dispersionVariance.scope" }),
+			ports.string({ name: "extremeRatioBaseline.scope", label: "extremeRatioBaseline.scope" }),
+			ports.string({ name: "extremeRatioVariance.scope", label: "extremeRatioVariance.scope" }),
+			ports.string({ name: "largest_move_ratio_velocity.scope", label: "largest_move_ratio_velocity.scope" }),
 			ports.float64({ name: "largest_move_ratio_velocity.ts", label: "largest_move_ratio_velocity.ts" }),
+			ports.string({ name: "medianAbsoluteBaseline.scope", label: "medianAbsoluteBaseline.scope" }),
+			ports.string({ name: "medianAbsoluteVariance.scope", label: "medianAbsoluteVariance.scope" }),
+			ports.string({ name: "medianBaseline.scope", label: "medianBaseline.scope" }),
+			ports.string({ name: "medianVariance.scope", label: "medianVariance.scope" }),
+			ports.string({ name: "median_absolute_return_velocity.scope", label: "median_absolute_return_velocity.scope" }),
 			ports.float64({ name: "median_absolute_return_velocity.ts", label: "median_absolute_return_velocity.ts" }),
+			ports.string({ name: "median_return_velocity.scope", label: "median_return_velocity.scope" }),
 			ports.float64({ name: "median_return_velocity.ts", label: "median_return_velocity.ts" }),
+			ports.string({ name: "return.scope", label: "return.scope" }),
 			ports.float64({ name: "return.value", label: "return.value" }),
+			ports.string({ name: "return_dispersion_velocity.scope", label: "return_dispersion_velocity.scope" }),
 			ports.float64({ name: "return_dispersion_velocity.ts", label: "return_dispersion_velocity.ts" }),
+			ports.string({ name: "shareMean.scope", label: "shareMean.scope" }),
+			ports.string({ name: "shareVar.scope", label: "shareVar.scope" }),
 		],
 		outputs: (ports) => (_inputData, _connections) => [
 			ports.float64({ name: "advance_fraction.out", label: "advance_fraction.out" }),
@@ -9116,12 +9670,18 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		description: "Sub-graph: signals",
 		initialWidth: 320,
 		inputs: (ports) => (_inputData, _connections) => [
+			ports.bool({ name: "gather.present", label: "gather.present" }),
 			ports["[]byte"]({ name: "grid.data", label: "grid.data" }),
+			ports.bool({ name: "grid.present", label: "grid.present" }),
+			ports.string({ name: "grid.scope", label: "grid.scope" }),
 		],
 		outputs: (ports) => (_inputData, _connections) => [
+			ports.data({ name: "gather.present", label: "gather.present" }),
+			ports.data({ name: "gather.values", label: "gather.values" }),
 			ports.int64({ name: "grid.delivered", label: "grid.delivered" }),
 			ports.int64({ name: "grid.metrics", label: "grid.metrics" }),
 			ports.data({ name: "grid.observations", label: "grid.observations" }),
+			ports.data({ name: "grid.observed", label: "grid.observed" }),
 			ports["[]byte"]({ name: "grid.out", label: "grid.out" }),
 			ports.data({ name: "grid.present", label: "grid.present" }),
 			ports.data({ name: "grid.values", label: "grid.values" }),
@@ -9135,21 +9695,38 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		description: "Sub-graph: toxicity_level3",
 		initialWidth: 320,
 		inputs: (ports) => (_inputData, _connections) => [
+			ports.string({ name: "elapsed.scope", label: "elapsed.scope" }),
 			ports.int64({ name: "elapsed.timestamp", label: "elapsed.timestamp" }),
+			ports.string({ name: "previous_best_price:ask.scope", label: "previous_best_price:ask.scope" }),
 			ports.float64({ name: "previous_best_price:ask.value", label: "previous_best_price:ask.value" }),
+			ports.string({ name: "previous_best_price:bid.scope", label: "previous_best_price:bid.scope" }),
 			ports.float64({ name: "previous_best_price:bid.value", label: "previous_best_price:bid.value" }),
+			ports.string({ name: "previous_touch_quantity:ask.scope", label: "previous_touch_quantity:ask.scope" }),
 			ports.float64({ name: "previous_touch_quantity:ask.value", label: "previous_touch_quantity:ask.value" }),
+			ports.string({ name: "previous_touch_quantity:bid.scope", label: "previous_touch_quantity:bid.scope" }),
 			ports.float64({ name: "previous_touch_quantity:bid.value", label: "previous_touch_quantity:bid.value" }),
 			ports.float64({ name: "quantityChange:ask.b", label: "quantityChange:ask.b" }),
 			ports.float64({ name: "quantityChange:bid.b", label: "quantityChange:bid.b" }),
+			ports.string({ name: "retreataskBaseline.scope", label: "retreataskBaseline.scope" }),
+			ports.string({ name: "retreataskVariance.scope", label: "retreataskVariance.scope" }),
+			ports.string({ name: "retreatbidBaseline.scope", label: "retreatbidBaseline.scope" }),
+			ports.string({ name: "retreatbidVariance.scope", label: "retreatbidVariance.scope" }),
+			ports.string({ name: "touch_price_log_change:ask.scope", label: "touch_price_log_change:ask.scope" }),
 			ports.float64({ name: "touch_price_log_change:ask.value", label: "touch_price_log_change:ask.value" }),
+			ports.string({ name: "touch_price_log_change:bid.scope", label: "touch_price_log_change:bid.scope" }),
 			ports.float64({ name: "touch_price_log_change:bid.value", label: "touch_price_log_change:bid.value" }),
 			ports.float64({ name: "unfilled_residual_quantity:ask.a", label: "unfilled_residual_quantity:ask.a" }),
 			ports.float64({ name: "unfilled_residual_quantity:ask.b", label: "unfilled_residual_quantity:ask.b" }),
 			ports.float64({ name: "unfilled_residual_quantity:bid.a", label: "unfilled_residual_quantity:bid.a" }),
 			ports.float64({ name: "unfilled_residual_quantity:bid.b", label: "unfilled_residual_quantity:bid.b" }),
+			ports.string({ name: "withdrawal_fraction_velocity:ask.scope", label: "withdrawal_fraction_velocity:ask.scope" }),
 			ports.float64({ name: "withdrawal_fraction_velocity:ask.ts", label: "withdrawal_fraction_velocity:ask.ts" }),
+			ports.string({ name: "withdrawal_fraction_velocity:bid.scope", label: "withdrawal_fraction_velocity:bid.scope" }),
 			ports.float64({ name: "withdrawal_fraction_velocity:bid.ts", label: "withdrawal_fraction_velocity:bid.ts" }),
+			ports.string({ name: "withdrawaskBaseline.scope", label: "withdrawaskBaseline.scope" }),
+			ports.string({ name: "withdrawaskVariance.scope", label: "withdrawaskVariance.scope" }),
+			ports.string({ name: "withdrawbidBaseline.scope", label: "withdrawbidBaseline.scope" }),
+			ports.string({ name: "withdrawbidVariance.scope", label: "withdrawbidVariance.scope" }),
 		],
 		outputs: (ports) => (_inputData, _connections) => [
 			ports.float64({ name: "net_replenishment_fraction:ask.out", label: "net_replenishment_fraction:ask.out" }),
@@ -9190,9 +9767,16 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		inputs: (ports) => (_inputData, _connections) => [
 			ports.bool({ name: "bracket_trade_quantity.flush", label: "bracket_trade_quantity.flush" }),
 			ports.float64({ name: "bracket_trade_quantity.value", label: "bracket_trade_quantity.value" }),
+			ports.string({ name: "elapsed.scope", label: "elapsed.scope" }),
 			ports.int64({ name: "elapsed.timestamp", label: "elapsed.timestamp" }),
+			ports.string({ name: "fill_fraction_velocity:ask.scope", label: "fill_fraction_velocity:ask.scope" }),
 			ports.float64({ name: "fill_fraction_velocity:ask.ts", label: "fill_fraction_velocity:ask.ts" }),
+			ports.string({ name: "fill_fraction_velocity:bid.scope", label: "fill_fraction_velocity:bid.scope" }),
 			ports.float64({ name: "fill_fraction_velocity:bid.ts", label: "fill_fraction_velocity:bid.ts" }),
+			ports.string({ name: "fillaskBaseline.scope", label: "fillaskBaseline.scope" }),
+			ports.string({ name: "fillaskVariance.scope", label: "fillaskVariance.scope" }),
+			ports.string({ name: "fillbidBaseline.scope", label: "fillbidBaseline.scope" }),
+			ports.string({ name: "fillbidVariance.scope", label: "fillbidVariance.scope" }),
 			ports.bool({ name: "matched_touch_trade_quantity:ask.flush", label: "matched_touch_trade_quantity:ask.flush" }),
 			ports.float64({ name: "matched_touch_trade_quantity:ask.value", label: "matched_touch_trade_quantity:ask.value" }),
 			ports.bool({ name: "matched_touch_trade_quantity:bid.flush", label: "matched_touch_trade_quantity:bid.flush" }),
@@ -9227,12 +9811,37 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		description: "Sub-graph: training",
 		initialWidth: 320,
 		inputs: (ports) => (_inputData, _connections) => [
+			ports.float64({ name: "at_extremum_held.threshold", label: "at_extremum_held.threshold" }),
+			ports.string({ name: "entered_value.encoding", label: "entered_value.encoding" }),
+			ports.bool({ name: "entered_value.unique", label: "entered_value.unique" }),
+			ports.int64({ name: "entered_value.unsigned", label: "entered_value.unsigned" }),
+			ports.float64({ name: "entered_value.value", label: "entered_value.value" }),
 			ports["[]byte"]({ name: "event_pending.json", label: "event_pending.json" }),
 			ports.bool({ name: "event_pending.unique", label: "event_pending.unique" }),
 			ports.float64({ name: "event_pending.value", label: "event_pending.value" }),
 			ports.bool({ name: "events.commit", label: "events.commit" }),
 			ports.string({ name: "events_drained.referencePath", label: "events_drained.referencePath" }),
+			ports.string({ name: "exited_value.encoding", label: "exited_value.encoding" }),
+			ports.bool({ name: "exited_value.unique", label: "exited_value.unique" }),
+			ports.int64({ name: "exited_value.unsigned", label: "exited_value.unsigned" }),
+			ports.float64({ name: "exited_value.value", label: "exited_value.value" }),
 			ports.string({ name: "fragments.indexPath", label: "fragments.indexPath" }),
+			ports.string({ name: "inventory.key", label: "inventory.key" }),
+			ports["[]byte"]({ name: "inventory.value", label: "inventory.value" }),
+			ports["[]byte"]({ name: "kept.no", label: "kept.no" }),
+			ports["[]byte"]({ name: "kept.yes", label: "kept.yes" }),
+			ports.string({ name: "kept_value.encoding", label: "kept_value.encoding" }),
+			ports.bool({ name: "kept_value.unique", label: "kept_value.unique" }),
+			ports.int64({ name: "kept_value.unsigned", label: "kept_value.unsigned" }),
+			ports.float64({ name: "kept_value.value", label: "kept_value.value" }),
+			ports["[]byte"]({ name: "neither.no", label: "neither.no" }),
+			ports["[]byte"]({ name: "neither.yes", label: "neither.yes" }),
+			ports["[]byte"]({ name: "next_holding.no", label: "next_holding.no" }),
+			ports["[]byte"]({ name: "next_holding.yes", label: "next_holding.yes" }),
+			ports["[]byte"]({ name: "no_rise.no", label: "no_rise.no" }),
+			ports["[]byte"]({ name: "no_rise.yes", label: "no_rise.yes" }),
+			ports["[]byte"]({ name: "not_ignition.no", label: "not_ignition.no" }),
+			ports["[]byte"]({ name: "not_ignition.yes", label: "not_ignition.yes" }),
 			ports.float64({ name: "paper_at_extremum.threshold", label: "paper_at_extremum.threshold" }),
 			ports.float64({ name: "paper_at_ignition.threshold", label: "paper_at_ignition.threshold" }),
 			ports.string({ name: "paper_enter_symbol.encoding", label: "paper_enter_symbol.encoding" }),
@@ -9317,6 +9926,8 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "record_pending.value", label: "record_pending.value" }),
 			ports.string({ name: "records_drained.referencePath", label: "records_drained.referencePath" }),
 			ports["[]byte"]({ name: "snapshot_ready.no", label: "snapshot_ready.no" }),
+			ports.string({ name: "token_sequence.scope", label: "token_sequence.scope" }),
+			ports.string({ name: "token_sequence.token", label: "token_sequence.token" }),
 			ports.string({ name: "with_event_endpoint.encoding", label: "with_event_endpoint.encoding" }),
 			ports.bool({ name: "with_event_endpoint.unique", label: "with_event_endpoint.unique" }),
 			ports.int64({ name: "with_event_endpoint.unsigned", label: "with_event_endpoint.unsigned" }),
@@ -9330,8 +9941,23 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.bool({ name: "with_event_truth.unique", label: "with_event_truth.unique" }),
 			ports.int64({ name: "with_event_truth.unsigned", label: "with_event_truth.unsigned" }),
 			ports.float64({ name: "with_event_truth.value", label: "with_event_truth.value" }),
+			ports.string({ name: "with_holding.encoding", label: "with_holding.encoding" }),
+			ports.bool({ name: "with_holding.unique", label: "with_holding.unique" }),
+			ports.int64({ name: "with_holding.unsigned", label: "with_holding.unsigned" }),
+			ports.float64({ name: "with_holding.value", label: "with_holding.value" }),
+			ports.string({ name: "with_sequence.encoding", label: "with_sequence.encoding" }),
+			ports.bool({ name: "with_sequence.unique", label: "with_sequence.unique" }),
+			ports.int64({ name: "with_sequence.unsigned", label: "with_sequence.unsigned" }),
+			ports.float64({ name: "with_sequence.value", label: "with_sequence.value" }),
+			ports.string({ name: "with_settled.encoding", label: "with_settled.encoding" }),
+			ports.bool({ name: "with_settled.unique", label: "with_settled.unique" }),
+			ports.int64({ name: "with_settled.unsigned", label: "with_settled.unsigned" }),
+			ports.float64({ name: "with_settled.value", label: "with_settled.value" }),
 		],
 		outputs: (ports) => (_inputData, _connections) => [
+			ports["[]byte"]({ name: "at_extremum_held.out", label: "at_extremum_held.out" }),
+			ports.int64({ name: "at_extremum_held.rejected", label: "at_extremum_held.rejected" }),
+			ports.bool({ name: "entered_value.inserted", label: "entered_value.inserted" }),
 			ports.bool({ name: "event_endpoint.found", label: "event_endpoint.found" }),
 			ports.int64({ name: "event_endpoint.missing", label: "event_endpoint.missing" }),
 			ports.float64({ name: "event_endpoint.out", label: "event_endpoint.out" }),
@@ -9354,15 +9980,34 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.int64({ name: "events.pending", label: "events.pending" }),
 			ports.bool({ name: "events_drained.passed", label: "events_drained.passed" }),
 			ports.int64({ name: "events_drained.rejected", label: "events_drained.rejected" }),
+			ports.bool({ name: "exited_value.inserted", label: "exited_value.inserted" }),
 			ports.int64({ name: "fragments.count", label: "fragments.count" }),
 			ports.bool({ name: "fragments.found", label: "fragments.found" }),
 			ports.int64({ name: "fragments.ignored", label: "fragments.ignored" }),
 			ports.int64({ name: "fragments.index", label: "fragments.index" }),
 			ports.bool({ name: "fragments.last", label: "fragments.last" }),
+			ports.data({ name: "inventory.found", label: "inventory.found" }),
+			ports.data({ name: "inventory.out", label: "inventory.out" }),
+			ports.Capability({ name: "inventory.self", label: "inventory.self" }),
+			ports.bool({ name: "inventory_key.found", label: "inventory_key.found" }),
+			ports["[]byte"]({ name: "inventory_key.json", label: "inventory_key.json" }),
+			ports.int64({ name: "inventory_key.missing", label: "inventory_key.missing" }),
+			ports.float64({ name: "inventory_key.out", label: "inventory_key.out" }),
+			ports.int64({ name: "inventory_key.unsigned", label: "inventory_key.unsigned" }),
+			ports.int64({ name: "kept.absent", label: "kept.absent" }),
+			ports.bool({ name: "kept_value.inserted", label: "kept_value.inserted" }),
 			ports.int64({ name: "mine.none", label: "mine.none" }),
+			ports.int64({ name: "neither.absent", label: "neither.absent" }),
+			ports.int64({ name: "next_holding.absent", label: "next_holding.absent" }),
+			ports.bool({ name: "next_inventory.found", label: "next_inventory.found" }),
+			ports.int64({ name: "next_inventory.missing", label: "next_inventory.missing" }),
+			ports.float64({ name: "next_inventory.out", label: "next_inventory.out" }),
+			ports.string({ name: "next_inventory.text", label: "next_inventory.text" }),
+			ports.int64({ name: "next_inventory.unsigned", label: "next_inventory.unsigned" }),
+			ports.int64({ name: "no_rise.absent", label: "no_rise.absent" }),
+			ports.int64({ name: "not_ignition.absent", label: "not_ignition.absent" }),
 			ports.bool({ name: "paper_at_extremum.passed", label: "paper_at_extremum.passed" }),
 			ports.int64({ name: "paper_at_extremum.rejected", label: "paper_at_extremum.rejected" }),
-			ports.bool({ name: "paper_at_ignition.passed", label: "paper_at_ignition.passed" }),
 			ports.int64({ name: "paper_at_ignition.rejected", label: "paper_at_ignition.rejected" }),
 			ports.bool({ name: "paper_closed.found", label: "paper_closed.found" }),
 			ports.int64({ name: "paper_closed.missing", label: "paper_closed.missing" }),
@@ -9420,7 +10065,6 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "paper_record_time.out", label: "paper_record_time.out" }),
 			ports.string({ name: "paper_record_time.text", label: "paper_record_time.text" }),
 			ports.int64({ name: "paper_record_time.unsigned", label: "paper_record_time.unsigned" }),
-			ports.bool({ name: "paper_rise.passed", label: "paper_rise.passed" }),
 			ports.int64({ name: "paper_rise.rejected", label: "paper_rise.rejected" }),
 			ports.int64({ name: "paper_round_trips.bytes", label: "paper_round_trips.bytes" }),
 			ports.int64({ name: "paper_round_trips.committed", label: "paper_round_trips.committed" }),
@@ -9468,6 +10112,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.bool({ name: "paper_wrap_enter.inserted", label: "paper_wrap_enter.inserted" }),
 			ports.bool({ name: "paper_wrap_exit.inserted", label: "paper_wrap_exit.inserted" }),
 			ports.bool({ name: "paper_wrap_observation.inserted", label: "paper_wrap_observation.inserted" }),
+			ports.int64({ name: "prior_inventory.absent", label: "prior_inventory.absent" }),
 			ports.bool({ name: "record_pending.inserted", label: "record_pending.inserted" }),
 			ports.bool({ name: "records_drained.passed", label: "records_drained.passed" }),
 			ports.int64({ name: "records_drained.rejected", label: "records_drained.rejected" }),
@@ -9476,9 +10121,15 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.string({ name: "tape.frame.receivedAt", label: "tape.frame.receivedAt" }),
 			ports.int64({ name: "tape.idle", label: "tape.idle" }),
 			ports.int64({ name: "tape.pending", label: "tape.pending" }),
+			ports.int64({ name: "token_sequence.depth", label: "token_sequence.depth" }),
+			ports.string({ name: "token_sequence.path", label: "token_sequence.path" }),
+			ports.data({ name: "token_sequence.sequence", label: "token_sequence.sequence" }),
 			ports.bool({ name: "with_event_endpoint.inserted", label: "with_event_endpoint.inserted" }),
 			ports.bool({ name: "with_event_session.inserted", label: "with_event_session.inserted" }),
 			ports.bool({ name: "with_event_truth.inserted", label: "with_event_truth.inserted" }),
+			ports.bool({ name: "with_holding.inserted", label: "with_holding.inserted" }),
+			ports.bool({ name: "with_sequence.inserted", label: "with_sequence.inserted" }),
+			ports.bool({ name: "with_settled.inserted", label: "with_settled.inserted" }),
 		],
 	});
 	config.addNodeType({
@@ -9753,385 +10404,6 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 	});
 	config.addNodeType({
-		type: "definition:training_pair",
-		label: "training_pair",
-		category: "Definitions",
-		description: "Sub-graph: training_pair",
-		initialWidth: 320,
-		inputs: (ports) => (_inputData, _connections) => [
-			ports.string({ name: "aligned.encoding", label: "aligned.encoding" }),
-			ports.bool({ name: "aligned.unique", label: "aligned.unique" }),
-			ports.int64({ name: "aligned.unsigned", label: "aligned.unsigned" }),
-			ports.float64({ name: "aligned.value", label: "aligned.value" }),
-			ports.string({ name: "co_movement.encoding", label: "co_movement.encoding" }),
-			ports.bool({ name: "co_movement.unique", label: "co_movement.unique" }),
-			ports.int64({ name: "co_movement.unsigned", label: "co_movement.unsigned" }),
-			ports.float64({ name: "co_movement.value", label: "co_movement.value" }),
-			ports.string({ name: "commit.encoding", label: "commit.encoding" }),
-			ports.bool({ name: "commit.unique", label: "commit.unique" }),
-			ports.int64({ name: "commit.unsigned", label: "commit.unsigned" }),
-			ports.float64({ name: "commit.value", label: "commit.value" }),
-			ports["[]byte"]({ name: "cursor_record.json", label: "cursor_record.json" }),
-			ports.bool({ name: "cursor_record.unique", label: "cursor_record.unique" }),
-			ports.float64({ name: "cursor_record.value", label: "cursor_record.value" }),
-			ports["[]byte"]({ name: "cursor_sequence.json", label: "cursor_sequence.json" }),
-			ports.bool({ name: "cursor_sequence.unique", label: "cursor_sequence.unique" }),
-			ports.float64({ name: "cursor_sequence.value", label: "cursor_sequence.value" }),
-			ports.string({ name: "evidence.encoding", label: "evidence.encoding" }),
-			ports.bool({ name: "evidence.unique", label: "evidence.unique" }),
-			ports.int64({ name: "evidence.unsigned", label: "evidence.unsigned" }),
-			ports.float64({ name: "evidence.value", label: "evidence.value" }),
-			ports.string({ name: "has_cursor_record.referencePath", label: "has_cursor_record.referencePath" }),
-			ports.string({ name: "has_cursor_sequence.referencePath", label: "has_cursor_sequence.referencePath" }),
-			ports.string({ name: "has_pair_left.referencePath", label: "has_pair_left.referencePath" }),
-			ports.string({ name: "has_pair_right.referencePath", label: "has_pair_right.referencePath" }),
-			ports.string({ name: "has_scope.referencePath", label: "has_scope.referencePath" }),
-			ports["[]byte"]({ name: "input.data", label: "input.data" }),
-			ports.string({ name: "interval.encoding", label: "interval.encoding" }),
-			ports.bool({ name: "interval.unique", label: "interval.unique" }),
-			ports.int64({ name: "interval.unsigned", label: "interval.unsigned" }),
-			ports.float64({ name: "interval.value", label: "interval.value" }),
-			ports.string({ name: "memory.key", label: "memory.key" }),
-			ports["[]byte"]({ name: "memory.value", label: "memory.value" }),
-			ports.string({ name: "pair_key.encoding", label: "pair_key.encoding" }),
-			ports.bool({ name: "pair_key.unique", label: "pair_key.unique" }),
-			ports.int64({ name: "pair_key.unsigned", label: "pair_key.unsigned" }),
-			ports.float64({ name: "pair_key.value", label: "pair_key.value" }),
-			ports.string({ name: "paired_input.encoding", label: "paired_input.encoding" }),
-			ports.bool({ name: "paired_input.unique", label: "paired_input.unique" }),
-			ports.int64({ name: "paired_input.unsigned", label: "paired_input.unsigned" }),
-			ports.float64({ name: "paired_input.value", label: "paired_input.value" }),
-			ports.string({ name: "reaction.encoding", label: "reaction.encoding" }),
-			ports["[]byte"]({ name: "reaction.json", label: "reaction.json" }),
-			ports.bool({ name: "reaction.unique", label: "reaction.unique" }),
-			ports.int64({ name: "reaction.unsigned", label: "reaction.unsigned" }),
-			ports.string({ name: "reaction_left.encoding", label: "reaction_left.encoding" }),
-			ports["[]byte"]({ name: "reaction_left.json", label: "reaction_left.json" }),
-			ports.bool({ name: "reaction_left.unique", label: "reaction_left.unique" }),
-			ports.int64({ name: "reaction_left.unsigned", label: "reaction_left.unsigned" }),
-			ports.string({ name: "sample.encoding", label: "sample.encoding" }),
-			ports["[]byte"]({ name: "sample.json", label: "sample.json" }),
-			ports.bool({ name: "sample.unique", label: "sample.unique" }),
-			ports.int64({ name: "sample.unsigned", label: "sample.unsigned" }),
-			ports.string({ name: "sample_key.encoding", label: "sample_key.encoding" }),
-			ports.bool({ name: "sample_key.unique", label: "sample_key.unique" }),
-			ports.int64({ name: "sample_key.unsigned", label: "sample_key.unsigned" }),
-			ports.float64({ name: "sample_key.value", label: "sample_key.value" }),
-			ports.string({ name: "sample_left.encoding", label: "sample_left.encoding" }),
-			ports["[]byte"]({ name: "sample_left.json", label: "sample_left.json" }),
-			ports.bool({ name: "sample_left.unique", label: "sample_left.unique" }),
-			ports.int64({ name: "sample_left.unsigned", label: "sample_left.unsigned" }),
-			ports.string({ name: "scope_key.encoding", label: "scope_key.encoding" }),
-			ports.bool({ name: "scope_key.unique", label: "scope_key.unique" }),
-			ports.int64({ name: "scope_key.unsigned", label: "scope_key.unsigned" }),
-			ports.float64({ name: "scope_key.value", label: "scope_key.value" }),
-			ports.string({ name: "start_cursor.encoding", label: "start_cursor.encoding" }),
-			ports.bool({ name: "start_cursor.unique", label: "start_cursor.unique" }),
-			ports.int64({ name: "start_cursor.unsigned", label: "start_cursor.unsigned" }),
-			ports.float64({ name: "start_cursor.value", label: "start_cursor.value" }),
-			ports.string({ name: "state.encoding", label: "state.encoding" }),
-			ports.bool({ name: "state.unique", label: "state.unique" }),
-			ports.int64({ name: "state.unsigned", label: "state.unsigned" }),
-			ports.float64({ name: "state.value", label: "state.value" }),
-			ports.string({ name: "unique.encoding", label: "unique.encoding" }),
-			ports.int64({ name: "unique.unsigned", label: "unique.unsigned" }),
-			ports.float64({ name: "unique.value", label: "unique.value" }),
-			ports["[]byte"]({ name: "unseen.no", label: "unseen.no" }),
-			ports.string({ name: "with_prior.encoding", label: "with_prior.encoding" }),
-			ports.bool({ name: "with_prior.unique", label: "with_prior.unique" }),
-			ports.int64({ name: "with_prior.unsigned", label: "with_prior.unsigned" }),
-			ports.float64({ name: "with_prior.value", label: "with_prior.value" }),
-			ports.string({ name: "wrapped_key.encoding", label: "wrapped_key.encoding" }),
-			ports.bool({ name: "wrapped_key.unique", label: "wrapped_key.unique" }),
-			ports.int64({ name: "wrapped_key.unsigned", label: "wrapped_key.unsigned" }),
-			ports.float64({ name: "wrapped_key.value", label: "wrapped_key.value" }),
-			ports.string({ name: "wrapped_sample.encoding", label: "wrapped_sample.encoding" }),
-			ports.bool({ name: "wrapped_sample.unique", label: "wrapped_sample.unique" }),
-			ports.int64({ name: "wrapped_sample.unsigned", label: "wrapped_sample.unsigned" }),
-			ports.float64({ name: "wrapped_sample.value", label: "wrapped_sample.value" }),
-		],
-		outputs: (ports) => (_inputData, _connections) => [
-			ports.bool({ name: "aligned.inserted", label: "aligned.inserted" }),
-			ports.int64({ name: "anchor.absent", label: "anchor.absent" }),
-			ports.bool({ name: "co_movement.inserted", label: "co_movement.inserted" }),
-			ports["[]byte"]({ name: "co_movement.out", label: "co_movement.out" }),
-			ports.bool({ name: "commit.inserted", label: "commit.inserted" }),
-			ports.bool({ name: "commit_example.found", label: "commit_example.found" }),
-			ports.int64({ name: "commit_example.missing", label: "commit_example.missing" }),
-			ports.float64({ name: "commit_example.out", label: "commit_example.out" }),
-			ports.string({ name: "commit_example.text", label: "commit_example.text" }),
-			ports.int64({ name: "commit_example.unsigned", label: "commit_example.unsigned" }),
-			ports.bool({ name: "current_left.found", label: "current_left.found" }),
-			ports["[]byte"]({ name: "current_left.json", label: "current_left.json" }),
-			ports.int64({ name: "current_left.missing", label: "current_left.missing" }),
-			ports.string({ name: "current_left.text", label: "current_left.text" }),
-			ports.int64({ name: "current_left.unsigned", label: "current_left.unsigned" }),
-			ports.bool({ name: "current_right.found", label: "current_right.found" }),
-			ports["[]byte"]({ name: "current_right.json", label: "current_right.json" }),
-			ports.int64({ name: "current_right.missing", label: "current_right.missing" }),
-			ports.string({ name: "current_right.text", label: "current_right.text" }),
-			ports.int64({ name: "current_right.unsigned", label: "current_right.unsigned" }),
-			ports.bool({ name: "cursor.found", label: "cursor.found" }),
-			ports.int64({ name: "cursor.missing", label: "cursor.missing" }),
-			ports.float64({ name: "cursor.out", label: "cursor.out" }),
-			ports.string({ name: "cursor.text", label: "cursor.text" }),
-			ports.int64({ name: "cursor.unsigned", label: "cursor.unsigned" }),
-			ports.bool({ name: "cursor_record.inserted", label: "cursor_record.inserted" }),
-			ports.bool({ name: "cursor_sequence.inserted", label: "cursor_sequence.inserted" }),
-			ports.bool({ name: "evidence.inserted", label: "evidence.inserted" }),
-			ports["[]byte"]({ name: "evidence.out", label: "evidence.out" }),
-			ports.bool({ name: "fresh.found", label: "fresh.found" }),
-			ports.int64({ name: "fresh.missing", label: "fresh.missing" }),
-			ports.float64({ name: "fresh.out", label: "fresh.out" }),
-			ports.string({ name: "fresh.text", label: "fresh.text" }),
-			ports.int64({ name: "fresh.unsigned", label: "fresh.unsigned" }),
-			ports.bool({ name: "has_cursor_record.passed", label: "has_cursor_record.passed" }),
-			ports.int64({ name: "has_cursor_record.rejected", label: "has_cursor_record.rejected" }),
-			ports.bool({ name: "has_cursor_sequence.passed", label: "has_cursor_sequence.passed" }),
-			ports.int64({ name: "has_cursor_sequence.rejected", label: "has_cursor_sequence.rejected" }),
-			ports.bool({ name: "has_pair_left.passed", label: "has_pair_left.passed" }),
-			ports.int64({ name: "has_pair_left.rejected", label: "has_pair_left.rejected" }),
-			ports.bool({ name: "has_pair_right.passed", label: "has_pair_right.passed" }),
-			ports.int64({ name: "has_pair_right.rejected", label: "has_pair_right.rejected" }),
-			ports.bool({ name: "has_scope.passed", label: "has_scope.passed" }),
-			ports.int64({ name: "has_scope.rejected", label: "has_scope.rejected" }),
-			ports.bool({ name: "identity.found", label: "identity.found" }),
-			ports["[]byte"]({ name: "identity.json", label: "identity.json" }),
-			ports.int64({ name: "identity.missing", label: "identity.missing" }),
-			ports.float64({ name: "identity.out", label: "identity.out" }),
-			ports.int64({ name: "identity.unsigned", label: "identity.unsigned" }),
-			ports.bool({ name: "interval.inserted", label: "interval.inserted" }),
-			ports.bool({ name: "key.found", label: "key.found" }),
-			ports["[]byte"]({ name: "key.json", label: "key.json" }),
-			ports.int64({ name: "key.missing", label: "key.missing" }),
-			ports.float64({ name: "key.out", label: "key.out" }),
-			ports.int64({ name: "key.unsigned", label: "key.unsigned" }),
-			ports.bool({ name: "left.found", label: "left.found" }),
-			ports["[]byte"]({ name: "left.json", label: "left.json" }),
-			ports.int64({ name: "left.missing", label: "left.missing" }),
-			ports.string({ name: "left.text", label: "left.text" }),
-			ports.int64({ name: "left.unsigned", label: "left.unsigned" }),
-			ports.data({ name: "memory.found", label: "memory.found" }),
-			ports.data({ name: "memory.out", label: "memory.out" }),
-			ports.Capability({ name: "memory.self", label: "memory.self" }),
-			ports["[]byte"]({ name: "ordered.out", label: "ordered.out" }),
-			ports.int64({ name: "ordered.rejected", label: "ordered.rejected" }),
-			ports.bool({ name: "pair.found", label: "pair.found" }),
-			ports.int64({ name: "pair.missing", label: "pair.missing" }),
-			ports.float64({ name: "pair.out", label: "pair.out" }),
-			ports.string({ name: "pair.text", label: "pair.text" }),
-			ports.int64({ name: "pair.unsigned", label: "pair.unsigned" }),
-			ports.bool({ name: "pair_key.inserted", label: "pair_key.inserted" }),
-			ports.bool({ name: "paired_input.inserted", label: "paired_input.inserted" }),
-			ports.bool({ name: "previous.found", label: "previous.found" }),
-			ports.int64({ name: "previous.missing", label: "previous.missing" }),
-			ports.float64({ name: "previous.out", label: "previous.out" }),
-			ports.string({ name: "previous.text", label: "previous.text" }),
-			ports.int64({ name: "previous.unsigned", label: "previous.unsigned" }),
-			ports.bool({ name: "previous_left.found", label: "previous_left.found" }),
-			ports["[]byte"]({ name: "previous_left.json", label: "previous_left.json" }),
-			ports.int64({ name: "previous_left.missing", label: "previous_left.missing" }),
-			ports.string({ name: "previous_left.text", label: "previous_left.text" }),
-			ports.int64({ name: "previous_left.unsigned", label: "previous_left.unsigned" }),
-			ports.bool({ name: "previous_right.found", label: "previous_right.found" }),
-			ports["[]byte"]({ name: "previous_right.json", label: "previous_right.json" }),
-			ports.int64({ name: "previous_right.missing", label: "previous_right.missing" }),
-			ports.string({ name: "previous_right.text", label: "previous_right.text" }),
-			ports.int64({ name: "previous_right.unsigned", label: "previous_right.unsigned" }),
-			ports.int64({ name: "prior.absent", label: "prior.absent" }),
-			ports.int64({ name: "prior_example.absent", label: "prior_example.absent" }),
-			ports.bool({ name: "reaction.inserted", label: "reaction.inserted" }),
-			ports.bool({ name: "reaction_left.inserted", label: "reaction_left.inserted" }),
-			ports.bool({ name: "record.found", label: "record.found" }),
-			ports["[]byte"]({ name: "record.json", label: "record.json" }),
-			ports.int64({ name: "record.missing", label: "record.missing" }),
-			ports.float64({ name: "record.out", label: "record.out" }),
-			ports.string({ name: "record.text", label: "record.text" }),
-			ports.bool({ name: "right.found", label: "right.found" }),
-			ports["[]byte"]({ name: "right.json", label: "right.json" }),
-			ports.int64({ name: "right.missing", label: "right.missing" }),
-			ports.string({ name: "right.text", label: "right.text" }),
-			ports.int64({ name: "right.unsigned", label: "right.unsigned" }),
-			ports.bool({ name: "sample.inserted", label: "sample.inserted" }),
-			ports.bool({ name: "sample_key.inserted", label: "sample_key.inserted" }),
-			ports.bool({ name: "sample_left.inserted", label: "sample_left.inserted" }),
-			ports.bool({ name: "scope.found", label: "scope.found" }),
-			ports.int64({ name: "scope.missing", label: "scope.missing" }),
-			ports.float64({ name: "scope.out", label: "scope.out" }),
-			ports.string({ name: "scope.text", label: "scope.text" }),
-			ports.int64({ name: "scope.unsigned", label: "scope.unsigned" }),
-			ports.bool({ name: "scope_key.inserted", label: "scope_key.inserted" }),
-			ports.bool({ name: "sequence.found", label: "sequence.found" }),
-			ports["[]byte"]({ name: "sequence.json", label: "sequence.json" }),
-			ports.int64({ name: "sequence.missing", label: "sequence.missing" }),
-			ports.float64({ name: "sequence.out", label: "sequence.out" }),
-			ports.string({ name: "sequence.text", label: "sequence.text" }),
-			ports.bool({ name: "start.found", label: "start.found" }),
-			ports.int64({ name: "start.missing", label: "start.missing" }),
-			ports.float64({ name: "start.out", label: "start.out" }),
-			ports.string({ name: "start.text", label: "start.text" }),
-			ports.int64({ name: "start.unsigned", label: "start.unsigned" }),
-			ports.bool({ name: "start_cursor.inserted", label: "start_cursor.inserted" }),
-			ports.bool({ name: "state.inserted", label: "state.inserted" }),
-			ports.int64({ name: "unseen.absent", label: "unseen.absent" }),
-			ports.bool({ name: "with_prior.inserted", label: "with_prior.inserted" }),
-			ports.bool({ name: "wrapped_key.inserted", label: "wrapped_key.inserted" }),
-			ports.bool({ name: "wrapped_sample.inserted", label: "wrapped_sample.inserted" }),
-		],
-	});
-	config.addNodeType({
-		type: "definition:training_pair_step",
-		label: "training_pair_step",
-		category: "Definitions",
-		description: "Sub-graph: training_pair_step",
-		initialWidth: 320,
-		inputs: (ports) => (_inputData, _connections) => [
-			ports.string({ name: "both_scales.referencePath", label: "both_scales.referencePath" }),
-			ports.string({ name: "co_movement.encoding", label: "co_movement.encoding" }),
-			ports["[]byte"]({ name: "co_movement.json", label: "co_movement.json" }),
-			ports.bool({ name: "co_movement.unique", label: "co_movement.unique" }),
-			ports.int64({ name: "co_movement.unsigned", label: "co_movement.unsigned" }),
-			ports.string({ name: "evidence.encoding", label: "evidence.encoding" }),
-			ports["[]byte"]({ name: "evidence.json", label: "evidence.json" }),
-			ports.bool({ name: "evidence.unique", label: "evidence.unique" }),
-			ports.int64({ name: "evidence.unsigned", label: "evidence.unsigned" }),
-			ports["[]byte"]({ name: "input.data", label: "input.data" }),
-			ports.string({ name: "left_scale.referencePath", label: "left_scale.referencePath" }),
-			ports.string({ name: "repeated.referencePath", label: "repeated.referencePath" }),
-			ports.string({ name: "write_joint.encoding", label: "write_joint.encoding" }),
-			ports["[]byte"]({ name: "write_joint.json", label: "write_joint.json" }),
-			ports.bool({ name: "write_joint.unique", label: "write_joint.unique" }),
-			ports.int64({ name: "write_joint.unsigned", label: "write_joint.unsigned" }),
-			ports.string({ name: "write_leftEnergy.encoding", label: "write_leftEnergy.encoding" }),
-			ports["[]byte"]({ name: "write_leftEnergy.json", label: "write_leftEnergy.json" }),
-			ports.bool({ name: "write_leftEnergy.unique", label: "write_leftEnergy.unique" }),
-			ports.int64({ name: "write_leftEnergy.unsigned", label: "write_leftEnergy.unsigned" }),
-			ports.string({ name: "write_magnitude.encoding", label: "write_magnitude.encoding" }),
-			ports["[]byte"]({ name: "write_magnitude.json", label: "write_magnitude.json" }),
-			ports.bool({ name: "write_magnitude.unique", label: "write_magnitude.unique" }),
-			ports.int64({ name: "write_magnitude.unsigned", label: "write_magnitude.unsigned" }),
-			ports.string({ name: "write_nonresponse.encoding", label: "write_nonresponse.encoding" }),
-			ports["[]byte"]({ name: "write_nonresponse.json", label: "write_nonresponse.json" }),
-			ports.bool({ name: "write_nonresponse.unique", label: "write_nonresponse.unique" }),
-			ports.int64({ name: "write_nonresponse.unsigned", label: "write_nonresponse.unsigned" }),
-			ports.string({ name: "write_product.encoding", label: "write_product.encoding" }),
-			ports["[]byte"]({ name: "write_product.json", label: "write_product.json" }),
-			ports.bool({ name: "write_product.unique", label: "write_product.unique" }),
-			ports.int64({ name: "write_product.unsigned", label: "write_product.unsigned" }),
-			ports.string({ name: "write_rightEnergy.encoding", label: "write_rightEnergy.encoding" }),
-			ports["[]byte"]({ name: "write_rightEnergy.json", label: "write_rightEnergy.json" }),
-			ports.bool({ name: "write_rightEnergy.unique", label: "write_rightEnergy.unique" }),
-			ports.int64({ name: "write_rightEnergy.unsigned", label: "write_rightEnergy.unsigned" }),
-			ports.string({ name: "write_sign.encoding", label: "write_sign.encoding" }),
-			ports["[]byte"]({ name: "write_sign.json", label: "write_sign.json" }),
-			ports.bool({ name: "write_sign.unique", label: "write_sign.unique" }),
-			ports.int64({ name: "write_sign.unsigned", label: "write_sign.unsigned" }),
-			ports.string({ name: "write_support.encoding", label: "write_support.encoding" }),
-			ports["[]byte"]({ name: "write_support.json", label: "write_support.json" }),
-			ports.bool({ name: "write_support.unique", label: "write_support.unique" }),
-			ports.int64({ name: "write_support.unsigned", label: "write_support.unsigned" }),
-		],
-		outputs: (ports) => (_inputData, _connections) => [
-			ports.bool({ name: "both_scales.passed", label: "both_scales.passed" }),
-			ports.int64({ name: "both_scales.rejected", label: "both_scales.rejected" }),
-			ports.bool({ name: "co_movement.inserted", label: "co_movement.inserted" }),
-			ports.bool({ name: "evidence.inserted", label: "evidence.inserted" }),
-			ports["[]byte"]({ name: "evidence.out", label: "evidence.out" }),
-			ports.bool({ name: "left.found", label: "left.found" }),
-			ports["[]byte"]({ name: "left.json", label: "left.json" }),
-			ports.int64({ name: "left.missing", label: "left.missing" }),
-			ports.string({ name: "left.text", label: "left.text" }),
-			ports.int64({ name: "left.unsigned", label: "left.unsigned" }),
-			ports.bool({ name: "left_scale.passed", label: "left_scale.passed" }),
-			ports.int64({ name: "left_scale.rejected", label: "left_scale.rejected" }),
-			ports.bool({ name: "prior_joint.found", label: "prior_joint.found" }),
-			ports["[]byte"]({ name: "prior_joint.json", label: "prior_joint.json" }),
-			ports.int64({ name: "prior_joint.missing", label: "prior_joint.missing" }),
-			ports.string({ name: "prior_joint.text", label: "prior_joint.text" }),
-			ports.int64({ name: "prior_joint.unsigned", label: "prior_joint.unsigned" }),
-			ports.bool({ name: "prior_leftEnergy.found", label: "prior_leftEnergy.found" }),
-			ports["[]byte"]({ name: "prior_leftEnergy.json", label: "prior_leftEnergy.json" }),
-			ports.int64({ name: "prior_leftEnergy.missing", label: "prior_leftEnergy.missing" }),
-			ports.string({ name: "prior_leftEnergy.text", label: "prior_leftEnergy.text" }),
-			ports.int64({ name: "prior_leftEnergy.unsigned", label: "prior_leftEnergy.unsigned" }),
-			ports.bool({ name: "prior_nonresponse.found", label: "prior_nonresponse.found" }),
-			ports["[]byte"]({ name: "prior_nonresponse.json", label: "prior_nonresponse.json" }),
-			ports.int64({ name: "prior_nonresponse.missing", label: "prior_nonresponse.missing" }),
-			ports.string({ name: "prior_nonresponse.text", label: "prior_nonresponse.text" }),
-			ports.int64({ name: "prior_nonresponse.unsigned", label: "prior_nonresponse.unsigned" }),
-			ports.bool({ name: "prior_product.found", label: "prior_product.found" }),
-			ports["[]byte"]({ name: "prior_product.json", label: "prior_product.json" }),
-			ports.int64({ name: "prior_product.missing", label: "prior_product.missing" }),
-			ports.string({ name: "prior_product.text", label: "prior_product.text" }),
-			ports.int64({ name: "prior_product.unsigned", label: "prior_product.unsigned" }),
-			ports.bool({ name: "prior_rightEnergy.found", label: "prior_rightEnergy.found" }),
-			ports["[]byte"]({ name: "prior_rightEnergy.json", label: "prior_rightEnergy.json" }),
-			ports.int64({ name: "prior_rightEnergy.missing", label: "prior_rightEnergy.missing" }),
-			ports.string({ name: "prior_rightEnergy.text", label: "prior_rightEnergy.text" }),
-			ports.int64({ name: "prior_rightEnergy.unsigned", label: "prior_rightEnergy.unsigned" }),
-			ports.bool({ name: "prior_sign.found", label: "prior_sign.found" }),
-			ports["[]byte"]({ name: "prior_sign.json", label: "prior_sign.json" }),
-			ports.int64({ name: "prior_sign.missing", label: "prior_sign.missing" }),
-			ports.string({ name: "prior_sign.text", label: "prior_sign.text" }),
-			ports.int64({ name: "prior_sign.unsigned", label: "prior_sign.unsigned" }),
-			ports.bool({ name: "prior_support.found", label: "prior_support.found" }),
-			ports["[]byte"]({ name: "prior_support.json", label: "prior_support.json" }),
-			ports.int64({ name: "prior_support.missing", label: "prior_support.missing" }),
-			ports.string({ name: "prior_support.text", label: "prior_support.text" }),
-			ports.int64({ name: "prior_support.unsigned", label: "prior_support.unsigned" }),
-			ports.bool({ name: "read_joint.found", label: "read_joint.found" }),
-			ports["[]byte"]({ name: "read_joint.json", label: "read_joint.json" }),
-			ports.int64({ name: "read_joint.missing", label: "read_joint.missing" }),
-			ports.string({ name: "read_joint.text", label: "read_joint.text" }),
-			ports.int64({ name: "read_joint.unsigned", label: "read_joint.unsigned" }),
-			ports.bool({ name: "read_leftEnergy.found", label: "read_leftEnergy.found" }),
-			ports["[]byte"]({ name: "read_leftEnergy.json", label: "read_leftEnergy.json" }),
-			ports.int64({ name: "read_leftEnergy.missing", label: "read_leftEnergy.missing" }),
-			ports.string({ name: "read_leftEnergy.text", label: "read_leftEnergy.text" }),
-			ports.int64({ name: "read_leftEnergy.unsigned", label: "read_leftEnergy.unsigned" }),
-			ports.bool({ name: "read_nonresponse.found", label: "read_nonresponse.found" }),
-			ports["[]byte"]({ name: "read_nonresponse.json", label: "read_nonresponse.json" }),
-			ports.int64({ name: "read_nonresponse.missing", label: "read_nonresponse.missing" }),
-			ports.string({ name: "read_nonresponse.text", label: "read_nonresponse.text" }),
-			ports.int64({ name: "read_nonresponse.unsigned", label: "read_nonresponse.unsigned" }),
-			ports.bool({ name: "read_product.found", label: "read_product.found" }),
-			ports["[]byte"]({ name: "read_product.json", label: "read_product.json" }),
-			ports.int64({ name: "read_product.missing", label: "read_product.missing" }),
-			ports.string({ name: "read_product.text", label: "read_product.text" }),
-			ports.int64({ name: "read_product.unsigned", label: "read_product.unsigned" }),
-			ports.bool({ name: "read_rightEnergy.found", label: "read_rightEnergy.found" }),
-			ports["[]byte"]({ name: "read_rightEnergy.json", label: "read_rightEnergy.json" }),
-			ports.int64({ name: "read_rightEnergy.missing", label: "read_rightEnergy.missing" }),
-			ports.string({ name: "read_rightEnergy.text", label: "read_rightEnergy.text" }),
-			ports.int64({ name: "read_rightEnergy.unsigned", label: "read_rightEnergy.unsigned" }),
-			ports.bool({ name: "read_sign.found", label: "read_sign.found" }),
-			ports["[]byte"]({ name: "read_sign.json", label: "read_sign.json" }),
-			ports.int64({ name: "read_sign.missing", label: "read_sign.missing" }),
-			ports.string({ name: "read_sign.text", label: "read_sign.text" }),
-			ports.int64({ name: "read_sign.unsigned", label: "read_sign.unsigned" }),
-			ports.bool({ name: "read_support.found", label: "read_support.found" }),
-			ports["[]byte"]({ name: "read_support.json", label: "read_support.json" }),
-			ports.int64({ name: "read_support.missing", label: "read_support.missing" }),
-			ports.string({ name: "read_support.text", label: "read_support.text" }),
-			ports.int64({ name: "read_support.unsigned", label: "read_support.unsigned" }),
-			ports.bool({ name: "repeated.passed", label: "repeated.passed" }),
-			ports.int64({ name: "repeated.rejected", label: "repeated.rejected" }),
-			ports.bool({ name: "right.found", label: "right.found" }),
-			ports["[]byte"]({ name: "right.json", label: "right.json" }),
-			ports.int64({ name: "right.missing", label: "right.missing" }),
-			ports.string({ name: "right.text", label: "right.text" }),
-			ports.int64({ name: "right.unsigned", label: "right.unsigned" }),
-			ports.bool({ name: "write_joint.inserted", label: "write_joint.inserted" }),
-			ports.bool({ name: "write_leftEnergy.inserted", label: "write_leftEnergy.inserted" }),
-			ports.bool({ name: "write_magnitude.inserted", label: "write_magnitude.inserted" }),
-			ports.bool({ name: "write_nonresponse.inserted", label: "write_nonresponse.inserted" }),
-			ports.bool({ name: "write_product.inserted", label: "write_product.inserted" }),
-			ports.bool({ name: "write_rightEnergy.inserted", label: "write_rightEnergy.inserted" }),
-			ports.bool({ name: "write_sign.inserted", label: "write_sign.inserted" }),
-			ports.bool({ name: "write_support.inserted", label: "write_support.inserted" }),
-		],
-	});
-	config.addNodeType({
 		type: "definition:training_reinforce",
 		label: "training_reinforce",
 		category: "Definitions",
@@ -10158,34 +10430,33 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.bool({ name: "id_record.unique", label: "id_record.unique" }),
 			ports.int64({ name: "id_record.unsigned", label: "id_record.unsigned" }),
 			ports.float64({ name: "id_record.value", label: "id_record.value" }),
+			ports["[]byte"]({ name: "id_seed.data", label: "id_seed.data" }),
+			ports.string({ name: "id_seed.encoding", label: "id_seed.encoding" }),
+			ports.bool({ name: "id_seed.unique", label: "id_seed.unique" }),
+			ports.int64({ name: "id_seed.unsigned", label: "id_seed.unsigned" }),
+			ports.float64({ name: "id_seed.value", label: "id_seed.value" }),
 			ports.string({ name: "id_sequence.encoding", label: "id_sequence.encoding" }),
 			ports.bool({ name: "id_sequence.unique", label: "id_sequence.unique" }),
 			ports.int64({ name: "id_sequence.unsigned", label: "id_sequence.unsigned" }),
 			ports.float64({ name: "id_sequence.value", label: "id_sequence.value" }),
-			ports["[]byte"]({ name: "id_session.data", label: "id_session.data" }),
 			ports.string({ name: "id_session.encoding", label: "id_session.encoding" }),
 			ports.bool({ name: "id_session.unique", label: "id_session.unique" }),
 			ports.int64({ name: "id_session.unsigned", label: "id_session.unsigned" }),
 			ports.float64({ name: "id_session.value", label: "id_session.value" }),
-			ports.string({ name: "id_vocabulary.encoding", label: "id_vocabulary.encoding" }),
-			ports.bool({ name: "id_vocabulary.unique", label: "id_vocabulary.unique" }),
-			ports.int64({ name: "id_vocabulary.unsigned", label: "id_vocabulary.unsigned" }),
-			ports.float64({ name: "id_vocabulary.value", label: "id_vocabulary.value" }),
 			ports["[]byte"]({ name: "input.data", label: "input.data" }),
 			ports.float64({ name: "inventory.threshold", label: "inventory.threshold" }),
 			ports.string({ name: "key_holding.encoding", label: "key_holding.encoding" }),
 			ports.bool({ name: "key_holding.unique", label: "key_holding.unique" }),
 			ports.int64({ name: "key_holding.unsigned", label: "key_holding.unsigned" }),
 			ports.float64({ name: "key_holding.value", label: "key_holding.value" }),
+			ports.string({ name: "key_sequence_history.encoding", label: "key_sequence_history.encoding" }),
+			ports.bool({ name: "key_sequence_history.unique", label: "key_sequence_history.unique" }),
+			ports.int64({ name: "key_sequence_history.unsigned", label: "key_sequence_history.unsigned" }),
+			ports.float64({ name: "key_sequence_history.value", label: "key_sequence_history.value" }),
 			ports.string({ name: "key_tokens.encoding", label: "key_tokens.encoding" }),
 			ports.bool({ name: "key_tokens.unique", label: "key_tokens.unique" }),
 			ports.int64({ name: "key_tokens.unsigned", label: "key_tokens.unsigned" }),
 			ports.float64({ name: "key_tokens.value", label: "key_tokens.value" }),
-			ports["[]byte"]({ name: "key_vocabulary.data", label: "key_vocabulary.data" }),
-			ports.string({ name: "key_vocabulary.encoding", label: "key_vocabulary.encoding" }),
-			ports.bool({ name: "key_vocabulary.unique", label: "key_vocabulary.unique" }),
-			ports.int64({ name: "key_vocabulary.unsigned", label: "key_vocabulary.unsigned" }),
-			ports.float64({ name: "key_vocabulary.value", label: "key_vocabulary.value" }),
 			ports.string({ name: "memory.key", label: "memory.key" }),
 			ports["[]byte"]({ name: "memory.value", label: "memory.value" }),
 			ports.string({ name: "novel_fact.encoding", label: "novel_fact.encoding" }),
@@ -10222,9 +10493,9 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.int64({ name: "holding.unsigned", label: "holding.unsigned" }),
 			ports.bool({ name: "id_endpoint.inserted", label: "id_endpoint.inserted" }),
 			ports.bool({ name: "id_record.inserted", label: "id_record.inserted" }),
+			ports.bool({ name: "id_seed.inserted", label: "id_seed.inserted" }),
 			ports.bool({ name: "id_sequence.inserted", label: "id_sequence.inserted" }),
 			ports.bool({ name: "id_session.inserted", label: "id_session.inserted" }),
-			ports.bool({ name: "id_vocabulary.inserted", label: "id_vocabulary.inserted" }),
 			ports.bool({ name: "identity.found", label: "identity.found" }),
 			ports["[]byte"]({ name: "identity.json", label: "identity.json" }),
 			ports.int64({ name: "identity.missing", label: "identity.missing" }),
@@ -10233,8 +10504,8 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.bool({ name: "inventory.passed", label: "inventory.passed" }),
 			ports.int64({ name: "inventory.rejected", label: "inventory.rejected" }),
 			ports.bool({ name: "key_holding.inserted", label: "key_holding.inserted" }),
+			ports.bool({ name: "key_sequence_history.inserted", label: "key_sequence_history.inserted" }),
 			ports.bool({ name: "key_tokens.inserted", label: "key_tokens.inserted" }),
-			ports.bool({ name: "key_vocabulary.inserted", label: "key_vocabulary.inserted" }),
 			ports.data({ name: "memory.found", label: "memory.found" }),
 			ports.data({ name: "memory.out", label: "memory.out" }),
 			ports.Capability({ name: "memory.self", label: "memory.self" }),
@@ -10260,11 +10531,21 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.data({ name: "reinforce.categories", label: "reinforce.categories" }),
 			ports.int64({ name: "reinforce.total", label: "reinforce.total" }),
 			ports.data({ name: "reinforce.weights", label: "reinforce.weights" }),
+			ports.bool({ name: "seed.found", label: "seed.found" }),
+			ports.int64({ name: "seed.missing", label: "seed.missing" }),
+			ports.float64({ name: "seed.out", label: "seed.out" }),
+			ports.string({ name: "seed.text", label: "seed.text" }),
+			ports.int64({ name: "seed.unsigned", label: "seed.unsigned" }),
 			ports.bool({ name: "sequence.found", label: "sequence.found" }),
 			ports.int64({ name: "sequence.missing", label: "sequence.missing" }),
 			ports.float64({ name: "sequence.out", label: "sequence.out" }),
 			ports.string({ name: "sequence.text", label: "sequence.text" }),
 			ports.int64({ name: "sequence.unsigned", label: "sequence.unsigned" }),
+			ports.bool({ name: "sequence_history.found", label: "sequence_history.found" }),
+			ports.int64({ name: "sequence_history.missing", label: "sequence_history.missing" }),
+			ports.float64({ name: "sequence_history.out", label: "sequence_history.out" }),
+			ports.string({ name: "sequence_history.text", label: "sequence_history.text" }),
+			ports.int64({ name: "sequence_history.unsigned", label: "sequence_history.unsigned" }),
 			ports.bool({ name: "session.found", label: "session.found" }),
 			ports.int64({ name: "session.missing", label: "session.missing" }),
 			ports.float64({ name: "session.out", label: "session.out" }),
@@ -10282,11 +10563,6 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "truth.out", label: "truth.out" }),
 			ports.string({ name: "truth.text", label: "truth.text" }),
 			ports.int64({ name: "truth.unsigned", label: "truth.unsigned" }),
-			ports.bool({ name: "vocabulary.found", label: "vocabulary.found" }),
-			ports.int64({ name: "vocabulary.missing", label: "vocabulary.missing" }),
-			ports.float64({ name: "vocabulary.out", label: "vocabulary.out" }),
-			ports.string({ name: "vocabulary.text", label: "vocabulary.text" }),
-			ports.int64({ name: "vocabulary.unsigned", label: "vocabulary.unsigned" }),
 		],
 	});
 	config.addNodeType({
@@ -10354,6 +10630,10 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "end_request_symbol.value", label: "end_request_symbol.value" }),
 			ports["[]byte"]({ name: "event.data", label: "event.data" }),
 			ports["[]byte"]({ name: "events.append", label: "events.append" }),
+			ports.string({ name: "fragment_begin.encoding", label: "fragment_begin.encoding" }),
+			ports.bool({ name: "fragment_begin.unique", label: "fragment_begin.unique" }),
+			ports.int64({ name: "fragment_begin.unsigned", label: "fragment_begin.unsigned" }),
+			ports.float64({ name: "fragment_begin.value", label: "fragment_begin.value" }),
 			ports.string({ name: "fragment_end.encoding", label: "fragment_end.encoding" }),
 			ports.bool({ name: "fragment_end.unique", label: "fragment_end.unique" }),
 			ports.int64({ name: "fragment_end.unsigned", label: "fragment_end.unsigned" }),
@@ -10362,6 +10642,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.bool({ name: "fragment_event.unique", label: "fragment_event.unique" }),
 			ports.int64({ name: "fragment_event.unsigned", label: "fragment_event.unsigned" }),
 			ports.float64({ name: "fragment_event.value", label: "fragment_event.value" }),
+			ports.float64({ name: "fragment_first.threshold", label: "fragment_first.threshold" }),
 			ports.string({ name: "fragment_index.encoding", label: "fragment_index.encoding" }),
 			ports.bool({ name: "fragment_index.unique", label: "fragment_index.unique" }),
 			ports.int64({ name: "fragment_index.unsigned", label: "fragment_index.unsigned" }),
@@ -10533,6 +10814,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.int64({ name: "events.count", label: "events.count" }),
 			ports.bool({ name: "events.found", label: "events.found" }),
 			ports.int64({ name: "events.missing", label: "events.missing" }),
+			ports.bool({ name: "fragment_begin.inserted", label: "fragment_begin.inserted" }),
 			ports.bool({ name: "fragment_end.inserted", label: "fragment_end.inserted" }),
 			ports.bool({ name: "fragment_end_position.found", label: "fragment_end_position.found" }),
 			ports.int64({ name: "fragment_end_position.missing", label: "fragment_end_position.missing" }),
@@ -10545,6 +10827,9 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "fragment_event_index.out", label: "fragment_event_index.out" }),
 			ports.string({ name: "fragment_event_index.text", label: "fragment_event_index.text" }),
 			ports.int64({ name: "fragment_event_index.unsigned", label: "fragment_event_index.unsigned" }),
+			ports["[]byte"]({ name: "fragment_first.out", label: "fragment_first.out" }),
+			ports.bool({ name: "fragment_first.passed", label: "fragment_first.passed" }),
+			ports.int64({ name: "fragment_first.rejected", label: "fragment_first.rejected" }),
 			ports.bool({ name: "fragment_index.inserted", label: "fragment_index.inserted" }),
 			ports.bool({ name: "fragment_partition.inserted", label: "fragment_partition.inserted" }),
 			ports.bool({ name: "fragment_record.found", label: "fragment_record.found" }),
@@ -10552,6 +10837,12 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "fragment_record.out", label: "fragment_record.out" }),
 			ports.string({ name: "fragment_record.text", label: "fragment_record.text" }),
 			ports.int64({ name: "fragment_record.unsigned", label: "fragment_record.unsigned" }),
+			ports.bool({ name: "fragment_scope.found", label: "fragment_scope.found" }),
+			ports["[]byte"]({ name: "fragment_scope.json", label: "fragment_scope.json" }),
+			ports.int64({ name: "fragment_scope.missing", label: "fragment_scope.missing" }),
+			ports.float64({ name: "fragment_scope.out", label: "fragment_scope.out" }),
+			ports.string({ name: "fragment_scope.text", label: "fragment_scope.text" }),
+			ports.int64({ name: "fragment_scope.unsigned", label: "fragment_scope.unsigned" }),
 			ports.bool({ name: "fragment_session.inserted", label: "fragment_session.inserted" }),
 			ports.bool({ name: "fragment_session_value.found", label: "fragment_session_value.found" }),
 			ports.int64({ name: "fragment_session_value.missing", label: "fragment_session_value.missing" }),

@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	"github.com/bytedance/sonic"
@@ -24,6 +23,7 @@ recognise one it should ignore.
 */
 type GridServer struct {
 	*runtime.System
+	scope     string
 	interests []string
 	declared  string
 	metrics   []float64
@@ -59,6 +59,10 @@ func (server *GridServer) Write(ctx context.Context, call Grid_write) error {
 
 	server.declare(interests)
 
+	if err := server.enter(call.Args()); err != nil {
+		return err
+	}
+
 	metrics, err := call.Args().Metrics()
 
 	if err != nil {
@@ -76,8 +80,11 @@ func (server *GridServer) Write(ctx context.Context, call Grid_write) error {
 			server.metrics = make([]float64, metrics.Len())
 			server.observed = make([]bool, metrics.Len())
 		}
-		presentCount := 0
 
+		// Observed marks what reported since the grid last handed its
+		// readings out; done clears it. A metric that did not report is
+		// unknown, however recently it last reported: its last value stays in
+		// metrics but is never handed out as a fresh reading.
 		for index := range metrics.Len() {
 			if present.IsValid() && index < present.Len() && !present.At(index) {
 				continue
@@ -85,17 +92,7 @@ func (server *GridServer) Write(ctx context.Context, call Grid_write) error {
 
 			server.metrics[index] = metrics.At(index)
 			server.observed[index] = true
-			presentCount++
 		}
-		fmt.Printf("GRID WRITE METRICS: metricsLen=%d, presentValid=%v, presentCount=%d, totalObserved=%d\n", metrics.Len(), present.IsValid(), presentCount, func() int {
-			c := 0
-			for _, o := range server.observed {
-				if o {
-					c++
-				}
-			}
-			return c
-		}())
 	}
 
 	feeds, err := call.Args().Data()
@@ -147,6 +144,57 @@ func (server *GridServer) Write(ctx context.Context, call Grid_write) error {
 }
 
 /*
+enter moves the grid to the series its written data belongs to. A new series
+hands out nothing observed under the previous one.
+*/
+func (server *GridServer) enter(args Grid_write_Params) error {
+	scopes, err := args.Scope()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.BadRequest,
+			"[store.grid.enter] failed to read scope argument",
+			err,
+		))
+	}
+
+	if scopes.Len() == 0 {
+		return nil
+	}
+
+	scope, err := scopes.At(0)
+
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.BadRequest, "[store.grid.enter] failed to read a scope", err))
+	}
+
+	for index := 1; index < scopes.Len(); index++ {
+		other, err := scopes.At(index)
+
+		if err != nil {
+			return errnie.Error(errnie.Err(errnie.BadRequest, "[store.grid.enter] failed to read a scope", err))
+		}
+
+		if other != scope {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[store.grid.enter] data written together belongs to different scopes: "+scope+", "+other,
+				nil,
+			))
+		}
+	}
+
+	if scope == server.scope {
+		return nil
+	}
+
+	server.scope = scope
+	clear(server.metrics)
+	clear(server.observed)
+	return nil
+}
+
+/*
 Done reports what the grid resolved and how many metrics are wired into it.
 */
 func (server *GridServer) Done(ctx context.Context, call Grid_done) error {
@@ -162,6 +210,14 @@ func (server *GridServer) Done(ctx context.Context, call Grid_done) error {
 
 	results.SetStatus(runtime.Status(server.Status()))
 	results.SetDelivered(server.delivered)
+
+	if err := results.SetScope(server.scope); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"[store.grid.Done] failed to set scope",
+			err,
+		))
+	}
 	results.SetMetrics(int64(len(server.metrics)))
 
 	if err := server.deliver(results); err != nil {
@@ -189,9 +245,12 @@ func (server *GridServer) Done(ctx context.Context, call Grid_done) error {
 			))
 		}
 
+		// A reading is handed out once. The next evaluation sees it as
+		// observed only if a new commit reported it again.
 		for index, value := range server.metrics {
 			observations.Set(index, value)
 			observed.Set(index, server.observed[index])
+			server.observed[index] = false
 		}
 	}
 
@@ -289,7 +348,6 @@ func (server *GridServer) resolve(payload []byte) error {
 
 		server.values[index] = value
 		server.present[index] = true
-		fmt.Printf("GRID VALUE [%d] %s = %f\n", index, interest, value)
 	}
 
 	return nil

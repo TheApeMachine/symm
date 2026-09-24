@@ -1949,6 +1949,10 @@
             {
               "nodeId": "fragment_index",
               "portName": "json"
+            },
+            {
+              "nodeId": "fragment_begin",
+              "portName": "json"
             }
           ]
         }
@@ -2052,7 +2056,7 @@
         "outputs": {
           "out": [
             {
-              "nodeId": "fragment_end",
+              "nodeId": "fragment_begin",
               "portName": "data"
             }
           ]
@@ -2107,16 +2111,16 @@
       },
       "connections": {
         "inputs": {
-          "data": [
-            {
-              "nodeId": "fragment_index",
-              "portName": "out"
-            }
-          ],
           "json": [
             {
               "nodeId": "fragment_end_position",
               "portName": "json"
+            }
+          ],
+          "data": [
+            {
+              "nodeId": "fragment_begin",
+              "portName": "out"
             }
           ]
         },
@@ -2745,6 +2749,14 @@
             },
             {
               "nodeId": "fragment_record",
+              "portName": "data"
+            },
+            {
+              "nodeId": "fragment_scope",
+              "portName": "data"
+            },
+            {
+              "nodeId": "fragment_first",
               "portName": "data"
             }
           ]
@@ -3408,6 +3420,100 @@
       },
       "x": 2720.0,
       "y": 1540.0
+    },
+    "fragment_begin": {
+      "id": "fragment_begin",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 1080.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "fragment_index",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "begin",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "fragment_end",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "begin"
+        }
+      }
+    },
+    "fragment_scope": {
+      "id": "fragment_scope",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "x": 680.0,
+      "y": 1520.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "walked",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      },
+      "inputData": {
+        "path": {
+          "value": "position.event"
+        },
+        "encoding": {
+          "value": "json-text"
+        }
+      }
+    },
+    "fragment_first": {
+      "id": "fragment_first",
+      "type": "data.Filter",
+      "width": 280,
+      "height": 172,
+      "x": 680.0,
+      "y": 1720.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "walked",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      },
+      "inputData": {
+        "path": {
+          "value": "position.index"
+        },
+        "operator": {
+          "value": "=="
+        },
+        "referencePath": {
+          "value": "position.begin"
+        }
+      }
     }
   }
 }

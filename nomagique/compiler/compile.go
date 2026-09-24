@@ -565,7 +565,11 @@ func CompileWithPrevious(
 				if toField.ValueList {
 					presence, carried := resolveOutputField(uSchema, presencePort)
 					var targetPresence *FieldInfo
-					if presentField, ok := vSchema.Inputs["present"]; ok && presentField.Which == schema.Type_Which_list && presentField.ElementWhich == schema.Type_Which_bool {
+					// present flags a numeric gathering port slot by slot. A port
+					// gathering documents or names has slots of its own count,
+					// which the flags do not describe.
+					if presentField, ok := vSchema.Inputs["present"]; ok && presentField.Which == schema.Type_Which_list &&
+						presentField.ElementWhich == schema.Type_Which_bool && toField.ElementWhich == schema.Type_Which_float64 {
 						targetPresence = &presentField
 					}
 					fanInEdges = append(fanInEdges, fanInEdge{
@@ -1455,12 +1459,18 @@ func compileFanIn(edges []fanInEdge) ([]Route, error) {
 				))
 			}
 
+			// A list inside a union branch is only there while that branch is
+			// active; handing over an inactive branch would read another
+			// member's slot.
 			routes = append(routes, Route{
-				FromNode:  edge.fromNode,
-				FromField: edge.fromField,
-				ToNode:    edge.toNode,
-				ToField:   edge.toField,
-				Copy:      copier,
+				FromNode:       edge.fromNode,
+				FromField:      edge.fromField,
+				ToNode:         edge.toNode,
+				ToField:        edge.toField,
+				Copy:           copier,
+				FromInUnion:    edge.fromInfo.InUnion,
+				FromDiscVal:    edge.fromInfo.DiscriminantValue,
+				FromDiscOffset: edge.fromInfo.DiscriminantOffset,
 			})
 
 			continue

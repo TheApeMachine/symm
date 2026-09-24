@@ -1,0 +1,738 @@
+{
+  "id": "impulse_map",
+  "name": "impulse_map: coordinates rearranged by sympathy into regions, and the regions lighting up now",
+  "nodes": {
+    "previous": {
+      "id": "previous",
+      "type": "store.Vector",
+      "width": 280,
+      "height": 172,
+      "x": 0.0,
+      "y": 200.0,
+      "connections": {
+        "inputs": {
+          "index": [
+            {
+              "nodeId": "change",
+              "portName": "read.index"
+            }
+          ],
+          "values": [
+            {
+              "nodeId": "change",
+              "portName": "read.latest"
+            }
+          ]
+        },
+        "outputs": {
+          "values": [
+            {
+              "nodeId": "change",
+              "portName": "previous"
+            }
+          ],
+          "found": [
+            {
+              "nodeId": "change",
+              "portName": "known"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "width": {
+          "value": 1
+        }
+      }
+    },
+    "change": {
+      "id": "change",
+      "type": "calculus.Change",
+      "width": 280,
+      "height": 172,
+      "x": 0.0,
+      "y": 400.0,
+      "connections": {
+        "inputs": {
+          "previous": [
+            {
+              "nodeId": "previous",
+              "portName": "values"
+            }
+          ],
+          "known": [
+            {
+              "nodeId": "previous",
+              "portName": "found"
+            }
+          ]
+        },
+        "outputs": {
+          "change": [
+            {
+              "nodeId": "authority",
+              "portName": "value"
+            }
+          ],
+          "defined": [
+            {
+              "nodeId": "authority",
+              "portName": "defined"
+            }
+          ],
+          "read.index": [
+            {
+              "nodeId": "previous",
+              "portName": "index"
+            }
+          ],
+          "read.latest": [
+            {
+              "nodeId": "previous",
+              "portName": "values"
+            }
+          ]
+        }
+      }
+    },
+    "authority_state": {
+      "id": "authority_state",
+      "type": "store.Vector",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 200.0,
+      "connections": {
+        "inputs": {
+          "index": [
+            {
+              "nodeId": "authority",
+              "portName": "index"
+            }
+          ],
+          "values": [
+            {
+              "nodeId": "authority",
+              "portName": "state"
+            }
+          ]
+        },
+        "outputs": {
+          "values": [
+            {
+              "nodeId": "authority",
+              "portName": "prior"
+            }
+          ],
+          "found": [
+            {
+              "nodeId": "authority",
+              "portName": "known"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "width": {
+          "value": 3
+        }
+      }
+    },
+    "authority": {
+      "id": "authority",
+      "type": "statistic.Authority",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 400.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "change",
+              "portName": "change"
+            }
+          ],
+          "defined": [
+            {
+              "nodeId": "change",
+              "portName": "defined"
+            }
+          ],
+          "prior": [
+            {
+              "nodeId": "authority_state",
+              "portName": "values"
+            }
+          ],
+          "known": [
+            {
+              "nodeId": "authority_state",
+              "portName": "found"
+            }
+          ]
+        },
+        "outputs": {
+          "index": [
+            {
+              "nodeId": "authority_state",
+              "portName": "index"
+            }
+          ],
+          "state": [
+            {
+              "nodeId": "authority_state",
+              "portName": "values"
+            }
+          ],
+          "defined": [
+            {
+              "nodeId": "pairs",
+              "portName": "present"
+            },
+            {
+              "nodeId": "activation",
+              "portName": "present"
+            }
+          ],
+          "standard": [
+            {
+              "nodeId": "concordance",
+              "portName": "value"
+            }
+          ],
+          "authority": [
+            {
+              "nodeId": "relaxation",
+              "portName": "authority"
+            },
+            {
+              "nodeId": "peak",
+              "portName": "authority"
+            }
+          ],
+          "energy": [
+            {
+              "nodeId": "activation",
+              "portName": "values"
+            }
+          ]
+        }
+      }
+    },
+    "pairs": {
+      "id": "pairs",
+      "type": "graph.Complete",
+      "width": 280,
+      "height": 172,
+      "x": 680.0,
+      "y": 200.0,
+      "connections": {
+        "inputs": {
+          "present": [
+            {
+              "nodeId": "authority",
+              "portName": "defined"
+            }
+          ]
+        },
+        "outputs": {
+          "pairs": [
+            {
+              "nodeId": "pair_state",
+              "portName": "read"
+            },
+            {
+              "nodeId": "concordance",
+              "portName": "pairs"
+            }
+          ],
+          "fromNodes": [
+            {
+              "nodeId": "concordance",
+              "portName": "fromNodes"
+            }
+          ],
+          "toNodes": [
+            {
+              "nodeId": "concordance",
+              "portName": "toNodes"
+            }
+          ]
+        }
+      }
+    },
+    "pair_state": {
+      "id": "pair_state",
+      "type": "store.Vector",
+      "width": 280,
+      "height": 172,
+      "x": 680.0,
+      "y": 400.0,
+      "connections": {
+        "inputs": {
+          "read": [
+            {
+              "nodeId": "pairs",
+              "portName": "pairs"
+            }
+          ],
+          "index": [
+            {
+              "nodeId": "concordance",
+              "portName": "index"
+            }
+          ],
+          "values": [
+            {
+              "nodeId": "concordance",
+              "portName": "state"
+            }
+          ]
+        },
+        "outputs": {
+          "values": [
+            {
+              "nodeId": "concordance",
+              "portName": "prior"
+            }
+          ],
+          "found": [
+            {
+              "nodeId": "concordance",
+              "portName": "known"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "width": {
+          "value": 5
+        }
+      }
+    },
+    "concordance": {
+      "id": "concordance",
+      "type": "statistic.Concordance",
+      "width": 280,
+      "height": 172,
+      "x": 1020.0,
+      "y": 200.0,
+      "connections": {
+        "inputs": {
+          "fromNodes": [
+            {
+              "nodeId": "pairs",
+              "portName": "fromNodes"
+            }
+          ],
+          "toNodes": [
+            {
+              "nodeId": "pairs",
+              "portName": "toNodes"
+            }
+          ],
+          "pairs": [
+            {
+              "nodeId": "pairs",
+              "portName": "pairs"
+            }
+          ],
+          "value": [
+            {
+              "nodeId": "authority",
+              "portName": "standard"
+            }
+          ],
+          "prior": [
+            {
+              "nodeId": "pair_state",
+              "portName": "values"
+            }
+          ],
+          "known": [
+            {
+              "nodeId": "pair_state",
+              "portName": "found"
+            }
+          ]
+        },
+        "outputs": {
+          "index": [
+            {
+              "nodeId": "pair_state",
+              "portName": "index"
+            }
+          ],
+          "state": [
+            {
+              "nodeId": "pair_state",
+              "portName": "values"
+            }
+          ],
+          "strength": [
+            {
+              "nodeId": "inversion",
+              "portName": "strength"
+            },
+            {
+              "nodeId": "relaxation",
+              "portName": "strength"
+            },
+            {
+              "nodeId": "peak",
+              "portName": "strength"
+            }
+          ],
+          "fromNodes": [
+            {
+              "nodeId": "relaxation",
+              "portName": "fromNodes"
+            },
+            {
+              "nodeId": "peak",
+              "portName": "fromNodes"
+            }
+          ],
+          "toNodes": [
+            {
+              "nodeId": "relaxation",
+              "portName": "toNodes"
+            },
+            {
+              "nodeId": "peak",
+              "portName": "toNodes"
+            }
+          ]
+        }
+      }
+    },
+    "inversion": {
+      "id": "inversion",
+      "type": "geometry.Inversion",
+      "width": 280,
+      "height": 172,
+      "x": 1020.0,
+      "y": 400.0,
+      "connections": {
+        "inputs": {
+          "strength": [
+            {
+              "nodeId": "concordance",
+              "portName": "strength"
+            }
+          ]
+        },
+        "outputs": {
+          "distance": [
+            {
+              "nodeId": "relaxation",
+              "portName": "distance"
+            }
+          ]
+        }
+      }
+    },
+    "positions": {
+      "id": "positions",
+      "type": "store.Vector",
+      "width": 280,
+      "height": 172,
+      "x": 1360.0,
+      "y": 200.0,
+      "connections": {
+        "inputs": {
+          "index": [
+            {
+              "nodeId": "relaxation",
+              "portName": "index"
+            }
+          ],
+          "values": [
+            {
+              "nodeId": "relaxation",
+              "portName": "positions"
+            }
+          ]
+        },
+        "outputs": {
+          "values": [
+            {
+              "nodeId": "relaxation",
+              "portName": "positions"
+            }
+          ],
+          "found": [
+            {
+              "nodeId": "relaxation",
+              "portName": "known"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "width": {
+          "value": 2
+        }
+      }
+    },
+    "relaxation": {
+      "id": "relaxation",
+      "type": "geometry.Relaxation",
+      "width": 280,
+      "height": 172,
+      "x": 1360.0,
+      "y": 400.0,
+      "connections": {
+        "inputs": {
+          "positions": [
+            {
+              "nodeId": "positions",
+              "portName": "values"
+            }
+          ],
+          "known": [
+            {
+              "nodeId": "positions",
+              "portName": "found"
+            }
+          ],
+          "authority": [
+            {
+              "nodeId": "authority",
+              "portName": "authority"
+            }
+          ],
+          "fromNodes": [
+            {
+              "nodeId": "concordance",
+              "portName": "fromNodes"
+            }
+          ],
+          "toNodes": [
+            {
+              "nodeId": "concordance",
+              "portName": "toNodes"
+            }
+          ],
+          "strength": [
+            {
+              "nodeId": "concordance",
+              "portName": "strength"
+            }
+          ],
+          "distance": [
+            {
+              "nodeId": "inversion",
+              "portName": "distance"
+            }
+          ]
+        },
+        "outputs": {
+          "index": [
+            {
+              "nodeId": "positions",
+              "portName": "index"
+            }
+          ],
+          "positions": [
+            {
+              "nodeId": "positions",
+              "portName": "values"
+            },
+            {
+              "nodeId": "peak",
+              "portName": "positions"
+            }
+          ]
+        }
+      }
+    },
+    "partition": {
+      "id": "partition",
+      "type": "store.Vector",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 0.0,
+      "inputData": {
+        "width": {
+          "value": 3
+        }
+      },
+      "connections": {
+        "inputs": {
+          "index": [
+            {
+              "nodeId": "peak",
+              "portName": "index"
+            }
+          ],
+          "values": [
+            {
+              "nodeId": "peak",
+              "portName": "state"
+            }
+          ]
+        },
+        "outputs": {
+          "found": [
+            {
+              "nodeId": "peak",
+              "portName": "known"
+            }
+          ],
+          "values": [
+            {
+              "nodeId": "peak",
+              "portName": "prior"
+            }
+          ]
+        }
+      }
+    },
+    "peak": {
+      "id": "peak",
+      "type": "geometry.Peak",
+      "width": 280,
+      "height": 172,
+      "x": 1700.0,
+      "y": 200.0,
+      "connections": {
+        "inputs": {
+          "positions": [
+            {
+              "nodeId": "relaxation",
+              "portName": "positions"
+            }
+          ],
+          "authority": [
+            {
+              "nodeId": "authority",
+              "portName": "authority"
+            }
+          ],
+          "known": [
+            {
+              "nodeId": "partition",
+              "portName": "found"
+            }
+          ],
+          "prior": [
+            {
+              "nodeId": "partition",
+              "portName": "values"
+            }
+          ],
+          "fromNodes": [
+            {
+              "nodeId": "concordance",
+              "portName": "fromNodes"
+            }
+          ],
+          "toNodes": [
+            {
+              "nodeId": "concordance",
+              "portName": "toNodes"
+            }
+          ],
+          "strength": [
+            {
+              "nodeId": "concordance",
+              "portName": "strength"
+            }
+          ]
+        },
+        "outputs": {
+          "index": [
+            {
+              "nodeId": "partition",
+              "portName": "index"
+            }
+          ],
+          "settled": [
+            {
+              "nodeId": "activation",
+              "portName": "labels"
+            }
+          ],
+          "state": [
+            {
+              "nodeId": "partition",
+              "portName": "values"
+            }
+          ]
+        }
+      }
+    },
+    "activation": {
+      "id": "activation",
+      "type": "statistic.GroupSum",
+      "width": 280,
+      "height": 172,
+      "x": 1700.0,
+      "y": 400.0,
+      "connections": {
+        "inputs": {
+          "values": [
+            {
+              "nodeId": "authority",
+              "portName": "energy"
+            }
+          ],
+          "present": [
+            {
+              "nodeId": "authority",
+              "portName": "defined"
+            }
+          ],
+          "labels": [
+            {
+              "nodeId": "peak",
+              "portName": "settled"
+            }
+          ]
+        },
+        "outputs": {
+          "sums": [
+            {
+              "nodeId": "hot",
+              "portName": "values"
+            }
+          ],
+          "labels": [
+            {
+              "nodeId": "hot",
+              "portName": "labels"
+            }
+          ]
+        }
+      }
+    },
+    "hot": {
+      "id": "hot",
+      "type": "statistic.Otsu",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 200.0,
+      "connections": {
+        "inputs": {
+          "values": [
+            {
+              "nodeId": "activation",
+              "portName": "sums"
+            }
+          ],
+          "labels": [
+            {
+              "nodeId": "activation",
+              "portName": "labels"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    }
+  }
+}

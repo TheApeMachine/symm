@@ -7,6 +7,7 @@ import (
 )
 
 type CausalMeanServer struct {
+	scope    string
 	out      float64
 	count    float64
 	sum      float64
@@ -14,6 +15,17 @@ type CausalMeanServer struct {
 }
 
 func (srv *CausalMeanServer) Write(ctx context.Context, call CausalMean_write) error {
+	scope, err := call.Args().Scope()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.Validation, "statistic.causal_mean: failed to read scope", err))
+	}
+
+	// A new series starts from nothing it has not itself observed.
+	if scope != srv.scope {
+		*srv = CausalMeanServer{scope: scope}
+	}
+
 	inVal := call.Args().Value()
 	ret := srv.prevMean
 	srv.count++

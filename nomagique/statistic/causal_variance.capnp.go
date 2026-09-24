@@ -27,7 +27,7 @@ func (c CausalVariance) Write(ctx context.Context, params func(CausalVariance_wr
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 8, PointerCount: 0}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 8, PointerCount: 1}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(CausalVariance_write_Params(s)) }
 	}
 
@@ -228,12 +228,12 @@ type CausalVariance_write_Params capnp.Struct
 const CausalVariance_write_Params_TypeID = 0x87520f970df7bd46
 
 func NewCausalVariance_write_Params(s *capnp.Segment) (CausalVariance_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
 	return CausalVariance_write_Params(st), err
 }
 
 func NewRootCausalVariance_write_Params(s *capnp.Segment) (CausalVariance_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
 	return CausalVariance_write_Params(st), err
 }
 
@@ -277,12 +277,30 @@ func (s CausalVariance_write_Params) SetValue(v float64) {
 	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
 }
 
+func (s CausalVariance_write_Params) Scope() (string, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return p.Text(), err
+}
+
+func (s CausalVariance_write_Params) HasScope() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s CausalVariance_write_Params) ScopeBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return p.TextBytes(), err
+}
+
+func (s CausalVariance_write_Params) SetScope(v string) error {
+	return capnp.Struct(s).SetText(0, v)
+}
+
 // CausalVariance_write_Params_List is a list of CausalVariance_write_Params.
 type CausalVariance_write_Params_List = capnp.StructList[CausalVariance_write_Params]
 
 // NewCausalVariance_write_Params creates a new list of CausalVariance_write_Params.
 func NewCausalVariance_write_Params_List(s *capnp.Segment, sz int32) (CausalVariance_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1}, sz)
 	return capnp.StructList[CausalVariance_write_Params](l), err
 }
 

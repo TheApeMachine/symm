@@ -84,3 +84,35 @@ func TestVelocityWrite(t *testing.T) {
 		})
 	})
 }
+
+func TestVelocityScope(t *testing.T) {
+	Convey("Given a velocity read across two series", t, func() {
+		ctx := context.Background()
+		client := Velocity_ServerToClient(NewVelocity())
+		defer client.Release()
+
+		observe := func(scope string, at, value float64) Velocity_done_Results {
+			So(client.Write(ctx, func(params Velocity_write_Params) error {
+				params.SetTs(at)
+				params.SetVal(value)
+				return params.SetScope(scope)
+			}), ShouldBeNil)
+
+			future, release := client.Done(ctx, nil)
+			t.Cleanup(release)
+
+			results, err := future.Struct()
+			So(err, ShouldBeNil)
+			return results
+		}
+
+		observe("a", 0, 0)
+		observe("a", 1, 2)
+		So(observe("a", 2, 4).Out(), ShouldAlmostEqual, 2, 1e-9)
+
+		Convey("A new series fits only its own observations", func() {
+			observe("b", 0, 100)
+			So(observe("b", 1, 90).Out(), ShouldAlmostEqual, -10, 1e-9)
+		})
+	})
+}

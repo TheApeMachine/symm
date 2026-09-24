@@ -82,7 +82,7 @@ interface Add {
 
 ## Current focus: training in the graph model
 
-The goal is to restore the precursor training system entirely as composed graphs (manifests of generic nodes), not as Go application code. `TRAINING.md` is the behavioural contract, and its "Where this stands" table is the status of record. `docs/TRAINING-REPAIR-DESIGN.md` is the proposed maths for grading, pair evidence, remapping and region tokens. One point is still pending review: a lexicographic versus an additive remapper objective. Do not settle it in code. The label question is settled: decisions are graded by executable PnL (see below).
+The goal is to restore the precursor training system entirely as composed graphs (manifests of generic nodes), not as Go application code. `TRAINING.md` is the behavioural contract, and its "Where this stands" table is the status of record. `docs/TRAINING-REPAIR-DESIGN.md` is the proposed maths for grading, pair evidence, remapping and region tokens. The remapper objective is additive, as TRAINING.md states the sympathy ladder: priorities add when they occur together (concordance strength adds consistency-weighted magnitude to consistency; authority then splits each pull). The label question is settled: decisions are graded by executable PnL (see below).
 
 The manifests are wired as follows:
 
@@ -95,8 +95,8 @@ The manifests are wired as follows:
 | `training_grade.json` | A/B/C fragment selection (WAIT/ENTER/EXIT labels per cursor) | yes |
 | `paper_exchange.json` (wired as `paper_exchange` in `training.json`) | **the grade**, composed of nodes: `paper.Book` (L3 replay, SDK book + checksum) and `paper.Sweep` (walk levels), `arithmetic.Decimal*` for money, account state (cash, holding, resting order, pair record per symbol) in one `store.Radix` written back as feedback. Orders rest until the next L3 frame; 20% of cash per entry; round-trip PnL. Takes one ordered `event` stream (observations and decisions); fragment ENTER-at-B/EXIT-at-C decide until the trie exists; round trips → `paper_round_trips_v1` | yes |
 | `capture.json` + `live_level3.json` | capture program: `live_spot` (public) and `live_level3` (token per connection, one subscription per Kraken heartbeat via `store.Queue`) into one gathered `store.Capture` session → `raw_frames_v3` | separate program |
-| `training_pair.json` → `training_pair_step.json` | pair-evidence stage of the remapper (sign and magnitude sufficient stats in `store.Radix`) | **not yet** |
-| `training_reinforce.json` | grade → `cognition.Attractor` + `statistic.Tally` into the trie | **not yet** |
+| `impulse_map.json` | the remapper as generic nodes: `calculus.Change` → `statistic.Authority` → `graph.Complete` + `statistic.Concordance` → `geometry.Inversion` → `geometry.Relaxation` → `geometry.Peak` (settle gate) → `statistic.GroupSum` → `statistic.Otsu`; all state in `store.Vector` feedback. Coordinates are grid slots, never metric names | yes |
+| `training_reinforce.json` | grade → `cognition.Attractor` + `statistic.Tally` into the trie, keyed by token sequence and holding | yes |
 
 The training loop is TRAINING.md §5: fragment type (up clearing friction / up not clearing / stagnant / down) is ground truth known beforehand, with friction measured by executing ENTER at B and EXIT at C through the recorded L3 book (`paper_exchange`); A is random before B; the model predicts from the region-token *sequence*; evaluation says whether its ENTER/EXIT was too early, too late or right relative to B/C, where "right" means the round trip from the predicted point still clears friction. Profitability judges predictions; it never replaces the precursor truth. The balance is simulation state: losses compound, and a wallet below the venue minimum is a consequence, never skipped or resized.
 
@@ -104,7 +104,9 @@ Live Kraken facts (measured 2026-09-23): Level 3 is on `wss://ws-l3.kraken.com/v
 
 Graph idioms that matter here: every wired input is required EXCEPT gathered (list) ports, so a node whose inputs all gather runs every pass with whatever arrived — that is how independent events join (such nodes must report an idle union branch, never an empty value). Retained state is written back from descendants as deferred feedback, committed after the evaluation. Branches are `data.Filter` stages whose complement is a `controlflow.Select` on `passed`; alternatives merge through a `Select` with static `test` true. Money travels as JSON-number text and is computed by `arithmetic.Decimal*` on exact rationals (`core.ReadDecimal`/`WriteDecimal`); never the Kraken SDK's `decimal.Mul`/`Div`, whose `BankersRound` turns 99×1 at scale 0 into 100. Nodes embed `*runtime.System`, construct with `NewX(ctx)` and report through `server.Error(errnie.Err(...))`.
 
-The following are not built yet: metric 2D coordinates, the remapper settling gate, region tokens, the trie's sensory keys, the connection from token to reinforce, emitting flat or non-event fragments, and the live paper process.
+Signals run on the fragment walk, never the raw tape: `training_replay` exposes `fragment_record`, `fragment_scope` (one fragment is one series) and `fragment_first`. Stateful signal nodes (`statistic.Causal*`, `temporal.Velocity|Delay|LogReturns|Elapsed`), `store.Grid` and `store.Vector` take a `scope`; a new scope starts a fresh series. Holding is the `inventory` radix in `training.json`, updated by the fragment's decisions.
+
+The following are not built yet: the trie's sensory keys, emitting flat or non-event fragments, per-instrument signal scope in the live `system.json`, and the live paper process.
 
 Invariants that are easy to break here:
 - Future B/C/D values reach the grader inputs only, never the causal token path.

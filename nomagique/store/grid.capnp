@@ -31,12 +31,20 @@ using import "radix.capnp".Retained;
 # The grid is Retained: what it hands out is what it was holding when the
 # evaluation began. That is what lets the same grid feed the metrics and
 # collect them, without the two closing a cycle around each other.
+#
+# scope names the series the written data belongs to; like data it gathers,
+# and every scope written together must agree. A new scope starts the grid
+# from no retained readings, so nothing observed under one series is handed
+# out under the next, and scope is handed back out so every metric reading the
+# grid reads under the same one. No scope arriving keeps the current series;
+# an unwired scope is one series.
 interface Grid extends(Retained) {
   write @0 (
     data      :List(Data),
     interests :Text,
     metrics   :List(Float64),
-    present   :List(Bool)
+    present   :List(Bool),
+    scope     :List(Text)
   ) -> stream;
   done @1 () -> (
     values       :List(Float64),
@@ -46,6 +54,7 @@ interface Grid extends(Retained) {
     metrics      :Int64,
     status       :Status,
     observations :List(Float64),
-    observed     :List(Bool)
+    observed     :List(Bool),
+    scope        :Text
   );
 }

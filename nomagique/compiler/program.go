@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"math"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 
@@ -530,10 +529,6 @@ func (p *Program) Execute(
 		node := &p.Nodes[currIdx]
 		client := node.Client
 
-		if strings.Contains(node.ID, "reinforce__") {
-			fmt.Printf("REINFORCE NODE: %s, ready=%b, req=%b, argsValid=%v\n", node.ID, frames[currIdx].ready, node.RequiredMask, frames[currIdx].args.IsValid())
-		}
-
 		var resStruct capnp.Struct
 
 		if client.IsValid() {
@@ -581,9 +576,6 @@ func (p *Program) Execute(
 			}
 			ans, release := client.SendCall(ctx, doneSend)
 			res, err := ans.Struct()
-			if node.ID == "token_sequence" || node.ID == "fragment_scope" {
-				fmt.Printf("NODE EXECUTED: %s, resValid=%v, err=%v\n", node.ID, res.IsValid(), err)
-			}
 
 			if err != nil {
 				release()
@@ -621,12 +613,6 @@ func (p *Program) Execute(
 			}
 
 			// Step D: Route results to downstreams
-			if node.ID == "remapper" {
-				fmt.Printf("REMAPPER EXECUTED: resStruct.valid=%v, outgoing=%d\n", resStruct.IsValid(), len(outgoing[currIdx]))
-				for _, r := range outgoing[currIdx] {
-					fmt.Printf("  REMAPPER ROUTE: toNode=%s, toField=%d, fromInUnion=%v\n", p.Nodes[r.ToNode].ID, r.ToField, r.FromInUnion)
-				}
-			}
 			for _, r := range outgoing[currIdx] {
 				destIdx := r.ToNode
 				if int(destIdx) < nodeCount {
@@ -682,9 +668,6 @@ func (p *Program) Execute(
 					}
 					frames[destIdx].ready |= (1 << r.ToField)
 					destReq := p.Nodes[destIdx].RequiredMask
-					if p.Nodes[destIdx].ID == "token_sequence" || p.Nodes[destIdx].ID == "fragment_scope" {
-						fmt.Printf("ROUTED TO %s from %s: toField=%d, ready=%b, req=%b, executed=%v\n", p.Nodes[destIdx].ID, node.ID, r.ToField, frames[destIdx].ready, destReq, frames[destIdx].executed)
-					}
 					if (frames[destIdx].ready&destReq) == destReq && !frames[destIdx].executed {
 						queue = append(queue, destIdx)
 					}
@@ -741,9 +724,6 @@ func (p *Program) Execute(
 	// Feedback only changes persistent storage after every consumer has seen
 	// the prior state. No extra result is published during the commit phase.
 	commits := make([]bool, nodeCount)
-	if len(deferred) > 0 {
-		fmt.Printf("COMMIT: len(deferred)=%d\n", len(deferred))
-	}
 
 	for _, route := range deferred {
 		destination := &p.Nodes[route.ToNode]

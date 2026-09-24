@@ -5,9 +5,9 @@ excursions, and then replays each mined fragment through the signal graphs, the
 A/B/C grader and the paper exchange. `training_replay.json` owns replay
 advancement in JSON; `training_fragment.json` separates causal observations from
 future event labels. Only fragments are replayed, never the whole tape.
-The pair-evidence stage of the remapper is composed in `training_pair.json` and
-`training_pair_step.json`. Spatial settling, region tokens, and the connection
-to `training_reinforce.json` remain unimplemented.
+The impulse map is composed in `impulse_map.json` and wired between the signal
+grid and `training_reinforce.json`: coordinates are rearranged by sympathy, and
+settled regions light up as region tokens.
 
 How the system learns. Read `ARCHITECTURE.md` first for how the graph is built
 and run; this describes what is built on top of it.
@@ -101,26 +101,41 @@ asymmetric and weighted by how much each cell has earned the right to pull.
 The third priority is what produces structure: hot spots of strong, agreeing
 cells, separated by a colder gradient.
 
-### Pair evidence
+### The composed impulse map
 
-`training_pair.json` accepts scoped metric-coordinate pairs, exact capture
-cursors, and two observed scalar values. It derives reactions between successive
-joint observations. Missing readings leave the anchor unchanged; the first joint
-reading establishes the anchor. Cursor identities and accumulated statistics are
-committed together in `store.Radix`. Duplicate readings do not add support;
-conflicting duplicates and new out-of-order readings fail the evaluation.
+`impulse_map.json` takes the grid's readings: one slot per original coordinate,
+slot i at (i mod width, i div width) on the square lattice, with a flag for
+whether it reported now. A coordinate's identity is its slot; what wrote it is
+not the map's concern. Every step is a generic node, and every piece of state
+lives in a `store.Vector` written back as feedback:
 
-`training_pair_step.json` contains the arithmetic. On active paired intervals,
-let `q = sign(left reaction) * sign(right reaction)`, `N` be support, `Q = sum(q)`,
-and `S = sum(q²)`. Consistency is `(Q²-S)/(N*(N-1))`: the average sign-product
-agreement over distinct intervals, defined only for `N > 1`. Joint quiet does
-not increase support. Observed one-sided nonresponse contributes a separate
-repulsion rate. Magnitude match is `sum(abs(left*right)) / sqrt(sum(left²)*sum(right²))`
-over the same paired support. It is scale invariant and exists only when both
-sides have observed energy. Sympathy adds consistency-weighted magnitude match
-to consistency minus nonresponse rate. These are empirical relationship
-statistics, not probabilities or confidence claims. The graph publishes the
-underlying sufficient statistics alongside them.
+1. `calculus.Change` against the previous reading (`previous`): a coordinate
+   that did not report now has no movement, never zero; one that reported and
+   did not move moved by exactly zero.
+2. `statistic.Authority` (`authority_state`): each movement divided by the
+   coordinate's own earlier root mean square, so zero stays zero; its signal
+   power standard²/(1+standard²); authority is summed power over the readings
+   of the most-read coordinate (maturity and SNR together); energy is
+   standard² × authority.
+3. `graph.Complete` over the coordinates that moved now, and
+   `statistic.Concordance` over those pairs (`pair_state`, read only for the
+   pairs present): alignment is the product of directions, so a consistent
+   inverse is as concordant as a direct pair; one moving while the other was
+   read still is an observed non-response and aligns zero. Strength is
+   |mean alignment| less its standard error plus consistency-weighted
+   magnitude agreement, and a pair that just broke its orientation reads
+   negative — the repulsion of the second priority.
+4. `geometry.Inversion` turns strength into a target distance (sympathy under
+   one cell, repulsion over), and `geometry.Relaxation` (`positions`) takes one
+   stress step per pair, each end moving by the other end's share of their
+   authority: the weak cell travels to the strong one.
+5. `geometry.Peak` (`partition`) drains every coordinate to its highest
+   sympathetic neighbour the arrangement has pulled within one cell, up to a
+   peak. The partition has settled when every coordinate drains to the same
+   peak as on the previous pass; only then are regions published.
+6. `statistic.GroupSum` of energy per settled region and `statistic.Otsu` over
+   those sums: the regions lighting up now, named by their peak's original
+   coordinate, are the region token.
 
 ### Regions
 
@@ -296,10 +311,10 @@ Paper versus real is a deployment setting, not a stage of learning.
 | Piece | State |
 | --- | --- |
 | Virtual grid, metric registration, per-symbol state | built |
-| Metric 2D coordinates | not built |
-| Impulse map and sympathy clustering | not built |
-| Remapper and settling gate | not built |
-| Region tokens | not built |
+| Metric 2D coordinates | built: slot i of the grid is original coordinate (i mod width, i div width) |
+| Impulse map and sympathy clustering | built: `impulse_map.json` (`TestImpulseMapManifest`) |
+| Remapper and settling gate | built: `geometry.Relaxation` arranges, `geometry.Peak` gates on a partition that held |
+| Region tokens | built: `statistic.Otsu` over settled region energy, into `cognition.TokenSequence` (`TestCompileTrainingPaper`) |
 | Radix trie | partly built (`nomagique/cognition`) |
 | Raw capture into Iceberg | explicit cursors and ordered deduplicated replay built; deployment subscriptions pending |
 | Excursion mining | per-symbol mining and persisted event cursors built |
@@ -309,7 +324,7 @@ Paper versus real is a deployment setting, not a stage of learning.
 | PnL grading against the L3 book | `paper_exchange.json` wired into `training.json`: replayed records and, until the trie decides, the fragments' own ENTER at B / EXIT at C are one ordered event stream; closed round trips go to `paper_round_trips_v1`. Proven end to end by `TestCompileTrainingPaper` (archive → mining → fills against recorded L3 → positive round trip archived). Fee is the account's measured 0.80% taker as a visible constant |
 | Level 3 capture | `capture.json` verified live: 603 L3 symbols admitted in minutes (rate-limited ones retried), instrument/ticker/trade/L3 in one session in `symmtables/symm/raw_frames_v3` |
 | Throughput | measured on a live archive: ~909 graph passes/s, 97% of CPU in goroutine park/wake (one Cap'n Proto server hand-off per node call). The tape still costs one pass per archived row to scan and index |
-| Fragment training loop | archive → signals and truth grading wired; remapper/token/reinforcement connection pending |
+| Fragment training loop | built: the tape is indexed once; each mined event walks its own instrument, and that walk alone feeds the signals under the fragment's scope (every stateful signal node, the grid and the impulse map's last readings start fresh per fragment). `data.Gather` hands the impulse map each record's metrics on the pass they are computed, so the token joined to a cursor's truth is the state after that cursor's record. The token sequence restarts with each fragment. Holding is a retained inventory per symbol, read before each decision and changed by the fragment's own ENTER at B and EXIT at C; both reach the trie (`TestCompileTrainingPaper`) |
 | Live paper process | not built |
 
 The capture is the dependency everything else waits on: without the stored tape

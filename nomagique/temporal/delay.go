@@ -7,6 +7,7 @@ import (
 )
 
 type DelayServer struct {
+	scope   string
 	out     float64
 	horizon int
 	buffer  []float64
@@ -14,6 +15,17 @@ type DelayServer struct {
 }
 
 func (srv *DelayServer) Write(ctx context.Context, call Delay_write) error {
+	scope, err := call.Args().Scope()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.Validation, "temporal.delay: failed to read scope", err))
+	}
+
+	// A new series starts from nothing it has not itself observed.
+	if scope != srv.scope {
+		*srv = DelayServer{scope: scope, horizon: srv.horizon}
+	}
+
 	inVal := call.Args().Value()
 	if srv.horizon <= 0 {
 		srv.horizon = 1

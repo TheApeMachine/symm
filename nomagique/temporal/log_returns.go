@@ -8,12 +8,24 @@ import (
 )
 
 type LogReturnsServer struct {
+	scope       string
 	out         float64
 	previous    float64
 	initialized bool
 }
 
 func (srv *LogReturnsServer) Write(ctx context.Context, call LogReturns_write) error {
+	scope, err := call.Args().Scope()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.Validation, "temporal.log_returns: failed to read scope", err))
+	}
+
+	// A new series starts from nothing it has not itself observed.
+	if scope != srv.scope {
+		*srv = LogReturnsServer{scope: scope}
+	}
+
 	inVal := call.Args().Value()
 
 	if !srv.initialized || srv.previous <= 0 || inVal <= 0 {

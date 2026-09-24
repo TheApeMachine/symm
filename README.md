@@ -217,10 +217,10 @@ version.
 - [x] Ordered, deduplicated tape replay
 - [x] Excursion mining with persisted event batches
 - [x] Fragment A/B/C/D reference selection
-- [ ] 2D coordinates for metrics
-- [ ] Impulse map and sympathy clustering
-- [ ] Remapper and settling gate
-- [ ] Region tokens
+- [x] 2D coordinates for metrics
+- [x] Impulse map and sympathy clustering
+- [x] Remapper and settling gate
+- [x] Region tokens
 - [ ] Radix trie *(partial — structure exists, sensory keys don't)*
 - [ ] Full fragment replay
 - [ ] A/B/C grading

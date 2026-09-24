@@ -27,7 +27,9 @@ import (
 	"github.com/theapemachine/symm/nomagique/cognition"
 	"github.com/theapemachine/symm/nomagique/compiler"
 	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/geometry"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/store/tables"
 	"github.com/theapemachine/symm/nomagique/temporal"
@@ -1107,24 +1109,44 @@ func TestCompileTrainingPaper(t *testing.T) {
 		So(err, ShouldBeNil)
 		defer program.Release()
 
-		// Supply pair evidence to revision store
-		revClient := store.Revision(program.Nodes[program.NodeMap["revision"]].Client)
-		So(revClient.Write(ctx, func(params store.Revision_write_Params) error {
-			if err := params.SetKey("correlation_ticker.hy.correlation:correlation_ticker.hy.covariance"); err != nil {
-				return err
-			}
-			if err := params.SetData([]byte(`{"evidence":{"support":10,"sympathy":2.5,"magnitude":1.2,"relation":1.0}}`)); err != nil {
-				return err
-			}
-			params.SetFlush(true)
-			return nil
-		}), ShouldBeNil)
-		So(revClient.WaitStreaming(), ShouldBeNil)
-
 		var trips []map[string]any
+		lit := map[string]bool{}
+		settled, edges, depth := 0, 0, int64(0)
+		reinforced := map[string]bool{}
 
 		for pass := 0; pass < 200000 && len(trips) == 0; pass++ {
 			So(program.Execute(ctx, nil), ShouldBeNil)
+
+			if result, found := program.Result("impulse_map__concordance"); found {
+				strength, err := statistic.Concordance_done_Results(result).Strength()
+				So(err, ShouldBeNil)
+				edges += strength.Len()
+			}
+
+			if result, found := program.Result("impulse_map__peak"); found && geometry.Watershed(result).Which() == geometry.Watershed_Which_settled {
+				settled++
+			}
+
+			if result, found := program.Result("token_sequence"); found {
+				depth = max(depth, cognition.TokenSequence_done_Results(result).Depth())
+			}
+
+			if result, found := program.Result("reinforce__action"); found && data.Extracted(result).Which() == data.Extracted_Which_text {
+				action, err := data.Extracted(result).Text()
+				So(err, ShouldBeNil)
+				reinforced[action] = true
+			}
+
+			if result, found := program.Result("impulse_map__hot"); found {
+				hot, err := statistic.Otsu_done_Results(result).Hot()
+				So(err, ShouldBeNil)
+
+				for position := range hot.Len() {
+					token, err := hot.At(position)
+					So(err, ShouldBeNil)
+					lit[token] = true
+				}
+			}
 
 			if result, found := program.Result("paper_closed"); found && data.Extracted(result).Which() == data.Extracted_Which_json {
 				payload, err := data.Extracted(result).Json()
@@ -1150,27 +1172,17 @@ func TestCompileTrainingPaper(t *testing.T) {
 				So(archived.CurrentSnapshot().Summary.Properties["total-records"], ShouldEqual, "1")
 			})
 
-			Convey("And causal pair evidence settles the remapper and forms token history for reinforcement", func() {
-				remapperRes, found := program.Result("remapper")
-				So(found, ShouldBeTrue)
-				remDone := cognition.Remapper_done_Results(remapperRes)
-				So(remDone.Settled(), ShouldBeTrue)
-				vocab, err := remDone.Vocabulary()
-				So(err, ShouldBeNil)
-				So(vocab, ShouldNotBeEmpty)
-				tokens, err := remDone.Tokens()
-				So(err, ShouldBeNil)
-				t.Logf("REMAPPER TOKENS LEN: %d, VOCAB: %s", tokens.Len(), vocab)
-				So(tokens.Len(), ShouldBeGreaterThan, 0)
+			Convey("And the tape's own co-movement lights regions of the arranged map and forms token history", func() {
+				So(edges, ShouldBeGreaterThan, 0)
+				So(settled, ShouldBeGreaterThan, 0)
+				So(lit, ShouldNotBeEmpty)
+				So(depth, ShouldBeGreaterThan, 1)
 
-				tokenSeqRes, found := program.Result("token_sequence")
-				So(found, ShouldBeTrue)
-				seqDone := cognition.TokenSequence_done_Results(tokenSeqRes)
-				path, err := seqDone.Path()
-				So(err, ShouldBeNil)
-				So(path, ShouldNotBeEmpty)
+				Convey("And both the entry at ignition and the exit at the extremum reach the trie", func() {
+					So(reinforced["ENTER"], ShouldBeTrue)
+					So(reinforced["EXIT"], ShouldBeTrue)
+				})
 			})
 		})
 	})
 }
-

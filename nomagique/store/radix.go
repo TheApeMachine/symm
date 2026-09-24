@@ -3,7 +3,6 @@ package store
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"sync/atomic"
 
 	capnp "capnproto.org/go/capnp/v3"
@@ -60,7 +59,6 @@ func (server *RadixServer) Write(ctx context.Context, call Radix_write) error {
 		}
 
 		if key == "" || seen[key] {
-			fmt.Printf("RADIX WRITE FAILED: index=%d, key=%q, seen=%v, keysLen=%d\n", index, key, seen[key], keys.Len())
 			return errnie.Error(errnie.Err(errnie.Validation, "radix: keys must be nonempty and distinct", nil))
 		}
 

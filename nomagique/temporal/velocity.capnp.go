@@ -27,7 +27,7 @@ func (c Velocity) Write(ctx context.Context, params func(Velocity_write_Params) 
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 16, PointerCount: 0}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 16, PointerCount: 1}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(Velocity_write_Params(s)) }
 	}
 
@@ -228,12 +228,12 @@ type Velocity_write_Params capnp.Struct
 const Velocity_write_Params_TypeID = 0xfcde679b9c559be2
 
 func NewVelocity_write_Params(s *capnp.Segment) (Velocity_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 1})
 	return Velocity_write_Params(st), err
 }
 
 func NewRootVelocity_write_Params(s *capnp.Segment) (Velocity_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 1})
 	return Velocity_write_Params(st), err
 }
 
@@ -285,12 +285,30 @@ func (s Velocity_write_Params) SetTs(v float64) {
 	capnp.Struct(s).SetUint64(8, math.Float64bits(v))
 }
 
+func (s Velocity_write_Params) Scope() (string, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return p.Text(), err
+}
+
+func (s Velocity_write_Params) HasScope() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s Velocity_write_Params) ScopeBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return p.TextBytes(), err
+}
+
+func (s Velocity_write_Params) SetScope(v string) error {
+	return capnp.Struct(s).SetText(0, v)
+}
+
 // Velocity_write_Params_List is a list of Velocity_write_Params.
 type Velocity_write_Params_List = capnp.StructList[Velocity_write_Params]
 
 // NewVelocity_write_Params creates a new list of Velocity_write_Params.
 func NewVelocity_write_Params_List(s *capnp.Segment, sz int32) (Velocity_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 16, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 16, PointerCount: 1}, sz)
 	return capnp.StructList[Velocity_write_Params](l), err
 }
 

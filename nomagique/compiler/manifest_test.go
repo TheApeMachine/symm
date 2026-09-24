@@ -9,6 +9,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
+	"math/rand"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -20,6 +22,9 @@ import (
 	gorillaws "github.com/gorilla/websocket"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/manifest"
+	"github.com/theapemachine/symm/nomagique/geometry"
+	"github.com/theapemachine/symm/nomagique/statistic"
+	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
@@ -227,6 +232,158 @@ func TestLiveLevel3Manifest(t *testing.T) {
 			So(venue.signatures, ShouldEqual, 1)
 			So(venue.accepted, ShouldResemble, []string{"BTC/USD", "ETH/USD", "RATE/USD"})
 			So(venue.tokens, ShouldResemble, []string{"issued-token", "issued-token", "issued-token"})
+		})
+	})
+}
+
+/*
+TestImpulseMapManifest drives manifest/impulse_map.json with an impulse map of
+six coordinates on a 3x2 lattice, interleaved as two communities: 0, 2 and 4
+react together (4 consistently inverse) and 1, 3 and 5 react together, each
+community to its own driver.
+*/
+func TestImpulseMapManifest(t *testing.T) {
+	Convey("Given the impulse map fed two interleaved communities of coordinates", t, func() {
+		var graph Graph
+		So(json.Unmarshal([]byte(`{"id":"impulse_map_fixture","nodes":{
+"feed":{"id":"feed","type":"store.Vector","inputData":{"width":{"value":1}},
+ "connections":{"inputs":{},"outputs":{"values":[{"nodeId":"map","portName":"change.value"}],"found":[{"nodeId":"map","portName":"change.present"}]}}},
+"map":{"id":"map","type":"definition:impulse_map",
+ "connections":{"inputs":{"change.value":[{"nodeId":"feed","portName":"values"}],"change.present":[{"nodeId":"feed","portName":"found"}]},"outputs":{}}}
+}}`), &graph), ShouldBeNil)
+
+		program, err := Compile(graph, nil, DefaultRepository())
+		So(err, ShouldBeNil)
+		defer program.Release()
+
+		ctx := context.Background()
+		feed := store.Vector(program.Nodes[program.NodeMap["feed"]].Client)
+		levels := make([]float64, 6)
+		random := rand.New(rand.NewSource(7))
+		community := []int{0, 1, 0, 1, 0, 1}
+		direction := []float64{1, 1, 1, 1, -1, 1}
+
+		// pass moves each community by its own driver, a member by the same
+		// amount (scaled per coordinate), and runs the graph once.
+		pass := func(drivers [2]float64) {
+			for coordinate := range levels {
+				levels[coordinate] += direction[coordinate] * float64(coordinate+1) * drivers[community[coordinate]]
+			}
+
+			So(feed.Write(ctx, func(params store.Vector_write_Params) error {
+				params.SetWidth(1)
+				index, err := params.NewIndex(6)
+
+				if err != nil {
+					return err
+				}
+
+				values, err := params.NewValues(6)
+
+				if err != nil {
+					return err
+				}
+
+				for coordinate, level := range levels {
+					index.Set(coordinate, int64(coordinate))
+					values.Set(coordinate, level)
+				}
+
+				return nil
+			}), ShouldBeNil)
+			So(feed.WaitStreaming(), ShouldBeNil)
+			So(program.Execute(ctx, nil), ShouldBeNil)
+		}
+
+		driver := func() float64 {
+			return math.Copysign(0.5+random.Float64(), random.Float64()-0.5)
+		}
+
+		for range 300 {
+			pass([2]float64{driver(), driver()})
+		}
+
+		relaxed, found := program.Result("map__relaxation")
+		So(found, ShouldBeTrue)
+		positions, err := geometry.Relaxation_done_Results(relaxed).Positions()
+		So(err, ShouldBeNil)
+		So(positions.Len(), ShouldEqual, 12)
+
+		distance := func(left, right int) float64 {
+			return math.Hypot(
+				positions.At(left*2)-positions.At(right*2),
+				positions.At(left*2+1)-positions.At(right*2+1),
+			)
+		}
+
+		Convey("Then each community gathers and the two drift apart", func() {
+			within, across := 0.0, 0.0
+			withinPairs, acrossPairs := 0, 0
+
+			for left := range 6 {
+				for right := left + 1; right < 6; right++ {
+					if community[left] == community[right] {
+						within += distance(left, right)
+						withinPairs++
+						continue
+					}
+
+					across += distance(left, right)
+					acrossPairs++
+				}
+			}
+
+			So(within/float64(withinPairs), ShouldBeLessThan, across/float64(acrossPairs))
+
+			Convey("And the consistently inverse coordinate is gathered with its community", func() {
+				So(distance(0, 4), ShouldBeLessThan, distance(0, 1))
+			})
+		})
+
+		Convey("Then when only one community moves, only its regions light up", func() {
+			pass([2]float64{driver(), 0})
+
+			watershed, found := program.Result("map__peak")
+			So(found, ShouldBeTrue)
+			So(geometry.Watershed(watershed).Which(), ShouldEqual, geometry.Watershed_Which_settled)
+
+			settled, err := geometry.Watershed(watershed).Settled()
+			So(err, ShouldBeNil)
+
+			moving := map[string]bool{}
+			members := map[string]map[int]bool{}
+
+			for coordinate := range 6 {
+				region, err := settled.At(coordinate)
+				So(err, ShouldBeNil)
+
+				if members[region] == nil {
+					members[region] = map[int]bool{}
+				}
+
+				members[region][community[coordinate]] = true
+
+				if community[coordinate] == 0 {
+					moving[region] = true
+				}
+			}
+
+			// A region is one community's ground: the two never share one.
+			for _, communities := range members {
+				So(communities, ShouldHaveLength, 1)
+			}
+
+			result, found := program.Result("map__hot")
+			So(found, ShouldBeTrue)
+			hot, err := statistic.Otsu_done_Results(result).Hot()
+			So(err, ShouldBeNil)
+			So(hot.Len(), ShouldBeGreaterThan, 0)
+
+			for position := range hot.Len() {
+				token, err := hot.At(position)
+				So(err, ShouldBeNil)
+				So(moving[token], ShouldBeTrue)
+			}
 		})
 	})
 }

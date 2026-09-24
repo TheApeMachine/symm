@@ -27,7 +27,7 @@ func (c Elapsed) Write(ctx context.Context, params func(Elapsed_write_Params) er
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 8, PointerCount: 0}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 8, PointerCount: 1}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(Elapsed_write_Params(s)) }
 	}
 
@@ -228,12 +228,12 @@ type Elapsed_write_Params capnp.Struct
 const Elapsed_write_Params_TypeID = 0xca2490936fa0b453
 
 func NewElapsed_write_Params(s *capnp.Segment) (Elapsed_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
 	return Elapsed_write_Params(st), err
 }
 
 func NewRootElapsed_write_Params(s *capnp.Segment) (Elapsed_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
 	return Elapsed_write_Params(st), err
 }
 
@@ -277,12 +277,30 @@ func (s Elapsed_write_Params) SetTimestamp(v int64) {
 	capnp.Struct(s).SetUint64(0, uint64(v))
 }
 
+func (s Elapsed_write_Params) Scope() (string, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return p.Text(), err
+}
+
+func (s Elapsed_write_Params) HasScope() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s Elapsed_write_Params) ScopeBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return p.TextBytes(), err
+}
+
+func (s Elapsed_write_Params) SetScope(v string) error {
+	return capnp.Struct(s).SetText(0, v)
+}
+
 // Elapsed_write_Params_List is a list of Elapsed_write_Params.
 type Elapsed_write_Params_List = capnp.StructList[Elapsed_write_Params]
 
 // NewElapsed_write_Params creates a new list of Elapsed_write_Params.
 func NewElapsed_write_Params_List(s *capnp.Segment, sz int32) (Elapsed_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1}, sz)
 	return capnp.StructList[Elapsed_write_Params](l), err
 }
 

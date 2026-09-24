@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"strconv"
 	"strings"
 
@@ -76,9 +75,6 @@ func (server *ExtractServer) Write(ctx context.Context, call Extract_write) erro
 	}
 
 	if len(payload) == 0 {
-		if server.path == "key" {
-			fmt.Printf("EXTRACT KEY: payload is EMPTY (len=0)\n")
-		}
 		server.found = false
 		return nil
 	}
@@ -244,10 +240,6 @@ func (server *ExtractServer) project(payload []byte) error {
 	}
 	value, found := walk(document, strings.Split(server.path, "."))
 	server.found = found
-
-	if server.path == "key" {
-		fmt.Printf("EXTRACT PROJECT KEY: encoding=%s, found=%v, payload=%s\n", server.encoding, found, string(payload))
-	}
 
 	if !found {
 		return nil

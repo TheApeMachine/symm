@@ -630,17 +630,17 @@ func TestProgramExecuteReinforcement(t *testing.T) {
 		offset := 0
 		holding := false
 		settled := true
-		execute := func(identity string, cursor int, vocabulary string) error {
+		execute := func(identity string, cursor int, history string) error {
 			input := map[string]any{
 				"capture": map[string]string{"session": identity, "endpoint": "spot"},
 				"holding": holding,
-				"settled": map[string]any{"vocabulary": vocabulary, "tokens": []string{"A", "B"}, "sequence": "A/B"},
+				"settled": map[string]any{"tokens": []string{"A", "B"}, "sequence": history},
 				"cursor":  map[string]int{"sequence": offset + cursor, "record": 0},
 				"event": map[string]any{
 					"a": map[string]int{"sequence": offset + 1, "record": 0},
 					"b": map[string]int{"sequence": offset + ignition, "record": 0},
 					"c": map[string]int{"sequence": offset + 5, "record": 0},
-					"d": map[string]int{"sequence": offset + 7, "record": 0}, "excursion": 1,
+					"d": map[string]int{"sequence": offset + 7, "record": 0}, "excursion": 1, "seed": 1,
 				},
 			}
 			if !settled {
@@ -668,33 +668,33 @@ func TestProgramExecuteReinforcement(t *testing.T) {
 		}
 
 		Convey("Then truth bootstraps an empty trie and incorrect predictions still learn", func() {
-			So(execute("entry-1", 3, "v1"), ShouldBeNil)
+			So(execute("entry-1", 3, "A/B"), ShouldBeNil)
 			prediction("", 0)
-			So(execute("wait-1", 2, "v1"), ShouldBeNil)
+			So(execute("wait-1", 2, "A/B"), ShouldBeNil)
 			prediction("ENTER", 1)
-			So(execute("wait-1", 2, "v1"), ShouldBeNil)
+			So(execute("wait-1", 2, "A/B"), ShouldBeNil)
 			prediction("", 2)
 			_, updated := program.Result("reinforce")
 			So(updated, ShouldBeFalse)
-			So(execute("wait-2", 2, "v1"), ShouldBeNil)
+			So(execute("wait-2", 2, "A/B"), ShouldBeNil)
 			prediction("", 2)
-			So(execute("wait-2", 2, "v1"), ShouldBeNil)
+			So(execute("wait-2", 2, "A/B"), ShouldBeNil)
 			prediction("WAIT", 3)
 
-			Convey("And another vocabulary has no borrowed evidence", func() {
-				So(execute("entry-2", 3, "v2"), ShouldBeNil)
+			Convey("And another precursor history has no borrowed evidence", func() {
+				So(execute("entry-2", 3, "C/A/B"), ShouldBeNil)
 				prediction("", 0)
 			})
 
 			Convey("And adjacent capture identities above Float64 precision remain distinct", func() {
 				offset = 1 << 53
-				So(execute("large", 3, "exact"), ShouldBeNil)
+				So(execute("large", 3, "L/A/B"), ShouldBeNil)
 				prediction("", 0)
 				offset++
-				So(execute("large", 3, "exact"), ShouldBeNil)
+				So(execute("large", 3, "L/A/B"), ShouldBeNil)
 				prediction("ENTER", 1)
 				offset--
-				So(execute("large", 3, "exact"), ShouldBeNil)
+				So(execute("large", 3, "L/A/B"), ShouldBeNil)
 				prediction("ENTER", 2)
 				_, updated := program.Result("reinforce")
 				So(updated, ShouldBeFalse)
@@ -702,15 +702,15 @@ func TestProgramExecuteReinforcement(t *testing.T) {
 
 			Convey("And held inventory has separate evidence", func() {
 				holding = true
-				So(execute("held", 4, "v1"), ShouldBeNil)
+				So(execute("held", 4, "A/B"), ShouldBeNil)
 				prediction("", 0)
-				So(execute("held", 4, "v1"), ShouldBeNil)
+				So(execute("held", 4, "A/B"), ShouldBeNil)
 				prediction("WAIT", 1)
 			})
 
 			Convey("And an unsettled observation cannot reach reinforcement", func() {
 				settled = false
-				So(execute("unsettled", 3, "v1"), ShouldBeNil)
+				So(execute("unsettled", 3, "A/B"), ShouldBeNil)
 				_, updated := program.Result("reinforce")
 				So(updated, ShouldBeFalse)
 				result, read := program.Result("memory")
@@ -722,23 +722,23 @@ func TestProgramExecuteReinforcement(t *testing.T) {
 
 			Convey("And a contradictory label for the same example is rejected", func() {
 				ignition = 2
-				err := execute("wait-2", 2, "v1")
+				err := execute("wait-2", 2, "A/B")
 				So(err, ShouldNotBeNil)
 				So(err.Error(), ShouldContainSubstring, "conflicting value at unique path")
 			})
 
 			Convey("And two different precursor histories ending at the same current token remain separate", func() {
-				executeWithSeq := func(identity string, cursor int, vocabulary string, seq string, tokens []string) error {
+				executeWithSeq := func(identity string, cursor int, seq string, tokens []string) error {
 					input := map[string]any{
 						"capture": map[string]string{"session": identity, "endpoint": "spot"},
 						"holding": holding,
-						"settled": map[string]any{"vocabulary": vocabulary, "tokens": tokens, "sequence": seq},
+						"settled": map[string]any{"tokens": tokens, "sequence": seq},
 						"cursor":  map[string]int{"sequence": offset + cursor, "record": 0},
 						"event": map[string]any{
 							"a": map[string]int{"sequence": offset + 1, "record": 0},
 							"b": map[string]int{"sequence": offset + ignition, "record": 0},
 							"c": map[string]int{"sequence": offset + 5, "record": 0},
-							"d": map[string]int{"sequence": offset + 7, "record": 0}, "excursion": 1,
+							"d": map[string]int{"sequence": offset + 7, "record": 0}, "excursion": 1, "seed": 1,
 						},
 					}
 
@@ -753,17 +753,17 @@ func TestProgramExecuteReinforcement(t *testing.T) {
 				}
 
 				// History 1: R1 -> R4 -> [R7,R9], ending at [R7,R9], trained to ENTER (cursor == ignition == 3)
-				So(executeWithSeq("hist-1", 3, "v1", "R1/R4/[R7,R9]", []string{"R7", "R9"}), ShouldBeNil)
+				So(executeWithSeq("hist-1", 3, "R1/R4/[R7,R9]", []string{"R7", "R9"}), ShouldBeNil)
 
 				// History 2: R3 -> R2 -> [R7,R9], ending at [R7,R9], trained to WAIT (cursor == 2 != ignition)
-				So(executeWithSeq("hist-2", 2, "v1", "R3/R2/[R7,R9]", []string{"R7", "R9"}), ShouldBeNil)
+				So(executeWithSeq("hist-2", 2, "R3/R2/[R7,R9]", []string{"R7", "R9"}), ShouldBeNil)
 
 				// Query History 1 (cursor == 2, so it doesn't train a conflicting ENTER on the same session)
-				So(executeWithSeq("query-1", 2, "v1", "R1/R4/[R7,R9]", []string{"R7", "R9"}), ShouldBeNil)
+				So(executeWithSeq("query-1", 2, "R1/R4/[R7,R9]", []string{"R7", "R9"}), ShouldBeNil)
 				prediction("ENTER", 1)
 
 				// Query History 2 (cursor == 2)
-				So(executeWithSeq("query-2", 2, "v1", "R3/R2/[R7,R9]", []string{"R7", "R9"}), ShouldBeNil)
+				So(executeWithSeq("query-2", 2, "R3/R2/[R7,R9]", []string{"R7", "R9"}), ShouldBeNil)
 				prediction("WAIT", 1)
 			})
 		})
@@ -789,13 +789,13 @@ func BenchmarkProgramExecuteReinforcement(b *testing.B) {
 		payload, err := json.Marshal(map[string]any{
 			"capture": map[string]string{"session": "benchmark", "endpoint": "spot"},
 			"holding": false,
-			"settled": map[string]any{"vocabulary": "v1", "tokens": []string{"region-A", "region-B"}, "sequence": "region-A/region-B"},
+			"settled": map[string]any{"tokens": []string{"region-A", "region-B"}, "sequence": "region-A/region-B"},
 			"cursor":  map[string]int{"sequence": observation*4 + 1, "record": 0},
 			"event": map[string]any{
 				"a": map[string]int{"sequence": observation * 4, "record": 0},
 				"b": map[string]int{"sequence": observation*4 + 1, "record": 0},
 				"c": map[string]int{"sequence": observation*4 + 2, "record": 0},
-				"d": map[string]int{"sequence": observation*4 + 3, "record": 0}, "excursion": 1,
+				"d": map[string]int{"sequence": observation*4 + 3, "record": 0}, "excursion": 1, "seed": 1,
 			},
 		})
 
@@ -1101,309 +1101,6 @@ func BenchmarkProgramExecuteReplay(b *testing.B) {
 			}
 		}
 	}
-}
-
-func TestProgramExecutePair(t *testing.T) {
-	Convey("Given the graph for paired, resolved reaction intervals", t, func() {
-		program, err := CompileFile("../../manifest/training_pair.json", nil, NewRepository())
-		So(err, ShouldBeNil)
-		defer program.Release()
-		scope := "capture-A:MOVE/USD"
-		levels := map[string]map[int][2]float64{}
-		futureLabel := "ENTER"
-		execute := func(index int, left, right any) error {
-			if levels[scope] == nil {
-				levels[scope] = map[int][2]float64{}
-			}
-			pair := [2]float64{}
-			if index >= 0 {
-				pair = levels[scope][index-1]
-			}
-			if value, valid := left.(float64); valid {
-				pair[0] += value
-			}
-			if value, valid := left.(int); valid {
-				pair[0] += float64(value)
-			}
-			if value, valid := right.(float64); valid {
-				pair[1] += value
-			}
-			if value, valid := right.(int); valid {
-				pair[1] += float64(value)
-			}
-			levels[scope][index] = pair
-			var observedRight any = pair[1]
-			if right == nil {
-				observedRight = nil
-			}
-			payload, err := json.Marshal(map[string]any{
-				"scope":  scope,
-				"pair":   map[string]any{"left": []int{0, 0}, "right": []int{1, 0}},
-				"cursor": map[string]int{"sequence": index + 1, "record": 0},
-				"left":   pair[0], "right": observedRight,
-				"future": futureLabel,
-			})
-			So(err, ShouldBeNil)
-			_, segment, err := capnp.NewMessage(capnp.SingleSegment(nil))
-			So(err, ShouldBeNil)
-			params, err := transport.NewFan_write_Params(segment)
-			So(err, ShouldBeNil)
-			So(params.SetData(payload), ShouldBeNil)
-			return program.Execute(context.Background(), map[NodeID]capnp.Struct{program.NodeMap["input"]: capnp.Struct(params)})
-		}
-		So(execute(-1, 0, 0), ShouldBeNil)
-		read := func(name string) map[string]float64 {
-			result, found := program.Result("step__" + name)
-			So(found, ShouldBeTrue)
-			payload, err := data.Insert_done_Results(result).Out()
-			So(err, ShouldBeNil)
-			var document map[string]float64
-			So(json.Unmarshal(payload, &document), ShouldBeNil)
-			return document
-		}
-
-		Convey("Consistently inverted reactions attract and scale does not change their match", func() {
-			for index, value := range []float64{1, -2, 4, -3} {
-				So(execute(index, value, -10*value), ShouldBeNil)
-				if index == 0 {
-					_, produced := program.Result("step__evidence")
-					So(produced, ShouldBeFalse)
-				}
-			}
-			evidence := read("evidence")
-			So(evidence["support"], ShouldEqual, 4)
-			So(evidence["relation"], ShouldEqual, 1)
-			So(evidence["magnitude"], ShouldAlmostEqual, 1)
-			So(evidence["sympathy"], ShouldAlmostEqual, 2)
-
-			Convey("Repeating the last interval does not change sufficient statistics", func() {
-				futureLabel = "EXIT"
-				So(execute(3, -3, 30), ShouldBeNil)
-				_, produced := program.Result("step__evidence")
-				So(produced, ShouldBeFalse)
-				So(execute(4, 2, -20), ShouldBeNil)
-				So(read("evidence")["support"], ShouldEqual, 5)
-			})
-
-			Convey("A conflicting replacement for an observed interval is rejected", func() {
-				err := execute(3, -3, 29)
-				So(err, ShouldNotBeNil)
-				So(err.Error(), ShouldContainSubstring, "conflicting value at unique path")
-			})
-
-			Convey("Another session or instrument starts with no borrowed pair evidence", func() {
-				scope = "capture-B:OTHER/USD"
-				So(execute(-1, 0, 0), ShouldBeNil)
-				So(execute(0, 1, 1), ShouldBeNil)
-				_, produced := program.Result("step__evidence")
-				So(produced, ShouldBeFalse)
-			})
-		})
-
-		Convey("Alternating relationships repel even when magnitudes match", func() {
-			for index, right := range []float64{1, 1, -1, -1} {
-				left := []float64{1, -1, 1, -1}[index]
-				So(execute(index, left, right), ShouldBeNil)
-			}
-			evidence := read("evidence")
-			So(evidence["relation"], ShouldAlmostEqual, -1.0/3)
-			So(evidence["sympathy"], ShouldAlmostEqual, -2.0/3)
-		})
-
-		Convey("Observed nonresponse repels without inventing a magnitude scale", func() {
-			So(execute(0, 2, 0), ShouldBeNil)
-			So(execute(1, -3, 0), ShouldBeNil)
-			So(read("co_movement")["relation"], ShouldEqual, -1)
-			_, produced := program.Result("step__evidence")
-			So(produced, ShouldBeFalse)
-		})
-
-		Convey("Joint quiet intervals add no evidence of a reaction relationship", func() {
-			So(execute(0, 0, 0), ShouldBeNil)
-			So(execute(1, 1, 1), ShouldBeNil)
-			_, produced := program.Result("step__evidence")
-			So(produced, ShouldBeFalse)
-			So(execute(2, -1, -1), ShouldBeNil)
-			So(read("evidence")["support"], ShouldEqual, 2)
-		})
-
-		Convey("Missing observations do not become observed nonresponses", func() {
-			So(execute(0, 0, nil), ShouldBeNil)
-			So(execute(1, 1, 1), ShouldBeNil)
-			_, produced := program.Result("step__evidence")
-			So(produced, ShouldBeFalse)
-			So(execute(2, -1, -1), ShouldBeNil)
-			So(read("evidence")["support"], ShouldEqual, 2)
-		})
-
-		Convey("New observations cannot move the pair anchor backward", func() {
-			So(execute(3, 2, -2), ShouldBeNil)
-			err := execute(1, 1, -1)
-			So(err, ShouldNotBeNil)
-			So(err.Error(), ShouldContainSubstring, "observations must follow capture cursor order")
-		})
-
-		Convey("Mixed reactions agree with direct enumeration over distinct active intervals", func() {
-			reactions := [][2]float64{{1, -2}, {-2, 1}, {0, 0}, {0, 1}, {3, -4}, {1, 0}, {-4, -3}}
-			var signs []float64
-			nonresponse := 0.0
-			for index, reaction := range reactions {
-				So(execute(index, reaction[0], reaction[1]), ShouldBeNil)
-				if reaction[0] == 0 && reaction[1] == 0 {
-					continue
-				}
-				product := reaction[0] * reaction[1]
-				sign := 0.0
-				if product > 0 {
-					sign = 1
-				}
-				if product < 0 {
-					sign = -1
-				}
-				if product == 0 {
-					nonresponse++
-				}
-				signs = append(signs, sign)
-				if len(signs) < 2 {
-					continue
-				}
-				sum, pairs := 0.0, 0.0
-				for first := range signs {
-					for second := first + 1; second < len(signs); second++ {
-						sum += signs[first] * signs[second]
-						pairs++
-					}
-				}
-				evidence := read("evidence")
-				So(evidence["support"], ShouldEqual, len(signs))
-				So(evidence["relation"], ShouldAlmostEqual, sum/pairs-nonresponse/float64(len(signs)))
-			}
-		})
-
-		Convey("Different relative magnitudes weaken the additional attraction", func() {
-			So(execute(0, 1, 4), ShouldBeNil)
-			So(execute(1, -4, -1), ShouldBeNil)
-			evidence := read("evidence")
-			So(evidence["relation"], ShouldEqual, 1)
-			So(evidence["magnitude"], ShouldAlmostEqual, 8.0/17)
-			So(evidence["sympathy"], ShouldAlmostEqual, 1+8.0/17)
-		})
-	})
-}
-
-func BenchmarkProgramExecutePair(b *testing.B) {
-	errnie.Apply(&errnie.Config{Level: "error"})
-	defer errnie.Apply(&errnie.Config{Level: "info"})
-	program, err := CompileFile("../../manifest/training_pair.json", nil, NewRepository())
-
-	if err != nil {
-		b.Fatal(err)
-	}
-	defer program.Release()
-	b.ReportAllocs()
-	b.ResetTimer()
-	index := 0
-
-	for b.Loop() {
-		index++
-		payload, err := json.Marshal(map[string]any{
-			"scope":  "benchmark:MOVE/USD",
-			"pair":   map[string]any{"left": []int{0, 0}, "right": []int{1, 0}},
-			"cursor": map[string]int{"sequence": index + 1, "record": 0},
-			"left":   index % 7, "right": -(index % 7),
-		})
-
-		if err != nil {
-			b.Fatal(err)
-		}
-		_, segment, err := capnp.NewMessage(capnp.SingleSegment(nil))
-
-		if err != nil {
-			b.Fatal(err)
-		}
-		params, err := transport.NewFan_write_Params(segment)
-
-		if err != nil {
-			b.Fatal(err)
-		}
-
-		if err := params.SetData(payload); err != nil {
-			b.Fatal(err)
-		}
-
-		if err := program.Execute(context.Background(), map[NodeID]capnp.Struct{program.NodeMap["input"]: capnp.Struct(params)}); err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
-func TestProgramExecuteSignalPair(t *testing.T) {
-	Convey("Given existing signal outputs connected to the pair graph in one compiled program", t, func() {
-		repository := NewRepository()
-		graph := trainingSignals(t, repository)
-		var connections Graph
-		So(json.Unmarshal([]byte(`{"nodes":{
-"context":{"id":"context","type":"data.Extract","inputData":{"path":{"value":"context"},"encoding":{"value":"json"}},"connections":{"inputs":{"data":[{"nodeId":"records","portName":"out"}]},"outputs":{"json":[{"nodeId":"pair_left","portName":"data"}]}}},
-"pair_left":{"id":"pair_left","type":"data.Insert","inputData":{"path":{"value":"left"}},"connections":{"inputs":{"data":[{"nodeId":"context","portName":"json"}],"value":[{"nodeId":"definition-liquidity_ticker","portName":"spread.out"}]},"outputs":{"out":[{"nodeId":"pair_right","portName":"data"}]}}},
-"pair_right":{"id":"pair_right","type":"data.Insert","inputData":{"path":{"value":"right"}},"connections":{"inputs":{"data":[{"nodeId":"pair_left","portName":"out"}],"value":[{"nodeId":"definition-liquidity_ticker","portName":"two_sided_touch_notional.out"}]},"outputs":{"out":[{"nodeId":"pair","portName":"input.data"}]}}},
-"pair":{"id":"pair","type":"definition:training_pair","connections":{"inputs":{"input.data":[{"nodeId":"pair_right","portName":"out"}]}}}
-}}`), &connections), ShouldBeNil)
-		for id, node := range connections.Nodes {
-			graph.Nodes[id] = node
-		}
-		// The fixture connects the existing outputs; it does not change any
-		// signal formula or substitute a second calculation for those nodes.
-		records := graph.Nodes["records"]
-		records.Connections.Outputs["out"] = append(records.Connections.Outputs["out"], ConnectionTarget{NodeID: "context", PortName: "data"})
-		signal := graph.Nodes["definition-liquidity_ticker"]
-		signal.Connections.Outputs["spread.out"] = append(signal.Connections.Outputs["spread.out"], ConnectionTarget{NodeID: "pair_left", PortName: "value"})
-		signal.Connections.Outputs["two_sided_touch_notional.out"] = append(signal.Connections.Outputs["two_sided_touch_notional.out"], ConnectionTarget{NodeID: "pair_right", PortName: "value"})
-		graph.Nodes["definition-liquidity_ticker"] = signal
-		program, err := Compile(graph, nil, repository)
-		So(err, ShouldBeNil)
-		defer program.Release()
-
-		for index, reading := range []struct{ spread, quantity float64 }{{1, 10}, {2, 11}, {1, 10}, {4, 13}} {
-			payload, err := json.Marshal(map[string]any{
-				"channel": "ticker",
-				"data":    []map[string]any{{"symbol": "MOVE/USD", "bid": 100, "ask": 100 + reading.spread, "bid_qty": reading.quantity, "ask_qty": 100}},
-				"context": map[string]any{
-					"scope":  map[string]string{"session": "signal-replay", "symbol": "MOVE/USD"},
-					"pair":   map[string]any{"left": []int{0, 0}, "right": []int{0, 1}},
-					"cursor": map[string]uint64{"sequence": 9007199254740993 + uint64(index), "record": 0},
-				},
-			})
-			So(err, ShouldBeNil)
-			_, segment, err := capnp.NewMessage(capnp.SingleSegment(nil))
-			So(err, ShouldBeNil)
-			params, err := data.NewIterate_write_Params(segment)
-			So(err, ShouldBeNil)
-			So(params.SetPath("data"), ShouldBeNil)
-			params.SetEnvelope(true)
-			arrivals, err := params.NewData(1)
-			So(err, ShouldBeNil)
-			So(arrivals.Set(0, payload), ShouldBeNil)
-			So(program.Execute(context.Background(), map[NodeID]capnp.Struct{program.NodeMap["records"]: capnp.Struct(params)}), ShouldBeNil)
-		}
-		result, found := program.Result("pair__evidence")
-		So(found, ShouldBeTrue)
-		payload, err := data.Insert_done_Results(result).Out()
-		So(err, ShouldBeNil)
-		var evidence struct {
-			Scope    map[string]string `json:"scope"`
-			Interval struct {
-				Start struct{ Sequence uint64 } `json:"start"`
-				End   struct{ Sequence uint64 } `json:"end"`
-			} `json:"interval"`
-			Evidence map[string]float64 `json:"evidence"`
-		}
-		So(json.Unmarshal(payload, &evidence), ShouldBeNil)
-		So(evidence.Scope["session"], ShouldEqual, "signal-replay")
-		So(evidence.Interval.Start.Sequence == uint64(9007199254740995), ShouldBeTrue)
-		So(evidence.Interval.End.Sequence == uint64(9007199254740996), ShouldBeTrue)
-		So(evidence.Evidence["support"], ShouldEqual, 3)
-		So(evidence.Evidence["sympathy"], ShouldAlmostEqual, 2)
-	})
 }
 
 func TestProgramExecuteLiveSpot(t *testing.T) {

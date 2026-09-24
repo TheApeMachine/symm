@@ -279,7 +279,100 @@ func TestGridWrite(t *testing.T) {
 				So(observed.At(0), ShouldBeTrue)
 				So(observed.At(1), ShouldBeFalse)
 				So(observed.At(2), ShouldBeTrue)
+
+				Convey("And a reading is handed out once: the next evaluation has observed nothing new", func() {
+					future, release := client.Done(ctx, nil)
+					defer release()
+
+					results, err := future.Struct()
+					So(err, ShouldBeNil)
+					observed, err := results.Observed()
+					So(err, ShouldBeNil)
+					So(observed.At(0), ShouldBeFalse)
+					So(observed.At(2), ShouldBeFalse)
+				})
 			})
+		})
+	})
+}
+
+func TestGridScope(t *testing.T) {
+	Convey("Given a grid holding a reading under one scope", t, func() {
+		ctx := context.Background()
+		client := store.Grid_ServerToClient(store.NewGrid(ctx))
+		defer client.Release()
+
+		write := func(scopes []string, reading bool) {
+			So(client.Write(ctx, func(params store.Grid_write_Params) error {
+				names, err := params.NewScope(int32(len(scopes)))
+
+				if err != nil {
+					return err
+				}
+
+				for position, scope := range scopes {
+					if err := names.Set(position, scope); err != nil {
+						return err
+					}
+				}
+
+				if !reading {
+					return nil
+				}
+
+				metrics, err := params.NewMetrics(1)
+
+				if err != nil {
+					return err
+				}
+
+				metrics.Set(0, 7)
+				present, err := params.NewPresent(1)
+
+				if err != nil {
+					return err
+				}
+
+				present.Set(0, true)
+				return nil
+			}), ShouldBeNil)
+		}
+
+		done := func() (bool, string) {
+			future, release := client.Done(ctx, nil)
+			defer release()
+
+			results, err := future.Struct()
+			So(err, ShouldBeNil)
+			observed, err := results.Observed()
+			So(err, ShouldBeNil)
+			scope, err := results.Scope()
+			So(err, ShouldBeNil)
+			return observed.Len() > 0 && observed.At(0), scope
+		}
+
+		write([]string{"first"}, true)
+		So(client.WaitStreaming(), ShouldBeNil)
+
+		Convey("A write that carries no scope keeps the series", func() {
+			write(nil, false)
+			So(client.WaitStreaming(), ShouldBeNil)
+			observed, scope := done()
+			So(observed, ShouldBeTrue)
+			So(scope, ShouldEqual, "first")
+		})
+
+		Convey("A new scope hands out nothing observed under the previous one", func() {
+			write([]string{"second"}, false)
+			So(client.WaitStreaming(), ShouldBeNil)
+			observed, scope := done()
+			So(observed, ShouldBeFalse)
+			So(scope, ShouldEqual, "second")
+		})
+
+		Convey("Data written together under different scopes is rejected", func() {
+			write([]string{"second", "third"}, false)
+			So(client.WaitStreaming(), ShouldNotBeNil)
 		})
 	})
 }

@@ -16,6 +16,7 @@ was the noise the series already carried. Fitting reports the slope together
 with the confidence behind it, so a caller can tell those apart.
 */
 type VelocityServer struct {
+	scope       string
 	count       float64
 	sumTime     float64
 	sumValue    float64
@@ -35,6 +36,17 @@ func NewVelocity() *VelocityServer {
 Write admits one observation and refits the slope across everything seen.
 */
 func (server *VelocityServer) Write(ctx context.Context, call Velocity_write) error {
+	scope, err := call.Args().Scope()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.Validation, "temporal.velocity: failed to read scope", err))
+	}
+
+	// A new series starts from nothing it has not itself observed.
+	if scope != server.scope {
+		*server = VelocityServer{scope: scope}
+	}
+
 	value := call.Args().Val()
 	at := call.Args().Ts()
 

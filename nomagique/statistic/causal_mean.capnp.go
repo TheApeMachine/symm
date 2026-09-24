@@ -27,7 +27,7 @@ func (c CausalMean) Write(ctx context.Context, params func(CausalMean_write_Para
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 8, PointerCount: 0}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 8, PointerCount: 1}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(CausalMean_write_Params(s)) }
 	}
 
@@ -228,12 +228,12 @@ type CausalMean_write_Params capnp.Struct
 const CausalMean_write_Params_TypeID = 0xd707eec92f7adafd
 
 func NewCausalMean_write_Params(s *capnp.Segment) (CausalMean_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
 	return CausalMean_write_Params(st), err
 }
 
 func NewRootCausalMean_write_Params(s *capnp.Segment) (CausalMean_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
 	return CausalMean_write_Params(st), err
 }
 
@@ -277,12 +277,30 @@ func (s CausalMean_write_Params) SetValue(v float64) {
 	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
 }
 
+func (s CausalMean_write_Params) Scope() (string, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return p.Text(), err
+}
+
+func (s CausalMean_write_Params) HasScope() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s CausalMean_write_Params) ScopeBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return p.TextBytes(), err
+}
+
+func (s CausalMean_write_Params) SetScope(v string) error {
+	return capnp.Struct(s).SetText(0, v)
+}
+
 // CausalMean_write_Params_List is a list of CausalMean_write_Params.
 type CausalMean_write_Params_List = capnp.StructList[CausalMean_write_Params]
 
 // NewCausalMean_write_Params creates a new list of CausalMean_write_Params.
 func NewCausalMean_write_Params_List(s *capnp.Segment, sz int32) (CausalMean_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1}, sz)
 	return capnp.StructList[CausalMean_write_Params](l), err
 }
 
