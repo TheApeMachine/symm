@@ -849,7 +849,6 @@ func RegisterSchema(reg *schemas.Registry) {
 			0x8183b1d61abfade9,
 			0x8184976ded3c974e,
 			0x8799e00972975657,
-			0x8b2a68e19c111ac0,
 			0x8e89588bca783bc0,
 			0x91fb29103a862f72,
 			0x93af7e86b0fdf5b6,
@@ -858,7 +857,6 @@ func RegisterSchema(reg *schemas.Registry) {
 			0x9b51f810d340c4cf,
 			0x9e1f3638573bf479,
 			0x9f737c249d754c45,
-			0xa1427acd498114b6,
 			0xa32c90c355cc8c09,
 			0xa386f0b1f79a0fbd,
 			0xa9b15aea598ce5aa,
@@ -870,13 +868,11 @@ func RegisterSchema(reg *schemas.Registry) {
 			0xbee7a39db5cde247,
 			0xbef22111281d86ec,
 			0xbf4797ed2cbc65b9,
-			0xc6618673c2949b62,
 			0xcafc853dd0de0f23,
 			0xccc1ae1e0bbc29ad,
 			0xd29236e3705f0bc1,
 			0xd5ab1698d577655d,
 			0xd7546102172af19d,
-			0xdf7ff8cd7fbf2e00,
 			0xe0a56f91286e7269,
 			0xe40fb69e8e61ebd5,
 			0xe6115b6fdcda2cdd,
@@ -889,4 +885,26 @@ func RegisterSchema(reg *schemas.Registry) {
 		},
 		Compressed: true,
 	})
+	reg.Register(&schemas.Schema{
+		String: schema_a66318359218d6a8,
+		Nodes: []uint64{
+			0x8b2a68e19c111ac0,
+			0xa1427acd498114b6,
+			0xc6618673c2949b62,
+			0xdf7ff8cd7fbf2e00,
+		},
+		Compressed: true,
+	})
+	reg.Register(&schemas.Schema{
+		String: schema_b62908f5d0234a62,
+		Nodes: []uint64{
+			0x8d825c2899e43a06,
+			0xd7ca45773f8a696b,
+			0xe1ead1173e4fc89a,
+			0xf5b70e448826ef93,
+		},
+		Compressed: true,
+	})
 }
+
+

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"math/big"
 	"strings"
 
@@ -91,6 +92,10 @@ func (server *FilterServer) Write(ctx context.Context, call Filter_write) error 
 
 	server.passed = false
 	server.out = nil
+
+	if strings.Contains(server.path, "settled.tokens") {
+		fmt.Printf("TOKEN_AVAILABLE INBOUND: %s\n", string(payload))
+	}
 
 	if len(payload) == 0 {
 		return nil

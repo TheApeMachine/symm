@@ -24,6 +24,7 @@ import (
 	krakendecimal "github.com/krakenfx/api-go/v2/pkg/decimal"
 	_ "github.com/mattn/go-sqlite3"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique/cognition"
 	"github.com/theapemachine/symm/nomagique/compiler"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
@@ -1106,6 +1107,20 @@ func TestCompileTrainingPaper(t *testing.T) {
 		So(err, ShouldBeNil)
 		defer program.Release()
 
+		// Supply pair evidence to revision store
+		revClient := store.Revision(program.Nodes[program.NodeMap["revision"]].Client)
+		So(revClient.Write(ctx, func(params store.Revision_write_Params) error {
+			if err := params.SetKey("correlation_ticker.hy.correlation:correlation_ticker.hy.covariance"); err != nil {
+				return err
+			}
+			if err := params.SetData([]byte(`{"evidence":{"support":10,"sympathy":2.5,"magnitude":1.2,"relation":1.0}}`)); err != nil {
+				return err
+			}
+			params.SetFlush(true)
+			return nil
+		}), ShouldBeNil)
+		So(revClient.WaitStreaming(), ShouldBeNil)
+
 		var trips []map[string]any
 
 		for pass := 0; pass < 200000 && len(trips) == 0; pass++ {
@@ -1134,6 +1149,28 @@ func TestCompileTrainingPaper(t *testing.T) {
 				So(archived.CurrentSnapshot(), ShouldNotBeNil)
 				So(archived.CurrentSnapshot().Summary.Properties["total-records"], ShouldEqual, "1")
 			})
+
+			Convey("And causal pair evidence settles the remapper and forms token history for reinforcement", func() {
+				remapperRes, found := program.Result("remapper")
+				So(found, ShouldBeTrue)
+				remDone := cognition.Remapper_done_Results(remapperRes)
+				So(remDone.Settled(), ShouldBeTrue)
+				vocab, err := remDone.Vocabulary()
+				So(err, ShouldBeNil)
+				So(vocab, ShouldNotBeEmpty)
+				tokens, err := remDone.Tokens()
+				So(err, ShouldBeNil)
+				t.Logf("REMAPPER TOKENS LEN: %d, VOCAB: %s", tokens.Len(), vocab)
+				So(tokens.Len(), ShouldBeGreaterThan, 0)
+
+				tokenSeqRes, found := program.Result("token_sequence")
+				So(found, ShouldBeTrue)
+				seqDone := cognition.TokenSequence_done_Results(tokenSeqRes)
+				path, err := seqDone.Path()
+				So(err, ShouldBeNil)
+				So(path, ShouldNotBeEmpty)
+			})
 		})
 	})
 }
+

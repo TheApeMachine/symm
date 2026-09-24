@@ -27,7 +27,7 @@ func (c Grid) Write(ctx context.Context, params func(Grid_write_Params) error) e
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 3}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 4}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(Grid_write_Params(s)) }
 	}
 
@@ -209,7 +209,7 @@ func (c Grid_done) Args() Grid_done_Params {
 
 // AllocResults allocates the results struct.
 func (c Grid_done) AllocResults() (Grid_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 24, PointerCount: 4})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 24, PointerCount: 5})
 	return Grid_done_Results(r), err
 }
 
@@ -228,12 +228,12 @@ type Grid_write_Params capnp.Struct
 const Grid_write_Params_TypeID = 0x8b2a68e19c111ac0
 
 func NewGrid_write_Params(s *capnp.Segment) (Grid_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 3})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 4})
 	return Grid_write_Params(st), err
 }
 
 func NewRootGrid_write_Params(s *capnp.Segment) (Grid_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 3})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 4})
 	return Grid_write_Params(st), err
 }
 
@@ -333,13 +333,36 @@ func (s Grid_write_Params) NewMetrics(n int32) (capnp.Float64List, error) {
 	err = capnp.Struct(s).SetPtr(2, l.ToPtr())
 	return l, err
 }
+func (s Grid_write_Params) Present() (capnp.BitList, error) {
+	p, err := capnp.Struct(s).Ptr(3)
+	return capnp.BitList(p.List()), err
+}
+
+func (s Grid_write_Params) HasPresent() bool {
+	return capnp.Struct(s).HasPtr(3)
+}
+
+func (s Grid_write_Params) SetPresent(v capnp.BitList) error {
+	return capnp.Struct(s).SetPtr(3, v.ToPtr())
+}
+
+// NewPresent sets the present field to a newly
+// allocated capnp.BitList, preferring placement in s's segment.
+func (s Grid_write_Params) NewPresent(n int32) (capnp.BitList, error) {
+	l, err := capnp.NewBitList(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return capnp.BitList{}, err
+	}
+	err = capnp.Struct(s).SetPtr(3, l.ToPtr())
+	return l, err
+}
 
 // Grid_write_Params_List is a list of Grid_write_Params.
 type Grid_write_Params_List = capnp.StructList[Grid_write_Params]
 
 // NewGrid_write_Params creates a new list of Grid_write_Params.
 func NewGrid_write_Params_List(s *capnp.Segment, sz int32) (Grid_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 3}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 4}, sz)
 	return capnp.StructList[Grid_write_Params](l), err
 }
 
@@ -422,12 +445,12 @@ type Grid_done_Results capnp.Struct
 const Grid_done_Results_TypeID = 0xdf7ff8cd7fbf2e00
 
 func NewGrid_done_Results(s *capnp.Segment) (Grid_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 4})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 5})
 	return Grid_done_Results(st), err
 }
 
 func NewRootGrid_done_Results(s *capnp.Segment) (Grid_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 4})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 5})
 	return Grid_done_Results(st), err
 }
 
@@ -569,13 +592,36 @@ func (s Grid_done_Results) NewObservations(n int32) (capnp.Float64List, error) {
 	err = capnp.Struct(s).SetPtr(3, l.ToPtr())
 	return l, err
 }
+func (s Grid_done_Results) Observed() (capnp.BitList, error) {
+	p, err := capnp.Struct(s).Ptr(4)
+	return capnp.BitList(p.List()), err
+}
+
+func (s Grid_done_Results) HasObserved() bool {
+	return capnp.Struct(s).HasPtr(4)
+}
+
+func (s Grid_done_Results) SetObserved(v capnp.BitList) error {
+	return capnp.Struct(s).SetPtr(4, v.ToPtr())
+}
+
+// NewObserved sets the observed field to a newly
+// allocated capnp.BitList, preferring placement in s's segment.
+func (s Grid_done_Results) NewObserved(n int32) (capnp.BitList, error) {
+	l, err := capnp.NewBitList(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return capnp.BitList{}, err
+	}
+	err = capnp.Struct(s).SetPtr(4, l.ToPtr())
+	return l, err
+}
 
 // Grid_done_Results_List is a list of Grid_done_Results.
 type Grid_done_Results_List = capnp.StructList[Grid_done_Results]
 
 // NewGrid_done_Results creates a new list of Grid_done_Results.
 func NewGrid_done_Results_List(s *capnp.Segment, sz int32) (Grid_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 24, PointerCount: 4}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 24, PointerCount: 5}, sz)
 	return capnp.StructList[Grid_done_Results](l), err
 }
 
@@ -586,3 +632,47 @@ func (f Grid_done_Results_Future) Struct() (Grid_done_Results, error) {
 	p, err := f.Future.Ptr()
 	return Grid_done_Results(p.Struct()), err
 }
+
+const schema_a66318359218d6a8 = "x\xda\x8c\x92?h,U\x18\xc5\xcf\xb9w&\x13q" +
+	"\xf7\xcd\xbb\xcc\x80\xcf\x7f\x18\xe4=\x90-^\x8c\x8bM" +
+	",\xb2\xa4P\xb4\xda\xbb\xdb((2\xc9\\\xe2\x84\xec" +
+	"l\x9c\x99M\x96\x80\xac6F\x89\x08J\x1a\x8d\x82\x16" +
+	"JR\xa6P\xb0\x10\x83\x82\xa2\x98B\x0b+A-\x82" +
+	"\xb6\x82\x82Jt\xe4nv\xc3\x12\x0bS\x0c\xdc9\xf7" +
+	"\xe3\xdc\xef\xfb~\xe7\xfe\xcf\xd8p\xe6\xaa\xdb.\x84n" +
+	"\xb8S\xe5\xd1\x1d\xea\xad\x9f\x9e\xa9\xed@\xcd\x10p\x1d" +
+	"\x0f\xa8\x1f\x88U\x82\xc1\x07\xe2g\xb0<z\xa8\xff\xd5" +
+	"\xce\xe3/\xbf\x0au\x97,\xaf<\xf1\xfd\xb7\x07\x1f\xa9" +
+	"\xbf\x00\xd6?\x965\x06\xc7\xd2\x03\x82/\xa5g?\xa0" +
+	"\xfc0|\xe1\xd1\xe3\xad\xc5w\xcf\xec\x86n\x87r\x89" +
+	"p\xca\xa5\xbd\xddO\xf3\x17\xa3\xcf\xa1\xee\x94\xe5\xfew" +
+	"\xd7^\x7f\xf0\xda\xf2\xfb\xd6\xe7m)\x18\x1c\x0c}\xde" +
+	"\x93\xdb\xc1\xef\xf26\xe0\x9f\x9b\x9f\x0c\x8e\xff\x18\xfc\xa0" +
+	"g(\x01\xd7\xb5>'\xd2vU\xffU~Al\x95" +
+	"i\xb7\x13\xad$\xcf\xf6\x1c3\x9b\x17\xdd\xcc\xcc\xaed" +
+	"I|s9ZO\xd7\xe7\x1f\xb1\xc7\xcd,)\xcc\xf5" +
+	"f\xe4gQ'\xd7W\xa5\x038\x04TT\x03\xf4\x93" +
+	"\x92\xba/\xa8\xc8\x90V\xec\xb5\x00]H\xea\xe7\x05\x95" +
+	"\x10!\x05\xa0\x9e[\x04t_R\xef\x0a*)C\xdb" +
+	"\x8az\xcd\x8a\xafH\xea}A?\x8e\x8a\x88W\xc0\xa6" +
+	"$\xab\x10\xf6X&ia2\x93\x17`\xce\x0a\x04+" +
+	"\xe0\xa0c\x8a,Y\xce\xc7\xa5\xb7\x9e\x95\x0e\xd63\x93" +
+	"\x9b\xb4\x18\xcb\x1c9\x8cG\x93\xe3\xd1\xb2(N\xfa\xa3" +
+	"\xd9Z\xa6\x88\xfc$5q\x93lJ\xb7I\xfe\xff*" +
+	"\xe2nj7\x91yQ'\xff\xaf\xfb\x85j4I=" +
+	"-]\xe0<\x1bL\x0f\x8f6\xebo>\xfd\x86\x9a{" +
+	"\x00B\xdd\xf0\xc8s\xd0\xc4\x08\x95\xba\xbd\x06\xa1\xaa\xde" +
+	"=\xc3\xc57\xe8\xdbW\x1b\xd4\x0e'2\x04\\\xb2\xdb" +
+	"\x96\xc9\xfd\xdeZ\x91\xeb\x99sp\xdf\xcc\x03\xfakI" +
+	"\xfd\xcb\x04\xb8\x13\x8b\xe3GI}:\x01\xee\xcf{\x01" +
+	"\xfd\x9bd\x8b\x82\x1cq\xfb\xdb\x12>\x95lOSP" +
+	"9\x0c\xe9\x00\x81\xcbE\xa0E\xc9v\xc5\xca\xeetH" +
+	"\x17\x08n\xe1<\xd0v\xac~\xd5\xeaS2\xe4\x14\x10" +
+	"T\xb9\x0a\xb4+V\xbf\xcf\xea\x9e\x13\xd2\xe6\xf6\x06\x1f" +
+	"\x03\xda\xd7\xad\xde\xa0\xe0\xc2F\xb4\xd63\x97\xc4\xedu" +
+	"{\xc50<U\xb0\x8c\xcdZ\xb2a2\x03\xc6t!" +
+	"\xe8N\x84g\xf4\xbf\x90\x17Q\xd1\xcb\xe9\x97O\xad\xbe" +
+	"sx\xf7\xc3{/\x01\xa4\x0f\x96\xdd\xa5\xdcd\x1bQ" +
+	"\x01?\xe9\xa6\x17_\x1f\xdd\x9a\x18\xc0\x85\x0e\xfe\x0d\x00" +
+	"\x00\xff\xff\x81\xc9\xf9\xcd"
+

@@ -75,6 +75,15 @@ func TestSetStaticField(t *testing.T) {
 		So(SetStaticField(target, field, `null`), ShouldNotBeNil)
 		So(SetStaticField(target, field, `[1]`), ShouldNotBeNil)
 		So(SetStaticField(target, field, `[null]`), ShouldNotBeNil)
+
+		floatField := FieldInfo{Which: schema.Type_Which_list, ElementWhich: schema.Type_Which_float64}
+		So(SetStaticField(target, floatField, `[10.5, 20.25]`), ShouldBeNil)
+		floatPtr, err := target.Ptr(0)
+		So(err, ShouldBeNil)
+		floatList := capnp.Float64List(floatPtr.List())
+		So(floatList.Len(), ShouldEqual, 2)
+		So(floatList.At(0), ShouldEqual, 10.5)
+		So(floatList.At(1), ShouldEqual, 20.25)
 	})
 }
 
@@ -128,7 +137,7 @@ func TestCompileFanInCopier(t *testing.T) {
 		to := FieldInfo{Which: schema.Type_Which_list, ElementWhich: schema.Type_Which_float64}
 		for index, value := range []float64{2.5, -7, 0, 19} {
 			source.SetUint64(8, math.Float64bits(value))
-			copy, err := CompileFanInCopier(from, to, index, 4)
+			copy, err := CompileFanInCopier(from, to, nil, index, 4)
 			So(err, ShouldBeNil)
 			So(copy(source, target), ShouldBeNil)
 		}
@@ -140,10 +149,48 @@ func TestCompileFanInCopier(t *testing.T) {
 			So(values.At(index), ShouldEqual, value)
 		}
 	})
+
+	Convey("Given numeric signal results with a companion presence bit list", t, func() {
+		_, segment, err := capnp.NewMessage(capnp.SingleSegment(nil))
+		So(err, ShouldBeNil)
+		source, err := capnp.NewRootStruct(segment, capnp.ObjectSize{DataSize: 16})
+		So(err, ShouldBeNil)
+		target, err := capnp.NewStruct(segment, capnp.ObjectSize{PointerCount: 2})
+		So(err, ShouldBeNil)
+		from := FieldInfo{Which: schema.Type_Which_float64, Offset: 1}
+		to := FieldInfo{Which: schema.Type_Which_list, ElementWhich: schema.Type_Which_float64, Offset: 0}
+		presence := &FieldInfo{Which: schema.Type_Which_list, ElementWhich: schema.Type_Which_bool, Offset: 1}
+
+		// Only write slots 0 and 2
+		source.SetUint64(8, math.Float64bits(42.0))
+		copy0, err := CompileFanInCopier(from, to, presence, 0, 4)
+		So(err, ShouldBeNil)
+		So(copy0(source, target), ShouldBeNil)
+
+		source.SetUint64(8, math.Float64bits(99.0))
+		copy2, err := CompileFanInCopier(from, to, presence, 2, 4)
+		So(err, ShouldBeNil)
+		So(copy2(source, target), ShouldBeNil)
+
+		valPtr, err := target.Ptr(0)
+		So(err, ShouldBeNil)
+		values := capnp.Float64List(valPtr.List())
+		So(values.At(0), ShouldEqual, 42.0)
+		So(values.At(1), ShouldEqual, 0.0) // unwritten defaults to 0
+		So(values.At(2), ShouldEqual, 99.0)
+
+		presPtr, err := target.Ptr(1)
+		So(err, ShouldBeNil)
+		pres := capnp.BitList(presPtr.List())
+		So(pres.At(0), ShouldBeTrue)
+		So(pres.At(1), ShouldBeFalse)
+		So(pres.At(2), ShouldBeTrue)
+		So(pres.At(3), ShouldBeFalse)
+	})
 }
 
 func BenchmarkCompileFanInCopier(b *testing.B) {
-	copy, err := CompileFanInCopier(FieldInfo{Which: schema.Type_Which_float64}, FieldInfo{Which: schema.Type_Which_list, ElementWhich: schema.Type_Which_float64}, 2, 411)
+	copy, err := CompileFanInCopier(FieldInfo{Which: schema.Type_Which_float64}, FieldInfo{Which: schema.Type_Which_list, ElementWhich: schema.Type_Which_float64}, nil, 2, 411)
 	if err != nil {
 		b.Fatal(err)
 	}

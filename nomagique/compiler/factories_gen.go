@@ -461,6 +461,12 @@ func RegisterGeneratedPrimitives(r *Registry) {
 			return capnp.Client(data.Equation_ServerToClient(data.NewEquation())), nil
 		},
 	})
+	r.Register("data.CanonicalizeFutures", Factory{
+		InterfaceID: data.CanonicalizeFutures_TypeID,
+		New: func(ctx context.Context, cfg []byte) (capnp.Client, error) {
+			return capnp.Client(data.CanonicalizeFutures_ServerToClient(data.NewCanonicalizeFutures(ctx))), nil
+		},
+	})
 	r.Register("data.Extract", Factory{
 		InterfaceID: data.Extract_TypeID,
 		New: func(ctx context.Context, cfg []byte) (capnp.Client, error) {
@@ -1821,6 +1827,12 @@ func RegisterGeneratedPrimitives(r *Registry) {
 		InterfaceID: store.Radix_TypeID,
 		New: func(ctx context.Context, cfg []byte) (capnp.Client, error) {
 			return capnp.Client(store.Radix_ServerToClient(store.NewRadix())), nil
+		},
+	})
+	r.Register("store.Revision", Factory{
+		InterfaceID: store.Revision_TypeID,
+		New: func(ctx context.Context, cfg []byte) (capnp.Client, error) {
+			return capnp.Client(store.Revision_ServerToClient(store.NewRevision(ctx))), nil
 		},
 	})
 	r.Register("store.Sequence", Factory{

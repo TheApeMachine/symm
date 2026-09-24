@@ -405,6 +405,21 @@ func SetStaticField(target capnp.Struct, field FieldInfo, rawVal string) error {
 		return nil
 
 	case schema.Type_Which_list:
+		if field.ElementWhich == schema.Type_Which_float64 {
+			var nums []float64
+			if err := json.Unmarshal([]byte(rawVal), &nums); err != nil {
+				return errnie.Error(errnie.Err(errnie.Validation, "compiler: static float64 list", err))
+			}
+			list, err := capnp.NewFloat64List(target.Segment(), int32(len(nums)))
+			if err != nil {
+				return errnie.Error(errnie.Err(errnie.Internal, "compiler: allocate static float64 list", err))
+			}
+			for index, num := range nums {
+				list.Set(index, num)
+			}
+			return target.SetPtr(uint16(field.Offset), list.ToPtr())
+		}
+
 		if field.ElementWhich != schema.Type_Which_text && field.ElementWhich != schema.Type_Which_data {
 			return errnie.Error(errnie.Err(errnie.Validation, "compiler: static list element type is unsupported", nil))
 		}
@@ -612,6 +627,7 @@ given, so arriving in any order leaves every value in place.
 func CompileFanInCopier(
 	fromField FieldInfo,
 	toField FieldInfo,
+	presenceField *FieldInfo,
 	index int,
 	length int,
 ) (Copier, error) {
@@ -643,7 +659,32 @@ func CompileFanInCopier(
 					return errnie.Error(errnie.Err(errnie.Internal, "compiler: attach numeric gathering port", err))
 				}
 			}
-			values.Set(index, math.Float64frombits(source.Uint64(capnp.DataOffset(fromField.Offset*8))))
+			rawBits := source.Uint64(capnp.DataOffset(fromField.Offset * 8))
+			values.Set(index, math.Float64frombits(rawBits))
+
+			if presenceField == nil {
+				return nil
+			}
+
+			ptr, err := target.Ptr(uint16(presenceField.Offset))
+			if err != nil {
+				return nil
+			}
+
+			presenceList := capnp.BitList(ptr.List())
+			if !presenceList.IsValid() {
+				presenceList, err = capnp.NewBitList(target.Segment(), int32(length))
+				if err != nil {
+					return nil
+				}
+
+				_ = target.SetPtr(uint16(presenceField.Offset), presenceList.ToPtr())
+			}
+
+			if (rawBits & 0x7ff0000000000000) != 0x7ff0000000000000 {
+				presenceList.Set(index, true)
+			}
+
 			return nil
 		}, nil
 	}
@@ -671,6 +712,22 @@ func CompileFanInCopier(
 				"compiler: failed to place value on a gathering port",
 				err,
 			))
+		}
+
+		if presenceField != nil {
+			ptr, err := dst.Ptr(uint16(presenceField.Offset))
+			if err == nil {
+				presenceList := capnp.BitList(ptr.List())
+				if !presenceList.IsValid() {
+					presenceList, err = capnp.NewBitList(dst.Segment(), int32(length))
+					if err == nil {
+						_ = dst.SetPtr(uint16(presenceField.Offset), presenceList.ToPtr())
+					}
+				}
+				if presenceList.IsValid() {
+					presenceList.Set(index, true)
+				}
+			}
 		}
 
 		return nil

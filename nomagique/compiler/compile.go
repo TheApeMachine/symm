@@ -564,17 +564,22 @@ func CompileWithPrevious(
 				// its slots are handed out once they are all known.
 				if toField.ValueList {
 					presence, carried := resolveOutputField(uSchema, presencePort)
+					var targetPresence *FieldInfo
+					if presentField, ok := vSchema.Inputs["present"]; ok && presentField.Which == schema.Type_Which_list && presentField.ElementWhich == schema.Type_Which_bool {
+						targetPresence = &presentField
+					}
 					fanInEdges = append(fanInEdges, fanInEdge{
-						fromPort:  outPort,
-						presence:  presence,
-						carried:   carried,
-						fromNode:  NodeID(uIdx),
-						fromField: fromFieldID,
-						fromInfo:  fromField,
-						toNode:    vIdx,
-						toField:   toFieldID,
-						toInfo:    toField,
-						port:      target.PortName,
+						fromPort:       outPort,
+						presence:       presence,
+						carried:        carried,
+						fromNode:       NodeID(uIdx),
+						fromField:      fromFieldID,
+						fromInfo:       fromField,
+						toNode:         vIdx,
+						toField:        toFieldID,
+						toInfo:         toField,
+						port:           target.PortName,
+						targetPresence: targetPresence,
 					})
 
 					continue
@@ -1360,16 +1365,17 @@ func wireDefinitionPorts(
 fanInEdge records a wire landing on a port that gathers several producers.
 */
 type fanInEdge struct {
-	fromPort  string
-	presence  FieldInfo
-	carried   bool
-	fromNode  NodeID
-	fromField FieldID
-	fromInfo  FieldInfo
-	toNode    NodeID
-	toField   FieldID
-	toInfo    FieldInfo
-	port      string
+	fromPort       string
+	presence       FieldInfo
+	carried        bool
+	fromNode       NodeID
+	fromField      FieldID
+	fromInfo       FieldInfo
+	toNode         NodeID
+	toField        FieldID
+	toInfo         FieldInfo
+	port           string
+	targetPresence *FieldInfo
 }
 
 /*
@@ -1472,7 +1478,7 @@ func compileFanIn(edges []fanInEdge) ([]Route, error) {
 			}
 
 			if !edge.fromInfo.ValueList || !indexed {
-				copier, err = CompileFanInCopier(edge.fromInfo, edge.toInfo, index, len(group))
+				copier, err = CompileFanInCopier(edge.fromInfo, edge.toInfo, edge.targetPresence, index, len(group))
 			}
 
 			if err != nil {

@@ -35,7 +35,8 @@ interface Grid extends(Retained) {
   write @0 (
     data      :List(Data),
     interests :Text,
-    metrics   :List(Float64)
+    metrics   :List(Float64),
+    present   :List(Bool)
   ) -> stream;
   done @1 () -> (
     values       :List(Float64),
@@ -44,6 +45,7 @@ interface Grid extends(Retained) {
     delivered    :Int64,
     metrics      :Int64,
     status       :Status,
-    observations :List(Float64)
+    observations :List(Float64),
+    observed     :List(Bool)
   );
 }

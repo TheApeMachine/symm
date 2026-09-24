@@ -26,7 +26,7 @@ func (c Remapper) Write(ctx context.Context, params func(Remapper_write_Params) 
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 8, PointerCount: 5}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 8, PointerCount: 6}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(Remapper_write_Params(s)) }
 	}
 
@@ -227,12 +227,12 @@ type Remapper_write_Params capnp.Struct
 const Remapper_write_Params_TypeID = 0xa475c558b67afc7f
 
 func NewRemapper_write_Params(s *capnp.Segment) (Remapper_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 5})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 6})
 	return Remapper_write_Params(st), err
 }
 
 func NewRootRemapper_write_Params(s *capnp.Segment) (Remapper_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 5})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 6})
 	return Remapper_write_Params(st), err
 }
 
@@ -304,17 +304,40 @@ func (s Remapper_write_Params) NewActivations(n int32) (capnp.Float64List, error
 	err = capnp.Struct(s).SetPtr(1, l.ToPtr())
 	return l, err
 }
-func (s Remapper_write_Params) Authorities() (capnp.Float64List, error) {
+func (s Remapper_write_Params) Observed() (capnp.BitList, error) {
 	p, err := capnp.Struct(s).Ptr(2)
+	return capnp.BitList(p.List()), err
+}
+
+func (s Remapper_write_Params) HasObserved() bool {
+	return capnp.Struct(s).HasPtr(2)
+}
+
+func (s Remapper_write_Params) SetObserved(v capnp.BitList) error {
+	return capnp.Struct(s).SetPtr(2, v.ToPtr())
+}
+
+// NewObserved sets the observed field to a newly
+// allocated capnp.BitList, preferring placement in s's segment.
+func (s Remapper_write_Params) NewObserved(n int32) (capnp.BitList, error) {
+	l, err := capnp.NewBitList(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return capnp.BitList{}, err
+	}
+	err = capnp.Struct(s).SetPtr(2, l.ToPtr())
+	return l, err
+}
+func (s Remapper_write_Params) Authorities() (capnp.Float64List, error) {
+	p, err := capnp.Struct(s).Ptr(3)
 	return capnp.Float64List(p.List()), err
 }
 
 func (s Remapper_write_Params) HasAuthorities() bool {
-	return capnp.Struct(s).HasPtr(2)
+	return capnp.Struct(s).HasPtr(3)
 }
 
 func (s Remapper_write_Params) SetAuthorities(v capnp.Float64List) error {
-	return capnp.Struct(s).SetPtr(2, v.ToPtr())
+	return capnp.Struct(s).SetPtr(3, v.ToPtr())
 }
 
 // NewAuthorities sets the authorities field to a newly
@@ -324,20 +347,20 @@ func (s Remapper_write_Params) NewAuthorities(n int32) (capnp.Float64List, error
 	if err != nil {
 		return capnp.Float64List{}, err
 	}
-	err = capnp.Struct(s).SetPtr(2, l.ToPtr())
+	err = capnp.Struct(s).SetPtr(3, l.ToPtr())
 	return l, err
 }
 func (s Remapper_write_Params) Ids() (capnp.TextList, error) {
-	p, err := capnp.Struct(s).Ptr(3)
+	p, err := capnp.Struct(s).Ptr(4)
 	return capnp.TextList(p.List()), err
 }
 
 func (s Remapper_write_Params) HasIds() bool {
-	return capnp.Struct(s).HasPtr(3)
+	return capnp.Struct(s).HasPtr(4)
 }
 
 func (s Remapper_write_Params) SetIds(v capnp.TextList) error {
-	return capnp.Struct(s).SetPtr(3, v.ToPtr())
+	return capnp.Struct(s).SetPtr(4, v.ToPtr())
 }
 
 // NewIds sets the ids field to a newly
@@ -347,20 +370,20 @@ func (s Remapper_write_Params) NewIds(n int32) (capnp.TextList, error) {
 	if err != nil {
 		return capnp.TextList{}, err
 	}
-	err = capnp.Struct(s).SetPtr(3, l.ToPtr())
+	err = capnp.Struct(s).SetPtr(4, l.ToPtr())
 	return l, err
 }
 func (s Remapper_write_Params) Cursor() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(4)
+	p, err := capnp.Struct(s).Ptr(5)
 	return []byte(p.Data()), err
 }
 
 func (s Remapper_write_Params) HasCursor() bool {
-	return capnp.Struct(s).HasPtr(4)
+	return capnp.Struct(s).HasPtr(5)
 }
 
 func (s Remapper_write_Params) SetCursor(v []byte) error {
-	return capnp.Struct(s).SetData(4, v)
+	return capnp.Struct(s).SetData(5, v)
 }
 
 func (s Remapper_write_Params) Reset() bool {
@@ -376,7 +399,7 @@ type Remapper_write_Params_List = capnp.StructList[Remapper_write_Params]
 
 // NewRemapper_write_Params creates a new list of Remapper_write_Params.
 func NewRemapper_write_Params_List(s *capnp.Segment, sz int32) (Remapper_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 5}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 6}, sz)
 	return capnp.StructList[Remapper_write_Params](l), err
 }
 
@@ -599,3 +622,47 @@ func (f Remapper_done_Results_Future) Struct() (Remapper_done_Results, error) {
 	p, err := f.Future.Ptr()
 	return Remapper_done_Results(p.Struct()), err
 }
+
+const schema_d0a4b6a3823dba94 = "x\xda\x94\xd3\xc1KtU\x18\x06\xf0\xe79\xe7\x9e\xb9" +
+	"\x82\x8eq\x98\x81\x14\x0c\xc3l\x13\x92\xe9\x14\x84\x12J" +
+	"P\x8b\xdax\x9c\x85RP\xdc\x999\xd8%\xbdw\xba" +
+	"\xf7\xceXm\x846\x11E-rc\x18\x04*\x08\x15" +
+	"%8BQ0\x04BI\x8b\x82\xa26\xfd\x01EA" +
+	"\xab\x16\x11\xdc8\xe3\x8c~\xb8\xf9\xbeoy\xdf\xf3\xbc" +
+	"\xf7\xdc\xf3;\xf7}\xa4\xc3eo\xae\xf8\x8b\x07a\x1e" +
+	"W\x85\xfc\xf7\xfd\x7f\x9f\xe2\x8f\xcf\x1f\xc0\xccP\x00\xca" +
+	"\xf3\x81\x8a\x11\x17\x04+V\xac\x11\xccw\xfe{\xfdl" +
+	"\xfd\xbcu\xe8\"\x04T\xc1E\xbe\x93\xbd\xc8o\xf2=" +
+	"\x17)>\xf6\xe8\xda\xf0;\xff|\x0c=C\xa0\xf7\x8e" +
+	"\x8e\xfa\x86\xf0\xf2g_X,=\xfd\xd9\xfb\x7f@?" +
+	" \xf3\xdd/\x9fx\xe3\xe0\xec\xf0\x07\x80\x95#Uc" +
+	"\xe9\x0b\xe5\x03\xa5\x8ez\xb3\xa4\x0a\xf7\"\xca\xa3x+" +
+	"\xd8\x08_i\x15\xecl=\xde\x88\xc2,\x8c\xa3\xd9\xc4" +
+	"n\x05\xcd\xa6M\x1e\xae\x07\xcd\xa8\xb9\xb0:xl\xc4" +
+	"\x91\x9d^\xb5ik3K\x013&=\xc0#\xa0\xf7" +
+	"\x9e\x04\xcc\xae\xa4\xf9HP\x93e\xf7\xd5\xfa\xc3g\x00" +
+	"\xb3/i\x8e\x05)\xca\xee\xb0\xfa\xe89\xc0\x1cJ\x9a" +
+	"\xcf\x05\xb5d\x99\x12\xd0\x9f\xba\xeecIs*\xa8=" +
+	"Q\xa6\x07\xe8\x93\x05\xc0|\"i\xbe\x15\xd4J\x96\xa9" +
+	"\x00}>\x05\x98\xae\xa4\xf9^p'\xb5Y\xb6i\x1b" +
+	"$\x04\x1dIb\xdba\x1a\xc6\x11\x00*\x08*0o" +
+	"\xc7\xf5\xa0\xd6\xda\x0c \x93\xd78\x02\xc1\x11p'\xb1" +
+	"\x1ba\x1c\xa5,B\xb0\x08.e\xf1\xcb6J9\x0a" +
+	"\xaeH\xf6R\xa3\xa0\x1f\xb7\xb2A\xe2\xee\x94\xb6\x930" +
+	"\xb3\xd3+A\x12l9\xa5\x89+\xa5\x8e\x039\x954" +
+	"\xdd[\x94\xbe\xae\x01\xe6+I\xf3\xab\xa0\x16}\xa6\x9f" +
+	"]\xf2'I\xf3\xb7c\x92\x97L\x7f\xb9\xe4\x9f\x92\xd5" +
+	"!:'\xaf\xe7TR\x9c\x02V)Y\x9dpe\xa5" +
+	"zR\xa5q.\x00\xd5\xb2\xab\xdfOA\x16\xca,\x00" +
+	"\xa5\xfb8\x0fT\xc7\\y\x9a\x82\xb9m\x87\x0d\x1b\xd5" +
+	"\xad3\x1b\x1c6\xa8ga;\xc8B\xf8\xf1\xb5\xca\xf0" +
+	"\xa5J\x1e\xd7R\x9b\xb4m\xc35\xf4\x97\xd8_\x0aZ" +
+	"\xd9Kq\x12f\xf0C{\xb3\xcf\x0f\x1b7\x81\x97\xea" +
+	"\xad$\x8d\x93\xc1\xb6\x93\x89Mmvu\x99\x03\xf1\xe1" +
+	";\xfe/\xfb\xe0\x83\xc6\xdb\xf5\xf9M\x9b\xac\x90fH" +
+	"*\xe0j\xe2\x18\x9dt\xb7+\x1f\xbc\xb8\xa7\xe7\xe6!" +
+	"\xf4\x83>\xafG\x8d\x83\xc9\xd5\xe3\x0fA\xe8\xa2?\xd9" +
+	"\xbb\xe9e\xde\xe3\xf6_\xa6\xf1\xc8\xbc\xbb\xf8\xea\xc5\xdb" +
+	"\xebo\xbd\x0b\xe0\xff\x00\x00\x00\xff\xff\x1c\"\xf5z"
+
+

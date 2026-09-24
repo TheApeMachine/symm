@@ -2,6 +2,7 @@ package cognition_test
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -52,6 +53,14 @@ func TestTokenSequence(t *testing.T) {
 				tok, err := seqList.At(index)
 				So(err, ShouldBeNil)
 				tokens[index] = tok
+			}
+
+			outBytes, err := results.Out()
+			So(err, ShouldBeNil)
+			if len(outBytes) > 0 {
+				var outPath string
+				So(json.Unmarshal(outBytes, &outPath), ShouldBeNil)
+				So(outPath, ShouldEqual, path)
 			}
 
 			return tokens, path, depth

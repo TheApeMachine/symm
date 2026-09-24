@@ -754,6 +754,67 @@
       "x": 1550,
       "y": 690
     },
+    "seed": {
+      "id": "seed",
+      "type": "data.Extract",
+      "inputData": {
+        "path": {
+          "value": "event.seed"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "token_available",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "id_seed",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "x": 1860,
+      "y": 690
+    },
+    "id_seed": {
+      "id": "id_seed",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "key.seed"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "seed",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "id_session",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "x": 0,
+      "y": 800
+    },
     "id_session": {
       "id": "id_session",
       "type": "data.Insert",
@@ -764,6 +825,12 @@
       },
       "connections": {
         "inputs": {
+          "data": [
+            {
+              "nodeId": "id_seed",
+              "portName": "out"
+            }
+          ],
           "json": [
             {
               "nodeId": "session",
@@ -1075,6 +1142,10 @@
             },
             {
               "nodeId": "sequence_history",
+              "portName": "data"
+            },
+            {
+              "nodeId": "seed",
               "portName": "data"
             }
           ]

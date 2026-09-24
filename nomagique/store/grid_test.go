@@ -245,6 +245,14 @@ func TestGridWrite(t *testing.T) {
 				metrics.Set(0, 1.25)
 				metrics.Set(1, -0.5)
 				metrics.Set(2, 3.75)
+
+				present, err := params.NewPresent(3)
+				if err != nil {
+					return err
+				}
+				present.Set(0, true)
+				present.Set(1, false)
+				present.Set(2, true)
 				return nil
 			})
 			So(err, ShouldBeNil)
@@ -256,15 +264,21 @@ func TestGridWrite(t *testing.T) {
 			results, err := future.Struct()
 			So(err, ShouldBeNil)
 
-			Convey("Then the grid reports metric count and observations", func() {
+			Convey("Then the grid reports metric count, observations, and presence", func() {
 				So(results.Metrics(), ShouldEqual, 3)
 
 				observations, err := results.Observations()
 				So(err, ShouldBeNil)
 				So(observations.Len(), ShouldEqual, 3)
 				So(observations.At(0), ShouldEqual, 1.25)
-				So(observations.At(1), ShouldEqual, -0.5)
 				So(observations.At(2), ShouldEqual, 3.75)
+
+				observed, err := results.Observed()
+				So(err, ShouldBeNil)
+				So(observed.Len(), ShouldEqual, 3)
+				So(observed.At(0), ShouldBeTrue)
+				So(observed.At(1), ShouldBeFalse)
+				So(observed.At(2), ShouldBeTrue)
 			})
 		})
 	})

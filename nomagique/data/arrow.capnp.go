@@ -894,4 +894,14 @@ func RegisterSchema(reg *schemas.Registry) {
 		},
 		Compressed: true,
 	})
+	reg.Register(&schemas.Schema{
+		String: schema_9cc2ec51223481bc,
+		Nodes: []uint64{
+			0xa770360349259c8b,
+			0xb4b17bd7a28c0ef0,
+			0xbe9966c8de4a025a,
+			0xc790a03b1519aa51,
+		},
+		Compressed: true,
+	})
 }

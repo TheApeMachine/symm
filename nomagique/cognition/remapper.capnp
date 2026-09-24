@@ -10,6 +10,7 @@ interface Remapper extends(Retained) {
   write @0 (
     evidence    :Data,
     activations :List(Float64),
+    observed    :List(Bool),
     authorities :List(Float64),
     ids         :List(Text),
     cursor      :Data,

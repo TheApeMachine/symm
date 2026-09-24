@@ -53,7 +53,11 @@ func (server *TokenSequenceServer) Write(ctx context.Context, call TokenSequence
 	tokensList, _ := args.Tokens()
 
 	if args.Reset() {
-		delete(server.history, scope)
+		if scope != "" {
+			delete(server.history, scope)
+		} else {
+			server.history = make(map[string][]string)
+		}
 	}
 
 	var incomingTokens []string
@@ -89,14 +93,7 @@ func (server *TokenSequenceServer) Write(ctx context.Context, call TokenSequence
 	server.path = strings.Join(updated, "/")
 	server.depth = int64(len(updated))
 
-	payload := map[string]any{
-		"scope":    scope,
-		"sequence": updated,
-		"path":     server.path,
-		"depth":    server.depth,
-	}
-
-	encoded, err := sonic.Marshal(payload)
+	encoded, err := sonic.Marshal(server.path)
 	if err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.Internal,

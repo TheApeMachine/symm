@@ -1,6 +1,7 @@
 package cognition
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -12,12 +13,6 @@ import (
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/runtime"
-)
-
-const (
-	remapperGridWidth  = 21
-	remapperGridHeight = 21
-	remapperGridCells  = remapperGridWidth * remapperGridHeight
 )
 
 type point struct {
@@ -45,6 +40,10 @@ type RemapperServer struct {
 	positions   []point
 	prevSettled []point
 	metricIDs   []string
+	cursor      []byte
+	gridWidth    int
+	gridHeight   int
+	lastEvidence []byte
 }
 
 func NewRemapper() *RemapperServer {
@@ -58,7 +57,6 @@ func NewRemapper() *RemapperServer {
 
 func (server *RemapperServer) Write(ctx context.Context, call Remapper_write) error {
 	args := call.Args()
-	server.settled = false
 	server.tokens = nil
 	server.out = nil
 
@@ -67,11 +65,49 @@ func (server *RemapperServer) Write(ctx context.Context, call Remapper_write) er
 		server.prevSettled = nil
 		server.revision = 0
 		server.vocabulary = ""
+		server.cursor = nil
+		server.lastEvidence = nil
+		server.settled = false
 	}
 
-	idsList, _ := args.Ids()
-	activationsList, err := args.Activations()
+	cursorBytes, _ := args.Cursor()
+	if len(cursorBytes) > 0 {
+		server.cursor = bytes.Clone(cursorBytes)
+	}
 
+	idsList, err := args.Ids()
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"cognition.remapper: failed to read IDs",
+			err,
+		))
+	}
+
+	totalMetrics := idsList.Len()
+	if totalMetrics == 0 {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"cognition.remapper: metric IDs cannot be empty",
+			nil,
+		))
+	}
+
+	metricNames := make([]string, totalMetrics)
+	for index := range totalMetrics {
+		metricID, err := idsList.At(index)
+		if err != nil || metricID == "" {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				"cognition.remapper: metric ID cannot be missing or empty",
+				err,
+			))
+		}
+		metricNames[index] = metricID
+	}
+	server.metricIDs = metricNames
+
+	activationsList, err := args.Activations()
 	if err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -80,47 +116,17 @@ func (server *RemapperServer) Write(ctx context.Context, call Remapper_write) er
 		))
 	}
 
-	totalMetrics := idsList.Len()
-
-	if totalMetrics == 0 && activationsList.IsValid() {
-		totalMetrics = activationsList.Len()
+	if activationsList.Len() != totalMetrics {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"cognition.remapper: activations length does not match metric IDs length",
+			nil,
+		))
 	}
-
-	if totalMetrics == 0 {
-		outPayload := map[string]any{
-			"settled":    server.settled,
-			"revision":   server.revision,
-			"vocabulary": server.vocabulary,
-			"tokens":     []string{},
-			"regions":    []any{},
-		}
-		encodedOut, _ := sonic.Marshal(outPayload)
-		server.out = encodedOut
-		return nil
-	}
-
-	metricNames := make([]string, totalMetrics)
-
-	for index := range totalMetrics {
-		if index < idsList.Len() {
-			metricID, err := idsList.At(index)
-
-			if err == nil && metricID != "" {
-				metricNames[index] = metricID
-				continue
-			}
-		}
-
-		metricNames[index] = fmt.Sprintf("m_%d", index)
-	}
-
-	server.metricIDs = metricNames
 
 	activations := make([]float64, totalMetrics)
-	for index := range activationsList.Len() {
-		if index < totalMetrics {
-			activations[index] = activationsList.At(index)
-		}
+	for index := range totalMetrics {
+		activations[index] = activationsList.At(index)
 	}
 
 	authoritiesList, err := args.Authorities()
@@ -132,10 +138,25 @@ func (server *RemapperServer) Write(ctx context.Context, call Remapper_write) er
 		))
 	}
 
+	if authoritiesList.Len() != totalMetrics {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"cognition.remapper: authorities length does not match metric IDs length",
+			nil,
+		))
+	}
+
 	authorities := make([]float64, totalMetrics)
-	for index := range authoritiesList.Len() {
-		if index < totalMetrics {
-			authorities[index] = authoritiesList.At(index)
+	for index := range totalMetrics {
+		authorities[index] = authoritiesList.At(index)
+	}
+
+	observedList, _ := args.Observed()
+	var observed []bool
+	if observedList.IsValid() && observedList.Len() == totalMetrics {
+		observed = make([]bool, totalMetrics)
+		for index := range totalMetrics {
+			observed[index] = observedList.At(index)
 		}
 	}
 
@@ -151,9 +172,20 @@ func (server *RemapperServer) Write(ctx context.Context, call Remapper_write) er
 	evidenceMap := make(map[string]pairEvidence)
 	if len(evidenceBytes) > 0 {
 		var decoded map[string]any
-		if err := sonic.Unmarshal(evidenceBytes, &decoded); err == nil {
-			for key, val := range decoded {
-				if obj, ok := val.(map[string]any); ok {
+		if err := sonic.Unmarshal(evidenceBytes, &decoded); err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				"cognition.remapper: invalid evidence JSON",
+				err,
+			))
+		}
+		for key, val := range decoded {
+			if obj, ok := val.(map[string]any); ok {
+				if evObj, hasEv := obj["evidence"].(map[string]any); hasEv {
+					symp, _ := evObj["sympathy"].(float64)
+					mag, _ := evObj["magnitude"].(float64)
+					evidenceMap[key] = pairEvidence{sympathy: symp, magnitude: mag}
+				} else {
 					symp, _ := obj["sympathy"].(float64)
 					mag, _ := obj["magnitude"].(float64)
 					evidenceMap[key] = pairEvidence{sympathy: symp, magnitude: mag}
@@ -162,31 +194,53 @@ func (server *RemapperServer) Write(ctx context.Context, call Remapper_write) er
 		}
 	}
 
-	// Initial layout setup if uninitialized
+	evidenceChanged := !bytes.Equal(server.lastEvidence, evidenceBytes)
+	if evidenceChanged {
+		server.lastEvidence = bytes.Clone(evidenceBytes)
+		server.settled = false
+	}
+
+	// Derive dynamic grid geometry from total metric count
+	gridWidth := int(math.Ceil(math.Sqrt(float64(totalMetrics))))
+	if gridWidth < 1 {
+		gridWidth = 1
+	}
+	gridHeight := int(math.Ceil(float64(totalMetrics) / float64(gridWidth)))
+	if gridHeight < 1 {
+		gridHeight = 1
+	}
+	server.gridWidth = gridWidth
+	server.gridHeight = gridHeight
+
+	// Initial layout setup if uninitialized or size changed
 	if len(server.positions) != totalMetrics {
 		server.positions = make([]point, totalMetrics)
 		server.prevSettled = make([]point, totalMetrics)
 
 		for index := range totalMetrics {
 			cellPoint := point{
-				x: index % remapperGridWidth,
-				y: index / remapperGridWidth,
+				x: index % server.gridWidth,
+				y: index / server.gridWidth,
 			}
 			server.positions[index] = cellPoint
 			server.prevSettled[index] = cellPoint
 		}
 	}
 
-	// Deterministic strict-descent permutation search
-	maxNormDistSq := float64(remapperGridWidth*remapperGridWidth + remapperGridHeight*remapperGridHeight)
-	improved := server.solvePermutation(evidenceMap, authorities, maxNormDistSq)
+	// Strict settling gate: without evidence, layout structurally cannot settle
+	if len(evidenceMap) == 0 {
+		server.settled = false
+	} else if !server.settled {
+		maxNormDistSq := float64(server.gridWidth*server.gridWidth + server.gridHeight*server.gridHeight)
+		improved := server.solvePermutation(evidenceMap, authorities, maxNormDistSq)
 
-	if !improved {
-		server.settled = true
-		server.revision++
+		if !improved {
+			server.settled = true
+			server.revision++
 
-		for index := range totalMetrics {
-			server.prevSettled[index] = server.positions[index]
+			for index := range totalMetrics {
+				server.prevSettled[index] = server.positions[index]
+			}
 		}
 	}
 
@@ -197,7 +251,10 @@ func (server *RemapperServer) Write(ctx context.Context, call Remapper_write) er
 
 	var hotTokens []string
 	if server.settled {
-		hotTokens = server.selectHotTokens(basins, basinMembers, activations, authorities)
+		hotTokens = server.selectHotTokens(basins, basinMembers, activations, authorities, observed)
+		if len(hotTokens) > 0 {
+			fmt.Printf("REMAPPER WRITE: settled=true, hotTokens=%v, totalBasins=%d\n", hotTokens, len(basinMembers))
+		}
 	}
 	server.tokens = hotTokens
 
@@ -215,6 +272,13 @@ func (server *RemapperServer) Write(ctx context.Context, call Remapper_write) er
 		"vocabulary": server.vocabulary,
 		"tokens":     server.tokens,
 		"regions":    regionsPayload,
+	}
+
+	if len(server.cursor) > 0 {
+		var decodedCursor any
+		if err := sonic.Unmarshal(server.cursor, &decodedCursor); err == nil {
+			outPayload["cursor"] = decodedCursor
+		}
 	}
 
 	encodedOut, err := sonic.Marshal(outPayload)
@@ -302,7 +366,7 @@ func (server *RemapperServer) solvePermutation(
 	pairCosts := make([]float64, totalMetrics*totalMetrics)
 	hasNonZero := false
 	for k, ev := range evidence {
-		cost := ev.sympathy + ev.magnitude
+		cost := ev.sympathy
 		if cost == 0 {
 			continue
 		}
@@ -368,8 +432,8 @@ func (server *RemapperServer) solvePermutation(
 				delta += costDiff * distDiff
 			}
 
-			// Strict improvement threshold
-			if delta < -1e-9 {
+			// Strict improvement threshold: strict descent delta < 0
+			if delta < 0 {
 				server.positions[first], server.positions[second] = secondPos, firstPos
 				firstPos = server.positions[first]
 				anySwapAccepted = true
@@ -387,9 +451,9 @@ func (server *RemapperServer) extractBasins(authorities []float64) ([]int, [][]s
 	}
 
 	// Construct grid of authority heights
-	grid := make([][]float64, remapperGridHeight)
-	for y := range remapperGridHeight {
-		grid[y] = make([]float64, remapperGridWidth)
+	grid := make([][]float64, server.gridHeight)
+	for y := range server.gridHeight {
+		grid[y] = make([]float64, server.gridWidth)
 	}
 
 	metricAtCell := make(map[point]int)
@@ -423,7 +487,7 @@ func (server *RemapperServer) extractBasins(authorities []float64) ([]int, [][]s
 			nx := pos.x + dxs[neighborIdx]
 			ny := pos.y + dys[neighborIdx]
 
-			if nx < 0 || nx >= remapperGridWidth || ny < 0 || ny >= remapperGridHeight {
+			if nx < 0 || nx >= server.gridWidth || ny < 0 || ny >= server.gridHeight {
 				continue
 			}
 
@@ -495,6 +559,7 @@ func (server *RemapperServer) selectHotTokens(
 	basinMembers [][]string,
 	activations []float64,
 	authorities []float64,
+	observed []bool,
 ) []string {
 	totalBasins := len(basinMembers)
 	if totalBasins == 0 {
@@ -504,8 +569,26 @@ func (server *RemapperServer) selectHotTokens(
 	basinActivations := make([]float64, totalBasins)
 	hasNonZero := false
 
+	nonZeroAct := 0
+	nonZeroObs := 0
+	for i := range activations {
+		if activations[i] != 0 {
+			nonZeroAct++
+		}
+		if len(observed) > i && observed[i] {
+			nonZeroObs++
+			if i < len(server.metricIDs) {
+				fmt.Printf("OBSERVED METRIC [%d] %s = %v\n", i, server.metricIDs[i], activations[i])
+			}
+		}
+	}
+	fmt.Printf("SELECT_HOT_TOKENS: total=%d, nonZeroAct=%d, nonZeroObs=%d, lenObs=%d, auth0=%f\n", len(activations), nonZeroAct, nonZeroObs, len(observed), authorities[0])
+
 	for index, basinIdx := range basins {
 		if basinIdx >= 0 && basinIdx < totalBasins {
+			if len(observed) == len(activations) && !observed[index] {
+				continue
+			}
 			energy := math.Abs(activations[index]) * authorities[index]
 			basinActivations[basinIdx] += energy
 			if energy > 0 {
@@ -520,6 +603,7 @@ func (server *RemapperServer) selectHotTokens(
 
 	// Otsu thresholding on basin activations
 	threshold := server.otsuThreshold(basinActivations)
+	fmt.Printf("REMAPPER OTSU: threshold=%f, basinActivations=%v\n", threshold, basinActivations)
 
 	var hotTokens []string
 	for idx, activation := range basinActivations {

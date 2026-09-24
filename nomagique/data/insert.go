@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"strconv"
 	"strings"
@@ -117,6 +118,7 @@ func (server *InsertServer) Write(ctx context.Context, call Insert_write) error 
 		previous, found := walk(document, strings.Split(server.path, "."))
 
 		if found && !reflect.DeepEqual(previous, value) {
+			fmt.Printf("DEDUPLICATE CONFLICT: path=%s\n  PREV: %v\n  CURR: %v\n", server.path, previous, value)
 			return errnie.Error(errnie.Err(errnie.Validation, "insert: conflicting value at unique path "+server.path, nil))
 		}
 

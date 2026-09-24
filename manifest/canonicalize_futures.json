@@ -1,0 +1,19 @@
+{
+  "id": "canonicalize_futures",
+  "name": "Canonicalize Kraken Futures ticker and trade frames into standard channel/data schema",
+  "nodes": {
+    "normalizer": {
+      "id": "normalizer",
+      "type": "data.CanonicalizeFutures",
+      "width": 280,
+      "height": 172,
+      "inputData": {},
+      "connections": {
+        "inputs": {},
+        "outputs": {}
+      },
+      "x": 0.0,
+      "y": 0.0
+    }
+  }
+}

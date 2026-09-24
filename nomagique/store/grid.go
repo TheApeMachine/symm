@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/bytedance/sonic"
@@ -26,6 +27,7 @@ type GridServer struct {
 	interests []string
 	declared  string
 	metrics   []float64
+	observed  []bool
 	values    []float64
 	present   []bool
 	out       []byte
@@ -67,12 +69,33 @@ func (server *GridServer) Write(ctx context.Context, call Grid_write) error {
 		))
 	}
 
+	present, _ := call.Args().Present()
+
 	if metrics.IsValid() {
-		server.metrics = make([]float64, metrics.Len())
+		if len(server.metrics) != metrics.Len() {
+			server.metrics = make([]float64, metrics.Len())
+			server.observed = make([]bool, metrics.Len())
+		}
+		presentCount := 0
 
 		for index := range metrics.Len() {
+			if present.IsValid() && index < present.Len() && !present.At(index) {
+				continue
+			}
+
 			server.metrics[index] = metrics.At(index)
+			server.observed[index] = true
+			presentCount++
 		}
+		fmt.Printf("GRID WRITE METRICS: metricsLen=%d, presentValid=%v, presentCount=%d, totalObserved=%d\n", metrics.Len(), present.IsValid(), presentCount, func() int {
+			c := 0
+			for _, o := range server.observed {
+				if o {
+					c++
+				}
+			}
+			return c
+		}())
 	}
 
 	feeds, err := call.Args().Data()
@@ -156,8 +179,19 @@ func (server *GridServer) Done(ctx context.Context, call Grid_done) error {
 			))
 		}
 
+		observed, err := results.NewObserved(int32(len(server.observed)))
+
+		if err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.Internal,
+				"[store.grid.Done] failed to allocate observed",
+				err,
+			))
+		}
+
 		for index, value := range server.metrics {
 			observations.Set(index, value)
+			observed.Set(index, server.observed[index])
 		}
 	}
 
@@ -255,6 +289,7 @@ func (server *GridServer) resolve(payload []byte) error {
 
 		server.values[index] = value
 		server.present[index] = true
+		fmt.Printf("GRID VALUE [%d] %s = %f\n", index, interest, value)
 	}
 
 	return nil
@@ -367,18 +402,29 @@ func walkInterest(document any, segments []string) (any, bool) {
 		if elements, indexed := current.([]any); indexed {
 			position, ok := interestIndex(segment)
 
-			if !ok || position >= len(elements) {
-				return nil, false
+			if ok && position < len(elements) {
+				current = elements[position]
+				continue
 			}
 
-			current = elements[position]
-			continue
+			if len(elements) == 1 {
+				current = elements[0]
+			}
+
+			if len(elements) != 1 && (!ok || position >= len(elements)) {
+				return nil, false
+			}
 		}
 
 		object, ok := current.(map[string]any)
 
 		if !ok {
 			return nil, false
+		}
+
+		if market, hasMarket := object["market"].(map[string]any); hasMarket {
+			object = market
+			current = market
 		}
 
 		// A channel-tagged record has the same declared path as its named

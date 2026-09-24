@@ -24,7 +24,14 @@
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "frame.read": [
+            {
+              "nodeId": "records",
+              "portName": "data"
+            }
+          ]
+        }
       },
       "x": 0,
       "y": 0
@@ -52,6 +59,26 @@
       },
       "x": 0,
       "y": 200
+    },
+    "records": {
+      "id": "records",
+      "type": "data.CanonicalizeFutures",
+      "width": 280,
+      "height": 172,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "socket",
+              "portName": "frame.read"
+            }
+          ]
+        },
+        "outputs": {}
+      },
+      "x": 300,
+      "y": 0
     }
   }
 }
