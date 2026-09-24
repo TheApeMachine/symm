@@ -1,11 +1,11 @@
-import { Badge } from "./badge";
-import { cn } from "#/lib/utils";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "#/components/ui/button";
 import { Slider } from "#/components/ui/slider";
 import { ToggleGroup, ToggleGroupItem } from "#/components/ui/toggle-group";
 import { Typography } from "#/components/ui/typography";
+import { cn } from "#/lib/utils";
+import { Badge } from "./badge";
 
 export interface TrieNode {
 	id: string;
@@ -13,6 +13,11 @@ export interface TrieNode {
 	probability: number;
 	stepProbability?: number;
 	tokens?: string[];
+	// label is what was recorded at this prefix most often (an action), share
+	// its part of the endings there, visits the paths through the node.
+	label?: string;
+	share?: number;
+	visits?: number;
 	state?: "EVALUATED" | "POLICY CHOICE" | "ESTIMATED";
 	isEnd?: boolean;
 	children?: TrieNode[];
@@ -31,6 +36,17 @@ interface FlatLink {
 	source: FlatNode;
 	target: FlatNode;
 }
+
+/* Layout spacing, in SVG units before zoom: a node box is 100 by 30. */
+const SIBLING_GAP = 56;
+const GENERATION_GAP = 200;
+
+/* actionTone colours a recorded action the way the rest of the surface does. */
+const actionTone = (label?: string) => {
+	if (label === "ENTER") return "var(--up)";
+	if (label === "EXIT") return "var(--down)";
+	return "var(--f1)";
+};
 
 export interface TrieCandidate {
 	id: string;
@@ -91,7 +107,7 @@ export const TrieView = ({
 		presentation.root === root ? presentation.collapsed : new Set<string>();
 	const bestOnly = presentation.root === root && presentation.best;
 	const preferredIds = bestOnly && root ? selectTriePath(root) : null;
-	const [transform, setTransform] = useState({ x: 60, y: 180, k: 1 });
+	const [transform, setTransform] = useState({ x: 60, y: 250, k: 1 });
 	const isDragging = useRef(false);
 	const dragStart = useRef({ x: 0, y: 0 });
 
@@ -186,22 +202,23 @@ export const TrieView = ({
 
 		if (filteredTree) assignLeafSlots(filteredTree, 0, null);
 
+		// Siblings and generations keep a fixed spacing so labels never
+		// collide; a large trie is panned and zoomed, not squeezed.
 		const maxLeaves = Math.max(1, leafIndex);
+		const rootSlot = filteredTree ? (nodeMap.get(filteredTree.id)?.y ?? 0) : 0;
 		for (const fn of flatNodes) {
+			const slot = fn.y - rootSlot;
 			if (projection === "vertical") {
-				fn.x =
-					(fn.y / maxLeaves) * (dimensions.width * 0.85) -
-					dimensions.width * 0.38;
-				fn.y = fn.depth * 95;
+				fn.x = slot * SIBLING_GAP * 2.2;
+				fn.y = fn.depth * GENERATION_GAP * 0.55;
 			} else if (projection === "radial") {
 				const angle = (fn.y / maxLeaves) * Math.PI * 2;
-				const radius = fn.depth * 110;
+				const radius = fn.depth * GENERATION_GAP * 0.7;
 				fn.x = radius * Math.cos(angle - Math.PI / 2);
 				fn.y = radius * Math.sin(angle - Math.PI / 2);
 			} else {
-				// Horizontal
-				fn.x = fn.depth * 175;
-				fn.y = (fn.y / maxLeaves) * (dimensions.height * 0.82);
+				fn.x = fn.depth * GENERATION_GAP;
+				fn.y = slot * SIBLING_GAP;
 			}
 		}
 
@@ -215,7 +232,7 @@ export const TrieView = ({
 		}
 
 		return { nodes: flatNodes, links: flatLinks };
-	}, [filteredTree, projection, dimensions]);
+	}, [filteredTree, projection]);
 
 	// Ancestor path highlighting
 	const activePathIds = useMemo(() => {
@@ -419,10 +436,16 @@ export const TrieView = ({
 											? "var(--up)"
 											: "var(--line2)";
 
+									// The step's tokens sit just before the node they lead to,
+									// so siblings fanning out of one parent never share a spot.
 									const textX =
-										(link.source.x + link.target.x) / 2 +
-										(projection === "vertical" ? 40 : 40);
-									const textY = (link.source.y + link.target.y) / 2 - 4;
+										projection === "horizontal"
+											? link.target.x - 16
+											: link.target.x + 40;
+									const textY =
+										projection === "horizontal"
+											? link.target.y - 6
+											: link.target.y - 22;
 
 									return (
 										<motion.g
@@ -446,7 +469,9 @@ export const TrieView = ({
 													y={textY}
 													fill="var(--f4)"
 													fontSize="9px"
-													textAnchor="middle"
+													textAnchor={
+														projection === "horizontal" ? "end" : "middle"
+													}
 													className="pointer-events-none select-none font-mono"
 												>
 													[{link.target.data.tokens.join(", ")}]
@@ -485,7 +510,11 @@ export const TrieView = ({
 											key={`node-${data.id}`}
 											role="button"
 											tabIndex={0}
-											aria-label={`Toggle ${data.prefix}`}
+											aria-label={
+												node.parentId
+													? `Toggle ${data.label ?? "·"} at ${data.prefix}`
+													: "Toggle root"
+											}
 											onKeyDown={(event) => {
 												if (
 													(event.key === "Enter" || event.key === " ") &&
@@ -565,26 +594,35 @@ export const TrieView = ({
 												/>
 											)}
 
-											{/* Node Prefix Text */}
+											{/* The action recorded at this prefix */}
 											<text
 												x={0}
 												y={0}
 												dy="0.32em"
 												fill={
-													data.state === "POLICY CHOICE"
-														? "var(--up)"
-														: isPolicyChoice
-															? "var(--acc)"
-															: "var(--f1)"
+													node.parentId ? actionTone(data.label) : "var(--f3)"
 												}
 												fontSize="11.5px"
 												fontWeight="bold"
 												className="pointer-events-none select-none"
 											>
-												{data.prefix}
+												{node.parentId ? (data.label ?? "·") : "ROOT"}
 											</text>
+											{data.share !== undefined && (
+												<text
+													x={84}
+													y={0}
+													dy="0.32em"
+													fill="var(--f3)"
+													fontSize="9px"
+													textAnchor="end"
+													className="pointer-events-none select-none"
+												>
+													{(data.share * 100).toFixed(0)}%
+												</text>
+											)}
 
-											{/* Probability Tag */}
+											{/* Share of all paths that pass through */}
 											<text
 												x={80}
 												y={-20}
@@ -593,7 +631,7 @@ export const TrieView = ({
 												textAnchor="end"
 												className="pointer-events-none select-none"
 											>
-												{(data.probability * 100).toFixed(0)}%
+												{(data.probability * 100).toFixed(1)}%
 											</text>
 
 											{/* State Badge */}
@@ -631,7 +669,7 @@ export const TrieView = ({
 					>
 						<div className="flex items-center justify-between border-b border-(--line) pb-1.5">
 							<span className="font-bold text-(--acc)">
-								{tooltip.data.prefix}
+								{tooltip.data.label ?? "ROOT"}
 							</span>
 							{tooltip.data.state && (
 								<Badge
@@ -647,7 +685,28 @@ export const TrieView = ({
 								/>
 							)}
 						</div>
-						<div className="mt-1.5 flex justify-between">
+						<div className="mt-1.5 break-all text-(--f3)">
+							{tooltip.data.prefix}
+						</div>
+						{tooltip.data.share !== undefined && (
+							<div className="mt-1.5 flex justify-between">
+								<span className="text-(--f4)">Recorded here:</span>
+								<span
+									className="font-bold"
+									style={{ color: actionTone(tooltip.data.label) }}
+								>
+									{tooltip.data.label} · {(tooltip.data.share * 100).toFixed(1)}
+									%
+								</span>
+							</div>
+						)}
+						{tooltip.data.visits !== undefined && (
+							<div className="flex justify-between">
+								<span className="text-(--f4)">Visits:</span>
+								<span>{tooltip.data.visits.toLocaleString()}</span>
+							</div>
+						)}
+						<div className="flex justify-between">
 							<span className="text-(--f4)">Sequence Prob:</span>
 							<span className="font-bold text-(--f1)">
 								{(tooltip.data.probability * 100).toFixed(1)}%

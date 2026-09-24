@@ -46,7 +46,7 @@ export const computeDistributionPath = (
 		const val = min + i * stepVal;
 		const pdf =
 			(1 / (safeSd * Math.sqrt(2 * Math.PI))) *
-			Math.exp(-0.5 * Math.pow((val - mean) / safeSd, 2));
+			Math.exp(-0.5 * ((val - mean) / safeSd) ** 2);
 		if (pdf > maxY) maxY = pdf;
 		points.push({ x: val, y: pdf });
 	}

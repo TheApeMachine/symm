@@ -9,7 +9,175 @@ import (
 	server "capnproto.org/go/capnp/v3/server"
 	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
 	context "context"
+	strconv "strconv"
 )
+
+type Gathered capnp.Struct
+type Gathered_gathered Gathered
+type Gathered_Which uint16
+
+const (
+	Gathered_Which_idle     Gathered_Which = 0
+	Gathered_Which_gathered Gathered_Which = 1
+)
+
+func (w Gathered_Which) String() string {
+	const s = "idlegathered"
+	switch w {
+	case Gathered_Which_idle:
+		return s[0:4]
+	case Gathered_Which_gathered:
+		return s[4:12]
+
+	}
+	return "Gathered_Which(" + strconv.FormatUint(uint64(w), 10) + ")"
+}
+
+// Gathered_TypeID is the unique identifier for the type Gathered.
+const Gathered_TypeID = 0xe611e8aaeb8460b8
+
+func NewGathered(s *capnp.Segment) (Gathered, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 2})
+	return Gathered(st), err
+}
+
+func NewRootGathered(s *capnp.Segment) (Gathered, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 2})
+	return Gathered(st), err
+}
+
+func ReadRootGathered(msg *capnp.Message) (Gathered, error) {
+	root, err := msg.Root()
+	return Gathered(root.Struct()), err
+}
+
+func (s Gathered) String() string {
+	str, _ := text.Marshal(0xe611e8aaeb8460b8, capnp.Struct(s))
+	return str
+}
+
+func (s Gathered) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+	return capnp.Struct(s).EncodeAsPtr(seg)
+}
+
+func (Gathered) DecodeFromPtr(p capnp.Ptr) Gathered {
+	return Gathered(capnp.Struct{}.DecodeFromPtr(p))
+}
+
+func (s Gathered) ToPtr() capnp.Ptr {
+	return capnp.Struct(s).ToPtr()
+}
+
+func (s Gathered) Which() Gathered_Which {
+	return Gathered_Which(capnp.Struct(s).Uint16(0))
+}
+func (s Gathered) IsValid() bool {
+	return capnp.Struct(s).IsValid()
+}
+
+func (s Gathered) Message() *capnp.Message {
+	return capnp.Struct(s).Message()
+}
+
+func (s Gathered) Segment() *capnp.Segment {
+	return capnp.Struct(s).Segment()
+}
+func (s Gathered) SetIdle() {
+	capnp.Struct(s).SetUint16(0, 0)
+
+}
+
+func (s Gathered) Gathered() Gathered_gathered { return Gathered_gathered(s) }
+
+func (s Gathered) SetGathered() {
+	capnp.Struct(s).SetUint16(0, 1)
+}
+
+func (s Gathered_gathered) IsValid() bool {
+	return capnp.Struct(s).IsValid()
+}
+
+func (s Gathered_gathered) Message() *capnp.Message {
+	return capnp.Struct(s).Message()
+}
+
+func (s Gathered_gathered) Segment() *capnp.Segment {
+	return capnp.Struct(s).Segment()
+}
+func (s Gathered_gathered) Values() (capnp.Float64List, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return capnp.Float64List(p.List()), err
+}
+
+func (s Gathered_gathered) HasValues() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s Gathered_gathered) SetValues(v capnp.Float64List) error {
+	return capnp.Struct(s).SetPtr(0, v.ToPtr())
+}
+
+// NewValues sets the values field to a newly
+// allocated capnp.Float64List, preferring placement in s's segment.
+func (s Gathered_gathered) NewValues(n int32) (capnp.Float64List, error) {
+	l, err := capnp.NewFloat64List(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return capnp.Float64List{}, err
+	}
+	err = capnp.Struct(s).SetPtr(0, l.ToPtr())
+	return l, err
+}
+func (s Gathered_gathered) Present() (capnp.BitList, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return capnp.BitList(p.List()), err
+}
+
+func (s Gathered_gathered) HasPresent() bool {
+	return capnp.Struct(s).HasPtr(1)
+}
+
+func (s Gathered_gathered) SetPresent(v capnp.BitList) error {
+	return capnp.Struct(s).SetPtr(1, v.ToPtr())
+}
+
+// NewPresent sets the present field to a newly
+// allocated capnp.BitList, preferring placement in s's segment.
+func (s Gathered_gathered) NewPresent(n int32) (capnp.BitList, error) {
+	l, err := capnp.NewBitList(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return capnp.BitList{}, err
+	}
+	err = capnp.Struct(s).SetPtr(1, l.ToPtr())
+	return l, err
+}
+
+// Gathered_List is a list of Gathered.
+type Gathered_List = capnp.StructList[Gathered]
+
+// NewGathered creates a new list of Gathered.
+func NewGathered_List(s *capnp.Segment, sz int32) (Gathered_List, error) {
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 2}, sz)
+	return capnp.StructList[Gathered](l), err
+}
+
+// Gathered_Future is a wrapper for a Gathered promised by a client call.
+type Gathered_Future struct{ *capnp.Future }
+
+func (f Gathered_Future) Struct() (Gathered, error) {
+	p, err := f.Future.Ptr()
+	return Gathered(p.Struct()), err
+}
+func (p Gathered_Future) Gathered() Gathered_gathered_Future {
+	return Gathered_gathered_Future{p.Future}
+}
+
+// Gathered_gathered_Future is a wrapper for a Gathered_gathered promised by a client call.
+type Gathered_gathered_Future struct{ *capnp.Future }
+
+func (f Gathered_gathered_Future) Struct() (Gathered_gathered, error) {
+	p, err := f.Future.Ptr()
+	return Gathered_gathered(p.Struct()), err
+}
 
 type Gather capnp.Client
 
@@ -34,7 +202,7 @@ func (c Gather) Write(ctx context.Context, params func(Gather_write_Params) erro
 
 }
 
-func (c Gather) Done(ctx context.Context, params func(Gather_done_Params) error) (Gather_done_Results_Future, capnp.ReleaseFunc) {
+func (c Gather) Done(ctx context.Context, params func(Gather_done_Params) error) (Gathered_Future, capnp.ReleaseFunc) {
 
 	s := capnp.Send{
 		Method: capnp.Method{
@@ -50,7 +218,7 @@ func (c Gather) Done(ctx context.Context, params func(Gather_done_Params) error)
 	}
 
 	ans, release := capnp.Client(c).SendCall(ctx, s)
-	return Gather_done_Results_Future{Future: ans.Future()}, release
+	return Gathered_Future{Future: ans.Future()}, release
 
 }
 
@@ -207,9 +375,9 @@ func (c Gather_done) Args() Gather_done_Params {
 }
 
 // AllocResults allocates the results struct.
-func (c Gather_done) AllocResults() (Gather_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 2})
-	return Gather_done_Results(r), err
+func (c Gather_done) AllocResults() (Gathered, error) {
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 2})
+	return Gathered(r), err
 }
 
 // Gather_List is a list of Gather.
@@ -395,115 +563,4 @@ type Gather_done_Params_Future struct{ *capnp.Future }
 func (f Gather_done_Params_Future) Struct() (Gather_done_Params, error) {
 	p, err := f.Future.Ptr()
 	return Gather_done_Params(p.Struct()), err
-}
-
-type Gather_done_Results capnp.Struct
-
-// Gather_done_Results_TypeID is the unique identifier for the type Gather_done_Results.
-const Gather_done_Results_TypeID = 0xd93dde2912c756c0
-
-func NewGather_done_Results(s *capnp.Segment) (Gather_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
-	return Gather_done_Results(st), err
-}
-
-func NewRootGather_done_Results(s *capnp.Segment) (Gather_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
-	return Gather_done_Results(st), err
-}
-
-func ReadRootGather_done_Results(msg *capnp.Message) (Gather_done_Results, error) {
-	root, err := msg.Root()
-	return Gather_done_Results(root.Struct()), err
-}
-
-func (s Gather_done_Results) String() string {
-	str, _ := text.Marshal(0xd93dde2912c756c0, capnp.Struct(s))
-	return str
-}
-
-func (s Gather_done_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (Gather_done_Results) DecodeFromPtr(p capnp.Ptr) Gather_done_Results {
-	return Gather_done_Results(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s Gather_done_Results) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s Gather_done_Results) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s Gather_done_Results) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s Gather_done_Results) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s Gather_done_Results) Values() (capnp.Float64List, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return capnp.Float64List(p.List()), err
-}
-
-func (s Gather_done_Results) HasValues() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s Gather_done_Results) SetValues(v capnp.Float64List) error {
-	return capnp.Struct(s).SetPtr(0, v.ToPtr())
-}
-
-// NewValues sets the values field to a newly
-// allocated capnp.Float64List, preferring placement in s's segment.
-func (s Gather_done_Results) NewValues(n int32) (capnp.Float64List, error) {
-	l, err := capnp.NewFloat64List(capnp.Struct(s).Segment(), n)
-	if err != nil {
-		return capnp.Float64List{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, l.ToPtr())
-	return l, err
-}
-func (s Gather_done_Results) Present() (capnp.BitList, error) {
-	p, err := capnp.Struct(s).Ptr(1)
-	return capnp.BitList(p.List()), err
-}
-
-func (s Gather_done_Results) HasPresent() bool {
-	return capnp.Struct(s).HasPtr(1)
-}
-
-func (s Gather_done_Results) SetPresent(v capnp.BitList) error {
-	return capnp.Struct(s).SetPtr(1, v.ToPtr())
-}
-
-// NewPresent sets the present field to a newly
-// allocated capnp.BitList, preferring placement in s's segment.
-func (s Gather_done_Results) NewPresent(n int32) (capnp.BitList, error) {
-	l, err := capnp.NewBitList(capnp.Struct(s).Segment(), n)
-	if err != nil {
-		return capnp.BitList{}, err
-	}
-	err = capnp.Struct(s).SetPtr(1, l.ToPtr())
-	return l, err
-}
-
-// Gather_done_Results_List is a list of Gather_done_Results.
-type Gather_done_Results_List = capnp.StructList[Gather_done_Results]
-
-// NewGather_done_Results creates a new list of Gather_done_Results.
-func NewGather_done_Results_List(s *capnp.Segment, sz int32) (Gather_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2}, sz)
-	return capnp.StructList[Gather_done_Results](l), err
-}
-
-// Gather_done_Results_Future is a wrapper for a Gather_done_Results promised by a client call.
-type Gather_done_Results_Future struct{ *capnp.Future }
-
-func (f Gather_done_Results_Future) Struct() (Gather_done_Results, error) {
-	p, err := f.Future.Ptr()
-	return Gather_done_Results(p.Struct()), err
 }

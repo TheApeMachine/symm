@@ -10,6 +10,7 @@ import (
 	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
 	context "context"
 	math "math"
+	strconv "strconv"
 )
 
 type Reciprocal capnp.Client
@@ -35,7 +36,7 @@ func (c Reciprocal) Write(ctx context.Context, params func(Reciprocal_write_Para
 
 }
 
-func (c Reciprocal) Done(ctx context.Context, params func(Reciprocal_done_Params) error) (Reciprocal_done_Results_Future, capnp.ReleaseFunc) {
+func (c Reciprocal) Done(ctx context.Context, params func(Reciprocal_done_Params) error) (Inverse_Future, capnp.ReleaseFunc) {
 
 	s := capnp.Send{
 		Method: capnp.Method{
@@ -51,7 +52,7 @@ func (c Reciprocal) Done(ctx context.Context, params func(Reciprocal_done_Params
 	}
 
 	ans, release := capnp.Client(c).SendCall(ctx, s)
-	return Reciprocal_done_Results_Future{Future: ans.Future()}, release
+	return Inverse_Future{Future: ans.Future()}, release
 
 }
 
@@ -208,9 +209,9 @@ func (c Reciprocal_done) Args() Reciprocal_done_Params {
 }
 
 // AllocResults allocates the results struct.
-func (c Reciprocal_done) AllocResults() (Reciprocal_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 0})
-	return Reciprocal_done_Results(r), err
+func (c Reciprocal_done) AllocResults() (Inverse, error) {
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 16, PointerCount: 0})
+	return Inverse(r), err
 }
 
 // Reciprocal_List is a list of Reciprocal.
@@ -359,74 +360,105 @@ func (f Reciprocal_done_Params_Future) Struct() (Reciprocal_done_Params, error) 
 	return Reciprocal_done_Params(p.Struct()), err
 }
 
-type Reciprocal_done_Results capnp.Struct
+type Inverse capnp.Struct
+type Inverse_Which uint16
 
-// Reciprocal_done_Results_TypeID is the unique identifier for the type Reciprocal_done_Results.
-const Reciprocal_done_Results_TypeID = 0xbfe9a16ad8c58384
+const (
+	Inverse_Which_undefined Inverse_Which = 0
+	Inverse_Which_out       Inverse_Which = 1
+)
 
-func NewReciprocal_done_Results(s *capnp.Segment) (Reciprocal_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
-	return Reciprocal_done_Results(st), err
+func (w Inverse_Which) String() string {
+	const s = "undefinedout"
+	switch w {
+	case Inverse_Which_undefined:
+		return s[0:9]
+	case Inverse_Which_out:
+		return s[9:12]
+
+	}
+	return "Inverse_Which(" + strconv.FormatUint(uint64(w), 10) + ")"
 }
 
-func NewRootReciprocal_done_Results(s *capnp.Segment) (Reciprocal_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
-	return Reciprocal_done_Results(st), err
+// Inverse_TypeID is the unique identifier for the type Inverse.
+const Inverse_TypeID = 0xe59fc24d94cb2184
+
+func NewInverse(s *capnp.Segment) (Inverse, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 0})
+	return Inverse(st), err
 }
 
-func ReadRootReciprocal_done_Results(msg *capnp.Message) (Reciprocal_done_Results, error) {
+func NewRootInverse(s *capnp.Segment) (Inverse, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 0})
+	return Inverse(st), err
+}
+
+func ReadRootInverse(msg *capnp.Message) (Inverse, error) {
 	root, err := msg.Root()
-	return Reciprocal_done_Results(root.Struct()), err
+	return Inverse(root.Struct()), err
 }
 
-func (s Reciprocal_done_Results) String() string {
-	str, _ := text.Marshal(0xbfe9a16ad8c58384, capnp.Struct(s))
+func (s Inverse) String() string {
+	str, _ := text.Marshal(0xe59fc24d94cb2184, capnp.Struct(s))
 	return str
 }
 
-func (s Reciprocal_done_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+func (s Inverse) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
 	return capnp.Struct(s).EncodeAsPtr(seg)
 }
 
-func (Reciprocal_done_Results) DecodeFromPtr(p capnp.Ptr) Reciprocal_done_Results {
-	return Reciprocal_done_Results(capnp.Struct{}.DecodeFromPtr(p))
+func (Inverse) DecodeFromPtr(p capnp.Ptr) Inverse {
+	return Inverse(capnp.Struct{}.DecodeFromPtr(p))
 }
 
-func (s Reciprocal_done_Results) ToPtr() capnp.Ptr {
+func (s Inverse) ToPtr() capnp.Ptr {
 	return capnp.Struct(s).ToPtr()
 }
-func (s Reciprocal_done_Results) IsValid() bool {
+
+func (s Inverse) Which() Inverse_Which {
+	return Inverse_Which(capnp.Struct(s).Uint16(0))
+}
+func (s Inverse) IsValid() bool {
 	return capnp.Struct(s).IsValid()
 }
 
-func (s Reciprocal_done_Results) Message() *capnp.Message {
+func (s Inverse) Message() *capnp.Message {
 	return capnp.Struct(s).Message()
 }
 
-func (s Reciprocal_done_Results) Segment() *capnp.Segment {
+func (s Inverse) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Reciprocal_done_Results) Out() float64 {
-	return math.Float64frombits(capnp.Struct(s).Uint64(0))
+func (s Inverse) SetUndefined() {
+	capnp.Struct(s).SetUint16(0, 0)
+
 }
 
-func (s Reciprocal_done_Results) SetOut(v float64) {
-	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
+func (s Inverse) Out() float64 {
+	if capnp.Struct(s).Uint16(0) != 1 {
+		panic("Which() != out")
+	}
+	return math.Float64frombits(capnp.Struct(s).Uint64(8))
 }
 
-// Reciprocal_done_Results_List is a list of Reciprocal_done_Results.
-type Reciprocal_done_Results_List = capnp.StructList[Reciprocal_done_Results]
-
-// NewReciprocal_done_Results creates a new list of Reciprocal_done_Results.
-func NewReciprocal_done_Results_List(s *capnp.Segment, sz int32) (Reciprocal_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0}, sz)
-	return capnp.StructList[Reciprocal_done_Results](l), err
+func (s Inverse) SetOut(v float64) {
+	capnp.Struct(s).SetUint16(0, 1)
+	capnp.Struct(s).SetUint64(8, math.Float64bits(v))
 }
 
-// Reciprocal_done_Results_Future is a wrapper for a Reciprocal_done_Results promised by a client call.
-type Reciprocal_done_Results_Future struct{ *capnp.Future }
+// Inverse_List is a list of Inverse.
+type Inverse_List = capnp.StructList[Inverse]
 
-func (f Reciprocal_done_Results_Future) Struct() (Reciprocal_done_Results, error) {
+// NewInverse creates a new list of Inverse.
+func NewInverse_List(s *capnp.Segment, sz int32) (Inverse_List, error) {
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 16, PointerCount: 0}, sz)
+	return capnp.StructList[Inverse](l), err
+}
+
+// Inverse_Future is a wrapper for a Inverse promised by a client call.
+type Inverse_Future struct{ *capnp.Future }
+
+func (f Inverse_Future) Struct() (Inverse, error) {
 	p, err := f.Future.Ptr()
-	return Reciprocal_done_Results(p.Struct()), err
+	return Inverse(p.Struct()), err
 }

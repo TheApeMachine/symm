@@ -307,3 +307,38 @@ func TestInsertWriteUnsigned(t *testing.T) {
 		}
 	})
 }
+
+func TestInsertText(t *testing.T) {
+	Convey("Given text inserted as a string", t, func() {
+		ctx := context.Background()
+		client := data.Insert_ServerToClient(data.NewInsert(ctx))
+		defer client.Release()
+
+		So(client.Write(ctx, func(args data.Insert_write_Params) error {
+			for _, err := range []error{
+				args.SetPath("capture.receivedAt"),
+				args.SetEncoding("text"),
+				args.SetText("2026-09-24T17:09:18.111Z"),
+				args.SetData([]byte(`{"channel":"ticker"}`)),
+			} {
+				if err != nil {
+					return err
+				}
+			}
+			return nil
+		}), ShouldBeNil)
+		So(client.WaitStreaming(), ShouldBeNil)
+
+		future, release := client.Done(ctx, nil)
+		defer release()
+		result, err := future.Struct()
+		So(err, ShouldBeNil)
+		payload, err := result.Out()
+		So(err, ShouldBeNil)
+
+		Convey("It lands as that string beside what the document held", func() {
+			So(string(payload), ShouldContainSubstring, `"channel":"ticker"`)
+			So(string(payload), ShouldContainSubstring, `"receivedAt":"2026-09-24T17:09:18.111Z"`)
+		})
+	})
+}

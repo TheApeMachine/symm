@@ -1,8 +1,8 @@
-import { cn } from "#/lib/utils";
 import { Badge } from "#/components/ui/badge";
+import { basis, percent } from "#/components/ui/learning-format";
 import { Stat } from "#/components/ui/stat";
 import { Typography } from "#/components/ui/typography";
-import { basis, percent } from "#/components/ui/learning-format";
+import { cn } from "#/lib/utils";
 
 export interface ActivityRow {
 	id: string;

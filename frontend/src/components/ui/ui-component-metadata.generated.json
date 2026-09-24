@@ -1186,6 +1186,41 @@
         "name": "episode",
         "type": "data",
         "optional": true
+      },
+      {
+        "name": "run",
+        "type": "number",
+        "optional": true
+      },
+      {
+        "name": "phase",
+        "type": "string",
+        "optional": true
+      },
+      {
+        "name": "coordinate",
+        "type": "string",
+        "optional": true
+      },
+      {
+        "name": "marks",
+        "type": "data",
+        "optional": true
+      },
+      {
+        "name": "entered",
+        "type": "number",
+        "optional": true
+      },
+      {
+        "name": "exited",
+        "type": "number",
+        "optional": true
+      },
+      {
+        "name": "outcome",
+        "type": "number",
+        "optional": true
       }
     ]
   },
@@ -6264,6 +6299,175 @@
       }
     ]
   },
+  "KernelCard": {
+    "name": "KernelCard",
+    "exportName": "KernelCard",
+    "hasChildren": false,
+    "props": [
+      {
+        "name": "title",
+        "type": "string",
+        "optional": true
+      },
+      {
+        "name": "className",
+        "type": "string",
+        "optional": true
+      },
+      {
+        "name": "justify",
+        "type": "select",
+        "options": [
+          "center",
+          "start",
+          "end",
+          "between",
+          "around",
+          "evenly",
+          "stretch"
+        ],
+        "optional": true
+      },
+      {
+        "name": "align",
+        "type": "select",
+        "options": [
+          "center",
+          "start",
+          "end",
+          "stretch",
+          "baseline"
+        ],
+        "optional": true
+      },
+      {
+        "name": "wrap",
+        "type": "select",
+        "options": [
+          "wrap",
+          "wrapReverse",
+          "nowrap"
+        ],
+        "optional": true
+      },
+      {
+        "name": "gap",
+        "type": "select",
+        "options": [
+          "1",
+          "2",
+          "3",
+          "4",
+          "5",
+          "6",
+          "7",
+          "8",
+          "9",
+          "10",
+          "11",
+          "12"
+        ],
+        "optional": true
+      },
+      {
+        "name": "padding",
+        "type": "select",
+        "options": [
+          "1",
+          "2",
+          "3",
+          "4",
+          "5",
+          "6",
+          "7",
+          "8",
+          "9",
+          "10",
+          "11",
+          "12"
+        ],
+        "optional": true
+      },
+      {
+        "name": "margin",
+        "type": "select",
+        "options": [
+          "1",
+          "2",
+          "3",
+          "4",
+          "5",
+          "6",
+          "7",
+          "8",
+          "9",
+          "10",
+          "11",
+          "12"
+        ],
+        "optional": true
+      },
+      {
+        "name": "grow",
+        "type": "select",
+        "options": [
+          "grow",
+          "shrink",
+          "growShrink",
+          "growShrinkGrow",
+          "growShrinkShrink"
+        ],
+        "optional": true
+      },
+      {
+        "name": "fullHeight",
+        "type": "boolean",
+        "optional": true
+      },
+      {
+        "name": "fullWidth",
+        "type": "boolean",
+        "optional": true
+      },
+      {
+        "name": "appear",
+        "type": "select",
+        "options": [
+          "panelBottomRight",
+          "panelCenter",
+          "fade",
+          "fadeUp",
+          "fadeDown",
+          "slideRight",
+          "slideLeft",
+          "scaleIn",
+          "wiggleIdle",
+          "press"
+        ],
+        "optional": true
+      },
+      {
+        "name": "name",
+        "type": "string",
+        "optional": true
+      },
+      {
+        "name": "description",
+        "type": "string",
+        "optional": true
+      },
+      {
+        "name": "value",
+        "type": "number",
+        "optional": true
+      },
+      {
+        "name": "points",
+        "type": "data",
+        "optional": true
+      }
+    ]
+  },
   "Key": {
     "name": "Key",
     "exportName": "Key",
@@ -7176,7 +7380,22 @@
         "optional": true
       },
       {
+        "name": "mean",
+        "type": "number",
+        "optional": true
+      },
+      {
+        "name": "deviation",
+        "type": "number",
+        "optional": true
+      },
+      {
         "name": "unit",
+        "type": "string",
+        "optional": true
+      },
+      {
+        "name": "note",
         "type": "string",
         "optional": true
       }
@@ -8072,6 +8291,195 @@
       }
     ]
   },
+  "SkillPanel": {
+    "name": "SkillPanel",
+    "exportName": "SkillPanel",
+    "hasChildren": false,
+    "props": [
+      {
+        "name": "title",
+        "type": "string",
+        "optional": true
+      },
+      {
+        "name": "className",
+        "type": "string",
+        "optional": true
+      },
+      {
+        "name": "justify",
+        "type": "select",
+        "options": [
+          "center",
+          "start",
+          "end",
+          "between",
+          "around",
+          "evenly",
+          "stretch"
+        ],
+        "optional": true
+      },
+      {
+        "name": "align",
+        "type": "select",
+        "options": [
+          "center",
+          "start",
+          "end",
+          "stretch",
+          "baseline"
+        ],
+        "optional": true
+      },
+      {
+        "name": "wrap",
+        "type": "select",
+        "options": [
+          "wrap",
+          "wrapReverse",
+          "nowrap"
+        ],
+        "optional": true
+      },
+      {
+        "name": "gap",
+        "type": "select",
+        "options": [
+          "1",
+          "2",
+          "3",
+          "4",
+          "5",
+          "6",
+          "7",
+          "8",
+          "9",
+          "10",
+          "11",
+          "12"
+        ],
+        "optional": true
+      },
+      {
+        "name": "padding",
+        "type": "select",
+        "options": [
+          "1",
+          "2",
+          "3",
+          "4",
+          "5",
+          "6",
+          "7",
+          "8",
+          "9",
+          "10",
+          "11",
+          "12"
+        ],
+        "optional": true
+      },
+      {
+        "name": "margin",
+        "type": "select",
+        "options": [
+          "1",
+          "2",
+          "3",
+          "4",
+          "5",
+          "6",
+          "7",
+          "8",
+          "9",
+          "10",
+          "11",
+          "12"
+        ],
+        "optional": true
+      },
+      {
+        "name": "grow",
+        "type": "select",
+        "options": [
+          "grow",
+          "shrink",
+          "growShrink",
+          "growShrinkGrow",
+          "growShrinkShrink"
+        ],
+        "optional": true
+      },
+      {
+        "name": "fullHeight",
+        "type": "boolean",
+        "optional": true
+      },
+      {
+        "name": "fullWidth",
+        "type": "boolean",
+        "optional": true
+      },
+      {
+        "name": "appear",
+        "type": "select",
+        "options": [
+          "panelBottomRight",
+          "panelCenter",
+          "fade",
+          "fadeUp",
+          "fadeDown",
+          "slideRight",
+          "slideLeft",
+          "scaleIn",
+          "wiggleIdle",
+          "press"
+        ],
+        "optional": true
+      },
+      {
+        "name": "evaluated",
+        "type": "number",
+        "optional": true
+      },
+      {
+        "name": "edge",
+        "type": "number",
+        "optional": true
+      },
+      {
+        "name": "positive",
+        "type": "number",
+        "optional": true
+      },
+      {
+        "name": "negative",
+        "type": "number",
+        "optional": true
+      },
+      {
+        "name": "balance",
+        "type": "number",
+        "optional": true
+      },
+      {
+        "name": "pnl",
+        "type": "number",
+        "optional": true
+      },
+      {
+        "name": "currency",
+        "type": "string",
+        "optional": true
+      },
+      {
+        "name": "activity",
+        "type": "data",
+        "optional": true
+      }
+    ]
+  },
   "Slider": {
     "name": "Slider",
     "exportName": "Slider",
@@ -8327,6 +8735,17 @@
         "optional": false
       },
       {
+        "name": "format",
+        "type": "select",
+        "options": [
+          "percent",
+          "integer",
+          "basis",
+          "money"
+        ],
+        "optional": true
+      },
+      {
         "name": "valueClassName",
         "type": "string",
         "optional": true
@@ -8524,6 +8943,17 @@
       {
         "name": "value",
         "type": "string",
+        "optional": true
+      },
+      {
+        "name": "format",
+        "type": "select",
+        "options": [
+          "percent",
+          "integer",
+          "basis",
+          "money"
+        ],
         "optional": true
       }
     ]

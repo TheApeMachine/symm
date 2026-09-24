@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
@@ -430,8 +431,22 @@ func readInterest(resolved map[string]any, interest string) (float64, bool) {
 	field, literal, asked := strings.Cut(interest, "=")
 
 	if !asked {
-		value, numeric := resolved[interest].(float64)
-		return value, numeric
+		switch value := resolved[interest].(type) {
+		case float64:
+			return value, true
+		case string:
+			// A time is read as the instant it names, in nanoseconds since
+			// the epoch, so a metric asking for a timestamp gets a number.
+			instant, err := time.Parse(time.RFC3339Nano, value)
+
+			if err != nil {
+				return 0, false
+			}
+
+			return float64(instant.UnixNano()), true
+		}
+
+		return 0, false
 	}
 
 	held, found := resolved[field]
@@ -480,22 +495,33 @@ func walkInterest(document any, segments []string) (any, bool) {
 			return nil, false
 		}
 
-		if market, hasMarket := object["market"].(map[string]any); hasMarket {
-			object = market
-			current = market
+		// A replayed record carries the venue's frame under market beside the
+		// capture that received it; a live one carries both at its root. A
+		// field is looked for on the record first and then in its frame.
+		market, hasMarket := object["market"].(map[string]any)
+		channel, tagged := object["channel"].(string)
+
+		if !tagged && hasMarket {
+			channel, tagged = market["channel"].(string)
 		}
 
 		// A channel-tagged record has the same declared path as its named
 		// envelope: ticker.data.last addresses channel=ticker, data.last.
-		if channel, tagged := object["channel"].(string); tagged && channel == segment {
+		if tagged && channel == segment {
 			continue
 		}
 
-		current, ok = object[segment]
+		next, found := object[segment]
 
-		if !ok {
+		if !found && hasMarket {
+			next, found = market[segment]
+		}
+
+		if !found {
 			return nil, false
 		}
+
+		current = next
 	}
 
 	return current, true

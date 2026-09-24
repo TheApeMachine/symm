@@ -255,7 +255,7 @@
         "inputs": {
           "data": [
             {
-              "nodeId": "id_record",
+              "nodeId": "id_vocabulary",
               "portName": "out"
             }
           ]
@@ -486,9 +486,6 @@
       "inputData": {
         "path": {
           "value": "key.tokens"
-        },
-        "data": {
-          "value": "{}"
         }
       },
       "connections": {
@@ -497,6 +494,12 @@
             {
               "nodeId": "tokens",
               "portName": "json"
+            }
+          ],
+          "data": [
+            {
+              "nodeId": "key_vocabulary",
+              "portName": "out"
             }
           ]
         },
@@ -974,7 +977,7 @@
         "outputs": {
           "out": [
             {
-              "nodeId": "identity",
+              "nodeId": "id_vocabulary",
               "portName": "data"
             }
           ]
@@ -1074,6 +1077,10 @@
             },
             {
               "nodeId": "seed",
+              "portName": "data"
+            },
+            {
+              "nodeId": "vocabulary",
               "portName": "data"
             }
           ]
@@ -1247,6 +1254,112 @@
       },
       "x": 1240,
       "y": 1150
+    },
+    "vocabulary": {
+      "id": "vocabulary",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "x": 310,
+      "y": 490,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "token_available",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "key_vocabulary",
+              "portName": "json"
+            },
+            {
+              "nodeId": "id_vocabulary",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "settled.vocabulary"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      }
+    },
+    "key_vocabulary": {
+      "id": "key_vocabulary",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "x": 620,
+      "y": 490,
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "vocabulary",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "key_tokens",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "key.vocabulary"
+        }
+      }
+    },
+    "id_vocabulary": {
+      "id": "id_vocabulary",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "x": 340,
+      "y": 1150,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "id_record",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "vocabulary",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "identity",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "key.vocabulary"
+        }
+      }
     }
   }
 }

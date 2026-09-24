@@ -25,7 +25,11 @@ describe("the UI graphs that ship", () => {
 	});
 
 	for (const [file, module] of Object.entries(authored)) {
-		const name = file.split("/").pop()?.replace(/\.json$/, "") ?? file;
+		const name =
+			file
+				.split("/")
+				.pop()
+				?.replace(/\.json$/, "") ?? file;
 
 		describe(name, () => {
 			const compiled = compileUI(module.default);
@@ -48,7 +52,9 @@ describe("the UI graphs that ship", () => {
 					renderUIRoute(compiled.routes[0]) as React.ReactElement,
 				);
 
-				expect(markup).toContain(`data-route-path="${compiled.routes[0].path}"`);
+				expect(markup).toContain(
+					`data-route-path="${compiled.routes[0].path}"`,
+				);
 
 				// Every word the graph declares has to survive into the
 				// markup. A component that silently ignored what it was

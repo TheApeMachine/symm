@@ -4,11 +4,6 @@ import { focusAtom } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
 import type { ResonanceFrame } from "#/collections/types";
 import {
-	clearCanvas,
-	resizeCanvas,
-	TERMINAL_COLORS,
-} from "#/components/ui/canvas-utils";
-import {
 	categoryColor,
 	drawXrayWaiting,
 	latentAxis,
@@ -18,6 +13,11 @@ import {
 	type LatentPoint,
 	latentPointsFromFrames,
 } from "#/components/terminal/xray-view";
+import {
+	clearCanvas,
+	resizeCanvas,
+	TERMINAL_COLORS,
+} from "#/components/ui/canvas-utils";
 
 const latentCanvasRef = createRef<HTMLCanvasElement>();
 const latentPointsStore = createStore<LatentPoint[]>([]);

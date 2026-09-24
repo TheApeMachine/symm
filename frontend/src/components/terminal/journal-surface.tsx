@@ -6,13 +6,12 @@ import { Flex } from "#/components/ui/flex";
 import { Panel } from "#/components/ui/panel";
 import { Section } from "#/components/ui/section";
 import { Typography } from "#/components/ui/typography";
+import { hubBaseUrl } from "#/lib/hub";
 import { Decision } from "#/providers/telemetry/telemetry/decision";
 import { EntryCost } from "#/providers/telemetry/telemetry/entry-cost";
 import { Holding } from "#/providers/telemetry/telemetry/holding";
 import { Position } from "#/providers/telemetry/telemetry/position";
-import { hubBaseUrl } from "#/lib/hub";
 import { cn } from "@/lib/utils";
-
 
 const formatNumber = (value: unknown, digits: number): string =>
 	typeof value === "number"
@@ -185,102 +184,52 @@ export const JournalSurface = () => {
 
 	const history = useSelector(signals.trades, (state) => state);
 
-	const { activeLots, closedTrades } = useSelector(signals.position, (state) => {
-		const activeMap = new Map<string, ActiveLotEntry>();
-		const closedMap = new Map<string, JournalTradeEntry>();
+	const { activeLots, closedTrades } = useSelector(
+		signals.position,
+		(state) => {
+			const activeMap = new Map<string, ActiveLotEntry>();
+			const closedMap = new Map<string, JournalTradeEntry>();
 
-		const latestFrame =
-			typeof (state as any)?.findLast === "function"
-				? (state as any).findLast(() => true)
-				: Array.isArray(state)
-					? state[state.length - 1]
-					: state;
-		if (latestFrame && typeof latestFrame.rowsLength === "function") {
-			for (let rowIndex = 0; rowIndex < latestFrame.rowsLength(); rowIndex++) {
-				const currentPosition = latestFrame.rows(rowIndex, positionHolder);
-				if (!currentPosition) continue;
+			const latestFrame =
+				typeof (state as any)?.findLast === "function"
+					? (state as any).findLast(() => true)
+					: Array.isArray(state)
+						? state[state.length - 1]
+						: state;
+			if (latestFrame && typeof latestFrame.rowsLength === "function") {
+				for (
+					let rowIndex = 0;
+					rowIndex < latestFrame.rowsLength();
+					rowIndex++
+				) {
+					const currentPosition = latestFrame.rows(rowIndex, positionHolder);
+					if (!currentPosition) continue;
 
-				const currentHolding = currentPosition.holding(holdingHolder);
-				if (!currentHolding) continue;
+					const currentHolding = currentPosition.holding(holdingHolder);
+					if (!currentHolding) continue;
 
-				const currentSymbol = currentHolding.symbol() ?? "";
-				if (!currentSymbol) continue;
+					const currentSymbol = currentHolding.symbol() ?? "";
+					if (!currentSymbol) continue;
 
-				const positionStatus =
-					currentHolding.status() ?? currentPosition.status() ?? "—";
-				if (positionStatus === "closed" || currentHolding.exitPrice()) continue;
+					const positionStatus =
+						currentHolding.status() ?? currentPosition.status() ?? "—";
+					if (positionStatus === "closed" || currentHolding.exitPrice())
+						continue;
 
-				const currentDecision = currentPosition.decision(decisionHolder);
+					const currentDecision = currentPosition.decision(decisionHolder);
 
-				const entryNano = currentHolding.entryAt();
-				const entryTimestamp = entryNano > 0n ? timeOf(entryNano) : "—";
+					const entryNano = currentHolding.entryAt();
+					const entryTimestamp = entryNano > 0n ? timeOf(entryNano) : "—";
 
-				activeMap.set(currentSymbol, {
-					symbol: currentSymbol,
-					status: positionStatus,
-					pnl: `${formatNumber(currentHolding.pnl(), 4)} USD`,
-					pnlValue: numberOf(currentHolding.pnl()),
-					mark: formatNumber(currentHolding.mark(), 6),
-					returnPct: formatPct(currentHolding.returnPct(), 2),
-					entryPrice: formatNumber(currentHolding.entryPrice(), 6),
-					entryAt: entryTimestamp,
-					opportunityType: currentDecision?.opportunityType() || "—",
-					opportunityPhase: currentDecision?.opportunityPhase() || "—",
-					predictiveStatus: currentDecision?.predictiveStatus() || "—",
-					confidence: formatPct((currentDecision?.confidence() ?? 0) * 100, 1),
-				});
-			}
-		}
-
-		const frames =
-			typeof (state as any)?.toArray === "function"
-				? (state as any).toArray()
-				: Array.isArray(state)
-					? state
-					: [];
-		for (const frame of frames) {
-			if (!frame || typeof frame.rowsLength !== "function") continue;
-			for (let rowIndex = 0; rowIndex < frame.rowsLength(); rowIndex++) {
-				const currentPosition = frame.rows(rowIndex, positionHolder);
-				if (!currentPosition) continue;
-
-				const currentHolding = currentPosition.holding(holdingHolder);
-				if (!currentHolding) continue;
-
-				const currentSymbol = currentHolding.symbol() ?? "";
-				if (!currentSymbol) continue;
-
-				const positionStatus =
-					currentHolding.status() ?? currentPosition.status() ?? "—";
-				const currentDecision = currentPosition.decision(decisionHolder);
-				const currentEntryCost = currentDecision?.entryCost(entryCostHolder);
-
-				const entryNano = currentHolding.entryAt();
-				const entryTimestamp = entryNano > 0n ? timeOf(entryNano) : "—";
-
-				if (positionStatus === "closed" || currentHolding.exitPrice()) {
-					const exitNano = currentHolding.exitAt();
-					const tradeId = `${currentSymbol}-${String(exitNano)}`;
-					closedMap.set(tradeId, {
-						id: tradeId,
+					activeMap.set(currentSymbol, {
 						symbol: currentSymbol,
 						status: positionStatus,
 						pnl: `${formatNumber(currentHolding.pnl(), 4)} USD`,
 						pnlValue: numberOf(currentHolding.pnl()),
+						mark: formatNumber(currentHolding.mark(), 6),
 						returnPct: formatPct(currentHolding.returnPct(), 2),
 						entryPrice: formatNumber(currentHolding.entryPrice(), 6),
 						entryAt: entryTimestamp,
-						exitPrice: formatNumber(currentHolding.exitPrice(), 6),
-						entryFee: formatNumber(currentHolding.entryFee(), 4),
-						exitFee: formatNumber(currentHolding.exitFee(), 4),
-						exitAt: timeOf(exitNano),
-						exitAtSort: sortOf(exitNano),
-						bestAsk: formatNumber(currentEntryCost?.bestAsk(), 6),
-						bestBid: formatNumber(currentEntryCost?.bestBid(), 6),
-						spread: formatNumber(currentEntryCost?.spread(), 6),
-						impact: formatNumber(currentEntryCost?.impact(), 6),
-						breakEven: formatNumber(currentEntryCost?.breakEven(), 6),
-						roundTripFees: formatNumber(currentEntryCost?.roundTripFees(), 6),
 						opportunityType: currentDecision?.opportunityType() || "—",
 						opportunityPhase: currentDecision?.opportunityPhase() || "—",
 						predictiveStatus: currentDecision?.predictiveStatus() || "—",
@@ -288,40 +237,103 @@ export const JournalSurface = () => {
 							(currentDecision?.confidence() ?? 0) * 100,
 							1,
 						),
-						source: "live",
 					});
 				}
 			}
-		}
 
-		// Merge in persisted history, deduped against live frames by symbol +
-		// exit timestamp so a trade that's in both sources renders once — the
-		// live copy wins since it carries the freshest decision snapshot.
-		const liveExitKeys = new Set(
-			[...closedMap.values()].map(
-				(entry) => `${entry.symbol}-${entry.exitAtSort}`,
-			),
-		);
+			const frames =
+				typeof (state as any)?.toArray === "function"
+					? (state as any).toArray()
+					: Array.isArray(state)
+						? state
+						: [];
+			for (const frame of frames) {
+				if (!frame || typeof frame.rowsLength !== "function") continue;
+				for (let rowIndex = 0; rowIndex < frame.rowsLength(); rowIndex++) {
+					const currentPosition = frame.rows(rowIndex, positionHolder);
+					if (!currentPosition) continue;
 
-		const records = Array.isArray(history) ? history : Object.values(history ?? {});
-		for (const record of records) {
-			const entry = fromRecord(record);
-			if (!entry) continue;
+					const currentHolding = currentPosition.holding(holdingHolder);
+					if (!currentHolding) continue;
 
-			if (!liveExitKeys.has(`${entry.symbol}-${entry.exitAtSort}`)) {
-				closedMap.set(entry.id, entry);
+					const currentSymbol = currentHolding.symbol() ?? "";
+					if (!currentSymbol) continue;
+
+					const positionStatus =
+						currentHolding.status() ?? currentPosition.status() ?? "—";
+					const currentDecision = currentPosition.decision(decisionHolder);
+					const currentEntryCost = currentDecision?.entryCost(entryCostHolder);
+
+					const entryNano = currentHolding.entryAt();
+					const entryTimestamp = entryNano > 0n ? timeOf(entryNano) : "—";
+
+					if (positionStatus === "closed" || currentHolding.exitPrice()) {
+						const exitNano = currentHolding.exitAt();
+						const tradeId = `${currentSymbol}-${String(exitNano)}`;
+						closedMap.set(tradeId, {
+							id: tradeId,
+							symbol: currentSymbol,
+							status: positionStatus,
+							pnl: `${formatNumber(currentHolding.pnl(), 4)} USD`,
+							pnlValue: numberOf(currentHolding.pnl()),
+							returnPct: formatPct(currentHolding.returnPct(), 2),
+							entryPrice: formatNumber(currentHolding.entryPrice(), 6),
+							entryAt: entryTimestamp,
+							exitPrice: formatNumber(currentHolding.exitPrice(), 6),
+							entryFee: formatNumber(currentHolding.entryFee(), 4),
+							exitFee: formatNumber(currentHolding.exitFee(), 4),
+							exitAt: timeOf(exitNano),
+							exitAtSort: sortOf(exitNano),
+							bestAsk: formatNumber(currentEntryCost?.bestAsk(), 6),
+							bestBid: formatNumber(currentEntryCost?.bestBid(), 6),
+							spread: formatNumber(currentEntryCost?.spread(), 6),
+							impact: formatNumber(currentEntryCost?.impact(), 6),
+							breakEven: formatNumber(currentEntryCost?.breakEven(), 6),
+							roundTripFees: formatNumber(currentEntryCost?.roundTripFees(), 6),
+							opportunityType: currentDecision?.opportunityType() || "—",
+							opportunityPhase: currentDecision?.opportunityPhase() || "—",
+							predictiveStatus: currentDecision?.predictiveStatus() || "—",
+							confidence: formatPct(
+								(currentDecision?.confidence() ?? 0) * 100,
+								1,
+							),
+							source: "live",
+						});
+					}
+				}
 			}
-		}
 
-		return {
-			activeLots: [...activeMap.values()].sort((leftLot, rightLot) =>
-				leftLot.symbol.localeCompare(rightLot.symbol),
-			),
-			closedTrades: [...closedMap.values()].sort(
-				(left, right) => right.exitAtSort - left.exitAtSort,
-			),
-		};
-	});
+			// Merge in persisted history, deduped against live frames by symbol +
+			// exit timestamp so a trade that's in both sources renders once — the
+			// live copy wins since it carries the freshest decision snapshot.
+			const liveExitKeys = new Set(
+				[...closedMap.values()].map(
+					(entry) => `${entry.symbol}-${entry.exitAtSort}`,
+				),
+			);
+
+			const records = Array.isArray(history)
+				? history
+				: Object.values(history ?? {});
+			for (const record of records) {
+				const entry = fromRecord(record);
+				if (!entry) continue;
+
+				if (!liveExitKeys.has(`${entry.symbol}-${entry.exitAtSort}`)) {
+					closedMap.set(entry.id, entry);
+				}
+			}
+
+			return {
+				activeLots: [...activeMap.values()].sort((leftLot, rightLot) =>
+					leftLot.symbol.localeCompare(rightLot.symbol),
+				),
+				closedTrades: [...closedMap.values()].sort(
+					(left, right) => right.exitAtSort - left.exitAtSort,
+				),
+			};
+		},
+	);
 
 	return (
 		<div className="grid h-full min-h-0 min-w-260 grid-cols-[minmax(280px,320px)_minmax(420px,1fr)]">

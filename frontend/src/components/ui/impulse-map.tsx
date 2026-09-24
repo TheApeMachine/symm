@@ -1,7 +1,12 @@
-import { type ComponentProps, useState } from "react";
+import {
+	type ComponentProps,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
 import { cn } from "@/lib/utils";
 import { Flex } from "./flex";
-import { Typography } from "./typography";
 
 export interface ImpulsePoint {
 	id: number;
@@ -19,9 +24,9 @@ export interface ImpulsePoint {
 export interface ImpulseRegion {
 	id: number;
 	source: string;
-	snr: number;
-	authority: number;
-	members: number;
+	snr?: number;
+	authority?: number;
+	members?: number;
 }
 
 export interface ImpulseContour {
@@ -40,127 +45,328 @@ export type ImpulseMapProps = Omit<
 	"children"
 > & {
 	points?: ImpulsePoint[];
+	/** The hot regions: those above the action threshold (Otsu split). */
 	regions?: ImpulseRegion[];
 	contours?: ImpulseContour[];
 	connections?: ImpulseConnection[];
-	/** SVG drawing dimensions, in producer coordinate units, centered at the origin. */
+	title?: string;
+	/**
+	 * Drawing extent in producer coordinate units, centered at the origin.
+	 * Without one the drawing fits the supplied points.
+	 */
 	viewport?: { width: number; height: number };
 };
 
+/* Heat from the panel line through blue and green to the accent. */
+const HEAT = ["#3a342b", "#7fbacb", "#9cc06e", "#e8a33d"];
+
+const mix = (from: string, to: string, t: number) => {
+	const channel = (hex: string, offset: number) =>
+		Number.parseInt(hex.slice(offset, offset + 2), 16);
+	const blend = (offset: number) =>
+		Math.round(
+			channel(from, offset) + (channel(to, offset) - channel(from, offset)) * t,
+		);
+	return `rgb(${blend(1)}, ${blend(3)}, ${blend(5)})`;
+};
+
+/* heat maps a share in [0,1] onto the heat scale. */
+export const heat = (share: number) => {
+	const clamped = Math.min(1, Math.max(0, share));
+	const scaled = clamped * (HEAT.length - 1);
+	const index = Math.min(HEAT.length - 2, Math.floor(scaled));
+	return mix(HEAT[index], HEAT[index + 1], scaled - index);
+};
+
 /*
-Draws supplied positions, contour geometry and relationships without simulating
-signals or deciding which evidence is hot. Regions and contours come from the
-producer. The view owns hover selection only; empty inputs clear the drawing.
+Draws supplied positions and relationships without simulating signals or
+deciding which evidence is hot: positions, activation and the hot regions all
+come from the producer. The view owns only the layout toggle (the original
+lattice or the arrangement sympathy produced) and hover inspection.
 */
 export const ImpulseMap = ({
 	points,
 	regions,
 	contours,
 	connections,
-	viewport = { width: 640, height: 400 },
+	title = "Map",
+	viewport,
 	className,
 	...props
 }: ImpulseMapProps) => {
-	const { width, height } = viewport;
+	const ref = useRef<HTMLDivElement>(null);
+	const [size, setSize] = useState({ width: 640, height: 400 });
+	const [layout, setLayout] = useState<"grid" | "regions">("regions");
 	const [selected, setSelected] = useState<number | null>(null);
-	const byId = new Map(points?.map((point) => [point.id, point]));
+
+	useEffect(() => {
+		const target = ref.current;
+		if (!target || typeof ResizeObserver === "undefined") return;
+		const observer = new ResizeObserver((entries) => {
+			const box = entries[0]?.contentRect;
+			if (box && box.width > 0 && box.height > 0)
+				setSize({ width: box.width, height: box.height });
+		});
+		observer.observe(target);
+		return () => observer.disconnect();
+	}, []);
+
+	const placed = useMemo(
+		() => place(points ?? [], layout, size, viewport),
+		[points, layout, size, viewport],
+	);
+	const byId = new Map(placed.points.map((point) => [point.id, point]));
+	const hot = new Set((regions ?? []).map((region) => region.source));
+	const strongest = Math.max(
+		0,
+		...(points ?? []).map((point) => Math.abs(point.activation)),
+	);
 	const inspected = selected === null ? undefined : byId.get(selected);
+	const members = new Map<string, number>();
+	for (const point of points ?? []) {
+		if (hot.has(point.source))
+			members.set(point.source, (members.get(point.source) ?? 0) + 1);
+	}
 
 	return (
-		<Flex.Column className={cn("min-h-64 bg-(--sunken)", className)} {...props}>
-			<svg
-				role="img"
-				aria-label="Impulse map"
-				className="min-h-0 w-full flex-1"
-				viewBox={`${-width / 2} ${-height / 2} ${width} ${height}`}
-			>
-				{contours?.map((contour) => (
-					<polygon
-						key={contour.id}
-						points={contour.points
-							.map((point) => `${point.x},${point.y}`)
-							.join(" ")}
-						className="fill-(--acc)/10 stroke-(--acc)/40"
-						vectorEffect="non-scaling-stroke"
-					>
-						<title>{contour.label}</title>
-					</polygon>
-				))}
-				{connections?.map((connection) => {
-					const from = byId.get(connection.from);
-					const to = byId.get(connection.to);
-
-					if (!from || !to)
-						throw new Error(
-							`ImpulseMap: connection ${connection.from} -> ${connection.to} references a missing point`,
-						);
-
-					return (
-						<line
-							key={`${connection.from}:${connection.to}`}
-							x1={from.x}
-							y1={from.y}
-							x2={to.x}
-							y2={to.y}
-							className="stroke-(--acc)/50"
-							vectorEffect="non-scaling-stroke"
-						/>
-					);
-				})}
-				{points?.map((point) => (
-					// biome-ignore lint/a11y/useSemanticElements: SVG has no native button; this circle supports click, Enter, Space and focus inspection.
-					<circle
-						role="button"
-						key={point.id}
-						cx={point.x}
-						cy={point.y}
-						r={4}
-						className={
-							point.present
-								? "fill-(--acc) stroke-(--f1)"
-								: "fill-transparent stroke-(--f4)"
-						}
-						vectorEffect="non-scaling-stroke"
-						tabIndex={0}
-						aria-label={point.label}
-						onMouseEnter={() => setSelected(point.id)}
-						onMouseLeave={() => setSelected(null)}
-						onClick={() => setSelected(point.id)}
-						onKeyDown={(event) => {
-							if (event.key === "Enter" || event.key === " ") {
-								event.preventDefault();
-								setSelected(point.id);
-							}
-						}}
-						onFocus={() => setSelected(point.id)}
-						onBlur={() => setSelected(null)}
-					>
-						<title>{`${point.label} · ${point.source} · SNR ${point.snr}`}</title>
-					</circle>
-				))}
-			</svg>
-			{!points?.length && (
-				<Typography.Mono className="p-3">No impulse data</Typography.Mono>
+		<Flex.Column
+			className={cn(
+				"min-h-64 overflow-hidden rounded border border-(--line) bg-(--surface) font-mono text-xs text-(--f3)",
+				className,
 			)}
-			{inspected && (
-				<Typography.Mono className="p-3" aria-live="polite">
-					{inspected.label} · SNR {inspected.snr} · activation{" "}
-					{inspected.activation} · energy {inspected.energy} · authority{" "}
-					{inspected.authority}
-				</Typography.Mono>
-			)}
-			{regions?.map((region) => (
-				<Flex.Row
-					key={region.id}
-					className="justify-between border-t border-(--line) p-2"
-				>
-					<Typography.Label>{region.source}</Typography.Label>
-					<Typography.Mono>
-						{region.members} members · SNR {region.snr} · authority{" "}
-						{region.authority}
-					</Typography.Mono>
+			{...props}
+		>
+			<Flex.Row className="h-8 shrink-0 items-center justify-between border-(--line) border-b bg-(--sunken) px-4">
+				<span className="border-(--acc) border-b py-1.5 text-(--acc)">
+					{title}
+				</span>
+				<Flex.Row className="items-center gap-3">
+					<Flex.Row className="items-center gap-1 rounded border border-(--line) bg-(--raised) p-0.5">
+						{(
+							[
+								["grid", "Initial grid"],
+								["regions", "Sympathy clustering"],
+							] as const
+						).map(([mode, label]) => (
+							<button
+								key={mode}
+								type="button"
+								onClick={() => setLayout(mode)}
+								className={cn(
+									"rounded px-2.5 py-0.5 transition-colors",
+									layout === mode
+										? "bg-(--line) text-(--acc)"
+										: "text-(--f4) hover:text-(--f2)",
+								)}
+							>
+								{label}
+							</button>
+						))}
+					</Flex.Row>
+					<Flex.Row className="items-center gap-1 text-(--f4)">
+						<span className="inline-block size-2 rounded-sm bg-(--acc) opacity-80" />
+						<span>Agent action threshold (Otsu split)</span>
+					</Flex.Row>
 				</Flex.Row>
-			))}
+			</Flex.Row>
+
+			<div ref={ref} className="relative min-h-0 flex-1 bg-(--sunken)">
+				<div
+					className="pointer-events-none absolute inset-0 opacity-[0.15]"
+					style={{
+						backgroundImage:
+							"linear-gradient(var(--line) 1px, transparent 1px), linear-gradient(90deg, var(--line) 1px, transparent 1px)",
+						backgroundSize: "40px 40px",
+					}}
+				/>
+				{!points?.length && (
+					<span className="absolute inset-0 flex items-center justify-center tracking-widest text-(--f4)">
+						No impulse data
+					</span>
+				)}
+				<svg
+					role="img"
+					aria-label="Impulse map"
+					width={size.width}
+					height={size.height}
+					className="absolute inset-0"
+				>
+					<title>Impulse map</title>
+					{layout === "regions" &&
+						contours?.map((contour) => (
+							<polygon
+								key={contour.id}
+								points={contour.points
+									.map((point) => {
+										const at = placed.project(point.x, point.y);
+										return `${at.x},${at.y}`;
+									})
+									.join(" ")}
+								className="fill-(--acc)/10 stroke-(--acc)/40"
+							>
+								<title>{contour.label}</title>
+							</polygon>
+						))}
+					{layout === "regions" &&
+						connections?.map((connection) => {
+							const from = byId.get(connection.from);
+							const to = byId.get(connection.to);
+
+							if (!from || !to)
+								throw new Error(
+									`ImpulseMap: connection ${connection.from} -> ${connection.to} references a missing point`,
+								);
+
+							return (
+								<line
+									key={`${connection.from}:${connection.to}`}
+									x1={from.px}
+									y1={from.py}
+									x2={to.px}
+									y2={to.py}
+									stroke="var(--acc)"
+									strokeOpacity={0.35}
+									strokeWidth={1}
+								/>
+							);
+						})}
+					{placed.points.map((point) => {
+						const lit = hot.has(point.source);
+						// A square-root share keeps quieter movement visible beside
+						// the strongest instead of fading it into the panel.
+						const share =
+							strongest > 0
+								? Math.sqrt(Math.abs(point.activation) / strongest)
+								: 0;
+						return (
+							// biome-ignore lint/a11y/useSemanticElements: SVG has no native button; this circle supports click, Enter, Space and focus inspection.
+							<circle
+								role="button"
+								key={point.id}
+								cx={point.px}
+								cy={point.py}
+								r={placed.radius * (0.45 + 0.55 * point.snr)}
+								fill={point.present ? heat(share) : "var(--raised)"}
+								stroke={lit ? "var(--acc)" : "var(--sunken)"}
+								strokeWidth={lit ? 1.5 : 1}
+								tabIndex={0}
+								aria-label={point.label}
+								onMouseEnter={() => setSelected(point.id)}
+								onMouseLeave={() => setSelected(null)}
+								onClick={() => setSelected(point.id)}
+								onKeyDown={(event) => {
+									if (event.key === "Enter" || event.key === " ") {
+										event.preventDefault();
+										setSelected(point.id);
+									}
+								}}
+								onFocus={() => setSelected(point.id)}
+								onBlur={() => setSelected(null)}
+							>
+								<title>{`coordinate ${point.id} · region ${point.source} · SNR ${point.snr.toFixed(2)}`}</title>
+							</circle>
+						);
+					})}
+				</svg>
+
+				{!!regions?.length && (
+					<div className="pointer-events-none absolute top-4 left-4 w-56 rounded border border-(--line) bg-(--surface)/85 p-3 shadow-xl backdrop-blur">
+						<div className="mb-2 text-[10px] uppercase tracking-widest text-(--f4)">
+							Hot regions
+						</div>
+						<div className="space-y-1.5">
+							{regions.map((region) => (
+								<div
+									key={region.id}
+									className="flex items-center justify-between text-(--f2)"
+								>
+									<span className="truncate">region {region.source}</span>
+									<span className="text-(--acc)">
+										{members.get(region.source) ?? 0} coordinates
+									</span>
+								</div>
+							))}
+						</div>
+					</div>
+				)}
+
+				{inspected && (
+					<div
+						className="absolute right-4 bottom-4 rounded border border-(--line) bg-(--surface)/90 px-3 py-2 text-(--f2)"
+						aria-live="polite"
+					>
+						coordinate {inspected.id} · region {inspected.source} · SNR{" "}
+						{inspected.snr.toFixed(2)} · authority{" "}
+						{inspected.authority.toFixed(3)}
+					</div>
+				)}
+			</div>
 		</Flex.Column>
 	);
+};
+
+/*
+place projects the producer's coordinates onto the drawing. In grid mode each
+point sits on the lattice its coordinate started on; in regions mode it sits
+where the arrangement moved it. Either way the extent is fitted to the drawing.
+*/
+const place = (
+	points: ImpulsePoint[],
+	layout: "grid" | "regions",
+	size: { width: number; height: number },
+	viewport?: { width: number; height: number },
+) => {
+	const columns = Math.max(1, Math.ceil(Math.sqrt(points.length)));
+	const source = points.map((point) =>
+		layout === "grid"
+			? { x: point.id % columns, y: Math.floor(point.id / columns) }
+			: { x: point.x, y: point.y },
+	);
+
+	let left = viewport
+		? -viewport.width / 2
+		: Math.min(...source.map((p) => p.x));
+	let right = viewport
+		? viewport.width / 2
+		: Math.max(...source.map((p) => p.x));
+	let top = viewport
+		? -viewport.height / 2
+		: Math.min(...source.map((p) => p.y));
+	let bottom = viewport
+		? viewport.height / 2
+		: Math.max(...source.map((p) => p.y));
+
+	if (!points.length) {
+		left = -1;
+		right = 1;
+		top = -1;
+		bottom = 1;
+	}
+
+	const spanX = right - left || 1;
+	const spanY = bottom - top || 1;
+	const margin = 32;
+	const scale = Math.min(
+		(size.width - 2 * margin) / spanX,
+		(size.height - 2 * margin) / spanY,
+	);
+	const offsetX = (size.width - spanX * scale) / 2;
+	const offsetY = (size.height - spanY * scale) / 2;
+	const project = (x: number, y: number) => ({
+		x: offsetX + (x - left) * scale,
+		y: offsetY + (y - top) * scale,
+	});
+	const spacing = Math.max(
+		4,
+		Math.min(size.width, size.height) / Math.max(1, columns + 1),
+	);
+
+	return {
+		project,
+		radius: spacing * 0.4,
+		points: points.map((point, index) => {
+			const at = project(source[index].x, source[index].y);
+			return { ...point, px: at.x, py: at.y };
+		}),
+	};
 };

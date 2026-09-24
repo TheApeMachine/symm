@@ -1,6 +1,7 @@
 import { cva, type VariantProps } from "class-variance-authority";
 import type { ComponentProps, ReactNode } from "react";
 import { cn } from "@/lib/utils";
+import { type MeasureFormat, measure } from "./learning-format";
 import type { Size } from "./types";
 
 export const statVariants = cva("", {
@@ -91,6 +92,8 @@ export type StatProps = Omit<ComponentProps<"div">, "children"> &
 		*/
 		value: ReactNode;
 		label: string;
+		/* How a numeric value is written; the value itself is never altered. */
+		format?: MeasureFormat;
 		valueClassName?: string;
 		labelClassName?: string;
 	};
@@ -103,6 +106,7 @@ export const Stat = ({
 	ref,
 	value,
 	label,
+	format,
 	layout,
 	variant,
 	size,
@@ -125,7 +129,7 @@ export const Stat = ({
 				valueClassName,
 			)}
 		>
-			{value}
+			{format === undefined ? value : measure(value, format)}
 		</div>
 	);
 

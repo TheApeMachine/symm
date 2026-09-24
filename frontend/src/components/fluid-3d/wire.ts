@@ -1,7 +1,10 @@
 import * as flatbuffers from "flatbuffers";
 import { ManifoldFrame } from "#/providers/telemetry/telemetry/manifold-frame";
 import { Message } from "#/providers/telemetry/telemetry/message";
-import { PhysicsHealth, type PhysicsHealthT } from "#/providers/telemetry/telemetry/physics-health";
+import {
+	PhysicsHealth,
+	type PhysicsHealthT,
+} from "#/providers/telemetry/telemetry/physics-health";
 import { WaveMode as WaveModeTable } from "#/providers/telemetry/telemetry/wave-mode";
 
 export type FluidGrid = {

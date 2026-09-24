@@ -27,7 +27,7 @@ func (c Tape) Write(ctx context.Context, params func(Tape_write_Params) error) e
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 8, PointerCount: 1}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 8, PointerCount: 2}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(Tape_write_Params(s)) }
 	}
 
@@ -209,7 +209,7 @@ func (c Tape_done) Args() Tape_done_Params {
 
 // AllocResults allocates the results struct.
 func (c Tape_done) AllocResults() (TapeResult, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 24, PointerCount: 5})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 16, PointerCount: 6})
 	return TapeResult(r), err
 }
 
@@ -228,12 +228,12 @@ type Tape_write_Params capnp.Struct
 const Tape_write_Params_TypeID = 0xccc1ae1e0bbc29ad
 
 func NewTape_write_Params(s *capnp.Segment) (Tape_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 2})
 	return Tape_write_Params(st), err
 }
 
 func NewRootTape_write_Params(s *capnp.Segment) (Tape_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 2})
 	return Tape_write_Params(st), err
 }
 
@@ -269,19 +269,29 @@ func (s Tape_write_Params) Message() *capnp.Message {
 func (s Tape_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Tape_write_Params) Row() ([]byte, error) {
+func (s Tape_write_Params) Rows() (capnp.DataList, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return []byte(p.Data()), err
+	return capnp.DataList(p.List()), err
 }
 
-func (s Tape_write_Params) HasRow() bool {
+func (s Tape_write_Params) HasRows() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s Tape_write_Params) SetRow(v []byte) error {
-	return capnp.Struct(s).SetData(0, v)
+func (s Tape_write_Params) SetRows(v capnp.DataList) error {
+	return capnp.Struct(s).SetPtr(0, v.ToPtr())
 }
 
+// NewRows sets the rows field to a newly
+// allocated capnp.DataList, preferring placement in s's segment.
+func (s Tape_write_Params) NewRows(n int32) (capnp.DataList, error) {
+	l, err := capnp.NewDataList(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return capnp.DataList{}, err
+	}
+	err = capnp.Struct(s).SetPtr(0, l.ToPtr())
+	return l, err
+}
 func (s Tape_write_Params) Exhausted() bool {
 	return capnp.Struct(s).Bit(0)
 }
@@ -290,12 +300,30 @@ func (s Tape_write_Params) SetExhausted(v bool) {
 	capnp.Struct(s).SetBit(0, v)
 }
 
+func (s Tape_write_Params) Envelope() (string, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return p.Text(), err
+}
+
+func (s Tape_write_Params) HasEnvelope() bool {
+	return capnp.Struct(s).HasPtr(1)
+}
+
+func (s Tape_write_Params) EnvelopeBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return p.TextBytes(), err
+}
+
+func (s Tape_write_Params) SetEnvelope(v string) error {
+	return capnp.Struct(s).SetText(1, v)
+}
+
 // Tape_write_Params_List is a list of Tape_write_Params.
 type Tape_write_Params_List = capnp.StructList[Tape_write_Params]
 
 // NewTape_write_Params creates a new list of Tape_write_Params.
 func NewTape_write_Params_List(s *capnp.Segment, sz int32) (Tape_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 2}, sz)
 	return capnp.StructList[Tape_write_Params](l), err
 }
 
@@ -373,24 +401,24 @@ func (f Tape_done_Params_Future) Struct() (Tape_done_Params, error) {
 }
 
 type TapeResult capnp.Struct
-type TapeResult_frame TapeResult
+type TapeResult_frames TapeResult
 type TapeResult_Which uint16
 
 const (
 	TapeResult_Which_idle      TapeResult_Which = 0
-	TapeResult_Which_frame     TapeResult_Which = 1
+	TapeResult_Which_frames    TapeResult_Which = 1
 	TapeResult_Which_exhausted TapeResult_Which = 2
 )
 
 func (w TapeResult_Which) String() string {
-	const s = "idleframeexhausted"
+	const s = "idleframesexhausted"
 	switch w {
 	case TapeResult_Which_idle:
 		return s[0:4]
-	case TapeResult_Which_frame:
-		return s[4:9]
+	case TapeResult_Which_frames:
+		return s[4:10]
 	case TapeResult_Which_exhausted:
-		return s[9:18]
+		return s[10:19]
 
 	}
 	return "TapeResult_Which(" + strconv.FormatUint(uint64(w), 10) + ")"
@@ -400,12 +428,12 @@ func (w TapeResult_Which) String() string {
 const TapeResult_TypeID = 0xfc1e4f015b2afcb1
 
 func NewTapeResult(s *capnp.Segment) (TapeResult, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 5})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 6})
 	return TapeResult(st), err
 }
 
 func NewRootTapeResult(s *capnp.Segment) (TapeResult, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 5})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 6})
 	return TapeResult(st), err
 }
 
@@ -432,7 +460,7 @@ func (s TapeResult) ToPtr() capnp.Ptr {
 }
 
 func (s TapeResult) Which() TapeResult_Which {
-	return TapeResult_Which(capnp.Struct(s).Uint16(0))
+	return TapeResult_Which(capnp.Struct(s).Uint16(2))
 }
 func (s TapeResult) IsValid() bool {
 	return capnp.Struct(s).IsValid()
@@ -446,133 +474,178 @@ func (s TapeResult) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
 func (s TapeResult) Finished() bool {
-	return capnp.Struct(s).Bit(16)
+	return capnp.Struct(s).Bit(0)
 }
 
 func (s TapeResult) SetFinished(v bool) {
-	capnp.Struct(s).SetBit(16, v)
+	capnp.Struct(s).SetBit(0, v)
 }
 
 func (s TapeResult) Pending() uint64 {
-	return capnp.Struct(s).Uint64(16)
+	return capnp.Struct(s).Uint64(8)
 }
 
 func (s TapeResult) SetPending(v uint64) {
-	capnp.Struct(s).SetUint64(16, v)
+	capnp.Struct(s).SetUint64(8, v)
 }
 
 func (s TapeResult) SetIdle() {
-	capnp.Struct(s).SetUint16(0, 0)
+	capnp.Struct(s).SetUint16(2, 0)
 
 }
 
-func (s TapeResult) Frame() TapeResult_frame { return TapeResult_frame(s) }
+func (s TapeResult) Frames() TapeResult_frames { return TapeResult_frames(s) }
 
-func (s TapeResult) SetFrame() {
-	capnp.Struct(s).SetUint16(0, 1)
+func (s TapeResult) SetFrames() {
+	capnp.Struct(s).SetUint16(2, 1)
 }
 
-func (s TapeResult_frame) IsValid() bool {
+func (s TapeResult_frames) IsValid() bool {
 	return capnp.Struct(s).IsValid()
 }
 
-func (s TapeResult_frame) Message() *capnp.Message {
+func (s TapeResult_frames) Message() *capnp.Message {
 	return capnp.Struct(s).Message()
 }
 
-func (s TapeResult_frame) Segment() *capnp.Segment {
+func (s TapeResult_frames) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s TapeResult_frame) Payload() ([]byte, error) {
+func (s TapeResult_frames) Session() (string, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return []byte(p.Data()), err
+	return p.Text(), err
 }
 
-func (s TapeResult_frame) HasPayload() bool {
+func (s TapeResult_frames) HasSession() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s TapeResult_frame) SetPayload(v []byte) error {
-	return capnp.Struct(s).SetData(0, v)
+func (s TapeResult_frames) SessionBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return p.TextBytes(), err
 }
 
-func (s TapeResult_frame) Session() (string, error) {
+func (s TapeResult_frames) SetSession(v string) error {
+	return capnp.Struct(s).SetText(0, v)
+}
+
+func (s TapeResult_frames) Payload() (capnp.DataList, error) {
 	p, err := capnp.Struct(s).Ptr(1)
-	return p.Text(), err
+	return capnp.DataList(p.List()), err
 }
 
-func (s TapeResult_frame) HasSession() bool {
+func (s TapeResult_frames) HasPayload() bool {
 	return capnp.Struct(s).HasPtr(1)
 }
 
-func (s TapeResult_frame) SessionBytes() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(1)
-	return p.TextBytes(), err
+func (s TapeResult_frames) SetPayload(v capnp.DataList) error {
+	return capnp.Struct(s).SetPtr(1, v.ToPtr())
 }
 
-func (s TapeResult_frame) SetSession(v string) error {
-	return capnp.Struct(s).SetText(1, v)
+// NewPayload sets the payload field to a newly
+// allocated capnp.DataList, preferring placement in s's segment.
+func (s TapeResult_frames) NewPayload(n int32) (capnp.DataList, error) {
+	l, err := capnp.NewDataList(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return capnp.DataList{}, err
+	}
+	err = capnp.Struct(s).SetPtr(1, l.ToPtr())
+	return l, err
 }
-
-func (s TapeResult_frame) Sequence() int64 {
-	return int64(capnp.Struct(s).Uint64(8))
-}
-
-func (s TapeResult_frame) SetSequence(v int64) {
-	capnp.Struct(s).SetUint64(8, uint64(v))
-}
-
-func (s TapeResult_frame) ReceivedAt() (string, error) {
+func (s TapeResult_frames) Sequence() (capnp.Int64List, error) {
 	p, err := capnp.Struct(s).Ptr(2)
-	return p.Text(), err
+	return capnp.Int64List(p.List()), err
 }
 
-func (s TapeResult_frame) HasReceivedAt() bool {
+func (s TapeResult_frames) HasSequence() bool {
 	return capnp.Struct(s).HasPtr(2)
 }
 
-func (s TapeResult_frame) ReceivedAtBytes() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(2)
-	return p.TextBytes(), err
+func (s TapeResult_frames) SetSequence(v capnp.Int64List) error {
+	return capnp.Struct(s).SetPtr(2, v.ToPtr())
 }
 
-func (s TapeResult_frame) SetReceivedAt(v string) error {
-	return capnp.Struct(s).SetText(2, v)
+// NewSequence sets the sequence field to a newly
+// allocated capnp.Int64List, preferring placement in s's segment.
+func (s TapeResult_frames) NewSequence(n int32) (capnp.Int64List, error) {
+	l, err := capnp.NewInt64List(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return capnp.Int64List{}, err
+	}
+	err = capnp.Struct(s).SetPtr(2, l.ToPtr())
+	return l, err
 }
-
-func (s TapeResult_frame) Endpoint() (string, error) {
+func (s TapeResult_frames) ReceivedAt() (capnp.TextList, error) {
 	p, err := capnp.Struct(s).Ptr(3)
-	return p.Text(), err
+	return capnp.TextList(p.List()), err
 }
 
-func (s TapeResult_frame) HasEndpoint() bool {
+func (s TapeResult_frames) HasReceivedAt() bool {
 	return capnp.Struct(s).HasPtr(3)
 }
 
-func (s TapeResult_frame) EndpointBytes() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(3)
-	return p.TextBytes(), err
+func (s TapeResult_frames) SetReceivedAt(v capnp.TextList) error {
+	return capnp.Struct(s).SetPtr(3, v.ToPtr())
 }
 
-func (s TapeResult_frame) SetEndpoint(v string) error {
-	return capnp.Struct(s).SetText(3, v)
+// NewReceivedAt sets the receivedAt field to a newly
+// allocated capnp.TextList, preferring placement in s's segment.
+func (s TapeResult_frames) NewReceivedAt(n int32) (capnp.TextList, error) {
+	l, err := capnp.NewTextList(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return capnp.TextList{}, err
+	}
+	err = capnp.Struct(s).SetPtr(3, l.ToPtr())
+	return l, err
 }
-
-func (s TapeResult_frame) Row() ([]byte, error) {
+func (s TapeResult_frames) Endpoint() (capnp.TextList, error) {
 	p, err := capnp.Struct(s).Ptr(4)
-	return []byte(p.Data()), err
+	return capnp.TextList(p.List()), err
 }
 
-func (s TapeResult_frame) HasRow() bool {
+func (s TapeResult_frames) HasEndpoint() bool {
 	return capnp.Struct(s).HasPtr(4)
 }
 
-func (s TapeResult_frame) SetRow(v []byte) error {
-	return capnp.Struct(s).SetData(4, v)
+func (s TapeResult_frames) SetEndpoint(v capnp.TextList) error {
+	return capnp.Struct(s).SetPtr(4, v.ToPtr())
 }
 
+// NewEndpoint sets the endpoint field to a newly
+// allocated capnp.TextList, preferring placement in s's segment.
+func (s TapeResult_frames) NewEndpoint(n int32) (capnp.TextList, error) {
+	l, err := capnp.NewTextList(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return capnp.TextList{}, err
+	}
+	err = capnp.Struct(s).SetPtr(4, l.ToPtr())
+	return l, err
+}
+func (s TapeResult_frames) Documents() (capnp.DataList, error) {
+	p, err := capnp.Struct(s).Ptr(5)
+	return capnp.DataList(p.List()), err
+}
+
+func (s TapeResult_frames) HasDocuments() bool {
+	return capnp.Struct(s).HasPtr(5)
+}
+
+func (s TapeResult_frames) SetDocuments(v capnp.DataList) error {
+	return capnp.Struct(s).SetPtr(5, v.ToPtr())
+}
+
+// NewDocuments sets the documents field to a newly
+// allocated capnp.DataList, preferring placement in s's segment.
+func (s TapeResult_frames) NewDocuments(n int32) (capnp.DataList, error) {
+	l, err := capnp.NewDataList(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return capnp.DataList{}, err
+	}
+	err = capnp.Struct(s).SetPtr(5, l.ToPtr())
+	return l, err
+}
 func (s TapeResult) SetExhausted() {
-	capnp.Struct(s).SetUint16(0, 2)
+	capnp.Struct(s).SetUint16(2, 2)
 
 }
 
@@ -581,7 +654,7 @@ type TapeResult_List = capnp.StructList[TapeResult]
 
 // NewTapeResult creates a new list of TapeResult.
 func NewTapeResult_List(s *capnp.Segment, sz int32) (TapeResult_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 24, PointerCount: 5}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 16, PointerCount: 6}, sz)
 	return capnp.StructList[TapeResult](l), err
 }
 
@@ -592,12 +665,14 @@ func (f TapeResult_Future) Struct() (TapeResult, error) {
 	p, err := f.Future.Ptr()
 	return TapeResult(p.Struct()), err
 }
-func (p TapeResult_Future) Frame() TapeResult_frame_Future { return TapeResult_frame_Future{p.Future} }
+func (p TapeResult_Future) Frames() TapeResult_frames_Future {
+	return TapeResult_frames_Future{p.Future}
+}
 
-// TapeResult_frame_Future is a wrapper for a TapeResult_frame promised by a client call.
-type TapeResult_frame_Future struct{ *capnp.Future }
+// TapeResult_frames_Future is a wrapper for a TapeResult_frames promised by a client call.
+type TapeResult_frames_Future struct{ *capnp.Future }
 
-func (f TapeResult_frame_Future) Struct() (TapeResult_frame, error) {
+func (f TapeResult_frames_Future) Struct() (TapeResult_frames, error) {
 	p, err := f.Future.Ptr()
-	return TapeResult_frame(p.Struct()), err
+	return TapeResult_frames(p.Struct()), err
 }

@@ -1,8 +1,8 @@
 import type { ComponentProps } from "react";
 import { EpisodeTape, type TrainingEpisode } from "./episode-tape";
 import { Flex } from "./flex";
-import { OutcomeDistribution, type OutcomeBin } from "./outcome-distribution";
-import { PolicyBranches, type PolicyBranch } from "./policy-branches";
+import { type OutcomeBin, OutcomeDistribution } from "./outcome-distribution";
+import { type PolicyBranch, PolicyBranches } from "./policy-branches";
 import { Stat } from "./stat";
 
 export interface ForwardSummary {

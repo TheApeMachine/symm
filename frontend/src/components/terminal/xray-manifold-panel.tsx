@@ -132,11 +132,9 @@ export const XrayManifoldPanel = () => {
 			const last = ring && !ring.isEmpty() ? ring.getLast() : null;
 
 			if (last) {
-				const row = (
-					typeof (last as any).unpack === "function"
-						? (last as any).unpack()
-						: last
-				) as unknown as Record<string, unknown>;
+				const row = (typeof (last as any).unpack === "function"
+					? (last as any).unpack()
+					: last) as unknown as Record<string, unknown>;
 				const sym = typeof row.symbol === "string" ? row.symbol : "";
 
 				if (sym) {

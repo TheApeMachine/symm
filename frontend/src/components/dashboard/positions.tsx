@@ -2,10 +2,7 @@ import { useSelector } from "@tanstack/react-store";
 import { useEffect, useState } from "react";
 import { signals } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
-import {
-	type OpenPosition,
-	PositionList,
-} from "#/components/ui/position-list";
+import { type OpenPosition, PositionList } from "#/components/ui/position-list";
 import { Holding } from "#/providers/telemetry/telemetry/holding";
 import { Position } from "#/providers/telemetry/telemetry/position";
 import { sendPositionExit } from "#/providers/websocket";

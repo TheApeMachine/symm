@@ -11,7 +11,11 @@ $Go.import("github.com/theapemachine/symm/nomagique/geometry");
 # a point never placed starts at its original coordinate on the square lattice
 # of that many points: (i mod width, i div width).
 #
-# Each relationship pulls or pushes its two points toward its target distance.
+# An attracting relationship (positive strength) pulls or pushes its two points
+# toward its target distance. A repelling one (negative strength) is a least
+# separation: it pushes a pair apart while they are closer than its target and
+# leaves them alone once they are not, so inconsistency never draws points
+# together.
 # Its pull is |s| times the pair's combined authority, and it corrects
 # pull/(1+pull) of the residual: a stronger relationship between better
 # evidenced points closes more of it, a weak one between immature points

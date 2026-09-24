@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"slices"
 
 	capnp "capnproto.org/go/capnp/v3"
 	"capnproto.org/go/capnp/v3/std/capnp/schema"
@@ -36,6 +37,23 @@ func (p *Program) bindings() ([]byte, error) {
 
 	if p.published == nil {
 		p.published = make([]string, len(p.Bindings.Bindings))
+	}
+
+	// A surface that just joined is owed what every port is showing, not only
+	// what changed on this evaluation.
+	told := make([]bool, len(p.Bindings.Bindings))
+
+	if p.replay {
+		p.replay = false
+
+		for slot, encoded := range p.published {
+			if encoded == "" {
+				continue
+			}
+
+			told[slot] = true
+			arrivals = append(arrivals, arrival{p.Bindings.Bindings[slot], encoded})
+		}
 	}
 
 	for slot, entry := range p.Bindings.Bindings {
@@ -83,6 +101,13 @@ func (p *Program) bindings() ([]byte, error) {
 		}
 
 		p.published[slot] = encoded
+
+		if told[slot] {
+			arrivals = slices.DeleteFunc(arrivals, func(candidate arrival) bool {
+				return candidate.entry == entry
+			})
+		}
+
 		arrivals = append(arrivals, arrival{entry, encoded})
 	}
 
@@ -171,12 +196,13 @@ func boundJSON(value any) (string, bool, error) {
 }
 
 /*
-Refresh forgets what every component was last told, so the next evaluation
-delivers each bound value again — what a surface that just connected needs.
+Refresh has the next evaluation deliver every bound value last published, as
+well as what changed — what a surface that just connected needs, even when
+the producers behind it have gone quiet.
 */
 func (p *Program) Refresh() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	p.published = nil
+	p.replay = true
 }

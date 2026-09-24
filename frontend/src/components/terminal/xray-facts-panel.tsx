@@ -1,5 +1,5 @@
 import { useSelector } from "@tanstack/react-store";
-import { signals, focusAtom } from "#/collections/app";
+import { focusAtom, signals } from "#/collections/app";
 import { DataRow } from "#/components/ui/data-row";
 import { Flex } from "#/components/ui/flex";
 import { usePaintStore } from "#/components/ui/paint";

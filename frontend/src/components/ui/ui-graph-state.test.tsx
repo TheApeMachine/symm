@@ -60,7 +60,10 @@ const graph: FlumeGraph = {
 				},
 			},
 		},
-		leftTabLabel: { type: "ui.Text", inputData: { value: { value: "Left tab" } } },
+		leftTabLabel: {
+			type: "ui.Text",
+			inputData: { value: { value: "Left tab" } },
+		},
 		rightTabLabel: {
 			type: "ui.Text",
 			inputData: { value: { value: "Right tab" } },

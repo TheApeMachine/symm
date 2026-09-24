@@ -4,17 +4,17 @@ import { focusAtom, type RingBuffer, signals } from "#/collections/app";
 import { RingCursor } from "#/collections/ring";
 import { Badge } from "#/components/ui/badge";
 import { Flex } from "#/components/ui/flex";
-import { Typography } from "#/components/ui/typography";
-import { Tabs } from "#/components/ui/tabs";
-import { renderValue } from "#/lib/utils";
-import type { WireMeasurement } from "#/types/capnp/measurement";
-import { basis, percent } from "#/components/ui/learning-format";
 import { ForwardView } from "#/components/ui/forward-view";
+import { basis, percent } from "#/components/ui/learning-format";
 import {
 	type ActivityRow,
 	RecognitionView,
 } from "#/components/ui/recognition-view";
+import { Tabs } from "#/components/ui/tabs";
 import { TrieView } from "#/components/ui/trie-view";
+import { Typography } from "#/components/ui/typography";
+import { renderValue } from "#/lib/utils";
+import type { WireMeasurement } from "#/types/capnp/measurement";
 
 type Tab = "forward" | "trie" | "impulse" | "recognition";
 

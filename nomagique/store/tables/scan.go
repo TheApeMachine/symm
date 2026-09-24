@@ -23,8 +23,6 @@ type IcebergScanServer struct {
 	metadata, properties []byte
 	next                 func() (arrow.RecordBatch, error, bool)
 	stop                 func()
-	batch                arrow.RecordBatch
-	row                  int64
 	exhausted            bool
 }
 
@@ -92,7 +90,11 @@ func (server *IcebergScanServer) Write(ctx context.Context, call IcebergScan_wri
 	return nil
 }
 
-/* Done emits one Arrow row as IPC so downstream graph evaluations remain ordered. */
+/*
+Done emits the next record batch as IPC. A batch is handed over whole, so a
+snapshot is read a batch per evaluation; the rows keep the order they have
+within it, and ordering across batches is the consumer's to establish.
+*/
 func (server *IcebergScanServer) Done(ctx context.Context, call IcebergScan_done) error {
 	result, err := call.AllocResults()
 	if err != nil {
@@ -102,12 +104,9 @@ func (server *IcebergScanServer) Done(ctx context.Context, call IcebergScan_done
 		result.SetIdle()
 		return nil
 	}
-	if server.batch != nil && server.row == server.batch.NumRows() {
-		server.batch.Release()
-		server.batch = nil
-	}
-	for server.batch == nil && !server.exhausted {
-		batch, err, available := server.next()
+	var batch arrow.RecordBatch
+	for batch == nil && !server.exhausted {
+		next, err, available := server.next()
 		if err != nil {
 			return errnie.Error(errnie.Err(errnie.IO, "scan: read", err))
 		}
@@ -116,22 +115,21 @@ func (server *IcebergScanServer) Done(ctx context.Context, call IcebergScan_done
 			server.stop()
 			break
 		}
-		if batch.NumRows() == 0 {
-			batch.Release()
+		if next.NumRows() == 0 {
+			next.Release()
 			continue
 		}
-		server.batch, server.row = batch, 0
+		batch = next
 	}
 	result.SetExhausted(server.exhausted)
 	if server.exhausted {
 		return nil
 	}
-	row := server.batch.NewSlice(server.row, server.row+1)
-	defer row.Release()
+	defer batch.Release()
 	var buffer bytes.Buffer
-	writer := ipc.NewWriter(&buffer, ipc.WithSchema(row.Schema()))
-	if err := writer.Write(row); err != nil {
-		return errnie.Error(errnie.Err(errnie.IO, "scan: encode Arrow row", err))
+	writer := ipc.NewWriter(&buffer, ipc.WithSchema(batch.Schema()))
+	if err := writer.Write(batch); err != nil {
+		return errnie.Error(errnie.Err(errnie.IO, "scan: encode Arrow batch", err))
 	}
 	if err := writer.Close(); err != nil {
 		return errnie.Error(errnie.Err(errnie.IO, "scan: close IPC stream", err))
@@ -139,18 +137,13 @@ func (server *IcebergScanServer) Done(ctx context.Context, call IcebergScan_done
 	if err := result.SetOut(buffer.Bytes()); err != nil {
 		return errnie.Error(errnie.Err(errnie.Internal, "scan: output", err))
 	}
-	server.row++
-	// The rows left in this batch, and the read that finds the rest or the end.
-	result.SetPending(uint64(server.batch.NumRows()-server.row) + 1)
+	// The read that finds the next batch or the end is still to come.
+	result.SetPending(1)
 	return nil
 }
 
 /* Shutdown releases this node's snapshot read resources. */
 func (server *IcebergScanServer) Shutdown() {
-	if server.batch != nil {
-		server.batch.Release()
-		server.batch = nil
-	}
 	if server.stop != nil {
 		server.stop()
 	}

@@ -23,6 +23,11 @@
             }
           ]
         }
+      },
+      "inputData": {
+        "origin": {
+          "value": true
+        }
       }
     },
     "bracket_trade_quantity": {
@@ -35,6 +40,9 @@
       "inputData": {
         "operator": {
           "value": "sum"
+        },
+        "running": {
+          "value": true
         }
       },
       "connections": {
@@ -63,6 +71,9 @@
       "inputData": {
         "operator": {
           "value": "sum"
+        },
+        "running": {
+          "value": true
         }
       },
       "connections": {
@@ -358,6 +369,9 @@
       "inputData": {
         "operator": {
           "value": "sum"
+        },
+        "running": {
+          "value": true
         }
       },
       "connections": {

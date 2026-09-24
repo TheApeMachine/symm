@@ -14,47 +14,77 @@ export { Alert, type AlertProps, alertVariants } from "./alert";
 export {
 	Badge,
 	type BadgeProps,
+	type BadgeSize,
+	type BadgeVariant,
 	badgeVariants,
 	setBadge,
-	type BadgeVariant,
-	type BadgeSize,
 } from "./badge";
 export { Button, type ButtonProps, buttonVariants } from "./button";
 export { Callout, type CalloutProps, calloutVariants } from "./callout";
 export {
 	Canvas,
-	type CanvasProps,
 	CanvasPlot,
-	type CanvasPlotProps,
 	type CanvasPlotDraw,
+	type CanvasPlotProps,
+	type CanvasProps,
 } from "./canvas";
 export { Card, CardPanel } from "./card";
 export { Checkbox, type CheckboxProps } from "./checkbox";
 export { Chip, type ChipProps, chipVariants } from "./chip";
 export {
 	Collapsible,
-	CollapsibleTrigger,
 	CollapsiblePanel,
 	type CollapsibleProps,
+	CollapsibleTrigger,
 } from "./collapsible";
 export {
 	DataRow,
-	type DataRowProps,
 	type DataRowGroupProps,
-	dataRowVariants,
+	type DataRowProps,
 	dataRowValueVariants,
+	dataRowVariants,
 } from "./data-row";
+export {
+	DecisionList,
+	type DecisionListProps,
+	type DecisionRow,
+} from "./decision-list";
+export {
+	computeDistributionPath,
+	DistributionCurve,
+	type DistributionCurveProps,
+} from "./distribution-curve";
 export { Divider, type DividerProps, dividerVariants } from "./divider";
 export { DOT_SIZE_FOR, Dot, type DotProps, dotVariants } from "./dot";
+export {
+	EpisodeTape,
+	type EpisodeTapeProps,
+	type TapeMarker,
+	type TapePoint,
+	type TrainingEpisode,
+} from "./episode-tape";
+export { EvidenceGraph, type EvidenceGraphProps } from "./evidence-graph";
+export type {
+	Graph as EvidenceGraphData,
+	GraphEdge as EvidenceGraphEdge,
+	GraphNode as EvidenceGraphNode,
+} from "./evidence-graph.types";
+export { Explain } from "./explain";
 export { AnimatePresence, Flex, flexVariants } from "./flex";
+export { FluidLegend } from "./fluid-legend";
+export {
+	type ForwardSummary,
+	ForwardView,
+	type ForwardViewProps,
+} from "./forward-view";
 export {
 	Frame,
-	FrameHeader,
-	FrameTitle,
 	FrameDescription,
 	FrameFooter,
-	frameVariants,
+	FrameHeader,
 	type FrameProps,
+	FrameTitle,
+	frameVariants,
 } from "./frame";
 export {
 	type GapType,
@@ -64,7 +94,24 @@ export {
 	type IslandAreaKey,
 	type SegmentsType,
 } from "./grid";
+export {
+	HeatmapRow,
+	HeatmapRowMetric,
+	type HeatmapRowMetricProps,
+	type HeatmapRowProps,
+	HeatmapStrip,
+	type HeatmapStripProps,
+	heatmapStripVariants,
+} from "./heatmap-row";
 export { ICON_NAMES, Icon, type IconName, type IconProps } from "./icon";
+export {
+	type ImpulseConnection,
+	type ImpulseContour,
+	ImpulseMap,
+	type ImpulseMapProps,
+	type ImpulsePoint,
+	type ImpulseRegion,
+} from "./impulse-map";
 export {
 	type FieldProps,
 	fieldVariants,
@@ -73,16 +120,9 @@ export {
 	inputVariants,
 	type SearchProps,
 } from "./input";
-export {
-	HeatmapRow,
-	type HeatmapRowProps,
-	HeatmapStrip,
-	type HeatmapStripProps,
-	HeatmapRowMetric,
-	type HeatmapRowMetricProps,
-	heatmapStripVariants,
-} from "./heatmap-row";
+export { KernelCard, type KernelCardProps } from "./kernel-card";
 export { Key, type KeyProps, keyVariants, type Modifier } from "./key";
+export { KnowledgePanel } from "./knowledge-panel";
 export {
 	List,
 	type ListItemProps,
@@ -94,11 +134,11 @@ export {
 export {
 	Meter,
 	type MeterProps,
+	type MeterSize,
+	type MeterVariant,
 	meterTrackVariants,
 	meterVariants,
 	setMeter,
-	type MeterVariant,
-	type MeterSize,
 } from "./meter";
 export {
 	Modal,
@@ -114,36 +154,65 @@ export {
 	navVariants,
 } from "./nav";
 export {
+	type OutcomeBin,
+	OutcomeDistribution,
+	type OutcomeDistributionProps,
+} from "./outcome-distribution";
+export {
 	Overlay,
 	type OverlayProps,
 	overlayContentVariants,
 	overlayVariants,
 } from "./overlay";
 export {
+	applyPaintMap,
 	type JSONPrimitive,
 	type JSONSerializable,
 	type Paint,
-	type SubscribableStore,
-	type PaintMap,
-	type PaintFieldRecord,
-	type PaintMeterRecord,
-	type PaintMeterValue,
 	type PaintBadgeRecord,
 	type PaintBadgeValue,
+	type PaintFieldRecord,
+	type PaintMap,
+	type PaintMeterRecord,
+	type PaintMeterValue,
 	type PaintVarRecord,
-	applyPaintMap,
+	type SubscribableStore,
 	usePaintStore,
 } from "./paint";
 export { Panel, type PanelProps, panelVariants } from "./panel";
-export { Radar, type RadarProps, type RadarAxis, radarVariants } from "./radar";
+export { LearningPerformanceBanner } from "./performance-banner";
+export {
+	type PolicyBranch,
+	PolicyBranches,
+	type PolicyBranchesProps,
+} from "./policy-branches";
+export {
+	type OpenPosition,
+	PositionList,
+	type PositionListProps,
+} from "./position-list";
+export { Radar, type RadarAxis, type RadarProps, radarVariants } from "./radar";
 export {
 	Rail,
-	type RailProps,
-	type RailHeaderProps,
 	type RailBodyProps,
+	type RailHeaderProps,
+	type RailProps,
 	railVariants,
 } from "./rail";
+export {
+	RatioBar,
+	type RatioBarProps,
+	type RatioBarSegment,
+	ratioBarTrackVariants,
+} from "./ratio-bar";
 export { Readout, type ReadoutProps } from "./readout";
+export { RecognitionPanel } from "./recognition-panel";
+export {
+	type ActivityRow,
+	type RecognitionMetrics,
+	RecognitionView,
+	type RecognitionViewProps,
+} from "./recognition-view";
 export { Scanlines, type ScanlinesProps, scanlinesVariants } from "./scanlines";
 export {
 	Section,
@@ -152,12 +221,25 @@ export {
 	sectionHeaderVariants,
 	sectionVariants,
 } from "./section";
+export { TerminalSignalHeatmap } from "./signal-heatmap";
+export {
+	type SkillActivity,
+	SkillPanel,
+	type SkillPanelProps,
+} from "./skill-panel";
+export {
+	Slider,
+	type SliderFieldProps,
+	type SliderProps,
+	sliderFieldVariants,
+	sliderVariants,
+} from "./slider";
 export {
 	computeSparklinePath,
 	computeSparklinePaths,
 	Sparkline,
-	type SparklineProps,
 	type SparklinePaths,
+	type SparklineProps,
 	setSparkline,
 } from "./sparkline";
 export { Spinner, type SpinnerProps } from "./spinner";
@@ -174,25 +256,14 @@ export {
 	tabsVariants,
 	tabVariants,
 } from "./tabs";
-export {
-	DistributionCurve,
-	type DistributionCurveProps,
-	computeDistributionPath,
-} from "./distribution-curve";
-export {
-	RatioBar,
-	type RatioBarProps,
-	type RatioBarSegment,
-	ratioBarTrackVariants,
-} from "./ratio-bar";
-export {
-	Slider,
-	type SliderProps,
-	type SliderFieldProps,
-	sliderVariants,
-	sliderFieldVariants,
-} from "./slider";
+export { Text, type TextProps } from "./text";
 export { Toolbar, type ToolbarProps, toolbarVariants } from "./toolbar";
+export {
+	type TrieCandidate,
+	type TrieNode,
+	TrieView,
+	type TrieViewProps,
+} from "./trie-view";
 export {
 	SIZE_ORDER,
 	type Size,
@@ -211,71 +282,3 @@ export {
 	type TypographyVariant,
 	typographyVariants,
 } from "./typography";
-export { EvidenceGraph, type EvidenceGraphProps } from "./evidence-graph";
-export type {
-	Graph as EvidenceGraphData,
-	GraphNode as EvidenceGraphNode,
-	GraphEdge as EvidenceGraphEdge,
-} from "./evidence-graph.types";
-export {
-	ImpulseMap,
-	type ImpulseMapProps,
-	type ImpulsePoint,
-	type ImpulseRegion,
-	type ImpulseContour,
-	type ImpulseConnection,
-} from "./impulse-map";
-
-export {
-	EpisodeTape,
-	type EpisodeTapeProps,
-	type TrainingEpisode,
-	type TapePoint,
-	type TapeMarker,
-} from "./episode-tape";
-export {
-	PolicyBranches,
-	type PolicyBranchesProps,
-	type PolicyBranch,
-} from "./policy-branches";
-export {
-	OutcomeDistribution,
-	type OutcomeDistributionProps,
-	type OutcomeBin,
-} from "./outcome-distribution";
-export {
-	ForwardView,
-	type ForwardViewProps,
-	type ForwardSummary,
-} from "./forward-view";
-export {
-	RecognitionView,
-	type RecognitionViewProps,
-	type RecognitionMetrics,
-	type ActivityRow,
-} from "./recognition-view";
-
-export {
-	TrieView,
-	type TrieViewProps,
-	type TrieNode,
-	type TrieCandidate,
-} from "./trie-view";
-
-export { Explain } from "./explain";
-export { KnowledgePanel } from "./knowledge-panel";
-export { RecognitionPanel } from "./recognition-panel";
-export { LearningPerformanceBanner } from "./performance-banner";
-export { TerminalSignalHeatmap } from "./signal-heatmap";
-export { FluidLegend } from "./fluid-legend";
-export { Text, type TextProps } from "./text";
-export {
-	PositionList,
-	type PositionListProps,
-	type OpenPosition,
-} from "./position-list";
-export {
-	DecisionList,
-	type DecisionListProps,
-	type DecisionRow,
-} from "./decision-list";

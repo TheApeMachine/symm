@@ -26,7 +26,9 @@ const Output = ({
 	const { label: defaultLabel, color } = inputTypes[type] || {};
 
 	return (
-		<Flex.Row align="center" gap={2}
+		<Flex.Row
+			align="center"
+			gap={2}
 			data-flume-component="port-output"
 			data-controlless={true}
 			onDragStart={(e) => {

@@ -347,7 +347,7 @@ func TestImpulseMapManifest(t *testing.T) {
 			So(found, ShouldBeTrue)
 			So(geometry.Watershed(watershed).Which(), ShouldEqual, geometry.Watershed_Which_settled)
 
-			settled, err := geometry.Watershed(watershed).Settled()
+			settled, err := geometry.Watershed(watershed).Settled().Regions()
 			So(err, ShouldBeNil)
 
 			moving := map[string]bool{}

@@ -109,13 +109,35 @@ func (server *IcebergTableServer) Write(ctx context.Context, call IcebergTable_w
 		server.asked = true
 	}
 
-	if len(payload) == 0 {
-		return nil
+	rows, err := call.Args().Rows()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.BadRequest, "[iceberg] failed to read the rows", err))
 	}
-	server.pending = append(server.pending, bytes.Clone(payload))
-	server.held += len(payload)
+
+	server.hold(payload)
+
+	for index := range rows.Len() {
+		row, err := rows.At(index)
+
+		if err != nil {
+			return errnie.Error(errnie.Err(errnie.BadRequest, "[iceberg] failed to read a row", err))
+		}
+
+		server.hold(row)
+	}
 
 	return nil
+}
+
+/* hold keeps one row until the next commit; an empty row is nothing written. */
+func (server *IcebergTableServer) hold(row []byte) {
+	if len(row) == 0 {
+		return
+	}
+
+	server.pending = append(server.pending, bytes.Clone(row))
+	server.held += len(row)
 }
 
 /* Flush persists the tail even when it has not reached the append byte budget. */

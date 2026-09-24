@@ -33,14 +33,14 @@ AuthorityServer measures how much weight each element of a list of readings
 has earned, and scales each reading against the element's own history.
 */
 type AuthorityServer struct {
-	standard  []float64
-	defined   []bool
-	authority []float64
-	maturity  []float64
-	snr       []float64
-	energy    []float64
-	index     []int64
-	state     []float64
+	standard    []float64
+	defined     []bool
+	authority   []float64
+	maturity    []float64
+	snrFraction []float64
+	energy      []float64
+	index       []int64
+	state       []float64
 }
 
 func NewAuthority() *AuthorityServer {
@@ -101,7 +101,7 @@ func (server *AuthorityServer) Write(ctx context.Context, call Authority_write) 
 	server.defined = make([]bool, count)
 	server.authority = make([]float64, count)
 	server.maturity = make([]float64, count)
-	server.snr = make([]float64, count)
+	server.snrFraction = make([]float64, count)
 	server.energy = make([]float64, count)
 	server.index = server.index[:0]
 	server.state = server.state[:0]
@@ -123,8 +123,8 @@ func (server *AuthorityServer) Write(ctx context.Context, call Authority_write) 
 
 		// The same maturity data.Quality gives a measurement with support.
 		server.maturity[element] = 1 - 1/support
-		server.snr[element] = records[element*authorityWidth+2] / support
-		server.authority[element] = server.maturity[element] * server.snr[element]
+		server.snrFraction[element] = records[element*authorityWidth+2] / support
+		server.authority[element] = server.maturity[element] * server.snrFraction[element]
 		server.energy[element] = server.standard[element] * server.standard[element] * server.authority[element]
 	}
 
@@ -165,7 +165,7 @@ func (server *AuthorityServer) Done(ctx context.Context, call Authority_done) er
 		{server.standard, func(size int32) (listSetter, error) { return results.NewStandard(size) }},
 		{server.authority, func(size int32) (listSetter, error) { return results.NewAuthority(size) }},
 		{server.maturity, func(size int32) (listSetter, error) { return results.NewMaturity(size) }},
-		{server.snr, func(size int32) (listSetter, error) { return results.NewSnr(size) }},
+		{server.snrFraction, func(size int32) (listSetter, error) { return results.NewSnrFraction(size) }},
 		{server.energy, func(size int32) (listSetter, error) { return results.NewEnergy(size) }},
 		{server.state, func(size int32) (listSetter, error) { return results.NewState(size) }},
 	}
@@ -203,7 +203,7 @@ func (server *AuthorityServer) Done(ctx context.Context, call Authority_done) er
 	}
 
 	server.standard, server.defined, server.authority, server.energy = nil, nil, nil, nil
-	server.maturity, server.snr = nil, nil
+	server.maturity, server.snrFraction = nil, nil
 	server.index, server.state = server.index[:0], server.state[:0]
 	return nil
 }

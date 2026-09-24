@@ -158,10 +158,7 @@ const textElement = <T extends keyof JSX.IntrinsicElements>(
 export const Typography = ({ children }: { children: React.ReactNode }) =>
 	children;
 
-Typography.PageTitle = textElement(
-	"h1",
-	"font-semibold text-(--f1) text-lg",
-);
+Typography.PageTitle = textElement("h1", "font-semibold text-(--f1) text-lg");
 
 /*
 Display is the serif title a surface opens with — the one piece of text in the

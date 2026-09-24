@@ -28,7 +28,7 @@ func (c Insert) Write(ctx context.Context, params func(Insert_write_Params) erro
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 24, PointerCount: 4}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 24, PointerCount: 5}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(Insert_write_Params(s)) }
 	}
 
@@ -229,12 +229,12 @@ type Insert_write_Params capnp.Struct
 const Insert_write_Params_TypeID = 0xdfa5c32a01ac04ba
 
 func NewInsert_write_Params(s *capnp.Segment) (Insert_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 4})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 5})
 	return Insert_write_Params(st), err
 }
 
 func NewRootInsert_write_Params(s *capnp.Segment) (Insert_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 4})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 5})
 	return Insert_write_Params(st), err
 }
 
@@ -356,12 +356,30 @@ func (s Insert_write_Params) SetUnsigned(v uint64) {
 	capnp.Struct(s).SetUint64(16, v)
 }
 
+func (s Insert_write_Params) Text() (string, error) {
+	p, err := capnp.Struct(s).Ptr(4)
+	return p.Text(), err
+}
+
+func (s Insert_write_Params) HasText() bool {
+	return capnp.Struct(s).HasPtr(4)
+}
+
+func (s Insert_write_Params) TextBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(4)
+	return p.TextBytes(), err
+}
+
+func (s Insert_write_Params) SetText(v string) error {
+	return capnp.Struct(s).SetText(4, v)
+}
+
 // Insert_write_Params_List is a list of Insert_write_Params.
 type Insert_write_Params_List = capnp.StructList[Insert_write_Params]
 
 // NewInsert_write_Params creates a new list of Insert_write_Params.
 func NewInsert_write_Params_List(s *capnp.Segment, sz int32) (Insert_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 24, PointerCount: 4}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 24, PointerCount: 5}, sz)
 	return capnp.StructList[Insert_write_Params](l), err
 }
 

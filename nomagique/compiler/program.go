@@ -60,6 +60,8 @@ type CompiledNode struct {
 	Resource     bool // Constructed capability without the write/done evaluation protocol.
 	Source       bool
 	Queued       bool
+	Standing     bool
+	Origin       bool // Runs every evaluation; see markOrigins.
 	ID           string
 	Index        NodeID
 	Client       capnp.Client
@@ -158,8 +160,10 @@ type Program struct {
 	Publish func([]byte)
 	// published is what each binding last delivered.
 	published []string
-	results   map[string]capnp.Struct
-	mu        sync.Mutex // ensures one graph evaluation at a time per program
+	// replay has the next publish deliver every published value again.
+	replay  bool
+	results map[string]capnp.Struct
+	mu      sync.Mutex // ensures one graph evaluation at a time per program
 }
 
 /*
@@ -421,6 +425,7 @@ func (p *Program) arguments(frames []nodeFrame, index NodeID) (capnp.Struct, err
 		))
 	}
 
+	segment.Message().ResetReadLimit(math.MaxUint64)
 	arguments, err := capnp.NewRootStruct(segment, node.Write.ParamsSize)
 
 	if err != nil {
@@ -489,10 +494,11 @@ func (p *Program) Execute(
 	//
 	// A node whose inputs are all wired waits for them: it runs when an
 	// upstream delivers, never on whatever its arguments held from a previous
-	// observation. A node with nothing wired into it is an origin — it owns a
-	// clock, a socket, a process — and runs every pass because only it knows
-	// whether it has something to report. Work is therefore proportional to
-	// what arrived rather than to the size of the graph.
+	// observation. A gathering node runs when anything lands on it. An origin
+	// — a clock, a socket, a queue, a loop closed through feedback — runs
+	// every pass because only it knows whether it has something to report.
+	// Work is therefore proportional to what arrived rather than to the size
+	// of the graph.
 	var queue []NodeID
 	for i := 0; i < nodeCount; i++ {
 		node := &p.Nodes[i]
@@ -506,7 +512,7 @@ func (p *Program) Execute(
 			continue
 		}
 
-		if node.RequiredMask == 0 {
+		if node.Origin {
 			queue = append(queue, NodeID(i))
 		}
 	}
@@ -587,6 +593,10 @@ func (p *Program) Execute(
 			}
 
 			if res.IsValid() {
+				// Results never leave the process, so the traversal limit that
+				// guards against hostile remote messages only caps how often a
+				// large result may be read (routed, cached, published).
+				res.Message().ResetReadLimit(math.MaxUint64)
 				resStruct = res
 
 				// Retain a result independently of the RPC answer's lifetime.
@@ -597,6 +607,7 @@ func (p *Program) Execute(
 					return errnie.Error(errnie.Err(errnie.Internal, "compiler: allocate result message", err))
 				}
 
+				segment.Message().ResetReadLimit(math.MaxUint64)
 				cloned, err := capnp.NewRootStruct(segment, node.Done.ResultSize)
 
 				if err != nil {

@@ -1,7 +1,7 @@
 import * as flatbuffers from "flatbuffers";
 import { hubBaseUrl, hubWsUrl } from "#/lib/hub";
-import { MeasurementsFrame } from "#/providers/telemetry/telemetry/measurements-frame";
 import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
+import { MeasurementsFrame } from "#/providers/telemetry/telemetry/measurements-frame";
 import type {
 	EpisodeKind,
 	HindsightCapture,
@@ -81,9 +81,7 @@ export const fetchHindsightRuns = async (): Promise<HindsightRun[]> => {
 	return uniqueRuns;
 };
 
-export const fetchHindsightSymbols = async (
-	run: string,
-): Promise<string[]> => {
+export const fetchHindsightSymbols = async (run: string): Promise<string[]> => {
 	const response = await fetch(
 		`${hubBaseUrl()}/hindsight/symbols?run=${encodeURIComponent(run)}`,
 	);
@@ -258,7 +256,10 @@ export const adaptMeasurementsToTimeline = (
 ): HindsightTimeline => {
 	const numBuckets = query.buckets && query.buckets > 0 ? query.buckets : 200;
 	const selectedSymbol =
-		query.symbol || measurements[0]?.label || measurements[0]?.symbol || "BTC/USD";
+		query.symbol ||
+		measurements[0]?.label ||
+		measurements[0]?.symbol ||
+		"BTC/USD";
 
 	const filtered = measurements.filter(
 		(m) =>
@@ -329,7 +330,9 @@ export const adaptMeasurementsToTimeline = (
 				m.peers.forEach((p) => {
 					if (p.source === "spot_trade") {
 						trades += 1;
-						const peerMetrics = p.metrics as Record<string, { raw: number }> | undefined;
+						const peerMetrics = p.metrics as
+							| Record<string, { raw: number }>
+							| undefined;
 						tradeQty += peerMetrics?.qty?.raw ?? 0;
 					}
 				});
@@ -738,7 +741,12 @@ export const fetchHindsightTimeline = async (
 
 				if (options?.onProgress && measurements.length > 0) {
 					options.onProgress(
-						adaptMeasurementsToTimeline(measurements, query, symbols, excursions),
+						adaptMeasurementsToTimeline(
+							measurements,
+							query,
+							symbols,
+							excursions,
+						),
 					);
 				}
 			} catch (err) {
@@ -762,7 +770,9 @@ export const fetchHindsightTimeline = async (
 				options.signal.removeEventListener("abort", onAbort);
 			}
 
-			resolve(adaptMeasurementsToTimeline(measurements, query, symbols, excursions));
+			resolve(
+				adaptMeasurementsToTimeline(measurements, query, symbols, excursions),
+			);
 		};
 	});
 };
@@ -779,5 +789,3 @@ export const fetchHindsightMetricMap =
 
 		return (await response.json()) as HindsightMetricMap;
 	};
-
-

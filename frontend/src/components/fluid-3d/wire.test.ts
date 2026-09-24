@@ -1,10 +1,10 @@
 import * as flatbuffers from "flatbuffers";
 import { describe, expect, it } from "vitest";
-import { Message } from "#/providers/telemetry/telemetry/message";
 import { Frame } from "#/providers/telemetry/telemetry/frame";
 import { IntegratorHealthT } from "#/providers/telemetry/telemetry/integrator-health";
 import { ManifoldFrameT } from "#/providers/telemetry/telemetry/manifold-frame";
 import { ManifoldReadingT } from "#/providers/telemetry/telemetry/manifold-reading";
+import { Message } from "#/providers/telemetry/telemetry/message";
 import { PhysicsHealthT } from "#/providers/telemetry/telemetry/physics-health";
 import { WaveModeT } from "#/providers/telemetry/telemetry/wave-mode";
 import { decodeManifold } from "./wire";
@@ -117,7 +117,10 @@ describe("decodeManifold", () => {
 		expect(decoded.phase.reading.version).toBe(1n);
 		expect(decoded.phase.reading.at).toBe(1000n);
 		expect(decoded.phase.reading.health?.integrator?.substeps).toBe(4);
-		expect(decoded.phase.reading.health?.integrator?.time).toBeCloseTo(1.234, 3);
+		expect(decoded.phase.reading.health?.integrator?.time).toBeCloseTo(
+			1.234,
+			3,
+		);
 		expect(decoded.phase.oscillators).toHaveLength(1);
 		expect(decoded.phase.oscillators[0]).toEqual({
 			phase: expect.closeTo(0.1, 5),

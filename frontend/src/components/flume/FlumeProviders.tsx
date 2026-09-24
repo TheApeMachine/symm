@@ -4,9 +4,9 @@ import type FlumeCache from "#/components/flume/Cache";
 import type { EdgeRoutingMode } from "#/components/flume/connectionCalculator";
 import {
 	CacheContext,
+	type CompilerDiagnostic,
 	ConnectionRecalculateContext,
 	ContextContext,
-	type CompilerDiagnostic,
 	DiagnosticsContext,
 	EdgeRoutingContext,
 	EditorIdContext,
@@ -15,12 +15,12 @@ import {
 	GraphIdContext,
 	NodeActionsContext,
 	NodeDragOverrideContext,
+	type NodeLogEntry,
+	NodeLogsContext,
 	NodeMapContext,
 	NodeResultsContext,
-	NodeStatusesContext,
-	NodeLogsContext,
 	type NodeStatus,
-	type NodeLogEntry,
+	NodeStatusesContext,
 	NodeTypesContext,
 	PortTypesContext,
 	RecalculateStageRectContext,
@@ -85,21 +85,31 @@ export const FlumeProviders = ({
 				<NodeStatusesContext.Provider value={value.statuses ?? {}}>
 					<NodeLogsContext.Provider value={value.logs ?? {}}>
 						<ObstacleIndexContext.Provider value={value.indexRef}>
-							<PortLayoutRegistrationContext.Provider value={value.registerPortLayout}>
+							<PortLayoutRegistrationContext.Provider
+								value={value.registerPortLayout}
+							>
 								<FlumeGraphWorkerContext.Provider value={value.graphWorker}>
 									<NodeDragOverrideContext.Provider value={value.dragOverride}>
 										<NodeMapContext.Provider value={value.nodes}>
-											<EdgeRoutingContext.Provider value={value.edgeRoutingMode}>
+											<EdgeRoutingContext.Provider
+												value={value.edgeRoutingMode}
+											>
 												<PortTypesContext.Provider value={value.portTypes}>
 													<NodeTypesContext.Provider value={value.nodeTypes}>
-														<NodeActionsContext.Provider value={value.nodeActions}>
+														<NodeActionsContext.Provider
+															value={value.nodeActions}
+														>
 															<ConnectionRecalculateContext.Provider
 																value={value.triggerRecalculation}
 															>
 																<ContextContext.Provider value={value.context}>
-																	<StageContext.Provider value={value.stageState}>
+																	<StageContext.Provider
+																		value={value.stageState}
+																	>
 																		<CacheContext.Provider value={value.cache}>
-																			<GraphIdContext.Provider value={value.graphId}>
+																			<GraphIdContext.Provider
+																				value={value.graphId}
+																			>
 																				<EditorIdContext.Provider
 																					value={value.editorId}
 																				>

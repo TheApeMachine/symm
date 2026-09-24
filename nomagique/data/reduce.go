@@ -27,6 +27,7 @@ type ReduceServer struct {
 	out         float64
 	published   int64
 	ready       bool
+	scope       string
 }
 
 func NewReduce(ctx context.Context) *ReduceServer {
@@ -57,11 +58,28 @@ func (server *ReduceServer) Write(ctx context.Context, call Reduce_write) error 
 		server.operator = operator
 	}
 
+	scope, err := call.Args().Scope()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.BadRequest, "[data.reduce.Write] failed to read scope", err))
+	}
+
+	if scope != server.scope {
+		server.scope = scope
+		server.accumulator = 0
+		server.count = 0
+	}
+
 	if err := server.fold(call.Args().Value()); err != nil {
 		return err
 	}
 
 	server.ready = false
+
+	if call.Args().Running() {
+		server.report()
+		return nil
+	}
 
 	if !call.Args().Flush() {
 		return nil
@@ -87,6 +105,7 @@ func (server *ReduceServer) Done(ctx context.Context, call Reduce_done) error {
 	results.SetStatus(runtime.Status(server.Status()))
 	results.SetReady(server.ready)
 	results.SetCount(server.published)
+	results.SetIdle()
 
 	if server.ready {
 		results.SetOut(server.out)
@@ -145,6 +164,21 @@ func (server *ReduceServer) publish() error {
 		return nil
 	}
 
+	server.report()
+	server.accumulator = 0
+	server.count = 0
+
+	return nil
+}
+
+/*
+report publishes the fold as it stands.
+*/
+func (server *ReduceServer) report() {
+	if server.count == 0 {
+		return
+	}
+
 	switch strings.TrimSpace(server.operator) {
 	case "mean":
 		server.out = server.accumulator / float64(server.count)
@@ -156,8 +190,4 @@ func (server *ReduceServer) publish() error {
 
 	server.published = server.count
 	server.ready = true
-	server.accumulator = 0
-	server.count = 0
-
-	return nil
 }

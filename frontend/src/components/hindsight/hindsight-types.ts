@@ -7,6 +7,7 @@ domain model — so the UI reads the same identities the backend persisted.
 
 export { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
 export { MetricT } from "#/providers/telemetry/telemetry/metric";
+
 import type { Measurement } from "#/collections/types";
 export type { Measurement };
 export type Metric<Value = number> = {
@@ -411,5 +412,3 @@ export type HindsightMetricMap = {
 	metrics: Record<string, MetricSemantics>;
 	signals: Record<string, SignalSemantics>;
 };
-
-

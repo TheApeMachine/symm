@@ -26,7 +26,12 @@ describe("Radar component", () => {
 
 	it("supports custom title and variants", () => {
 		const markup = renderToStaticMarkup(
-			<Radar axes={sampleAxes} title="Custom Matrix" variant="brand" size="s" />,
+			<Radar
+				axes={sampleAxes}
+				title="Custom Matrix"
+				variant="brand"
+				size="s"
+			/>,
 		);
 
 		expect(markup).toContain("Custom Matrix");

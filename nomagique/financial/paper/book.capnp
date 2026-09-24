@@ -20,7 +20,9 @@ $Go.import("github.com/theapemachine/symm/nomagique/financial/paper");
 # levels best first as [price, quantity] decimal strings and pair the symbol's
 # latest instrument record. A frame that moved no reconciled book reports
 # {"symbol": ""}, so every evaluation says what it knows.
-interface Book {
+using import "../../runtime/status.capnp".Standing;
+
+interface Book extends(Standing) {
   write @0 (frame :List(Data), depth :Int64) -> stream;
   done @1 () -> (out :Data);
 }

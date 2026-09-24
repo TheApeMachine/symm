@@ -4,9 +4,18 @@ import { List } from "./list";
 import { Typography } from "./typography";
 
 /*
-OpenPosition is one lot as a reader sees it: already formatted, because what a
-number should look like is a decision the desk made, not one this list should
-be making again on its own.
+fixed writes a decimal the producer sent as text at a reading precision; text
+that is not a plain decimal is shown as sent.
+*/
+const fixed = (value: string | number, digits: number) =>
+	/^-?\d+(\.\d+)?$/.test(String(value))
+		? Number(value).toFixed(digits)
+		: String(value);
+
+/*
+OpenPosition is one lot as a reader sees it. Amounts arrive as the exact
+decimal text the producer settled them at; the list writes them at reading
+precision and leaves any other text as sent.
 */
 export type OpenPosition = {
 	symbol: string;
@@ -109,7 +118,7 @@ export const PositionList = ({
 											tone,
 										)}
 									>
-										{position.pnl}
+										{fixed(position.pnl, 4)}
 									</Typography.Span>
 									{onExit ? (
 										<button
@@ -131,10 +140,12 @@ export const PositionList = ({
 
 							<Flex.Row className="mt-0.75 items-center justify-between gap-3 text-[9.5px] text-(--f4)">
 								<Typography.Span>
-									entry {position.entryPrice} / mark {position.mark}
+									entry {fixed(position.entryPrice, 2)} / mark{" "}
+									{fixed(position.mark, 2)}
 								</Typography.Span>
 								<Typography.Span className={cn(tone)}>
-									{position.returnPct}
+									{fixed(position.returnPct, 2)}
+									{/^-?[\d.]+$/.test(String(position.returnPct)) ? "%" : ""}
 								</Typography.Span>
 							</Flex.Row>
 						</Flex.Column>

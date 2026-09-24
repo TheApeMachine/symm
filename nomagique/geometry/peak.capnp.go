@@ -209,7 +209,7 @@ func (c Peak_done) Args() Peak_done_Params {
 
 // AllocResults allocates the results struct.
 func (c Peak_done) AllocResults() (Watershed, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 3})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 4})
 	return Watershed(r), err
 }
 
@@ -514,6 +514,7 @@ func (f Peak_done_Params_Future) Struct() (Peak_done_Params, error) {
 }
 
 type Watershed capnp.Struct
+type Watershed_settled Watershed
 type Watershed_Which uint16
 
 const (
@@ -537,12 +538,12 @@ func (w Watershed_Which) String() string {
 const Watershed_TypeID = 0xeda90b40fc1efdd5
 
 func NewWatershed(s *capnp.Segment) (Watershed, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 3})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 4})
 	return Watershed(st), err
 }
 
 func NewRootWatershed(s *capnp.Segment) (Watershed, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 3})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 4})
 	return Watershed(st), err
 }
 
@@ -633,30 +634,39 @@ func (s Watershed) SetMoving() {
 
 }
 
-func (s Watershed) Settled() (capnp.TextList, error) {
-	if capnp.Struct(s).Uint16(0) != 1 {
-		panic("Which() != settled")
-	}
+func (s Watershed) Settled() Watershed_settled { return Watershed_settled(s) }
+
+func (s Watershed) SetSettled() {
+	capnp.Struct(s).SetUint16(0, 1)
+}
+
+func (s Watershed_settled) IsValid() bool {
+	return capnp.Struct(s).IsValid()
+}
+
+func (s Watershed_settled) Message() *capnp.Message {
+	return capnp.Struct(s).Message()
+}
+
+func (s Watershed_settled) Segment() *capnp.Segment {
+	return capnp.Struct(s).Segment()
+}
+func (s Watershed_settled) Regions() (capnp.TextList, error) {
 	p, err := capnp.Struct(s).Ptr(2)
 	return capnp.TextList(p.List()), err
 }
 
-func (s Watershed) HasSettled() bool {
-	if capnp.Struct(s).Uint16(0) != 1 {
-		return false
-	}
+func (s Watershed_settled) HasRegions() bool {
 	return capnp.Struct(s).HasPtr(2)
 }
 
-func (s Watershed) SetSettled(v capnp.TextList) error {
-	capnp.Struct(s).SetUint16(0, 1)
+func (s Watershed_settled) SetRegions(v capnp.TextList) error {
 	return capnp.Struct(s).SetPtr(2, v.ToPtr())
 }
 
-// NewSettled sets the settled field to a newly
+// NewRegions sets the regions field to a newly
 // allocated capnp.TextList, preferring placement in s's segment.
-func (s Watershed) NewSettled(n int32) (capnp.TextList, error) {
-	capnp.Struct(s).SetUint16(0, 1)
+func (s Watershed_settled) NewRegions(n int32) (capnp.TextList, error) {
 	l, err := capnp.NewTextList(capnp.Struct(s).Segment(), n)
 	if err != nil {
 		return capnp.TextList{}, err
@@ -664,13 +674,25 @@ func (s Watershed) NewSettled(n int32) (capnp.TextList, error) {
 	err = capnp.Struct(s).SetPtr(2, l.ToPtr())
 	return l, err
 }
+func (s Watershed_settled) Vocabulary() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(3)
+	return []byte(p.Data()), err
+}
+
+func (s Watershed_settled) HasVocabulary() bool {
+	return capnp.Struct(s).HasPtr(3)
+}
+
+func (s Watershed_settled) SetVocabulary(v []byte) error {
+	return capnp.Struct(s).SetData(3, v)
+}
 
 // Watershed_List is a list of Watershed.
 type Watershed_List = capnp.StructList[Watershed]
 
 // NewWatershed creates a new list of Watershed.
 func NewWatershed_List(s *capnp.Segment, sz int32) (Watershed_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 3}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 4}, sz)
 	return capnp.StructList[Watershed](l), err
 }
 
@@ -680,4 +702,15 @@ type Watershed_Future struct{ *capnp.Future }
 func (f Watershed_Future) Struct() (Watershed, error) {
 	p, err := f.Future.Ptr()
 	return Watershed(p.Struct()), err
+}
+func (p Watershed_Future) Settled() Watershed_settled_Future {
+	return Watershed_settled_Future{p.Future}
+}
+
+// Watershed_settled_Future is a wrapper for a Watershed_settled promised by a client call.
+type Watershed_settled_Future struct{ *capnp.Future }
+
+func (f Watershed_settled_Future) Struct() (Watershed_settled, error) {
+	p, err := f.Future.Ptr()
+	return Watershed_settled(p.Struct()), err
 }

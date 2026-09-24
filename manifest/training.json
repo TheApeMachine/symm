@@ -8,16 +8,16 @@
       "connections": {
         "inputs": {},
         "outputs": {
-          "project.out": [
-            {
-              "nodeId": "tape",
-              "portName": "row"
-            }
-          ],
           "scan.exhausted": [
             {
               "nodeId": "tape",
               "portName": "exhausted"
+            }
+          ],
+          "project.rows": [
+            {
+              "nodeId": "tape",
+              "portName": "rows"
             }
           ]
         }
@@ -33,60 +33,59 @@
       "type": "store.Tape",
       "connections": {
         "inputs": {
-          "row": [
-            {
-              "nodeId": "replay",
-              "portName": "project.out"
-            }
-          ],
           "exhausted": [
             {
               "nodeId": "replay",
               "portName": "scan.exhausted"
             }
+          ],
+          "rows": [
+            {
+              "nodeId": "replay",
+              "portName": "project.rows"
+            }
           ]
         },
         "outputs": {
-          "frame.payload": [
+          "frames.payload": [
             {
               "nodeId": "mine",
               "portName": "payload"
-            },
-            {
-              "nodeId": "records",
-              "portName": "frame.data"
             }
           ],
-          "frame.session": [
+          "frames.session": [
             {
               "nodeId": "mine",
               "portName": "session"
             }
           ],
-          "frame.sequence": [
+          "frames.sequence": [
             {
               "nodeId": "mine",
               "portName": "sequence"
             }
           ],
-          "frame.endpoint": [
+          "frames.endpoint": [
             {
               "nodeId": "mine",
               "portName": "endpoint"
             }
           ],
-          "frame.row": [
+          "frames.documents": [
             {
               "nodeId": "records",
-              "portName": "row.data"
-            }
-          ],
-          "finished": [
+              "portName": "records.data"
+            },
             {
-              "nodeId": "snapshot_ready",
-              "portName": "test"
+              "nodeId": "records",
+              "portName": "instruments.data"
             }
           ]
+        }
+      },
+      "inputData": {
+        "envelope": {
+          "value": "market"
         }
       }
     },
@@ -106,25 +105,25 @@
           "payload": [
             {
               "nodeId": "tape",
-              "portName": "frame.payload"
+              "portName": "frames.payload"
             }
           ],
           "session": [
             {
               "nodeId": "tape",
-              "portName": "frame.session"
+              "portName": "frames.session"
             }
           ],
           "sequence": [
             {
               "nodeId": "tape",
-              "portName": "frame.sequence"
+              "portName": "frames.sequence"
             }
           ],
           "endpoint": [
             {
               "nodeId": "tape",
-              "portName": "frame.endpoint"
+              "portName": "frames.endpoint"
             }
           ]
         },
@@ -132,10 +131,10 @@
           "events.out": [
             {
               "nodeId": "events",
-              "portName": "payload"
+              "portName": "rows"
             }
           ],
-          "batch": [
+          "events.batch": [
             {
               "nodeId": "fragments",
               "portName": "data"
@@ -154,7 +153,7 @@
       },
       "connections": {
         "inputs": {
-          "payload": [
+          "rows": [
             {
               "nodeId": "mine",
               "portName": "events.out"
@@ -169,30 +168,34 @@
       "type": "definition:archive_records",
       "connections": {
         "inputs": {
-          "row.data": [
+          "records.data": [
             {
               "nodeId": "tape",
-              "portName": "frame.row"
+              "portName": "frames.documents"
             }
           ],
-          "frame.data": [
+          "instruments.data": [
             {
               "nodeId": "tape",
-              "portName": "frame.payload"
+              "portName": "frames.documents"
             }
           ]
         },
         "outputs": {
-          "records.out": [
+          "records.all": [
             {
               "nodeId": "learning_replay",
-              "portName": "record.data"
+              "portName": "index.append_0"
             }
           ],
-          "records.pending": [
+          "instrument.out": [
             {
-              "nodeId": "record_pending",
-              "portName": "unsigned"
+              "nodeId": "paper_instrument_market",
+              "portName": "data"
+            },
+            {
+              "nodeId": "paper_instrument_received",
+              "portName": "data"
             }
           ]
         }
@@ -214,7 +217,7 @@
           "data": [
             {
               "nodeId": "mine",
-              "portName": "batch"
+              "portName": "events.batch"
             }
           ]
         },
@@ -231,12 +234,6 @@
             {
               "nodeId": "event_truth",
               "portName": "data"
-            }
-          ],
-          "pending": [
-            {
-              "nodeId": "event_pending",
-              "portName": "unsigned"
             }
           ]
         }
@@ -431,21 +428,21 @@
       "inputData": {},
       "connections": {
         "inputs": {
-          "record.data": [
-            {
-              "nodeId": "records",
-              "portName": "records.out"
-            }
-          ],
           "event.data": [
             {
               "nodeId": "with_event_truth",
               "portName": "out"
             }
           ],
+          "index.append_0": [
+            {
+              "nodeId": "records",
+              "portName": "records.all"
+            }
+          ],
           "ready.data": [
             {
-              "nodeId": "snapshot_ready",
+              "nodeId": "walk_ready",
               "portName": "out"
             }
           ]
@@ -471,6 +468,10 @@
             {
               "nodeId": "no_rise",
               "portName": "no_0"
+            },
+            {
+              "nodeId": "window_start",
+              "portName": "data"
             }
           ],
           "observation.json": [
@@ -497,176 +498,6 @@
             {
               "nodeId": "impulse_map",
               "portName": "previous.scope"
-            }
-          ],
-          "fragment_first.passed": [
-            {
-              "nodeId": "token_sequence",
-              "portName": "reset"
-            }
-          ]
-        }
-      }
-    },
-    "record_pending": {
-      "id": "record_pending",
-      "type": "data.Insert",
-      "inputData": {
-        "path": {
-          "value": "records"
-        },
-        "encoding": {
-          "value": "uint64"
-        },
-        "data": {
-          "value": "{\"ready\":1}"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "unsigned": [
-            {
-              "nodeId": "records",
-              "portName": "records.pending"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "event_pending",
-              "portName": "data"
-            }
-          ]
-        }
-      }
-    },
-    "event_pending": {
-      "id": "event_pending",
-      "type": "data.Insert",
-      "inputData": {
-        "path": {
-          "value": "events"
-        },
-        "encoding": {
-          "value": "uint64"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "unsigned": [
-            {
-              "nodeId": "fragments",
-              "portName": "pending"
-            }
-          ],
-          "data": [
-            {
-              "nodeId": "record_pending",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "records_drained",
-              "portName": "data"
-            }
-          ]
-        }
-      }
-    },
-    "records_drained": {
-      "id": "records_drained",
-      "type": "data.Filter",
-      "inputData": {
-        "path": {
-          "value": "records"
-        },
-        "operator": {
-          "value": "=="
-        },
-        "threshold": {
-          "value": 0
-        }
-      },
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "event_pending",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "events_drained",
-              "portName": "data"
-            }
-          ]
-        }
-      }
-    },
-    "events_drained": {
-      "id": "events_drained",
-      "type": "data.Filter",
-      "inputData": {
-        "path": {
-          "value": "events"
-        },
-        "operator": {
-          "value": "=="
-        },
-        "threshold": {
-          "value": 0
-        }
-      },
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "records_drained",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "snapshot_ready",
-              "portName": "yes"
-            }
-          ]
-        }
-      }
-    },
-    "snapshot_ready": {
-      "id": "snapshot_ready",
-      "type": "controlflow.Select",
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "test": [
-            {
-              "nodeId": "tape",
-              "portName": "finished"
-            }
-          ],
-          "yes": [
-            {
-              "nodeId": "events_drained",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "learning_replay",
-              "portName": "ready.data"
             }
           ]
         }
@@ -1466,7 +1297,7 @@
           "out": [
             {
               "nodeId": "paper_events",
-              "portName": "data_0"
+              "portName": "data_1"
             }
           ]
         }
@@ -1500,7 +1331,7 @@
           "out": [
             {
               "nodeId": "paper_events",
-              "portName": "data_1"
+              "portName": "data_2"
             }
           ]
         }
@@ -1534,7 +1365,7 @@
           "out": [
             {
               "nodeId": "paper_events",
-              "portName": "data_2"
+              "portName": "data_3"
             }
           ]
         }
@@ -1557,21 +1388,27 @@
       },
       "connections": {
         "inputs": {
-          "data_0": [
+          "data_1": [
             {
               "nodeId": "paper_wrap_observation",
               "portName": "out"
             }
           ],
-          "data_1": [
+          "data_2": [
             {
               "nodeId": "paper_wrap_enter",
               "portName": "out"
             }
           ],
-          "data_2": [
+          "data_3": [
             {
               "nodeId": "paper_wrap_exit",
+              "portName": "out"
+            }
+          ],
+          "data_0": [
+            {
+              "nodeId": "paper_wrap_instrument",
               "portName": "out"
             }
           ]
@@ -2232,13 +2069,13 @@
           ]
         },
         "outputs": {
-          "gather.values": [
+          "gather.gathered.values": [
             {
               "nodeId": "impulse_map",
               "portName": "change.value"
             }
           ],
-          "gather.present": [
+          "gather.gathered.present": [
             {
               "nodeId": "impulse_map",
               "portName": "change.present"
@@ -2262,13 +2099,19 @@
           ],
           "reset": [
             {
-              "nodeId": "learning_replay",
-              "portName": "fragment_first.passed"
+              "nodeId": "window_start",
+              "portName": "passed"
+            }
+          ],
+          "scope": [
+            {
+              "nodeId": "token_scope",
+              "portName": "text"
             }
           ]
         },
         "outputs": {
-          "out": [
+          "step.out": [
             {
               "nodeId": "with_sequence",
               "portName": "json"
@@ -2307,7 +2150,7 @@
         "outputs": {
           "out": [
             {
-              "nodeId": "with_sequence",
+              "nodeId": "with_vocabulary",
               "portName": "data"
             }
           ]
@@ -2328,15 +2171,15 @@
       },
       "connections": {
         "inputs": {
-          "data": [
-            {
-              "nodeId": "with_settled",
-              "portName": "out"
-            }
-          ],
           "json": [
             {
               "nodeId": "token_sequence",
+              "portName": "step.out"
+            }
+          ],
+          "data": [
+            {
+              "nodeId": "with_vocabulary",
               "portName": "out"
             }
           ]
@@ -2427,13 +2270,13 @@
           "change.value": [
             {
               "nodeId": "signals",
-              "portName": "gather.values"
+              "portName": "gather.gathered.values"
             }
           ],
           "change.present": [
             {
               "nodeId": "signals",
-              "portName": "gather.present"
+              "portName": "gather.gathered.present"
             }
           ]
         },
@@ -2447,6 +2290,16 @@
           "hot.out": [
             {
               "nodeId": "with_settled",
+              "portName": "json"
+            }
+          ],
+          "peak.settled.vocabulary": [
+            {
+              "nodeId": "scope_vocabulary",
+              "portName": "json"
+            },
+            {
+              "nodeId": "with_vocabulary",
               "portName": "json"
             }
           ]
@@ -2555,6 +2408,10 @@
             },
             {
               "nodeId": "with_holding",
+              "portName": "json"
+            },
+            {
+              "nodeId": "scope_holding",
               "portName": "json"
             }
           ]
@@ -2919,6 +2776,382 @@
         },
         "encoding": {
           "value": "json"
+        }
+      }
+    },
+    "window_start": {
+      "id": "window_start",
+      "type": "data.Filter",
+      "width": 280,
+      "height": 172,
+      "x": 1600.0,
+      "y": -600.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "learning_replay",
+              "portName": "fragment.truth.out"
+            }
+          ]
+        },
+        "outputs": {
+          "passed": [
+            {
+              "nodeId": "token_sequence",
+              "portName": "reset"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "cursor.sequence,cursor.record"
+        },
+        "operator": {
+          "value": "=="
+        },
+        "referencePath": {
+          "value": "event.a.sequence,event.a.record"
+        }
+      }
+    },
+    "scope_vocabulary": {
+      "id": "scope_vocabulary",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "x": 1600.0,
+      "y": -800.0,
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "impulse_map",
+              "portName": "peak.settled.vocabulary"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "scope_holding",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "scope.vocabulary"
+        },
+        "data": {
+          "value": "{}"
+        }
+      }
+    },
+    "scope_holding": {
+      "id": "scope_holding",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "x": 1940.0,
+      "y": -800.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "scope_vocabulary",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "prior_inventory",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "token_scope",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "scope.holding"
+        }
+      }
+    },
+    "token_scope": {
+      "id": "token_scope",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "x": 2280.0,
+      "y": -800.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "scope_holding",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "text": [
+            {
+              "nodeId": "token_sequence",
+              "portName": "scope"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "scope"
+        },
+        "encoding": {
+          "value": "json-text"
+        }
+      }
+    },
+    "with_vocabulary": {
+      "id": "with_vocabulary",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "x": 2110.0,
+      "y": 200.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "with_settled",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "impulse_map",
+              "portName": "peak.settled.vocabulary"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "with_sequence",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "settled.vocabulary"
+        }
+      }
+    },
+    "walk_ready": {
+      "id": "walk_ready",
+      "type": "store.Constant",
+      "width": 280,
+      "height": 172,
+      "x": 0.0,
+      "y": 1200.0,
+      "inputData": {
+        "data": {
+          "value": "{\"ready\":1}"
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "learning_replay",
+              "portName": "ready.data"
+            }
+          ]
+        }
+      }
+    },
+    "paper_instrument_market": {
+      "id": "paper_instrument_market",
+      "type": "data.Extract",
+      "width": 240,
+      "height": 120,
+      "x": 2400.0,
+      "y": 2600.0,
+      "inputData": {
+        "path": {
+          "value": "market"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "records",
+              "portName": "instrument.out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "paper_instrument_frame",
+              "portName": "json"
+            }
+          ]
+        }
+      }
+    },
+    "paper_instrument_frame": {
+      "id": "paper_instrument_frame",
+      "type": "data.Insert",
+      "width": 240,
+      "height": 120,
+      "x": 2700.0,
+      "y": 2600.0,
+      "inputData": {
+        "path": {
+          "value": "frame"
+        },
+        "data": {
+          "value": "{}"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "paper_instrument_market",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "paper_instrument_time",
+              "portName": "data"
+            }
+          ]
+        }
+      }
+    },
+    "paper_instrument_received": {
+      "id": "paper_instrument_received",
+      "type": "data.Extract",
+      "width": 240,
+      "height": 120,
+      "x": 2400.0,
+      "y": 2750.0,
+      "inputData": {
+        "path": {
+          "value": "capture.receivedAt"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "records",
+              "portName": "instrument.out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "paper_instrument_time",
+              "portName": "json"
+            }
+          ]
+        }
+      }
+    },
+    "paper_instrument_time": {
+      "id": "paper_instrument_time",
+      "type": "data.Insert",
+      "width": 240,
+      "height": 120,
+      "x": 3000.0,
+      "y": 2600.0,
+      "inputData": {
+        "path": {
+          "value": "time"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "paper_instrument_frame",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "paper_instrument_received",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "paper_wrap_instrument",
+              "portName": "json"
+            }
+          ]
+        }
+      }
+    },
+    "paper_wrap_instrument": {
+      "id": "paper_wrap_instrument",
+      "type": "data.Insert",
+      "width": 240,
+      "height": 120,
+      "x": 3300.0,
+      "y": 2600.0,
+      "inputData": {
+        "path": {
+          "value": "events.0"
+        },
+        "data": {
+          "value": "{\"events\":[]}"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "paper_instrument_time",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "paper_events",
+              "portName": "data_0"
+            }
+          ]
         }
       }
     }

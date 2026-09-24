@@ -1,6 +1,6 @@
 import { useNavigate } from "@tanstack/react-router";
 import { useSelector } from "@tanstack/react-store";
-import {  focusAtom, signals } from "#/collections/app";
+import { focusAtom, signals } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
 import {
 	kernelCopy,
@@ -121,12 +121,16 @@ export const KernelInspector = () => {
 
 	const resonanceReadings = useSelector(signals.resonance, (state) => state);
 	const rawState = useSelector(
-		(signals[active && !resonance ? source : "" as keyof typeof signals] || signals.cvd),
+		signals[active && !resonance ? source : ("" as keyof typeof signals)] ||
+			signals.cvd,
 		(state) => state,
 	);
 	const measurementState = (rawState as any)?.getBufferLength
 		? rawState
-		: (rawState as any)?.[focusSymbol] ?? (rawState as any)?.[""] ?? Object.values(rawState || {})[0] ?? null;
+		: ((rawState as any)?.[focusSymbol] ??
+			(rawState as any)?.[""] ??
+			Object.values(rawState || {})[0] ??
+			null);
 
 	if (!active) {
 		return null;
@@ -144,7 +148,9 @@ export const KernelInspector = () => {
 		let raw: number | null = null;
 		let normalized = 0;
 
-		const count = (measurementState as any)?.getBufferLength ? (measurementState as any).getBufferLength() : 0;
+		const count = (measurementState as any)?.getBufferLength
+			? (measurementState as any).getBufferLength()
+			: 0;
 		let row: any = null;
 		for (let i = count - 1; i >= 0; i--) {
 			const candidate = (measurementState as any).get(i);

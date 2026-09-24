@@ -1,5 +1,6 @@
 import { bench, describe } from "vitest";
 import { projectEpisodeTape } from "./episode-tape";
+
 // Fixture: 1,000 observations with alternating multi-leg movements.
 const episode = {
 	id: "benchmark",

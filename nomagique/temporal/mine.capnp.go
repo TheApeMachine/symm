@@ -27,7 +27,7 @@ func (c Mine) Write(ctx context.Context, params func(Mine_write_Params) error) e
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 8, PointerCount: 5}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 6}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(Mine_write_Params(s)) }
 	}
 
@@ -228,12 +228,12 @@ type Mine_write_Params capnp.Struct
 const Mine_write_Params_TypeID = 0xc63d14d85d0c5b28
 
 func NewMine_write_Params(s *capnp.Segment) (Mine_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 5})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 6})
 	return Mine_write_Params(st), err
 }
 
 func NewRootMine_write_Params(s *capnp.Segment) (Mine_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 5})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 6})
 	return Mine_write_Params(st), err
 }
 
@@ -269,19 +269,29 @@ func (s Mine_write_Params) Message() *capnp.Message {
 func (s Mine_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Mine_write_Params) Payload() ([]byte, error) {
+func (s Mine_write_Params) Payload() (capnp.DataList, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return []byte(p.Data()), err
+	return capnp.DataList(p.List()), err
 }
 
 func (s Mine_write_Params) HasPayload() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s Mine_write_Params) SetPayload(v []byte) error {
-	return capnp.Struct(s).SetData(0, v)
+func (s Mine_write_Params) SetPayload(v capnp.DataList) error {
+	return capnp.Struct(s).SetPtr(0, v.ToPtr())
 }
 
+// NewPayload sets the payload field to a newly
+// allocated capnp.DataList, preferring placement in s's segment.
+func (s Mine_write_Params) NewPayload(n int32) (capnp.DataList, error) {
+	l, err := capnp.NewDataList(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return capnp.DataList{}, err
+	}
+	err = capnp.Struct(s).SetPtr(0, l.ToPtr())
+	return l, err
+}
 func (s Mine_write_Params) Session() (string, error) {
 	p, err := capnp.Struct(s).Ptr(1)
 	return p.Text(), err
@@ -300,66 +310,86 @@ func (s Mine_write_Params) SetSession(v string) error {
 	return capnp.Struct(s).SetText(1, v)
 }
 
-func (s Mine_write_Params) Sequence() int64 {
-	return int64(capnp.Struct(s).Uint64(0))
-}
-
-func (s Mine_write_Params) SetSequence(v int64) {
-	capnp.Struct(s).SetUint64(0, uint64(v))
-}
-
-func (s Mine_write_Params) Endpoint() (string, error) {
+func (s Mine_write_Params) Sequence() (capnp.Int64List, error) {
 	p, err := capnp.Struct(s).Ptr(2)
-	return p.Text(), err
+	return capnp.Int64List(p.List()), err
 }
 
-func (s Mine_write_Params) HasEndpoint() bool {
+func (s Mine_write_Params) HasSequence() bool {
 	return capnp.Struct(s).HasPtr(2)
 }
 
-func (s Mine_write_Params) EndpointBytes() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(2)
-	return p.TextBytes(), err
+func (s Mine_write_Params) SetSequence(v capnp.Int64List) error {
+	return capnp.Struct(s).SetPtr(2, v.ToPtr())
 }
 
-func (s Mine_write_Params) SetEndpoint(v string) error {
-	return capnp.Struct(s).SetText(2, v)
+// NewSequence sets the sequence field to a newly
+// allocated capnp.Int64List, preferring placement in s's segment.
+func (s Mine_write_Params) NewSequence(n int32) (capnp.Int64List, error) {
+	l, err := capnp.NewInt64List(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return capnp.Int64List{}, err
+	}
+	err = capnp.Struct(s).SetPtr(2, l.ToPtr())
+	return l, err
 }
-
-func (s Mine_write_Params) Channel() (string, error) {
+func (s Mine_write_Params) Endpoint() (capnp.TextList, error) {
 	p, err := capnp.Struct(s).Ptr(3)
+	return capnp.TextList(p.List()), err
+}
+
+func (s Mine_write_Params) HasEndpoint() bool {
+	return capnp.Struct(s).HasPtr(3)
+}
+
+func (s Mine_write_Params) SetEndpoint(v capnp.TextList) error {
+	return capnp.Struct(s).SetPtr(3, v.ToPtr())
+}
+
+// NewEndpoint sets the endpoint field to a newly
+// allocated capnp.TextList, preferring placement in s's segment.
+func (s Mine_write_Params) NewEndpoint(n int32) (capnp.TextList, error) {
+	l, err := capnp.NewTextList(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return capnp.TextList{}, err
+	}
+	err = capnp.Struct(s).SetPtr(3, l.ToPtr())
+	return l, err
+}
+func (s Mine_write_Params) Channel() (string, error) {
+	p, err := capnp.Struct(s).Ptr(4)
 	return p.Text(), err
 }
 
 func (s Mine_write_Params) HasChannel() bool {
-	return capnp.Struct(s).HasPtr(3)
+	return capnp.Struct(s).HasPtr(4)
 }
 
 func (s Mine_write_Params) ChannelBytes() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(3)
+	p, err := capnp.Struct(s).Ptr(4)
 	return p.TextBytes(), err
 }
 
 func (s Mine_write_Params) SetChannel(v string) error {
-	return capnp.Struct(s).SetText(3, v)
+	return capnp.Struct(s).SetText(4, v)
 }
 
 func (s Mine_write_Params) PriceField() (string, error) {
-	p, err := capnp.Struct(s).Ptr(4)
+	p, err := capnp.Struct(s).Ptr(5)
 	return p.Text(), err
 }
 
 func (s Mine_write_Params) HasPriceField() bool {
-	return capnp.Struct(s).HasPtr(4)
+	return capnp.Struct(s).HasPtr(5)
 }
 
 func (s Mine_write_Params) PriceFieldBytes() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(4)
+	p, err := capnp.Struct(s).Ptr(5)
 	return p.TextBytes(), err
 }
 
 func (s Mine_write_Params) SetPriceField(v string) error {
-	return capnp.Struct(s).SetText(4, v)
+	return capnp.Struct(s).SetText(5, v)
 }
 
 // Mine_write_Params_List is a list of Mine_write_Params.
@@ -367,7 +397,7 @@ type Mine_write_Params_List = capnp.StructList[Mine_write_Params]
 
 // NewMine_write_Params creates a new list of Mine_write_Params.
 func NewMine_write_Params_List(s *capnp.Segment, sz int32) (Mine_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 5}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 6}, sz)
 	return capnp.StructList[Mine_write_Params](l), err
 }
 
@@ -514,19 +544,6 @@ func (s Mined) Message() *capnp.Message {
 func (s Mined) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Mined) Batch() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(1)
-	return []byte(p.Data()), err
-}
-
-func (s Mined) HasBatch() bool {
-	return capnp.Struct(s).HasPtr(1)
-}
-
-func (s Mined) SetBatch(v []byte) error {
-	return capnp.Struct(s).SetData(1, v)
-}
-
 func (s Mined) SetNone() {
 	capnp.Struct(s).SetUint16(0, 0)
 
@@ -549,17 +566,51 @@ func (s Mined_events) Message() *capnp.Message {
 func (s Mined_events) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Mined_events) Out() ([]byte, error) {
+func (s Mined_events) Out() (capnp.DataList, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return []byte(p.Data()), err
+	return capnp.DataList(p.List()), err
 }
 
 func (s Mined_events) HasOut() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s Mined_events) SetOut(v []byte) error {
-	return capnp.Struct(s).SetData(0, v)
+func (s Mined_events) SetOut(v capnp.DataList) error {
+	return capnp.Struct(s).SetPtr(0, v.ToPtr())
+}
+
+// NewOut sets the out field to a newly
+// allocated capnp.DataList, preferring placement in s's segment.
+func (s Mined_events) NewOut(n int32) (capnp.DataList, error) {
+	l, err := capnp.NewDataList(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return capnp.DataList{}, err
+	}
+	err = capnp.Struct(s).SetPtr(0, l.ToPtr())
+	return l, err
+}
+func (s Mined_events) Batch() (capnp.DataList, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return capnp.DataList(p.List()), err
+}
+
+func (s Mined_events) HasBatch() bool {
+	return capnp.Struct(s).HasPtr(1)
+}
+
+func (s Mined_events) SetBatch(v capnp.DataList) error {
+	return capnp.Struct(s).SetPtr(1, v.ToPtr())
+}
+
+// NewBatch sets the batch field to a newly
+// allocated capnp.DataList, preferring placement in s's segment.
+func (s Mined_events) NewBatch(n int32) (capnp.DataList, error) {
+	l, err := capnp.NewDataList(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return capnp.DataList{}, err
+	}
+	err = capnp.Struct(s).SetPtr(1, l.ToPtr())
+	return l, err
 }
 
 // Mined_List is a list of Mined.

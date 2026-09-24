@@ -1,3 +1,4 @@
+import type { GraphNode } from "./evidence-graph.types";
 import {
 	type GraphHit,
 	measurementNumber,
@@ -5,7 +6,6 @@ import {
 	nodeKind,
 	nodeLabel,
 } from "./evidence-graph-viz";
-import type { GraphNode } from "./evidence-graph.types";
 
 const Row = ({ label, value }: { label: string; value: string }) => (
 	<div className="flex justify-between gap-3">

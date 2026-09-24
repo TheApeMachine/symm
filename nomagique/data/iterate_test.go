@@ -246,3 +246,81 @@ func BenchmarkIterateWrite(b *testing.B) {
 		}
 	}
 }
+
+func TestIterateWhole(t *testing.T) {
+	ctx := context.Background()
+
+	Convey("Given an Iterate asked for whole collections", t, func() {
+		client := data.Iterate_ServerToClient(data.NewIterate(ctx))
+		defer client.Release()
+
+		step := func(payloads ...string) ([]string, uint64) {
+			So(client.Write(ctx, func(params data.Iterate_write_Params) error {
+				params.SetWhole(true)
+				params.SetEnvelope(true)
+
+				if err := params.SetPath("data"); err != nil {
+					return err
+				}
+
+				if err := params.SetIndexPath("record"); err != nil {
+					return err
+				}
+
+				values, err := params.NewData(int32(len(payloads)))
+
+				if err != nil {
+					return err
+				}
+
+				for index, payload := range payloads {
+					if err := values.Set(index, []byte(payload)); err != nil {
+						return err
+					}
+				}
+
+				return nil
+			}), ShouldBeNil)
+			So(client.WaitStreaming(), ShouldBeNil)
+
+			future, release := client.Done(ctx, nil)
+			defer release()
+
+			results, err := future.Struct()
+			So(err, ShouldBeNil)
+			all, err := results.All()
+			So(err, ShouldBeNil)
+
+			elements := []string{}
+
+			for index := range all.Len() {
+				element, err := all.At(index)
+				So(err, ShouldBeNil)
+				elements = append(elements, string(element))
+			}
+
+			return elements, results.Pending()
+		}
+
+		Convey("Every element of every collection that arrived is handed over at once, projected and indexed", func() {
+			elements, pending := step(`{"data":[{"p":1},{"p":2}]}`, `{"data":[{"p":3}]}`)
+			decoded := make([]map[string]any, len(elements))
+
+			for index, element := range elements {
+				So(json.Unmarshal([]byte(element), &decoded[index]), ShouldBeNil)
+			}
+
+			So(decoded, ShouldResemble, []map[string]any{
+				{"data": map[string]any{"p": 1.0}, "record": 0.0},
+				{"data": map[string]any{"p": 2.0}, "record": 1.0},
+				{"data": map[string]any{"p": 3.0}, "record": 0.0},
+			})
+			So(pending, ShouldEqual, 0)
+
+			Convey("And the next evaluation starts clean", func() {
+				elements, _ := step()
+				So(elements, ShouldBeEmpty)
+			})
+		})
+	})
+}

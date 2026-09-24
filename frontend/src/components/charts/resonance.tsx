@@ -1,5 +1,6 @@
 import { createRef } from "react";
 import type { ResonanceFrame } from "#/collections/types";
+import { terminalResonanceLayerMatrixFromFrame } from "#/components/terminal/charts-frame";
 import {
 	clearCanvas,
 	drawGrid,
@@ -7,7 +8,6 @@ import {
 	resizeCanvas,
 	TERMINAL_COLORS,
 } from "#/components/ui/canvas-utils";
-import { terminalResonanceLayerMatrixFromFrame } from "#/components/terminal/charts-frame";
 
 const resonanceCanvasRef = createRef<HTMLCanvasElement>();
 

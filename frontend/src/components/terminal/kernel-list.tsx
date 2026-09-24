@@ -1,6 +1,12 @@
 import { useSelector } from "@tanstack/react-store";
 import { useEffect, useRef } from "react";
-import { focusMetricAtom, focusAtom, type RingBuffer, SIGNALS, signals } from "#/collections/app";
+import {
+	focusAtom,
+	focusMetricAtom,
+	type RingBuffer,
+	SIGNALS,
+	signals,
+} from "#/collections/app";
 import { RingCursor } from "#/collections/ring";
 import { terminalStore } from "#/collections/terminal";
 import {

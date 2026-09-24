@@ -16,8 +16,13 @@ interface WebSocketClient extends(Source, Retained) {
   done @1 () -> Received;
 }
 
+# connection is the generation of the physical connection currently open,
+# reported on every evaluation whether or not a frame arrived, so anything
+# kept per connection can be looked up between frames. frame.generation is the
+# connection the frame was read on, which may be an earlier one.
 struct Received {
   status @0 :Status;
+  connection @6 :UInt64;
   union {
     idle @1 :Void;
     frame :group {

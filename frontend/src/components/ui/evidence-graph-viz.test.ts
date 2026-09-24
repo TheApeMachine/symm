@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { Graph, GraphEdge, GraphNode } from "./evidence-graph.types";
 import {
 	buildScene,
 	edgeControlPoint,
@@ -11,7 +12,6 @@ import {
 	pairKey,
 	reciprocalPairs,
 } from "./evidence-graph-viz";
-import type { Graph, GraphEdge, GraphNode } from "./evidence-graph.types";
 
 /*
 categoryGraph models the real category-centered shape: two measurements draw

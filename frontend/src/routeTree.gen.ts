@@ -14,7 +14,6 @@ import { Route as WorkbenchRouteImport } from './routes/workbench'
 import { Route as SignalsRouteImport } from './routes/signals'
 import { Route as PipelineRouteImport } from './routes/pipeline'
 import { Route as LineageRouteImport } from './routes/lineage'
-import { Route as LearningRouteImport } from './routes/learning'
 import { Route as JournalRouteImport } from './routes/journal'
 import { Route as InfluenceRouteImport } from './routes/influence'
 import { Route as HindsightRouteImport } from './routes/hindsight'
@@ -23,7 +22,6 @@ import { Route as DynamicRouteImport } from './routes/dynamic'
 import { Route as DiagnosticsRouteImport } from './routes/diagnostics'
 import { Route as CortexRouteImport } from './routes/cortex'
 import { Route as SplatRouteImport } from './routes/$'
-import { Route as IndexRouteImport } from './routes/index'
 import { Route as DynamicIndexRouteImport } from './routes/dynamic.index'
 import { Route as DynamicNameRouteImport } from './routes/dynamic.$name'
 
@@ -50,11 +48,6 @@ const PipelineRoute = PipelineRouteImport.update({
 const LineageRoute = LineageRouteImport.update({
   id: '/lineage',
   path: '/lineage',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const LearningRoute = LearningRouteImport.update({
-  id: '/learning',
-  path: '/learning',
   getParentRoute: () => rootRouteImport,
 } as any)
 const JournalRoute = JournalRouteImport.update({
@@ -97,11 +90,6 @@ const SplatRoute = SplatRouteImport.update({
   path: '/$',
   getParentRoute: () => rootRouteImport,
 } as any)
-const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const DynamicIndexRoute = DynamicIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -114,7 +102,6 @@ const DynamicNameRoute = DynamicNameRouteImport.update({
 } as any)
 
 export interface FileRoutesByFullPath {
-  '/': typeof IndexRoute
   '/$': typeof SplatRoute
   '/cortex': typeof CortexRoute
   '/diagnostics': typeof DiagnosticsRoute
@@ -123,7 +110,6 @@ export interface FileRoutesByFullPath {
   '/hindsight': typeof HindsightRoute
   '/influence': typeof InfluenceRoute
   '/journal': typeof JournalRoute
-  '/learning': typeof LearningRoute
   '/lineage': typeof LineageRoute
   '/pipeline': typeof PipelineRoute
   '/signals': typeof SignalsRoute
@@ -133,7 +119,6 @@ export interface FileRoutesByFullPath {
   '/dynamic/': typeof DynamicIndexRoute
 }
 export interface FileRoutesByTo {
-  '/': typeof IndexRoute
   '/$': typeof SplatRoute
   '/cortex': typeof CortexRoute
   '/diagnostics': typeof DiagnosticsRoute
@@ -141,7 +126,6 @@ export interface FileRoutesByTo {
   '/hindsight': typeof HindsightRoute
   '/influence': typeof InfluenceRoute
   '/journal': typeof JournalRoute
-  '/learning': typeof LearningRoute
   '/lineage': typeof LineageRoute
   '/pipeline': typeof PipelineRoute
   '/signals': typeof SignalsRoute
@@ -152,7 +136,6 @@ export interface FileRoutesByTo {
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
-  '/': typeof IndexRoute
   '/$': typeof SplatRoute
   '/cortex': typeof CortexRoute
   '/diagnostics': typeof DiagnosticsRoute
@@ -161,7 +144,6 @@ export interface FileRoutesById {
   '/hindsight': typeof HindsightRoute
   '/influence': typeof InfluenceRoute
   '/journal': typeof JournalRoute
-  '/learning': typeof LearningRoute
   '/lineage': typeof LineageRoute
   '/pipeline': typeof PipelineRoute
   '/signals': typeof SignalsRoute
@@ -173,7 +155,6 @@ export interface FileRoutesById {
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
-    | '/'
     | '/$'
     | '/cortex'
     | '/diagnostics'
@@ -182,7 +163,6 @@ export interface FileRouteTypes {
     | '/hindsight'
     | '/influence'
     | '/journal'
-    | '/learning'
     | '/lineage'
     | '/pipeline'
     | '/signals'
@@ -192,7 +172,6 @@ export interface FileRouteTypes {
     | '/dynamic/'
   fileRoutesByTo: FileRoutesByTo
   to:
-    | '/'
     | '/$'
     | '/cortex'
     | '/diagnostics'
@@ -200,7 +179,6 @@ export interface FileRouteTypes {
     | '/hindsight'
     | '/influence'
     | '/journal'
-    | '/learning'
     | '/lineage'
     | '/pipeline'
     | '/signals'
@@ -210,7 +188,6 @@ export interface FileRouteTypes {
     | '/dynamic'
   id:
     | '__root__'
-    | '/'
     | '/$'
     | '/cortex'
     | '/diagnostics'
@@ -219,7 +196,6 @@ export interface FileRouteTypes {
     | '/hindsight'
     | '/influence'
     | '/journal'
-    | '/learning'
     | '/lineage'
     | '/pipeline'
     | '/signals'
@@ -230,7 +206,6 @@ export interface FileRouteTypes {
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
-  IndexRoute: typeof IndexRoute
   SplatRoute: typeof SplatRoute
   CortexRoute: typeof CortexRoute
   DiagnosticsRoute: typeof DiagnosticsRoute
@@ -239,7 +214,6 @@ export interface RootRouteChildren {
   HindsightRoute: typeof HindsightRoute
   InfluenceRoute: typeof InfluenceRoute
   JournalRoute: typeof JournalRoute
-  LearningRoute: typeof LearningRoute
   LineageRoute: typeof LineageRoute
   PipelineRoute: typeof PipelineRoute
   SignalsRoute: typeof SignalsRoute
@@ -282,13 +256,6 @@ declare module '@tanstack/react-router' {
       path: '/lineage'
       fullPath: '/lineage'
       preLoaderRoute: typeof LineageRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/learning': {
-      id: '/learning'
-      path: '/learning'
-      fullPath: '/learning'
-      preLoaderRoute: typeof LearningRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/journal': {
@@ -347,13 +314,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SplatRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/': {
-      id: '/'
-      path: '/'
-      fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/dynamic/': {
       id: '/dynamic/'
       path: '/'
@@ -385,7 +345,6 @@ const DynamicRouteWithChildren =
   DynamicRoute._addFileChildren(DynamicRouteChildren)
 
 const rootRouteChildren: RootRouteChildren = {
-  IndexRoute: IndexRoute,
   SplatRoute: SplatRoute,
   CortexRoute: CortexRoute,
   DiagnosticsRoute: DiagnosticsRoute,
@@ -394,7 +353,6 @@ const rootRouteChildren: RootRouteChildren = {
   HindsightRoute: HindsightRoute,
   InfluenceRoute: InfluenceRoute,
   JournalRoute: JournalRoute,
-  LearningRoute: LearningRoute,
   LineageRoute: LineageRoute,
   PipelineRoute: PipelineRoute,
   SignalsRoute: SignalsRoute,

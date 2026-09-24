@@ -1,3 +1,5 @@
+import type { ReactNode } from "react";
+
 /*
 Display formatting for the learning surface. These helpers only choose how a
 measured number is written; none of them substitutes a value, clamps a range
@@ -58,4 +60,32 @@ export const rational = (value: string | undefined) => {
 	return amount(
 		Number(numerator) / (denominator === undefined ? 1 : Number(denominator)),
 	);
+};
+
+/*
+MeasureFormat names how a measured number is written on a surface. It chooses
+notation only: an absent value is written as absent, never as zero.
+*/
+export type MeasureFormat = "integer" | "basis" | "percent" | "money";
+
+export const measure = (
+	value: ReactNode,
+	format?: MeasureFormat,
+): ReactNode => {
+	if (value === undefined || value === null || value === "") return "—";
+	if (typeof value !== "number" || format === undefined) return value;
+
+	switch (format) {
+		case "integer":
+			return Math.floor(value).toLocaleString();
+		case "basis":
+			return basis(value);
+		case "percent":
+			return percent(value);
+		case "money":
+			return value.toLocaleString(undefined, {
+				minimumFractionDigits: 2,
+				maximumFractionDigits: 2,
+			});
+	}
 };

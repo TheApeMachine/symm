@@ -115,8 +115,9 @@ lives in a `store.Vector` written back as feedback:
 2. `statistic.Authority` (`authority_state`) uses `data.Quality`'s definitions
    on each coordinate's own history: a reading's SNR is divergence² over noise
    variance (its square over the coordinate's earlier mean square), maturity is
-   1 − 1/support, and authority is maturity × the mean SNR fraction
-   snr/(1+snr). Maturity and SNR are published beside it. The standardized
+   1 − 1/support, and authority is maturity × snrFraction, the mean of
+   snr/(1+snr) over its readings (bounded, so no extreme reading dominates).
+   Maturity and snrFraction are published beside it. The standardized
    reading keeps zero as zero; energy is standard² × authority.
 3. `graph.Complete` (with `reach`) joins every coordinate that reported to
    every other coordinate, and `statistic.Concordance` reads those pairs
@@ -147,7 +148,26 @@ lives in a `store.Vector` written back as feedback:
    what move the arrangement.
 6. `statistic.GroupSum` of energy per settled region and `statistic.Otsu` over
    those sums: the regions lighting up now, named by their peak's original
-   coordinate, are the region token.
+   coordinate, are the region token. Peak also publishes the partition's
+   vocabulary: the same name under another partition may cover other ground,
+   so the vocabulary scopes the token history and is part of the trie key.
+
+### Precursor windows
+
+What is learned is the development, not the landmark. B and C only grade.
+
+- The entry precursor is the token trajectory from A to B. The token history
+  starts at A (`window_start`), and the ENTER truth at B is keyed by the path
+  A→B.
+- The exit precursor is the trajectory from B to C. `cognition.TokenSequence`
+  is scoped by {vocabulary, holding}, and holding is the causal inventory: it
+  turns true on the first cursor after the entry filled, so a fresh history
+  begins there and the EXIT truth at C is keyed by the path B→C.
+- A step that brings no token is read against the development so far; before
+  any token the sequence is idle and nothing is reinforced.
+- The labels travel only on the fragment's truth; `TestTrainingTokensAreCausal`
+  checks on the compiled graph that nothing downstream of the truth feeds a
+  signal or the impulse map.
 
 ### Regions
 

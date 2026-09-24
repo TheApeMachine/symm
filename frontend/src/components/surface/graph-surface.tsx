@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
 import { useSelector } from "@tanstack/react-store";
+import { useEffect, useMemo, useState } from "react";
 import { boundAtom } from "#/collections/app";
 import { useGraphResults } from "#/components/flume/graph-results.store";
 import type { FlumeNode } from "#/components/flume/types";

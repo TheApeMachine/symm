@@ -58,17 +58,20 @@ describe("the grid as the signals graph wires it", () => {
 	it("draws one row for a gathering port however many slots it has", async () => {
 		const signalsGraph = (await import("../../../../manifest/signals.json"))
 			.default as unknown as {
-			nodes: Record<string, { connections?: { inputs?: Record<string, unknown> } }>;
+			nodes: Record<
+				string,
+				{ connections?: { inputs?: Record<string, unknown> } }
+			>;
 		};
 
-		const wired = Object.keys(signalsGraph.nodes.grid.connections?.inputs ?? {});
+		const wired = Object.keys(
+			signalsGraph.nodes.grid.connections?.inputs ?? {},
+		);
 		const groups = groupPorts(wired.map(port));
 
 		expect(wired.length).toBeGreaterThan(400);
 		// Four hundred and some wired slots under the metrics port family.
-		expect(groups.map((group) => group.base).sort()).toEqual([
-			"metrics",
-		]);
+		expect(groups.map((group) => group.base).sort()).toEqual(["metrics"]);
 
 		const metrics = groups.find((group) => group.base === "metrics");
 		expect(metrics?.members.length).toBeGreaterThan(400);

@@ -670,38 +670,150 @@ func NewQueued_List(s *capnp.Segment, sz int32) (Queued_List, error) {
 	return capnp.CapList[Queued](l), err
 }
 
-const schema_91d758a99e934525 = "x\xda\x94\x92=h\x14_\x14\xc5\xcf\x9d\x8f\xcc\x9f?" +
-	"\xc4\xe1\xb2\x82 \xca\xa8\x18\xc4\x14\xf9\xd8mt\x9b\x8d" +
-	"\x92\x18\xd2\xed\x18\x84X\x88\xbcd\xdf\xc6\x89\xbb3q" +
-	"f\x9e\xb2\x95\xf8Q\xd8\x04\x09\xb1\x13D$\x04\x14," +
-	"\x14,,\xc4J%\xca\x82\x10D\xb6\x13a\x0b\xb1P" +
-	"\x0b\x1b\x9b\x91\x99\x8d&\xb2\x84(\xc3\xe52\xf0;\xe7" +
-	"\x9e\xcb\xbbCo\x8c\x11c\xb8\xf7\xf9\x01h\x93\xb7\xc8" +
-	"\xecI\xce\xcc\xdd}\xb4\xf7\xc4\xed\x1b`GK\xfa\xc6" +
-	"\x96\xee\xdc\x9fz\xbf\x08Pa\x8c\xf3\x94;\xc5\x16\x90" +
-	"s\xf9\x15(yxE6\xaf\xbe^Z\x80\xeb\x10m" +
-	"\xa0\x86\x05\x14\x9e\xf0\x1c\xe5V3\xf8\x05\x97@I\xa1" +
-	"\x1a\xde\xdc\xc3\xed\x05\xb0\xa3\xffa\xdbNm\xbfg\xe4" +
-	"7\xb6\xd2\x02\x92\xb5\xff\xdfN\xac\xbc\xfb\xb0\xd8E\xb7" +
-	"R\xfaSF\xb7\xd9J\x0bH\xbc#\x1fW\xbe<\xbe" +
-	"\xb8\x0c>D\xe8\xcco\xf2=\x82\x91L\xf5-\x0f\x9d" +
-	"\xfd\xbck\xad\xcb\xe7\x19\x17)\xd7\xcc|Vy|}" +
-	"\xea\x8f\xa7\xd7\xc6_^\xff\xda\xda\xe4\xd3\xe2\x07\x84d" +
-	"\xfd\xdb\x91\xf8A]\xccz\x17\x94.\x07C\xe5\xc7^" +
-	"]\x0eF\xb1\x88U40#\xe6\xfd\xf9\xe2\xa4\x93\xfd" +
-	"\x95\x89\xdc}\xa4\x01|\xba\x1f bw7@\x1aO" +
-	"\xe4\x01\xd2\xf9X\xda\x0c>\x9a6\x93\x87S\xa4\x87\x0f" +
-	"\x1f\x07\xc8\xe2\xfd\xfd\x80\xed\xf9^\xac\x07\xe7\x1d\x19\x86" +
-	"A\xe8TE,jN(E\xa5aO\xab\xa8q\xf9" +
-	"\x92\xf0b\xcf\x9f\xb5+\x81/\x7fG2\xb6\x8a\xd4I" +
-	"$\x1av-\x10\x954\x99\xa1\x1b\x80A\x00\xf7\x16\x01" +
-	"\xf7?\x9d\xdc\x9d\x1a\x95:*\xb27.\x00D6\xe8" +
-	"/\x96\x0eT8#\xcbDe\xdd,\xd3\xf6\x02\xd7Q" +
-	"R\xc9J\xb7\xc0\xdcB0\xaaB1]\x93\x03\xd5\x9a" +
-	"\x8a\xce\x1d,\x8b\xd0\x12\xf5h\xdb1\xa3\xa5\x8e\xac\xb3" +
-	"\xb3\xb9\xe9P\xe8\xd7K3\xe7\xa1\xb1i9\x99\xf3\x08" +
-	"\xfd{\x98\x932\xb2U-\x8e~\x06\x00\x00\xff\xff;" +
-	"\x0f\x0b\xc0"
+type Standing capnp.Client
+
+// Standing_TypeID is the unique identifier for the type Standing.
+const Standing_TypeID = 0x8fb793974245fb2b
+
+func (c Standing) WaitStreaming() error {
+	return capnp.Client(c).WaitStreaming()
+}
+
+// String returns a string that identifies this capability for debugging
+// purposes.  Its format should not be depended on: in particular, it
+// should not be used to compare clients.  Use IsSame to compare clients
+// for equality.
+func (c Standing) String() string {
+	return "Standing(" + capnp.Client(c).String() + ")"
+}
+
+// AddRef creates a new Client that refers to the same capability as c.
+// If c is nil or has resolved to null, then AddRef returns nil.
+func (c Standing) AddRef() Standing {
+	return Standing(capnp.Client(c).AddRef())
+}
+
+// Release releases a capability reference.  If this is the last
+// reference to the capability, then the underlying resources associated
+// with the capability will be released.
+//
+// Release will panic if c has already been released, but not if c is
+// nil or resolved to null.
+func (c Standing) Release() {
+	capnp.Client(c).Release()
+}
+
+// Resolve blocks until the capability is fully resolved or the Context
+// expires.
+func (c Standing) Resolve(ctx context.Context) error {
+	return capnp.Client(c).Resolve(ctx)
+}
+
+func (c Standing) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+	return capnp.Client(c).EncodeAsPtr(seg)
+}
+
+func (Standing) DecodeFromPtr(p capnp.Ptr) Standing {
+	return Standing(capnp.Client{}.DecodeFromPtr(p))
+}
+
+// IsValid reports whether c is a valid reference to a capability.
+// A reference is invalid if it is nil, has resolved to null, or has
+// been released.
+func (c Standing) IsValid() bool {
+	return capnp.Client(c).IsValid()
+}
+
+// IsSame reports whether c and other refer to a capability created by the
+// same call to NewClient.  This can return false negatives if c or other
+// are not fully resolved: use Resolve if this is an issue.  If either
+// c or other are released, then IsSame panics.
+func (c Standing) IsSame(other Standing) bool {
+	return capnp.Client(c).IsSame(capnp.Client(other))
+}
+
+// Update the flowcontrol.FlowLimiter used to manage flow control for
+// this client. This affects all future calls, but not calls already
+// waiting to send. Passing nil sets the value to flowcontrol.NopLimiter,
+// which is also the default.
+func (c Standing) SetFlowLimiter(lim fc.FlowLimiter) {
+	capnp.Client(c).SetFlowLimiter(lim)
+}
+
+// Get the current flowcontrol.FlowLimiter used to manage flow control
+// for this client.
+func (c Standing) GetFlowLimiter() fc.FlowLimiter {
+	return capnp.Client(c).GetFlowLimiter()
+}
+
+// A Standing_Server is a Standing with a local implementation.
+type Standing_Server interface {
+}
+
+// Standing_NewServer creates a new Server from an implementation of Standing_Server.
+func Standing_NewServer(s Standing_Server) *server.Server {
+	c, _ := s.(server.Shutdowner)
+	return server.New(Standing_Methods(nil, s), s, c)
+}
+
+// Standing_ServerToClient creates a new Client from an implementation of Standing_Server.
+// The caller is responsible for calling Release on the returned Client.
+func Standing_ServerToClient(s Standing_Server) Standing {
+	return Standing(capnp.NewClient(Standing_NewServer(s)))
+}
+
+// Standing_Methods appends Methods to a slice that invoke the methods on s.
+// This can be used to create a more complicated Server.
+func Standing_Methods(methods []server.Method, s Standing_Server) []server.Method {
+	if cap(methods) == 0 {
+		methods = make([]server.Method, 0, 0)
+	}
+
+	return methods
+}
+
+// Standing_List is a list of Standing.
+type Standing_List = capnp.CapList[Standing]
+
+// NewStanding_List creates a new list of Standing.
+func NewStanding_List(s *capnp.Segment, sz int32) (Standing_List, error) {
+	l, err := capnp.NewPointerList(s, sz)
+	return capnp.CapList[Standing](l), err
+}
+
+const schema_91d758a99e934525 = "x\xda\x94\x92Ok\xd4P\x14\xc5\xcf}I\x1a\x15J" +
+	"xD\x10DI\x05K\xb1B\xffL7\xda\xcd\xd4\xa1" +
+	"\xb5t7\xd1M]\x88\xbcv\xde\x8c\xa93I\x9b\xe4" +
+	")\xb3\x10\x19u\xe1f(\xc3,\xa4\x88\"R\x0b\x15" +
+	"\\\xe8F\xfc\x02\x0a\x82 \x14\x11w\"\xb8r\xa1[" +
+	"u\x11IFme\x18\xac\x8b\xcb%\xf0;\xe7\x9e<" +
+	"\xce\x00M\xe9\xe3\xfdC:\x98;f\xf4%\xe7\x97\xee" +
+	"?9|\xfa\xce-p\x87%\x833\xed{\x9b\xf3\xef" +
+	"Z\x00M|\xa3\x1c\xd9{\x99\x09\xd8\x06{\x09J\x1e" +
+	"7\xe4\xeb\xeb\xaf\xdaM\xb8\x0e\xd16\xaa\x9b\xc0\x84\xc7" +
+	"\x96\xc8\xbe\x9a\xc1u\x96\x07%\x13\xe5p\xf5\x10\xff\xd4" +
+	"\x04w\xb4\xbfl\xd7X\x8e\xec\xcd\x8c|\xc8\xcct\x80" +
+	"\xe4\xf8\x8f\x99\xc2\xed\xf6\xb3\xd5.\xba\xc9\x0ad\xdf\xcd" +
+	"\xe85f\xa6\x03$[\xfb\xde\xccm\xbc\xfd\xd0\xea\xa2" +
+	"\x1b\xa9w+\xa3\x9b\xccL\x07H\xbc\x13\x1f7\xbe<" +
+	"\xbd\xbc\x0e>D\xe8\xa4U\xec\x01AO\xe6\x07\xd7\xc7" +
+	".|>\xb0\xd5\xe5#\xd9$\xd9*\xf3Ya\xb3\xbf" +
+	"\xae~\x7f~c\xf6\xc5\xcd\xaf\xefw\xf84\xd8#\xc2" +
+	"X\xe2\x075Q\xf1V\x94&GC\xe5\xc7^M\x8e" +
+	"F\xb1\x88U4\xb2(\x96\xfd\xe5\xc9\xb3N\xf6U$" +
+	"r\x07\x88\x01\xfc\xdc0@\xc4\xdd\x83\x001>\x97\x03" +
+	"H\xe3\xa7\xd2\xa5\xf3\x93\xe92\xf8x\x8a\xf4\xf1c\x05" +
+	"\x80L~d\x18\xb0<\xdf\x8b\xb5\xe0\x92#\xc30\x08" +
+	"\x9d\xb2\x88E\xd5\x09\xa5(\xd5\xad\x05\x15\xd5\xaf]\x11" +
+	"^\xec\xf9\x15\xab\x14\xf8\xf2O$\xbdW\xa4N\"Q" +
+	"\xb7\xaa\x81(\xa5\xc9tM\x07t\x02x\xff$\xe0\xee" +
+	"\xd1\xc8\xdd\xcf(\xdfQ\x91\xb5\xdd\x13\x10Y\xa0]\xfc" +
+	"t\xa0\xc2EY$*jF\x91h7\x91\xfc\x92\xe7" +
+	"W\xd0-\xe9u\xc3u\x94T\xb2\xd4-0z\x08\xa6" +
+	"U(\x16\xaar\xa4\\U\xd1\xc5\xa3E\x11\x9a\xa2\x16" +
+	"\xfd\xf3\xcct\xbe#\xeb<\x93\xb1\xa3S\xf4\xbb\x14\x9c" +
+	"\xe7\xc0\xb8a:\x99\xf3\x14\xfd\x7f\x9832\xb2T5" +
+	"\x8e~\x06\x00\x00\xff\xff\x1f-\x1eN"
 
 func RegisterSchema(reg *schemas.Registry) {
 	reg.Register(&schemas.Schema{
@@ -710,6 +822,7 @@ func RegisterSchema(reg *schemas.Registry) {
 			0x889b461db1a06a5d,
 			0x8d93ca82cd6581ad,
 			0x8de5111c8f726633,
+			0x8fb793974245fb2b,
 			0x91e0d5a649d00ad3,
 			0xa476b2efa6e23869,
 			0xd317eb5f30a42558,

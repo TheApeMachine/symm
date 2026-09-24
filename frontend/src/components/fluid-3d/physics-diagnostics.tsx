@@ -263,7 +263,9 @@ export const PhysicsDiagnosticsHUD = ({
 							<div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
 								<div className="flex justify-between">
 									<span className="text-(--f4)">Vorticity RMS:</span>
-									<span className="text-(--f2)">{formatSci(vorticityVal, 4)}</span>
+									<span className="text-(--f2)">
+										{formatSci(vorticityVal, 4)}
+									</span>
 								</div>
 								<div className="flex justify-between">
 									<span className="text-(--f4)">Vorticity Max:</span>
@@ -303,11 +305,15 @@ export const PhysicsDiagnosticsHUD = ({
 							<div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
 								<div className="flex justify-between">
 									<span className="text-(--f4)">E_internal:</span>
-									<span className="text-(--f2)">{formatSci(gasInternal, 3)}</span>
+									<span className="text-(--f2)">
+										{formatSci(gasInternal, 3)}
+									</span>
 								</div>
 								<div className="flex justify-between">
 									<span className="text-(--f4)">E_kinetic:</span>
-									<span className="text-(--f2)">{formatSci(gasKinetic, 3)}</span>
+									<span className="text-(--f2)">
+										{formatSci(gasKinetic, 3)}
+									</span>
 								</div>
 								<div className="flex justify-between">
 									<span className="text-(--f4)">Min Density ρ:</span>
@@ -372,23 +378,33 @@ export const PhysicsDiagnosticsHUD = ({
 							<div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
 								<div className="flex justify-between">
 									<span className="text-(--f4)">Guidance Speed v_B:</span>
-									<span className="text-(--f2)">{formatSci(guidanceSpeed, 4)}</span>
+									<span className="text-(--f2)">
+										{formatSci(guidanceSpeed, 4)}
+									</span>
 								</div>
 								<div className="flex justify-between">
 									<span className="text-(--f4)">Coherence ⟨|Ψ|²⟩:</span>
-									<span className="text-(--f2)">{formatSci(coherenceMag2, 4)}</span>
+									<span className="text-(--f2)">
+										{formatSci(coherenceMag2, 4)}
+									</span>
 								</div>
 								<div className="flex justify-between">
 									<span className="text-(--f4)">Wave Kinetic:</span>
-									<span className="text-(--f2)">{formatSci(wave?.kinetic, 4)}</span>
+									<span className="text-(--f2)">
+										{formatSci(wave?.kinetic, 4)}
+									</span>
 								</div>
 								<div className="flex justify-between">
 									<span className="text-(--f4)">Wave Potential:</span>
-									<span className="text-(--f2)">{formatSci(wave?.potential, 4)}</span>
+									<span className="text-(--f2)">
+										{formatSci(wave?.potential, 4)}
+									</span>
 								</div>
 								<div className="flex justify-between">
 									<span className="text-(--f4)">Chemical Pot μ:</span>
-									<span className="text-(--f2)">{formatSci(wave?.chemical, 4)}</span>
+									<span className="text-(--f2)">
+										{formatSci(wave?.chemical, 4)}
+									</span>
 								</div>
 								<div className="flex justify-between">
 									<span className="text-(--f4)">Phase Potential:</span>
@@ -406,7 +422,9 @@ export const PhysicsDiagnosticsHUD = ({
 							<div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
 								<div className="flex justify-between">
 									<span className="text-(--f4)">Speed RMS:</span>
-									<span className="text-(--f2)">{formatSci(pilot?.speedRms, 4)}</span>
+									<span className="text-(--f2)">
+										{formatSci(pilot?.speedRms, 4)}
+									</span>
 								</div>
 								<div className="flex justify-between">
 									<span className="text-(--f4)">Displacement RMS:</span>
@@ -469,7 +487,9 @@ export const PhysicsDiagnosticsHUD = ({
 									</span>
 								</div>
 								<div className="flex justify-between items-center border-b border-(--line) pb-1">
-									<span className="text-(--f4)">Particle Balance Residual:</span>
+									<span className="text-(--f4)">
+										Particle Balance Residual:
+									</span>
 									<span className="text-(--f2)">
 										{formatSci(sources?.particleBalanceResidual, 6)}
 									</span>

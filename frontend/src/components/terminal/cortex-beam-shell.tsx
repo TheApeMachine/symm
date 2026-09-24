@@ -72,21 +72,11 @@ export const CortexBeamShell = ({ symbol }: { symbol: string }) => {
 					className="min-h-0 flex-1 overflow-auto px-2 py-1.5"
 				>
 					{predictions.map((pred, index) => (
-						<Panel
-							key={pred.name}
-							size="s"
-							className="flex items-center gap-2"
-						>
-							<Typography.Mono
-								size="s"
-								className="w-4 shrink-0 text-(--info)"
-							>
+						<Panel key={pred.name} size="s" className="flex items-center gap-2">
+							<Typography.Mono size="s" className="w-4 shrink-0 text-(--info)">
 								{index + 1}
 							</Typography.Mono>
-							<Typography.Span
-								variant="f1"
-								className="flex-1 text-[11px]"
-							>
+							<Typography.Span variant="f1" className="flex-1 text-[11px]">
 								{pred.name}
 							</Typography.Span>
 							<Meter

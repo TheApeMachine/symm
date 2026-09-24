@@ -192,7 +192,10 @@ const Control = (props: ControlProps) => {
 							onChange={(event) => {
 								commonProps.onChange(event.target.value);
 							}}
-							placeholder={placeholder || (calculatedLabel ? `Enter ${calculatedLabel}...` : "value")}
+							placeholder={
+								placeholder ||
+								(calculatedLabel ? `Enter ${calculatedLabel}...` : "value")
+							}
 							size="s"
 							mono
 						/>
@@ -325,7 +328,10 @@ const Control = (props: ControlProps) => {
 	};
 
 	return (
-		<div className="flex flex-col gap-1 w-full min-w-0" data-flume-component="control">
+		<div
+			className="flex flex-col gap-1 w-full min-w-0"
+			data-flume-component="control"
+		>
 			{calculatedLabel && type !== "checkbox" && type !== "custom" && (
 				<Label
 					data-flume-component="control-label"

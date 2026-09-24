@@ -11,18 +11,57 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
+/*
+frames writes one session's frames, all from one endpoint, as a miner receives
+them from a tape.
+*/
+func frames(params Mine_write_Params, first int64, payloads ...[]byte) error {
+	for _, err := range []error{params.SetSession("test"), params.SetChannel("ticker"), params.SetPriceField("last")} {
+		if err != nil {
+			return err
+		}
+	}
+
+	list, err := params.NewPayload(int32(len(payloads)))
+
+	if err != nil {
+		return err
+	}
+
+	sequences, err := params.NewSequence(int32(len(payloads)))
+
+	if err != nil {
+		return err
+	}
+
+	endpoints, err := params.NewEndpoint(int32(len(payloads)))
+
+	if err != nil {
+		return err
+	}
+
+	for index, payload := range payloads {
+		sequences.Set(index, first+int64(index))
+
+		if err := list.Set(index, payload); err != nil {
+			return err
+		}
+
+		if err := endpoints.Set(index, "fixture"); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 func TestMineWrite(t *testing.T) {
 	Convey("Given a miner receiving a malformed multi-symbol frame", t, func() {
 		server := NewMine()
 		client := Mine_ServerToClient(server)
 		defer client.Release()
 		So(client.Write(context.Background(), func(params Mine_write_Params) error {
-			for _, err := range []error{params.SetSession("test"), params.SetEndpoint("fixture"), params.SetChannel("ticker"), params.SetPriceField("last")} {
-				if err != nil {
-					return err
-				}
-			}
-			return params.SetPayload([]byte(`{"channel":"ticker","data":[{"symbol":"BTC/USD","last":100},{"symbol":"ETH/USD"}]}`))
+			return frames(params, 0, []byte(`{"channel":"ticker","data":[{"symbol":"BTC/USD","last":100},{"symbol":"ETH/USD"}]}`))
 		}), ShouldBeNil)
 		So(client.WaitStreaming(), ShouldNotBeNil)
 		So(server.paths, ShouldBeEmpty)
@@ -34,13 +73,8 @@ func TestMineWrite(t *testing.T) {
 		client := Mine_ServerToClient(server)
 		defer client.Release()
 		So(client.Write(context.Background(), func(params Mine_write_Params) error {
-			for _, err := range []error{params.SetSession("test"), params.SetEndpoint("fixture"), params.SetChannel("ticker"), params.SetPriceField("last")} {
-				if err != nil {
-					return err
-				}
-			}
 			// Kraken reports last 0 for a pair with no trades (CORN/USD, captured 2026-09-23).
-			return params.SetPayload([]byte(`{"channel":"ticker","data":[{"symbol":"CORN/USD","last":0,"trades":0},{"symbol":"BTC/USD","last":100}]}`))
+			return frames(params, 0, []byte(`{"channel":"ticker","data":[{"symbol":"CORN/USD","last":0,"trades":0},{"symbol":"BTC/USD","last":100}]}`))
 		}), ShouldBeNil)
 
 		Convey("Then the unpriced pair is absent and the priced one keeps its record position", func() {
@@ -51,6 +85,65 @@ func TestMineWrite(t *testing.T) {
 				So(key.symbol, ShouldEqual, "BTC/USD")
 				So(path.cursors, ShouldResemble, []TapeCursor{{Sequence: 0, Record: 1}})
 			}
+		})
+	})
+
+	Convey("Given a rise and its fall handed over together", t, func() {
+		client := Mine_ServerToClient(NewMine())
+		defer client.Release()
+		payloads := make([][]byte, 0, 180)
+
+		for index := 0; index < 180; index++ {
+			exponent := float64(index) * 0.005
+
+			if index >= 60 {
+				exponent = 59*0.005 - float64(index-59)*0.008
+			}
+
+			payload, err := json.Marshal(map[string]any{"channel": "ticker", "data": []map[string]any{{"symbol": "BTC/USD", "last": 100 * math.Exp(exponent)}}})
+			So(err, ShouldBeNil)
+			payloads = append(payloads, payload)
+		}
+
+		So(client.Write(context.Background(), func(params Mine_write_Params) error {
+			return frames(params, 0, payloads...)
+		}), ShouldBeNil)
+		So(client.WaitStreaming(), ShouldBeNil)
+
+		future, release := client.Done(context.Background(), nil)
+		defer release()
+		results, err := future.Struct()
+		So(err, ShouldBeNil)
+
+		Convey("Then each frame was mined in order, and the confirmed move is archived once and batched per stream", func() {
+			So(results.Which(), ShouldEqual, Mined_Which_events)
+			rows, err := results.Events().Out()
+			So(err, ShouldBeNil)
+			batches, err := results.Events().Batch()
+			So(err, ShouldBeNil)
+			So(rows.Len(), ShouldBeGreaterThan, 0)
+			So(batches.Len(), ShouldEqual, 1)
+
+			raw, err := batches.At(0)
+			So(err, ShouldBeNil)
+			var batch MiningBatch
+			So(json.Unmarshal(raw, &batch), ShouldBeNil)
+			So(batch.Session, ShouldEqual, "test")
+			So(batch.Endpoint, ShouldEqual, "fixture")
+			So(batch.Events, ShouldNotBeEmpty)
+			So(batch.Events[0].B.Sequence, ShouldBeLessThan, batch.Events[0].C.Sequence)
+
+			Convey("And the next evaluation starts clean", func() {
+				So(client.Write(context.Background(), func(params Mine_write_Params) error {
+					return frames(params, 180)
+				}), ShouldBeNil)
+				So(client.WaitStreaming(), ShouldBeNil)
+				next, release := client.Done(context.Background(), nil)
+				defer release()
+				quiet, err := next.Struct()
+				So(err, ShouldBeNil)
+				So(quiet.Which(), ShouldEqual, Mined_Which_none)
+			})
 		})
 	})
 }
@@ -109,13 +202,7 @@ func BenchmarkMineWrite(b *testing.B) {
 			b.Fatal(err)
 		}
 		err = client.Write(ctx, func(params Mine_write_Params) error {
-			params.SetSequence(int64(index))
-			for _, err := range []error{params.SetSession("test"), params.SetEndpoint("fixture"), params.SetChannel("ticker"), params.SetPriceField("last"), params.SetPayload(payload)} {
-				if err != nil {
-					return err
-				}
-			}
-			return nil
+			return frames(params, int64(index), payload)
 		})
 
 		if err != nil {

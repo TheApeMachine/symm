@@ -230,6 +230,32 @@ func TestDomainServer_Write(t *testing.T) {
 			})
 		})
 
+		Convey("When the seed falls on the upper bounds themselves", func() {
+			// One component makes every arrival, so its observed rate is
+			// the highest the window allows, and evenly spaced arrivals put
+			// the median gap on the quickest one, so the decay seed is the
+			// fastest resolvable decay too.
+			derived := domainOf(t, realisation{
+				times:      []float64{1, 2, 3, 4, 5, 6, 7, 8},
+				components: []float64{0, 0, 0, 0, 0, 0, 0, 0},
+				dimension:  2,
+				origin:     0,
+				horizon:    8,
+			})
+
+			Convey("Then its coordinates are drawn just inside them, not infinite", func() {
+				So(derived.defined, ShouldBeTrue)
+
+				start := mapCoordinates(t, derived.seed, derived.lower, derived.upper, 2)
+				So(start.baseline[0], ShouldBeLessThan, math.Exp(derived.upper[0]))
+				So(start.baseline[0], ShouldAlmostEqual, math.Exp(derived.upper[0]), 1e-6)
+				So(start.decay, ShouldAlmostEqual, math.Exp(derived.upper[width-1]), 1e-6)
+
+				branching := branchingOf(t, start.excitation, start.decay, 2)
+				So(radiusOf(t, branching, 2), ShouldAlmostEqual, 0.5, 1e-6)
+			})
+		})
+
 		Convey("When the window has no extent", func() {
 			derived := domainOf(t, realisation{
 				times:      []float64{1, 2},

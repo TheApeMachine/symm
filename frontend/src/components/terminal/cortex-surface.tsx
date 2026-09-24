@@ -1,13 +1,13 @@
 import { useSelector } from "@tanstack/react-store";
-import { signals, focusAtom } from "#/collections/app";
-import { CortexBeamShell } from "./cortex-beam-shell";
-import { CortexCanvas } from "./cortex-canvas";
-import { CortexPanelsShell } from "./cortex-panels-shell";
+import { focusAtom, signals } from "#/collections/app";
 import { Flex } from "#/components/ui/flex";
 import { Grid } from "#/components/ui/grid";
 import { usePaintStore } from "#/components/ui/paint";
 import { Rail } from "#/components/ui/rail";
 import { Typography } from "#/components/ui/typography";
+import { CortexBeamShell } from "./cortex-beam-shell";
+import { CortexCanvas } from "./cortex-canvas";
+import { CortexPanelsShell } from "./cortex-panels-shell";
 
 export const CortexSurface = () => {
 	const focusSymbol = useSelector(focusAtom, (state) => state);

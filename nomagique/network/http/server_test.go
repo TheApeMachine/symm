@@ -63,5 +63,20 @@ func TestHTTPServer(t *testing.T) {
 
 			_ = server.Close()
 		})
+
+		Convey("When another server finds the port already held", func() {
+			other := HTTPServer_ServerToClient(NewHTTPServer(ctx))
+			defer other.Release()
+
+			future, release := other.Done(ctx, nil)
+			defer release()
+
+			_, err := future.Struct()
+
+			Convey("Then it fails instead of serving nobody", func() {
+				So(err, ShouldNotBeNil)
+				So(err.Error(), ShouldContainSubstring, "failed to listen")
+			})
+		})
 	})
 }

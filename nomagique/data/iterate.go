@@ -29,6 +29,7 @@ type IterateServer struct {
 	index, count int64
 	last, found  bool
 	ignored      uint64
+	all          [][]byte
 }
 
 func NewIterate(ctx context.Context) *IterateServer {
@@ -77,7 +78,19 @@ func (server *IterateServer) Write(ctx context.Context, call Iterate_write) erro
 			return err
 		}
 	}
-	return server.advance()
+	if !call.Args().Whole() {
+		return server.advance()
+	}
+
+	server.all = server.all[:0]
+
+	for _, collection := range server.pending {
+		server.all = append(server.all, collection...)
+	}
+
+	server.pending = nil
+	server.cursor = 0
+	return nil
 }
 
 /*
@@ -101,6 +114,22 @@ func (server *IterateServer) Done(ctx context.Context, call Iterate_done) error 
 	results.SetIndex(server.index)
 	results.SetCount(server.count)
 	results.SetLast(server.last)
+
+	if len(server.all) > 0 {
+		all, err := results.NewAll(int32(len(server.all)))
+
+		if err != nil {
+			return errnie.Error(errnie.Err(errnie.Internal, "[data.iterate.Done] failed to allocate all", err))
+		}
+
+		for index, element := range server.all {
+			if err := all.Set(index, element); err != nil {
+				return errnie.Error(errnie.Err(errnie.Internal, "[data.iterate.Done] failed to set an element", err))
+			}
+		}
+
+		server.all = server.all[:0]
+	}
 
 	if !server.found {
 		return nil

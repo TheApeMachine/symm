@@ -11,6 +11,7 @@ import (
 	context "context"
 	runtime "github.com/theapemachine/symm/nomagique/runtime"
 	math "math"
+	strconv "strconv"
 )
 
 type Reduce capnp.Client
@@ -28,7 +29,7 @@ func (c Reduce) Write(ctx context.Context, params func(Reduce_write_Params) erro
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 16, PointerCount: 1}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 16, PointerCount: 2}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(Reduce_write_Params(s)) }
 	}
 
@@ -36,7 +37,7 @@ func (c Reduce) Write(ctx context.Context, params func(Reduce_write_Params) erro
 
 }
 
-func (c Reduce) Done(ctx context.Context, params func(Reduce_done_Params) error) (Reduce_done_Results_Future, capnp.ReleaseFunc) {
+func (c Reduce) Done(ctx context.Context, params func(Reduce_done_Params) error) (Folded_Future, capnp.ReleaseFunc) {
 
 	s := capnp.Send{
 		Method: capnp.Method{
@@ -52,7 +53,7 @@ func (c Reduce) Done(ctx context.Context, params func(Reduce_done_Params) error)
 	}
 
 	ans, release := capnp.Client(c).SendCall(ctx, s)
-	return Reduce_done_Results_Future{Future: ans.Future()}, release
+	return Folded_Future{Future: ans.Future()}, release
 
 }
 
@@ -209,9 +210,9 @@ func (c Reduce_done) Args() Reduce_done_Params {
 }
 
 // AllocResults allocates the results struct.
-func (c Reduce_done) AllocResults() (Reduce_done_Results, error) {
+func (c Reduce_done) AllocResults() (Folded, error) {
 	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 24, PointerCount: 0})
-	return Reduce_done_Results(r), err
+	return Folded(r), err
 }
 
 // Reduce_List is a list of Reduce.
@@ -229,12 +230,12 @@ type Reduce_write_Params capnp.Struct
 const Reduce_write_Params_TypeID = 0xb96f801492ca1046
 
 func NewReduce_write_Params(s *capnp.Segment) (Reduce_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 1})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 2})
 	return Reduce_write_Params(st), err
 }
 
 func NewRootReduce_write_Params(s *capnp.Segment) (Reduce_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 1})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 2})
 	return Reduce_write_Params(st), err
 }
 
@@ -304,12 +305,38 @@ func (s Reduce_write_Params) SetFlush(v bool) {
 	capnp.Struct(s).SetBit(64, v)
 }
 
+func (s Reduce_write_Params) Running() bool {
+	return capnp.Struct(s).Bit(65)
+}
+
+func (s Reduce_write_Params) SetRunning(v bool) {
+	capnp.Struct(s).SetBit(65, v)
+}
+
+func (s Reduce_write_Params) Scope() (string, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return p.Text(), err
+}
+
+func (s Reduce_write_Params) HasScope() bool {
+	return capnp.Struct(s).HasPtr(1)
+}
+
+func (s Reduce_write_Params) ScopeBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return p.TextBytes(), err
+}
+
+func (s Reduce_write_Params) SetScope(v string) error {
+	return capnp.Struct(s).SetText(1, v)
+}
+
 // Reduce_write_Params_List is a list of Reduce_write_Params.
 type Reduce_write_Params_List = capnp.StructList[Reduce_write_Params]
 
 // NewReduce_write_Params creates a new list of Reduce_write_Params.
 func NewReduce_write_Params_List(s *capnp.Segment, sz int32) (Reduce_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 16, PointerCount: 1}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 16, PointerCount: 2}, sz)
 	return capnp.StructList[Reduce_write_Params](l), err
 }
 
@@ -386,98 +413,129 @@ func (f Reduce_done_Params_Future) Struct() (Reduce_done_Params, error) {
 	return Reduce_done_Params(p.Struct()), err
 }
 
-type Reduce_done_Results capnp.Struct
+type Folded capnp.Struct
+type Folded_Which uint16
 
-// Reduce_done_Results_TypeID is the unique identifier for the type Reduce_done_Results.
-const Reduce_done_Results_TypeID = 0x9e4560f1f6712e04
+const (
+	Folded_Which_idle Folded_Which = 0
+	Folded_Which_out  Folded_Which = 1
+)
 
-func NewReduce_done_Results(s *capnp.Segment) (Reduce_done_Results, error) {
+func (w Folded_Which) String() string {
+	const s = "idleout"
+	switch w {
+	case Folded_Which_idle:
+		return s[0:4]
+	case Folded_Which_out:
+		return s[4:7]
+
+	}
+	return "Folded_Which(" + strconv.FormatUint(uint64(w), 10) + ")"
+}
+
+// Folded_TypeID is the unique identifier for the type Folded.
+const Folded_TypeID = 0xd1b1efd04f4eb94f
+
+func NewFolded(s *capnp.Segment) (Folded, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 0})
-	return Reduce_done_Results(st), err
+	return Folded(st), err
 }
 
-func NewRootReduce_done_Results(s *capnp.Segment) (Reduce_done_Results, error) {
+func NewRootFolded(s *capnp.Segment) (Folded, error) {
 	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 0})
-	return Reduce_done_Results(st), err
+	return Folded(st), err
 }
 
-func ReadRootReduce_done_Results(msg *capnp.Message) (Reduce_done_Results, error) {
+func ReadRootFolded(msg *capnp.Message) (Folded, error) {
 	root, err := msg.Root()
-	return Reduce_done_Results(root.Struct()), err
+	return Folded(root.Struct()), err
 }
 
-func (s Reduce_done_Results) String() string {
-	str, _ := text.Marshal(0x9e4560f1f6712e04, capnp.Struct(s))
+func (s Folded) String() string {
+	str, _ := text.Marshal(0xd1b1efd04f4eb94f, capnp.Struct(s))
 	return str
 }
 
-func (s Reduce_done_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+func (s Folded) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
 	return capnp.Struct(s).EncodeAsPtr(seg)
 }
 
-func (Reduce_done_Results) DecodeFromPtr(p capnp.Ptr) Reduce_done_Results {
-	return Reduce_done_Results(capnp.Struct{}.DecodeFromPtr(p))
+func (Folded) DecodeFromPtr(p capnp.Ptr) Folded {
+	return Folded(capnp.Struct{}.DecodeFromPtr(p))
 }
 
-func (s Reduce_done_Results) ToPtr() capnp.Ptr {
+func (s Folded) ToPtr() capnp.Ptr {
 	return capnp.Struct(s).ToPtr()
 }
-func (s Reduce_done_Results) IsValid() bool {
+
+func (s Folded) Which() Folded_Which {
+	return Folded_Which(capnp.Struct(s).Uint16(12))
+}
+func (s Folded) IsValid() bool {
 	return capnp.Struct(s).IsValid()
 }
 
-func (s Reduce_done_Results) Message() *capnp.Message {
+func (s Folded) Message() *capnp.Message {
 	return capnp.Struct(s).Message()
 }
 
-func (s Reduce_done_Results) Segment() *capnp.Segment {
+func (s Folded) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Reduce_done_Results) Out() float64 {
-	return math.Float64frombits(capnp.Struct(s).Uint64(0))
+func (s Folded) Count() int64 {
+	return int64(capnp.Struct(s).Uint64(0))
 }
 
-func (s Reduce_done_Results) SetOut(v float64) {
-	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
+func (s Folded) SetCount(v int64) {
+	capnp.Struct(s).SetUint64(0, uint64(v))
 }
 
-func (s Reduce_done_Results) Count() int64 {
-	return int64(capnp.Struct(s).Uint64(8))
+func (s Folded) Ready() bool {
+	return capnp.Struct(s).Bit(64)
 }
 
-func (s Reduce_done_Results) SetCount(v int64) {
-	capnp.Struct(s).SetUint64(8, uint64(v))
+func (s Folded) SetReady(v bool) {
+	capnp.Struct(s).SetBit(64, v)
 }
 
-func (s Reduce_done_Results) Ready() bool {
-	return capnp.Struct(s).Bit(128)
+func (s Folded) Status() runtime.Status {
+	return runtime.Status(capnp.Struct(s).Uint16(10))
 }
 
-func (s Reduce_done_Results) SetReady(v bool) {
-	capnp.Struct(s).SetBit(128, v)
+func (s Folded) SetStatus(v runtime.Status) {
+	capnp.Struct(s).SetUint16(10, uint16(v))
 }
 
-func (s Reduce_done_Results) Status() runtime.Status {
-	return runtime.Status(capnp.Struct(s).Uint16(18))
+func (s Folded) SetIdle() {
+	capnp.Struct(s).SetUint16(12, 0)
+
 }
 
-func (s Reduce_done_Results) SetStatus(v runtime.Status) {
-	capnp.Struct(s).SetUint16(18, uint16(v))
+func (s Folded) Out() float64 {
+	if capnp.Struct(s).Uint16(12) != 1 {
+		panic("Which() != out")
+	}
+	return math.Float64frombits(capnp.Struct(s).Uint64(16))
 }
 
-// Reduce_done_Results_List is a list of Reduce_done_Results.
-type Reduce_done_Results_List = capnp.StructList[Reduce_done_Results]
+func (s Folded) SetOut(v float64) {
+	capnp.Struct(s).SetUint16(12, 1)
+	capnp.Struct(s).SetUint64(16, math.Float64bits(v))
+}
 
-// NewReduce_done_Results creates a new list of Reduce_done_Results.
-func NewReduce_done_Results_List(s *capnp.Segment, sz int32) (Reduce_done_Results_List, error) {
+// Folded_List is a list of Folded.
+type Folded_List = capnp.StructList[Folded]
+
+// NewFolded creates a new list of Folded.
+func NewFolded_List(s *capnp.Segment, sz int32) (Folded_List, error) {
 	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 24, PointerCount: 0}, sz)
-	return capnp.StructList[Reduce_done_Results](l), err
+	return capnp.StructList[Folded](l), err
 }
 
-// Reduce_done_Results_Future is a wrapper for a Reduce_done_Results promised by a client call.
-type Reduce_done_Results_Future struct{ *capnp.Future }
+// Folded_Future is a wrapper for a Folded promised by a client call.
+type Folded_Future struct{ *capnp.Future }
 
-func (f Reduce_done_Results_Future) Struct() (Reduce_done_Results, error) {
+func (f Folded_Future) Struct() (Folded, error) {
 	p, err := f.Future.Ptr()
-	return Reduce_done_Results(p.Struct()), err
+	return Folded(p.Struct()), err
 }

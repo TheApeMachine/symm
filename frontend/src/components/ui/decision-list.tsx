@@ -24,7 +24,8 @@ export type DecisionListProps = {
 };
 
 /*
-DecisionList draws what the system decided, most recent standing per symbol.
+DecisionList draws what the system decided, one row per decision it is handed;
+id tells the rows apart, so one instrument may stand in several.
 
 It reaches for nothing: the rows and what a click means arrive as props, so the
 same list serves a React surface reading the strategy stream and a
@@ -56,7 +57,7 @@ export const DecisionList = ({
 			) : (
 				decisions.map((decision) => (
 					<List.Item
-						key={decision.symbol || decision.id}
+						key={decision.id}
 						className="grid cursor-pointer grid-cols-[minmax(0,1fr)_auto] items-start gap-x-2 gap-y-0 rounded-[3px] border border-(--line) bg-(--sunken) px-2.5 py-1.5 transition-colors hover:border-[color-mix(in_srgb,var(--acc)_35%,transparent)] hover:bg-(--raised)"
 						data-decision-card="true"
 						data-decision-id={decision.id}
@@ -77,8 +78,8 @@ export const DecisionList = ({
 								{decision.action}
 							</Typography.Span>
 						</Flex.Row>
-						<Typography.Span className="col-span-2 mt-0.5 line-clamp-2 min-w-0 wrap-break-word text-[9px] leading-tight text-(--f4)">
-							{decision.reason}
+						<Typography.Span className="col-span-2 mt-0.5 min-w-0 truncate text-[9px] leading-tight text-(--f4)">
+							<span title={decision.reason}>{decision.reason}</span>
 						</Typography.Span>
 					</List.Item>
 				))

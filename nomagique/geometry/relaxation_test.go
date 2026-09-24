@@ -129,6 +129,13 @@ func TestRelaxation(t *testing.T) {
 			So(math.Hypot(positions[6]-positions[0], positions[7]-positions[1]), ShouldBeGreaterThan, math.Sqrt2)
 		})
 
+		Convey("A repelling pair already farther apart than its target is left where it is", func() {
+			// Points 0 and 3 start √2 apart; a repulsion asking for only 1.2
+			// is satisfied. Inconsistency pushes apart and never draws together.
+			positions := relax(nil, nil, []float64{0.5, 0, 0, 0.5}, -0.2, 1.2)
+			So(positions, ShouldResemble, []float64{0, 0, 1, 0, 0, 1, 1, 1})
+		})
+
 		Convey("Points with no authority between them have no evidence to move by", func() {
 			positions := relax(nil, nil, []float64{0, 0, 0, 0}, 2, 0.1)
 			So(positions, ShouldResemble, []float64{0, 0, 1, 0, 0, 1, 1, 1})

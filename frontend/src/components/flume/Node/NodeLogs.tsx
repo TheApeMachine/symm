@@ -41,7 +41,9 @@ export const NodeLogs = ({
 	isOpen,
 	onClose,
 }: NodeLogsProps) => {
-	const [filter, setFilter] = useState<"all" | "info" | "warn" | "error">("all");
+	const [filter, setFilter] = useState<"all" | "info" | "warn" | "error">(
+		"all",
+	);
 	const [isFullscreen, setIsFullscreen] = useState(false);
 	const [copied, setCopied] = useState(false);
 
@@ -336,7 +338,8 @@ export const NodeLogs = ({
 										className={cn(
 											"flex items-start gap-2 py-1 px-1.5 rounded hover:bg-(--raised)/40 break-all",
 											entry.level === "error" && "text-red-300 bg-red-950/20",
-											entry.level === "warn" && "text-amber-300 bg-amber-950/20",
+											entry.level === "warn" &&
+												"text-amber-300 bg-amber-950/20",
 											entry.level === "info" && "text-(--f2)",
 										)}
 									>
@@ -347,7 +350,8 @@ export const NodeLogs = ({
 											className={cn(
 												"shrink-0 font-semibold text-[10px] uppercase px-1.5 py-0.5 rounded",
 												entry.level === "error" && "bg-red-500/20 text-red-400",
-												entry.level === "warn" && "bg-amber-500/20 text-amber-400",
+												entry.level === "warn" &&
+													"bg-amber-500/20 text-amber-400",
 												entry.level === "info" && "bg-(--acc)/15 text-(--acc)",
 											)}
 										>

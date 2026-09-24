@@ -1,15 +1,15 @@
 import { createStore } from "@tanstack/store";
 import { createRef, useEffect } from "react";
 import type { FluidOscillator } from "#/components/fluid-3d/wire";
+import type {
+	TerminalPhaseStatus,
+	TerminalWaveMode,
+} from "#/components/terminal/charts-frame";
 import {
 	clearCanvas,
 	resizeCanvas,
 	TERMINAL_COLORS,
 } from "#/components/ui/canvas-utils";
-import type {
-	TerminalPhaseStatus,
-	TerminalWaveMode,
-} from "#/components/terminal/charts-frame";
 
 /*
 The order-book phase dial is the live oscillator state, not an HCAM corpus

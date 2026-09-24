@@ -9,9 +9,19 @@ $Go.import("github.com/theapemachine/symm/nomagique/data");
 # unknown, never zero.
 #
 # It hands out what arrived on the same evaluation, so a consumer reads a
-# producer's number on the pass it was produced. When nothing arrived there is
-# no list at all.
+# producer's number on the pass it was produced. An evaluation on which no
+# producer delivered is idle, so nothing downstream runs on it.
+struct Gathered {
+  union {
+    idle @0 :Void;
+    gathered :group {
+      values  @1 :List(Float64);
+      present @2 :List(Bool);
+    }
+  }
+}
+
 interface Gather {
   write @0 (values :List(Float64), present :List(Bool)) -> stream;
-  done @1 () -> (values :List(Float64), present :List(Bool));
+  done @1 () -> Gathered;
 }

@@ -33,7 +33,6 @@ export const useLiveSources = (): Record<string, unknown> => {
 			way it names the data, so a surface drawn from nodes can open the
 			same inspector the React one opens.
 		*/
-		inspectSymbol: (symbol: string) =>
-			terminalStore.actions.openThesis(symbol),
+		inspectSymbol: (symbol: string) => terminalStore.actions.openThesis(symbol),
 	};
 };

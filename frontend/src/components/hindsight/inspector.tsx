@@ -420,7 +420,6 @@ export const measurementToReading = (m: Measurement): MeasurementReading => {
 	};
 };
 
-
 /*
 formatValue keeps a metric legible across the range these estimators actually
 produce — arrival intensities in the thousands beside imbalances at 1e-9 —
@@ -976,35 +975,38 @@ const MeasurementPanel = ({
 											<div className="space-y-1">
 												{(measurement.peers ?? measurement.Peers)!.map(
 													(peer, peerIdx) => (
-													<div
-														key={peer.id || peerIdx}
-														className="rounded bg-(--sunken) p-1.5 font-mono text-[9px]"
-													>
-														<div className="flex items-center gap-2 text-(--f2)">
-															<span className="font-semibold text-(--f1)">
-																{peer.source}
-															</span>
-															{peer.label ? (
-																<span className="text-(--f4)">{peer.label}</span>
-															) : null}
-															<span className="ml-auto text-(--f4)">
-																seq {peer.seqIdx}
-															</span>
-														</div>
-														{peer.metrics.length > 0 ? (
-															<div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[8px]">
-																{peer.metrics.map((m) => (
-																	<span key={m.id} className="text-(--f4)">
-																		{m.label || m.key}:{" "}
-																		<span className="text-(--f1)">
-																			{formatValue(m.raw)}
-																		</span>
+														<div
+															key={peer.id || peerIdx}
+															className="rounded bg-(--sunken) p-1.5 font-mono text-[9px]"
+														>
+															<div className="flex items-center gap-2 text-(--f2)">
+																<span className="font-semibold text-(--f1)">
+																	{peer.source}
+																</span>
+																{peer.label ? (
+																	<span className="text-(--f4)">
+																		{peer.label}
 																	</span>
-																))}
+																) : null}
+																<span className="ml-auto text-(--f4)">
+																	seq {peer.seqIdx}
+																</span>
 															</div>
-														) : null}
-													</div>
-												))}
+															{peer.metrics.length > 0 ? (
+																<div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[8px]">
+																	{peer.metrics.map((m) => (
+																		<span key={m.id} className="text-(--f4)">
+																			{m.label || m.key}:{" "}
+																			<span className="text-(--f1)">
+																				{formatValue(m.raw)}
+																			</span>
+																		</span>
+																	))}
+																</div>
+															) : null}
+														</div>
+													),
+												)}
 											</div>
 										</div>
 									) : null}
@@ -1057,8 +1059,8 @@ export const StatePanel = ({
 						Observed measurement at sequence {directReading.seqIdx || "—"}
 					</span>
 					{" · "}
-					{directReading.source || "market"} ({directReading.label || "BTC/USD"})
-					{peerCount > 0 ? ` · ${peerCount} concurrent peers` : ""}
+					{directReading.source || "market"} ({directReading.label || "BTC/USD"}
+					){peerCount > 0 ? ` · ${peerCount} concurrent peers` : ""}
 				</div>
 
 				<MeasurementPanel

@@ -1,4 +1,5 @@
-import React, { useCallback, useMemo, useState } from "react";
+import type React from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
 	type UIComponentName,
 	uiComponents,
@@ -154,7 +155,12 @@ export const renderNode = (
 	let resolvedProps: Record<string, any> = {};
 
 	if (node.props) {
-		resolvedProps = resolveBindings(node.props, observableState, sources, state);
+		resolvedProps = resolveBindings(
+			node.props,
+			observableState,
+			sources,
+			state,
+		);
 	}
 
 	// A port wired to a producer in the running program shows what arrived.

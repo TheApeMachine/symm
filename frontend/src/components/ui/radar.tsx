@@ -126,7 +126,8 @@ export const Radar = ({
 
 			{/* Dynamic arms (scaled directly via CSS --axis or DOM mutations) */}
 			{axes.map((axis) => {
-				const initialAxis = axis.initialValue !== undefined ? axis.initialValue : 0;
+				const initialAxis =
+					axis.initialValue !== undefined ? axis.initialValue : 0;
 				return (
 					<g
 						key={`arm:${axis.label}`}

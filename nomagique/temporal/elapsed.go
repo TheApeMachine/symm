@@ -9,7 +9,7 @@ import (
 type ElapsedServer struct {
 	scope       string
 	out         float64
-	previous    int64
+	previous    float64
 	initialized bool
 }
 
@@ -34,7 +34,12 @@ func (srv *ElapsedServer) Write(ctx context.Context, call Elapsed_write) error {
 		return nil
 	}
 
-	srv.out = float64(inVal-srv.previous) / 1e9
+	srv.out = (inVal - srv.previous) / 1e9
+
+	if call.Args().Origin() {
+		return nil
+	}
+
 	srv.previous = inVal
 	return nil
 }

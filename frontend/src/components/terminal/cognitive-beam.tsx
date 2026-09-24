@@ -1,6 +1,6 @@
 import { useSelector } from "@tanstack/react-store";
 import { useEffect, useRef } from "react";
-import { signals, focusAtom } from "#/collections/app";
+import { focusAtom, signals } from "#/collections/app";
 import type { CognitiveReading } from "#/collections/types";
 import { useDecisionsScopeSymbol } from "#/components/terminal/decision-side";
 import { meterTrackVariants } from "#/components/ui/meter";

@@ -1,10 +1,5814 @@
 {
   "id": "ui_training",
-  "name": "ui:training",
+  "name": "ui:training \u2014 the learning dashboard, drawn from the training graph",
   "nodes": {
+    "walk": {
+      "id": "walk",
+      "type": "transport.Fan",
+      "width": 280,
+      "height": 172,
+      "x": 0.0,
+      "y": 0.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "walk_x",
+              "portName": "data"
+            },
+            {
+              "nodeId": "walk_price",
+              "portName": "data"
+            }
+          ]
+        }
+      }
+    },
+    "trips": {
+      "id": "trips",
+      "type": "transport.Fan",
+      "width": 280,
+      "height": 172,
+      "x": 0.0,
+      "y": 200.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "trip_pnl",
+              "portName": "data"
+            },
+            {
+              "nodeId": "trip_basis",
+              "portName": "data"
+            },
+            {
+              "nodeId": "trip_positive",
+              "portName": "data"
+            },
+            {
+              "nodeId": "trip_negative",
+              "portName": "data"
+            },
+            {
+              "nodeId": "activity_closed",
+              "portName": "data"
+            },
+            {
+              "nodeId": "activity_symbol",
+              "portName": "data"
+            },
+            {
+              "nodeId": "activity_pnl",
+              "portName": "data"
+            }
+          ]
+        }
+      }
+    },
+    "event": {
+      "id": "event",
+      "type": "transport.Fan",
+      "width": 280,
+      "height": 172,
+      "x": 0.0,
+      "y": 400.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "event_symbol",
+              "portName": "data"
+            },
+            {
+              "nodeId": "event_excursion",
+              "portName": "data"
+            },
+            {
+              "nodeId": "mark_A",
+              "portName": "data"
+            },
+            {
+              "nodeId": "mark_B",
+              "portName": "data"
+            },
+            {
+              "nodeId": "mark_C",
+              "portName": "data"
+            }
+          ]
+        }
+      }
+    },
+    "walk_x": {
+      "id": "walk_x",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 0.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "walk",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "frames",
+              "portName": "value"
+            },
+            {
+              "nodeId": "point_x",
+              "portName": "value"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "record.cursor.sequence"
+        },
+        "encoding": {
+          "value": "number"
+        }
+      }
+    },
+    "walk_price": {
+      "id": "walk_price",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 200.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "walk",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "point",
+              "portName": "value"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "record.market.data.last"
+        },
+        "encoding": {
+          "value": "number"
+        }
+      }
+    },
+    "frames": {
+      "id": "frames",
+      "type": "data.Reduce",
+      "width": 280,
+      "height": 172,
+      "x": 680.0,
+      "y": 0.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "walk_x",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "kpiValue_frames",
+              "portName": "value"
+            },
+            {
+              "nodeId": "ribbonFrames",
+              "portName": "value"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "operator": {
+          "value": "count"
+        },
+        "running": {
+          "value": true
+        }
+      }
+    },
+    "point_x": {
+      "id": "point_x",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "x": 680.0,
+      "y": 200.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "walk_x",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "point",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "x"
+        },
+        "data": {
+          "value": "{}"
+        }
+      }
+    },
+    "point": {
+      "id": "point",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "x": 1020.0,
+      "y": 0.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "point_x",
+              "portName": "out"
+            }
+          ],
+          "value": [
+            {
+              "nodeId": "walk_price",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "walk_trail",
+              "portName": "values"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "y"
+        }
+      }
+    },
+    "walk_trail": {
+      "id": "walk_trail",
+      "type": "store.Trail",
+      "width": 280,
+      "height": 172,
+      "x": 1360.0,
+      "y": 0.0,
+      "connections": {
+        "inputs": {
+          "values": [
+            {
+              "nodeId": "point",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "episode",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "capacity": {
+          "value": 600
+        }
+      }
+    },
+    "episode": {
+      "id": "episode",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "x": 1700.0,
+      "y": 0.0,
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "walk_trail",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "episodeTape",
+              "portName": "episode"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "points"
+        },
+        "data": {
+          "value": "{\"id\":\"fragment\",\"label\":\"Fragment walk\"}"
+        }
+      }
+    },
+    "examples": {
+      "id": "examples",
+      "type": "transport.Fan",
+      "width": 280,
+      "height": 172,
+      "x": 0.0,
+      "y": 600.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "example_seq",
+              "portName": "data"
+            },
+            {
+              "nodeId": "example_path",
+              "portName": "data"
+            },
+            {
+              "nodeId": "example_action",
+              "portName": "data"
+            },
+            {
+              "nodeId": "example_label",
+              "portName": "data"
+            },
+            {
+              "nodeId": "example_symbol",
+              "portName": "data"
+            },
+            {
+              "nodeId": "example_record",
+              "portName": "data"
+            },
+            {
+              "nodeId": "example_cursor",
+              "portName": "data"
+            },
+            {
+              "nodeId": "example_origin",
+              "portName": "data"
+            },
+            {
+              "nodeId": "judged",
+              "portName": "data"
+            }
+          ]
+        }
+      }
+    },
+    "example_seq": {
+      "id": "example_seq",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 400.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "examples",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "situations",
+              "portName": "value"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "cursor.sequence"
+        },
+        "encoding": {
+          "value": "number"
+        }
+      }
+    },
+    "example_path": {
+      "id": "example_path",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 600.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "examples",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "row_reason",
+              "portName": "json"
+            },
+            {
+              "nodeId": "item_path",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "settled.sequence"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      }
+    },
+    "example_action": {
+      "id": "example_action",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 800.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "examples",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "row_action",
+              "portName": "json"
+            },
+            {
+              "nodeId": "item",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "truth.action"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      }
+    },
+    "example_label": {
+      "id": "example_label",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 1000.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "examples",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "text": [
+            {
+              "nodeId": "policyAction",
+              "portName": "label"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "truth.action"
+        },
+        "encoding": {
+          "value": "text"
+        }
+      }
+    },
+    "example_symbol": {
+      "id": "example_symbol",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 1200.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "examples",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "row_symbol",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "event.symbol"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      }
+    },
+    "example_record": {
+      "id": "example_record",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 1400.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "examples",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "row_id",
+              "portName": "values_2"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "cursor.record"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      }
+    },
+    "example_cursor": {
+      "id": "example_cursor",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 1600.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "examples",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "row_id",
+              "portName": "values_1"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "cursor.sequence"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      }
+    },
+    "example_origin": {
+      "id": "example_origin",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 1800.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "examples",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "row_id",
+              "portName": "values_0"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "event.a.sequence"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      }
+    },
+    "row_id": {
+      "id": "row_id",
+      "type": "data.Format",
+      "width": 280,
+      "height": 172,
+      "x": 680.0,
+      "y": 400.0,
+      "connections": {
+        "inputs": {
+          "values_0": [
+            {
+              "nodeId": "example_origin",
+              "portName": "json"
+            }
+          ],
+          "values_1": [
+            {
+              "nodeId": "example_cursor",
+              "portName": "json"
+            }
+          ],
+          "values_2": [
+            {
+              "nodeId": "example_record",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "row_key",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "template": {
+          "value": "\"{0}.{1}.{2}\""
+        }
+      }
+    },
+    "row_key": {
+      "id": "row_key",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "x": 1020.0,
+      "y": 200.0,
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "row_id",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "row_symbol",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "id"
+        },
+        "data": {
+          "value": "{}"
+        }
+      }
+    },
+    "row_symbol": {
+      "id": "row_symbol",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "x": 1020.0,
+      "y": 400.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "row_key",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "example_symbol",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "row_action",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "symbol"
+        }
+      }
+    },
+    "row_action": {
+      "id": "row_action",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "x": 1020.0,
+      "y": 600.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "row_symbol",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "example_action",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "row_reason",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "action"
+        }
+      }
+    },
+    "row_reason": {
+      "id": "row_reason",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "x": 1020.0,
+      "y": 800.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "row_action",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "example_path",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "row_confidence",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "reason"
+        }
+      }
+    },
+    "row_confidence": {
+      "id": "row_confidence",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "x": 1020.0,
+      "y": 1000.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "row_reason",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "decisions",
+              "portName": "values"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "confidence"
+        }
+      }
+    },
+    "decisions": {
+      "id": "decisions",
+      "type": "store.Trail",
+      "width": 280,
+      "height": 172,
+      "x": 1360.0,
+      "y": 200.0,
+      "connections": {
+        "inputs": {
+          "values": [
+            {
+              "nodeId": "row_confidence",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "activity",
+              "portName": "decisions"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "capacity": {
+          "value": 24
+        }
+      }
+    },
+    "situations": {
+      "id": "situations",
+      "type": "data.Reduce",
+      "width": 280,
+      "height": 172,
+      "x": 680.0,
+      "y": 600.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "example_seq",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "kpiValue_situations",
+              "portName": "value"
+            },
+            {
+              "nodeId": "recognition_situations",
+              "portName": "value"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "operator": {
+          "value": "count"
+        },
+        "running": {
+          "value": true
+        }
+      }
+    },
+    "item_path": {
+      "id": "item_path",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "x": 680.0,
+      "y": 800.0,
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "example_path",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "item",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "path"
+        },
+        "data": {
+          "value": "{}"
+        }
+      }
+    },
+    "item": {
+      "id": "item",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "x": 1020.0,
+      "y": 1200.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "item_path",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "example_action",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "items",
+              "portName": "values"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "label"
+        }
+      }
+    },
+    "items": {
+      "id": "items",
+      "type": "store.Trail",
+      "width": 280,
+      "height": 172,
+      "x": 1360.0,
+      "y": 400.0,
+      "connections": {
+        "inputs": {
+          "values": [
+            {
+              "nodeId": "item",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "tree",
+              "portName": "items"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "capacity": {
+          "value": 1000
+        }
+      }
+    },
+    "tree": {
+      "id": "tree",
+      "type": "data.Tree",
+      "width": 280,
+      "height": 172,
+      "x": 1700.0,
+      "y": 200.0,
+      "connections": {
+        "inputs": {
+          "items": [
+            {
+              "nodeId": "items",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "grown.branches": [
+            {
+              "nodeId": "policyBranches",
+              "portName": "branches"
+            }
+          ],
+          "grown.root": [
+            {
+              "nodeId": "trieView",
+              "portName": "root"
+            }
+          ],
+          "grown.candidates": [
+            {
+              "nodeId": "trieView",
+              "portName": "candidates"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "separator": {
+          "value": "/"
+        }
+      }
+    },
+    "predicted": {
+      "id": "predicted",
+      "type": "data.Format",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 2000.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "judged",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "template": {
+          "value": "\"{0}\""
+        }
+      }
+    },
+    "judged": {
+      "id": "judged",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "x": 680.0,
+      "y": 1000.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "examples",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "predicted",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "hit",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "predicted"
+        }
+      }
+    },
+    "hit": {
+      "id": "hit",
+      "type": "data.Filter",
+      "width": 280,
+      "height": 172,
+      "x": 1020.0,
+      "y": 1400.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "judged",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "passed": [
+            {
+              "nodeId": "scored",
+              "portName": "test"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "truth.action"
+        },
+        "operator": {
+          "value": "=="
+        },
+        "referencePath": {
+          "value": "predicted"
+        }
+      }
+    },
+    "scored": {
+      "id": "scored",
+      "type": "controlflow.Select",
+      "width": 280,
+      "height": 172,
+      "x": 1360.0,
+      "y": 600.0,
+      "connections": {
+        "inputs": {
+          "test": [
+            {
+              "nodeId": "hit",
+              "portName": "passed"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "score",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "yes": {
+          "value": "[\"{\\\"hit\\\":1}\"]"
+        },
+        "no": {
+          "value": "[\"{\\\"hit\\\":0}\"]"
+        }
+      }
+    },
+    "score": {
+      "id": "score",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "x": 1700.0,
+      "y": 400.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "scored",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "accuracy",
+              "portName": "value"
+            },
+            {
+              "nodeId": "evaluated",
+              "portName": "value"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "hit"
+        },
+        "encoding": {
+          "value": "number"
+        }
+      }
+    },
+    "accuracy": {
+      "id": "accuracy",
+      "type": "data.Reduce",
+      "width": 280,
+      "height": 172,
+      "x": 1700.0,
+      "y": 600.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "score",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "kpiValue_accuracy",
+              "portName": "value"
+            },
+            {
+              "nodeId": "recognition_accuracy",
+              "portName": "value"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "operator": {
+          "value": "mean"
+        },
+        "running": {
+          "value": true
+        }
+      }
+    },
+    "evaluated": {
+      "id": "evaluated",
+      "type": "data.Reduce",
+      "width": 280,
+      "height": 172,
+      "x": 1700.0,
+      "y": 800.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "score",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "recognition_evaluated",
+              "portName": "value"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "operator": {
+          "value": "count"
+        },
+        "running": {
+          "value": true
+        }
+      }
+    },
+    "trip_pnl": {
+      "id": "trip_pnl",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 2200.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "trips",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "trip_return",
+              "portName": "a"
+            },
+            {
+              "nodeId": "wallet_pnl",
+              "portName": "value"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "pnl"
+        },
+        "encoding": {
+          "value": "number"
+        }
+      }
+    },
+    "trip_basis": {
+      "id": "trip_basis",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 2400.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "trips",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "trip_return",
+              "portName": "b"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "basis"
+        },
+        "encoding": {
+          "value": "number"
+        }
+      }
+    },
+    "trip_return": {
+      "id": "trip_return",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": 680.0,
+      "y": 1200.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "trip_pnl",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "trip_basis",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "resolved",
+              "portName": "value"
+            },
+            {
+              "nodeId": "edge",
+              "portName": "value"
+            },
+            {
+              "nodeId": "trip_bp",
+              "portName": "a"
+            }
+          ]
+        }
+      }
+    },
+    "resolved": {
+      "id": "resolved",
+      "type": "data.Reduce",
+      "width": 280,
+      "height": 172,
+      "x": 1020.0,
+      "y": 1600.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "trip_return",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "kpiValue_resolved",
+              "portName": "value"
+            },
+            {
+              "nodeId": "skill",
+              "portName": "evaluated"
+            },
+            {
+              "nodeId": "recognition_resolved",
+              "portName": "value"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "operator": {
+          "value": "count"
+        },
+        "running": {
+          "value": true
+        }
+      }
+    },
+    "edge": {
+      "id": "edge",
+      "type": "data.Reduce",
+      "width": 280,
+      "height": 172,
+      "x": 1020.0,
+      "y": 1800.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "trip_return",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "kpiValue_edge",
+              "portName": "value"
+            },
+            {
+              "nodeId": "skill",
+              "portName": "edge"
+            },
+            {
+              "nodeId": "recognition_edge",
+              "portName": "value"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "operator": {
+          "value": "mean"
+        },
+        "running": {
+          "value": true
+        }
+      }
+    },
+    "trip_bp": {
+      "id": "trip_bp",
+      "type": "arithmetic.Multiply",
+      "width": 280,
+      "height": 172,
+      "x": 1020.0,
+      "y": 2000.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "trip_return",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "outcomes",
+              "portName": "numbers"
+            },
+            {
+              "nodeId": "bp_mean",
+              "portName": "value"
+            },
+            {
+              "nodeId": "bp_square",
+              "portName": "a"
+            },
+            {
+              "nodeId": "bp_square",
+              "portName": "b"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "b": {
+          "value": 10000
+        }
+      }
+    },
+    "outcomes": {
+      "id": "outcomes",
+      "type": "store.Trail",
+      "width": 280,
+      "height": 172,
+      "x": 1360.0,
+      "y": 800.0,
+      "connections": {
+        "inputs": {
+          "numbers": [
+            {
+              "nodeId": "trip_bp",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "bins",
+              "portName": "values"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "capacity": {
+          "value": 1000
+        }
+      }
+    },
+    "bins": {
+      "id": "bins",
+      "type": "statistic.Histogram",
+      "width": 280,
+      "height": 172,
+      "x": 1700.0,
+      "y": 1000.0,
+      "connections": {
+        "inputs": {
+          "values": [
+            {
+              "nodeId": "outcomes",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "outcomeDistribution",
+              "portName": "bins"
+            }
+          ]
+        }
+      }
+    },
+    "event_symbol": {
+      "id": "event_symbol",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 2600.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "event",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "text": [
+            {
+              "nodeId": "symbolBadge",
+              "portName": "label"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "event.symbol"
+        },
+        "encoding": {
+          "value": "text"
+        }
+      }
+    },
+    "event_excursion": {
+      "id": "event_excursion",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 2800.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "event",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "episodeTape",
+              "portName": "outcome"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "event.excursion"
+        },
+        "encoding": {
+          "value": "number"
+        }
+      }
+    },
+    "mark_A": {
+      "id": "mark_A",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 3000.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "event",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "marks_A",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "event.a.sequence"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      }
+    },
+    "marks_A": {
+      "id": "marks_A",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "x": 680.0,
+      "y": 1400.0,
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "mark_A",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "marks_B",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "A"
+        },
+        "data": {
+          "value": "{}"
+        }
+      }
+    },
+    "mark_B": {
+      "id": "mark_B",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 3200.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "event",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "marks_B",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "event.b.sequence"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      }
+    },
+    "marks_B": {
+      "id": "marks_B",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "x": 680.0,
+      "y": 1600.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "marks_A",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "mark_B",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "marks_C",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "B"
+        }
+      }
+    },
+    "mark_C": {
+      "id": "mark_C",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 3400.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "event",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "marks_C",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "event.c.sequence"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      }
+    },
+    "marks_C": {
+      "id": "marks_C",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "x": 680.0,
+      "y": 1800.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "marks_B",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "mark_C",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "episodeTape",
+              "portName": "marks"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "C"
+        }
+      }
+    },
+    "entered_doc": {
+      "id": "entered_doc",
+      "type": "transport.Fan",
+      "width": 280,
+      "height": 172,
+      "x": 0.0,
+      "y": 800.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "entered_at",
+              "portName": "data"
+            }
+          ]
+        }
+      }
+    },
+    "exited_doc": {
+      "id": "exited_doc",
+      "type": "transport.Fan",
+      "width": 280,
+      "height": 172,
+      "x": 0.0,
+      "y": 1000.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "exited_at",
+              "portName": "data"
+            }
+          ]
+        }
+      }
+    },
+    "entered_at": {
+      "id": "entered_at",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 3600.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "entered_doc",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "episodeTape",
+              "portName": "entered"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "cursor.sequence"
+        },
+        "encoding": {
+          "value": "number"
+        }
+      }
+    },
+    "exited_at": {
+      "id": "exited_at",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 3800.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "exited_doc",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "episodeTape",
+              "portName": "exited"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "cursor.sequence"
+        },
+        "encoding": {
+          "value": "number"
+        }
+      }
+    },
+    "trip_positive": {
+      "id": "trip_positive",
+      "type": "data.Filter",
+      "width": 280,
+      "height": 172,
+      "x": 680.0,
+      "y": 2000.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "trips",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "trip_positive_pnl",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "pnl"
+        },
+        "operator": {
+          "value": ">"
+        },
+        "threshold": {
+          "value": 0
+        }
+      }
+    },
+    "trip_positive_pnl": {
+      "id": "trip_positive_pnl",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "x": 1020.0,
+      "y": 2200.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "trip_positive",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "positives",
+              "portName": "value"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "pnl"
+        },
+        "encoding": {
+          "value": "number"
+        }
+      }
+    },
+    "positives": {
+      "id": "positives",
+      "type": "data.Reduce",
+      "width": 280,
+      "height": 172,
+      "x": 1360.0,
+      "y": 1000.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "trip_positive_pnl",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "skill",
+              "portName": "positive"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "operator": {
+          "value": "count"
+        },
+        "running": {
+          "value": true
+        }
+      }
+    },
+    "trip_negative": {
+      "id": "trip_negative",
+      "type": "data.Filter",
+      "width": 280,
+      "height": 172,
+      "x": 680.0,
+      "y": 2200.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "trips",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "trip_negative_pnl",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "pnl"
+        },
+        "operator": {
+          "value": "<"
+        },
+        "threshold": {
+          "value": 0
+        }
+      }
+    },
+    "trip_negative_pnl": {
+      "id": "trip_negative_pnl",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "x": 1020.0,
+      "y": 2400.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "trip_negative",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "negatives",
+              "portName": "value"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "pnl"
+        },
+        "encoding": {
+          "value": "number"
+        }
+      }
+    },
+    "negatives": {
+      "id": "negatives",
+      "type": "data.Reduce",
+      "width": 280,
+      "height": 172,
+      "x": 1360.0,
+      "y": 1200.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "trip_negative_pnl",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "skill",
+              "portName": "negative"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "operator": {
+          "value": "count"
+        },
+        "running": {
+          "value": true
+        }
+      }
+    },
+    "wallet_pnl": {
+      "id": "wallet_pnl",
+      "type": "data.Reduce",
+      "width": 280,
+      "height": 172,
+      "x": 1020.0,
+      "y": 2600.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "trip_pnl",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "skill",
+              "portName": "pnl"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "operator": {
+          "value": "sum"
+        },
+        "running": {
+          "value": true
+        }
+      }
+    },
+    "activity_closed": {
+      "id": "activity_closed",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "x": 680.0,
+      "y": 2400.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "trips",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "activity_id",
+              "portName": "json"
+            },
+            {
+              "nodeId": "activity_time",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "closed"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      }
+    },
+    "activity_symbol": {
+      "id": "activity_symbol",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "x": 680.0,
+      "y": 2600.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "trips",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "activity_message",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "symbol"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      }
+    },
+    "activity_pnl": {
+      "id": "activity_pnl",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "x": 680.0,
+      "y": 2800.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "trips",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "activity_row",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "pnl"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      }
+    },
+    "activity_id": {
+      "id": "activity_id",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "x": 1020.0,
+      "y": 2800.0,
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "activity_closed",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "activity_time",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "id"
+        },
+        "data": {
+          "value": "{}"
+        }
+      }
+    },
+    "activity_time": {
+      "id": "activity_time",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "x": 1020.0,
+      "y": 3000.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "activity_id",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "activity_closed",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "activity_message",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "time"
+        }
+      }
+    },
+    "activity_message": {
+      "id": "activity_message",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "x": 1020.0,
+      "y": 3200.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "activity_time",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "activity_symbol",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "activity_row",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "message"
+        }
+      }
+    },
+    "activity_row": {
+      "id": "activity_row",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "x": 1020.0,
+      "y": 3400.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "activity_message",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "activity_pnl",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "activity_log",
+              "portName": "values"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "pnl"
+        }
+      }
+    },
+    "activity_log": {
+      "id": "activity_log",
+      "type": "store.Trail",
+      "width": 280,
+      "height": 172,
+      "x": 1360.0,
+      "y": 1400.0,
+      "connections": {
+        "inputs": {
+          "values": [
+            {
+              "nodeId": "activity_row",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "skill",
+              "portName": "activity"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "capacity": {
+          "value": 10
+        }
+      }
+    },
+    "bp_mean": {
+      "id": "bp_mean",
+      "type": "data.Reduce",
+      "width": 280,
+      "height": 172,
+      "x": 1360.0,
+      "y": 1600.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "trip_bp",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "bp_mean_square",
+              "portName": "a"
+            },
+            {
+              "nodeId": "bp_mean_square",
+              "portName": "b"
+            },
+            {
+              "nodeId": "outcomeDistribution",
+              "portName": "mean"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "operator": {
+          "value": "mean"
+        },
+        "running": {
+          "value": true
+        }
+      }
+    },
+    "bp_square": {
+      "id": "bp_square",
+      "type": "arithmetic.Multiply",
+      "width": 280,
+      "height": 172,
+      "x": 1360.0,
+      "y": 1800.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "trip_bp",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "trip_bp",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "bp_second",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "bp_second": {
+      "id": "bp_second",
+      "type": "data.Reduce",
+      "width": 280,
+      "height": 172,
+      "x": 1700.0,
+      "y": 1200.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "bp_square",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "bp_variance",
+              "portName": "a"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "operator": {
+          "value": "mean"
+        },
+        "running": {
+          "value": true
+        }
+      }
+    },
+    "bp_mean_square": {
+      "id": "bp_mean_square",
+      "type": "arithmetic.Multiply",
+      "width": 280,
+      "height": 172,
+      "x": 1700.0,
+      "y": 1400.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "bp_mean",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "bp_mean",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "bp_variance",
+              "portName": "b"
+            }
+          ]
+        }
+      }
+    },
+    "bp_variance": {
+      "id": "bp_variance",
+      "type": "arithmetic.Subtract",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 0.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "bp_second",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "bp_mean_square",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "bp_deviation",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "bp_deviation": {
+      "id": "bp_deviation",
+      "type": "calculus.Sqrt",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 200.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "bp_variance",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "outcomeDistribution",
+              "portName": "deviation"
+            }
+          ]
+        }
+      }
+    },
+    "xs": {
+      "id": "xs",
+      "type": "data.Array",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 4000.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "points",
+              "portName": "columns"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "stride": {
+          "value": 2
+        },
+        "offset": {
+          "value": 0
+        }
+      }
+    },
+    "ys": {
+      "id": "ys",
+      "type": "data.Array",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 4200.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "points",
+              "portName": "columns_1"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "stride": {
+          "value": 2
+        },
+        "offset": {
+          "value": 1
+        }
+      }
+    },
+    "energy": {
+      "id": "energy",
+      "type": "data.Array",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 4400.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "points",
+              "portName": "columns_2"
+            }
+          ]
+        }
+      }
+    },
+    "authority": {
+      "id": "authority",
+      "type": "data.Array",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 4600.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "points",
+              "portName": "columns_3"
+            }
+          ]
+        }
+      }
+    },
+    "snr": {
+      "id": "snr",
+      "type": "data.Array",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 4800.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "points",
+              "portName": "columns_4"
+            }
+          ]
+        }
+      }
+    },
+    "present": {
+      "id": "present",
+      "type": "data.Array",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 5000.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "points",
+              "portName": "columns_5"
+            }
+          ]
+        }
+      }
+    },
+    "label": {
+      "id": "label",
+      "type": "data.Array",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 5200.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "points",
+              "portName": "columns_6"
+            }
+          ]
+        }
+      }
+    },
+    "source": {
+      "id": "source",
+      "type": "data.Array",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 5400.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "points",
+              "portName": "columns_7"
+            }
+          ]
+        }
+      }
+    },
+    "activation": {
+      "id": "activation",
+      "type": "data.Array",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 5600.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "points",
+              "portName": "columns_8"
+            }
+          ]
+        }
+      }
+    },
+    "hot": {
+      "id": "hot",
+      "type": "data.Array",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 5800.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "regions",
+              "portName": "columns"
+            }
+          ]
+        }
+      }
+    },
+    "edge_from": {
+      "id": "edge_from",
+      "type": "data.Array",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 6000.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "links",
+              "portName": "columns"
+            }
+          ]
+        }
+      }
+    },
+    "edge_to": {
+      "id": "edge_to",
+      "type": "data.Array",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 6200.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "links",
+              "portName": "columns_1"
+            }
+          ]
+        }
+      }
+    },
+    "points": {
+      "id": "points",
+      "type": "data.Columns",
+      "width": 280,
+      "height": 172,
+      "x": 680.0,
+      "y": 3000.0,
+      "connections": {
+        "inputs": {
+          "columns": [
+            {
+              "nodeId": "xs",
+              "portName": "out"
+            }
+          ],
+          "columns_1": [
+            {
+              "nodeId": "ys",
+              "portName": "out"
+            }
+          ],
+          "columns_2": [
+            {
+              "nodeId": "energy",
+              "portName": "out"
+            }
+          ],
+          "columns_3": [
+            {
+              "nodeId": "authority",
+              "portName": "out"
+            }
+          ],
+          "columns_4": [
+            {
+              "nodeId": "snr",
+              "portName": "out"
+            }
+          ],
+          "columns_5": [
+            {
+              "nodeId": "present",
+              "portName": "out"
+            }
+          ],
+          "columns_6": [
+            {
+              "nodeId": "label",
+              "portName": "out"
+            }
+          ],
+          "columns_7": [
+            {
+              "nodeId": "source",
+              "portName": "out"
+            }
+          ],
+          "columns_8": [
+            {
+              "nodeId": "activation",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "impulseView",
+              "portName": "points"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "names": {
+          "value": "x,y,energy,authority,snr,present,label,source,activation"
+        },
+        "index": {
+          "value": "id"
+        }
+      }
+    },
+    "regions": {
+      "id": "regions",
+      "type": "data.Columns",
+      "width": 280,
+      "height": 172,
+      "x": 680.0,
+      "y": 3200.0,
+      "connections": {
+        "inputs": {
+          "columns": [
+            {
+              "nodeId": "hot",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "impulseView",
+              "portName": "regions"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "names": {
+          "value": "source"
+        },
+        "index": {
+          "value": "id"
+        }
+      }
+    },
+    "links": {
+      "id": "links",
+      "type": "data.Columns",
+      "width": 280,
+      "height": 172,
+      "x": 680.0,
+      "y": 3400.0,
+      "connections": {
+        "inputs": {
+          "columns": [
+            {
+              "nodeId": "edge_from",
+              "portName": "out"
+            }
+          ],
+          "columns_1": [
+            {
+              "nodeId": "edge_to",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "impulseView",
+              "portName": "connections"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "names": {
+          "value": "from,to"
+        }
+      }
+    },
+    "brandText": {
+      "id": "brandText",
+      "type": "ui.Text",
+      "width": 280,
+      "height": 172,
+      "x": 2720.0,
+      "y": 0.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "brand",
+              "portName": "components"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "value": {
+          "value": "SYMM"
+        }
+      }
+    },
+    "brand": {
+      "id": "brand",
+      "type": "ui.Typography.Mono",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 400.0,
+      "connections": {
+        "inputs": {
+          "components": [
+            {
+              "nodeId": "brandText",
+              "portName": "self"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "brandGroup",
+              "portName": "components"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "className": {
+          "value": "font-mono text-sm font-bold tracking-wider text-(--f1)"
+        }
+      }
+    },
+    "symbolBadge": {
+      "id": "symbolBadge",
+      "type": "ui.Badge",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 600.0,
+      "connections": {
+        "inputs": {
+          "label": [
+            {
+              "nodeId": "event_symbol",
+              "portName": "text"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "brandGroup",
+              "portName": "components_1"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "variant": {
+          "value": "warning"
+        },
+        "className": {
+          "value": "font-mono text-xs"
+        },
+        "label": {
+          "value": "learner"
+        }
+      }
+    },
+    "brandGroup": {
+      "id": "brandGroup",
+      "type": "ui.Flex.Row",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 800.0,
+      "connections": {
+        "inputs": {
+          "components": [
+            {
+              "nodeId": "brand",
+              "portName": "self"
+            }
+          ],
+          "components_1": [
+            {
+              "nodeId": "symbolBadge",
+              "portName": "self"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "headerLeft",
+              "portName": "components"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "className": {
+          "value": "flex items-center gap-2"
+        }
+      }
+    },
+    "rule": {
+      "id": "rule",
+      "type": "ui.Flex.Row",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 1000.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "headerLeft",
+              "portName": "components_1"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "className": {
+          "value": "h-4 w-px bg-(--line)"
+        }
+      }
+    },
+    "modeBadge": {
+      "id": "modeBadge",
+      "type": "ui.Badge",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 1200.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "headerLeft",
+              "portName": "components_2"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "label": {
+          "value": "PRECURSOR COGNITION"
+        },
+        "variant": {
+          "value": "info"
+        },
+        "dot": {
+          "value": true
+        }
+      }
+    },
+    "headerLeft": {
+      "id": "headerLeft",
+      "type": "ui.Flex.Row",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 1400.0,
+      "connections": {
+        "inputs": {
+          "components": [
+            {
+              "nodeId": "brandGroup",
+              "portName": "self"
+            }
+          ],
+          "components_1": [
+            {
+              "nodeId": "rule",
+              "portName": "self"
+            }
+          ],
+          "components_2": [
+            {
+              "nodeId": "modeBadge",
+              "portName": "self"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "header",
+              "portName": "components"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "className": {
+          "value": "flex items-center gap-3"
+        }
+      }
+    },
+    "kpiLabel_frames": {
+      "id": "kpiLabel_frames",
+      "type": "ui.Text",
+      "width": 280,
+      "height": 172,
+      "x": 2720.0,
+      "y": 200.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "kpi_frames",
+              "portName": "components"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "value": {
+          "value": "Frames:"
+        }
+      }
+    },
+    "kpiValue_frames": {
+      "id": "kpiValue_frames",
+      "type": "ui.Text",
+      "width": 280,
+      "height": 172,
+      "x": 2720.0,
+      "y": 400.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "frames",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "kpi_frames",
+              "portName": "components_1"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "value": {
+          "value": "\u2014"
+        },
+        "format": {
+          "value": "integer"
+        },
+        "className": {
+          "value": "font-bold text-(--f1)"
+        }
+      }
+    },
+    "kpi_frames": {
+      "id": "kpi_frames",
+      "type": "ui.Flex.Row",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 1600.0,
+      "connections": {
+        "inputs": {
+          "components": [
+            {
+              "nodeId": "kpiLabel_frames",
+              "portName": "self"
+            }
+          ],
+          "components_1": [
+            {
+              "nodeId": "kpiValue_frames",
+              "portName": "self"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "kpis",
+              "portName": "components"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "className": {
+          "value": "items-center gap-1"
+        }
+      }
+    },
+    "kpiLabel_situations": {
+      "id": "kpiLabel_situations",
+      "type": "ui.Text",
+      "width": 280,
+      "height": 172,
+      "x": 2720.0,
+      "y": 600.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "kpi_situations",
+              "portName": "components"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "value": {
+          "value": "Situations:"
+        }
+      }
+    },
+    "kpiValue_situations": {
+      "id": "kpiValue_situations",
+      "type": "ui.Text",
+      "width": 280,
+      "height": 172,
+      "x": 2720.0,
+      "y": 800.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "situations",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "kpi_situations",
+              "portName": "components_1"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "value": {
+          "value": "\u2014"
+        },
+        "format": {
+          "value": "integer"
+        },
+        "className": {
+          "value": "font-bold text-(--f1)"
+        }
+      }
+    },
+    "kpi_situations": {
+      "id": "kpi_situations",
+      "type": "ui.Flex.Row",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 1800.0,
+      "connections": {
+        "inputs": {
+          "components": [
+            {
+              "nodeId": "kpiLabel_situations",
+              "portName": "self"
+            }
+          ],
+          "components_1": [
+            {
+              "nodeId": "kpiValue_situations",
+              "portName": "self"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "kpis",
+              "portName": "components_1"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "className": {
+          "value": "items-center gap-1"
+        }
+      }
+    },
+    "kpiLabel_resolved": {
+      "id": "kpiLabel_resolved",
+      "type": "ui.Text",
+      "width": 280,
+      "height": 172,
+      "x": 2720.0,
+      "y": 1000.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "kpi_resolved",
+              "portName": "components"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "value": {
+          "value": "Resolved:"
+        }
+      }
+    },
+    "kpiValue_resolved": {
+      "id": "kpiValue_resolved",
+      "type": "ui.Text",
+      "width": 280,
+      "height": 172,
+      "x": 2720.0,
+      "y": 1200.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "resolved",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "kpi_resolved",
+              "portName": "components_1"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "value": {
+          "value": "\u2014"
+        },
+        "format": {
+          "value": "integer"
+        },
+        "className": {
+          "value": "font-bold text-(--acc)"
+        }
+      }
+    },
+    "kpi_resolved": {
+      "id": "kpi_resolved",
+      "type": "ui.Flex.Row",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 2000.0,
+      "connections": {
+        "inputs": {
+          "components": [
+            {
+              "nodeId": "kpiLabel_resolved",
+              "portName": "self"
+            }
+          ],
+          "components_1": [
+            {
+              "nodeId": "kpiValue_resolved",
+              "portName": "self"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "kpis",
+              "portName": "components_2"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "className": {
+          "value": "items-center gap-1"
+        }
+      }
+    },
+    "kpiLabel_edge": {
+      "id": "kpiLabel_edge",
+      "type": "ui.Text",
+      "width": 280,
+      "height": 172,
+      "x": 2720.0,
+      "y": 1400.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "kpi_edge",
+              "portName": "components"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "value": {
+          "value": "Mean Edge:"
+        }
+      }
+    },
+    "kpiValue_edge": {
+      "id": "kpiValue_edge",
+      "type": "ui.Text",
+      "width": 280,
+      "height": 172,
+      "x": 2720.0,
+      "y": 1600.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "edge",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "kpi_edge",
+              "portName": "components_1"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "value": {
+          "value": "\u2014"
+        },
+        "format": {
+          "value": "basis"
+        },
+        "className": {
+          "value": "font-bold text-(--acc)"
+        }
+      }
+    },
+    "kpi_edge": {
+      "id": "kpi_edge",
+      "type": "ui.Flex.Row",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 2200.0,
+      "connections": {
+        "inputs": {
+          "components": [
+            {
+              "nodeId": "kpiLabel_edge",
+              "portName": "self"
+            }
+          ],
+          "components_1": [
+            {
+              "nodeId": "kpiValue_edge",
+              "portName": "self"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "kpis",
+              "portName": "components_3"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "className": {
+          "value": "items-center gap-1"
+        }
+      }
+    },
+    "kpiLabel_accuracy": {
+      "id": "kpiLabel_accuracy",
+      "type": "ui.Text",
+      "width": 280,
+      "height": 172,
+      "x": 2720.0,
+      "y": 1800.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "kpi_accuracy",
+              "portName": "components"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "value": {
+          "value": "Accuracy:"
+        }
+      }
+    },
+    "kpiValue_accuracy": {
+      "id": "kpiValue_accuracy",
+      "type": "ui.Text",
+      "width": 280,
+      "height": 172,
+      "x": 2720.0,
+      "y": 2000.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "accuracy",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "kpi_accuracy",
+              "portName": "components_1"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "value": {
+          "value": "\u2014"
+        },
+        "format": {
+          "value": "percent"
+        },
+        "className": {
+          "value": "font-bold text-(--f1)"
+        }
+      }
+    },
+    "kpi_accuracy": {
+      "id": "kpi_accuracy",
+      "type": "ui.Flex.Row",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 2400.0,
+      "connections": {
+        "inputs": {
+          "components": [
+            {
+              "nodeId": "kpiLabel_accuracy",
+              "portName": "self"
+            }
+          ],
+          "components_1": [
+            {
+              "nodeId": "kpiValue_accuracy",
+              "portName": "self"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "kpis",
+              "portName": "components_4"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "className": {
+          "value": "items-center gap-1"
+        }
+      }
+    },
+    "kpis": {
+      "id": "kpis",
+      "type": "ui.Flex.Row",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 2600.0,
+      "connections": {
+        "inputs": {
+          "components": [
+            {
+              "nodeId": "kpi_frames",
+              "portName": "self"
+            }
+          ],
+          "components_1": [
+            {
+              "nodeId": "kpi_situations",
+              "portName": "self"
+            }
+          ],
+          "components_2": [
+            {
+              "nodeId": "kpi_resolved",
+              "portName": "self"
+            }
+          ],
+          "components_3": [
+            {
+              "nodeId": "kpi_edge",
+              "portName": "self"
+            }
+          ],
+          "components_4": [
+            {
+              "nodeId": "kpi_accuracy",
+              "portName": "self"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "header",
+              "portName": "components_1"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "className": {
+          "value": "hidden min-w-0 overflow-hidden lg:flex items-center gap-4 whitespace-nowrap font-mono text-xs text-(--f3)"
+        }
+      }
+    },
+    "tabState": {
+      "id": "tabState",
+      "type": "ui.UIState",
+      "width": 280,
+      "height": 172,
+      "x": 2380.0,
+      "y": 0.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "value": [
+            {
+              "nodeId": "tab_forward",
+              "portName": "selects"
+            },
+            {
+              "nodeId": "tab_trie",
+              "portName": "selects"
+            },
+            {
+              "nodeId": "tab_impulse",
+              "portName": "selects"
+            },
+            {
+              "nodeId": "tab_recognition",
+              "portName": "selects"
+            },
+            {
+              "nodeId": "pane_forward",
+              "portName": "visibleWhen"
+            },
+            {
+              "nodeId": "pane_trie",
+              "portName": "visibleWhen"
+            },
+            {
+              "nodeId": "pane_impulse",
+              "portName": "visibleWhen"
+            },
+            {
+              "nodeId": "pane_recognition",
+              "portName": "visibleWhen"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "key": {
+          "value": "tab"
+        },
+        "initial": {
+          "value": "forward"
+        }
+      }
+    },
+    "tabLabel_forward": {
+      "id": "tabLabel_forward",
+      "type": "ui.Text",
+      "width": 280,
+      "height": 172,
+      "x": 2720.0,
+      "y": 2200.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "tab_forward",
+              "portName": "components"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "value": {
+          "value": "Forward learning"
+        }
+      }
+    },
+    "tab_forward": {
+      "id": "tab_forward",
+      "type": "ui.Tabs.Tab",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 2800.0,
+      "connections": {
+        "inputs": {
+          "components": [
+            {
+              "nodeId": "tabLabel_forward",
+              "portName": "self"
+            }
+          ],
+          "selects": [
+            {
+              "nodeId": "tabState",
+              "portName": "value"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "tabs",
+              "portName": "components"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "size": {
+          "value": "s"
+        },
+        "stateValue": {
+          "value": "forward"
+        }
+      }
+    },
+    "tabLabel_trie": {
+      "id": "tabLabel_trie",
+      "type": "ui.Text",
+      "width": 280,
+      "height": 172,
+      "x": 2720.0,
+      "y": 2400.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "tab_trie",
+              "portName": "components"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "value": {
+          "value": "Radix trie"
+        }
+      }
+    },
+    "tab_trie": {
+      "id": "tab_trie",
+      "type": "ui.Tabs.Tab",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 3000.0,
+      "connections": {
+        "inputs": {
+          "components": [
+            {
+              "nodeId": "tabLabel_trie",
+              "portName": "self"
+            }
+          ],
+          "selects": [
+            {
+              "nodeId": "tabState",
+              "portName": "value"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "tabs",
+              "portName": "components_1"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "size": {
+          "value": "s"
+        },
+        "stateValue": {
+          "value": "trie"
+        }
+      }
+    },
+    "tabLabel_impulse": {
+      "id": "tabLabel_impulse",
+      "type": "ui.Text",
+      "width": 280,
+      "height": 172,
+      "x": 2720.0,
+      "y": 2600.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "tab_impulse",
+              "portName": "components"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "value": {
+          "value": "Impulse map"
+        }
+      }
+    },
+    "tab_impulse": {
+      "id": "tab_impulse",
+      "type": "ui.Tabs.Tab",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 3200.0,
+      "connections": {
+        "inputs": {
+          "components": [
+            {
+              "nodeId": "tabLabel_impulse",
+              "portName": "self"
+            }
+          ],
+          "selects": [
+            {
+              "nodeId": "tabState",
+              "portName": "value"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "tabs",
+              "portName": "components_2"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "size": {
+          "value": "s"
+        },
+        "stateValue": {
+          "value": "impulse"
+        }
+      }
+    },
+    "tabLabel_recognition": {
+      "id": "tabLabel_recognition",
+      "type": "ui.Text",
+      "width": 280,
+      "height": 172,
+      "x": 2720.0,
+      "y": 2800.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "tab_recognition",
+              "portName": "components"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "value": {
+          "value": "Precursor recognition"
+        }
+      }
+    },
+    "tab_recognition": {
+      "id": "tab_recognition",
+      "type": "ui.Tabs.Tab",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 3400.0,
+      "connections": {
+        "inputs": {
+          "components": [
+            {
+              "nodeId": "tabLabel_recognition",
+              "portName": "self"
+            }
+          ],
+          "selects": [
+            {
+              "nodeId": "tabState",
+              "portName": "value"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "tabs",
+              "portName": "components_3"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "size": {
+          "value": "s"
+        },
+        "stateValue": {
+          "value": "recognition"
+        }
+      }
+    },
+    "tabs": {
+      "id": "tabs",
+      "type": "ui.Tabs",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 3600.0,
+      "connections": {
+        "inputs": {
+          "components": [
+            {
+              "nodeId": "tab_forward",
+              "portName": "self"
+            }
+          ],
+          "components_1": [
+            {
+              "nodeId": "tab_trie",
+              "portName": "self"
+            }
+          ],
+          "components_2": [
+            {
+              "nodeId": "tab_impulse",
+              "portName": "self"
+            }
+          ],
+          "components_3": [
+            {
+              "nodeId": "tab_recognition",
+              "portName": "self"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "header",
+              "portName": "components_2"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "size": {
+          "value": "s"
+        },
+        "className": {
+          "value": "shrink-0"
+        }
+      }
+    },
+    "header": {
+      "id": "header",
+      "type": "ui.Flex.Row",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 3800.0,
+      "connections": {
+        "inputs": {
+          "components": [
+            {
+              "nodeId": "headerLeft",
+              "portName": "self"
+            }
+          ],
+          "components_1": [
+            {
+              "nodeId": "kpis",
+              "portName": "self"
+            }
+          ],
+          "components_2": [
+            {
+              "nodeId": "tabs",
+              "portName": "self"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "page",
+              "portName": "components"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "className": {
+          "value": "flex h-12 shrink-0 items-center justify-between border-b border-(--line) bg-(--surface) px-4"
+        }
+      }
+    },
+    "episodeTape": {
+      "id": "episodeTape",
+      "type": "ui.EpisodeTape",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 4000.0,
+      "connections": {
+        "inputs": {
+          "episode": [
+            {
+              "nodeId": "episode",
+              "portName": "out"
+            }
+          ],
+          "marks": [
+            {
+              "nodeId": "marks_C",
+              "portName": "out"
+            }
+          ],
+          "outcome": [
+            {
+              "nodeId": "event_excursion",
+              "portName": "out"
+            }
+          ],
+          "entered": [
+            {
+              "nodeId": "entered_at",
+              "portName": "out"
+            }
+          ],
+          "exited": [
+            {
+              "nodeId": "exited_at",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "forwardTop",
+              "portName": "components"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "className": {
+          "value": "min-w-0 flex-1"
+        },
+        "phase": {
+          "value": "LEARNING PHASE"
+        },
+        "coordinate": {
+          "value": "capture sequence"
+        }
+      }
+    },
+    "skill": {
+      "id": "skill",
+      "type": "ui.SkillPanel",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 4200.0,
+      "connections": {
+        "inputs": {
+          "evaluated": [
+            {
+              "nodeId": "resolved",
+              "portName": "out"
+            }
+          ],
+          "edge": [
+            {
+              "nodeId": "edge",
+              "portName": "out"
+            }
+          ],
+          "positive": [
+            {
+              "nodeId": "positives",
+              "portName": "out"
+            }
+          ],
+          "negative": [
+            {
+              "nodeId": "negatives",
+              "portName": "out"
+            }
+          ],
+          "pnl": [
+            {
+              "nodeId": "wallet_pnl",
+              "portName": "out"
+            }
+          ],
+          "activity": [
+            {
+              "nodeId": "activity_log",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "forwardTop",
+              "portName": "components_1"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "className": {
+          "value": "w-[300px] shrink-0"
+        }
+      }
+    },
+    "forwardTop": {
+      "id": "forwardTop",
+      "type": "ui.Flex.Row",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 4400.0,
+      "connections": {
+        "inputs": {
+          "components": [
+            {
+              "nodeId": "episodeTape",
+              "portName": "self"
+            }
+          ],
+          "components_1": [
+            {
+              "nodeId": "skill",
+              "portName": "self"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "pane_forward",
+              "portName": "components"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "className": {
+          "value": "flex h-3/5 min-h-0 gap-2"
+        }
+      }
+    },
+    "policyBranches": {
+      "id": "policyBranches",
+      "type": "ui.PolicyBranches",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 4600.0,
+      "connections": {
+        "inputs": {
+          "branches": [
+            {
+              "nodeId": "tree",
+              "portName": "grown.branches"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "forwardBottom",
+              "portName": "components"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "className": {
+          "value": "min-w-0 flex-1"
+        }
+      }
+    },
+    "outcomeDistribution": {
+      "id": "outcomeDistribution",
+      "type": "ui.OutcomeDistribution",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 4800.0,
+      "connections": {
+        "inputs": {
+          "bins": [
+            {
+              "nodeId": "bins",
+              "portName": "out"
+            }
+          ],
+          "mean": [
+            {
+              "nodeId": "bp_mean",
+              "portName": "out"
+            }
+          ],
+          "deviation": [
+            {
+              "nodeId": "bp_deviation",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "forwardBottom",
+              "portName": "components_1"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "unit": {
+          "value": "bp"
+        },
+        "className": {
+          "value": "w-[400px] shrink-0"
+        }
+      }
+    },
+    "forwardBottom": {
+      "id": "forwardBottom",
+      "type": "ui.Flex.Row",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 5000.0,
+      "connections": {
+        "inputs": {
+          "components": [
+            {
+              "nodeId": "policyBranches",
+              "portName": "self"
+            }
+          ],
+          "components_1": [
+            {
+              "nodeId": "outcomeDistribution",
+              "portName": "self"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "pane_forward",
+              "portName": "components_1"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "className": {
+          "value": "flex h-2/5 min-h-0 gap-2"
+        }
+      }
+    },
+    "pane_forward": {
+      "id": "pane_forward",
+      "type": "ui.Flex.Column",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 5200.0,
+      "connections": {
+        "inputs": {
+          "components": [
+            {
+              "nodeId": "forwardTop",
+              "portName": "self"
+            }
+          ],
+          "components_1": [
+            {
+              "nodeId": "forwardBottom",
+              "portName": "self"
+            }
+          ],
+          "visibleWhen": [
+            {
+              "nodeId": "tabState",
+              "portName": "value"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "page",
+              "portName": "components_1"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "className": {
+          "value": "flex min-h-0 flex-1 flex-col gap-2 overflow-hidden bg-(--bg) p-2"
+        },
+        "stateValue": {
+          "value": "forward"
+        }
+      }
+    },
+    "trieView": {
+      "id": "trieView",
+      "type": "ui.TrieView",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 5400.0,
+      "connections": {
+        "inputs": {
+          "root": [
+            {
+              "nodeId": "tree",
+              "portName": "grown.root"
+            }
+          ],
+          "candidates": [
+            {
+              "nodeId": "tree",
+              "portName": "grown.candidates"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "pane_trie",
+              "portName": "components"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "className": {
+          "value": "h-full"
+        }
+      }
+    },
+    "pane_trie": {
+      "id": "pane_trie",
+      "type": "ui.Flex.Column",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 5600.0,
+      "connections": {
+        "inputs": {
+          "components": [
+            {
+              "nodeId": "trieView",
+              "portName": "self"
+            }
+          ],
+          "visibleWhen": [
+            {
+              "nodeId": "tabState",
+              "portName": "value"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "page",
+              "portName": "components_2"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "className": {
+          "value": "min-h-0 flex-1 overflow-hidden bg-(--bg) p-2"
+        },
+        "stateValue": {
+          "value": "trie"
+        }
+      }
+    },
+    "impulseView": {
+      "id": "impulseView",
+      "type": "ui.ImpulseMap",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 5800.0,
+      "connections": {
+        "inputs": {
+          "points": [
+            {
+              "nodeId": "points",
+              "portName": "out"
+            }
+          ],
+          "regions": [
+            {
+              "nodeId": "regions",
+              "portName": "out"
+            }
+          ],
+          "connections": [
+            {
+              "nodeId": "links",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "pane_impulse",
+              "portName": "components"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "className": {
+          "value": "h-full min-h-0 flex-1"
+        },
+        "title": {
+          "value": "Impulse map \u00b7 training"
+        }
+      }
+    },
+    "pane_impulse": {
+      "id": "pane_impulse",
+      "type": "ui.Flex.Column",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 6000.0,
+      "connections": {
+        "inputs": {
+          "components": [
+            {
+              "nodeId": "impulseView",
+              "portName": "self"
+            }
+          ],
+          "visibleWhen": [
+            {
+              "nodeId": "tabState",
+              "portName": "value"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "page",
+              "portName": "components_3"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "className": {
+          "value": "min-h-0 flex-1 overflow-hidden bg-(--bg) p-2"
+        },
+        "stateValue": {
+          "value": "impulse"
+        }
+      }
+    },
+    "ribbonTitleText": {
+      "id": "ribbonTitleText",
+      "type": "ui.Text",
+      "width": 280,
+      "height": 172,
+      "x": 2720.0,
+      "y": 3000.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "ribbonTitle",
+              "portName": "components"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "value": {
+          "value": "CAUSAL PRECURSOR RECOGNITION"
+        }
+      }
+    },
+    "ribbonTitle": {
+      "id": "ribbonTitle",
+      "type": "ui.Typography.Label",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 6200.0,
+      "connections": {
+        "inputs": {
+          "components": [
+            {
+              "nodeId": "ribbonTitleText",
+              "portName": "self"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "ribbonLead",
+              "portName": "components"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "size": {
+          "value": "s"
+        },
+        "tone": {
+          "value": "f4"
+        },
+        "weight": {
+          "value": "normal"
+        }
+      }
+    },
+    "ribbonBadge": {
+      "id": "ribbonBadge",
+      "type": "ui.Badge",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 6400.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "ribbonLead",
+              "portName": "components_1"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "label": {
+          "value": "VOLUME-CLOCK OBSERVER"
+        },
+        "variant": {
+          "value": "info"
+        },
+        "size": {
+          "value": "s"
+        }
+      }
+    },
+    "ribbonLead": {
+      "id": "ribbonLead",
+      "type": "ui.Flex.Row",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 6600.0,
+      "connections": {
+        "inputs": {
+          "components": [
+            {
+              "nodeId": "ribbonTitle",
+              "portName": "self"
+            }
+          ],
+          "components_1": [
+            {
+              "nodeId": "ribbonBadge",
+              "portName": "self"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "ribbonHead",
+              "portName": "components"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "className": {
+          "value": "flex items-center gap-2"
+        }
+      }
+    },
+    "ribbonFrames": {
+      "id": "ribbonFrames",
+      "type": "ui.Text",
+      "width": 280,
+      "height": 172,
+      "x": 2720.0,
+      "y": 3200.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "frames",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "ribbonCount",
+              "portName": "components"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "value": {
+          "value": "\u2014"
+        },
+        "format": {
+          "value": "integer"
+        }
+      }
+    },
+    "ribbonFramesTail": {
+      "id": "ribbonFramesTail",
+      "type": "ui.Text",
+      "width": 280,
+      "height": 172,
+      "x": 2720.0,
+      "y": 3400.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "ribbonCount",
+              "portName": "components_1"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "value": {
+          "value": " frames observed"
+        }
+      }
+    },
+    "ribbonCount": {
+      "id": "ribbonCount",
+      "type": "ui.Typography.Mono",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 6800.0,
+      "connections": {
+        "inputs": {
+          "components": [
+            {
+              "nodeId": "ribbonFrames",
+              "portName": "self"
+            }
+          ],
+          "components_1": [
+            {
+              "nodeId": "ribbonFramesTail",
+              "portName": "self"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "ribbonHead",
+              "portName": "components_1"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "size": {
+          "value": "s"
+        },
+        "tone": {
+          "value": "f4"
+        }
+      }
+    },
+    "ribbonHead": {
+      "id": "ribbonHead",
+      "type": "ui.Flex.Row",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 7000.0,
+      "connections": {
+        "inputs": {
+          "components": [
+            {
+              "nodeId": "ribbonLead",
+              "portName": "self"
+            }
+          ],
+          "components_1": [
+            {
+              "nodeId": "ribbonCount",
+              "portName": "self"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "ribbon",
+              "portName": "components"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "className": {
+          "value": "mb-3 flex items-center justify-between"
+        }
+      }
+    },
+    "recognition_situations": {
+      "id": "recognition_situations",
+      "type": "ui.Stat",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 7200.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "situations",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "ribbonStats",
+              "portName": "components"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "label": {
+          "value": "Learned Situations"
+        },
+        "format": {
+          "value": "integer"
+        },
+        "value": {
+          "value": "\u2014"
+        }
+      }
+    },
+    "recognition_evaluated": {
+      "id": "recognition_evaluated",
+      "type": "ui.Stat",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 7400.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "evaluated",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "ribbonStats",
+              "portName": "components_1"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "label": {
+          "value": "Evaluations"
+        },
+        "format": {
+          "value": "integer"
+        },
+        "value": {
+          "value": "\u2014"
+        }
+      }
+    },
+    "recognition_accuracy": {
+      "id": "recognition_accuracy",
+      "type": "ui.Stat",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 7600.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "accuracy",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "ribbonStats",
+              "portName": "components_2"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "label": {
+          "value": "Accuracy"
+        },
+        "format": {
+          "value": "percent"
+        },
+        "value": {
+          "value": "\u2014"
+        }
+      }
+    },
+    "recognition_edge": {
+      "id": "recognition_edge",
+      "type": "ui.Stat",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 7800.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "edge",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "ribbonStats",
+              "portName": "components_3"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "label": {
+          "value": "Quoted Edge"
+        },
+        "format": {
+          "value": "basis"
+        },
+        "value": {
+          "value": "\u2014"
+        }
+      }
+    },
+    "recognition_resolved": {
+      "id": "recognition_resolved",
+      "type": "ui.Stat",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 8000.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "resolved",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "ribbonStats",
+              "portName": "components_4"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "label": {
+          "value": "Resolved Outcomes"
+        },
+        "format": {
+          "value": "integer"
+        },
+        "value": {
+          "value": "\u2014"
+        }
+      }
+    },
+    "ribbonStats": {
+      "id": "ribbonStats",
+      "type": "ui.Grid",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 8200.0,
+      "connections": {
+        "inputs": {
+          "components": [
+            {
+              "nodeId": "recognition_situations",
+              "portName": "self"
+            }
+          ],
+          "components_1": [
+            {
+              "nodeId": "recognition_evaluated",
+              "portName": "self"
+            }
+          ],
+          "components_2": [
+            {
+              "nodeId": "recognition_accuracy",
+              "portName": "self"
+            }
+          ],
+          "components_3": [
+            {
+              "nodeId": "recognition_edge",
+              "portName": "self"
+            }
+          ],
+          "components_4": [
+            {
+              "nodeId": "recognition_resolved",
+              "portName": "self"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "ribbon",
+              "portName": "components_1"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "className": {
+          "value": "grid grid-cols-2 gap-4 md:grid-cols-5 pt-1"
+        }
+      }
+    },
+    "ribbon": {
+      "id": "ribbon",
+      "type": "ui.Flex.Column",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 8400.0,
+      "connections": {
+        "inputs": {
+          "components": [
+            {
+              "nodeId": "ribbonHead",
+              "portName": "self"
+            }
+          ],
+          "components_1": [
+            {
+              "nodeId": "ribbonStats",
+              "portName": "self"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "pane_recognition",
+              "portName": "components"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "className": {
+          "value": "flex shrink-0 flex-col border-b border-(--line) bg-(--surface) p-4"
+        }
+      }
+    },
+    "policyTitleText": {
+      "id": "policyTitleText",
+      "type": "ui.Text",
+      "width": 280,
+      "height": 172,
+      "x": 2720.0,
+      "y": 3600.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "policyTitle",
+              "portName": "components"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "value": {
+          "value": "ACTIVE POLICY ACTION"
+        }
+      }
+    },
+    "policyTitle": {
+      "id": "policyTitle",
+      "type": "ui.Typography.Label",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 8600.0,
+      "connections": {
+        "inputs": {
+          "components": [
+            {
+              "nodeId": "policyTitleText",
+              "portName": "self"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "policy",
+              "portName": "components"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "size": {
+          "value": "s"
+        },
+        "tone": {
+          "value": "f4"
+        },
+        "weight": {
+          "value": "normal"
+        }
+      }
+    },
+    "policyAction": {
+      "id": "policyAction",
+      "type": "ui.Badge",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 8800.0,
+      "connections": {
+        "inputs": {
+          "label": [
+            {
+              "nodeId": "example_label",
+              "portName": "text"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "policy",
+              "portName": "components_1"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "size": {
+          "value": "m"
+        },
+        "variant": {
+          "value": "warning"
+        },
+        "label": {
+          "value": "\u2014"
+        },
+        "dot": {
+          "value": true
+        }
+      }
+    },
+    "pathTitleText": {
+      "id": "pathTitleText",
+      "type": "ui.Text",
+      "width": 280,
+      "height": 172,
+      "x": 2720.0,
+      "y": 3800.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "pathTitle",
+              "portName": "components"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "value": {
+          "value": "PRECURSOR DEVELOPMENT"
+        }
+      }
+    },
+    "pathTitle": {
+      "id": "pathTitle",
+      "type": "ui.Typography.Label",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 9000.0,
+      "connections": {
+        "inputs": {
+          "components": [
+            {
+              "nodeId": "pathTitleText",
+              "portName": "self"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "policy",
+              "portName": "components_2"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "size": {
+          "value": "s"
+        },
+        "tone": {
+          "value": "f4"
+        },
+        "weight": {
+          "value": "normal"
+        }
+      }
+    },
+    "pathText": {
+      "id": "pathText",
+      "type": "ui.Text",
+      "width": 280,
+      "height": 172,
+      "x": 2720.0,
+      "y": 4000.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "pathValue",
+              "portName": "components"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "value": {
+          "value": "\u2014"
+        },
+        "className": {
+          "value": "break-all"
+        }
+      }
+    },
+    "pathValue": {
+      "id": "pathValue",
+      "type": "ui.Typography.Mono",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 9200.0,
+      "connections": {
+        "inputs": {
+          "components": [
+            {
+              "nodeId": "pathText",
+              "portName": "self"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "policy",
+              "portName": "components_3"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "size": {
+          "value": "s"
+        },
+        "tone": {
+          "value": "f2"
+        }
+      }
+    },
+    "policy": {
+      "id": "policy",
+      "type": "ui.Flex.Column",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 9400.0,
+      "connections": {
+        "inputs": {
+          "components": [
+            {
+              "nodeId": "policyTitle",
+              "portName": "self"
+            }
+          ],
+          "components_1": [
+            {
+              "nodeId": "policyAction",
+              "portName": "self"
+            }
+          ],
+          "components_2": [
+            {
+              "nodeId": "pathTitle",
+              "portName": "self"
+            }
+          ],
+          "components_3": [
+            {
+              "nodeId": "pathValue",
+              "portName": "self"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "recognitionBody",
+              "portName": "components"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "className": {
+          "value": "flex flex-1 min-w-0 flex-col gap-3 border-r border-(--line) bg-(--surface) p-4 overflow-hidden"
+        }
+      }
+    },
+    "activity": {
+      "id": "activity",
+      "type": "ui.DecisionList",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 9600.0,
+      "connections": {
+        "inputs": {
+          "decisions": [
+            {
+              "nodeId": "decisions",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "recognitionBody",
+              "portName": "components_1"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "title": {
+          "value": "RECENT ACTIVITY STREAM"
+        },
+        "emptyLabel": {
+          "value": "No recorded activity"
+        },
+        "className": {
+          "value": "flex w-96 shrink-0 flex-col bg-(--surface) overflow-auto"
+        }
+      }
+    },
+    "recognitionBody": {
+      "id": "recognitionBody",
+      "type": "ui.Flex.Row",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 9800.0,
+      "connections": {
+        "inputs": {
+          "components": [
+            {
+              "nodeId": "policy",
+              "portName": "self"
+            }
+          ],
+          "components_1": [
+            {
+              "nodeId": "activity",
+              "portName": "self"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "pane_recognition",
+              "portName": "components_1"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "className": {
+          "value": "flex flex-1 min-h-0 overflow-hidden"
+        }
+      }
+    },
+    "pane_recognition": {
+      "id": "pane_recognition",
+      "type": "ui.Flex.Column",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 10000.0,
+      "connections": {
+        "inputs": {
+          "components": [
+            {
+              "nodeId": "ribbon",
+              "portName": "self"
+            }
+          ],
+          "components_1": [
+            {
+              "nodeId": "recognitionBody",
+              "portName": "self"
+            }
+          ],
+          "visibleWhen": [
+            {
+              "nodeId": "tabState",
+              "portName": "value"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "page",
+              "portName": "components_4"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "className": {
+          "value": "flex h-full w-full min-h-0 flex-col overflow-hidden bg-(--bg) font-mono text-xs text-(--f2)"
+        },
+        "stateValue": {
+          "value": "recognition"
+        }
+      }
+    },
+    "page": {
+      "id": "page",
+      "type": "ui.Flex.Column",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 10200.0,
+      "connections": {
+        "inputs": {
+          "components": [
+            {
+              "nodeId": "header",
+              "portName": "self"
+            }
+          ],
+          "components_1": [
+            {
+              "nodeId": "pane_forward",
+              "portName": "self"
+            }
+          ],
+          "components_2": [
+            {
+              "nodeId": "pane_trie",
+              "portName": "self"
+            }
+          ],
+          "components_3": [
+            {
+              "nodeId": "pane_impulse",
+              "portName": "self"
+            }
+          ],
+          "components_4": [
+            {
+              "nodeId": "pane_recognition",
+              "portName": "self"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "route",
+              "portName": "components"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "className": {
+          "value": "h-full w-full min-h-0 flex-col overflow-hidden bg-(--bg) text-(--f1)"
+        }
+      }
+    },
     "route": {
       "id": "route",
       "type": "ui.UIRoute",
+      "width": 280,
+      "height": 172,
+      "x": 2380.0,
+      "y": 200.0,
       "connections": {
         "inputs": {
           "components": [
@@ -23,941 +5827,7 @@
         "title": {
           "value": "Training"
         }
-      },
-      "width": 280,
-      "height": 172,
-      "x": 0.0,
-      "y": 0.0
-    },
-    "page": {
-      "id": "page",
-      "type": "ui.Flex.Column",
-      "connections": {
-        "inputs": {
-          "components": [
-            {
-              "nodeId": "header",
-              "portName": "self"
-            }
-          ],
-          "components_1": [
-            {
-              "nodeId": "banner",
-              "portName": "self"
-            }
-          ],
-          "components_2": [
-            {
-              "nodeId": "pane_forward",
-              "portName": "self"
-            }
-          ],
-          "components_3": [
-            {
-              "nodeId": "pane_recognition",
-              "portName": "self"
-            }
-          ],
-          "components_4": [
-            {
-              "nodeId": "pane_trie",
-              "portName": "self"
-            }
-          ],
-          "components_5": [
-            {
-              "nodeId": "pane_impulse",
-              "portName": "self"
-            }
-          ],
-          "components_6": [
-            {
-              "nodeId": "panels",
-              "portName": "self"
-            }
-          ]
-        },
-        "outputs": {
-          "self": [
-            {
-              "nodeId": "route",
-              "portName": "components"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "className": {
-          "value": "h-full min-h-0 w-full overflow-hidden bg-(--bg) text-(--f1)"
-        }
-      },
-      "width": 280,
-      "height": 172,
-      "x": 340.0,
-      "y": 0.0
-    },
-    "header": {
-      "id": "header",
-      "type": "ui.Flex.Row",
-      "connections": {
-        "inputs": {
-          "components": [
-            {
-              "nodeId": "brand",
-              "portName": "self"
-            }
-          ],
-          "components_1": [
-            {
-              "nodeId": "focusBadge",
-              "portName": "self"
-            }
-          ],
-          "components_2": [
-            {
-              "nodeId": "modeBadge",
-              "portName": "self"
-            }
-          ],
-          "components_3": [
-            {
-              "nodeId": "tabs",
-              "portName": "self"
-            }
-          ]
-        },
-        "outputs": {
-          "self": [
-            {
-              "nodeId": "page",
-              "portName": "components"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "className": {
-          "value": "h-12 shrink-0 items-center gap-3 border-(--line) border-b bg-(--surface) px-4"
-        },
-        "align": {
-          "value": "center"
-        }
-      },
-      "width": 280,
-      "height": 172,
-      "x": 680.0,
-      "y": 0.0
-    },
-    "brand": {
-      "id": "brand",
-      "type": "ui.Typography.Mono",
-      "connections": {
-        "inputs": {
-          "components": [
-            {
-              "nodeId": "brandText",
-              "portName": "self"
-            }
-          ]
-        },
-        "outputs": {
-          "self": [
-            {
-              "nodeId": "header",
-              "portName": "components"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "className": {
-          "value": "font-bold tracking-wider"
-        },
-        "size": {
-          "value": "s"
-        }
-      },
-      "width": 280,
-      "height": 172,
-      "x": 1020.0,
-      "y": 0.0
-    },
-    "brandText": {
-      "id": "brandText",
-      "type": "ui.Text",
-      "connections": {
-        "inputs": {},
-        "outputs": {
-          "self": [
-            {
-              "nodeId": "brand",
-              "portName": "components"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "value": {
-          "value": "SYMM"
-        }
-      },
-      "width": 280,
-      "height": 172,
-      "x": 1360.0,
-      "y": 0.0
-    },
-    "focusBadge": {
-      "id": "focusBadge",
-      "type": "ui.Badge",
-      "connections": {
-        "inputs": {},
-        "outputs": {
-          "self": [
-            {
-              "nodeId": "header",
-              "portName": "components_1"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "label": {
-          "value": "learner"
-        },
-        "variant": {
-          "value": "warning"
-        }
-      },
-      "width": 280,
-      "height": 172,
-      "x": 1700.0,
-      "y": 0.0
-    },
-    "modeBadge": {
-      "id": "modeBadge",
-      "type": "ui.Badge",
-      "connections": {
-        "inputs": {},
-        "outputs": {
-          "self": [
-            {
-              "nodeId": "header",
-              "portName": "components_2"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "label": {
-          "value": "PRECURSOR COGNITION"
-        },
-        "variant": {
-          "value": "info"
-        },
-        "dot": {
-          "value": true
-        }
-      },
-      "width": 280,
-      "height": 172,
-      "x": 0.0,
-      "y": 220.0
-    },
-    "tabs": {
-      "id": "tabs",
-      "type": "ui.Tabs",
-      "connections": {
-        "inputs": {
-          "components": [
-            {
-              "nodeId": "tab_forward",
-              "portName": "self"
-            }
-          ],
-          "components_1": [
-            {
-              "nodeId": "tab_recognition",
-              "portName": "self"
-            }
-          ],
-          "components_2": [
-            {
-              "nodeId": "tab_trie",
-              "portName": "self"
-            }
-          ],
-          "components_3": [
-            {
-              "nodeId": "tab_impulse",
-              "portName": "self"
-            }
-          ]
-        },
-        "outputs": {
-          "self": [
-            {
-              "nodeId": "header",
-              "portName": "components_3"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "size": {
-          "value": "s"
-        },
-        "className": {
-          "value": "ml-auto shrink-0"
-        }
-      },
-      "width": 280,
-      "height": 172,
-      "x": 340.0,
-      "y": 220.0
-    },
-    "tab_forward": {
-      "id": "tab_forward",
-      "type": "ui.Tabs.Tab",
-      "connections": {
-        "inputs": {
-          "selects": [
-            {
-              "nodeId": "tabState",
-              "portName": "value"
-            }
-          ],
-          "components": [
-            {
-              "nodeId": "tabLabel_forward",
-              "portName": "self"
-            }
-          ]
-        },
-        "outputs": {
-          "self": [
-            {
-              "nodeId": "tabs",
-              "portName": "components"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "size": {
-          "value": "s"
-        },
-        "stateValue": {
-          "value": "forward"
-        }
-      },
-      "width": 280,
-      "height": 172,
-      "x": 680.0,
-      "y": 220.0
-    },
-    "tabLabel_forward": {
-      "id": "tabLabel_forward",
-      "type": "ui.Text",
-      "connections": {
-        "inputs": {},
-        "outputs": {
-          "self": [
-            {
-              "nodeId": "tab_forward",
-              "portName": "components"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "value": {
-          "value": "Forward learning"
-        }
-      },
-      "width": 280,
-      "height": 172,
-      "x": 1020.0,
-      "y": 220.0
-    },
-    "tab_recognition": {
-      "id": "tab_recognition",
-      "type": "ui.Tabs.Tab",
-      "connections": {
-        "inputs": {
-          "selects": [
-            {
-              "nodeId": "tabState",
-              "portName": "value"
-            }
-          ],
-          "components": [
-            {
-              "nodeId": "tabLabel_recognition",
-              "portName": "self"
-            }
-          ]
-        },
-        "outputs": {
-          "self": [
-            {
-              "nodeId": "tabs",
-              "portName": "components_1"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "size": {
-          "value": "s"
-        },
-        "stateValue": {
-          "value": "recognition"
-        }
-      },
-      "width": 280,
-      "height": 172,
-      "x": 1360.0,
-      "y": 220.0
-    },
-    "tabLabel_recognition": {
-      "id": "tabLabel_recognition",
-      "type": "ui.Text",
-      "connections": {
-        "inputs": {},
-        "outputs": {
-          "self": [
-            {
-              "nodeId": "tab_recognition",
-              "portName": "components"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "value": {
-          "value": "Precursor recognition"
-        }
-      },
-      "width": 280,
-      "height": 172,
-      "x": 1700.0,
-      "y": 220.0
-    },
-    "tab_trie": {
-      "id": "tab_trie",
-      "type": "ui.Tabs.Tab",
-      "connections": {
-        "inputs": {
-          "selects": [
-            {
-              "nodeId": "tabState",
-              "portName": "value"
-            }
-          ],
-          "components": [
-            {
-              "nodeId": "tabLabel_trie",
-              "portName": "self"
-            }
-          ]
-        },
-        "outputs": {
-          "self": [
-            {
-              "nodeId": "tabs",
-              "portName": "components_2"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "size": {
-          "value": "s"
-        },
-        "stateValue": {
-          "value": "trie"
-        }
-      },
-      "width": 280,
-      "height": 172,
-      "x": 0.0,
-      "y": 440.0
-    },
-    "tabLabel_trie": {
-      "id": "tabLabel_trie",
-      "type": "ui.Text",
-      "connections": {
-        "inputs": {},
-        "outputs": {
-          "self": [
-            {
-              "nodeId": "tab_trie",
-              "portName": "components"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "value": {
-          "value": "Radix trie"
-        }
-      },
-      "width": 280,
-      "height": 172,
-      "x": 340.0,
-      "y": 440.0
-    },
-    "tab_impulse": {
-      "id": "tab_impulse",
-      "type": "ui.Tabs.Tab",
-      "connections": {
-        "inputs": {
-          "selects": [
-            {
-              "nodeId": "tabState",
-              "portName": "value"
-            }
-          ],
-          "components": [
-            {
-              "nodeId": "tabLabel_impulse",
-              "portName": "self"
-            }
-          ]
-        },
-        "outputs": {
-          "self": [
-            {
-              "nodeId": "tabs",
-              "portName": "components_3"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "size": {
-          "value": "s"
-        },
-        "stateValue": {
-          "value": "impulse"
-        }
-      },
-      "width": 280,
-      "height": 172,
-      "x": 680.0,
-      "y": 440.0
-    },
-    "tabLabel_impulse": {
-      "id": "tabLabel_impulse",
-      "type": "ui.Text",
-      "connections": {
-        "inputs": {},
-        "outputs": {
-          "self": [
-            {
-              "nodeId": "tab_impulse",
-              "portName": "components"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "value": {
-          "value": "Impulse map"
-        }
-      },
-      "width": 280,
-      "height": 172,
-      "x": 1020.0,
-      "y": 440.0
-    },
-    "banner": {
-      "id": "banner",
-      "type": "ui.LearningPerformanceBanner",
-      "connections": {
-        "inputs": {},
-        "outputs": {
-          "self": [
-            {
-              "nodeId": "page",
-              "portName": "components_1"
-            }
-          ]
-        }
-      },
-      "width": 280,
-      "height": 172,
-      "x": 1360.0,
-      "y": 440.0
-    },
-    "pane_forward": {
-      "id": "pane_forward",
-      "type": "ui.Flex.Column",
-      "connections": {
-        "inputs": {
-          "visibleWhen": [
-            {
-              "nodeId": "tabState",
-              "portName": "value"
-            }
-          ],
-          "components": [
-            {
-              "nodeId": "forwardView",
-              "portName": "self"
-            }
-          ]
-        },
-        "outputs": {
-          "self": [
-            {
-              "nodeId": "page",
-              "portName": "components_2"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "className": {
-          "value": "min-h-0 flex-1 overflow-auto"
-        },
-        "stateValue": {
-          "value": "forward"
-        }
-      },
-      "width": 280,
-      "height": 172,
-      "x": 1700.0,
-      "y": 440.0
-    },
-    "forwardView": {
-      "id": "forwardView",
-      "type": "ui.ForwardView",
-      "connections": {
-        "inputs": {},
-        "outputs": {
-          "self": [
-            {
-              "nodeId": "pane_forward",
-              "portName": "components"
-            }
-          ]
-        }
-      },
-      "width": 280,
-      "height": 172,
-      "x": 0.0,
-      "y": 660.0
-    },
-    "pane_recognition": {
-      "id": "pane_recognition",
-      "type": "ui.Flex.Column",
-      "connections": {
-        "inputs": {
-          "visibleWhen": [
-            {
-              "nodeId": "tabState",
-              "portName": "value"
-            }
-          ],
-          "components": [
-            {
-              "nodeId": "recognitionView",
-              "portName": "self"
-            }
-          ]
-        },
-        "outputs": {
-          "self": [
-            {
-              "nodeId": "page",
-              "portName": "components_3"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "className": {
-          "value": "min-h-0 flex-1 overflow-auto"
-        },
-        "stateValue": {
-          "value": "recognition"
-        }
-      },
-      "width": 280,
-      "height": 172,
-      "x": 340.0,
-      "y": 660.0
-    },
-    "recognitionView": {
-      "id": "recognitionView",
-      "type": "ui.RecognitionView",
-      "connections": {
-        "inputs": {},
-        "outputs": {
-          "self": [
-            {
-              "nodeId": "pane_recognition",
-              "portName": "components"
-            }
-          ]
-        }
-      },
-      "width": 280,
-      "height": 172,
-      "x": 680.0,
-      "y": 660.0
-    },
-    "pane_trie": {
-      "id": "pane_trie",
-      "type": "ui.Flex.Column",
-      "connections": {
-        "inputs": {
-          "visibleWhen": [
-            {
-              "nodeId": "tabState",
-              "portName": "value"
-            }
-          ],
-          "components": [
-            {
-              "nodeId": "trieView",
-              "portName": "self"
-            }
-          ]
-        },
-        "outputs": {
-          "self": [
-            {
-              "nodeId": "page",
-              "portName": "components_4"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "className": {
-          "value": "min-h-0 flex-1 overflow-auto"
-        },
-        "stateValue": {
-          "value": "trie"
-        }
-      },
-      "width": 280,
-      "height": 172,
-      "x": 1020.0,
-      "y": 660.0
-    },
-    "trieView": {
-      "id": "trieView",
-      "type": "ui.TrieView",
-      "connections": {
-        "inputs": {},
-        "outputs": {
-          "self": [
-            {
-              "nodeId": "pane_trie",
-              "portName": "components"
-            }
-          ]
-        }
-      },
-      "width": 280,
-      "height": 172,
-      "x": 1360.0,
-      "y": 660.0
-    },
-    "pane_impulse": {
-      "id": "pane_impulse",
-      "type": "ui.Flex.Column",
-      "connections": {
-        "inputs": {
-          "visibleWhen": [
-            {
-              "nodeId": "tabState",
-              "portName": "value"
-            }
-          ],
-          "components": [
-            {
-              "nodeId": "impulseView",
-              "portName": "self"
-            }
-          ]
-        },
-        "outputs": {
-          "self": [
-            {
-              "nodeId": "page",
-              "portName": "components_5"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "className": {
-          "value": "min-h-0 flex-1 overflow-auto"
-        },
-        "stateValue": {
-          "value": "impulse"
-        }
-      },
-      "width": 280,
-      "height": 172,
-      "x": 1700.0,
-      "y": 660.0
-    },
-    "impulseView": {
-      "id": "impulseView",
-      "type": "ui.ImpulseMap",
-      "connections": {
-        "inputs": {},
-        "outputs": {
-          "self": [
-            {
-              "nodeId": "pane_impulse",
-              "portName": "components"
-            }
-          ]
-        }
-      },
-      "width": 280,
-      "height": 172,
-      "x": 0.0,
-      "y": 880.0
-    },
-    "panels": {
-      "id": "panels",
-      "type": "ui.Flex.Row",
-      "connections": {
-        "inputs": {
-          "components": [
-            {
-              "nodeId": "knowledge",
-              "portName": "self"
-            }
-          ],
-          "components_1": [
-            {
-              "nodeId": "recognitionPanel",
-              "portName": "self"
-            }
-          ]
-        },
-        "outputs": {
-          "self": [
-            {
-              "nodeId": "page",
-              "portName": "components_6"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "className": {
-          "value": "min-h-0 shrink-0 border-(--line) border-t"
-        },
-        "gap": {
-          "value": "3"
-        }
-      },
-      "width": 280,
-      "height": 172,
-      "x": 340.0,
-      "y": 880.0
-    },
-    "knowledge": {
-      "id": "knowledge",
-      "type": "ui.KnowledgePanel",
-      "connections": {
-        "inputs": {},
-        "outputs": {
-          "self": [
-            {
-              "nodeId": "panels",
-              "portName": "components"
-            }
-          ]
-        }
-      },
-      "width": 280,
-      "height": 172,
-      "x": 680.0,
-      "y": 880.0
-    },
-    "recognitionPanel": {
-      "id": "recognitionPanel",
-      "type": "ui.RecognitionPanel",
-      "connections": {
-        "inputs": {},
-        "outputs": {
-          "self": [
-            {
-              "nodeId": "panels",
-              "portName": "components_1"
-            }
-          ]
-        }
-      },
-      "width": 280,
-      "height": 172,
-      "x": 1020.0,
-      "y": 880.0
-    },
-    "tabState": {
-      "id": "tabState",
-      "type": "ui.UIState",
-      "inputData": {
-        "key": {
-          "value": "tab"
-        },
-        "initial": {
-          "value": "forward"
-        }
-      },
-      "connections": {
-        "inputs": {},
-        "outputs": {
-          "value": [
-            {
-              "nodeId": "tab_forward",
-              "portName": "selects"
-            },
-            {
-              "nodeId": "tab_recognition",
-              "portName": "selects"
-            },
-            {
-              "nodeId": "tab_trie",
-              "portName": "selects"
-            },
-            {
-              "nodeId": "tab_impulse",
-              "portName": "selects"
-            },
-            {
-              "nodeId": "pane_forward",
-              "portName": "visibleWhen"
-            },
-            {
-              "nodeId": "pane_recognition",
-              "portName": "visibleWhen"
-            },
-            {
-              "nodeId": "pane_trie",
-              "portName": "visibleWhen"
-            },
-            {
-              "nodeId": "pane_impulse",
-              "portName": "visibleWhen"
-            }
-          ]
-        }
-      },
-      "width": 280,
-      "height": 172,
-      "x": 1360.0,
-      "y": 880.0
+      }
     }
   }
 }

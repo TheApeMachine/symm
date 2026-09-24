@@ -135,20 +135,15 @@ describe("syncConnectionElements", () => {
 			"smooth",
 		);
 
-		expect(
-			container.querySelector('[data-connection-id="conn-1"]'),
-		).toBeNull();
+		expect(container.querySelector('[data-connection-id="conn-1"]')).toBeNull();
 		expect(
 			container.querySelector('[data-connection-id="conn-2"]'),
 		).not.toBeNull();
 
 		// Delete conn-2 explicitly
 		deleteConnection({ id: "conn-2" });
-		expect(
-			container.querySelector('[data-connection-id="conn-2"]'),
-		).toBeNull();
+		expect(container.querySelector('[data-connection-id="conn-2"]')).toBeNull();
 
 		container.remove();
 	});
 });
-

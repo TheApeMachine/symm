@@ -265,7 +265,11 @@ func (server *DomainServer) coordinates(seed, lower, upper []float64) []float64 
 		// The coordinates mapping onto the bounds themselves are infinite,
 		// so a seed sitting on one is drawn just inside it.
 		ratio = math.Max(seedRatioFloor, math.Min(1-seedRatioFloor, ratio))
-		seed[index] = math.Log(math.Expm1(ratio / (1 - ratio)))
+		lift := ratio / (1 - ratio)
+
+		// The inverse softplus log(exp(x) - 1), written as x + log(1 - exp(-x))
+		// so a seed drawn in against the upper bound does not overflow exp.
+		seed[index] = lift + math.Log(-math.Expm1(-lift))
 	}
 
 	return seed

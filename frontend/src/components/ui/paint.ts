@@ -168,8 +168,7 @@ export function usePaintStore<
 		};
 
 		// 1. Apply initial store state immediately
-		const initial =
-			store.state !== undefined ? store.state : store.get?.();
+		const initial = store.state !== undefined ? store.state : store.get?.();
 		if (initial !== undefined) {
 			update(initial as TState);
 		}

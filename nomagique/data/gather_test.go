@@ -44,12 +44,16 @@ func TestGather(t *testing.T) {
 			results, err := future.Struct()
 			So(err, ShouldBeNil)
 
-			numbers, err := results.Values()
-			So(err, ShouldBeNil)
-			flags, err := results.Present()
-			So(err, ShouldBeNil)
-
 			out, delivered := []float64{}, []bool{}
+
+			if results.Which() == data.Gathered_Which_idle {
+				return out, delivered
+			}
+
+			numbers, err := results.Gathered().Values()
+			So(err, ShouldBeNil)
+			flags, err := results.Gathered().Present()
+			So(err, ShouldBeNil)
 
 			for slot := range numbers.Len() {
 				out = append(out, numbers.At(slot))
@@ -66,6 +70,12 @@ func TestGather(t *testing.T) {
 
 			Convey("And nothing arriving is no list at all", func() {
 				values, present := gather(nil, nil)
+				So(values, ShouldBeEmpty)
+				So(present, ShouldBeEmpty)
+			})
+
+			Convey("And slots none of whose producers delivered are idle", func() {
+				values, present := gather([]float64{0, 0, 0}, []bool{false, false, false})
 				So(values, ShouldBeEmpty)
 				So(present, ShouldBeEmpty)
 			})

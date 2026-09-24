@@ -25,8 +25,8 @@ $Go.import("github.com/theapemachine/symm/nomagique/store");
 # a position past the end, or a seek with no such document, is not found.
 # Answers line up with request slots; a slot nothing asked on is empty.
 #
-# Every port gathers, so the index runs on every evaluation with whatever
-# arrived.
+# Every port gathers, so the index runs whenever any of them arrives, with
+# whatever arrived.
 interface Index {
   write @0 (append :List(Data), request :List(Data), partition :Text, order :Text) -> stream;
   done @1 () -> (answers :List(Data));

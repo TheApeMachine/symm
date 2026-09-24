@@ -32,7 +32,6 @@ type WebSocketClientServer struct {
 	incoming   *lf.Queue[receivedFrame]
 	dialing    atomic.Bool
 	generation uint64
-	writeErr   error
 }
 
 /* receivedFrame retains metadata at socket receipt, before graph scheduling. */
@@ -66,10 +65,6 @@ func (server *WebSocketClientServer) Write(ctx context.Context, call WebSocketCl
 	}
 	server.mu.Lock()
 	defer server.mu.Unlock()
-
-	if server.writeErr != nil {
-		return server.writeErr
-	}
 
 	if server.Context().Err() != nil {
 		return errnie.Error(errnie.Err(errnie.IO, "websocket: client is closed", server.Context().Err()))
@@ -106,7 +101,9 @@ func (server *WebSocketClientServer) Write(ctx context.Context, call WebSocketCl
 		server.reconnect()
 		return nil
 	}
-	return server.send()
+
+	server.send()
+	return nil
 }
 
 /* Done drains received frames even while the transport reconnects. */
@@ -117,6 +114,9 @@ func (server *WebSocketClientServer) Done(ctx context.Context, call WebSocketCli
 		return errnie.Error(errnie.Err(errnie.Internal, "websocket: results", err))
 	}
 	results.SetStatus(runtime.Status(server.Status()))
+	server.mu.Lock()
+	results.SetConnection(server.generation)
+	server.mu.Unlock()
 	message, found := server.incoming.Dequeue()
 
 	if !found {
@@ -193,15 +193,21 @@ func (server *WebSocketClientServer) connect() bool {
 	server.generation++
 	server.read(connection, endpoint, server.generation)
 
-	if err := server.send(); err != nil {
-		server.writeErr = err
-	}
+	server.send()
 	server.Info("connected to %s", endpoint)
 	return true
 }
 
-/* send transmits each admitted frame once; an ambiguous write fails explicitly. */
-func (server *WebSocketClientServer) send() error {
+/*
+send transmits each admitted frame once. A write that fails is ambiguous: the
+venue may or may not have taken it, and the connection it was meant for is
+gone. What was pending belonged to that connection, so it is dropped with it
+rather than replayed onto the next one, where it would carry that connection's
+state (a token, a subscription the graph derives again per connection). The
+failure is reported, the connection is closed, and the client reconnects; one
+venue going away never fails the evaluation of everything else.
+*/
+func (server *WebSocketClientServer) send() {
 	for len(server.pending) > 0 {
 		payload := server.pending[0]
 		messageType := gorillaws.TextMessage
@@ -211,12 +217,25 @@ func (server *WebSocketClientServer) send() error {
 		}
 
 		if err := server.conn.WriteMessage(messageType, payload); err != nil {
-			return errnie.Error(errnie.Err(errnie.IO, fmt.Sprintf("websocket: write to %s failed", server.endpoint), err))
+			errnie.Error(errnie.Err(errnie.IO, fmt.Sprintf("websocket: write to %s failed; dropping its connection", server.endpoint), err))
+			server.drop()
+			return
 		}
 		server.pending[0] = nil
 		server.pending = server.pending[1:]
 	}
-	return nil
+}
+
+/* drop closes the current connection with what was pending for it, and reconnects. */
+func (server *WebSocketClientServer) drop() {
+	if err := server.conn.Close(); err != nil {
+		errnie.Error(errnie.Err(errnie.IO, "websocket: close failed connection", err))
+	}
+
+	server.conn = nil
+	server.pending = nil
+	server.Transition(runtime.WAITING)
+	server.reconnect()
 }
 
 /* reconnect admits one transport retry loop, bounded by the client context. */

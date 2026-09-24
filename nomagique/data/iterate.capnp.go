@@ -209,7 +209,7 @@ func (c Iterate_done) Args() Iterate_done_Params {
 
 // AllocResults allocates the results struct.
 func (c Iterate_done) AllocResults() (Iterate_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 40, PointerCount: 1})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 40, PointerCount: 2})
 	return Iterate_done_Results(r), err
 }
 
@@ -336,6 +336,14 @@ func (s Iterate_write_Params) SetIndexPath(v string) error {
 	return capnp.Struct(s).SetText(2, v)
 }
 
+func (s Iterate_write_Params) Whole() bool {
+	return capnp.Struct(s).Bit(1)
+}
+
+func (s Iterate_write_Params) SetWhole(v bool) {
+	capnp.Struct(s).SetBit(1, v)
+}
+
 // Iterate_write_Params_List is a list of Iterate_write_Params.
 type Iterate_write_Params_List = capnp.StructList[Iterate_write_Params]
 
@@ -424,12 +432,12 @@ type Iterate_done_Results capnp.Struct
 const Iterate_done_Results_TypeID = 0x84365fa4de73d250
 
 func NewIterate_done_Results(s *capnp.Segment) (Iterate_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 40, PointerCount: 1})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 40, PointerCount: 2})
 	return Iterate_done_Results(st), err
 }
 
 func NewRootIterate_done_Results(s *capnp.Segment) (Iterate_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 40, PointerCount: 1})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 40, PointerCount: 2})
 	return Iterate_done_Results(st), err
 }
 
@@ -534,12 +542,36 @@ func (s Iterate_done_Results) SetStatus(v runtime.Status) {
 	capnp.Struct(s).SetUint16(18, uint16(v))
 }
 
+func (s Iterate_done_Results) All() (capnp.DataList, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return capnp.DataList(p.List()), err
+}
+
+func (s Iterate_done_Results) HasAll() bool {
+	return capnp.Struct(s).HasPtr(1)
+}
+
+func (s Iterate_done_Results) SetAll(v capnp.DataList) error {
+	return capnp.Struct(s).SetPtr(1, v.ToPtr())
+}
+
+// NewAll sets the all field to a newly
+// allocated capnp.DataList, preferring placement in s's segment.
+func (s Iterate_done_Results) NewAll(n int32) (capnp.DataList, error) {
+	l, err := capnp.NewDataList(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return capnp.DataList{}, err
+	}
+	err = capnp.Struct(s).SetPtr(1, l.ToPtr())
+	return l, err
+}
+
 // Iterate_done_Results_List is a list of Iterate_done_Results.
 type Iterate_done_Results_List = capnp.StructList[Iterate_done_Results]
 
 // NewIterate_done_Results creates a new list of Iterate_done_Results.
 func NewIterate_done_Results_List(s *capnp.Segment, sz int32) (Iterate_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 40, PointerCount: 1}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 40, PointerCount: 2}, sz)
 	return capnp.StructList[Iterate_done_Results](l), err
 }
 

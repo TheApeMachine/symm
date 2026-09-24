@@ -80,7 +80,10 @@ export const RatioBar = ({
 								key={seg.label ?? seg.tone ?? "acc"}
 								title={seg.label ? `${seg.label}: ${seg.value}` : undefined}
 								style={{ width: `${pct}%` }}
-								className={cn("h-full transition-[width] duration-300", bgClass)}
+								className={cn(
+									"h-full transition-[width] duration-300",
+									bgClass,
+								)}
 							/>
 						);
 					})

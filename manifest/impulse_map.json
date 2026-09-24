@@ -665,16 +665,16 @@
               "portName": "index"
             }
           ],
-          "settled": [
-            {
-              "nodeId": "activation",
-              "portName": "labels"
-            }
-          ],
           "state": [
             {
               "nodeId": "partition",
               "portName": "values"
+            }
+          ],
+          "settled.regions": [
+            {
+              "nodeId": "activation",
+              "portName": "labels"
             }
           ]
         }
@@ -704,7 +704,7 @@
           "labels": [
             {
               "nodeId": "peak",
-              "portName": "settled"
+              "portName": "settled.regions"
             }
           ]
         },

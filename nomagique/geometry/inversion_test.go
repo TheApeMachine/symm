@@ -2,6 +2,7 @@ package geometry_test
 
 import (
 	"context"
+	"math"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -15,32 +16,63 @@ func TestInversion(t *testing.T) {
 		client := geometry.Inversion_ServerToClient(geometry.NewInversion())
 		defer client.Release()
 
-		So(client.Write(ctx, func(params geometry.Inversion_write_Params) error {
-			strength, err := params.NewStrength(3)
+		invert := func(strengths ...float64) []float64 {
+			So(client.Write(ctx, func(params geometry.Inversion_write_Params) error {
+				list, err := params.NewStrength(int32(len(strengths)))
 
-			if err != nil {
-				return err
-			}
+				if err != nil {
+					return err
+				}
 
-			strength.Set(0, 1)
-			strength.Set(1, 0)
-			strength.Set(2, -1)
-			return nil
-		}), ShouldBeNil)
-		So(client.WaitStreaming(), ShouldBeNil)
+				for index, value := range strengths {
+					list.Set(index, value)
+				}
 
-		future, release := client.Done(ctx, nil)
-		defer release()
+				return nil
+			}), ShouldBeNil)
+			So(client.WaitStreaming(), ShouldBeNil)
 
-		results, err := future.Struct()
-		So(err, ShouldBeNil)
+			future, release := client.Done(ctx, nil)
+			defer release()
 
-		Convey("Sympathy asks for less than a cell, none for one cell, repulsion for more", func() {
+			results, err := future.Struct()
+			So(err, ShouldBeNil)
 			distance, err := results.Distance()
 			So(err, ShouldBeNil)
-			So(distance.At(0), ShouldEqual, 0.5)
-			So(distance.At(1), ShouldEqual, 1)
-			So(distance.At(2), ShouldEqual, 2)
+
+			out := make([]float64, distance.Len())
+
+			for index := range out {
+				out[index] = distance.At(index)
+			}
+
+			return out
+		}
+
+		Convey("Sympathy asks for less than a cell, none for one cell, repulsion for more", func() {
+			// Measured against their root mean square, sqrt(2/3), the
+			// strengths 1, 0, -1 read as ±sqrt(3/2).
+			relative := math.Sqrt(1.5)
+			distance := invert(1, 0, -1)
+			So(distance[0], ShouldAlmostEqual, 1/(1+relative))
+			So(distance[1], ShouldEqual, 1)
+			So(distance[2], ShouldAlmostEqual, 1+relative)
+
+			Convey("And only how strengths compare matters, not their unit", func() {
+				scaled := invert(0.01, 0, -0.01)
+				for index := range distance {
+					So(scaled[index], ShouldAlmostEqual, distance[index])
+				}
+			})
+		})
+
+		Convey("An evaluation with no strength anywhere asks one cell of every pair", func() {
+			So(invert(0, 0), ShouldResemble, []float64{1, 1})
+		})
+
+		Convey("The next evaluation starts clean", func() {
+			invert(1, -1)
+			So(invert(), ShouldBeEmpty)
 		})
 	})
 }

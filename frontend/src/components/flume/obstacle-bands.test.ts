@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-	calculateEdgePath,
-	type ObstacleRect,
-} from "./connection-path-math";
+import { calculateEdgePath, type ObstacleRect } from "./connection-path-math";
 
 /*
 	The corridor scan files obstacles into bands so it does not walk all of

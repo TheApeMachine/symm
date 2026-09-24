@@ -584,6 +584,12 @@
               "nodeId": "grid",
               "portName": "scope"
             }
+          ],
+          "elapsed.timestamp": [
+            {
+              "nodeId": "grid",
+              "portName": "values_0"
+            }
           ]
         },
         "outputs": {
@@ -1599,6 +1605,12 @@
             {
               "nodeId": "grid",
               "portName": "scope"
+            }
+          ],
+          "trade_interval_seconds.timestamp": [
+            {
+              "nodeId": "grid",
+              "portName": "values_5"
             }
           ]
         },
@@ -2624,6 +2636,12 @@
               "nodeId": "grid",
               "portName": "scope"
             }
+          ],
+          "elapsed.timestamp": [
+            {
+              "nodeId": "grid",
+              "portName": "values_19"
+            }
           ]
         },
         "outputs": {
@@ -3116,6 +3134,30 @@
               "nodeId": "grid",
               "portName": "scope"
             }
+          ],
+          "liquidation_notional:buy.scope": [
+            {
+              "nodeId": "grid",
+              "portName": "scope"
+            }
+          ],
+          "liquidation_notional:sell.scope": [
+            {
+              "nodeId": "grid",
+              "portName": "scope"
+            }
+          ],
+          "gross_derivative_trade_notional.scope": [
+            {
+              "nodeId": "grid",
+              "portName": "scope"
+            }
+          ],
+          "elapsed.timestamp": [
+            {
+              "nodeId": "grid",
+              "portName": "values_5"
+            }
           ]
         },
         "outputs": {
@@ -3297,6 +3339,12 @@
             {
               "nodeId": "grid",
               "portName": "scope"
+            }
+          ],
+          "elapsed.timestamp": [
+            {
+              "nodeId": "grid",
+              "portName": "values_19"
             }
           ]
         },
@@ -3945,6 +3993,30 @@
             {
               "nodeId": "grid",
               "portName": "scope"
+            }
+          ],
+          "bracket_trade_quantity.scope": [
+            {
+              "nodeId": "grid",
+              "portName": "scope"
+            }
+          ],
+          "matched_touch_trade_quantity:bid.scope": [
+            {
+              "nodeId": "grid",
+              "portName": "scope"
+            }
+          ],
+          "matched_touch_trade_quantity:ask.scope": [
+            {
+              "nodeId": "grid",
+              "portName": "scope"
+            }
+          ],
+          "elapsed.timestamp": [
+            {
+              "nodeId": "grid",
+              "portName": "values_5"
             }
           ]
         },
@@ -4996,6 +5068,12 @@
               "nodeId": "grid",
               "portName": "scope"
             }
+          ],
+          "elapsed.timestamp": [
+            {
+              "nodeId": "grid",
+              "portName": "values_0"
+            }
           ]
         },
         "outputs": {
@@ -5343,6 +5421,54 @@
             {
               "nodeId": "grid",
               "portName": "scope"
+            }
+          ],
+          "trade_count.scope": [
+            {
+              "nodeId": "grid",
+              "portName": "scope"
+            }
+          ],
+          "trade_count:buy.scope": [
+            {
+              "nodeId": "grid",
+              "portName": "scope"
+            }
+          ],
+          "trade_count:sell.scope": [
+            {
+              "nodeId": "grid",
+              "portName": "scope"
+            }
+          ],
+          "executed_quantity:buy.scope": [
+            {
+              "nodeId": "grid",
+              "portName": "scope"
+            }
+          ],
+          "executed_quantity:sell.scope": [
+            {
+              "nodeId": "grid",
+              "portName": "scope"
+            }
+          ],
+          "aggressive_notional:buy.scope": [
+            {
+              "nodeId": "grid",
+              "portName": "scope"
+            }
+          ],
+          "aggressive_notional:sell.scope": [
+            {
+              "nodeId": "grid",
+              "portName": "scope"
+            }
+          ],
+          "elapsed.timestamp": [
+            {
+              "nodeId": "grid",
+              "portName": "values_5"
             }
           ]
         },
@@ -5735,7 +5861,7 @@
       "y": 0.0,
       "inputData": {
         "interests": {
-          "value": "ticker.data.timestamp,ticker.data.last,trade.data.qty,trade.data.side=sell,trade.data.price,trade.data.timestamp,level3.data.ask,level3.data.bid,level3.data.ask_qty,level3.data.bid_qty,ticker.data.index,ticker.data.mark,ticker.data.openInterest,ticker.data.ask,ticker.data.bid,ticker.data.ask_qty,ticker.data.bid_qty,level3.data.bids,level3.data.asks"
+          "value": "ticker.capture.receivedAt,ticker.data.last,trade.data.qty,trade.data.side=sell,trade.data.price,trade.data.timestamp,level3.data.ask,level3.data.bid,level3.data.ask_qty,level3.data.bid_qty,ticker.data.index,ticker.data.mark,ticker.data.openInterest,ticker.data.ask,ticker.data.bid,ticker.data.ask_qty,ticker.data.bid_qty,level3.data.bids,level3.data.asks,level3.capture.receivedAt"
         }
       },
       "connections": {
@@ -8308,6 +8434,14 @@
             {
               "nodeId": "definition-leadlag_ticker",
               "portName": "shiftEnd_8.a"
+            },
+            {
+              "nodeId": "definition-pumpdump_ticker",
+              "portName": "elapsed.timestamp"
+            },
+            {
+              "nodeId": "definition-derivatives_ticker",
+              "portName": "elapsed.timestamp"
             }
           ],
           "values_1": [
@@ -8454,6 +8588,22 @@
             {
               "nodeId": "definition-hawkes_trade",
               "portName": "spectral_radius_velocity.ts"
+            },
+            {
+              "nodeId": "definition-cvd_trade",
+              "portName": "elapsed.timestamp"
+            },
+            {
+              "nodeId": "definition-derivatives_trade",
+              "portName": "elapsed.timestamp"
+            },
+            {
+              "nodeId": "definition-toxicity_trade",
+              "portName": "elapsed.timestamp"
+            },
+            {
+              "nodeId": "definition-pumpdump_trade",
+              "portName": "trade_interval_seconds.timestamp"
             }
           ],
           "values_6": [
@@ -9214,6 +9364,68 @@
             {
               "nodeId": "definition-cvd_trade",
               "portName": "responseRateVar.scope"
+            },
+            {
+              "nodeId": "definition-cvd_trade",
+              "portName": "trade_count.scope"
+            },
+            {
+              "nodeId": "definition-cvd_trade",
+              "portName": "trade_count:buy.scope"
+            },
+            {
+              "nodeId": "definition-cvd_trade",
+              "portName": "trade_count:sell.scope"
+            },
+            {
+              "nodeId": "definition-cvd_trade",
+              "portName": "executed_quantity:buy.scope"
+            },
+            {
+              "nodeId": "definition-cvd_trade",
+              "portName": "executed_quantity:sell.scope"
+            },
+            {
+              "nodeId": "definition-cvd_trade",
+              "portName": "aggressive_notional:buy.scope"
+            },
+            {
+              "nodeId": "definition-cvd_trade",
+              "portName": "aggressive_notional:sell.scope"
+            },
+            {
+              "nodeId": "definition-derivatives_trade",
+              "portName": "liquidation_notional:buy.scope"
+            },
+            {
+              "nodeId": "definition-derivatives_trade",
+              "portName": "liquidation_notional:sell.scope"
+            },
+            {
+              "nodeId": "definition-derivatives_trade",
+              "portName": "gross_derivative_trade_notional.scope"
+            },
+            {
+              "nodeId": "definition-toxicity_trade",
+              "portName": "bracket_trade_quantity.scope"
+            },
+            {
+              "nodeId": "definition-toxicity_trade",
+              "portName": "matched_touch_trade_quantity:bid.scope"
+            },
+            {
+              "nodeId": "definition-toxicity_trade",
+              "portName": "matched_touch_trade_quantity:ask.scope"
+            }
+          ],
+          "values_19": [
+            {
+              "nodeId": "definition-toxicity_level3",
+              "portName": "elapsed.timestamp"
+            },
+            {
+              "nodeId": "definition-depthflow_level3",
+              "portName": "elapsed.timestamp"
             }
           ]
         }

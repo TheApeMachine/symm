@@ -108,6 +108,10 @@ func TestReduce(t *testing.T) {
 				return 0, false, err
 			}
 
+			if results.Which() != data.Folded_Which_out {
+				return 0, results.Ready(), nil
+			}
+
 			return results.Out(), results.Ready(), nil
 		}
 

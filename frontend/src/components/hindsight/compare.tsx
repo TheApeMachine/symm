@@ -75,8 +75,6 @@ type Reading = {
 	} | null;
 };
 
-
-
 const readMeasurement = (m: Measurement | null): Map<string, Reading> => {
 	const facts = new Map<string, Reading>();
 	if (m === null || m === undefined) return facts;
@@ -85,9 +83,7 @@ const readMeasurement = (m: Measurement | null): Map<string, Reading> => {
 	for (const item of all) {
 		const source = item.source || item.label || "measurement";
 		const seq =
-			typeof item.seqIdx === "number"
-				? item.seqIdx
-				: Number(item.seqIdx) || 0;
+			typeof item.seqIdx === "number" ? item.seqIdx : Number(item.seqIdx) || 0;
 		const origin = {
 			sequence: seq,
 			ordinal: 0,
@@ -295,13 +291,10 @@ export const ComparePanel = ({
 				<span className="ml-2">
 					{marks.map((mark, index) => {
 						const m = measurements?.[index];
-						const peers = m ? m.peers ?? m.Peers ?? [] : [];
+						const peers = m ? (m.peers ?? m.Peers ?? []) : [];
 
 						return (
-							<span
-								key={`${mark.sequence}:${mark.ordinal}`}
-								className="mr-3"
-							>
+							<span key={`${mark.sequence}:${mark.ordinal}`} className="mr-3">
 								<span className="text-(--info)">
 									{String.fromCharCode(65 + index)}
 								</span>{" "}

@@ -81,7 +81,9 @@ export const StepCard = ({
 					{resolvedText}
 				</p>
 			)}
-			{footer && <div className="mt-2 pt-2 border-t border-(--line)">{footer}</div>}
+			{footer && (
+				<div className="mt-2 pt-2 border-t border-(--line)">{footer}</div>
+			)}
 		</motion.div>
 	);
 };

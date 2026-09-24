@@ -6,9 +6,7 @@ import {
 } from "./spatial-index";
 import type { NodeMap } from "./types";
 
-const snapshotWith = (
-	ports: Array<[string, string, "input" | "output"]>,
-) => {
+const snapshotWith = (ports: Array<[string, string, "input" | "output"]>) => {
 	const snapshot = createSpatialIndexSnapshot();
 
 	for (const [nodeId, portName, transput] of ports) {

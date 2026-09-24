@@ -7,8 +7,9 @@ using import "../../runtime/status.capnp".Queued;
 
 # Reads a pinned, already-loaded Iceberg metadata document.
 # Catalog requests and row projection are separate graph operations.
-# One row is handed out per evaluation; pending stays positive until the
-# snapshot is exhausted, so the rows still unread keep the graph running.
+# One record batch is handed out per evaluation, as an Arrow IPC stream;
+# pending stays positive until the snapshot is exhausted, so the batches still
+# unread keep the graph running.
 interface IcebergScan @0xefa0adbd7a396d92 extends(Queued) {
   write @0 (metadata :List(Data), properties :List(Data)) -> stream;
   done @1 () -> Scanned;

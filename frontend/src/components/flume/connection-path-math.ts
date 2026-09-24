@@ -1,8 +1,8 @@
 import { curveBasis, line } from "d3-shape";
 import {
 	buildRoutingGridFromObstacles,
-	routeOrthogonalWithGrid,
 	type RoutingGrid,
+	routeOrthogonalWithGrid,
 } from "#/components/flume/orthogonal-grid-router";
 import type { Coordinate } from "#/components/flume/types";
 
@@ -391,14 +391,7 @@ export const calculateEdgePath = (
 		case "orthogonal": {
 			const v = obstaclesVertical ?? [];
 			const h = obstaclesHorizontal ?? v;
-			return calculateOrthogonalEdgePath(
-				from,
-				to,
-				v,
-				h,
-				grid,
-				excludedNodeIds,
-			);
+			return calculateOrthogonalEdgePath(from, to, v, h, grid, excludedNodeIds);
 		}
 		default:
 			return calculateSmoothCurve(from, to);

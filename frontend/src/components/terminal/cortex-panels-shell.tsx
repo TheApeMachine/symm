@@ -56,8 +56,16 @@ export const CortexPanelsShell = ({ symbol }: { symbol: string }) => {
 				<Panel.Caption>softmax posterior · b/[class]/[sequence]</Panel.Caption>
 				<Flex.Column gap={2}>
 					<Flex.Row justify="between" align="center">
-						<Typography.Span data-f="winner" variant="f3" className="text-[10px]" />
-						<Typography.Span data-f="confidence" variant="f1" className="text-[10px]" />
+						<Typography.Span
+							data-f="winner"
+							variant="f3"
+							className="text-[10px]"
+						/>
+						<Typography.Span
+							data-f="confidence"
+							variant="f1"
+							className="text-[10px]"
+						/>
 					</Flex.Row>
 					<Meter
 						layout="bar"

@@ -137,7 +137,9 @@ export const FluidInspector = () => {
 	});
 
 	const [hydro, setHydro] = useState<Record<string, number> | null>(null);
-	const [phaseReading, setPhaseReading] = useState<FluidPhaseReading | null>(null);
+	const [phaseReading, setPhaseReading] = useState<FluidPhaseReading | null>(
+		null,
+	);
 	const [showDiagnostics, setShowDiagnostics] = useState(true);
 
 	const connect = () => {

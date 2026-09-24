@@ -8,21 +8,19 @@ import (
 )
 
 type SqrtServer struct {
-	out float64
+	out     float64
+	defined bool
 }
 
 func (srv *SqrtServer) Write(ctx context.Context, call Sqrt_write) error {
-	inVal := call.Args().Value()
+	value := call.Args().Value()
+	srv.defined = value >= 0
+	srv.out = 0
 
-	if inVal < 0 {
-		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"calculus: sqrt of negative value",
-			nil,
-		))
+	if srv.defined {
+		srv.out = math.Sqrt(value)
 	}
 
-	srv.out = math.Sqrt(inVal)
 	return nil
 }
 
@@ -37,8 +35,13 @@ func (srv *SqrtServer) Done(ctx context.Context, call Sqrt_done) error {
 		))
 	}
 
-	res.SetOut(srv.out)
-	srv.out = 0
+	res.SetUndefined()
+
+	if srv.defined {
+		res.SetOut(srv.out)
+	}
+
+	srv.out, srv.defined = 0, false
 	return nil
 }
 

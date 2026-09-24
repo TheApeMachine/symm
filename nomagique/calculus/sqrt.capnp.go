@@ -10,6 +10,7 @@ import (
 	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
 	context "context"
 	math "math"
+	strconv "strconv"
 )
 
 type Sqrt capnp.Client
@@ -35,7 +36,7 @@ func (c Sqrt) Write(ctx context.Context, params func(Sqrt_write_Params) error) e
 
 }
 
-func (c Sqrt) Done(ctx context.Context, params func(Sqrt_done_Params) error) (Sqrt_done_Results_Future, capnp.ReleaseFunc) {
+func (c Sqrt) Done(ctx context.Context, params func(Sqrt_done_Params) error) (Root_Future, capnp.ReleaseFunc) {
 
 	s := capnp.Send{
 		Method: capnp.Method{
@@ -51,7 +52,7 @@ func (c Sqrt) Done(ctx context.Context, params func(Sqrt_done_Params) error) (Sq
 	}
 
 	ans, release := capnp.Client(c).SendCall(ctx, s)
-	return Sqrt_done_Results_Future{Future: ans.Future()}, release
+	return Root_Future{Future: ans.Future()}, release
 
 }
 
@@ -208,9 +209,9 @@ func (c Sqrt_done) Args() Sqrt_done_Params {
 }
 
 // AllocResults allocates the results struct.
-func (c Sqrt_done) AllocResults() (Sqrt_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 0})
-	return Sqrt_done_Results(r), err
+func (c Sqrt_done) AllocResults() (Root, error) {
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 16, PointerCount: 0})
+	return Root(r), err
 }
 
 // Sqrt_List is a list of Sqrt.
@@ -359,74 +360,105 @@ func (f Sqrt_done_Params_Future) Struct() (Sqrt_done_Params, error) {
 	return Sqrt_done_Params(p.Struct()), err
 }
 
-type Sqrt_done_Results capnp.Struct
+type Root capnp.Struct
+type Root_Which uint16
 
-// Sqrt_done_Results_TypeID is the unique identifier for the type Sqrt_done_Results.
-const Sqrt_done_Results_TypeID = 0x957394a62bf633a8
+const (
+	Root_Which_undefined Root_Which = 0
+	Root_Which_out       Root_Which = 1
+)
 
-func NewSqrt_done_Results(s *capnp.Segment) (Sqrt_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
-	return Sqrt_done_Results(st), err
+func (w Root_Which) String() string {
+	const s = "undefinedout"
+	switch w {
+	case Root_Which_undefined:
+		return s[0:9]
+	case Root_Which_out:
+		return s[9:12]
+
+	}
+	return "Root_Which(" + strconv.FormatUint(uint64(w), 10) + ")"
 }
 
-func NewRootSqrt_done_Results(s *capnp.Segment) (Sqrt_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
-	return Sqrt_done_Results(st), err
+// Root_TypeID is the unique identifier for the type Root.
+const Root_TypeID = 0xc93a6eb521d5062b
+
+func NewRoot(s *capnp.Segment) (Root, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 0})
+	return Root(st), err
 }
 
-func ReadRootSqrt_done_Results(msg *capnp.Message) (Sqrt_done_Results, error) {
+func NewRootRoot(s *capnp.Segment) (Root, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 0})
+	return Root(st), err
+}
+
+func ReadRootRoot(msg *capnp.Message) (Root, error) {
 	root, err := msg.Root()
-	return Sqrt_done_Results(root.Struct()), err
+	return Root(root.Struct()), err
 }
 
-func (s Sqrt_done_Results) String() string {
-	str, _ := text.Marshal(0x957394a62bf633a8, capnp.Struct(s))
+func (s Root) String() string {
+	str, _ := text.Marshal(0xc93a6eb521d5062b, capnp.Struct(s))
 	return str
 }
 
-func (s Sqrt_done_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+func (s Root) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
 	return capnp.Struct(s).EncodeAsPtr(seg)
 }
 
-func (Sqrt_done_Results) DecodeFromPtr(p capnp.Ptr) Sqrt_done_Results {
-	return Sqrt_done_Results(capnp.Struct{}.DecodeFromPtr(p))
+func (Root) DecodeFromPtr(p capnp.Ptr) Root {
+	return Root(capnp.Struct{}.DecodeFromPtr(p))
 }
 
-func (s Sqrt_done_Results) ToPtr() capnp.Ptr {
+func (s Root) ToPtr() capnp.Ptr {
 	return capnp.Struct(s).ToPtr()
 }
-func (s Sqrt_done_Results) IsValid() bool {
+
+func (s Root) Which() Root_Which {
+	return Root_Which(capnp.Struct(s).Uint16(0))
+}
+func (s Root) IsValid() bool {
 	return capnp.Struct(s).IsValid()
 }
 
-func (s Sqrt_done_Results) Message() *capnp.Message {
+func (s Root) Message() *capnp.Message {
 	return capnp.Struct(s).Message()
 }
 
-func (s Sqrt_done_Results) Segment() *capnp.Segment {
+func (s Root) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Sqrt_done_Results) Out() float64 {
-	return math.Float64frombits(capnp.Struct(s).Uint64(0))
+func (s Root) SetUndefined() {
+	capnp.Struct(s).SetUint16(0, 0)
+
 }
 
-func (s Sqrt_done_Results) SetOut(v float64) {
-	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
+func (s Root) Out() float64 {
+	if capnp.Struct(s).Uint16(0) != 1 {
+		panic("Which() != out")
+	}
+	return math.Float64frombits(capnp.Struct(s).Uint64(8))
 }
 
-// Sqrt_done_Results_List is a list of Sqrt_done_Results.
-type Sqrt_done_Results_List = capnp.StructList[Sqrt_done_Results]
-
-// NewSqrt_done_Results creates a new list of Sqrt_done_Results.
-func NewSqrt_done_Results_List(s *capnp.Segment, sz int32) (Sqrt_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0}, sz)
-	return capnp.StructList[Sqrt_done_Results](l), err
+func (s Root) SetOut(v float64) {
+	capnp.Struct(s).SetUint16(0, 1)
+	capnp.Struct(s).SetUint64(8, math.Float64bits(v))
 }
 
-// Sqrt_done_Results_Future is a wrapper for a Sqrt_done_Results promised by a client call.
-type Sqrt_done_Results_Future struct{ *capnp.Future }
+// Root_List is a list of Root.
+type Root_List = capnp.StructList[Root]
 
-func (f Sqrt_done_Results_Future) Struct() (Sqrt_done_Results, error) {
+// NewRoot creates a new list of Root.
+func NewRoot_List(s *capnp.Segment, sz int32) (Root_List, error) {
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 16, PointerCount: 0}, sz)
+	return capnp.StructList[Root](l), err
+}
+
+// Root_Future is a wrapper for a Root promised by a client call.
+type Root_Future struct{ *capnp.Future }
+
+func (f Root_Future) Struct() (Root, error) {
 	p, err := f.Future.Ptr()
-	return Sqrt_done_Results(p.Struct()), err
+	return Root(p.Struct()), err
 }

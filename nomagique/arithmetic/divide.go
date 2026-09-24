@@ -6,22 +6,19 @@ import (
 	"github.com/theapemachine/errnie"
 )
 
-/*
-DivideServer owns division.
-
-A zero divisor is not an error here. The quotient is undefined, and saying so
-is what division by zero means: the result carries that forward as infinity or
-as not-a-number, and whichever metric depended on it reports undefined. Refusing
-the call instead would abort the whole evaluation, so one undefined quotient
-would erase every other metric measured from the same observation — including
-all the ones that were perfectly well defined.
-*/
 type DivideServer struct {
-	out float64
+	out     float64
+	defined bool
 }
 
 func (srv *DivideServer) Write(ctx context.Context, call Divide_write) error {
-	srv.out = call.Args().A() / call.Args().B()
+	srv.defined = call.Args().B() != 0
+	srv.out = 0
+
+	if srv.defined {
+		srv.out = call.Args().A() / call.Args().B()
+	}
+
 	return nil
 }
 
@@ -36,9 +33,13 @@ func (srv *DivideServer) Done(ctx context.Context, call Divide_done) error {
 		))
 	}
 
-	res.SetOut(srv.out)
-	srv.out = 0
+	res.SetUndefined()
 
+	if srv.defined {
+		res.SetOut(srv.out)
+	}
+
+	srv.out, srv.defined = 0, false
 	return nil
 }
 

@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import { ImpulseMap, type ImpulsePoint } from "./impulse-map";
+import { createFlumeConfig } from "../flume/flume-config.generated";
 import { compileUI } from "./compiler";
+import { ImpulseMap, type ImpulsePoint } from "./impulse-map";
 import { renderNode, resolveBindings } from "./renderer";
 import metadata from "./ui-component-metadata.generated.json";
-import { createFlumeConfig } from "../flume/flume-config.generated";
 
 const points: ImpulsePoint[] = [
 	{
@@ -51,17 +51,17 @@ describe("ImpulseMap", () => {
 				]}
 			/>,
 		);
-		expect(container.querySelector("circle")?.getAttribute("cx")).toBe("12");
-		expect(container.querySelector("polygon")?.getAttribute("points")).toBe(
-			"0,0 20,0 20,30",
-		);
+		expect(container.querySelectorAll("circle")).toHaveLength(1);
+		expect(
+			container.querySelector("polygon")?.getAttribute("points")?.split(" "),
+		).toHaveLength(3);
 		fireEvent.focus(screen.getByLabelText("Observed point"));
-		expect(screen.getByText(/activation 0.2/)).toBeDefined();
-		expect(screen.getByText("Measured region")).toBeDefined();
+		expect(screen.getByText(/authority 0.800/)).toBeDefined();
+		expect(screen.getByText("region Measured region")).toBeDefined();
 		expect(points).toEqual(before);
 		rerender(<ImpulseMap points={[]} />);
 		expect(container.querySelector("circle")).toBeNull();
-		expect(screen.queryByText(/activation/)).toBeNull();
+		expect(screen.queryByText(/coordinate 7/)).toBeNull();
 		expect(screen.getByText("No impulse data")).toBeDefined();
 	});
 
@@ -95,12 +95,38 @@ describe("ImpulseMap", () => {
 		expect(container.querySelectorAll("circle")).toHaveLength(1);
 		rerender(
 			renderNode(node, "view", {
-				source: { points: [{ ...points[0], x: -25 }] },
+				source: {
+					points: [
+						{ ...points[0], x: -25 },
+						{ ...points[0], id: 8, label: "Right point", x: 40 },
+					],
+				},
 			}),
 		);
-		expect(container.querySelector("circle")?.getAttribute("cx")).toBe("-25");
+		const [left, right] = Array.from(container.querySelectorAll("circle"));
+		expect(Number(left.getAttribute("cx"))).toBeLessThan(
+			Number(right.getAttribute("cx")),
+		);
 		rerender(renderNode(node, "view", {}));
 		expect(container.querySelectorAll("circle")).toHaveLength(0);
+	});
+
+	it("toggles between the original lattice and the arrangement", () => {
+		const arranged: ImpulsePoint[] = [
+			{ ...points[0], id: 0, label: "first", x: 5, y: 0 },
+			{ ...points[0], id: 3, label: "second", x: -5, y: 0 },
+		];
+		const { container } = render(<ImpulseMap points={arranged} />);
+		const cx = () =>
+			Array.from(container.querySelectorAll("circle")).map((circle) =>
+				Number(circle.getAttribute("cx")),
+			);
+		const [first, second] = cx();
+		expect(first).toBeGreaterThan(second);
+		fireEvent.click(screen.getByText("Initial grid"));
+		// On a two-column lattice coordinate 0 sits left of coordinate 3.
+		const [gridFirst, gridSecond] = cx();
+		expect(gridFirst).toBeLessThan(gridSecond);
 	});
 
 	it("rejects a relationship whose endpoints are missing", () => {

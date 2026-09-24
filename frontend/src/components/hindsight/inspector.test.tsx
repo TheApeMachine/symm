@@ -40,10 +40,7 @@ const measurement: Measurement = {
 describe("StatePanel", () => {
 	it("shows observed measurements and concurrent peers", () => {
 		const markup = renderToStaticMarkup(
-			<StatePanel
-				measurement={measurement}
-				semantics={null}
-			/>,
+			<StatePanel measurement={measurement} semantics={null} />,
 		);
 
 		expect(markup).toContain("Observed measurement at sequence 100");

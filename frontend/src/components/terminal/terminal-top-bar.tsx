@@ -1,14 +1,9 @@
 import { useSelector } from "@tanstack/react-store";
-import {
-	focusAtom,
-	onlineAtom,
-	signals,
-	tickCountAtom,
-} from "#/collections/app";
+import { focusAtom, onlineAtom } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
 import { Balance } from "#/components/balance";
-import { Count } from "#/components/count";
 import { AgentSkill } from "#/components/learning/agent-skill";
+import { useShellValue } from "#/components/shell-value";
 import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
 import { Divider } from "#/components/ui/divider";
@@ -39,29 +34,7 @@ const SymmLogo = () => (
 );
 
 const ObservationCounter = () => {
-	const symbol = useSelector(focusAtom, (s) => s);
-	const steps = useSelector(signals.training, (state) => {
-		const ring =
-			state[symbol] ?? state.learner ?? state[""] ?? Object.values(state)[0];
-		const latest = ring?.getLast();
-		if (!latest) {
-			return null;
-		}
-
-		for (const metric of latest.metrics ?? []) {
-			if (metric.name === "steps") {
-				return Math.floor(metric.raw ?? 0);
-			}
-		}
-
-		return null;
-	});
-	const ticks = useSelector(tickCountAtom, (s) => s);
-
-	let count = steps;
-	if (count === null && ticks > 0) {
-		count = ticks;
-	}
+	const count = useShellValue("observations");
 
 	return (
 		<Flex.Row align="center" gap={6}>
@@ -70,7 +43,7 @@ const ObservationCounter = () => {
 					Observations
 				</Typography.Label>
 				<Typography.Mono size="lg" tone="f1" data-tick="true">
-					{count !== null ? count.toLocaleString() : "—"}
+					{count === undefined ? "—" : Math.floor(count).toLocaleString()}
 				</Typography.Mono>
 			</Flex.Column>
 		</Flex.Row>
@@ -174,10 +147,6 @@ export const TerminalTopBar = () => {
 					<span className="text-[11px]">Jump to</span>
 					<Key>k</Key>
 				</Button>
-
-				<Rule />
-
-				<Count />
 
 				<Rule />
 

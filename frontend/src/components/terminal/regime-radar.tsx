@@ -1,9 +1,9 @@
 import { useSelector } from "@tanstack/react-store";
 import { useEffect, useRef } from "react";
-import {  focusAtom , signals } from "#/collections/app";
+import { focusAtom, signals } from "#/collections/app";
+import { applyPaintMap } from "#/components/ui/paint";
 import { Panel } from "#/components/ui/panel";
 import { Radar } from "#/components/ui/radar";
-import { applyPaintMap } from "#/components/ui/paint";
 import { Metric } from "#/providers/telemetry/telemetry/metric";
 
 const metricObj = new Metric();
@@ -53,10 +53,11 @@ export const RadarPanel = () => {
 
 	useEffect(() => {
 		const subscriptions = radarAxes.map((axis) => {
-			const store = (signals[axis.source as keyof typeof signals] || signals.cvd);
+			const store = signals[axis.source as keyof typeof signals] || signals.cvd;
 
 			const apply = (state: any) => {
-				if (!root.current || !state || typeof state.getLast !== "function") return;
+				if (!root.current || !state || typeof state.getLast !== "function")
+					return;
 				const normalized = readNormalizedMetric(state.getLast(), axis.metric);
 				applyPaintMap(root.current, {
 					vars: {

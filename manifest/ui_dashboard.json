@@ -1,1192 +1,3048 @@
 {
- "id": "ui_dashboard",
- "name": "ui:dashboard",
- "nodes": {
-  "route": {
-   "id": "route",
-   "type": "ui.UIRoute",
-   "connections": {
-    "inputs": {
-     "components": [
-      {
-       "nodeId": "page",
-       "portName": "self"
-      }
-     ]
-    },
-    "outputs": {}
-   },
-   "inputData": {
-    "path": {
-     "value": "/"
-    },
-    "title": {
-     "value": "Overview"
-    }
-   },
-   "width": 280,
-   "height": 172,
-   "x": 0.0,
-   "y": 0.0
-  },
-  "page": {
-   "id": "page",
-   "type": "ui.Flex.Column",
-   "connections": {
-    "inputs": {
-     "components": [
-      {
-       "nodeId": "grid",
-       "portName": "self"
-      }
-     ]
-    },
-    "outputs": {
-     "self": [
-      {
-       "nodeId": "route",
-       "portName": "components"
-      }
-     ]
-    }
-   },
-   "inputData": {
-    "className": {
-     "value": "h-full min-h-0 w-full bg-(--bg) text-(--f1)"
-    }
-   },
-   "width": 280,
-   "height": 172,
-   "x": 340.0,
-   "y": 0.0
-  },
-  "grid": {
-   "id": "grid",
-   "type": "ui.Grid",
-   "connections": {
-    "inputs": {
-     "components": [
-      {
-       "nodeId": "kernels",
-       "portName": "self"
-      }
-     ],
-     "components_1": [
-      {
-       "nodeId": "centre",
-       "portName": "self"
-      }
-     ],
-     "components_2": [
-      {
-       "nodeId": "right",
-       "portName": "self"
-      }
-     ]
-    },
-    "outputs": {
-     "self": [
-      {
-       "nodeId": "page",
-       "portName": "components"
-      }
-     ]
-    }
-   },
-   "inputData": {
-    "className": {
-     "value": "h-full min-h-0 min-w-0 flex-1 grid-cols-[282px_minmax(360px,1fr)_332px]"
-    }
-   },
-   "width": 280,
-   "height": 172,
-   "x": 680.0,
-   "y": 0.0
-  },
-  "kernels": {
-   "id": "kernels",
-   "type": "ui.Section",
-   "connections": {
-    "inputs": {
-     "components": [
-      {
-       "nodeId": "kernelsHeader",
-       "portName": "self"
-      }
-     ],
-     "components_1": [
-      {
-       "nodeId": "kernelRows",
-       "portName": "self"
-      }
-     ]
-    },
-    "outputs": {
-     "self": [
-      {
-       "nodeId": "grid",
-       "portName": "components"
-      }
-     ]
-    }
-   },
-   "inputData": {
-    "className": {
-     "value": "min-h-0 border-(--line) border-r"
-    },
-    "fit": {
-     "value": "pane"
-    }
-   },
-   "width": 280,
-   "height": 172,
-   "x": 1020.0,
-   "y": 0.0
-  },
-  "kernelsHeader": {
-   "id": "kernelsHeader",
-   "type": "ui.Section.Header",
-   "connections": {
-    "inputs": {},
-    "outputs": {
-     "self": [
-      {
-       "nodeId": "kernels",
-       "portName": "components"
-      }
-     ]
-    }
-   },
-   "inputData": {
-    "title": {
-     "value": "Signal kernels"
-    },
-    "sticky": {
-     "value": true
-    }
-   },
-   "width": 280,
-   "height": 172,
-   "x": 1360.0,
-   "y": 0.0
-  },
-  "centre": {
-   "id": "centre",
-   "type": "ui.Flex.Column",
-   "connections": {
-    "inputs": {
-     "components": [
-      {
-       "nodeId": "predictive",
-       "portName": "self"
-      }
-     ],
-     "components_1": [
-      {
-       "nodeId": "resonance",
-       "portName": "self"
-      }
-     ]
-    },
-    "outputs": {
-     "self": [
-      {
-       "nodeId": "grid",
-       "portName": "components_1"
-      }
-     ]
-    }
-   },
-   "inputData": {
-    "className": {
-     "value": "min-h-0 border-(--line) border-r bg-(--sunken)"
-    }
-   },
-   "width": 280,
-   "height": 172,
-   "x": 0.0,
-   "y": 220.0
-  },
-  "predictive": {
-   "id": "predictive",
-   "type": "ui.Canvas",
-   "connections": {
-    "inputs": {
-     "components": [
-      {
-       "nodeId": "impulse",
-       "portName": "self"
-      }
-     ]
-    },
-    "outputs": {
-     "self": [
-      {
-       "nodeId": "centre",
-       "portName": "components"
-      }
-     ]
-    }
-   },
-   "inputData": {
-    "title": {
-     "value": "Predictive coding"
-    },
-    "className": {
-     "value": "flex-1"
-    },
-    "scanlines": {
-     "value": true
-    }
-   },
-   "width": 280,
-   "height": 172,
-   "x": 340.0,
-   "y": 220.0
-  },
-  "impulse": {
-   "id": "impulse",
-   "type": "ui.ImpulseMap",
-   "connections": {
-    "inputs": {},
-    "outputs": {
-     "self": [
-      {
-       "nodeId": "predictive",
-       "portName": "components"
-      }
-     ]
-    }
-   },
-   "inputData": {
-    "fullHeight": {
-     "value": true
-    }
-   },
-   "width": 280,
-   "height": 172,
-   "x": 680.0,
-   "y": 220.0
-  },
-  "resonance": {
-   "id": "resonance",
-   "type": "ui.Panel",
-   "connections": {
-    "inputs": {
-     "components": [
-      {
-       "nodeId": "resonanceHeader",
-       "portName": "self"
-      }
-     ],
-     "components_1": [
-      {
-       "nodeId": "resonanceMeter",
-       "portName": "self"
-      }
-     ]
-    },
-    "outputs": {
-     "self": [
-      {
-       "nodeId": "centre",
-       "portName": "components_1"
-      }
-     ]
-    }
-   },
-   "inputData": {
-    "className": {
-     "value": "shrink-0 border-(--line) border-t"
-    }
-   },
-   "width": 280,
-   "height": 172,
-   "x": 1020.0,
-   "y": 220.0
-  },
-  "resonanceHeader": {
-   "id": "resonanceHeader",
-   "type": "ui.Panel.Header",
-   "connections": {
-    "inputs": {},
-    "outputs": {
-     "self": [
-      {
-       "nodeId": "resonance",
-       "portName": "components"
-      }
-     ]
-    }
-   },
-   "inputData": {
-    "title": {
-     "value": "Resonance"
-    }
-   },
-   "width": 280,
-   "height": 172,
-   "x": 1360.0,
-   "y": 220.0
-  },
-  "resonanceMeter": {
-   "id": "resonanceMeter",
-   "type": "ui.Meter",
-   "connections": {
-    "inputs": {},
-    "outputs": {
-     "self": [
-      {
-       "nodeId": "resonance",
-       "portName": "components_1"
-      }
-     ]
-    }
-   },
-   "inputData": {
-    "label": {
-     "value": "settled latent state"
-    }
-   },
-   "width": 280,
-   "height": 172,
-   "x": 1700.0,
-   "y": 220.0
-  },
-  "right": {
-   "id": "right",
-   "type": "ui.Flex.Column",
-   "connections": {
-    "inputs": {
-     "components": [
-      {
-       "nodeId": "decisions",
-       "portName": "self"
-      }
-     ],
-     "components_1": [
-      {
-       "nodeId": "positions",
-       "portName": "self"
-      }
-     ]
-    },
-    "outputs": {
-     "self": [
-      {
-       "nodeId": "grid",
-       "portName": "components_2"
-      }
-     ]
-    }
-   },
-   "inputData": {
-    "className": {
-     "value": "min-h-0 overflow-hidden bg-(--surface)"
-    }
-   },
-   "width": 280,
-   "height": 172,
-   "x": 0.0,
-   "y": 440.0
-  },
-  "decisions": {
-   "id": "decisions",
-   "type": "ui.DecisionList",
-   "connections": {
-    "inputs": {
-     "decisions": [
-      {
-       "nodeId": "decisionSource",
-       "portName": "value"
-      }
-     ],
-     "onInspect": [
-      {
-       "nodeId": "inspectSource",
-       "portName": "value"
-      }
-     ]
-    },
-    "outputs": {
-     "self": [
-      {
-       "nodeId": "right",
-       "portName": "components"
-      }
-     ]
-    }
-   },
-   "inputData": {
-    "className": {
-     "value": "min-h-0 flex-[1.15] border-(--line) border-b"
-    },
-    "title": {
-     "value": "DECISIONS"
-    }
-   },
-   "width": 280,
-   "height": 172,
-   "x": 340.0,
-   "y": 440.0
-  },
-  "positions": {
-   "id": "positions",
-   "type": "ui.Section",
-   "connections": {
-    "inputs": {
-     "components": [
-      {
-       "nodeId": "positionsHeader",
-       "portName": "self"
-      }
-     ],
-     "components_1": [
-      {
-       "nodeId": "positionList",
-       "portName": "self"
-      }
-     ]
-    },
-    "outputs": {
-     "self": [
-      {
-       "nodeId": "right",
-       "portName": "components_1"
-      }
-     ]
-    }
-   },
-   "inputData": {
-    "className": {
-     "value": "min-h-0 flex-1 overflow-auto border-(--line) border-b"
-    }
-   },
-   "width": 280,
-   "height": 172,
-   "x": 680.0,
-   "y": 440.0
-  },
-  "positionsHeader": {
-   "id": "positionsHeader",
-   "type": "ui.Section.Header",
-   "connections": {
-    "inputs": {},
-    "outputs": {
-     "self": [
-      {
-       "nodeId": "positions",
-       "portName": "components"
-      }
-     ]
-    }
-   },
-   "inputData": {
-    "title": {
-     "value": "Open positions"
-    }
-   },
-   "width": 280,
-   "height": 172,
-   "x": 1020.0,
-   "y": 440.0
-  },
-  "positionList": {
-   "id": "positionList",
-   "type": "ui.PositionList",
-   "connections": {
-    "inputs": {
-     "positions": [
-      {
-       "nodeId": "positionSource",
-       "portName": "value"
-      }
-     ],
-     "onInspect": [
-      {
-       "nodeId": "inspectSource",
-       "portName": "value"
-      }
-     ]
-    },
-    "outputs": {
-     "self": [
-      {
-       "nodeId": "positions",
-       "portName": "components_1"
-      }
-     ]
-    }
-   },
-   "width": 280,
-   "height": 172,
-   "x": 1360.0,
-   "y": 440.0
-  },
-  "decisionSource": {
-   "id": "decisionSource",
-   "type": "ui.UIData",
-   "inputData": {
-    "source": {
-     "value": "decisions"
-    }
-   },
-   "connections": {
-    "inputs": {},
-    "outputs": {
-     "value": [
-      {
-       "nodeId": "decisions",
-       "portName": "decisions"
-      }
-     ]
-    }
-   },
-   "width": 280,
-   "height": 172,
-   "x": 1700.0,
-   "y": 440.0
-  },
-  "positionSource": {
-   "id": "positionSource",
-   "type": "ui.UIData",
-   "inputData": {
-    "source": {
-     "value": "positions"
-    }
-   },
-   "connections": {
-    "inputs": {},
-    "outputs": {
-     "value": [
-      {
-       "nodeId": "positionList",
-       "portName": "positions"
-      }
-     ]
-    }
-   },
-   "width": 280,
-   "height": 172,
-   "x": 0.0,
-   "y": 660.0
-  },
-  "inspectSource": {
-   "id": "inspectSource",
-   "type": "ui.UIData",
-   "inputData": {
-    "source": {
-     "value": "inspectSymbol"
-    }
-   },
-   "connections": {
-    "inputs": {},
-    "outputs": {
-     "value": [
-      {
-       "nodeId": "decisions",
-       "portName": "onInspect"
+  "id": "ui_dashboard",
+  "name": "ui:dashboard \u2014 the live overview, drawn from the running graph",
+  "nodes": {
+    "xs": {
+      "id": "xs",
+      "type": "data.Array",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 0.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "points",
+              "portName": "columns"
+            }
+          ]
+        }
       },
-      {
-       "nodeId": "positionList",
-       "portName": "onInspect"
+      "inputData": {
+        "stride": {
+          "value": 2
+        },
+        "offset": {
+          "value": 0
+        }
       }
-     ]
-    }
-   },
-   "width": 280,
-   "height": 172,
-   "x": 340.0,
-   "y": 660.0
-  },
-  "marketSymbol": {
-   "id": "marketSymbol",
-   "type": "ui.DataRow",
-   "width": 280,
-   "height": 120,
-   "x": 0,
-   "y": 0,
-   "inputData": {
+    },
+    "ys": {
+      "id": "ys",
+      "type": "data.Array",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 200.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "points",
+              "portName": "columns_1"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "stride": {
+          "value": 2
+        },
+        "offset": {
+          "value": 1
+        }
+      }
+    },
+    "energy": {
+      "id": "energy",
+      "type": "data.Array",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 400.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "points",
+              "portName": "columns_2"
+            }
+          ]
+        }
+      }
+    },
+    "authority": {
+      "id": "authority",
+      "type": "data.Array",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 600.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "points",
+              "portName": "columns_3"
+            }
+          ]
+        }
+      }
+    },
+    "snr": {
+      "id": "snr",
+      "type": "data.Array",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 800.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "points",
+              "portName": "columns_4"
+            }
+          ]
+        }
+      }
+    },
+    "present": {
+      "id": "present",
+      "type": "data.Array",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 1000.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "points",
+              "portName": "columns_5"
+            }
+          ]
+        }
+      }
+    },
     "label": {
-     "value": "symbol"
+      "id": "label",
+      "type": "data.Array",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 1200.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "points",
+              "portName": "columns_6"
+            }
+          ]
+        }
+      }
     },
-    "size": {
-     "value": "s"
-    }
-   },
-   "connections": {
-    "inputs": {},
-    "outputs": {
-     "self": [
-      {
-       "nodeId": "kernelRows",
-       "portName": "components"
+    "source": {
+      "id": "source",
+      "type": "data.Array",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 1400.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "points",
+              "portName": "columns_7"
+            }
+          ]
+        }
       }
-     ]
-    }
-   }
-  },
-  "marketPrice": {
-   "id": "marketPrice",
-   "type": "ui.DataRow",
-   "width": 280,
-   "height": 120,
-   "x": 0,
-   "y": 0,
-   "inputData": {
-    "label": {
-     "value": "last"
     },
-    "size": {
-     "value": "s"
-    }
-   },
-   "connections": {
-    "inputs": {},
-    "outputs": {
-     "self": [
-      {
-       "nodeId": "kernelRows",
-       "portName": "components_1"
+    "activation": {
+      "id": "activation",
+      "type": "data.Array",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 1600.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "points",
+              "portName": "columns_8"
+            }
+          ]
+        }
       }
-     ]
-    }
-   }
-  },
-  "kernel_correlation": {
-   "id": "kernel_correlation",
-   "type": "ui.DataRow",
-   "width": 280,
-   "height": 120,
-   "x": 0,
-   "y": 0,
-   "inputData": {
-    "label": {
-     "value": "correlation"
     },
-    "size": {
-     "value": "s"
-    }
-   },
-   "connections": {
-    "inputs": {},
-    "outputs": {
-     "self": [
-      {
-       "nodeId": "kernelRows",
-       "portName": "components_2"
+    "hot": {
+      "id": "hot",
+      "type": "data.Array",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 1800.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "regions",
+              "portName": "columns"
+            }
+          ]
+        }
       }
-     ]
-    }
-   }
-  },
-  "kernel_cvd": {
-   "id": "kernel_cvd",
-   "type": "ui.DataRow",
-   "width": 280,
-   "height": 120,
-   "x": 0,
-   "y": 0,
-   "inputData": {
-    "label": {
-     "value": "cvd"
     },
-    "size": {
-     "value": "s"
-    }
-   },
-   "connections": {
-    "inputs": {},
-    "outputs": {
-     "self": [
-      {
-       "nodeId": "kernelRows",
-       "portName": "components_3"
+    "edge_from": {
+      "id": "edge_from",
+      "type": "data.Array",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 2000.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "links",
+              "portName": "columns"
+            }
+          ]
+        }
       }
-     ]
-    }
-   }
-  },
-  "kernel_depthflow": {
-   "id": "kernel_depthflow",
-   "type": "ui.DataRow",
-   "width": 280,
-   "height": 120,
-   "x": 0,
-   "y": 0,
-   "inputData": {
-    "label": {
-     "value": "depthflow"
     },
-    "size": {
-     "value": "s"
-    }
-   },
-   "connections": {
-    "inputs": {},
-    "outputs": {
-     "self": [
-      {
-       "nodeId": "kernelRows",
-       "portName": "components_4"
+    "edge_to": {
+      "id": "edge_to",
+      "type": "data.Array",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 2200.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "links",
+              "portName": "columns_1"
+            }
+          ]
+        }
       }
-     ]
-    }
-   }
-  },
-  "kernel_derivatives": {
-   "id": "kernel_derivatives",
-   "type": "ui.DataRow",
-   "width": 280,
-   "height": 120,
-   "x": 0,
-   "y": 0,
-   "inputData": {
-    "label": {
-     "value": "derivatives"
     },
-    "size": {
-     "value": "s"
-    }
-   },
-   "connections": {
-    "inputs": {},
-    "outputs": {
-     "self": [
-      {
-       "nodeId": "kernelRows",
-       "portName": "components_5"
+    "points": {
+      "id": "points",
+      "type": "data.Columns",
+      "width": 280,
+      "height": 172,
+      "x": 680.0,
+      "y": 0.0,
+      "connections": {
+        "inputs": {
+          "columns": [
+            {
+              "nodeId": "xs",
+              "portName": "out"
+            }
+          ],
+          "columns_1": [
+            {
+              "nodeId": "ys",
+              "portName": "out"
+            }
+          ],
+          "columns_2": [
+            {
+              "nodeId": "energy",
+              "portName": "out"
+            }
+          ],
+          "columns_3": [
+            {
+              "nodeId": "authority",
+              "portName": "out"
+            }
+          ],
+          "columns_4": [
+            {
+              "nodeId": "snr",
+              "portName": "out"
+            }
+          ],
+          "columns_5": [
+            {
+              "nodeId": "present",
+              "portName": "out"
+            }
+          ],
+          "columns_6": [
+            {
+              "nodeId": "label",
+              "portName": "out"
+            }
+          ],
+          "columns_7": [
+            {
+              "nodeId": "source",
+              "portName": "out"
+            }
+          ],
+          "columns_8": [
+            {
+              "nodeId": "activation",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "impulse",
+              "portName": "points"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "names": {
+          "value": "x,y,energy,authority,snr,present,label,source,activation"
+        },
+        "index": {
+          "value": "id"
+        }
       }
-     ]
-    }
-   }
-  },
-  "kernel_liquidations": {
-   "id": "kernel_liquidations",
-   "type": "ui.DataRow",
-   "width": 280,
-   "height": 120,
-   "x": 0,
-   "y": 0,
-   "inputData": {
-    "label": {
-     "value": "liquidations"
     },
-    "size": {
-     "value": "s"
-    }
-   },
-   "connections": {
-    "inputs": {},
-    "outputs": {
-     "self": [
-      {
-       "nodeId": "kernelRows",
-       "portName": "components_6"
+    "regions": {
+      "id": "regions",
+      "type": "data.Columns",
+      "width": 280,
+      "height": 172,
+      "x": 680.0,
+      "y": 200.0,
+      "connections": {
+        "inputs": {
+          "columns": [
+            {
+              "nodeId": "hot",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "impulse",
+              "portName": "regions"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "names": {
+          "value": "source"
+        },
+        "index": {
+          "value": "id"
+        }
       }
-     ]
-    }
-   }
-  },
-  "kernel_hawkes": {
-   "id": "kernel_hawkes",
-   "type": "ui.DataRow",
-   "width": 280,
-   "height": 120,
-   "x": 0,
-   "y": 0,
-   "inputData": {
-    "label": {
-     "value": "hawkes"
     },
-    "size": {
-     "value": "s"
-    }
-   },
-   "connections": {
-    "inputs": {},
-    "outputs": {
-     "self": [
-      {
-       "nodeId": "kernelRows",
-       "portName": "components_7"
+    "links": {
+      "id": "links",
+      "type": "data.Columns",
+      "width": 280,
+      "height": 172,
+      "x": 680.0,
+      "y": 400.0,
+      "connections": {
+        "inputs": {
+          "columns": [
+            {
+              "nodeId": "edge_from",
+              "portName": "out"
+            }
+          ],
+          "columns_1": [
+            {
+              "nodeId": "edge_to",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "impulse",
+              "portName": "connections"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "names": {
+          "value": "from,to"
+        }
       }
-     ]
-    }
-   }
-  },
-  "kernel_leadlag": {
-   "id": "kernel_leadlag",
-   "type": "ui.DataRow",
-   "width": 280,
-   "height": 120,
-   "x": 0,
-   "y": 0,
-   "inputData": {
-    "label": {
-     "value": "leadlag"
     },
-    "size": {
-     "value": "s"
-    }
-   },
-   "connections": {
-    "inputs": {},
-    "outputs": {
-     "self": [
-      {
-       "nodeId": "kernelRows",
-       "portName": "components_8"
+    "examples": {
+      "id": "examples",
+      "type": "transport.Fan",
+      "width": 280,
+      "height": 172,
+      "x": 0.0,
+      "y": 0.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "example_seq",
+              "portName": "data"
+            },
+            {
+              "nodeId": "example_path",
+              "portName": "data"
+            },
+            {
+              "nodeId": "example_action",
+              "portName": "data"
+            },
+            {
+              "nodeId": "example_label",
+              "portName": "data"
+            },
+            {
+              "nodeId": "example_symbol",
+              "portName": "data"
+            },
+            {
+              "nodeId": "example_record",
+              "portName": "data"
+            },
+            {
+              "nodeId": "example_cursor",
+              "portName": "data"
+            },
+            {
+              "nodeId": "example_origin",
+              "portName": "data"
+            }
+          ]
+        }
       }
-     ]
-    }
-   }
-  },
-  "kernel_liquidity": {
-   "id": "kernel_liquidity",
-   "type": "ui.DataRow",
-   "width": 280,
-   "height": 120,
-   "x": 0,
-   "y": 0,
-   "inputData": {
-    "label": {
-     "value": "liquidity"
     },
-    "size": {
-     "value": "s"
-    }
-   },
-   "connections": {
-    "inputs": {},
-    "outputs": {
-     "self": [
-      {
-       "nodeId": "kernelRows",
-       "portName": "components_9"
+    "example_seq": {
+      "id": "example_seq",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 2400.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "examples",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      },
+      "inputData": {
+        "path": {
+          "value": "cursor.sequence"
+        },
+        "encoding": {
+          "value": "number"
+        }
       }
-     ]
-    }
-   }
-  },
-  "kernel_morphology": {
-   "id": "kernel_morphology",
-   "type": "ui.DataRow",
-   "width": 280,
-   "height": 120,
-   "x": 0,
-   "y": 0,
-   "inputData": {
-    "label": {
-     "value": "morphology"
     },
-    "size": {
-     "value": "s"
-    }
-   },
-   "connections": {
-    "inputs": {},
-    "outputs": {
-     "self": [
-      {
-       "nodeId": "kernelRows",
-       "portName": "components_10"
+    "example_path": {
+      "id": "example_path",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 2600.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "examples",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "row_reason",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "settled.sequence"
+        },
+        "encoding": {
+          "value": "json"
+        }
       }
-     ]
-    }
-   }
-  },
-  "kernel_pumpdump_book": {
-   "id": "kernel_pumpdump_book",
-   "type": "ui.DataRow",
-   "width": 280,
-   "height": 120,
-   "x": 0,
-   "y": 0,
-   "inputData": {
-    "label": {
-     "value": "pumpdump book"
     },
-    "size": {
-     "value": "s"
-    }
-   },
-   "connections": {
-    "inputs": {},
-    "outputs": {
-     "self": [
-      {
-       "nodeId": "kernelRows",
-       "portName": "components_11"
+    "example_action": {
+      "id": "example_action",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 2800.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "examples",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "row_action",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "truth.action"
+        },
+        "encoding": {
+          "value": "json"
+        }
       }
-     ]
-    }
-   }
-  },
-  "kernel_pumpdump_ticker": {
-   "id": "kernel_pumpdump_ticker",
-   "type": "ui.DataRow",
-   "width": 280,
-   "height": 120,
-   "x": 0,
-   "y": 0,
-   "inputData": {
-    "label": {
-     "value": "pumpdump ticker"
     },
-    "size": {
-     "value": "s"
-    }
-   },
-   "connections": {
-    "inputs": {},
-    "outputs": {
-     "self": [
-      {
-       "nodeId": "kernelRows",
-       "portName": "components_12"
+    "example_label": {
+      "id": "example_label",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 3000.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "examples",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      },
+      "inputData": {
+        "path": {
+          "value": "truth.action"
+        },
+        "encoding": {
+          "value": "text"
+        }
       }
-     ]
-    }
-   }
-  },
-  "kernel_pumpdump_trade": {
-   "id": "kernel_pumpdump_trade",
-   "type": "ui.DataRow",
-   "width": 280,
-   "height": 120,
-   "x": 0,
-   "y": 0,
-   "inputData": {
-    "label": {
-     "value": "pumpdump trade"
     },
-    "size": {
-     "value": "s"
-    }
-   },
-   "connections": {
-    "inputs": {},
-    "outputs": {
-     "self": [
-      {
-       "nodeId": "kernelRows",
-       "portName": "components_13"
+    "example_symbol": {
+      "id": "example_symbol",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 3200.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "examples",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "row_symbol",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "event.symbol"
+        },
+        "encoding": {
+          "value": "json"
+        }
       }
-     ]
-    }
-   }
-  },
-  "kernel_sentiment": {
-   "id": "kernel_sentiment",
-   "type": "ui.DataRow",
-   "width": 280,
-   "height": 120,
-   "x": 0,
-   "y": 0,
-   "inputData": {
-    "label": {
-     "value": "sentiment"
     },
-    "size": {
-     "value": "s"
-    }
-   },
-   "connections": {
-    "inputs": {},
-    "outputs": {
-     "self": [
-      {
-       "nodeId": "kernelRows",
-       "portName": "components_14"
+    "example_record": {
+      "id": "example_record",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 3400.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "examples",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "row_id",
+              "portName": "values_2"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "cursor.record"
+        },
+        "encoding": {
+          "value": "json"
+        }
       }
-     ]
-    }
-   }
-  },
-  "kernel_toxicity_book": {
-   "id": "kernel_toxicity_book",
-   "type": "ui.DataRow",
-   "width": 280,
-   "height": 120,
-   "x": 0,
-   "y": 0,
-   "inputData": {
-    "label": {
-     "value": "toxicity book"
     },
-    "size": {
-     "value": "s"
-    }
-   },
-   "connections": {
-    "inputs": {},
-    "outputs": {
-     "self": [
-      {
-       "nodeId": "kernelRows",
-       "portName": "components_15"
+    "example_cursor": {
+      "id": "example_cursor",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 3600.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "examples",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "row_id",
+              "portName": "values_1"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "cursor.sequence"
+        },
+        "encoding": {
+          "value": "json"
+        }
       }
-     ]
-    }
-   }
-  },
-  "kernel_toxicity_trade": {
-   "id": "kernel_toxicity_trade",
-   "type": "ui.DataRow",
-   "width": 280,
-   "height": 120,
-   "x": 0,
-   "y": 0,
-   "inputData": {
-    "label": {
-     "value": "toxicity trade"
     },
-    "size": {
-     "value": "s"
-    }
-   },
-   "connections": {
-    "inputs": {},
-    "outputs": {
-     "self": [
-      {
-       "nodeId": "kernelRows",
-       "portName": "components_16"
+    "example_origin": {
+      "id": "example_origin",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 3800.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "examples",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "row_id",
+              "portName": "values_0"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "event.a.sequence"
+        },
+        "encoding": {
+          "value": "json"
+        }
       }
-     ]
-    }
-   }
-  },
-  "kernelRows": {
-   "id": "kernelRows",
-   "type": "ui.Flex.Column",
-   "width": 280,
-   "height": 120,
-   "x": 0,
-   "y": 0,
-   "inputData": {
-    "className": {
-     "value": "min-h-0 overflow-auto px-3 py-2"
     },
-    "gap": {
-     "value": 2
-    }
-   },
-   "connections": {
-    "inputs": {
-     "components": [
-      {
-       "nodeId": "marketSymbol",
-       "portName": "self"
+    "row_id": {
+      "id": "row_id",
+      "type": "data.Format",
+      "width": 280,
+      "height": 172,
+      "x": 680.0,
+      "y": 600.0,
+      "connections": {
+        "inputs": {
+          "values_0": [
+            {
+              "nodeId": "example_origin",
+              "portName": "json"
+            }
+          ],
+          "values_1": [
+            {
+              "nodeId": "example_cursor",
+              "portName": "json"
+            }
+          ],
+          "values_2": [
+            {
+              "nodeId": "example_record",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "row_key",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "template": {
+          "value": "\"{0}.{1}.{2}\""
+        }
       }
-     ],
-     "components_1": [
-      {
-       "nodeId": "marketPrice",
-       "portName": "self"
-      }
-     ],
-     "components_2": [
-      {
-       "nodeId": "kernel_correlation",
-       "portName": "self"
-      }
-     ],
-     "components_3": [
-      {
-       "nodeId": "kernel_cvd",
-       "portName": "self"
-      }
-     ],
-     "components_4": [
-      {
-       "nodeId": "kernel_depthflow",
-       "portName": "self"
-      }
-     ],
-     "components_5": [
-      {
-       "nodeId": "kernel_derivatives",
-       "portName": "self"
-      }
-     ],
-     "components_6": [
-      {
-       "nodeId": "kernel_liquidations",
-       "portName": "self"
-      }
-     ],
-     "components_7": [
-      {
-       "nodeId": "kernel_hawkes",
-       "portName": "self"
-      }
-     ],
-     "components_8": [
-      {
-       "nodeId": "kernel_leadlag",
-       "portName": "self"
-      }
-     ],
-     "components_9": [
-      {
-       "nodeId": "kernel_liquidity",
-       "portName": "self"
-      }
-     ],
-     "components_10": [
-      {
-       "nodeId": "kernel_morphology",
-       "portName": "self"
-      }
-     ],
-     "components_11": [
-      {
-       "nodeId": "kernel_pumpdump_book",
-       "portName": "self"
-      }
-     ],
-     "components_12": [
-      {
-       "nodeId": "kernel_pumpdump_ticker",
-       "portName": "self"
-      }
-     ],
-     "components_13": [
-      {
-       "nodeId": "kernel_pumpdump_trade",
-       "portName": "self"
-      }
-     ],
-     "components_14": [
-      {
-       "nodeId": "kernel_sentiment",
-       "portName": "self"
-      }
-     ],
-     "components_15": [
-      {
-       "nodeId": "kernel_toxicity_book",
-       "portName": "self"
-      }
-     ],
-     "components_16": [
-      {
-       "nodeId": "kernel_toxicity_trade",
-       "portName": "self"
-      }
-     ]
     },
-    "outputs": {
-     "self": [
-      {
-       "nodeId": "kernels",
-       "portName": "components_1"
+    "row_key": {
+      "id": "row_key",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "x": 1020.0,
+      "y": 0.0,
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "row_id",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "row_symbol",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "id"
+        },
+        "data": {
+          "value": "{}"
+        }
       }
-     ]
+    },
+    "row_symbol": {
+      "id": "row_symbol",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "x": 1020.0,
+      "y": 200.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "row_key",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "example_symbol",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "row_action",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "symbol"
+        }
+      }
+    },
+    "row_action": {
+      "id": "row_action",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "x": 1020.0,
+      "y": 400.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "row_symbol",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "example_action",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "row_reason",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "action"
+        }
+      }
+    },
+    "row_reason": {
+      "id": "row_reason",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "x": 1020.0,
+      "y": 600.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "row_action",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "example_path",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "row_confidence",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "reason"
+        }
+      }
+    },
+    "row_confidence": {
+      "id": "row_confidence",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "x": 1020.0,
+      "y": 800.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "row_reason",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "decisions",
+              "portName": "values"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "confidence"
+        }
+      }
+    },
+    "decisions": {
+      "id": "decisions",
+      "type": "store.Trail",
+      "width": 280,
+      "height": 172,
+      "x": 1360.0,
+      "y": 0.0,
+      "connections": {
+        "inputs": {
+          "values": [
+            {
+              "nodeId": "row_confidence",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "decisionList",
+              "portName": "decisions"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "capacity": {
+          "value": 40
+        }
+      }
+    },
+    "trips": {
+      "id": "trips",
+      "type": "transport.Fan",
+      "width": 280,
+      "height": 172,
+      "x": 0.0,
+      "y": 200.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "trip_symbol",
+              "portName": "data"
+            },
+            {
+              "nodeId": "trip_pnl_json",
+              "portName": "data"
+            },
+            {
+              "nodeId": "trip_basis_json",
+              "portName": "data"
+            },
+            {
+              "nodeId": "trip_proceeds_json",
+              "portName": "data"
+            },
+            {
+              "nodeId": "trip_pnl",
+              "portName": "data"
+            },
+            {
+              "nodeId": "trip_basis",
+              "portName": "data"
+            }
+          ]
+        }
+      }
+    },
+    "trip_symbol": {
+      "id": "trip_symbol",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 4000.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "trips",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "trip_row",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "symbol"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      }
+    },
+    "trip_pnl_json": {
+      "id": "trip_pnl_json",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 4200.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "trips",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "closed_pnl",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "pnl"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      }
+    },
+    "trip_basis_json": {
+      "id": "trip_basis_json",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 4400.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "trips",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "closed_entryPrice",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "basis"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      }
+    },
+    "trip_proceeds_json": {
+      "id": "trip_proceeds_json",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 4600.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "trips",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "json": [
+            {
+              "nodeId": "closed_mark",
+              "portName": "json"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "proceeds"
+        },
+        "encoding": {
+          "value": "json"
+        }
+      }
+    },
+    "trip_pnl": {
+      "id": "trip_pnl",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 4800.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "trips",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "trip_return",
+              "portName": "a"
+            },
+            {
+              "nodeId": "trip_value",
+              "portName": "value"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "pnl"
+        },
+        "encoding": {
+          "value": "number"
+        }
+      }
+    },
+    "trip_basis": {
+      "id": "trip_basis",
+      "type": "data.Extract",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 5000.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "trips",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "trip_return",
+              "portName": "b"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "basis"
+        },
+        "encoding": {
+          "value": "number"
+        }
+      }
+    },
+    "trip_return": {
+      "id": "trip_return",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": 680.0,
+      "y": 800.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "trip_pnl",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "trip_basis",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "trip_percent",
+              "portName": "a"
+            }
+          ]
+        }
+      }
+    },
+    "trip_percent": {
+      "id": "trip_percent",
+      "type": "arithmetic.Multiply",
+      "width": 280,
+      "height": 172,
+      "x": 680.0,
+      "y": 1000.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "trip_return",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "trip_returned",
+              "portName": "value"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "b": {
+          "value": 100
+        }
+      }
+    },
+    "trip_row": {
+      "id": "trip_row",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "x": 1020.0,
+      "y": 1000.0,
+      "connections": {
+        "inputs": {
+          "json": [
+            {
+              "nodeId": "trip_symbol",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "closed_pnl",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "symbol"
+        },
+        "data": {
+          "value": "{\"status\":\"closed\"}"
+        }
+      }
+    },
+    "closed_pnl": {
+      "id": "closed_pnl",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "x": 1020.0,
+      "y": 1200.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "trip_row",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "trip_pnl_json",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "closed_entryPrice",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "pnl"
+        }
+      }
+    },
+    "closed_entryPrice": {
+      "id": "closed_entryPrice",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "x": 1020.0,
+      "y": 1400.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "closed_pnl",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "trip_basis_json",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "closed_mark",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "entryPrice"
+        }
+      }
+    },
+    "closed_mark": {
+      "id": "closed_mark",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "x": 1020.0,
+      "y": 1600.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "closed_entryPrice",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "trip_proceeds_json",
+              "portName": "json"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "trip_value",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "mark"
+        }
+      }
+    },
+    "trip_value": {
+      "id": "trip_value",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "x": 1020.0,
+      "y": 1800.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "closed_mark",
+              "portName": "out"
+            }
+          ],
+          "value": [
+            {
+              "nodeId": "trip_pnl",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "trip_returned",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "pnlValue"
+        }
+      }
+    },
+    "trip_returned": {
+      "id": "trip_returned",
+      "type": "data.Insert",
+      "width": 280,
+      "height": 172,
+      "x": 1020.0,
+      "y": 2000.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "trip_value",
+              "portName": "out"
+            }
+          ],
+          "value": [
+            {
+              "nodeId": "trip_percent",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "closed",
+              "portName": "values"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "returnPct"
+        }
+      }
+    },
+    "closed": {
+      "id": "closed",
+      "type": "store.Trail",
+      "width": 280,
+      "height": 172,
+      "x": 1360.0,
+      "y": 200.0,
+      "connections": {
+        "inputs": {
+          "values": [
+            {
+              "nodeId": "trip_returned",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "positionList",
+              "portName": "positions"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "capacity": {
+          "value": 40
+        }
+      }
+    },
+    "kernelsHeader": {
+      "id": "kernelsHeader",
+      "type": "ui.Section.Header",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 0.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "kernels",
+              "portName": "components"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "sticky": {
+          "value": true
+        },
+        "title": {
+          "value": "Signal kernels"
+        },
+        "meta": {
+          "value": "15 kernels"
+        }
+      }
+    },
+    "trail_correlation": {
+      "id": "trail_correlation",
+      "type": "store.Trail",
+      "width": 280,
+      "height": 172,
+      "x": 1700.0,
+      "y": 0.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "kernel_correlation",
+              "portName": "points"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "capacity": {
+          "value": 120
+        }
+      }
+    },
+    "kernel_correlation": {
+      "id": "kernel_correlation",
+      "type": "ui.KernelCard",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 200.0,
+      "connections": {
+        "inputs": {
+          "points": [
+            {
+              "nodeId": "trail_correlation",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "kernelRows",
+              "portName": "components"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "name": {
+          "value": "Correlation"
+        },
+        "description": {
+          "value": "cross-asset return co-movement"
+        }
+      }
+    },
+    "trail_cvd": {
+      "id": "trail_cvd",
+      "type": "store.Trail",
+      "width": 280,
+      "height": 172,
+      "x": 1700.0,
+      "y": 200.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "kernel_cvd",
+              "portName": "points"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "capacity": {
+          "value": 120
+        }
+      }
+    },
+    "kernel_cvd": {
+      "id": "kernel_cvd",
+      "type": "ui.KernelCard",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 400.0,
+      "connections": {
+        "inputs": {
+          "points": [
+            {
+              "nodeId": "trail_cvd",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "kernelRows",
+              "portName": "components_1"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "name": {
+          "value": "Cvd"
+        },
+        "description": {
+          "value": "cumulative volume delta \u00b7 trade aggression"
+        }
+      }
+    },
+    "trail_depthflow": {
+      "id": "trail_depthflow",
+      "type": "store.Trail",
+      "width": 280,
+      "height": 172,
+      "x": 1700.0,
+      "y": 400.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "kernel_depthflow",
+              "portName": "points"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "capacity": {
+          "value": 120
+        }
+      }
+    },
+    "kernel_depthflow": {
+      "id": "kernel_depthflow",
+      "type": "ui.KernelCard",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 600.0,
+      "connections": {
+        "inputs": {
+          "points": [
+            {
+              "nodeId": "trail_depthflow",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "kernelRows",
+              "portName": "components_2"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "name": {
+          "value": "Depthflow"
+        },
+        "description": {
+          "value": "level 3 depth added and pulled"
+        }
+      }
+    },
+    "trail_derivatives": {
+      "id": "trail_derivatives",
+      "type": "store.Trail",
+      "width": 280,
+      "height": 172,
+      "x": 1700.0,
+      "y": 600.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "kernel_derivatives",
+              "portName": "points"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "capacity": {
+          "value": 120
+        }
+      }
+    },
+    "kernel_derivatives": {
+      "id": "kernel_derivatives",
+      "type": "ui.KernelCard",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 800.0,
+      "connections": {
+        "inputs": {
+          "points": [
+            {
+              "nodeId": "trail_derivatives",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "kernelRows",
+              "portName": "components_3"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "name": {
+          "value": "Derivatives"
+        },
+        "description": {
+          "value": "futures basis and funding"
+        }
+      }
+    },
+    "trail_hawkes": {
+      "id": "trail_hawkes",
+      "type": "store.Trail",
+      "width": 280,
+      "height": 172,
+      "x": 1700.0,
+      "y": 800.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "kernel_hawkes",
+              "portName": "points"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "capacity": {
+          "value": 120
+        }
+      }
+    },
+    "kernel_hawkes": {
+      "id": "kernel_hawkes",
+      "type": "ui.KernelCard",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 1000.0,
+      "connections": {
+        "inputs": {
+          "points": [
+            {
+              "nodeId": "trail_hawkes",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "kernelRows",
+              "portName": "components_4"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "name": {
+          "value": "Hawkes"
+        },
+        "description": {
+          "value": "self-exciting trade arrivals \u00b7 branching"
+        }
+      }
+    },
+    "trail_leadlag": {
+      "id": "trail_leadlag",
+      "type": "store.Trail",
+      "width": 280,
+      "height": 172,
+      "x": 1700.0,
+      "y": 1000.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "kernel_leadlag",
+              "portName": "points"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "capacity": {
+          "value": 120
+        }
+      }
+    },
+    "kernel_leadlag": {
+      "id": "kernel_leadlag",
+      "type": "ui.KernelCard",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 1200.0,
+      "connections": {
+        "inputs": {
+          "points": [
+            {
+              "nodeId": "trail_leadlag",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "kernelRows",
+              "portName": "components_5"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "name": {
+          "value": "Leadlag"
+        },
+        "description": {
+          "value": "which venue moves first"
+        }
+      }
+    },
+    "trail_liquidations": {
+      "id": "trail_liquidations",
+      "type": "store.Trail",
+      "width": 280,
+      "height": 172,
+      "x": 1700.0,
+      "y": 1200.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "kernel_liquidations",
+              "portName": "points"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "capacity": {
+          "value": 120
+        }
+      }
+    },
+    "kernel_liquidations": {
+      "id": "kernel_liquidations",
+      "type": "ui.KernelCard",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 1400.0,
+      "connections": {
+        "inputs": {
+          "points": [
+            {
+              "nodeId": "trail_liquidations",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "kernelRows",
+              "portName": "components_6"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "name": {
+          "value": "Liquidations"
+        },
+        "description": {
+          "value": "forced liquidation flow"
+        }
+      }
+    },
+    "trail_liquidity": {
+      "id": "trail_liquidity",
+      "type": "store.Trail",
+      "width": 280,
+      "height": 172,
+      "x": 1700.0,
+      "y": 1400.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "kernel_liquidity",
+              "portName": "points"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "capacity": {
+          "value": 120
+        }
+      }
+    },
+    "kernel_liquidity": {
+      "id": "kernel_liquidity",
+      "type": "ui.KernelCard",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 1600.0,
+      "connections": {
+        "inputs": {
+          "points": [
+            {
+              "nodeId": "trail_liquidity",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "kernelRows",
+              "portName": "components_7"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "name": {
+          "value": "Liquidity"
+        },
+        "description": {
+          "value": "spread and touch depth"
+        }
+      }
+    },
+    "trail_morphology": {
+      "id": "trail_morphology",
+      "type": "store.Trail",
+      "width": 280,
+      "height": 172,
+      "x": 1700.0,
+      "y": 1600.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "kernel_morphology",
+              "portName": "points"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "capacity": {
+          "value": 120
+        }
+      }
+    },
+    "kernel_morphology": {
+      "id": "kernel_morphology",
+      "type": "ui.KernelCard",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 1800.0,
+      "connections": {
+        "inputs": {
+          "points": [
+            {
+              "nodeId": "trail_morphology",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "kernelRows",
+              "portName": "components_8"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "name": {
+          "value": "Morphology"
+        },
+        "description": {
+          "value": "level 3 book shape"
+        }
+      }
+    },
+    "trail_pumpdump_book": {
+      "id": "trail_pumpdump_book",
+      "type": "store.Trail",
+      "width": 280,
+      "height": 172,
+      "x": 1700.0,
+      "y": 1800.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "kernel_pumpdump_book",
+              "portName": "points"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "capacity": {
+          "value": 120
+        }
+      }
+    },
+    "kernel_pumpdump_book": {
+      "id": "kernel_pumpdump_book",
+      "type": "ui.KernelCard",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 2000.0,
+      "connections": {
+        "inputs": {
+          "points": [
+            {
+              "nodeId": "trail_pumpdump_book",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "kernelRows",
+              "portName": "components_9"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "name": {
+          "value": "Pumpdump Book"
+        },
+        "description": {
+          "value": "pump / dump ignition \u00b7 book"
+        }
+      }
+    },
+    "trail_pumpdump_ticker": {
+      "id": "trail_pumpdump_ticker",
+      "type": "store.Trail",
+      "width": 280,
+      "height": 172,
+      "x": 1700.0,
+      "y": 2000.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "kernel_pumpdump_ticker",
+              "portName": "points"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "capacity": {
+          "value": 120
+        }
+      }
+    },
+    "kernel_pumpdump_ticker": {
+      "id": "kernel_pumpdump_ticker",
+      "type": "ui.KernelCard",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 2200.0,
+      "connections": {
+        "inputs": {
+          "points": [
+            {
+              "nodeId": "trail_pumpdump_ticker",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "kernelRows",
+              "portName": "components_10"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "name": {
+          "value": "Pumpdump Ticker"
+        },
+        "description": {
+          "value": "pump / dump ignition \u00b7 ticker"
+        }
+      }
+    },
+    "trail_pumpdump_trade": {
+      "id": "trail_pumpdump_trade",
+      "type": "store.Trail",
+      "width": 280,
+      "height": 172,
+      "x": 1700.0,
+      "y": 2200.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "kernel_pumpdump_trade",
+              "portName": "points"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "capacity": {
+          "value": 120
+        }
+      }
+    },
+    "kernel_pumpdump_trade": {
+      "id": "kernel_pumpdump_trade",
+      "type": "ui.KernelCard",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 2400.0,
+      "connections": {
+        "inputs": {
+          "points": [
+            {
+              "nodeId": "trail_pumpdump_trade",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "kernelRows",
+              "portName": "components_11"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "name": {
+          "value": "Pumpdump Trade"
+        },
+        "description": {
+          "value": "pump / dump ignition \u00b7 trades"
+        }
+      }
+    },
+    "trail_sentiment": {
+      "id": "trail_sentiment",
+      "type": "store.Trail",
+      "width": 280,
+      "height": 172,
+      "x": 1700.0,
+      "y": 2400.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "kernel_sentiment",
+              "portName": "points"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "capacity": {
+          "value": 120
+        }
+      }
+    },
+    "kernel_sentiment": {
+      "id": "kernel_sentiment",
+      "type": "ui.KernelCard",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 2600.0,
+      "connections": {
+        "inputs": {
+          "points": [
+            {
+              "nodeId": "trail_sentiment",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "kernelRows",
+              "portName": "components_12"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "name": {
+          "value": "Sentiment"
+        },
+        "description": {
+          "value": "ticker sentiment"
+        }
+      }
+    },
+    "trail_toxicity_book": {
+      "id": "trail_toxicity_book",
+      "type": "store.Trail",
+      "width": 280,
+      "height": 172,
+      "x": 1700.0,
+      "y": 2600.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "kernel_toxicity_book",
+              "portName": "points"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "capacity": {
+          "value": 120
+        }
+      }
+    },
+    "kernel_toxicity_book": {
+      "id": "kernel_toxicity_book",
+      "type": "ui.KernelCard",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 2800.0,
+      "connections": {
+        "inputs": {
+          "points": [
+            {
+              "nodeId": "trail_toxicity_book",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "kernelRows",
+              "portName": "components_13"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "name": {
+          "value": "Toxicity Book"
+        },
+        "description": {
+          "value": "order-flow toxicity \u00b7 book"
+        }
+      }
+    },
+    "trail_toxicity_trade": {
+      "id": "trail_toxicity_trade",
+      "type": "store.Trail",
+      "width": 280,
+      "height": 172,
+      "x": 1700.0,
+      "y": 2800.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "kernel_toxicity_trade",
+              "portName": "points"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "capacity": {
+          "value": 120
+        }
+      }
+    },
+    "kernel_toxicity_trade": {
+      "id": "kernel_toxicity_trade",
+      "type": "ui.KernelCard",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 3000.0,
+      "connections": {
+        "inputs": {
+          "points": [
+            {
+              "nodeId": "trail_toxicity_trade",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "kernelRows",
+              "portName": "components_14"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "name": {
+          "value": "Toxicity Trade"
+        },
+        "description": {
+          "value": "order-flow toxicity \u00b7 trades"
+        }
+      }
+    },
+    "kernelRows": {
+      "id": "kernelRows",
+      "type": "ui.Flex.Column",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 3200.0,
+      "connections": {
+        "inputs": {
+          "components": [
+            {
+              "nodeId": "kernel_correlation",
+              "portName": "self"
+            }
+          ],
+          "components_1": [
+            {
+              "nodeId": "kernel_cvd",
+              "portName": "self"
+            }
+          ],
+          "components_2": [
+            {
+              "nodeId": "kernel_depthflow",
+              "portName": "self"
+            }
+          ],
+          "components_3": [
+            {
+              "nodeId": "kernel_derivatives",
+              "portName": "self"
+            }
+          ],
+          "components_4": [
+            {
+              "nodeId": "kernel_hawkes",
+              "portName": "self"
+            }
+          ],
+          "components_5": [
+            {
+              "nodeId": "kernel_leadlag",
+              "portName": "self"
+            }
+          ],
+          "components_6": [
+            {
+              "nodeId": "kernel_liquidations",
+              "portName": "self"
+            }
+          ],
+          "components_7": [
+            {
+              "nodeId": "kernel_liquidity",
+              "portName": "self"
+            }
+          ],
+          "components_8": [
+            {
+              "nodeId": "kernel_morphology",
+              "portName": "self"
+            }
+          ],
+          "components_9": [
+            {
+              "nodeId": "kernel_pumpdump_book",
+              "portName": "self"
+            }
+          ],
+          "components_10": [
+            {
+              "nodeId": "kernel_pumpdump_ticker",
+              "portName": "self"
+            }
+          ],
+          "components_11": [
+            {
+              "nodeId": "kernel_pumpdump_trade",
+              "portName": "self"
+            }
+          ],
+          "components_12": [
+            {
+              "nodeId": "kernel_sentiment",
+              "portName": "self"
+            }
+          ],
+          "components_13": [
+            {
+              "nodeId": "kernel_toxicity_book",
+              "portName": "self"
+            }
+          ],
+          "components_14": [
+            {
+              "nodeId": "kernel_toxicity_trade",
+              "portName": "self"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "kernels",
+              "portName": "components_1"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "className": {
+          "value": "min-h-0 flex-1 overflow-auto"
+        }
+      }
+    },
+    "kernels": {
+      "id": "kernels",
+      "type": "ui.Section",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 3400.0,
+      "connections": {
+        "inputs": {
+          "components": [
+            {
+              "nodeId": "kernelsHeader",
+              "portName": "self"
+            }
+          ],
+          "components_1": [
+            {
+              "nodeId": "kernelRows",
+              "portName": "self"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "grid",
+              "portName": "components"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "fit": {
+          "value": "pane"
+        },
+        "className": {
+          "value": "min-h-0 border-(--line) border-r"
+        }
+      }
+    },
+    "marketSymbol": {
+      "id": "marketSymbol",
+      "type": "ui.Text",
+      "width": 280,
+      "height": 172,
+      "x": 2720.0,
+      "y": 0.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "market",
+              "portName": "components"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "value": {
+          "value": "\u2014"
+        },
+        "className": {
+          "value": "font-mono text-(--f1)"
+        }
+      }
+    },
+    "marketPrice": {
+      "id": "marketPrice",
+      "type": "ui.Text",
+      "width": 280,
+      "height": 172,
+      "x": 2720.0,
+      "y": 200.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "market",
+              "portName": "components_1"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "value": {
+          "value": "\u2014"
+        },
+        "className": {
+          "value": "font-mono text-(--acc)"
+        }
+      }
+    },
+    "market": {
+      "id": "market",
+      "type": "ui.Flex.Row",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 3600.0,
+      "connections": {
+        "inputs": {
+          "components": [
+            {
+              "nodeId": "marketSymbol",
+              "portName": "self"
+            }
+          ],
+          "components_1": [
+            {
+              "nodeId": "marketPrice",
+              "portName": "self"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "centre",
+              "portName": "components"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "className": {
+          "value": "items-center gap-3 px-4 py-2 text-xs"
+        }
+      }
+    },
+    "impulse": {
+      "id": "impulse",
+      "type": "ui.ImpulseMap",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 3800.0,
+      "connections": {
+        "inputs": {
+          "points": [
+            {
+              "nodeId": "points",
+              "portName": "out"
+            }
+          ],
+          "regions": [
+            {
+              "nodeId": "regions",
+              "portName": "out"
+            }
+          ],
+          "connections": [
+            {
+              "nodeId": "links",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "centre",
+              "portName": "components_1"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "title": {
+          "value": "Impulse map \u00b7 live"
+        },
+        "className": {
+          "value": "min-h-0 flex-1"
+        }
+      }
+    },
+    "centre": {
+      "id": "centre",
+      "type": "ui.Flex.Column",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 4000.0,
+      "connections": {
+        "inputs": {
+          "components": [
+            {
+              "nodeId": "market",
+              "portName": "self"
+            }
+          ],
+          "components_1": [
+            {
+              "nodeId": "impulse",
+              "portName": "self"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "grid",
+              "portName": "components_1"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "className": {
+          "value": "min-h-0 gap-2 border-(--line) border-r bg-(--bg) p-2"
+        }
+      }
+    },
+    "decisionList": {
+      "id": "decisionList",
+      "type": "ui.DecisionList",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 4200.0,
+      "connections": {
+        "inputs": {
+          "decisions": [
+            {
+              "nodeId": "decisions",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "decisionPane",
+              "portName": "components"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "title": {
+          "value": "DECISIONS"
+        },
+        "emptyLabel": {
+          "value": "No decisions yet"
+        }
+      }
+    },
+    "decisionPane": {
+      "id": "decisionPane",
+      "type": "ui.Flex.Column",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 4400.0,
+      "connections": {
+        "inputs": {
+          "components": [
+            {
+              "nodeId": "decisionList",
+              "portName": "self"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "right",
+              "portName": "components"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "className": {
+          "value": "min-h-0 flex-[1.15] overflow-auto border-(--line) border-b"
+        }
+      }
+    },
+    "positionsHeader": {
+      "id": "positionsHeader",
+      "type": "ui.Section.Header",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 4600.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "positions",
+              "portName": "components"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "title": {
+          "value": "Closed round trips"
+        }
+      }
+    },
+    "positionList": {
+      "id": "positionList",
+      "type": "ui.PositionList",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 4800.0,
+      "connections": {
+        "inputs": {
+          "positions": [
+            {
+              "nodeId": "closed",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "positions",
+              "portName": "components_1"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "emptyLabel": {
+          "value": "No round trips yet"
+        }
+      }
+    },
+    "positions": {
+      "id": "positions",
+      "type": "ui.Section",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 5000.0,
+      "connections": {
+        "inputs": {
+          "components": [
+            {
+              "nodeId": "positionsHeader",
+              "portName": "self"
+            }
+          ],
+          "components_1": [
+            {
+              "nodeId": "positionList",
+              "portName": "self"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "right",
+              "portName": "components_1"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "className": {
+          "value": "min-h-0 flex-1 overflow-auto border-(--line) border-b"
+        }
+      }
+    },
+    "right": {
+      "id": "right",
+      "type": "ui.Flex.Column",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 5200.0,
+      "connections": {
+        "inputs": {
+          "components": [
+            {
+              "nodeId": "decisionPane",
+              "portName": "self"
+            }
+          ],
+          "components_1": [
+            {
+              "nodeId": "positions",
+              "portName": "self"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "grid",
+              "portName": "components_2"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "className": {
+          "value": "min-h-0 overflow-hidden bg-(--surface)"
+        }
+      }
+    },
+    "grid": {
+      "id": "grid",
+      "type": "ui.Grid",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 5400.0,
+      "connections": {
+        "inputs": {
+          "components": [
+            {
+              "nodeId": "kernels",
+              "portName": "self"
+            }
+          ],
+          "components_1": [
+            {
+              "nodeId": "centre",
+              "portName": "self"
+            }
+          ],
+          "components_2": [
+            {
+              "nodeId": "right",
+              "portName": "self"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "page",
+              "portName": "components"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "responsive": {
+          "value": false
+        },
+        "className": {
+          "value": "h-full min-h-0 min-w-0 flex-1 grid-cols-[282px_minmax(360px,1fr)_332px]"
+        }
+      }
+    },
+    "page": {
+      "id": "page",
+      "type": "ui.Flex.Column",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 5600.0,
+      "connections": {
+        "inputs": {
+          "components": [
+            {
+              "nodeId": "grid",
+              "portName": "self"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "route",
+              "portName": "components"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "fullWidth": {
+          "value": true
+        },
+        "className": {
+          "value": "h-full min-w-280"
+        }
+      }
+    },
+    "route": {
+      "id": "route",
+      "type": "ui.UIRoute",
+      "width": 280,
+      "height": 172,
+      "x": 2380.0,
+      "y": 0.0,
+      "connections": {
+        "inputs": {
+          "components": [
+            {
+              "nodeId": "page",
+              "portName": "self"
+            }
+          ]
+        },
+        "outputs": {}
+      },
+      "inputData": {
+        "path": {
+          "value": "/"
+        },
+        "title": {
+          "value": "Overview"
+        }
+      }
     }
-   }
   }
- }
 }

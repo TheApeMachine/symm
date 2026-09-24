@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
-import { describe, expect, it, vi } from "vitest";
+
 import { renderHook } from "@testing-library/react";
-import { applyPaintMap, usePaintStore, type SubscribableStore } from "./paint";
+import { describe, expect, it, vi } from "vitest";
+import { applyPaintMap, type SubscribableStore, usePaintStore } from "./paint";
 
 describe("paint system", () => {
 	it("applyPaintMap updates fields, meters, badges, and variables directly", () => {
@@ -30,14 +31,22 @@ describe("paint system", () => {
 			},
 		});
 
-		expect(root.querySelector('[data-f="winner"]')?.textContent).toBe("CLASSIFIED");
-		expect(root.querySelector('[data-f="confidence"]')?.textContent).toBe("87.5%");
+		expect(root.querySelector('[data-f="winner"]')?.textContent).toBe(
+			"CLASSIFIED",
+		);
+		expect(root.querySelector('[data-f="confidence"]')?.textContent).toBe(
+			"87.5%",
+		);
 		expect(
-			(root.querySelector('[data-meter-fill]') as HTMLElement)?.style.width,
+			(root.querySelector("[data-meter-fill]") as HTMLElement)?.style.width,
 		).toBe("65%");
-		expect(root.querySelector('[data-badge="status"]')?.textContent).toBe("HEALTHY");
+		expect(root.querySelector('[data-badge="status"]')?.textContent).toBe(
+			"HEALTHY",
+		);
 		expect(
-			(root.querySelector('[data-axis="volatility"]') as HTMLElement)?.style.getPropertyValue("--axis"),
+			(
+				root.querySelector('[data-axis="volatility"]') as HTMLElement
+			)?.style.getPropertyValue("--axis"),
 		).toBe("0.85");
 	});
 

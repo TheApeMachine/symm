@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createFlumeConfig } from "#/components/flume/flume-config.generated";
 import {
 	clearGraphResults,
 	setGraphResults,
 } from "#/components/flume/graph-results.store";
-import { createFlumeConfig } from "#/components/flume/flume-config.generated";
 
 const fixture = vi.hoisted(() => ({
 	nodes: {
@@ -48,7 +48,9 @@ vi.mock("#/service/compute", () => ({
 	fetchDefinition: async () => fixture,
 	fetchDefinitions: async () => ["local-default"],
 }));
+
 import { GraphSurface } from "#/components/surface/graph-surface";
+
 afterEach(() => {
 	cleanup();
 	clearGraphResults("local-default");
@@ -108,12 +110,12 @@ describe("a graph drawn as a surface", () => {
 		expect(screen.getByText("Observed path")).toBeDefined();
 		expect(screen.getByText("9007199254740993")).toBeDefined();
 		expect(screen.getByText("Observed EXIT")).toBeDefined();
-		expect(screen.getByText("Observed root")).toBeDefined();
+		expect(screen.getByText("ROOT")).toBeDefined();
 		expect(screen.queryByText(/Compilation Warnings/)).toBeNull();
 		act(() => setGraphResults("local-default", version, {}));
-		expect(screen.getByText("No episode observations")).toBeDefined();
+		expect(screen.getByText("NO EPISODE OBSERVATIONS")).toBeDefined();
 		expect(screen.getByText("No recorded activity")).toBeDefined();
 		expect(screen.getByText("No recorded branches")).toBeDefined();
-		await waitFor(() => expect(screen.queryByText("Observed root")).toBeNull());
+		await waitFor(() => expect(screen.queryByText("ROOT")).toBeNull());
 	});
 });

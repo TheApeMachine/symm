@@ -2,34 +2,6 @@
   "id": "training_replay",
   "name": "Fragment replay: each mined event walks its own instrument's records from the book's snapshot through D",
   "nodes": {
-    "record": {
-      "id": "record",
-      "type": "transport.Fan",
-      "width": 280,
-      "height": 172,
-      "inputData": {},
-      "connections": {
-        "inputs": {},
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "index",
-              "portName": "append_0"
-            },
-            {
-              "nodeId": "tape_constants",
-              "portName": "data"
-            },
-            {
-              "nodeId": "instrument_record",
-              "portName": "json"
-            }
-          ]
-        }
-      },
-      "x": 0.0,
-      "y": 0.0
-    },
     "event": {
       "id": "event",
       "type": "transport.Fan",
@@ -85,12 +57,6 @@
       },
       "connections": {
         "inputs": {
-          "append_0": [
-            {
-              "nodeId": "record",
-              "portName": "out"
-            }
-          ],
           "request_0": [
             {
               "nodeId": "walk_request",
@@ -144,114 +110,6 @@
         }
       },
       "x": 1020.0,
-      "y": 0.0
-    },
-    "tape_constants": {
-      "id": "tape_constants",
-      "type": "data.Insert",
-      "width": 280,
-      "height": 172,
-      "inputData": {
-        "path": {
-          "value": "_const"
-        },
-        "json": {
-          "value": "{\"instrument\": \"instrument\", \"yes\": true}"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "record",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "instrument",
-              "portName": "data"
-            }
-          ]
-        }
-      },
-      "x": 1360.0,
-      "y": 0.0
-    },
-    "instrument": {
-      "id": "instrument",
-      "type": "data.Filter",
-      "width": 280,
-      "height": 172,
-      "inputData": {
-        "path": {
-          "value": "market.channel"
-        },
-        "operator": {
-          "value": "=="
-        },
-        "referencePath": {
-          "value": "_const.instrument"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "tape_constants",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "instrument_record",
-              "portName": "data"
-            }
-          ]
-        }
-      },
-      "x": 1700.0,
-      "y": 0.0
-    },
-    "instrument_record": {
-      "id": "instrument_record",
-      "type": "data.Insert",
-      "width": 280,
-      "height": 172,
-      "inputData": {
-        "path": {
-          "value": "record"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "instrument",
-              "portName": "out"
-            }
-          ],
-          "json": [
-            {
-              "nodeId": "record",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "emitted",
-              "portName": "yes_1"
-            }
-          ]
-        }
-      },
-      "x": 2040.0,
       "y": 0.0
     },
     "cursor": {
@@ -1949,10 +1807,6 @@
             {
               "nodeId": "fragment_index",
               "portName": "json"
-            },
-            {
-              "nodeId": "fragment_begin",
-              "portName": "json"
             }
           ]
         }
@@ -2056,7 +1910,7 @@
         "outputs": {
           "out": [
             {
-              "nodeId": "fragment_begin",
+              "nodeId": "fragment_end",
               "portName": "data"
             }
           ]
@@ -2119,7 +1973,7 @@
           ],
           "data": [
             {
-              "nodeId": "fragment_begin",
+              "nodeId": "fragment_index",
               "portName": "out"
             }
           ]
@@ -2744,10 +2598,6 @@
               "portName": "no_0"
             },
             {
-              "nodeId": "emitted",
-              "portName": "yes_0"
-            },
-            {
               "nodeId": "fragment_record",
               "portName": "data"
             },
@@ -2756,7 +2606,7 @@
               "portName": "data"
             },
             {
-              "nodeId": "fragment_first",
+              "nodeId": "observation",
               "portName": "data"
             }
           ]
@@ -3263,43 +3113,6 @@
       "x": 1020.0,
       "y": 1540.0
     },
-    "emitted": {
-      "id": "emitted",
-      "type": "controlflow.Select",
-      "width": 280,
-      "height": 172,
-      "inputData": {
-        "test": {
-          "value": true
-        }
-      },
-      "connections": {
-        "inputs": {
-          "yes_0": [
-            {
-              "nodeId": "walked",
-              "portName": "out"
-            }
-          ],
-          "yes_1": [
-            {
-              "nodeId": "instrument_record",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "observation",
-              "portName": "data"
-            }
-          ]
-        }
-      },
-      "x": 1360.0,
-      "y": 1540.0
-    },
     "observation": {
       "id": "observation",
       "type": "data.Extract",
@@ -3317,7 +3130,7 @@
         "inputs": {
           "data": [
             {
-              "nodeId": "emitted",
+              "nodeId": "walked",
               "portName": "out"
             }
           ]
@@ -3421,43 +3234,6 @@
       "x": 2720.0,
       "y": 1540.0
     },
-    "fragment_begin": {
-      "id": "fragment_begin",
-      "type": "data.Insert",
-      "width": 280,
-      "height": 172,
-      "x": 2040.0,
-      "y": 1080.0,
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "fragment_index",
-              "portName": "out"
-            }
-          ],
-          "json": [
-            {
-              "nodeId": "begin",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "fragment_end",
-              "portName": "data"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "path": {
-          "value": "begin"
-        }
-      }
-    },
     "fragment_scope": {
       "id": "fragment_scope",
       "type": "data.Extract",
@@ -3482,36 +3258,6 @@
         },
         "encoding": {
           "value": "json-text"
-        }
-      }
-    },
-    "fragment_first": {
-      "id": "fragment_first",
-      "type": "data.Filter",
-      "width": 280,
-      "height": 172,
-      "x": 680.0,
-      "y": 1720.0,
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "walked",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      },
-      "inputData": {
-        "path": {
-          "value": "position.index"
-        },
-        "operator": {
-          "value": "=="
-        },
-        "referencePath": {
-          "value": "position.begin"
         }
       }
     }

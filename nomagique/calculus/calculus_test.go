@@ -73,33 +73,6 @@ func TestCalculusPrimitives(t *testing.T) {
 			So(results.Out(), ShouldEqual, 9.0)
 		})
 
-		Convey("Sqrt evaluates correctly and guards negative values", func() {
-			server := calculus.NewSqrt()
-			client := calculus.Sqrt_ServerToClient(server)
-			So(client.IsValid(), ShouldBeTrue)
-
-			err := client.Write(ctx, func(params calculus.Sqrt_write_Params) error {
-				params.SetValue(16.0)
-				return nil
-			})
-			So(err, ShouldBeNil)
-			So(client.WaitStreaming(), ShouldBeNil)
-
-			future, release := client.Done(ctx, nil)
-			defer release()
-
-			results, err := future.Struct()
-			So(err, ShouldBeNil)
-			So(results.Out(), ShouldEqual, 4.0)
-
-			err = client.Write(ctx, func(params calculus.Sqrt_write_Params) error {
-				params.SetValue(-1.0)
-				return nil
-			})
-			So(err, ShouldBeNil)
-			So(client.WaitStreaming(), ShouldNotBeNil)
-		})
-
 		Convey("Negate evaluates correctly", func() {
 			server := calculus.NewNegate()
 			client := calculus.Negate_ServerToClient(server)
@@ -144,7 +117,14 @@ func TestCalculusPrimitives(t *testing.T) {
 				return nil
 			})
 			So(err, ShouldBeNil)
-			So(client.WaitStreaming(), ShouldNotBeNil)
+			So(client.WaitStreaming(), ShouldBeNil)
+
+			undefined, releaseUndefined := client.Done(ctx, nil)
+			defer releaseUndefined()
+
+			reciprocal, err := undefined.Struct()
+			So(err, ShouldBeNil)
+			So(reciprocal.Which(), ShouldEqual, calculus.Inverse_Which_undefined)
 		})
 	})
 

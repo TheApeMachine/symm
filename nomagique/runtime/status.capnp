@@ -30,3 +30,7 @@ interface Durable {
 # Queued owners report pending :UInt64 in done. A positive count means
 # admitted work remains runnable without a new external observation.
 interface Queued {}
+
+# Standing owners report on every evaluation, whether or not anything reached
+# them, so a consumer may join on what they say when they were told nothing.
+interface Standing {}

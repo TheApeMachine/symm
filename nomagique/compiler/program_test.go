@@ -1,6 +1,7 @@
 package compiler
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -455,24 +456,42 @@ func TestProgramExecuteArchive(t *testing.T) {
 		program, err := Compile(graph, nil, repository)
 		So(err, ShouldBeNil)
 		defer program.Release()
-		for index := int64(0); index < 3; index++ {
+		// Batches arrive whole, one per evaluation, until the snapshot is read.
+		var rows [][]byte
+
+		for pass := 0; pass < 10; pass++ {
 			So(program.Execute(ctx, nil), ShouldBeNil)
+			scanned, found := program.Result("scan")
+			So(found, ShouldBeTrue)
+
+			if tables.Scanned(scanned).Exhausted() {
+				break
+			}
+
 			result, found := program.Result("project")
 			So(found, ShouldBeTrue)
-			raw, err := data.Arrow_done_Results(result).Out()
+			list, err := data.Arrow_done_Results(result).Rows()
 			So(err, ShouldBeNil)
+
+			for index := range list.Len() {
+				row, err := list.At(index)
+				So(err, ShouldBeNil)
+				rows = append(rows, bytes.Clone(row))
+			}
+		}
+
+		So(rows, ShouldHaveLength, 3)
+
+		for index, raw := range rows {
 			var row struct {
 				Sequence int64
 				Payload  []byte
 			}
 			So(json.Unmarshal(raw, &row), ShouldBeNil)
-			So(row.Sequence, ShouldEqual, 9007199254740993+index)
+			So(row.Sequence, ShouldEqual, 9007199254740993+int64(index))
 			So(row.Payload, ShouldResemble, []byte{byte(index), 0, 255})
 		}
-		So(program.Execute(ctx, nil), ShouldBeNil)
-		result, found := program.Result("scan")
-		So(found, ShouldBeTrue)
-		So(tables.Scanned(result).Exhausted(), ShouldBeTrue)
+
 		So(configCalls.Load(), ShouldEqual, 1)
 		So(tableCalls.Load(), ShouldEqual, 1)
 	})
@@ -630,11 +649,12 @@ func TestProgramExecuteReinforcement(t *testing.T) {
 		offset := 0
 		holding := false
 		settled := true
+		vocabulary := "v1"
 		execute := func(identity string, cursor int, history string) error {
 			input := map[string]any{
 				"capture": map[string]string{"session": identity, "endpoint": "spot"},
 				"holding": holding,
-				"settled": map[string]any{"tokens": []string{"A", "B"}, "sequence": history},
+				"settled": map[string]any{"vocabulary": vocabulary, "tokens": []string{"A", "B"}, "sequence": history},
 				"cursor":  map[string]int{"sequence": offset + cursor, "record": 0},
 				"event": map[string]any{
 					"a": map[string]int{"sequence": offset + 1, "record": 0},
@@ -680,6 +700,12 @@ func TestProgramExecuteReinforcement(t *testing.T) {
 			prediction("", 2)
 			So(execute("wait-2", 2, "A/B"), ShouldBeNil)
 			prediction("WAIT", 3)
+
+			Convey("And the same history under another region vocabulary has no borrowed evidence", func() {
+				vocabulary = "v2"
+				So(execute("entry-3", 3, "A/B"), ShouldBeNil)
+				prediction("", 0)
+			})
 
 			Convey("And another precursor history has no borrowed evidence", func() {
 				So(execute("entry-2", 3, "C/A/B"), ShouldBeNil)
@@ -732,7 +758,7 @@ func TestProgramExecuteReinforcement(t *testing.T) {
 					input := map[string]any{
 						"capture": map[string]string{"session": identity, "endpoint": "spot"},
 						"holding": holding,
-						"settled": map[string]any{"tokens": tokens, "sequence": seq},
+						"settled": map[string]any{"vocabulary": vocabulary, "tokens": tokens, "sequence": seq},
 						"cursor":  map[string]int{"sequence": offset + cursor, "record": 0},
 						"event": map[string]any{
 							"a": map[string]int{"sequence": offset + 1, "record": 0},
@@ -789,7 +815,7 @@ func BenchmarkProgramExecuteReinforcement(b *testing.B) {
 		payload, err := json.Marshal(map[string]any{
 			"capture": map[string]string{"session": "benchmark", "endpoint": "spot"},
 			"holding": false,
-			"settled": map[string]any{"tokens": []string{"region-A", "region-B"}, "sequence": "region-A/region-B"},
+			"settled": map[string]any{"vocabulary": "v1", "tokens": []string{"region-A", "region-B"}, "sequence": "region-A/region-B"},
 			"cursor":  map[string]int{"sequence": observation*4 + 1, "record": 0},
 			"event": map[string]any{
 				"a": map[string]int{"sequence": observation * 4, "record": 0},
@@ -835,46 +861,95 @@ func TestProgramExecuteRecords(t *testing.T) {
 		program, err := CompileFile("../../manifest/archive_records.json", nil, NewRepository())
 		So(err, ShouldBeNil)
 		defer program.Release()
-		for step := range 4 {
-			inputs := make(map[NodeID]capnp.Struct)
-			if step < 2 {
-				row, err := json.Marshal(map[string]any{"capture_session": []string{"first", "second"}[step], "capture_sequence": int64(9007199254740993) + int64(step), "endpoint": []string{"spot", "futures"}[step], "received_time": "2026-09-23T00:00:00.123456789Z"})
-				So(err, ShouldBeNil)
-				frame, err := json.Marshal(map[string]any{"channel": "ticker", "data": []map[string]int{{"last": step*2 + 1}, {"last": step*2 + 2}}})
-				So(err, ShouldBeNil)
-				for name, payload := range map[string][]byte{"row": row, "frame": frame} {
-					_, segment, err := capnp.NewMessage(capnp.SingleSegment(nil))
-					So(err, ShouldBeNil)
-					params, err := transport.NewFan_write_Params(segment)
-					So(err, ShouldBeNil)
-					So(params.SetData(payload), ShouldBeNil)
-					inputs[program.NodeMap[name]] = capnp.Struct(params)
-				}
+
+		// documents are one tape evaluation: two frames of a session, each in
+		// the envelope the tape hands out, and an instrument catalogue.
+		documents := [][]byte{}
+
+		for step := range 2 {
+			document, err := json.Marshal(map[string]any{
+				"capture": map[string]string{"session": "first", "endpoint": "spot", "receivedAt": "2026-09-23T00:00:00.123456789Z"},
+				"cursor":  map[string]int64{"sequence": int64(9007199254740993) + int64(step)},
+				"market":  map[string]any{"channel": "ticker", "data": []map[string]int{{"last": step*2 + 1}, {"last": step*2 + 2}}},
+			})
+			So(err, ShouldBeNil)
+			documents = append(documents, document)
+		}
+
+		catalogue, err := json.Marshal(map[string]any{
+			"capture": map[string]string{"session": "first", "endpoint": "spot", "receivedAt": "2026-09-23T00:00:00.123456789Z"},
+			"cursor":  map[string]int64{"sequence": int64(9007199254740995)},
+			"market":  map[string]any{"channel": "instrument", "data": map[string]any{"pairs": []any{}}},
+		})
+		So(err, ShouldBeNil)
+		documents = append(documents, catalogue)
+
+		seed := func(id string, list func(capnp.Struct, int32) (capnp.DataList, error)) capnp.Struct {
+			node := program.Nodes[program.NodeMap[id]]
+			_, segment, err := capnp.NewMessage(capnp.SingleSegment(nil))
+			So(err, ShouldBeNil)
+			args, err := capnp.NewRootStruct(segment, node.Write.ParamsSize)
+			So(err, ShouldBeNil)
+			So(args.CopyFrom(node.ArgsTemplate), ShouldBeNil)
+			data, err := list(args, int32(len(documents)))
+			So(err, ShouldBeNil)
+
+			for index, document := range documents {
+				So(data.Set(index, document), ShouldBeNil)
 			}
-			So(program.Execute(context.Background(), inputs), ShouldBeNil)
+
+			return args
+		}
+
+		inputs := map[NodeID]capnp.Struct{
+			program.NodeMap["records"]: seed("records", func(args capnp.Struct, count int32) (capnp.DataList, error) {
+				return data.Iterate_write_Params(args).NewData(count)
+			}),
+			program.NodeMap["instruments"]: seed("instruments", func(args capnp.Struct, count int32) (capnp.DataList, error) {
+				return data.Where_write_Params(args).NewData(count)
+			}),
+		}
+		So(program.Execute(context.Background(), inputs), ShouldBeNil)
+
+		Convey("Every record of every frame is handed over on the evaluation the frames arrived on", func() {
 			result, found := program.Result("records")
 			So(found, ShouldBeTrue)
-			raw, err := data.Iterate_done_Results(result).Out()
+			all, err := data.Iterate_done_Results(result).All()
 			So(err, ShouldBeNil)
-			var record struct {
-				Capture struct{ Session, Endpoint, ReceivedAt string }
-				Cursor  struct {
-					Sequence int64
-					Record   int
+			So(all.Len(), ShouldEqual, 5)
+
+			for position := range 4 {
+				raw, err := all.At(position)
+				So(err, ShouldBeNil)
+				var record struct {
+					Capture struct{ Session, Endpoint, ReceivedAt string }
+					Cursor  struct {
+						Sequence int64
+						Record   int
+					}
+					Market struct {
+						Channel string
+						Data    struct{ Last int }
+					}
 				}
-				Market struct {
-					Channel string
-					Data    struct{ Last int }
-				}
+				So(json.Unmarshal(raw, &record), ShouldBeNil)
+				So(record.Cursor.Sequence == int64(9007199254740993)+int64(position/2), ShouldBeTrue)
+				So(record.Cursor.Record, ShouldEqual, position%2)
+				So(record.Capture.Session, ShouldEqual, "first")
+				So(record.Capture.Endpoint, ShouldEqual, "spot")
+				So(record.Capture.ReceivedAt, ShouldEqual, "2026-09-23T00:00:00.123456789Z")
+				So(record.Market.Data.Last, ShouldEqual, position+1)
 			}
-			So(json.Unmarshal(raw, &record), ShouldBeNil)
-			So(record.Cursor.Sequence == int64(9007199254740993)+int64(step/2), ShouldBeTrue)
-			So(record.Cursor.Record, ShouldEqual, step%2)
-			So(record.Capture.Session, ShouldEqual, []string{"first", "second"}[step/2])
-			So(record.Capture.Endpoint, ShouldEqual, []string{"spot", "futures"}[step/2])
-			So(record.Capture.ReceivedAt, ShouldEqual, "2026-09-23T00:00:00.123456789Z")
-			So(record.Market.Data.Last, ShouldEqual, step+1)
-		}
+		})
+
+		Convey("The instrument catalogue alone is handed on as a frame of its own", func() {
+			result, found := program.Result("instrument")
+			So(found, ShouldBeTrue)
+			out, err := data.Iterate_done_Results(result).Out()
+			So(err, ShouldBeNil)
+			So(string(out), ShouldContainSubstring, `"instrument"`)
+			So(string(out), ShouldContainSubstring, `"pairs"`)
+		})
 	})
 }
 
@@ -977,7 +1052,7 @@ func TestProgramExecuteReplay(t *testing.T) {
 		defer program.Release()
 		execute := func(record, event []byte, ready bool) {
 			inputs := make(map[NodeID]capnp.Struct)
-			arrivals := map[string][]byte{"record": record, "event": event}
+			arrivals := map[string][]byte{"event": event}
 			if ready {
 				arrivals["ready"] = []byte(`{"ready":1}`)
 			}
@@ -991,6 +1066,19 @@ func TestProgramExecuteReplay(t *testing.T) {
 				So(err, ShouldBeNil)
 				So(args.SetData(payload), ShouldBeNil)
 				inputs[program.NodeMap[name]] = capnp.Struct(args)
+			}
+			// The root graph appends a frame's records to the index directly.
+			if len(record) > 0 {
+				_, segment, err := capnp.NewMessage(capnp.SingleSegment(nil))
+				So(err, ShouldBeNil)
+				args, err := store.NewIndex_write_Params(segment)
+				So(err, ShouldBeNil)
+				appended, err := args.NewAppend(1)
+				So(err, ShouldBeNil)
+				So(appended.Set(0, record), ShouldBeNil)
+				So(args.SetPartition("capture.session,market.data.symbol"), ShouldBeNil)
+				So(args.SetOrder("cursor.sequence,cursor.record"), ShouldBeNil)
+				inputs[program.NodeMap["index"]] = capnp.Struct(args)
 			}
 			So(program.Execute(context.Background(), inputs), ShouldBeNil)
 		}
@@ -1087,7 +1175,25 @@ func BenchmarkProgramExecuteReplay(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		if err := program.Execute(context.Background(), makeInput("record", string(payload))); err != nil {
+		// The root graph appends a frame's records to the index directly.
+		_, segment, err := capnp.NewMessage(capnp.SingleSegment(nil))
+		if err != nil {
+			b.Fatal(err)
+		}
+		args, err := store.NewIndex_write_Params(segment)
+		if err != nil {
+			b.Fatal(err)
+		}
+		appended, err := args.NewAppend(1)
+		if err != nil {
+			b.Fatal(err)
+		}
+		for _, err := range []error{appended.Set(0, payload), args.SetPartition("capture.session,market.data.symbol"), args.SetOrder("cursor.sequence,cursor.record")} {
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+		if err := program.Execute(context.Background(), map[NodeID]capnp.Struct{program.NodeMap["index"]: capnp.Struct(args)}); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -1182,6 +1288,8 @@ func TestProgramExecuteLiveSpot(t *testing.T) {
 				delete(graph.Nodes, id)
 			}
 		}
+		// Only the spot venue is faked; every other outside source leaves.
+		withoutNodes(graph, "level3", "futures", "envelope", "capture", "training")
 		spot := graph.Nodes["spot"]
 		endpoint, err := json.Marshal(map[string]string{"value": "ws" + strings.TrimPrefix(venue.URL, "http")})
 		So(err, ShouldBeNil)
@@ -1193,7 +1301,9 @@ func TestProgramExecuteLiveSpot(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		var spreads []float64
-		for len(spreads) < 4 && ctx.Err() == nil {
+		// Only the focused symbol reaches the live signals: BTC/USD's frame
+		// carries two records, and ETH/USD's never arrives.
+		for len(spreads) < 2 && ctx.Err() == nil {
 			So(program.Execute(ctx, nil), ShouldBeNil)
 			if _, found := program.Result("signals__definition-liquidity_ticker__spread"); found {
 				spread, err := program.Float64Result("signals__definition-liquidity_ticker__spread", "out")
@@ -1202,7 +1312,7 @@ func TestProgramExecuteLiveSpot(t *testing.T) {
 			}
 			time.Sleep(time.Millisecond)
 		}
-		So(spreads, ShouldResemble, []float64{2, 5, 2, 5})
+		So(spreads, ShouldResemble, []float64{2, 5})
 		received := map[string]bool{}
 		for len(received) < 4 && ctx.Err() == nil {
 			select {
@@ -1382,4 +1492,39 @@ func TestProgramExecuteFanIn(t *testing.T) {
 		So(err, ShouldBeNil)
 		So(actual, ShouldEqual, 10)
 	})
+}
+
+/*
+withoutNodes removes nodes from a graph together with every connection that
+names them, so a test can keep only the sources it fakes.
+*/
+func withoutNodes(graph Graph, ids ...string) {
+	removed := make(map[string]bool, len(ids))
+
+	for _, id := range ids {
+		removed[id] = true
+		delete(graph.Nodes, id)
+	}
+
+	for id, node := range graph.Nodes {
+		for _, ports := range []map[string][]ConnectionTarget{node.Connections.Inputs, node.Connections.Outputs} {
+			for port, targets := range ports {
+				kept := targets[:0]
+
+				for _, target := range targets {
+					if !removed[target.NodeID] {
+						kept = append(kept, target)
+					}
+				}
+
+				ports[port] = kept
+
+				if len(kept) == 0 {
+					delete(ports, port)
+				}
+			}
+		}
+
+		graph.Nodes[id] = node
+	}
 }

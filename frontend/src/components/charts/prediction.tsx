@@ -233,13 +233,9 @@ const ScalarDiagnostics = () => {
 					horizon / reach
 				</div>
 				<div className="mt-0.5 flex gap-1 font-mono text-[11px] text-(--f2)">
-					<span data-p="horizon">
-						{fmt(horizon, 0)}
-					</span>
+					<span data-p="horizon">{fmt(horizon, 0)}</span>
 					<span>/</span>
-					<span data-p="reach">
-						{fmt(reach, 0)}
-					</span>
+					<span data-p="reach">{fmt(reach, 0)}</span>
 				</div>
 			</div>
 			<div className="bg-(--sunken) px-2 py-1.5">
@@ -343,8 +339,9 @@ const VerdictRow = () => {
 	);
 };
 
-const toVector = (value: Float64Array | number[] | null | undefined): number[] =>
-	value === null || value === undefined ? [] : Array.from(value);
+const toVector = (
+	value: Float64Array | number[] | null | undefined,
+): number[] => (value === null || value === undefined ? [] : Array.from(value));
 
 /*
 Each lane is normalized against its own largest component because every layer's

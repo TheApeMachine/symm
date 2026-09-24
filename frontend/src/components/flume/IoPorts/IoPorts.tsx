@@ -3,13 +3,13 @@ import {
 	ConnectionRecalculateContext,
 	PortTypesContext,
 } from "#/components/flume/context";
+import { groupPorts } from "#/components/flume/port-families";
 import type {
 	Connections,
 	InputData,
 	PortType,
 	TransputBuilder,
 } from "#/components/flume/types";
-import { groupPorts } from "#/components/flume/port-families";
 import { Flex } from "#/components/ui/flex";
 import Input from "./Input";
 import Output from "./Output";
@@ -133,11 +133,7 @@ const IoPorts = ({
 				</Flex.Column>
 			) : null}
 			{shownOutputs.length ? (
-				<Flex.Column
-					align="end"
-					gap={2}
-					data-flume-component="ports-outputs"
-				>
+				<Flex.Column align="end" gap={2} data-flume-component="ports-outputs">
 					{shownOutputs.map((output) => (
 						<Output
 							{...output}

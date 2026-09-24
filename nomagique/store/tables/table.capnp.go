@@ -27,7 +27,7 @@ func (c IcebergTable) Write(ctx context.Context, params func(IcebergTable_write_
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 8, PointerCount: 2}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 8, PointerCount: 3}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(IcebergTable_write_Params(s)) }
 	}
 
@@ -262,12 +262,12 @@ type IcebergTable_write_Params capnp.Struct
 const IcebergTable_write_Params_TypeID = 0xcec2209f6cf83c36
 
 func NewIcebergTable_write_Params(s *capnp.Segment) (IcebergTable_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 2})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 3})
 	return IcebergTable_write_Params(st), err
 }
 
 func NewRootIcebergTable_write_Params(s *capnp.Segment) (IcebergTable_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 2})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 3})
 	return IcebergTable_write_Params(st), err
 }
 
@@ -342,12 +342,36 @@ func (s IcebergTable_write_Params) SetCommit(v bool) {
 	capnp.Struct(s).SetBit(0, v)
 }
 
+func (s IcebergTable_write_Params) Rows() (capnp.DataList, error) {
+	p, err := capnp.Struct(s).Ptr(2)
+	return capnp.DataList(p.List()), err
+}
+
+func (s IcebergTable_write_Params) HasRows() bool {
+	return capnp.Struct(s).HasPtr(2)
+}
+
+func (s IcebergTable_write_Params) SetRows(v capnp.DataList) error {
+	return capnp.Struct(s).SetPtr(2, v.ToPtr())
+}
+
+// NewRows sets the rows field to a newly
+// allocated capnp.DataList, preferring placement in s's segment.
+func (s IcebergTable_write_Params) NewRows(n int32) (capnp.DataList, error) {
+	l, err := capnp.NewDataList(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return capnp.DataList{}, err
+	}
+	err = capnp.Struct(s).SetPtr(2, l.ToPtr())
+	return l, err
+}
+
 // IcebergTable_write_Params_List is a list of IcebergTable_write_Params.
 type IcebergTable_write_Params_List = capnp.StructList[IcebergTable_write_Params]
 
 // NewIcebergTable_write_Params creates a new list of IcebergTable_write_Params.
 func NewIcebergTable_write_Params_List(s *capnp.Segment, sz int32) (IcebergTable_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 2}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 3}, sz)
 	return capnp.StructList[IcebergTable_write_Params](l), err
 }
 

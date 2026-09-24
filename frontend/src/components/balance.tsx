@@ -1,6 +1,5 @@
-import { useSelector } from "@tanstack/react-store";
 import type { ReactNode } from "react";
-import { cashAtom, equityAtom, unrealizedAtom } from "#/collections/app";
+import { useShellValue } from "#/components/shell-value";
 import { Flex } from "#/components/ui/flex";
 import { Typography } from "#/components/ui/typography";
 
@@ -21,8 +20,8 @@ const fmt = (value: unknown): string => {
 };
 
 /*
-The lambo rides behind the equity reading whenever the book is in unrealized
-profit, and is simply absent otherwise.
+The lambo rides behind the P&L reading whenever the wallet is in profit, and
+is simply absent otherwise.
 
 It is decoration with a real job: an ambient state you catch from across the
 room without reading a digit. That only works if it stays ambient — behind the
@@ -77,20 +76,17 @@ const Reading = ({
 	</Flex.Column>
 );
 
+/*
+Balance is the learner's paper wallet as the running graph reports it: the cash
+it holds and what its completed round trips have made or lost, fees included.
+*/
 export const Balance = () => {
-	const cash = useSelector(cashAtom, (state) => state);
-	const unrealized = useSelector(unrealizedAtom, (state) => state);
-	const equity = useSelector(equityAtom, (state) => state);
-
-	const unrealizedVal = Number(unrealized);
-	const inProfit = Number.isFinite(unrealizedVal) && unrealizedVal > 0;
+	const cash = useShellValue("cash");
+	const pnl = useShellValue("pnl");
+	const inProfit = pnl !== undefined && pnl > 0;
 
 	return (
-		<Flex.Row
-			align="center"
-			gap={6}
-			data-wallet="account"
-		>
+		<Flex.Row align="center" gap={6} data-wallet="account">
 			<Reading
 				label="Cash"
 				tone="f1"
@@ -99,18 +95,11 @@ export const Balance = () => {
 				value={fmt(cash)}
 			/>
 			<Reading
-				label="Unrealized"
-				tone="f2"
-				weight="medium"
-				which="unrealized"
-				value={fmt(unrealized)}
-			/>
-			<Reading
-				label="Equity"
+				label="P&L"
 				tone="accent"
 				weight="semibold"
-				which="equity"
-				value={fmt(equity)}
+				which="pnl"
+				value={fmt(pnl)}
 			>
 				{inProfit ? <Lambo /> : null}
 			</Reading>

@@ -108,6 +108,33 @@ func TestIcebergTableFlush(t *testing.T) {
 		}
 		So(writer.pending, ShouldHaveLength, 2)
 
+		Convey("Rows handed over together are held in order alongside payloads", func() {
+			first, second := captureRow(t, []byte(`{"channel":"a"}`)), captureRow(t, []byte(`{"channel":"b"}`))
+			So(client.Write(ctx, func(params IcebergTable_write_Params) error {
+				if err := params.SetConfig(captureDeclaration); err != nil {
+					return err
+				}
+
+				rows, err := params.NewRows(3)
+
+				if err != nil {
+					return err
+				}
+
+				for index, row := range [][]byte{first, nil, second} {
+					if err := rows.Set(index, row); err != nil {
+						return err
+					}
+				}
+
+				return nil
+			}), ShouldBeNil)
+			So(client.WaitStreaming(), ShouldBeNil)
+			So(writer.pending, ShouldHaveLength, 4)
+			So(writer.pending[2], ShouldResemble, first)
+			So(writer.pending[3], ShouldResemble, second)
+		})
+
 		Convey("Lifecycle flush persists the below-budget tail and scan returns exact bytes", func() {
 			future, release := runtime.Durable(client).Flush(ctx, nil)
 			_, err := future.Struct()
@@ -136,10 +163,19 @@ func TestIcebergTableFlush(t *testing.T) {
 			}), ShouldBeNil)
 			So(reader.WaitStreaming(), ShouldBeNil)
 
-			for _, payload := range payloads {
+			// Batches arrive whole; every row of every batch is one record.
+			var rows [][]byte
+
+			for {
 				future, release := reader.Done(ctx, nil)
 				result, err := future.Struct()
 				So(err, ShouldBeNil)
+
+				if result.Exhausted() {
+					release()
+					break
+				}
+
 				ipc, err := result.Out()
 				So(err, ShouldBeNil)
 				projection := data.Arrow_ServerToClient(data.NewArrow())
@@ -148,10 +184,24 @@ func TestIcebergTableFlush(t *testing.T) {
 				projected, releaseProjection := projection.Done(ctx, nil)
 				projectedResult, err := projected.Struct()
 				So(err, ShouldBeNil)
-				row, err := projectedResult.Out()
+				list, err := projectedResult.Rows()
 				So(err, ShouldBeNil)
-				defer releaseProjection()
-				defer projection.Release()
+
+				for index := range list.Len() {
+					row, err := list.At(index)
+					So(err, ShouldBeNil)
+					rows = append(rows, bytes.Clone(row))
+				}
+
+				releaseProjection()
+				projection.Release()
+				release()
+			}
+
+			So(rows, ShouldHaveLength, len(payloads))
+
+			for index, payload := range payloads {
+				row := rows[index]
 				var record store.CaptureRecord
 				So(json.Unmarshal(row, &record), ShouldBeNil)
 				frame := record.Payload
@@ -186,7 +236,6 @@ func TestIcebergTableFlush(t *testing.T) {
 					releaseGrid()
 					grid.Release()
 				}
-				release()
 			}
 		})
 	})

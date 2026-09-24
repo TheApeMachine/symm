@@ -52,12 +52,9 @@ func (server *TokenSequenceServer) Write(ctx context.Context, call TokenSequence
 	token, _ := args.Token()
 	tokensList, _ := args.Tokens()
 
+	// A reset starts a new window: no scope carries history into it.
 	if args.Reset() {
-		if scope != "" {
-			delete(server.history, scope)
-		} else {
-			server.history = make(map[string][]string)
-		}
+		server.history = make(map[string][]string)
 	}
 
 	var incomingTokens []string
@@ -78,17 +75,20 @@ func (server *TokenSequenceServer) Write(ctx context.Context, call TokenSequence
 		incomingTokens = append(incomingTokens, trimmed)
 	}
 
-	if len(incomingTokens) == 0 {
+	if len(incomingTokens) > 0 {
+		existing := server.history[scope]
+		updated := make([]string, len(existing)+1)
+		copy(updated, existing)
+		updated[len(existing)] = strings.Join(incomingTokens, ",")
+		server.history[scope] = updated
+	}
+
+	updated := server.history[scope]
+
+	if len(updated) == 0 {
 		return nil
 	}
 
-	stepToken := strings.Join(incomingTokens, ",")
-	existing := server.history[scope]
-	updated := make([]string, len(existing)+1)
-	copy(updated, existing)
-	updated[len(existing)] = stepToken
-
-	server.history[scope] = updated
 	server.sequence = updated
 	server.path = strings.Join(updated, "/")
 	server.depth = int64(len(updated))
@@ -116,9 +116,17 @@ func (server *TokenSequenceServer) Done(ctx context.Context, call TokenSequence_
 		))
 	}
 
-	results.SetDepth(server.depth)
+	results.SetIdle()
 
-	if err := results.SetPath(server.path); err != nil {
+	if len(server.sequence) == 0 {
+		return nil
+	}
+
+	results.SetStep()
+	step := results.Step()
+	step.SetDepth(server.depth)
+
+	if err := step.SetPath(server.path); err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.Internal,
 			"cognition.token_sequence: failed to set path",
@@ -126,7 +134,7 @@ func (server *TokenSequenceServer) Done(ctx context.Context, call TokenSequence_
 		))
 	}
 
-	seqList, err := results.NewSequence(int32(len(server.sequence)))
+	seqList, err := step.NewSequence(int32(len(server.sequence)))
 	if err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.Internal,
@@ -145,14 +153,12 @@ func (server *TokenSequenceServer) Done(ctx context.Context, call TokenSequence_
 		}
 	}
 
-	if len(server.out) > 0 {
-		if err := results.SetOut(server.out); err != nil {
-			return errnie.Error(errnie.Err(
-				errnie.Internal,
-				"cognition.token_sequence: failed to set out payload",
-				err,
-			))
-		}
+	if err := step.SetOut(server.out); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"cognition.token_sequence: failed to set out payload",
+			err,
+		))
 	}
 
 	server.sequence = nil

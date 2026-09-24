@@ -87,7 +87,7 @@ func (server *InsertServer) Write(ctx context.Context, call Insert_write) error 
 		return errnie.Error(errnie.Err(errnie.Validation, "insert: encoding", err))
 	}
 
-	if encoding != "" && encoding != "uint64" {
+	if encoding != "" && encoding != "uint64" && encoding != "text" {
 		return errnie.Error(errnie.Err(errnie.Validation, "insert: unsupported encoding", nil))
 	}
 
@@ -96,6 +96,20 @@ func (server *InsertServer) Write(ctx context.Context, call Insert_write) error 
 			return errnie.Error(errnie.Err(errnie.Validation, "insert: unsigned and JSON inputs are mutually exclusive", nil))
 		}
 		value = json.Number(strconv.FormatUint(call.Args().Unsigned(), 10))
+	}
+
+	if encoding == "text" {
+		if call.Args().HasJson() {
+			return errnie.Error(errnie.Err(errnie.Validation, "insert: text and JSON inputs are mutually exclusive", nil))
+		}
+
+		text, err := call.Args().Text()
+
+		if err != nil {
+			return errnie.Error(errnie.Err(errnie.Validation, "insert: text value", err))
+		}
+
+		value = text
 	}
 
 	if call.Args().HasJson() {

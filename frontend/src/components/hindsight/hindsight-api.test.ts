@@ -1,18 +1,18 @@
 import * as flatbuffers from "flatbuffers";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { MeasurementsFrame } from "#/providers/telemetry/telemetry/measurements-frame";
 import { Measurement } from "#/providers/telemetry/telemetry/measurement";
+import { MeasurementsFrame } from "#/providers/telemetry/telemetry/measurements-frame";
 import {
-	fetchHindsightRuns,
 	fetchHindsightCaptures,
-	fetchHindsightStates,
-	fetchHindsightState,
 	fetchHindsightEnvelope,
 	fetchHindsightGaps,
 	fetchHindsightLifecycle,
-	fetchHindsightTimeline,
-	fetchHindsightSymbols,
 	fetchHindsightMetricMap,
+	fetchHindsightRuns,
+	fetchHindsightState,
+	fetchHindsightStates,
+	fetchHindsightSymbols,
+	fetchHindsightTimeline,
 } from "./hindsight-api";
 
 afterEach(() => vi.unstubAllGlobals());

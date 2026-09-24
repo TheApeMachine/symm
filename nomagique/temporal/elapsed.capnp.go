@@ -27,7 +27,7 @@ func (c Elapsed) Write(ctx context.Context, params func(Elapsed_write_Params) er
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 8, PointerCount: 1}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 16, PointerCount: 1}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(Elapsed_write_Params(s)) }
 	}
 
@@ -228,12 +228,12 @@ type Elapsed_write_Params capnp.Struct
 const Elapsed_write_Params_TypeID = 0xca2490936fa0b453
 
 func NewElapsed_write_Params(s *capnp.Segment) (Elapsed_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 1})
 	return Elapsed_write_Params(st), err
 }
 
 func NewRootElapsed_write_Params(s *capnp.Segment) (Elapsed_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 1})
 	return Elapsed_write_Params(st), err
 }
 
@@ -269,12 +269,12 @@ func (s Elapsed_write_Params) Message() *capnp.Message {
 func (s Elapsed_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Elapsed_write_Params) Timestamp() int64 {
-	return int64(capnp.Struct(s).Uint64(0))
+func (s Elapsed_write_Params) Timestamp() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(0))
 }
 
-func (s Elapsed_write_Params) SetTimestamp(v int64) {
-	capnp.Struct(s).SetUint64(0, uint64(v))
+func (s Elapsed_write_Params) SetTimestamp(v float64) {
+	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
 }
 
 func (s Elapsed_write_Params) Scope() (string, error) {
@@ -295,12 +295,20 @@ func (s Elapsed_write_Params) SetScope(v string) error {
 	return capnp.Struct(s).SetText(0, v)
 }
 
+func (s Elapsed_write_Params) Origin() bool {
+	return capnp.Struct(s).Bit(64)
+}
+
+func (s Elapsed_write_Params) SetOrigin(v bool) {
+	capnp.Struct(s).SetBit(64, v)
+}
+
 // Elapsed_write_Params_List is a list of Elapsed_write_Params.
 type Elapsed_write_Params_List = capnp.StructList[Elapsed_write_Params]
 
 // NewElapsed_write_Params creates a new list of Elapsed_write_Params.
 func NewElapsed_write_Params_List(s *capnp.Segment, sz int32) (Elapsed_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 16, PointerCount: 1}, sz)
 	return capnp.StructList[Elapsed_write_Params](l), err
 }
 

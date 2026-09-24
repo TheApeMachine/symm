@@ -2,6 +2,9 @@ package geometry
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"math"
 	"strconv"
@@ -254,16 +257,34 @@ func (server *PeakServer) Done(ctx context.Context, call Peak_done) error {
 	results.SetMoving()
 
 	if server.regions != nil {
-		region, err := results.NewSettled(int32(len(server.regions)))
+		results.SetSettled()
+		settled := results.Settled()
+		region, err := settled.NewRegions(int32(len(server.regions)))
 
 		if err != nil {
-			return errnie.Error(errnie.Err(errnie.Internal, "geometry.peak: failed to allocate settled", err))
+			return errnie.Error(errnie.Err(errnie.Internal, "geometry.peak: failed to allocate regions", err))
 		}
 
+		hasher := sha256.New()
+
 		for point, summit := range server.regions {
-			if err := region.Set(point, strconv.Itoa(summit)); err != nil {
+			name := strconv.Itoa(summit)
+
+			if err := region.Set(point, name); err != nil {
 				return errnie.Error(errnie.Err(errnie.Internal, "geometry.peak: failed to set a region", err))
 			}
+
+			hasher.Write([]byte(name + ","))
+		}
+
+		vocabulary, err := json.Marshal(hex.EncodeToString(hasher.Sum(nil)))
+
+		if err != nil {
+			return errnie.Error(errnie.Err(errnie.Internal, "geometry.peak: failed to encode vocabulary", err))
+		}
+
+		if err := settled.SetVocabulary(vocabulary); err != nil {
+			return errnie.Error(errnie.Err(errnie.Internal, "geometry.peak: failed to set vocabulary", err))
 		}
 	}
 

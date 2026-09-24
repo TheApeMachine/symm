@@ -19,6 +19,7 @@ type QueueServer struct {
 	seen    map[string]bool
 	waiting [][]byte
 	out     []byte
+	ready   bool
 }
 
 func NewQueue(ctx context.Context) *QueueServer {
@@ -75,10 +76,19 @@ func (server *QueueServer) Write(ctx context.Context, call Queue_write) error {
 		))
 	}
 
+	// A release says the consumer is ready for the next value. Readiness is a
+	// state, not a count: it holds until something is handed out, however many
+	// releases arrived meanwhile, so a release that finds the queue empty is
+	// not lost and an idle stretch cannot bank a burst.
+	if arrivals(release) > 0 {
+		server.ready = true
+	}
+
 	// One value per evaluation keeps each hand-out its own observation.
-	if arrivals(release) > 0 && len(server.waiting) > 0 {
+	if server.ready && len(server.waiting) > 0 {
 		server.out = server.waiting[0]
 		server.waiting = server.waiting[1:]
+		server.ready = false
 	}
 
 	return nil

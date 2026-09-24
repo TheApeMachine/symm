@@ -2,6 +2,9 @@ package temporal
 
 import (
 	"context"
+	"math"
+
+	capnp "capnproto.org/go/capnp/v3"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -48,33 +51,43 @@ type miningSymbol struct {
 type MineServer struct {
 	paths     map[miningSymbol]*minedPath
 	sequences map[miningStream]int64
-	out       []byte
-	batch     []byte
+	batches   []MiningBatch
+	out       [][]byte
+	batch     [][]byte
 }
 
 func NewMine() *MineServer {
 	return &MineServer{paths: make(map[miningSymbol]*minedPath), sequences: make(map[miningStream]int64)}
 }
 
-/* Write mines a complete archived frame, retaining every symbol and record. */
+/*
+Write mines the archived frames of one session handed over together, in
+capture order, as if each had arrived alone.
+*/
 func (server *MineServer) Write(ctx context.Context, call Mine_write) error {
-	server.out = nil
-	server.batch = nil
+	server.out = server.out[:0]
+	server.batch = server.batch[:0]
 	args := call.Args()
-	payload, err := args.Payload()
+	call.Args().Message().ResetReadLimit(math.MaxUint64)
+	payloads, err := args.Payload()
 
 	if err != nil {
 		return errnie.Error(errnie.Err(errnie.Validation, "mine: payload", err))
+	}
+	sequences, err := args.Sequence()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.Validation, "mine: sequence", err))
+	}
+	endpoints, err := args.Endpoint()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.Validation, "mine: endpoint", err))
 	}
 	session, err := args.Session()
 
 	if err != nil {
 		return errnie.Error(errnie.Err(errnie.Validation, "mine: session", err))
-	}
-	endpoint, err := args.Endpoint()
-
-	if err != nil {
-		return errnie.Error(errnie.Err(errnie.Validation, "mine: endpoint", err))
 	}
 	channel, err := args.Channel()
 
@@ -87,8 +100,74 @@ func (server *MineServer) Write(ctx context.Context, call Mine_write) error {
 		return errnie.Error(errnie.Err(errnie.Validation, "mine: price field", err))
 	}
 
-	if session == "" || endpoint == "" || channel == "" || priceField == "" || args.Sequence() < 0 {
-		return errnie.Error(errnie.Err(errnie.Validation, "mine: session, endpoint, channel, price field and sequence are required", nil))
+	if payloads.Len() != sequences.Len() || payloads.Len() != endpoints.Len() {
+		return errnie.Error(errnie.Err(errnie.Validation, fmt.Sprintf(
+			"mine: %d payloads, %d sequences and %d endpoints", payloads.Len(), sequences.Len(), endpoints.Len(),
+		), nil))
+	}
+
+	batches := make(map[miningStream]int)
+
+	for frame := range payloads.Len() {
+		payload, err := payloads.At(frame)
+
+		if err != nil {
+			return errnie.Error(errnie.Err(errnie.Validation, "mine: payload", err))
+		}
+		endpoint, err := endpoints.At(frame)
+
+		if err != nil {
+			return errnie.Error(errnie.Err(errnie.Validation, "mine: endpoint", err))
+		}
+		stream := miningStream{session, endpoint, channel}
+		events, err := server.mine(ctx, payload, stream, sequences.At(frame), priceField)
+
+		if err != nil {
+			return err
+		}
+
+		if len(events) == 0 {
+			continue
+		}
+
+		if err := server.archive(stream, sequences.At(frame), events); err != nil {
+			return err
+		}
+
+		position, found := batches[stream]
+
+		if !found {
+			position = len(server.batches)
+			batches[stream] = position
+			server.batches = append(server.batches, MiningBatch{Session: session, Endpoint: endpoint})
+		}
+
+		server.batches[position].Events = append(server.batches[position].Events, events...)
+	}
+
+	for _, batch := range server.batches {
+		encoded, err := json.Marshal(batch)
+
+		if err != nil {
+			return errnie.Error(errnie.Err(errnie.Internal, "mine: encode grading batch", err))
+		}
+
+		server.batch = append(server.batch, encoded)
+	}
+
+	server.batches = server.batches[:0]
+	return nil
+}
+
+/*
+mine steps every instrument one frame carries and returns the moves that
+frame confirmed.
+*/
+func (server *MineServer) mine(
+	ctx context.Context, payload []byte, stream miningStream, sequence int64, priceField string,
+) ([]MinedEvent, error) {
+	if stream.session == "" || stream.endpoint == "" || stream.channel == "" || priceField == "" || sequence < 0 {
+		return nil, errnie.Error(errnie.Err(errnie.Validation, "mine: session, endpoint, channel, price field and sequence are required", nil))
 	}
 
 	var envelope struct {
@@ -97,30 +176,28 @@ func (server *MineServer) Write(ctx context.Context, call Mine_write) error {
 	}
 
 	if err := json.Unmarshal(payload, &envelope); err != nil {
-		return errnie.Error(errnie.Err(errnie.Validation, "mine: decode frame", err))
+		return nil, errnie.Error(errnie.Err(errnie.Validation, "mine: decode frame", err))
 	}
 
 	// Other channels shape their data as they like; only the mined one is read.
-	if envelope.Channel != channel {
-		return nil
+	if envelope.Channel != stream.channel {
+		return nil, nil
 	}
-	var frame struct{ Data []map[string]json.RawMessage }
+	var records []map[string]json.RawMessage
 
-	if err := json.Unmarshal(envelope.Data, &frame.Data); err != nil {
-		return errnie.Error(errnie.Err(errnie.Validation, "mine: decode "+channel+" data", err))
+	if err := json.Unmarshal(envelope.Data, &records); err != nil {
+		return nil, errnie.Error(errnie.Err(errnie.Validation, "mine: decode "+stream.channel+" data", err))
 	}
 
-	stream := miningStream{session, endpoint, channel}
-
-	if previous, found := server.sequences[stream]; found && args.Sequence() <= previous {
-		return errnie.Error(errnie.Err(errnie.Validation, "mine: capture sequence did not advance", nil))
+	if previous, found := server.sequences[stream]; found && sequence <= previous {
+		return nil, errnie.Error(errnie.Err(errnie.Validation, "mine: capture sequence did not advance", nil))
 	}
 
 	// Validate the entire frame before changing any instrument state.
-	readings, err := readPrices(frame.Data, priceField)
+	readings, err := readPrices(records, priceField)
 
 	if err != nil {
-		return err
+		return nil, err
 	}
 	events := make([]MinedEvent, 0)
 
@@ -132,11 +209,11 @@ func (server *MineServer) Write(ctx context.Context, call Mine_write) error {
 			path = &minedPath{excursion: NewExcursion(ctx)}
 			server.paths[key] = path
 		}
-		cursor := TapeCursor{args.Sequence(), reading.record}
+		cursor := TapeCursor{sequence, reading.record}
 		path.cursors = append(path.cursors, cursor)
 
 		if err := path.excursion.Step(reading.value); err != nil {
-			return err
+			return nil, err
 		}
 
 		if !path.excursion.reported.found {
@@ -145,37 +222,25 @@ func (server *MineServer) Write(ctx context.Context, call Mine_write) error {
 		event, err := path.event(reading.symbol, cursor)
 
 		if err != nil {
-			return err
+			return nil, err
 		}
 		events = append(events, event)
 		path.excursion.reported.found = false
 	}
-	server.sequences[stream] = args.Sequence()
+	server.sequences[stream] = sequence
+	return events, nil
+}
 
-	batch := MiningBatch{Session: session, Endpoint: endpoint, Events: events, Closed: make(map[string]TapeCursor)}
-	for key, path := range server.paths {
-		if key.stream != stream {
-			continue
-		}
-		batch.Closed[key.symbol] = path.cursors[path.excursion.ignitionIndex]
-		if path.excursion.floor == 0 {
-			batch.Flat = append(batch.Flat, key.symbol)
-		}
-	}
-	server.batch, err = json.Marshal(batch)
-	if err != nil {
-		return errnie.Error(errnie.Err(errnie.Internal, "mine: encode grading batch", err))
-	}
-
-	if len(events) == 0 {
-		return nil
-	}
+/*
+archive adds the row that records one frame's confirmed moves.
+*/
+func (server *MineServer) archive(stream miningStream, sequence int64, events []MinedEvent) error {
 	data, err := json.Marshal(events)
 
 	if err != nil {
 		return errnie.Error(errnie.Err(errnie.Internal, "mine: encode events", err))
 	}
-	server.out, err = json.Marshal(struct {
+	row, err := json.Marshal(struct {
 		ID       string `json:"capture_id"`
 		Session  string `json:"capture_session"`
 		Sequence int64  `json:"capture_sequence"`
@@ -183,11 +248,13 @@ func (server *MineServer) Write(ctx context.Context, call Mine_write) error {
 		Channel  string `json:"channel"`
 		Payload  []byte `json:"payload"`
 		Count    int    `json:"event_count"`
-	}{fmt.Sprintf("%s:%d", session, args.Sequence()), session, args.Sequence(), endpoint, channel, data, len(events)})
+	}{fmt.Sprintf("%s:%d", stream.session, sequence), stream.session, sequence, stream.endpoint, stream.channel, data, len(events)})
 
 	if err != nil {
 		return errnie.Error(errnie.Err(errnie.Internal, "mine: encode archive row", err))
 	}
+
+	server.out = append(server.out, row)
 	return nil
 }
 
@@ -212,7 +279,7 @@ func (path *minedPath) event(symbol string, confirmed TapeCursor) (MinedEvent, e
 	return event, nil
 }
 
-/* Done emits the batch of confirmed events once, suitable for IcebergTable. */
+/* Done hands over what the frames just mined confirmed, once. */
 func (server *MineServer) Done(ctx context.Context, call Mine_done) error {
 	results, err := call.AllocResults()
 
@@ -220,20 +287,36 @@ func (server *MineServer) Done(ctx context.Context, call Mine_done) error {
 		return errnie.Error(errnie.Err(errnie.Internal, "mine: allocate result", err))
 	}
 
-	if err := results.SetBatch(server.batch); err != nil {
-		return errnie.Error(errnie.Err(errnie.Internal, "mine: batch", err))
-	}
-
 	if len(server.out) == 0 {
 		results.SetNone()
 		return nil
 	}
-	results.SetEvents()
 
-	if err := results.Events().SetOut(server.out); err != nil {
-		return errnie.Error(errnie.Err(errnie.Internal, "mine: set events", err))
+	results.SetEvents()
+	events := results.Events()
+
+	for _, set := range []struct {
+		name  string
+		items [][]byte
+		alloc func(int32) (capnp.DataList, error)
+	}{
+		{"batch", server.batch, events.NewBatch},
+		{"out", server.out, events.NewOut},
+	} {
+		list, err := set.alloc(int32(len(set.items)))
+
+		if err != nil {
+			return errnie.Error(errnie.Err(errnie.Internal, "mine: allocate "+set.name, err))
+		}
+
+		for index, item := range set.items {
+			if err := list.Set(index, item); err != nil {
+				return errnie.Error(errnie.Err(errnie.Internal, "mine: set "+set.name, err))
+			}
+		}
 	}
-	server.out = nil
+
+	server.out, server.batch = server.out[:0], server.batch[:0]
 	return nil
 }
 
@@ -262,6 +345,4 @@ type MiningBatch struct {
 	Session  string
 	Endpoint string
 	Events   []MinedEvent
-	Closed   map[string]TapeCursor
-	Flat     []string
 }

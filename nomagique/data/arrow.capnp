@@ -3,8 +3,10 @@ using Go = import "/go.capnp";
 $Go.package("data");
 $Go.import("github.com/theapemachine/symm/nomagique/data");
 
-# Projects one indexed row from an Arrow IPC stream using its field types.
+# Arrow projects every row of an Arrow IPC stream, in stream order, as one
+# JSON document per row typed by its fields. A stream is handed over whole, so
+# an archive is read a batch per evaluation rather than a row.
 interface Arrow {
-  write @0 (data :Data, row :UInt64) -> stream;
-  done @1 () -> (out :Data);
+  write @0 (data :Data) -> stream;
+  done @1 () -> (rows :List(Data));
 }

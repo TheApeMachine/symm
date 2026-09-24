@@ -29,16 +29,22 @@
           ]
         },
         "outputs": {
-          "frame.read": [
-            {
-              "nodeId": "generation",
-              "portName": "data"
-            }
-          ],
           "frame.generation": [
             {
               "nodeId": "generation",
               "portName": "unsigned"
+            }
+          ],
+          "frame.read": [
+            {
+              "nodeId": "socket_received",
+              "portName": "data"
+            }
+          ],
+          "frame.receivedAt": [
+            {
+              "nodeId": "socket_received",
+              "portName": "text"
             }
           ]
         }
@@ -59,16 +65,16 @@
       },
       "connections": {
         "inputs": {
-          "data": [
-            {
-              "nodeId": "socket",
-              "portName": "frame.read"
-            }
-          ],
           "unsigned": [
             {
               "nodeId": "socket",
               "portName": "frame.generation"
+            }
+          ],
+          "data": [
+            {
+              "nodeId": "socket_received",
+              "portName": "out"
             }
           ]
         },
@@ -911,6 +917,46 @@
       },
       "x": 1900,
       "y": 400
+    },
+    "socket_received": {
+      "id": "socket_received",
+      "type": "data.Insert",
+      "width": 240,
+      "height": 120,
+      "x": 300,
+      "y": 200,
+      "inputData": {
+        "path": {
+          "value": "capture.receivedAt"
+        },
+        "encoding": {
+          "value": "text"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "socket",
+              "portName": "frame.read"
+            }
+          ],
+          "text": [
+            {
+              "nodeId": "socket",
+              "portName": "frame.receivedAt"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "generation",
+              "portName": "data"
+            }
+          ]
+        }
+      }
     }
   }
 }

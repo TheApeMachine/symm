@@ -9,10 +9,16 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
-func tapeRow(session string, sequence int64, payload string) []byte {
+func tapeRow(session string, sequence int64, payload string, received ...string) []byte {
+	receivedTime := "2026-09-22T12:00:00.123456789Z"
+
+	if len(received) > 0 {
+		receivedTime = received[0]
+	}
+
 	// Strings and integer fields in this fixture always marshal successfully.
 	record := CaptureRecord{ID: fmt.Sprintf("%s:%d", session, sequence), Session: session, Sequence: sequence,
-		ReceivedAt: "2026-09-22T12:00:00.123456Z", ReceivedTime: "2026-09-22T12:00:00.123456789Z",
+		ReceivedAt: "2026-09-22T12:00:00.123456Z", ReceivedTime: receivedTime,
 		Endpoint: "wss://fixture", Payload: []byte(payload)}
 	row, err := json.Marshal(record)
 
@@ -28,8 +34,26 @@ func TestTapeWrite(t *testing.T) {
 		defer client.Release()
 		ctx := context.Background()
 
-		for _, row := range [][]byte{tapeRow("second", 0, "other"), tapeRow("first", 10, "ten"), tapeRow("first", 2, "two"), tapeRow("first", 2, "two")} {
-			So(client.Write(ctx, func(params Tape_write_Params) error { return params.SetRow(row) }), ShouldBeNil)
+		rows := [][]byte{
+			tapeRow("second", 0, `"other"`),
+			tapeRow("first", 10, `"ten"`),
+			tapeRow("first", 2, `"two"`),
+			tapeRow("first", 2, `"two"`),
+			tapeRow("first", 11, `"eleven"`, "2026-09-22T12:00:01.5Z"),
+			tapeRow("first", 12, `"lagging"`, "2026-09-22T12:00:00.9Z"),
+		}
+
+		for _, row := range rows {
+			So(client.Write(ctx, func(params Tape_write_Params) error {
+				if err := params.SetEnvelope("market"); err != nil {
+					return err
+				}
+				list, err := params.NewRows(1)
+				if err != nil {
+					return err
+				}
+				return list.Set(0, row)
+			}), ShouldBeNil)
 			So(client.WaitStreaming(), ShouldBeNil)
 			future, release := client.Done(ctx, nil)
 			result, err := future.Struct()
@@ -38,31 +62,60 @@ func TestTapeWrite(t *testing.T) {
 			release()
 		}
 
-		Convey("Snapshot exhaustion orders numeric cursors, deduplicates, and retains exact metadata", func() {
-			So(client.Write(ctx, func(params Tape_write_Params) error { params.SetExhausted(true); return nil }), ShouldBeNil)
+		Convey("Snapshot exhaustion replays each session a captured second at a time, ordered and deduplicated", func() {
+			So(client.Write(ctx, func(params Tape_write_Params) error {
+				params.SetExhausted(true)
+				return params.SetEnvelope("market")
+			}), ShouldBeNil)
 			So(client.WaitStreaming(), ShouldBeNil)
 
-			for index, expected := range []string{"two", "ten", "other"} {
+			for index, expected := range []struct {
+				session   string
+				payloads  []string
+				sequences []int64
+			}{
+				{"first", []string{`"two"`, `"ten"`}, []int64{2, 10}},
+				{"first", []string{`"eleven"`, `"lagging"`}, []int64{11, 12}},
+				{"second", []string{`"other"`}, []int64{0}},
+			} {
 				future, release := client.Done(ctx, nil)
 				result, err := future.Struct()
 				So(err, ShouldBeNil)
-				So(result.Which(), ShouldEqual, TapeResult_Which_frame)
-				payload, err := result.Frame().Payload()
+				So(result.Which(), ShouldEqual, TapeResult_Which_frames)
+				frames := result.Frames()
+				session, err := frames.Session()
 				So(err, ShouldBeNil)
-				So(string(payload), ShouldEqual, expected)
-				So(result.Frame().Sequence(), ShouldEqual, []int64{2, 10, 0}[index])
+				So(session, ShouldEqual, expected.session)
+				payloads, err := frames.Payload()
+				So(err, ShouldBeNil)
+				sequences, err := frames.Sequence()
+				So(err, ShouldBeNil)
+				documents, err := frames.Documents()
+				So(err, ShouldBeNil)
+				So(payloads.Len(), ShouldEqual, len(expected.payloads))
+
+				for slot, payload := range expected.payloads {
+					raw, err := payloads.At(slot)
+					So(err, ShouldBeNil)
+					So(string(raw), ShouldEqual, payload)
+					So(sequences.At(slot), ShouldEqual, expected.sequences[slot])
+
+					document, err := documents.At(slot)
+					So(err, ShouldBeNil)
+					var decoded struct {
+						Capture struct{ Session, Endpoint, ReceivedAt string }
+						Cursor  struct{ Sequence int64 }
+						Market  string
+					}
+					So(json.Unmarshal(document, &decoded), ShouldBeNil)
+					So(decoded.Capture.Session, ShouldEqual, expected.session)
+					So(decoded.Capture.Endpoint, ShouldEqual, "wss://fixture")
+					So(decoded.Cursor.Sequence, ShouldEqual, expected.sequences[slot])
+					So(`"`+decoded.Market+`"`, ShouldEqual, payload)
+				}
+
 				// The frames still to replay keep an otherwise quiet graph running.
-				So(result.Pending(), ShouldEqual, uint64(2-index))
-				received, err := result.Frame().ReceivedAt()
-				So(err, ShouldBeNil)
-				So(received, ShouldEqual, "2026-09-22T12:00:00.123456789Z")
-				row, err := result.Frame().Row()
-				So(err, ShouldBeNil)
-				var record CaptureRecord
-				So(json.Unmarshal(row, &record), ShouldBeNil)
-				So(record.Sequence, ShouldEqual, result.Frame().Sequence())
-				So(record.ReceivedTime, ShouldEqual, received)
-				So(string(record.Payload), ShouldEqual, expected)
+				So(result.Pending(), ShouldEqual, uint64([]int{3, 1, 0}[index]))
 				release()
 			}
 			future, release := client.Done(ctx, nil)
@@ -123,14 +176,26 @@ func BenchmarkTapeWrite(b *testing.B) {
 		client := Tape_ServerToClient(NewTape())
 
 		for index := len(rows) - 1; index >= 0; index-- {
-			err := client.Write(ctx, func(params Tape_write_Params) error { return params.SetRow(rows[index]) })
+			err := client.Write(ctx, func(params Tape_write_Params) error {
+				if err := params.SetEnvelope("market"); err != nil {
+					return err
+				}
+				list, err := params.NewRows(1)
+				if err != nil {
+					return err
+				}
+				return list.Set(0, rows[index])
+			})
 
 			if err != nil {
 				b.Fatal(err)
 			}
 		}
 
-		if err := client.Write(ctx, func(params Tape_write_Params) error { params.SetExhausted(true); return nil }); err != nil {
+		if err := client.Write(ctx, func(params Tape_write_Params) error {
+			params.SetExhausted(true)
+			return params.SetEnvelope("market")
+		}); err != nil {
 			b.Fatal(err)
 		}
 
@@ -138,19 +203,17 @@ func BenchmarkTapeWrite(b *testing.B) {
 			b.Fatal(err)
 		}
 
-		for range rows {
-			future, release := client.Done(ctx, nil)
-			result, err := future.Struct()
+		future, release := client.Done(ctx, nil)
+		result, err := future.Struct()
 
-			if err != nil {
-				b.Fatal(err)
-			}
-
-			if result.Which() != TapeResult_Which_frame {
-				b.Fatal("missing ordered frame")
-			}
-			release()
+		if err != nil {
+			b.Fatal(err)
 		}
+
+		if result.Which() != TapeResult_Which_frames {
+			b.Fatal("missing ordered frames")
+		}
+		release()
 		client.Release()
 	}
 }

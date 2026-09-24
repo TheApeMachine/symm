@@ -263,7 +263,11 @@ export const EntryDecisionSnapshot = ({ symbol }: { symbol: string }) => {
 	if (decision === null) {
 		return (
 			<Flex padding={6}>
-				<Typography.Mono tone="f4" size="xs" className="text-(--warn) leading-relaxed">
+				<Typography.Mono
+					tone="f4"
+					size="xs"
+					className="text-(--warn) leading-relaxed"
+				>
 					The open position did not carry its entry decision. This is
 					unavailable, not an empty or zero-valued snapshot.
 				</Typography.Mono>

@@ -84,7 +84,7 @@ func (server *OtsuServer) Write(ctx context.Context, call Otsu_write) error {
 		}
 	}
 
-	server.hot = server.hot[:0]
+	server.hot = make([]string, 0, len(candidates))
 	server.threshold = 0
 
 	for _, element := range candidates[:cutoff] {

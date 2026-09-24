@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { pipelineGraphCollection } from "#/collections/pipeline_graph";
+import type { BackendGraph } from "./import-graph";
 import {
 	convertJSONGraphToFlumeNodes,
 	importJSONGraphToCollection,
 	isStaleAgainst,
 } from "./import-graph";
-import type { BackendGraph } from "./import-graph";
 import type { NodeMap } from "./types";
 
 describe("import-graph", () => {
@@ -190,9 +190,7 @@ describe("laying out the signals graph", () => {
 		}
 
 		for (const [, ids] of columns) {
-			const ordered = ids
-				.map((id) => nodes[id])
-				.sort((a, b) => a.y - b.y);
+			const ordered = ids.map((id) => nodes[id]).sort((a, b) => a.y - b.y);
 
 			for (let index = 1; index < ordered.length; index++) {
 				const above = ordered[index - 1];
@@ -260,9 +258,18 @@ describe("a closed sub-graph", () => {
 describe("a canvas whose definition changed underneath it", () => {
 	const flattened = {
 		nodes: {
-			"sig/a": { type: "arithmetic.Add", connections: { inputs: {}, outputs: {} } },
-			"sig/b": { type: "calculus.Square", connections: { inputs: {}, outputs: {} } },
-			"sig/c": { type: "calculus.Sqrt", connections: { inputs: {}, outputs: {} } },
+			"sig/a": {
+				type: "arithmetic.Add",
+				connections: { inputs: {}, outputs: {} },
+			},
+			"sig/b": {
+				type: "calculus.Square",
+				connections: { inputs: {}, outputs: {} },
+			},
+			"sig/c": {
+				type: "calculus.Sqrt",
+				connections: { inputs: {}, outputs: {} },
+			},
 		},
 	};
 
@@ -317,7 +324,10 @@ describe("a canvas whose definition changed underneath it", () => {
 		const graphId = "stale-rewire";
 		const rewired = {
 			nodes: {
-				"sig/a": { type: "arithmetic.Add", connections: { inputs: {}, outputs: {} } },
+				"sig/a": {
+					type: "arithmetic.Add",
+					connections: { inputs: {}, outputs: {} },
+				},
 				"sig/b": {
 					type: "calculus.Square",
 					connections: {
@@ -325,7 +335,10 @@ describe("a canvas whose definition changed underneath it", () => {
 						outputs: {},
 					},
 				},
-				"sig/c": { type: "calculus.Sqrt", connections: { inputs: {}, outputs: {} } },
+				"sig/c": {
+					type: "calculus.Sqrt",
+					connections: { inputs: {}, outputs: {} },
+				},
 			},
 		};
 

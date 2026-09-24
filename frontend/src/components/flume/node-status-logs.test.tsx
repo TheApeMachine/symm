@@ -1,13 +1,21 @@
-import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { NodeLogs } from "./Node/NodeLogs";
+import { describe, expect, it } from "vitest";
 import type { NodeLogEntry } from "./context";
+import { NodeLogs } from "./Node/NodeLogs";
 
 describe("Node Status and Logging UI", () => {
 	const sampleLogs: NodeLogEntry[] = [
 		{ timestamp: 1700000000000, level: "info", message: "Node initialized" },
-		{ timestamp: 1700000001000, level: "warn", message: "High latency detected" },
-		{ timestamp: 1700000002000, level: "error", message: "Failed to connect to socket" },
+		{
+			timestamp: 1700000001000,
+			level: "warn",
+			message: "High latency detected",
+		},
+		{
+			timestamp: 1700000002000,
+			level: "error",
+			message: "Failed to connect to socket",
+		},
 	];
 
 	it("renders nothing when isOpen is false", () => {

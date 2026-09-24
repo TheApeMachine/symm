@@ -125,6 +125,13 @@ func (server *RelaxationServer) relax(left, right int, leftAuthority, rightAutho
 	current := math.Hypot(horizontal, vertical)
 	residual := current - target
 
+	// Repulsion is a least separation, not a spring: inconsistency pushes a
+	// pair apart while it is closer than its target and never draws together
+	// a pair that is already farther apart.
+	if strength < 0 && residual >= 0 {
+		return
+	}
+
 	if current == 0 {
 		// Coincident points have no direction between them. The angle names
 		// the right-hand point on the unit circle, so repulsion separates

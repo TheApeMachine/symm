@@ -13,12 +13,12 @@ authorityReading is one evaluation of Authority, with its retained state
 carried the way a store written back as feedback carries it.
 */
 type authorityReading struct {
-	standard  []float64
-	defined   []bool
-	authority []float64
-	maturity  []float64
-	snr       []float64
-	energy    []float64
+	standard    []float64
+	defined     []bool
+	authority   []float64
+	maturity    []float64
+	snrFraction []float64
+	energy      []float64
 }
 
 func TestAuthority(t *testing.T) {
@@ -105,7 +105,7 @@ func TestAuthority(t *testing.T) {
 			So(err, ShouldBeNil)
 			maturity, err := results.Maturity()
 			So(err, ShouldBeNil)
-			snr, err := results.Snr()
+			snrFraction, err := results.SnrFraction()
 			So(err, ShouldBeNil)
 
 			for element := range standard.Len() {
@@ -114,7 +114,7 @@ func TestAuthority(t *testing.T) {
 				reading.authority = append(reading.authority, authority.At(element))
 				reading.energy = append(reading.energy, energy.At(element))
 				reading.maturity = append(reading.maturity, maturity.At(element))
-				reading.snr = append(reading.snr, snr.At(element))
+				reading.snrFraction = append(reading.snrFraction, snrFraction.At(element))
 			}
 
 			return reading
@@ -140,7 +140,7 @@ func TestAuthority(t *testing.T) {
 					// Two readings: maturity 1-1/2. The second read 4 against a mean
 					// square of 4, an SNR of 4 and a fraction of 4/5, over 2 readings.
 					So(reading.maturity[0], ShouldAlmostEqual, 0.5)
-					So(reading.snr[0], ShouldAlmostEqual, (4.0/5.0)/2.0)
+					So(reading.snrFraction[0], ShouldAlmostEqual, (4.0/5.0)/2.0)
 					So(reading.authority[0], ShouldAlmostEqual, 0.5*(4.0/5.0)/2.0)
 					So(reading.energy[0], ShouldAlmostEqual, 4*reading.authority[0])
 				})

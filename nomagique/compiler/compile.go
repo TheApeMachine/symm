@@ -265,6 +265,7 @@ func CompileWithPrevious(
 			Index:        NodeID(i),
 			Source:       Implements(factory.InterfaceID, runtime.Source_TypeID),
 			Queued:       Implements(factory.InterfaceID, runtime.Queued_TypeID),
+			Standing:     Implements(factory.InterfaceID, runtime.Standing_TypeID),
 			Inputs:       make(map[string]CompiledField),
 			Outputs:      make(map[string]CompiledField),
 			InputIndices: make(map[string]FieldID),
@@ -691,6 +692,8 @@ func CompileWithPrevious(
 			destination.RequiredMask &^= 1 << route.ToField
 		}
 	}
+
+	markOrigins(compiledNodes, routes)
 
 	if err := bindCapabilities(compiledNodes, capabilityEdges); err != nil {
 		return nil, err
@@ -1804,4 +1807,33 @@ func holdsRetained(registry *Registry, producer Node) bool {
 	}
 
 	return Implements(factory.InterfaceID, store.Retained_TypeID)
+}
+
+/*
+markOrigins finds the nodes an evaluation starts from. A node with nothing
+wired into it owns its own timing, a source or a queue has something of its
+own to hand out, a standing node reports even when told nothing, and a store
+written back by feedback carries a loop that steps once per evaluation, so
+each of these runs every evaluation. A node
+fed only through gathering ports is not an origin: it runs when something
+lands on one of them, and an evaluation that brings it nothing leaves it
+alone.
+*/
+func markOrigins(nodes []CompiledNode, routes []Route) {
+	wired := make([]bool, len(nodes))
+	fed := make([]bool, len(nodes))
+
+	for _, route := range routes {
+		if route.Deferred {
+			fed[route.ToNode] = true
+			continue
+		}
+
+		wired[route.ToNode] = true
+	}
+
+	for index := range nodes {
+		node := &nodes[index]
+		node.Origin = node.RequiredMask == 0 && (!wired[index] || fed[index] || node.Source || node.Queued || node.Standing)
+	}
 }

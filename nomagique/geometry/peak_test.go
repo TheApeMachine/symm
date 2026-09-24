@@ -26,6 +26,7 @@ func TestPeak(t *testing.T) {
 		positions := []float64{0, 0, 0.5, 0, 1, 0, 1.5, 0, 2, 0}
 		heights := []float64{1, 0.5, 0.25, 0.5, 1}
 		var state []float64
+		var vocabularies []string
 
 		// drain reads the partition once, carrying its record forward the way
 		// its store does, and returns the regions when settled, nil otherwise.
@@ -117,8 +118,12 @@ func TestPeak(t *testing.T) {
 				return nil
 			}
 
-			region, err := results.Settled()
+			region, err := results.Settled().Regions()
 			So(err, ShouldBeNil)
+			vocabulary, err := results.Settled().Vocabulary()
+			So(err, ShouldBeNil)
+			So(string(vocabulary), ShouldStartWith, `"`)
+			vocabularies = append(vocabularies, string(vocabulary))
 
 			names := []string{}
 
@@ -167,8 +172,10 @@ func TestPeak(t *testing.T) {
 			Convey("And while the arrangement then moves, the partition that held stands", func() {
 				So(drain(positions, heights, nil), ShouldResemble, []string{"0", "0", "0", "4", "4"})
 
-				Convey("Until the new partition has held", func() {
+				Convey("Until the new partition has held, under a new vocabulary", func() {
 					So(drain(positions, heights, nil), ShouldResemble, []string{"0", "0", "0", "3", "4"})
+					So(vocabularies[len(vocabularies)-1], ShouldNotEqual, vocabularies[0])
+					So(vocabularies[1], ShouldEqual, vocabularies[0])
 				})
 			})
 		})

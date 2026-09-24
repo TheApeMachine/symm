@@ -8,7 +8,12 @@ import {
 	onlineAtom,
 	routeAtom,
 } from "#/collections/app";
-import { type Bound, readBindings } from "#/types/capnp/bindings";
+import {
+	type Bound,
+	type BoundText,
+	readBound,
+	readBoundTexts,
+} from "#/types/capnp/bindings";
 
 let globalWsWorker: Worker | null = null;
 
@@ -59,6 +64,43 @@ function dispatchBindings(values: Bound[]) {
 		return next;
 	});
 }
+
+/*
+Frames arrive as fast as the program evaluates, far faster than a screen
+repaints. What arrives is held until the next paint, keyed by the port it
+reached, so a port told twice before it is drawn is read and drawn once, with
+the later value.
+*/
+const arrived = new Map<string, BoundText>();
+let painting = false;
+
+const land = (values: BoundText[]) => {
+	for (const bound of values) {
+		arrived.set(`${bound.graph}\u0000${bound.component}\u0000${bound.prop}`, bound);
+	}
+
+	if (painting || arrived.size === 0) {
+		return;
+	}
+
+	painting = true;
+	requestAnimationFrame(paint);
+};
+
+const paint = () => {
+	painting = false;
+	const values = [...arrived.values()];
+	arrived.clear();
+
+	try {
+		const read = values.map(readBound);
+		storeBatch(() => {
+			dispatchBindings(read);
+		});
+	} catch (err) {
+		console.error("bound value is not JSON:", err);
+	}
+};
 
 /*
 What has already been said about frames this socket could not read. Keyed by
@@ -121,10 +163,7 @@ export const WsFeed = () => {
 
 			if (data.type === "BATCH" && data.buffer instanceof ArrayBuffer) {
 				try {
-					const values = readBindings(data.buffer);
-					storeBatch(() => {
-						dispatchBindings(values);
-					});
+					land(readBoundTexts(data.buffer));
 				} catch (err) {
 					// A frame that cannot be read is reported once per shape
 					// rather than on every arrival: a peer sending something

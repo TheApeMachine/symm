@@ -7,39 +7,63 @@ import {
 	waitFor,
 } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import { TrieView, selectTriePath, type TrieNode } from "./trie-view";
+import { selectTriePath, type TrieNode, TrieView } from "./trie-view";
+
 afterEach(cleanup);
 describe("TrieView", () => {
-	it("uses supplied tree data for collapse and focus, and replaces snapshots", async () => {
+	it("draws recorded actions on nodes and region tokens on edges, and replaces snapshots", async () => {
 		const root: TrieNode = {
 			id: "root",
-			prefix: "Actual root",
+			prefix: "",
 			probability: 1,
 			children: [
-				{ id: "a", prefix: "Observed A", probability: 0.8 },
-				{ id: "b", prefix: "Observed B", probability: 0.2 },
+				{
+					id: "a",
+					prefix: "211",
+					probability: 0.8,
+					tokens: ["211"],
+					label: "ENTER",
+					share: 0.75,
+				},
+				{
+					id: "b",
+					prefix: "214",
+					probability: 0.2,
+					tokens: ["214"],
+					label: "EXIT",
+					share: 1,
+				},
 			],
 		};
 		const before = JSON.stringify(root);
 		const { rerender } = render(<TrieView root={root} />);
-		expect(screen.getByText("Observed A")).toBeDefined();
+		expect(screen.getByText("ROOT")).toBeDefined();
+		expect(screen.getByText("ENTER")).toBeDefined();
+		expect(screen.getByText("[211]")).toBeDefined();
+		expect(screen.getByText("75%")).toBeDefined();
 		fireEvent.click(screen.getByText("HIGHEST PROBABILITY PATH"));
-		await waitFor(() => expect(screen.queryByText("Observed B")).toBeNull());
+		await waitFor(() => expect(screen.queryByText("EXIT")).toBeNull());
 		fireEvent.click(screen.getByText("ALL PATHS"));
-		expect(screen.getByText("Observed B")).toBeDefined();
-		fireEvent.keyDown(
-			screen.getByRole("button", { name: "Toggle Actual root" }),
-			{ key: "Enter" },
-		);
-		await waitFor(() => expect(screen.queryByText("Observed A")).toBeNull());
+		expect(screen.getByText("EXIT")).toBeDefined();
+		fireEvent.keyDown(screen.getByRole("button", { name: "Toggle root" }), {
+			key: "Enter",
+		});
+		await waitFor(() => expect(screen.queryByText("ENTER")).toBeNull());
 		expect(JSON.stringify(root)).toBe(before);
 		rerender(
-			<TrieView root={{ id: "new", prefix: "New snapshot", probability: 1 }} />,
+			<TrieView
+				root={{
+					id: "new",
+					prefix: "",
+					probability: 1,
+					children: [{ id: "w", prefix: "290", probability: 1, label: "WAIT" }],
+				}}
+			/>,
 		);
-		expect(screen.getByText("New snapshot")).toBeDefined();
+		expect(screen.getByText("WAIT")).toBeDefined();
 		rerender(<TrieView />);
 		expect(screen.getByText("No recorded trie")).toBeDefined();
-		await waitFor(() => expect(screen.queryByText("New snapshot")).toBeNull());
+		await waitFor(() => expect(screen.queryByText("WAIT")).toBeNull());
 	});
 });
 

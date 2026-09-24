@@ -2,6 +2,7 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { RecognitionView } from "./recognition-view";
+
 afterEach(cleanup);
 describe("RecognitionView", () => {
 	it("distinguishes absence from measured zero and never generates activity", () => {

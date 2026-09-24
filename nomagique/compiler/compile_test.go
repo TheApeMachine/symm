@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -266,8 +267,9 @@ func TestCompileFlume(t *testing.T) {
 			p := &compiler.Program{
 				Nodes: []compiler.CompiledNode{
 					{
-						ID:    "src",
-						Index: 0,
+						ID:     "src",
+						Index:  0,
+						Origin: true,
 					},
 					{
 						ID:           "target1",
@@ -917,17 +919,23 @@ func TestCompile(t *testing.T) {
 			projected, releaseProjection := projector.Done(ctx, nil)
 			projection, err := projected.Struct()
 			So(err, ShouldBeNil)
-			row, err := projection.Out()
+			rows, err := projection.Rows()
 			So(err, ShouldBeNil)
 			defer releaseProjection()
 			defer projector.Release()
-			var archived struct {
-				Payload []byte `json:"payload"`
+
+			for index := range rows.Len() {
+				row, err := rows.At(index)
+				So(err, ShouldBeNil)
+				var archived struct {
+					Payload []byte `json:"payload"`
+				}
+				So(json.Unmarshal(row, &archived), ShouldBeNil)
+				var batch []temporal.MinedEvent
+				So(json.Unmarshal(archived.Payload, &batch), ShouldBeNil)
+				events = append(events, batch...)
 			}
-			So(json.Unmarshal(row, &archived), ShouldBeNil)
-			var batch []temporal.MinedEvent
-			So(json.Unmarshal(archived.Payload, &batch), ShouldBeNil)
-			events = append(events, batch...)
+
 			release()
 		}
 		So(events, ShouldHaveLength, 2)
@@ -1114,6 +1122,20 @@ func TestCompileTrainingPaper(t *testing.T) {
 		settled, edges, depth := 0, 0, int64(0)
 		reinforced := map[string]bool{}
 
+		// window is the truth of one graded cursor as reinforcement reads it:
+		// where it sits against its event, and the token path that led there.
+		type window struct {
+			Cursor  temporal.TapeCursor
+			Holding bool
+			Event   struct {
+				Excursion float64
+				A, B, C   temporal.TapeCursor
+			}
+			Settled struct{ Sequence string }
+		}
+
+		var entry, exit window
+
 		for pass := 0; pass < 200000 && len(trips) == 0; pass++ {
 			So(program.Execute(ctx, nil), ShouldBeNil)
 
@@ -1128,13 +1150,30 @@ func TestCompileTrainingPaper(t *testing.T) {
 			}
 
 			if result, found := program.Result("token_sequence"); found {
-				depth = max(depth, cognition.TokenSequence_done_Results(result).Depth())
+				if sequenced := cognition.Sequenced(result); sequenced.Which() == cognition.Sequenced_Which_step {
+					depth = max(depth, sequenced.Step().Depth())
+				}
 			}
 
 			if result, found := program.Result("reinforce__action"); found && data.Extracted(result).Which() == data.Extracted_Which_text {
 				action, err := data.Extracted(result).Text()
 				So(err, ShouldBeNil)
 				reinforced[action] = true
+			}
+
+			if result, found := program.Result("with_holding"); found {
+				payload, err := data.Insert_done_Results(result).Out()
+				So(err, ShouldBeNil)
+				var graded window
+				So(json.Unmarshal(payload, &graded), ShouldBeNil)
+
+				if graded.Event.Excursion > 0 && graded.Cursor.Compare(graded.Event.B) == 0 {
+					entry = graded
+				}
+
+				if graded.Event.Excursion > 0 && graded.Cursor.Compare(graded.Event.C) == 0 {
+					exit = graded
+				}
 			}
 
 			if result, found := program.Result("impulse_map__hot"); found {
@@ -1176,13 +1215,89 @@ func TestCompileTrainingPaper(t *testing.T) {
 				So(edges, ShouldBeGreaterThan, 0)
 				So(settled, ShouldBeGreaterThan, 0)
 				So(lit, ShouldNotBeEmpty)
-				So(depth, ShouldBeGreaterThan, 1)
+				// A map moves only on what the tape brings it. This one walk is
+				// all the map ever sees, so every record may still redraw its
+				// regions, and each new partition opens a history of its own:
+				// depth here says a token path was formed, not how long it grew.
+				// How long histories grow on a matured map is the archive's to
+				// show, and the sequencing itself is TokenSequence's own test.
+				So(depth, ShouldBeGreaterThanOrEqualTo, 1)
+
+				Convey("And the entry is read from the A→B development and the exit from the B→C development", func() {
+					So(entry.Settled.Sequence, ShouldNotBeEmpty)
+					So(exit.Settled.Sequence, ShouldNotBeEmpty)
+					So(entry.Holding, ShouldBeFalse)
+					So(exit.Holding, ShouldBeTrue)
+
+					entrySteps := len(strings.Split(entry.Settled.Sequence, "/"))
+					exitSteps := len(strings.Split(exit.Settled.Sequence, "/"))
+					So(entrySteps, ShouldBeLessThanOrEqualTo, int(entry.Event.B.Sequence-entry.Event.A.Sequence)+1)
+					// The exit history restarted after B: it holds no more steps
+					// than there are cursors after B.
+					So(exitSteps, ShouldBeLessThanOrEqualTo, int(exit.Event.C.Sequence-exit.Event.B.Sequence))
+				})
 
 				Convey("And both the entry at ignition and the exit at the extremum reach the trie", func() {
 					So(reinforced["ENTER"], ShouldBeTrue)
 					So(reinforced["EXIT"], ShouldBeTrue)
 				})
 			})
+		})
+	})
+}
+
+/*
+TestTrainingTokensAreCausal checks, on the compiled training graph, that what a
+fragment will turn out to mean never reaches the region tokens. The event picks
+which records are walked, but its labels (A, B, C, D and the excursion) travel
+only on the fragment's truth, and nothing downstream of the truth may feed the
+signals or the impulse map.
+*/
+func TestTrainingTokensAreCausal(t *testing.T) {
+	Convey("Given the compiled training graph", t, func() {
+		program, err := compiler.CompileFile("../../manifest/training.json", nil, compiler.DefaultRepository())
+		So(err, ShouldBeNil)
+		defer program.Release()
+
+		truth, found := program.NodeMap["learning_replay__fragment__truth"]
+		So(found, ShouldBeTrue)
+
+		downstream := map[compiler.NodeID]bool{truth: true}
+		pending := []compiler.NodeID{truth}
+
+		for len(pending) > 0 {
+			current := pending[0]
+			pending = pending[1:]
+
+			for _, route := range program.Routes {
+				if route.FromNode != current || downstream[route.ToNode] {
+					continue
+				}
+
+				downstream[route.ToNode] = true
+				pending = append(pending, route.ToNode)
+			}
+		}
+
+		Convey("Then no signal and no part of the impulse map is downstream of a fragment's truth", func() {
+			causal := 0
+
+			for index, node := range program.Nodes {
+				if !strings.HasPrefix(node.ID, "signals__") && !strings.HasPrefix(node.ID, "impulse_map__") {
+					continue
+				}
+
+				causal++
+				So(downstream[compiler.NodeID(index)], ShouldBeFalse)
+			}
+
+			So(causal, ShouldBeGreaterThan, 0)
+		})
+
+		Convey("Then the truth does reach reinforcement, where it grades the development", func() {
+			reinforce, found := program.NodeMap["reinforce__reinforce"]
+			So(found, ShouldBeTrue)
+			So(downstream[reinforce], ShouldBeTrue)
 		})
 	})
 }

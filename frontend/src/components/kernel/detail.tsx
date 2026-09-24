@@ -1,6 +1,12 @@
 import { useSelector } from "@tanstack/react-store";
 import { useEffect, useRef } from "react";
-import {  focusAtom, kernelDetailAtom, measurementSourcesAtom, symbolsAtom , signals } from "#/collections/app";
+import {
+	focusAtom,
+	kernelDetailAtom,
+	measurementSourcesAtom,
+	signals,
+	symbolsAtom,
+} from "#/collections/app";
 import {
 	kernelCopy,
 	metricLabel,
@@ -24,7 +30,7 @@ export const SignalDetail = () => {
 
 	useEffect(() => {
 		if (source === "") return;
-		const sourceStore = (signals[source as keyof typeof signals] || signals.cvd);
+		const sourceStore = signals[source as keyof typeof signals] || signals.cvd;
 
 		const applyState = () => {
 			if (!root.current) return;

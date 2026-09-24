@@ -5,10 +5,7 @@ import {
 	setDecisionsPendingFocus,
 	setDecisionsScopeSymbol,
 } from "#/components/terminal/decision-side";
-import {
-	DecisionList,
-	type DecisionRow,
-} from "#/components/ui/decision-list";
+import { DecisionList, type DecisionRow } from "#/components/ui/decision-list";
 import { Decision } from "#/providers/telemetry/telemetry/decision";
 
 const decObj = new Decision();

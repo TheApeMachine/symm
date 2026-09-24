@@ -10,6 +10,7 @@ import (
 	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
 	context "context"
 	math "math"
+	strconv "strconv"
 )
 
 type Divide capnp.Client
@@ -35,7 +36,7 @@ func (c Divide) Write(ctx context.Context, params func(Divide_write_Params) erro
 
 }
 
-func (c Divide) Done(ctx context.Context, params func(Divide_done_Params) error) (Divide_done_Results_Future, capnp.ReleaseFunc) {
+func (c Divide) Done(ctx context.Context, params func(Divide_done_Params) error) (Quotient_Future, capnp.ReleaseFunc) {
 
 	s := capnp.Send{
 		Method: capnp.Method{
@@ -51,7 +52,7 @@ func (c Divide) Done(ctx context.Context, params func(Divide_done_Params) error)
 	}
 
 	ans, release := capnp.Client(c).SendCall(ctx, s)
-	return Divide_done_Results_Future{Future: ans.Future()}, release
+	return Quotient_Future{Future: ans.Future()}, release
 
 }
 
@@ -208,9 +209,9 @@ func (c Divide_done) Args() Divide_done_Params {
 }
 
 // AllocResults allocates the results struct.
-func (c Divide_done) AllocResults() (Divide_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 0})
-	return Divide_done_Results(r), err
+func (c Divide_done) AllocResults() (Quotient, error) {
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 16, PointerCount: 0})
+	return Quotient(r), err
 }
 
 // Divide_List is a list of Divide.
@@ -367,74 +368,105 @@ func (f Divide_done_Params_Future) Struct() (Divide_done_Params, error) {
 	return Divide_done_Params(p.Struct()), err
 }
 
-type Divide_done_Results capnp.Struct
+type Quotient capnp.Struct
+type Quotient_Which uint16
 
-// Divide_done_Results_TypeID is the unique identifier for the type Divide_done_Results.
-const Divide_done_Results_TypeID = 0x9d477ea5155fa7f8
+const (
+	Quotient_Which_undefined Quotient_Which = 0
+	Quotient_Which_out       Quotient_Which = 1
+)
 
-func NewDivide_done_Results(s *capnp.Segment) (Divide_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
-	return Divide_done_Results(st), err
+func (w Quotient_Which) String() string {
+	const s = "undefinedout"
+	switch w {
+	case Quotient_Which_undefined:
+		return s[0:9]
+	case Quotient_Which_out:
+		return s[9:12]
+
+	}
+	return "Quotient_Which(" + strconv.FormatUint(uint64(w), 10) + ")"
 }
 
-func NewRootDivide_done_Results(s *capnp.Segment) (Divide_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
-	return Divide_done_Results(st), err
+// Quotient_TypeID is the unique identifier for the type Quotient.
+const Quotient_TypeID = 0xfdca4ed3e46bdf5f
+
+func NewQuotient(s *capnp.Segment) (Quotient, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 0})
+	return Quotient(st), err
 }
 
-func ReadRootDivide_done_Results(msg *capnp.Message) (Divide_done_Results, error) {
+func NewRootQuotient(s *capnp.Segment) (Quotient, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 0})
+	return Quotient(st), err
+}
+
+func ReadRootQuotient(msg *capnp.Message) (Quotient, error) {
 	root, err := msg.Root()
-	return Divide_done_Results(root.Struct()), err
+	return Quotient(root.Struct()), err
 }
 
-func (s Divide_done_Results) String() string {
-	str, _ := text.Marshal(0x9d477ea5155fa7f8, capnp.Struct(s))
+func (s Quotient) String() string {
+	str, _ := text.Marshal(0xfdca4ed3e46bdf5f, capnp.Struct(s))
 	return str
 }
 
-func (s Divide_done_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+func (s Quotient) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
 	return capnp.Struct(s).EncodeAsPtr(seg)
 }
 
-func (Divide_done_Results) DecodeFromPtr(p capnp.Ptr) Divide_done_Results {
-	return Divide_done_Results(capnp.Struct{}.DecodeFromPtr(p))
+func (Quotient) DecodeFromPtr(p capnp.Ptr) Quotient {
+	return Quotient(capnp.Struct{}.DecodeFromPtr(p))
 }
 
-func (s Divide_done_Results) ToPtr() capnp.Ptr {
+func (s Quotient) ToPtr() capnp.Ptr {
 	return capnp.Struct(s).ToPtr()
 }
-func (s Divide_done_Results) IsValid() bool {
+
+func (s Quotient) Which() Quotient_Which {
+	return Quotient_Which(capnp.Struct(s).Uint16(0))
+}
+func (s Quotient) IsValid() bool {
 	return capnp.Struct(s).IsValid()
 }
 
-func (s Divide_done_Results) Message() *capnp.Message {
+func (s Quotient) Message() *capnp.Message {
 	return capnp.Struct(s).Message()
 }
 
-func (s Divide_done_Results) Segment() *capnp.Segment {
+func (s Quotient) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Divide_done_Results) Out() float64 {
-	return math.Float64frombits(capnp.Struct(s).Uint64(0))
+func (s Quotient) SetUndefined() {
+	capnp.Struct(s).SetUint16(0, 0)
+
 }
 
-func (s Divide_done_Results) SetOut(v float64) {
-	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
+func (s Quotient) Out() float64 {
+	if capnp.Struct(s).Uint16(0) != 1 {
+		panic("Which() != out")
+	}
+	return math.Float64frombits(capnp.Struct(s).Uint64(8))
 }
 
-// Divide_done_Results_List is a list of Divide_done_Results.
-type Divide_done_Results_List = capnp.StructList[Divide_done_Results]
-
-// NewDivide_done_Results creates a new list of Divide_done_Results.
-func NewDivide_done_Results_List(s *capnp.Segment, sz int32) (Divide_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0}, sz)
-	return capnp.StructList[Divide_done_Results](l), err
+func (s Quotient) SetOut(v float64) {
+	capnp.Struct(s).SetUint16(0, 1)
+	capnp.Struct(s).SetUint64(8, math.Float64bits(v))
 }
 
-// Divide_done_Results_Future is a wrapper for a Divide_done_Results promised by a client call.
-type Divide_done_Results_Future struct{ *capnp.Future }
+// Quotient_List is a list of Quotient.
+type Quotient_List = capnp.StructList[Quotient]
 
-func (f Divide_done_Results_Future) Struct() (Divide_done_Results, error) {
+// NewQuotient creates a new list of Quotient.
+func NewQuotient_List(s *capnp.Segment, sz int32) (Quotient_List, error) {
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 16, PointerCount: 0}, sz)
+	return capnp.StructList[Quotient](l), err
+}
+
+// Quotient_Future is a wrapper for a Quotient promised by a client call.
+type Quotient_Future struct{ *capnp.Future }
+
+func (f Quotient_Future) Struct() (Quotient, error) {
 	p, err := f.Future.Ptr()
-	return Divide_done_Results(p.Struct()), err
+	return Quotient(p.Struct()), err
 }

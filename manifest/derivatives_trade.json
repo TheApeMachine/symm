@@ -19,6 +19,11 @@
             }
           ]
         }
+      },
+      "inputData": {
+        "origin": {
+          "value": true
+        }
       }
     },
     "tradeNotional": {
@@ -200,6 +205,9 @@
       "inputData": {
         "operator": {
           "value": "sum"
+        },
+        "running": {
+          "value": true
         }
       },
       "connections": {
@@ -267,6 +275,9 @@
       "inputData": {
         "operator": {
           "value": "sum"
+        },
+        "running": {
+          "value": true
         }
       },
       "connections": {
@@ -424,6 +435,9 @@
       "inputData": {
         "operator": {
           "value": "sum"
+        },
+        "running": {
+          "value": true
         }
       },
       "connections": {

@@ -6,9 +6,9 @@ import type {
 	InputData,
 	PortTypeMap,
 } from "#/components/flume/types";
+import { Label } from "#/components/ui/label";
 import usePrevious from "#/hooks/usePrevious";
 import { cn } from "@/lib/utils";
-import { Label } from "#/components/ui/label";
 import styles from "./IoPorts.module.css";
 import Port from "./Port";
 
@@ -156,7 +156,8 @@ const Input = ({
 	}, [isConnected, prevConnected, triggerRecalculation]);
 
 	// A row standing for several slots names the port, never one slot's value.
-	const showLabel = Boolean(onToggleFamily) || !controls.length || noControls || isConnected;
+	const showLabel =
+		Boolean(onToggleFamily) || !controls.length || noControls || isConnected;
 	const showControls = !onToggleFamily && !noControls && !isConnected;
 	const isMonoControl = controls.length === 1;
 

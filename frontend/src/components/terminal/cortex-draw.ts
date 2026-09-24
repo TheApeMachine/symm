@@ -1,5 +1,5 @@
-import { TERMINAL_COLORS } from "#/components/ui/canvas-utils";
 import type { CortexNode, CortexTree } from "#/components/terminal/cortex-tree";
+import { TERMINAL_COLORS } from "#/components/ui/canvas-utils";
 
 export type CortexLayout = {
 	xByID: Map<number, number>;

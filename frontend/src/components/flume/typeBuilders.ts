@@ -10,8 +10,8 @@ import type {
 	PortTypeBuilder,
 	PortTypeConfig,
 	SelectControl,
-	TextControl,
 	TextareaControl,
+	TextControl,
 } from "./types";
 
 const define = <T>(value: T, defaultValue: T): T =>

@@ -1,10 +1,16 @@
 // @vitest-environment jsdom
 import { act, render } from "@testing-library/react";
-import { clockAtom, focusAtom, RingBuffer, signals, DEFAULT_FOCUS_SYMBOL } from "#/collections/app";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { hawkesSample, XrayHawkesPanel } from "./xray-hawkes";
+import {
+	clockAtom,
+	DEFAULT_FOCUS_SYMBOL,
+	focusAtom,
+	RingBuffer,
+	signals,
+} from "#/collections/app";
 import type { WireMeasurement } from "#/types/capnp/measurement";
+import { hawkesSample, XrayHawkesPanel } from "./xray-hawkes";
 
 describe("XrayHawkesPanel", () => {
 	it("renders the arrival-process readouts and canvas shell", () => {
@@ -103,15 +109,20 @@ describe("XrayHawkesPanel market clock", () => {
 			fill: vi.fn(),
 			fillText: vi.fn(),
 		};
-		vi.spyOn(HTMLCanvasElement.prototype, "getContext")
-			.mockReturnValue(context as unknown as CanvasRenderingContext2D);
-		vi.spyOn(HTMLCanvasElement.prototype, "clientWidth", "get")
-			.mockReturnValue(800);
-		vi.spyOn(HTMLCanvasElement.prototype, "clientHeight", "get")
-			.mockReturnValue(240);
+		vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(
+			context as unknown as CanvasRenderingContext2D,
+		);
+		vi.spyOn(HTMLCanvasElement.prototype, "clientWidth", "get").mockReturnValue(
+			800,
+		);
+		vi.spyOn(
+			HTMLCanvasElement.prototype,
+			"clientHeight",
+			"get",
+		).mockReturnValue(240);
 
 		const symbol = focusAtom.get() || DEFAULT_FOCUS_SYMBOL;
-		const store = (signals["hawkes" as keyof typeof signals] || signals.cvd);
+		const store = signals["hawkes" as keyof typeof signals] || signals.cvd;
 		const ring = new RingBuffer<WireMeasurement>(50);
 		ring.add({
 			id: "m-hawkes-test",
@@ -150,7 +161,7 @@ describe("XrayHawkesPanel market clock", () => {
 			expect(
 				view.container.querySelector('[data-f="lambda"]')?.textContent,
 			).toBe("0.5033 /s");
-			expect((store.state[symbol]?.getBufferLength() ?? 0)).toBe(1);
+			expect(store.state[symbol]?.getBufferLength() ?? 0).toBe(1);
 			const baselineY = context.moveTo.mock.calls[0][1];
 			context.moveTo.mockClear();
 			act(() => clockAtom.set(5500));

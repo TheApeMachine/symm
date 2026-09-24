@@ -1,5 +1,6 @@
 import { createRef } from "react";
 import type { ManifoldFrame } from "#/collections/types";
+import { frameMatrix } from "#/components/terminal/charts-frame";
 import {
 	clearCanvas,
 	drawGrid,
@@ -7,7 +8,6 @@ import {
 	resizeCanvas,
 	TERMINAL_COLORS,
 } from "#/components/ui/canvas-utils";
-import { frameMatrix } from "#/components/terminal/charts-frame";
 
 const manifoldCanvasRef = createRef<HTMLCanvasElement>();
 

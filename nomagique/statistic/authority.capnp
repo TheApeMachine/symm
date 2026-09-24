@@ -18,8 +18,9 @@ $Go.import("github.com/theapemachine/symm/nomagique/statistic");
 # dimensionless and a reading of exactly zero stays zero. It is only defined
 # for an element that already has a scale; a first reading has none.
 #
-# maturity is 1 - 1/support over the element's readings, and snr is its mean
-# SNR fraction snr/(1+snr) across them. authority is maturity × snr: an
+# maturity is 1 - 1/support over the element's readings, and snrFraction is
+# the mean over them of snr/(1+snr): SNR bounded so no single extreme reading
+# can dominate. authority is maturity × snrFraction: an
 # element earns weight by being read often and by standing above its own
 # noise when it moves. An element that never moved has none.
 #
@@ -37,7 +38,7 @@ interface Authority {
     defined   :List(Bool),
     authority :List(Float64),
     maturity  :List(Float64),
-    snr       :List(Float64),
+    snrFraction :List(Float64),
     energy    :List(Float64),
     index     :List(Int64),
     state     :List(Float64)

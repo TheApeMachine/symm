@@ -1,0 +1,117 @@
+{
+  "id": "ui_shell",
+  "name": "ui:shell \u2014 the readouts the application's top bar shows, bound like any screen",
+  "nodes": {
+    "winShare": {
+      "id": "winShare",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": 0.0,
+      "y": 0.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "winRate",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "winRate": {
+      "id": "winRate",
+      "type": "ui.Text",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 0.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "winShare",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      },
+      "inputData": {
+        "value": {
+          "value": "\u2014"
+        }
+      }
+    },
+    "edge": {
+      "id": "edge",
+      "type": "ui.Text",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 200.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {}
+      },
+      "inputData": {
+        "value": {
+          "value": "\u2014"
+        }
+      }
+    },
+    "cash": {
+      "id": "cash",
+      "type": "ui.Text",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 400.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {}
+      },
+      "inputData": {
+        "value": {
+          "value": "\u2014"
+        }
+      }
+    },
+    "pnl": {
+      "id": "pnl",
+      "type": "ui.Text",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 600.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {}
+      },
+      "inputData": {
+        "value": {
+          "value": "\u2014"
+        }
+      }
+    },
+    "observations": {
+      "id": "observations",
+      "type": "ui.Text",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 800.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {}
+      },
+      "inputData": {
+        "value": {
+          "value": "\u2014"
+        }
+      }
+    }
+  }
+}

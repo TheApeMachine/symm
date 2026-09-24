@@ -1,10 +1,10 @@
 import { useSelector } from "@tanstack/react-store";
-import {  focusAtom , signals } from "#/collections/app";
+import { focusAtom, signals } from "#/collections/app";
 import { Badge } from "#/components/ui/badge";
 import { Flex } from "#/components/ui/flex";
 import { Grid } from "#/components/ui/grid";
-import { usePaintStore } from "#/components/ui/paint";
 import { Meter } from "#/components/ui/meter";
+import { usePaintStore } from "#/components/ui/paint";
 import { Panel } from "#/components/ui/panel";
 import { Stat } from "#/components/ui/stat";
 import { Typography } from "#/components/ui/typography";
@@ -32,7 +32,7 @@ const STATS = [
 
 export const CrossSectionPanel = () => {
 	const focusSymbol = useSelector(focusAtom, (state) => state);
-	const store = (signals["liquidity" as keyof typeof signals] || signals.cvd);
+	const store = signals["liquidity" as keyof typeof signals] || signals.cvd;
 
 	const rootRef = usePaintStore(
 		store,
@@ -120,8 +120,7 @@ export const CrossSectionPanel = () => {
 
 			<Flex.Row align="center" justify="between">
 				<Typography.Span variant="f2" className="text-[11px]">
-					relative depth{" "}
-					<Typography.Span data-f="rel" variant="accent" />
+					relative depth <Typography.Span data-f="rel" variant="accent" />
 				</Typography.Span>
 				<Typography.Span data-f="at" variant="f4" className="text-[10px]" />
 			</Flex.Row>

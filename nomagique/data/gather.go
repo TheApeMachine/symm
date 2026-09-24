@@ -3,6 +3,7 @@ package data
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	"github.com/theapemachine/errnie"
 )
@@ -62,13 +63,24 @@ func (server *GatherServer) Done(ctx context.Context, call Gather_done) error {
 		return errnie.Error(errnie.Err(errnie.Internal, "data.gather: failed to allocate results", err))
 	}
 
-	values, err := results.NewValues(int32(len(server.values)))
+	defer func() {
+		server.values, server.present = server.values[:0], server.present[:0]
+	}()
+
+	if !slices.Contains(server.present, true) {
+		results.SetIdle()
+		return nil
+	}
+
+	results.SetGathered()
+	gathered := results.Gathered()
+	values, err := gathered.NewValues(int32(len(server.values)))
 
 	if err != nil {
 		return errnie.Error(errnie.Err(errnie.Internal, "data.gather: failed to allocate values", err))
 	}
 
-	present, err := results.NewPresent(int32(len(server.present)))
+	present, err := gathered.NewPresent(int32(len(server.present)))
 
 	if err != nil {
 		return errnie.Error(errnie.Err(errnie.Internal, "data.gather: failed to allocate present", err))
@@ -79,6 +91,5 @@ func (server *GatherServer) Done(ctx context.Context, call Gather_done) error {
 		present.Set(slot, server.present[slot])
 	}
 
-	server.values, server.present = server.values[:0], server.present[:0]
 	return nil
 }

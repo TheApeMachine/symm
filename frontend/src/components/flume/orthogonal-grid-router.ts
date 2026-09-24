@@ -271,7 +271,6 @@ export const buildRoutingGridFromObstacleMap = (
 	return grid;
 };
 
-
 const manhattanDistance = (left: GridCell, right: GridCell) =>
 	Math.abs(left.cellX - right.cellX) + Math.abs(left.cellY - right.cellY);
 

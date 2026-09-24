@@ -10,7 +10,9 @@ An event's mark determines its excitation jump. Windowed event counts are not
 cumulative counters and cannot identify the side of the arriving trade.
 A declared zero decay has not been fitted and supplies no intensity curve.
 */
-export const hawkesSample = (row: WireMeasurement): HawkesTraceSample | null => {
+export const hawkesSample = (
+	row: WireMeasurement,
+): HawkesTraceSample | null => {
 	const metrics = Object.fromEntries(
 		row.metrics.map((metric: any) => [String(metric.name), metric.raw]),
 	);
@@ -163,8 +165,10 @@ export const XrayHawkesPanel = () => {
 			});
 			const latest = rows.at(-1);
 			const metrics = Object.fromEntries(
-				latest?.metrics.map((metric: any) => [String(metric.name), metric.raw]) ??
-					[],
+				latest?.metrics.map((metric: any) => [
+					String(metric.name),
+					metric.raw,
+				]) ?? [],
 			);
 			const fitted = samples.at(-1);
 			set("events", metrics.event_count?.toFixed(0) ?? "—");

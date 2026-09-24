@@ -1,4 +1,4 @@
-import { signals } from "#/collections/app";
+import type { signals } from "#/collections/app";
 import { Decision } from "#/providers/telemetry/telemetry/decision";
 import { EntryCost } from "#/providers/telemetry/telemetry/entry-cost";
 import { Holding } from "#/providers/telemetry/telemetry/holding";

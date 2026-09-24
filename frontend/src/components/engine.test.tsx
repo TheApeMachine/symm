@@ -1,6 +1,12 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { candidatesAtom, onlineAtom, phaseAtom, positionCountAtom, tickCountAtom } from "#/collections/app";
+import {
+	candidatesAtom,
+	onlineAtom,
+	phaseAtom,
+	positionCountAtom,
+	tickCountAtom,
+} from "#/collections/app";
 import { Engine } from "#/components/engine";
 
 describe("Engine", () => {

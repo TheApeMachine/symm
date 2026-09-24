@@ -40,12 +40,17 @@ func TestTokenSequence(t *testing.T) {
 			results, err := future.Struct()
 			So(err, ShouldBeNil)
 
-			path, err := results.Path()
+			if results.Which() != cognition.Sequenced_Which_step {
+				return nil, "", 0
+			}
+
+			step := results.Step()
+			path, err := step.Path()
 			So(err, ShouldBeNil)
 
-			depth := results.Depth()
+			depth := step.Depth()
 
-			seqList, err := results.Sequence()
+			seqList, err := step.Sequence()
 			So(err, ShouldBeNil)
 
 			tokens := make([]string, seqList.Len())
@@ -55,7 +60,7 @@ func TestTokenSequence(t *testing.T) {
 				tokens[index] = tok
 			}
 
-			outBytes, err := results.Out()
+			outBytes, err := step.Out()
 			So(err, ShouldBeNil)
 			if len(outBytes) > 0 {
 				var outPath string
@@ -99,14 +104,33 @@ func TestTokenSequence(t *testing.T) {
 			So(path1, ShouldNotEqual, path2)
 		})
 
-		Convey("Reset clears prior token history for that scope", func() {
+		Convey("A step that brings no token is read against the development so far", func() {
+			step("SOL/USD", "R1", false)
+			tokens, path, depth := step("SOL/USD", "", false)
+			So(tokens, ShouldResemble, []string{"R1"})
+			So(path, ShouldEqual, "R1")
+			So(depth, ShouldEqual, 1)
+		})
+
+		Convey("A scope with no development yet is idle", func() {
+			tokens, path, depth := step("ADA/USD", "", false)
+			So(tokens, ShouldBeNil)
+			So(path, ShouldEqual, "")
+			So(depth, ShouldEqual, 0)
+		})
+
+		Convey("Reset starts a new window with no history in any scope", func() {
 			step("ETH/USD", "R1", false)
 			step("ETH/USD", "R2", false)
+			step("BTC/USD", "R8", false)
 
 			tokens, path, depth := step("ETH/USD", "R5", true)
 			So(tokens, ShouldResemble, []string{"R5"})
 			So(path, ShouldEqual, "R5")
 			So(depth, ShouldEqual, 1)
+
+			_, other, _ := step("BTC/USD", "R9", false)
+			So(other, ShouldEqual, "R9")
 		})
 	})
 }

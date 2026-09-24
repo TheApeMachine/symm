@@ -7,21 +7,19 @@ import (
 )
 
 type ReciprocalServer struct {
-	out float64
+	out     float64
+	defined bool
 }
 
 func (srv *ReciprocalServer) Write(ctx context.Context, call Reciprocal_write) error {
-	inVal := call.Args().Value()
+	value := call.Args().Value()
+	srv.defined = value != 0
+	srv.out = 0
 
-	if inVal == 0 {
-		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"calculus: reciprocal of zero",
-			nil,
-		))
+	if srv.defined {
+		srv.out = 1 / value
 	}
 
-	srv.out = 1.0 / inVal
 	return nil
 }
 
@@ -36,8 +34,13 @@ func (srv *ReciprocalServer) Done(ctx context.Context, call Reciprocal_done) err
 		))
 	}
 
-	res.SetOut(srv.out)
-	srv.out = 0
+	res.SetUndefined()
+
+	if srv.defined {
+		res.SetOut(srv.out)
+	}
+
+	srv.out, srv.defined = 0, false
 	return nil
 }
 

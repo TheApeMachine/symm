@@ -1,5 +1,8 @@
 import { useEffect, useRef } from "react";
-import { CortexLeafRoster, drawCortexTree } from "#/components/terminal/cortex-draw";
+import {
+	CortexLeafRoster,
+	drawCortexTree,
+} from "#/components/terminal/cortex-draw";
 import { cortexTreeFromReading } from "#/components/terminal/cortex-tree";
 import { Modal } from "#/components/ui/modal";
 import { Typography } from "#/components/ui/typography";
@@ -74,13 +77,7 @@ export const TrieModal = ({
 			});
 
 			if (tree) {
-				drawCortexTree(
-					context,
-					box.width,
-					box.height,
-					tree,
-					rosterRef.current,
-				);
+				drawCortexTree(context, box.width, box.height, tree, rosterRef.current);
 			}
 		};
 

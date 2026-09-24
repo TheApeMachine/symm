@@ -488,11 +488,7 @@
     "project": {
       "id": "project",
       "type": "data.Arrow",
-      "inputData": {
-        "row": {
-          "value": 0
-        }
-      },
+      "inputData": {},
       "connections": {
         "inputs": {
           "data": [

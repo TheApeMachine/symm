@@ -10,6 +10,7 @@ import (
 	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
 	context "context"
 	math "math"
+	strconv "strconv"
 )
 
 type Log capnp.Client
@@ -35,7 +36,7 @@ func (c Log) Write(ctx context.Context, params func(Log_write_Params) error) err
 
 }
 
-func (c Log) Done(ctx context.Context, params func(Log_done_Params) error) (Log_done_Results_Future, capnp.ReleaseFunc) {
+func (c Log) Done(ctx context.Context, params func(Log_done_Params) error) (Logarithm_Future, capnp.ReleaseFunc) {
 
 	s := capnp.Send{
 		Method: capnp.Method{
@@ -51,7 +52,7 @@ func (c Log) Done(ctx context.Context, params func(Log_done_Params) error) (Log_
 	}
 
 	ans, release := capnp.Client(c).SendCall(ctx, s)
-	return Log_done_Results_Future{Future: ans.Future()}, release
+	return Logarithm_Future{Future: ans.Future()}, release
 
 }
 
@@ -208,9 +209,9 @@ func (c Log_done) Args() Log_done_Params {
 }
 
 // AllocResults allocates the results struct.
-func (c Log_done) AllocResults() (Log_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 0})
-	return Log_done_Results(r), err
+func (c Log_done) AllocResults() (Logarithm, error) {
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 16, PointerCount: 0})
+	return Logarithm(r), err
 }
 
 // Log_List is a list of Log.
@@ -359,74 +360,105 @@ func (f Log_done_Params_Future) Struct() (Log_done_Params, error) {
 	return Log_done_Params(p.Struct()), err
 }
 
-type Log_done_Results capnp.Struct
+type Logarithm capnp.Struct
+type Logarithm_Which uint16
 
-// Log_done_Results_TypeID is the unique identifier for the type Log_done_Results.
-const Log_done_Results_TypeID = 0x871de8bd1299baa3
+const (
+	Logarithm_Which_undefined Logarithm_Which = 0
+	Logarithm_Which_out       Logarithm_Which = 1
+)
 
-func NewLog_done_Results(s *capnp.Segment) (Log_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
-	return Log_done_Results(st), err
+func (w Logarithm_Which) String() string {
+	const s = "undefinedout"
+	switch w {
+	case Logarithm_Which_undefined:
+		return s[0:9]
+	case Logarithm_Which_out:
+		return s[9:12]
+
+	}
+	return "Logarithm_Which(" + strconv.FormatUint(uint64(w), 10) + ")"
 }
 
-func NewRootLog_done_Results(s *capnp.Segment) (Log_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
-	return Log_done_Results(st), err
+// Logarithm_TypeID is the unique identifier for the type Logarithm.
+const Logarithm_TypeID = 0xa18ce9db0a3ec673
+
+func NewLogarithm(s *capnp.Segment) (Logarithm, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 0})
+	return Logarithm(st), err
 }
 
-func ReadRootLog_done_Results(msg *capnp.Message) (Log_done_Results, error) {
+func NewRootLogarithm(s *capnp.Segment) (Logarithm, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 0})
+	return Logarithm(st), err
+}
+
+func ReadRootLogarithm(msg *capnp.Message) (Logarithm, error) {
 	root, err := msg.Root()
-	return Log_done_Results(root.Struct()), err
+	return Logarithm(root.Struct()), err
 }
 
-func (s Log_done_Results) String() string {
-	str, _ := text.Marshal(0x871de8bd1299baa3, capnp.Struct(s))
+func (s Logarithm) String() string {
+	str, _ := text.Marshal(0xa18ce9db0a3ec673, capnp.Struct(s))
 	return str
 }
 
-func (s Log_done_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+func (s Logarithm) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
 	return capnp.Struct(s).EncodeAsPtr(seg)
 }
 
-func (Log_done_Results) DecodeFromPtr(p capnp.Ptr) Log_done_Results {
-	return Log_done_Results(capnp.Struct{}.DecodeFromPtr(p))
+func (Logarithm) DecodeFromPtr(p capnp.Ptr) Logarithm {
+	return Logarithm(capnp.Struct{}.DecodeFromPtr(p))
 }
 
-func (s Log_done_Results) ToPtr() capnp.Ptr {
+func (s Logarithm) ToPtr() capnp.Ptr {
 	return capnp.Struct(s).ToPtr()
 }
-func (s Log_done_Results) IsValid() bool {
+
+func (s Logarithm) Which() Logarithm_Which {
+	return Logarithm_Which(capnp.Struct(s).Uint16(0))
+}
+func (s Logarithm) IsValid() bool {
 	return capnp.Struct(s).IsValid()
 }
 
-func (s Log_done_Results) Message() *capnp.Message {
+func (s Logarithm) Message() *capnp.Message {
 	return capnp.Struct(s).Message()
 }
 
-func (s Log_done_Results) Segment() *capnp.Segment {
+func (s Logarithm) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Log_done_Results) Out() float64 {
-	return math.Float64frombits(capnp.Struct(s).Uint64(0))
+func (s Logarithm) SetUndefined() {
+	capnp.Struct(s).SetUint16(0, 0)
+
 }
 
-func (s Log_done_Results) SetOut(v float64) {
-	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
+func (s Logarithm) Out() float64 {
+	if capnp.Struct(s).Uint16(0) != 1 {
+		panic("Which() != out")
+	}
+	return math.Float64frombits(capnp.Struct(s).Uint64(8))
 }
 
-// Log_done_Results_List is a list of Log_done_Results.
-type Log_done_Results_List = capnp.StructList[Log_done_Results]
-
-// NewLog_done_Results creates a new list of Log_done_Results.
-func NewLog_done_Results_List(s *capnp.Segment, sz int32) (Log_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0}, sz)
-	return capnp.StructList[Log_done_Results](l), err
+func (s Logarithm) SetOut(v float64) {
+	capnp.Struct(s).SetUint16(0, 1)
+	capnp.Struct(s).SetUint64(8, math.Float64bits(v))
 }
 
-// Log_done_Results_Future is a wrapper for a Log_done_Results promised by a client call.
-type Log_done_Results_Future struct{ *capnp.Future }
+// Logarithm_List is a list of Logarithm.
+type Logarithm_List = capnp.StructList[Logarithm]
 
-func (f Log_done_Results_Future) Struct() (Log_done_Results, error) {
+// NewLogarithm creates a new list of Logarithm.
+func NewLogarithm_List(s *capnp.Segment, sz int32) (Logarithm_List, error) {
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 16, PointerCount: 0}, sz)
+	return capnp.StructList[Logarithm](l), err
+}
+
+// Logarithm_Future is a wrapper for a Logarithm promised by a client call.
+type Logarithm_Future struct{ *capnp.Future }
+
+func (f Logarithm_Future) Struct() (Logarithm, error) {
 	p, err := f.Future.Ptr()
-	return Log_done_Results(p.Struct()), err
+	return Logarithm(p.Struct()), err
 }

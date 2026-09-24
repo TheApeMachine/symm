@@ -17,7 +17,6 @@ export {
 	paintTerminalResonanceChart,
 	TerminalResonanceChart,
 } from "#/components/charts/resonance";
-export { TerminalSignalHeatmap } from "#/components/ui/signal-heatmap";
 export {
 	fluidGridDimensions,
 	phaseColumnsFromScan,
@@ -27,6 +26,7 @@ export {
 	terminalResonanceLayerMatrixFromFrame,
 	terminalWaveModesFromFrame,
 } from "#/components/terminal/charts-frame";
+export { TerminalSignalHeatmap } from "#/components/ui/signal-heatmap";
 
 type Draw = (
 	context: CanvasRenderingContext2D,

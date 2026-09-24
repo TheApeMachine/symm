@@ -31,8 +31,11 @@ $Go.import("github.com/theapemachine/symm/nomagique/geometry");
 # relationships change takes effect on later evaluations, never on the regions
 # this one publishes. While the arrangement is moving, the last partition that
 # held stands; a partition in flight is never read. Until one has held,
-# moving is reported and nothing is published. settled names each point's
-# region by its peak's index, which is the peak's original coordinate.
+# moving is reported and nothing is published. settled.regions names each
+# point's region by its peak's index, which is the peak's original
+# coordinate. settled.vocabulary identifies the partition those names belong
+# to, as a JSON string: the same name under another partition may cover other
+# ground, so anything that remembers names must remember the vocabulary too.
 interface Peak {
   write @0 (
     positions :List(Float64),
@@ -52,6 +55,9 @@ struct Watershed {
 
   union {
     moving  @2 :Void;
-    settled @3 :List(Text);
+    settled :group {
+      regions    @3 :List(Text);
+      vocabulary @4 :Data;
+    }
   }
 }

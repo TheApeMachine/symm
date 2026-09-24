@@ -512,7 +512,7 @@ export const FlumeEditor = ({ projectId }: FlumeEditorProps) => {
 				align="center"
 				justify="between"
 				gap={3}
-				className="shrink-0 flex-wrap rounded-sm border bg-(--raised)/48 px-3 py-2"
+				className="shrink-0 flex-wrap rounded-sm bg-(--raised)/48 px-3 py-2"
 			>
 				<Flex.Row align="center" gap={2} className="flex-wrap">
 					<Flex.Row align="center" gap={2}>

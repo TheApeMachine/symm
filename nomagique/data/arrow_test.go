@@ -38,52 +38,56 @@ func arrowInput(t testing.TB) []byte {
 	return encoded.Bytes()
 }
 
-/* TestArrowWrite verifies indexing across batches, exact values and absent input. */
+/* TestArrowWrite verifies every row across batches, exact values and absent input. */
 func TestArrowWrite(t *testing.T) {
 	Convey("Given a two-batch IPC stream", t, func() {
 		ctx := context.Background()
 		payload := arrowInput(t)
 		client := data.Arrow_ServerToClient(data.NewArrow())
 		defer client.Release()
-		for index := uint64(0); index < 2; index++ {
-			So(client.Write(ctx, func(args data.Arrow_write_Params) error {
-				args.SetRow(index)
-				return args.SetData(payload)
-			}), ShouldBeNil)
-			So(client.WaitStreaming(), ShouldBeNil)
-			future, release := client.Done(ctx, nil)
-			result, err := future.Struct()
-			So(err, ShouldBeNil)
-			raw, err := result.Out()
-			So(err, ShouldBeNil)
-			var row struct {
-				Sequence int64
-				Payload  []byte
-			}
-			So(json.Unmarshal(raw, &row), ShouldBeNil)
-			So(row.Sequence, ShouldEqual, 9007199254740993+int64(index))
-			So(row.Payload, ShouldResemble, []byte{byte(index), 0, 255})
-			release()
-		}
-		Convey("A row outside the stream is an error", func() {
-			So(client.Write(ctx, func(args data.Arrow_write_Params) error { args.SetRow(2); return args.SetData(payload) }), ShouldBeNil)
-			So(client.WaitStreaming(), ShouldNotBeNil)
-		})
-		Convey("An absent frame does not repeat the previous projection", func() {
-			So(client.Write(ctx, nil), ShouldBeNil)
+
+		project := func(input []byte) [][]byte {
+			So(client.Write(ctx, func(args data.Arrow_write_Params) error { return args.SetData(input) }), ShouldBeNil)
 			So(client.WaitStreaming(), ShouldBeNil)
 			future, release := client.Done(ctx, nil)
 			defer release()
 			result, err := future.Struct()
 			So(err, ShouldBeNil)
-			raw, err := result.Out()
+			rows, err := result.Rows()
 			So(err, ShouldBeNil)
-			So(raw, ShouldBeEmpty)
+			out := [][]byte{}
+
+			for index := range rows.Len() {
+				row, err := rows.At(index)
+				So(err, ShouldBeNil)
+				out = append(out, bytes.Clone(row))
+			}
+
+			return out
+		}
+
+		Convey("Every row is projected, in stream order, with exact values", func() {
+			rows := project(payload)
+			So(rows, ShouldHaveLength, 2)
+
+			for index, raw := range rows {
+				var row struct {
+					Sequence int64
+					Payload  []byte
+				}
+				So(json.Unmarshal(raw, &row), ShouldBeNil)
+				So(row.Sequence, ShouldEqual, 9007199254740993+int64(index))
+				So(row.Payload, ShouldResemble, []byte{byte(index), 0, 255})
+			}
+
+			Convey("And an absent frame does not repeat the previous projection", func() {
+				So(project(nil), ShouldBeEmpty)
+			})
 		})
 	})
 }
 
-/* BenchmarkArrowWrite measures IPC decoding and exact row projection through the capability. */
+/* BenchmarkArrowWrite measures IPC decoding and row projection through the capability. */
 func BenchmarkArrowWrite(b *testing.B) {
 	payload := arrowInput(b)
 	ctx := context.Background()
@@ -91,7 +95,7 @@ func BenchmarkArrowWrite(b *testing.B) {
 	defer client.Release()
 	b.ReportAllocs()
 	for b.Loop() {
-		if err := client.Write(ctx, func(args data.Arrow_write_Params) error { args.SetRow(1); return args.SetData(payload) }); err != nil {
+		if err := client.Write(ctx, func(args data.Arrow_write_Params) error { return args.SetData(payload) }); err != nil {
 			b.Fatal(err)
 		}
 		if err := client.WaitStreaming(); err != nil {

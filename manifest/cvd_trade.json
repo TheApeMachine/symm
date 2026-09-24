@@ -277,6 +277,9 @@
       "inputData": {
         "operator": {
           "value": "count"
+        },
+        "running": {
+          "value": true
         }
       },
       "connections": {
@@ -309,6 +312,9 @@
       "inputData": {
         "operator": {
           "value": "sum"
+        },
+        "running": {
+          "value": true
         }
       },
       "connections": {
@@ -340,6 +346,9 @@
       "inputData": {
         "operator": {
           "value": "sum"
+        },
+        "running": {
+          "value": true
         }
       },
       "connections": {
@@ -371,6 +380,9 @@
       "inputData": {
         "operator": {
           "value": "sum"
+        },
+        "running": {
+          "value": true
         }
       },
       "connections": {
@@ -406,6 +418,9 @@
       "inputData": {
         "operator": {
           "value": "sum"
+        },
+        "running": {
+          "value": true
         }
       },
       "connections": {
@@ -441,6 +456,9 @@
       "inputData": {
         "operator": {
           "value": "sum"
+        },
+        "running": {
+          "value": true
         }
       },
       "connections": {
@@ -480,6 +498,9 @@
       "inputData": {
         "operator": {
           "value": "sum"
+        },
+        "running": {
+          "value": true
         }
       },
       "connections": {
@@ -801,6 +822,11 @@
               "portName": "b"
             }
           ]
+        }
+      },
+      "inputData": {
+        "origin": {
+          "value": true
         }
       }
     },

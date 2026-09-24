@@ -96,6 +96,14 @@ func TestQueueWrite(t *testing.T) {
 			out, waiting = step(client, queueCall{release: "true"})
 			So(out, ShouldEqual, "")
 			So(waiting, ShouldEqual, 0)
+
+			Convey("And the readiness holds for the next offer, once, however many releases found it empty", func() {
+				out, _ = step(client, queueCall{offer: `["QRS/USD","TUV/USD"]`})
+				So(out, ShouldEqual, `"QRS/USD"`)
+				out, waiting = step(client, queueCall{})
+				So(out, ShouldEqual, "")
+				So(waiting, ShouldEqual, 1)
+			})
 		})
 	})
 

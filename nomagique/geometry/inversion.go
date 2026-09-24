@@ -2,6 +2,7 @@ package geometry
 
 import (
 	"context"
+	"math"
 
 	"github.com/theapemachine/errnie"
 )
@@ -26,8 +27,27 @@ func (server *InversionServer) Write(ctx context.Context, call Inversion_write) 
 
 	server.distance = make([]float64, strength.Len())
 
+	// Strength has no unit of its own: it is read against the root mean
+	// square of the strengths read now, so a typical relationship asks for a
+	// typical distance whatever the scale the evidence happens to sit at.
+	squares := 0.0
+
 	for edge := range strength.Len() {
-		server.distance[edge] = invert(strength.At(edge))
+		squares += strength.At(edge) * strength.At(edge)
+	}
+
+	if squares == 0 {
+		for edge := range server.distance {
+			server.distance[edge] = 1
+		}
+
+		return nil
+	}
+
+	scale := math.Sqrt(squares / float64(strength.Len()))
+
+	for edge := range strength.Len() {
+		server.distance[edge] = invert(strength.At(edge) / scale)
 	}
 
 	return nil

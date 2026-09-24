@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { bench, describe } from "vitest";
-import { TrieView, selectTriePath, type TrieNode } from "./trie-view";
+import { selectTriePath, type TrieNode, TrieView } from "./trie-view";
+
 // Fixture: 64 measured alternatives under one root, for layout and rendering.
 const root: TrieNode = {
 	id: "root",

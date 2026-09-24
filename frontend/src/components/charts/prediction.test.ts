@@ -115,4 +115,3 @@ describe("signedVectorTransform", () => {
 		expect(signedVectorTransform).toBe("scaleY(calc(var(--value, 0) * -1))");
 	});
 });
-

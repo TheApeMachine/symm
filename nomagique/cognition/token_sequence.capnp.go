@@ -9,6 +9,7 @@ import (
 	server "capnproto.org/go/capnp/v3/server"
 	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
 	context "context"
+	strconv "strconv"
 )
 
 type TokenSequence capnp.Client
@@ -34,7 +35,7 @@ func (c TokenSequence) Write(ctx context.Context, params func(TokenSequence_writ
 
 }
 
-func (c TokenSequence) Done(ctx context.Context, params func(TokenSequence_done_Params) error) (TokenSequence_done_Results_Future, capnp.ReleaseFunc) {
+func (c TokenSequence) Done(ctx context.Context, params func(TokenSequence_done_Params) error) (Sequenced_Future, capnp.ReleaseFunc) {
 
 	s := capnp.Send{
 		Method: capnp.Method{
@@ -50,7 +51,7 @@ func (c TokenSequence) Done(ctx context.Context, params func(TokenSequence_done_
 	}
 
 	ans, release := capnp.Client(c).SendCall(ctx, s)
-	return TokenSequence_done_Results_Future{Future: ans.Future()}, release
+	return Sequenced_Future{Future: ans.Future()}, release
 
 }
 
@@ -207,9 +208,9 @@ func (c TokenSequence_done) Args() TokenSequence_done_Params {
 }
 
 // AllocResults allocates the results struct.
-func (c TokenSequence_done) AllocResults() (TokenSequence_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 3})
-	return TokenSequence_done_Results(r), err
+func (c TokenSequence_done) AllocResults() (Sequenced, error) {
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 16, PointerCount: 3})
+	return Sequenced(r), err
 }
 
 // TokenSequence_List is a list of TokenSequence.
@@ -417,69 +418,114 @@ func (f TokenSequence_done_Params_Future) Struct() (TokenSequence_done_Params, e
 	return TokenSequence_done_Params(p.Struct()), err
 }
 
-type TokenSequence_done_Results capnp.Struct
+type Sequenced capnp.Struct
+type Sequenced_step Sequenced
+type Sequenced_Which uint16
 
-// TokenSequence_done_Results_TypeID is the unique identifier for the type TokenSequence_done_Results.
-const TokenSequence_done_Results_TypeID = 0xd3a53ef678472daf
+const (
+	Sequenced_Which_idle Sequenced_Which = 0
+	Sequenced_Which_step Sequenced_Which = 1
+)
 
-func NewTokenSequence_done_Results(s *capnp.Segment) (TokenSequence_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 3})
-	return TokenSequence_done_Results(st), err
+func (w Sequenced_Which) String() string {
+	const s = "idlestep"
+	switch w {
+	case Sequenced_Which_idle:
+		return s[0:4]
+	case Sequenced_Which_step:
+		return s[4:8]
+
+	}
+	return "Sequenced_Which(" + strconv.FormatUint(uint64(w), 10) + ")"
 }
 
-func NewRootTokenSequence_done_Results(s *capnp.Segment) (TokenSequence_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 3})
-	return TokenSequence_done_Results(st), err
+// Sequenced_TypeID is the unique identifier for the type Sequenced.
+const Sequenced_TypeID = 0x891a54706e6d1b03
+
+func NewSequenced(s *capnp.Segment) (Sequenced, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 3})
+	return Sequenced(st), err
 }
 
-func ReadRootTokenSequence_done_Results(msg *capnp.Message) (TokenSequence_done_Results, error) {
+func NewRootSequenced(s *capnp.Segment) (Sequenced, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 3})
+	return Sequenced(st), err
+}
+
+func ReadRootSequenced(msg *capnp.Message) (Sequenced, error) {
 	root, err := msg.Root()
-	return TokenSequence_done_Results(root.Struct()), err
+	return Sequenced(root.Struct()), err
 }
 
-func (s TokenSequence_done_Results) String() string {
-	str, _ := text.Marshal(0xd3a53ef678472daf, capnp.Struct(s))
+func (s Sequenced) String() string {
+	str, _ := text.Marshal(0x891a54706e6d1b03, capnp.Struct(s))
 	return str
 }
 
-func (s TokenSequence_done_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+func (s Sequenced) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
 	return capnp.Struct(s).EncodeAsPtr(seg)
 }
 
-func (TokenSequence_done_Results) DecodeFromPtr(p capnp.Ptr) TokenSequence_done_Results {
-	return TokenSequence_done_Results(capnp.Struct{}.DecodeFromPtr(p))
+func (Sequenced) DecodeFromPtr(p capnp.Ptr) Sequenced {
+	return Sequenced(capnp.Struct{}.DecodeFromPtr(p))
 }
 
-func (s TokenSequence_done_Results) ToPtr() capnp.Ptr {
+func (s Sequenced) ToPtr() capnp.Ptr {
 	return capnp.Struct(s).ToPtr()
 }
-func (s TokenSequence_done_Results) IsValid() bool {
+
+func (s Sequenced) Which() Sequenced_Which {
+	return Sequenced_Which(capnp.Struct(s).Uint16(0))
+}
+func (s Sequenced) IsValid() bool {
 	return capnp.Struct(s).IsValid()
 }
 
-func (s TokenSequence_done_Results) Message() *capnp.Message {
+func (s Sequenced) Message() *capnp.Message {
 	return capnp.Struct(s).Message()
 }
 
-func (s TokenSequence_done_Results) Segment() *capnp.Segment {
+func (s Sequenced) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s TokenSequence_done_Results) Sequence() (capnp.TextList, error) {
+func (s Sequenced) SetIdle() {
+	capnp.Struct(s).SetUint16(0, 0)
+
+}
+
+func (s Sequenced) Step() Sequenced_step { return Sequenced_step(s) }
+
+func (s Sequenced) SetStep() {
+	capnp.Struct(s).SetUint16(0, 1)
+}
+
+func (s Sequenced_step) IsValid() bool {
+	return capnp.Struct(s).IsValid()
+}
+
+func (s Sequenced_step) Message() *capnp.Message {
+	return capnp.Struct(s).Message()
+}
+
+func (s Sequenced_step) Segment() *capnp.Segment {
+	return capnp.Struct(s).Segment()
+}
+func (s Sequenced_step) Sequence() (capnp.TextList, error) {
 	p, err := capnp.Struct(s).Ptr(0)
 	return capnp.TextList(p.List()), err
 }
 
-func (s TokenSequence_done_Results) HasSequence() bool {
+func (s Sequenced_step) HasSequence() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s TokenSequence_done_Results) SetSequence(v capnp.TextList) error {
+func (s Sequenced_step) SetSequence(v capnp.TextList) error {
 	return capnp.Struct(s).SetPtr(0, v.ToPtr())
 }
 
 // NewSequence sets the sequence field to a newly
 // allocated capnp.TextList, preferring placement in s's segment.
-func (s TokenSequence_done_Results) NewSequence(n int32) (capnp.TextList, error) {
+func (s Sequenced_step) NewSequence(n int32) (capnp.TextList, error) {
 	l, err := capnp.NewTextList(capnp.Struct(s).Segment(), n)
 	if err != nil {
 		return capnp.TextList{}, err
@@ -487,58 +533,67 @@ func (s TokenSequence_done_Results) NewSequence(n int32) (capnp.TextList, error)
 	err = capnp.Struct(s).SetPtr(0, l.ToPtr())
 	return l, err
 }
-func (s TokenSequence_done_Results) Path() (string, error) {
+func (s Sequenced_step) Path() (string, error) {
 	p, err := capnp.Struct(s).Ptr(1)
 	return p.Text(), err
 }
 
-func (s TokenSequence_done_Results) HasPath() bool {
+func (s Sequenced_step) HasPath() bool {
 	return capnp.Struct(s).HasPtr(1)
 }
 
-func (s TokenSequence_done_Results) PathBytes() ([]byte, error) {
+func (s Sequenced_step) PathBytes() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(1)
 	return p.TextBytes(), err
 }
 
-func (s TokenSequence_done_Results) SetPath(v string) error {
+func (s Sequenced_step) SetPath(v string) error {
 	return capnp.Struct(s).SetText(1, v)
 }
 
-func (s TokenSequence_done_Results) Depth() int64 {
-	return int64(capnp.Struct(s).Uint64(0))
+func (s Sequenced_step) Depth() int64 {
+	return int64(capnp.Struct(s).Uint64(8))
 }
 
-func (s TokenSequence_done_Results) SetDepth(v int64) {
-	capnp.Struct(s).SetUint64(0, uint64(v))
+func (s Sequenced_step) SetDepth(v int64) {
+	capnp.Struct(s).SetUint64(8, uint64(v))
 }
 
-func (s TokenSequence_done_Results) Out() ([]byte, error) {
+func (s Sequenced_step) Out() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(2)
 	return []byte(p.Data()), err
 }
 
-func (s TokenSequence_done_Results) HasOut() bool {
+func (s Sequenced_step) HasOut() bool {
 	return capnp.Struct(s).HasPtr(2)
 }
 
-func (s TokenSequence_done_Results) SetOut(v []byte) error {
+func (s Sequenced_step) SetOut(v []byte) error {
 	return capnp.Struct(s).SetData(2, v)
 }
 
-// TokenSequence_done_Results_List is a list of TokenSequence_done_Results.
-type TokenSequence_done_Results_List = capnp.StructList[TokenSequence_done_Results]
+// Sequenced_List is a list of Sequenced.
+type Sequenced_List = capnp.StructList[Sequenced]
 
-// NewTokenSequence_done_Results creates a new list of TokenSequence_done_Results.
-func NewTokenSequence_done_Results_List(s *capnp.Segment, sz int32) (TokenSequence_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 3}, sz)
-	return capnp.StructList[TokenSequence_done_Results](l), err
+// NewSequenced creates a new list of Sequenced.
+func NewSequenced_List(s *capnp.Segment, sz int32) (Sequenced_List, error) {
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 16, PointerCount: 3}, sz)
+	return capnp.StructList[Sequenced](l), err
 }
 
-// TokenSequence_done_Results_Future is a wrapper for a TokenSequence_done_Results promised by a client call.
-type TokenSequence_done_Results_Future struct{ *capnp.Future }
+// Sequenced_Future is a wrapper for a Sequenced promised by a client call.
+type Sequenced_Future struct{ *capnp.Future }
 
-func (f TokenSequence_done_Results_Future) Struct() (TokenSequence_done_Results, error) {
+func (f Sequenced_Future) Struct() (Sequenced, error) {
 	p, err := f.Future.Ptr()
-	return TokenSequence_done_Results(p.Struct()), err
+	return Sequenced(p.Struct()), err
+}
+func (p Sequenced_Future) Step() Sequenced_step_Future { return Sequenced_step_Future{p.Future} }
+
+// Sequenced_step_Future is a wrapper for a Sequenced_step promised by a client call.
+type Sequenced_step_Future struct{ *capnp.Future }
+
+func (f Sequenced_step_Future) Struct() (Sequenced_step, error) {
+	p, err := f.Future.Ptr()
+	return Sequenced_step(p.Struct()), err
 }

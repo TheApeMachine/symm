@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"net"
 	stdhttp "net/http"
-	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -56,6 +56,7 @@ type HTTPServerServer struct {
 	webrtcServer *webrtc.WebRTCServerServer
 	incoming     *lf.Queue[[]byte]
 	out          []byte
+	bind         error
 }
 
 func NewHTTPServer(ctx context.Context) *HTTPServerServer {
@@ -76,11 +77,22 @@ func NewHTTPServer(ctx context.Context) *HTTPServerServer {
 		Handler: handler,
 	}
 
-	go func() {
-		err := server.httpServer.ListenAndServe()
+	// Binding happens here, not in the serving goroutine, so a port another
+	// process holds is this node's failure rather than a surface that
+	// silently talks to someone else.
+	listener, err := net.Listen("tcp", server.httpServer.Addr)
 
-		if err != nil && err != stdhttp.ErrServerClosed && !strings.Contains(err.Error(), "address already in use") {
-			errnie.Error(errnie.Err(errnie.IO, "[http.server] listen and serve failed", err))
+	if err != nil {
+		server.bind = errnie.Err(errnie.IO, "http.server: failed to listen on "+server.httpServer.Addr, err)
+		server.Transition(runtime.READY)
+		return server
+	}
+
+	go func() {
+		err := server.httpServer.Serve(listener)
+
+		if err != nil && err != stdhttp.ErrServerClosed {
+			errnie.Error(errnie.Err(errnie.IO, "[http.server] serve failed", err))
 		}
 	}()
 
@@ -353,6 +365,10 @@ Done returns the next available message or the last written payload,
 along with the current lifecycle status.
 */
 func (server *HTTPServerServer) Done(ctx context.Context, call HTTPServer_done) error {
+	if server.bind != nil {
+		return server.Error(server.bind)
+	}
+
 	results, err := call.AllocResults()
 
 	if err != nil {

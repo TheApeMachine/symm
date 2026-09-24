@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { terminalStore } from "#/collections/terminal";
 import { RingBuffer } from "#/collections/ring";
+import { terminalStore } from "#/collections/terminal";
 import type { WireMeasurement } from "#/types/capnp/measurement";
 
 /*
@@ -13,8 +13,9 @@ vi.mock("@tanstack/react-router", () => ({
 	useNavigate: () => () => {},
 }));
 
-const { DEFAULT_FOCUS_SYMBOL, signals } =
-	(await import("#/collections/app")) as any;
+const { DEFAULT_FOCUS_SYMBOL, signals } = (await import(
+	"#/collections/app"
+)) as any;
 const { KernelInspector } = await import("#/components/kernel/inspector");
 
 const renderInspector = () => renderToStaticMarkup(<KernelInspector />);

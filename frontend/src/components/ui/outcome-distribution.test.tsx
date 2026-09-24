@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { OutcomeDistribution } from "./outcome-distribution";
+
 describe("OutcomeDistribution", () => {
 	it("uses supplied bins with their actual counts, including zero", () => {
 		const markup = renderToStaticMarkup(
