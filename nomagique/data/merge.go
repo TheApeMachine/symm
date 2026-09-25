@@ -7,8 +7,8 @@ import (
 	"github.com/theapemachine/errnie"
 )
 
-// MergeServer overlays fields without converting values. Gathered overlays
-// are optional publications in this evaluation; absence leaves the base alone.
+// MergeServer overlays fields without converting values. The explicit scalar
+// operands remain required. Additional gathered overlays may be absent.
 type MergeServer struct{ out []byte }
 
 func NewMerge() *MergeServer { return &MergeServer{} }
@@ -19,10 +19,6 @@ func (server *MergeServer) Write(ctx context.Context, call Merge_write) error {
 
 	if err != nil {
 		return mergeError("read base", err)
-	}
-
-	if len(base) == 0 {
-		return nil
 	}
 
 	var document map[string]json.RawMessage
@@ -39,6 +35,10 @@ func (server *MergeServer) Write(ctx context.Context, call Merge_write) error {
 
 	if err != nil {
 		return mergeError("read overlay", err)
+	}
+
+	if len(overlay) == 0 {
+		return mergeError("an explicit overlay object is required", nil)
 	}
 
 	if err := mergeFields(document, overlay); err != nil {
