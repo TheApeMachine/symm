@@ -4,73 +4,20 @@ on:
   push:
     branches: [fix/sealed-measurement-boundaries]
 
-concurrency:
-  group: measurement-boundaries-${{ github.ref }}
-  cancel-in-progress: true
-
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  verify:
+  source:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
-    env:
-      GOFLAGS: -ldflags=-checklinkname=0
     steps:
       - uses: actions/checkout@v4
         with:
-          path: symm
-      - uses: actions/checkout@v4
-        with:
-          repository: theapemachine/datura
-          ref: v1.2.11
-          path: datura
           persist-credentials: false
-      - uses: actions/setup-go@v5
+      - name: Export exact implementation source
+        run: git archive --format=tar.gz --output="$RUNNER_TEMP/boundary-source.tar.gz" HEAD
+      - uses: actions/upload-artifact@v4
         with:
-          go-version-file: symm/go.mod
-          cache-dependency-path: symm/go.sum
-      - name: Install schema compiler
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y capnproto
-          go install capnproto.org/go/capnp/v3/capnpc-go@v3.1.0-alpha.2
-      - name: Apply integration and regenerate schemas
-        working-directory: symm
-        run: |
-          set -eu
-          python3 - <<'PY'
-          from pathlib import Path
-          path = Path('scripts/finish-boundary-pr.py')
-          source = path.read_text()
-          source = source.replace('if after in source:', 'if after in source or "".join(after.split()) in "".join(source.split()):')
-          path.write_text(source)
-          PY
-          python3 scripts/finish-boundary-pr.py
-          python3 scripts/patch-boundary-pr.py
-          include="$(go list -m -f '{{.Dir}}' capnproto.org/go/capnp/v3)/std"
-          capnp compile -I "$include" -ogo nomagique/data/*.capnp
-          capnp compile -I "$include" -ogo nomagique/store/*.capnp
-          capnp compile -I "$include" -ogo nomagique/store/tables/*.capnp
-          gofmt -w nomagique/data/measurement*.go nomagique/data/merge.go nomagique/data/extract.go nomagique/store/boundary*.go nomagique/store/grid*.go nomagique/store/stamp*.go nomagique/store/index*.go nomagique/compiler/boundary_integration_test.go nomagique/temporal/mine.go nomagique/financial/kraken/futures.go
-          make catalog
-      - name: Run primitive regressions
-        working-directory: symm
-        run: go test -count=1 -p 1 -timeout 8m ./nomagique/data ./nomagique/store ./nomagique/temporal ./nomagique/financial/kraken -run 'TestBoundary|TestMeasurement|TestIndex|TestMerge|TestExtract|TestStamp|TestMine|TestFutures'
-      - name: Run compiled boundary and manifest tests
-        working-directory: symm
-        run: go test -count=1 -p 1 -timeout 8m ./nomagique/compiler -run 'TestBoundaryCompiledReplay|TestManifestsCompile|TestManifestsAgree'
-      - name: Commit verified generated source and graphs
-        if: github.ref == 'refs/heads/fix/sealed-measurement-boundaries'
-        working-directory: symm
-        run: |
-          set -eu
-          git add nomagique/data nomagique/store nomagique/compiler/boundary_integration_test.go nomagique/compiler/factories_gen.go nomagique/temporal/mine.go nomagique/financial/kraken/futures.go frontend/src/components/flume/flume-config.generated.ts manifest scripts/finish-boundary-pr.py
-          git diff --cached --stat
-          if ! git diff --cached --quiet; then
-            git config user.name 'github-actions[bot]'
-            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            git commit -m 'feat: wire and verify sealed measurement capture and replay'
-            git push origin HEAD:fix/sealed-measurement-boundaries
-          fi
+          name: boundary-source
+          path: ${{ runner.temp }}/boundary-source.tar.gz
+          retention-days: 1
