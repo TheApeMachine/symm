@@ -1,0 +1,29 @@
+name: measurement-boundaries
+
+on:
+  push:
+    branches: [fix/sealed-measurement-boundaries]
+  pull_request:
+    paths:
+      - 'nomagique/**'
+      - 'manifest/**'
+      - '.github/workflows/measurement-boundaries.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Export tracked source for isolated development
+        run: git archive --format=tar.gz --output="$RUNNER_TEMP/symm-source.tar.gz" HEAD
+      - uses: actions/upload-artifact@v4
+        with:
+          name: symm-source
+          path: ${{ runner.temp }}/symm-source.tar.gz
+          retention-days: 1
