@@ -1612,6 +1612,30 @@
               "nodeId": "grid",
               "portName": "values_5"
             }
+          ],
+          "volume_bar_quantity.scope": [
+            {
+              "nodeId": "grid",
+              "portName": "scope"
+            }
+          ],
+          "volume_bar_notional.scope": [
+            {
+              "nodeId": "grid",
+              "portName": "scope"
+            }
+          ],
+          "volume_bar_trade_count.scope": [
+            {
+              "nodeId": "grid",
+              "portName": "scope"
+            }
+          ],
+          "volume_bar_duration.scope": [
+            {
+              "nodeId": "grid",
+              "portName": "scope"
+            }
           ]
         },
         "outputs": {
@@ -3087,30 +3111,6 @@
       "y": 80.0,
       "connections": {
         "inputs": {
-          "buyShare.a": [
-            {
-              "nodeId": "grid",
-              "portName": "values_3"
-            }
-          ],
-          "sellShare.b": [
-            {
-              "nodeId": "grid",
-              "portName": "values_3"
-            }
-          ],
-          "tradeNotional.a": [
-            {
-              "nodeId": "grid",
-              "portName": "values_2"
-            }
-          ],
-          "tradeNotional.b": [
-            {
-              "nodeId": "grid",
-              "portName": "values_4"
-            }
-          ],
           "elapsed.scope": [
             {
               "nodeId": "grid",
@@ -3153,10 +3153,40 @@
               "portName": "scope"
             }
           ],
+          "tradeNotional.a": [
+            {
+              "nodeId": "grid",
+              "portName": "values_27"
+            }
+          ],
+          "tradeNotional.b": [
+            {
+              "nodeId": "grid",
+              "portName": "values_26"
+            }
+          ],
+          "buyShare.a": [
+            {
+              "nodeId": "grid",
+              "portName": "values_28"
+            }
+          ],
+          "sellShare.b": [
+            {
+              "nodeId": "grid",
+              "portName": "values_28"
+            }
+          ],
           "elapsed.timestamp": [
             {
               "nodeId": "grid",
-              "portName": "values_5"
+              "portName": "values_30"
+            }
+          ],
+          "liquidatedNotional.b": [
+            {
+              "nodeId": "grid",
+              "portName": "values_29"
             }
           ]
         },
@@ -4913,84 +4943,6 @@
       "y": 80.0,
       "connections": {
         "inputs": {
-          "basis.b": [
-            {
-              "nodeId": "grid",
-              "portName": "values_10"
-            }
-          ],
-          "basisDifference.a": [
-            {
-              "nodeId": "grid",
-              "portName": "values_1"
-            }
-          ],
-          "basisDifference.b": [
-            {
-              "nodeId": "grid",
-              "portName": "values_10"
-            }
-          ],
-          "derivativeIndexRatio.a": [
-            {
-              "nodeId": "grid",
-              "portName": "values_1"
-            }
-          ],
-          "derivativeIndexRatio.b": [
-            {
-              "nodeId": "grid",
-              "portName": "values_10"
-            }
-          ],
-          "derivativeSpotRatio.a": [
-            {
-              "nodeId": "grid",
-              "portName": "values_1"
-            }
-          ],
-          "derivativeSpotRatio.b": [
-            {
-              "nodeId": "grid",
-              "portName": "values_11"
-            }
-          ],
-          "derivative_log_return.value": [
-            {
-              "nodeId": "grid",
-              "portName": "values_1"
-            }
-          ],
-          "indexSpotRatio.a": [
-            {
-              "nodeId": "grid",
-              "portName": "values_10"
-            }
-          ],
-          "indexSpotRatio.b": [
-            {
-              "nodeId": "grid",
-              "portName": "values_11"
-            }
-          ],
-          "open_interest_change.value": [
-            {
-              "nodeId": "grid",
-              "portName": "values_12"
-            }
-          ],
-          "open_interest_log_change.value": [
-            {
-              "nodeId": "grid",
-              "portName": "values_12"
-            }
-          ],
-          "reference_log_return.value": [
-            {
-              "nodeId": "grid",
-              "portName": "values_10"
-            }
-          ],
           "elapsed.scope": [
             {
               "nodeId": "grid",
@@ -5072,7 +5024,85 @@
           "elapsed.timestamp": [
             {
               "nodeId": "grid",
-              "portName": "values_0"
+              "portName": "values_20"
+            }
+          ],
+          "basisDifference.a": [
+            {
+              "nodeId": "grid",
+              "portName": "values_21"
+            }
+          ],
+          "derivativeIndexRatio.a": [
+            {
+              "nodeId": "grid",
+              "portName": "values_21"
+            }
+          ],
+          "derivativeSpotRatio.a": [
+            {
+              "nodeId": "grid",
+              "portName": "values_21"
+            }
+          ],
+          "derivative_log_return.value": [
+            {
+              "nodeId": "grid",
+              "portName": "values_21"
+            }
+          ],
+          "basis.b": [
+            {
+              "nodeId": "grid",
+              "portName": "values_22"
+            }
+          ],
+          "basisDifference.b": [
+            {
+              "nodeId": "grid",
+              "portName": "values_22"
+            }
+          ],
+          "derivativeIndexRatio.b": [
+            {
+              "nodeId": "grid",
+              "portName": "values_22"
+            }
+          ],
+          "indexSpotRatio.a": [
+            {
+              "nodeId": "grid",
+              "portName": "values_22"
+            }
+          ],
+          "reference_log_return.value": [
+            {
+              "nodeId": "grid",
+              "portName": "values_22"
+            }
+          ],
+          "derivativeSpotRatio.b": [
+            {
+              "nodeId": "grid",
+              "portName": "values_25"
+            }
+          ],
+          "indexSpotRatio.b": [
+            {
+              "nodeId": "grid",
+              "portName": "values_25"
+            }
+          ],
+          "open_interest_change.value": [
+            {
+              "nodeId": "grid",
+              "portName": "values_24"
+            }
+          ],
+          "open_interest_log_change.value": [
+            {
+              "nodeId": "grid",
+              "portName": "values_24"
             }
           ]
         },
@@ -5861,7 +5891,7 @@
       "y": 0.0,
       "inputData": {
         "interests": {
-          "value": "ticker.capture.receivedAt,ticker.data.last,trade.data.qty,trade.data.side=sell,trade.data.price,trade.data.timestamp,level3.data.ask,level3.data.bid,level3.data.ask_qty,level3.data.bid_qty,ticker.data.index,ticker.data.mark,ticker.data.openInterest,ticker.data.ask,ticker.data.bid,ticker.data.ask_qty,ticker.data.bid_qty,level3.data.bids,level3.data.asks,level3.capture.receivedAt"
+          "value": "ticker.capture.receivedAt,ticker.data.last,trade.data.qty,trade.data.side=sell,trade.data.price,trade.data.timestamp,level3.data.ask,level3.data.bid,level3.data.ask_qty,level3.data.bid_qty,ticker.data.index,ticker.data.mark,ticker.data.openInterest,ticker.data.ask,ticker.data.bid,ticker.data.ask_qty,ticker.data.bid_qty,level3.data.bids,level3.data.asks,level3.capture.receivedAt,futures_ticker.capture.receivedAt,futures_ticker.data.last,futures_ticker.data.index,futures_ticker.data.mark,futures_ticker.data.openInterest,held:ticker.data.last,futures_trade.data.price,futures_trade.data.qty,futures_trade.data.side=sell,futures_trade.data.type=liquidation,futures_trade.data.timestamp"
         }
       },
       "connections": {
@@ -8438,10 +8468,6 @@
             {
               "nodeId": "definition-pumpdump_ticker",
               "portName": "elapsed.timestamp"
-            },
-            {
-              "nodeId": "definition-derivatives_ticker",
-              "portName": "elapsed.timestamp"
             }
           ],
           "values_1": [
@@ -8452,22 +8478,6 @@
             {
               "nodeId": "definition-correlation_ticker",
               "portName": "returns.value"
-            },
-            {
-              "nodeId": "definition-derivatives_ticker",
-              "portName": "basisDifference.a"
-            },
-            {
-              "nodeId": "definition-derivatives_ticker",
-              "portName": "derivativeIndexRatio.a"
-            },
-            {
-              "nodeId": "definition-derivatives_ticker",
-              "portName": "derivativeSpotRatio.a"
-            },
-            {
-              "nodeId": "definition-derivatives_ticker",
-              "portName": "derivative_log_return.value"
             },
             {
               "nodeId": "definition-leadlag_ticker",
@@ -8498,10 +8508,6 @@
             {
               "nodeId": "definition-cvd_trade",
               "portName": "trade_count.value"
-            },
-            {
-              "nodeId": "definition-derivatives_trade",
-              "portName": "tradeNotional.a"
             },
             {
               "nodeId": "definition-pumpdump_trade",
@@ -8538,14 +8544,6 @@
               "portName": "sellShare.b"
             },
             {
-              "nodeId": "definition-derivatives_trade",
-              "portName": "buyShare.a"
-            },
-            {
-              "nodeId": "definition-derivatives_trade",
-              "portName": "sellShare.b"
-            },
-            {
               "nodeId": "definition-hawkes_trade",
               "portName": "events.component"
             }
@@ -8557,10 +8555,6 @@
             },
             {
               "nodeId": "definition-cvd_trade",
-              "portName": "tradeNotional.b"
-            },
-            {
-              "nodeId": "definition-derivatives_trade",
               "portName": "tradeNotional.b"
             },
             {
@@ -8591,10 +8585,6 @@
             },
             {
               "nodeId": "definition-cvd_trade",
-              "portName": "elapsed.timestamp"
-            },
-            {
-              "nodeId": "definition-derivatives_trade",
               "portName": "elapsed.timestamp"
             },
             {
@@ -8708,48 +8698,6 @@
             {
               "nodeId": "definition-toxicity_level3",
               "portName": "unfilled_residual_quantity:bid.b"
-            }
-          ],
-          "values_10": [
-            {
-              "nodeId": "definition-derivatives_ticker",
-              "portName": "basis.b"
-            },
-            {
-              "nodeId": "definition-derivatives_ticker",
-              "portName": "basisDifference.b"
-            },
-            {
-              "nodeId": "definition-derivatives_ticker",
-              "portName": "derivativeIndexRatio.b"
-            },
-            {
-              "nodeId": "definition-derivatives_ticker",
-              "portName": "indexSpotRatio.a"
-            },
-            {
-              "nodeId": "definition-derivatives_ticker",
-              "portName": "reference_log_return.value"
-            }
-          ],
-          "values_11": [
-            {
-              "nodeId": "definition-derivatives_ticker",
-              "portName": "derivativeSpotRatio.b"
-            },
-            {
-              "nodeId": "definition-derivatives_ticker",
-              "portName": "indexSpotRatio.b"
-            }
-          ],
-          "values_12": [
-            {
-              "nodeId": "definition-derivatives_ticker",
-              "portName": "open_interest_change.value"
-            },
-            {
-              "nodeId": "definition-derivatives_ticker",
-              "portName": "open_interest_log_change.value"
             }
           ],
           "values_13": [
@@ -9416,6 +9364,22 @@
             {
               "nodeId": "definition-toxicity_trade",
               "portName": "matched_touch_trade_quantity:ask.scope"
+            },
+            {
+              "nodeId": "definition-pumpdump_trade",
+              "portName": "volume_bar_quantity.scope"
+            },
+            {
+              "nodeId": "definition-pumpdump_trade",
+              "portName": "volume_bar_notional.scope"
+            },
+            {
+              "nodeId": "definition-pumpdump_trade",
+              "portName": "volume_bar_trade_count.scope"
+            },
+            {
+              "nodeId": "definition-pumpdump_trade",
+              "portName": "volume_bar_duration.scope"
             }
           ],
           "values_19": [
@@ -9426,6 +9390,106 @@
             {
               "nodeId": "definition-depthflow_level3",
               "portName": "elapsed.timestamp"
+            }
+          ],
+          "values_20": [
+            {
+              "nodeId": "definition-derivatives_ticker",
+              "portName": "elapsed.timestamp"
+            }
+          ],
+          "values_21": [
+            {
+              "nodeId": "definition-derivatives_ticker",
+              "portName": "basisDifference.a"
+            },
+            {
+              "nodeId": "definition-derivatives_ticker",
+              "portName": "derivativeIndexRatio.a"
+            },
+            {
+              "nodeId": "definition-derivatives_ticker",
+              "portName": "derivativeSpotRatio.a"
+            },
+            {
+              "nodeId": "definition-derivatives_ticker",
+              "portName": "derivative_log_return.value"
+            }
+          ],
+          "values_22": [
+            {
+              "nodeId": "definition-derivatives_ticker",
+              "portName": "basis.b"
+            },
+            {
+              "nodeId": "definition-derivatives_ticker",
+              "portName": "basisDifference.b"
+            },
+            {
+              "nodeId": "definition-derivatives_ticker",
+              "portName": "derivativeIndexRatio.b"
+            },
+            {
+              "nodeId": "definition-derivatives_ticker",
+              "portName": "indexSpotRatio.a"
+            },
+            {
+              "nodeId": "definition-derivatives_ticker",
+              "portName": "reference_log_return.value"
+            }
+          ],
+          "values_25": [
+            {
+              "nodeId": "definition-derivatives_ticker",
+              "portName": "derivativeSpotRatio.b"
+            },
+            {
+              "nodeId": "definition-derivatives_ticker",
+              "portName": "indexSpotRatio.b"
+            }
+          ],
+          "values_24": [
+            {
+              "nodeId": "definition-derivatives_ticker",
+              "portName": "open_interest_change.value"
+            },
+            {
+              "nodeId": "definition-derivatives_ticker",
+              "portName": "open_interest_log_change.value"
+            }
+          ],
+          "values_27": [
+            {
+              "nodeId": "definition-derivatives_trade",
+              "portName": "tradeNotional.a"
+            }
+          ],
+          "values_26": [
+            {
+              "nodeId": "definition-derivatives_trade",
+              "portName": "tradeNotional.b"
+            }
+          ],
+          "values_28": [
+            {
+              "nodeId": "definition-derivatives_trade",
+              "portName": "buyShare.a"
+            },
+            {
+              "nodeId": "definition-derivatives_trade",
+              "portName": "sellShare.b"
+            }
+          ],
+          "values_30": [
+            {
+              "nodeId": "definition-derivatives_trade",
+              "portName": "elapsed.timestamp"
+            }
+          ],
+          "values_29": [
+            {
+              "nodeId": "definition-derivatives_trade",
+              "portName": "liquidatedNotional.b"
             }
           ]
         }

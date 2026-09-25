@@ -1051,19 +1051,6 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 	});
 	config.addNodeType({
-		type: "data.CanonicalizeFutures",
-		label: "Canonicalize Futures",
-		category: "data",
-		initialWidth: 340,
-		inputs: (ports) => [
-			ports["[]byte"]({ name: "data", label: "data" }),
-		],
-		outputs: (ports) => [
-			ports["[]byte"]({ name: "out", label: "out" }),
-			ports.Status({ name: "status", label: "status" }),
-		],
-	});
-	config.addNodeType({
 		type: "data.Collect",
 		label: "Collect",
 		category: "data",
@@ -1361,6 +1348,28 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.Status({ name: "status", label: "status" }),
 		],
 	});
+	config.addNodeType({
+		type: "data.Pluck",
+		label: "Pluck",
+		category: "data",
+		initialWidth: 340,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "path", label: "path" }),
+			];
+			const wiredData = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("data"));
+			for (let index = 0; index < Math.max(1, wiredData.length + 1); index++) {
+				const portName = index === 0 ? "data" : `data_${index}`;
+				dynamicPorts.push(ports["[]byte"]({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.int64({ name: "idle", label: "idle" }),
+			ports["[]byte"]({ name: "out", label: "out" }),
+		],
+	});
+
 	config.addNodeType({
 		type: "data.Quality",
 		label: "Quality",
@@ -3161,6 +3170,19 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 	});
 
+	config.addNodeType({
+		type: "kraken.Futures",
+		label: "Futures",
+		category: "kraken",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports["[]byte"]({ name: "data", label: "data" }),
+		],
+		outputs: (ports) => [
+			ports.int64({ name: "idle", label: "idle" }),
+			ports.data({ name: "records", label: "records" }),
+		],
+	});
 	config.addNodeType({
 		type: "learning.Backdoor",
 		label: "Backdoor",
@@ -7976,19 +7998,6 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 	});
 	config.addNodeType({
-		type: "definition:canonicalize_futures",
-		label: "canonicalize_futures",
-		category: "Definitions",
-		description: "Sub-graph: canonicalize_futures",
-		initialWidth: 320,
-		inputs: (ports) => (_inputData, _connections) => [
-			ports["[]byte"]({ name: "normalizer.data", label: "normalizer.data" }),
-		],
-		outputs: (ports) => (_inputData, _connections) => [
-			ports["[]byte"]({ name: "normalizer.out", label: "normalizer.out" }),
-		],
-	});
-	config.addNodeType({
 		type: "definition:capture",
 		label: "capture",
 		category: "Definitions",
@@ -8331,6 +8340,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "elapsed.timestamp", label: "elapsed.timestamp" }),
 			ports.bool({ name: "gross_derivative_trade_notional.flush", label: "gross_derivative_trade_notional.flush" }),
 			ports.string({ name: "gross_derivative_trade_notional.scope", label: "gross_derivative_trade_notional.scope" }),
+			ports.float64({ name: "liquidatedNotional.b", label: "liquidatedNotional.b" }),
 			ports.bool({ name: "liquidation_notional:buy.flush", label: "liquidation_notional:buy.flush" }),
 			ports.string({ name: "liquidation_notional:buy.scope", label: "liquidation_notional:buy.scope" }),
 			ports.bool({ name: "liquidation_notional:sell.flush", label: "liquidation_notional:sell.flush" }),
@@ -8773,6 +8783,9 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		description: "Sub-graph: live_futures",
 		initialWidth: 320,
 		inputs: (ports) => (_inputData, _connections) => [
+			ports.bool({ name: "record.envelope", label: "record.envelope" }),
+			ports.string({ name: "record.indexPath", label: "record.indexPath" }),
+			ports.bool({ name: "record.whole", label: "record.whole" }),
 			ports["[]byte"]({ name: "socket.write", label: "socket.write" }),
 			ports["[]byte"]({ name: "socket_received.json", label: "socket_received.json" }),
 			ports.bool({ name: "socket_received.unique", label: "socket_received.unique" }),
@@ -8780,7 +8793,15 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "socket_received.value", label: "socket_received.value" }),
 		],
 		outputs: (ports) => (_inputData, _connections) => [
-			ports["[]byte"]({ name: "records.out", label: "records.out" }),
+			ports.data({ name: "record.all", label: "record.all" }),
+			ports.int64({ name: "record.count", label: "record.count" }),
+			ports.bool({ name: "record.found", label: "record.found" }),
+			ports.int64({ name: "record.ignored", label: "record.ignored" }),
+			ports.int64({ name: "record.index", label: "record.index" }),
+			ports.bool({ name: "record.last", label: "record.last" }),
+			ports["[]byte"]({ name: "record.out", label: "record.out" }),
+			ports.int64({ name: "record.pending", label: "record.pending" }),
+			ports.int64({ name: "records.idle", label: "records.idle" }),
 			ports.int64({ name: "socket.connection", label: "socket.connection" }),
 			ports.string({ name: "socket.frame.endpoint", label: "socket.frame.endpoint" }),
 			ports.int64({ name: "socket.frame.generation", label: "socket.frame.generation" }),

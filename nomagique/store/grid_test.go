@@ -87,6 +87,58 @@ func TestGridWrite(t *testing.T) {
 			return values, present
 		}
 
+		Convey("When one feed's reading is held for another's records", func() {
+			declare("ticker.data.last,held:ticker.data.last,futures.data.mark")
+
+			spot, err := sonic.Marshal(map[string]any{"channel": "ticker", "data": map[string]any{"last": 100.0}})
+			So(err, ShouldBeNil)
+			futures, err := sonic.Marshal(map[string]any{"channel": "futures", "data": map[string]any{"mark": 101.0}})
+			So(err, ShouldBeNil)
+
+			Convey("Then nothing is held before the field is ever carried", func() {
+				_, present := slots(futures)
+				So(present, ShouldResemble, []bool{false, false, true})
+
+				Convey("and once carried, the held reading rides along with the other feed", func() {
+					values, present := slots(spot)
+					So(present, ShouldResemble, []bool{true, true, false})
+					So(values[1], ShouldEqual, 100)
+
+					values, present = slots(futures)
+					So(present, ShouldResemble, []bool{false, true, true})
+					So(values[1], ShouldEqual, 100)
+					So(values[2], ShouldEqual, 101)
+				})
+			})
+		})
+
+		Convey("When a level 3 order book update is written", func() {
+			declare("level3.data.bid,level3.data.bid_qty,level3.data.ask,level3.data.ask_qty,level3.data.bids")
+
+			l3, err := sonic.Marshal(map[string]any{
+				"channel": "level3",
+				"data": map[string]any{
+					"symbol": "BTC/USD",
+					"bids": []any{
+						map[string]any{"limit_price": 50000.0, "order_qty": 1.5},
+						map[string]any{"limit_price": 49990.0, "order_qty": 2.0},
+					},
+					"asks": []any{
+						map[string]any{"limit_price": 50001.0, "order_qty": 3.0},
+					},
+				},
+			})
+			So(err, ShouldBeNil)
+
+			values, present := slots(l3)
+			So(present, ShouldResemble, []bool{true, true, true, true, true})
+			So(values[0], ShouldEqual, 50000.0)
+			So(values[1], ShouldEqual, 1.5)
+			So(values[2], ShouldEqual, 50001.0)
+			So(values[3], ShouldEqual, 3.0)
+			So(values[4], ShouldEqual, 3.5)
+		})
+
 		Convey("When data carrying every declared field is written", func() {
 			declare("trade.price,trade.qty")
 

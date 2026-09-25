@@ -33,6 +33,7 @@ type GridServer struct {
 	present   []bool
 	out       []byte
 	delivered int64
+	held      map[string]float64
 }
 
 func NewGrid(ctx context.Context) *GridServer {
@@ -192,6 +193,7 @@ func (server *GridServer) enter(args Grid_write_Params) error {
 	server.scope = scope
 	clear(server.metrics)
 	clear(server.observed)
+	server.held = nil
 	return nil
 }
 
@@ -341,7 +343,20 @@ func (server *GridServer) resolve(payload []byte) error {
 	// carried it, so a metric reads the slot it asked for rather than
 	// whichever field happened to land ahead of it.
 	for index, interest := range server.interests {
-		value, numeric := readInterest(resolved, interest)
+		field, keep := strings.CutPrefix(interest, heldPrefix)
+		value, numeric := readInterest(resolved, field)
+
+		if keep {
+			if numeric {
+				if server.held == nil {
+					server.held = make(map[string]float64)
+				}
+
+				server.held[field] = value
+			}
+
+			value, numeric = server.held[field]
+		}
 
 		if !numeric {
 			continue
@@ -394,6 +409,14 @@ func (server *GridServer) deliver(results Grid_done_Results) error {
 }
 
 /*
+heldPrefix marks an interest whose last reading the grid keeps: held:field is
+delivered with every record once any record has carried field, until a new
+scope starts a new series. It is how one feed's reading is read beside
+another's, which arrive on different records.
+*/
+const heldPrefix = "held:"
+
+/*
 resolveInterests collects whichever of the declared fields this data carries.
 
 One record comes from one feed and carries that feed's fields, so asking for
@@ -405,7 +428,7 @@ func resolveInterests(document any, interests []string) map[string]any {
 	resolved := make(map[string]any, len(interests))
 
 	for _, interest := range interests {
-		field, _, _ := strings.Cut(interest, "=")
+		field, _, _ := strings.Cut(strings.TrimPrefix(interest, heldPrefix), "=")
 		value, found := walkInterest(document, strings.Split(field, "."))
 
 		if !found {
@@ -434,6 +457,26 @@ func readInterest(resolved map[string]any, interest string) (float64, bool) {
 		switch value := resolved[interest].(type) {
 		case float64:
 			return value, true
+		case []any:
+			sum := 0.0
+
+			for _, item := range value {
+				order, ok := item.(map[string]any)
+
+				if ok {
+					qty, hasQty := order["order_qty"].(float64)
+
+					if hasQty {
+						sum += qty
+					}
+				}
+			}
+
+			if sum > 0 {
+				return sum, true
+			}
+
+			return float64(len(value)), true
 		case string:
 			// A time is read as the instant it names, in nanoseconds since
 			// the epoch, so a metric asking for a timestamp gets a number.
@@ -512,6 +555,54 @@ func walkInterest(document any, segments []string) (any, bool) {
 		}
 
 		next, found := object[segment]
+
+		if !found && segment == "bid" {
+			bids, ok := object["bids"].([]any)
+
+			if ok && len(bids) > 0 {
+				first, isObj := bids[0].(map[string]any)
+
+				if isObj {
+					next, found = first["limit_price"]
+				}
+			}
+		}
+
+		if !found && segment == "bid_qty" {
+			bids, ok := object["bids"].([]any)
+
+			if ok && len(bids) > 0 {
+				first, isObj := bids[0].(map[string]any)
+
+				if isObj {
+					next, found = first["order_qty"]
+				}
+			}
+		}
+
+		if !found && segment == "ask" {
+			asks, ok := object["asks"].([]any)
+
+			if ok && len(asks) > 0 {
+				first, isObj := asks[0].(map[string]any)
+
+				if isObj {
+					next, found = first["limit_price"]
+				}
+			}
+		}
+
+		if !found && segment == "ask_qty" {
+			asks, ok := object["asks"].([]any)
+
+			if ok && len(asks) > 0 {
+				first, isObj := asks[0].(map[string]any)
+
+				if isObj {
+					next, found = first["order_qty"]
+				}
+			}
+		}
 
 		if !found && hasMarket {
 			next, found = market[segment]

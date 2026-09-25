@@ -68,7 +68,7 @@
     },
     "records": {
       "id": "records",
-      "type": "data.CanonicalizeFutures",
+      "type": "kraken.Futures",
       "width": 280,
       "height": 172,
       "inputData": {},
@@ -81,7 +81,14 @@
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "records": [
+            {
+              "nodeId": "record",
+              "portName": "data"
+            }
+          ]
+        }
       },
       "x": 300,
       "y": 0
@@ -124,6 +131,30 @@
             }
           ]
         }
+      }
+    },
+    "record": {
+      "id": "record",
+      "type": "data.Iterate",
+      "width": 240,
+      "height": 120,
+      "x": 600,
+      "y": 0,
+      "inputData": {
+        "path": {
+          "value": ""
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "records",
+              "portName": "records"
+            }
+          ]
+        },
+        "outputs": {}
       }
     }
   }

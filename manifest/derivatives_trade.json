@@ -38,16 +38,12 @@
         "outputs": {
           "out": [
             {
-              "nodeId": "liquidationNotional:buy",
-              "portName": "a"
-            },
-            {
-              "nodeId": "liquidationNotional:sell",
-              "portName": "a"
-            },
-            {
               "nodeId": "gross_derivative_trade_notional",
               "portName": "value"
+            },
+            {
+              "nodeId": "liquidatedNotional",
+              "portName": "a"
             }
           ]
         }
@@ -172,15 +168,15 @@
       "y": -300.0,
       "connections": {
         "inputs": {
-          "a": [
-            {
-              "nodeId": "tradeNotional",
-              "portName": "out"
-            }
-          ],
           "b": [
             {
               "nodeId": "buyIndicator",
+              "portName": "out"
+            }
+          ],
+          "a": [
+            {
+              "nodeId": "liquidatedNotional",
               "portName": "out"
             }
           ]
@@ -242,15 +238,15 @@
       "y": -150.0,
       "connections": {
         "inputs": {
-          "a": [
-            {
-              "nodeId": "tradeNotional",
-              "portName": "out"
-            }
-          ],
           "b": [
             {
               "nodeId": "sellIndicator",
+              "portName": "out"
+            }
+          ],
+          "a": [
+            {
+              "nodeId": "liquidatedNotional",
               "portName": "out"
             }
           ]
@@ -683,6 +679,37 @@
           ]
         },
         "outputs": {}
+      }
+    },
+    "liquidatedNotional": {
+      "id": "liquidatedNotional",
+      "type": "arithmetic.Multiply",
+      "width": 240,
+      "height": 120,
+      "x": -1200.0,
+      "y": -300.0,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "tradeNotional",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "liquidationNotional:buy",
+              "portName": "a"
+            },
+            {
+              "nodeId": "liquidationNotional:sell",
+              "portName": "a"
+            }
+          ]
+        }
       }
     }
   }

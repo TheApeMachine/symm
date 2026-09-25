@@ -32,6 +32,10 @@ using import "radix.capnp".Retained;
 # evaluation began. That is what lets the same grid feed the metrics and
 # collect them, without the two closing a cycle around each other.
 #
+# An interest written held:field keeps the last reading of field: once any
+# record has carried it, it is delivered with every record, so a reading from
+# one feed can be read beside another feed's. A new scope forgets it.
+#
 # scope names the series the written data belongs to; like data it gathers,
 # and every scope written together must agree. A new scope starts the grid
 # from no retained readings, so nothing observed under one series is handed

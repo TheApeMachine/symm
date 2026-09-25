@@ -105,7 +105,7 @@
         "path": {
           "value": "data.pairs"
         },
-        "envelope": {
+        "whole": {
           "value": true
         }
       },
@@ -119,16 +119,10 @@
           ]
         },
         "outputs": {
-          "out": [
+          "all": [
             {
-              "nodeId": "selection",
+              "nodeId": "usd",
               "portName": "data"
-            }
-          ],
-          "last": [
-            {
-              "nodeId": "symbols",
-              "portName": "flush"
             }
           ]
         }
@@ -136,15 +130,15 @@
       "x": 600,
       "y": 0
     },
-    "selection": {
-      "id": "selection",
-      "type": "data.Insert",
+    "usd": {
+      "id": "usd",
+      "type": "data.Where",
       "inputData": {
         "path": {
-          "value": "_selection"
+          "value": "quote"
         },
-        "json": {
-          "value": "{\"quote\":\"USD\",\"status\":\"online\"}"
+        "value": {
+          "value": "\"USD\""
         }
       },
       "connections": {
@@ -152,45 +146,7 @@
           "data": [
             {
               "nodeId": "pairs",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "usd",
-              "portName": "data"
-            }
-          ]
-        }
-      },
-      "x": 900,
-      "y": 0
-    },
-    "usd": {
-      "id": "usd",
-      "type": "data.Filter",
-      "inputData": {
-        "path": {
-          "value": "data.pairs.quote"
-        },
-        "operator": {
-          "value": "=="
-        },
-        "threshold": {
-          "value": 0
-        },
-        "referencePath": {
-          "value": "_selection.quote"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "selection",
-              "portName": "out"
+              "portName": "all"
             }
           ]
         },
@@ -203,24 +159,18 @@
           ]
         }
       },
-      "x": 1200,
+      "x": 900,
       "y": 0
     },
     "online": {
       "id": "online",
-      "type": "data.Filter",
+      "type": "data.Where",
       "inputData": {
         "path": {
-          "value": "data.pairs.status"
+          "value": "status"
         },
-        "operator": {
-          "value": "=="
-        },
-        "threshold": {
-          "value": 0
-        },
-        "referencePath": {
-          "value": "_selection.status"
+        "value": {
+          "value": "\"online\""
         }
       },
       "connections": {
@@ -235,315 +185,14 @@
         "outputs": {
           "out": [
             {
-              "nodeId": "pair_symbol",
+              "nodeId": "symbols",
               "portName": "data"
-            },
-            {
-              "nodeId": "connection",
-              "portName": "data"
-            },
-            {
-              "nodeId": "unrequested",
-              "portName": "no"
-            }
-          ]
-        }
-      },
-      "x": 1500,
-      "y": 0
-    },
-    "pair_symbol": {
-      "id": "pair_symbol",
-      "type": "data.Extract",
-      "inputData": {
-        "path": {
-          "value": "data.pairs.symbol"
-        },
-        "encoding": {
-          "value": "json"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "online",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "json": [
-            {
-              "nodeId": "key_symbol",
-              "portName": "json"
-            }
-          ]
-        }
-      },
-      "x": 1800,
-      "y": 0
-    },
-    "connection": {
-      "id": "connection",
-      "type": "data.Extract",
-      "inputData": {
-        "path": {
-          "value": "_connection"
-        },
-        "encoding": {
-          "value": "json"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "online",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "json": [
-            {
-              "nodeId": "key_generation",
-              "portName": "json"
-            }
-          ]
-        }
-      },
-      "x": 2100,
-      "y": 0
-    },
-    "key_symbol": {
-      "id": "key_symbol",
-      "type": "data.Insert",
-      "inputData": {
-        "path": {
-          "value": "symbol"
-        },
-        "data": {
-          "value": "{}"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "json": [
-            {
-              "nodeId": "pair_symbol",
-              "portName": "json"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "key_generation",
-              "portName": "data"
-            }
-          ]
-        }
-      },
-      "x": 0,
-      "y": 200
-    },
-    "key_generation": {
-      "id": "key_generation",
-      "type": "data.Insert",
-      "inputData": {
-        "path": {
-          "value": "generation"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "key_symbol",
-              "portName": "out"
-            }
-          ],
-          "json": [
-            {
-              "nodeId": "connection",
-              "portName": "json"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "key_document",
-              "portName": "json"
-            }
-          ]
-        }
-      },
-      "x": 300,
-      "y": 200
-    },
-    "key_document": {
-      "id": "key_document",
-      "type": "data.Insert",
-      "inputData": {
-        "data": {
-          "value": "{}"
-        },
-        "path": {
-          "value": "key"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "json": [
-            {
-              "nodeId": "key_generation",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "key",
-              "portName": "data"
-            }
-          ]
-        }
-      },
-      "x": 600,
-      "y": 200
-    },
-    "key": {
-      "id": "key",
-      "type": "data.Extract",
-      "inputData": {
-        "path": {
-          "value": "key"
-        },
-        "encoding": {
-          "value": "json-text"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "key_document",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "text": [
-            {
-              "nodeId": "requested",
-              "portName": "key_0"
-            }
-          ]
-        }
-      },
-      "x": 900,
-      "y": 200
-    },
-    "requested": {
-      "id": "requested",
-      "type": "store.Radix",
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "key_0": [
-            {
-              "nodeId": "key",
-              "portName": "text"
-            }
-          ],
-          "value_0": [
-            {
-              "nodeId": "remember",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "found_0": [
-            {
-              "nodeId": "unrequested",
-              "portName": "test"
             }
           ]
         }
       },
       "x": 1200,
-      "y": 200
-    },
-    "unrequested": {
-      "id": "unrequested",
-      "type": "controlflow.Select",
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "test": [
-            {
-              "nodeId": "requested",
-              "portName": "found_0"
-            }
-          ],
-          "no": [
-            {
-              "nodeId": "online",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "symbol",
-              "portName": "data"
-            }
-          ]
-        }
-      },
-      "x": 1500,
-      "y": 200
-    },
-    "symbol": {
-      "id": "symbol",
-      "type": "data.Extract",
-      "inputData": {
-        "path": {
-          "value": "data.pairs.symbol"
-        },
-        "encoding": {
-          "value": "json"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "unrequested",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "json": [
-            {
-              "nodeId": "symbols",
-              "portName": "data_0"
-            },
-            {
-              "nodeId": "remember",
-              "portName": "json"
-            }
-          ]
-        }
-      },
-      "x": 1800,
-      "y": 200
+      "y": 0
     },
     "ticker": {
       "id": "ticker",
@@ -607,38 +256,6 @@
         }
       },
       "x": 0,
-      "y": 400
-    },
-    "remember": {
-      "id": "remember",
-      "type": "data.Insert",
-      "inputData": {
-        "data": {
-          "value": "{}"
-        },
-        "path": {
-          "value": "symbol"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "json": [
-            {
-              "nodeId": "symbol",
-              "portName": "json"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "requested",
-              "portName": "value_0"
-            }
-          ]
-        }
-      },
-      "x": 300,
       "y": 400
     },
     "records": {
@@ -885,20 +502,18 @@
     },
     "symbols": {
       "id": "symbols",
-      "type": "data.Collect",
-      "inputData": {},
+      "type": "data.Pluck",
+      "inputData": {
+        "path": {
+          "value": "symbol"
+        }
+      },
       "connections": {
         "inputs": {
-          "data_0": [
+          "data": [
             {
-              "nodeId": "symbol",
-              "portName": "json"
-            }
-          ],
-          "flush": [
-            {
-              "nodeId": "pairs",
-              "portName": "last"
+              "nodeId": "online",
+              "portName": "out"
             }
           ]
         },
@@ -915,8 +530,8 @@
           ]
         }
       },
-      "x": 1900,
-      "y": 400
+      "x": 1500,
+      "y": 0
     },
     "socket_received": {
       "id": "socket_received",

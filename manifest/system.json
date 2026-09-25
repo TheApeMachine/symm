@@ -121,12 +121,6 @@
       "inputData": {},
       "connections": {
         "inputs": {
-          "grid.data_2": [
-            {
-              "nodeId": "futures",
-              "portName": "records.out"
-            }
-          ],
           "grid.data_0": [
             {
               "nodeId": "focus_spot",
@@ -137,6 +131,12 @@
             {
               "nodeId": "focus_level3",
               "portName": "out"
+            }
+          ],
+          "grid.data_2": [
+            {
+              "nodeId": "futures",
+              "portName": "record.out"
             }
           ]
         },
@@ -699,7 +699,7 @@
               "portName": "receivedAt_2"
             }
           ],
-          "records.out": [
+          "record.out": [
             {
               "nodeId": "signals",
               "portName": "grid.data_2"
