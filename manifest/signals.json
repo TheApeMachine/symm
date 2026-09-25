@@ -11972,6 +11972,11 @@
           ]
         },
         "outputs": {}
+      },
+      "inputData": {
+        "families": {
+          "value": "[{\"name\": \"correlation_ticker\", \"count\": 33}, {\"name\": \"cvd_trade\", \"count\": 38}, {\"name\": \"depthflow_level3\", \"count\": 15}, {\"name\": \"derivatives_ticker\", \"count\": 22}, {\"name\": \"derivatives_trade\", \"count\": 9}, {\"name\": \"hawkes_trade\", \"count\": 61}, {\"name\": \"leadlag_ticker\", \"count\": 27}, {\"name\": \"liquidity_ticker\", \"count\": 29}, {\"name\": \"morphology_level3\", \"count\": 12}, {\"name\": \"pumpdump_level3\", \"count\": 8}, {\"name\": \"pumpdump_ticker\", \"count\": 18}, {\"name\": \"pumpdump_trade\", \"count\": 20}, {\"name\": \"sentiment_ticker\", \"count\": 58}, {\"name\": \"toxicity_level3\", \"count\": 43}, {\"name\": \"toxicity_trade\", \"count\": 18}]"
+        }
       }
     }
   }

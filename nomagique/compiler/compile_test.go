@@ -581,7 +581,7 @@ func TestCompileTraining(t *testing.T) {
 				}
 				So(kinds["store.Capture"], ShouldEqual, 1)
 				So(kinds["tables.IcebergTable"], ShouldEqual, 1)
-				So(kinds["websocket.WebSocketClient"], ShouldEqual, 3)
+				So(kinds["websocket.WebSocketClient"], ShouldEqual, 5)
 				continue
 			}
 
@@ -1107,6 +1107,18 @@ func TestCompileTrainingPaper(t *testing.T) {
 		replay := graph.Nodes["replay"]
 		replay.InputData = map[string]json.RawMessage{"input.through": configured}
 		graph.Nodes["replay"] = replay
+
+		signalsNode := graph.Nodes["signals"]
+		if signalsNode.InputData == nil {
+			signalsNode.InputData = make(map[string]json.RawMessage)
+		}
+		configuredFamilies, err := json.Marshal(map[string]string{
+			"value": "correlation_ticker,depthflow_level3,leadlag_ticker,liquidity_ticker,morphology_level3,pumpdump_level3,pumpdump_ticker,sentiment_ticker,toxicity_level3",
+		})
+		So(err, ShouldBeNil)
+		signalsNode.InputData["gather.families"] = configuredFamilies
+		graph.Nodes["signals"] = signalsNode
+
 		registry := compiler.DefaultRegistry()
 		registry.Register("tables.IcebergTable", compiler.Factory{InterfaceID: tables.IcebergTable_TypeID, New: func(ctx context.Context, config []byte) (capnp.Client, error) {
 			writer := tables.NewIcebergTable()

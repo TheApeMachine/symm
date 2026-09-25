@@ -33,7 +33,7 @@ PolicyBranches lists the trie's recorded paths: each path signature, how deep
 it runs, how often it was taken, and the action most of those visits carried.
 */
 export const PolicyBranches = ({
-	title = "Radix Trie Memory (Active Branches)",
+	title = "Supervised Precursor Examples (Active Branches)",
 	branches,
 	className,
 	...props

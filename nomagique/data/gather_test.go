@@ -2,6 +2,7 @@ package data_test
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -87,6 +88,81 @@ func TestGather(t *testing.T) {
 				return err
 			}), ShouldBeNil)
 			So(client.WaitStreaming(), ShouldNotBeNil)
+		})
+	})
+
+	Convey("Given numbers gathered with declared signal families", t, func() {
+		client := data.Gather_ServerToClient(data.NewGather())
+		defer client.Release()
+
+		familiesJSON := `[{"name":"ticker_fam","count":2},{"name":"trade_fam","count":2}]`
+
+		step := func(values []float64, present []bool) (bool, string, map[string]any) {
+			So(client.Write(ctx, func(params data.Gather_write_Params) error {
+				numbers, err := params.NewValues(int32(len(values)))
+				So(err, ShouldBeNil)
+				flags, err := params.NewPresent(int32(len(present)))
+				So(err, ShouldBeNil)
+
+				for slot := range values {
+					numbers.Set(slot, values[slot])
+					flags.Set(slot, present[slot])
+				}
+
+				So(params.SetFamilies(familiesJSON), ShouldBeNil)
+				return nil
+			}), ShouldBeNil)
+			So(client.WaitStreaming(), ShouldBeNil)
+
+			future, release := client.Done(ctx, nil)
+			defer release()
+
+			results, err := future.Struct()
+			So(err, ShouldBeNil)
+
+			phase, err := results.Phase()
+			So(err, ShouldBeNil)
+
+			readinessBytes, err := results.Readiness()
+			So(err, ShouldBeNil)
+
+			var meta map[string]any
+			So(json.Unmarshal(readinessBytes, &meta), ShouldBeNil)
+
+			isGathered := results.Which() == data.Gathered_Which_gathered
+			return isGathered, phase, meta
+		}
+
+		Convey("Phase 1: stays idle while only a subset of families has contributed", func() {
+			gathered, phase, meta := step([]float64{10, 20, 0, 0}, []bool{true, true, false, false})
+			So(gathered, ShouldBeFalse)
+			So(phase, ShouldEqual, "WARMING_SIGNALS")
+			So(meta["ready"], ShouldEqual, false)
+			So(meta["contributing"], ShouldEqual, 1)
+			So(meta["total"], ShouldEqual, 2)
+			So(meta["missing"], ShouldResemble, []any{"trade_fam"})
+		})
+
+		Convey("Phase 2: once all families contribute, map formation begins and stays ready", func() {
+			// Step 1: ticker_fam contributes
+			gathered, phase, _ := step([]float64{10, 20, 0, 0}, []bool{true, true, false, false})
+			So(gathered, ShouldBeFalse)
+			So(phase, ShouldEqual, "WARMING_SIGNALS")
+
+			// Step 2: trade_fam contributes
+			gathered, phase, meta := step([]float64{0, 0, 30, 40}, []bool{false, false, true, true})
+			So(gathered, ShouldBeTrue)
+			So(phase, ShouldEqual, "FORMING_MAP")
+			So(meta["ready"], ShouldEqual, true)
+			So(meta["contributing"], ShouldEqual, 2)
+			So(meta["missing"], ShouldBeEmpty)
+
+			// Step 3: asynchronous arrival with only ticker present retains readiness
+			gathered, phase, meta = step([]float64{15, 25, 0, 0}, []bool{true, true, false, false})
+			So(gathered, ShouldBeTrue)
+			So(phase, ShouldEqual, "FORMING_MAP")
+			So(meta["ready"], ShouldEqual, true)
+			So(meta["contributing"], ShouldEqual, 2)
 		})
 	})
 }

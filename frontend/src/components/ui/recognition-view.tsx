@@ -21,6 +21,9 @@ export interface RecognitionMetrics {
 	resolved?: number | string;
 	edge?: number;
 	action?: number | string;
+	predictedAction?: number | string;
+	predictedConfidence?: number;
+	truthAction?: number | string;
 	input_count?: number | string;
 	invalid_inputs?: number | string;
 }
@@ -52,10 +55,18 @@ export const RecognitionView = ({
 		"2": "EXIT",
 		"3": "RETREAT",
 	};
-	const actionLabel =
-		actionVal === undefined
-			? "—"
-			: (actionLabels[String(actionVal)] ?? `Unknown action ${actionVal}`);
+
+	const formatAction = (val?: number | string) => {
+		if (val === undefined || val === null || val === "" || val === "—") return "—";
+		return actionLabels[String(val)] ?? String(val);
+	};
+
+	const predictedVal = metricMap.predictedAction;
+	const confidenceVal = metricMap.predictedConfidence;
+	const truthVal = metricMap.truthAction ?? (predictedVal === undefined ? actionVal : undefined);
+
+	const predictedLabel = formatAction(predictedVal ?? (truthVal === undefined ? actionVal : undefined));
+	const truthLabel = formatAction(truthVal);
 
 	return (
 		<div
@@ -71,7 +82,7 @@ export const RecognitionView = ({
 						<Typography.Label size="s" tone="f4" weight="normal">
 							CAUSAL PRECURSOR RECOGNITION
 						</Typography.Label>
-						<Badge variant="info" label="VOLUME-CLOCK OBSERVER" size="s" />
+						<Badge variant="info" label="MARKET OBSERVER" size="s" />
 					</div>
 					<Typography.Mono size="s" tone="f4">
 						{steps === undefined ? "—" : steps.toLocaleString()} frames observed
@@ -80,7 +91,7 @@ export const RecognitionView = ({
 
 				<div className="grid grid-cols-2 gap-4 md:grid-cols-6 pt-1">
 					<Stat
-						label="Learned Situations"
+						label="Precursor Observations"
 						value={decisions === undefined ? "—" : decisions.toLocaleString()}
 					/>
 					<Stat
@@ -120,34 +131,56 @@ export const RecognitionView = ({
 					</div>
 
 					<div className="flex flex-1 flex-col gap-4 p-4 overflow-hidden">
-						<div>
-							<Typography.Label size="s" tone="f4" weight="normal">
-								ACTIVE POLICY ACTION
-							</Typography.Label>
-							<div className="mt-1 flex items-center gap-3">
-								<Badge
-									size="m"
-									variant={
-										actionLabel === "ENTER"
-											? "success"
-											: actionLabel === "EXIT"
-												? "error"
-												: "warning"
-									}
-									label={actionLabel}
-									dot
-								/>
-								<span className="font-bold text-(--f1) text-base">
-									{edge !== undefined ? basis(edge) : "—"} edge
-								</span>
+						<div className="flex flex-col gap-3">
+							<div>
+								<Typography.Label size="s" tone="f4" weight="normal">
+									PREDICTED POLICY ACTION
+								</Typography.Label>
+								<div className="mt-1 flex items-center gap-3">
+									<Badge
+										size="m"
+										variant={
+											predictedLabel === "ENTER"
+												? "success"
+												: predictedLabel === "EXIT"
+													? "error"
+													: predictedLabel === "WAIT"
+														? "neutral"
+														: "warning"
+										}
+										label={`PREDICTED: ${predictedLabel}`}
+										dot
+									/>
+									<span className="text-(--f3) text-xs">
+										conf: {confidenceVal !== undefined ? percent(confidenceVal) : "—"}
+									</span>
+									<span className="font-bold text-(--f1) text-xs ml-auto">
+										{edge !== undefined ? basis(edge) : "—"} edge
+									</span>
+								</div>
 							</div>
-							<Typography.Mono
-								size="s"
-								tone="f4"
-								className="mt-2 text-[10.5px] leading-relaxed"
-							>
-								Policy and outcome measurements supplied by the producer.
-							</Typography.Mono>
+
+							<div className="border-t border-(--line)/40 pt-2">
+								<Typography.Label size="s" tone="f4" weight="normal">
+									SUPERVISED TRUTH
+								</Typography.Label>
+								<div className="mt-1 flex items-center gap-3">
+									<Badge
+										size="s"
+										variant={
+											truthLabel === "ENTER"
+												? "success"
+												: truthLabel === "EXIT"
+													? "error"
+													: "neutral"
+										}
+										label={`TRUTH: ${truthLabel}`}
+									/>
+									<Typography.Mono size="s" tone="f4" className="text-[10px]">
+										Training truth supplied by the excursion grader
+									</Typography.Mono>
+								</div>
+							</div>
 						</div>
 
 						<div className="border-t border-(--line) pt-4">

@@ -13,6 +13,7 @@ import (
 	"math/rand"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -67,11 +68,13 @@ with a status frame, beats, rate limits one symbol once and records every
 subscription it accepts.
 */
 type fakeKraken struct {
-	mu         sync.Mutex
-	accepted   []string
-	tokens     []string
-	limited    bool
-	signatures int
+	mu                sync.Mutex
+	accepted          []string
+	tokens            []string
+	limited           bool
+	signatures        int
+	connections       int
+	connectionSymbols map[int][]string
 }
 
 func (venue *fakeKraken) tokenServer(key string, secret []byte) *httptest.Server {
@@ -109,6 +112,15 @@ func (venue *fakeKraken) socketServer() *httptest.Server {
 			return
 		}
 		defer connection.Close()
+
+		venue.mu.Lock()
+		connID := venue.connections
+		venue.connections++
+		if venue.connectionSymbols == nil {
+			venue.connectionSymbols = make(map[int][]string)
+		}
+		venue.mu.Unlock()
+
 		var write sync.Mutex
 		send := func(frame string) error {
 			write.Lock()
@@ -172,6 +184,7 @@ func (venue *fakeKraken) socketServer() *httptest.Server {
 			if !limit {
 				venue.accepted = append(venue.accepted, symbol)
 				venue.tokens = append(venue.tokens, message.Params.Token)
+				venue.connectionSymbols[connID] = append(venue.connectionSymbols[connID], symbol)
 			}
 			venue.mu.Unlock()
 
@@ -201,7 +214,18 @@ func TestLiveLevel3Manifest(t *testing.T) {
 			"wss://ws-l3.kraken.com/v2", "ws"+strings.TrimPrefix(sockets.URL, "http"),
 			"https://api.kraken.com", tokens.URL,
 		).Replace(string(raw))
-		program, err := CompileJSON([]byte(document), nil, NewRepository())
+
+		shardRaw, err := manifest.ReadFile("live_level3_shard")
+		So(err, ShouldBeNil)
+		shardDoc := strings.NewReplacer(
+			"wss://ws-l3.kraken.com/v2", "ws"+strings.TrimPrefix(sockets.URL, "http"),
+			"https://api.kraken.com", tokens.URL,
+		).Replace(string(shardRaw))
+
+		repo := NewRepository()
+		So(repo.Save("live_level3_shard", []byte(shardDoc)), ShouldBeNil)
+
+		program, err := CompileJSON([]byte(document), nil, repo)
 		So(err, ShouldBeNil)
 		defer program.Release()
 
@@ -232,6 +256,96 @@ func TestLiveLevel3Manifest(t *testing.T) {
 			So(venue.signatures, ShouldEqual, 1)
 			So(venue.accepted, ShouldResemble, []string{"BTC/USD", "ETH/USD", "RATE/USD"})
 			So(venue.tokens, ShouldResemble, []string{"issued-token", "issued-token", "issued-token"})
+		})
+	})
+}
+
+func TestLiveLevel3Manifest_Sharded451(t *testing.T) {
+	Convey("Given 451 online USD symbols across the sharded level 3 ingress graph", t, func() {
+		secret := []byte("level three secret")
+		t.Setenv("L3_API_KEY", "level-three-key")
+		t.Setenv("L3_API_SECRET", base64.StdEncoding.EncodeToString(secret))
+		venue := &fakeKraken{}
+		tokens := venue.tokenServer("level-three-key", secret)
+		defer tokens.Close()
+		sockets := venue.socketServer()
+		defer sockets.Close()
+
+		raw, err := manifest.ReadFile("live_level3")
+		So(err, ShouldBeNil)
+		document := strings.NewReplacer(
+			"wss://ws-l3.kraken.com/v2", "ws"+strings.TrimPrefix(sockets.URL, "http"),
+			"https://api.kraken.com", tokens.URL,
+		).Replace(string(raw))
+
+		shardRaw, err := manifest.ReadFile("live_level3_shard")
+		So(err, ShouldBeNil)
+		shardDoc := strings.NewReplacer(
+			"wss://ws-l3.kraken.com/v2", "ws"+strings.TrimPrefix(sockets.URL, "http"),
+			"https://api.kraken.com", tokens.URL,
+		).Replace(string(shardRaw))
+
+		repo := NewRepository()
+		So(repo.Save("live_level3_shard", []byte(shardDoc)), ShouldBeNil)
+
+		program, err := CompileJSON([]byte(document), nil, repo)
+		So(err, ShouldBeNil)
+		defer program.Release()
+
+		// Generate 451 distinct symbols with RATE/USD in shard 0
+		symbolList := make([]string, 451)
+		for i := 0; i < 451; i++ {
+			if i == 50 {
+				symbolList[i] = "RATE/USD"
+			} else {
+				symbolList[i] = fmt.Sprintf("SYM%03d/USD", i)
+			}
+		}
+
+		symbolsJSON, err := json.Marshal(symbolList)
+		So(err, ShouldBeNil)
+
+		_, segment, err := capnp.NewMessage(capnp.SingleSegment(nil))
+		So(err, ShouldBeNil)
+		symbols, err := transport.NewFan_write_Params(segment)
+		So(err, ShouldBeNil)
+		So(symbols.SetData(symbolsJSON), ShouldBeNil)
+		So(program.Execute(context.Background(), map[NodeID]capnp.Struct{program.NodeMap["symbols"]: capnp.Struct(symbols)}), ShouldBeNil)
+
+		deadline := time.Now().Add(10 * time.Second)
+
+		for time.Now().Before(deadline) {
+			So(program.Execute(context.Background(), nil), ShouldBeNil)
+			venue.mu.Lock()
+			done := len(venue.accepted) == 451
+			venue.mu.Unlock()
+
+			if done {
+				break
+			}
+			time.Sleep(2 * time.Millisecond)
+		}
+
+		Convey("Then exactly 3 physical connections are created with 200 / 200 / 51 membership", func() {
+			venue.mu.Lock()
+			defer venue.mu.Unlock()
+			So(venue.connections, ShouldEqual, 3)
+			lengths := []int{
+				len(venue.connectionSymbols[0]),
+				len(venue.connectionSymbols[1]),
+				len(venue.connectionSymbols[2]),
+			}
+			sort.Ints(lengths)
+			So(lengths, ShouldResemble, []int{51, 200, 200})
+			So(len(venue.accepted), ShouldEqual, 451)
+			So(venue.limited, ShouldBeTrue)
+
+			seen := make(map[string]bool)
+			for _, s := range venue.accepted {
+				So(seen[s], ShouldBeFalse)
+				seen[s] = true
+			}
+			So(len(seen), ShouldEqual, 451)
 		})
 	})
 }

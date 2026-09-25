@@ -37,12 +37,12 @@ func (w Gathered_Which) String() string {
 const Gathered_TypeID = 0xe611e8aaeb8460b8
 
 func NewGathered(s *capnp.Segment) (Gathered, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 2})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 4})
 	return Gathered(st), err
 }
 
 func NewRootGathered(s *capnp.Segment) (Gathered, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 2})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 4})
 	return Gathered(st), err
 }
 
@@ -82,6 +82,37 @@ func (s Gathered) Message() *capnp.Message {
 func (s Gathered) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s Gathered) Readiness() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(2)
+	return []byte(p.Data()), err
+}
+
+func (s Gathered) HasReadiness() bool {
+	return capnp.Struct(s).HasPtr(2)
+}
+
+func (s Gathered) SetReadiness(v []byte) error {
+	return capnp.Struct(s).SetData(2, v)
+}
+
+func (s Gathered) Phase() (string, error) {
+	p, err := capnp.Struct(s).Ptr(3)
+	return p.Text(), err
+}
+
+func (s Gathered) HasPhase() bool {
+	return capnp.Struct(s).HasPtr(3)
+}
+
+func (s Gathered) PhaseBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(3)
+	return p.TextBytes(), err
+}
+
+func (s Gathered) SetPhase(v string) error {
+	return capnp.Struct(s).SetText(3, v)
+}
+
 func (s Gathered) SetIdle() {
 	capnp.Struct(s).SetUint16(0, 0)
 
@@ -156,7 +187,7 @@ type Gathered_List = capnp.StructList[Gathered]
 
 // NewGathered creates a new list of Gathered.
 func NewGathered_List(s *capnp.Segment, sz int32) (Gathered_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 2}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 4}, sz)
 	return capnp.StructList[Gathered](l), err
 }
 
@@ -194,7 +225,7 @@ func (c Gather) Write(ctx context.Context, params func(Gather_write_Params) erro
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 2}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 3}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(Gather_write_Params(s)) }
 	}
 
@@ -376,7 +407,7 @@ func (c Gather_done) Args() Gather_done_Params {
 
 // AllocResults allocates the results struct.
 func (c Gather_done) AllocResults() (Gathered, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 2})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 4})
 	return Gathered(r), err
 }
 
@@ -395,12 +426,12 @@ type Gather_write_Params capnp.Struct
 const Gather_write_Params_TypeID = 0xa68fad2ad7113eb0
 
 func NewGather_write_Params(s *capnp.Segment) (Gather_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 3})
 	return Gather_write_Params(st), err
 }
 
 func NewRootGather_write_Params(s *capnp.Segment) (Gather_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 3})
 	return Gather_write_Params(st), err
 }
 
@@ -482,13 +513,30 @@ func (s Gather_write_Params) NewPresent(n int32) (capnp.BitList, error) {
 	err = capnp.Struct(s).SetPtr(1, l.ToPtr())
 	return l, err
 }
+func (s Gather_write_Params) Families() (string, error) {
+	p, err := capnp.Struct(s).Ptr(2)
+	return p.Text(), err
+}
+
+func (s Gather_write_Params) HasFamilies() bool {
+	return capnp.Struct(s).HasPtr(2)
+}
+
+func (s Gather_write_Params) FamiliesBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(2)
+	return p.TextBytes(), err
+}
+
+func (s Gather_write_Params) SetFamilies(v string) error {
+	return capnp.Struct(s).SetText(2, v)
+}
 
 // Gather_write_Params_List is a list of Gather_write_Params.
 type Gather_write_Params_List = capnp.StructList[Gather_write_Params]
 
 // NewGather_write_Params creates a new list of Gather_write_Params.
 func NewGather_write_Params_List(s *capnp.Segment, sz int32) (Gather_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 3}, sz)
 	return capnp.StructList[Gather_write_Params](l), err
 }
 

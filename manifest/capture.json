@@ -58,19 +58,19 @@
           ]
         },
         "outputs": {
-          "socket.frame.read": [
+          "shard_0.socket.frame.read": [
             {
               "nodeId": "envelope",
               "portName": "payload_1"
             }
           ],
-          "socket.frame.endpoint": [
+          "shard_0.socket.frame.endpoint": [
             {
               "nodeId": "envelope",
               "portName": "endpoint_1"
             }
           ],
-          "socket.frame.receivedAt": [
+          "shard_0.socket.frame.receivedAt": [
             {
               "nodeId": "envelope",
               "portName": "receivedAt_1"
@@ -142,19 +142,19 @@
           "payload_1": [
             {
               "nodeId": "level3",
-              "portName": "socket.frame.read"
+              "portName": "shard_0.socket.frame.read"
             }
           ],
           "endpoint_1": [
             {
               "nodeId": "level3",
-              "portName": "socket.frame.endpoint"
+              "portName": "shard_0.socket.frame.endpoint"
             }
           ],
           "receivedAt_1": [
             {
               "nodeId": "level3",
-              "portName": "socket.frame.receivedAt"
+              "portName": "shard_0.socket.frame.receivedAt"
             }
           ],
           "payload_2": [

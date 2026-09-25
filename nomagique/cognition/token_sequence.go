@@ -76,11 +76,15 @@ func (server *TokenSequenceServer) Write(ctx context.Context, call TokenSequence
 	}
 
 	if len(incomingTokens) > 0 {
+		tokenStr := strings.Join(incomingTokens, ",")
 		existing := server.history[scope]
-		updated := make([]string, len(existing)+1)
-		copy(updated, existing)
-		updated[len(existing)] = strings.Join(incomingTokens, ",")
-		server.history[scope] = updated
+
+		if len(existing) == 0 || existing[len(existing)-1] != tokenStr {
+			updated := make([]string, len(existing)+1)
+			copy(updated, existing)
+			updated[len(existing)] = tokenStr
+			server.history[scope] = updated
+		}
 	}
 
 	updated := server.history[scope]

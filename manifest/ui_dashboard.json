@@ -246,6 +246,25 @@
         }
       }
     },
+    "edge_strength": {
+      "id": "edge_strength",
+      "type": "data.Array",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 2400.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "links",
+              "portName": "columns_2"
+            }
+          ]
+        }
+      }
+    },
     "points": {
       "id": "points",
       "type": "data.Columns",
@@ -382,6 +401,12 @@
               "nodeId": "edge_to",
               "portName": "out"
             }
+          ],
+          "columns_2": [
+            {
+              "nodeId": "edge_strength",
+              "portName": "out"
+            }
           ]
         },
         "outputs": {
@@ -395,7 +420,7 @@
       },
       "inputData": {
         "names": {
-          "value": "from,to"
+          "value": "from,to,strength"
         }
       }
     },

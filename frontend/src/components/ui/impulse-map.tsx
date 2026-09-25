@@ -38,6 +38,7 @@ export interface ImpulseContour {
 export interface ImpulseConnection {
 	from: number;
 	to: number;
+	strength?: number;
 }
 
 export type ImpulseMapProps = Omit<
@@ -45,11 +46,13 @@ export type ImpulseMapProps = Omit<
 	"children"
 > & {
 	points?: ImpulsePoint[];
-	/** The hot regions: those above the action threshold (Otsu split). */
+	/** The hot regions: those above the hot-region split (Otsu split). */
 	regions?: ImpulseRegion[];
 	contours?: ImpulseContour[];
 	connections?: ImpulseConnection[];
 	title?: string;
+	/** Ingress bootstrap lifecycle phase: WARMING_SIGNALS, FORMING_MAP, SETTLED */
+	phase?: string;
 	/**
 	 * Drawing extent in producer coordinate units, centered at the origin.
 	 * Without one the drawing fits the supplied points.
@@ -90,6 +93,7 @@ export const ImpulseMap = ({
 	contours,
 	connections,
 	title = "Map",
+	phase,
 	viewport,
 	className,
 	...props
@@ -141,6 +145,24 @@ export const ImpulseMap = ({
 					{title}
 				</span>
 				<Flex.Row className="items-center gap-3">
+					{phase && (
+						<span
+							className={cn(
+								"rounded px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wider",
+								phase === "SETTLED"
+									? "bg-(--up)/15 text-(--up) border border-(--up)/30"
+									: phase === "FORMING_MAP"
+										? "bg-(--acc)/15 text-(--acc) border border-(--acc)/30"
+										: "bg-(--warning)/15 text-(--warning) border border-(--warning)/30",
+							)}
+						>
+							{phase === "SETTLED"
+								? "SETTLED"
+								: phase === "FORMING_MAP"
+									? "FORMING · TOKENS DISABLED"
+									: "WARMING SENSORIUM"}
+						</span>
+					)}
 					<Flex.Row className="items-center gap-1 rounded border border-(--line) bg-(--raised) p-0.5">
 						{(
 							[
@@ -165,7 +187,7 @@ export const ImpulseMap = ({
 					</Flex.Row>
 					<Flex.Row className="items-center gap-1 text-(--f4)">
 						<span className="inline-block size-2 rounded-sm bg-(--acc) opacity-80" />
-						<span>Agent action threshold (Otsu split)</span>
+						<span>Hot-region split · Otsu</span>
 					</Flex.Row>
 				</Flex.Row>
 			</Flex.Row>
@@ -217,6 +239,13 @@ export const ImpulseMap = ({
 									`ImpulseMap: connection ${connection.from} -> ${connection.to} references a missing point`,
 								);
 
+							const strength = connection.strength ?? 0;
+							const isAttraction = strength >= 0;
+							const magnitude = Math.min(1, Math.max(0.15, Math.abs(strength)));
+							const strokeColor = isAttraction ? "var(--acc)" : "var(--down)";
+							const strokeWidth = 0.5 + 1.5 * magnitude;
+							const strokeOpacity = 0.2 + 0.6 * magnitude;
+
 							return (
 								<line
 									key={`${connection.from}:${connection.to}`}
@@ -224,10 +253,12 @@ export const ImpulseMap = ({
 									y1={from.py}
 									x2={to.px}
 									y2={to.py}
-									stroke="var(--acc)"
-									strokeOpacity={0.35}
-									strokeWidth={1}
-								/>
+									stroke={strokeColor}
+									strokeOpacity={strokeOpacity}
+									strokeWidth={strokeWidth}
+								>
+									<title>{`sympathy: ${connection.from} ↔ ${connection.to} · strength: ${strength.toFixed(3)} (${isAttraction ? "attraction" : "repulsion"})`}</title>
+								</line>
 							);
 						})}
 					{placed.points.map((point) => {

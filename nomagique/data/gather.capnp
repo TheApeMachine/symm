@@ -8,10 +8,12 @@ $Go.import("github.com/theapemachine/symm/nomagique/data");
 # saying which of them delivered. A slot whose producer did not deliver is
 # unknown, never zero.
 #
-# It hands out what arrived on the same evaluation, so a consumer reads a
-# producer's number on the pass it was produced. An evaluation on which no
-# producer delivered is idle, so nothing downstream runs on it.
+# When families are declared, it maintains retained readiness coverage until all
+# declared signal families have contributed at least once, staying idle until
+# the coordinate universe is ready.
 struct Gathered {
+  readiness @3 :Data;
+  phase     @4 :Text;
   union {
     idle @0 :Void;
     gathered :group {
@@ -22,6 +24,6 @@ struct Gathered {
 }
 
 interface Gather {
-  write @0 (values :List(Float64), present :List(Bool)) -> stream;
+  write @0 (values :List(Float64), present :List(Bool), families :Text) -> stream;
   done @1 () -> Gathered;
 }

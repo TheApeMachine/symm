@@ -1834,6 +1834,6 @@ func markOrigins(nodes []CompiledNode, routes []Route) {
 
 	for index := range nodes {
 		node := &nodes[index]
-		node.Origin = node.RequiredMask == 0 && (!wired[index] || fed[index] || node.Source || node.Queued || node.Standing)
+		node.Origin = node.Source || node.Standing || (node.RequiredMask == 0 && (!wired[index] || fed[index] || node.Queued))
 	}
 }

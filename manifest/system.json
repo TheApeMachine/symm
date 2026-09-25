@@ -84,19 +84,19 @@
           ]
         },
         "outputs": {
-          "socket.frame.read": [
+          "shard_0.socket.frame.read": [
             {
               "nodeId": "envelope",
               "portName": "payload_1"
             }
           ],
-          "socket.frame.endpoint": [
+          "shard_0.socket.frame.endpoint": [
             {
               "nodeId": "envelope",
               "portName": "endpoint_1"
             }
           ],
-          "socket.frame.receivedAt": [
+          "shard_0.socket.frame.receivedAt": [
             {
               "nodeId": "envelope",
               "portName": "receivedAt_1"
@@ -580,22 +580,10 @@
               "portName": "concordance.toNodes"
             }
           ],
-          "examples.data": [
+          "edge_strength.numbers": [
             {
-              "nodeId": "training",
-              "portName": "reinforce.inventory.out"
-            }
-          ],
-          "row_confidence.value": [
-            {
-              "nodeId": "training",
-              "portName": "reinforce.prediction.prob"
-            }
-          ],
-          "trips.data": [
-            {
-              "nodeId": "training",
-              "portName": "paper_closed.json"
+              "nodeId": "live_map",
+              "portName": "concordance.strength"
             }
           ]
         },
@@ -739,19 +727,19 @@
           "payload_1": [
             {
               "nodeId": "level3",
-              "portName": "socket.frame.read"
+              "portName": "shard_0.socket.frame.read"
             }
           ],
           "endpoint_1": [
             {
               "nodeId": "level3",
-              "portName": "socket.frame.endpoint"
+              "portName": "shard_0.socket.frame.endpoint"
             }
           ],
           "receivedAt_1": [
             {
               "nodeId": "level3",
-              "portName": "socket.frame.receivedAt"
+              "portName": "shard_0.socket.frame.receivedAt"
             }
           ],
           "payload_2": [
@@ -833,10 +821,6 @@
             {
               "nodeId": "learning",
               "portName": "examples.data"
-            },
-            {
-              "nodeId": "dashboard",
-              "portName": "examples.data"
             }
           ],
           "reinforce.prediction.class": [
@@ -848,10 +832,6 @@
           "paper_closed.json": [
             {
               "nodeId": "learning",
-              "portName": "trips.data"
-            },
-            {
-              "nodeId": "dashboard",
               "portName": "trips.data"
             }
           ],
@@ -929,6 +909,12 @@
               "portName": "edge_to.integers"
             }
           ],
+          "impulse_map.concordance.strength": [
+            {
+              "nodeId": "learning",
+              "portName": "edge_strength.numbers"
+            }
+          ],
           "token_sequence.step.path": [
             {
               "nodeId": "learning",
@@ -936,10 +922,6 @@
             }
           ],
           "reinforce.prediction.prob": [
-            {
-              "nodeId": "dashboard",
-              "portName": "row_confidence.value"
-            },
             {
               "nodeId": "learning",
               "portName": "row_confidence.value"
@@ -1091,6 +1073,12 @@
             {
               "nodeId": "training",
               "portName": "impulse_map.concordance.toNodes"
+            }
+          ],
+          "edge_strength.numbers": [
+            {
+              "nodeId": "training",
+              "portName": "impulse_map.concordance.strength"
             }
           ],
           "pathText.value": [
@@ -1253,6 +1241,12 @@
             {
               "nodeId": "dashboard",
               "portName": "edge_to.integers"
+            }
+          ],
+          "concordance.strength": [
+            {
+              "nodeId": "dashboard",
+              "portName": "edge_strength.numbers"
             }
           ]
         }

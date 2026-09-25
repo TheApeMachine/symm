@@ -24,7 +24,7 @@ describe("RecognitionView", () => {
 			/>,
 		);
 		expect(screen.getByText("0.0%")).toBeDefined();
-		expect(screen.getByText("WAIT")).toBeDefined();
+		expect(screen.getByText(/WAIT/)).toBeDefined();
 		expect(screen.getByText("recorded EXIT")).toBeDefined();
 		rerender(<RecognitionView />);
 		expect(screen.queryByText("recorded EXIT")).toBeNull();

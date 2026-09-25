@@ -529,7 +529,7 @@
         "outputs": {
           "text": [
             {
-              "nodeId": "policyAction",
+              "nodeId": "truthAction",
               "portName": "label"
             }
           ]
@@ -1127,6 +1127,10 @@
             {
               "nodeId": "judged",
               "portName": "json"
+            },
+            {
+              "nodeId": "policyAction",
+              "portName": "label"
             }
           ]
         }
@@ -3003,6 +3007,25 @@
         }
       }
     },
+    "edge_strength": {
+      "id": "edge_strength",
+      "type": "data.Array",
+      "width": 280,
+      "height": 172,
+      "x": 340.0,
+      "y": 6400.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "links",
+              "portName": "columns_2"
+            }
+          ]
+        }
+      }
+    },
     "points": {
       "id": "points",
       "type": "data.Columns",
@@ -3139,6 +3162,12 @@
               "nodeId": "edge_to",
               "portName": "out"
             }
+          ],
+          "columns_2": [
+            {
+              "nodeId": "edge_strength",
+              "portName": "out"
+            }
           ]
         },
         "outputs": {
@@ -3152,7 +3181,7 @@
       },
       "inputData": {
         "names": {
-          "value": "from,to"
+          "value": "from,to,strength"
         }
       }
     },
@@ -3500,7 +3529,7 @@
       },
       "inputData": {
         "value": {
-          "value": "Situations:"
+          "value": "Observations:"
         }
       }
     },
@@ -4066,7 +4095,7 @@
       },
       "inputData": {
         "value": {
-          "value": "Radix trie"
+          "value": "Precursor examples"
         }
       }
     },
@@ -4896,7 +4925,7 @@
       },
       "inputData": {
         "label": {
-          "value": "VOLUME-CLOCK OBSERVER"
+          "value": "MARKET OBSERVER"
         },
         "variant": {
           "value": "info"
@@ -5105,7 +5134,7 @@
       },
       "inputData": {
         "label": {
-          "value": "Learned Situations"
+          "value": "Precursor Observations"
         },
         "format": {
           "value": "integer"
@@ -5375,7 +5404,7 @@
       },
       "inputData": {
         "value": {
-          "value": "ACTIVE POLICY ACTION"
+          "value": "PREDICTED POLICY ACTION"
         }
       }
     },
@@ -5427,8 +5456,8 @@
         "inputs": {
           "label": [
             {
-              "nodeId": "example_label",
-              "portName": "text"
+              "nodeId": "predicted",
+              "portName": "out"
             }
           ]
         },
@@ -5449,10 +5478,108 @@
           "value": "warning"
         },
         "label": {
-          "value": "\u2014"
+          "value": "—"
         },
         "dot": {
           "value": true
+        }
+      }
+    },
+    "truthTitleText": {
+      "id": "truthTitleText",
+      "type": "ui.Text",
+      "width": 280,
+      "height": 172,
+      "x": 2720.0,
+      "y": 3700.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "truthTitle",
+              "portName": "components"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "value": {
+          "value": "SUPERVISED TRUTH"
+        }
+      }
+    },
+    "truthTitle": {
+      "id": "truthTitle",
+      "type": "ui.Typography.Label",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 8900.0,
+      "connections": {
+        "inputs": {
+          "components": [
+            {
+              "nodeId": "truthTitleText",
+              "portName": "self"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "policy",
+              "portName": "components_2"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "size": {
+          "value": "s"
+        },
+        "tone": {
+          "value": "f4"
+        },
+        "weight": {
+          "value": "normal"
+        }
+      }
+    },
+    "truthAction": {
+      "id": "truthAction",
+      "type": "ui.Badge",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 8950.0,
+      "connections": {
+        "inputs": {
+          "label": [
+            {
+              "nodeId": "example_label",
+              "portName": "text"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "policy",
+              "portName": "components_3"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "size": {
+          "value": "s"
+        },
+        "variant": {
+          "value": "info"
+        },
+        "label": {
+          "value": "—"
         }
       }
     },
@@ -5500,7 +5627,7 @@
           "self": [
             {
               "nodeId": "policy",
-              "portName": "components_2"
+              "portName": "components_4"
             }
           ]
         }
@@ -5537,7 +5664,7 @@
       },
       "inputData": {
         "value": {
-          "value": "\u2014"
+          "value": "—"
         },
         "className": {
           "value": "break-all"
@@ -5564,7 +5691,7 @@
           "self": [
             {
               "nodeId": "policy",
-              "portName": "components_3"
+              "portName": "components_5"
             }
           ]
         }
@@ -5601,11 +5728,23 @@
           ],
           "components_2": [
             {
-              "nodeId": "pathTitle",
+              "nodeId": "truthTitle",
               "portName": "self"
             }
           ],
           "components_3": [
+            {
+              "nodeId": "truthAction",
+              "portName": "self"
+            }
+          ],
+          "components_4": [
+            {
+              "nodeId": "pathTitle",
+              "portName": "self"
+            }
+          ],
+          "components_5": [
             {
               "nodeId": "pathValue",
               "portName": "self"

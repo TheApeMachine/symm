@@ -88,6 +88,28 @@ func TestTokenSequence(t *testing.T) {
 			So(depth, ShouldEqual, 3)
 		})
 
+		Convey("Consecutive identical tokens do not advance sequence depth", func() {
+			tokens, path, depth := step("BTC/USD", "13", false)
+			So(tokens, ShouldResemble, []string{"13"})
+			So(path, ShouldEqual, "13")
+			So(depth, ShouldEqual, 1)
+
+			tokens, path, depth = step("BTC/USD", "13", false)
+			So(tokens, ShouldResemble, []string{"13"})
+			So(path, ShouldEqual, "13")
+			So(depth, ShouldEqual, 1)
+
+			tokens, path, depth = step("BTC/USD", "13", false)
+			So(tokens, ShouldResemble, []string{"13"})
+			So(path, ShouldEqual, "13")
+			So(depth, ShouldEqual, 1)
+
+			tokens, path, depth = step("BTC/USD", "211", false)
+			So(tokens, ShouldResemble, []string{"13", "211"})
+			So(path, ShouldEqual, "13/211")
+			So(depth, ShouldEqual, 2)
+		})
+
 		Convey("Two different histories ending at the same current token remain separate", func() {
 			// History 1: R1 -> R4 -> [R7,R9]
 			step("sym1", "R1", false)

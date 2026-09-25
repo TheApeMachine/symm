@@ -20,6 +20,8 @@ export type OutcomeDistributionProps = Omit<
 	unit?: string;
 	title?: string;
 	note?: string;
+	/** Only render parametric model fit if explicitly enabled. */
+	showFit?: boolean;
 };
 
 const finite = (value: number | string | null | undefined) => {
@@ -33,16 +35,17 @@ const density = (x: number, mean: number, deviation: number) =>
 	(deviation * Math.sqrt(2 * Math.PI));
 
 /*
-OutcomeDistribution draws completed outcomes: the counts the graph binned, and
-the normal curve the graph's mean and deviation describe, against breakeven.
+OutcomeDistribution draws completed outcomes: the empirical histogram counts the
+graph binned, against breakeven, without assuming an unverified normal curve.
 */
 export const OutcomeDistribution = ({
 	bins,
 	mean,
 	deviation,
 	unit = "",
-	title = "Edge Distribution",
-	note = "Normal fit to the mean and deviation of completed outcomes.",
+	title = "Empirical Edge Distribution",
+	note = "Empirical outcome distribution from completed excursions.",
+	showFit = false,
 	className,
 	...props
 }: OutcomeDistributionProps) => {
@@ -68,7 +71,7 @@ export const OutcomeDistribution = ({
 
 	const mu = finite(mean);
 	const sigma = finite(deviation);
-	const fitted = mu !== undefined && sigma !== undefined && sigma > 0;
+	const fitted = showFit && mu !== undefined && sigma !== undefined && sigma > 0;
 	const empty = !bins?.length && !fitted;
 
 	let lower = 0;
@@ -80,6 +83,9 @@ export const OutcomeDistribution = ({
 	if (fitted) {
 		lower = Math.min(lower, mu - 3 * sigma);
 		upper = Math.max(upper, mu + 3 * sigma);
+	} else if (mu !== undefined) {
+		lower = Math.min(lower, mu);
+		upper = Math.max(upper, mu);
 	}
 	const span = upper - lower || 1;
 
@@ -132,20 +138,23 @@ export const OutcomeDistribution = ({
 								<stop offset="100%" stopColor="var(--info)" stopOpacity="0" />
 							</linearGradient>
 						</defs>
-						{bins?.map((bin) => (
-							<rect
-								key={bin.id}
-								x={x(bin.lower)}
-								y={peak === 0 ? base : base - (bin.count / peak) * (base - 24)}
-								width={x(bin.upper) - x(bin.lower)}
-								height={peak === 0 ? 0 : (bin.count / peak) * (base - 24)}
-								fill="var(--info)"
-								opacity={fitted ? 0.18 : 0.6}
-								stroke="var(--sunken)"
-							>
-								<title>{`${bin.lower} to ${bin.upper} ${unit}: ${bin.count}`}</title>
-							</rect>
-						))}
+						{bins?.map((bin) => {
+							const isProfit = (bin.lower + bin.upper) / 2 >= 0;
+							return (
+								<rect
+									key={bin.id}
+									x={x(bin.lower)}
+									y={peak === 0 ? base : base - (bin.count / peak) * (base - 24)}
+									width={Math.max(1, x(bin.upper) - x(bin.lower))}
+									height={peak === 0 ? 0 : (bin.count / peak) * (base - 24)}
+									fill={isProfit ? "var(--up)" : "var(--down)"}
+									fillOpacity={fitted ? 0.35 : 0.75}
+									stroke="var(--sunken)"
+								>
+									<title>{`${bin.lower} to ${bin.upper} ${unit}: ${bin.count}`}</title>
+								</rect>
+							);
+						})}
 						<line
 							x1={20}
 							x2={width - 20}
@@ -193,12 +202,17 @@ export const OutcomeDistribution = ({
 									stroke="var(--info)"
 									strokeWidth="1.5"
 								/>
+							</>
+						)}
+						{mu !== undefined && (
+							<>
 								<line
 									x1={x(mu)}
 									x2={x(mu)}
 									y1={20}
 									y2={base}
 									stroke={mu > 0 ? "var(--up)" : "var(--down)"}
+									strokeWidth="1.5"
 								/>
 								<text
 									x={x(mu)}
