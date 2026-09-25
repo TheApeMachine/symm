@@ -16,70 +16,114 @@ import (
 const boundaryLayout = `[{"producer":"signal","coordinates":[0]},{"producer":"logic","coordinates":[1]}]`
 
 type boundaryObservation struct {
-	row []byte
+	row     []byte
 	payload []byte
-	values []float64
+	values  []float64
 	present []bool
-	ready bool
+	ready   bool
 }
 
 func boundaryPublication(t *testing.T, owner, run string, sequence int64, coordinate uint32, value float64, present bool) []byte {
 	t.Helper()
 	_, segment, err := capnp.NewMessage(capnp.SingleSegment(nil))
 
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	measurement, err := data.NewRootMeasurement(segment)
-	if err != nil { t.Fatal(err) }
-	if err := measurement.SetRun(run); err != nil { t.Fatal(err) }
-	if err := measurement.SetProducer(owner); err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := measurement.SetRun(run); err != nil {
+		t.Fatal(err)
+	}
+	if err := measurement.SetProducer(owner); err != nil {
+		t.Fatal(err)
+	}
 	measurement.SetTick(sequence)
 	coordinates, err := measurement.NewCoordinates(1)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	coordinates.Set(0, coordinate)
 	metrics, err := measurement.NewMetrics(1)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	metrics.At(0).SetRaw(value)
 	flags, err := measurement.NewPresent(1)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	flags.Set(0, present)
 	encoded, err := measurement.Message().Marshal()
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	return encoded
 }
 
 func boundaryStep(ctx context.Context, client store.Boundary, sequence int64, publications [][]byte, replay []byte) (boundaryObservation, error) {
 	var observed boundaryObservation
 	err := client.Write(ctx, func(params store.Boundary_write_Params) error {
-		if len(replay) > 0 { return params.SetReplay(replay) }
+		if len(replay) > 0 {
+			return params.SetReplay(replay)
+		}
 		params.SetSequence(sequence)
-		if err := params.SetRun("recorded-run"); err != nil { return err }
-		if err := params.SetLayout(boundaryLayout); err != nil { return err }
-		if err := params.SetReceipt([]byte(`{"capture":"raw-source-boundary"}`)); err != nil { return err }
+		if err := params.SetRun("recorded-run"); err != nil {
+			return err
+		}
+		if err := params.SetLayout(boundaryLayout); err != nil {
+			return err
+		}
+		if err := params.SetReceipt([]byte(`{"capture":"raw-source-boundary"}`)); err != nil {
+			return err
+		}
 		inputs, err := params.NewPublications(int32(len(publications)))
-		if err != nil { return err }
+		if err != nil {
+			return err
+		}
 		for index, publication := range publications {
-			if err := inputs.Set(index, publication); err != nil { return err }
+			if err := inputs.Set(index, publication); err != nil {
+				return err
+			}
 		}
 		return nil
 	})
-	if err != nil { return observed, err }
-	if err := client.WaitStreaming(); err != nil { return observed, err }
+	if err != nil {
+		return observed, err
+	}
+	if err := client.WaitStreaming(); err != nil {
+		return observed, err
+	}
 	future, release := client.Done(ctx, nil)
 	defer release()
 	result, err := future.Struct()
-	if err != nil { return observed, err }
+	if err != nil {
+		return observed, err
+	}
 	row, err := result.Row()
-	if err != nil { return observed, err }
+	if err != nil {
+		return observed, err
+	}
 	observed.row = bytes.Clone(row)
 	payload, err := result.Payload()
-	if err != nil { return observed, err }
+	if err != nil {
+		return observed, err
+	}
 	observed.payload = bytes.Clone(payload)
 	observed.ready = result.Which() == store.BoundaryResult_Which_ready
-	if !observed.ready { return observed, nil }
+	if !observed.ready {
+		return observed, nil
+	}
 	values, err := result.Ready().Values()
-	if err != nil { return observed, err }
+	if err != nil {
+		return observed, err
+	}
 	present, err := result.Ready().Present()
-	if err != nil { return observed, err }
+	if err != nil {
+		return observed, err
+	}
 	for index := range values.Len() {
 		observed.values = append(observed.values, values.At(index))
 		observed.present = append(observed.present, present.At(index))

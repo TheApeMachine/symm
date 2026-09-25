@@ -307,11 +307,11 @@ func (server *BoundaryServer) Done(ctx context.Context, call Boundary_done) erro
 	}
 
 	readiness, err := json.Marshal(struct {
-		Phase string `json:"phase"`
-		Ready bool `json:"ready"`
-		Covered int `json:"covered"`
-		Total int `json:"total"`
-		Sequence int64 `json:"sequence"`
+		Phase    string `json:"phase"`
+		Ready    bool   `json:"ready"`
+		Covered  int    `json:"covered"`
+		Total    int    `json:"total"`
+		Sequence int64  `json:"sequence"`
 	}{phase, ready, frame.covered, len(frame.projection.values), frame.sequence})
 
 	if err != nil {

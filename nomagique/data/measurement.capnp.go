@@ -377,12 +377,12 @@ type Measurement capnp.Struct
 const Measurement_TypeID = 0x9b10da1415a7b4bb
 
 func NewMeasurement(s *capnp.Segment) (Measurement, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 56, PointerCount: 4})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 56, PointerCount: 8})
 	return Measurement(st), err
 }
 
 func NewRootMeasurement(s *capnp.Segment) (Measurement, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 56, PointerCount: 4})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 56, PointerCount: 8})
 	return Measurement(st), err
 }
 
@@ -555,12 +555,95 @@ func (s Measurement) NewMetadata() (Table, error) {
 	return ss, err
 }
 
+func (s Measurement) Producer() (string, error) {
+	p, err := capnp.Struct(s).Ptr(4)
+	return p.Text(), err
+}
+
+func (s Measurement) HasProducer() bool {
+	return capnp.Struct(s).HasPtr(4)
+}
+
+func (s Measurement) ProducerBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(4)
+	return p.TextBytes(), err
+}
+
+func (s Measurement) SetProducer(v string) error {
+	return capnp.Struct(s).SetText(4, v)
+}
+
+func (s Measurement) Run() (string, error) {
+	p, err := capnp.Struct(s).Ptr(5)
+	return p.Text(), err
+}
+
+func (s Measurement) HasRun() bool {
+	return capnp.Struct(s).HasPtr(5)
+}
+
+func (s Measurement) RunBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(5)
+	return p.TextBytes(), err
+}
+
+func (s Measurement) SetRun(v string) error {
+	return capnp.Struct(s).SetText(5, v)
+}
+
+func (s Measurement) Coordinates() (capnp.UInt32List, error) {
+	p, err := capnp.Struct(s).Ptr(6)
+	return capnp.UInt32List(p.List()), err
+}
+
+func (s Measurement) HasCoordinates() bool {
+	return capnp.Struct(s).HasPtr(6)
+}
+
+func (s Measurement) SetCoordinates(v capnp.UInt32List) error {
+	return capnp.Struct(s).SetPtr(6, v.ToPtr())
+}
+
+// NewCoordinates sets the coordinates field to a newly
+// allocated capnp.UInt32List, preferring placement in s's segment.
+func (s Measurement) NewCoordinates(n int32) (capnp.UInt32List, error) {
+	l, err := capnp.NewUInt32List(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return capnp.UInt32List{}, err
+	}
+	err = capnp.Struct(s).SetPtr(6, l.ToPtr())
+	return l, err
+}
+func (s Measurement) Present() (capnp.BitList, error) {
+	p, err := capnp.Struct(s).Ptr(7)
+	return capnp.BitList(p.List()), err
+}
+
+func (s Measurement) HasPresent() bool {
+	return capnp.Struct(s).HasPtr(7)
+}
+
+func (s Measurement) SetPresent(v capnp.BitList) error {
+	return capnp.Struct(s).SetPtr(7, v.ToPtr())
+}
+
+// NewPresent sets the present field to a newly
+// allocated capnp.BitList, preferring placement in s's segment.
+func (s Measurement) NewPresent(n int32) (capnp.BitList, error) {
+	l, err := capnp.NewBitList(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return capnp.BitList{}, err
+	}
+	err = capnp.Struct(s).SetPtr(7, l.ToPtr())
+	return l, err
+}
+
 // Measurement_List is a list of Measurement.
 type Measurement_List = capnp.StructList[Measurement]
 
 // NewMeasurement creates a new list of Measurement.
 func NewMeasurement_List(s *capnp.Segment, sz int32) (Measurement_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 56, PointerCount: 4}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 56, PointerCount: 8}, sz)
 	return capnp.StructList[Measurement](l), err
 }
 
@@ -808,7 +891,7 @@ func (c MeasurementService) Write(ctx context.Context, params func(MeasurementSe
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 56, PointerCount: 4}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 56, PointerCount: 9}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(MeasurementService_write_Params(s)) }
 	}
 
@@ -1009,12 +1092,12 @@ type MeasurementService_write_Params capnp.Struct
 const MeasurementService_write_Params_TypeID = 0xbdd3896350dd5474
 
 func NewMeasurementService_write_Params(s *capnp.Segment) (MeasurementService_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 56, PointerCount: 4})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 56, PointerCount: 9})
 	return MeasurementService_write_Params(st), err
 }
 
 func NewRootMeasurementService_write_Params(s *capnp.Segment) (MeasurementService_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 56, PointerCount: 4})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 56, PointerCount: 9})
 	return MeasurementService_write_Params(st), err
 }
 
@@ -1187,12 +1270,113 @@ func (s MeasurementService_write_Params) NewMetadata() (Table, error) {
 	return ss, err
 }
 
+func (s MeasurementService_write_Params) Producer() (string, error) {
+	p, err := capnp.Struct(s).Ptr(4)
+	return p.Text(), err
+}
+
+func (s MeasurementService_write_Params) HasProducer() bool {
+	return capnp.Struct(s).HasPtr(4)
+}
+
+func (s MeasurementService_write_Params) ProducerBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(4)
+	return p.TextBytes(), err
+}
+
+func (s MeasurementService_write_Params) SetProducer(v string) error {
+	return capnp.Struct(s).SetText(4, v)
+}
+
+func (s MeasurementService_write_Params) Run() (string, error) {
+	p, err := capnp.Struct(s).Ptr(5)
+	return p.Text(), err
+}
+
+func (s MeasurementService_write_Params) HasRun() bool {
+	return capnp.Struct(s).HasPtr(5)
+}
+
+func (s MeasurementService_write_Params) RunBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(5)
+	return p.TextBytes(), err
+}
+
+func (s MeasurementService_write_Params) SetRun(v string) error {
+	return capnp.Struct(s).SetText(5, v)
+}
+
+func (s MeasurementService_write_Params) Coordinates() (string, error) {
+	p, err := capnp.Struct(s).Ptr(6)
+	return p.Text(), err
+}
+
+func (s MeasurementService_write_Params) HasCoordinates() bool {
+	return capnp.Struct(s).HasPtr(6)
+}
+
+func (s MeasurementService_write_Params) CoordinatesBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(6)
+	return p.TextBytes(), err
+}
+
+func (s MeasurementService_write_Params) SetCoordinates(v string) error {
+	return capnp.Struct(s).SetText(6, v)
+}
+
+func (s MeasurementService_write_Params) Values() (capnp.Float64List, error) {
+	p, err := capnp.Struct(s).Ptr(7)
+	return capnp.Float64List(p.List()), err
+}
+
+func (s MeasurementService_write_Params) HasValues() bool {
+	return capnp.Struct(s).HasPtr(7)
+}
+
+func (s MeasurementService_write_Params) SetValues(v capnp.Float64List) error {
+	return capnp.Struct(s).SetPtr(7, v.ToPtr())
+}
+
+// NewValues sets the values field to a newly
+// allocated capnp.Float64List, preferring placement in s's segment.
+func (s MeasurementService_write_Params) NewValues(n int32) (capnp.Float64List, error) {
+	l, err := capnp.NewFloat64List(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return capnp.Float64List{}, err
+	}
+	err = capnp.Struct(s).SetPtr(7, l.ToPtr())
+	return l, err
+}
+func (s MeasurementService_write_Params) Present() (capnp.BitList, error) {
+	p, err := capnp.Struct(s).Ptr(8)
+	return capnp.BitList(p.List()), err
+}
+
+func (s MeasurementService_write_Params) HasPresent() bool {
+	return capnp.Struct(s).HasPtr(8)
+}
+
+func (s MeasurementService_write_Params) SetPresent(v capnp.BitList) error {
+	return capnp.Struct(s).SetPtr(8, v.ToPtr())
+}
+
+// NewPresent sets the present field to a newly
+// allocated capnp.BitList, preferring placement in s's segment.
+func (s MeasurementService_write_Params) NewPresent(n int32) (capnp.BitList, error) {
+	l, err := capnp.NewBitList(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return capnp.BitList{}, err
+	}
+	err = capnp.Struct(s).SetPtr(8, l.ToPtr())
+	return l, err
+}
+
 // MeasurementService_write_Params_List is a list of MeasurementService_write_Params.
 type MeasurementService_write_Params_List = capnp.StructList[MeasurementService_write_Params]
 
 // NewMeasurementService_write_Params creates a new list of MeasurementService_write_Params.
 func NewMeasurementService_write_Params_List(s *capnp.Segment, sz int32) (MeasurementService_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 56, PointerCount: 4}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 56, PointerCount: 9}, sz)
 	return capnp.StructList[MeasurementService_write_Params](l), err
 }
 

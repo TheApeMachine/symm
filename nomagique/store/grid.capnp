@@ -48,7 +48,10 @@ interface Grid extends(Retained) {
     interests :Text,
     metrics   :List(Float64),
     present   :List(Bool),
-    scope     :List(Text)
+    scope     :List(Text),
+    run       :Text,
+    sequence  :Int64,
+    receipt   :Data
   ) -> stream;
   done @1 () -> (
     values       :List(Float64),
@@ -59,6 +62,9 @@ interface Grid extends(Retained) {
     status       :Status,
     observations :List(Float64),
     observed     :List(Bool),
-    scope        :Text
+    scope        :Text,
+    run          :Text,
+    sequence     :Int64,
+    receipt      :Data
   );
 }
