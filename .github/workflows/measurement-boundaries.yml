@@ -6,56 +6,27 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
-  development-tools:
-    runs-on: ubuntu-22.04
+  dependencies:
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        with:
-          path: symm
-          persist-credentials: false
-      - uses: actions/checkout@v4
-        with:
-          repository: theapemachine/datura
-          ref: v1.2.11
-          path: datura
-          persist-credentials: false
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: symm/go.mod
-          cache: false
-      - name: Install schema compiler
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y capnproto libcapnp-dev
-          go install capnproto.org/go/capnp/v3/capnpc-go@v3.1.0-alpha.2
-      - name: Package verification tools and dependency sources
-        working-directory: symm
-        run: |
-          set -eu
-          go mod download
-          mkdir -p "$RUNNER_TEMP/tools/bin" "$RUNNER_TEMP/tools/lib" "$RUNNER_TEMP/tools/include"
-          cp /usr/bin/capnp /usr/bin/capnpc-c++ "$(go env GOPATH)/bin/capnpc-go" "$RUNNER_TEMP/tools/bin/"
-          cp -a /usr/lib/x86_64-linux-gnu/libcapnp*.so* /usr/lib/x86_64-linux-gnu/libkj*.so* "$RUNNER_TEMP/tools/lib/"
-          cp -a /usr/include/capnp "$RUNNER_TEMP/tools/include/"
-          cp -a "$(go env GOROOT)" "$RUNNER_TEMP/tools/go"
-          cp -a "$(go env GOPATH)/pkg/mod/capnproto.org/go/capnp/v3@v3.1.0-alpha.2/std/." "$RUNNER_TEMP/tools/include/"
-          tar -czf "$RUNNER_TEMP/tools.tar.gz" -C "$RUNNER_TEMP" tools
-          tar -czf "$RUNNER_TEMP/modules.tar.gz" -C "$(go env GOPATH)" pkg/mod
-          tar -czf "$RUNNER_TEMP/siblings.tar.gz" --exclude=.git -C "$GITHUB_WORKSPACE" datura
-      - uses: actions/upload-artifact@v4
-        with:
-          name: boundary-tools
-          path: ${{ runner.temp }}/tools.tar.gz
-          retention-days: 1
-      - uses: actions/upload-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           name: boundary-modules
-          path: ${{ runner.temp }}/modules.tar.gz
+          run-id: 36153945046
+          github-token: ${{ github.token }}
+          path: modules
+      - name: Split dependency archive at transport size boundary
+        run: split -b 350M -d modules/modules.tar.gz modules/part-
+      - uses: actions/upload-artifact@v4
+        with:
+          name: boundary-modules-0
+          path: modules/part-00
           retention-days: 1
       - uses: actions/upload-artifact@v4
         with:
-          name: boundary-siblings
-          path: ${{ runner.temp }}/siblings.tar.gz
+          name: boundary-modules-1
+          path: modules/part-01
           retention-days: 1
