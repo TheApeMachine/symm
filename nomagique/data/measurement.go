@@ -37,6 +37,17 @@ Write records the observation a signal measured and the metrics it published.
 */
 func (server *MeasurementServiceServer) Write(ctx context.Context, call MeasurementService_write) error {
 	args := call.Args()
+	server.assigned = false
+	producer, err := args.Producer()
+
+	if err != nil {
+		return measurementProjectionError("read producer", err)
+	}
+
+	// Zero is the absent-boundary sentinel, never a measurement epoch.
+	if producer != "" && args.Tick() == 0 {
+		return nil
+	}
 
 	_, segment, err := capnp.NewMessage(capnp.SingleSegment(nil))
 
@@ -72,6 +83,10 @@ func (server *MeasurementServiceServer) Write(ctx context.Context, call Measurem
 	}
 
 	if err := server.carry(measurement, args); err != nil {
+		return err
+	}
+
+	if err := server.project(measurement, args); err != nil {
 		return err
 	}
 

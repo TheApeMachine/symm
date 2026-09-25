@@ -40,6 +40,10 @@ struct Measurement  {
     separation @9  :Float64;
     metrics    @10 :List(Metric);
     metadata   @11 :Table(Text, Metadata);
+    producer   @12 :Text;
+    run        @13 :Text;
+    coordinates @14 :List(UInt32);
+    present    @15 :List(Bool);
 
     enum EntityType {
         ticker       @0;
@@ -91,7 +95,12 @@ interface MeasurementService {
         maturity   :Float64,
         separation :Float64,
         metrics    :List(Metric),
-        metadata   :Table(Text, Metadata)
+        metadata   :Table(Text, Metadata),
+        producer   :Text,
+        run        :Text,
+        coordinates :Text,
+        values     :List(Float64),
+        present    :List(Bool)
     ) -> stream;
     done @1 () -> (status :Status, read :Data);
 }

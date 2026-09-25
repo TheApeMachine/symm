@@ -1057,9 +1057,14 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		initialWidth: 340,
 		inputs: (ports) => [
 			ports["[]byte"]({ name: "data", label: "data" }),
+			ports.string({ name: "endpoint", label: "endpoint" }),
 			ports.int64({ name: "size", label: "size" }),
 		],
 		outputs: (ports) => [
+			ports.string({ name: "endpoint0", label: "endpoint0" }),
+			ports.string({ name: "endpoint1", label: "endpoint1" }),
+			ports.string({ name: "endpoint2", label: "endpoint2" }),
+			ports.string({ name: "endpoint3", label: "endpoint3" }),
 			ports["[]byte"]({ name: "out0", label: "out0" }),
 			ports["[]byte"]({ name: "out1", label: "out1" }),
 			ports["[]byte"]({ name: "out2", label: "out2" }),
@@ -1313,12 +1318,15 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		initialWidth: 340,
 		inputs: (ports) => (_inputData, connections) => {
 			const dynamicPorts = [
+				ports.string({ name: "coordinates", label: "coordinates" }),
 				ports.Status({ name: "entity", label: "entity" }),
 				ports.int64({ name: "epoch", label: "epoch" }),
 				ports["[]byte"]({ name: "id", label: "id" }),
 				ports["[]byte"]({ name: "label", label: "label" }),
 				ports.float64({ name: "maturity", label: "maturity" }),
 				ports.data({ name: "metadata", label: "metadata" }),
+				ports.string({ name: "producer", label: "producer" }),
+				ports.string({ name: "run", label: "run" }),
 				ports.float64({ name: "separation", label: "separation" }),
 				ports.float64({ name: "snr", label: "snr" }),
 				ports.Status({ name: "source", label: "source" }),
@@ -1329,6 +1337,16 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			for (let index = 0; index < Math.max(1, wiredMetrics.length + 1); index++) {
 				const portName = index === 0 ? "metrics" : `metrics_${index}`;
 				dynamicPorts.push(ports.data({ name: portName, label: portName }));
+			}
+			const wiredPresent = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("present"));
+			for (let index = 0; index < Math.max(1, wiredPresent.length + 1); index++) {
+				const portName = index === 0 ? "present" : `present_${index}`;
+				dynamicPorts.push(ports.bool({ name: portName, label: portName }));
+			}
+			const wiredValues = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("values"));
+			for (let index = 0; index < Math.max(1, wiredValues.length + 1); index++) {
+				const portName = index === 0 ? "values" : `values_${index}`;
+				dynamicPorts.push(ports.float64({ name: portName, label: portName }));
 			}
 			return dynamicPorts;
 		},
@@ -6030,6 +6048,40 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 	});
 	config.addNodeType({
+		type: "store.Boundary",
+		label: "Boundary",
+		category: "store",
+		initialWidth: 340,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "layout", label: "layout" }),
+				ports["[]byte"]({ name: "receipt", label: "receipt" }),
+				ports["[]byte"]({ name: "replay", label: "replay" }),
+				ports.string({ name: "run", label: "run" }),
+				ports.int64({ name: "sequence", label: "sequence" }),
+			];
+			const wiredPublications = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("publications"));
+			for (let index = 0; index < Math.max(1, wiredPublications.length + 1); index++) {
+				const portName = index === 0 ? "publications" : `publications_${index}`;
+				dynamicPorts.push(ports["[]byte"]({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.int64({ name: "idle", label: "idle" }),
+			ports["[]byte"]({ name: "payload", label: "payload" }),
+			ports["[]byte"]({ name: "readiness", label: "readiness" }),
+			ports.data({ name: "ready.present", label: "ready.present" }),
+			ports.data({ name: "ready.values", label: "ready.values" }),
+			ports["[]byte"]({ name: "receipt", label: "receipt" }),
+			ports["[]byte"]({ name: "row", label: "row" }),
+			ports.string({ name: "run", label: "run" }),
+			ports.int64({ name: "sequence", label: "sequence" }),
+			ports.int64({ name: "warming", label: "warming" }),
+		],
+	});
+
+	config.addNodeType({
 		type: "store.Capture",
 		label: "Capture",
 		category: "store",
@@ -6096,6 +6148,9 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		inputs: (ports) => (_inputData, connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "interests", label: "interests" }),
+				ports["[]byte"]({ name: "receipt", label: "receipt" }),
+				ports.string({ name: "run", label: "run" }),
+				ports.int64({ name: "sequence", label: "sequence" }),
 			];
 			const wiredData = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("data"));
 			for (let index = 0; index < Math.max(1, wiredData.length + 1); index++) {
@@ -6126,7 +6181,10 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.data({ name: "observed", label: "observed" }),
 			ports["[]byte"]({ name: "out", label: "out" }),
 			ports.data({ name: "present", label: "present" }),
+			ports["[]byte"]({ name: "receipt", label: "receipt" }),
+			ports.string({ name: "run", label: "run" }),
 			ports.string({ name: "scope", label: "scope" }),
+			ports.int64({ name: "sequence", label: "sequence" }),
 			ports.Status({ name: "status", label: "status" }),
 			ports.data({ name: "values", label: "values" }),
 			ports.Capability({ name: "self", label: "self" }),
@@ -8835,6 +8893,31 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		description: "Sub-graph: live_level3",
 		initialWidth: 320,
 		inputs: (ports) => (_inputData, _connections) => [
+			ports["[]byte"]({ name: "records.data", label: "records.data" }),
+			ports.string({ name: "records.indexPath", label: "records.indexPath" }),
+			ports.bool({ name: "records.whole", label: "records.whole" }),
+			ports["[]byte"]({ name: "symbols.data", label: "symbols.data" }),
+		],
+		outputs: (ports) => (_inputData, _connections) => [
+			ports.string({ name: "chunk.endpoint3", label: "chunk.endpoint3" }),
+			ports["[]byte"]({ name: "chunk.out3", label: "chunk.out3" }),
+			ports.data({ name: "records.all", label: "records.all" }),
+			ports.int64({ name: "records.count", label: "records.count" }),
+			ports.bool({ name: "records.found", label: "records.found" }),
+			ports.int64({ name: "records.ignored", label: "records.ignored" }),
+			ports.int64({ name: "records.index", label: "records.index" }),
+			ports.bool({ name: "records.last", label: "records.last" }),
+			ports["[]byte"]({ name: "records.out", label: "records.out" }),
+			ports.int64({ name: "records.pending", label: "records.pending" }),
+		],
+	});
+	config.addNodeType({
+		type: "definition:live_level3_shard",
+		label: "live_level3_shard",
+		category: "Definitions",
+		description: "Sub-graph: live_level3_shard",
+		initialWidth: 320,
+		inputs: (ports) => (_inputData, _connections) => [
 			ports.float64({ name: "accepted.threshold", label: "accepted.threshold" }),
 			ports["[]byte"]({ name: "admission.offer", label: "admission.offer" }),
 			ports["[]byte"]({ name: "admission.release", label: "admission.release" }),
@@ -8878,6 +8961,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "retried.value", label: "retried.value" }),
 			ports["[]byte"]({ name: "sign_header.values", label: "sign_header.values" }),
 			ports["[]byte"]({ name: "signed_path.values", label: "signed_path.values" }),
+			ports.string({ name: "socket.endpoint", label: "socket.endpoint" }),
 			ports["[]byte"]({ name: "socket.onConnect", label: "socket.onConnect" }),
 			ports["[]byte"]({ name: "socket.write", label: "socket.write" }),
 			ports["[]byte"]({ name: "socket_received.json", label: "socket_received.json" }),
@@ -10103,7 +10187,10 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.bool({ name: "gather.present", label: "gather.present" }),
 			ports["[]byte"]({ name: "grid.data", label: "grid.data" }),
 			ports.bool({ name: "grid.present", label: "grid.present" }),
+			ports["[]byte"]({ name: "grid.receipt", label: "grid.receipt" }),
+			ports.string({ name: "grid.run", label: "grid.run" }),
 			ports.string({ name: "grid.scope", label: "grid.scope" }),
+			ports.int64({ name: "grid.sequence", label: "grid.sequence" }),
 		],
 		outputs: (ports) => (_inputData, _connections) => [
 			ports.data({ name: "gather.gathered.present", label: "gather.gathered.present" }),
@@ -10117,6 +10204,9 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.data({ name: "grid.observed", label: "grid.observed" }),
 			ports["[]byte"]({ name: "grid.out", label: "grid.out" }),
 			ports.data({ name: "grid.present", label: "grid.present" }),
+			ports["[]byte"]({ name: "grid.receipt", label: "grid.receipt" }),
+			ports.string({ name: "grid.run", label: "grid.run" }),
+			ports.int64({ name: "grid.sequence", label: "grid.sequence" }),
 			ports.data({ name: "grid.values", label: "grid.values" }),
 			ports.Capability({ name: "grid.self", label: "grid.self" }),
 		],
@@ -11627,6 +11717,12 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.int64({ name: "edge_from.offset", label: "edge_from.offset" }),
 			ports.int64({ name: "edge_from.stride", label: "edge_from.stride" }),
 			ports.string({ name: "edge_from.texts", label: "edge_from.texts" }),
+			ports.bool({ name: "edge_strength.flags", label: "edge_strength.flags" }),
+			ports.int64({ name: "edge_strength.integers", label: "edge_strength.integers" }),
+			ports.float64({ name: "edge_strength.numbers", label: "edge_strength.numbers" }),
+			ports.int64({ name: "edge_strength.offset", label: "edge_strength.offset" }),
+			ports.int64({ name: "edge_strength.stride", label: "edge_strength.stride" }),
+			ports.string({ name: "edge_strength.texts", label: "edge_strength.texts" }),
 			ports.bool({ name: "edge_to.flags", label: "edge_to.flags" }),
 			ports.int64({ name: "edge_to.integers", label: "edge_to.integers" }),
 			ports.float64({ name: "edge_to.numbers", label: "edge_to.numbers" }),
@@ -11977,6 +12073,12 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.int64({ name: "edge_from.offset", label: "edge_from.offset" }),
 			ports.int64({ name: "edge_from.stride", label: "edge_from.stride" }),
 			ports.string({ name: "edge_from.texts", label: "edge_from.texts" }),
+			ports.bool({ name: "edge_strength.flags", label: "edge_strength.flags" }),
+			ports.int64({ name: "edge_strength.integers", label: "edge_strength.integers" }),
+			ports.float64({ name: "edge_strength.numbers", label: "edge_strength.numbers" }),
+			ports.int64({ name: "edge_strength.offset", label: "edge_strength.offset" }),
+			ports.int64({ name: "edge_strength.stride", label: "edge_strength.stride" }),
+			ports.string({ name: "edge_strength.texts", label: "edge_strength.texts" }),
 			ports.bool({ name: "edge_to.flags", label: "edge_to.flags" }),
 			ports.int64({ name: "edge_to.integers", label: "edge_to.integers" }),
 			ports.float64({ name: "edge_to.numbers", label: "edge_to.numbers" }),

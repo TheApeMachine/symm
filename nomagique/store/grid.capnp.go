@@ -27,7 +27,7 @@ func (c Grid) Write(ctx context.Context, params func(Grid_write_Params) error) e
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 5}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 8, PointerCount: 7}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(Grid_write_Params(s)) }
 	}
 
@@ -209,7 +209,7 @@ func (c Grid_done) Args() Grid_done_Params {
 
 // AllocResults allocates the results struct.
 func (c Grid_done) AllocResults() (Grid_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 24, PointerCount: 6})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 32, PointerCount: 8})
 	return Grid_done_Results(r), err
 }
 
@@ -228,12 +228,12 @@ type Grid_write_Params capnp.Struct
 const Grid_write_Params_TypeID = 0x8b2a68e19c111ac0
 
 func NewGrid_write_Params(s *capnp.Segment) (Grid_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 5})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 7})
 	return Grid_write_Params(st), err
 }
 
 func NewRootGrid_write_Params(s *capnp.Segment) (Grid_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 5})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 7})
 	return Grid_write_Params(st), err
 }
 
@@ -379,13 +379,51 @@ func (s Grid_write_Params) NewScope(n int32) (capnp.TextList, error) {
 	err = capnp.Struct(s).SetPtr(4, l.ToPtr())
 	return l, err
 }
+func (s Grid_write_Params) Run() (string, error) {
+	p, err := capnp.Struct(s).Ptr(5)
+	return p.Text(), err
+}
+
+func (s Grid_write_Params) HasRun() bool {
+	return capnp.Struct(s).HasPtr(5)
+}
+
+func (s Grid_write_Params) RunBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(5)
+	return p.TextBytes(), err
+}
+
+func (s Grid_write_Params) SetRun(v string) error {
+	return capnp.Struct(s).SetText(5, v)
+}
+
+func (s Grid_write_Params) Sequence() int64 {
+	return int64(capnp.Struct(s).Uint64(0))
+}
+
+func (s Grid_write_Params) SetSequence(v int64) {
+	capnp.Struct(s).SetUint64(0, uint64(v))
+}
+
+func (s Grid_write_Params) Receipt() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(6)
+	return []byte(p.Data()), err
+}
+
+func (s Grid_write_Params) HasReceipt() bool {
+	return capnp.Struct(s).HasPtr(6)
+}
+
+func (s Grid_write_Params) SetReceipt(v []byte) error {
+	return capnp.Struct(s).SetData(6, v)
+}
 
 // Grid_write_Params_List is a list of Grid_write_Params.
 type Grid_write_Params_List = capnp.StructList[Grid_write_Params]
 
 // NewGrid_write_Params creates a new list of Grid_write_Params.
 func NewGrid_write_Params_List(s *capnp.Segment, sz int32) (Grid_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 5}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 7}, sz)
 	return capnp.StructList[Grid_write_Params](l), err
 }
 
@@ -468,12 +506,12 @@ type Grid_done_Results capnp.Struct
 const Grid_done_Results_TypeID = 0xdf7ff8cd7fbf2e00
 
 func NewGrid_done_Results(s *capnp.Segment) (Grid_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 6})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 32, PointerCount: 8})
 	return Grid_done_Results(st), err
 }
 
 func NewRootGrid_done_Results(s *capnp.Segment) (Grid_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 6})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 32, PointerCount: 8})
 	return Grid_done_Results(st), err
 }
 
@@ -656,12 +694,51 @@ func (s Grid_done_Results) SetScope(v string) error {
 	return capnp.Struct(s).SetText(5, v)
 }
 
+func (s Grid_done_Results) Run() (string, error) {
+	p, err := capnp.Struct(s).Ptr(6)
+	return p.Text(), err
+}
+
+func (s Grid_done_Results) HasRun() bool {
+	return capnp.Struct(s).HasPtr(6)
+}
+
+func (s Grid_done_Results) RunBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(6)
+	return p.TextBytes(), err
+}
+
+func (s Grid_done_Results) SetRun(v string) error {
+	return capnp.Struct(s).SetText(6, v)
+}
+
+func (s Grid_done_Results) Sequence() int64 {
+	return int64(capnp.Struct(s).Uint64(24))
+}
+
+func (s Grid_done_Results) SetSequence(v int64) {
+	capnp.Struct(s).SetUint64(24, uint64(v))
+}
+
+func (s Grid_done_Results) Receipt() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(7)
+	return []byte(p.Data()), err
+}
+
+func (s Grid_done_Results) HasReceipt() bool {
+	return capnp.Struct(s).HasPtr(7)
+}
+
+func (s Grid_done_Results) SetReceipt(v []byte) error {
+	return capnp.Struct(s).SetData(7, v)
+}
+
 // Grid_done_Results_List is a list of Grid_done_Results.
 type Grid_done_Results_List = capnp.StructList[Grid_done_Results]
 
 // NewGrid_done_Results creates a new list of Grid_done_Results.
 func NewGrid_done_Results_List(s *capnp.Segment, sz int32) (Grid_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 24, PointerCount: 6}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 32, PointerCount: 8}, sz)
 	return capnp.StructList[Grid_done_Results](l), err
 }
 

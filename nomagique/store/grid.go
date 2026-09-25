@@ -25,6 +25,9 @@ recognise one it should ignore.
 type GridServer struct {
 	*runtime.System
 	scope     string
+	run       string
+	sequence  int64
+	receipt   []byte
 	interests []string
 	declared  string
 	metrics   []float64
@@ -105,6 +108,14 @@ func (server *GridServer) Write(ctx context.Context, call Grid_write) error {
 			"[store.grid.Write] failed to read data argument",
 			err,
 		))
+	}
+
+	server.run, server.sequence, server.receipt = "", 0, nil
+
+	if feeds.Len() > 0 && call.Args().Sequence() > 0 {
+		if err := server.receiveBoundary(call.Args()); err != nil {
+			return err
+		}
 	}
 
 	server.out = nil
@@ -212,6 +223,17 @@ func (server *GridServer) Done(ctx context.Context, call Grid_done) error {
 	}
 
 	results.SetStatus(runtime.Status(server.Status()))
+	results.SetSequence(server.sequence)
+
+	if err := results.SetRun(server.run); err != nil {
+		return boundaryError("grid: publish run", err)
+	}
+
+	if err := results.SetReceipt(server.receipt); err != nil {
+		return boundaryError("grid: publish receipt", err)
+	}
+
+	server.run, server.sequence, server.receipt = "", 0, nil
 	results.SetDelivered(server.delivered)
 
 	if err := results.SetScope(server.scope); err != nil {

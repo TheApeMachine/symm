@@ -3,55 +3,113 @@ package data
 import (
 	"context"
 	"encoding/json"
+
 	"github.com/theapemachine/errnie"
 )
 
-/* MergeServer overlays fields without converting the values or synthesizing operands. */
+// MergeServer overlays fields without converting values. The explicit scalar
+// operands remain required. Additional gathered overlays may be absent.
 type MergeServer struct{ out []byte }
 
-/* NewMerge constructs an idle object-overlay primitive. */
 func NewMerge() *MergeServer { return &MergeServer{} }
 
-/* Write preserves JSON values byte-for-byte while overlay fields replace matching base fields. */
 func (server *MergeServer) Write(ctx context.Context, call Merge_write) error {
 	server.out = nil
 	base, err := call.Args().Base()
+
 	if err != nil {
-		return errnie.Error(errnie.Err(errnie.Validation, "merge: base", err))
+		return mergeError("read base", err)
 	}
-	overlay, err := call.Args().Overlay()
-	if err != nil {
-		return errnie.Error(errnie.Err(errnie.Validation, "merge: overlay", err))
-	}
-	var document, replacements map[string]json.RawMessage
+
+	var document map[string]json.RawMessage
+
 	if err := json.Unmarshal(base, &document); err != nil {
-		return errnie.Error(errnie.Err(errnie.Validation, "merge: base must be an object", err))
+		return mergeError("base must be an object", err)
 	}
-	if err := json.Unmarshal(overlay, &replacements); err != nil {
-		return errnie.Error(errnie.Err(errnie.Validation, "merge: overlay must be an object", err))
+
+	if document == nil {
+		return mergeError("null is not an object", nil)
 	}
-	if document == nil || replacements == nil {
-		return errnie.Error(errnie.Err(errnie.Validation, "merge: null is not an object", nil))
-	}
-	for name, value := range replacements {
-		document[name] = value
-	}
-	server.out, err = json.Marshal(document)
+
+	overlay, err := call.Args().Overlay()
+
 	if err != nil {
-		return errnie.Error(errnie.Err(errnie.Internal, "merge: encode object", err))
+		return mergeError("read overlay", err)
 	}
+
+	if len(overlay) == 0 {
+		return mergeError("an explicit overlay object is required", nil)
+	}
+
+	if err := mergeFields(document, overlay); err != nil {
+		return err
+	}
+
+	overlays, err := call.Args().Overlays()
+
+	if err != nil {
+		return mergeError("read gathered overlays", err)
+	}
+
+	for index := range overlays.Len() {
+		incoming, err := overlays.At(index)
+
+		if err != nil {
+			return mergeError("read overlay slot", err)
+		}
+
+		if err := mergeFields(document, incoming); err != nil {
+			return err
+		}
+	}
+
+	server.out, err = json.Marshal(document)
+
+	if err != nil {
+		return mergeError("encode object", err)
+	}
+
 	return nil
 }
 
-/* Done emits the object and resets evaluation state. */
+func mergeFields(document map[string]json.RawMessage, incoming []byte) error {
+	if len(incoming) == 0 {
+		return nil
+	}
+
+	var replacements map[string]json.RawMessage
+
+	if err := json.Unmarshal(incoming, &replacements); err != nil {
+		return mergeError("overlay must be an object", err)
+	}
+
+	if replacements == nil {
+		return mergeError("null is not an object", nil)
+	}
+
+	for name, value := range replacements {
+		document[name] = value
+	}
+
+	return nil
+}
+
+func mergeError(message string, cause error) error {
+	return errnie.Error(errnie.Err(errnie.Validation, "data.merge: "+message, cause))
+}
+
 func (server *MergeServer) Done(ctx context.Context, call Merge_done) error {
 	result, err := call.AllocResults()
+
 	if err != nil {
-		return errnie.Error(errnie.Err(errnie.Internal, "merge: results", err))
+		return mergeError("allocate result", err)
 	}
+
+	defer func() { server.out = nil }()
+
 	if err := result.SetOut(server.out); err != nil {
-		return errnie.Error(errnie.Err(errnie.Internal, "merge: output", err))
+		return mergeError("publish result", err)
 	}
-	server.out = nil
+
 	return nil
 }
