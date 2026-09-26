@@ -1,0 +1,75 @@
+{
+  "id": "resonance",
+  "name": "Retained causal resonance",
+  "nodes": {
+    "model": {
+      "id": "model",
+      "type": "store.Resonance",
+      "inputData": {
+        "featureIdentities": {
+          "value": [
+            "category:forecast_edge.confidence",
+            "category:physical_field.confidence",
+            "category:laminar.confidence",
+            "category:turbulent.confidence",
+            "category:inertial.confidence",
+            "category:viscous.confidence",
+            "category:frenzy.confidence",
+            "category:saturation.confidence",
+            "category:organic.confidence",
+            "category:exhaustion.confidence",
+            "category:hidden_absorption.confidence",
+            "category:aggressive_drive.confidence",
+            "category:stochastic_balance.confidence",
+            "category:volume_starvation.confidence",
+            "category:loaded_imbalance.confidence",
+            "category:spoof_trap.confidence",
+            "category:book_thinning.confidence",
+            "category:dense_neutrality.confidence",
+            "category:inefficient_lag.confidence",
+            "category:synchronized_drift.confidence",
+            "category:decoupled_move.confidence",
+            "category:anchor_stall.confidence",
+            "category:vertical_ignition.confidence",
+            "category:coiled_compression.confidence",
+            "category:organic_trend.confidence",
+            "category:faded_exhaustion.confidence",
+            "category:extreme_scarcity.confidence",
+            "category:median_depth.confidence",
+            "category:robust_liquidity.confidence",
+            "category:risk_on_surge.confidence",
+            "category:divergent_move.confidence",
+            "category:systemic_slump.confidence",
+            "category:leveraged_ignition.confidence",
+            "category:short_squeeze.confidence",
+            "category:adverse_leverage_buildup.confidence",
+            "category:long_deleveraging.confidence",
+            "category:derivatives_decoupling.confidence",
+            "category:liquidity_vacuum.confidence",
+            "category:toxic_bluff.confidence",
+            "category:hard_support.confidence",
+            "category:systemic_herd.confidence",
+            "category:decoupled_alpha.confidence",
+            "category:stochastic_noise.confidence",
+            "category:divergent_stress.confidence",
+            "category:endogenous_alpha.confidence",
+            "category:systemic_beta.confidence",
+            "category:liquidity_shock.confidence",
+            "category:causal_noise.confidence",
+            "category:mechanical_collapse.confidence",
+            "category:thermal_exhaustion.confidence",
+            "category:fragile_expansion.confidence",
+            "category:active_reversal.confidence",
+            "category:laminar_resonance.confidence",
+            "category:turbulent_resonance.confidence",
+            "category:equilibrium.confidence"
+          ]
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {}
+      }
+    }
+  }
+}

@@ -2,6 +2,7 @@ package compiler
 
 import (
 	"context"
+	"strconv"
 	"strings"
 
 	capnp "capnproto.org/go/capnp/v3"
@@ -152,6 +153,26 @@ func (p *Program) seedBindings(frames []nodeFrame, input runtime.StageNode_step_
 		return false, errnie.Error(errnie.Err(errnie.Validation, "program: upstream", err))
 	}
 
+	// Resolve each upstream identity once. Re-reading both Text fields for
+	// every binding made the complete cut allocate quadratically in its width.
+	indexed := make(map[[2]string]runtime.Result, upstream.Len())
+	for index := range upstream.Len() {
+		result := upstream.At(index)
+		producer, err := result.Producer()
+		if err != nil {
+			return false, errnie.Error(err)
+		}
+		node, err := result.Node()
+		if err != nil {
+			return false, errnie.Error(err)
+		}
+		key := [2]string{producer, node}
+		if _, found := indexed[key]; found {
+			return false, errnie.Error(errnie.Err(errnie.Validation, "program: duplicate upstream result for "+producer+"/"+node, nil))
+		}
+		indexed[key] = result
+	}
+
 	if p.stageWidths == nil {
 		p.stageWidths = make(map[NodeID]map[string]int)
 	}
@@ -182,7 +203,7 @@ func (p *Program) seedBindings(frames []nodeFrame, input runtime.StageNode_step_
 			}
 			p.stageWidths[nodeIndex][field.Name] = max(p.stageWidths[nodeIndex][field.Name], slot+1)
 		}
-		if !field.ValueList {
+		if !field.ValueList && !bindings.At(index).Optional() {
 			node.RequiredMask |= 1 << node.Inputs[field.Name].Index
 		}
 		if !node.Source && !node.Standing && !node.Queued {
@@ -194,7 +215,7 @@ func (p *Program) seedBindings(frames []nodeFrame, input runtime.StageNode_step_
 		ready = ready || node.Source
 	}
 	for index := range bindings.Len() {
-		present, err := p.seedBinding(frames, bindings.At(index), upstream)
+		present, err := p.seedBinding(frames, bindings.At(index), indexed)
 		if err != nil {
 			return false, err
 		}
@@ -207,7 +228,7 @@ func (p *Program) seedBindings(frames []nodeFrame, input runtime.StageNode_step_
 }
 
 /* seedBinding copies a schema-checked active result into its authored target. */
-func (p *Program) seedBinding(frames []nodeFrame, binding runtime.Binding, upstream runtime.Result_List) (bool, error) {
+func (p *Program) seedBinding(frames []nodeFrame, binding runtime.Binding, upstream map[[2]string]runtime.Result) (bool, error) {
 	producer, err := binding.Producer()
 
 	if err != nil {
@@ -219,25 +240,11 @@ func (p *Program) seedBinding(frames []nodeFrame, binding runtime.Binding, upstr
 		return false, err
 	}
 
-	for index := range upstream.Len() {
-		result := upstream.At(index)
-		source, err := result.Producer()
-
-		if err != nil {
-			return false, err
-		}
-		node, err := result.Node()
-
-		if err != nil {
-			return false, err
-		}
-
-		if producer != source || name != node {
-			continue
-		}
-		return p.copyBinding(frames, binding, result)
+	result, found := upstream[[2]string{producer, name}]
+	if !found {
+		return false, nil
 	}
-	return false, nil
+	return p.copyBinding(frames, binding, result)
 }
 
 /* copyBinding preserves the original Cap'n Proto value and union presence. */
@@ -270,6 +277,15 @@ func (p *Program) copyBinding(frames []nodeFrame, binding runtime.Binding, resul
 	if field.InUnion && value.Uint16(capnp.DataOffset(field.DiscriminantOffset*2)) != field.DiscriminantValue {
 		return false, nil
 	}
+	if field.Which == schema.Type_Which_structType {
+		payload, err := value.Ptr(uint16(field.Offset))
+		if err != nil {
+			return false, errnie.Error(err)
+		}
+		if !payload.IsValid() {
+			return false, nil
+		}
+	}
 	if binding.Gate() {
 		if field.Which == schema.Type_Which_data {
 			pointer, err := value.Ptr(uint16(field.Offset))
@@ -292,6 +308,13 @@ func (p *Program) copyBinding(frames []nodeFrame, binding runtime.Binding, resul
 			projected, err := projection.Field(value, field.SchemaField)
 			if err != nil {
 				return false, err
+			}
+			if slot, indexed := outputSlot(name); indexed && field.ValueList {
+				presence, carried := resolveOutputField(source, presencePort)
+				if !CompileFanOutDelivery(field, slot, presence, carried)(value) {
+					return false, nil
+				}
+				projected = projected.([]any)[slot]
 			}
 			encoded, present, err := boundJSON(projected)
 			if err != nil {
@@ -320,7 +343,8 @@ func (p *Program) copyBinding(frames []nodeFrame, binding runtime.Binding, resul
 		}
 		copier, err = CompileFanOutCopier(field, destination, slot, presence, carried)
 	}
-	if !field.ValueList && destination.ValueList {
+	sourceSlot, indexed := outputSlot(name)
+	if destination.ValueList && (!field.ValueList || indexed) {
 		reflected, reflectErr := ReflectInterface(p.Nodes[index].Identity.InterfaceID)
 		if reflectErr != nil {
 			return false, reflectErr
@@ -331,9 +355,18 @@ func (p *Program) copyBinding(frames []nodeFrame, binding runtime.Binding, resul
 		}
 		_, port, _ := strings.Cut(target, ".")
 		slot, _ := outputSlot(port)
-		copier, err = CompileFanInCopier(field, destination, presence, slot, p.stageWidths[index][destination.Name])
+		if !field.ValueList {
+			copier, err = CompileFanInCopier(field, destination, presence, slot, p.stageWidths[index][destination.Name])
+		}
+		if field.ValueList {
+			carriedPresence, carried := resolveOutputField(source, presencePort)
+			if !CompileFanOutDelivery(field, sourceSlot, carriedPresence, carried)(value) {
+				return false, nil
+			}
+			copier, err = CompileFanInSlotCopier(field, destination, presence, sourceSlot, slot, p.stageWidths[index][destination.Name])
+		}
 	}
-	if field.ValueList == destination.ValueList {
+	if field.ValueList == destination.ValueList && (!field.ValueList || !indexed) {
 		copier, err = CompileCopier(field, destination)
 	}
 	if err != nil {
@@ -428,28 +461,38 @@ func (p *Program) Shutdown() { p.Release() }
 /* Fence persists the actual graph owners before its consumer releases them. */
 func (p *Program) Fence(ctx context.Context, call runtime.StageNode_fence) error { return p.Flush(ctx) }
 
-/* copyStamp binds the producing Result's protocol stamp to an authored Int64 input. */
+/* copyStamp binds protocol counters without losing any 64-bit integer digits. */
 func (p *Program) copyStamp(frames []nodeFrame, binding runtime.Binding, result runtime.Result) (bool, error) {
+	value, encoded, kind := uint64(result.Epoch()), strconv.FormatInt(result.Epoch(), 10), schema.Type_Which_int64
+	if binding.Stamp() == runtime.Stamp_sequence {
+		value, encoded = uint64(result.Sequence()), strconv.FormatInt(result.Sequence(), 10)
+	}
+	if binding.Stamp() == runtime.Stamp_completed {
+		value, encoded, kind = result.Completed(), strconv.FormatUint(result.Completed(), 10), schema.Type_Which_uint64
+	}
 	target, err := binding.Target()
 	if err != nil {
 		return false, errnie.Error(err)
+	}
+	targetNode, prop, _ := strings.Cut(target, ".")
+	if p.Bindings != nil {
+		if origin, found := p.Bindings.Inputs[targetNode]; found {
+			p.stageArrivals = append(p.stageArrivals, bindingArrival{BindingEntry{TargetGraph: origin.Definition, TargetComponent: origin.Node, TargetProp: prop}, strconv.Quote(encoded)})
+			return true, nil
+		}
 	}
 	index, field, err := p.entry(target)
 	if err != nil {
 		return false, err
 	}
-	if field.Which != schema.Type_Which_int64 {
-		return false, errnie.Error(errnie.Err(errnie.Validation, "program: stamp target must be Int64", nil))
-	}
-	value := result.Epoch()
-	if binding.Stamp() == runtime.Stamp_sequence {
-		value = result.Sequence()
+	if field.Which != kind {
+		return false, errnie.Error(errnie.Err(errnie.Validation, "program: stamp target must be "+kind.String(), nil))
 	}
 	args, err := p.arguments(frames, index)
 	if err != nil {
 		return false, err
 	}
-	args.SetUint64(capnp.DataOffset(field.Offset*8), uint64(value))
+	args.SetUint64(capnp.DataOffset(field.Offset*8), value)
 	frames[index].ready |= 1 << p.Nodes[index].Inputs[field.Name].Index
 	return true, nil
 }

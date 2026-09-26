@@ -2,1512 +2,34 @@
   "id": "leadlag_ticker",
   "name": "leadlag:ticker",
   "nodes": {
-    "returns": {
-      "id": "returns",
-      "type": "temporal.LogReturns",
-      "width": 280,
-      "height": 172,
-      "x": -1800.0,
-      "y": -300.0,
-      "connections": {
-        "inputs": {},
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "candidate_0",
-              "portName": "returns1"
-            },
-            {
-              "nodeId": "candidate_1",
-              "portName": "returns1"
-            },
-            {
-              "nodeId": "candidate_2",
-              "portName": "returns1"
-            },
-            {
-              "nodeId": "candidate_3",
-              "portName": "returns1"
-            },
-            {
-              "nodeId": "candidate_4",
-              "portName": "returns1"
-            },
-            {
-              "nodeId": "candidate_5",
-              "portName": "returns1"
-            },
-            {
-              "nodeId": "candidate_6",
-              "portName": "returns1"
-            },
-            {
-              "nodeId": "candidate_7",
-              "portName": "returns1"
-            },
-            {
-              "nodeId": "candidate_8",
-              "portName": "returns1"
-            }
-          ]
-        }
-      }
-    },
-    "referenceReturns": {
-      "id": "referenceReturns",
-      "type": "temporal.LogReturns",
-      "width": 280,
-      "height": 172,
-      "x": -1800.0,
-      "y": -150.0,
-      "connections": {
-        "inputs": {},
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "candidate_0",
-              "portName": "returns2"
-            },
-            {
-              "nodeId": "candidate_1",
-              "portName": "returns2"
-            },
-            {
-              "nodeId": "candidate_2",
-              "portName": "returns2"
-            },
-            {
-              "nodeId": "candidate_3",
-              "portName": "returns2"
-            },
-            {
-              "nodeId": "candidate_4",
-              "portName": "returns2"
-            },
-            {
-              "nodeId": "candidate_5",
-              "portName": "returns2"
-            },
-            {
-              "nodeId": "candidate_6",
-              "portName": "returns2"
-            },
-            {
-              "nodeId": "candidate_7",
-              "portName": "returns2"
-            },
-            {
-              "nodeId": "candidate_8",
-              "portName": "returns2"
-            }
-          ]
-        }
-      }
-    },
-    "previousTimestamp": {
-      "id": "previousTimestamp",
-      "type": "temporal.Delay",
-      "width": 280,
-      "height": 172,
-      "x": -1800.0,
-      "y": 0.0,
-      "connections": {
-        "inputs": {},
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "candidate_0",
-              "portName": "boundsStart1"
-            },
-            {
-              "nodeId": "candidate_1",
-              "portName": "boundsStart1"
-            },
-            {
-              "nodeId": "candidate_2",
-              "portName": "boundsStart1"
-            },
-            {
-              "nodeId": "candidate_3",
-              "portName": "boundsStart1"
-            },
-            {
-              "nodeId": "candidate_4",
-              "portName": "boundsStart1"
-            },
-            {
-              "nodeId": "candidate_5",
-              "portName": "boundsStart1"
-            },
-            {
-              "nodeId": "candidate_6",
-              "portName": "boundsStart1"
-            },
-            {
-              "nodeId": "candidate_7",
-              "portName": "boundsStart1"
-            },
-            {
-              "nodeId": "candidate_8",
-              "portName": "boundsStart1"
-            }
-          ]
-        }
-      }
-    },
-    "previousReferenceTimestamp": {
-      "id": "previousReferenceTimestamp",
-      "type": "temporal.Delay",
-      "width": 280,
-      "height": 172,
-      "x": -1800.0,
-      "y": 150.0,
-      "connections": {
-        "inputs": {},
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "shiftStart_0",
-              "portName": "a"
-            },
-            {
-              "nodeId": "shiftStart_1",
-              "portName": "a"
-            },
-            {
-              "nodeId": "shiftStart_2",
-              "portName": "a"
-            },
-            {
-              "nodeId": "shiftStart_3",
-              "portName": "a"
-            },
-            {
-              "nodeId": "shiftStart_4",
-              "portName": "a"
-            },
-            {
-              "nodeId": "shiftStart_5",
-              "portName": "a"
-            },
-            {
-              "nodeId": "shiftStart_6",
-              "portName": "a"
-            },
-            {
-              "nodeId": "shiftStart_7",
-              "portName": "a"
-            },
-            {
-              "nodeId": "shiftStart_8",
-              "portName": "a"
-            }
-          ]
-        }
-      }
-    },
-    "searchProfile": {
-      "id": "searchProfile",
-      "type": "statistic.Order",
-      "width": 280,
-      "height": 172,
-      "x": -400.0,
-      "y": 0.0,
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "candidateStrength_0",
-              "portName": "out"
-            }
-          ],
-          "value_1": [
-            {
-              "nodeId": "candidateStrength_1",
-              "portName": "out"
-            }
-          ],
-          "value_2": [
-            {
-              "nodeId": "candidateStrength_2",
-              "portName": "out"
-            }
-          ],
-          "value_3": [
-            {
-              "nodeId": "candidateStrength_3",
-              "portName": "out"
-            }
-          ],
-          "value_4": [
-            {
-              "nodeId": "candidateStrength_4",
-              "portName": "out"
-            }
-          ],
-          "value_5": [
-            {
-              "nodeId": "candidateStrength_5",
-              "portName": "out"
-            }
-          ],
-          "value_6": [
-            {
-              "nodeId": "candidateStrength_6",
-              "portName": "out"
-            }
-          ],
-          "value_7": [
-            {
-              "nodeId": "candidateStrength_7",
-              "portName": "out"
-            }
-          ],
-          "value_8": [
-            {
-              "nodeId": "candidateStrength_8",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "extremeMagnitude": [
-            {
-              "nodeId": "best_lag_correlation",
-              "portName": "a"
-            }
-          ],
-          "extremeIndex": [
-            {
-              "nodeId": "best_lag_index",
-              "portName": "a"
-            },
-            {
-              "nodeId": "bestLagOffset",
-              "portName": "a"
-            }
-          ],
-          "count": [
-            {
-              "nodeId": "search_count",
-              "portName": "a"
-            }
-          ]
-        }
-      }
-    },
-    "candidate_0": {
-      "id": "candidate_0",
-      "type": "algo.HayashiYoshida",
-      "width": 280,
-      "height": 172,
-      "x": -1100.0,
-      "y": -400.0,
-      "connections": {
-        "inputs": {
-          "returns1": [
-            {
-              "nodeId": "returns",
-              "portName": "out"
-            }
-          ],
-          "returns2": [
-            {
-              "nodeId": "referenceReturns",
-              "portName": "out"
-            }
-          ],
-          "boundsStart1": [
-            {
-              "nodeId": "previousTimestamp",
-              "portName": "out"
-            }
-          ],
-          "boundsStart2": [
-            {
-              "nodeId": "shiftStart_0",
-              "portName": "out"
-            }
-          ],
-          "boundsEnd2": [
-            {
-              "nodeId": "shiftEnd_0",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "correlation": [
-            {
-              "nodeId": "candidateStrength_0",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "shiftStart_0": {
-      "id": "shiftStart_0",
-      "type": "arithmetic.Add",
-      "width": 280,
-      "height": 172,
-      "x": -1450.0,
-      "y": -400.0,
-      "inputData": {
-        "b": {
-          "value": -4
-        }
-      },
-      "connections": {
-        "inputs": {
-          "a": [
-            {
-              "nodeId": "previousReferenceTimestamp",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "candidate_0",
-              "portName": "boundsStart2"
-            }
-          ]
-        }
-      }
-    },
-    "shiftEnd_0": {
-      "id": "shiftEnd_0",
-      "type": "arithmetic.Add",
-      "width": 280,
-      "height": 172,
-      "x": -1450.0,
-      "y": -340.0,
-      "inputData": {
-        "b": {
-          "value": -4
-        }
-      },
-      "connections": {
-        "inputs": {},
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "candidate_0",
-              "portName": "boundsEnd2"
-            }
-          ]
-        }
-      }
-    },
-    "candidateStrength_0": {
-      "id": "candidateStrength_0",
-      "type": "calculus.Absolute",
-      "width": 280,
-      "height": 172,
-      "x": -750.0,
-      "y": -400.0,
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "candidate_0",
-              "portName": "correlation"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "searchProfile",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "candidate_1": {
-      "id": "candidate_1",
-      "type": "algo.HayashiYoshida",
-      "width": 280,
-      "height": 172,
-      "x": -1100.0,
-      "y": -280.0,
-      "connections": {
-        "inputs": {
-          "returns1": [
-            {
-              "nodeId": "returns",
-              "portName": "out"
-            }
-          ],
-          "returns2": [
-            {
-              "nodeId": "referenceReturns",
-              "portName": "out"
-            }
-          ],
-          "boundsStart1": [
-            {
-              "nodeId": "previousTimestamp",
-              "portName": "out"
-            }
-          ],
-          "boundsStart2": [
-            {
-              "nodeId": "shiftStart_1",
-              "portName": "out"
-            }
-          ],
-          "boundsEnd2": [
-            {
-              "nodeId": "shiftEnd_1",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "correlation": [
-            {
-              "nodeId": "candidateStrength_1",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "shiftStart_1": {
-      "id": "shiftStart_1",
-      "type": "arithmetic.Add",
-      "width": 280,
-      "height": 172,
-      "x": -1450.0,
-      "y": -280.0,
-      "inputData": {
-        "b": {
-          "value": -3
-        }
-      },
-      "connections": {
-        "inputs": {
-          "a": [
-            {
-              "nodeId": "previousReferenceTimestamp",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "candidate_1",
-              "portName": "boundsStart2"
-            }
-          ]
-        }
-      }
-    },
-    "shiftEnd_1": {
-      "id": "shiftEnd_1",
-      "type": "arithmetic.Add",
-      "width": 280,
-      "height": 172,
-      "x": -1450.0,
-      "y": -220.0,
-      "inputData": {
-        "b": {
-          "value": -3
-        }
-      },
-      "connections": {
-        "inputs": {},
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "candidate_1",
-              "portName": "boundsEnd2"
-            }
-          ]
-        }
-      }
-    },
-    "candidateStrength_1": {
-      "id": "candidateStrength_1",
-      "type": "calculus.Absolute",
-      "width": 280,
-      "height": 172,
-      "x": -750.0,
-      "y": -280.0,
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "candidate_1",
-              "portName": "correlation"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "searchProfile",
-              "portName": "value_1"
-            }
-          ]
-        }
-      }
-    },
-    "candidate_2": {
-      "id": "candidate_2",
-      "type": "algo.HayashiYoshida",
-      "width": 280,
-      "height": 172,
-      "x": -1100.0,
-      "y": -160.0,
-      "connections": {
-        "inputs": {
-          "returns1": [
-            {
-              "nodeId": "returns",
-              "portName": "out"
-            }
-          ],
-          "returns2": [
-            {
-              "nodeId": "referenceReturns",
-              "portName": "out"
-            }
-          ],
-          "boundsStart1": [
-            {
-              "nodeId": "previousTimestamp",
-              "portName": "out"
-            }
-          ],
-          "boundsStart2": [
-            {
-              "nodeId": "shiftStart_2",
-              "portName": "out"
-            }
-          ],
-          "boundsEnd2": [
-            {
-              "nodeId": "shiftEnd_2",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "correlation": [
-            {
-              "nodeId": "candidateStrength_2",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "shiftStart_2": {
-      "id": "shiftStart_2",
-      "type": "arithmetic.Add",
-      "width": 280,
-      "height": 172,
-      "x": -1450.0,
-      "y": -160.0,
-      "inputData": {
-        "b": {
-          "value": -2
-        }
-      },
-      "connections": {
-        "inputs": {
-          "a": [
-            {
-              "nodeId": "previousReferenceTimestamp",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "candidate_2",
-              "portName": "boundsStart2"
-            }
-          ]
-        }
-      }
-    },
-    "shiftEnd_2": {
-      "id": "shiftEnd_2",
-      "type": "arithmetic.Add",
-      "width": 280,
-      "height": 172,
-      "x": -1450.0,
-      "y": -100.0,
-      "inputData": {
-        "b": {
-          "value": -2
-        }
-      },
-      "connections": {
-        "inputs": {},
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "candidate_2",
-              "portName": "boundsEnd2"
-            }
-          ]
-        }
-      }
-    },
-    "candidateStrength_2": {
-      "id": "candidateStrength_2",
-      "type": "calculus.Absolute",
-      "width": 280,
-      "height": 172,
-      "x": -750.0,
-      "y": -160.0,
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "candidate_2",
-              "portName": "correlation"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "searchProfile",
-              "portName": "value_2"
-            }
-          ]
-        }
-      }
-    },
-    "candidate_3": {
-      "id": "candidate_3",
-      "type": "algo.HayashiYoshida",
-      "width": 280,
-      "height": 172,
-      "x": -1100.0,
-      "y": -40.0,
-      "connections": {
-        "inputs": {
-          "returns1": [
-            {
-              "nodeId": "returns",
-              "portName": "out"
-            }
-          ],
-          "returns2": [
-            {
-              "nodeId": "referenceReturns",
-              "portName": "out"
-            }
-          ],
-          "boundsStart1": [
-            {
-              "nodeId": "previousTimestamp",
-              "portName": "out"
-            }
-          ],
-          "boundsStart2": [
-            {
-              "nodeId": "shiftStart_3",
-              "portName": "out"
-            }
-          ],
-          "boundsEnd2": [
-            {
-              "nodeId": "shiftEnd_3",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "correlation": [
-            {
-              "nodeId": "candidateStrength_3",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "shiftStart_3": {
-      "id": "shiftStart_3",
-      "type": "arithmetic.Add",
-      "width": 280,
-      "height": 172,
-      "x": -1450.0,
-      "y": -40.0,
-      "inputData": {
-        "b": {
-          "value": -1
-        }
-      },
-      "connections": {
-        "inputs": {
-          "a": [
-            {
-              "nodeId": "previousReferenceTimestamp",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "candidate_3",
-              "portName": "boundsStart2"
-            }
-          ]
-        }
-      }
-    },
-    "shiftEnd_3": {
-      "id": "shiftEnd_3",
-      "type": "arithmetic.Add",
-      "width": 280,
-      "height": 172,
-      "x": -1450.0,
-      "y": 20.0,
-      "inputData": {
-        "b": {
-          "value": -1
-        }
-      },
-      "connections": {
-        "inputs": {},
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "candidate_3",
-              "portName": "boundsEnd2"
-            }
-          ]
-        }
-      }
-    },
-    "candidateStrength_3": {
-      "id": "candidateStrength_3",
-      "type": "calculus.Absolute",
-      "width": 280,
-      "height": 172,
-      "x": -750.0,
-      "y": -40.0,
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "candidate_3",
-              "portName": "correlation"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "searchProfile",
-              "portName": "value_3"
-            }
-          ]
-        }
-      }
-    },
-    "candidate_4": {
-      "id": "candidate_4",
-      "type": "algo.HayashiYoshida",
-      "width": 280,
-      "height": 172,
-      "x": -1100.0,
-      "y": 80.0,
-      "connections": {
-        "inputs": {
-          "returns1": [
-            {
-              "nodeId": "returns",
-              "portName": "out"
-            }
-          ],
-          "returns2": [
-            {
-              "nodeId": "referenceReturns",
-              "portName": "out"
-            }
-          ],
-          "boundsStart1": [
-            {
-              "nodeId": "previousTimestamp",
-              "portName": "out"
-            }
-          ],
-          "boundsStart2": [
-            {
-              "nodeId": "shiftStart_4",
-              "portName": "out"
-            }
-          ],
-          "boundsEnd2": [
-            {
-              "nodeId": "shiftEnd_4",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "correlation": [
-            {
-              "nodeId": "candidateStrength_4",
-              "portName": "value"
-            },
-            {
-              "nodeId": "contemporaneous_correlation",
-              "portName": "value"
-            }
-          ],
-          "support": [
-            {
-              "nodeId": "fisherDegreesOfFreedom",
-              "portName": "a"
-            }
-          ]
-        }
-      }
-    },
-    "shiftStart_4": {
-      "id": "shiftStart_4",
-      "type": "arithmetic.Add",
-      "width": 280,
-      "height": 172,
-      "x": -1450.0,
-      "y": 80.0,
-      "inputData": {
-        "b": {
-          "value": 0
-        }
-      },
-      "connections": {
-        "inputs": {
-          "a": [
-            {
-              "nodeId": "previousReferenceTimestamp",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "candidate_4",
-              "portName": "boundsStart2"
-            }
-          ]
-        }
-      }
-    },
-    "shiftEnd_4": {
-      "id": "shiftEnd_4",
-      "type": "arithmetic.Add",
-      "width": 280,
-      "height": 172,
-      "x": -1450.0,
-      "y": 140.0,
-      "inputData": {
-        "b": {
-          "value": 0
-        }
-      },
-      "connections": {
-        "inputs": {},
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "candidate_4",
-              "portName": "boundsEnd2"
-            }
-          ]
-        }
-      }
-    },
-    "candidateStrength_4": {
-      "id": "candidateStrength_4",
-      "type": "calculus.Absolute",
-      "width": 280,
-      "height": 172,
-      "x": -750.0,
-      "y": 80.0,
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "candidate_4",
-              "portName": "correlation"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "searchProfile",
-              "portName": "value_4"
-            }
-          ]
-        }
-      }
-    },
-    "candidate_5": {
-      "id": "candidate_5",
-      "type": "algo.HayashiYoshida",
-      "width": 280,
-      "height": 172,
-      "x": -1100.0,
-      "y": 200.0,
-      "connections": {
-        "inputs": {
-          "returns1": [
-            {
-              "nodeId": "returns",
-              "portName": "out"
-            }
-          ],
-          "returns2": [
-            {
-              "nodeId": "referenceReturns",
-              "portName": "out"
-            }
-          ],
-          "boundsStart1": [
-            {
-              "nodeId": "previousTimestamp",
-              "portName": "out"
-            }
-          ],
-          "boundsStart2": [
-            {
-              "nodeId": "shiftStart_5",
-              "portName": "out"
-            }
-          ],
-          "boundsEnd2": [
-            {
-              "nodeId": "shiftEnd_5",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "correlation": [
-            {
-              "nodeId": "candidateStrength_5",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "shiftStart_5": {
-      "id": "shiftStart_5",
-      "type": "arithmetic.Add",
-      "width": 280,
-      "height": 172,
-      "x": -1450.0,
-      "y": 200.0,
-      "inputData": {
-        "b": {
-          "value": 1
-        }
-      },
-      "connections": {
-        "inputs": {
-          "a": [
-            {
-              "nodeId": "previousReferenceTimestamp",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "candidate_5",
-              "portName": "boundsStart2"
-            }
-          ]
-        }
-      }
-    },
-    "shiftEnd_5": {
-      "id": "shiftEnd_5",
-      "type": "arithmetic.Add",
-      "width": 280,
-      "height": 172,
-      "x": -1450.0,
-      "y": 260.0,
-      "inputData": {
-        "b": {
-          "value": 1
-        }
-      },
-      "connections": {
-        "inputs": {},
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "candidate_5",
-              "portName": "boundsEnd2"
-            }
-          ]
-        }
-      }
-    },
-    "candidateStrength_5": {
-      "id": "candidateStrength_5",
-      "type": "calculus.Absolute",
-      "width": 280,
-      "height": 172,
-      "x": -750.0,
-      "y": 200.0,
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "candidate_5",
-              "portName": "correlation"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "searchProfile",
-              "portName": "value_5"
-            }
-          ]
-        }
-      }
-    },
-    "candidate_6": {
-      "id": "candidate_6",
-      "type": "algo.HayashiYoshida",
-      "width": 280,
-      "height": 172,
-      "x": -1100.0,
-      "y": 320.0,
-      "connections": {
-        "inputs": {
-          "returns1": [
-            {
-              "nodeId": "returns",
-              "portName": "out"
-            }
-          ],
-          "returns2": [
-            {
-              "nodeId": "referenceReturns",
-              "portName": "out"
-            }
-          ],
-          "boundsStart1": [
-            {
-              "nodeId": "previousTimestamp",
-              "portName": "out"
-            }
-          ],
-          "boundsStart2": [
-            {
-              "nodeId": "shiftStart_6",
-              "portName": "out"
-            }
-          ],
-          "boundsEnd2": [
-            {
-              "nodeId": "shiftEnd_6",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "correlation": [
-            {
-              "nodeId": "candidateStrength_6",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "shiftStart_6": {
-      "id": "shiftStart_6",
-      "type": "arithmetic.Add",
-      "width": 280,
-      "height": 172,
-      "x": -1450.0,
-      "y": 320.0,
-      "inputData": {
-        "b": {
-          "value": 2
-        }
-      },
-      "connections": {
-        "inputs": {
-          "a": [
-            {
-              "nodeId": "previousReferenceTimestamp",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "candidate_6",
-              "portName": "boundsStart2"
-            }
-          ]
-        }
-      }
-    },
-    "shiftEnd_6": {
-      "id": "shiftEnd_6",
-      "type": "arithmetic.Add",
-      "width": 280,
-      "height": 172,
-      "x": -1450.0,
-      "y": 380.0,
-      "inputData": {
-        "b": {
-          "value": 2
-        }
-      },
-      "connections": {
-        "inputs": {},
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "candidate_6",
-              "portName": "boundsEnd2"
-            }
-          ]
-        }
-      }
-    },
-    "candidateStrength_6": {
-      "id": "candidateStrength_6",
-      "type": "calculus.Absolute",
-      "width": 280,
-      "height": 172,
-      "x": -750.0,
-      "y": 320.0,
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "candidate_6",
-              "portName": "correlation"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "searchProfile",
-              "portName": "value_6"
-            }
-          ]
-        }
-      }
-    },
-    "candidate_7": {
-      "id": "candidate_7",
-      "type": "algo.HayashiYoshida",
-      "width": 280,
-      "height": 172,
-      "x": -1100.0,
-      "y": 440.0,
-      "connections": {
-        "inputs": {
-          "returns1": [
-            {
-              "nodeId": "returns",
-              "portName": "out"
-            }
-          ],
-          "returns2": [
-            {
-              "nodeId": "referenceReturns",
-              "portName": "out"
-            }
-          ],
-          "boundsStart1": [
-            {
-              "nodeId": "previousTimestamp",
-              "portName": "out"
-            }
-          ],
-          "boundsStart2": [
-            {
-              "nodeId": "shiftStart_7",
-              "portName": "out"
-            }
-          ],
-          "boundsEnd2": [
-            {
-              "nodeId": "shiftEnd_7",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "correlation": [
-            {
-              "nodeId": "candidateStrength_7",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "shiftStart_7": {
-      "id": "shiftStart_7",
-      "type": "arithmetic.Add",
-      "width": 280,
-      "height": 172,
-      "x": -1450.0,
-      "y": 440.0,
-      "inputData": {
-        "b": {
-          "value": 3
-        }
-      },
-      "connections": {
-        "inputs": {
-          "a": [
-            {
-              "nodeId": "previousReferenceTimestamp",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "candidate_7",
-              "portName": "boundsStart2"
-            }
-          ]
-        }
-      }
-    },
-    "shiftEnd_7": {
-      "id": "shiftEnd_7",
-      "type": "arithmetic.Add",
-      "width": 280,
-      "height": 172,
-      "x": -1450.0,
-      "y": 500.0,
-      "inputData": {
-        "b": {
-          "value": 3
-        }
-      },
-      "connections": {
-        "inputs": {},
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "candidate_7",
-              "portName": "boundsEnd2"
-            }
-          ]
-        }
-      }
-    },
-    "candidateStrength_7": {
-      "id": "candidateStrength_7",
-      "type": "calculus.Absolute",
-      "width": 280,
-      "height": 172,
-      "x": -750.0,
-      "y": 440.0,
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "candidate_7",
-              "portName": "correlation"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "searchProfile",
-              "portName": "value_7"
-            }
-          ]
-        }
-      }
-    },
-    "candidate_8": {
-      "id": "candidate_8",
-      "type": "algo.HayashiYoshida",
-      "width": 280,
-      "height": 172,
-      "x": -1100.0,
-      "y": 560.0,
-      "connections": {
-        "inputs": {
-          "returns1": [
-            {
-              "nodeId": "returns",
-              "portName": "out"
-            }
-          ],
-          "returns2": [
-            {
-              "nodeId": "referenceReturns",
-              "portName": "out"
-            }
-          ],
-          "boundsStart1": [
-            {
-              "nodeId": "previousTimestamp",
-              "portName": "out"
-            }
-          ],
-          "boundsStart2": [
-            {
-              "nodeId": "shiftStart_8",
-              "portName": "out"
-            }
-          ],
-          "boundsEnd2": [
-            {
-              "nodeId": "shiftEnd_8",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "correlation": [
-            {
-              "nodeId": "candidateStrength_8",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "shiftStart_8": {
-      "id": "shiftStart_8",
-      "type": "arithmetic.Add",
-      "width": 280,
-      "height": 172,
-      "x": -1450.0,
-      "y": 560.0,
-      "inputData": {
-        "b": {
-          "value": 4
-        }
-      },
-      "connections": {
-        "inputs": {
-          "a": [
-            {
-              "nodeId": "previousReferenceTimestamp",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "candidate_8",
-              "portName": "boundsStart2"
-            }
-          ]
-        }
-      }
-    },
-    "shiftEnd_8": {
-      "id": "shiftEnd_8",
-      "type": "arithmetic.Add",
-      "width": 280,
-      "height": 172,
-      "x": -1450.0,
-      "y": 620.0,
-      "inputData": {
-        "b": {
-          "value": 4
-        }
-      },
-      "connections": {
-        "inputs": {},
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "candidate_8",
-              "portName": "boundsEnd2"
-            }
-          ]
-        }
-      }
-    },
-    "candidateStrength_8": {
-      "id": "candidateStrength_8",
-      "type": "calculus.Absolute",
-      "width": 280,
-      "height": 172,
-      "x": -750.0,
-      "y": 560.0,
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "candidate_8",
-              "portName": "correlation"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "searchProfile",
-              "portName": "value_8"
-            }
-          ]
-        }
-      }
-    },
     "contemporaneous_correlation": {
       "id": "contemporaneous_correlation",
-      "type": "calculus.Absolute",
+      "type": "arithmetic.Add",
       "width": 280,
       "height": 172,
       "x": -400.0,
       "y": -600.0,
       "connections": {
         "inputs": {
-          "value": [
+          "a": [
             {
-              "nodeId": "candidate_4",
-              "portName": "correlation"
+              "nodeId": "search",
+              "portName": "values_0"
             }
           ]
         },
         "outputs": {
           "out": [
             {
-              "nodeId": "absolute_correlation_gain",
-              "portName": "b"
+              "nodeId": "zeroMagnitude",
+              "portName": "value"
             }
           ]
+        }
+      },
+      "inputData": {
+        "b": {
+          "value": 0
         }
       }
     },
@@ -1527,21 +49,13 @@
         "inputs": {
           "a": [
             {
-              "nodeId": "searchProfile",
-              "portName": "extremeMagnitude"
+              "nodeId": "search",
+              "portName": "values_1"
             }
           ]
         },
         "outputs": {
           "out": [
-            {
-              "nodeId": "absolute_correlation_gain",
-              "portName": "a"
-            },
-            {
-              "nodeId": "lag_fraction",
-              "portName": "b"
-            },
             {
               "nodeId": "fisherCoordinate",
               "portName": "value"
@@ -1556,6 +70,10 @@
             },
             {
               "nodeId": "bestVar",
+              "portName": "value"
+            },
+            {
+              "nodeId": "bestMagnitude",
               "portName": "value"
             }
           ]
@@ -1578,43 +96,12 @@
         "inputs": {
           "a": [
             {
-              "nodeId": "searchProfile",
-              "portName": "extremeIndex"
+              "nodeId": "search",
+              "portName": "values_2"
             }
           ]
         },
         "outputs": {}
-      }
-    },
-    "bestLagOffset": {
-      "id": "bestLagOffset",
-      "type": "arithmetic.Subtract",
-      "width": 280,
-      "height": 172,
-      "x": 340.0,
-      "y": 150.0,
-      "inputData": {
-        "b": {
-          "value": 4.0
-        }
-      },
-      "connections": {
-        "inputs": {
-          "a": [
-            {
-              "nodeId": "searchProfile",
-              "portName": "extremeIndex"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "best_lag_seconds",
-              "portName": "a"
-            }
-          ]
-        }
       }
     },
     "best_lag_seconds": {
@@ -1628,8 +115,8 @@
         "inputs": {
           "a": [
             {
-              "nodeId": "bestLagOffset",
-              "portName": "out"
+              "nodeId": "search",
+              "portName": "values_3"
             }
           ]
         },
@@ -1671,23 +158,19 @@
         "inputs": {
           "a": [
             {
-              "nodeId": "best_lag_correlation",
+              "nodeId": "bestMagnitude",
               "portName": "out"
             }
           ],
           "b": [
             {
-              "nodeId": "contemporaneous_correlation",
+              "nodeId": "zeroMagnitude",
               "portName": "out"
             }
           ]
         },
         "outputs": {
           "out": [
-            {
-              "nodeId": "lag_fraction",
-              "portName": "a"
-            },
             {
               "nodeId": "gainMean",
               "portName": "value"
@@ -1710,7 +193,7 @@
     },
     "lag_fraction": {
       "id": "lag_fraction",
-      "type": "arithmetic.Divide",
+      "type": "arithmetic.Add",
       "width": 280,
       "height": 172,
       "x": 680.0,
@@ -1719,18 +202,17 @@
         "inputs": {
           "a": [
             {
-              "nodeId": "absolute_correlation_gain",
-              "portName": "out"
-            }
-          ],
-          "b": [
-            {
-              "nodeId": "best_lag_correlation",
-              "portName": "out"
+              "nodeId": "search",
+              "portName": "values_5"
             }
           ]
         },
         "outputs": {}
+      },
+      "inputData": {
+        "b": {
+          "value": 0
+        }
       }
     },
     "search_count": {
@@ -1749,17 +231,13 @@
         "inputs": {
           "a": [
             {
-              "nodeId": "searchProfile",
-              "portName": "count"
+              "nodeId": "search",
+              "portName": "values_7"
             }
           ]
         },
         "outputs": {
           "out": [
-            {
-              "nodeId": "lag_search_span",
-              "portName": "a"
-            },
             {
               "nodeId": "search_adjusted_p_value",
               "portName": "b"
@@ -1779,8 +257,8 @@
         "inputs": {
           "a": [
             {
-              "nodeId": "search_count",
-              "portName": "out"
+              "nodeId": "search",
+              "portName": "values_6"
             }
           ]
         },
@@ -1808,8 +286,8 @@
         "inputs": {
           "a": [
             {
-              "nodeId": "candidate_4",
-              "portName": "support"
+              "nodeId": "search",
+              "portName": "values_10"
             }
           ]
         },
@@ -2540,6 +1018,110 @@
           ]
         },
         "outputs": {}
+      }
+    },
+    "search": {
+      "id": "search",
+      "type": "statistic.LagSearch",
+      "inputData": {},
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "values_0": [
+            {
+              "nodeId": "contemporaneous_correlation",
+              "portName": "a"
+            }
+          ],
+          "values_1": [
+            {
+              "nodeId": "best_lag_correlation",
+              "portName": "a"
+            }
+          ],
+          "values_2": [
+            {
+              "nodeId": "best_lag_index",
+              "portName": "a"
+            }
+          ],
+          "values_3": [
+            {
+              "nodeId": "best_lag_seconds",
+              "portName": "a"
+            }
+          ],
+          "values_5": [
+            {
+              "nodeId": "lag_fraction",
+              "portName": "a"
+            }
+          ],
+          "values_6": [
+            {
+              "nodeId": "lag_search_span",
+              "portName": "a"
+            }
+          ],
+          "values_7": [
+            {
+              "nodeId": "search_count",
+              "portName": "a"
+            }
+          ],
+          "values_10": [
+            {
+              "nodeId": "fisherDegreesOfFreedom",
+              "portName": "a"
+            }
+          ]
+        }
+      }
+    },
+    "bestMagnitude": {
+      "id": "bestMagnitude",
+      "type": "calculus.Absolute",
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "best_lag_correlation",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "absolute_correlation_gain",
+              "portName": "a"
+            }
+          ]
+        }
+      }
+    },
+    "zeroMagnitude": {
+      "id": "zeroMagnitude",
+      "type": "calculus.Absolute",
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "contemporaneous_correlation",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "absolute_correlation_gain",
+              "portName": "b"
+            }
+          ]
+        }
       }
     }
   }

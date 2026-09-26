@@ -1,6 +1,7 @@
 package sensorium
 
 import (
+	"errors"
 	"fmt"
 	"math"
 )
@@ -170,8 +171,8 @@ func advanceCoupled(request float64, controls PhysicsControls, snapshot func() f
 				break
 			}
 			rollbackAttempt()
-			numerical, ok := err.(*CoupledStepError)
-			if !ok || !numerical.Retry || retry >= controls.MaxRetries {
+			var numerical *CoupledStepError
+			if !errors.As(err, &numerical) || !numerical.Retry || retry >= controls.MaxRetries {
 				rollbackMacro()
 				return h, err
 			}

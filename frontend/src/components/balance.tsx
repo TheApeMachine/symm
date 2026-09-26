@@ -3,21 +3,8 @@ import { useShellValue } from "#/components/shell-value";
 import { Flex } from "#/components/ui/flex";
 import { Typography } from "#/components/ui/typography";
 
-const fmt = (value: unknown): string => {
-	if (typeof value === "number") {
-		return value.toFixed(2);
-	}
-
-	if (
-		typeof value === "string" &&
-		value.trim() !== "" &&
-		Number.isFinite(Number(value))
-	) {
-		return Number(value).toFixed(2);
-	}
-
-	return "—";
-};
+const fmt = (value: unknown): string =>
+	typeof value === "string" || typeof value === "number" ? String(value) : "—";
 
 /*
 The lambo rides behind the P&L reading whenever the wallet is in profit, and
@@ -83,7 +70,7 @@ it holds and what its completed round trips have made or lost, fees included.
 export const Balance = () => {
 	const cash = useShellValue("cash");
 	const pnl = useShellValue("pnl");
-	const inProfit = pnl !== undefined && pnl > 0;
+	const inProfit = pnl !== undefined && Number(pnl) > 0;
 
 	return (
 		<Flex.Row align="center" gap={6} data-wallet="account">

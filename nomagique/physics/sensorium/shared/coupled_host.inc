@@ -1,5 +1,6 @@
 #include <cfloat>
 #include <limits>
+#include <vector>
 /* Shared host contract. Kernels are generated from the same bodies for both GPUs. */
 static bool mc_buffers(ManifoldContext* c,std::initializer_list<ManifoldBuffer*> bs) {
     return mf_v2_ready(c,bs) && mf_v2_distinct(bs);
@@ -107,11 +108,26 @@ extern "C" bool manifold_pic_remap_conservative(ManifoldContext* c,ManifoldBuffe
     ManifoldBuffer* mix=manifold_create_buffer(c,n*4,nullptr);
     bool ok=rows&&cols&&errors&&cellflags&&mix,converged=false;
     if(ok){manifold_clear_field(c,cols);manifold_clear_field(c,cellflags);}
+    // Anderson depth-one acceleration of the same Sinkhorn fixed point.
+    // The secant coefficient minimizes the observed fixed-point residual.
+    // A candidate is accepted only when its measured marginal improves;
+    // otherwise restore the prior scaling and take an ordinary Sinkhorn block.
+    std::vector<double> block_input(np,0), previous_output(np,0), previous_residual(np,0);
+    std::vector<float> accepted_columns(np,0);
+    float accepted_residual=0;bool have_accepted=false,have_secant=false;
+    // Epsilon scaling warm-starts the target locality without changing it.
+    // Preserve dual potentials as epsilon (proportional to width squared)
+    // decreases. See Schmitzer, SIAM J. Sci. Comput. 41 (2019), section 3.2:
+    // https://arxiv.org/abs/1610.06519 . Powers of two are mesh resolutions.
+    float stage_width=width;
+    while(stage_width<float(std::max(p.nx,std::max(p.ny,p.nz))))stage_width*=2;
+    while(ok){
+        converged=false;have_accepted=false;have_secant=false;
     for(unsigned it=0;it<iterations&&ok;++it){
-        ok=mc_launch_mc_remap_rows(c,u,x,cols,rows,cellflags,np,p,width,scale)&&
-           mc_launch_mc_remap_columns(c,u,x,m,rows,cols,flags,np,p,width);
+        ok=mc_launch_mc_remap_rows(c,u,x,cols,rows,cellflags,np,p,stage_width,scale)&&
+           mc_launch_mc_remap_columns(c,u,x,m,rows,cols,flags,np,p,stage_width);
         if((it+1)%8==0||it+1==iterations){
-            ok=ok&&mc_launch_mc_remap_residual(c,u,x,rows,cols,errors,cellflags,np,p,width,scale)&&
+            ok=ok&&mc_launch_mc_remap_residual(c,u,x,rows,cols,errors,cellflags,np,p,stage_width,scale)&&
                mf_v2_status_ok(c,cellflags,p.n)&&mf_v2_status_ok(c,flags,np);
             if(!ok)break;
             float worst=0;auto er=static_cast<const float*>(manifold_get_buffer_pointer(errors));
@@ -119,7 +135,38 @@ extern "C" bool manifold_pic_remap_conservative(ManifoldContext* c,ManifoldBuffe
             for(unsigned j=0;j<p.n;++j)worst=std::max(worst,er[j]);
             diag[0]=worst;diag[1]=float(it+1);
             if(worst<=tolerance){converged=true;break;}
+            auto column=static_cast<float*>(manifold_get_buffer_pointer(cols));
+            if(!column){ok=false;break;}
+            if(have_accepted&&worst>accepted_residual){
+                for(unsigned i=0;i<np;++i){column[i]=accepted_columns[i];block_input[i]=column[i];}
+                have_secant=false;continue;
+            }
+            std::vector<double> output(np),residual(np);
+            double origin=column[0],input_origin=block_input[0],numerator=0,denominator=0;
+            for(unsigned i=0;i<np;++i){
+                output[i]=double(column[i])-origin;
+                residual[i]=output[i]-(block_input[i]-input_origin);
+                double delta=residual[i]-previous_residual[i];
+                numerator+=delta*residual[i];denominator+=delta*delta;
+                accepted_columns[i]=float(output[i]);
+            }
+            accepted_residual=worst;have_accepted=true;
+            double coefficient=have_secant&&denominator>0?numerator/denominator:0;
+            for(unsigned i=0;i<np;++i){
+                column[i]=float(output[i]-coefficient*(output[i]-previous_output[i]));
+                block_input[i]=column[i];
+            }
+            previous_output=std::move(output);previous_residual=std::move(residual);have_secant=true;
         }
+    }
+        if(!converged||stage_width==width)break;
+        float next_width=std::max(width,stage_width/2);
+        double ratio=double(stage_width)/next_width;
+        auto column=static_cast<float*>(manifold_get_buffer_pointer(cols));
+        if(!column){ok=false;break;}
+        double origin=column[0];
+        for(unsigned i=0;i<np;++i){column[i]=float((double(column[i])-origin)*ratio*ratio);block_input[i]=column[i];}
+        stage_width=next_width;
     }
     if(ok&&converged)ok=mc_launch_mc_remap_gather(c,u,x,m,rows,vo,qo,eo,mix,flags,np,p,width,scale)&&mf_v2_status_ok(c,flags,np);
     double gravity_work=0;

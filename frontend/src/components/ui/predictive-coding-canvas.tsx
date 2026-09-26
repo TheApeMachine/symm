@@ -1,10 +1,7 @@
 import type { ComponentProps } from "react";
 import { cn } from "#/lib/utils";
 import { Canvas } from "./canvas";
-import {
-	PredictionChart,
-	type PredictionChartProps,
-} from "./prediction-chart";
+import { PredictionChart, type PredictionChartProps } from "./prediction-chart";
 
 export type PredictiveCodingCanvasProps = Omit<
 	ComponentProps<typeof Canvas>,
@@ -12,7 +9,6 @@ export type PredictiveCodingCanvasProps = Omit<
 > &
 	PredictionChartProps & {
 		title?: string;
-		points?: any;
 	};
 
 export const PredictiveCodingCanvas = ({
@@ -35,51 +31,21 @@ export const PredictiveCodingCanvas = ({
 	status,
 	skillStatus,
 	forecast,
-	points,
 	title,
 	...props
 }: PredictiveCodingCanvasProps = {}) => {
-	const resolvedLatent =
-		latent ??
-		points?.x ??
-		(Array.isArray(points) ? points.map((p: any) => p?.x ?? p?.[0]) : undefined);
-	const resolvedForwardCurve =
-		forwardCurve ??
-		points?.y ??
-		(Array.isArray(points) ? points.map((p: any) => p?.y ?? p?.[1]) : undefined);
-	const resolvedEnergy =
-		energy ??
-		(Array.isArray(points?.energy)
-			? points.energy[points.energy.length - 1]
-			: points?.energy);
-	const resolvedSkill =
-		skill ??
-		(Array.isArray(points?.authority)
-			? points.authority[points.authority.length - 1]
-			: points?.authority);
-	const resolvedPrecision =
-		relativePrecision ??
-		(Array.isArray(points?.snr)
-			? points.snr[points.snr.length - 1]
-			: points?.snr);
-	const resolvedConfidence =
-		confidence ??
-		(Array.isArray(points?.activation)
-			? points.activation[points.activation.length - 1]
-			: points?.activation);
-
 	const h = horizon !== undefined ? String(horizon) : "—";
 	const r =
 		reach !== undefined
 			? String(reach)
-			: resolvedForwardCurve?.length
-				? String(resolvedForwardCurve.length)
+			: forwardCurve?.length
+				? String(forwardCurve.length)
 				: "—";
 	const prec =
-		resolvedPrecision !== undefined
-			? typeof resolvedPrecision === "number"
-				? resolvedPrecision.toFixed(3)
-				: String(resolvedPrecision)
+		relativePrecision !== undefined
+			? typeof relativePrecision === "number"
+				? relativePrecision.toFixed(3)
+				: String(relativePrecision)
 			: "—";
 
 	return (
@@ -118,11 +84,11 @@ export const PredictiveCodingCanvas = ({
 		>
 			<PredictionChart
 				artifact={artifact}
-				latent={resolvedLatent}
-				forwardCurve={resolvedForwardCurve}
+				latent={latent}
+				forwardCurve={forwardCurve}
 				layers={layers}
-				skill={resolvedSkill}
-				relativePrecision={resolvedPrecision}
+				skill={skill}
+				relativePrecision={relativePrecision}
 				issued={issued}
 				realized={realized}
 				error={error}
@@ -130,8 +96,8 @@ export const PredictiveCodingCanvas = ({
 				reach={reach}
 				samples={samples}
 				surprise={surprise}
-				energy={resolvedEnergy}
-				confidence={resolvedConfidence}
+				energy={energy}
+				confidence={confidence}
 				status={status}
 				skillStatus={skillStatus}
 				forecast={forecast}

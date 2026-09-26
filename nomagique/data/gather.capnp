@@ -16,6 +16,8 @@ struct Gathered {
   sequences @8 :List(Int64);
   scope @9 :Text;
   row @10 :import "../types/record.capnp".Record;
+  labels @11 :List(Text);
+  sources @12 :List(Text);
   union {
     idle @0 :Void;
     gathered :group {

@@ -7,28 +7,28 @@ import (
 
 	capnp "capnproto.org/go/capnp/v3"
 	"github.com/krakenfx/api-go/v2/pkg/book"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
-/* BookServer owns each symbol's replayed book and latest instrument record. */
+/* BookServer owns each symbol's canonical reconciled order book. */
 type BookServer struct {
 	*runtime.System
-	books      map[string]*book.Book
-	pairs      map[string]json.RawMessage
+	markets    map[string]*marketBook
 	reconcile  *spot.BookManager
-	out        []byte
-	values     [17]float64
-	present    [17]bool
+	values     [29]float64
+	present    [29]bool
 	reconciled uint64
+	symbol     string
+	updated    bool
 }
 
 func NewBook(ctx context.Context) *BookServer {
 	return &BookServer{
 		System:    runtime.NewSystem(ctx, "paper.book"),
-		books:     make(map[string]*book.Book),
-		pairs:     make(map[string]json.RawMessage),
+		markets:   make(map[string]*marketBook),
 		reconcile: spot.NewBookManager(),
 	}
 }
@@ -42,8 +42,8 @@ func (server *BookServer) Write(ctx context.Context, call Book_write) error {
 		))
 	}
 
-	server.out = []byte(`{"symbol":""}`)
-	server.values, server.present = [17]float64{}, [17]bool{}
+	server.values, server.present = [29]float64{}, [29]bool{}
+	server.symbol, server.updated = "", false
 	frame, err := single(frames)
 
 	if err != nil {
@@ -69,19 +69,15 @@ func (server *BookServer) Write(ctx context.Context, call Book_write) error {
 		))
 	}
 
-	if envelope.Channel == "instrument" {
-		return server.instruments(envelope.Data)
-	}
-
 	if envelope.Channel == "trade" {
 		return server.match(envelope.Data)
 	}
 
 	if envelope.Channel != "level3" {
-		return nil
+		return server.identify(envelope.Data)
 	}
 
-	return server.level3(envelope.Type, envelope.Data, call.Args().Depth(), call.Args().Encode())
+	return server.level3(envelope.Type, envelope.Data, call.Args().Depth())
 }
 
 /* single is the one frame that arrived this evaluation, or nil when none did. */
@@ -107,37 +103,7 @@ func single(frames capnp.DataList) ([]byte, error) {
 	return frame, nil
 }
 
-func (server *BookServer) instruments(data json.RawMessage) error {
-	var catalog struct {
-		Pairs []json.RawMessage `json:"pairs"`
-	}
-
-	if err := json.Unmarshal(data, &catalog); err != nil {
-		return server.Error(errnie.Err(
-			errnie.Validation, "paper.book: decode instrument data", err,
-		))
-	}
-
-	for _, pair := range catalog.Pairs {
-		var named struct {
-			Symbol string `json:"symbol"`
-		}
-
-		if err := json.Unmarshal(pair, &named); err != nil || named.Symbol == "" {
-			return server.Error(errnie.Err(
-				errnie.Validation,
-				"paper.book: instrument pair without symbol",
-				err,
-			))
-		}
-
-		server.pairs[named.Symbol] = pair
-	}
-
-	return nil
-}
-
-func (server *BookServer) level3(kind string, data json.RawMessage, depth int64, encode bool) error {
+func (server *BookServer) level3(kind string, data json.RawMessage, depth int64) error {
 	if depth <= 0 {
 		return server.Error(errnie.Err(
 			errnie.Validation,
@@ -184,78 +150,47 @@ func (server *BookServer) level3(kind string, data json.RawMessage, depth int64,
 			errnie.Validation, "paper.book: level3 entry without symbol", nil,
 		))
 	}
+	server.symbol = symbol
 
+	market := server.marketBook(symbol)
 	if kind == "snapshot" {
+		market.matched = [2]*decimal.Decimal{}
 		fresh := book.New()
 		fresh.Name = symbol
 		fresh.MaxDepth = int(depth)
 		fresh.EnableMaxDepth = true
-		server.books[symbol] = fresh
+		market.book = fresh
 	}
 
-	held := server.books[symbol]
+	held := market.book
 
 	if held == nil {
 		return nil
 	}
 
+	prior := market.touch()
+
 	// A book that no longer reconciles with the exchange's checksum is not
 	// the book the exchange held; it stays unknown until the next snapshot.
-	if err := server.reconcile.UpdateL3(held, entry); err != nil {
+	if err := server.reconcileL3(held, entry); err != nil {
 		errnie.Warn(
 			"paper.book: book lost until next snapshot",
 			"symbol", symbol,
 			"cause", err.Error(),
 		)
 
-		delete(server.books, symbol)
+		market.book = nil
+		market.matched = [2]*decimal.Decimal{}
 		return nil
 	}
 	server.project(held)
+	if kind != "snapshot" {
+		server.touch(market, prior)
+	}
+	market.matched = [2]*decimal.Decimal{}
 	server.reconciled++
+	server.updated = true
 
-	if encode {
-		return server.report(symbol, held)
-	}
-	return nil
-}
-
-func (server *BookServer) report(symbol string, held *book.Book) error {
-	market := struct {
-		Symbol string          `json:"symbol"`
-		Bids   [][2]string     `json:"bids"`
-		Asks   [][2]string     `json:"asks"`
-		Pair   json.RawMessage `json:"pair,omitempty"`
-	}{
-		Symbol: symbol,
-		Bids:   [][2]string{},
-		Asks:   [][2]string{},
-		Pair:   server.pairs[symbol],
-	}
-
-	for level := held.BestBid(); level != nil; level = level.Lower {
-		market.Bids = append(
-			market.Bids,
-			[2]string{level.Price.String(), level.Quantity.String()},
-		)
-	}
-
-	for level := held.BestAsk(); level != nil; level = level.Higher {
-		market.Asks = append(
-			market.Asks,
-			[2]string{level.Price.String(), level.Quantity.String()},
-		)
-	}
-
-	out, err := json.Marshal(market)
-
-	if err != nil {
-		return server.Error(errnie.Err(
-			errnie.Internal, "paper.book: encode market", err,
-		))
-	}
-
-	server.out = out
 	return nil
 }
 
@@ -268,10 +203,19 @@ func (server *BookServer) Done(ctx context.Context, call Book_done) error {
 		))
 	}
 
-	if err := results.SetOut(server.out); err != nil {
-		return server.Error(errnie.Err(errnie.Internal, "paper.book: emit", err))
-	}
 	results.SetReconciled(server.reconciled)
+
+	if held := server.markets[server.symbol]; held != nil && held.book != nil {
+		market, err := results.NewMarket()
+
+		if err != nil {
+			return errnie.Error(err)
+		}
+
+		if err := server.market(market, held.book); err != nil {
+			return err
+		}
+	}
 	values, err := results.NewValues(int32(len(server.values)))
 
 	if err != nil {
@@ -287,6 +231,5 @@ func (server *BookServer) Done(ctx context.Context, call Book_done) error {
 		present.Set(index, server.present[index])
 	}
 
-	server.out = nil
 	return nil
 }

@@ -656,47 +656,13 @@ func CompileFanInCopier(
 
 	if fromField.Which == schema.Type_Which_float64 {
 		return func(source, target capnp.Struct) error {
-			pointer, err := target.Ptr(toOffset)
+			values, err := fanInFloats(target, toOffset, length)
+
 			if err != nil {
-				return errnie.Error(errnie.Err(errnie.Internal, "compiler: numeric gathering port", err))
+				return err
 			}
-			values := capnp.Float64List(pointer.List())
-			if !values.IsValid() {
-				values, err = capnp.NewFloat64List(target.Segment(), int32(length))
-				if err != nil {
-					return errnie.Error(errnie.Err(errnie.Internal, "compiler: allocate numeric gathering port", err))
-				}
-				if err := target.SetPtr(toOffset, values.ToPtr()); err != nil {
-					return errnie.Error(errnie.Err(errnie.Internal, "compiler: attach numeric gathering port", err))
-				}
-			}
-			rawBits := source.Uint64(capnp.DataOffset(fromField.Offset * 8))
-			values.Set(index, math.Float64frombits(rawBits))
-
-			if presenceField == nil {
-				return nil
-			}
-
-			ptr, err := target.Ptr(uint16(presenceField.Offset))
-			if err != nil {
-				return nil
-			}
-
-			presenceList := capnp.BitList(ptr.List())
-			if !presenceList.IsValid() {
-				presenceList, err = capnp.NewBitList(target.Segment(), int32(length))
-				if err != nil {
-					return nil
-				}
-
-				_ = target.SetPtr(uint16(presenceField.Offset), presenceList.ToPtr())
-			}
-
-			if (rawBits & 0x7ff0000000000000) != 0x7ff0000000000000 {
-				presenceList.Set(index, true)
-			}
-
-			return nil
+			values.Set(index, math.Float64frombits(source.Uint64(capnp.DataOffset(fromField.Offset*8))))
+			return setFanInPresence(target, presenceField, index, length)
 		}, nil
 	}
 
@@ -725,23 +691,7 @@ func CompileFanInCopier(
 			))
 		}
 
-		if presenceField != nil {
-			ptr, err := dst.Ptr(uint16(presenceField.Offset))
-			if err == nil {
-				presenceList := capnp.BitList(ptr.List())
-				if !presenceList.IsValid() {
-					presenceList, err = capnp.NewBitList(dst.Segment(), int32(length))
-					if err == nil {
-						_ = dst.SetPtr(uint16(presenceField.Offset), presenceList.ToPtr())
-					}
-				}
-				if presenceList.IsValid() {
-					presenceList.Set(index, true)
-				}
-			}
-		}
-
-		return nil
+		return setFanInPresence(dst, presenceField, index, length)
 	}, nil
 }
 
@@ -1004,15 +954,24 @@ func reflectOutputFields(node schema.Node, nodes map[uint64]schema.Node, prefix 
 	return output, nil
 }
 
-/* CompileFanInSlotCopier projects one pointer-valued source slot into a gathered list. */
-func CompileFanInSlotCopier(from, to FieldInfo, sourceIndex, targetIndex, length int) (Copier, error) {
-	if from.ElementWhich != to.ElementWhich || (from.ElementWhich != schema.Type_Which_data && from.ElementWhich != schema.Type_Which_text) {
-		return nil, errnie.Error(errnie.Err(errnie.Validation, "compiler: indexed gathering requires matching Data or Text elements", nil))
+/* CompileFanInSlotCopier transfers one typed list element without replacing its neighbours. */
+func CompileFanInSlotCopier(from, to FieldInfo, presence *FieldInfo, sourceIndex, targetIndex, length int) (Copier, error) {
+	if from.ElementWhich != to.ElementWhich || (from.ElementWhich != schema.Type_Which_data && from.ElementWhich != schema.Type_Which_text && from.ElementWhich != schema.Type_Which_float64) {
+		return nil, errnie.Error(errnie.Err(errnie.Validation, "compiler: indexed gathering requires matching Float64, Data or Text elements", nil))
 	}
 	return func(source, target capnp.Struct) error {
 		pointer, err := source.Ptr(uint16(from.Offset))
 		if err != nil {
 			return errnie.Error(errnie.Err(errnie.Internal, "compiler: read indexed gathering source", err))
+		}
+		if from.ElementWhich == schema.Type_Which_float64 {
+			values, err := fanInFloats(target, uint16(to.Offset), length)
+
+			if err != nil {
+				return err
+			}
+			values.Set(targetIndex, capnp.Float64List(pointer.List()).At(sourceIndex))
+			return setFanInPresence(target, presence, targetIndex, length)
 		}
 		value, err := capnp.PointerList(pointer.List()).At(sourceIndex)
 		if err != nil {
@@ -1027,4 +986,62 @@ func CompileFanInSlotCopier(from, to FieldInfo, sourceIndex, targetIndex, length
 		}
 		return nil
 	}, nil
+}
+
+/* fanInFloats preserves previously written slots when an authored fan-in expands. */
+func fanInFloats(target capnp.Struct, offset uint16, length int) (capnp.Float64List, error) {
+	pointer, err := target.Ptr(offset)
+
+	if err != nil {
+		return capnp.Float64List{}, errnie.Error(err)
+	}
+	previous := capnp.Float64List(pointer.List())
+
+	if previous.IsValid() && previous.Len() >= length {
+		return previous, nil
+	}
+	values, err := capnp.NewFloat64List(target.Segment(), int32(length))
+
+	if err != nil {
+		return capnp.Float64List{}, errnie.Error(err)
+	}
+	for index := range previous.Len() {
+		values.Set(index, previous.At(index))
+	}
+
+	if err := target.SetPtr(offset, values.ToPtr()); err != nil {
+		return capnp.Float64List{}, errnie.Error(err)
+	}
+	return values, nil
+}
+
+/* setFanInPresence reports delivery, never silently classifying a numeric result. */
+func setFanInPresence(target capnp.Struct, field *FieldInfo, index, length int) error {
+	if field == nil {
+		return nil
+	}
+	pointer, err := target.Ptr(uint16(field.Offset))
+
+	if err != nil {
+		return errnie.Error(err)
+	}
+	presence := capnp.BitList(pointer.List())
+
+	if !presence.IsValid() || presence.Len() < length {
+		grown, err := capnp.NewBitList(target.Segment(), int32(length))
+
+		if err != nil {
+			return errnie.Error(err)
+		}
+		for slot := range presence.Len() {
+			grown.Set(slot, presence.At(slot))
+		}
+
+		if err := target.SetPtr(uint16(field.Offset), grown.ToPtr()); err != nil {
+			return errnie.Error(err)
+		}
+		presence = grown
+	}
+	presence.Set(index, true)
+	return nil
 }

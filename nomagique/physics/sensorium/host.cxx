@@ -6,4 +6,5 @@
 
 #include "physics_v2_metal_host.inc"
 
+// Conservative remap kernels retain density separately from log row scaling; safeguarded secants accelerate the shared fixed point through mesh-resolution continuation.
 #include "coupled_metal_host.inc"

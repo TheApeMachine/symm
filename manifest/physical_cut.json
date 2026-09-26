@@ -1,0 +1,26 @@
+{
+  "id": "physical_cut",
+  "name": "Causal signal and physical cut",
+  "nodes": {
+    "cut": {
+      "id": "cut",
+      "type": "data.ExtendCut",
+      "inputData": {
+        "identities": {
+          "value": [
+            "manifold:divergence",
+            "manifold:guidance_speed",
+            "manifold:coherence",
+            "manifold:pressure_gradient",
+            "manifold:viscosity",
+            "manifold:synchronization"
+          ]
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {}
+      }
+    }
+  }
+}

@@ -137,6 +137,7 @@ func TestConsumerStep(t *testing.T) {
 		defer consumer.Release()
 
 		Convey("It preserves stamps and acknowledges only successful work", func() {
+			stage.source = func(observation recordedObservation) string { return observation.payload }
 			So(stepConsumer(ctx, consumer, 77, 10, "ticker"), ShouldBeNil)
 			So(stepConsumer(ctx, consumer, 77, 11, "trade"), ShouldBeNil)
 			So(stage.snapshot(), ShouldResemble, []recordedObservation{{77, 10, "ticker"}, {77, 11, "trade"}})
@@ -147,6 +148,11 @@ func TestConsumerStep(t *testing.T) {
 			So(result.Completed(), ShouldEqual, 2)
 			So(result.Epoch(), ShouldEqual, 77)
 			So(result.Sequence(), ShouldEqual, 11)
+			outputs, err := result.Outputs()
+			So(err, ShouldBeNil)
+			So(outputs.Len(), ShouldEqual, 1)
+			So(outputs.At(0).Completed(), ShouldEqual, 2)
+			So(outputs.At(0).Sequence(), ShouldEqual, 11)
 		})
 
 		Convey("A failed stage remains failed and cannot acknowledge later observations", func() {

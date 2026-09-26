@@ -1,7 +1,6 @@
 package paper_test
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"testing"
@@ -33,25 +32,12 @@ func deepBidFrame(event string) []byte {
 	return marketfixture.Level3Frame("update", "BTC/USD", before, [2][]resting{{deep}, nil}, event)
 }
 
-func instrumentFrame(symbol, minimumQuantity string) []byte {
-	frame, err := json.Marshal(map[string]any{
-		"channel": "instrument", "type": "snapshot",
-		"data": map[string]any{"pairs": []any{map[string]any{
-			"symbol": symbol, "quote": "USD", "cost_precision": json.Number("5"),
-			"qty_min": json.Number(minimumQuantity), "cost_min": json.Number("0.5"), "qty_increment": json.Number("1e-04"),
-		}}},
-	})
-	So(err, ShouldBeNil)
-	return frame
-}
-
 type market struct {
-	Symbol  string          `json:"symbol"`
-	Bids    [][2]string     `json:"bids"`
-	Asks    [][2]string     `json:"asks"`
-	Pair    json.RawMessage `json:"pair"`
-	Values  []float64       `json:"-"`
-	Present []bool          `json:"-"`
+	Symbol  string
+	Bids    [][2]string
+	Asks    [][2]string
+	Values  []float64
+	Present []bool
 }
 
 func replay(client paper.Book, frame []byte) (market, error) {
@@ -79,15 +65,41 @@ func replay(client paper.Book, frame []byte) (market, error) {
 	if err != nil {
 		return market{}, err
 	}
-	out, err := results.Out()
-
-	if err != nil {
-		return market{}, err
-	}
 	var reported market
-	err = json.Unmarshal(bytes.Clone(out), &reported)
+	native, err := results.Market()
 	if err != nil {
 		return reported, err
+	}
+	if native.IsValid() {
+		reported.Symbol, err = native.Symbol()
+		if err != nil {
+			return reported, err
+		}
+		for side := range 2 {
+			levels, err := native.Bids()
+			if side == 1 {
+				levels, err = native.Asks()
+			}
+			if err != nil {
+				return reported, err
+			}
+			copied := make([][2]string, levels.Len())
+			for index := range levels.Len() {
+				copied[index][0], err = levels.At(index).Price()
+				if err != nil {
+					return reported, err
+				}
+				copied[index][1], err = levels.At(index).Quantity()
+				if err != nil {
+					return reported, err
+				}
+			}
+			if side == 0 {
+				reported.Bids = copied
+				continue
+			}
+			reported.Asks = copied
+		}
 	}
 	values, err := results.Values()
 	if err != nil {
@@ -117,7 +129,6 @@ func BenchmarkBookWrite(b *testing.B) {
 		iteration++
 		if err := client.Write(ctx, func(params paper.Book_write_Params) error {
 			params.SetDepth(10)
-			params.SetEncode(false)
 			arrivals, err := params.NewFrame(1)
 			if err != nil {
 				return err
@@ -145,20 +156,16 @@ func BenchmarkBookWrite(b *testing.B) {
 }
 
 func TestBookWrite(t *testing.T) {
-	Convey("Given a book that has seen BTC/USD's instrument record and snapshot", t, func() {
+	Convey("Given a reconciled BTC/USD order book snapshot", t, func() {
 		client := paper.Book_ServerToClient(paper.NewBook(context.Background()))
 		defer client.Release()
-		quiet, err := replay(client, instrumentFrame("BTC/USD", "0.001"))
-		So(err, ShouldBeNil)
-		So(quiet.Symbol, ShouldEqual, "")
 		reported, err := replay(client, snapshotFrame("BTC/USD"))
 		So(err, ShouldBeNil)
 
-		Convey("Then it reports the reconciled levels best first, with the pair's record", func() {
+		Convey("Then it reports native reconciled levels best first", func() {
 			So(reported.Symbol, ShouldEqual, "BTC/USD")
 			So(reported.Bids, ShouldResemble, [][2]string{{"99", "1"}, {"98", "3"}})
 			So(reported.Asks, ShouldResemble, [][2]string{{"100", "1"}, {"101", "2"}})
-			So(string(reported.Pair), ShouldContainSubstring, `"qty_min":0.001`)
 		})
 
 		Convey("When a replayed record carries its entry as one object", func() {

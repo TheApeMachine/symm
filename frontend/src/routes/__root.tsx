@@ -12,12 +12,11 @@ import { errorAtom, focusAtom, routeAtom } from "#/collections/app";
 import { type TerminalSurface, terminalStore } from "#/collections/terminal";
 import { CommandPalette } from "#/components/terminal/palette";
 import { SymbolFocusLayer } from "#/components/terminal/symbol-focus";
-import { TerminalNav } from "#/components/terminal/terminal-nav";
-import { TerminalTopBar } from "#/components/terminal/terminal-top-bar";
+import { GraphSurface } from "#/components/surface/graph-surface";
+import { SurfaceOutletContext } from "#/components/ui/surface-outlet";
 import { Dialog } from "#/components/ui/dialog";
 import { Flex } from "#/components/ui/flex";
 import { Scanlines } from "#/components/ui/scanlines";
-import { RtcFeed } from "#/providers/rtc";
 import { WsFeed } from "#/providers/websocket";
 import appCss from "../app.css?url";
 
@@ -61,7 +60,7 @@ const SURFACE_PATHS: Record<TerminalSurface, string> = {
 	hindsight: "/hindsight",
 	workbench: "/workbench",
 	pipeline: "/pipeline",
-	dynamic: "/dynamic"
+	dynamic: "/dynamic",
 };
 
 export const parseSurface = (path: unknown): TerminalSurface => {
@@ -156,17 +155,12 @@ const RootDocument = ({ children }: { children: React.ReactNode }) => {
 			<body className="flex h-full min-h-svh flex-col" suppressHydrationWarning>
 				<ClientOnly fallback={null}>
 					<WsFeed />
-					<RtcFeed />
 					<Flex.Column className="fixed inset-0 z-50 min-h-0 overflow-hidden bg-(--bg) text-[13px] text-(--f2)">
 						{scanlines ? <Scanlines variant="screen" className="z-60" /> : null}
 						<SymbolFocusLayer>
-							<TerminalTopBar />
-							<Flex.Row className="min-h-0 flex-1">
-								<TerminalNav active={surface} />
-								<main className="min-w-0 flex-1 overflow-auto bg-(--bg)">
-									<div className="h-full min-h-180">{children}</div>
-								</main>
-							</Flex.Row>
+							<SurfaceOutletContext.Provider value={children}>
+								<GraphSurface name="ui_shell" />
+							</SurfaceOutletContext.Provider>
 						</SymbolFocusLayer>
 						<CommandPalette activeSurface={surface} onRun={runPalette} />
 						<Dialog />

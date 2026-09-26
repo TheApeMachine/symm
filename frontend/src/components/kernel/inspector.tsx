@@ -199,7 +199,7 @@ export const KernelInspector = () => {
 	const openInSignalInsight = () => {
 		selectSource(source);
 		closeInspect();
-		navigate({ to: "/signals" });
+		navigate({ to: "/$", params: { _splat: "signals" } });
 	};
 
 	return (

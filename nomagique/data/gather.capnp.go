@@ -39,12 +39,12 @@ func (w Gathered_Which) String() string {
 const Gathered_TypeID = 0xe611e8aaeb8460b8
 
 func NewGathered(s *capnp.Segment) (Gathered, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 8})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 10})
 	return Gathered(st), err
 }
 
 func NewRootGathered(s *capnp.Segment) (Gathered, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 8})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 10})
 	return Gathered(st), err
 }
 
@@ -219,6 +219,52 @@ func (s Gathered) NewRow() (types.Record, error) {
 	return ss, err
 }
 
+func (s Gathered) Labels() (capnp.TextList, error) {
+	p, err := capnp.Struct(s).Ptr(8)
+	return capnp.TextList(p.List()), err
+}
+
+func (s Gathered) HasLabels() bool {
+	return capnp.Struct(s).HasPtr(8)
+}
+
+func (s Gathered) SetLabels(v capnp.TextList) error {
+	return capnp.Struct(s).SetPtr(8, v.ToPtr())
+}
+
+// NewLabels sets the labels field to a newly
+// allocated capnp.TextList, preferring placement in s's segment.
+func (s Gathered) NewLabels(n int32) (capnp.TextList, error) {
+	l, err := capnp.NewTextList(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return capnp.TextList{}, err
+	}
+	err = capnp.Struct(s).SetPtr(8, l.ToPtr())
+	return l, err
+}
+func (s Gathered) Sources() (capnp.TextList, error) {
+	p, err := capnp.Struct(s).Ptr(9)
+	return capnp.TextList(p.List()), err
+}
+
+func (s Gathered) HasSources() bool {
+	return capnp.Struct(s).HasPtr(9)
+}
+
+func (s Gathered) SetSources(v capnp.TextList) error {
+	return capnp.Struct(s).SetPtr(9, v.ToPtr())
+}
+
+// NewSources sets the sources field to a newly
+// allocated capnp.TextList, preferring placement in s's segment.
+func (s Gathered) NewSources(n int32) (capnp.TextList, error) {
+	l, err := capnp.NewTextList(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return capnp.TextList{}, err
+	}
+	err = capnp.Struct(s).SetPtr(9, l.ToPtr())
+	return l, err
+}
 func (s Gathered) SetIdle() {
 	capnp.Struct(s).SetUint16(0, 0)
 
@@ -293,7 +339,7 @@ type Gathered_List = capnp.StructList[Gathered]
 
 // NewGathered creates a new list of Gathered.
 func NewGathered_List(s *capnp.Segment, sz int32) (Gathered_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 24, PointerCount: 8}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 24, PointerCount: 10}, sz)
 	return capnp.StructList[Gathered](l), err
 }
 
@@ -516,7 +562,7 @@ func (c Gather_done) Args() Gather_done_Params {
 
 // AllocResults allocates the results struct.
 func (c Gather_done) AllocResults() (Gathered, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 24, PointerCount: 8})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 24, PointerCount: 10})
 	return Gathered(r), err
 }
 

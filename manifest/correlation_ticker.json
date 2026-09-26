@@ -2,163 +2,6 @@
   "id": "correlation_ticker",
   "name": "correlation:ticker",
   "nodes": {
-    "prevTimestamp": {
-      "id": "prevTimestamp",
-      "type": "temporal.Delay",
-      "width": 280,
-      "height": 172,
-      "x": -600.0,
-      "y": 200.0,
-      "connections": {
-        "inputs": {},
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "hy",
-              "portName": "boundsStart1"
-            }
-          ]
-        }
-      }
-    },
-    "returns": {
-      "id": "returns",
-      "type": "temporal.LogReturns",
-      "width": 280,
-      "height": 172,
-      "x": -600.0,
-      "y": -100.0,
-      "connections": {
-        "inputs": {},
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "hy",
-              "portName": "returns1"
-            }
-          ]
-        }
-      }
-    },
-    "referenceReturns": {
-      "id": "referenceReturns",
-      "type": "temporal.LogReturns",
-      "width": 280,
-      "height": 172,
-      "x": -600.0,
-      "y": 40.0,
-      "connections": {
-        "inputs": {},
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "hy",
-              "portName": "returns2"
-            }
-          ]
-        }
-      }
-    },
-    "hy": {
-      "id": "hy",
-      "type": "algo.HayashiYoshida",
-      "width": 280,
-      "height": 172,
-      "x": -260.0,
-      "y": 0.0,
-      "connections": {
-        "inputs": {
-          "returns1": [
-            {
-              "nodeId": "returns",
-              "portName": "out"
-            }
-          ],
-          "returns2": [
-            {
-              "nodeId": "referenceReturns",
-              "portName": "out"
-            }
-          ],
-          "boundsStart1": [
-            {
-              "nodeId": "prevTimestamp",
-              "portName": "out"
-            }
-          ],
-          "boundsStart2": [
-            {
-              "nodeId": "prevReferenceTimestamp",
-              "portName": "out"
-            }
-          ],
-          "state": [
-            {
-              "nodeId": "pairHistory",
-              "portName": "out_0"
-            }
-          ]
-        },
-        "outputs": {
-          "correlation": [
-            {
-              "nodeId": "absolute",
-              "portName": "value"
-            },
-            {
-              "nodeId": "atanh",
-              "portName": "value"
-            },
-            {
-              "nodeId": "cohortSigned",
-              "portName": "value"
-            },
-            {
-              "nodeId": "cohortAbsoluteValue",
-              "portName": "value"
-            }
-          ],
-          "state": [
-            {
-              "nodeId": "pairHistory",
-              "portName": "value"
-            }
-          ],
-          "support": [
-            {
-              "nodeId": "fisherDegreesOfFreedom",
-              "portName": "a"
-            },
-            {
-              "nodeId": "cohortSigned",
-              "portName": "weight"
-            },
-            {
-              "nodeId": "cohortAbsolute",
-              "portName": "weight"
-            },
-            {
-              "nodeId": "cohortEnergy",
-              "portName": "weight"
-            },
-            {
-              "nodeId": "cohortFisher",
-              "portName": "weight"
-            }
-          ],
-          "leftEnergyRate": [
-            {
-              "nodeId": "cohortEnergy",
-              "portName": "value"
-            },
-            {
-              "nodeId": "relativeReturnEnergy",
-              "portName": "a"
-            }
-          ]
-        }
-      }
-    },
     "absolute": {
       "id": "absolute",
       "type": "calculus.Absolute",
@@ -167,14 +10,7 @@
       "x": 80.0,
       "y": -200.0,
       "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "hy",
-              "portName": "correlation"
-            }
-          ]
-        },
+        "inputs": {},
         "outputs": {}
       }
     },
@@ -186,14 +22,7 @@
       "x": 80.0,
       "y": -60.0,
       "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "hy",
-              "portName": "correlation"
-            }
-          ]
-        },
+        "inputs": {},
         "outputs": {
           "out": [
             {
@@ -215,10 +44,6 @@
             {
               "nodeId": "fisherStatistic",
               "portName": "a"
-            },
-            {
-              "nodeId": "cohortFisher",
-              "portName": "value"
             }
           ]
         }
@@ -336,56 +161,6 @@
         "outputs": {}
       }
     },
-    "prevReferenceTimestamp": {
-      "id": "prevReferenceTimestamp",
-      "type": "temporal.Delay",
-      "width": 280,
-      "height": 172,
-      "x": -600.0,
-      "y": 340.0,
-      "connections": {
-        "inputs": {},
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "hy",
-              "portName": "boundsStart2"
-            }
-          ]
-        }
-      }
-    },
-    "pairHistory": {
-      "id": "pairHistory",
-      "type": "store.Radix",
-      "width": 280,
-      "height": 172,
-      "x": -260.0,
-      "y": 360.0,
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "hy",
-              "portName": "state"
-            }
-          ]
-        },
-        "outputs": {
-          "out_0": [
-            {
-              "nodeId": "hy",
-              "portName": "state"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "key": {
-          "value": "[\"correlation:ticker\"]"
-        }
-      }
-    },
     "fisherDegreesOfFreedom": {
       "id": "fisherDegreesOfFreedom",
       "type": "arithmetic.Subtract",
@@ -399,14 +174,7 @@
         }
       },
       "connections": {
-        "inputs": {
-          "a": [
-            {
-              "nodeId": "hy",
-              "portName": "support"
-            }
-          ]
-        },
+        "inputs": {},
         "outputs": {
           "out": [
             {
@@ -574,165 +342,6 @@
         "outputs": {}
       }
     },
-    "cohortSigned": {
-      "id": "cohortSigned",
-      "type": "statistic.Weighted",
-      "width": 280,
-      "height": 172,
-      "x": 420.0,
-      "y": 760.0,
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "hy",
-              "portName": "correlation"
-            }
-          ],
-          "weight": [
-            {
-              "nodeId": "hy",
-              "portName": "support"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "cohortAbsoluteValue": {
-      "id": "cohortAbsoluteValue",
-      "type": "calculus.Absolute",
-      "width": 280,
-      "height": 172,
-      "x": 80.0,
-      "y": 900.0,
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "hy",
-              "portName": "correlation"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "cohortAbsolute",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "cohortAbsolute": {
-      "id": "cohortAbsolute",
-      "type": "statistic.Weighted",
-      "width": 280,
-      "height": 172,
-      "x": 420.0,
-      "y": 900.0,
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "cohortAbsoluteValue",
-              "portName": "out"
-            }
-          ],
-          "weight": [
-            {
-              "nodeId": "hy",
-              "portName": "support"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "cohortEnergy": {
-      "id": "cohortEnergy",
-      "type": "statistic.Weighted",
-      "width": 280,
-      "height": 172,
-      "x": 420.0,
-      "y": 1040.0,
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "hy",
-              "portName": "leftEnergyRate"
-            }
-          ],
-          "weight": [
-            {
-              "nodeId": "hy",
-              "portName": "support"
-            }
-          ]
-        },
-        "outputs": {
-          "mean": [
-            {
-              "nodeId": "relativeReturnEnergy",
-              "portName": "b"
-            }
-          ]
-        }
-      }
-    },
-    "cohortFisher": {
-      "id": "cohortFisher",
-      "type": "statistic.Weighted",
-      "width": 280,
-      "height": 172,
-      "x": 420.0,
-      "y": 1180.0,
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "atanh",
-              "portName": "out"
-            }
-          ],
-          "weight": [
-            {
-              "nodeId": "hy",
-              "portName": "support"
-            }
-          ]
-        },
-        "outputs": {
-          "variance": [
-            {
-              "nodeId": "cohortDispersion",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "cohortDispersion": {
-      "id": "cohortDispersion",
-      "type": "calculus.Sqrt",
-      "width": 280,
-      "height": 172,
-      "x": 760.0,
-      "y": 1180.0,
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "cohortFisher",
-              "portName": "variance"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
     "relativeReturnEnergy": {
       "id": "relativeReturnEnergy",
       "type": "arithmetic.Divide",
@@ -741,20 +350,7 @@
       "x": 760.0,
       "y": 1600.0,
       "connections": {
-        "inputs": {
-          "a": [
-            {
-              "nodeId": "hy",
-              "portName": "leftEnergyRate"
-            }
-          ],
-          "b": [
-            {
-              "nodeId": "cohortEnergy",
-              "portName": "mean"
-            }
-          ]
-        },
+        "inputs": {},
         "outputs": {
           "out": [
             {

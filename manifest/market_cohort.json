@@ -10,6 +10,15 @@
         "inputs": {},
         "outputs": {}
       }
+    },
+    "relations": {
+      "id": "relations",
+      "type": "store.Relations",
+      "inputData": {},
+      "connections": {
+        "inputs": {},
+        "outputs": {}
+      }
     }
   }
 }

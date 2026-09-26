@@ -1,0 +1,76 @@
+{
+  "id": "ui_xray",
+  "name": "Predictive latent hierarchy",
+  "nodes": {
+    "route": {
+      "id": "route",
+      "type": "ui.UIRoute",
+      "inputData": {
+        "path": {
+          "value": "/xray"
+        },
+        "title": {
+          "value": "Predictive latent hierarchy"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "components": [
+            {
+              "nodeId": "body",
+              "portName": "self"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "content": {
+      "id": "content",
+      "type": "ui.ResonanceCanvas",
+      "inputData": {
+        "className": {
+          "value": "h-full min-h-0"
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "body",
+              "portName": "components"
+            }
+          ]
+        }
+      }
+    },
+    "body": {
+      "id": "body",
+      "type": "ui.Flex.Column",
+      "inputData": {
+        "className": {
+          "value": "h-full min-h-0"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "components": [
+            {
+              "nodeId": "content",
+              "portName": "self"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "route",
+              "portName": "components"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

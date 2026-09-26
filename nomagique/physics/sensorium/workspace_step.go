@@ -6,7 +6,7 @@ import (
 	"sort"
 )
 
-// step is one transactional macro interval. Every active operator is called with
+// step is one transactional stability-limited interval. Every active operator is called with
 // the SAME accepted float32 substep; rejected substeps restore all reservoirs,
 // phases, RNG state, fields, and source counters before retrying.
 func (workspace *workspace) step() (Reading, error) {
@@ -19,6 +19,15 @@ func (workspace *workspace) step() (Reading, error) {
 	rollback := workspace.snapshotPhysics()
 	request := workspace.rates.deltaT
 	defer func() { workspace.rates.deltaT = request }()
+	stable, err := workspace.stabilityLimit()
+	if err != nil {
+		rollback()
+		return Reading{}, err
+	}
+	// Streaming arrivals provide one opportunity to advance the coupled field.
+	// Its physical interval comes from the present state, not a fixed simulated
+	// horizon that can require thousands of substeps after queue turnover.
+	interval := math.Min(request, stable)
 	_, _, e, _, _ := workspace.particleTotals()
 	initialMatter := workspace.materialTotal() + e
 	injected := initialMatter
@@ -29,7 +38,7 @@ func (workspace *workspace) step() (Reading, error) {
 	workspace.health = PhysicsHealth{UnresolvedCoupling: true}
 	workspace.health.Sources.GravityFieldEnergy = priorGravity
 	workspace.health.Sources.ExogenousParticleEnergy = injected
-	h, err := advanceCoupled(request, workspace.physics, workspace.snapshotPhysics, workspace.stabilityLimit, func(dt float32) error {
+	h, err := advanceCoupled(interval, workspace.physics, workspace.snapshotPhysics, workspace.stabilityLimit, func(dt float32) error {
 		workspace.rates.deltaT = float64(dt)
 		if workspace.physics.Contacts.Enabled {
 			if err := workspace.contactKick(.5 * dt); err != nil {

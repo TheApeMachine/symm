@@ -43,7 +43,7 @@
     },
     "previous_best_price:bid": {
       "id": "previous_best_price:bid",
-      "type": "temporal.Delay",
+      "type": "arithmetic.Add",
       "width": 280,
       "height": 172,
       "x": -1600.0,
@@ -51,11 +51,16 @@
       "connections": {
         "inputs": {},
         "outputs": {}
+      },
+      "inputData": {
+        "b": {
+          "value": 0
+        }
       }
     },
     "previous_touch_quantity:bid": {
       "id": "previous_touch_quantity:bid",
-      "type": "temporal.Delay",
+      "type": "arithmetic.Add",
       "width": 280,
       "height": 172,
       "x": -1600.0,
@@ -64,10 +69,6 @@
         "inputs": {},
         "outputs": {
           "out": [
-            {
-              "nodeId": "quantityChange:bid",
-              "portName": "a"
-            },
             {
               "nodeId": "net_withdrawal_fraction:bid",
               "portName": "b"
@@ -82,6 +83,11 @@
             }
           ]
         }
+      },
+      "inputData": {
+        "b": {
+          "value": 0
+        }
       }
     },
     "touch_price_log_change:bid": {
@@ -94,12 +100,7 @@
       "connections": {
         "inputs": {},
         "outputs": {
-          "out": [
-            {
-              "nodeId": "retreated_quantity:bid",
-              "portName": "b"
-            }
-          ]
+          "out": []
         }
       }
     },
@@ -114,7 +115,7 @@
         "inputs": {
           "a": [
             {
-              "nodeId": "previous_touch_quantity:bid",
+              "nodeId": "unfilled_residual_quantity:bid",
               "portName": "out"
             }
           ]
@@ -122,12 +123,12 @@
         "outputs": {
           "out": [
             {
-              "nodeId": "net_withdrawn_quantity:bid",
+              "nodeId": "net_withdrawn_quantity:bid:positive",
               "portName": "a"
             },
             {
-              "nodeId": "net_replenished_quantity:bid",
-              "portName": "a"
+              "nodeId": "replenishment_change:bid",
+              "portName": "b"
             }
           ]
         }
@@ -135,21 +136,16 @@
     },
     "net_withdrawn_quantity:bid": {
       "id": "net_withdrawn_quantity:bid",
-      "type": "calculus.Maximum",
+      "type": "arithmetic.Multiply",
       "width": 280,
       "height": 172,
       "x": -960.0,
       "y": -750.0,
-      "inputData": {
-        "b": {
-          "value": 0
-        }
-      },
       "connections": {
         "inputs": {
           "a": [
             {
-              "nodeId": "quantityChange:bid",
+              "nodeId": "net_withdrawn_quantity:bid:positive",
               "portName": "out"
             }
           ]
@@ -170,21 +166,16 @@
     },
     "net_replenished_quantity:bid": {
       "id": "net_replenished_quantity:bid",
-      "type": "calculus.Minimum",
+      "type": "arithmetic.Multiply",
       "width": 280,
       "height": 172,
       "x": -960.0,
       "y": -600.0,
-      "inputData": {
-        "b": {
-          "value": 0
-        }
-      },
       "connections": {
         "inputs": {
           "a": [
             {
-              "nodeId": "quantityChange:bid",
+              "nodeId": "net_replenished_quantity:bid:positive",
               "portName": "out"
             }
           ]
@@ -217,6 +208,10 @@
             {
               "nodeId": "retreated_quantity:bid",
               "portName": "a"
+            },
+            {
+              "nodeId": "quantityChange:bid",
+              "portName": "a"
             }
           ]
         }
@@ -234,12 +229,6 @@
           "a": [
             {
               "nodeId": "unfilled_residual_quantity:bid",
-              "portName": "out"
-            }
-          ],
-          "b": [
-            {
-              "nodeId": "touch_price_log_change:bid",
               "portName": "out"
             }
           ]
@@ -444,7 +433,7 @@
     },
     "previous_best_price:ask": {
       "id": "previous_best_price:ask",
-      "type": "temporal.Delay",
+      "type": "arithmetic.Add",
       "width": 280,
       "height": 172,
       "x": -1600.0,
@@ -452,11 +441,16 @@
       "connections": {
         "inputs": {},
         "outputs": {}
+      },
+      "inputData": {
+        "b": {
+          "value": 0
+        }
       }
     },
     "previous_touch_quantity:ask": {
       "id": "previous_touch_quantity:ask",
-      "type": "temporal.Delay",
+      "type": "arithmetic.Add",
       "width": 280,
       "height": 172,
       "x": -1600.0,
@@ -465,10 +459,6 @@
         "inputs": {},
         "outputs": {
           "out": [
-            {
-              "nodeId": "quantityChange:ask",
-              "portName": "a"
-            },
             {
               "nodeId": "net_withdrawal_fraction:ask",
               "portName": "b"
@@ -483,6 +473,11 @@
             }
           ]
         }
+      },
+      "inputData": {
+        "b": {
+          "value": 0
+        }
       }
     },
     "touch_price_log_change:ask": {
@@ -495,12 +490,7 @@
       "connections": {
         "inputs": {},
         "outputs": {
-          "out": [
-            {
-              "nodeId": "retreated_quantity:ask",
-              "portName": "b"
-            }
-          ]
+          "out": []
         }
       }
     },
@@ -515,7 +505,7 @@
         "inputs": {
           "a": [
             {
-              "nodeId": "previous_touch_quantity:ask",
+              "nodeId": "unfilled_residual_quantity:ask",
               "portName": "out"
             }
           ]
@@ -523,12 +513,12 @@
         "outputs": {
           "out": [
             {
-              "nodeId": "net_withdrawn_quantity:ask",
+              "nodeId": "net_withdrawn_quantity:ask:positive",
               "portName": "a"
             },
             {
-              "nodeId": "net_replenished_quantity:ask",
-              "portName": "a"
+              "nodeId": "replenishment_change:ask",
+              "portName": "b"
             }
           ]
         }
@@ -536,21 +526,16 @@
     },
     "net_withdrawn_quantity:ask": {
       "id": "net_withdrawn_quantity:ask",
-      "type": "calculus.Maximum",
+      "type": "arithmetic.Multiply",
       "width": 280,
       "height": 172,
       "x": -960.0,
       "y": -80.0,
-      "inputData": {
-        "b": {
-          "value": 0
-        }
-      },
       "connections": {
         "inputs": {
           "a": [
             {
-              "nodeId": "quantityChange:ask",
+              "nodeId": "net_withdrawn_quantity:ask:positive",
               "portName": "out"
             }
           ]
@@ -571,21 +556,16 @@
     },
     "net_replenished_quantity:ask": {
       "id": "net_replenished_quantity:ask",
-      "type": "calculus.Minimum",
+      "type": "arithmetic.Multiply",
       "width": 280,
       "height": 172,
       "x": -960.0,
       "y": 70.0,
-      "inputData": {
-        "b": {
-          "value": 0
-        }
-      },
       "connections": {
         "inputs": {
           "a": [
             {
-              "nodeId": "quantityChange:ask",
+              "nodeId": "net_replenished_quantity:ask:positive",
               "portName": "out"
             }
           ]
@@ -618,6 +598,10 @@
             {
               "nodeId": "retreated_quantity:ask",
               "portName": "a"
+            },
+            {
+              "nodeId": "quantityChange:ask",
+              "portName": "a"
             }
           ]
         }
@@ -635,12 +619,6 @@
           "a": [
             {
               "nodeId": "unfilled_residual_quantity:ask",
-              "portName": "out"
-            }
-          ],
-          "b": [
-            {
-              "nodeId": "touch_price_log_change:ask",
               "portName": "out"
             }
           ]
@@ -1615,6 +1593,192 @@
           ]
         },
         "outputs": {}
+      }
+    },
+    "net_withdrawn_quantity:bid:positive": {
+      "id": "net_withdrawn_quantity:bid:positive",
+      "type": "calculus.Maximum",
+      "width": 280,
+      "height": 172,
+      "x": -960.0,
+      "y": -750.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "quantityChange:bid",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "net_withdrawn_quantity:bid",
+              "portName": "a"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "b": {
+          "value": 0
+        }
+      }
+    },
+    "net_replenished_quantity:bid:positive": {
+      "id": "net_replenished_quantity:bid:positive",
+      "type": "calculus.Maximum",
+      "width": 280,
+      "height": 172,
+      "x": -960.0,
+      "y": -600.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "replenishment_change:bid",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "net_replenished_quantity:bid",
+              "portName": "a"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "b": {
+          "value": 0
+        }
+      }
+    },
+    "replenishment_change:bid": {
+      "id": "replenishment_change:bid",
+      "type": "arithmetic.Subtract",
+      "width": 280,
+      "height": 172,
+      "x": -1300.0,
+      "y": -750.0,
+      "connections": {
+        "inputs": {
+          "b": [
+            {
+              "nodeId": "quantityChange:bid",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "net_replenished_quantity:bid:positive",
+              "portName": "a"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "a": {
+          "value": 0
+        }
+      }
+    },
+    "net_withdrawn_quantity:ask:positive": {
+      "id": "net_withdrawn_quantity:ask:positive",
+      "type": "calculus.Maximum",
+      "width": 280,
+      "height": 172,
+      "x": -960.0,
+      "y": -80.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "quantityChange:ask",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "net_withdrawn_quantity:ask",
+              "portName": "a"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "b": {
+          "value": 0
+        }
+      }
+    },
+    "net_replenished_quantity:ask:positive": {
+      "id": "net_replenished_quantity:ask:positive",
+      "type": "calculus.Maximum",
+      "width": 280,
+      "height": 172,
+      "x": -960.0,
+      "y": 70.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "replenishment_change:ask",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "net_replenished_quantity:ask",
+              "portName": "a"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "b": {
+          "value": 0
+        }
+      }
+    },
+    "replenishment_change:ask": {
+      "id": "replenishment_change:ask",
+      "type": "arithmetic.Subtract",
+      "width": 280,
+      "height": 172,
+      "x": -1300.0,
+      "y": -80.0,
+      "connections": {
+        "inputs": {
+          "b": [
+            {
+              "nodeId": "quantityChange:ask",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "net_replenished_quantity:ask:positive",
+              "portName": "a"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "a": {
+          "value": 0
+        }
       }
     }
   }

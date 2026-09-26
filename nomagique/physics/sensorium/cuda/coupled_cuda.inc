@@ -173,7 +173,9 @@ if(gid>=p.n)return;
 status[gid]=0;if(state[gid].q[0]==0){rows[gid]=0;return;}
 MCLogSum s={};for(unsigned i=0;i<particles;++i)mc_log_add(s,columns[i]-mc_transport_cost(gid,pos,i,p,width));
 float target=mc_row_mass(state[gid],p,mass_scale);
-rows[gid]=MC_LOG(target)-mc_log_total(s);
+// Factor density out of the stored row multiplier. Tiny occupied cells
+// otherwise lose the marginal residual when large density logs cancel.
+rows[gid]=MC_LOG(p.dx*p.dx*p.dx*mass_scale)-mc_log_total(s);
 if(!(target>0)||!MF_FINITE(rows[gid]))status[gid]=MF_PHYSICS_BAD_STATE;
 
 }
@@ -190,7 +192,7 @@ __global__ void mc_remap_columns(
  float width) {
 unsigned gid=blockIdx.x*blockDim.x+threadIdx.x;
 if(gid>=particles)return;
-MCLogSum s={};for(unsigned c=0;c<p.n;++c)if(state[c].q[0]>0)mc_log_add(s,rows[c]-mc_transport_cost(c,pos,gid,p,width));
+MCLogSum s={};for(unsigned c=0;c<p.n;++c)if(state[c].q[0]>0)mc_log_add(s,MC_LOG(state[c].q[0])+rows[c]-mc_transport_cost(c,pos,gid,p,width));
 columns[gid]=MC_LOG(mass[gid])-mc_log_total(s);
 status[gid]=(!s.count||!(mass[gid]>0)||!MF_FINITE(columns[gid]))?MF_PHYSICS_BAD_STATE:0;
 
@@ -211,7 +213,7 @@ unsigned gid=blockIdx.x*blockDim.x+threadIdx.x;
 if(gid>=p.n)return;
 status[gid]=0;residual[gid]=0;if(state[gid].q[0]==0)return;
 MCLogSum s={};for(unsigned i=0;i<particles;++i)mc_log_add(s,columns[i]-mc_transport_cost(gid,pos,i,p,width));
-float ratio=MR_EXP(rows[gid]+mc_log_total(s)-MC_LOG(mc_row_mass(state[gid],p,mass_scale)));
+float ratio=MR_EXP(rows[gid]+mc_log_total(s)-MC_LOG(p.dx*p.dx*p.dx*mass_scale));
 residual[gid]=mf_abs(ratio-1);if(!MF_FINITE(ratio))status[gid]=MF_PHYSICS_BAD_STATE;
 
 }
@@ -233,12 +235,12 @@ __global__ void mc_remap_gather(
 unsigned gid=blockIdx.x*blockDim.x+threadIdx.x;
 if(gid>=particles)return;
 status[gid]=0;MCLogSum ls={};unsigned reference=0;float peak=-3.402823466e38f;
-for(unsigned c=0;c<p.n;++c)if(state[c].q[0]>0){float z=rows[c]-mc_transport_cost(c,pos,gid,p,width);mc_log_add(ls,z);if(z>peak){peak=z;reference=c;}}
+for(unsigned c=0;c<p.n;++c)if(state[c].q[0]>0){float z=MC_LOG(state[c].q[0])+rows[c]-mc_transport_cost(c,pos,gid,p,width);mc_log_add(ls,z);if(z>peak){peak=z;reference=c;}}
 if(!ls.count){status[gid]=MF_PHYSICS_BAD_STATE;return;}
 float ref[3];for(unsigned a=0;a<3;++a)ref[a]=state[reference].q[a+1]/(state[reference].q[0]*mass_scale);
 MCTransportMoments m={};
 for(unsigned c=0;c<p.n;++c)if(state[c].q[0]>0){
- float fraction=MR_EXP(rows[c]-mc_transport_cost(c,pos,gid,p,width)-ls.maximum)/ls.sum;
+ float fraction=MR_EXP(MC_LOG(state[c].q[0])+rows[c]-mc_transport_cost(c,pos,gid,p,width)-ls.maximum)/ls.sum;
  if(fraction==0)continue;
  MFPrimitive v=mf_primitive(state[c],p);if(v.status){status[gid]=v.status;return;}
  float r=state[c].q[0]*mass_scale;
@@ -248,7 +250,7 @@ for(unsigned c=0;c<p.n;++c)if(state[c].q[0]>0){
 }
 float out[3];for(unsigned a=0;a<3;++a)out[a]=ref[a]+m.delta[a];
 for(unsigned c=0;c<p.n;++c)if(state[c].q[0]>0){
- float fraction=MR_EXP(rows[c]-mc_transport_cost(c,pos,gid,p,width)-ls.maximum)/ls.sum;
+ float fraction=MR_EXP(MC_LOG(state[c].q[0])+rows[c]-mc_transport_cost(c,pos,gid,p,width)-ls.maximum)/ls.sum;
  if(fraction==0)continue;
  float v2=0;for(unsigned a=0;a<3;++a){float dv=(state[c].q[a+1]/(state[c].q[0]*mass_scale)-ref[a])-m.delta[a];v2+=dv*dv;}
  mc_compensated_add(m.variance,m.correction[5],.5f*fraction*v2);

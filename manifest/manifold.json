@@ -1,0 +1,26 @@
+{
+  "id": "manifold",
+  "name": "Shared physical field",
+  "nodes": {
+    "field": {
+      "id": "field",
+      "type": "store.Manifold",
+      "inputData": {
+        "gridX": {
+          "value": 64
+        },
+        "gridY": {
+          "value": 64
+        },
+        "gridZ": {
+          "value": 64
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {}
+      },
+      "description": "The 64 cubed physical mesh is the LEGACY production GPU resource resolution, independent of market horizons or confidence."
+    }
+  }
+}

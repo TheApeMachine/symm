@@ -49,7 +49,13 @@ func (server *BookServer) match(data json.RawMessage) error {
 	if price.Sign() <= 0 || quantity.Sign() <= 0 {
 		return errnie.Error(errnie.Err(errnie.Validation, "paper.book: trade price and quantity must be positive", nil))
 	}
-	held := server.books[trade.Symbol]
+	server.symbol = trade.Symbol
+	market := server.markets[trade.Symbol]
+
+	if market == nil || market.book == nil {
+		return nil
+	}
+	held := market.book
 
 	if held == nil || held.BestBid() == nil || held.BestAsk() == nil {
 		return nil
@@ -61,12 +67,14 @@ func (server *BookServer) match(data json.RawMessage) error {
 	}
 	if trade.Side == "sell" && price.Cmp(bid.Price) == 0 {
 		server.values[11], server.values[13] = quantity.Float64(), 1
+		market.match(0, quantity)
 	}
 	if trade.Side == "buy" && price.Cmp(ask.Price) == 0 {
 		server.values[12], server.values[14] = quantity.Float64(), 1
+		market.match(1, quantity)
 	}
 	server.values[15], server.values[16] = bid.Quantity.Float64(), ask.Quantity.Float64()
-	for index := 10; index < len(server.present); index++ {
+	for index := 10; index < 17; index++ {
 		server.present[index] = true
 	}
 	return nil

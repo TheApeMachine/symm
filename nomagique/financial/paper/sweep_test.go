@@ -1,8 +1,8 @@
 package paper_test
 
 import (
-	"bytes"
 	"context"
+	"encoding/json"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -14,41 +14,49 @@ func sweep(levels, amount string, spend bool) (quantity, cost, unfilled string, 
 	client := paper.Sweep_ServerToClient(paper.NewSweep(context.Background()))
 	defer client.Release()
 
-	if err := client.Write(ctx, func(params paper.Sweep_write_Params) error {
+	future, release := client.Execute(ctx, func(params paper.Sweep_execute_Params) error {
 		params.SetSpend(spend)
+		var values [][2]string
+		if err := json.Unmarshal([]byte(levels), &values); err != nil {
+			return err
+		}
+		list, err := params.NewLevels(int32(len(values)))
+		if err != nil {
+			return err
+		}
+		for index, value := range values {
+			if err := list.At(index).SetPrice(value[0]); err != nil {
+				return err
+			}
+			if err := list.At(index).SetQuantity(value[1]); err != nil {
+				return err
+			}
+		}
 
 		for _, err := range []error{
-			params.SetLevels([]byte(levels)),
-			params.SetAmount([]byte(amount)),
-			params.SetIncrement([]byte("0.0001")),
+			params.SetAmount(amount),
+			params.SetIncrement("0.0001"),
 		} {
 			if err != nil {
 				return err
 			}
 		}
 		return nil
-	}); err != nil {
-		return "", "", "", err
-	}
-
-	if err := client.WaitStreaming(); err != nil {
-		return "", "", "", err
-	}
-	future, release := client.Done(ctx, nil)
+	})
 	defer release()
 	results, err := future.Struct()
 
 	if err != nil {
 		return "", "", "", err
 	}
-	read := func(value []byte, err error) string {
+	read := func(value string, err error) string {
 		So(err, ShouldBeNil)
-		return string(bytes.Clone(value))
+		return value
 	}
 	return read(results.Quantity()), read(results.Cost()), read(results.Unfilled()), nil
 }
 
-func TestSweepWrite(t *testing.T) {
+func TestSweepExecute(t *testing.T) {
 	Convey("Given the asks 1 @ 100 and 2 @ 101", t, func() {
 		Convey("When a quote budget is spent into them", func() {
 			quantity, cost, unfilled, err := sweep(`[["100","1"],["101","2"]]`, "199.20318", true)

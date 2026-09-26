@@ -29,9 +29,9 @@ func TestBookMatch(t *testing.T) {
 			frame := fmt.Sprintf(`{"channel":"trade","data":{"symbol":%q,"side":%q,"price":%g,"qty":%g}}`, trade.symbol, trade.side, trade.price, trade.quantity)
 			result, err := replay(client, []byte(frame))
 			So(err, ShouldBeNil)
-			So(result.Values[10:], ShouldResemble, trade.want)
+			So(result.Values[10:17], ShouldResemble, trade.want)
 			So(result.Present[:10], ShouldResemble, make([]bool, 10))
-			for _, present := range result.Present[10:] {
+			for _, present := range result.Present[10:17] {
 				So(present, ShouldEqual, trade.symbol == "BTC/USD")
 			}
 		}

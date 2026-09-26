@@ -10,13 +10,15 @@ import (
 	"capnproto.org/go/capnp/v3/schemas"
 	"capnproto.org/go/capnp/v3/std/capnp/schema"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 /*
 resultProjection owns schema lookup while projecting one execution's results.
 It preserves active union fields and schema defaults. Int64 and UInt64 become
 decimal strings so browser JSON parsing cannot round them. Data remains bytes
-(encoded as base64 by JSON); capabilities and untyped pointers are not UI data.
+(encoded as base64 by JSON). Record resolves its registered type ID; other
+untyped pointers and capabilities are not UI data.
 */
 type resultProjection struct {
 	nodes map[uint64]schema.Node
@@ -139,10 +141,28 @@ func (projection *resultProjection) Pointer(pointer capnp.Ptr, valueType schema.
 Struct projects declared fields, including groups, omitting inactive union arms.
 */
 func (projection *resultProjection) Struct(value capnp.Struct, typeID uint64) (map[string]any, error) {
+	if typeID == types.Record_TypeID {
+		record := types.Record(value)
+		pointer, err := record.Value()
+		if err != nil {
+			return nil, projectionError("read native record", err)
+		}
+		if !pointer.Struct().IsValid() {
+			return nil, projectionError("native record requires a typed struct value", nil)
+		}
+		projected, err := projection.Struct(pointer.Struct(), record.TypeId())
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"typeId": strconv.FormatUint(record.TypeId(), 10), "value": projected}, nil
+	}
 	node, err := projection.Node(typeID)
 
 	if err != nil {
 		return nil, err
+	}
+	if node.Which() != schema.Node_Which_structNode {
+		return nil, projectionError(fmt.Sprintf("schema %x is not a struct", typeID), nil)
 	}
 	discriminants := node.StructNode().DiscriminantCount()
 

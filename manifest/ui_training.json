@@ -2,72 +2,6 @@
   "id": "ui_training",
   "name": "ui:training \u2014 the learning dashboard, drawn from the training graph",
   "nodes": {
-    "walk": {
-      "id": "walk",
-      "type": "transport.Fan",
-      "width": 280,
-      "height": 172,
-      "x": 0.0,
-      "y": 0.0,
-      "connections": {
-        "inputs": {},
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "walk_x",
-              "portName": "data"
-            },
-            {
-              "nodeId": "walk_price",
-              "portName": "data"
-            }
-          ]
-        }
-      }
-    },
-    "trips": {
-      "id": "trips",
-      "type": "transport.Fan",
-      "width": 280,
-      "height": 172,
-      "x": 0.0,
-      "y": 200.0,
-      "connections": {
-        "inputs": {},
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "trip_pnl",
-              "portName": "data"
-            },
-            {
-              "nodeId": "trip_basis",
-              "portName": "data"
-            },
-            {
-              "nodeId": "trip_positive",
-              "portName": "data"
-            },
-            {
-              "nodeId": "trip_negative",
-              "portName": "data"
-            },
-            {
-              "nodeId": "activity_closed",
-              "portName": "data"
-            },
-            {
-              "nodeId": "activity_symbol",
-              "portName": "data"
-            },
-            {
-              "nodeId": "activity_pnl",
-              "portName": "data"
-            }
-          ]
-        }
-      }
-    },
     "event": {
       "id": "event",
       "type": "transport.Fan",
@@ -82,270 +16,8 @@
             {
               "nodeId": "event_symbol",
               "portName": "data"
-            },
-            {
-              "nodeId": "event_excursion",
-              "portName": "data"
-            },
-            {
-              "nodeId": "mark_A",
-              "portName": "data"
-            },
-            {
-              "nodeId": "mark_B",
-              "portName": "data"
-            },
-            {
-              "nodeId": "mark_C",
-              "portName": "data"
             }
           ]
-        }
-      }
-    },
-    "walk_x": {
-      "id": "walk_x",
-      "type": "data.Extract",
-      "width": 280,
-      "height": 172,
-      "x": 340.0,
-      "y": 0.0,
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "walk",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "frames",
-              "portName": "value"
-            },
-            {
-              "nodeId": "point_x",
-              "portName": "value"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "path": {
-          "value": "record.cursor.sequence"
-        },
-        "encoding": {
-          "value": "number"
-        }
-      }
-    },
-    "walk_price": {
-      "id": "walk_price",
-      "type": "data.Extract",
-      "width": 280,
-      "height": 172,
-      "x": 340.0,
-      "y": 200.0,
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "walk",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "point",
-              "portName": "value"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "path": {
-          "value": "record.market.data.last"
-        },
-        "encoding": {
-          "value": "number"
-        }
-      }
-    },
-    "frames": {
-      "id": "frames",
-      "type": "data.Reduce",
-      "width": 280,
-      "height": 172,
-      "x": 680.0,
-      "y": 0.0,
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "walk_x",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "kpiValue_frames",
-              "portName": "value"
-            },
-            {
-              "nodeId": "ribbonFrames",
-              "portName": "value"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "operator": {
-          "value": "count"
-        },
-        "running": {
-          "value": true
-        }
-      }
-    },
-    "point_x": {
-      "id": "point_x",
-      "type": "data.Insert",
-      "width": 280,
-      "height": 172,
-      "x": 680.0,
-      "y": 200.0,
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "walk_x",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "point",
-              "portName": "data"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "path": {
-          "value": "x"
-        },
-        "data": {
-          "value": "{}"
-        }
-      }
-    },
-    "point": {
-      "id": "point",
-      "type": "data.Insert",
-      "width": 280,
-      "height": 172,
-      "x": 1020.0,
-      "y": 0.0,
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "point_x",
-              "portName": "out"
-            }
-          ],
-          "value": [
-            {
-              "nodeId": "walk_price",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "walk_trail",
-              "portName": "values"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "path": {
-          "value": "y"
-        }
-      }
-    },
-    "walk_trail": {
-      "id": "walk_trail",
-      "type": "store.Trail",
-      "width": 280,
-      "height": 172,
-      "x": 1360.0,
-      "y": 0.0,
-      "connections": {
-        "inputs": {
-          "values": [
-            {
-              "nodeId": "point",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "episode",
-              "portName": "json"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "capacity": {
-          "value": 600
-        }
-      }
-    },
-    "episode": {
-      "id": "episode",
-      "type": "data.Insert",
-      "width": 280,
-      "height": 172,
-      "x": 1700.0,
-      "y": 0.0,
-      "connections": {
-        "inputs": {
-          "json": [
-            {
-              "nodeId": "walk_trail",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "episodeTape",
-              "portName": "episode"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "path": {
-          "value": "points"
-        },
-        "data": {
-          "value": "{\"id\":\"fragment\",\"label\":\"Fragment walk\"}"
         }
       }
     },
@@ -360,10 +32,6 @@
         "inputs": {},
         "outputs": {
           "out": [
-            {
-              "nodeId": "example_seq",
-              "portName": "data"
-            },
             {
               "nodeId": "example_path",
               "portName": "data"
@@ -397,40 +65,6 @@
               "portName": "data"
             }
           ]
-        }
-      }
-    },
-    "example_seq": {
-      "id": "example_seq",
-      "type": "data.Extract",
-      "width": 280,
-      "height": 172,
-      "x": 340.0,
-      "y": 400.0,
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "examples",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "situations",
-              "portName": "value"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "path": {
-          "value": "cursor.sequence"
-        },
-        "encoding": {
-          "value": "number"
         }
       }
     },
@@ -930,44 +564,6 @@
         }
       }
     },
-    "situations": {
-      "id": "situations",
-      "type": "data.Reduce",
-      "width": 280,
-      "height": 172,
-      "x": 680.0,
-      "y": 600.0,
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "example_seq",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "kpiValue_situations",
-              "portName": "value"
-            },
-            {
-              "nodeId": "recognition_situations",
-              "portName": "value"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "operator": {
-          "value": "count"
-        },
-        "running": {
-          "value": true
-        }
-      }
-    },
     "item_path": {
       "id": "item_path",
       "type": "data.Insert",
@@ -1168,10 +764,6 @@
             {
               "nodeId": "hit",
               "portName": "data"
-            },
-            {
-              "nodeId": "with_target_enter",
-              "portName": "data"
             }
           ]
         }
@@ -1363,202 +955,6 @@
         }
       }
     },
-    "trip_pnl": {
-      "id": "trip_pnl",
-      "type": "data.Extract",
-      "width": 280,
-      "height": 172,
-      "x": 340.0,
-      "y": 2200.0,
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "trips",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "trip_return",
-              "portName": "a"
-            },
-            {
-              "nodeId": "wallet_pnl",
-              "portName": "value"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "path": {
-          "value": "pnl"
-        },
-        "encoding": {
-          "value": "number"
-        }
-      }
-    },
-    "trip_basis": {
-      "id": "trip_basis",
-      "type": "data.Extract",
-      "width": 280,
-      "height": 172,
-      "x": 340.0,
-      "y": 2400.0,
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "trips",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "trip_return",
-              "portName": "b"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "path": {
-          "value": "basis"
-        },
-        "encoding": {
-          "value": "number"
-        }
-      }
-    },
-    "trip_return": {
-      "id": "trip_return",
-      "type": "arithmetic.Divide",
-      "width": 280,
-      "height": 172,
-      "x": 680.0,
-      "y": 1200.0,
-      "connections": {
-        "inputs": {
-          "a": [
-            {
-              "nodeId": "trip_pnl",
-              "portName": "out"
-            }
-          ],
-          "b": [
-            {
-              "nodeId": "trip_basis",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "resolved",
-              "portName": "value"
-            },
-            {
-              "nodeId": "edge",
-              "portName": "value"
-            },
-            {
-              "nodeId": "trip_bp",
-              "portName": "a"
-            }
-          ]
-        }
-      }
-    },
-    "resolved": {
-      "id": "resolved",
-      "type": "data.Reduce",
-      "width": 280,
-      "height": 172,
-      "x": 1020.0,
-      "y": 1600.0,
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "trip_return",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "kpiValue_resolved",
-              "portName": "value"
-            },
-            {
-              "nodeId": "skill",
-              "portName": "evaluated"
-            },
-            {
-              "nodeId": "recognition_resolved",
-              "portName": "value"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "operator": {
-          "value": "count"
-        },
-        "running": {
-          "value": true
-        }
-      }
-    },
-    "edge": {
-      "id": "edge",
-      "type": "data.Reduce",
-      "width": 280,
-      "height": 172,
-      "x": 1020.0,
-      "y": 1800.0,
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "trip_return",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "kpiValue_edge",
-              "portName": "value"
-            },
-            {
-              "nodeId": "skill",
-              "portName": "edge"
-            },
-            {
-              "nodeId": "recognition_edge",
-              "portName": "value"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "operator": {
-          "value": "mean"
-        },
-        "running": {
-          "value": true
-        }
-      }
-    },
     "trip_bp": {
       "id": "trip_bp",
       "type": "arithmetic.Multiply",
@@ -1567,14 +963,7 @@
       "x": 1020.0,
       "y": 2000.0,
       "connections": {
-        "inputs": {
-          "a": [
-            {
-              "nodeId": "trip_return",
-              "portName": "out"
-            }
-          ]
-        },
+        "inputs": {},
         "outputs": {
           "out": [
             {
@@ -1690,881 +1079,6 @@
         },
         "encoding": {
           "value": "text"
-        }
-      }
-    },
-    "event_excursion": {
-      "id": "event_excursion",
-      "type": "data.Extract",
-      "width": 280,
-      "height": 172,
-      "x": 340.0,
-      "y": 2800.0,
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "event",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "episodeTape",
-              "portName": "outcome"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "path": {
-          "value": "event.excursion"
-        },
-        "encoding": {
-          "value": "number"
-        }
-      }
-    },
-    "mark_A": {
-      "id": "mark_A",
-      "type": "data.Extract",
-      "width": 280,
-      "height": 172,
-      "x": 340.0,
-      "y": 3000.0,
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "event",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "json": [
-            {
-              "nodeId": "marks_A",
-              "portName": "json"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "path": {
-          "value": "event.a.sequence"
-        },
-        "encoding": {
-          "value": "json"
-        }
-      }
-    },
-    "marks_A": {
-      "id": "marks_A",
-      "type": "data.Insert",
-      "width": 280,
-      "height": 172,
-      "x": 680.0,
-      "y": 1400.0,
-      "connections": {
-        "inputs": {
-          "json": [
-            {
-              "nodeId": "mark_A",
-              "portName": "json"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "marks_B",
-              "portName": "data"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "path": {
-          "value": "A"
-        },
-        "data": {
-          "value": "{}"
-        }
-      }
-    },
-    "mark_B": {
-      "id": "mark_B",
-      "type": "data.Extract",
-      "width": 280,
-      "height": 172,
-      "x": 340.0,
-      "y": 3200.0,
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "event",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "json": [
-            {
-              "nodeId": "marks_B",
-              "portName": "json"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "path": {
-          "value": "event.b.sequence"
-        },
-        "encoding": {
-          "value": "json"
-        }
-      }
-    },
-    "marks_B": {
-      "id": "marks_B",
-      "type": "data.Insert",
-      "width": 280,
-      "height": 172,
-      "x": 680.0,
-      "y": 1600.0,
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "marks_A",
-              "portName": "out"
-            }
-          ],
-          "json": [
-            {
-              "nodeId": "mark_B",
-              "portName": "json"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "marks_C",
-              "portName": "data"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "path": {
-          "value": "B"
-        }
-      }
-    },
-    "mark_C": {
-      "id": "mark_C",
-      "type": "data.Extract",
-      "width": 280,
-      "height": 172,
-      "x": 340.0,
-      "y": 3400.0,
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "event",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "json": [
-            {
-              "nodeId": "marks_C",
-              "portName": "json"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "path": {
-          "value": "event.c.sequence"
-        },
-        "encoding": {
-          "value": "json"
-        }
-      }
-    },
-    "marks_C": {
-      "id": "marks_C",
-      "type": "data.Insert",
-      "width": 280,
-      "height": 172,
-      "x": 680.0,
-      "y": 1800.0,
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "marks_B",
-              "portName": "out"
-            }
-          ],
-          "json": [
-            {
-              "nodeId": "mark_C",
-              "portName": "json"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "episodeTape",
-              "portName": "marks"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "path": {
-          "value": "C"
-        }
-      }
-    },
-    "with_target_enter": {
-      "id": "with_target_enter",
-      "type": "data.Insert",
-      "width": 280,
-      "height": 172,
-      "x": 680.0,
-      "y": 1200.0,
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "judged",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "enter_filter",
-              "portName": "data"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "path": {
-          "value": "target_enter"
-        },
-        "json": {
-          "value": "\"ENTER\""
-        }
-      }
-    },
-    "enter_filter": {
-      "id": "enter_filter",
-      "type": "data.Filter",
-      "width": 280,
-      "height": 172,
-      "x": 1020.0,
-      "y": 1200.0,
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "with_target_enter",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "entered_at",
-              "portName": "data"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "path": {
-          "value": "predicted"
-        },
-        "operator": {
-          "value": "=="
-        },
-        "referencePath": {
-          "value": "target_enter"
-        }
-      }
-    },
-    "entered_at": {
-      "id": "entered_at",
-      "type": "data.Extract",
-      "width": 280,
-      "height": 172,
-      "x": 1360.0,
-      "y": 1200.0,
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "enter_filter",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "episodeTape",
-              "portName": "entered"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "path": {
-          "value": "cursor.sequence"
-        },
-        "encoding": {
-          "value": "number"
-        }
-      }
-    },
-    "trip_positive": {
-      "id": "trip_positive",
-      "type": "data.Filter",
-      "width": 280,
-      "height": 172,
-      "x": 680.0,
-      "y": 2000.0,
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "trips",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "trip_positive_pnl",
-              "portName": "data"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "path": {
-          "value": "pnl"
-        },
-        "operator": {
-          "value": ">"
-        },
-        "threshold": {
-          "value": 0
-        }
-      }
-    },
-    "trip_positive_pnl": {
-      "id": "trip_positive_pnl",
-      "type": "data.Extract",
-      "width": 280,
-      "height": 172,
-      "x": 1020.0,
-      "y": 2200.0,
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "trip_positive",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "positives",
-              "portName": "value"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "path": {
-          "value": "pnl"
-        },
-        "encoding": {
-          "value": "number"
-        }
-      }
-    },
-    "positives": {
-      "id": "positives",
-      "type": "data.Reduce",
-      "width": 280,
-      "height": 172,
-      "x": 1360.0,
-      "y": 1000.0,
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "trip_positive_pnl",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "skill",
-              "portName": "positive"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "operator": {
-          "value": "count"
-        },
-        "running": {
-          "value": true
-        }
-      }
-    },
-    "trip_negative": {
-      "id": "trip_negative",
-      "type": "data.Filter",
-      "width": 280,
-      "height": 172,
-      "x": 680.0,
-      "y": 2200.0,
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "trips",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "trip_negative_pnl",
-              "portName": "data"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "path": {
-          "value": "pnl"
-        },
-        "operator": {
-          "value": "<"
-        },
-        "threshold": {
-          "value": 0
-        }
-      }
-    },
-    "trip_negative_pnl": {
-      "id": "trip_negative_pnl",
-      "type": "data.Extract",
-      "width": 280,
-      "height": 172,
-      "x": 1020.0,
-      "y": 2400.0,
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "trip_negative",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "negatives",
-              "portName": "value"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "path": {
-          "value": "pnl"
-        },
-        "encoding": {
-          "value": "number"
-        }
-      }
-    },
-    "negatives": {
-      "id": "negatives",
-      "type": "data.Reduce",
-      "width": 280,
-      "height": 172,
-      "x": 1360.0,
-      "y": 1200.0,
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "trip_negative_pnl",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "skill",
-              "portName": "negative"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "operator": {
-          "value": "count"
-        },
-        "running": {
-          "value": true
-        }
-      }
-    },
-    "wallet_pnl": {
-      "id": "wallet_pnl",
-      "type": "data.Reduce",
-      "width": 280,
-      "height": 172,
-      "x": 1020.0,
-      "y": 2600.0,
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "trip_pnl",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "skill",
-              "portName": "pnl"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "operator": {
-          "value": "sum"
-        },
-        "running": {
-          "value": true
-        }
-      }
-    },
-    "activity_closed": {
-      "id": "activity_closed",
-      "type": "data.Extract",
-      "width": 280,
-      "height": 172,
-      "x": 680.0,
-      "y": 2400.0,
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "trips",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "json": [
-            {
-              "nodeId": "activity_id",
-              "portName": "json"
-            },
-            {
-              "nodeId": "activity_time",
-              "portName": "json"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "path": {
-          "value": "closed"
-        },
-        "encoding": {
-          "value": "json"
-        }
-      }
-    },
-    "activity_symbol": {
-      "id": "activity_symbol",
-      "type": "data.Extract",
-      "width": 280,
-      "height": 172,
-      "x": 680.0,
-      "y": 2600.0,
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "trips",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "json": [
-            {
-              "nodeId": "activity_message",
-              "portName": "json"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "path": {
-          "value": "symbol"
-        },
-        "encoding": {
-          "value": "json"
-        }
-      }
-    },
-    "activity_pnl": {
-      "id": "activity_pnl",
-      "type": "data.Extract",
-      "width": 280,
-      "height": 172,
-      "x": 680.0,
-      "y": 2800.0,
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "trips",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "json": [
-            {
-              "nodeId": "activity_row",
-              "portName": "json"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "path": {
-          "value": "pnl"
-        },
-        "encoding": {
-          "value": "json"
-        }
-      }
-    },
-    "activity_id": {
-      "id": "activity_id",
-      "type": "data.Insert",
-      "width": 280,
-      "height": 172,
-      "x": 1020.0,
-      "y": 2800.0,
-      "connections": {
-        "inputs": {
-          "json": [
-            {
-              "nodeId": "activity_closed",
-              "portName": "json"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "activity_time",
-              "portName": "data"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "path": {
-          "value": "id"
-        },
-        "data": {
-          "value": "{}"
-        }
-      }
-    },
-    "activity_time": {
-      "id": "activity_time",
-      "type": "data.Insert",
-      "width": 280,
-      "height": 172,
-      "x": 1020.0,
-      "y": 3000.0,
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "activity_id",
-              "portName": "out"
-            }
-          ],
-          "json": [
-            {
-              "nodeId": "activity_closed",
-              "portName": "json"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "activity_message",
-              "portName": "data"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "path": {
-          "value": "time"
-        }
-      }
-    },
-    "activity_message": {
-      "id": "activity_message",
-      "type": "data.Insert",
-      "width": 280,
-      "height": 172,
-      "x": 1020.0,
-      "y": 3200.0,
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "activity_time",
-              "portName": "out"
-            }
-          ],
-          "json": [
-            {
-              "nodeId": "activity_symbol",
-              "portName": "json"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "activity_row",
-              "portName": "data"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "path": {
-          "value": "message"
-        }
-      }
-    },
-    "activity_row": {
-      "id": "activity_row",
-      "type": "data.Insert",
-      "width": 280,
-      "height": 172,
-      "x": 1020.0,
-      "y": 3400.0,
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "activity_message",
-              "portName": "out"
-            }
-          ],
-          "json": [
-            {
-              "nodeId": "activity_pnl",
-              "portName": "json"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "activity_log",
-              "portName": "values"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "path": {
-          "value": "pnl"
-        }
-      }
-    },
-    "activity_log": {
-      "id": "activity_log",
-      "type": "store.Trail",
-      "width": 280,
-      "height": 172,
-      "x": 1360.0,
-      "y": 1400.0,
-      "connections": {
-        "inputs": {
-          "values": [
-            {
-              "nodeId": "activity_row",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "skill",
-              "portName": "activity"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "capacity": {
-          "value": 10
         }
       }
     },
@@ -2913,7 +1427,8 @@
             }
           ]
         }
-      }
+      },
+      "inputData": {}
     },
     "source": {
       "id": "source",
@@ -2932,7 +1447,8 @@
             }
           ]
         }
-      }
+      },
+      "inputData": {}
     },
     "activation": {
       "id": "activation",
@@ -3434,7 +1950,7 @@
       },
       "inputData": {
         "value": {
-          "value": "Frames:"
+          "value": "Replay steps:"
         }
       }
     },
@@ -3446,14 +1962,7 @@
       "x": 2720.0,
       "y": 400.0,
       "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "frames",
-              "portName": "out"
-            }
-          ]
-        },
+        "inputs": {},
         "outputs": {
           "self": [
             {
@@ -3532,7 +2041,7 @@
       },
       "inputData": {
         "value": {
-          "value": "Observations:"
+          "value": "Labeled examples:"
         }
       }
     },
@@ -3544,14 +2053,7 @@
       "x": 2720.0,
       "y": 800.0,
       "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "situations",
-              "portName": "out"
-            }
-          ]
-        },
+        "inputs": {},
         "outputs": {
           "self": [
             {
@@ -3630,7 +2132,7 @@
       },
       "inputData": {
         "value": {
-          "value": "Resolved:"
+          "value": "Paper trades:"
         }
       }
     },
@@ -3642,14 +2144,7 @@
       "x": 2720.0,
       "y": 1200.0,
       "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "resolved",
-              "portName": "out"
-            }
-          ]
-        },
+        "inputs": {},
         "outputs": {
           "self": [
             {
@@ -3728,7 +2223,7 @@
       },
       "inputData": {
         "value": {
-          "value": "Mean Edge:"
+          "value": "Paper edge:"
         }
       }
     },
@@ -3740,14 +2235,7 @@
       "x": 2720.0,
       "y": 1600.0,
       "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "edge",
-              "portName": "out"
-            }
-          ]
-        },
+        "inputs": {},
         "outputs": {
           "self": [
             {
@@ -4367,38 +2855,13 @@
     },
     "episodeTape": {
       "id": "episodeTape",
-      "type": "ui.EpisodeTape",
+      "type": "ui.FragmentReplay",
       "width": 280,
       "height": 172,
       "x": 2040.0,
       "y": 4000.0,
       "connections": {
-        "inputs": {
-          "episode": [
-            {
-              "nodeId": "episode",
-              "portName": "out"
-            }
-          ],
-          "marks": [
-            {
-              "nodeId": "marks_C",
-              "portName": "out"
-            }
-          ],
-          "outcome": [
-            {
-              "nodeId": "event_excursion",
-              "portName": "out"
-            }
-          ],
-          "entered": [
-            {
-              "nodeId": "entered_at",
-              "portName": "out"
-            }
-          ]
-        },
+        "inputs": {},
         "outputs": {
           "self": [
             {
@@ -4411,64 +2874,18 @@
       "inputData": {
         "className": {
           "value": "min-w-0 flex-1"
-        },
-        "fallback": {
-          "value": true
-        },
-        "phase": {
-          "value": "LEARNING PHASE"
-        },
-        "coordinate": {
-          "value": "capture sequence"
         }
       }
     },
     "skill": {
       "id": "skill",
-      "type": "ui.SkillPanel",
+      "type": "ui.AccountSummary",
       "width": 280,
       "height": 172,
       "x": 2040.0,
       "y": 4200.0,
       "connections": {
-        "inputs": {
-          "evaluated": [
-            {
-              "nodeId": "resolved",
-              "portName": "out"
-            }
-          ],
-          "edge": [
-            {
-              "nodeId": "edge",
-              "portName": "out"
-            }
-          ],
-          "positive": [
-            {
-              "nodeId": "positives",
-              "portName": "out"
-            }
-          ],
-          "negative": [
-            {
-              "nodeId": "negatives",
-              "portName": "out"
-            }
-          ],
-          "pnl": [
-            {
-              "nodeId": "wallet_pnl",
-              "portName": "out"
-            }
-          ],
-          "activity": [
-            {
-              "nodeId": "activity_log",
-              "portName": "out"
-            }
-          ]
-        },
+        "inputs": {},
         "outputs": {
           "self": [
             {
@@ -4480,7 +2897,7 @@
       },
       "inputData": {
         "className": {
-          "value": "w-[300px] shrink-0"
+          "value": "w-[380px] shrink-0 overflow-auto"
         }
       }
     },
@@ -4552,6 +2969,9 @@
         },
         "fallback": {
           "value": true
+        },
+        "title": {
+          "value": "Recent labeled region paths"
         }
       }
     },
@@ -4992,14 +3412,7 @@
       "x": 2720.0,
       "y": 3200.0,
       "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "frames",
-              "portName": "out"
-            }
-          ]
-        },
+        "inputs": {},
         "outputs": {
           "self": [
             {
@@ -5127,14 +3540,7 @@
       "x": 2040.0,
       "y": 7200.0,
       "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "situations",
-              "portName": "out"
-            }
-          ]
-        },
+        "inputs": {},
         "outputs": {
           "self": [
             {
@@ -5238,14 +3644,7 @@
       "x": 2040.0,
       "y": 7800.0,
       "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "edge",
-              "portName": "out"
-            }
-          ]
-        },
+        "inputs": {},
         "outputs": {
           "self": [
             {
@@ -5257,7 +3656,7 @@
       },
       "inputData": {
         "label": {
-          "value": "Quoted Edge"
+          "value": "Paper mean edge"
         },
         "format": {
           "value": "basis"
@@ -5275,14 +3674,7 @@
       "x": 2040.0,
       "y": 8000.0,
       "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "resolved",
-              "portName": "out"
-            }
-          ]
-        },
+        "inputs": {},
         "outputs": {
           "self": [
             {
@@ -5294,7 +3686,7 @@
       },
       "inputData": {
         "label": {
-          "value": "Resolved Outcomes"
+          "value": "Completed paper trades"
         },
         "format": {
           "value": "integer"
@@ -5490,7 +3882,7 @@
           "value": "warning"
         },
         "label": {
-          "value": "—"
+          "value": "\u2014"
         },
         "dot": {
           "value": true
@@ -5591,7 +3983,7 @@
           "value": "info"
         },
         "label": {
-          "value": "—"
+          "value": "\u2014"
         }
       }
     },
@@ -5676,7 +4068,7 @@
       },
       "inputData": {
         "value": {
-          "value": "—"
+          "value": "\u2014"
         },
         "className": {
           "value": "break-all"

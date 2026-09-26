@@ -41,12 +41,12 @@ func inspectionFixture(t testing.TB, live bool) *HTTPServerServer {
 	}
 	setup := []string{
 		"LOAD arrow", "ATTACH ':memory:' AS symmtables", "CREATE SCHEMA symmtables.symm",
-		"CREATE TABLE symmtables.symm.metric_cuts_v2(epoch BIGINT, sequence BIGINT, symbol VARCHAR, complete BOOLEAN, provenance VARCHAR)",
-		`INSERT INTO symmtables.symm.metric_cuts_v2 VALUES (1,10,'BTC/USD',true,'{"receivedAt":"2026-09-26T07:00:00Z"}'),(1,20,'BTC/USD',false,'{"receivedAt":"2026-09-26T07:00:01Z"}'),(2,30,'ETH/USD',true,'{"receivedAt":"2026-09-26T08:00:00Z"}')`,
+		"CREATE TABLE symmtables.symm.metric_cuts_v3(epoch BIGINT, sequence BIGINT, symbol VARCHAR, complete BOOLEAN, provenance VARCHAR)",
+		`INSERT INTO symmtables.symm.metric_cuts_v3 VALUES (1,10,'BTC/USD',true,'{"receivedAt":"2026-09-26T07:00:00Z"}'),(1,20,'BTC/USD',false,'{"receivedAt":"2026-09-26T07:00:01Z"}'),(2,30,'ETH/USD',true,'{"receivedAt":"2026-09-26T08:00:00Z"}')`,
 		"CREATE TABLE symmtables.symm.excursion_fragments_v1(epoch BIGINT, symbol VARCHAR, anchor_sequence BIGINT, ignition_sequence BIGINT, extremum_sequence BIGINT, confirmation_sequence BIGINT, anchor DOUBLE, ignition DOUBLE, extremum DOUBLE, excursion DOUBLE, has_precursor BOOLEAN)",
 		"INSERT INTO symmtables.symm.excursion_fragments_v1 VALUES (1,'BTC/USD',10,11,19,20,95,100,112.3456,0.123456,true),(2,'ETH/USD',30,31,39,40,110,100,95.5,-0.045,true)",
-		"CREATE TABLE symmtables.symm.paper_round_trips_v1(symbol VARCHAR, opened TIMESTAMP, closed TIMESTAMP, basis VARCHAR, proceeds VARCHAR, pnl VARCHAR)",
-		"INSERT INTO symmtables.symm.paper_round_trips_v1 VALUES ('BTC/USD','2026-09-26 07:00:00','2026-09-26 08:00:00','100.00','112.3456','12.3456')",
+		"CREATE TABLE symmtables.symm.paper_round_trips_v2(symbol VARCHAR, opened TIMESTAMP, closed TIMESTAMP, basis VARCHAR, proceeds VARCHAR, pnl VARCHAR)",
+		"INSERT INTO symmtables.symm.paper_round_trips_v2 VALUES ('BTC/USD','2026-09-26 07:00:00','2026-09-26 08:00:00','100.00','112.3456','12.3456')",
 	}
 	if live {
 		if err := json.Unmarshal(graph.Nodes["inspection"].InputData["setup"].Value, &setup); err != nil {
@@ -135,7 +135,7 @@ func TestInspectionServeHTTP(t *testing.T) {
 			}
 		})
 		Convey("Workbench SQL returns decodable Arrow and keeps session views", func() {
-			for _, statement := range []string{"CREATE TEMP VIEW selected AS SELECT * FROM symmtables.symm.metric_cuts_v2 WHERE epoch=2", "SELECT epoch FROM selected"} {
+			for _, statement := range []string{"CREATE TEMP VIEW selected AS SELECT * FROM symmtables.symm.metric_cuts_v3 WHERE epoch=2", "SELECT epoch FROM selected"} {
 				requestBody, err := json.Marshal(map[string]string{"sql": statement})
 				So(err, ShouldBeNil)
 				response := httptest.NewRecorder()

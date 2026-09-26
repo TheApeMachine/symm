@@ -1,0 +1,995 @@
+{
+  "id": "ui_diagnostics",
+  "name": "System diagnostics",
+  "nodes": {
+    "route": {
+      "id": "route",
+      "type": "ui.UIRoute",
+      "inputData": {
+        "path": {
+          "value": "/diagnostics"
+        },
+        "title": {
+          "value": "System diagnostics"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "components": [
+            {
+              "nodeId": "body",
+              "portName": "self"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "body": {
+      "id": "body",
+      "type": "ui.Flex.Column",
+      "inputData": {
+        "className": {
+          "value": "h-full min-h-0"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "components": [
+            {
+              "nodeId": "heading",
+              "portName": "self"
+            }
+          ],
+          "components_1": [
+            {
+              "nodeId": "content",
+              "portName": "self"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "route",
+              "portName": "components"
+            }
+          ]
+        }
+      }
+    },
+    "content": {
+      "id": "content",
+      "type": "ui.StageDiagnostics",
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "components_0": [
+            {
+              "nodeId": "stage_0",
+              "portName": "self"
+            }
+          ],
+          "components_1": [
+            {
+              "nodeId": "stage_1",
+              "portName": "self"
+            }
+          ],
+          "components_2": [
+            {
+              "nodeId": "stage_2",
+              "portName": "self"
+            }
+          ],
+          "components_3": [
+            {
+              "nodeId": "stage_3",
+              "portName": "self"
+            }
+          ],
+          "components_4": [
+            {
+              "nodeId": "stage_4",
+              "portName": "self"
+            }
+          ],
+          "components_5": [
+            {
+              "nodeId": "stage_5",
+              "portName": "self"
+            }
+          ],
+          "components_6": [
+            {
+              "nodeId": "stage_6",
+              "portName": "self"
+            }
+          ],
+          "components_7": [
+            {
+              "nodeId": "stage_7",
+              "portName": "self"
+            }
+          ],
+          "components_8": [
+            {
+              "nodeId": "stage_8",
+              "portName": "self"
+            }
+          ],
+          "components_9": [
+            {
+              "nodeId": "stage_9",
+              "portName": "self"
+            }
+          ],
+          "components_10": [
+            {
+              "nodeId": "stage_10",
+              "portName": "self"
+            }
+          ],
+          "components_11": [
+            {
+              "nodeId": "stage_11",
+              "portName": "self"
+            }
+          ],
+          "components_12": [
+            {
+              "nodeId": "stage_12",
+              "portName": "self"
+            }
+          ],
+          "components_13": [
+            {
+              "nodeId": "stage_13",
+              "portName": "self"
+            }
+          ],
+          "components_14": [
+            {
+              "nodeId": "stage_14",
+              "portName": "self"
+            }
+          ],
+          "components_15": [
+            {
+              "nodeId": "stage_15",
+              "portName": "self"
+            }
+          ],
+          "components_16": [
+            {
+              "nodeId": "stage_16",
+              "portName": "self"
+            }
+          ],
+          "components_17": [
+            {
+              "nodeId": "stage_17",
+              "portName": "self"
+            }
+          ],
+          "components_18": [
+            {
+              "nodeId": "stage_18",
+              "portName": "self"
+            }
+          ],
+          "components_19": [
+            {
+              "nodeId": "stage_19",
+              "portName": "self"
+            }
+          ],
+          "components_20": [
+            {
+              "nodeId": "stage_20",
+              "portName": "self"
+            }
+          ],
+          "components_21": [
+            {
+              "nodeId": "stage_21",
+              "portName": "self"
+            }
+          ],
+          "components_22": [
+            {
+              "nodeId": "stage_22",
+              "portName": "self"
+            }
+          ],
+          "components_23": [
+            {
+              "nodeId": "stage_23",
+              "portName": "self"
+            }
+          ],
+          "components_24": [
+            {
+              "nodeId": "stage_24",
+              "portName": "self"
+            }
+          ],
+          "components_25": [
+            {
+              "nodeId": "stage_25",
+              "portName": "self"
+            }
+          ],
+          "components_26": [
+            {
+              "nodeId": "stage_26",
+              "portName": "self"
+            }
+          ],
+          "components_27": [
+            {
+              "nodeId": "stage_27",
+              "portName": "self"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "body",
+              "portName": "components_1"
+            }
+          ]
+        }
+      }
+    },
+    "stage_0": {
+      "id": "stage_0",
+      "type": "ui.StageRow",
+      "inputData": {
+        "name": {
+          "value": "spot"
+        },
+        "group": {
+          "value": "feeds_group"
+        },
+        "barrier": {
+          "value": 0
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "content",
+              "portName": "components_0"
+            }
+          ]
+        }
+      }
+    },
+    "stage_1": {
+      "id": "stage_1",
+      "type": "ui.StageRow",
+      "inputData": {
+        "name": {
+          "value": "level3"
+        },
+        "group": {
+          "value": "feeds_group"
+        },
+        "barrier": {
+          "value": 0
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "content",
+              "portName": "components_1"
+            }
+          ]
+        }
+      }
+    },
+    "stage_2": {
+      "id": "stage_2",
+      "type": "ui.StageRow",
+      "inputData": {
+        "name": {
+          "value": "futures"
+        },
+        "group": {
+          "value": "feeds_group"
+        },
+        "barrier": {
+          "value": 0
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "content",
+              "portName": "components_2"
+            }
+          ]
+        }
+      }
+    },
+    "stage_3": {
+      "id": "stage_3",
+      "type": "ui.StageRow",
+      "inputData": {
+        "name": {
+          "value": "raw_capture"
+        },
+        "group": {
+          "value": "raw_capture_group"
+        },
+        "barrier": {
+          "value": 1
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "content",
+              "portName": "components_3"
+            }
+          ]
+        }
+      }
+    },
+    "stage_4": {
+      "id": "stage_4",
+      "type": "ui.StageRow",
+      "inputData": {
+        "name": {
+          "value": "projection"
+        },
+        "group": {
+          "value": "projection_group"
+        },
+        "barrier": {
+          "value": 2
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "content",
+              "portName": "components_4"
+            }
+          ]
+        }
+      }
+    },
+    "stage_5": {
+      "id": "stage_5",
+      "type": "ui.StageRow",
+      "inputData": {
+        "name": {
+          "value": "returns"
+        },
+        "group": {
+          "value": "returns_group"
+        },
+        "barrier": {
+          "value": 3
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "content",
+              "portName": "components_5"
+            }
+          ]
+        }
+      }
+    },
+    "stage_6": {
+      "id": "stage_6",
+      "type": "ui.StageRow",
+      "inputData": {
+        "name": {
+          "value": "cohort"
+        },
+        "group": {
+          "value": "cohort_group"
+        },
+        "barrier": {
+          "value": 4
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "content",
+              "portName": "components_6"
+            }
+          ]
+        }
+      }
+    },
+    "stage_7": {
+      "id": "stage_7",
+      "type": "ui.StageRow",
+      "inputData": {
+        "name": {
+          "value": "definition-leadlag_ticker"
+        },
+        "group": {
+          "value": "metrics_group"
+        },
+        "barrier": {
+          "value": 5
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "content",
+              "portName": "components_7"
+            }
+          ]
+        }
+      }
+    },
+    "stage_8": {
+      "id": "stage_8",
+      "type": "ui.StageRow",
+      "inputData": {
+        "name": {
+          "value": "definition-pumpdump_ticker"
+        },
+        "group": {
+          "value": "metrics_group"
+        },
+        "barrier": {
+          "value": 5
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "content",
+              "portName": "components_8"
+            }
+          ]
+        }
+      }
+    },
+    "stage_9": {
+      "id": "stage_9",
+      "type": "ui.StageRow",
+      "inputData": {
+        "name": {
+          "value": "definition-morphology_level3"
+        },
+        "group": {
+          "value": "metrics_group"
+        },
+        "barrier": {
+          "value": 5
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "content",
+              "portName": "components_9"
+            }
+          ]
+        }
+      }
+    },
+    "stage_10": {
+      "id": "stage_10",
+      "type": "ui.StageRow",
+      "inputData": {
+        "name": {
+          "value": "definition-correlation_ticker"
+        },
+        "group": {
+          "value": "metrics_group"
+        },
+        "barrier": {
+          "value": 5
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "content",
+              "portName": "components_10"
+            }
+          ]
+        }
+      }
+    },
+    "stage_11": {
+      "id": "stage_11",
+      "type": "ui.StageRow",
+      "inputData": {
+        "name": {
+          "value": "definition-pumpdump_level3"
+        },
+        "group": {
+          "value": "metrics_group"
+        },
+        "barrier": {
+          "value": 5
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "content",
+              "portName": "components_11"
+            }
+          ]
+        }
+      }
+    },
+    "stage_12": {
+      "id": "stage_12",
+      "type": "ui.StageRow",
+      "inputData": {
+        "name": {
+          "value": "definition-pumpdump_trade"
+        },
+        "group": {
+          "value": "metrics_group"
+        },
+        "barrier": {
+          "value": 5
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "content",
+              "portName": "components_12"
+            }
+          ]
+        }
+      }
+    },
+    "stage_13": {
+      "id": "stage_13",
+      "type": "ui.StageRow",
+      "inputData": {
+        "name": {
+          "value": "definition-hawkes_trade"
+        },
+        "group": {
+          "value": "metrics_group"
+        },
+        "barrier": {
+          "value": 5
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "content",
+              "portName": "components_13"
+            }
+          ]
+        }
+      }
+    },
+    "stage_14": {
+      "id": "stage_14",
+      "type": "ui.StageRow",
+      "inputData": {
+        "name": {
+          "value": "definition-toxicity_level3"
+        },
+        "group": {
+          "value": "metrics_group"
+        },
+        "barrier": {
+          "value": 5
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "content",
+              "portName": "components_14"
+            }
+          ]
+        }
+      }
+    },
+    "stage_15": {
+      "id": "stage_15",
+      "type": "ui.StageRow",
+      "inputData": {
+        "name": {
+          "value": "definition-derivatives_trade"
+        },
+        "group": {
+          "value": "metrics_group"
+        },
+        "barrier": {
+          "value": 5
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "content",
+              "portName": "components_15"
+            }
+          ]
+        }
+      }
+    },
+    "stage_16": {
+      "id": "stage_16",
+      "type": "ui.StageRow",
+      "inputData": {
+        "name": {
+          "value": "definition-depthflow_level3"
+        },
+        "group": {
+          "value": "metrics_group"
+        },
+        "barrier": {
+          "value": 5
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "content",
+              "portName": "components_16"
+            }
+          ]
+        }
+      }
+    },
+    "stage_17": {
+      "id": "stage_17",
+      "type": "ui.StageRow",
+      "inputData": {
+        "name": {
+          "value": "definition-liquidity_ticker"
+        },
+        "group": {
+          "value": "metrics_group"
+        },
+        "barrier": {
+          "value": 5
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "content",
+              "portName": "components_17"
+            }
+          ]
+        }
+      }
+    },
+    "stage_18": {
+      "id": "stage_18",
+      "type": "ui.StageRow",
+      "inputData": {
+        "name": {
+          "value": "definition-toxicity_trade"
+        },
+        "group": {
+          "value": "metrics_group"
+        },
+        "barrier": {
+          "value": 5
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "content",
+              "portName": "components_18"
+            }
+          ]
+        }
+      }
+    },
+    "stage_19": {
+      "id": "stage_19",
+      "type": "ui.StageRow",
+      "inputData": {
+        "name": {
+          "value": "definition-sentiment_ticker"
+        },
+        "group": {
+          "value": "metrics_group"
+        },
+        "barrier": {
+          "value": 5
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "content",
+              "portName": "components_19"
+            }
+          ]
+        }
+      }
+    },
+    "stage_20": {
+      "id": "stage_20",
+      "type": "ui.StageRow",
+      "inputData": {
+        "name": {
+          "value": "definition-derivatives_ticker"
+        },
+        "group": {
+          "value": "metrics_group"
+        },
+        "barrier": {
+          "value": 5
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "content",
+              "portName": "components_20"
+            }
+          ]
+        }
+      }
+    },
+    "stage_21": {
+      "id": "stage_21",
+      "type": "ui.StageRow",
+      "inputData": {
+        "name": {
+          "value": "definition-cvd_trade"
+        },
+        "group": {
+          "value": "metrics_group"
+        },
+        "barrier": {
+          "value": 5
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "content",
+              "portName": "components_21"
+            }
+          ]
+        }
+      }
+    },
+    "stage_22": {
+      "id": "stage_22",
+      "type": "ui.StageRow",
+      "inputData": {
+        "name": {
+          "value": "cut"
+        },
+        "group": {
+          "value": "cut_group"
+        },
+        "barrier": {
+          "value": 6
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "content",
+              "portName": "components_22"
+            }
+          ]
+        }
+      }
+    },
+    "stage_23": {
+      "id": "stage_23",
+      "type": "ui.StageRow",
+      "inputData": {
+        "name": {
+          "value": "forward"
+        },
+        "group": {
+          "value": "forward_group"
+        },
+        "barrier": {
+          "value": 7
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "content",
+              "portName": "components_23"
+            }
+          ]
+        }
+      }
+    },
+    "stage_24": {
+      "id": "stage_24",
+      "type": "ui.StageRow",
+      "inputData": {
+        "name": {
+          "value": "training"
+        },
+        "group": {
+          "value": "training_group"
+        },
+        "barrier": {
+          "value": 8
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "content",
+              "portName": "components_24"
+            }
+          ]
+        }
+      }
+    },
+    "stage_25": {
+      "id": "stage_25",
+      "type": "ui.StageRow",
+      "inputData": {
+        "name": {
+          "value": "model_live"
+        },
+        "group": {
+          "value": "model_group"
+        },
+        "barrier": {
+          "value": 9
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "content",
+              "portName": "components_25"
+            }
+          ]
+        }
+      }
+    },
+    "stage_26": {
+      "id": "stage_26",
+      "type": "ui.StageRow",
+      "inputData": {
+        "name": {
+          "value": "model_train"
+        },
+        "group": {
+          "value": "model_group"
+        },
+        "barrier": {
+          "value": 9
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "content",
+              "portName": "components_26"
+            }
+          ]
+        }
+      }
+    },
+    "stage_27": {
+      "id": "stage_27",
+      "type": "ui.StageRow",
+      "inputData": {
+        "name": {
+          "value": "model_held"
+        },
+        "group": {
+          "value": "model_group"
+        },
+        "barrier": {
+          "value": 9
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "content",
+              "portName": "components_27"
+            }
+          ]
+        }
+      }
+    },
+    "heading": {
+      "id": "heading",
+      "type": "ui.Section.Header",
+      "inputData": {
+        "title": {
+          "value": "System diagnostics"
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "body",
+              "portName": "components"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

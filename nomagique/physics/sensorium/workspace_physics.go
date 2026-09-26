@@ -281,7 +281,8 @@ func (workspace *workspace) gatherDual(dt float32) error {
 		return err
 	}
 	if err := workspace.engine.RemapConservative(workspace.hydro, workspace.posOut, workspace.mass, workspace.velOut, workspace.heatOut, workspace.materialEnergyOut, workspace.remapReport, workspace.particleStatus, workspace.particles, workspace.hydroParams(dt), float32(workspace.physics.RemapWidthCells), float32(workspace.physics.RemapTolerance), workspace.physics.RemapIterations, float32(workspace.physics.GravityG)); err != nil {
-		return err
+		report := workspace.remapReport.Float32Slice()
+		return fmt.Errorf("sensorium: remap residual=%g iterations=%g mass correction=%g energy residual=%g momentum residual=%v: %w", report[0], report[1], report[2], report[4], report[5:8], err)
 	}
 	report := workspace.remapReport.Float32Slice()
 	workspace.health.Remap = RemapHealth{MaxMarginalResidual: float64(report[0]), Iterations: int(report[1]), MassRoundoffScale: float64(report[2]), MixingToAuxiliary: float64(report[3]), EnergyResidual: float64(report[4]), MomentumResidual: [3]float64{float64(report[5]), float64(report[6]), float64(report[7])}, WidthCells: workspace.physics.RemapWidthCells}

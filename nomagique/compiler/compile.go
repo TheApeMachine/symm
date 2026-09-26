@@ -1660,7 +1660,7 @@ func compileFanIn(edges []fanInEdge) ([]Route, error) {
 			sourceIndex, indexed := outputSlot(edge.fromPort)
 
 			if edge.fromInfo.ValueList && indexed {
-				copier, err = CompileFanInSlotCopier(edge.fromInfo, edge.toInfo, sourceIndex, index, len(group))
+				copier, err = CompileFanInSlotCopier(edge.fromInfo, edge.toInfo, edge.targetPresence, sourceIndex, index, len(group))
 				delivered = CompileFanOutDelivery(edge.fromInfo, sourceIndex, edge.presence, edge.carried)
 			}
 

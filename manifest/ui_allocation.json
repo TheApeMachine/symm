@@ -1,0 +1,120 @@
+{
+  "id": "ui_allocation",
+  "name": "Account allocation",
+  "nodes": {
+    "route": {
+      "id": "route",
+      "type": "ui.UIRoute",
+      "inputData": {
+        "path": {
+          "value": "/allocation"
+        },
+        "title": {
+          "value": "Account allocation"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "components": [
+            {
+              "nodeId": "body",
+              "portName": "self"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "body": {
+      "id": "body",
+      "type": "ui.Flex.Column",
+      "inputData": {
+        "className": {
+          "value": "h-full min-h-0"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "components": [
+            {
+              "nodeId": "heading",
+              "portName": "self"
+            }
+          ],
+          "components_1": [
+            {
+              "nodeId": "content",
+              "portName": "self"
+            }
+          ],
+          "components_2": [
+            {
+              "nodeId": "positions",
+              "portName": "self"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "route",
+              "portName": "components"
+            }
+          ]
+        }
+      }
+    },
+    "content": {
+      "id": "content",
+      "type": "ui.AccountSummary",
+      "inputData": {},
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "body",
+              "portName": "components_1"
+            }
+          ]
+        }
+      }
+    },
+    "heading": {
+      "id": "heading",
+      "type": "ui.Section.Header",
+      "inputData": {
+        "title": {
+          "value": "Account allocation"
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "body",
+              "portName": "components"
+            }
+          ]
+        }
+      }
+    },
+    "positions": {
+      "id": "positions",
+      "type": "ui.AccountPositions",
+      "inputData": {},
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "body",
+              "portName": "components_2"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

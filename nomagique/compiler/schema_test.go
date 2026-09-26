@@ -118,7 +118,7 @@ func TestCompileFanInSlotCopier(t *testing.T) {
 		from := FieldInfo{Which: schema.Type_Which_list, ElementWhich: schema.Type_Which_data, ValueList: true}
 		to := from
 		for index := range 2 {
-			copier, err := CompileFanInSlotCopier(from, to, 1-index, index, 2)
+			copier, err := CompileFanInSlotCopier(from, to, nil, 1-index, index, 2)
 			So(err, ShouldBeNil)
 			So(copier(source, destination), ShouldBeNil)
 		}
@@ -134,7 +134,7 @@ func TestCompileFanInSlotCopier(t *testing.T) {
 		So(string(second), ShouldEqual, "counts")
 		Convey("Incompatible slots fail at compile time", func() {
 			to.ElementWhich = schema.Type_Which_text
-			_, err := CompileFanInSlotCopier(from, to, 0, 0, 1)
+			_, err := CompileFanInSlotCopier(from, to, nil, 0, 0, 1)
 			So(err, ShouldNotBeNil)
 		})
 	})

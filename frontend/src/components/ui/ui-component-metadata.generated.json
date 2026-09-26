@@ -1,4 +1,105 @@
 {
+  "AccountDecision": {
+    "name": "AccountDecision",
+    "exportName": "AccountDecision",
+    "hasChildren": false,
+    "props": [
+      {
+        "name": "decision",
+        "type": "string",
+        "optional": true
+      },
+      {
+        "name": "symbol",
+        "type": "string",
+        "optional": true
+      },
+      {
+        "name": "reason",
+        "type": "string",
+        "optional": true
+      },
+      {
+        "name": "phase",
+        "type": "string",
+        "optional": true
+      },
+      {
+        "name": "className",
+        "type": "string",
+        "optional": true
+      }
+    ]
+  },
+  "AccountPositions": {
+    "name": "AccountPositions",
+    "exportName": "AccountPositions",
+    "hasChildren": false,
+    "props": [
+      {
+        "name": "positions",
+        "type": "data",
+        "optional": true
+      },
+      {
+        "name": "className",
+        "type": "string",
+        "optional": true
+      }
+    ]
+  },
+  "AccountSummary": {
+    "name": "AccountSummary",
+    "exportName": "AccountSummary",
+    "hasChildren": false,
+    "props": [
+      {
+        "name": "cash",
+        "type": "string",
+        "optional": true
+      },
+      {
+        "name": "pnl",
+        "type": "string",
+        "optional": true
+      },
+      {
+        "name": "equity",
+        "type": "string",
+        "optional": true
+      },
+      {
+        "name": "meanEdge",
+        "type": "number",
+        "optional": true
+      },
+      {
+        "name": "edgeDefined",
+        "type": "boolean",
+        "optional": true
+      },
+      {
+        "name": "standardError",
+        "type": "number",
+        "optional": true
+      },
+      {
+        "name": "uncertaintyDefined",
+        "type": "boolean",
+        "optional": true
+      },
+      {
+        "name": "phase",
+        "type": "string",
+        "optional": true
+      },
+      {
+        "name": "className",
+        "type": "string",
+        "optional": true
+      }
+    ]
+  },
   "Alert": {
     "name": "Alert",
     "exportName": "Alert",
@@ -374,6 +475,18 @@
       },
       {
         "name": "title",
+        "type": "string",
+        "optional": true
+      }
+    ]
+  },
+  "CaptureHistory": {
+    "name": "CaptureHistory",
+    "exportName": "CaptureHistory",
+    "hasChildren": false,
+    "props": [
+      {
+        "name": "className",
         "type": "string",
         "optional": true
       }
@@ -1879,9 +1992,27 @@
       }
     ]
   },
+  "FluidInspector": {
+    "name": "FluidInspector",
+    "exportName": "FluidInspector",
+    "hasChildren": false,
+    "props": [
+      {
+        "name": "className",
+        "type": "string",
+        "optional": true
+      }
+    ]
+  },
   "FluidLegend": {
     "name": "FluidLegend",
     "exportName": "FluidLegend",
+    "hasChildren": false,
+    "props": []
+  },
+  "FlumeEditor": {
+    "name": "FlumeEditor",
+    "exportName": "FlumeEditor",
     "hasChildren": false,
     "props": []
   },
@@ -2054,6 +2185,33 @@
       }
     ]
   },
+  "FragmentReplay": {
+    "name": "FragmentReplay",
+    "exportName": "FragmentReplay",
+    "hasChildren": false,
+    "props": [
+      {
+        "name": "observation",
+        "type": "data",
+        "optional": true
+      },
+      {
+        "name": "context",
+        "type": "data",
+        "optional": true
+      },
+      {
+        "name": "completed",
+        "type": "string",
+        "optional": true
+      },
+      {
+        "name": "className",
+        "type": "string",
+        "optional": true
+      }
+    ]
+  },
   "Frame": {
     "name": "Frame",
     "exportName": "Frame",
@@ -2148,6 +2306,12 @@
         "optional": true
       }
     ]
+  },
+  "GraphIndex": {
+    "name": "GraphIndex",
+    "exportName": "GraphIndex",
+    "hasChildren": false,
+    "props": []
   },
   "Grid": {
     "name": "Grid",
@@ -7038,6 +7202,28 @@
       }
     ]
   },
+  "MetricInspector": {
+    "name": "MetricInspector",
+    "exportName": "MetricInspector",
+    "hasChildren": false,
+    "props": [
+      {
+        "name": "row",
+        "type": "data",
+        "optional": true
+      },
+      {
+        "name": "title",
+        "type": "string",
+        "optional": true
+      },
+      {
+        "name": "className",
+        "type": "string",
+        "optional": true
+      }
+    ]
+  },
   "Modal": {
     "name": "Modal",
     "exportName": "Modal",
@@ -8449,6 +8635,65 @@
       }
     ]
   },
+  "RecordTable": {
+    "name": "RecordTable",
+    "exportName": "RecordTable",
+    "hasChildren": false,
+    "props": [
+      {
+        "name": "endpoint",
+        "type": "string",
+        "optional": false
+      },
+      {
+        "name": "title",
+        "type": "string",
+        "optional": true
+      },
+      {
+        "name": "columns",
+        "type": "data",
+        "optional": true
+      },
+      {
+        "name": "className",
+        "type": "string",
+        "optional": true
+      }
+    ]
+  },
+  "ResonanceCanvas": {
+    "name": "ResonanceCanvas",
+    "exportName": "ResonanceCanvas",
+    "hasChildren": false,
+    "props": [
+      {
+        "name": "reading",
+        "type": "data",
+        "optional": true
+      },
+      {
+        "name": "forwardCurve",
+        "type": "data",
+        "optional": true
+      },
+      {
+        "name": "calibrated",
+        "type": "boolean",
+        "optional": true
+      },
+      {
+        "name": "lastResolution",
+        "type": "data",
+        "optional": true
+      },
+      {
+        "name": "className",
+        "type": "string",
+        "optional": true
+      }
+    ]
+  },
   "ScalarDiagnostics": {
     "name": "ScalarDiagnostics",
     "exportName": "ScalarDiagnostics",
@@ -9018,6 +9263,60 @@
       }
     ]
   },
+  "StageDiagnostics": {
+    "name": "StageDiagnostics",
+    "exportName": "StageDiagnostics",
+    "hasChildren": true,
+    "props": [
+      {
+        "name": "readiness",
+        "type": "data",
+        "optional": true
+      },
+      {
+        "name": "className",
+        "type": "string",
+        "optional": true
+      }
+    ]
+  },
+  "StageRow": {
+    "name": "StageRow",
+    "exportName": "StageRow",
+    "hasChildren": false,
+    "props": [
+      {
+        "name": "name",
+        "type": "string",
+        "optional": false
+      },
+      {
+        "name": "group",
+        "type": "string",
+        "optional": false
+      },
+      {
+        "name": "barrier",
+        "type": "number",
+        "optional": false
+      },
+      {
+        "name": "completed",
+        "type": "string",
+        "optional": true
+      },
+      {
+        "name": "epoch",
+        "type": "string",
+        "optional": true
+      },
+      {
+        "name": "sequence",
+        "type": "string",
+        "optional": true
+      }
+    ]
+  },
   "Stat": {
     "name": "Stat",
     "exportName": "Stat",
@@ -9166,6 +9465,12 @@
       }
     ]
   },
+  "SurfaceOutlet": {
+    "name": "SurfaceOutlet",
+    "exportName": "SurfaceOutlet",
+    "hasChildren": false,
+    "props": []
+  },
   "Tabs": {
     "name": "Tabs",
     "exportName": "Tabs",
@@ -9264,6 +9569,12 @@
       }
     ]
   },
+  "TerminalNav": {
+    "name": "TerminalNav",
+    "exportName": "TerminalNav",
+    "hasChildren": false,
+    "props": []
+  },
   "TerminalPredictionChart": {
     "name": "TerminalPredictionChart",
     "exportName": "TerminalPredictionChart",
@@ -9354,6 +9665,12 @@
   "TerminalSignalHeatmap": {
     "name": "TerminalSignalHeatmap",
     "exportName": "TerminalSignalHeatmap",
+    "hasChildren": false,
+    "props": []
+  },
+  "TerminalTopBar": {
+    "name": "TerminalTopBar",
+    "exportName": "TerminalTopBar",
     "hasChildren": false,
     "props": []
   },
@@ -11245,5 +11562,11 @@
         "optional": true
       }
     ]
+  },
+  "Workbench": {
+    "name": "Workbench",
+    "exportName": "Workbench",
+    "hasChildren": false,
+    "props": []
   }
 }

@@ -12,6 +12,9 @@ $Go.import("github.com/theapemachine/symm/nomagique/financial/paper");
 # the levels. What the levels could not absorb is unfilled, never assumed
 # filled beyond what they show.
 interface Sweep {
-  write @0 (levels :Data, amount :Data, increment :Data, spend :Bool) -> stream;
-  done @1 () -> (quantity :Data, cost :Data, unfilled :Data);
+  write @0 () -> stream;
+  done @1 () -> (ready :Bool);
+  # One atomic request owns its result even when accounts share this capability.
+  execute @2 (levels :List(import "book.capnp".Market.Level), amount :Text,
+              increment :Text, spend :Bool) -> (quantity :Text, cost :Text, unfilled :Text);
 }

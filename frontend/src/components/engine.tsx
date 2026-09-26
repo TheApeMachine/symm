@@ -1,20 +1,15 @@
 import { useSelector } from "@tanstack/react-store";
-import {
-	candidatesAtom,
-	onlineAtom,
-	phaseAtom,
-	positionCountAtom,
-	tickCountAtom,
-} from "#/collections/app";
+import { onlineAtom } from "#/collections/app";
+import { useShellValue } from "#/components/shell-value";
 import { Flex } from "#/components/ui/flex";
 import { Panel } from "#/components/ui/panel";
 
 export const Engine = () => {
 	const online = useSelector(onlineAtom);
-	const phase = useSelector(phaseAtom);
-	const seq = useSelector(tickCountAtom);
-	const cand = useSelector(candidatesAtom);
-	const open = useSelector(positionCountAtom);
+	const phase = useShellValue("phase");
+	const seq = useShellValue("observations");
+	const cand = useShellValue("decisions");
+	const open = useShellValue("open");
 	const displayPhase = online === "OFFLINE" ? "offline" : String(phase ?? "—");
 
 	return (

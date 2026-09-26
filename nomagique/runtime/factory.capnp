@@ -4,8 +4,9 @@ $Go.package("runtime");
 $Go.import("github.com/theapemachine/symm/nomagique/runtime");
 using import "consumer.capnp".Stage;
 using import "status.capnp".Configured;
+using import "snapshot.capnp".Snapshot;
 # Each creation owns an independent instance of the authored node graph.
-interface StageFactory extends(Stage, Configured) {
+interface StageFactory extends(Stage, Configured, Snapshot) {
  create @0 () -> (stage :Stage);
  # When used as a stage, select a child by a native Text output from an
  # earlier LMAX group. Empty selectors support explicit create calls only.

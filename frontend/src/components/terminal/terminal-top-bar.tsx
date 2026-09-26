@@ -43,7 +43,7 @@ const ObservationCounter = () => {
 					Observations
 				</Typography.Label>
 				<Typography.Mono size="lg" tone="f1" data-tick="true">
-					{count === undefined ? "—" : Math.floor(count).toLocaleString()}
+					{count === undefined ? "—" : String(count)}
 				</Typography.Mono>
 			</Flex.Column>
 		</Flex.Row>
@@ -64,35 +64,6 @@ component drawing two different lines depending on its neighbours.
 const Rule = () => (
 	<Divider orientation="vertical" className="h-4.5 self-center" />
 );
-
-/*
-ResonanceTransportBadge surfaces WebRTC data-channel health next to the websocket
-liveness badge so a dead telemetry transport is never mistaken for a quiet
-predictive coder. Offline here means the resonance/diagnostics channels are down
-or reconnecting — the model may be fine, but no artifacts are arriving.
-
-The label is the transport's name and nothing else: colour carries the state
-(red down, orange connecting, green live), and the detail a reconnect leaves —
-the countdown, the failing channel — belongs in the hover, where reading it is a
-deliberate act rather than a line of chrome that changes width every second.
-*/
-const ResonanceTransportBadge = () => {
-	const status = useSelector(onlineAtom);
-	const live = status === "ONLINE";
-	const connecting = status === "CONNECTING";
-	const state = live ? "live" : connecting ? "connecting" : "offline";
-	const variant = live ? "success" : connecting ? "warning" : "error";
-
-	return (
-		<Badge
-			label="WebRTC"
-			variant={variant}
-			dot
-			pulse={live}
-			title={`WebRTC ${state}`}
-		/>
-	);
-};
 
 export const TerminalTopBar = () => {
 	const online = useSelector(onlineAtom, (state) => state === "ONLINE");
@@ -118,7 +89,6 @@ export const TerminalTopBar = () => {
 					pulse={online}
 					title={online ? "WebSocket live" : "WebSocket offline"}
 				/>
-				<ResonanceTransportBadge />
 			</Toolbar.Group>
 
 			<Rule />

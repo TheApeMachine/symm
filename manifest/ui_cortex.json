@@ -1,0 +1,102 @@
+{
+  "id": "ui_cortex",
+  "name": "Cognitive tree",
+  "nodes": {
+    "route": {
+      "id": "route",
+      "type": "ui.UIRoute",
+      "inputData": {
+        "path": {
+          "value": "/cortex"
+        },
+        "title": {
+          "value": "Cognitive tree"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "components": [
+            {
+              "nodeId": "body",
+              "portName": "self"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "body": {
+      "id": "body",
+      "type": "ui.Flex.Column",
+      "inputData": {
+        "className": {
+          "value": "h-full min-h-0"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "components": [
+            {
+              "nodeId": "heading",
+              "portName": "self"
+            }
+          ],
+          "components_1": [
+            {
+              "nodeId": "content",
+              "portName": "self"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "route",
+              "portName": "components"
+            }
+          ]
+        }
+      }
+    },
+    "content": {
+      "id": "content",
+      "type": "ui.TrieView",
+      "inputData": {
+        "className": {
+          "value": "h-full"
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "body",
+              "portName": "components_1"
+            }
+          ]
+        }
+      }
+    },
+    "heading": {
+      "id": "heading",
+      "type": "ui.Section.Header",
+      "inputData": {
+        "title": {
+          "value": "Cognitive tree"
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "body",
+              "portName": "components"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

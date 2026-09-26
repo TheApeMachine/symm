@@ -11,38 +11,7 @@
       "y": 1300.0,
       "inputData": {},
       "connections": {
-        "inputs": {
-          "winShare.a": [
-            {
-              "nodeId": "learning",
-              "portName": "positives.out"
-            }
-          ],
-          "winShare.b": [
-            {
-              "nodeId": "learning",
-              "portName": "resolved.out"
-            }
-          ],
-          "edge.value": [
-            {
-              "nodeId": "learning",
-              "portName": "edge.out"
-            }
-          ],
-          "pnl.value": [
-            {
-              "nodeId": "learning",
-              "portName": "wallet_pnl.out"
-            }
-          ],
-          "observations.value": [
-            {
-              "nodeId": "learning",
-              "portName": "frames.out"
-            }
-          ]
-        },
+        "inputs": {},
         "outputs": {}
       }
     },
@@ -56,7 +25,26 @@
       "inputData": {},
       "connections": {
         "inputs": {},
-        "outputs": {}
+        "outputs": {
+          "points.out": [
+            {
+              "nodeId": "influence",
+              "portName": "content.points"
+            }
+          ],
+          "regions.out": [
+            {
+              "nodeId": "influence",
+              "portName": "content.regions"
+            }
+          ],
+          "links.out": [
+            {
+              "nodeId": "influence",
+              "portName": "content.connections"
+            }
+          ]
+        }
       }
     },
     "learning": {
@@ -69,37 +57,168 @@
       "connections": {
         "inputs": {},
         "outputs": {
-          "positives.out": [
+          "tree.grown.root": [
             {
-              "nodeId": "shell",
-              "portName": "winShare.a"
+              "nodeId": "cortex",
+              "portName": "content.root"
             }
           ],
-          "resolved.out": [
+          "tree.grown.candidates": [
             {
-              "nodeId": "shell",
-              "portName": "winShare.b"
-            }
-          ],
-          "edge.out": [
-            {
-              "nodeId": "shell",
-              "portName": "edge.value"
-            }
-          ],
-          "wallet_pnl.out": [
-            {
-              "nodeId": "shell",
-              "portName": "pnl.value"
-            }
-          ],
-          "frames.out": [
-            {
-              "nodeId": "shell",
-              "portName": "observations.value"
+              "nodeId": "cortex",
+              "portName": "content.candidates"
             }
           ]
         }
+      }
+    },
+    "signals": {
+      "id": "signals",
+      "type": "definition:ui_signals",
+      "inputData": {},
+      "connections": {
+        "inputs": {},
+        "outputs": {}
+      }
+    },
+    "lineage": {
+      "id": "lineage",
+      "type": "definition:ui_lineage",
+      "inputData": {},
+      "connections": {
+        "inputs": {},
+        "outputs": {}
+      }
+    },
+    "influence": {
+      "id": "influence",
+      "type": "definition:ui_influence",
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "content.points": [
+            {
+              "nodeId": "dashboard",
+              "portName": "points.out"
+            }
+          ],
+          "content.regions": [
+            {
+              "nodeId": "dashboard",
+              "portName": "regions.out"
+            }
+          ],
+          "content.connections": [
+            {
+              "nodeId": "dashboard",
+              "portName": "links.out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "cortex": {
+      "id": "cortex",
+      "type": "definition:ui_cortex",
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "content.root": [
+            {
+              "nodeId": "learning",
+              "portName": "tree.grown.root"
+            }
+          ],
+          "content.candidates": [
+            {
+              "nodeId": "learning",
+              "portName": "tree.grown.candidates"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "diagnostics": {
+      "id": "diagnostics",
+      "type": "definition:ui_diagnostics",
+      "inputData": {},
+      "connections": {
+        "inputs": {},
+        "outputs": {}
+      }
+    },
+    "workbench": {
+      "id": "workbench",
+      "type": "definition:ui_workbench",
+      "inputData": {},
+      "connections": {
+        "inputs": {},
+        "outputs": {}
+      }
+    },
+    "pipeline": {
+      "id": "pipeline",
+      "type": "definition:ui_pipeline",
+      "inputData": {},
+      "connections": {
+        "inputs": {},
+        "outputs": {}
+      }
+    },
+    "allocation": {
+      "id": "allocation",
+      "type": "definition:ui_allocation",
+      "inputData": {},
+      "connections": {
+        "inputs": {},
+        "outputs": {}
+      }
+    },
+    "journal": {
+      "id": "journal",
+      "type": "definition:ui_journal",
+      "inputData": {},
+      "connections": {
+        "inputs": {},
+        "outputs": {}
+      }
+    },
+    "hindsight": {
+      "id": "hindsight",
+      "type": "definition:ui_hindsight",
+      "inputData": {},
+      "connections": {
+        "inputs": {},
+        "outputs": {}
+      }
+    },
+    "dynamic": {
+      "id": "dynamic",
+      "type": "definition:ui_dynamic",
+      "inputData": {},
+      "connections": {
+        "inputs": {},
+        "outputs": {}
+      }
+    },
+    "fluid": {
+      "id": "fluid",
+      "type": "definition:ui_fluid",
+      "inputData": {},
+      "connections": {
+        "inputs": {},
+        "outputs": {}
+      }
+    },
+    "xray": {
+      "id": "xray",
+      "type": "definition:ui_xray",
+      "inputData": {},
+      "connections": {
+        "inputs": {},
+        "outputs": {}
       }
     }
   }

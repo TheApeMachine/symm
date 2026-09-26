@@ -1,0 +1,116 @@
+{
+  "id": "ui_journal",
+  "name": "Trade journal",
+  "nodes": {
+    "route": {
+      "id": "route",
+      "type": "ui.UIRoute",
+      "inputData": {
+        "path": {
+          "value": "/journal"
+        },
+        "title": {
+          "value": "Trade journal"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "components": [
+            {
+              "nodeId": "body",
+              "portName": "self"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "body": {
+      "id": "body",
+      "type": "ui.Flex.Column",
+      "inputData": {
+        "className": {
+          "value": "h-full min-h-0"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "components": [
+            {
+              "nodeId": "heading",
+              "portName": "self"
+            }
+          ],
+          "components_1": [
+            {
+              "nodeId": "content",
+              "portName": "self"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "route",
+              "portName": "components"
+            }
+          ]
+        }
+      }
+    },
+    "content": {
+      "id": "content",
+      "type": "ui.RecordTable",
+      "inputData": {
+        "endpoint": {
+          "value": "/trades"
+        },
+        "columns": {
+          "value": [
+            "execution",
+            "symbol",
+            "opened",
+            "closed",
+            "basis",
+            "proceeds",
+            "pnl",
+            "edge",
+            "epoch",
+            "sequence"
+          ]
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "body",
+              "portName": "components_1"
+            }
+          ]
+        }
+      }
+    },
+    "heading": {
+      "id": "heading",
+      "type": "ui.Section.Header",
+      "inputData": {
+        "title": {
+          "value": "Trade journal"
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "body",
+              "portName": "components"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

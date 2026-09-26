@@ -9,304 +9,48 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as XrayRouteImport } from './routes/xray'
-import { Route as WorkbenchRouteImport } from './routes/workbench'
-import { Route as SignalsRouteImport } from './routes/signals'
-import { Route as PipelineRouteImport } from './routes/pipeline'
-import { Route as LineageRouteImport } from './routes/lineage'
-import { Route as JournalRouteImport } from './routes/journal'
-import { Route as InfluenceRouteImport } from './routes/influence'
-import { Route as HindsightRouteImport } from './routes/hindsight'
-import { Route as FluidRouteImport } from './routes/fluid'
-import { Route as DynamicRouteImport } from './routes/dynamic'
-import { Route as DiagnosticsRouteImport } from './routes/diagnostics'
-import { Route as CortexRouteImport } from './routes/cortex'
 import { Route as SplatRouteImport } from './routes/$'
-import { Route as DynamicIndexRouteImport } from './routes/dynamic.index'
 import { Route as DynamicNameRouteImport } from './routes/dynamic.$name'
 
-const XrayRoute = XrayRouteImport.update({
-  id: '/xray',
-  path: '/xray',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const WorkbenchRoute = WorkbenchRouteImport.update({
-  id: '/workbench',
-  path: '/workbench',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const SignalsRoute = SignalsRouteImport.update({
-  id: '/signals',
-  path: '/signals',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const PipelineRoute = PipelineRouteImport.update({
-  id: '/pipeline',
-  path: '/pipeline',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const LineageRoute = LineageRouteImport.update({
-  id: '/lineage',
-  path: '/lineage',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const JournalRoute = JournalRouteImport.update({
-  id: '/journal',
-  path: '/journal',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const InfluenceRoute = InfluenceRouteImport.update({
-  id: '/influence',
-  path: '/influence',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const HindsightRoute = HindsightRouteImport.update({
-  id: '/hindsight',
-  path: '/hindsight',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const FluidRoute = FluidRouteImport.update({
-  id: '/fluid',
-  path: '/fluid',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DynamicRoute = DynamicRouteImport.update({
-  id: '/dynamic',
-  path: '/dynamic',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DiagnosticsRoute = DiagnosticsRouteImport.update({
-  id: '/diagnostics',
-  path: '/diagnostics',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const CortexRoute = CortexRouteImport.update({
-  id: '/cortex',
-  path: '/cortex',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const SplatRoute = SplatRouteImport.update({
   id: '/$',
   path: '/$',
   getParentRoute: () => rootRouteImport,
 } as any)
-const DynamicIndexRoute = DynamicIndexRouteImport.update({
-  id: '/',
-  path: '/',
-  getParentRoute: () => DynamicRoute,
-} as any)
 const DynamicNameRoute = DynamicNameRouteImport.update({
-  id: '/$name',
-  path: '/$name',
-  getParentRoute: () => DynamicRoute,
+  id: '/dynamic/$name',
+  path: '/dynamic/$name',
+  getParentRoute: () => rootRouteImport,
 } as any)
 
 export interface FileRoutesByFullPath {
   '/$': typeof SplatRoute
-  '/cortex': typeof CortexRoute
-  '/diagnostics': typeof DiagnosticsRoute
-  '/dynamic': typeof DynamicRouteWithChildren
-  '/fluid': typeof FluidRoute
-  '/hindsight': typeof HindsightRoute
-  '/influence': typeof InfluenceRoute
-  '/journal': typeof JournalRoute
-  '/lineage': typeof LineageRoute
-  '/pipeline': typeof PipelineRoute
-  '/signals': typeof SignalsRoute
-  '/workbench': typeof WorkbenchRoute
-  '/xray': typeof XrayRoute
   '/dynamic/$name': typeof DynamicNameRoute
-  '/dynamic/': typeof DynamicIndexRoute
 }
 export interface FileRoutesByTo {
   '/$': typeof SplatRoute
-  '/cortex': typeof CortexRoute
-  '/diagnostics': typeof DiagnosticsRoute
-  '/fluid': typeof FluidRoute
-  '/hindsight': typeof HindsightRoute
-  '/influence': typeof InfluenceRoute
-  '/journal': typeof JournalRoute
-  '/lineage': typeof LineageRoute
-  '/pipeline': typeof PipelineRoute
-  '/signals': typeof SignalsRoute
-  '/workbench': typeof WorkbenchRoute
-  '/xray': typeof XrayRoute
   '/dynamic/$name': typeof DynamicNameRoute
-  '/dynamic': typeof DynamicIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/$': typeof SplatRoute
-  '/cortex': typeof CortexRoute
-  '/diagnostics': typeof DiagnosticsRoute
-  '/dynamic': typeof DynamicRouteWithChildren
-  '/fluid': typeof FluidRoute
-  '/hindsight': typeof HindsightRoute
-  '/influence': typeof InfluenceRoute
-  '/journal': typeof JournalRoute
-  '/lineage': typeof LineageRoute
-  '/pipeline': typeof PipelineRoute
-  '/signals': typeof SignalsRoute
-  '/workbench': typeof WorkbenchRoute
-  '/xray': typeof XrayRoute
   '/dynamic/$name': typeof DynamicNameRoute
-  '/dynamic/': typeof DynamicIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths:
-    | '/$'
-    | '/cortex'
-    | '/diagnostics'
-    | '/dynamic'
-    | '/fluid'
-    | '/hindsight'
-    | '/influence'
-    | '/journal'
-    | '/lineage'
-    | '/pipeline'
-    | '/signals'
-    | '/workbench'
-    | '/xray'
-    | '/dynamic/$name'
-    | '/dynamic/'
+  fullPaths: '/$' | '/dynamic/$name'
   fileRoutesByTo: FileRoutesByTo
-  to:
-    | '/$'
-    | '/cortex'
-    | '/diagnostics'
-    | '/fluid'
-    | '/hindsight'
-    | '/influence'
-    | '/journal'
-    | '/lineage'
-    | '/pipeline'
-    | '/signals'
-    | '/workbench'
-    | '/xray'
-    | '/dynamic/$name'
-    | '/dynamic'
-  id:
-    | '__root__'
-    | '/$'
-    | '/cortex'
-    | '/diagnostics'
-    | '/dynamic'
-    | '/fluid'
-    | '/hindsight'
-    | '/influence'
-    | '/journal'
-    | '/lineage'
-    | '/pipeline'
-    | '/signals'
-    | '/workbench'
-    | '/xray'
-    | '/dynamic/$name'
-    | '/dynamic/'
+  to: '/$' | '/dynamic/$name'
+  id: '__root__' | '/$' | '/dynamic/$name'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   SplatRoute: typeof SplatRoute
-  CortexRoute: typeof CortexRoute
-  DiagnosticsRoute: typeof DiagnosticsRoute
-  DynamicRoute: typeof DynamicRouteWithChildren
-  FluidRoute: typeof FluidRoute
-  HindsightRoute: typeof HindsightRoute
-  InfluenceRoute: typeof InfluenceRoute
-  JournalRoute: typeof JournalRoute
-  LineageRoute: typeof LineageRoute
-  PipelineRoute: typeof PipelineRoute
-  SignalsRoute: typeof SignalsRoute
-  WorkbenchRoute: typeof WorkbenchRoute
-  XrayRoute: typeof XrayRoute
+  DynamicNameRoute: typeof DynamicNameRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/xray': {
-      id: '/xray'
-      path: '/xray'
-      fullPath: '/xray'
-      preLoaderRoute: typeof XrayRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/workbench': {
-      id: '/workbench'
-      path: '/workbench'
-      fullPath: '/workbench'
-      preLoaderRoute: typeof WorkbenchRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/signals': {
-      id: '/signals'
-      path: '/signals'
-      fullPath: '/signals'
-      preLoaderRoute: typeof SignalsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/pipeline': {
-      id: '/pipeline'
-      path: '/pipeline'
-      fullPath: '/pipeline'
-      preLoaderRoute: typeof PipelineRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/lineage': {
-      id: '/lineage'
-      path: '/lineage'
-      fullPath: '/lineage'
-      preLoaderRoute: typeof LineageRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/journal': {
-      id: '/journal'
-      path: '/journal'
-      fullPath: '/journal'
-      preLoaderRoute: typeof JournalRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/influence': {
-      id: '/influence'
-      path: '/influence'
-      fullPath: '/influence'
-      preLoaderRoute: typeof InfluenceRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/hindsight': {
-      id: '/hindsight'
-      path: '/hindsight'
-      fullPath: '/hindsight'
-      preLoaderRoute: typeof HindsightRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/fluid': {
-      id: '/fluid'
-      path: '/fluid'
-      fullPath: '/fluid'
-      preLoaderRoute: typeof FluidRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/dynamic': {
-      id: '/dynamic'
-      path: '/dynamic'
-      fullPath: '/dynamic'
-      preLoaderRoute: typeof DynamicRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/diagnostics': {
-      id: '/diagnostics'
-      path: '/diagnostics'
-      fullPath: '/diagnostics'
-      preLoaderRoute: typeof DiagnosticsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/cortex': {
-      id: '/cortex'
-      path: '/cortex'
-      fullPath: '/cortex'
-      preLoaderRoute: typeof CortexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/$': {
       id: '/$'
       path: '/$'
@@ -314,50 +58,19 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SplatRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/dynamic/': {
-      id: '/dynamic/'
-      path: '/'
-      fullPath: '/dynamic/'
-      preLoaderRoute: typeof DynamicIndexRouteImport
-      parentRoute: typeof DynamicRoute
-    }
     '/dynamic/$name': {
       id: '/dynamic/$name'
-      path: '/$name'
+      path: '/dynamic/$name'
       fullPath: '/dynamic/$name'
       preLoaderRoute: typeof DynamicNameRouteImport
-      parentRoute: typeof DynamicRoute
+      parentRoute: typeof rootRouteImport
     }
   }
 }
 
-interface DynamicRouteChildren {
-  DynamicNameRoute: typeof DynamicNameRoute
-  DynamicIndexRoute: typeof DynamicIndexRoute
-}
-
-const DynamicRouteChildren: DynamicRouteChildren = {
-  DynamicNameRoute: DynamicNameRoute,
-  DynamicIndexRoute: DynamicIndexRoute,
-}
-
-const DynamicRouteWithChildren =
-  DynamicRoute._addFileChildren(DynamicRouteChildren)
-
 const rootRouteChildren: RootRouteChildren = {
   SplatRoute: SplatRoute,
-  CortexRoute: CortexRoute,
-  DiagnosticsRoute: DiagnosticsRoute,
-  DynamicRoute: DynamicRouteWithChildren,
-  FluidRoute: FluidRoute,
-  HindsightRoute: HindsightRoute,
-  InfluenceRoute: InfluenceRoute,
-  JournalRoute: JournalRoute,
-  LineageRoute: LineageRoute,
-  PipelineRoute: PipelineRoute,
-  SignalsRoute: SignalsRoute,
-  WorkbenchRoute: WorkbenchRoute,
-  XrayRoute: XrayRoute,
+  DynamicNameRoute: DynamicNameRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

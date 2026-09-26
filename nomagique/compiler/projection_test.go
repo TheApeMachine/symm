@@ -10,6 +10,8 @@ import (
 	"capnproto.org/go/capnp/v3/std/capnp/schema"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/compiler/testdata/projectionfixture"
+	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 func init() { projectionfixture.RegisterSchema(schemas.DefaultRegistry) }
@@ -152,6 +154,99 @@ func BenchmarkResultProjectionStruct(b *testing.B) {
 	b.ResetTimer()
 	for range b.N {
 		if _, err := projection.Struct(capnp.Struct(value), projectionfixture.Value_TypeID); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func TestResultProjectionStructRecord(t *testing.T) {
+	Convey("Native metric cuts keep partial presence and exact causal stamps in the UI", t, func() {
+		message, segment, err := capnp.NewMessage(capnp.SingleSegment(nil))
+		So(err, ShouldBeNil)
+		defer message.Release()
+		cut, err := data.NewMetricCut(segment)
+		So(err, ShouldBeNil)
+		cut.SetEpoch(9007199254740993)
+		cut.SetSequence(11)
+		So(cut.SetSymbol("BTC/USD"), ShouldBeNil)
+		metrics, err := cut.NewMetrics(2)
+		So(err, ShouldBeNil)
+		So(metrics.At(0).SetIdentity("trade:imbalance"), ShouldBeNil)
+		metrics.At(0).SetPresent(true)
+		metrics.At(0).SetValue(-0.25)
+		metrics.At(0).SetEpoch(cut.Epoch())
+		metrics.At(0).SetSequence(9)
+		So(metrics.At(1).SetIdentity("ticker:correlation"), ShouldBeNil)
+		record, err := types.NewRecord(segment)
+		So(err, ShouldBeNil)
+		record.SetTypeId(data.MetricCut_TypeID)
+		So(record.SetValue(capnp.Struct(cut).ToPtr()), ShouldBeNil)
+		projection := &resultProjection{nodes: make(map[uint64]schema.Node)}
+		result, err := projection.Struct(capnp.Struct(record), types.Record_TypeID)
+		So(err, ShouldBeNil)
+		projected := result["value"].(map[string]any)
+		So(projected["epoch"], ShouldEqual, "9007199254740993")
+		So(projected["complete"], ShouldBeFalse)
+		readings := projected["metrics"].([]any)
+		So(readings[0].(map[string]any)["value"], ShouldEqual, -0.25)
+		So(readings[0].(map[string]any)["sequence"], ShouldEqual, "9")
+		So(readings[1].(map[string]any)["present"], ShouldBeFalse)
+		cut.SetComplete(true)
+		metrics.At(1).SetPresent(true)
+		metrics.At(1).SetValue(0.8)
+		result, err = projection.Struct(capnp.Struct(record), types.Record_TypeID)
+		So(err, ShouldBeNil)
+		So(result["value"].(map[string]any)["complete"], ShouldBeTrue)
+		Convey("An unregistered type is an explicit failure", func() {
+			record.SetTypeId(0)
+			_, err := projection.Struct(capnp.Struct(record), types.Record_TypeID)
+			So(err, ShouldNotBeNil)
+		})
+	})
+}
+
+/* BenchmarkResultProjectionStructRecord projects the shipping cut shape at the UI boundary. */
+func BenchmarkResultProjectionStructRecord(b *testing.B) {
+	_, input, _ := stageBindingFixture(b)
+	message := input.Message()
+	cut, err := data.NewMetricCut(input.Segment())
+	if err != nil {
+		b.Fatal(err)
+	}
+	bindings, err := input.Bindings()
+	if err != nil {
+		b.Fatal(err)
+	}
+	metrics, err := cut.NewMetrics(int32(bindings.Len()))
+	if err != nil {
+		b.Fatal(err)
+	}
+	for index := range metrics.Len() {
+		identity, err := bindings.At(index).Node()
+		if err != nil {
+			b.Fatal(err)
+		}
+		if err := metrics.At(index).SetIdentity(identity); err != nil {
+			b.Fatal(err)
+		}
+		metrics.At(index).SetPresent(index%2 == 0)
+		metrics.At(index).SetValue(float64(index))
+		metrics.At(index).SetEpoch(9007199254740993)
+		metrics.At(index).SetSequence(int64(index))
+	}
+	record, err := types.NewRecord(input.Segment())
+	if err != nil {
+		b.Fatal(err)
+	}
+	record.SetTypeId(data.MetricCut_TypeID)
+	if err := record.SetValue(capnp.Struct(cut).ToPtr()); err != nil {
+		b.Fatal(err)
+	}
+	projection := &resultProjection{nodes: make(map[uint64]schema.Node)}
+	message.ResetReadLimit(math.MaxUint64)
+	b.ReportAllocs()
+	for b.Loop() {
+		if _, err := projection.Struct(capnp.Struct(record), types.Record_TypeID); err != nil {
 			b.Fatal(err)
 		}
 	}

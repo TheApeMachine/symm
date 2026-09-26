@@ -1,3 +1,4 @@
+import { routeAtom } from "#/collections/app";
 import { Link } from "@tanstack/react-router";
 import { useSelector } from "@tanstack/react-store";
 import { type TerminalSurface, terminalStore } from "#/collections/terminal";
@@ -67,7 +68,9 @@ export const SURFACE_ITEMS: Array<{
 	{ key: "dynamic", label: "Dynamic UI", icon: "spark", to: "/dynamic" },
 ];
 
-export const TerminalNav = ({ active }: { active: TerminalSurface }) => {
+export const TerminalNav = ({ active }: { active?: TerminalSurface }) => {
+	const route = useSelector(routeAtom);
+	const selected = active ?? route;
 	const scanlines = useSelector(terminalStore, (state) => state.scanlines);
 	const { toggleScanlines } = terminalStore.actions;
 
@@ -79,7 +82,7 @@ export const TerminalNav = ({ active }: { active: TerminalSurface }) => {
 						key={item.key}
 						as={Link}
 						to={item.to}
-						active={active === item.key}
+						active={selected === item.key}
 						icon={<Icon name={item.icon} size="m" />}
 						label={item.label}
 					/>

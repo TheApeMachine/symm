@@ -8,6 +8,8 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -21,6 +23,7 @@ import (
 	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/cognition"
 	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/financial/execution"
 	"github.com/theapemachine/symm/nomagique/geometry"
 	"github.com/theapemachine/symm/nomagique/network/websocket"
 	"github.com/theapemachine/symm/nomagique/statistic"
@@ -427,14 +430,18 @@ func TestProgramStepDurable(t *testing.T) {
 		graph, err := repository.Load("system")
 		So(err, ShouldBeNil)
 		for id, node := range graph.Nodes {
-			if id != "server" && id != "grid_checkpoint" && !strings.HasPrefix(node.Type, "runtime.") && !strings.HasSuffix(id, "_graph") {
+			if id != "server" && !strings.HasSuffix(id, "_checkpoint") && !strings.HasPrefix(node.Type, "runtime.") && !strings.HasSuffix(id, "_graph") {
 				withoutNodes(graph, id)
 			}
 		}
-		checkpoint := graph.Nodes["grid_checkpoint"]
-		checkpoint.InputData["path"], err = json.Marshal(filepath.Join(directory, "grid.capnp"))
-		So(err, ShouldBeNil)
-		graph.Nodes["grid_checkpoint"] = checkpoint
+		for id, checkpoint := range graph.Nodes {
+			if !strings.HasSuffix(id, "_checkpoint") {
+				continue
+			}
+			checkpoint.InputData["path"], err = json.Marshal(filepath.Join(directory, id+".capnp"))
+			So(err, ShouldBeNil)
+			graph.Nodes[id] = checkpoint
+		}
 		model := graph.Nodes["model_graph"]
 		model.InputData["memory.path"], err = json.Marshal(filepath.Join(directory, "model.capnp"))
 		So(err, ShouldBeNil)
@@ -722,7 +729,7 @@ func TestProgramStepReplay(t *testing.T) {
 		query.InputData["sql"], err = json.Marshal(strings.ReplaceAll(statement.Value, "symmtables.symm.", ""))
 		So(err, ShouldBeNil)
 		query.InputData["setup"], err = json.Marshal([]string{
-			"CREATE TABLE metric_cuts_v2 AS SELECT * FROM read_json('" + cuts + "')",
+			"CREATE TABLE metric_cuts_v3 AS SELECT * FROM read_json('" + cuts + "')",
 			"CREATE TABLE excursion_fragments_v1 AS SELECT * FROM read_json('" + fragments + "')",
 		})
 		So(err, ShouldBeNil)
@@ -1377,5 +1384,643 @@ func TestProgramStepCohort(t *testing.T) {
 		}
 		So(found, ShouldBeTrue)
 		So(peers, ShouldResemble, map[string]float64{"same_direction_peer_count": 1, "opposite_direction_peer_count": 1})
+	})
+}
+
+/* stageBindingFixture uses the production cut width and native scalar results. */
+func stageBindingFixture(t testing.TB) (*Program, runtime.StageNode_step_Params, int) {
+	t.Helper()
+	graph, err := DefaultRepository().Load("cut")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var identities struct {
+		Value []string `json:"value"`
+	}
+	if err := json.Unmarshal(graph.Nodes["gather"].InputData["identities"], &identities); err != nil {
+		t.Fatal(err)
+	}
+	count := len(identities.Value)
+	program, err := CompileJSON([]byte(`{"nodes":{"grid":{"id":"grid","type":"store.Grid"}}}`), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(program.Release)
+	message, segment, err := capnp.NewMessage(capnp.SingleSegment(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(message.Release)
+	message.ResetReadLimit(math.MaxUint64)
+	input, err := runtime.NewStageNode_step_Params(segment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bindings, err := input.NewBindings(int32(count))
+	if err != nil {
+		t.Fatal(err)
+	}
+	upstream, err := input.NewUpstream(int32(count))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index, identity := range identities.Value {
+		producer, node, found := strings.Cut(identity, ":")
+		if !found {
+			t.Fatalf("metric has no producer: %s", identity)
+		}
+		node = fmt.Sprintf("%s/%d", node, index)
+		binding := bindings.At(index)
+		result := upstream.At(count - index - 1)
+		for _, err := range []error{binding.SetProducer(producer), binding.SetNode(node), binding.SetField("out"), binding.SetTarget(fmt.Sprintf("grid.metrics_%d", index)), result.SetProducer(producer), result.SetNode(node)} {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		result.SetInterfaceId(arithmetic.Add_TypeID)
+		value, err := arithmetic.NewAdd_done_Results(segment)
+		if err != nil {
+			t.Fatal(err)
+		}
+		value.SetOut(float64(index + 1))
+		if err := result.SetValue(capnp.Struct(value).ToPtr()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return program, input, count
+}
+
+func TestProgramSeedBindings(t *testing.T) {
+	Convey("Every native metric finds its producer even when upstream order is reversed", t, func() {
+		program, input, count := stageBindingFixture(t)
+		for pass := range 2 {
+			frames := make([]nodeFrame, len(program.Nodes))
+			ready, err := program.seedBindings(frames, input)
+			So(err, ShouldBeNil)
+			So(ready, ShouldBeTrue)
+			args := store.Grid_write_Params(frames[program.NodeMap["grid"]].args)
+			values, err := args.Metrics()
+			So(err, ShouldBeNil)
+			present, err := args.Present()
+			So(err, ShouldBeNil)
+			So(values.Len(), ShouldEqual, count)
+			for index := range count {
+				So(present.At(index), ShouldEqual, pass == 0 || index%2 == 0)
+				if present.At(index) {
+					So(values.At(index), ShouldEqual, index+1)
+				}
+			}
+			args.Message().Release()
+			upstream, err := input.Upstream()
+			So(err, ShouldBeNil)
+			for index := range count {
+				if index%2 == 1 {
+					So(upstream.At(count-index-1).SetProducer("absent"), ShouldBeNil)
+				}
+			}
+		}
+	})
+}
+
+func BenchmarkProgramSeedBindings(b *testing.B) {
+	program, input, _ := stageBindingFixture(b)
+	b.ReportAllocs()
+	for b.Loop() {
+		frames := make([]nodeFrame, len(program.Nodes))
+		if _, err := program.seedBindings(frames, input); err != nil {
+			b.Fatal(err)
+		}
+		for _, frame := range frames {
+			if frame.args.IsValid() {
+				frame.args.Message().Release()
+			}
+		}
+	}
+}
+
+func TestProgramStepRelations(t *testing.T) {
+	Convey("The shipping graph sends cross-market correlation and measured lags into the cut", t, func() {
+		graph, err := DefaultRepository().Load("system")
+		So(err, ShouldBeNil)
+		for identifier, node := range graph.Nodes {
+			if !strings.HasPrefix(node.Type, "runtime.") && !strings.HasSuffix(identifier, "_graph") {
+				withoutNodes(graph, identifier)
+			}
+		}
+		withoutLearningStages(graph)
+		program, err := Compile(graph, nil, DefaultRepository())
+		So(err, ShouldBeNil)
+		defer program.Release()
+		ctx := context.Background()
+		So(program.Execute(ctx, nil), ShouldBeNil)
+		workspace := runtime.Workspace(program.Nodes[program.NodeMap["workspace"]].Client)
+		prices := marketfixture.Reversal()
+		sequence := 0
+		for index := range prices {
+			for market, symbol := range []string{"BTC/USD", "ETH/USD", "SOL/USD"} {
+				price := prices[max(0, index-market*2)] + float64((index+market)%5)/10
+				stamp := time.Unix(1700000000+int64(index), 0).UTC().Format(time.RFC3339Nano)
+				frame := []byte(fmt.Sprintf(`{"channel":"ticker","capture":{"session":"spot","sequence":%d,"record":0,"endpoint":"wss://fixture","receivedAt":%q},"data":{"symbol":%q,"last":%g,"bid":%g,"ask":%g}}`, sequence, stamp, symbol, price, price-1, price+1))
+				So(workspace.Write(ctx, func(args runtime.Workspace_write_Params) error {
+					arrivals, err := args.NewData(1)
+					if err != nil {
+						return err
+					}
+					return arrivals.Set(0, frame)
+				}), ShouldBeNil)
+				So(workspace.WaitStreaming(), ShouldBeNil)
+				sequence++
+			}
+		}
+		So(program.Flush(ctx), ShouldBeNil)
+		consumer := runtime.Consumer(program.Nodes[program.NodeMap["cut_consumer"]].Client)
+		future, release := consumer.Done(ctx, nil)
+		defer release()
+		result, err := future.Struct()
+		So(err, ShouldBeNil)
+		outputs, err := result.Outputs()
+		So(err, ShouldBeNil)
+		So(outputs.Len(), ShouldEqual, 1)
+		pointer, err := outputs.At(0).Value()
+		So(err, ShouldBeNil)
+		row, err := data.Gathered(pointer.Struct()).Row()
+		So(err, ShouldBeNil)
+		stored, err := row.Value()
+		So(err, ShouldBeNil)
+		metrics, err := data.MetricCut(stored.Struct()).Metrics()
+		So(err, ShouldBeNil)
+		observed := map[string]bool{}
+		for index := range metrics.Len() {
+			identity, err := metrics.At(index).Identity()
+			So(err, ShouldBeNil)
+			observed[identity] = metrics.At(index).Present()
+		}
+		for _, identity := range []string{"correlation_ticker:hy.correlation", "correlation_ticker:zscore.out", "correlation_ticker:cohortSigned.mean", "leadlag_ticker:best_lag_correlation.out", "leadlag_ticker:best_lag_seconds.out", "leadlag_ticker:search_count.out"} {
+			SoMsg(identity, observed[identity], ShouldBeTrue)
+		}
+	})
+}
+
+func TestProgramSeedBindingsDuplicate(t *testing.T) {
+	Convey("Ambiguous producer identities fail before routing any values", t, func() {
+		program, input, _ := stageBindingFixture(t)
+		upstream, err := input.Upstream()
+		So(err, ShouldBeNil)
+		producer, err := upstream.At(0).Producer()
+		So(err, ShouldBeNil)
+		node, err := upstream.At(0).Node()
+		So(err, ShouldBeNil)
+		So(upstream.At(1).SetProducer(producer), ShouldBeNil)
+		So(upstream.At(1).SetNode(node), ShouldBeNil)
+		_, err = program.seedBindings(make([]nodeFrame, len(program.Nodes)), input)
+		So(err, ShouldNotBeNil)
+		So(err.Error(), ShouldContainSubstring, "duplicate upstream")
+	})
+}
+
+func TestProgramCopyStamp(t *testing.T) {
+	Convey("Exact native observation counters reach native inputs and UI nodes", t, func() {
+		program, err := CompileJSON([]byte(`{"nodes":{"sequence":{"id":"sequence","type":"store.Sequence"}}}`), nil)
+		So(err, ShouldBeNil)
+		defer program.Release()
+		message, segment, err := capnp.NewMessage(capnp.SingleSegment(nil))
+		So(err, ShouldBeNil)
+		defer message.Release()
+		result, err := runtime.NewResult(segment)
+		So(err, ShouldBeNil)
+		result.SetEpoch(9007199254740993)
+		result.SetSequence(9007199254740995)
+		result.SetCompleted(18446744073709551615)
+		binding, err := runtime.NewBinding(segment)
+		So(err, ShouldBeNil)
+		binding.SetStamp(runtime.Stamp_completed)
+		So(binding.SetTarget("sequence.index"), ShouldBeNil)
+		frames := make([]nodeFrame, len(program.Nodes))
+		present, err := program.copyStamp(frames, binding, result)
+		So(err, ShouldBeNil)
+		So(present, ShouldBeTrue)
+		args := store.Sequence_write_Params(frames[program.NodeMap["sequence"]].args)
+		So(args.Index(), ShouldEqual, uint64(18446744073709551615))
+		defer args.Message().Release()
+		program.Bindings = &BindingPlan{Inputs: map[string]Origin{"stage": {Definition: "ui_diagnostics", Node: "stage"}}}
+		for _, test := range []struct {
+			stamp    runtime.Stamp
+			expected string
+		}{
+			{runtime.Stamp_epoch, `"9007199254740993"`},
+			{runtime.Stamp_sequence, `"9007199254740995"`},
+			{runtime.Stamp_completed, `"18446744073709551615"`},
+		} {
+			binding.SetStamp(test.stamp)
+			So(binding.SetTarget("stage.completed"), ShouldBeNil)
+			present, err := program.copyStamp(frames, binding, result)
+			So(err, ShouldBeNil)
+			So(present, ShouldBeTrue)
+			So(program.stageArrivals[len(program.stageArrivals)-1].value, ShouldEqual, test.expected)
+		}
+		Convey("Signed stamps cannot silently become unsigned counts", func() {
+			binding.SetStamp(runtime.Stamp_epoch)
+			So(binding.SetTarget("sequence.index"), ShouldBeNil)
+			_, err := program.copyStamp(frames, binding, result)
+			So(err, ShouldNotBeNil)
+		})
+	})
+}
+
+func TestProgramSeedBindingsListSlots(t *testing.T) {
+	Convey("Numbered list results merge into the wider cut without replacing scalar neighbours", t, func() {
+		program, input, count := stageBindingFixture(t)
+		bindings, err := input.Bindings()
+		So(err, ShouldBeNil)
+		upstream, err := input.Upstream()
+		So(err, ShouldBeNil)
+		result := upstream.At(count - 1)
+		result.SetInterfaceId(store.Grid_TypeID)
+		wire, err := store.NewGrid_done_Results(input.Segment())
+		So(err, ShouldBeNil)
+		values, err := wire.NewValues(2)
+		So(err, ShouldBeNil)
+		values.Set(0, 42)
+		values.Set(1, -7)
+		presence, err := wire.NewPresent(2)
+		So(err, ShouldBeNil)
+		presence.Set(0, true)
+		So(result.SetValue(capnp.Struct(wire).ToPtr()), ShouldBeNil)
+		for _, field := range []string{"values_0", "values_1"} {
+			So(bindings.At(0).SetField(field), ShouldBeNil)
+			frames := make([]nodeFrame, len(program.Nodes))
+			ready, err := program.seedBindings(frames, input)
+			So(err, ShouldBeNil)
+			So(ready, ShouldBeTrue)
+			args := store.Grid_write_Params(frames[program.NodeMap["grid"]].args)
+			actual, err := args.Metrics()
+			So(err, ShouldBeNil)
+			present, err := args.Present()
+			So(err, ShouldBeNil)
+			So(actual.Len(), ShouldEqual, count)
+			So(present.At(0), ShouldEqual, field == "values_0")
+			if present.At(0) {
+				So(actual.At(0), ShouldEqual, 42)
+			}
+			for index := 1; index < count; index++ {
+				So(actual.At(index), ShouldEqual, index+1)
+				So(present.At(index), ShouldBeTrue)
+			}
+			args.Message().Release()
+		}
+	})
+}
+
+/* TestProgramStepCompleteMarket exercises every required signal coordinate with all authored feeds. */
+func TestProgramStepCompleteMarket(t *testing.T) {
+	Convey("Every required metric initializes on complete multi-market feed observations", t, func() {
+		graph, err := DefaultRepository().Load("system")
+		So(err, ShouldBeNil)
+		for identifier, node := range graph.Nodes {
+			if !strings.HasPrefix(node.Type, "runtime.") && !strings.HasSuffix(identifier, "_graph") {
+				withoutNodes(graph, identifier)
+			}
+		}
+		withoutLearningStages(graph)
+		program, err := Compile(graph, nil, DefaultRepository())
+		So(err, ShouldBeNil)
+		defer program.Release()
+		ctx := context.Background()
+		So(program.Execute(ctx, nil), ShouldBeNil)
+		workspace := runtime.Workspace(program.Nodes[program.NodeMap["workspace"]].Client)
+		sequence := 0
+		prices := marketfixture.Reversal()
+		previousBooks := make(map[string][2][]marketfixture.Order)
+		low, high := slices.Min(prices)-10, slices.Max(prices)+10
+		for index := range prices {
+			for ordinal, symbol := range []string{"BTC/USD", "ETH/USD", "SOL/USD"} {
+				price := prices[max(0, index-ordinal*2)] + float64((index+ordinal)%5)/10
+				stamp := time.Unix(1700000000+int64(index*index+ordinal), 0).UTC().Format(time.RFC3339Nano)
+				spread, quantity := float64((index+ordinal)%3+1), float64((index+ordinal)%5+1)
+				orders := [2][]marketfixture.Order{
+					{{fmt.Sprint(price - spread), fmt.Sprint(quantity), stamp}, {fmt.Sprint(price - spread - 1), fmt.Sprint(quantity + 1), stamp}},
+					{{fmt.Sprint(price + spread), fmt.Sprint(6 - quantity), stamp}, {fmt.Sprint(price + spread + 1), fmt.Sprint(quantity + 2), stamp}},
+				}
+				anchors := [2][]marketfixture.Order{{{fmt.Sprint(low), "10", "2023-11-14T22:00:00Z"}}, {{fmt.Sprint(high), "10", "2023-11-14T22:00:00Z"}}}
+				var bookFrames [][]byte
+				previous, initialized := previousBooks[symbol]
+				if initialized {
+					// The fixture alternates same-price depletion and touch retreat,
+					// so withdrawal and retreat statistics both see differing regimes.
+					modified := [2][]marketfixture.Order{{previous[0][0]}, {previous[1][0]}}
+					for side := range modified {
+						quantity, err := strconv.ParseFloat(modified[side][0].Quantity, 64)
+						So(err, ShouldBeNil)
+						modified[side][0].Quantity = fmt.Sprint(quantity * float64((index+side)%3+1) / 4)
+					}
+					bookFrames = append(bookFrames, marketfixture.Level3Frame("update", symbol, previous, modified, "modify"))
+					previous[0][0], previous[1][0] = modified[0][0], modified[1][0]
+					removed := [2][]marketfixture.Order{previous[0][:2], previous[1][:2]}
+					bookFrames = append(bookFrames, marketfixture.Level3Frame("update", symbol, previous, removed, "delete"))
+					bookFrames = append(bookFrames, marketfixture.Level3Frame("update", symbol, anchors, orders, "add"))
+				}
+				combined := [2][]marketfixture.Order{append(append([]marketfixture.Order{}, orders[0]...), anchors[0]...), append(append([]marketfixture.Order{}, orders[1]...), anchors[1]...)}
+				if !initialized {
+					bookFrames = append(bookFrames, marketfixture.Level3Frame("snapshot", symbol, [2][]marketfixture.Order{}, combined, ""))
+				}
+				previousBooks[symbol] = combined
+				for index, frame := range bookFrames {
+					var record map[string]any
+					So(json.Unmarshal(frame, &record), ShouldBeNil)
+					record["capture"] = map[string]any{"session": "fixture", "sequence": sequence + index, "record": 0, "endpoint": "wss://fixture", "receivedAt": stamp}
+					bookFrames[index], err = json.Marshal(record)
+					So(err, ShouldBeNil)
+				}
+				side, tradePrice, kind := "sell", price-spread, "fill"
+				if (index+ordinal)%3 == 1 {
+					side, tradePrice = "buy", price+spread
+				}
+				if index%7 == ordinal {
+					kind = "liquidation"
+				}
+				capture := fmt.Sprintf(`"capture":{"session":"fixture","sequence":%d,"record":0,"endpoint":"wss://fixture","receivedAt":%q}`, sequence, stamp)
+				frames := append(bookFrames, [][]byte{
+					[]byte(fmt.Sprintf(`{"channel":"ticker",%s,"data":{"symbol":%q,"last":%g,"bid":%g,"ask":%g,"bid_qty":%g,"ask_qty":%g}}`, capture, symbol, price, price-spread, price+spread, quantity, 6-quantity)),
+					[]byte(fmt.Sprintf(`{"channel":"trade",%s,"data":{"symbol":%q,"side":%q,"price":%g,"qty":%g,"timestamp":%q}}`, capture, symbol, side, tradePrice, quantity/10, stamp)),
+					[]byte(fmt.Sprintf(`{"channel":"futures_ticker",%s,"data":{"symbol":%q,"last":%g,"index":%g,"mark":%g,"openInterest":%g}}`, capture, symbol, price+spread, price, price-spread/2, quantity+100)),
+					[]byte(fmt.Sprintf(`{"channel":"futures_trade",%s,"data":{"symbol":%q,"side":%q,"price":%g,"qty":%g,"timestamp":%q,"type":%q}}`, capture, symbol, side, tradePrice, quantity/5, stamp, kind)),
+				}...)
+				for _, frame := range frames {
+					var stamped map[string]any
+					So(json.Unmarshal(frame, &stamped), ShouldBeNil)
+					stamped["capture"].(map[string]any)["receivedAt"] = time.Unix(1700000000, int64(sequence)*int64(time.Millisecond)).UTC().Format(time.RFC3339Nano)
+					frame, err = json.Marshal(stamped)
+					So(err, ShouldBeNil)
+					So(workspace.Write(ctx, func(args runtime.Workspace_write_Params) error {
+						arrivals, err := args.NewData(1)
+						if err != nil {
+							return err
+						}
+						return arrivals.Set(0, frame)
+					}), ShouldBeNil)
+					So(workspace.WaitStreaming(), ShouldBeNil)
+					sequence++
+				}
+			}
+		}
+		So(program.Flush(ctx), ShouldBeNil)
+		consumer := runtime.Consumer(program.Nodes[program.NodeMap["cut_consumer"]].Client)
+		future, release := consumer.Done(ctx, nil)
+		defer release()
+		result, err := future.Struct()
+		So(err, ShouldBeNil)
+		outputs, err := result.Outputs()
+		So(err, ShouldBeNil)
+		So(outputs.Len(), ShouldEqual, 1)
+		pointer, err := outputs.At(0).Value()
+		So(err, ShouldBeNil)
+		row, err := data.Gathered(pointer.Struct()).Row()
+		So(err, ShouldBeNil)
+		stored, err := row.Value()
+		So(err, ShouldBeNil)
+		cut := data.MetricCut(stored.Struct())
+		metrics, err := cut.Metrics()
+		So(err, ShouldBeNil)
+		missing := []string{}
+		for index := range metrics.Len() {
+			if !metrics.At(index).Present() {
+				identity, err := metrics.At(index).Identity()
+				So(err, ShouldBeNil)
+				missing = append(missing, identity)
+			}
+		}
+		So(missing, ShouldBeEmpty)
+		So(cut.Complete(), ShouldBeTrue)
+	})
+}
+
+func TestProgramCopyBinding(t *testing.T) {
+	Convey("Native absent records remain absent and numbered UI ports receive their own value", t, func() {
+		program, err := CompileJSON([]byte(`{"nodes":{"grid":{"id":"grid","type":"store.Grid"}}}`), nil)
+		So(err, ShouldBeNil)
+		defer program.Release()
+		program.Bindings = &BindingPlan{Inputs: map[string]Origin{"stage": {Definition: "ui_diagnostics", Node: "stage"}}}
+		message, segment, err := capnp.NewMessage(capnp.SingleSegment(nil))
+		So(err, ShouldBeNil)
+		defer message.Release()
+		result, err := runtime.NewResult(segment)
+		So(err, ShouldBeNil)
+		binding, err := runtime.NewBinding(segment)
+		So(err, ShouldBeNil)
+		So(binding.SetTarget("stage.value"), ShouldBeNil)
+		frames := make([]nodeFrame, len(program.Nodes))
+		Convey("An idle gather does not send a null record as an initialized value", func() {
+			gathered, err := data.NewGathered(segment)
+			So(err, ShouldBeNil)
+			result.SetInterfaceId(data.Gather_TypeID)
+			So(result.SetValue(capnp.Struct(gathered).ToPtr()), ShouldBeNil)
+			So(binding.SetField("row"), ShouldBeNil)
+			present, err := program.copyBinding(frames, binding, result)
+			So(err, ShouldBeNil)
+			So(present, ShouldBeFalse)
+			So(program.stageArrivals, ShouldBeEmpty)
+		})
+		Convey("List index and presence govern a scalar UI binding", func() {
+			output, err := store.NewGrid_done_Results(segment)
+			So(err, ShouldBeNil)
+			values, err := output.NewValues(2)
+			So(err, ShouldBeNil)
+			values.Set(0, 42)
+			values.Set(1, -7)
+			presence, err := output.NewPresent(2)
+			So(err, ShouldBeNil)
+			presence.Set(0, true)
+			result.SetInterfaceId(store.Grid_TypeID)
+			So(result.SetValue(capnp.Struct(output).ToPtr()), ShouldBeNil)
+			for _, field := range []string{"values_1", "values_0"} {
+				So(binding.SetField(field), ShouldBeNil)
+				present, err := program.copyBinding(frames, binding, result)
+				So(err, ShouldBeNil)
+				So(present, ShouldEqual, field == "values_0")
+			}
+			So(len(program.stageArrivals), ShouldEqual, 1)
+			So(program.stageArrivals[0].value, ShouldEqual, "42")
+		})
+	})
+}
+
+/* TestProgramStepPaper exercises the authored paper consumer behind its production LMAX group. */
+func TestProgramStepPaper(t *testing.T) {
+	Convey("The production book projection activates one native paper wallet", t, func() {
+		t.Setenv("KRAKEN_API_KEY", "fixture-key")
+		t.Setenv("KRAKEN_API_SECRET", "Zml4dHVyZS1zZWNyZXQ=")
+		repository := NewRepository()
+		paperGraph, err := repository.Load("paper_exchange")
+		So(err, ShouldBeNil)
+		withoutNodes(paperGraph, "round_trips", "live_round_trips")
+		liveCheckpoint := paperGraph.Nodes["live_checkpoint"]
+		liveCheckpoint.InputData["path"], err = json.Marshal(filepath.Join(t.TempDir(), "live-account.capnp"))
+		So(err, ShouldBeNil)
+		paperGraph.Nodes["live_checkpoint"] = liveCheckpoint
+		encoded, err := json.Marshal(paperGraph)
+		So(err, ShouldBeNil)
+		So(repository.Save("paper_exchange", encoded), ShouldBeNil)
+		graph, err := repository.Load("system")
+		So(err, ShouldBeNil)
+		keep := map[string]bool{"workspace": true, "projection_graph": true, "projection_consumer": true, "projection_group": true, "paper_graph": true, "paper_consumer": true, "paper_group": true, "paper_checkpoint": true}
+		for id := range graph.Nodes {
+			if !keep[id] {
+				withoutNodes(graph, id)
+			}
+		}
+		checkpoint := graph.Nodes["paper_checkpoint"]
+		checkpoint.InputData["path"], err = json.Marshal(filepath.Join(t.TempDir(), "paper.capnp"))
+		So(err, ShouldBeNil)
+		graph.Nodes["paper_checkpoint"] = checkpoint
+		program, err := Compile(graph, nil, repository)
+		So(err, ShouldBeNil)
+		defer program.Release()
+		ctx := context.Background()
+		So(program.Execute(ctx, nil), ShouldBeNil)
+		workspace := runtime.Workspace(program.Nodes[program.NodeMap["workspace"]].Client)
+		stamp := "2026-09-26T10:00:00Z"
+		frame := marketfixture.Level3Frame("snapshot", "BTC/USD", [2][]marketfixture.Order{}, [2][]marketfixture.Order{{{Price: "99", Quantity: "2", At: stamp}}, {{Price: "100", Quantity: "3", At: stamp}}}, "")
+		var record map[string]any
+		So(json.Unmarshal(frame, &record), ShouldBeNil)
+		record["capture"] = map[string]any{"session": "fixture", "sequence": 0, "record": 0, "endpoint": "wss://fixture", "receivedAt": stamp}
+		frame, err = json.Marshal(record)
+		So(err, ShouldBeNil)
+		So(workspace.Write(ctx, func(args runtime.Workspace_write_Params) error {
+			data, err := args.NewData(1)
+			if err != nil {
+				return err
+			}
+			return data.Set(0, frame)
+		}), ShouldBeNil)
+		So(workspace.WaitStreaming(), ShouldBeNil)
+		So(program.Flush(ctx), ShouldBeNil)
+		consumer := runtime.Consumer(program.Nodes[program.NodeMap["paper_consumer"]].Client)
+		future, release := consumer.Done(ctx, nil)
+		defer release()
+		result, err := future.Struct()
+		So(err, ShouldBeNil)
+		outputs, err := result.Outputs()
+		So(err, ShouldBeNil)
+		So(outputs.Len(), ShouldEqual, 2)
+		var accountIndex int
+		for index := range outputs.Len() {
+			name, err := outputs.At(index).Node()
+			So(err, ShouldBeNil)
+			if name == "account" {
+				accountIndex = index
+			}
+		}
+		value, err := outputs.At(accountIndex).Value()
+		So(err, ShouldBeNil)
+		account := execution.AccountState(value.Struct())
+		cash, err := account.Cash()
+		So(err, ShouldBeNil)
+		So(cash, ShouldEqual, "200")
+		So(account.Observations(), ShouldEqual, 1)
+		So(account.Decisions(), ShouldEqual, 0)
+	})
+}
+
+func TestProgramSeedBindingsOptional(t *testing.T) {
+	Convey("A causal cut can record absent optional logic without fabricating its stamp", t, func() {
+		program, err := CompileJSON([]byte(`{"nodes":{"cut":{"id":"cut","type":"data.ExtendCut","inputData":{"identities":{"value":["logic:late"]}}}}}`), nil)
+		So(err, ShouldBeNil)
+		client := runtime.State_ServerToClient(program)
+		defer client.Release()
+		for _, optional := range []bool{true, false} {
+			future, release := client.Step(context.Background(), func(args runtime.StageNode_step_Params) error {
+				outputs, err := args.NewOutputs(1)
+				if err != nil {
+					return err
+				}
+				if err := outputs.Set(0, "cut"); err != nil {
+					return err
+				}
+				bindings, err := args.NewBindings(2)
+				if err != nil {
+					return err
+				}
+				for index, entry := range []struct{ producer, field, target string }{{"signal", "row", "cut.base"}, {"absent", "epoch", "cut.epoch"}} {
+					binding := bindings.At(index)
+					for _, err := range []error{binding.SetProducer(entry.producer), binding.SetNode("producer"), binding.SetField(entry.field), binding.SetTarget(entry.target)} {
+						if err != nil {
+							return err
+						}
+					}
+					binding.SetOptional(index == 1 && optional)
+				}
+				upstream, err := args.NewUpstream(1)
+				if err != nil {
+					return err
+				}
+				result := upstream.At(0)
+				result.SetInterfaceId(data.Gather_TypeID)
+				if err := result.SetProducer("signal"); err != nil {
+					return err
+				}
+				if err := result.SetNode("producer"); err != nil {
+					return err
+				}
+				gathered, err := data.NewGathered(args.Segment())
+				if err != nil {
+					return err
+				}
+				row, err := gathered.NewRow()
+				if err != nil {
+					return err
+				}
+				row.SetTypeId(data.MetricCut_TypeID)
+				cut, err := data.NewMetricCut(args.Segment())
+				if err != nil {
+					return err
+				}
+				cut.SetEpoch(7)
+				cut.SetSequence(9)
+				cut.SetComplete(true)
+				if err := cut.SetSymbol("BTC/USD"); err != nil {
+					return err
+				}
+				metrics, err := cut.NewMetrics(1)
+				if err != nil {
+					return err
+				}
+				metric := metrics.At(0)
+				if err := metric.SetIdentity("signal:observed"); err != nil {
+					return err
+				}
+				metric.SetValue(42)
+				metric.SetPresent(true)
+				metric.SetEpoch(7)
+				metric.SetSequence(8)
+				if err := row.SetValue(capnp.Struct(cut).ToPtr()); err != nil {
+					return err
+				}
+				return result.SetValue(capnp.Struct(gathered).ToPtr())
+			})
+			result, err := future.Struct()
+			So(err, ShouldBeNil)
+			outputs, err := result.Outputs()
+			So(err, ShouldBeNil)
+			if !optional {
+				So(outputs.Len(), ShouldEqual, 0)
+				release()
+				continue
+			}
+			So(outputs.Len(), ShouldEqual, 1)
+			pointer, err := outputs.At(0).Value()
+			So(err, ShouldBeNil)
+			row, err := data.Gathered(pointer.Struct()).Row()
+			So(err, ShouldBeNil)
+			stored, err := row.Value()
+			So(err, ShouldBeNil)
+			cut := data.MetricCut(stored.Struct())
+			So(cut.Complete(), ShouldBeFalse)
+			metrics, err := cut.Metrics()
+			So(err, ShouldBeNil)
+			So(metrics.At(0).Value(), ShouldEqual, 42)
+			So(metrics.At(0).Sequence(), ShouldEqual, 8)
+			So(metrics.At(1).Present(), ShouldBeFalse)
+			release()
+		}
 	})
 }

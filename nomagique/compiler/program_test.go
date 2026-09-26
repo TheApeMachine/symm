@@ -1433,7 +1433,13 @@ func withoutNodes(graph Graph, ids ...string) {
 func withoutLearningStages(graph Graph) {
 	withoutNodes(graph, "forward_graph", "forward_consumer", "forward_group",
 		"training_graph", "training_consumer", "training_group", "model_graph",
-		"model_live_consumer", "model_train_consumer", "model_held_consumer", "model_group",
+		"model_live_consumer", "model_live_held_consumer", "model_train_consumer", "model_held_consumer", "model_group",
+		"paper_graph", "paper_consumer", "paper_group", "paper_checkpoint",
+		"logic_graph", "logic_consumer", "logic_group",
+		"resonance_graph", "resonance_consumer", "resonance_group", "resonance_checkpoint",
+		"manifold_graph", "manifold_consumer", "manifold_group",
+		"physical_cut_graph", "physical_cut_consumer", "physical_cut_group",
+		"combined_cut_graph", "combined_cut_consumer", "combined_cut_group",
 		"view_graph", "view_consumer", "view_group")
 }
 
@@ -1476,6 +1482,72 @@ func modelContextFixture(segment *capnp.Segment, vocabulary string, holding bool
 	return input, nil
 }
 
+/* tradeSignalObserver inspects every stamped observation after the metric group. */
+type tradeSignalObserver struct {
+	trades, initialized, bidMatches, askMatches int
+	defined                                     map[string]int
+}
+
+func (observer *tradeSignalObserver) Step(ctx context.Context, call runtime.StageNode_step) error {
+	payload, err := call.Args().Data()
+	if err != nil {
+		return err
+	}
+	if bytes.Contains(payload, []byte(`"channel":"trade"`)) {
+		observer.trades++
+	}
+	outputs, err := call.Args().Upstream()
+	if err != nil {
+		return err
+	}
+	for index := range outputs.Len() {
+		output := outputs.At(index)
+		pointer, err := output.Value()
+		if err != nil {
+			return err
+		}
+		if output.InterfaceId() == paper.Book_TypeID {
+			bookResult := paper.Book_done_Results(pointer.Struct())
+			values, err := bookResult.Values()
+			if err != nil {
+				return err
+			}
+			present, err := bookResult.Present()
+			if err != nil {
+				return err
+			}
+			if present.Len() > 14 && present.At(10) {
+				observer.initialized++
+				if values.At(13) == 1 {
+					observer.bidMatches++
+				}
+				if values.At(14) == 1 {
+					observer.askMatches++
+				}
+			}
+		}
+		producer, err := output.Producer()
+		if err != nil {
+			return err
+		}
+		node, err := output.Node()
+		if err != nil {
+			return err
+		}
+		if producer == "definition-toxicity_trade" && strings.HasPrefix(node, "fill_fraction_zscore:") {
+			quotient := arithmetic.Quotient(pointer.Struct())
+			if quotient.Which() == arithmetic.Quotient_Which_out {
+				observer.defined[node]++
+			}
+		}
+	}
+	return nil
+}
+
+func (observer *tradeSignalObserver) Fence(ctx context.Context, call runtime.StageNode_fence) error {
+	return nil
+}
+
 func TestProgramExecuteTradeSignals(t *testing.T) {
 	if os.Getenv("SYMM_LIVE_VERIFY") != "1" {
 		t.Skip("set SYMM_LIVE_VERIFY=1 to verify live trade signals")
@@ -1491,93 +1563,38 @@ func TestProgramExecuteTradeSignals(t *testing.T) {
 				withoutNodes(graph, name)
 			}
 		}
-		program, err := Compile(graph, nil, DefaultRepository())
+		observer := &tradeSignalObserver{defined: map[string]int{}}
+		registry := DefaultRegistry()
+		registry.Register("test.TradeSignals", Factory{InterfaceID: runtime.StageNode_TypeID, New: func(ctx context.Context, config []byte) (capnp.Client, error) {
+			return capnp.Client(runtime.StageNode_ServerToClient(observer)), nil
+		}})
+		graph.Nodes["observer"] = Node{ID: "observer", Type: "test.TradeSignals"}
+		graph.Nodes["observer_consumer"] = Node{ID: "observer_consumer", Type: "runtime.Consumer"}
+		graph.Nodes["observer_group"] = Node{ID: "observer_group", Type: "runtime.Group"}
+		for _, edge := range [][3]string{{"observer", "observer_consumer", "target"}, {"observer_consumer", "observer_group", "consumers_0"}, {"observer_group", "workspace", "groups_6"}} {
+			source, destination := graph.Nodes[edge[0]], graph.Nodes[edge[1]]
+			if source.Connections.Outputs == nil {
+				source.Connections.Outputs = map[string][]ConnectionTarget{}
+			}
+			if destination.Connections.Inputs == nil {
+				destination.Connections.Inputs = map[string][]ConnectionTarget{}
+			}
+			source.Connections.Outputs["self"] = append(source.Connections.Outputs["self"], ConnectionTarget{NodeID: edge[1], PortName: edge[2]})
+			destination.Connections.Inputs[edge[2]] = []ConnectionTarget{{NodeID: edge[0], PortName: "self"}}
+			graph.Nodes[edge[0]], graph.Nodes[edge[1]] = source, destination
+		}
+		program, err := Compile(graph, registry, DefaultRepository())
 		So(err, ShouldBeNil)
 		defer program.Release()
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-		defer cancel()
-		trades, initialized, bidMatches, askMatches := 0, 0, 0, 0
-		defined := map[string]int{}
-		defer func() {
-			t.Logf("live trades=%d initialized books=%d bid matches=%d ask matches=%d defined=%v", trades, initialized, bidMatches, askMatches, defined)
-		}()
-		for ctx.Err() == nil && (defined["fill_fraction_zscore:bid"] == 0 || defined["fill_fraction_zscore:ask"] == 0) {
+		ctx := context.Background()
+		deadline := time.Now().Add(60 * time.Second)
+		for time.Now().Before(deadline) && (observer.defined["fill_fraction_zscore:bid"] == 0 || observer.defined["fill_fraction_zscore:ask"] == 0) {
 			if err := program.Execute(ctx, nil); err != nil {
 				t.Fatal(err)
 			}
-			for _, name := range []string{"spot", "projection", "definition-toxicity_trade"} {
-				client := runtime.Consumer(program.Nodes[program.NodeMap[name+"_consumer"]].Client)
-				future, release := client.Done(ctx, nil)
-				result, err := future.Struct()
-				if err != nil {
-					release()
-					t.Fatal(err)
-				}
-				payload, err := result.Data()
-				if err != nil {
-					release()
-					t.Fatal(err)
-				}
-				if name == "spot" && bytes.Contains(payload, []byte(`"channel":"trade"`)) {
-					trades++
-					if trades <= 3 {
-						t.Logf("trade record: %s", payload)
-					}
-				}
-				outputs, err := result.Outputs()
-				if err != nil {
-					release()
-					t.Fatal(err)
-				}
-				for index := range outputs.Len() {
-					output := outputs.At(index)
-					pointer, err := output.Value()
-					if err != nil {
-						release()
-						t.Fatal(err)
-					}
-					if output.InterfaceId() == paper.Book_TypeID {
-						bookResult := paper.Book_done_Results(pointer.Struct())
-						values, err := bookResult.Values()
-						if err != nil {
-							release()
-							t.Fatal(err)
-						}
-						present, err := bookResult.Present()
-						if err != nil {
-							release()
-							t.Fatal(err)
-						}
-						if present.Len() > 14 && present.At(10) {
-							initialized++
-							if initialized <= 3 {
-								t.Logf("trade book slots: %v", values)
-							}
-							if values.At(13) == 1 {
-								bidMatches++
-							}
-							if values.At(14) == 1 {
-								askMatches++
-							}
-						}
-					}
-					node, err := output.Node()
-					if err != nil {
-						release()
-						t.Fatal(err)
-					}
-					if name == "definition-toxicity_trade" && strings.HasPrefix(node, "fill_fraction_zscore:") {
-						quotient := arithmetic.Quotient(pointer.Struct())
-						if quotient.Which() == arithmetic.Quotient_Which_out {
-							defined[node]++
-						}
-					}
-				}
-				release()
-			}
 		}
-		t.Logf("live trades=%d initialized books=%d bid matches=%d ask matches=%d defined=%v", trades, initialized, bidMatches, askMatches, defined)
-		So(defined["fill_fraction_zscore:bid"], ShouldBeGreaterThan, 0)
-		So(defined["fill_fraction_zscore:ask"], ShouldBeGreaterThan, 0)
+		t.Logf("live trades=%d initialized books=%d bid matches=%d ask matches=%d defined=%v", observer.trades, observer.initialized, observer.bidMatches, observer.askMatches, observer.defined)
+		So(observer.defined["fill_fraction_zscore:bid"], ShouldBeGreaterThan, 0)
+		So(observer.defined["fill_fraction_zscore:ask"], ShouldBeGreaterThan, 0)
 	})
 }

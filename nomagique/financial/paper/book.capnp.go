@@ -27,7 +27,7 @@ func (c Book) Write(ctx context.Context, params func(Book_write_Params) error) e
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 16, PointerCount: 1}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 8, PointerCount: 1}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(Book_write_Params(s)) }
 	}
 
@@ -228,12 +228,12 @@ type Book_write_Params capnp.Struct
 const Book_write_Params_TypeID = 0xf3c760863461e015
 
 func NewBook_write_Params(s *capnp.Segment) (Book_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 1})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
 	return Book_write_Params(st), err
 }
 
 func NewRootBook_write_Params(s *capnp.Segment) (Book_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 1})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
 	return Book_write_Params(st), err
 }
 
@@ -300,20 +300,12 @@ func (s Book_write_Params) SetDepth(v int64) {
 	capnp.Struct(s).SetUint64(0, uint64(v))
 }
 
-func (s Book_write_Params) Encode() bool {
-	return !capnp.Struct(s).Bit(64)
-}
-
-func (s Book_write_Params) SetEncode(v bool) {
-	capnp.Struct(s).SetBit(64, !v)
-}
-
 // Book_write_Params_List is a list of Book_write_Params.
 type Book_write_Params_List = capnp.StructList[Book_write_Params]
 
 // NewBook_write_Params creates a new list of Book_write_Params.
 func NewBook_write_Params_List(s *capnp.Segment, sz int32) (Book_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 16, PointerCount: 1}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1}, sz)
 	return capnp.StructList[Book_write_Params](l), err
 }
 
@@ -437,30 +429,17 @@ func (s Book_done_Results) Message() *capnp.Message {
 func (s Book_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Book_done_Results) Out() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return []byte(p.Data()), err
-}
-
-func (s Book_done_Results) HasOut() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s Book_done_Results) SetOut(v []byte) error {
-	return capnp.Struct(s).SetData(0, v)
-}
-
 func (s Book_done_Results) Values() (capnp.Float64List, error) {
-	p, err := capnp.Struct(s).Ptr(1)
+	p, err := capnp.Struct(s).Ptr(0)
 	return capnp.Float64List(p.List()), err
 }
 
 func (s Book_done_Results) HasValues() bool {
-	return capnp.Struct(s).HasPtr(1)
+	return capnp.Struct(s).HasPtr(0)
 }
 
 func (s Book_done_Results) SetValues(v capnp.Float64List) error {
-	return capnp.Struct(s).SetPtr(1, v.ToPtr())
+	return capnp.Struct(s).SetPtr(0, v.ToPtr())
 }
 
 // NewValues sets the values field to a newly
@@ -470,20 +449,20 @@ func (s Book_done_Results) NewValues(n int32) (capnp.Float64List, error) {
 	if err != nil {
 		return capnp.Float64List{}, err
 	}
-	err = capnp.Struct(s).SetPtr(1, l.ToPtr())
+	err = capnp.Struct(s).SetPtr(0, l.ToPtr())
 	return l, err
 }
 func (s Book_done_Results) Present() (capnp.BitList, error) {
-	p, err := capnp.Struct(s).Ptr(2)
+	p, err := capnp.Struct(s).Ptr(1)
 	return capnp.BitList(p.List()), err
 }
 
 func (s Book_done_Results) HasPresent() bool {
-	return capnp.Struct(s).HasPtr(2)
+	return capnp.Struct(s).HasPtr(1)
 }
 
 func (s Book_done_Results) SetPresent(v capnp.BitList) error {
-	return capnp.Struct(s).SetPtr(2, v.ToPtr())
+	return capnp.Struct(s).SetPtr(1, v.ToPtr())
 }
 
 // NewPresent sets the present field to a newly
@@ -493,7 +472,7 @@ func (s Book_done_Results) NewPresent(n int32) (capnp.BitList, error) {
 	if err != nil {
 		return capnp.BitList{}, err
 	}
-	err = capnp.Struct(s).SetPtr(2, l.ToPtr())
+	err = capnp.Struct(s).SetPtr(1, l.ToPtr())
 	return l, err
 }
 func (s Book_done_Results) Reconciled() uint64 {
@@ -502,6 +481,30 @@ func (s Book_done_Results) Reconciled() uint64 {
 
 func (s Book_done_Results) SetReconciled(v uint64) {
 	capnp.Struct(s).SetUint64(0, v)
+}
+
+func (s Book_done_Results) Market() (Market, error) {
+	p, err := capnp.Struct(s).Ptr(2)
+	return Market(p.Struct()), err
+}
+
+func (s Book_done_Results) HasMarket() bool {
+	return capnp.Struct(s).HasPtr(2)
+}
+
+func (s Book_done_Results) SetMarket(v Market) error {
+	return capnp.Struct(s).SetPtr(2, capnp.Struct(v).ToPtr())
+}
+
+// NewMarket sets the market field to a newly
+// allocated Market struct, preferring placement in s's segment.
+func (s Book_done_Results) NewMarket() (Market, error) {
+	ss, err := NewMarket(capnp.Struct(s).Segment())
+	if err != nil {
+		return Market{}, err
+	}
+	err = capnp.Struct(s).SetPtr(2, capnp.Struct(ss).ToPtr())
+	return ss, err
 }
 
 // Book_done_Results_List is a list of Book_done_Results.
@@ -520,56 +523,480 @@ func (f Book_done_Results_Future) Struct() (Book_done_Results, error) {
 	p, err := f.Future.Ptr()
 	return Book_done_Results(p.Struct()), err
 }
+func (p Book_done_Results_Future) Market() Market_Future {
+	return Market_Future{Future: p.Future.Field(2, nil)}
+}
 
-const schema_a1b07a61838e6a63 = "x\xda\x94SO\x88\xdcT\x18\xff\xfd\xdeKf,:" +
-	"\xb6a\xb6\x88\x07\x19\xd0\xae\xc2\xda\xban\xd7?X\x94" +
-	"\x19\x16\x0b\"\x8a\xf3\xd6\"*-n\x9ay\xeb\xc6f" +
-	"\x92\xec$\xe9\xda\xdaU\x8b\xd8^\xac+\xf4\xa0-x" +
-	"\xe8I<\xd9.\xa8 \x08\"B\xab ^\xb5'\xe9" +
-	"\xc1z\xd0\x8b\x0a\x1eD\"o\xd2dF\xd0\xb6{\xfb" +
-	"\xf2\xf1{\xdf\xf7\xfb\xf3\xe5\xdeI\xd1\xb1f\x1ak5" +
-	"\x08\xf5\x84]\xcb\x1f\x88\xff\xf8\xed.\xef\x91\x93p\xa6" +
-	"\x08Xu`v\x87\\'\xac\xfc\xe2C\x87\xcf\xbez" +
-	"\xc7\x85\xd3p&e\xee\xbd\xf4\xf6\x1b\xee\xe1\xb3g\x00" +
-	"\xce\xde&\xe7\xd9\x9c\x91u\xa0\xb9C\x1eo\xae\xca[" +
-	"\x80\xfc\xef\xe8\xd21\xf1\xe7\x07\x9f\xc0\xb9S\xe6\x97\xd7" +
-	"/\xbe\xb2\x9e\xe5\x17\x0c\xba/\xf7\xb3yt\x88^\x95" +
-	"\xc7\x9b\xdf\x9a*?\xb2\x1c\xa5\xa7^\xff\xf9<\xd4v" +
-	"\x12\xb0Ms\xf6c\xf9\x0d\xc1\xe6\xd7\xf22\x98\x7f\xf7" +
-	"\xa6\xbc\x7f\xfe\xe1\xa3?AM\x8d\x10g\xac\xcf\x0c\xe2" +
-	"\x9ce\x10_\xfd\xf0\xcb\x89\x07\x9f\xd9\xf2+\x9c\xed\x15" +
-	"\xe0C{8\xe2s\xfb#0\xdf\xfa\xa3{\xdf\xb1\x85" +
-	"\xf3\xbf\x9b\x11\x02\xb0i\x10\xfbj\xc3\x11\xfd\x9aA\xd4" +
-	"\xbe\x7f\xca\xbf\xf4\xfeZ^\x8c\x18\x8a\xdfZ\xff\x92X" +
-	"\xcd\xc3\xa8\xef\xbe\xe8/g\xb6\x9e^\xf4C7\xf4|" +
-	"7\x98\x8e\xddX\x0f\xa6\xf7G\xd1\x81{<7\x0e\xe3" +
-	"]s\xa6\xecE\xa1\xde\xd6m\xb9\x03\xb7\x9fT\xef\xac" +
-	"k\xbd\xe3\x81.\xa9n\x906P\x11ex\xee\x8b\x95" +
-	"\xd9\xd3/\x9crfvB8\x93u\xb2\xca\x87\xa5!" +
-	"\xce\xadS\x10N\xa3\xdeZ\x19\xf8\xa9\xeep\xb3\xd9\xdf" +
-	"\xa1\xb2\xc8\xfc\xee\xbfv\xcf\xbd{\xf2\xd35\x00Wc" +
-	"\x92\xach\x1d_\xa1\xf2\xf4J]\xebx\xc4\xa5L\xe6" +
-	"\xbf\xb8\x94v\xb1\xb4\xfe\x7f\xb8t\xc9j}\xedZ\xeb" +
-	"M=|\xbe\xad;\xb4\x10P[\xa4\x05X\x04\x1cw" +
-	"\x17\xa0\xf6J\xaa%A\x87\x9c0\xa7\xe0h\xd3\\\x90" +
-	"T\x81\xa0#\xc4\x84\x09\xd7\xf1\xe7\x01\xb5$\xa9RA" +
-	"\xca\x09J\xc0Y\xde\x09\xa8@R\xbd,\xd8\x0e\xf4A" +
-	"\x1d$l@\xb0\x01\xb6\xdd~\x94\x85i\xf9\x99\xfb\xa1" +
-	"7\xd0}\x1d\x82U\xaf\x95\xc4:\xec\x91\x10$\xb8\xe1" +
-	"\x8b\x98o\xeb$\x0b\xd2d\\\xcd\xedWSsdL" +
-	"\xcd\xa19@\xa5\x92\xea\x9d\x91\x9a\x13\xcf\x03\xea-I" +
-	"\xf5\x9e`=\xca*\x9e\xed\x83n\x90\xe9\x847\x83]" +
-	"I\xde\x08a\xca\xd7\xe2\x81Nt\x98\x96m\x16\xed|" +
-	"\xa0\xbd(\xf4\xfc\x00R\xf7\xb8\x09\x82\x9b\xb0\xc1\xb0\x0a" +
-	"u\x858@\xddT\xc9\xdb\xfd8\xa0\x1e\x95T\xdd1" +
-	"yON\x01\xea1I\xb5gL\x9e2\xc8\xae\xa4\xda" +
-	"+\x98/gn\x98\xfa\xe9!\x00\xa5\xa4\xcd^\x94\x8c" +
-	"\xb2\xc9\xc2E?\x08to\x0c\xb0\x914\x8a\xe3j\x17" +
-	"\xd75N\xd7\\G\xa7 Q\xb2}\xce\xf4\xf6H\xaa" +
-	"\x05\xc3\xb63AA:\xfbLB\xcfJ\xaa\x9e`k" +
-	"q\xe0\xf6uij\xa30\xb5\xd5\xd3q\xbaD\x1b\x82" +
-	"6\xd8\xd6\xa1\x17\xf5\xb4q\xdc\xfe\xd7\xe5\\\xbf\xbbW" +
-	"\xfe\x84\x7f\x02\x00\x00\xff\xff\x99\xda~\xd0"
+type Market capnp.Struct
+
+// Market_TypeID is the unique identifier for the type Market.
+const Market_TypeID = 0xd2e5c3355d579f6e
+
+func NewMarket(s *capnp.Segment) (Market, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 4})
+	return Market(st), err
+}
+
+func NewRootMarket(s *capnp.Segment) (Market, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 4})
+	return Market(st), err
+}
+
+func ReadRootMarket(msg *capnp.Message) (Market, error) {
+	root, err := msg.Root()
+	return Market(root.Struct()), err
+}
+
+func (s Market) String() string {
+	str, _ := text.Marshal(0xd2e5c3355d579f6e, capnp.Struct(s))
+	return str
+}
+
+func (s Market) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+	return capnp.Struct(s).EncodeAsPtr(seg)
+}
+
+func (Market) DecodeFromPtr(p capnp.Ptr) Market {
+	return Market(capnp.Struct{}.DecodeFromPtr(p))
+}
+
+func (s Market) ToPtr() capnp.Ptr {
+	return capnp.Struct(s).ToPtr()
+}
+func (s Market) IsValid() bool {
+	return capnp.Struct(s).IsValid()
+}
+
+func (s Market) Message() *capnp.Message {
+	return capnp.Struct(s).Message()
+}
+
+func (s Market) Segment() *capnp.Segment {
+	return capnp.Struct(s).Segment()
+}
+func (s Market) Symbol() (string, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return p.Text(), err
+}
+
+func (s Market) HasSymbol() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s Market) SymbolBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return p.TextBytes(), err
+}
+
+func (s Market) SetSymbol(v string) error {
+	return capnp.Struct(s).SetText(0, v)
+}
+
+func (s Market) Bids() (Market_Level_List, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return Market_Level_List(p.List()), err
+}
+
+func (s Market) HasBids() bool {
+	return capnp.Struct(s).HasPtr(1)
+}
+
+func (s Market) SetBids(v Market_Level_List) error {
+	return capnp.Struct(s).SetPtr(1, v.ToPtr())
+}
+
+// NewBids sets the bids field to a newly
+// allocated Market_Level_List, preferring placement in s's segment.
+func (s Market) NewBids(n int32) (Market_Level_List, error) {
+	l, err := NewMarket_Level_List(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return Market_Level_List{}, err
+	}
+	err = capnp.Struct(s).SetPtr(1, l.ToPtr())
+	return l, err
+}
+func (s Market) Asks() (Market_Level_List, error) {
+	p, err := capnp.Struct(s).Ptr(2)
+	return Market_Level_List(p.List()), err
+}
+
+func (s Market) HasAsks() bool {
+	return capnp.Struct(s).HasPtr(2)
+}
+
+func (s Market) SetAsks(v Market_Level_List) error {
+	return capnp.Struct(s).SetPtr(2, v.ToPtr())
+}
+
+// NewAsks sets the asks field to a newly
+// allocated Market_Level_List, preferring placement in s's segment.
+func (s Market) NewAsks(n int32) (Market_Level_List, error) {
+	l, err := NewMarket_Level_List(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return Market_Level_List{}, err
+	}
+	err = capnp.Struct(s).SetPtr(2, l.ToPtr())
+	return l, err
+}
+func (s Market) Updated() bool {
+	return capnp.Struct(s).Bit(0)
+}
+
+func (s Market) SetUpdated(v bool) {
+	capnp.Struct(s).SetBit(0, v)
+}
+
+func (s Market) Orders() (Market_Order_List, error) {
+	p, err := capnp.Struct(s).Ptr(3)
+	return Market_Order_List(p.List()), err
+}
+
+func (s Market) HasOrders() bool {
+	return capnp.Struct(s).HasPtr(3)
+}
+
+func (s Market) SetOrders(v Market_Order_List) error {
+	return capnp.Struct(s).SetPtr(3, v.ToPtr())
+}
+
+// NewOrders sets the orders field to a newly
+// allocated Market_Order_List, preferring placement in s's segment.
+func (s Market) NewOrders(n int32) (Market_Order_List, error) {
+	l, err := NewMarket_Order_List(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return Market_Order_List{}, err
+	}
+	err = capnp.Struct(s).SetPtr(3, l.ToPtr())
+	return l, err
+}
+
+// Market_List is a list of Market.
+type Market_List = capnp.StructList[Market]
+
+// NewMarket creates a new list of Market.
+func NewMarket_List(s *capnp.Segment, sz int32) (Market_List, error) {
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 4}, sz)
+	return capnp.StructList[Market](l), err
+}
+
+// Market_Future is a wrapper for a Market promised by a client call.
+type Market_Future struct{ *capnp.Future }
+
+func (f Market_Future) Struct() (Market, error) {
+	p, err := f.Future.Ptr()
+	return Market(p.Struct()), err
+}
+
+type Market_Order capnp.Struct
+
+// Market_Order_TypeID is the unique identifier for the type Market_Order.
+const Market_Order_TypeID = 0xe80285dd29ecac3c
+
+func NewMarket_Order(s *capnp.Segment) (Market_Order, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 3})
+	return Market_Order(st), err
+}
+
+func NewRootMarket_Order(s *capnp.Segment) (Market_Order, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 3})
+	return Market_Order(st), err
+}
+
+func ReadRootMarket_Order(msg *capnp.Message) (Market_Order, error) {
+	root, err := msg.Root()
+	return Market_Order(root.Struct()), err
+}
+
+func (s Market_Order) String() string {
+	str, _ := text.Marshal(0xe80285dd29ecac3c, capnp.Struct(s))
+	return str
+}
+
+func (s Market_Order) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+	return capnp.Struct(s).EncodeAsPtr(seg)
+}
+
+func (Market_Order) DecodeFromPtr(p capnp.Ptr) Market_Order {
+	return Market_Order(capnp.Struct{}.DecodeFromPtr(p))
+}
+
+func (s Market_Order) ToPtr() capnp.Ptr {
+	return capnp.Struct(s).ToPtr()
+}
+func (s Market_Order) IsValid() bool {
+	return capnp.Struct(s).IsValid()
+}
+
+func (s Market_Order) Message() *capnp.Message {
+	return capnp.Struct(s).Message()
+}
+
+func (s Market_Order) Segment() *capnp.Segment {
+	return capnp.Struct(s).Segment()
+}
+func (s Market_Order) Id() (string, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return p.Text(), err
+}
+
+func (s Market_Order) HasId() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s Market_Order) IdBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return p.TextBytes(), err
+}
+
+func (s Market_Order) SetId(v string) error {
+	return capnp.Struct(s).SetText(0, v)
+}
+
+func (s Market_Order) Bid() bool {
+	return capnp.Struct(s).Bit(0)
+}
+
+func (s Market_Order) SetBid(v bool) {
+	capnp.Struct(s).SetBit(0, v)
+}
+
+func (s Market_Order) Price() (string, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return p.Text(), err
+}
+
+func (s Market_Order) HasPrice() bool {
+	return capnp.Struct(s).HasPtr(1)
+}
+
+func (s Market_Order) PriceBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return p.TextBytes(), err
+}
+
+func (s Market_Order) SetPrice(v string) error {
+	return capnp.Struct(s).SetText(1, v)
+}
+
+func (s Market_Order) Quantity() (string, error) {
+	p, err := capnp.Struct(s).Ptr(2)
+	return p.Text(), err
+}
+
+func (s Market_Order) HasQuantity() bool {
+	return capnp.Struct(s).HasPtr(2)
+}
+
+func (s Market_Order) QuantityBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(2)
+	return p.TextBytes(), err
+}
+
+func (s Market_Order) SetQuantity(v string) error {
+	return capnp.Struct(s).SetText(2, v)
+}
+
+func (s Market_Order) Rank() uint32 {
+	return capnp.Struct(s).Uint32(4)
+}
+
+func (s Market_Order) SetRank(v uint32) {
+	capnp.Struct(s).SetUint32(4, v)
+}
+
+// Market_Order_List is a list of Market_Order.
+type Market_Order_List = capnp.StructList[Market_Order]
+
+// NewMarket_Order creates a new list of Market_Order.
+func NewMarket_Order_List(s *capnp.Segment, sz int32) (Market_Order_List, error) {
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 3}, sz)
+	return capnp.StructList[Market_Order](l), err
+}
+
+// Market_Order_Future is a wrapper for a Market_Order promised by a client call.
+type Market_Order_Future struct{ *capnp.Future }
+
+func (f Market_Order_Future) Struct() (Market_Order, error) {
+	p, err := f.Future.Ptr()
+	return Market_Order(p.Struct()), err
+}
+
+type Market_Level capnp.Struct
+
+// Market_Level_TypeID is the unique identifier for the type Market_Level.
+const Market_Level_TypeID = 0xd7650b0c5ace9613
+
+func NewMarket_Level(s *capnp.Segment) (Market_Level, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
+	return Market_Level(st), err
+}
+
+func NewRootMarket_Level(s *capnp.Segment) (Market_Level, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
+	return Market_Level(st), err
+}
+
+func ReadRootMarket_Level(msg *capnp.Message) (Market_Level, error) {
+	root, err := msg.Root()
+	return Market_Level(root.Struct()), err
+}
+
+func (s Market_Level) String() string {
+	str, _ := text.Marshal(0xd7650b0c5ace9613, capnp.Struct(s))
+	return str
+}
+
+func (s Market_Level) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+	return capnp.Struct(s).EncodeAsPtr(seg)
+}
+
+func (Market_Level) DecodeFromPtr(p capnp.Ptr) Market_Level {
+	return Market_Level(capnp.Struct{}.DecodeFromPtr(p))
+}
+
+func (s Market_Level) ToPtr() capnp.Ptr {
+	return capnp.Struct(s).ToPtr()
+}
+func (s Market_Level) IsValid() bool {
+	return capnp.Struct(s).IsValid()
+}
+
+func (s Market_Level) Message() *capnp.Message {
+	return capnp.Struct(s).Message()
+}
+
+func (s Market_Level) Segment() *capnp.Segment {
+	return capnp.Struct(s).Segment()
+}
+func (s Market_Level) Price() (string, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return p.Text(), err
+}
+
+func (s Market_Level) HasPrice() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s Market_Level) PriceBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return p.TextBytes(), err
+}
+
+func (s Market_Level) SetPrice(v string) error {
+	return capnp.Struct(s).SetText(0, v)
+}
+
+func (s Market_Level) Quantity() (string, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return p.Text(), err
+}
+
+func (s Market_Level) HasQuantity() bool {
+	return capnp.Struct(s).HasPtr(1)
+}
+
+func (s Market_Level) QuantityBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return p.TextBytes(), err
+}
+
+func (s Market_Level) SetQuantity(v string) error {
+	return capnp.Struct(s).SetText(1, v)
+}
+
+// Market_Level_List is a list of Market_Level.
+type Market_Level_List = capnp.StructList[Market_Level]
+
+// NewMarket_Level creates a new list of Market_Level.
+func NewMarket_Level_List(s *capnp.Segment, sz int32) (Market_Level_List, error) {
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2}, sz)
+	return capnp.StructList[Market_Level](l), err
+}
+
+// Market_Level_Future is a wrapper for a Market_Level promised by a client call.
+type Market_Level_Future struct{ *capnp.Future }
+
+func (f Market_Level_Future) Struct() (Market_Level, error) {
+	p, err := f.Future.Ptr()
+	return Market_Level(p.Struct()), err
+}
+
+const schema_a1b07a61838e6a63 = "x\xda\x9cT\x7f\x88\x14\xe5\x1b\x7f>\xef\xbb{{\xe2" +
+	"\xdd\xf7\xf6e\xf6N\xfcBl\xd6\x99x\xf9\xf3.K" +
+	"E\xd9\xe3P\x08\xe9p\xdf3\xb2D\xb1\xb9\xdd\xd7\xda" +
+	"nwvnv\xd7\xbb3K\xa5\xce\x144S\xb3R" +
+	"\xb0\x10\xfa%(\xa9PA D\x19\x8aD\xbf J" +
+	"!\x08\xa1\x14\xb2\x7f*\xe8\x8f\x88\x89wfgv\xca" +
+	"\xdf\xb2\xff\x0c\xcf>\xf3\xcc\xe7\xd7\xf3\xccY\xdb\xd4\x1b" +
+	"\x9b\xdb\xba\xf2Nb+F\x11or\xef\xb7\xff\xf8m" +
+	"Zn\xf1^\x12] \x8a%\x88zD\xf2\x04(\xe6" +
+	"\x9e_\xb0\xe1\xd8\xb3w\x9f9@b*wsO\xbd" +
+	"\xf8\x9c\xb9\xe1\xd8!\"\xf4 9\x00\xa3=\x99 2" +
+	"D\xf2\x05\xc3LN\"r;\x1f[\xf4\xe8\xee;\xb6" +
+	"\xbdNr\x06@\x14\xe7z\x92L\x9e\x07\xc1P\xc9\x8b" +
+	"\x04\xf7\xef\xf2\x85\xad\xec\xcfw> q\x0fw/\x9e" +
+	"8\xff\xf4\x89\x9a{F\xcf\xeb\x17\x830L\xa1\xe7\xad" +
+	"\x11\xa7\x8do\xf5\x93\xbbq\xb8\\\xdd\xbf\xf9\xd2i\x12" +
+	"3\x02\\'\xc5Y\x8d\xcbzc\xe5\x9ay\x9f\xfe\xf4" +
+	"\x0d\xc9\xa9@\x03X\xdc\xeb9\xaeg}&\xa6\x11\xf5" +
+	"\x9c\x13i\x10\\\xe3\x95/V\xb5LT\xdf\xe9A\x8d" +
+	"w\xe3LwO6\xf6\xc0\x98k\xe8/\xcf4F\x08" +
+	"\xee\x97\xe3|\xde\xc0\xa2-?\x93\xecj\xb0\xd8i|" +
+	"\xa4Y\x1c44\x8bEG.O\xffa\x9c]\xf2x" +
+	"F\xe6y\x9d\xfbR{`\x1cM\xe9\xc7\xc3)\xef\xeb" +
+	"\xe3;?7\x0f\xbd\xfd\xd5/>\x0d\xbf\xebd\xfb\x05" +
+	"=\xef\xeb\xf6\xf7\x08\xee\xa9s\x97w>\xf0H\xf2\xd7" +
+	"\xban\x1e\x89\xe1\x8e\xb3\xbaa\xbc#Cp\xdb\x7f4" +
+	"\xef\xdb\xfa\xf8\xe9\xdf\x03H\xd0\x1doux\x90\xde\xef" +
+	"\xd0\xa0\x9b\xbe_^\xb8pp\x97\x1b\x91j\xca\xa4O" +
+	"@\xae\xf7\xdb\xe4Z\xe5\x92\xf9Da\xb8\x16W\xb3\xd7" +
+	"\x15,\xd3\xca\x15\xcc\xe2l\xdb\xb4\x953{\xb0\\\x1e" +
+	"\x9a\x953m\xcb^\xd8\xa7\x1f\xf3eKuf\xd3\xa6" +
+	"c\x96*\xe1{\xb1\x1b\xbd\x87\xa1, \x9by\x9c(" +
+	"\x84\x0b\xeb\xf8\xc7#=\x07\xd6\xee\x17s\xbb\x89\x89\xa9" +
+	"\x09 \xcc\x1a\x02\x99\xc5\xe4.b\xa25\x91\x1eq\x0a" +
+	"U\xd5\x8b6\xfd\xfd^\xc8\x18\xe0\xde\xfb\xd7\xd2\xbeW" +
+	"\xf7~\xb8\x8b\x88B$MW\"\xa9\x8c(e\xd7\xa1" +
+	"\xac\xf0\x9e\xd5\xa8\xca\xd5\xaa\xaa3k:&/Ud" +
+	"\x92\xc7\x88b \x12\xe6B\"\xb9\x9aC\x8e2\x08 " +
+	"\xa5\xf5\x145]\xb49\xe4F\x06\xc1X\x0a\x8cH\x8c" +
+	"\x0d\x10\xc9Q\x0e\xf9<\x03x\x0a\x9cHl\xe9&\x92" +
+	"\x1b9\xe46\x86LQ\xadW\xc5\x0a\xfeG\xc8r " +
+	"\xd9H\x19A\x173f\xa9\\\xb3\xaah!\x86\x16\x82" +
+	"[\xb0r\x8e*)\x8b\x10\xd6\xd2\x15[Yy\x80\x18" +
+	"tP\xae#\xf6\xbf)&\x94\xb2\xb5\xdc-\x9e\xdc\xc1" +
+	"\x9a4\xe4\x96Z\xee\xa5Z\xee \x17\x082&\x16h" +
+	"\xb9g&\xc0\xc2uE\x10P1\xa5\x8f\x98h\xff\xaf" +
+	"\x15\x9b\xeaj\xf6\"\x0b\xdc\x9a\x0f\xde \xcf\x85R%" +
+	"\xe2\xe1\xf5\xd3\xd4o:\x89!U\x95\xcd\x88\xac\x9a\x98" +
+	"\xd0\x1dY\xe3xwz\xb9\x93WN\xfa!\xed\x81L" +
+	"\x85\xf6>\xb3\xb0aZh\xef\x96\xae\xbak\xafE\xec" +
+	"\xdd\xa7\x8b/q\xc8#\x0d{\x0f\xf7\x11\xc979\xe4" +
+	"1\x06\x11\xe3)\xc4\x88\xc4Q=\xf2]\x0ey\x8a!" +
+	"S\x19+\x0d\x96\x8b\x81\x7fm\x83\x85\xfc\xb5\x03\xd0f" +
+	"V\x86\xae\xfd\xef\xa6\x9a\x9d7\xab*t?S\xd6\x84" +
+	"\"\xfd!u\xbf\xff&W\xb8\xdft\x86Tu\x96\xd6" +
+	"\x05E\x7f%\x03m\xa6\xeb\xf0vr\xc89\x11mf" +
+	".#\x9238\xe4|\x86\xb4\xed\x14r*\x0c\xecp" +
+	"\xcd\xb4\xaa\x85\xea\x18\x11\x85\xb5[\xbd#\x03\x19U\xa9" +
+	"\x15\xab7\xde\xc0\xbe\xfa\x06\xee`@\xdd\xa1\xed\xab\x88" +
+	"\xe46\x0e\xf92\x83\xe0\xcc\xb7h\xb7~{\x87\xefe" +
+	"f\xbdY\xac\xa9P\xb2\x89\xc4<amGU\x94U" +
+	"\x0d\xca\xf0\xcb\xae\xa3re+W(\x12WyL " +
+	"\x86\x09\x84L\xc9\x93\x0b\xc9\xc6\x15' y\xabj\xeb" +
+	",\xc2\xd1jG\x92\xf8\xff\xc8\xf9\x08\x82xW\xe3|" +
+	"\x08\x06\x9f\xe6\xb8\xb6e\xb3O=\xa4\xb9}Y\x84{" +
+	"\x0c~\x12ww5\xb8\xf3B>0%1X\x08S" +
+	"tc\x0b\xdb\x1c\xd3\x1aB314\x13n\xef\xaa\x0e" +
+	"\xa8J-\xa1Mm\x09\xd9.\xd5x\x97p\xc8l\xc4" +
+	"\xd4~\x8d\xf7A\x0e\xf9pd\xef\xa4\xee\xccr\xc8\xd5" +
+	"\xec\xea\xf8r\xe5J\xe3h\xd6\xacu\x85bQ\xe5\xaf" +
+	"\x96\xc1\x9b\xc2\xec\xa7\xd0\x0f!\x91\x8c\x85\x88[\xb5\xec" +
+	"\xcd\x1c2\xc5\x90v\x94\x99\x1f\xbb\xe2\x0e\xdfD\xc8\xfd" +
+	"\x03\x97\xf1/\xdc\xd5v\xad\xb7\xe1\xfeb]\x9b\xcf!" +
+	"\x970\xa4\xd79fI\x05\x11m\xf5#\x9a\xce+\xbb" +
+	"\xfa$\xe2\xc4\x10\xbf-\x9e\xf5C\xfbO\x00\x00\x00\xff" +
+	"\xffh)\x98\x1b"
 
 func RegisterSchema(reg *schemas.Registry) {
 	reg.Register(&schemas.Schema{
@@ -577,9 +1004,14 @@ func RegisterSchema(reg *schemas.Registry) {
 		Nodes: []uint64{
 			0x933d6327f2f47036,
 			0x9ac8237eb07a39da,
+			0x9e881d91583c5924,
 			0xb6a7f70286e26ffd,
 			0xc7e88099746f717c,
+			0xd2e5c3355d579f6e,
+			0xd7650b0c5ace9613,
 			0xe6813c52350385cf,
+			0xe80285dd29ecac3c,
+			0xebd0a6a161cc8d85,
 			0xed1056378decd9c4,
 			0xf3c760863461e015,
 			0xff8f9de2694fd806,

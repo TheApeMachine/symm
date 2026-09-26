@@ -1,11 +1,3 @@
-import { useSelector } from "@tanstack/react-store";
-import {
-	candidatesAtom,
-	measurementSourcesAtom,
-	phaseAtom,
-	positionCountAtom,
-	tickCountAtom,
-} from "#/collections/app";
 import { Flex } from "#/components/ui/flex";
 import { cn } from "#/lib/utils";
 
@@ -34,31 +26,28 @@ const Reading = ({
 	</Flex.Row>
 );
 
-export const Pulse = () => {
-	const tick = useSelector(tickCountAtom, (state) => state);
-	const phase = useSelector(phaseAtom, (state) => state);
-	const candidates = useSelector(candidatesAtom, (state) => state);
-	const measurementCount = useSelector(
-		measurementSourcesAtom,
-		(state) => state.length,
-	);
-	const openCount = useSelector(positionCountAtom, (state) => state);
+export interface PulseProps {
+	observations?: string | number;
+	phase?: string;
+	decisions?: number | string;
+	open?: number | string;
+}
 
+export const Pulse = ({ observations, phase, decisions, open }: PulseProps) => {
 	return (
 		<Flex.Row
 			align="center"
 			gap={4}
 			className="h-8 shrink-0 border-(--line) border-b bg-(--sunken) px-3.5 font-mono text-[11px] text-(--f3)"
 		>
-			<Reading which="tick" value={tick ? String(tick) : "—"} />
-			<Reading label="phase" which="phase" accent value={phase} />
+			<Reading which="tick" value={String(observations ?? "—")} />
+			<Reading label="phase" which="phase" accent value={phase ?? "—"} />
 			<Reading
-				label="cand"
+				label="decisions"
 				which="cand"
-				value={candidates ? String(candidates) : "—"}
+				value={String(decisions ?? "—")}
 			/>
-			<Reading label="meas" which="meas" value={String(measurementCount)} />
-			<Reading label="open" which="open" value={String(openCount)} />
+			<Reading label="open" which="open" value={String(open ?? "—")} />
 		</Flex.Row>
 	);
 };

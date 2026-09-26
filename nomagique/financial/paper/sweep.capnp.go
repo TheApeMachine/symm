@@ -26,7 +26,7 @@ func (c Sweep) Write(ctx context.Context, params func(Sweep_write_Params) error)
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 8, PointerCount: 3}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 0}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(Sweep_write_Params(s)) }
 	}
 
@@ -51,6 +51,26 @@ func (c Sweep) Done(ctx context.Context, params func(Sweep_done_Params) error) (
 
 	ans, release := capnp.Client(c).SendCall(ctx, s)
 	return Sweep_done_Results_Future{Future: ans.Future()}, release
+
+}
+
+func (c Sweep) Execute(ctx context.Context, params func(Sweep_execute_Params) error) (Sweep_execute_Results_Future, capnp.ReleaseFunc) {
+
+	s := capnp.Send{
+		Method: capnp.Method{
+			InterfaceID:   0xb6a7f70286e26ffd,
+			MethodID:      2,
+			InterfaceName: "nomagique/financial/paper/sweep.capnp:Sweep",
+			MethodName:    "execute",
+		},
+	}
+	if params != nil {
+		s.ArgsSize = capnp.ObjectSize{DataSize: 8, PointerCount: 3}
+		s.PlaceArgs = func(s capnp.Struct) error { return params(Sweep_execute_Params(s)) }
+	}
+
+	ans, release := capnp.Client(c).SendCall(ctx, s)
+	return Sweep_execute_Results_Future{Future: ans.Future()}, release
 
 }
 
@@ -130,6 +150,8 @@ type Sweep_Server interface {
 	Write(context.Context, Sweep_write) error
 
 	Done(context.Context, Sweep_done) error
+
+	Execute(context.Context, Sweep_execute) error
 }
 
 // Sweep_NewServer creates a new Server from an implementation of Sweep_Server.
@@ -148,7 +170,7 @@ func Sweep_ServerToClient(s Sweep_Server) Sweep {
 // This can be used to create a more complicated Server.
 func Sweep_Methods(methods []server.Method, s Sweep_Server) []server.Method {
 	if cap(methods) == 0 {
-		methods = make([]server.Method, 0, 2)
+		methods = make([]server.Method, 0, 3)
 	}
 
 	methods = append(methods, server.Method{
@@ -172,6 +194,18 @@ func Sweep_Methods(methods []server.Method, s Sweep_Server) []server.Method {
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
 			return s.Done(ctx, Sweep_done{call})
+		},
+	})
+
+	methods = append(methods, server.Method{
+		Method: capnp.Method{
+			InterfaceID:   0xb6a7f70286e26ffd,
+			MethodID:      2,
+			InterfaceName: "nomagique/financial/paper/sweep.capnp:Sweep",
+			MethodName:    "execute",
+		},
+		Impl: func(ctx context.Context, call *server.Call) error {
+			return s.Execute(ctx, Sweep_execute{call})
 		},
 	})
 
@@ -208,8 +242,25 @@ func (c Sweep_done) Args() Sweep_done_Params {
 
 // AllocResults allocates the results struct.
 func (c Sweep_done) AllocResults() (Sweep_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 3})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return Sweep_done_Results(r), err
+}
+
+// Sweep_execute holds the state for a server call to Sweep.execute.
+// See server.Call for documentation.
+type Sweep_execute struct {
+	*server.Call
+}
+
+// Args returns the call's arguments.
+func (c Sweep_execute) Args() Sweep_execute_Params {
+	return Sweep_execute_Params(c.Call.Args())
+}
+
+// AllocResults allocates the results struct.
+func (c Sweep_execute) AllocResults() (Sweep_execute_Results, error) {
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 3})
+	return Sweep_execute_Results(r), err
 }
 
 // Sweep_List is a list of Sweep.
@@ -227,12 +278,12 @@ type Sweep_write_Params capnp.Struct
 const Sweep_write_Params_TypeID = 0xc7e88099746f717c
 
 func NewSweep_write_Params(s *capnp.Segment) (Sweep_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 3})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
 	return Sweep_write_Params(st), err
 }
 
 func NewRootSweep_write_Params(s *capnp.Segment) (Sweep_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 3})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
 	return Sweep_write_Params(st), err
 }
 
@@ -268,59 +319,13 @@ func (s Sweep_write_Params) Message() *capnp.Message {
 func (s Sweep_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Sweep_write_Params) Levels() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return []byte(p.Data()), err
-}
-
-func (s Sweep_write_Params) HasLevels() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s Sweep_write_Params) SetLevels(v []byte) error {
-	return capnp.Struct(s).SetData(0, v)
-}
-
-func (s Sweep_write_Params) Amount() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(1)
-	return []byte(p.Data()), err
-}
-
-func (s Sweep_write_Params) HasAmount() bool {
-	return capnp.Struct(s).HasPtr(1)
-}
-
-func (s Sweep_write_Params) SetAmount(v []byte) error {
-	return capnp.Struct(s).SetData(1, v)
-}
-
-func (s Sweep_write_Params) Increment() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(2)
-	return []byte(p.Data()), err
-}
-
-func (s Sweep_write_Params) HasIncrement() bool {
-	return capnp.Struct(s).HasPtr(2)
-}
-
-func (s Sweep_write_Params) SetIncrement(v []byte) error {
-	return capnp.Struct(s).SetData(2, v)
-}
-
-func (s Sweep_write_Params) Spend() bool {
-	return capnp.Struct(s).Bit(0)
-}
-
-func (s Sweep_write_Params) SetSpend(v bool) {
-	capnp.Struct(s).SetBit(0, v)
-}
 
 // Sweep_write_Params_List is a list of Sweep_write_Params.
 type Sweep_write_Params_List = capnp.StructList[Sweep_write_Params]
 
 // NewSweep_write_Params creates a new list of Sweep_write_Params.
 func NewSweep_write_Params_List(s *capnp.Segment, sz int32) (Sweep_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 3}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
 	return capnp.StructList[Sweep_write_Params](l), err
 }
 
@@ -403,12 +408,12 @@ type Sweep_done_Results capnp.Struct
 const Sweep_done_Results_TypeID = 0xed1056378decd9c4
 
 func NewSweep_done_Results(s *capnp.Segment) (Sweep_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 3})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return Sweep_done_Results(st), err
 }
 
 func NewRootSweep_done_Results(s *capnp.Segment) (Sweep_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 3})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return Sweep_done_Results(st), err
 }
 
@@ -444,43 +449,12 @@ func (s Sweep_done_Results) Message() *capnp.Message {
 func (s Sweep_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Sweep_done_Results) Quantity() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return []byte(p.Data()), err
+func (s Sweep_done_Results) Ready() bool {
+	return capnp.Struct(s).Bit(0)
 }
 
-func (s Sweep_done_Results) HasQuantity() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s Sweep_done_Results) SetQuantity(v []byte) error {
-	return capnp.Struct(s).SetData(0, v)
-}
-
-func (s Sweep_done_Results) Cost() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(1)
-	return []byte(p.Data()), err
-}
-
-func (s Sweep_done_Results) HasCost() bool {
-	return capnp.Struct(s).HasPtr(1)
-}
-
-func (s Sweep_done_Results) SetCost(v []byte) error {
-	return capnp.Struct(s).SetData(1, v)
-}
-
-func (s Sweep_done_Results) Unfilled() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(2)
-	return []byte(p.Data()), err
-}
-
-func (s Sweep_done_Results) HasUnfilled() bool {
-	return capnp.Struct(s).HasPtr(2)
-}
-
-func (s Sweep_done_Results) SetUnfilled(v []byte) error {
-	return capnp.Struct(s).SetData(2, v)
+func (s Sweep_done_Results) SetReady(v bool) {
+	capnp.Struct(s).SetBit(0, v)
 }
 
 // Sweep_done_Results_List is a list of Sweep_done_Results.
@@ -488,7 +462,7 @@ type Sweep_done_Results_List = capnp.StructList[Sweep_done_Results]
 
 // NewSweep_done_Results creates a new list of Sweep_done_Results.
 func NewSweep_done_Results_List(s *capnp.Segment, sz int32) (Sweep_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 3}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0}, sz)
 	return capnp.StructList[Sweep_done_Results](l), err
 }
 
@@ -498,4 +472,253 @@ type Sweep_done_Results_Future struct{ *capnp.Future }
 func (f Sweep_done_Results_Future) Struct() (Sweep_done_Results, error) {
 	p, err := f.Future.Ptr()
 	return Sweep_done_Results(p.Struct()), err
+}
+
+type Sweep_execute_Params capnp.Struct
+
+// Sweep_execute_Params_TypeID is the unique identifier for the type Sweep_execute_Params.
+const Sweep_execute_Params_TypeID = 0x9e881d91583c5924
+
+func NewSweep_execute_Params(s *capnp.Segment) (Sweep_execute_Params, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 3})
+	return Sweep_execute_Params(st), err
+}
+
+func NewRootSweep_execute_Params(s *capnp.Segment) (Sweep_execute_Params, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 3})
+	return Sweep_execute_Params(st), err
+}
+
+func ReadRootSweep_execute_Params(msg *capnp.Message) (Sweep_execute_Params, error) {
+	root, err := msg.Root()
+	return Sweep_execute_Params(root.Struct()), err
+}
+
+func (s Sweep_execute_Params) String() string {
+	str, _ := text.Marshal(0x9e881d91583c5924, capnp.Struct(s))
+	return str
+}
+
+func (s Sweep_execute_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+	return capnp.Struct(s).EncodeAsPtr(seg)
+}
+
+func (Sweep_execute_Params) DecodeFromPtr(p capnp.Ptr) Sweep_execute_Params {
+	return Sweep_execute_Params(capnp.Struct{}.DecodeFromPtr(p))
+}
+
+func (s Sweep_execute_Params) ToPtr() capnp.Ptr {
+	return capnp.Struct(s).ToPtr()
+}
+func (s Sweep_execute_Params) IsValid() bool {
+	return capnp.Struct(s).IsValid()
+}
+
+func (s Sweep_execute_Params) Message() *capnp.Message {
+	return capnp.Struct(s).Message()
+}
+
+func (s Sweep_execute_Params) Segment() *capnp.Segment {
+	return capnp.Struct(s).Segment()
+}
+func (s Sweep_execute_Params) Levels() (Market_Level_List, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return Market_Level_List(p.List()), err
+}
+
+func (s Sweep_execute_Params) HasLevels() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s Sweep_execute_Params) SetLevels(v Market_Level_List) error {
+	return capnp.Struct(s).SetPtr(0, v.ToPtr())
+}
+
+// NewLevels sets the levels field to a newly
+// allocated Market_Level_List, preferring placement in s's segment.
+func (s Sweep_execute_Params) NewLevels(n int32) (Market_Level_List, error) {
+	l, err := NewMarket_Level_List(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return Market_Level_List{}, err
+	}
+	err = capnp.Struct(s).SetPtr(0, l.ToPtr())
+	return l, err
+}
+func (s Sweep_execute_Params) Amount() (string, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return p.Text(), err
+}
+
+func (s Sweep_execute_Params) HasAmount() bool {
+	return capnp.Struct(s).HasPtr(1)
+}
+
+func (s Sweep_execute_Params) AmountBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return p.TextBytes(), err
+}
+
+func (s Sweep_execute_Params) SetAmount(v string) error {
+	return capnp.Struct(s).SetText(1, v)
+}
+
+func (s Sweep_execute_Params) Increment() (string, error) {
+	p, err := capnp.Struct(s).Ptr(2)
+	return p.Text(), err
+}
+
+func (s Sweep_execute_Params) HasIncrement() bool {
+	return capnp.Struct(s).HasPtr(2)
+}
+
+func (s Sweep_execute_Params) IncrementBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(2)
+	return p.TextBytes(), err
+}
+
+func (s Sweep_execute_Params) SetIncrement(v string) error {
+	return capnp.Struct(s).SetText(2, v)
+}
+
+func (s Sweep_execute_Params) Spend() bool {
+	return capnp.Struct(s).Bit(0)
+}
+
+func (s Sweep_execute_Params) SetSpend(v bool) {
+	capnp.Struct(s).SetBit(0, v)
+}
+
+// Sweep_execute_Params_List is a list of Sweep_execute_Params.
+type Sweep_execute_Params_List = capnp.StructList[Sweep_execute_Params]
+
+// NewSweep_execute_Params creates a new list of Sweep_execute_Params.
+func NewSweep_execute_Params_List(s *capnp.Segment, sz int32) (Sweep_execute_Params_List, error) {
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 3}, sz)
+	return capnp.StructList[Sweep_execute_Params](l), err
+}
+
+// Sweep_execute_Params_Future is a wrapper for a Sweep_execute_Params promised by a client call.
+type Sweep_execute_Params_Future struct{ *capnp.Future }
+
+func (f Sweep_execute_Params_Future) Struct() (Sweep_execute_Params, error) {
+	p, err := f.Future.Ptr()
+	return Sweep_execute_Params(p.Struct()), err
+}
+
+type Sweep_execute_Results capnp.Struct
+
+// Sweep_execute_Results_TypeID is the unique identifier for the type Sweep_execute_Results.
+const Sweep_execute_Results_TypeID = 0xebd0a6a161cc8d85
+
+func NewSweep_execute_Results(s *capnp.Segment) (Sweep_execute_Results, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 3})
+	return Sweep_execute_Results(st), err
+}
+
+func NewRootSweep_execute_Results(s *capnp.Segment) (Sweep_execute_Results, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 3})
+	return Sweep_execute_Results(st), err
+}
+
+func ReadRootSweep_execute_Results(msg *capnp.Message) (Sweep_execute_Results, error) {
+	root, err := msg.Root()
+	return Sweep_execute_Results(root.Struct()), err
+}
+
+func (s Sweep_execute_Results) String() string {
+	str, _ := text.Marshal(0xebd0a6a161cc8d85, capnp.Struct(s))
+	return str
+}
+
+func (s Sweep_execute_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+	return capnp.Struct(s).EncodeAsPtr(seg)
+}
+
+func (Sweep_execute_Results) DecodeFromPtr(p capnp.Ptr) Sweep_execute_Results {
+	return Sweep_execute_Results(capnp.Struct{}.DecodeFromPtr(p))
+}
+
+func (s Sweep_execute_Results) ToPtr() capnp.Ptr {
+	return capnp.Struct(s).ToPtr()
+}
+func (s Sweep_execute_Results) IsValid() bool {
+	return capnp.Struct(s).IsValid()
+}
+
+func (s Sweep_execute_Results) Message() *capnp.Message {
+	return capnp.Struct(s).Message()
+}
+
+func (s Sweep_execute_Results) Segment() *capnp.Segment {
+	return capnp.Struct(s).Segment()
+}
+func (s Sweep_execute_Results) Quantity() (string, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return p.Text(), err
+}
+
+func (s Sweep_execute_Results) HasQuantity() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s Sweep_execute_Results) QuantityBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return p.TextBytes(), err
+}
+
+func (s Sweep_execute_Results) SetQuantity(v string) error {
+	return capnp.Struct(s).SetText(0, v)
+}
+
+func (s Sweep_execute_Results) Cost() (string, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return p.Text(), err
+}
+
+func (s Sweep_execute_Results) HasCost() bool {
+	return capnp.Struct(s).HasPtr(1)
+}
+
+func (s Sweep_execute_Results) CostBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return p.TextBytes(), err
+}
+
+func (s Sweep_execute_Results) SetCost(v string) error {
+	return capnp.Struct(s).SetText(1, v)
+}
+
+func (s Sweep_execute_Results) Unfilled() (string, error) {
+	p, err := capnp.Struct(s).Ptr(2)
+	return p.Text(), err
+}
+
+func (s Sweep_execute_Results) HasUnfilled() bool {
+	return capnp.Struct(s).HasPtr(2)
+}
+
+func (s Sweep_execute_Results) UnfilledBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(2)
+	return p.TextBytes(), err
+}
+
+func (s Sweep_execute_Results) SetUnfilled(v string) error {
+	return capnp.Struct(s).SetText(2, v)
+}
+
+// Sweep_execute_Results_List is a list of Sweep_execute_Results.
+type Sweep_execute_Results_List = capnp.StructList[Sweep_execute_Results]
+
+// NewSweep_execute_Results creates a new list of Sweep_execute_Results.
+func NewSweep_execute_Results_List(s *capnp.Segment, sz int32) (Sweep_execute_Results_List, error) {
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 3}, sz)
+	return capnp.StructList[Sweep_execute_Results](l), err
+}
+
+// Sweep_execute_Results_Future is a wrapper for a Sweep_execute_Results promised by a client call.
+type Sweep_execute_Results_Future struct{ *capnp.Future }
+
+func (f Sweep_execute_Results_Future) Struct() (Sweep_execute_Results, error) {
+	p, err := f.Future.Ptr()
+	return Sweep_execute_Results(p.Struct()), err
 }

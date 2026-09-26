@@ -61,9 +61,8 @@ func (server *WebSocketServerServer) UpgradeHandler() http.HandlerFunc {
 			return
 		}
 
-		// One frame may wait behind the active socket write. A peer that
-		// exceeds this transport allowance is disconnected and refreshes on
-		// reconnect; it cannot retain unbounded telemetry or block the graph.
+		// Raw events allow one queued frame behind the active write. Typed UI
+		// publications retain latest properties independently of this queue.
 		outgoing := make(chan []byte, 1)
 		disconnected := make(chan struct{})
 		peer := &socketOutput{frames: outgoing, wake: make(chan struct{}, 1)}
@@ -73,8 +72,8 @@ func (server *WebSocketServerServer) UpgradeHandler() http.HandlerFunc {
 			peer.bindings[key] = value
 		}
 		server.clients.Store(conn, peer)
-		server.publicationMu.Unlock()
 		peer.wake <- struct{}{}
+		server.publicationMu.Unlock()
 		go server.transmit(conn, peer, disconnected)
 
 		go func() {

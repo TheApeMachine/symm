@@ -10,7 +10,13 @@ round trips that made money and their mean edge, as the running graph reports
 them.
 */
 export const AgentSkill = () => {
-	const winRate = useShellValue("winRate");
+	const positives = useShellValue("positives");
+	const outcomes = useShellValue("outcomes");
+	const edgeDefined = useShellValue("edgeDefined");
+	const winRate =
+		positives !== undefined && outcomes !== undefined && Number(outcomes) > 0
+			? Number(positives) / Number(outcomes)
+			: undefined;
 	const edge = useShellValue("edge");
 
 	return (
@@ -29,7 +35,7 @@ export const AgentSkill = () => {
 					Edge
 				</Typography.Label>
 				<Typography.Mono size="lg" tone="accent" data-a="edge">
-					{edge === undefined ? "—" : basis(edge)}
+					{edgeDefined === true && typeof edge === "number" ? basis(edge) : "—"}
 				</Typography.Mono>
 			</Flex.Column>
 		</Flex.Row>

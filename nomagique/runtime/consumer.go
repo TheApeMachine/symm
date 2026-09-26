@@ -29,6 +29,7 @@ type ConsumerServer struct {
 		Target   string `json:"target"`
 		Stamp    string `json:"stamp"`
 		Gate     bool   `json:"gate"`
+		Optional bool   `json:"optional"`
 	}
 	outputs   []string
 	result    Completion
@@ -183,6 +184,7 @@ func (server *ConsumerServer) Step(ctx context.Context, call StageNode_step) err
 		for index, binding := range server.bindings {
 			target := bindings.At(index)
 			target.SetGate(binding.Gate)
+			target.SetOptional(binding.Optional)
 			switch binding.Stamp {
 			case "", "value":
 				target.SetStamp(Stamp_value)
@@ -190,6 +192,8 @@ func (server *ConsumerServer) Step(ctx context.Context, call StageNode_step) err
 				target.SetStamp(Stamp_epoch)
 			case "sequence":
 				target.SetStamp(Stamp_sequence)
+			case "completed":
+				target.SetStamp(Stamp_completed)
 			default:
 				return errnie.Error(errnie.Err(errnie.Validation, "consumer: unknown binding stamp "+binding.Stamp, nil))
 			}
@@ -248,6 +252,7 @@ func (server *ConsumerServer) Step(ctx context.Context, call StageNode_step) err
 		output := outputs.At(index)
 		output.SetEpoch(args.Epoch())
 		output.SetSequence(args.Sequence())
+		output.SetCompleted(server.completed + 1)
 
 		if err := output.SetProducer(server.name); err != nil {
 			return errnie.Error(errnie.Err(errnie.Internal, "consumer: output producer", err))

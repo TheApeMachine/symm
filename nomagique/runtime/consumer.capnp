@@ -16,9 +16,11 @@ struct Result {
  value @3 :AnyPointer;
  epoch @4 :Int64;
  sequence @5 :Int64;
+ # Successful steps completed by this consumer including this observation.
+ completed @6 :UInt64;
 }
 
-enum Stamp { value @0; epoch @1; sequence @2; }
+enum Stamp { value @0; epoch @1; sequence @2; completed @3; }
 
 struct Binding {
  producer @0 :Text;
@@ -28,6 +30,8 @@ struct Binding {
  stamp @4 :Stamp;
  # A gate requires this output to be present before the stage may evaluate.
  gate @5 :Bool;
+ # Optional inputs preserve null/absent values without preventing other inputs from stepping.
+ optional @6 :Bool;
 }
 
 # A completed call means the existing node graph finished this observation.

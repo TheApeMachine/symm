@@ -29,8 +29,8 @@ MF_FN MCGravityWork mc_gravity_remap_work(MF_PTR const MFHydroStateV2* state,MF_
     unsigned i,float width,MFHydroParamsV2 p){
     MCGravityWork out={};auto shape=mc_cic(pos[3*i],pos[3*i+1],pos[3*i+2],p);if(shape.status){out.status=shape.status;return out;}
     float at_particle=0;for(unsigned k=0;k<8;++k)at_particle+=shape.weight[k]*mc_phi_average(phi0,phi1,shape.index[k],p);
-    MCLogSum ls={};for(unsigned c=0;c<p.n;++c)if(state[c].q[0]>0)mc_log_add(ls,rows[c]-mc_transport_cost(c,pos,i,p,width));
-    float work=0,correction=0;for(unsigned c=0;c<p.n;++c)if(state[c].q[0]>0){float f=MR_EXP(rows[c]-mc_transport_cost(c,pos,i,p,width)-ls.maximum)/ls.sum;
+    MCLogSum ls={};for(unsigned c=0;c<p.n;++c)if(state[c].q[0]>0)mc_log_add(ls,MC_LOG(state[c].q[0])+rows[c]-mc_transport_cost(c,pos,i,p,width));
+    float work=0,correction=0;for(unsigned c=0;c<p.n;++c)if(state[c].q[0]>0){float f=MR_EXP(MC_LOG(state[c].q[0])+rows[c]-mc_transport_cost(c,pos,i,p,width)-ls.maximum)/ls.sum;
         mc_compensated_add(work,correction,f*(mc_phi_average(phi0,phi1,c,p)-at_particle));}
     out.density=mass[i]*work;if(!MF_FINITE(out.density)||!ls.count)out.status=MF_PHYSICS_BAD_STATE;return out;
 }

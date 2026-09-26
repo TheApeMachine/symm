@@ -114,6 +114,46 @@ func (c StageFactory) Fence(ctx context.Context, params func(StageNode_fence_Par
 
 }
 
+func (c StageFactory) Snapshot(ctx context.Context, params func(Snapshot_snapshot_Params) error) (Snapshot_snapshot_Results_Future, capnp.ReleaseFunc) {
+
+	s := capnp.Send{
+		Method: capnp.Method{
+			InterfaceID:   0xe44d6da025855109,
+			MethodID:      0,
+			InterfaceName: "nomagique/runtime/snapshot.capnp:Snapshot",
+			MethodName:    "snapshot",
+		},
+	}
+	if params != nil {
+		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 0}
+		s.PlaceArgs = func(s capnp.Struct) error { return params(Snapshot_snapshot_Params(s)) }
+	}
+
+	ans, release := capnp.Client(c).SendCall(ctx, s)
+	return Snapshot_snapshot_Results_Future{Future: ans.Future()}, release
+
+}
+
+func (c StageFactory) Restore(ctx context.Context, params func(Snapshot_restore_Params) error) (Snapshot_restore_Results_Future, capnp.ReleaseFunc) {
+
+	s := capnp.Send{
+		Method: capnp.Method{
+			InterfaceID:   0xe44d6da025855109,
+			MethodID:      1,
+			InterfaceName: "nomagique/runtime/snapshot.capnp:Snapshot",
+			MethodName:    "restore",
+		},
+	}
+	if params != nil {
+		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 1}
+		s.PlaceArgs = func(s capnp.Struct) error { return params(Snapshot_restore_Params(s)) }
+	}
+
+	ans, release := capnp.Client(c).SendCall(ctx, s)
+	return Snapshot_restore_Results_Future{Future: ans.Future()}, release
+
+}
+
 func (c StageFactory) WaitStreaming() error {
 	return capnp.Client(c).WaitStreaming()
 }
@@ -196,6 +236,10 @@ type StageFactory_Server interface {
 	Step(context.Context, StageNode_step) error
 
 	Fence(context.Context, StageNode_fence) error
+
+	Snapshot(context.Context, Snapshot_snapshot) error
+
+	Restore(context.Context, Snapshot_restore) error
 }
 
 // StageFactory_NewServer creates a new Server from an implementation of StageFactory_Server.
@@ -214,7 +258,7 @@ func StageFactory_ServerToClient(s StageFactory_Server) StageFactory {
 // This can be used to create a more complicated Server.
 func StageFactory_Methods(methods []server.Method, s StageFactory_Server) []server.Method {
 	if cap(methods) == 0 {
-		methods = make([]server.Method, 0, 5)
+		methods = make([]server.Method, 0, 7)
 	}
 
 	methods = append(methods, server.Method{
@@ -274,6 +318,30 @@ func StageFactory_Methods(methods []server.Method, s StageFactory_Server) []serv
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
 			return s.Fence(ctx, StageNode_fence{call})
+		},
+	})
+
+	methods = append(methods, server.Method{
+		Method: capnp.Method{
+			InterfaceID:   0xe44d6da025855109,
+			MethodID:      0,
+			InterfaceName: "nomagique/runtime/snapshot.capnp:Snapshot",
+			MethodName:    "snapshot",
+		},
+		Impl: func(ctx context.Context, call *server.Call) error {
+			return s.Snapshot(ctx, Snapshot_snapshot{call})
+		},
+	})
+
+	methods = append(methods, server.Method{
+		Method: capnp.Method{
+			InterfaceID:   0xe44d6da025855109,
+			MethodID:      1,
+			InterfaceName: "nomagique/runtime/snapshot.capnp:Snapshot",
+			MethodName:    "restore",
+		},
+		Impl: func(ctx context.Context, call *server.Call) error {
+			return s.Restore(ctx, Snapshot_restore{call})
 		},
 	})
 

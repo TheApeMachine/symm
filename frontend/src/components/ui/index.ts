@@ -309,3 +309,31 @@ export {
 	type TypographyVariant,
 	typographyVariants,
 } from "./typography";
+export { MetricInspector, type MetricInspectorProps } from "./metric-inspector";
+export {
+	StageDiagnostics,
+	type StageDiagnosticsProps,
+} from "./stage-diagnostics";
+export { StageRow, type StageRowProps } from "./stage-diagnostics";
+export { Workbench } from "../workbench/workbench";
+export { FlumeEditor } from "../flume/flume-editor";
+export { AccountSummary, type AccountSummaryProps } from "./account-summary";
+export {
+	AccountPositions,
+	type AccountPositionsProps,
+} from "./account-positions";
+export { AccountDecision, type AccountDecisionProps } from "./account-decision";
+export { RecordTable, type RecordTableProps } from "./record-table";
+export { FragmentReplay, type FragmentReplayProps } from "./fragment-replay";
+export { CaptureHistory, type CaptureHistoryProps } from "./capture-history";
+
+export { SurfaceOutlet } from "./surface-outlet";
+export { GraphIndex } from "./graph-index";
+export { TerminalNav } from "../terminal/terminal-nav";
+export { TerminalTopBar } from "../terminal/terminal-top-bar";
+
+export {
+	FluidInspector,
+	type FluidInspectorProps,
+} from "../fluid-3d/component";
+export { ResonanceCanvas, type ResonanceCanvasProps } from "./resonance-canvas";
