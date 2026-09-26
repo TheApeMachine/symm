@@ -302,9 +302,14 @@ export const NodeEditor = ({
 		const mode = graphLayoutMode ?? "freeform";
 		if (prevGraphLayout === undefined || prevGraphLayout === mode) return;
 		if (mode === "freeform") return;
-		dispatchGraphLayout(mode, nodesRefForLayout.current, nodeActions);
+		dispatchGraphLayout(
+			mode,
+			nodesRefForLayout.current,
+			nodeActions,
+			indexRef.current,
+		);
 		triggerRecalculation();
-	}, [graphLayoutMode, prevGraphLayout, triggerRecalculation, nodeActions]);
+	}, [graphLayoutMode, prevGraphLayout, triggerRecalculation, nodeActions, indexRef]);
 
 	React.useImperativeHandle(ref, () => ({
 		getNodes: () => {
@@ -316,7 +321,12 @@ export const NodeEditor = ({
 		seed: seedNodes,
 		hasNodes: () => Object.keys(nodes).length > 0,
 		autoLayout: (mode: GraphLayoutMode = "orthogonal") => {
-			dispatchGraphLayout(mode, nodesRefForLayout.current, nodeActions);
+			dispatchGraphLayout(
+				mode,
+				nodesRefForLayout.current,
+				nodeActions,
+				indexRef.current,
+			);
 			triggerRecalculation();
 		},
 	}));

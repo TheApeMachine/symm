@@ -130,8 +130,31 @@ func TestIcebergTableFlush(t *testing.T) {
 			}), ShouldBeNil)
 			So(client.WaitStreaming(), ShouldBeNil)
 			So(writer.pending, ShouldHaveLength, 4)
-			So(writer.pending[2], ShouldResemble, first)
-			So(writer.pending[3], ShouldResemble, second)
+			So(writer.pending[2].raw, ShouldResemble, first)
+			So(writer.pending[3].raw, ShouldResemble, second)
+		})
+
+		Convey("A size-triggered append keeps its partial tail until an explicit flush", func() {
+			// The first two real rows fill one byte budget; the third is a tail.
+			writer.appendBytes = writer.held
+			row := captureRow(t, []byte(`{"channel":"tail"}`))
+			So(client.Write(ctx, func(params IcebergTable_write_Params) error {
+				if err := params.SetConfig(captureDeclaration); err != nil {
+					return err
+				}
+				return params.SetPayload(row)
+			}), ShouldBeNil)
+			So(client.WaitStreaming(), ShouldBeNil)
+			So(writer.commit(ctx, false), ShouldBeNil)
+			So(writer.committed, ShouldEqual, 2)
+			So(writer.pending, ShouldHaveLength, 1)
+			So(writer.pending[0].raw, ShouldResemble, row)
+			So(writer.held, ShouldEqual, len(row))
+			So(writer.inflight, ShouldEqual, 0)
+			So(writer.commit(ctx, true), ShouldBeNil)
+			So(writer.committed, ShouldEqual, 3)
+			So(writer.pending, ShouldBeEmpty)
+			So(writer.held, ShouldEqual, 0)
 		})
 
 		Convey("Lifecycle flush persists the below-budget tail and scan returns exact bytes", func() {
@@ -251,14 +274,14 @@ func TestWorthSending(t *testing.T) {
 		server.appendBytes = 64
 
 		Convey("It waits while what it holds is not worth a snapshot", func() {
-			server.pending = [][]byte{make([]byte, 16)}
+			server.pending = []tableRow{heldRow(make([]byte, 16))}
 			server.held = 16
 
 			So(server.worthSending(), ShouldBeFalse)
 		})
 
 		Convey("It sends once the rows add up to what an append is sized for", func() {
-			server.pending = [][]byte{make([]byte, 40), make([]byte, 40)}
+			server.pending = []tableRow{heldRow(make([]byte, 40)), heldRow(make([]byte, 40))}
 			server.held = 80
 
 			So(server.worthSending(), ShouldBeTrue)
@@ -267,7 +290,7 @@ func TestWorthSending(t *testing.T) {
 		// A caller that knows the run is ending must be able to say so, or
 		// the last rows sit in memory and the tape loses its tail.
 		Convey("It sends when a caller says now, whatever it holds", func() {
-			server.pending = [][]byte{make([]byte, 1)}
+			server.pending = []tableRow{heldRow(make([]byte, 1))}
 			server.held = 1
 			server.asked = true
 
@@ -276,7 +299,7 @@ func TestWorthSending(t *testing.T) {
 
 		Convey("An unbounded budget never sends on size alone", func() {
 			server.appendBytes = 0
-			server.pending = [][]byte{make([]byte, 1<<20)}
+			server.pending = []tableRow{heldRow(make([]byte, 1<<20))}
 			server.held = 1 << 20
 
 			So(server.worthSending(), ShouldBeFalse)
@@ -425,4 +448,34 @@ func BenchmarkIcebergTableFlush(b *testing.B) {
 			b.Fatal(err)
 		}
 	}
+}
+
+func TestIcebergTableWriteNative(t *testing.T) {
+	Convey("The table capability owns native arrivals after the caller releases them", t, func() {
+		record, _, release := nativeCutFixture(t)
+		writer := NewIcebergTable()
+		client := IcebergTable_ServerToClient(writer)
+		defer client.Release()
+		declaration := `{"namespace":"test","table":"native","fields":[{"id":1,"name":"epoch","type":"long","required":true}]}`
+		So(client.Write(context.Background(), func(params IcebergTable_write_Params) error {
+			if err := params.SetConfig(declaration); err != nil {
+				return err
+			}
+			return params.SetRecord(record)
+		}), ShouldBeNil)
+		So(client.WaitStreaming(), ShouldBeNil)
+		pointer, err := record.Value()
+		So(err, ShouldBeNil)
+		data.MetricCut(pointer.Struct()).SetSequence(999)
+		release()
+		So(writer.pending, ShouldHaveLength, 1)
+		carried, err := writer.pending[0].record.Value()
+		So(err, ShouldBeNil)
+		So(data.MetricCut(carried.Struct()).Sequence(), ShouldEqual, 17)
+		So(writer.held, ShouldEqual, writer.pending[0].size)
+		So(writer.pending[0].raw, ShouldBeEmpty)
+		writer.pending[0].release()
+		writer.pending = nil
+		writer.held = 0
+	})
 }

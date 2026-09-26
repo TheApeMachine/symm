@@ -19,6 +19,7 @@ type ConsumerServer struct {
 	snapshot      Snapshot
 	checkpoint    Checkpoint
 	entry         string
+	record        string
 	name          string
 	configuration string
 	bindings      []struct {
@@ -57,6 +58,12 @@ func (server *ConsumerServer) Write(ctx context.Context, call Consumer_write) er
 		return errnie.Error(errnie.Err(errnie.Validation, "consumer: missing stage capability", nil))
 	}
 
+	record, err := call.Args().Record()
+
+	if err != nil {
+		return errnie.Error(err)
+	}
+
 	name, err := call.Args().Name()
 
 	if err != nil {
@@ -85,7 +92,7 @@ func (server *ConsumerServer) Write(ctx context.Context, call Consumer_write) er
 		selected[index] = output
 	}
 	if server.target.IsValid() {
-		if !server.target.IsSame(target) || entry != server.entry || name != server.name ||
+		if !server.target.IsSame(target) || entry != server.entry || record != server.record || name != server.name ||
 			configuration != server.configuration || !slices.Equal(selected, server.outputs) || !server.receiver.IsSame(call.Args().Receiver()) || !server.snapshot.IsSame(call.Args().Snapshot()) || !server.checkpoint.IsSame(call.Args().Checkpoint()) {
 			return errnie.Error(errnie.Err(errnie.Validation, "consumer: configuration cannot change", nil))
 		}
@@ -101,7 +108,7 @@ func (server *ConsumerServer) Write(ctx context.Context, call Consumer_write) er
 	server.name, server.configuration = name, configuration
 	server.target = target.AddRef()
 	server.receiver = call.Args().Receiver().AddRef()
-	server.entry = entry
+	server.entry, server.record = entry, record
 	server.snapshot = call.Args().Snapshot().AddRef()
 	server.checkpoint = call.Args().Checkpoint().AddRef()
 	if server.snapshot.IsValid() != server.checkpoint.IsValid() {
@@ -207,6 +214,9 @@ func (server *ConsumerServer) Step(ctx context.Context, call StageNode_step) err
 		if err := params.SetEntry(server.entry); err != nil {
 			return err
 		}
+		if err := params.SetRecord(server.record); err != nil {
+			return err
+		}
 		return params.SetData(payload)
 	})
 	defer release()
@@ -300,6 +310,13 @@ func (server *ConsumerServer) Done(ctx context.Context, call Consumer_done) erro
 	results.SetStatus(Status(server.Status()))
 
 	if server.result.IsValid() {
+		payload, err := server.result.Data()
+		if err != nil {
+			return errnie.Error(err)
+		}
+		if err := results.SetData(payload); err != nil {
+			return errnie.Error(err)
+		}
 		outputs, err := server.result.Outputs()
 
 		if err != nil {

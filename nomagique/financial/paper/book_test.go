@@ -5,15 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
-	"time"
 
-	"github.com/krakenfx/api-go/v2/pkg/book"
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/financial/paper"
+	marketfixture "github.com/theapemachine/symm/tests/market"
 )
 
-type resting struct{ price, quantity, at string }
+type resting = marketfixture.Order
 
 var (
 	bids = []resting{{"99", "1", "2026-09-23T09:00:00Z"}, {"98", "3", "2026-09-23T09:00:01Z"}}
@@ -21,55 +19,8 @@ var (
 	deep = resting{"90", "1", "2026-09-23T09:30:00Z"}
 )
 
-/*
-level3Frame renders a Kraken level3 frame carrying the checksum the exchange
-would send for the book after it, computed by the exchange SDK's own book.
-*/
-func level3Frame(kind, symbol string, before, after [2][]resting, event string) []byte {
-	replica := book.New()
-	records := func(direction book.BookDirection, orders []resting, emit bool) []map[string]any {
-		out := make([]map[string]any, 0, len(orders))
-
-		for _, placed := range orders {
-			price, err := decimal.NewFromString(placed.price)
-			So(err, ShouldBeNil)
-			quantity, err := decimal.NewFromString(placed.quantity)
-			So(err, ShouldBeNil)
-			at, err := time.Parse(time.RFC3339, placed.at)
-			So(err, ShouldBeNil)
-			identity := placed.at + placed.price
-
-			if emit && event == "delete" {
-				quantity = decimal.NewFromInt64(0)
-			}
-			replica.Update(&book.UpdateOptions{Direction: direction, ID: identity, Price: price, Quantity: quantity, Timestamp: at})
-
-			if !emit {
-				continue
-			}
-			record := map[string]any{
-				"order_id": identity, "limit_price": json.Number(placed.price),
-				"order_qty": json.Number(placed.quantity), "timestamp": placed.at,
-			}
-
-			if event != "" {
-				record["event"] = event
-			}
-			out = append(out, record)
-		}
-		return out
-	}
-	records(book.Bid, before[0], false)
-	records(book.Ask, before[1], false)
-	entry := map[string]any{"symbol": symbol, "bids": records(book.Bid, after[0], true), "asks": records(book.Ask, after[1], true)}
-	entry["checksum"] = json.Number(replica.L3Checksum("").LocalChecksum)
-	frame, err := json.Marshal(map[string]any{"channel": "level3", "type": kind, "data": []any{entry}})
-	So(err, ShouldBeNil)
-	return frame
-}
-
 func snapshotFrame(symbol string) []byte {
-	return level3Frame("snapshot", symbol, [2][]resting{}, [2][]resting{bids, asks}, "")
+	return marketfixture.Level3Frame("snapshot", symbol, [2][]resting{}, [2][]resting{bids, asks}, "")
 }
 
 /* deepBidFrame adds or removes a bid far from the touch: the book moves, its fills do not. */
@@ -79,7 +30,7 @@ func deepBidFrame(event string) []byte {
 	if event == "delete" {
 		before[0] = append(append([]resting{}, bids...), deep)
 	}
-	return level3Frame("update", "BTC/USD", before, [2][]resting{{deep}, nil}, event)
+	return marketfixture.Level3Frame("update", "BTC/USD", before, [2][]resting{{deep}, nil}, event)
 }
 
 func instrumentFrame(symbol, minimumQuantity string) []byte {
@@ -95,10 +46,12 @@ func instrumentFrame(symbol, minimumQuantity string) []byte {
 }
 
 type market struct {
-	Symbol string          `json:"symbol"`
-	Bids   [][2]string     `json:"bids"`
-	Asks   [][2]string     `json:"asks"`
-	Pair   json.RawMessage `json:"pair"`
+	Symbol  string          `json:"symbol"`
+	Bids    [][2]string     `json:"bids"`
+	Asks    [][2]string     `json:"asks"`
+	Pair    json.RawMessage `json:"pair"`
+	Values  []float64       `json:"-"`
+	Present []bool          `json:"-"`
 }
 
 func replay(client paper.Book, frame []byte) (market, error) {
@@ -133,7 +86,62 @@ func replay(client paper.Book, frame []byte) (market, error) {
 	}
 	var reported market
 	err = json.Unmarshal(bytes.Clone(out), &reported)
+	if err != nil {
+		return reported, err
+	}
+	values, err := results.Values()
+	if err != nil {
+		return reported, err
+	}
+	present, err := results.Present()
+	if err != nil {
+		return reported, err
+	}
+	for index := range values.Len() {
+		reported.Values = append(reported.Values, values.At(index))
+		reported.Present = append(reported.Present, present.At(index))
+	}
 	return reported, err
+}
+
+/* BenchmarkBookWrite exercises reconciliation and native projection at the RPC boundary. */
+func BenchmarkBookWrite(b *testing.B) {
+	ctx := context.Background()
+	client := paper.Book_ServerToClient(paper.NewBook(ctx))
+	defer client.Release()
+	frames := [][]byte{snapshotFrame("BTC/USD"), deepBidFrame("add"), deepBidFrame("delete")}
+	b.ReportAllocs()
+	iteration := 0
+	for b.Loop() {
+		frame := frames[iteration%len(frames)]
+		iteration++
+		if err := client.Write(ctx, func(params paper.Book_write_Params) error {
+			params.SetDepth(10)
+			params.SetEncode(false)
+			arrivals, err := params.NewFrame(1)
+			if err != nil {
+				return err
+			}
+			return arrivals.Set(0, frame)
+		}); err != nil {
+			b.Fatal(err)
+		}
+		if err := client.WaitStreaming(); err != nil {
+			b.Fatal(err)
+		}
+		future, release := client.Done(ctx, nil)
+		result, err := future.Struct()
+		if err != nil {
+			release()
+			b.Fatal(err)
+		}
+		present, err := result.Present()
+		if err != nil || !present.At(0) {
+			release()
+			b.Fatalf("native reconciled bid missing: %v", err)
+		}
+		release()
+	}
 }
 
 func TestBookWrite(t *testing.T) {

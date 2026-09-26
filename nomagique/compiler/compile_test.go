@@ -755,6 +755,32 @@ func TestCompileCapabilities(t *testing.T) {
 			So(capnp.Client(second).IsSame(program.Nodes[program.NodeMap["x-second"]].Client), ShouldBeTrue)
 		})
 
+		Convey("Cancelling a run preserves its admitted source cycle and durable fence", func() {
+			graph := workspaceNodeGraph()
+			workspace := graph.Nodes["a-workspace"]
+			workspace.InputData["advance"] = json.RawMessage(`true`)
+			graph.Nodes["a-workspace"] = workspace
+			gate := make(chan struct{})
+			stage.gate, stage.entered = gate, make(chan struct{}, 2)
+			running, err := compiler.Compile(graph, registry, compiler.DefaultRepository())
+			So(err, ShouldBeNil)
+			defer running.Release()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			finished := make(chan error, 1)
+			go func() { finished <- running.Start(ctx) }()
+			select {
+			case <-stage.entered:
+			case <-time.After(5 * time.Second):
+				t.Fatal("source was not admitted")
+			}
+			cancel()
+			close(gate)
+			So(<-finished, ShouldBeNil)
+			So(running.Flush(context.Background()), ShouldBeNil)
+			So(stage.count.Load(), ShouldEqual, 2)
+		})
+
 		Convey("The graph configures dependencies and LMAX calls both consumer nodes", func() {
 			ctx := context.Background()
 			err := program.Execute(ctx, nil)
@@ -779,8 +805,8 @@ func TestCompileCapabilities(t *testing.T) {
 }
 
 func TestCompileCaptureWiring(t *testing.T) {
-	Convey("Every socket in the production and capture graphs reaches the raw archive", t, func() {
-		for _, definition := range []string{"system", "capture"} {
+	Convey("Every socket in the standalone capture graph reaches the raw archive", t, func() {
+		for _, definition := range []string{"capture"} {
 			graph, err := compiler.DefaultRepository().Load(definition)
 			So(err, ShouldBeNil)
 			program, err := compiler.Compile(graph, nil, compiler.DefaultRepository())

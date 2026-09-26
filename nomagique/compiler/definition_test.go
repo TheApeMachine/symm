@@ -152,7 +152,18 @@ func TestCompileSystemStages(t *testing.T) {
 		defer program.Release()
 		So(graph.Nodes["workspace"].Type, ShouldEqual, "runtime.Workspace")
 		So(len(graph.Nodes["metrics_group"].Connections.Inputs), ShouldEqual, 15)
-		So(len(graph.Nodes["workspace"].Connections.Inputs), ShouldEqual, 10)
+		So(graph.Nodes["workspace"].Connections.Inputs["groups_0"], ShouldResemble,
+			[]ConnectionTarget{{NodeID: "feeds_group", PortName: "self"}})
+		for _, feed := range []string{"spot", "level3", "futures"} {
+			So(graph.Nodes[feed].Connections.Inputs, ShouldBeEmpty)
+			So(graph.Nodes[feed].Connections.Outputs["self"], ShouldResemble,
+				[]ConnectionTarget{{NodeID: feed + "_consumer", PortName: "target"}})
+			_, flattened := program.NodeMap[feed+"__socket"]
+			So(flattened, ShouldBeFalse)
+		}
+		for port := range graph.Nodes["workspace"].Connections.Inputs {
+			So(port, ShouldNotStartWith, "data")
+		}
 		_, flattened := program.NodeMap["signals__definition-correlation_ticker__zscore"]
 		So(flattened, ShouldBeFalse)
 		_, staged := program.NodeMap["definition-correlation_ticker_graph"]

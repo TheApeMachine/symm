@@ -207,10 +207,13 @@ what they have, every node downstream of them steps once, and the pass ends.
 
 An evaluation failure terminates the run and reaches the caller. Streaming
 capability failures cannot be cleared by repeating the same evaluation.
-A cancelled context ends the run cleanly.
+Cancellation stops admission after the current evaluation finishes. It does not
+poison streaming capabilities while they still own an admitted observation;
+their durable fences must remain callable during shutdown.
 */
 func (p *Program) Start(ctx context.Context) error {
 	var idle time.Duration
+	cycleContext := context.WithoutCancel(ctx)
 
 	for {
 		select {
@@ -219,11 +222,7 @@ func (p *Program) Start(ctx context.Context) error {
 		default:
 		}
 
-		if err := p.Execute(ctx, nil); err != nil {
-			if ctx.Err() != nil {
-				return nil
-			}
-
+		if err := p.Execute(cycleContext, nil); err != nil {
 			return errnie.Error(errnie.Err(
 				errnie.Internal,
 				"compiler: graph evaluation failed",

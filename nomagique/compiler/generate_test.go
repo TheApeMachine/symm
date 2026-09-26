@@ -46,9 +46,11 @@ func TestEmitUIComponentNodeTypes(t *testing.T) {
 func TestEmitDefinitionNodeTypes(t *testing.T) {
 	Convey("Authored graph factories remain visible capability nodes in the editor", t, func() {
 		var output strings.Builder
-		emitDefinitionNodeTypes(&output, nil)
+		So(emitDefinitionNodeTypes(&output, nil), ShouldBeNil)
 		So(output.String(), ShouldContainSubstring, `type: "factory:live_level3_shard"`)
 		So(output.String(), ShouldContainSubstring, `label: "live_level3_shard factory"`)
+		So(output.String(), ShouldContainSubstring, `ports.string({ name: "producer", label: "producer" })`)
+		So(output.String(), ShouldContainSubstring, `ports.string({ name: "field", label: "field" })`)
 		So(output.String(), ShouldContainSubstring, `ports.Capability({ name: "self", label: "self" })`)
 	})
 }

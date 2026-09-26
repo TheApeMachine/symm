@@ -24,11 +24,7 @@
           ]
         }
       },
-      "inputData": {
-        "origin": {
-          "value": true
-        }
-      }
+      "inputData": {}
     },
     "bracket_trade_quantity": {
       "id": "bracket_trade_quantity",
@@ -48,16 +44,7 @@
       "connections": {
         "inputs": {},
         "outputs": {
-          "out": [
-            {
-              "nodeId": "touch_fill_fraction:bid",
-              "portName": "b"
-            },
-            {
-              "nodeId": "touch_fill_fraction:ask",
-              "portName": "b"
-            }
-          ]
+          "out": []
         }
       }
     },
@@ -112,11 +99,11 @@
         "outputs": {
           "out": [
             {
-              "nodeId": "touch_fill_fraction:bid",
+              "nodeId": "touch_fill_rate:bid",
               "portName": "a"
             },
             {
-              "nodeId": "touch_fill_rate:bid",
+              "nodeId": "touchFillRatio:bid",
               "portName": "a"
             }
           ]
@@ -125,7 +112,7 @@
     },
     "touch_fill_fraction:bid": {
       "id": "touch_fill_fraction:bid",
-      "type": "arithmetic.Divide",
+      "type": "arithmetic.Multiply",
       "width": 280,
       "height": 172,
       "x": -220.0,
@@ -134,13 +121,7 @@
         "inputs": {
           "a": [
             {
-              "nodeId": "touch_fill_quantity:bid",
-              "portName": "out"
-            }
-          ],
-          "b": [
-            {
-              "nodeId": "bracket_trade_quantity",
+              "nodeId": "touchFillRatio:bid",
               "portName": "out"
             }
           ]
@@ -148,20 +129,16 @@
         "outputs": {
           "out": [
             {
-              "nodeId": "fillbidBaseline",
-              "portName": "value"
-            },
-            {
               "nodeId": "fill_fraction_divergence:bid",
               "portName": "a"
             },
             {
-              "nodeId": "fillbidVariance",
-              "portName": "value"
-            },
-            {
               "nodeId": "fill_fraction_velocity:bid",
               "portName": "val"
+            },
+            {
+              "nodeId": "supportedFill:bid",
+              "portName": "a"
             }
           ]
         }
@@ -203,7 +180,7 @@
         "inputs": {
           "value": [
             {
-              "nodeId": "touch_fill_fraction:bid",
+              "nodeId": "supportedFill:bid",
               "portName": "out"
             }
           ]
@@ -293,7 +270,7 @@
         "inputs": {
           "value": [
             {
-              "nodeId": "touch_fill_fraction:bid",
+              "nodeId": "supportedFill:bid",
               "portName": "out"
             }
           ]
@@ -410,11 +387,11 @@
         "outputs": {
           "out": [
             {
-              "nodeId": "touch_fill_fraction:ask",
+              "nodeId": "touch_fill_rate:ask",
               "portName": "a"
             },
             {
-              "nodeId": "touch_fill_rate:ask",
+              "nodeId": "touchFillRatio:ask",
               "portName": "a"
             }
           ]
@@ -423,7 +400,7 @@
     },
     "touch_fill_fraction:ask": {
       "id": "touch_fill_fraction:ask",
-      "type": "arithmetic.Divide",
+      "type": "arithmetic.Multiply",
       "width": 280,
       "height": 172,
       "x": -220.0,
@@ -432,13 +409,7 @@
         "inputs": {
           "a": [
             {
-              "nodeId": "touch_fill_quantity:ask",
-              "portName": "out"
-            }
-          ],
-          "b": [
-            {
-              "nodeId": "bracket_trade_quantity",
+              "nodeId": "touchFillRatio:ask",
               "portName": "out"
             }
           ]
@@ -446,20 +417,16 @@
         "outputs": {
           "out": [
             {
-              "nodeId": "fillaskBaseline",
-              "portName": "value"
-            },
-            {
               "nodeId": "fill_fraction_divergence:ask",
               "portName": "a"
             },
             {
-              "nodeId": "fillaskVariance",
-              "portName": "value"
-            },
-            {
               "nodeId": "fill_fraction_velocity:ask",
               "portName": "val"
+            },
+            {
+              "nodeId": "supportedFill:ask",
+              "portName": "a"
             }
           ]
         }
@@ -501,7 +468,7 @@
         "inputs": {
           "value": [
             {
-              "nodeId": "touch_fill_fraction:ask",
+              "nodeId": "supportedFill:ask",
               "portName": "out"
             }
           ]
@@ -587,7 +554,7 @@
         "inputs": {
           "value": [
             {
-              "nodeId": "touch_fill_fraction:ask",
+              "nodeId": "supportedFill:ask",
               "portName": "out"
             }
           ]
@@ -713,6 +680,102 @@
           ]
         },
         "outputs": {}
+      }
+    },
+    "touchFillRatio:bid": {
+      "id": "touchFillRatio:bid",
+      "type": "arithmetic.Divide",
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "touch_fill_quantity:bid",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "touch_fill_fraction:bid",
+              "portName": "a"
+            }
+          ]
+        }
+      }
+    },
+    "touchFillRatio:ask": {
+      "id": "touchFillRatio:ask",
+      "type": "arithmetic.Divide",
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "touch_fill_quantity:ask",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "touch_fill_fraction:ask",
+              "portName": "a"
+            }
+          ]
+        }
+      }
+    },
+    "supportedFill:bid": {
+      "id": "supportedFill:bid",
+      "type": "arithmetic.Divide",
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "touch_fill_fraction:bid",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "fillbidBaseline",
+              "portName": "value"
+            },
+            {
+              "nodeId": "fillbidVariance",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "supportedFill:ask": {
+      "id": "supportedFill:ask",
+      "type": "arithmetic.Divide",
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "touch_fill_fraction:ask",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "fillaskBaseline",
+              "portName": "value"
+            },
+            {
+              "nodeId": "fillaskVariance",
+              "portName": "value"
+            }
+          ]
+        }
       }
     }
   }

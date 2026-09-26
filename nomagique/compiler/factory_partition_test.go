@@ -49,6 +49,20 @@ func TestStageFactoryStep(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(result.Partitions(), ShouldEqual, 0)
 		})
+		Convey("A quiet source does not create a market or advance its history", func() {
+			future, release := factory.Step(context.Background(), nil)
+			result, err := future.Struct()
+			So(err, ShouldBeNil)
+			outputs, err := result.Outputs()
+			So(err, ShouldBeNil)
+			So(outputs.Len(), ShouldEqual, 0)
+			release()
+			progress, release := factory.Done(context.Background(), nil)
+			defer release()
+			done, err := progress.Struct()
+			So(err, ShouldBeNil)
+			So(done.Partitions(), ShouldEqual, 0)
+		})
 	})
 }
 

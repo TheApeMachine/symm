@@ -1,0 +1,15 @@
+{
+  "id": "market_cohort",
+  "name": "Causally stamped cross-market returns",
+  "nodes": {
+    "latest": {
+      "id": "latest",
+      "type": "store.Latest",
+      "inputData": {},
+      "connections": {
+        "inputs": {},
+        "outputs": {}
+      }
+    }
+  }
+}

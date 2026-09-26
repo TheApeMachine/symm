@@ -23,6 +23,15 @@ $Go.import("github.com/theapemachine/symm/nomagique/financial/paper");
 using import "../../runtime/status.capnp".Standing;
 
 interface Book extends(Standing) {
-  write @0 (frame :List(Data), depth :Int64) -> stream;
-  done @1 () -> (out :Data);
+  write @0 (frame :List(Data), depth :Int64, encode :Bool = true) -> stream;
+  # Native metric projection. Slots are bid, ask, touch bid quantity, touch ask
+  # quantity, total bid quantity, total ask quantity, observed bid notional,
+  # observed ask notional, bid mutation count, ask mutation count.
+  # Touch/depth require a reconciled book. Flow describes this message only;
+  # delete mutations contribute a count but no displayed notional.
+  # Trade-only slots 10..16 are bracket quantity, matched bid quantity,
+  # matched ask quantity, bid match indicator, ask match indicator,
+  # pre-trade bid touch quantity, pre-trade ask touch quantity. These require
+  # the market's reconciled touch and never trigger the level3-only slots.
+  done @1 () -> (out :Data, values :List(Float64), present :List(Bool), reconciled :UInt64);
 }

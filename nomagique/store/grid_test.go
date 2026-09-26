@@ -112,7 +112,7 @@ func TestGridWrite(t *testing.T) {
 			})
 		})
 
-		Convey("When a level 3 order book update is written", func() {
+		Convey("When raw mutations do not contain reconciled touch fields", func() {
 			declare("level3.data.bid,level3.data.bid_qty,level3.data.ask,level3.data.ask_qty,level3.data.bids")
 
 			l3, err := sonic.Marshal(map[string]any{
@@ -131,12 +131,8 @@ func TestGridWrite(t *testing.T) {
 			So(err, ShouldBeNil)
 
 			values, present := slots(l3)
-			So(present, ShouldResemble, []bool{true, true, true, true, true})
-			So(values[0], ShouldEqual, 50000.0)
-			So(values[1], ShouldEqual, 1.5)
-			So(values[2], ShouldEqual, 50001.0)
-			So(values[3], ShouldEqual, 3.0)
-			So(values[4], ShouldEqual, 3.5)
+			So(present, ShouldResemble, []bool{false, false, false, false, false})
+			So(values, ShouldResemble, make([]float64, 5))
 		})
 
 		Convey("When data carrying every declared field is written", func() {

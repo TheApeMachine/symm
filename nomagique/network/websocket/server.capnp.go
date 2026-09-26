@@ -10,6 +10,7 @@ import (
 	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
 	context "context"
 	runtime "github.com/theapemachine/symm/nomagique/runtime"
+	ui "github.com/theapemachine/symm/nomagique/ui"
 )
 
 type WebSocketServer capnp.Client
@@ -52,6 +53,26 @@ func (c WebSocketServer) Done(ctx context.Context, params func(WebSocketServer_d
 
 	ans, release := capnp.Client(c).SendCall(ctx, s)
 	return WebSocketServer_done_Results_Future{Future: ans.Future()}, release
+
+}
+
+func (c WebSocketServer) Publish(ctx context.Context, params func(ui.Receiver_publish_Params) error) (ui.Receiver_publish_Results_Future, capnp.ReleaseFunc) {
+
+	s := capnp.Send{
+		Method: capnp.Method{
+			InterfaceID:   0xa4d75133316a2c68,
+			MethodID:      0,
+			InterfaceName: "nomagique/ui/binding.capnp:Receiver",
+			MethodName:    "publish",
+		},
+	}
+	if params != nil {
+		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 1}
+		s.PlaceArgs = func(s capnp.Struct) error { return params(ui.Receiver_publish_Params(s)) }
+	}
+
+	ans, release := capnp.Client(c).SendCall(ctx, s)
+	return ui.Receiver_publish_Results_Future{Future: ans.Future()}, release
 
 }
 
@@ -131,6 +152,8 @@ type WebSocketServer_Server interface {
 	Write(context.Context, WebSocketServer_write) error
 
 	Done(context.Context, WebSocketServer_done) error
+
+	Publish(context.Context, ui.Receiver_publish) error
 }
 
 // WebSocketServer_NewServer creates a new Server from an implementation of WebSocketServer_Server.
@@ -149,7 +172,7 @@ func WebSocketServer_ServerToClient(s WebSocketServer_Server) WebSocketServer {
 // This can be used to create a more complicated Server.
 func WebSocketServer_Methods(methods []server.Method, s WebSocketServer_Server) []server.Method {
 	if cap(methods) == 0 {
-		methods = make([]server.Method, 0, 2)
+		methods = make([]server.Method, 0, 3)
 	}
 
 	methods = append(methods, server.Method{
@@ -173,6 +196,18 @@ func WebSocketServer_Methods(methods []server.Method, s WebSocketServer_Server) 
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
 			return s.Done(ctx, WebSocketServer_done{call})
+		},
+	})
+
+	methods = append(methods, server.Method{
+		Method: capnp.Method{
+			InterfaceID:   0xa4d75133316a2c68,
+			MethodID:      0,
+			InterfaceName: "nomagique/ui/binding.capnp:Receiver",
+			MethodName:    "publish",
+		},
+		Impl: func(ctx context.Context, call *server.Call) error {
+			return s.Publish(ctx, ui.Receiver_publish{call})
 		},
 	})
 

@@ -30,6 +30,17 @@ func (p *Program) Step(ctx context.Context, call runtime.StageNode_step) error {
 	}
 
 	if entry != "" {
+		_, field, err := p.entry(entry)
+		if err != nil {
+			return err
+		}
+		payload, err := call.Args().Data()
+		if err != nil {
+			return errnie.Error(err)
+		}
+		if len(payload) == 0 && (field.Which == schema.Type_Which_data || field.ElementWhich == schema.Type_Which_data) {
+			return nil
+		}
 		if err := p.seedEntry(frames, entry, call.Args()); err != nil {
 			return err
 		}
@@ -179,6 +190,9 @@ func (p *Program) seedBindings(frames []nodeFrame, input runtime.StageNode_step_
 		}
 	}
 	ready := bindings.Len() == 0
+	for _, node := range p.Nodes {
+		ready = ready || node.Source
+	}
 	for index := range bindings.Len() {
 		present, err := p.seedBinding(frames, bindings.At(index), upstream)
 		if err != nil {
@@ -391,7 +405,21 @@ func (p *Program) exportStep(call runtime.StageNode_step) error {
 	if err != nil {
 		return err
 	}
-	return results.SetBindings(frame)
+	if err := results.SetBindings(frame); err != nil {
+		return errnie.Error(err)
+	}
+	record, err := call.Args().Record()
+	if err != nil {
+		return errnie.Error(err)
+	}
+	if record == "" {
+		return nil
+	}
+	payload, err := p.record(record)
+	if err != nil {
+		return err
+	}
+	return errnie.Error(results.SetData(payload))
 }
 
 /* Shutdown releases a definition's graph when its capability is released. */
@@ -424,4 +452,33 @@ func (p *Program) copyStamp(frames []nodeFrame, binding runtime.Binding, result 
 	args.SetUint64(capnp.DataOffset(field.Offset*8), uint64(value))
 	frames[index].ready |= 1 << p.Nodes[index].Inputs[field.Name].Index
 	return true, nil
+}
+
+/* record exposes one authored native Data output as the source observation. */
+func (p *Program) record(address string) ([]byte, error) {
+	name, port, found := strings.Cut(address, ".")
+	index, exists := p.NodeMap[name]
+	if !found || !exists {
+		return nil, errnie.Error(errnie.Err(errnie.Validation, "program: unknown record output "+address, nil))
+	}
+	reflected, err := ReflectInterface(p.Nodes[index].Identity.InterfaceID)
+	if err != nil {
+		return nil, err
+	}
+	field, found := resolveOutputField(reflected, port)
+	if !found || field.Which != schema.Type_Which_data {
+		return nil, errnie.Error(errnie.Err(errnie.Validation, "program: record output must be Data: "+address, nil))
+	}
+	value, found := p.results[name]
+	if !found {
+		return nil, nil
+	}
+	if field.InUnion && value.Uint16(capnp.DataOffset(field.DiscriminantOffset*2)) != field.DiscriminantValue {
+		return nil, nil
+	}
+	pointer, err := value.Ptr(uint16(field.Offset))
+	if err != nil {
+		return nil, errnie.Error(err)
+	}
+	return pointer.Data(), nil
 }

@@ -21,18 +21,21 @@ ports are the handler groups. LMAX alone orders their execution.
 */
 type WorkspaceServer struct {
 	*System
-	ring      disruptor.Disruptor
-	slots     []Slot
-	mask      int64
-	consumers []Consumer
-	progress  []*atomic.Int64
-	failure   atomic.Pointer[error]
-	groups    []Group
-	writers   uint8
-	epoch     int64
-	published int64
-	started   bool
-	finished  chan struct{}
+	ring       disruptor.Disruptor
+	slots      []Slot
+	mask       int64
+	consumers  []Consumer
+	progress   []*atomic.Int64
+	failure    atomic.Pointer[error]
+	groups     []Group
+	writers    uint8
+	epoch      int64
+	published  int64
+	started    bool
+	finished   chan struct{}
+	sources    int
+	sourceMode bool
+	data       []byte
 }
 
 /* NewWorkspace constructs an idle node. Write supplies its graph connections. */
@@ -42,7 +45,7 @@ func NewWorkspace(ctx context.Context) *WorkspaceServer {
 	return server
 }
 
-/* Write configures the ring once and admits every arriving feed in port order. */
+/* Write admits observations or advances the source group on the native ring. */
 func (server *WorkspaceServer) Write(ctx context.Context, call Workspace_write) error {
 	args := call.Args()
 
@@ -64,6 +67,13 @@ func (server *WorkspaceServer) Write(ctx context.Context, call Workspace_write) 
 
 	if err != nil {
 		return errnie.Error(errnie.Err(errnie.Validation, "workspace: input", err))
+	}
+
+	if server.sourceMode {
+		if payloads.Len() != 0 {
+			return errnie.Error(errnie.Err(errnie.Validation, "workspace: source cycles cannot also receive external records", nil))
+		}
+		return server.advance(ctx)
 	}
 
 	for index := range payloads.Len() {
@@ -104,6 +114,7 @@ func (server *WorkspaceServer) configure(ctx context.Context, args Workspace_wri
 	}
 	server.slots, server.mask = make([]Slot, capacity), int64(capacity)-1
 	server.writers = args.Writers()
+	server.sourceMode = args.Advance()
 	options := disruptor.NewOptions(disruptor.Options.BufferCapacity(capacity), disruptor.Options.WriterCount(args.Writers()))
 	groups, err := args.Groups()
 
@@ -126,6 +137,9 @@ func (server *WorkspaceServer) configure(ctx context.Context, args Workspace_wri
 
 		if err != nil {
 			return err
+		}
+		if index == 0 {
+			server.sources = len(handlers)
 		}
 		options = append(options, disruptor.Options.NewHandlerGroup(handlers...))
 		server.groups = append(server.groups, group.AddRef())
@@ -208,7 +222,7 @@ func (server *WorkspaceServer) Done(ctx context.Context, call Workspace_done) er
 	results.SetCompleted(completed)
 	results.SetPending(uint64(server.published - completed))
 	results.SetStatus(Status(server.Status()))
-	return nil
+	return errnie.Error(results.SetData(server.data))
 }
 
 /* completed reads the slowest handler's finished observation count. */
@@ -408,21 +422,10 @@ func (server *WorkspaceServer) bind(ctx context.Context, group Group) ([]disrupt
 func (server *WorkspaceServer) handle(consumer Consumer, progress *atomic.Int64, previous, position int, batch iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	for reserved := range batch {
 		slot := server.slots[*(*int64)(reserved)&server.mask]
-		future, release := consumer.Step(server.Context(), func(args StageNode_step_Params) error {
-			args.SetEpoch(slot.Epoch)
-			args.SetSequence(slot.Sequence)
-			if err := server.upstream(args, slot, previous); err != nil {
-				return err
-			}
-			return args.SetData(slot.Payload)
-		})
-		result, err := future.Struct()
-
+		result, err := server.consume(consumer, slot, previous, position)
 		if err == nil {
-			slot.Results[position], err = result.Clone()
+			slot.Results[position] = result
 		}
-
-		release()
 
 		if err != nil {
 			err = errnie.Error(errnie.Err(errnie.IO, "workspace: consumer failed", err))
@@ -475,6 +478,9 @@ func (server *WorkspaceServer) upstream(args StageNode_step_Params, slot Slot, p
 	if err != nil {
 		return errnie.Error(err)
 	}
+	if server.sourceMode && previous > 0 {
+		incoming = Result_List{}
+	}
 	count := incoming.Len()
 	lists := make([]Result_List, previous+1)
 	lists[previous] = incoming
@@ -488,6 +494,16 @@ func (server *WorkspaceServer) upstream(args StageNode_step_Params, slot Slot, p
 		lists[index] = outputs
 		count += outputs.Len()
 	}
+	if server.sourceMode && previous > 0 {
+		count = 0
+		for _, outputs := range lists {
+			for index := range outputs.Len() {
+				if outputs.At(index).Sequence() == args.Sequence() {
+					count++
+				}
+			}
+		}
+	}
 	upstream, err := args.NewUpstream(int32(count))
 
 	if err != nil {
@@ -497,6 +513,9 @@ func (server *WorkspaceServer) upstream(args StageNode_step_Params, slot Slot, p
 
 	for _, outputs := range lists {
 		for index := range outputs.Len() {
+			if server.sourceMode && previous > 0 && outputs.At(index).Sequence() != args.Sequence() {
+				continue
+			}
 			if err := upstream.Set(position, outputs.At(index)); err != nil {
 				return errnie.Error(errnie.Err(errnie.Internal, "workspace: copy upstream", err))
 			}

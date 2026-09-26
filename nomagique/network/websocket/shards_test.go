@@ -17,6 +17,28 @@ type shardStage struct {
 	idle    bool
 }
 
+func (fixture *shardFixture) Write(context.Context, runtime.StageFactory_write) error {
+	return fmt.Errorf("shard fixture: explicit child creation only")
+}
+
+func (fixture *shardFixture) Done(ctx context.Context, call runtime.StageFactory_done) error {
+	result, err := call.AllocResults()
+
+	if err != nil {
+		return err
+	}
+	result.SetPartitions(uint64(len(fixture.children)))
+	return nil
+}
+
+func (fixture *shardFixture) Step(context.Context, runtime.StageNode_step) error {
+	return fmt.Errorf("shard fixture: invoke the created child")
+}
+
+func (fixture *shardFixture) Fence(context.Context, runtime.StageNode_fence) error {
+	return nil
+}
+
 func (fixture *shardFixture) Create(ctx context.Context, call runtime.StageFactory_create) error {
 	child := &shardStage{}
 	fixture.children = append(fixture.children, child)

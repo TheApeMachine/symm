@@ -2,6 +2,7 @@ package websocket
 
 import (
 	"context"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -83,9 +84,12 @@ func TestWebSocketServerBroadcast(t *testing.T) {
 		defer cancel()
 		server := NewWebSocketServer(ctx)
 		joined := make(chan struct{}, 1)
-		server.OnJoin(func() { joined <- struct{}{} })
 		defer func() { So(server.Close(), ShouldBeNil) }()
-		venue := httptest.NewServer(server.UpgradeHandler())
+		handler := server.UpgradeHandler()
+		venue := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			handler(writer, request)
+			joined <- struct{}{}
+		}))
 		defer venue.Close()
 		slow, _, err := gorillaws.DefaultDialer.Dial("ws"+strings.TrimPrefix(venue.URL, "http"), nil)
 		So(err, ShouldBeNil)
@@ -134,13 +138,16 @@ func BenchmarkWebSocketServerBroadcast(b *testing.B) {
 	defer cancel()
 	server := NewWebSocketServer(ctx)
 	joined := make(chan struct{}, 1)
-	server.OnJoin(func() { joined <- struct{}{} })
 	defer func() {
 		if err := server.Close(); err != nil {
 			b.Error(err)
 		}
 	}()
-	venue := httptest.NewServer(server.UpgradeHandler())
+	handler := server.UpgradeHandler()
+	venue := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		handler(writer, request)
+		joined <- struct{}{}
+	}))
 	defer venue.Close()
 	connection, _, err := gorillaws.DefaultDialer.Dial("ws"+strings.TrimPrefix(venue.URL, "http"), nil)
 

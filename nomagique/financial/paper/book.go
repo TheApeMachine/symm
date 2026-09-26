@@ -15,10 +15,13 @@ import (
 /* BookServer owns each symbol's replayed book and latest instrument record. */
 type BookServer struct {
 	*runtime.System
-	books     map[string]*book.Book
-	pairs     map[string]json.RawMessage
-	reconcile *spot.BookManager
-	out       []byte
+	books      map[string]*book.Book
+	pairs      map[string]json.RawMessage
+	reconcile  *spot.BookManager
+	out        []byte
+	values     [17]float64
+	present    [17]bool
+	reconciled uint64
 }
 
 func NewBook(ctx context.Context) *BookServer {
@@ -40,6 +43,7 @@ func (server *BookServer) Write(ctx context.Context, call Book_write) error {
 	}
 
 	server.out = []byte(`{"symbol":""}`)
+	server.values, server.present = [17]float64{}, [17]bool{}
 	frame, err := single(frames)
 
 	if err != nil {
@@ -69,11 +73,15 @@ func (server *BookServer) Write(ctx context.Context, call Book_write) error {
 		return server.instruments(envelope.Data)
 	}
 
+	if envelope.Channel == "trade" {
+		return server.match(envelope.Data)
+	}
+
 	if envelope.Channel != "level3" {
 		return nil
 	}
 
-	return server.level3(envelope.Type, envelope.Data, call.Args().Depth())
+	return server.level3(envelope.Type, envelope.Data, call.Args().Depth(), call.Args().Encode())
 }
 
 /* single is the one frame that arrived this evaluation, or nil when none did. */
@@ -129,7 +137,7 @@ func (server *BookServer) instruments(data json.RawMessage) error {
 	return nil
 }
 
-func (server *BookServer) level3(kind string, data json.RawMessage, depth int64) error {
+func (server *BookServer) level3(kind string, data json.RawMessage, depth int64, encode bool) error {
 	if depth <= 0 {
 		return server.Error(errnie.Err(
 			errnie.Validation,
@@ -166,6 +174,9 @@ func (server *BookServer) level3(kind string, data json.RawMessage, depth int64)
 	}
 
 	entry := entries[0]
+	if err := server.flow(entry, kind); err != nil {
+		return err
+	}
 	symbol, found := entry["symbol"].(string)
 
 	if !found || symbol == "" {
@@ -200,7 +211,13 @@ func (server *BookServer) level3(kind string, data json.RawMessage, depth int64)
 		delete(server.books, symbol)
 		return nil
 	}
-	return server.report(symbol, held)
+	server.project(held)
+	server.reconciled++
+
+	if encode {
+		return server.report(symbol, held)
+	}
+	return nil
 }
 
 func (server *BookServer) report(symbol string, held *book.Book) error {
@@ -253,6 +270,21 @@ func (server *BookServer) Done(ctx context.Context, call Book_done) error {
 
 	if err := results.SetOut(server.out); err != nil {
 		return server.Error(errnie.Err(errnie.Internal, "paper.book: emit", err))
+	}
+	results.SetReconciled(server.reconciled)
+	values, err := results.NewValues(int32(len(server.values)))
+
+	if err != nil {
+		return errnie.Error(err)
+	}
+	present, err := results.NewPresent(int32(len(server.present)))
+
+	if err != nil {
+		return errnie.Error(err)
+	}
+	for index, value := range server.values {
+		values.Set(index, value)
+		present.Set(index, server.present[index])
 	}
 
 	server.out = nil

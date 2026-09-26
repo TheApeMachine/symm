@@ -102,8 +102,8 @@ func (server *GridServer) Write(ctx context.Context, call Grid_write) error {
 		return server.observe(call.Args())
 	}
 
-	// Each Workspace observation carries one record. The native sequencer
-	// owns concurrent feed admission, so a Grid never hides a second queue.
+	// Each Workspace invocation carries one source record. The native ring
+	// retains the cycle's records, so a Grid never hides a second queue.
 	arrivals := 0
 	for index := range feeds.Len() {
 		payload, err := feeds.At(index)
@@ -518,26 +518,6 @@ func readInterest(resolved map[string]any, interest string) (float64, bool) {
 		switch value := resolved[interest].(type) {
 		case float64:
 			return value, true
-		case []any:
-			sum := 0.0
-
-			for _, item := range value {
-				order, ok := item.(map[string]any)
-
-				if ok {
-					qty, hasQty := order["order_qty"].(float64)
-
-					if hasQty {
-						sum += qty
-					}
-				}
-			}
-
-			if sum > 0 {
-				return sum, true
-			}
-
-			return float64(len(value)), true
 		case string:
 			// A time is read as the instant it names, in nanoseconds since
 			// the epoch, so a metric asking for a timestamp gets a number.
@@ -616,54 +596,6 @@ func walkInterest(document any, segments []string) (any, bool) {
 		}
 
 		next, found := object[segment]
-
-		if !found && segment == "bid" {
-			bids, ok := object["bids"].([]any)
-
-			if ok && len(bids) > 0 {
-				first, isObj := bids[0].(map[string]any)
-
-				if isObj {
-					next, found = first["limit_price"]
-				}
-			}
-		}
-
-		if !found && segment == "bid_qty" {
-			bids, ok := object["bids"].([]any)
-
-			if ok && len(bids) > 0 {
-				first, isObj := bids[0].(map[string]any)
-
-				if isObj {
-					next, found = first["order_qty"]
-				}
-			}
-		}
-
-		if !found && segment == "ask" {
-			asks, ok := object["asks"].([]any)
-
-			if ok && len(asks) > 0 {
-				first, isObj := asks[0].(map[string]any)
-
-				if isObj {
-					next, found = first["limit_price"]
-				}
-			}
-		}
-
-		if !found && segment == "ask_qty" {
-			asks, ok := object["asks"].([]any)
-
-			if ok && len(asks) > 0 {
-				first, isObj := asks[0].(map[string]any)
-
-				if isObj {
-					next, found = first["order_qty"]
-				}
-			}
-		}
 
 		if !found && hasMarket {
 			next, found = market[segment]

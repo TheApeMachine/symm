@@ -51,17 +51,15 @@ and delegates streaming upgrades to the WebSocket and WebRTC protocol servers.
 */
 type HTTPServerServer struct {
 	*runtime.System
-	httpServer    *stdhttp.Server
-	wsServer      *websocket.WebSocketServerServer
-	webrtcServer  *webrtc.WebRTCServerServer
-	incoming      *lf.Queue[[]byte]
-	out           []byte
-	bind          error
-	address       string
-	listening     bool
-	inspection    inspection
-	publicationMu sync.Mutex
-	publications  map[[3]string]string
+	httpServer *stdhttp.Server
+	*websocket.WebSocketServerServer
+	webrtcServer *webrtc.WebRTCServerServer
+	incoming     *lf.Queue[[]byte]
+	out          []byte
+	bind         error
+	address      string
+	listening    bool
+	inspection   inspection
 }
 
 func NewHTTPServer(ctx context.Context) *HTTPServerServer {
@@ -70,10 +68,10 @@ func NewHTTPServer(ctx context.Context) *HTTPServerServer {
 	}
 
 	server := &HTTPServerServer{
-		System:       runtime.NewSystem(ctx, "http.server"),
-		wsServer:     websocket.NewWebSocketServer(ctx),
-		webrtcServer: webrtc.NewWebRTCServer(ctx),
-		incoming:     lf.NewQueue[[]byte](),
+		System:                runtime.NewSystem(ctx, "http.server"),
+		WebSocketServerServer: websocket.NewWebSocketServer(ctx),
+		webrtcServer:          webrtc.NewWebRTCServer(ctx),
+		incoming:              lf.NewQueue[[]byte](),
 	}
 
 	server.httpServer = &stdhttp.Server{Handler: server.Handler()}
@@ -109,7 +107,6 @@ func (server *HTTPServerServer) listen(address string) error {
 			errnie.Error(errnie.Err(errnie.IO, "http.server: serve", err))
 		}
 	}()
-	server.wsServer.OnJoin(server.replayBindings)
 	go func() {
 		<-server.Context().Done()
 		if err := server.httpServer.Close(); err != nil {
@@ -271,8 +268,8 @@ func (server *HTTPServerServer) Handler() stdhttp.Handler {
 
 	// Mount WebRTC and WebSocket handlers
 	mux.HandleFunc("POST /fluid/webrtc/offer", server.webrtcServer.OfferHandler())
-	mux.HandleFunc("GET /ws", server.wsServer.UpgradeHandler())
-	mux.HandleFunc("GET /hindsight/timeline", server.wsServer.UpgradeHandler())
+	mux.HandleFunc("GET /ws", server.WebSocketServerServer.UpgradeHandler())
+	mux.HandleFunc("GET /hindsight/timeline", server.WebSocketServerServer.UpgradeHandler())
 
 	return stdhttp.HandlerFunc(func(writer stdhttp.ResponseWriter, request *stdhttp.Request) {
 		writer.Header().Set("Access-Control-Allow-Origin", "*")
@@ -317,7 +314,7 @@ func (server *HTTPServerServer) Write(ctx context.Context, call HTTPServer_write
 	}
 
 	if len(data) > 0 {
-		server.wsServer.Broadcast(data)
+		server.WebSocketServerServer.Broadcast(data)
 		server.webrtcServer.Broadcast(data)
 		server.out = bytes.Clone(data)
 	}
@@ -366,13 +363,6 @@ func (server *HTTPServerServer) Done(ctx context.Context, call HTTPServer_done) 
 }
 
 /*
-WebSocketServer returns the underlying WebSocket server component.
-*/
-func (server *HTTPServerServer) WebSocketServer() *websocket.WebSocketServerServer {
-	return server.wsServer
-}
-
-/*
 WebRTCServer returns the underlying WebRTC server component.
 */
 func (server *HTTPServerServer) WebRTCServer() *webrtc.WebRTCServerServer {
@@ -388,7 +378,7 @@ func (server *HTTPServerServer) Close() error {
 	if server.httpServer != nil {
 		err = server.httpServer.Close()
 	}
-	return errnie.Error(errors.Join(err, server.wsServer.Close(), server.webrtcServer.Close(), server.System.Close()))
+	return errnie.Error(errors.Join(err, server.WebSocketServerServer.Close(), server.webrtcServer.Close(), server.System.Close()))
 }
 
 /* Shutdown releases the server with the lifetime of its Cap'n Proto capability. */

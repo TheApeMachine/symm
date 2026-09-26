@@ -31,11 +31,11 @@ struct Binding {
 }
 
 # A completed call means the existing node graph finished this observation.
-struct Completion { outputs @0 :List(Result); bindings @1 :Data; }
+struct Completion { outputs @0 :List(Result); bindings @1 :Data; data @2 :Data; }
 
 interface Stage $Go.name("StageNode") {
  step @0 (epoch :Int64, sequence :Int64, data :Data, entry :Text,
-          upstream :List(Result), bindings :List(Binding), outputs :List(Text), texts :List(Text))
+          upstream :List(Result), bindings :List(Binding), outputs :List(Text), texts :List(Text), record :Text)
       -> Completion;
  # Fence drains durable state owned by this stage and its children.
  fence @1 () -> ();
@@ -43,7 +43,7 @@ interface Stage $Go.name("StageNode") {
 
 interface Consumer extends(Stage, Configured) {
  write @0 (target :Stage, entry :Text, name :Text,
-           bindings :Text, outputs :List(Text), receiver :Receiver, snapshot :Snapshot, checkpoint :Checkpoint, checkpointReady :Bool) -> stream;
+           bindings :Text, outputs :List(Text), receiver :Receiver, snapshot :Snapshot, checkpoint :Checkpoint, checkpointReady :Bool, record :Text) -> stream;
  done @1 () -> (epoch :Int64, sequence :Int64, completed :UInt64,
-               status :Status, outputs :List(Result));
+               status :Status, outputs :List(Result), data :Data);
 }

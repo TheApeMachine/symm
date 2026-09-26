@@ -18,10 +18,14 @@ type workspaceFixture struct {
 	consumers []runtime.Consumer
 	groups    []runtime.Group
 	targets   []runtime.StageNode
+	sources   bool
 }
 
 func newWorkspaceFixture(ctx context.Context, capacity uint32, stages ...[]*recordingStage) (*workspaceFixture, error) {
 	fixture := &workspaceFixture{client: runtime.Workspace_ServerToClient(runtime.NewWorkspace(ctx))}
+	if len(stages) > 0 && len(stages[0]) > 0 {
+		fixture.sources = stages[0][0].source != nil
+	}
 
 	for _, stagesInGroup := range stages {
 		members := []runtime.Consumer{}
@@ -59,6 +63,7 @@ func (fixture *workspaceFixture) configure(ctx context.Context, capacity uint32,
 		params.SetWriters(1)
 		params.SetEpoch(77)
 		params.SetAdmit(admit)
+		params.SetAdvance(fixture.sources)
 		groups, err := params.NewGroups(int32(len(fixture.groups)))
 
 		if err != nil {

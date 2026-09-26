@@ -180,6 +180,62 @@ describe("optimizeOrthogonalLayout", () => {
 		expect(posTwo.x).toBeLessThan(posThree.x);
 	});
 
+	it("prevents overlapping for tall nodes with form controls or spatial measurements", () => {
+		const nodes = {
+			source: {
+				id: "source",
+				type: "source",
+				connections: {
+					inputs: {},
+					outputs: {
+						out: [
+							{ nodeId: "consumerAlpha", portName: "target" },
+							{ nodeId: "consumerBeta", portName: "target" },
+						],
+					},
+				},
+			},
+			consumerAlpha: {
+				id: "consumerAlpha",
+				type: "runtime.Consumer",
+				height: 550,
+				connections: {
+					inputs: { target: [{ nodeId: "source", portName: "out" }] },
+					outputs: {},
+				},
+			},
+			consumerBeta: {
+				id: "consumerBeta",
+				type: "runtime.Consumer",
+				height: 550,
+				connections: {
+					inputs: { target: [{ nodeId: "source", portName: "out" }] },
+					outputs: {},
+				},
+			},
+		} as unknown as NodeMap;
+
+		const updates = optimizeOrthogonalLayout(nodes);
+		const coordAlpha = updates.find((item) => item.nodeId === "consumerAlpha");
+		const coordBeta = updates.find((item) => item.nodeId === "consumerBeta");
+
+		expect(coordAlpha).toBeDefined();
+		expect(coordBeta).toBeDefined();
+
+		if (!coordAlpha || !coordBeta) {
+			throw new Error("Coordinates must be defined");
+		}
+
+		const [firstConsumer, secondConsumer] =
+			coordAlpha.y < coordBeta.y
+				? [coordAlpha, coordBeta]
+				: [coordBeta, coordAlpha];
+
+		expect(secondConsumer.y).toBeGreaterThanOrEqual(
+			firstConsumer.y + 550 + MIN_VERTICAL_GAP,
+		);
+	});
+
 	it("successfully optimizes layout for the full system manifest", () => {
 		const nodes = systemGraph.nodes as unknown as NodeMap;
 		const updates = optimizeOrthogonalLayout(nodes);

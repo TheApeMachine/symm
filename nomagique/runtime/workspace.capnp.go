@@ -65,7 +65,7 @@ func (c Workspace) Step(ctx context.Context, params func(StageNode_step_Params) 
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 16, PointerCount: 6}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 16, PointerCount: 7}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(StageNode_step_Params(s)) }
 	}
 
@@ -310,7 +310,7 @@ func (c Workspace_done) Args() Workspace_done_Params {
 
 // AllocResults allocates the results struct.
 func (c Workspace_done) AllocResults() (Workspace_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 40, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 40, PointerCount: 1})
 	return Workspace_done_Results(r), err
 }
 
@@ -448,6 +448,13 @@ func (s Workspace_write_Params) NewGroups(n int32) (Group_List, error) {
 	err = capnp.Struct(s).SetPtr(1, l.ToPtr())
 	return l, err
 }
+func (s Workspace_write_Params) Advance() bool {
+	return capnp.Struct(s).Bit(41)
+}
+
+func (s Workspace_write_Params) SetAdvance(v bool) {
+	capnp.Struct(s).SetBit(41, v)
+}
 
 // Workspace_write_Params_List is a list of Workspace_write_Params.
 type Workspace_write_Params_List = capnp.StructList[Workspace_write_Params]
@@ -537,12 +544,12 @@ type Workspace_done_Results capnp.Struct
 const Workspace_done_Results_TypeID = 0xeb72f9efe3d4d5d8
 
 func NewWorkspace_done_Results(s *capnp.Segment) (Workspace_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 40, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 40, PointerCount: 1})
 	return Workspace_done_Results(st), err
 }
 
 func NewRootWorkspace_done_Results(s *capnp.Segment) (Workspace_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 40, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 40, PointerCount: 1})
 	return Workspace_done_Results(st), err
 }
 
@@ -618,12 +625,25 @@ func (s Workspace_done_Results) SetStatus(v Status) {
 	capnp.Struct(s).SetUint16(32, uint16(v))
 }
 
+func (s Workspace_done_Results) Data() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return []byte(p.Data()), err
+}
+
+func (s Workspace_done_Results) HasData() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s Workspace_done_Results) SetData(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
+}
+
 // Workspace_done_Results_List is a list of Workspace_done_Results.
 type Workspace_done_Results_List = capnp.StructList[Workspace_done_Results]
 
 // NewWorkspace_done_Results creates a new list of Workspace_done_Results.
 func NewWorkspace_done_Results_List(s *capnp.Segment, sz int32) (Workspace_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 40, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 40, PointerCount: 1}, sz)
 	return capnp.StructList[Workspace_done_Results](l), err
 }
 

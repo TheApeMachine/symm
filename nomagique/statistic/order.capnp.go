@@ -209,7 +209,7 @@ func (c Order_done) Args() Order_done_Params {
 
 // AllocResults allocates the results struct.
 func (c Order_done) AllocResults() (Order_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 112, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 152, PointerCount: 0})
 	return Order_done_Results(r), err
 }
 
@@ -381,12 +381,12 @@ type Order_done_Results capnp.Struct
 const Order_done_Results_TypeID = 0x806916e49b75fd64
 
 func NewOrder_done_Results(s *capnp.Segment) (Order_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 112, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 152, PointerCount: 0})
 	return Order_done_Results(st), err
 }
 
 func NewRootOrder_done_Results(s *capnp.Segment) (Order_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 112, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 152, PointerCount: 0})
 	return Order_done_Results(st), err
 }
 
@@ -534,12 +534,52 @@ func (s Order_done_Results) SetZero(v float64) {
 	capnp.Struct(s).SetUint64(104, math.Float64bits(v))
 }
 
+func (s Order_done_Results) SumAbsolute() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(112))
+}
+
+func (s Order_done_Results) SetSumAbsolute(v float64) {
+	capnp.Struct(s).SetUint64(112, math.Float64bits(v))
+}
+
+func (s Order_done_Results) MeanAbsolute() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(120))
+}
+
+func (s Order_done_Results) SetMeanAbsolute(v float64) {
+	capnp.Struct(s).SetUint64(120, math.Float64bits(v))
+}
+
+func (s Order_done_Results) Rms() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(128))
+}
+
+func (s Order_done_Results) SetRms(v float64) {
+	capnp.Struct(s).SetUint64(128, math.Float64bits(v))
+}
+
+func (s Order_done_Results) MedianDeviation() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(136))
+}
+
+func (s Order_done_Results) SetMedianDeviation(v float64) {
+	capnp.Struct(s).SetUint64(136, math.Float64bits(v))
+}
+
+func (s Order_done_Results) MagnitudeDeviation() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(144))
+}
+
+func (s Order_done_Results) SetMagnitudeDeviation(v float64) {
+	capnp.Struct(s).SetUint64(144, math.Float64bits(v))
+}
+
 // Order_done_Results_List is a list of Order_done_Results.
 type Order_done_Results_List = capnp.StructList[Order_done_Results]
 
 // NewOrder_done_Results creates a new list of Order_done_Results.
 func NewOrder_done_Results_List(s *capnp.Segment, sz int32) (Order_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 112, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 152, PointerCount: 0}, sz)
 	return capnp.StructList[Order_done_Results](l), err
 }
 

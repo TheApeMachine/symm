@@ -10,7 +10,7 @@ using import "radix.capnp".Retained;
 # wired into it receive the fields they declared an interest in.
 #
 # The data port carries one parsed record per Workspace observation. Workspace
-# admits concurrent feed arrivals as distinct native LMAX slots; Grid refuses
+# preserves each source record within its native LMAX cycle; Grid refuses
 # multiple nonempty records in one invocation rather than discarding a feed.
 #
 # What a metric asked for comes back out already typed, one slot per declared

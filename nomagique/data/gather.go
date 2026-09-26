@@ -7,8 +7,10 @@ import (
 	"slices"
 	"time"
 
+	capnp "capnproto.org/go/capnp/v3"
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 /* SignalFamily names a consecutive range of required metric coordinates. */
@@ -253,11 +255,11 @@ func (server *GatherServer) Done(ctx context.Context, call Gather_done) error {
 	server.pending = false
 
 	if pending && len(server.identities) > 0 {
-		row, err := server.row(ready)
+		row, err := results.NewRow()
 		if err != nil {
 			return err
 		}
-		if err := results.SetRow(row); err != nil {
+		if err := server.row(row, ready); err != nil {
 			return errnie.Error(err)
 		}
 	}
@@ -351,16 +353,36 @@ func (server *GatherServer) readiness(results Gathered, phase string, ready bool
 }
 
 /* row preserves named metric evidence, including warming cuts, without replaying raw data. */
-func (server *GatherServer) row(ready bool) ([]byte, error) {
-	row := persistedCut{Epoch: server.epoch, Sequence: server.sequence, Symbol: server.scope, Complete: ready, Metrics: make([]persistedMetric, len(server.values)), Provenance: server.provenance}
-	for index, value := range server.values {
-		row.Metrics[index] = persistedMetric{server.identities[index], value, server.covered[index], server.epochs[index], server.sequences[index]}
-	}
-	encoded, err := sonic.Marshal(row)
+func (server *GatherServer) row(record types.Record, ready bool) error {
+	cut, err := NewMetricCut(record.Segment())
 	if err != nil {
-		return nil, errnie.Error(errnie.Err(errnie.Validation, "data.gather: encode metric cut", err))
+		return errnie.Error(err)
 	}
-	return encoded, nil
+	cut.SetEpoch(server.epoch)
+	cut.SetSequence(server.sequence)
+	cut.SetComplete(ready)
+	if err := cut.SetSymbol(server.scope); err != nil {
+		return errnie.Error(err)
+	}
+	if err := cut.SetProvenance(server.provenance); err != nil {
+		return errnie.Error(err)
+	}
+	metrics, err := cut.NewMetrics(int32(len(server.values)))
+	if err != nil {
+		return errnie.Error(err)
+	}
+	for index, value := range server.values {
+		metric := metrics.At(index)
+		if err := metric.SetIdentity(server.identities[index]); err != nil {
+			return errnie.Error(err)
+		}
+		metric.SetValue(value)
+		metric.SetPresent(server.covered[index])
+		metric.SetEpoch(server.epochs[index])
+		metric.SetSequence(server.sequences[index])
+	}
+	record.SetTypeId(MetricCut_TypeID)
+	return errnie.Error(record.SetValue(capnp.Struct(cut).ToPtr()))
 }
 
 /* persistedCut is the stored form of this node's complete causal state. */

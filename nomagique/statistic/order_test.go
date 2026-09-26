@@ -2,6 +2,7 @@ package statistic
 
 import (
 	"context"
+	"math"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -68,6 +69,22 @@ func TestOrderWrite(t *testing.T) {
 			Convey("Then the extreme keeps the sign of the member that moved most", func() {
 				So(results.ExtremeSigned(), ShouldAlmostEqual, -0.03, 1e-12)
 			})
+			Convey("Magnitude and dispersion describe the whole current cohort", func() {
+				So(results.SumAbsolute(), ShouldAlmostEqual, 0.07)
+				So(results.MeanAbsolute(), ShouldAlmostEqual, 0.014)
+				So(results.Rms(), ShouldAlmostEqual, math.Sqrt(0.0015/5))
+				So(results.MedianDeviation(), ShouldAlmostEqual, 0.01)
+				So(results.MagnitudeDeviation(), ShouldAlmostEqual, 0.01)
+			})
+		})
+		Convey("Replacing the cohort does not retain the previous cohort's energy", func() {
+			observe([]float64{1, -2, 3})
+			results := observe([]float64{0.5, 0.5, 0.5})
+			So(results.SumAbsolute(), ShouldEqual, 1.5)
+			So(results.MeanAbsolute(), ShouldEqual, 0.5)
+			So(results.Rms(), ShouldEqual, 0.5)
+			So(results.MedianDeviation(), ShouldEqual, 0)
+			So(results.MagnitudeDeviation(), ShouldEqual, 0)
 		})
 
 		Convey("When the spread of the cross section is measured", func() {
@@ -88,6 +105,34 @@ func TestOrderWrite(t *testing.T) {
 			})
 		})
 	})
+}
+
+/* BenchmarkOrderWrite includes publication of a 1,001-market cross section. */
+func BenchmarkOrderWrite(b *testing.B) {
+	ctx := context.Background()
+	client := Order_ServerToClient(NewOrder(ctx))
+	defer client.Release()
+	b.ReportAllocs()
+	for b.Loop() {
+		if err := client.Write(ctx, func(args Order_write_Params) error {
+			values, err := args.NewValue(1001)
+			if err != nil {
+				return err
+			}
+			for index := range values.Len() {
+				values.Set(index, float64(index-500)/10000)
+			}
+			return nil
+		}); err != nil {
+			b.Fatal(err)
+		}
+		future, release := client.Done(ctx, nil)
+		_, err := future.Struct()
+		release()
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
 }
 
 /*

@@ -27,7 +27,7 @@ func (c Book) Write(ctx context.Context, params func(Book_write_Params) error) e
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 8, PointerCount: 1}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 16, PointerCount: 1}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(Book_write_Params(s)) }
 	}
 
@@ -209,7 +209,7 @@ func (c Book_done) Args() Book_done_Params {
 
 // AllocResults allocates the results struct.
 func (c Book_done) AllocResults() (Book_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 3})
 	return Book_done_Results(r), err
 }
 
@@ -228,12 +228,12 @@ type Book_write_Params capnp.Struct
 const Book_write_Params_TypeID = 0xf3c760863461e015
 
 func NewBook_write_Params(s *capnp.Segment) (Book_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 1})
 	return Book_write_Params(st), err
 }
 
 func NewRootBook_write_Params(s *capnp.Segment) (Book_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 1})
 	return Book_write_Params(st), err
 }
 
@@ -300,12 +300,20 @@ func (s Book_write_Params) SetDepth(v int64) {
 	capnp.Struct(s).SetUint64(0, uint64(v))
 }
 
+func (s Book_write_Params) Encode() bool {
+	return !capnp.Struct(s).Bit(64)
+}
+
+func (s Book_write_Params) SetEncode(v bool) {
+	capnp.Struct(s).SetBit(64, !v)
+}
+
 // Book_write_Params_List is a list of Book_write_Params.
 type Book_write_Params_List = capnp.StructList[Book_write_Params]
 
 // NewBook_write_Params creates a new list of Book_write_Params.
 func NewBook_write_Params_List(s *capnp.Segment, sz int32) (Book_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 16, PointerCount: 1}, sz)
 	return capnp.StructList[Book_write_Params](l), err
 }
 
@@ -388,12 +396,12 @@ type Book_done_Results capnp.Struct
 const Book_done_Results_TypeID = 0xe6813c52350385cf
 
 func NewBook_done_Results(s *capnp.Segment) (Book_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 3})
 	return Book_done_Results(st), err
 }
 
 func NewRootBook_done_Results(s *capnp.Segment) (Book_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 3})
 	return Book_done_Results(st), err
 }
 
@@ -442,12 +450,66 @@ func (s Book_done_Results) SetOut(v []byte) error {
 	return capnp.Struct(s).SetData(0, v)
 }
 
+func (s Book_done_Results) Values() (capnp.Float64List, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return capnp.Float64List(p.List()), err
+}
+
+func (s Book_done_Results) HasValues() bool {
+	return capnp.Struct(s).HasPtr(1)
+}
+
+func (s Book_done_Results) SetValues(v capnp.Float64List) error {
+	return capnp.Struct(s).SetPtr(1, v.ToPtr())
+}
+
+// NewValues sets the values field to a newly
+// allocated capnp.Float64List, preferring placement in s's segment.
+func (s Book_done_Results) NewValues(n int32) (capnp.Float64List, error) {
+	l, err := capnp.NewFloat64List(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return capnp.Float64List{}, err
+	}
+	err = capnp.Struct(s).SetPtr(1, l.ToPtr())
+	return l, err
+}
+func (s Book_done_Results) Present() (capnp.BitList, error) {
+	p, err := capnp.Struct(s).Ptr(2)
+	return capnp.BitList(p.List()), err
+}
+
+func (s Book_done_Results) HasPresent() bool {
+	return capnp.Struct(s).HasPtr(2)
+}
+
+func (s Book_done_Results) SetPresent(v capnp.BitList) error {
+	return capnp.Struct(s).SetPtr(2, v.ToPtr())
+}
+
+// NewPresent sets the present field to a newly
+// allocated capnp.BitList, preferring placement in s's segment.
+func (s Book_done_Results) NewPresent(n int32) (capnp.BitList, error) {
+	l, err := capnp.NewBitList(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return capnp.BitList{}, err
+	}
+	err = capnp.Struct(s).SetPtr(2, l.ToPtr())
+	return l, err
+}
+func (s Book_done_Results) Reconciled() uint64 {
+	return capnp.Struct(s).Uint64(0)
+}
+
+func (s Book_done_Results) SetReconciled(v uint64) {
+	capnp.Struct(s).SetUint64(0, v)
+}
+
 // Book_done_Results_List is a list of Book_done_Results.
 type Book_done_Results_List = capnp.StructList[Book_done_Results]
 
 // NewBook_done_Results creates a new list of Book_done_Results.
 func NewBook_done_Results_List(s *capnp.Segment, sz int32) (Book_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 3}, sz)
 	return capnp.StructList[Book_done_Results](l), err
 }
 
@@ -459,51 +521,55 @@ func (f Book_done_Results_Future) Struct() (Book_done_Results, error) {
 	return Book_done_Results(p.Struct()), err
 }
 
-const schema_a1b07a61838e6a63 = "x\xda\x9c\x92Oh#U\x1c\xc7\xbf\xdf\xf7f\x92\x1e" +
-	"\xcc\xee\x0e\x89\x88\x07\x09hW1\xeeZ\xbb\xf1\xef\xe2" +
-	"\x92\xb0\xec\x82\x88b^\x14O\x0b\xeel\xf2j\xc7\x9d" +
-	"\xccL\x92\x89\xd1j\xc5\"mO\xdaC\x11i\xc1C" +
-	"O\x1em\x0b*x\x12\x11Z\x05\x11o\xdaS)h" +
-	"=\xe8E\x05\x0f\"O&i\xa6=\xa8\xa5\xde\xde\xfc" +
-	"\xf8\xbe\xef\xef3\xdf\xef{`\x97Uk2\xb7\x94\x81" +
-	"PO\xd9\x19\xf3p\xf4\xfb\xaf\xf74.-\xc3)\x11" +
-	"\xb0\xb2@\xf9\xbc\xdc$,\xb3\xf3\xd8\xcc\xfa\x1bwm" +
-	"\xaf\xc29+M\xe3\xa5w\xderg\xd6\xd7\x00\x96\xef" +
-	"\x90u\xe6'e\x16\xc8\x9f\x97\x8b\xf9Yy\x1b`\xfe" +
-	"\x0a\xf7\x16\xc4\x1f\x1f|\x0c\xe7ni\xf67w^\xdb" +
-	"\xec\x99\xedD\xdd\x927\x98\x9f\x1b\xa8g\xe5b\xfe\xeb" +
-	"\xe4d^o\x87\xf1\xca\x9b?mA\x9d#\x01;\x19" +
-	"\x96?\x92_\x11\xcc\x7f)\xf7A\xf3\xcd\xbc|\xa8\xfe" +
-	"\xf8\xdc\x8fC.\x9b\x89`\xcd\xfa4\x11lX\x15\xd0" +
-	"|\xf1\xfd\xcfo?\xf2\xfc\x99_\xe0\x9cK\x1d\xbe\xb5" +
-	"\x06\x0e?X\x1f\x82\xe6\xd6]\xf7\xc1\x85\xeb[\xbfA" +
-	"\x95\x98Z\xcc\xdb\x03\x8bw\xed>h2\xdf=\xe3\xed" +
-	"\xbd\xbfd\x86\x16\x83\x7fg\xe6sb\xd6\x04a\xcb}" +
-	"\xd1k\xf7l=1\xe5\x05n\xd0\xf0\\\x7f\"r#" +
-	"\xdd\x99\xb8\x11\x867\xefo\xb8Q\x10]\xbc\x9c\x1c\x9b" +
-	"a\xa0\xc7kE\xb7\xe3\xb6\xba\xe9=\xeb\xb8{\xbcY" +
-	"#\xd5\x98\xb4\x81\x14\x94\xc1\xc6g\xfd\xf2\xea\x0b+\xce" +
-	"\xe4\x05\x08\xe7l\x96L\xeb\xe1(\x0f\xe7\xf6\x12\x84\x93" +
-	"\xcb\x16\xfb\x1d/\xd6U\x9eN\xf6W\xa9,\xd2\xdc\xf7" +
-	"\xe7\xd5\xcb\xef-\x7f\xb2\x04\xe0\xbfH\xba}\xad\xa3\x03" +
-	"\x94g\xfbY\xad\xa3C\x96Q1\xff\xc42\x8a\x8b\xa3" +
-	"\xe8\xff\x85\xa5F\xa6\xeb3\xc7\xadO\xce\x83\xeb\xe3\xb5" +
-	"A\x84\x80:#-\xc0\"\xe0\xb8\x17\x01uMRM" +
-	"\x0b:d!\xe9\xd1\xd1\xc9\xf0\xba\xa4\xf2\x05\x1d!\x0a" +
-	"\x14\x80\xe3\xd5\x015-\xa9bA\xca\x02%\xe0\xb4/" +
-	"\x00\xca\x97T\xaf\x08V|\xfd\xb2\xf6\xbb\xccA0\x07" +
-	"V\xdcV\xd8\x0b\xe2\xd1\xa7\xf1\x82FG\xb7t\x00\xa6" +
-	"\xb3b7\xd2A\x93\x84 \xc1\x13\xbf\x88zEw{" +
-	"~\xdcUV\xfa7\xb9;\x015&\xa9\x0a\x82\xd9\xb0" +
-	"w\xb8\xfdDa\x0d\xdd\x87\xe6\x80\xba%\xb5\xbf\xfa$" +
-	"\xa0\xaeH\xaa\xda\x91\xb0\x9e.\x01\xea\x09I\xf5\xdc\x91" +
-	"\xb0T\xa2\xacI\xaak\x82\xa6\xdds\x83\xd8\x8b_\x05" +
-	"0\x02:\xdd\x08\xbb\x87t\xbd`\xca\xf3}\xdd<\"" +
-	"8I\x1a\xc3r+\xc3v\xd5X\x8a{o\xd2\xce\xb8" +
-	"\xa4\xaa\x0a\x8eh/%\xb3G%\xd5\x15\xc1\xe2T\xc7" +
-	"mi\x9e\x02k\x92\x83\xc5\xa7\xc0bSG\xf14m" +
-	"\x08\xda\xff+\xb8\x83G\xf6w\x00\x00\x00\xff\xffy\xd8" +
-	"c\xa9"
+const schema_a1b07a61838e6a63 = "x\xda\x94SO\x88\xdcT\x18\xff\xfd\xdeKf,:" +
+	"\xb6a\xb6\x88\x07\x19\xd0\xae\xc2\xda\xban\xd7?X\x94" +
+	"\x19\x16\x0b\"\x8a\xf3\xd6\"*-n\x9ay\xeb\xc6f" +
+	"\x92\xec$\xe9\xda\xdaU\x8b\xd8^\xac+\xf4\xa0-x" +
+	"\xe8I<\xd9.\xa8 \x08\"B\xab ^\xb5'\xe9" +
+	"\xc1z\xd0\x8b\x0a\x1eD\"o\xd2dF\xd0\xb6{\xfb" +
+	"\xf2\xf1{\xdf\xf7\xfb\xf3\xe5\xdeI\xd1\xb1f\x1ak5" +
+	"\x08\xf5\x84]\xcb\x1f\x88\xff\xf8\xed.\xef\x91\x93p\xa6" +
+	"\x08Xu`v\x87\\'\xac\xfc\xe2C\x87\xcf\xbez" +
+	"\xc7\x85\xd3p&e\xee\xbd\xf4\xf6\x1b\xee\xe1\xb3g\x00" +
+	"\xce\xde&\xe7\xd9\x9c\x91u\xa0\xb9C\x1eo\xae\xca[" +
+	"\x80\xfc\xef\xe8\xd21\xf1\xe7\x07\x9f\xc0\xb9S\xe6\x97\xd7" +
+	"/\xbe\xb2\x9e\xe5\x17\x0c\xba/\xf7\xb3yt\x88^\x95" +
+	"\xc7\x9b\xdf\x9a*?\xb2\x1c\xa5\xa7^\xff\xf9<\xd4v" +
+	"\x12\xb0Ms\xf6c\xf9\x0d\xc1\xe6\xd7\xf22\x98\x7f\xf7" +
+	"\xa6\xbc\x7f\xfe\xe1\xa3?AM\x8d\x10g\xac\xcf\x0c\xe2" +
+	"\x9ce\x10_\xfd\xf0\xcb\x89\x07\x9f\xd9\xf2+\x9c\xed\x15" +
+	"\xe0C{8\xe2s\xfb#0\xdf\xfa\xa3{\xdf\xb1\x85" +
+	"\xf3\xbf\x9b\x11\x02\xb0i\x10\xfbj\xc3\x11\xfd\x9aA\xd4" +
+	"\xbe\x7f\xca\xbf\xf4\xfeZ^\x8c\x18\x8a\xdfZ\xff\x92X" +
+	"\xcd\xc3\xa8\xef\xbe\xe8/g\xb6\x9e^\xf4C7\xf4|" +
+	"7\x98\x8e\xddX\x0f\xa6\xf7G\xd1\x81{<7\x0e\xe3" +
+	"]s\xa6\xecE\xa1\xde\xd6m\xb9\x03\xb7\x9fT\xef\xac" +
+	"k\xbd\xe3\x81.\xa9n\x906P\x11ex\xee\x8b\x95" +
+	"\xd9\xd3/\x9crfvB8\x93u\xb2\xca\x87\xa5!" +
+	"\xce\xadS\x10N\xa3\xdeZ\x19\xf8\xa9\xeep\xb3\xd9\xdf" +
+	"\xa1\xb2\xc8\xfc\xee\xbfv\xcf\xbd{\xf2\xd35\x00Wc" +
+	"\x92\xach\x1d_\xa1\xf2\xf4J]\xebx\xc4\xa5L\xe6" +
+	"\xbf\xb8\x94v\xb1\xb4\xfe\x7f\xb8t\xc9j}\xedZ\xeb" +
+	"M=|\xbe\xad;\xb4\x10P[\xa4\x05X\x04\x1cw" +
+	"\x17\xa0\xf6J\xaa%A\x87\x9c0\xa7\xe0h\xd3\\\x90" +
+	"T\x81\xa0#\xc4\x84\x09\xd7\xf1\xe7\x01\xb5$\xa9RA" +
+	"\xca\x09J\xc0Y\xde\x09\xa8@R\xbd,\xd8\x0e\xf4A" +
+	"\x1d$l@\xb0\x01\xb6\xdd~\x94\x85i\xf9\x99\xfb\xa1" +
+	"7\xd0}\x1d\x82U\xaf\x95\xc4:\xec\x91\x10$\xb8\xe1" +
+	"\x8b\x98o\xeb$\x0b\xd2d\\\xcd\xedWSsdL" +
+	"\xcd\xa19@\xa5\x92\xea\x9d\x91\x9a\x13\xcf\x03\xea-I" +
+	"\xf5\x9e`=\xca*\x9e\xed\x83n\x90\xe9\x847\x83]" +
+	"I\xde\x08a\xca\xd7\xe2\x81Nt\x98\x96m\x16\xed|" +
+	"\xa0\xbd(\xf4\xfc\x00R\xf7\xb8\x09\x82\x9b\xb0\xc1\xb0\x0a" +
+	"u\x858@\xddT\xc9\xdb\xfd8\xa0\x1e\x95T\xdd1" +
+	"yON\x01\xea1I\xb5gL\x9e2\xc8\xae\xa4\xda" +
+	"+\x98/gn\x98\xfa\xe9!\x00\xa5\xa4\xcd^\x94\x8c" +
+	"\xb2\xc9\xc2E?\x08to\x0c\xb0\x914\x8a\xe3j\x17" +
+	"\xd75N\xd7\\G\xa7 Q\xb2}\xce\xf4\xf6H\xaa" +
+	"\x05\xc3\xb63AA:\xfbLB\xcfJ\xaa\x9e`k" +
+	"q\xe0\xf6uij\xa30\xb5\xd5\xd3q\xbaD\x1b\x82" +
+	"6\xd8\xd6\xa1\x17\xf5\xb4q\xdc\xfe\xd7\xe5\\\xbf\xbbW" +
+	"\xfe\x84\x7f\x02\x00\x00\xff\xff\x99\xda~\xd0"
 
 func RegisterSchema(reg *schemas.Registry) {
 	reg.Register(&schemas.Schema{

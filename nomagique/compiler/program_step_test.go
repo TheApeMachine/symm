@@ -22,6 +22,7 @@ import (
 	"github.com/theapemachine/symm/nomagique/cognition"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/geometry"
+	"github.com/theapemachine/symm/nomagique/network/websocket"
 	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/store/tables"
@@ -29,6 +30,7 @@ import (
 
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/ui"
+	marketfixture "github.com/theapemachine/symm/tests/market"
 )
 
 /* BenchmarkProgramStep traverses actual definition capabilities through LMAX. */
@@ -991,21 +993,19 @@ func TestProgramStepMarkets(t *testing.T) {
 		So(cut.Which(), ShouldEqual, data.Gathered_Which_idle)
 		row, err := cut.Row()
 		So(err, ShouldBeNil)
-		var stored struct {
-			Symbol   string
-			Sequence int64
-			Metrics  []struct {
-				Identity string
-				Present  bool
-				Sequence int64
-			}
-		}
-		So(json.Unmarshal(row, &stored), ShouldBeNil)
-		So(stored.Symbol, ShouldEqual, "ETH/USD")
-		So(stored.Sequence, ShouldEqual, 63)
-		for _, metric := range stored.Metrics {
-			if metric.Present {
-				So(metric.Sequence%2, ShouldEqual, 1)
+		storedPointer, err := row.Value()
+		So(err, ShouldBeNil)
+		stored := data.MetricCut(storedPointer.Struct())
+		symbol, err := stored.Symbol()
+		So(err, ShouldBeNil)
+		So(symbol, ShouldEqual, "ETH/USD")
+		So(stored.Sequence(), ShouldEqual, 63)
+		metrics, err := stored.Metrics()
+		So(err, ShouldBeNil)
+		for index := range metrics.Len() {
+			metric := metrics.At(index)
+			if metric.Present() {
+				So(metric.Sequence()%2, ShouldEqual, 1)
 			}
 		}
 		for _, identifier := range []string{"definition-pumpdump_ticker_graph", "cut_graph"} {
@@ -1107,5 +1107,275 @@ func TestProgramStepSharedGrid(t *testing.T) {
 			So(values.At(0), ShouldEqual, sample.change)
 			release()
 		}
+	})
+}
+
+/* TestProgramStepCapture verifies the shipping bindings preserve raw frames and provenance. */
+func TestProgramStepCapture(t *testing.T) {
+	Convey("Source group results reach the one raw archive through native bindings", t, func() {
+		ctx := context.Background()
+		graph, err := DefaultRepository().Load("raw_capture")
+		So(err, ShouldBeNil)
+		withoutNodes(graph, "capture")
+		program, err := Compile(graph, nil, DefaultRepository())
+		So(err, ShouldBeNil)
+		stage := runtime.StageNode_ServerToClient(program)
+		defer stage.Release()
+		root, err := DefaultRepository().Load("system")
+		So(err, ShouldBeNil)
+		var configuration struct {
+			Value string `json:"value"`
+		}
+		So(json.Unmarshal(root.Nodes["raw_capture_consumer"].InputData["bindings"], &configuration), ShouldBeNil)
+		var bindings []struct{ Producer, Node, Field, Target string }
+		So(json.Unmarshal([]byte(configuration.Value), &bindings), ShouldBeNil)
+		for generation := range 2 {
+			for ordinal, feed := range []string{"spot", "level3", "futures"} {
+				payload := fmt.Sprintf("snapshot:%s:%d", feed, generation)
+				future, release := stage.Step(ctx, func(params runtime.StageNode_step_Params) error {
+					params.SetEpoch(91)
+					params.SetSequence(int64(generation*3 + ordinal))
+					selected, err := params.NewOutputs(1)
+					if err != nil {
+						return err
+					}
+					if err := selected.Set(0, "envelope"); err != nil {
+						return err
+					}
+					inputs, err := params.NewBindings(int32(len(bindings)))
+					if err != nil {
+						return err
+					}
+					for index, binding := range bindings {
+						for _, err := range []error{inputs.At(index).SetProducer(binding.Producer), inputs.At(index).SetNode(binding.Node), inputs.At(index).SetField(binding.Field), inputs.At(index).SetTarget(binding.Target)} {
+							if err != nil {
+								return err
+							}
+						}
+					}
+					upstream, err := params.NewUpstream(1)
+					if err != nil {
+						return err
+					}
+					output := upstream.At(0)
+					output.SetEpoch(91)
+					output.SetSequence(int64(generation*3 + ordinal))
+					output.SetInterfaceId(websocket.WebSocketClient_TypeID)
+					name := "socket"
+					if feed == "level3" {
+						name = "shards"
+						output.SetInterfaceId(websocket.Shards_TypeID)
+					}
+					if err := output.SetProducer(feed); err != nil {
+						return err
+					}
+					if err := output.SetNode(name); err != nil {
+						return err
+					}
+					received, err := websocket.NewReceived(params.Segment())
+					if err != nil {
+						return err
+					}
+					received.SetFrame()
+					if err := received.Frame().SetRead([]byte(payload)); err != nil {
+						return err
+					}
+					provenance := fmt.Sprintf(`{"session":%q,"sequence":%d,"endpoint":%q,"receivedAt":"2026-09-26T00:00:00Z"}`, feed, generation, "wss://fixture/"+feed)
+					if err := received.Frame().SetProvenance([]byte(provenance)); err != nil {
+						return err
+					}
+					return output.SetValue(capnp.Struct(received).ToPtr())
+				})
+				result, err := future.Struct()
+				So(err, ShouldBeNil)
+				outputs, err := result.Outputs()
+				So(err, ShouldBeNil)
+				So(outputs.Len(), ShouldEqual, 1)
+				pointer, err := outputs.At(0).Value()
+				So(err, ShouldBeNil)
+				captured := store.Captured(pointer.Struct())
+				So(captured.Which(), ShouldEqual, store.Captured_Which_row)
+				actual, err := captured.Row().Payload()
+				So(err, ShouldBeNil)
+				So(string(actual), ShouldEqual, payload)
+				release()
+			}
+		}
+	})
+}
+
+func TestProgramRecord(t *testing.T) {
+	Convey("An authored source output preserves Data and union presence", t, func() {
+		program, err := CompileJSON([]byte(`{"nodes":{"source":{"id":"source","type":"controlflow.Once","inputData":{"trigger":true,"through":"observation"}},"numeric":{"id":"numeric","type":"arithmetic.Add","inputData":{"a":1,"b":2}}}}`), nil, nil)
+		So(err, ShouldBeNil)
+		defer program.Release()
+		So(program.Execute(context.Background(), nil), ShouldBeNil)
+		payload, err := program.record("source.out")
+		So(err, ShouldBeNil)
+		So(string(payload), ShouldEqual, "observation")
+		for _, address := range []string{"missing.out", "source.missing", "numeric.out"} {
+			_, err := program.record(address)
+			So(err, ShouldNotBeNil)
+		}
+		So(program.Execute(context.Background(), nil), ShouldBeNil)
+		payload, err = program.record("source.out")
+		So(err, ShouldBeNil)
+		So(payload, ShouldBeEmpty)
+	})
+}
+
+func TestProgramStepBookSignals(t *testing.T) {
+	Convey("Production groups compute book, trade and derivatives signals through a market reversal", t, func() {
+		graph, err := DefaultRepository().Load("system")
+		So(err, ShouldBeNil)
+		for identifier, node := range graph.Nodes {
+			if !strings.HasPrefix(node.Type, "runtime.") && !strings.HasSuffix(identifier, "_graph") {
+				withoutNodes(graph, identifier)
+			}
+		}
+		withoutLearningStages(graph)
+		program, err := Compile(graph, nil, DefaultRepository())
+		So(err, ShouldBeNil)
+		defer program.Release()
+		ctx := context.Background()
+		So(program.Execute(ctx, nil), ShouldBeNil)
+		workspace := runtime.Workspace(program.Nodes[program.NodeMap["workspace"]].Client)
+		sequence := 0
+		for index, price := range marketfixture.Reversal() {
+			stamp := time.Unix(1700000000+int64(index), 0).UTC().Format(time.RFC3339Nano)
+			// Vary displayed depth and trade direction independently of the
+			// rise/fall/recovery to exercise nonconstant fractions and spreads.
+			spread, quantity := float64(index%3+1), float64(index%5+1)
+			orders := [2][]marketfixture.Order{
+				{{fmt.Sprint(price - spread), fmt.Sprint(quantity), stamp}},
+				{{fmt.Sprint(price + spread), "3", stamp}},
+			}
+			bookFrame := marketfixture.Level3Frame("snapshot", "BTC/USD", [2][]marketfixture.Order{}, orders, "")
+			var bookRecord map[string]any
+			So(json.Unmarshal(bookFrame, &bookRecord), ShouldBeNil)
+			bookRecord["capture"] = map[string]any{"session": "fixture", "sequence": sequence, "record": 0, "endpoint": "wss://fixture", "receivedAt": stamp}
+			bookFrame, err = json.Marshal(bookRecord)
+			So(err, ShouldBeNil)
+			side, tradePrice := "sell", price-spread
+			if index%2 == 1 {
+				side, tradePrice = "buy", price+spread
+			}
+			capture := fmt.Sprintf(`"capture":{"session":"fixture","sequence":%d,"record":0,"endpoint":"wss://fixture","receivedAt":%q}`, sequence, stamp)
+			frames := [][]byte{
+				bookFrame,
+				[]byte(fmt.Sprintf(`{"channel":"ticker",%s,"data":{"symbol":"BTC/USD","last":%g,"bid":%g,"ask":%g}}`, capture, price, price-spread, price+spread)),
+				[]byte(fmt.Sprintf(`{"channel":"trade",%s,"data":{"symbol":"BTC/USD","side":%q,"price":%g,"qty":%g,"timestamp":%q}}`, capture, side, tradePrice, quantity, stamp)),
+				[]byte(fmt.Sprintf(`{"channel":"futures_ticker",%s,"data":{"symbol":"BTC/USD","last":%g,"index":%g,"openInterest":%g}}`, capture, price+spread, price, quantity+100)),
+			}
+			for _, frame := range frames {
+				So(workspace.Write(ctx, func(args runtime.Workspace_write_Params) error {
+					arrivals, err := args.NewData(1)
+					if err != nil {
+						return err
+					}
+					return arrivals.Set(0, frame)
+				}), ShouldBeNil)
+				So(workspace.WaitStreaming(), ShouldBeNil)
+				sequence++
+			}
+		}
+		So(program.Flush(ctx), ShouldBeNil)
+		consumer := runtime.Consumer(program.Nodes[program.NodeMap["cut_consumer"]].Client)
+		future, release := consumer.Done(ctx, nil)
+		defer release()
+		result, err := future.Struct()
+		So(err, ShouldBeNil)
+		outputs, err := result.Outputs()
+		So(err, ShouldBeNil)
+		So(outputs.Len(), ShouldEqual, 1)
+		pointer, err := outputs.At(0).Value()
+		So(err, ShouldBeNil)
+		row, err := data.Gathered(pointer.Struct()).Row()
+		So(err, ShouldBeNil)
+		stored, err := row.Value()
+		So(err, ShouldBeNil)
+		metrics, err := data.MetricCut(stored.Struct()).Metrics()
+		So(err, ShouldBeNil)
+		observed := map[string]bool{}
+		for index := range metrics.Len() {
+			identity, err := metrics.At(index).Identity()
+			So(err, ShouldBeNil)
+			observed[identity] = metrics.At(index).Present()
+		}
+		for _, identity := range []string{
+			"depthflow_level3:observed_notional_imbalance_zscore.out",
+			"pumpdump_level3:spread_zscore.out",
+			"cvd_trade:signed_net_fraction_zscore.out",
+			"toxicity_trade:fill_fraction_zscore:bid.out",
+			"toxicity_trade:fill_fraction_zscore:ask.out",
+			"derivatives_ticker:basis_zscore.out",
+		} {
+			So(observed[identity], ShouldBeTrue)
+		}
+	})
+}
+
+func TestProgramStepCohort(t *testing.T) {
+	Convey("The shipping sentiment stage sees the latest return from every initialized market", t, func() {
+		graph, err := DefaultRepository().Load("system")
+		So(err, ShouldBeNil)
+		for identifier, node := range graph.Nodes {
+			if !strings.HasPrefix(node.Type, "runtime.") && !strings.HasSuffix(identifier, "_graph") {
+				withoutNodes(graph, identifier)
+			}
+		}
+		withoutLearningStages(graph)
+		program, err := Compile(graph, nil, DefaultRepository())
+		So(err, ShouldBeNil)
+		defer program.Release()
+		ctx := context.Background()
+		So(program.Execute(ctx, nil), ShouldBeNil)
+		workspace := runtime.Workspace(program.Nodes[program.NodeMap["workspace"]].Client)
+		for sequence, price := range []float64{100, 100, 100, 110, 110, 90, 121} {
+			symbol := []string{"BTC/USD", "ETH/USD", "SOL/USD"}[sequence%3]
+			So(workspace.Write(ctx, func(args runtime.Workspace_write_Params) error {
+				arrivals, err := args.NewData(1)
+				if err != nil {
+					return err
+				}
+				return arrivals.Set(0, []byte(fmt.Sprintf(`{"channel":"ticker","capture":{"session":"spot","sequence":%d,"record":0,"endpoint":"wss://fixture","receivedAt":"2026-09-26T00:00:00Z"},"data":{"symbol":%q,"last":%g,"bid":%g,"ask":%g}}`, sequence, symbol, price, price-1, price+1)))
+			}), ShouldBeNil)
+			So(workspace.WaitStreaming(), ShouldBeNil)
+		}
+		So(program.Flush(ctx), ShouldBeNil)
+		consumer := runtime.Consumer(program.Nodes[program.NodeMap["definition-sentiment_ticker_consumer"]].Client)
+		future, release := consumer.Done(ctx, nil)
+		defer release()
+		result, err := future.Struct()
+		So(err, ShouldBeNil)
+		outputs, err := result.Outputs()
+		So(err, ShouldBeNil)
+		found := false
+		peers := map[string]float64{}
+		for index := range outputs.Len() {
+			name, err := outputs.At(index).Node()
+			So(err, ShouldBeNil)
+			pointer, err := outputs.At(index).Value()
+			So(err, ShouldBeNil)
+			if name == "same_direction_peer_count" {
+				peers[name] = arithmetic.Subtract_done_Results(pointer.Struct()).Out()
+			}
+			if name == "opposite_direction_peer_count" {
+				peers[name] = arithmetic.Quotient(pointer.Struct()).Out()
+			}
+			if name != "crossSection" {
+				continue
+			}
+			found = true
+			section := statistic.Order_done_Results(pointer.Struct())
+			So(section.Count(), ShouldEqual, 3)
+			So(section.Positive(), ShouldEqual, 2)
+			So(section.Negative(), ShouldEqual, 1)
+			So(section.Zero(), ShouldEqual, 0)
+			So(section.Median(), ShouldAlmostEqual, math.Log(1.1))
+			So(section.ExtremeMagnitude(), ShouldAlmostEqual, -math.Log(0.9))
+		}
+		So(found, ShouldBeTrue)
+		So(peers, ShouldResemble, map[string]float64{"same_direction_peer_count": 1, "opposite_direction_peer_count": 1})
 	})
 }

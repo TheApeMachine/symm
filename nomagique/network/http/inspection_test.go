@@ -76,7 +76,7 @@ func inspectionFixture(t testing.TB, live bool) *HTTPServerServer {
 	}
 	release()
 	ctx := context.Background()
-	server := &HTTPServerServer{System: runtime.NewSystem(ctx, "inspection.test"), wsServer: websocket.NewWebSocketServer(ctx), webrtcServer: webrtc.NewWebRTCServer(ctx), incoming: lf.NewQueue[[]byte]()}
+	server := &HTTPServerServer{System: runtime.NewSystem(ctx, "inspection.test"), WebSocketServerServer: websocket.NewWebSocketServer(ctx), webrtcServer: webrtc.NewWebRTCServer(ctx), incoming: lf.NewQueue[[]byte]()}
 	server.Transition(runtime.READY)
 	client := HTTPServer_ServerToClient(server)
 	t.Cleanup(client.Release)
@@ -101,6 +101,22 @@ func TestInspectionServeHTTP(t *testing.T) {
 	Convey("HTTP routes call the graph-connected Cap'n Proto query node", t, func() {
 		server := inspectionFixture(t, false)
 		handler := server.Handler()
+		Convey("The metric map describes the current native cut vocabulary", func() {
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, httptest.NewRequest("GET", "/hindsight/metric-map", nil))
+			So(response.Code, ShouldEqual, 200)
+			var mapping struct {
+				Metrics map[string]struct {
+					Source, Metric, Destinations string
+				}
+				Signals map[string]json.RawMessage
+			}
+			So(json.Unmarshal(response.Body.Bytes(), &mapping), ShouldBeNil)
+			So(len(mapping.Signals), ShouldEqual, 15)
+			So(mapping.Metrics["correlation_ticker:hy.correlation"].Destinations, ShouldEqual, "gather.values")
+			So(mapping.Metrics["sentiment_ticker:return.out"].Destinations, ShouldEqual, "gather.values_299")
+			So(mapping.Metrics["sentiment_ticker:return.out"].Source, ShouldEqual, "sentiment_ticker")
+		})
 		Convey("Historical records are returned in the frontend's shapes, filtered by epoch", func() {
 			cases := []struct{ path, contains, excludes string }{
 				{"/hindsight/runs", `"startedAt":"2026-09-26`, "missing"},
@@ -191,11 +207,16 @@ func BenchmarkInspectionServeHTTP(b *testing.B) {
 	handler := server.Handler()
 	b.ReportAllocs()
 	b.ResetTimer()
-	for range b.N {
-		response := httptest.NewRecorder()
-		handler.ServeHTTP(response, httptest.NewRequest("GET", "/hindsight/excursions?run=1", nil))
-		if response.Code != 200 {
-			b.Fatal(response.Body.String())
-		}
+	for _, route := range []string{"/hindsight/excursions?run=1", "/hindsight/metric-map"} {
+		b.Run(route, func(b *testing.B) {
+			for range b.N {
+				response := httptest.NewRecorder()
+				handler.ServeHTTP(response, httptest.NewRequest("GET", route, nil))
+
+				if response.Code != 200 {
+					b.Fatal(response.Body.String())
+				}
+			}
+		})
 	}
 }

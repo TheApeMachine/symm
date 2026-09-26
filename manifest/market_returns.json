@@ -1,0 +1,18 @@
+{
+  "id": "market_returns",
+  "name": "Per-market observed ticker return",
+  "nodes": {
+    "return": {
+      "id": "return",
+      "type": "temporal.LogReturns",
+      "width": 280,
+      "height": 172,
+      "x": -1200.0,
+      "y": -400.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {}
+      }
+    }
+  }
+}

@@ -6,6 +6,10 @@ ordering follows edges producer → consumer.
 
 import type { NodeActions } from "#/components/flume/nodes-actions";
 import { portFamily } from "#/components/flume/port-families";
+import {
+	portLayoutKey,
+	type SpatialIndexSnapshot,
+} from "#/components/flume/spatial-index";
 import type { NodeMap } from "#/components/flume/types";
 
 /** How automatic arrangement places nodes relative to dependency order. */
@@ -18,33 +22,91 @@ export type GraphLayoutMode =
 export const NODE_HEADER = 96;
 export const PORT_ROW = 28;
 export const GRID_CELL_SIZE = 32;
-export const NODE_WIDTH = 288;
-export const HORIZONTAL_CORRIDOR = 160;
+export const NODE_WIDTH = 320;
+export const HORIZONTAL_CORRIDOR = 192;
 export const X_STEP = NODE_WIDTH + HORIZONTAL_CORRIDOR;
 export const MIN_VERTICAL_GAP = 64;
 export const START_X = 96;
 export const START_Y = 128;
 
 const HORIZ_STEP = 300;
-/** Vertical gap between dependency ranks (nodes are tall — match ~card + chart header). */
-const VERT_RANK_GAP = 360;
 /** Horizontal spacing between nodes that share the same rank (parallel branches). */
 const VERT_PARALLEL_GAP = 320;
 
-/** Estimates drawn height of a node based on its header and port rows. */
-export const estimateNodeHeight = (node: NodeMap[string]): number => {
-	if (node.type.startsWith("definition:")) {
-		return NODE_HEADER + PORT_ROW;
+/** Estimates drawn height of a node based on its spatial layout, DOM height, or structure. */
+export const estimateNodeHeight = (
+	node: NodeMap[string],
+	spatialIndex?: SpatialIndexSnapshot,
+): number => {
+	if (!node) {
+		return NODE_HEADER;
 	}
 
-	const rows = (ports: Record<string, unknown>) =>
-		new Set(Object.keys(ports).map((port) => portFamily(port) ?? port)).size;
+	const indexed = node.id ? spatialIndex?.nodeLayouts.get(node.id) : undefined;
+	if (indexed && indexed.height > 0) {
+		return indexed.height;
+	}
 
-	const ports =
-		rows(node.connections?.inputs ?? {}) +
-		rows(node.connections?.outputs ?? {});
+	if (typeof node.height === "number" && node.height > 0) {
+		return node.height;
+	}
 
-	return NODE_HEADER + ports * PORT_ROW;
+	if (node.id && typeof document !== "undefined") {
+		const element = document.querySelector(
+			`[data-flume-component="node"][data-node-id="${node.id}"], [data-node-id="${node.id}"]`,
+		);
+		if (element) {
+			const clientHeight = (element as HTMLElement).clientHeight;
+			const rectHeight = Math.round(element.getBoundingClientRect().height);
+			const measuredHeight = rectHeight > 0 ? rectHeight : clientHeight;
+			if (measuredHeight > 0) {
+				return measuredHeight;
+			}
+		}
+	}
+
+	if (node.type?.startsWith("definition:")) {
+		return 128;
+	}
+
+	let totalHeight = NODE_HEADER;
+	const inputData = node.inputData ?? {};
+	const connectedInputs = new Set(Object.keys(node.connections?.inputs ?? {}));
+
+	for (const [key, controlVal] of Object.entries(inputData)) {
+		if (connectedInputs.has(key)) {
+			totalHeight += PORT_ROW;
+			continue;
+		}
+
+		const val = (controlVal as { value?: unknown })?.value ?? controlVal;
+		if (typeof val === "boolean") {
+			totalHeight += 32;
+			continue;
+		}
+
+		if (
+			Array.isArray(val) ||
+			(typeof val === "string" && (val.length > 40 || val.includes("\n")))
+		) {
+			totalHeight += 96;
+			continue;
+		}
+
+		totalHeight += 48;
+	}
+
+	for (const inputKey of connectedInputs) {
+		if (!(inputKey in inputData)) {
+			totalHeight += PORT_ROW;
+		}
+	}
+
+	const outputs = Object.keys(node.connections?.outputs ?? {});
+	const outputCount = outputs.length;
+	totalHeight += outputCount * PORT_ROW;
+
+	return Math.max(totalHeight, NODE_HEADER);
 };
 
 /** Calculates vertical offset of a port relative to the top of the node card. */
@@ -52,22 +114,99 @@ export const estimatePortOffsetY = (
 	node: NodeMap[string],
 	portName: string,
 	isOutput: boolean,
+	spatialIndex?: SpatialIndexSnapshot,
 ): number => {
+	if (!node) {
+		return NODE_HEADER / 2;
+	}
+
+	const transputType = isOutput ? "output" : "input";
+
+	if (node.id && spatialIndex) {
+		const key = portLayoutKey(node.id, portName, transputType);
+		const layout = spatialIndex.portLayouts.get(key);
+		if (layout && layout.offsetY > 0) {
+			return layout.offsetY;
+		}
+
+		const family = portFamily(portName);
+		if (family) {
+			const familyLayout = spatialIndex.portLayouts.get(
+				portLayoutKey(node.id, family, transputType),
+			);
+			if (familyLayout && familyLayout.offsetY > 0) {
+				return familyLayout.offsetY;
+			}
+		}
+	}
+
+	if (node.id && typeof document !== "undefined") {
+		const nodeElement = document.querySelector(
+			`[data-flume-component="node"][data-node-id="${node.id}"], [data-node-id="${node.id}"]`,
+		);
+		if (nodeElement) {
+			const family = portFamily(portName);
+			const portElement =
+				nodeElement.querySelector(
+					`[data-port-name="${portName}"][data-port-transput-type="${transputType}"]`,
+				) ??
+				nodeElement.querySelector(`[data-port-name="${portName}"]`) ??
+				(family
+					? nodeElement.querySelector(`[data-port-name="${family}"]`)
+					: null);
+
+			if (portElement) {
+				const nodeRect = nodeElement.getBoundingClientRect();
+				const portRect = portElement.getBoundingClientRect();
+				const scale = nodeRect.width / (node.width || NODE_WIDTH) || 1;
+				const offsetY =
+					(portRect.top + portRect.height / 2 - nodeRect.top) / scale;
+				if (offsetY > 0) {
+					return Math.round(offsetY);
+				}
+			}
+		}
+	}
+
 	const inputs = Object.keys(node.connections?.inputs ?? {});
 	const outputs = Object.keys(node.connections?.outputs ?? {});
+	const inputData = node.inputData ?? {};
+	const targetFamily = portFamily(portName) ?? portName;
 
+	let inputSectionHeight = 0;
 	const inputFamilies = Array.from(
 		new Set(inputs.map((name) => portFamily(name) ?? name)),
 	);
-	const outputFamilies = Array.from(
-		new Set(outputs.map((name) => portFamily(name) ?? name)),
-	);
 
-	const targetFamily = portFamily(portName) ?? portName;
+	for (const [key, controlVal] of Object.entries(inputData)) {
+		if (inputs.includes(key)) {
+			inputSectionHeight += PORT_ROW;
+			continue;
+		}
+
+		const val = (controlVal as { value?: unknown })?.value ?? controlVal;
+		if (typeof val === "boolean") {
+			inputSectionHeight += 32;
+			continue;
+		}
+
+		if (
+			Array.isArray(val) ||
+			(typeof val === "string" && (val.length > 40 || val.includes("\n")))
+		) {
+			inputSectionHeight += 96;
+			continue;
+		}
+
+		inputSectionHeight += 48;
+	}
 
 	if (isOutput) {
+		const outputFamilies = Array.from(
+			new Set(outputs.map((name) => portFamily(name) ?? name)),
+		);
 		const outIndex = Math.max(0, outputFamilies.indexOf(targetFamily));
-		return NODE_HEADER + (inputFamilies.length + outIndex + 0.5) * PORT_ROW;
+		return NODE_HEADER + inputSectionHeight + (outIndex + 0.5) * PORT_ROW;
 	}
 
 	const inIndex = Math.max(0, inputFamilies.indexOf(targetFamily));
@@ -268,6 +407,7 @@ export function topologicalSortNodeIds(nodes: NodeMap): string[] {
  */
 export function optimizeOrthogonalLayout(
 	nodes: NodeMap,
+	spatialIndex?: SpatialIndexSnapshot,
 ): Array<{ nodeId: string; x: number; y: number }> {
 	const nodeIds = Object.keys(nodes);
 	if (nodeIds.length === 0) {
@@ -376,10 +516,10 @@ export function optimizeOrthogonalLayout(
 			let currentCoordY = START_Y;
 			for (const nodeId of currentLayer) {
 				const snappedCoordY =
-					Math.round(currentCoordY / GRID_CELL_SIZE) * GRID_CELL_SIZE;
+					Math.ceil(currentCoordY / GRID_CELL_SIZE) * GRID_CELL_SIZE;
 				positions.set(nodeId, { coordX: layerCoordX, coordY: snappedCoordY });
 
-				const nodeHeight = estimateNodeHeight(nodes[nodeId]);
+				const nodeHeight = estimateNodeHeight(nodes[nodeId], spatialIndex);
 				currentCoordY = snappedCoordY + nodeHeight + MIN_VERTICAL_GAP;
 			}
 			continue;
@@ -398,6 +538,7 @@ export function optimizeOrthogonalLayout(
 					nodes[nodeId],
 					inputPortName,
 					false,
+					spatialIndex,
 				);
 
 				for (const link of links) {
@@ -410,6 +551,7 @@ export function optimizeOrthogonalLayout(
 						nodes[link.nodeId],
 						link.portName,
 						true,
+						spatialIndex,
 					);
 					const idealNodeY =
 						predecessorPos.coordY + outPortOffsetY - inPortOffsetY;
@@ -426,20 +568,30 @@ export function optimizeOrthogonalLayout(
 			targetPositions.push({ nodeId, targetY: computedTargetY });
 		}
 
+		// Sort targetPositions by targetY ascending to preserve natural top-to-bottom flow
+		targetPositions.sort((itemA, itemB) => {
+			if (itemA.targetY !== itemB.targetY) {
+				return itemA.targetY - itemB.targetY;
+			}
+			return (
+				currentLayer.indexOf(itemA.nodeId) - currentLayer.indexOf(itemB.nodeId)
+			);
+		});
+
 		// Enforce non-overlapping vertical placement with minimum gaps
 		let runningCoordY = START_Y;
 		for (let itemIndex = 0; itemIndex < targetPositions.length; itemIndex++) {
 			const item = targetPositions[itemIndex];
 			const candidateY = Math.max(item.targetY, runningCoordY);
 			const snappedCoordY =
-				Math.round(candidateY / GRID_CELL_SIZE) * GRID_CELL_SIZE;
+				Math.ceil(candidateY / GRID_CELL_SIZE) * GRID_CELL_SIZE;
 
 			positions.set(item.nodeId, {
 				coordX: layerCoordX,
 				coordY: snappedCoordY,
 			});
 
-			const nodeHeight = estimateNodeHeight(nodes[item.nodeId]);
+			const nodeHeight = estimateNodeHeight(nodes[item.nodeId], spatialIndex);
 			runningCoordY = snappedCoordY + nodeHeight + MIN_VERTICAL_GAP;
 		}
 	}
@@ -457,11 +609,12 @@ export function dispatchGraphLayout(
 	mode: GraphLayoutMode,
 	nodeMap: NodeMap,
 	actions: NodeActions,
+	spatialIndex?: SpatialIndexSnapshot,
 ) {
 	if (mode === "freeform") return;
 
 	if (mode === "orthogonal") {
-		const updates = optimizeOrthogonalLayout(nodeMap);
+		const updates = optimizeOrthogonalLayout(nodeMap, spatialIndex);
 		actions.applyNodeCoordinates(updates);
 		return;
 	}
@@ -472,28 +625,43 @@ export function dispatchGraphLayout(
 		const layers: string[][] = Array.from({ length: maxRank + 1 }, () => []);
 
 		for (const id of Object.keys(nodeMap)) {
-			const r = ranks.get(id) ?? 0;
-			layers[r]?.push(id);
+			const rankValue = ranks.get(id) ?? 0;
+			layers[rankValue]?.push(id);
 		}
 		for (const layer of layers) {
-			layer.sort((a, b) => a.localeCompare(b));
+			layer.sort((nodeA, nodeB) => nodeA.localeCompare(nodeB));
 		}
 
 		const updates: Array<{ nodeId: string; x: number; y: number }> = [];
-		layers.forEach((layer, rank) => {
-			const n = layer.length;
-			layer.forEach((nodeId, i) => {
-				const x = n <= 1 ? 0 : (i - (n - 1) / 2) * VERT_PARALLEL_GAP;
-				const y = rank * VERT_RANK_GAP;
-				updates.push({ nodeId, x, y });
-			});
-		});
+		let currentCoordY = 0;
+		for (let rankIndex = 0; rankIndex <= maxRank; rankIndex++) {
+			const layer = layers[rankIndex];
+			const layerCount = layer.length;
+			let maxLayerHeight = 0;
+			for (let nodeIndex = 0; nodeIndex < layerCount; nodeIndex++) {
+				const nodeId = layer[nodeIndex];
+				const coordX =
+					layerCount <= 1
+						? 0
+						: (nodeIndex - (layerCount - 1) / 2) * VERT_PARALLEL_GAP;
+				updates.push({ nodeId, x: coordX, y: currentCoordY });
+				const nodeHeight = estimateNodeHeight(nodeMap[nodeId], spatialIndex);
+				if (nodeHeight > maxLayerHeight) {
+					maxLayerHeight = nodeHeight;
+				}
+			}
+			currentCoordY += maxLayerHeight + MIN_VERTICAL_GAP;
+		}
 		actions.applyNodeCoordinates(updates);
 		return;
 	}
 
 	const order = topologicalSortNodeIds(nodeMap);
 	actions.applyNodeCoordinates(
-		order.map((nodeId, i) => ({ nodeId, x: i * HORIZ_STEP, y: 0 })),
+		order.map((nodeId, nodeIndex) => ({
+			nodeId,
+			x: nodeIndex * HORIZ_STEP,
+			y: 0,
+		})),
 	);
 }

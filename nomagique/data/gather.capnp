@@ -15,7 +15,7 @@ struct Gathered {
   epochs @7 :List(Int64);
   sequences @8 :List(Int64);
   scope @9 :Text;
-  row @10 :Data;
+  row @10 :import "../types/record.capnp".Record;
   union {
     idle @0 :Void;
     gathered :group {
@@ -28,4 +28,21 @@ struct Gathered {
 interface Gather {
   write @0 (values :List(Float64), present :List(Bool), families :Text, epoch :Int64, sequence :Int64, scope :Text, identities :List(Text), row :Data, observation :Data, requireProvenance :Bool) -> stream;
   done @1 () -> Gathered;
+}
+
+# The persisted causal cut, projected into the existing Iceberg columns directly.
+struct MetricCut {
+  epoch @0 :Int64;
+  sequence @1 :Int64;
+  symbol @2 :Text;
+  complete @3 :Bool;
+  metrics @4 :List(Metric);
+  provenance @5 :Text;
+  struct Metric {
+    identity @0 :Text;
+    value @1 :Float64;
+    present @2 :Bool;
+    epoch @3 :Int64;
+    sequence @4 :Int64;
+  }
 }

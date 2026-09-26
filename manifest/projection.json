@@ -11,7 +11,7 @@
       "y": 0.0,
       "inputData": {
         "interests": {
-          "value": "ticker.capture.receivedAt,ticker.data.last,trade.data.qty,trade.data.side=sell,trade.data.price,trade.data.timestamp,level3.data.ask,level3.data.bid,level3.data.ask_qty,level3.data.bid_qty,ticker.data.index,ticker.data.mark,ticker.data.openInterest,ticker.data.ask,ticker.data.bid,ticker.data.ask_qty,ticker.data.bid_qty,level3.data.bids,level3.data.asks,level3.capture.receivedAt,futures_ticker.capture.receivedAt,futures_ticker.data.last,futures_ticker.data.index,futures_ticker.data.mark,futures_ticker.data.openInterest,held:ticker.data.last,futures_trade.data.price,futures_trade.data.qty,futures_trade.data.side=sell,futures_trade.data.type=liquidation,futures_trade.data.timestamp"
+          "value": "ticker.capture.receivedAt,ticker.data.last,trade.data.qty,trade.data.side=sell,trade.data.price,trade.data.timestamp,ticker.data.index,ticker.data.mark,ticker.data.openInterest,ticker.data.ask,ticker.data.bid,ticker.data.ask_qty,ticker.data.bid_qty,level3.capture.receivedAt,futures_ticker.capture.receivedAt,futures_ticker.data.last,futures_ticker.data.index,futures_ticker.data.mark,futures_ticker.data.openInterest,held:ticker.data.last,futures_trade.data.price,futures_trade.data.qty,futures_trade.data.side=sell,futures_trade.data.type=liquidation,futures_trade.data.timestamp"
         },
         "scopePath": {
           "value": "data.symbol"
@@ -19,6 +19,36 @@
       },
       "connections": {
         "inputs": {},
+        "outputs": {
+          "data": [
+            {
+              "nodeId": "book",
+              "portName": "frame_0"
+            }
+          ]
+        }
+      }
+    },
+    "book": {
+      "id": "book",
+      "type": "paper.Book",
+      "inputData": {
+        "depth": {
+          "value": 10
+        },
+        "encode": {
+          "value": false
+        }
+      },
+      "connections": {
+        "inputs": {
+          "frame_0": [
+            {
+              "nodeId": "grid",
+              "portName": "data"
+            }
+          ]
+        },
         "outputs": {}
       }
     }

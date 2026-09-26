@@ -85,7 +85,7 @@ func (c StageFactory) Step(ctx context.Context, params func(StageNode_step_Param
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 16, PointerCount: 6}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 16, PointerCount: 7}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(StageNode_step_Params(s)) }
 	}
 

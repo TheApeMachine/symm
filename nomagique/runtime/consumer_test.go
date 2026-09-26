@@ -6,6 +6,7 @@ import (
 	"sync"
 	"testing"
 
+	capnp "capnproto.org/go/capnp/v3"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
@@ -25,6 +26,7 @@ type recordingStage struct {
 	failure      error
 	echo         bool
 	before       func(recordedObservation) error
+	source       func(recordedObservation) string
 }
 
 func (stage *recordingStage) Step(ctx context.Context, call runtime.StageNode_step) error {
@@ -59,6 +61,25 @@ func (stage *recordingStage) Step(ctx context.Context, call runtime.StageNode_st
 	stage.mutex.Lock()
 	stage.observations = append(stage.observations, observation)
 	stage.mutex.Unlock()
+	if stage.source != nil {
+		results, err := call.AllocResults()
+		if err != nil {
+			return err
+		}
+		payload := stage.source(observation)
+		if err := results.SetData([]byte(payload)); err != nil {
+			return err
+		}
+		outputs, err := results.NewOutputs(1)
+		if err != nil {
+			return err
+		}
+		value, err := capnp.NewText(results.Segment(), payload)
+		if err != nil {
+			return err
+		}
+		return outputs.At(0).SetValue(value.ToPtr())
+	}
 	if stage.echo {
 		upstream, err := call.Args().Upstream()
 		if err != nil {

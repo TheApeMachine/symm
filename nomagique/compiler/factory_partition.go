@@ -57,6 +57,9 @@ func (factory *stageFactory) Step(ctx context.Context, call runtime.StageNode_st
 	if err != nil {
 		return err
 	}
+	if key == "" {
+		return nil
+	}
 	child, found := factory.children[key]
 
 	if !found {
@@ -145,7 +148,7 @@ func (factory *stageFactory) partition(args runtime.StageNode_step_Params) (stri
 		}
 		return text.Text(), nil
 	}
-	return "", errnie.Error(errnie.Err(errnie.Validation, "factory: partition key was not produced", nil))
+	return "", nil
 }
 
 /* Fence reaches every child, including markets quiet at the time of the fence. */

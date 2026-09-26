@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	capnp "capnproto.org/go/capnp/v3"
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/array"
 	"github.com/apache/arrow-go/v18/arrow/memory"
@@ -19,6 +20,7 @@ import (
 	icetable "github.com/apache/iceberg-go/table"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/nomagique/types"
 
 	// Registers the s3:// file IO the warehouse stores its metadata and data files behind.
 	_ "github.com/apache/iceberg-go/io/gocloud"
@@ -58,7 +60,8 @@ type IcebergTableServer struct {
 	declaration string
 	table       *icetable.Table
 
-	pending     [][]byte
+	pending     []tableRow
+	native      nativeColumns
 	held        int
 	appendBytes int
 	committed   int64
@@ -124,9 +127,9 @@ func (server *IcebergTableServer) Write(ctx context.Context, call IcebergTable_w
 	if server.failure != nil {
 		return server.failure
 	}
-	arrivals := make([][]byte, 0, rows.Len()+1)
+	arrivals := make([]tableRow, 0, rows.Len()+2)
 	if len(payload) > 0 {
-		arrivals = append(arrivals, payload)
+		arrivals = append(arrivals, heldRow(payload))
 	}
 	size := len(payload)
 	for index := range rows.Len() {
@@ -138,26 +141,46 @@ func (server *IcebergTableServer) Write(ctx context.Context, call IcebergTable_w
 			continue
 		}
 		size += len(row)
-		arrivals = append(arrivals, row)
+		arrivals = append(arrivals, heldRow(row))
+	}
+	record, err := call.Args().Record()
+	if err != nil {
+		return errnie.Error(err)
+	}
+	if record.IsValid() {
+		message, _, err := capnp.NewMessage(capnp.SingleSegment(nil))
+		if err != nil {
+			return errnie.Error(err)
+		}
+		if err := message.SetRoot(capnp.Struct(record).ToPtr()); err != nil {
+			message.Release()
+			return errnie.Error(err)
+		}
+		owned, err := types.ReadRootRecord(message)
+		if err != nil {
+			message.Release()
+			return errnie.Error(err)
+		}
+		length, err := message.TotalSize()
+		if err != nil {
+			owned.Message().Release()
+			return errnie.Error(err)
+		}
+		size += int(length)
+		arrivals = append(arrivals, tableRow{record: owned, size: int(length)})
 	}
 	if size > server.maxPendingBytes-server.held {
+		for _, row := range arrivals {
+			row.release()
+		}
 		return errnie.Error(errnie.Err(errnie.IO, "iceberg: pending byte budget exhausted; batch was not admitted", nil))
 	}
 	for _, row := range arrivals {
-		server.hold(row)
+		server.pending = append(server.pending, row)
+		server.held += row.size
 	}
 
 	return nil
-}
-
-/* hold keeps one row until the next commit; an empty row is nothing written. */
-func (server *IcebergTableServer) hold(row []byte) {
-	if len(row) == 0 {
-		return
-	}
-
-	server.pending = append(server.pending, bytes.Clone(row))
-	server.held += len(row)
 }
 
 /* Flush persists the tail even when it has not reached the append byte budget. */
@@ -172,7 +195,7 @@ func (server *IcebergTableServer) Flush(ctx context.Context, call runtime.Durabl
 			return errnie.Error(ctx.Err())
 		}
 	}
-	err := server.commit(ctx)
+	err := server.commit(ctx, true)
 	server.mutex.Lock()
 	server.failure = err
 	server.mutex.Unlock()
@@ -308,9 +331,10 @@ func (server *IcebergTableServer) dispatch() {
 	}
 	finished := make(chan struct{})
 	server.working = finished
+	forced := server.asked
 	server.asked = false
 	go func() {
-		err := server.commit(context.Background())
+		err := server.commit(context.Background(), forced)
 		server.mutex.Lock()
 		server.failure = err
 		server.working = nil
@@ -331,6 +355,10 @@ func (server *IcebergTableServer) Shutdown() {
 	defer server.mutex.Unlock()
 	if server.held > 0 {
 		errnie.Error(errnie.Err(errnie.IO, "iceberg: capability released with unflushed rows", server.failure))
+		for _, row := range server.pending {
+			row.release()
+		}
+		server.pending = nil
 	}
 }
 
@@ -347,7 +375,7 @@ observation is repairable by whatever reads the table, and a missing one is
 not. A tape with a hole in it cannot be replayed against, and nothing
 downstream can tell a hole from a quiet market.
 */
-func (server *IcebergTableServer) commit(ctx context.Context) error {
+func (server *IcebergTableServer) commit(ctx context.Context, forced bool) error {
 	server.io.Lock()
 	defer server.io.Unlock()
 	server.mutex.Lock()
@@ -380,12 +408,21 @@ func (server *IcebergTableServer) commit(ctx context.Context) error {
 		))
 	}
 
-	sent := 0
+	sent, remaining := 0, 0
+	for _, row := range rows {
+		remaining += row.size
+	}
 
 	for sent < len(rows) {
+		// Size-triggered writes keep the partial tail for the next full batch.
+		// Only a lifecycle flush or explicit commit spends a snapshot on that tail.
+		if !forced && remaining < server.appendBytes {
+			server.restore(rows[sent:])
+			return nil
+		}
 		end, held := sent, 0
-		for end < len(rows) && len(rows[end]) <= server.appendBytes-held {
-			held += len(rows[end])
+		for end < len(rows) && rows[end].size <= server.appendBytes-held {
+			held += rows[end].size
 			end++
 		}
 		if end == sent {
@@ -403,10 +440,12 @@ func (server *IcebergTableServer) commit(ctx context.Context) error {
 		server.committed += int64(end - sent)
 		server.inflight -= end - sent
 		for _, row := range rows[sent:end] {
-			server.held -= len(row)
+			server.held -= row.size
+			row.release()
 		}
 		server.mutex.Unlock()
 
+		remaining -= held
 		sent = end
 	}
 
@@ -414,13 +453,13 @@ func (server *IcebergTableServer) commit(ctx context.Context) error {
 }
 
 /* restore puts unacknowledged rows back at the front of what is held. */
-func (server *IcebergTableServer) restore(rows [][]byte) {
+func (server *IcebergTableServer) restore(rows []tableRow) {
 	if len(rows) == 0 {
 		return
 	}
 
 	server.mutex.Lock()
-	server.pending = append(append([][]byte{}, rows...), server.pending...)
+	server.pending = append(append([]tableRow{}, rows...), server.pending...)
 	server.inflight = 0
 	server.mutex.Unlock()
 }
@@ -429,7 +468,7 @@ func (server *IcebergTableServer) restore(rows [][]byte) {
 appendRange sends one snapshot.
 */
 func (server *IcebergTableServer) appendRange(
-	ctx context.Context, table *icetable.Table, rows [][]byte, start, end int,
+	ctx context.Context, table *icetable.Table, rows []tableRow, start, end int,
 ) error {
 	converted, err := icetable.SchemaToArrowSchema(table.Schema(), nil, true, false)
 	if err != nil {
@@ -438,8 +477,14 @@ func (server *IcebergTableServer) appendRange(
 	builder := array.NewRecordBuilder(memory.DefaultAllocator, converted)
 	defer builder.Release()
 	for _, row := range rows[start:end] {
+		if row.record.IsValid() {
+			if err := server.native.append(builder, row.record); err != nil {
+				return err
+			}
+			continue
+		}
 		var values map[string]json.RawMessage
-		if err := json.Unmarshal(row, &values); err != nil {
+		if err := json.Unmarshal(row.raw, &values); err != nil {
 			return errnie.Error(errnie.Err(errnie.Validation, "iceberg: invalid row", err))
 		}
 		for index, field := range converted.Fields() {

@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"strings"
 	"sync"
-	"sync/atomic"
 
 	"github.com/bytedance/sonic"
 	gorillaws "github.com/gorilla/websocket"
@@ -21,12 +20,13 @@ and lock-free queuing of incoming messages from connected WebSocket peers.
 */
 type WebSocketServerServer struct {
 	*runtime.System
-	upgrader  gorillaws.Upgrader
-	clients   sync.Map
-	joined    atomic.Value
-	incoming  *lf.Queue[[]byte]
-	focusChan chan string
-	out       []byte
+	upgrader      gorillaws.Upgrader
+	clients       sync.Map
+	publicationMu sync.Mutex
+	publications  map[[3]string]string
+	incoming      *lf.Queue[[]byte]
+	focusChan     chan string
+	out           []byte
 }
 
 func NewWebSocketServer(ctx context.Context) *WebSocketServerServer {
@@ -66,12 +66,16 @@ func (server *WebSocketServerServer) UpgradeHandler() http.HandlerFunc {
 		// reconnect; it cannot retain unbounded telemetry or block the graph.
 		outgoing := make(chan []byte, 1)
 		disconnected := make(chan struct{})
-		server.clients.Store(conn, outgoing)
-		go server.transmit(conn, outgoing, disconnected)
-
-		if joined, set := server.joined.Load().(func()); set {
-			joined()
+		peer := &socketOutput{frames: outgoing, wake: make(chan struct{}, 1)}
+		server.publicationMu.Lock()
+		peer.bindings = make(map[[3]string]string, len(server.publications))
+		for key, value := range server.publications {
+			peer.bindings[key] = value
 		}
+		server.clients.Store(conn, peer)
+		server.publicationMu.Unlock()
+		peer.wake <- struct{}{}
+		go server.transmit(conn, peer, disconnected)
 
 		go func() {
 			defer func() {
@@ -134,15 +138,8 @@ func (server *WebSocketServerServer) Write(ctx context.Context, call WebSocketSe
 }
 
 /*
-OnJoin runs join every time a client connects.
-*/
-func (server *WebSocketServerServer) OnJoin(join func()) {
-	server.joined.Store(join)
-}
-
-/*
 Broadcast admits immutable frames without waiting for any peer's socket.
-An overloaded peer is disconnected visibly; reconnect triggers OnJoin refresh.
+An overloaded raw-frame peer is disconnected visibly. UI state uses Publish.
 */
 func (server *WebSocketServerServer) Broadcast(data []byte) {
 	var payload []byte
@@ -152,7 +149,7 @@ func (server *WebSocketServerServer) Broadcast(data []byte) {
 		}
 
 		connection := key.(*gorillaws.Conn)
-		outgoing := value.(chan []byte)
+		outgoing := value.(*socketOutput).frames
 
 		select {
 		case outgoing <- payload:
@@ -165,7 +162,7 @@ func (server *WebSocketServerServer) Broadcast(data []byte) {
 }
 
 /* transmit owns the sole socket writer for a connected peer. */
-func (server *WebSocketServerServer) transmit(connection *gorillaws.Conn, outgoing <-chan []byte, disconnected <-chan struct{}) {
+func (server *WebSocketServerServer) transmit(connection *gorillaws.Conn, peer *socketOutput, disconnected <-chan struct{}) {
 	for {
 		select {
 		case <-server.Context().Done():
@@ -173,14 +170,36 @@ func (server *WebSocketServerServer) transmit(connection *gorillaws.Conn, outgoi
 			return
 		case <-disconnected:
 			return
-		case payload := <-outgoing:
-			if err := connection.WriteMessage(gorillaws.BinaryMessage, payload); err != nil {
-				errnie.Error(errnie.Err(errnie.IO, "websocket: peer write failed", err))
+		case <-peer.wake:
+			payload, err := server.pending(peer)
+			if err != nil {
+				errnie.Error(err)
 				server.disconnect(connection)
+				return
+			}
+			if len(payload) == 0 {
+				continue
+			}
+			if err := connection.WriteMessage(gorillaws.BinaryMessage, payload); err != nil {
+				server.writeFailure(connection, err)
+				return
+			}
+		case payload := <-peer.frames:
+			if err := connection.WriteMessage(gorillaws.BinaryMessage, payload); err != nil {
+				server.writeFailure(connection, err)
 				return
 			}
 		}
 	}
+}
+
+/* writeFailure reports transport failures only while the peer is connected. */
+func (server *WebSocketServerServer) writeFailure(connection *gorillaws.Conn, err error) {
+	if _, connected := server.clients.Load(connection); !connected {
+		return
+	}
+	errnie.Error(errnie.Err(errnie.IO, "websocket: peer write failed", err))
+	server.disconnect(connection)
 }
 
 /* disconnect removes and closes a connection exactly once across both pumps. */

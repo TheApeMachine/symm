@@ -29,6 +29,8 @@ import (
 	"github.com/theapemachine/symm/nomagique/arithmetic"
 	"github.com/theapemachine/symm/nomagique/cognition"
 	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/financial/kraken"
+	"github.com/theapemachine/symm/nomagique/financial/paper"
 	"github.com/theapemachine/symm/nomagique/network/websocket"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/statistic"
@@ -277,12 +279,12 @@ func TestProgramExecuteIdleCapture(t *testing.T) {
 	})
 }
 
-/* The archive and live programs use the existing signal definitions. */
+/* Signal fixtures execute the production Consumer and Workspace ownership path. */
 func TestProgramExecuteSignals(t *testing.T) {
-	Convey("Given the training signal JSON and actual channel-tagged records", t, func() {
+	Convey("Given the production signal stage and actual channel-tagged records", t, func() {
 		ctx := context.Background()
 		replay := func(repository DefinitionRepository) []float64 {
-			program, err := Compile(trainingSignals(t, repository), nil, repository)
+			program, err := Compile(signalFixture(t, repository), nil, repository)
 			So(err, ShouldBeNil)
 			defer program.Release()
 			records := program.NodeMap["records"]
@@ -304,9 +306,24 @@ func TestProgramExecuteSignals(t *testing.T) {
 					So(input.Set(0, []byte(payload)), ShouldBeNil)
 				}
 				So(program.Execute(ctx, map[NodeID]capnp.Struct{records: capnp.Struct(args)}), ShouldBeNil)
-				value, err := program.Float64Result("definition-liquidity_ticker__spread", "out")
+				So(program.Flush(ctx), ShouldBeNil)
+				consumer := runtime.Consumer(program.Nodes[program.NodeMap["definition-liquidity_ticker_consumer"]].Client)
+				future, release := consumer.Done(ctx, nil)
+				done, err := future.Struct()
 				So(err, ShouldBeNil)
-				spreads = append(spreads, value)
+				outputs, err := done.Outputs()
+				So(err, ShouldBeNil)
+				for index := range outputs.Len() {
+					name, err := outputs.At(index).Node()
+					So(err, ShouldBeNil)
+					if name != "spread" {
+						continue
+					}
+					pointer, err := outputs.At(index).Value()
+					So(err, ShouldBeNil)
+					spreads = append(spreads, arithmetic.Subtract_done_Results(pointer.Struct()).Out())
+				}
+				release()
 			}
 			return spreads
 		}
@@ -315,32 +332,33 @@ func TestProgramExecuteSignals(t *testing.T) {
 		})
 		Convey("When one signal connection is changed from ask to last in JSON", func() {
 			repository := NewRepository()
-			graph, err := repository.Load("signals")
+			graph, err := repository.Load("system")
 			So(err, ShouldBeNil)
-			signal := graph.Nodes["definition-liquidity_ticker"]
-			signal.Connections.Inputs["spread.a"] = []ConnectionTarget{{NodeID: "grid", PortName: "values_1"}}
-			grid := graph.Nodes["grid"]
-			for port, targets := range grid.Connections.Outputs {
-				retained := make([]ConnectionTarget, 0, len(targets))
-				for _, target := range targets {
-					if target.NodeID == signal.ID && target.PortName == "spread.a" {
-						continue
-					}
-					retained = append(retained, target)
+			consumer := graph.Nodes["definition-liquidity_ticker_consumer"]
+			var configured struct{ Value string }
+			So(json.Unmarshal(consumer.InputData["bindings"], &configured), ShouldBeNil)
+			var bindings []map[string]any
+			So(json.Unmarshal([]byte(configured.Value), &bindings), ShouldBeNil)
+			for _, binding := range bindings {
+				if binding["target"] == "spread.a" {
+					binding["field"] = "values_1"
 				}
-				grid.Connections.Outputs[port] = retained
 			}
-			grid.Connections.Outputs["values_1"] = append(grid.Connections.Outputs["values_1"], ConnectionTarget{NodeID: signal.ID, PortName: "spread.a"})
-			encoded, err := json.Marshal(graph)
+			encoded, err := json.Marshal(bindings)
 			So(err, ShouldBeNil)
-			So(repository.Save("signals", encoded), ShouldBeNil)
+			consumer.InputData["bindings"], err = json.Marshal(string(encoded))
+			So(err, ShouldBeNil)
+			graph.Nodes[consumer.ID] = consumer
+			encoded, err = json.Marshal(graph)
+			So(err, ShouldBeNil)
+			So(repository.Save("system", encoded), ShouldBeNil)
 			So(replay(repository), ShouldResemble, []float64{1, 1, 2})
 		})
 	})
 }
 
 func BenchmarkProgramExecuteSignals(b *testing.B) {
-	program, err := Compile(trainingSignals(b, DefaultRepository()), nil, DefaultRepository())
+	program, err := Compile(signalFixture(b, DefaultRepository()), nil, DefaultRepository())
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -371,22 +389,29 @@ func BenchmarkProgramExecuteSignals(b *testing.B) {
 		if err := program.Execute(context.Background(), inputs); err != nil {
 			b.Fatal(err)
 		}
+		if err := program.Flush(context.Background()); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
-/* trainingSignals is the shared signal stage with its record boundary injected. */
-func trainingSignals(t testing.TB, repository DefinitionRepository) Graph {
+/* signalFixture supplies records to the real production projection and liquidity groups. */
+func signalFixture(t testing.TB, repository DefinitionRepository) Graph {
 	t.Helper()
-	graph, err := repository.Load("signals")
+	graph, err := repository.Load("system")
 	if err != nil {
 		t.Fatal(err)
 	}
-	graph.Nodes["records"] = Node{ID: "records", Type: "data.Iterate", Connections: Connections{
-		Outputs: map[string][]ConnectionTarget{"out": {{NodeID: "grid", PortName: "data"}}},
-	}}
-	grid := graph.Nodes["grid"]
-	grid.Connections.Inputs["data"] = []ConnectionTarget{{NodeID: "records", PortName: "out"}}
-	graph.Nodes["grid"] = grid
+	keep := map[string]bool{"workspace": true, "projection_graph": true, "projection_consumer": true, "projection_group": true, "metrics_group": true, "definition-liquidity_ticker_consumer": true, "definition-liquidity_ticker_graph": true}
+	for name := range graph.Nodes {
+		if !keep[name] {
+			withoutNodes(graph, name)
+		}
+	}
+	graph.Nodes["records"] = Node{ID: "records", Type: "data.Iterate", Connections: Connections{Outputs: map[string][]ConnectionTarget{"out": {{NodeID: "workspace", PortName: "data"}}}}}
+	workspace := graph.Nodes["workspace"]
+	workspace.Connections.Inputs["data"] = []ConnectionTarget{{NodeID: "records", PortName: "out"}}
+	graph.Nodes["workspace"] = workspace
 	return graph
 }
 
@@ -1084,7 +1109,7 @@ func TestProgramExecuteLiveSpot(t *testing.T) {
 			}
 		}
 		// Only the spot venue is faked; every other outside source leaves.
-		withoutNodes(graph, "level3", "futures", "envelope", "capture")
+		withoutNodes(graph, "level3", "futures", "raw_capture_graph")
 		withoutLearningStages(graph)
 		spot := graph.Nodes["spot"]
 		endpoint, err := json.Marshal(map[string]string{"value": "ws" + strings.TrimPrefix(venue.URL, "http")})
@@ -1180,108 +1205,140 @@ func TestProgramCarriedPayloadQueued(t *testing.T) {
 
 func TestProgramExecuteKraken(t *testing.T) {
 	if os.Getenv("SYMM_LIVE_VERIFY") != "1" {
-		t.Skip("set SYMM_LIVE_VERIFY=1 to verify the live Kraken graph")
+		t.Skip("set SYMM_LIVE_VERIFY=1 to verify the live Kraken source group")
 	}
-	Convey("Given the shipping graph connected to Kraken public spot", t, func() {
+	Convey("The shipping source group joins spot, Level 3 and futures before projection", t, func() {
 		errnie.Apply(&errnie.Config{Level: "error"})
 		defer errnie.Apply(&errnie.Config{Level: "info"})
-		graph, err := NewRepository().Load("system")
-		if err != nil {
-			t.Fatal(err)
-		}
-		for id, node := range graph.Nodes {
-			if node.Type == "http.HTTPServer" {
-				withoutNodes(graph, id)
+		graph, err := DefaultRepository().Load("system")
+		So(err, ShouldBeNil)
+		keep := map[string]bool{"workspace": true, "feeds_group": true, "spot": true, "level3": true, "futures": true, "spot_consumer": true, "level3_consumer": true, "futures_consumer": true, "projection_graph": true, "projection_consumer": true, "projection_group": true}
+		for name := range graph.Nodes {
+			if !keep[name] {
+				withoutNodes(graph, name)
 			}
 		}
-		program, err := Compile(graph, nil, NewRepository())
-		if err != nil {
-			t.Fatal(err)
-		}
+		program, err := Compile(graph, nil, DefaultRepository())
+		So(err, ShouldBeNil)
 		defer program.Release()
-		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
-		subscriptions := map[string]bool{}
+		expected, subscriptions := map[string]bool{}, map[string]bool{}
+		records := map[string]int{}
 		symbols := map[string]bool{}
-		records, signals := 0, 0
-		discovered := false
-		expected := map[string]bool{}
+		projected := 0
+		reconciled := uint64(0)
 		for ctx.Err() == nil {
 			if err := program.Execute(ctx, nil); err != nil {
 				t.Fatal(err)
 			}
-			if result, found := program.Result("spot__socket"); found {
-				received := websocket.Received(result)
-				if received.Which() == websocket.Received_Which_frame {
-					payload, err := received.Frame().Read()
+			for _, name := range []string{"spot", "level3", "futures", "projection"} {
+				client := runtime.Consumer(program.Nodes[program.NodeMap[name+"_consumer"]].Client)
+				future, release := client.Done(ctx, nil)
+				result, err := future.Struct()
+				if err != nil {
+					release()
+					t.Fatal(err)
+				}
+				payload, err := result.Data()
+				if err != nil {
+					release()
+					t.Fatal(err)
+				}
+				if len(payload) > 0 {
+					var record struct {
+						Channel string
+						Data    struct{ Symbol string }
+					}
+					if err := json.Unmarshal(payload, &record); err != nil {
+						release()
+						t.Fatal(err)
+					}
+					records[name+":"+record.Channel]++
+					symbols[record.Data.Symbol] = true
+				}
+				outputs, err := result.Outputs()
+				if err != nil {
+					release()
+					t.Fatal(err)
+				}
+				for index := range outputs.Len() {
+					output := outputs.At(index)
+					pointer, err := output.Value()
 					if err != nil {
+						release()
 						t.Fatal(err)
 					}
-					var frame struct {
-						Channel string          `json:"channel"`
-						Data    json.RawMessage `json:"data"`
-						Success bool            `json:"success"`
-						Result  struct {
-							Channel string `json:"channel"`
-							Symbol  string `json:"symbol"`
-						} `json:"result"`
+					if name == "projection" {
+						projected++
 					}
-					if err := json.Unmarshal(payload, &frame); err != nil {
-						t.Fatal(err)
+					if output.InterfaceId() == paper.Book_TypeID {
+						reconciled = paper.Book_done_Results(pointer.Struct()).Reconciled()
 					}
-					if frame.Channel == "instrument" {
-						discovered = true
-						var instruments struct {
-							Pairs []struct {
-								Symbol string `json:"symbol"`
-								Quote  string `json:"quote"`
-								Status string `json:"status"`
-							} `json:"pairs"`
-						}
-						So(json.Unmarshal(frame.Data, &instruments), ShouldBeNil)
-						for _, pair := range instruments.Pairs {
-							if pair.Quote == "USD" && pair.Status == "online" {
-								expected["ticker:"+pair.Symbol] = true
-								expected["trade:"+pair.Symbol] = true
+					if output.InterfaceId() == kraken.Universe_TypeID {
+						universe := kraken.UniverseResult(pointer.Struct())
+						if universe.Which() == kraken.UniverseResult_Which_ready {
+							pairs, err := universe.Ready().Symbols()
+							if err != nil {
+								release()
+								t.Fatal(err)
+							}
+							for position := range pairs.Len() {
+								symbol, err := pairs.At(position)
+								if err != nil {
+									release()
+									t.Fatal(err)
+								}
+								expected["ticker:"+symbol], expected["trade:"+symbol] = true, true
 							}
 						}
 					}
-					if frame.Success && frame.Result.Symbol != "" {
-						subscriptions[frame.Result.Channel+":"+frame.Result.Symbol] = true
+					if name != "spot" || output.InterfaceId() != websocket.WebSocketClient_TypeID {
+						continue
+					}
+					received := websocket.Received(pointer.Struct())
+					if received.Which() != websocket.Received_Which_frame {
+						continue
+					}
+					raw, err := received.Frame().Read()
+					if err != nil {
+						release()
+						t.Fatal(err)
+					}
+					var ack struct {
+						Success bool
+						Result  struct{ Channel, Symbol string }
+					}
+					if err := json.Unmarshal(raw, &ack); err != nil {
+						release()
+						t.Fatal(err)
+					}
+					if ack.Success && ack.Result.Symbol != "" {
+						subscriptions[ack.Result.Channel+":"+ack.Result.Symbol] = true
 					}
 				}
+				release()
 			}
-			if result, found := program.Result("spot__records"); found && data.Iterate_done_Results(result).Found() {
-				records++
-				payload, err := data.Iterate_done_Results(result).Out()
-				if err != nil {
-					t.Fatal(err)
-				}
-				var record struct {
-					Data struct {
-						Symbol string `json:"symbol"`
-					} `json:"data"`
-				}
-				if err := json.Unmarshal(payload, &record); err != nil {
-					t.Fatal(err)
-				}
-				symbols[record.Data.Symbol] = true
+			complete := len(expected) > 0 && len(expected) == len(subscriptions) && reconciled > 0
+			for _, channel := range []string{"spot:ticker", "spot:trade", "level3:level3", "futures:futures_ticker", "futures:futures_trade"} {
+				complete = complete && records[channel] > 0
 			}
-			if _, found := program.Result("signals__definition-liquidity_ticker__spread"); found {
-				signals++
-			}
-			if discovered && len(expected) > 0 && len(subscriptions) == len(expected) && len(symbols) >= 10 && signals >= 20 {
+			if complete {
 				break
 			}
 			if !program.carriedPayload() {
 				time.Sleep(time.Millisecond)
 			}
 		}
-		if !discovered || len(expected) == 0 || len(subscriptions) != len(expected) || len(symbols) < 10 || signals < 20 {
-			t.Fatalf("live delivery incomplete: discovery=%v subscriptions=%d symbols=%d records=%d signals=%d", discovered, len(subscriptions), len(symbols), records, signals)
-		}
 		So(subscriptions, ShouldResemble, expected)
-		t.Logf("live Kraken: all eligible USD spot pairs subscribed; %d acknowledged subscriptions; %d symbols; %d records; %d liquidity signal evaluations", len(subscriptions), len(symbols), records, signals)
+		So(len(expected), ShouldBeGreaterThan, 0)
+		for _, channel := range []string{"spot:ticker", "spot:trade", "level3:level3", "futures:futures_ticker", "futures:futures_trade"} {
+			So(records[channel], ShouldBeGreaterThan, 0)
+		}
+		So(projected, ShouldBeGreaterThan, 0)
+		So(reconciled, ShouldBeGreaterThan, 0)
+		t.Logf("native Book reconciled %d live Level 3 messages", reconciled)
+		t.Logf("native source group: %d eligible USD pairs, %d subscription acknowledgements, %d markets, %d projections, records=%v", len(expected)/2, len(subscriptions), len(symbols), projected, records)
 	})
 }
 
@@ -1317,7 +1374,36 @@ func withoutNodes(graph Graph, ids ...string) {
 
 	for _, id := range ids {
 		removed[id] = true
+	}
+	for changed := true; changed; {
+		changed = false
+		for id, node := range graph.Nodes {
+			if removed[id] || (node.Type != "runtime.Consumer" && node.Type != "runtime.Group") {
+				continue
+			}
+			dependencies, missing := 0, 0
+			for port, targets := range node.Connections.Inputs {
+				if port != "target" && !strings.HasPrefix(port, "consumers") {
+					continue
+				}
+				for _, target := range targets {
+					dependencies++
+					if removed[target.NodeID] {
+						missing++
+					}
+				}
+			}
+			if dependencies > 0 && dependencies == missing {
+				removed[id], changed = true, true
+			}
+		}
+	}
+	for id := range removed {
 		delete(graph.Nodes, id)
+	}
+	if workspace, exists := graph.Nodes["workspace"]; removed["feeds_group"] && exists {
+		workspace.InputData["advance"] = json.RawMessage(`false`)
+		graph.Nodes["workspace"] = workspace
 	}
 
 	for id, node := range graph.Nodes {
@@ -1388,4 +1474,110 @@ func modelContextFixture(segment *capnp.Segment, vocabulary string, holding bool
 		}
 	}
 	return input, nil
+}
+
+func TestProgramExecuteTradeSignals(t *testing.T) {
+	if os.Getenv("SYMM_LIVE_VERIFY") != "1" {
+		t.Skip("set SYMM_LIVE_VERIFY=1 to verify live trade signals")
+	}
+	Convey("Live source records reach the authored trade toxicity calculation", t, func() {
+		errnie.Apply(&errnie.Config{Level: "error"})
+		defer errnie.Apply(&errnie.Config{Level: "info"})
+		graph, err := DefaultRepository().Load("system")
+		So(err, ShouldBeNil)
+		keep := map[string]bool{"workspace": true, "feeds_group": true, "spot": true, "level3": true, "futures": true, "spot_consumer": true, "level3_consumer": true, "futures_consumer": true, "projection_graph": true, "projection_consumer": true, "projection_group": true, "metrics_group": true, "definition-toxicity_trade_graph": true, "definition-toxicity_trade_consumer": true}
+		for name := range graph.Nodes {
+			if !keep[name] {
+				withoutNodes(graph, name)
+			}
+		}
+		program, err := Compile(graph, nil, DefaultRepository())
+		So(err, ShouldBeNil)
+		defer program.Release()
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		trades, initialized, bidMatches, askMatches := 0, 0, 0, 0
+		defined := map[string]int{}
+		defer func() {
+			t.Logf("live trades=%d initialized books=%d bid matches=%d ask matches=%d defined=%v", trades, initialized, bidMatches, askMatches, defined)
+		}()
+		for ctx.Err() == nil && (defined["fill_fraction_zscore:bid"] == 0 || defined["fill_fraction_zscore:ask"] == 0) {
+			if err := program.Execute(ctx, nil); err != nil {
+				t.Fatal(err)
+			}
+			for _, name := range []string{"spot", "projection", "definition-toxicity_trade"} {
+				client := runtime.Consumer(program.Nodes[program.NodeMap[name+"_consumer"]].Client)
+				future, release := client.Done(ctx, nil)
+				result, err := future.Struct()
+				if err != nil {
+					release()
+					t.Fatal(err)
+				}
+				payload, err := result.Data()
+				if err != nil {
+					release()
+					t.Fatal(err)
+				}
+				if name == "spot" && bytes.Contains(payload, []byte(`"channel":"trade"`)) {
+					trades++
+					if trades <= 3 {
+						t.Logf("trade record: %s", payload)
+					}
+				}
+				outputs, err := result.Outputs()
+				if err != nil {
+					release()
+					t.Fatal(err)
+				}
+				for index := range outputs.Len() {
+					output := outputs.At(index)
+					pointer, err := output.Value()
+					if err != nil {
+						release()
+						t.Fatal(err)
+					}
+					if output.InterfaceId() == paper.Book_TypeID {
+						bookResult := paper.Book_done_Results(pointer.Struct())
+						values, err := bookResult.Values()
+						if err != nil {
+							release()
+							t.Fatal(err)
+						}
+						present, err := bookResult.Present()
+						if err != nil {
+							release()
+							t.Fatal(err)
+						}
+						if present.Len() > 14 && present.At(10) {
+							initialized++
+							if initialized <= 3 {
+								t.Logf("trade book slots: %v", values)
+							}
+							if values.At(13) == 1 {
+								bidMatches++
+							}
+							if values.At(14) == 1 {
+								askMatches++
+							}
+						}
+					}
+					node, err := output.Node()
+					if err != nil {
+						release()
+						t.Fatal(err)
+					}
+					if name == "definition-toxicity_trade" && strings.HasPrefix(node, "fill_fraction_zscore:") {
+						quotient := arithmetic.Quotient(pointer.Struct())
+						if quotient.Which() == arithmetic.Quotient_Which_out {
+							defined[node]++
+						}
+					}
+				}
+				release()
+			}
+		}
+		t.Logf("live trades=%d initialized books=%d bid matches=%d ask matches=%d defined=%v", trades, initialized, bidMatches, askMatches, defined)
+		So(defined["fill_fraction_zscore:bid"], ShouldBeGreaterThan, 0)
+		So(defined["fill_fraction_zscore:ask"], ShouldBeGreaterThan, 0)
+	})
 }

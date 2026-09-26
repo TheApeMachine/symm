@@ -9,6 +9,8 @@ import (
 	server "capnproto.org/go/capnp/v3/server"
 	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
 	context "context"
+	types "github.com/theapemachine/symm/nomagique/types"
+	math "math"
 	strconv "strconv"
 )
 
@@ -193,17 +195,28 @@ func (s Gathered) SetScope(v string) error {
 	return capnp.Struct(s).SetText(6, v)
 }
 
-func (s Gathered) Row() ([]byte, error) {
+func (s Gathered) Row() (types.Record, error) {
 	p, err := capnp.Struct(s).Ptr(7)
-	return []byte(p.Data()), err
+	return types.Record(p.Struct()), err
 }
 
 func (s Gathered) HasRow() bool {
 	return capnp.Struct(s).HasPtr(7)
 }
 
-func (s Gathered) SetRow(v []byte) error {
-	return capnp.Struct(s).SetData(7, v)
+func (s Gathered) SetRow(v types.Record) error {
+	return capnp.Struct(s).SetPtr(7, capnp.Struct(v).ToPtr())
+}
+
+// NewRow sets the row field to a newly
+// allocated types.Record struct, preferring placement in s's segment.
+func (s Gathered) NewRow() (types.Record, error) {
+	ss, err := types.NewRecord(capnp.Struct(s).Segment())
+	if err != nil {
+		return types.Record{}, err
+	}
+	err = capnp.Struct(s).SetPtr(7, capnp.Struct(ss).ToPtr())
+	return ss, err
 }
 
 func (s Gathered) SetIdle() {
@@ -290,6 +303,9 @@ type Gathered_Future struct{ *capnp.Future }
 func (f Gathered_Future) Struct() (Gathered, error) {
 	p, err := f.Future.Ptr()
 	return Gathered(p.Struct()), err
+}
+func (p Gathered_Future) Row() types.Record_Future {
+	return types.Record_Future{Future: p.Future.Field(7, nil)}
 }
 func (p Gathered_Future) Gathered() Gathered_gathered_Future {
 	return Gathered_gathered_Future{p.Future}
@@ -795,4 +811,265 @@ type Gather_done_Params_Future struct{ *capnp.Future }
 func (f Gather_done_Params_Future) Struct() (Gather_done_Params, error) {
 	p, err := f.Future.Ptr()
 	return Gather_done_Params(p.Struct()), err
+}
+
+type MetricCut capnp.Struct
+
+// MetricCut_TypeID is the unique identifier for the type MetricCut.
+const MetricCut_TypeID = 0x93d53e2d3c0d97fb
+
+func NewMetricCut(s *capnp.Segment) (MetricCut, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 3})
+	return MetricCut(st), err
+}
+
+func NewRootMetricCut(s *capnp.Segment) (MetricCut, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 3})
+	return MetricCut(st), err
+}
+
+func ReadRootMetricCut(msg *capnp.Message) (MetricCut, error) {
+	root, err := msg.Root()
+	return MetricCut(root.Struct()), err
+}
+
+func (s MetricCut) String() string {
+	str, _ := text.Marshal(0x93d53e2d3c0d97fb, capnp.Struct(s))
+	return str
+}
+
+func (s MetricCut) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+	return capnp.Struct(s).EncodeAsPtr(seg)
+}
+
+func (MetricCut) DecodeFromPtr(p capnp.Ptr) MetricCut {
+	return MetricCut(capnp.Struct{}.DecodeFromPtr(p))
+}
+
+func (s MetricCut) ToPtr() capnp.Ptr {
+	return capnp.Struct(s).ToPtr()
+}
+func (s MetricCut) IsValid() bool {
+	return capnp.Struct(s).IsValid()
+}
+
+func (s MetricCut) Message() *capnp.Message {
+	return capnp.Struct(s).Message()
+}
+
+func (s MetricCut) Segment() *capnp.Segment {
+	return capnp.Struct(s).Segment()
+}
+func (s MetricCut) Epoch() int64 {
+	return int64(capnp.Struct(s).Uint64(0))
+}
+
+func (s MetricCut) SetEpoch(v int64) {
+	capnp.Struct(s).SetUint64(0, uint64(v))
+}
+
+func (s MetricCut) Sequence() int64 {
+	return int64(capnp.Struct(s).Uint64(8))
+}
+
+func (s MetricCut) SetSequence(v int64) {
+	capnp.Struct(s).SetUint64(8, uint64(v))
+}
+
+func (s MetricCut) Symbol() (string, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return p.Text(), err
+}
+
+func (s MetricCut) HasSymbol() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s MetricCut) SymbolBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return p.TextBytes(), err
+}
+
+func (s MetricCut) SetSymbol(v string) error {
+	return capnp.Struct(s).SetText(0, v)
+}
+
+func (s MetricCut) Complete() bool {
+	return capnp.Struct(s).Bit(128)
+}
+
+func (s MetricCut) SetComplete(v bool) {
+	capnp.Struct(s).SetBit(128, v)
+}
+
+func (s MetricCut) Metrics() (MetricCut_Metric_List, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return MetricCut_Metric_List(p.List()), err
+}
+
+func (s MetricCut) HasMetrics() bool {
+	return capnp.Struct(s).HasPtr(1)
+}
+
+func (s MetricCut) SetMetrics(v MetricCut_Metric_List) error {
+	return capnp.Struct(s).SetPtr(1, v.ToPtr())
+}
+
+// NewMetrics sets the metrics field to a newly
+// allocated MetricCut_Metric_List, preferring placement in s's segment.
+func (s MetricCut) NewMetrics(n int32) (MetricCut_Metric_List, error) {
+	l, err := NewMetricCut_Metric_List(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return MetricCut_Metric_List{}, err
+	}
+	err = capnp.Struct(s).SetPtr(1, l.ToPtr())
+	return l, err
+}
+func (s MetricCut) Provenance() (string, error) {
+	p, err := capnp.Struct(s).Ptr(2)
+	return p.Text(), err
+}
+
+func (s MetricCut) HasProvenance() bool {
+	return capnp.Struct(s).HasPtr(2)
+}
+
+func (s MetricCut) ProvenanceBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(2)
+	return p.TextBytes(), err
+}
+
+func (s MetricCut) SetProvenance(v string) error {
+	return capnp.Struct(s).SetText(2, v)
+}
+
+// MetricCut_List is a list of MetricCut.
+type MetricCut_List = capnp.StructList[MetricCut]
+
+// NewMetricCut creates a new list of MetricCut.
+func NewMetricCut_List(s *capnp.Segment, sz int32) (MetricCut_List, error) {
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 24, PointerCount: 3}, sz)
+	return capnp.StructList[MetricCut](l), err
+}
+
+// MetricCut_Future is a wrapper for a MetricCut promised by a client call.
+type MetricCut_Future struct{ *capnp.Future }
+
+func (f MetricCut_Future) Struct() (MetricCut, error) {
+	p, err := f.Future.Ptr()
+	return MetricCut(p.Struct()), err
+}
+
+type MetricCut_Metric capnp.Struct
+
+// MetricCut_Metric_TypeID is the unique identifier for the type MetricCut_Metric.
+const MetricCut_Metric_TypeID = 0xd8cfc713fb77a698
+
+func NewMetricCut_Metric(s *capnp.Segment) (MetricCut_Metric, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 32, PointerCount: 1})
+	return MetricCut_Metric(st), err
+}
+
+func NewRootMetricCut_Metric(s *capnp.Segment) (MetricCut_Metric, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 32, PointerCount: 1})
+	return MetricCut_Metric(st), err
+}
+
+func ReadRootMetricCut_Metric(msg *capnp.Message) (MetricCut_Metric, error) {
+	root, err := msg.Root()
+	return MetricCut_Metric(root.Struct()), err
+}
+
+func (s MetricCut_Metric) String() string {
+	str, _ := text.Marshal(0xd8cfc713fb77a698, capnp.Struct(s))
+	return str
+}
+
+func (s MetricCut_Metric) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+	return capnp.Struct(s).EncodeAsPtr(seg)
+}
+
+func (MetricCut_Metric) DecodeFromPtr(p capnp.Ptr) MetricCut_Metric {
+	return MetricCut_Metric(capnp.Struct{}.DecodeFromPtr(p))
+}
+
+func (s MetricCut_Metric) ToPtr() capnp.Ptr {
+	return capnp.Struct(s).ToPtr()
+}
+func (s MetricCut_Metric) IsValid() bool {
+	return capnp.Struct(s).IsValid()
+}
+
+func (s MetricCut_Metric) Message() *capnp.Message {
+	return capnp.Struct(s).Message()
+}
+
+func (s MetricCut_Metric) Segment() *capnp.Segment {
+	return capnp.Struct(s).Segment()
+}
+func (s MetricCut_Metric) Identity() (string, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return p.Text(), err
+}
+
+func (s MetricCut_Metric) HasIdentity() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s MetricCut_Metric) IdentityBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return p.TextBytes(), err
+}
+
+func (s MetricCut_Metric) SetIdentity(v string) error {
+	return capnp.Struct(s).SetText(0, v)
+}
+
+func (s MetricCut_Metric) Value() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(0))
+}
+
+func (s MetricCut_Metric) SetValue(v float64) {
+	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
+}
+
+func (s MetricCut_Metric) Present() bool {
+	return capnp.Struct(s).Bit(64)
+}
+
+func (s MetricCut_Metric) SetPresent(v bool) {
+	capnp.Struct(s).SetBit(64, v)
+}
+
+func (s MetricCut_Metric) Epoch() int64 {
+	return int64(capnp.Struct(s).Uint64(16))
+}
+
+func (s MetricCut_Metric) SetEpoch(v int64) {
+	capnp.Struct(s).SetUint64(16, uint64(v))
+}
+
+func (s MetricCut_Metric) Sequence() int64 {
+	return int64(capnp.Struct(s).Uint64(24))
+}
+
+func (s MetricCut_Metric) SetSequence(v int64) {
+	capnp.Struct(s).SetUint64(24, uint64(v))
+}
+
+// MetricCut_Metric_List is a list of MetricCut_Metric.
+type MetricCut_Metric_List = capnp.StructList[MetricCut_Metric]
+
+// NewMetricCut_Metric creates a new list of MetricCut_Metric.
+func NewMetricCut_Metric_List(s *capnp.Segment, sz int32) (MetricCut_Metric_List, error) {
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 32, PointerCount: 1}, sz)
+	return capnp.StructList[MetricCut_Metric](l), err
+}
+
+// MetricCut_Metric_Future is a wrapper for a MetricCut_Metric promised by a client call.
+type MetricCut_Metric_Future struct{ *capnp.Future }
+
+func (f MetricCut_Metric_Future) Struct() (MetricCut_Metric, error) {
+	p, err := f.Future.Ptr()
+	return MetricCut_Metric(p.Struct()), err
 }

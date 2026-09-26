@@ -28,6 +28,11 @@ interface Order {
     count             :Float64,
     positive          :Float64,
     negative          :Float64,
-    zero              :Float64
+    zero              :Float64,
+    sumAbsolute       :Float64,
+    meanAbsolute      :Float64,
+    rms               :Float64,
+    medianDeviation   :Float64,
+    magnitudeDeviation :Float64
   );
 }

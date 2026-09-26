@@ -181,7 +181,7 @@ func TestGatherWrite(t *testing.T) {
 	})
 }
 
-/* BenchmarkGatherWrite uses the 411-coordinate universe declared by signals.json. */
+/* BenchmarkGatherWrite uses the 411-coordinate universe declared by cut.json. */
 func BenchmarkGatherWrite(b *testing.B) {
 	ctx := context.Background()
 	client := data.Gather_ServerToClient(data.NewGather())
@@ -398,9 +398,13 @@ func TestGatherWriteProvenance(t *testing.T) {
 			So(err, ShouldBeNil)
 			row, err := result.Row()
 			So(err, ShouldBeNil)
-			var stored struct{ Provenance string }
-			So(json.Unmarshal(row, &stored), ShouldBeNil)
-			So(stored.Provenance, ShouldContainSubstring, "9007199254740993")
+			So(row.TypeId(), ShouldEqual, uint64(data.MetricCut_TypeID))
+			pointer, err := row.Value()
+			So(err, ShouldBeNil)
+			cut := data.MetricCut(pointer.Struct())
+			provenance, err := cut.Provenance()
+			So(err, ShouldBeNil)
+			So(provenance, ShouldContainSubstring, "9007199254740993")
 			replay := data.Gather_ServerToClient(data.NewGather())
 			So(replay.Write(context.Background(), func(args data.Gather_write_Params) error {
 				names, err := args.NewIdentities(1)
@@ -410,7 +414,11 @@ func TestGatherWriteProvenance(t *testing.T) {
 				if err := names.Set(0, "spread"); err != nil {
 					return err
 				}
-				return args.SetRow(row)
+				encoded, err := json.Marshal(map[string]any{"epoch": cut.Epoch(), "sequence": cut.Sequence(), "symbol": "BTC/USD", "complete": true, "provenance": provenance, "metrics": []any{map[string]any{"identity": "spread", "value": 5, "present": true, "epoch": cut.Epoch(), "sequence": cut.Sequence()}}})
+				if err != nil {
+					return err
+				}
+				return args.SetRow(encoded)
 			}), ShouldBeNil)
 			So(replay.WaitStreaming(), ShouldBeNil)
 			read, done := replay.Done(context.Background(), nil)
@@ -418,7 +426,14 @@ func TestGatherWriteProvenance(t *testing.T) {
 			So(err, ShouldBeNil)
 			restored, err := recovered.Row()
 			So(err, ShouldBeNil)
-			So(string(restored), ShouldEqual, string(row))
+			restoredPointer, err := restored.Value()
+			So(err, ShouldBeNil)
+			restoredCut := data.MetricCut(restoredPointer.Struct())
+			So(restoredCut.Epoch(), ShouldEqual, cut.Epoch())
+			So(restoredCut.Sequence(), ShouldEqual, cut.Sequence())
+			restoredProvenance, err := restoredCut.Provenance()
+			So(err, ShouldBeNil)
+			So(restoredProvenance, ShouldEqual, provenance)
 			done()
 			release()
 			replay.Release()

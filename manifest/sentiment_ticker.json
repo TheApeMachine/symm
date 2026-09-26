@@ -2,41 +2,6 @@
   "id": "sentiment_ticker",
   "name": "sentiment:ticker",
   "nodes": {
-    "return": {
-      "id": "return",
-      "type": "temporal.LogReturns",
-      "width": 280,
-      "height": 172,
-      "x": -1200.0,
-      "y": -400.0,
-      "connections": {
-        "inputs": {},
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "absolute_return",
-              "portName": "value"
-            },
-            {
-              "nodeId": "crossSection",
-              "portName": "value"
-            },
-            {
-              "nodeId": "ownDirection",
-              "portName": "value"
-            },
-            {
-              "nodeId": "squaredReturn",
-              "portName": "value"
-            },
-            {
-              "nodeId": "deviationFromMedian",
-              "portName": "a"
-            }
-          ]
-        }
-      }
-    },
     "absolute_return": {
       "id": "absolute_return",
       "type": "calculus.Absolute",
@@ -45,26 +10,8 @@
       "x": -900.0,
       "y": -400.0,
       "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "return",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "mean_absolute_return",
-              "portName": "value"
-            },
-            {
-              "nodeId": "magnitudeDeviation",
-              "portName": "a"
-            }
-          ]
-        }
+        "inputs": {},
+        "outputs": {}
       }
     },
     "crossSection": {
@@ -75,14 +22,7 @@
       "x": -600.0,
       "y": -200.0,
       "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "return",
-              "portName": "out"
-            }
-          ]
-        },
+        "inputs": {},
         "outputs": {
           "positive": [
             {
@@ -95,30 +35,6 @@
             },
             {
               "nodeId": "directional_participation",
-              "portName": "a"
-            }
-          ],
-          "negative": [
-            {
-              "nodeId": "decline_fraction",
-              "portName": "a"
-            },
-            {
-              "nodeId": "directionalDifference",
-              "portName": "b"
-            },
-            {
-              "nodeId": "directional_participation",
-              "portName": "b"
-            }
-          ],
-          "zero": [
-            {
-              "nodeId": "unchanged_fraction",
-              "portName": "a"
-            },
-            {
-              "nodeId": "zero_return_peer_fraction",
               "portName": "a"
             }
           ],
@@ -152,6 +68,30 @@
               "portName": "b"
             }
           ],
+          "negative": [
+            {
+              "nodeId": "decline_fraction",
+              "portName": "a"
+            },
+            {
+              "nodeId": "directionalDifference",
+              "portName": "b"
+            },
+            {
+              "nodeId": "directional_participation",
+              "portName": "b"
+            }
+          ],
+          "zero": [
+            {
+              "nodeId": "unchanged_fraction",
+              "portName": "a"
+            },
+            {
+              "nodeId": "zeroPeers",
+              "portName": "a"
+            }
+          ],
           "median": [
             {
               "nodeId": "median_return",
@@ -168,14 +108,6 @@
             {
               "nodeId": "medianVariance",
               "portName": "value"
-            },
-            {
-              "nodeId": "cohortDirection",
-              "portName": "value"
-            },
-            {
-              "nodeId": "deviationFromMedian",
-              "portName": "b"
             }
           ],
           "medianAbsolute": [
@@ -204,16 +136,12 @@
               "portName": "value"
             },
             {
-              "nodeId": "median_absolute_return_ratio",
-              "portName": "a"
-            },
-            {
-              "nodeId": "magnitudeDeviation",
-              "portName": "b"
-            },
-            {
               "nodeId": "median_absolute_return_velocity",
               "portName": "val"
+            },
+            {
+              "nodeId": "median_absolute_return_ratio",
+              "portName": "a"
             }
           ],
           "interquartile": [
@@ -260,6 +188,19 @@
             {
               "nodeId": "largest_signed_return",
               "portName": "a"
+            }
+          ],
+          "magnitudeDeviation": [
+            {
+              "nodeId": "largest_move_mad_excess",
+              "portName": "b"
+            }
+          ],
+          "meanAbsolute": [],
+          "sumAbsolute": [
+            {
+              "nodeId": "largest_move_share",
+              "portName": "b"
             }
           ]
         }
@@ -367,6 +308,10 @@
             {
               "nodeId": "breadth",
               "portName": "a"
+            },
+            {
+              "nodeId": "signedCohort",
+              "portName": "a"
             }
           ]
         }
@@ -402,6 +347,10 @@
             },
             {
               "nodeId": "directional_consensus",
+              "portName": "a"
+            },
+            {
+              "nodeId": "activeCohort",
               "portName": "a"
             }
           ]
@@ -1686,81 +1635,16 @@
       "x": 1900.0,
       "y": 0.0,
       "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "return",
-              "portName": "out"
-            }
-          ]
-        },
+        "inputs": {},
         "outputs": {
           "out": [
             {
-              "nodeId": "peerAgreement",
-              "portName": "a"
-            }
-          ]
-        }
-      }
-    },
-    "cohortDirection": {
-      "id": "cohortDirection",
-      "type": "calculus.Sign",
-      "width": 280,
-      "height": 172,
-      "x": 1900.0,
-      "y": 150.0,
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "crossSection",
-              "portName": "median"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "peerAgreement",
-              "portName": "b"
-            }
-          ]
-        }
-      }
-    },
-    "peerAgreement": {
-      "id": "peerAgreement",
-      "type": "arithmetic.Multiply",
-      "width": 280,
-      "height": 172,
-      "x": 2240.0,
-      "y": 75.0,
-      "connections": {
-        "inputs": {
-          "a": [
-            {
-              "nodeId": "ownDirection",
-              "portName": "out"
-            }
-          ],
-          "b": [
-            {
-              "nodeId": "cohortDirection",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "same_direction_peer_count",
-              "portName": "a"
+              "nodeId": "activeOwn",
+              "portName": "value"
             },
             {
-              "nodeId": "oppositeShare",
-              "portName": "a"
+              "nodeId": "signedCohort",
+              "portName": "b"
             }
           ]
         }
@@ -1768,21 +1652,19 @@
     },
     "same_direction_peer_count": {
       "id": "same_direction_peer_count",
-      "type": "calculus.Maximum",
-      "width": 280,
-      "height": 172,
-      "x": 2580.0,
-      "y": 0.0,
-      "inputData": {
-        "b": {
-          "value": 0
-        }
-      },
+      "type": "arithmetic.Subtract",
+      "inputData": {},
       "connections": {
         "inputs": {
           "a": [
             {
-              "nodeId": "peerAgreement",
+              "nodeId": "sameHalf",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "activeOwn",
               "portName": "out"
             }
           ]
@@ -1797,49 +1679,19 @@
         }
       }
     },
-    "oppositeShare": {
-      "id": "oppositeShare",
-      "type": "calculus.Minimum",
-      "width": 280,
-      "height": 172,
-      "x": 2580.0,
-      "y": 150.0,
+    "opposite_direction_peer_count": {
+      "id": "opposite_direction_peer_count",
+      "type": "arithmetic.Divide",
       "inputData": {
         "b": {
-          "value": 0
+          "value": 2
         }
       },
       "connections": {
         "inputs": {
           "a": [
             {
-              "nodeId": "peerAgreement",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "opposite_direction_peer_count",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "opposite_direction_peer_count": {
-      "id": "opposite_direction_peer_count",
-      "type": "calculus.Absolute",
-      "width": 280,
-      "height": 172,
-      "x": 2580.0,
-      "y": 300.0,
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "oppositeShare",
+              "nodeId": "oppositeTotal",
               "portName": "out"
             }
           ]
@@ -1954,8 +1806,8 @@
         "inputs": {
           "a": [
             {
-              "nodeId": "crossSection",
-              "portName": "zero"
+              "nodeId": "zeroPeers",
+              "portName": "out"
             }
           ],
           "b": [
@@ -1993,264 +1845,6 @@
         "outputs": {}
       }
     },
-    "squaredReturn": {
-      "id": "squaredReturn",
-      "type": "calculus.Square",
-      "width": 280,
-      "height": 172,
-      "x": 1900.0,
-      "y": 600.0,
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "return",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "meanSquaredReturn",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "meanSquaredReturn": {
-      "id": "meanSquaredReturn",
-      "type": "statistic.Mean",
-      "width": 280,
-      "height": 172,
-      "x": 2240.0,
-      "y": 600.0,
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "squaredReturn",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "rms_return",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "rms_return": {
-      "id": "rms_return",
-      "type": "calculus.Sqrt",
-      "width": 280,
-      "height": 172,
-      "x": 2580.0,
-      "y": 600.0,
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "meanSquaredReturn",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "mean_absolute_return": {
-      "id": "mean_absolute_return",
-      "type": "statistic.Mean",
-      "width": 280,
-      "height": 172,
-      "x": 2240.0,
-      "y": 750.0,
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "absolute_return",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "largest_move_share",
-              "portName": "b"
-            }
-          ]
-        }
-      }
-    },
-    "deviationFromMedian": {
-      "id": "deviationFromMedian",
-      "type": "arithmetic.Subtract",
-      "width": 280,
-      "height": 172,
-      "x": 1900.0,
-      "y": 900.0,
-      "connections": {
-        "inputs": {
-          "a": [
-            {
-              "nodeId": "return",
-              "portName": "out"
-            }
-          ],
-          "b": [
-            {
-              "nodeId": "crossSection",
-              "portName": "median"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "absoluteDeviation",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "absoluteDeviation": {
-      "id": "absoluteDeviation",
-      "type": "calculus.Absolute",
-      "width": 280,
-      "height": 172,
-      "x": 2240.0,
-      "y": 900.0,
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "deviationFromMedian",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "deviationSpread",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "deviationSpread": {
-      "id": "deviationSpread",
-      "type": "statistic.Order",
-      "width": 280,
-      "height": 172,
-      "x": 2580.0,
-      "y": 900.0,
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "absoluteDeviation",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "magnitudeDeviation": {
-      "id": "magnitudeDeviation",
-      "type": "arithmetic.Subtract",
-      "width": 280,
-      "height": 172,
-      "x": 1900.0,
-      "y": 1050.0,
-      "connections": {
-        "inputs": {
-          "a": [
-            {
-              "nodeId": "absolute_return",
-              "portName": "out"
-            }
-          ],
-          "b": [
-            {
-              "nodeId": "crossSection",
-              "portName": "medianAbsolute"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "absoluteMagnitudeDeviation",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "absoluteMagnitudeDeviation": {
-      "id": "absoluteMagnitudeDeviation",
-      "type": "calculus.Absolute",
-      "width": 280,
-      "height": 172,
-      "x": 2240.0,
-      "y": 1050.0,
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "magnitudeDeviation",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "magnitudeSpread",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "magnitudeSpread": {
-      "id": "magnitudeSpread",
-      "type": "statistic.Order",
-      "width": 280,
-      "height": 172,
-      "x": 2580.0,
-      "y": 1050.0,
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "absoluteMagnitudeDeviation",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "median": [
-            {
-              "nodeId": "largest_move_mad_excess",
-              "portName": "b"
-            }
-          ]
-        }
-      }
-    },
     "largest_move_mad_excess": {
       "id": "largest_move_mad_excess",
       "type": "arithmetic.Divide",
@@ -2268,8 +1862,8 @@
           ],
           "b": [
             {
-              "nodeId": "magnitudeSpread",
-              "portName": "median"
+              "nodeId": "crossSection",
+              "portName": "magnitudeDeviation"
             }
           ]
         },
@@ -2293,8 +1887,8 @@
           ],
           "b": [
             {
-              "nodeId": "mean_absolute_return",
-              "portName": "out"
+              "nodeId": "crossSection",
+              "portName": "sumAbsolute"
             }
           ]
         },
@@ -2477,6 +2071,244 @@
           ]
         },
         "outputs": {}
+      }
+    },
+    "activeOwn": {
+      "id": "activeOwn",
+      "type": "calculus.Absolute",
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "ownDirection",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "activeCohort",
+              "portName": "b"
+            },
+            {
+              "nodeId": "same_direction_peer_count",
+              "portName": "b"
+            },
+            {
+              "nodeId": "ownZero",
+              "portName": "b"
+            }
+          ]
+        }
+      }
+    },
+    "signedCohort": {
+      "id": "signedCohort",
+      "type": "arithmetic.Multiply",
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "directionalDifference",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "ownDirection",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sameTotal",
+              "portName": "b"
+            },
+            {
+              "nodeId": "oppositeTotal",
+              "portName": "b"
+            }
+          ]
+        }
+      }
+    },
+    "activeCohort": {
+      "id": "activeCohort",
+      "type": "arithmetic.Multiply",
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "directional_participation",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "activeOwn",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sameTotal",
+              "portName": "a"
+            },
+            {
+              "nodeId": "oppositeTotal",
+              "portName": "a"
+            }
+          ]
+        }
+      }
+    },
+    "sameTotal": {
+      "id": "sameTotal",
+      "type": "arithmetic.Add",
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "activeCohort",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "signedCohort",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sameHalf",
+              "portName": "a"
+            }
+          ]
+        }
+      }
+    },
+    "sameHalf": {
+      "id": "sameHalf",
+      "type": "arithmetic.Divide",
+      "inputData": {
+        "b": {
+          "value": 2
+        }
+      },
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "sameTotal",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "same_direction_peer_count",
+              "portName": "a"
+            }
+          ]
+        }
+      }
+    },
+    "oppositeTotal": {
+      "id": "oppositeTotal",
+      "type": "arithmetic.Subtract",
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "activeCohort",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "signedCohort",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "opposite_direction_peer_count",
+              "portName": "a"
+            }
+          ]
+        }
+      }
+    },
+    "ownZero": {
+      "id": "ownZero",
+      "type": "arithmetic.Subtract",
+      "inputData": {
+        "a": {
+          "value": 1
+        }
+      },
+      "connections": {
+        "inputs": {
+          "b": [
+            {
+              "nodeId": "activeOwn",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "zeroPeers",
+              "portName": "b"
+            }
+          ]
+        }
+      }
+    },
+    "zeroPeers": {
+      "id": "zeroPeers",
+      "type": "arithmetic.Subtract",
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "crossSection",
+              "portName": "zero"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "ownZero",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "zero_return_peer_fraction",
+              "portName": "a"
+            }
+          ]
+        }
       }
     }
   }

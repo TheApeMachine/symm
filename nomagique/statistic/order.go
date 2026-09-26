@@ -27,20 +27,25 @@ type OrderServer struct {
 ordered is one cross section's order statistics.
 */
 type ordered struct {
-	median            float64
-	lowerQuartile     float64
-	upperQuartile     float64
-	interquartile     float64
-	medianAbsolute    float64
-	extremeMagnitude  float64
-	extremeSigned     float64
-	extremeIndex      float64
-	extremeProminence float64
-	extremeCurvature  float64
-	count             float64
-	positive          float64
-	negative          float64
-	zero              float64
+	median             float64
+	lowerQuartile      float64
+	upperQuartile      float64
+	interquartile      float64
+	medianAbsolute     float64
+	extremeMagnitude   float64
+	extremeSigned      float64
+	extremeIndex       float64
+	extremeProminence  float64
+	extremeCurvature   float64
+	count              float64
+	positive           float64
+	negative           float64
+	zero               float64
+	sumAbsolute        float64
+	meanAbsolute       float64
+	rms                float64
+	medianDeviation    float64
+	magnitudeDeviation float64
 }
 
 func NewOrder(ctx context.Context) *OrderServer {
@@ -98,6 +103,11 @@ func (server *OrderServer) Done(ctx context.Context, call Order_done) error {
 	results.SetPositive(server.reading.positive)
 	results.SetNegative(server.reading.negative)
 	results.SetZero(server.reading.zero)
+	results.SetSumAbsolute(server.reading.sumAbsolute)
+	results.SetMeanAbsolute(server.reading.meanAbsolute)
+	results.SetRms(server.reading.rms)
+	results.SetMedianDeviation(server.reading.medianDeviation)
+	results.SetMagnitudeDeviation(server.reading.magnitudeDeviation)
 
 	server.reading = ordered{}
 	return nil
@@ -119,6 +129,8 @@ func summarise(observed capnp.Float64List) ordered {
 		value := observed.At(index)
 		values = append(values, value)
 		magnitudes = append(magnitudes, math.Abs(value))
+		reading.sumAbsolute += math.Abs(value)
+		reading.rms += value * value
 
 		if value > 0 {
 			reading.positive++
@@ -149,6 +161,16 @@ func summarise(observed capnp.Float64List) ordered {
 	reading.lowerQuartile = quantile(values, 0.25)
 	reading.upperQuartile = quantile(values, 0.75)
 	reading.interquartile = reading.upperQuartile - reading.lowerQuartile
+	reading.meanAbsolute = reading.sumAbsolute / reading.count
+	reading.rms = math.Sqrt(reading.rms / reading.count)
+	for index := range values {
+		values[index] = math.Abs(values[index] - reading.median)
+		magnitudes[index] = math.Abs(magnitudes[index] - reading.medianAbsolute)
+	}
+	sort.Float64s(values)
+	sort.Float64s(magnitudes)
+	reading.medianDeviation = middle(values)
+	reading.magnitudeDeviation = middle(magnitudes)
 
 	return reading
 }
