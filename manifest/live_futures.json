@@ -44,11 +44,14 @@
     },
     "trade_subscription": {
       "id": "trade_subscription",
-      "type": "store.Constant",
+      "type": "controlflow.Once",
       "width": 280,
       "height": 172,
       "inputData": {
-        "data": {
+        "trigger": {
+          "value": true
+        },
+        "through": {
           "value": "{\"event\":\"subscribe\",\"feed\":\"trade\",\"product_ids\":[\"PI_XBTUSD\"]}"
         }
       },

@@ -1168,6 +1168,10 @@
             {
               "nodeId": "hit",
               "portName": "data"
+            },
+            {
+              "nodeId": "with_target_enter",
+              "portName": "data"
             }
           ]
         }
@@ -1933,15 +1937,56 @@
         }
       }
     },
-    "entered_doc": {
-      "id": "entered_doc",
-      "type": "transport.Fan",
+    "with_target_enter": {
+      "id": "with_target_enter",
+      "type": "data.Insert",
       "width": 280,
       "height": 172,
-      "x": 0.0,
-      "y": 800.0,
+      "x": 680.0,
+      "y": 1200.0,
       "connections": {
-        "inputs": {},
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "judged",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "enter_filter",
+              "portName": "data"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "path": {
+          "value": "target_enter"
+        },
+        "json": {
+          "value": "\"ENTER\""
+        }
+      }
+    },
+    "enter_filter": {
+      "id": "enter_filter",
+      "type": "data.Filter",
+      "width": 280,
+      "height": 172,
+      "x": 1020.0,
+      "y": 1200.0,
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "with_target_enter",
+              "portName": "out"
+            }
+          ]
+        },
         "outputs": {
           "out": [
             {
@@ -1950,24 +1995,16 @@
             }
           ]
         }
-      }
-    },
-    "exited_doc": {
-      "id": "exited_doc",
-      "type": "transport.Fan",
-      "width": 280,
-      "height": 172,
-      "x": 0.0,
-      "y": 1000.0,
-      "connections": {
-        "inputs": {},
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "exited_at",
-              "portName": "data"
-            }
-          ]
+      },
+      "inputData": {
+        "path": {
+          "value": "predicted"
+        },
+        "operator": {
+          "value": "=="
+        },
+        "referencePath": {
+          "value": "target_enter"
         }
       }
     },
@@ -1976,13 +2013,13 @@
       "type": "data.Extract",
       "width": 280,
       "height": 172,
-      "x": 340.0,
-      "y": 3600.0,
+      "x": 1360.0,
+      "y": 1200.0,
       "connections": {
         "inputs": {
           "data": [
             {
-              "nodeId": "entered_doc",
+              "nodeId": "enter_filter",
               "portName": "out"
             }
           ]
@@ -1992,40 +2029,6 @@
             {
               "nodeId": "episodeTape",
               "portName": "entered"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "path": {
-          "value": "cursor.sequence"
-        },
-        "encoding": {
-          "value": "number"
-        }
-      }
-    },
-    "exited_at": {
-      "id": "exited_at",
-      "type": "data.Extract",
-      "width": 280,
-      "height": 172,
-      "x": 340.0,
-      "y": 3800.0,
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "exited_doc",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "episodeTape",
-              "portName": "exited"
             }
           ]
         }
@@ -4392,12 +4395,6 @@
           "entered": [
             {
               "nodeId": "entered_at",
-              "portName": "out"
-            }
-          ],
-          "exited": [
-            {
-              "nodeId": "exited_at",
               "portName": "out"
             }
           ]

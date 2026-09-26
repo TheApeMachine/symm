@@ -46,19 +46,26 @@ func CompileWithPrevious(
 	}
 
 	var repo DefinitionRepository
+
 	if len(repos) > 0 {
 		repo = repos[0]
 	}
 
 	if err := agree(graph); err != nil {
-		return nil, err
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation, "compiler: graph must agree", err,
+		))
 	}
 
 	// 1. Phase 2: Recursively expand nested definitions
 	expandedGraph, err := expandDefinitions(graph, repo)
+
 	if err != nil {
-		return nil, err
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation, "compiler: failed to expand definitions", err,
+		))
 	}
+
 	graph = expandedGraph
 
 	if len(graph.Nodes) == 0 {
@@ -76,6 +83,7 @@ func CompileWithPrevious(
 	var bindingPlan *BindingPlan
 
 	hasUINodes := false
+
 	for _, node := range graph.Nodes {
 		if strings.HasPrefix(node.Type, "ui.") {
 			hasUINodes = true
@@ -88,6 +96,7 @@ func CompileWithPrevious(
 	}
 
 	backendNodes := make(map[string]Node)
+
 	for id, node := range graph.Nodes {
 		if !strings.HasPrefix(node.Type, "ui.") {
 			backendNodes[id] = node
@@ -191,18 +200,18 @@ func CompileWithPrevious(
 	// map it leaves behind reports every node as an origin.
 	origins := make(map[string]int, len(inDegree))
 
-	for id, degree := range inDegree {
-		origins[id] = degree
-	}
+	maps.Copy(origins, inDegree)
 
 	for id, degree := range inDegree {
 		if degree == 0 {
 			queue = append(queue, id)
 		}
 	}
+
 	sort.Strings(queue)
 
 	execOrder := make([]string, 0, len(backendNodes))
+
 	for len(queue) > 0 {
 		curr := queue[0]
 		queue = queue[1:]
@@ -210,6 +219,7 @@ func CompileWithPrevious(
 
 		for _, neighbor := range adjacency[curr] {
 			inDegree[neighbor]--
+
 			if inDegree[neighbor] == 0 {
 				queue = append(queue, neighbor)
 			}
@@ -227,6 +237,7 @@ func CompileWithPrevious(
 	// 3. Phase 10: Assign numeric NodeIDs
 	nodeCount := len(execOrder)
 	nodeMap := make(map[string]NodeID, nodeCount)
+
 	for i, id := range execOrder {
 		nodeMap[id] = NodeID(i)
 	}
@@ -239,25 +250,37 @@ func CompileWithPrevious(
 	for i, id := range execOrder {
 		node := graph.Nodes[id]
 		factory, err := registry.Resolve(node.Type)
+
 		if err != nil {
-			return nil, err
+			return nil, errnie.Error(errnie.Err(
+				errnie.Validation, "compiler: failed to resolve factory", err,
+			))
 		}
+
 		factoriesMap[i] = factory
 
 		var ifaceSchema *InterfaceSchema
+
 		if factory.InterfaceID != 0 {
 			ifaceSchema, err = ReflectInterface(factory.InterfaceID)
+
 			if err != nil {
-				return nil, err
+				return nil, errnie.Error(errnie.Err(
+					errnie.Validation, "compiler: failed to reflect interface", err,
+				))
 			}
 		}
 
 		if Implements(factory.InterfaceID, runtime.Queued_TypeID) {
 			pending, found := ifaceSchema.Outputs["pending"]
+
 			if !found || pending.Which != schema.Type_Which_uint64 {
-				return nil, errnie.Error(errnie.Err(errnie.Validation, "compiler: queued node "+id+" must report pending as UInt64", nil))
+				return nil, errnie.Error(errnie.Err(
+					errnie.Validation, "compiler: queued node "+id+" must report pending as UInt64", nil,
+				))
 			}
 		}
+
 		schemasMap[i] = ifaceSchema
 
 		compiledNode := CompiledNode{
@@ -273,12 +296,14 @@ func CompileWithPrevious(
 
 		if ifaceSchema != nil {
 			compiledNode.Resource = !ifaceSchema.HasWrite || !ifaceSchema.HasDone
+			
 			compiledNode.Write = CompiledMethod{
 				InterfaceID: ifaceSchema.InterfaceID,
 				MethodID:    ifaceSchema.WriteMethod,
 				ParamsSize:  ifaceSchema.WriteParams,
 				ResultSize:  ifaceSchema.WriteResult,
 			}
+
 			compiledNode.Done = CompiledMethod{
 				InterfaceID: ifaceSchema.InterfaceID,
 				MethodID:    ifaceSchema.DoneMethod,
@@ -288,12 +313,16 @@ func CompileWithPrevious(
 
 			// Sort inputs for stable field index assignment
 			var inNames []string
+
 			for name := range ifaceSchema.Inputs {
 				inNames = append(inNames, name)
 			}
+
 			sort.Strings(inNames)
+
 			for idx, name := range inNames {
 				fi := ifaceSchema.Inputs[name]
+
 				compiledNode.Inputs[name] = CompiledField{
 					Name:               name,
 					Which:              fi.Which,
@@ -303,17 +332,22 @@ func CompileWithPrevious(
 					DiscriminantValue:  fi.DiscriminantValue,
 					DiscriminantOffset: fi.DiscriminantOffset,
 				}
+
 				compiledNode.InputIndices[name] = FieldID(idx)
 			}
 
 			// Sort outputs for stable field index assignment
 			var outNames []string
+
 			for name := range ifaceSchema.Outputs {
 				outNames = append(outNames, name)
 			}
+
 			sort.Strings(outNames)
+
 			for idx, name := range outNames {
 				fi := ifaceSchema.Outputs[name]
+
 				compiledNode.Outputs[name] = CompiledField{
 					SchemaField:        fi.SchemaField,
 					Name:               name,
@@ -330,13 +364,17 @@ func CompileWithPrevious(
 			_, segment, err := capnp.NewMessage(capnp.SingleSegment(nil))
 
 			if err != nil {
-				return nil, errnie.Error(errnie.Err(errnie.Internal, "compiler: allocate argument message", err))
+				return nil, errnie.Error(errnie.Err(
+					errnie.Internal, "compiler: allocate argument message", err,
+				))
 			}
 
 			template, err := capnp.NewRootStruct(segment, ifaceSchema.WriteParams)
 
 			if err != nil {
-				return nil, errnie.Error(errnie.Err(errnie.Internal, "compiler: allocate argument template", err))
+				return nil, errnie.Error(errnie.Err(
+					errnie.Internal, "compiler: allocate argument template", err,
+				))
 			}
 
 			for portName, rawBytes := range node.InputData {
@@ -345,7 +383,8 @@ func CompileWithPrevious(
 				if !exists {
 					return nil, errnie.Error(errnie.Err(
 						errnie.Validation,
-						fmt.Sprintf("compiler: node %q (%s) has no input port %q", id, node.Type, portName), nil,
+						fmt.Sprintf("compiler: node %q (%s) has no input port %q", id, node.Type, portName),
+						nil,
 					))
 				}
 
@@ -363,7 +402,8 @@ func CompileWithPrevious(
 				if err != nil {
 					return nil, errnie.Error(errnie.Err(
 						errnie.Validation,
-						fmt.Sprintf("compiler: invalid static input %q on node %q (%s)", portName, id, node.Type), err,
+						fmt.Sprintf("compiler: invalid static input %q on node %q (%s)", portName, id, node.Type),
+						err,
 					))
 				}
 			}
@@ -392,6 +432,7 @@ func CompileWithPrevious(
 			for _, target := range targets {
 				vID := target.NodeID
 				vIdx, targetExists := nodeMap[vID]
+
 				if !targetExists {
 					if targetNode, ok := graph.Nodes[vID]; ok && strings.HasPrefix(targetNode.Type, "ui.") {
 						continue
@@ -409,6 +450,7 @@ func CompileWithPrevious(
 
 				toField, inExists := resolveInputField(vSchema, target.PortName)
 				isSink := vSchema == nil || vSchema.InterfaceID == 0
+
 				if !inExists && !isSink {
 					return nil, errnie.Error(errnie.Err(
 						errnie.Validation,
@@ -444,6 +486,7 @@ func CompileWithPrevious(
 				}
 
 				fromField, exists := resolveOutputField(uSchema, outPort)
+
 				if !exists {
 					return nil, errnie.Error(errnie.Err(
 						errnie.Validation,
@@ -456,11 +499,13 @@ func CompileWithPrevious(
 
 				if isSink {
 					toFieldID, hasInput := compiledNodes[vIdx].InputIndices[target.PortName]
+
 					if !hasInput {
 						toFieldID = FieldID(len(compiledNodes[vIdx].Inputs))
 						compiledNodes[vIdx].InputIndices[target.PortName] = toFieldID
 
 						var offset uint32
+
 						switch fromField.Which {
 						case schema.Type_Which_text, schema.Type_Which_data,
 							schema.Type_Which_structType, schema.Type_Which_list,
@@ -477,6 +522,7 @@ func CompileWithPrevious(
 							Offset: offset,
 							Which:  fromField.Which,
 						}
+
 						compiledNodes[vIdx].Inputs[target.PortName] = CompiledField{
 							Name:   target.PortName,
 							Which:  fromField.Which,
@@ -566,6 +612,7 @@ func CompileWithPrevious(
 				if toField.ValueList {
 					presence, carried := resolveOutputField(uSchema, presencePort)
 					var targetPresence *FieldInfo
+
 					// present flags a numeric gathering port slot by slot. A port
 					// gathering documents or names has slots of its own count,
 					// which the flags do not describe.
@@ -573,6 +620,7 @@ func CompileWithPrevious(
 						presentField.ElementWhich == schema.Type_Which_bool && toField.ElementWhich == schema.Type_Which_float64 {
 						targetPresence = &presentField
 					}
+
 					fanInEdges = append(fanInEdges, fanInEdge{
 						fromPort:       outPort,
 						presence:       presence,
@@ -592,6 +640,7 @@ func CompileWithPrevious(
 
 				// Compile typed Copier with type compatibility validation
 				copier, err := CompileCopier(fromField, toField)
+
 				if err != nil {
 					return nil, errnie.Error(errnie.Err(
 						errnie.Validation,
@@ -625,9 +674,11 @@ func CompileWithPrevious(
 		factory := factoriesMap[i]
 
 		var configBytes []byte
+
 		if len(node.InputData) > 0 {
 			configBytes, _ = sonic.Marshal(node.InputData)
 		}
+
 		configDigest := sha256.Sum256(configBytes)
 
 		identity := NodeIdentity{
@@ -636,6 +687,7 @@ func CompileWithPrevious(
 			InterfaceID:  factory.InterfaceID,
 			ConfigDigest: configDigest,
 		}
+
 		compiledNodes[i].Identity = identity
 
 		var client capnp.Client
@@ -654,6 +706,7 @@ func CompileWithPrevious(
 		if !client.IsValid() {
 			var err error
 			client, err = factory.New(context.Background(), configBytes)
+
 			if err != nil {
 				// Clean up any acquired references on candidate failure
 				for _, cn := range compiledNodes {
@@ -661,6 +714,7 @@ func CompileWithPrevious(
 						cn.Client.Release()
 					}
 				}
+
 				return nil, errnie.Error(errnie.Err(
 					errnie.Internal,
 					fmt.Sprintf("compiler: failed to construct capability for node %q (%s)", id, node.Type),
@@ -730,6 +784,7 @@ func CompileFile(
 	repos ...DefinitionRepository,
 ) (*Program, error) {
 	data, err := os.ReadFile(jsonPath)
+
 	if err != nil {
 		return nil, errnie.Error(errnie.Err(
 			errnie.IO,
@@ -741,6 +796,7 @@ func CompileFile(
 	// A graph file is authored JSON; it passes the same edge agreement as
 	// every other document parsed into a graph.
 	graph, err := ParseGraph(data)
+
 	if err != nil {
 		return nil, errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -757,6 +813,7 @@ ParseGraph parses a raw JSON byte slice into a Graph AST.
 */
 func ParseGraph(data []byte) (Graph, error) {
 	var graph Graph
+
 	if err := sonic.Unmarshal(data, &graph); err != nil {
 		return Graph{}, errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -766,7 +823,11 @@ func ParseGraph(data []byte) (Graph, error) {
 	}
 
 	if err := agree(graph); err != nil {
-		return Graph{}, err
+		return Graph{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"compiler: edge agreement failed",
+			err,
+		))
 	}
 
 	return graph, nil
@@ -857,9 +918,15 @@ func CompileJSON(
 	repos ...DefinitionRepository,
 ) (*Program, error) {
 	graph, err := ParseGraph(data)
+
 	if err != nil {
-		return nil, err
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"compiler: failed to parse graph",
+			err,
+		))
 	}
+
 	return Compile(graph, reg, repos...)
 }
 
@@ -869,11 +936,13 @@ func resolveInputField(ifaceSchema *InterfaceSchema, port string) (FieldInfo, bo
 	}
 
 	fieldInfo, exists := ifaceSchema.Inputs[port]
+
 	if exists {
 		return fieldInfo, true
 	}
 
 	index := strings.LastIndex(port, "_")
+
 	if index != -1 {
 		prefix := port[:index]
 		fieldInfo, exists := ifaceSchema.Inputs[prefix]
@@ -1020,6 +1089,7 @@ func expandDefinitions(
 
 		defName := strings.TrimPrefix(defNode.Type, "definition:")
 		childGraph, err := repo.Load(defName)
+
 		if err != nil {
 			return Graph{}, errnie.Error(errnie.Err(
 				errnie.NotFound,
@@ -1086,7 +1156,11 @@ func expandDefinitions(
 		if err := wireDefinitionPorts(
 			graph, defID, defNode, prefix, childIngressTargets, childEgressSources,
 		); err != nil {
-			return Graph{}, err
+			return Graph{}, errnie.Error(errnie.Err(
+				errnie.Validation,
+				fmt.Sprintf("compiler: failed to wire definition ports for %q", defID),
+				err,
+			))
 		}
 
 		// 2. Remove definition node from graph
@@ -1266,16 +1340,21 @@ func wireDefinitionPorts(
 	// Definition controls address the same child fields as edges.
 	for port, value := range defNode.InputData {
 		childID, field, addressed := strings.Cut(port, ".")
+
 		if !addressed || field == "" {
 			return errnie.Error(errnie.Err(errnie.Validation, fmt.Sprintf("compiler: definition %q static input %q must name <node>.<field>", defID, port), nil))
 		}
+
 		child, known := graph.Nodes[prefix+childID]
+
 		if !known {
 			return errnie.Error(errnie.Err(errnie.Validation, fmt.Sprintf("compiler: definition %q static input %q names unknown child %q", defID, port, childID), nil))
 		}
+
 		if child.InputData == nil {
 			child.InputData = make(map[string]json.RawMessage)
 		}
+
 		child.InputData[field] = value
 		graph.Nodes[prefix+childID] = child
 	}
@@ -1435,9 +1514,11 @@ func compileFanIn(edges []fanInEdge) ([]Route, error) {
 		// is one wire, not one wire per value. Gathering that into a list of
 		// lists would bury it a level deeper than the consumer reads.
 		_, indexed := outputSlot(group[0].fromPort)
+
 		if len(group) == 1 && !indexed && group[0].fromInfo.ValueList &&
 			group[0].fromInfo.ElementWhich == group[0].toInfo.ElementWhich {
 			edge := group[0]
+
 			copier, err := CompileCopier(
 				FieldInfo{
 					Name:   edge.fromInfo.Name,
@@ -1590,10 +1671,12 @@ func lowerUIAndBindings(graph Graph) (*UIPlan, *BindingPlan) {
 		}
 
 		pathVal := "/"
+
 		if val, ok := node.InputData["path"]; ok {
 			var p struct {
 				Value string `json:"value"`
 			}
+
 			err := sonic.Unmarshal(val, &p)
 
 			if err == nil && p.Value != "" {
@@ -1611,10 +1694,12 @@ func lowerUIAndBindings(graph Graph) (*UIPlan, *BindingPlan) {
 		}
 
 		titleVal := ""
+
 		if val, ok := node.InputData["title"]; ok {
 			var t struct {
 				Value string `json:"value"`
 			}
+
 			err := sonic.Unmarshal(val, &t)
 
 			if err == nil {
@@ -1632,6 +1717,7 @@ func lowerUIAndBindings(graph Graph) (*UIPlan, *BindingPlan) {
 		}
 
 		components := lowerUIChildren(graph, id)
+
 		routes = append(routes, UIRoutePlan{
 			Path:       pathVal,
 			Title:      titleVal,
@@ -1641,6 +1727,7 @@ func lowerUIAndBindings(graph Graph) (*UIPlan, *BindingPlan) {
 
 	if len(routes) == 0 {
 		childSet := make(map[string]bool)
+
 		for _, node := range graph.Nodes {
 			if !strings.HasPrefix(node.Type, "ui.") {
 				continue
@@ -1656,6 +1743,7 @@ func lowerUIAndBindings(graph Graph) (*UIPlan, *BindingPlan) {
 		}
 
 		var rootComponents []UINodePlan
+
 		for id, node := range graph.Nodes {
 			if !strings.HasPrefix(node.Type, "ui.") || node.Type == "ui.UIRoute" {
 				continue
@@ -1686,11 +1774,13 @@ func lowerUIChildren(graph Graph, parentID string) []UINodePlan {
 	}
 
 	ports := make([]string, 0)
+
 	for portName := range parent.Connections.Inputs {
 		if strings.HasPrefix(portName, "components") {
 			ports = append(ports, portName)
 		}
 	}
+
 	sort.Slice(ports, func(i, j int) bool {
 		return parsePortIndex(ports[i]) < parsePortIndex(ports[j])
 	})
@@ -1716,8 +1806,8 @@ func parsePortIndex(port string) int {
 		return 0
 	}
 
-	if strings.HasPrefix(port, "components_") {
-		num, err := strconv.Atoi(strings.TrimPrefix(port, "components_"))
+	if after, ok := strings.CutPrefix(port, "components_"); ok {
+		num, err := strconv.Atoi(after)
 
 		if err == nil {
 			return num
@@ -1729,9 +1819,7 @@ func parsePortIndex(port string) int {
 
 func copyVisited(visited map[string]bool) map[string]bool {
 	cp := make(map[string]bool, len(visited)+1)
-	for key, val := range visited {
-		cp[key] = val
-	}
+	maps.Copy(cp, visited)
 
 	return cp
 }

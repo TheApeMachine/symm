@@ -93,6 +93,10 @@ func (server *RelaxationServer) Write(ctx context.Context, call Relaxation_write
 		server.positions[point*2+1] = positions.At(point*2 + 1)
 	}
 
+	moveX := make([]float64, count)
+	moveY := make([]float64, count)
+	mass := make([]float64, count)
+
 	for edge := range edges {
 		left, right := int(from.At(edge)), int(to.At(edge))
 
@@ -104,7 +108,14 @@ func (server *RelaxationServer) Write(ctx context.Context, call Relaxation_write
 			))
 		}
 
-		server.relax(left, right, authority.At(left), authority.At(right), strength.At(edge), distance.At(edge), count)
+		server.relax(left, right, authority.At(left), authority.At(right), strength.At(edge), distance.At(edge), count, moveX, moveY, mass)
+	}
+
+	for point := range count {
+		if mass[point] > 0 {
+			server.positions[point*2] += moveX[point] / mass[point]
+			server.positions[point*2+1] += moveY[point] / mass[point]
+		}
 	}
 
 	return nil
@@ -113,7 +124,10 @@ func (server *RelaxationServer) Write(ctx context.Context, call Relaxation_write
 /*
 relax takes one stress step on one relationship.
 */
-func (server *RelaxationServer) relax(left, right int, leftAuthority, rightAuthority, strength, target float64, count int) {
+func (server *RelaxationServer) relax(
+	left, right int, leftAuthority, rightAuthority, strength, target float64, count int,
+	moveX, moveY, mass []float64,
+) {
 	combined := leftAuthority + rightAuthority
 
 	if combined == 0 || strength == 0 {
@@ -144,11 +158,15 @@ func (server *RelaxationServer) relax(left, right int, leftAuthority, rightAutho
 	correction := pull / (1 + pull) * residual / current
 	leftShare := rightAuthority / combined
 	rightShare := leftAuthority / combined
+	weight := math.Abs(strength)
 
-	server.positions[left*2] += correction * horizontal * leftShare
-	server.positions[left*2+1] += correction * vertical * leftShare
-	server.positions[right*2] -= correction * horizontal * rightShare
-	server.positions[right*2+1] -= correction * vertical * rightShare
+	moveX[left] += correction * horizontal * leftShare * weight
+	moveY[left] += correction * vertical * leftShare * weight
+	mass[left] += weight
+
+	moveX[right] -= correction * horizontal * rightShare * weight
+	moveY[right] -= correction * vertical * rightShare * weight
+	mass[right] += weight
 }
 
 func (server *RelaxationServer) Done(ctx context.Context, call Relaxation_done) error {

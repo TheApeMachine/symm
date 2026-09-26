@@ -87,10 +87,6 @@
             {
               "nodeId": "channels",
               "portName": "data"
-            },
-            {
-              "nodeId": "rejection",
-              "portName": "data"
             }
           ]
         }
@@ -271,13 +267,13 @@
       },
       "connections": {
         "inputs": {
-          "data_ticker": [
+          "data_0": [
             {
               "nodeId": "ticker_frames",
               "portName": "out"
             }
           ],
-          "data_trade": [
+          "data_1": [
             {
               "nodeId": "trade_frames",
               "portName": "out"
@@ -355,7 +351,7 @@
           "out": [
             {
               "nodeId": "records",
-              "portName": "data_ticker"
+              "portName": "data_0"
             }
           ]
         }
@@ -393,112 +389,13 @@
           "out": [
             {
               "nodeId": "records",
-              "portName": "data_trade"
+              "portName": "data_1"
             }
           ]
         }
       },
       "x": 1500,
       "y": 400
-    },
-    "rejection": {
-      "id": "rejection",
-      "type": "data.Filter",
-      "inputData": {
-        "path": {
-          "value": "success"
-        },
-        "operator": {
-          "value": "=="
-        },
-        "threshold": {
-          "value": 0
-        }
-      },
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "generation",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "reason",
-              "portName": "data"
-            },
-            {
-              "nodeId": "accepted",
-              "portName": "data"
-            }
-          ]
-        }
-      },
-      "x": 1800,
-      "y": 400
-    },
-    "reason": {
-      "id": "reason",
-      "type": "data.Extract",
-      "inputData": {
-        "path": {
-          "value": "error"
-        },
-        "encoding": {
-          "value": "text"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "rejection",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "text": [
-            {
-              "nodeId": "accepted",
-              "portName": "reason"
-            }
-          ]
-        }
-      },
-      "x": 2100,
-      "y": 400
-    },
-    "accepted": {
-      "id": "accepted",
-      "type": "controlflow.Require",
-      "inputData": {
-        "test": {
-          "value": false
-        }
-      },
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "rejection",
-              "portName": "out"
-            }
-          ],
-          "reason": [
-            {
-              "nodeId": "reason",
-              "portName": "text"
-            }
-          ]
-        },
-        "outputs": {}
-      },
-      "x": 0,
-      "y": 600
     },
     "symbols": {
       "id": "symbols",

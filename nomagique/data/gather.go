@@ -20,17 +20,17 @@ type SignalFamily struct {
 /*
 GatherServer holds, as one list, the numbers its producers delivered on this
 evaluation. When families are declared, it maintains retained readiness coverage
-across all signal families, holding output idle until every family has contributed.
+across all signal families, reporting warming phase until all families have contributed.
 */
 type GatherServer struct {
 	values             []float64
-	present            []bool
+	covered            []bool
 	families           []SignalFamily
 	familyRanges       [][2]int
 	familyContributing []bool
-	covered            []bool
 	ready              bool
 	phase              string
+	lastBatchPresent   []bool
 }
 
 func NewGather() *GatherServer {
@@ -73,9 +73,8 @@ func (server *GatherServer) Write(ctx context.Context, call Gather_write) error 
 		}
 	}
 
-	server.values, server.present = server.values[:0], server.present[:0]
-
 	if values.Len() == 0 {
+		server.lastBatchPresent = nil
 		return nil
 	}
 
@@ -87,31 +86,35 @@ func (server *GatherServer) Write(ctx context.Context, call Gather_write) error 
 		))
 	}
 
-	if len(server.covered) != values.Len() {
+	if len(server.values) != values.Len() {
+		server.values = make([]float64, values.Len())
 		server.covered = make([]bool, values.Len())
 		server.ready = false
 		server.phase = "WARMING_SIGNALS"
 
-		if len(server.familyContributing) > 0 {
+		if len(server.families) > 0 {
 			server.familyContributing = make([]bool, len(server.families))
 		}
 	}
 
+	server.lastBatchPresent = make([]bool, values.Len())
+
 	for slot := range values.Len() {
-		val := values.At(slot)
 		isPres := present.At(slot)
+		server.lastBatchPresent[slot] = isPres
 
-		server.values = append(server.values, val)
-		server.present = append(server.present, isPres)
+		if !isPres {
+			continue
+		}
 
-		if isPres {
-			server.covered[slot] = true
+		val := values.At(slot)
+		server.values[slot] = val
+		server.covered[slot] = true
 
-			for familyIndex, bounds := range server.familyRanges {
-				if slot >= bounds[0] && slot < bounds[1] {
-					server.familyContributing[familyIndex] = true
-					break
-				}
+		for familyIndex, bounds := range server.familyRanges {
+			if slot >= bounds[0] && slot < bounds[1] {
+				server.familyContributing[familyIndex] = true
+				break
 			}
 		}
 	}
@@ -126,10 +129,6 @@ func (server *GatherServer) Done(ctx context.Context, call Gather_done) error {
 		return errnie.Error(errnie.Err(errnie.Internal, "data.gather: failed to allocate results", err))
 	}
 
-	defer func() {
-		server.values, server.present = server.values[:0], server.present[:0]
-	}()
-
 	contributingCount := 0
 	var missingNames []string
 
@@ -143,19 +142,14 @@ func (server *GatherServer) Done(ctx context.Context, call Gather_done) error {
 		}
 	}
 
-	if len(server.families) > 0 {
-		if contributingCount < len(server.families) {
-			server.ready = false
-			server.phase = "WARMING_SIGNALS"
-		}
+	if len(server.families) > 0 && contributingCount < len(server.families) {
+		server.ready = false
+		server.phase = "WARMING_SIGNALS"
+	}
 
-		if contributingCount >= len(server.families) {
-			server.ready = true
-
-			if server.phase == "WARMING_SIGNALS" || server.phase == "" {
-				server.phase = "FORMING_MAP"
-			}
-		}
+	if len(server.families) > 0 && contributingCount >= len(server.families) {
+		server.ready = true
+		server.phase = "FORMING_MAP"
 	}
 
 	if len(server.families) == 0 {
@@ -169,6 +163,7 @@ func (server *GatherServer) Done(ctx context.Context, call Gather_done) error {
 		"contributing": contributingCount,
 		"total":        len(server.families),
 		"missing":      missingNames,
+		"input_count":  len(server.values),
 	}
 
 	readinessBytes, err := sonic.Marshal(readinessMap)
@@ -185,7 +180,7 @@ func (server *GatherServer) Done(ctx context.Context, call Gather_done) error {
 		return errnie.Error(errnie.Err(errnie.Internal, "data.gather: failed to set phase", err))
 	}
 
-	if !server.ready || !slices.Contains(server.present, true) {
+	if !server.ready || !slices.Contains(server.lastBatchPresent, true) {
 		results.SetIdle()
 		return nil
 	}
@@ -198,7 +193,7 @@ func (server *GatherServer) Done(ctx context.Context, call Gather_done) error {
 		return errnie.Error(errnie.Err(errnie.Internal, "data.gather: failed to allocate values", err))
 	}
 
-	present, err := gathered.NewPresent(int32(len(server.present)))
+	present, err := gathered.NewPresent(int32(len(server.values)))
 
 	if err != nil {
 		return errnie.Error(errnie.Err(errnie.Internal, "data.gather: failed to allocate present", err))
@@ -206,7 +201,7 @@ func (server *GatherServer) Done(ctx context.Context, call Gather_done) error {
 
 	for slot, value := range server.values {
 		values.Set(slot, value)
-		present.Set(slot, server.present[slot])
+		present.Set(slot, server.lastBatchPresent[slot])
 	}
 
 	return nil

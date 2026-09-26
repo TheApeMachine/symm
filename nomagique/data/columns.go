@@ -70,6 +70,10 @@ func (server *ColumnsServer) Write(ctx context.Context, call Columns_write) erro
 			return errnie.Error(errnie.Err(errnie.Validation, "data.columns: column "+fields[position]+" is not a JSON array", err))
 		}
 
+		if len(decoded[position]) == 0 {
+			return nil
+		}
+
 		if len(decoded[position]) != len(decoded[0]) {
 			return errnie.Error(errnie.Err(
 				errnie.Validation,

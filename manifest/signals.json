@@ -68,7 +68,7 @@
           "previousReferenceTimestamp.value": [
             {
               "nodeId": "grid",
-              "portName": "values_0"
+              "portName": "values_20"
             }
           ],
           "previousTimestamp.value": [
@@ -80,7 +80,7 @@
           "referenceReturns.value": [
             {
               "nodeId": "grid",
-              "portName": "values_1"
+              "portName": "values_21"
             }
           ],
           "returns.value": [
@@ -92,55 +92,55 @@
           "shiftEnd_0.a": [
             {
               "nodeId": "grid",
-              "portName": "values_0"
+              "portName": "values_20"
             }
           ],
           "shiftEnd_1.a": [
             {
               "nodeId": "grid",
-              "portName": "values_0"
+              "portName": "values_20"
             }
           ],
           "shiftEnd_2.a": [
             {
               "nodeId": "grid",
-              "portName": "values_0"
+              "portName": "values_20"
             }
           ],
           "shiftEnd_3.a": [
             {
               "nodeId": "grid",
-              "portName": "values_0"
+              "portName": "values_20"
             }
           ],
           "shiftEnd_4.a": [
             {
               "nodeId": "grid",
-              "portName": "values_0"
+              "portName": "values_20"
             }
           ],
           "shiftEnd_5.a": [
             {
               "nodeId": "grid",
-              "portName": "values_0"
+              "portName": "values_20"
             }
           ],
           "shiftEnd_6.a": [
             {
               "nodeId": "grid",
-              "portName": "values_0"
+              "portName": "values_20"
             }
           ],
           "shiftEnd_7.a": [
             {
               "nodeId": "grid",
-              "portName": "values_0"
+              "portName": "values_20"
             }
           ],
           "shiftEnd_8.a": [
             {
               "nodeId": "grid",
-              "portName": "values_0"
+              "portName": "values_20"
             }
           ],
           "returns.scope": [
@@ -976,13 +976,13 @@
           "hy.boundsEnd2": [
             {
               "nodeId": "grid",
-              "portName": "values_0"
+              "portName": "values_20"
             }
           ],
           "prevReferenceTimestamp.value": [
             {
               "nodeId": "grid",
-              "portName": "values_0"
+              "portName": "values_20"
             }
           ],
           "prevTimestamp.value": [
@@ -994,7 +994,7 @@
           "referenceReturns.value": [
             {
               "nodeId": "grid",
-              "portName": "values_1"
+              "portName": "values_21"
             }
           ],
           "returns.value": [
@@ -3544,13 +3544,13 @@
           "divergence_velocity:ask.ts": [
             {
               "nodeId": "grid",
-              "portName": "values_13"
+              "portName": "values_0"
             }
           ],
           "divergence_velocity:bid.ts": [
             {
               "nodeId": "grid",
-              "portName": "values_14"
+              "portName": "values_0"
             }
           ],
           "midpointSum.a": [
@@ -8371,14 +8371,6 @@
             },
             {
               "nodeId": "definition-correlation_ticker",
-              "portName": "hy.boundsEnd2"
-            },
-            {
-              "nodeId": "definition-correlation_ticker",
-              "portName": "prevReferenceTimestamp.value"
-            },
-            {
-              "nodeId": "definition-correlation_ticker",
               "portName": "prevTimestamp.value"
             },
             {
@@ -8423,47 +8415,15 @@
             },
             {
               "nodeId": "definition-leadlag_ticker",
-              "portName": "previousReferenceTimestamp.value"
-            },
-            {
-              "nodeId": "definition-leadlag_ticker",
               "portName": "previousTimestamp.value"
             },
             {
-              "nodeId": "definition-leadlag_ticker",
-              "portName": "shiftEnd_0.a"
+              "nodeId": "definition-liquidity_ticker",
+              "portName": "divergence_velocity:ask.ts"
             },
             {
-              "nodeId": "definition-leadlag_ticker",
-              "portName": "shiftEnd_1.a"
-            },
-            {
-              "nodeId": "definition-leadlag_ticker",
-              "portName": "shiftEnd_2.a"
-            },
-            {
-              "nodeId": "definition-leadlag_ticker",
-              "portName": "shiftEnd_3.a"
-            },
-            {
-              "nodeId": "definition-leadlag_ticker",
-              "portName": "shiftEnd_4.a"
-            },
-            {
-              "nodeId": "definition-leadlag_ticker",
-              "portName": "shiftEnd_5.a"
-            },
-            {
-              "nodeId": "definition-leadlag_ticker",
-              "portName": "shiftEnd_6.a"
-            },
-            {
-              "nodeId": "definition-leadlag_ticker",
-              "portName": "shiftEnd_7.a"
-            },
-            {
-              "nodeId": "definition-leadlag_ticker",
-              "portName": "shiftEnd_8.a"
+              "nodeId": "definition-liquidity_ticker",
+              "portName": "divergence_velocity:bid.ts"
             },
             {
               "nodeId": "definition-pumpdump_ticker",
@@ -8473,15 +8433,7 @@
           "values_1": [
             {
               "nodeId": "definition-correlation_ticker",
-              "portName": "referenceReturns.value"
-            },
-            {
-              "nodeId": "definition-correlation_ticker",
               "portName": "returns.value"
-            },
-            {
-              "nodeId": "definition-leadlag_ticker",
-              "portName": "referenceReturns.value"
             },
             {
               "nodeId": "definition-leadlag_ticker",
@@ -8703,10 +8655,6 @@
           "values_13": [
             {
               "nodeId": "definition-liquidity_ticker",
-              "portName": "divergence_velocity:ask.ts"
-            },
-            {
-              "nodeId": "definition-liquidity_ticker",
               "portName": "midpointSum.a"
             },
             {
@@ -8727,10 +8675,6 @@
             }
           ],
           "values_14": [
-            {
-              "nodeId": "definition-liquidity_ticker",
-              "portName": "divergence_velocity:bid.ts"
-            },
             {
               "nodeId": "definition-liquidity_ticker",
               "portName": "midpointSum.b"
@@ -9394,11 +9338,63 @@
           ],
           "values_20": [
             {
+              "nodeId": "definition-correlation_ticker",
+              "portName": "hy.boundsEnd2"
+            },
+            {
+              "nodeId": "definition-correlation_ticker",
+              "portName": "prevReferenceTimestamp.value"
+            },
+            {
               "nodeId": "definition-derivatives_ticker",
               "portName": "elapsed.timestamp"
+            },
+            {
+              "nodeId": "definition-leadlag_ticker",
+              "portName": "previousReferenceTimestamp.value"
+            },
+            {
+              "nodeId": "definition-leadlag_ticker",
+              "portName": "shiftEnd_0.a"
+            },
+            {
+              "nodeId": "definition-leadlag_ticker",
+              "portName": "shiftEnd_1.a"
+            },
+            {
+              "nodeId": "definition-leadlag_ticker",
+              "portName": "shiftEnd_2.a"
+            },
+            {
+              "nodeId": "definition-leadlag_ticker",
+              "portName": "shiftEnd_3.a"
+            },
+            {
+              "nodeId": "definition-leadlag_ticker",
+              "portName": "shiftEnd_4.a"
+            },
+            {
+              "nodeId": "definition-leadlag_ticker",
+              "portName": "shiftEnd_5.a"
+            },
+            {
+              "nodeId": "definition-leadlag_ticker",
+              "portName": "shiftEnd_6.a"
+            },
+            {
+              "nodeId": "definition-leadlag_ticker",
+              "portName": "shiftEnd_7.a"
+            },
+            {
+              "nodeId": "definition-leadlag_ticker",
+              "portName": "shiftEnd_8.a"
             }
           ],
           "values_21": [
+            {
+              "nodeId": "definition-correlation_ticker",
+              "portName": "referenceReturns.value"
+            },
             {
               "nodeId": "definition-derivatives_ticker",
               "portName": "basisDifference.a"
@@ -9414,6 +9410,10 @@
             {
               "nodeId": "definition-derivatives_ticker",
               "portName": "derivative_log_return.value"
+            },
+            {
+              "nodeId": "definition-leadlag_ticker",
+              "portName": "referenceReturns.value"
             }
           ],
           "values_22": [

@@ -2247,7 +2247,11 @@
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "prediction.class": [],
+          "prediction.prob": [],
+          "inventory.out": []
+        }
       },
       "x": 2620.0,
       "y": 0.0

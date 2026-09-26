@@ -295,6 +295,10 @@
             {
               "nodeId": "live_map",
               "portName": "change.value"
+            },
+            {
+              "nodeId": "measurements_array",
+              "portName": "numbers"
             }
           ],
           "gather.gathered.present": [
@@ -550,18 +554,6 @@
               "portName": "authority.defined"
             }
           ],
-          "label.texts": [
-            {
-              "nodeId": "live_map",
-              "portName": "peak.settled.regions"
-            }
-          ],
-          "source.texts": [
-            {
-              "nodeId": "live_map",
-              "portName": "peak.settled.regions"
-            }
-          ],
           "hot.texts": [
             {
               "nodeId": "live_map",
@@ -584,6 +576,18 @@
             {
               "nodeId": "live_map",
               "portName": "concordance.strength"
+            }
+          ],
+          "examples.data": [
+            {
+              "nodeId": "live_reinforce",
+              "portName": "inventory.out"
+            }
+          ],
+          "trips.data": [
+            {
+              "nodeId": "training",
+              "portName": "paper_closed.json"
             }
           ]
         },
@@ -653,6 +657,10 @@
             {
               "nodeId": "dashboard",
               "portName": "marketPrice.value"
+            },
+            {
+              "nodeId": "excursion",
+              "portName": "value"
             }
           ]
         }
@@ -829,9 +837,19 @@
               "portName": "predicted.values_0"
             }
           ],
+          "reinforce.prediction.prob": [
+            {
+              "nodeId": "learning",
+              "portName": "row_confidence.value"
+            }
+          ],
           "paper_closed.json": [
             {
               "nodeId": "learning",
+              "portName": "trips.data"
+            },
+            {
+              "nodeId": "dashboard",
               "portName": "trips.data"
             }
           ],
@@ -919,24 +937,6 @@
             {
               "nodeId": "learning",
               "portName": "pathText.value"
-            }
-          ],
-          "reinforce.prediction.prob": [
-            {
-              "nodeId": "learning",
-              "portName": "row_confidence.value"
-            }
-          ],
-          "paper_at_ignition.out": [
-            {
-              "nodeId": "learning",
-              "portName": "entered_doc.data"
-            }
-          ],
-          "paper_at_extremum.out": [
-            {
-              "nodeId": "learning",
-              "portName": "exited_doc.data"
             }
           ],
           "learning_replay.event_index.unsigned": [
@@ -1093,18 +1093,6 @@
               "portName": "reinforce.prediction.prob"
             }
           ],
-          "entered_doc.data": [
-            {
-              "nodeId": "training",
-              "portName": "paper_at_ignition.out"
-            }
-          ],
-          "exited_doc.data": [
-            {
-              "nodeId": "training",
-              "portName": "paper_at_extremum.out"
-            }
-          ],
           "episodeTape.run": [
             {
               "nodeId": "training",
@@ -1215,20 +1203,14 @@
               "portName": "present.flags"
             }
           ],
-          "peak.settled.regions": [
-            {
-              "nodeId": "dashboard",
-              "portName": "label.texts"
-            },
-            {
-              "nodeId": "dashboard",
-              "portName": "source.texts"
-            }
-          ],
           "hot.hot": [
             {
               "nodeId": "dashboard",
               "portName": "hot.texts"
+            },
+            {
+              "nodeId": "token_sequence",
+              "portName": "tokens"
             }
           ],
           "concordance.fromNodes": [
@@ -1247,6 +1229,18 @@
             {
               "nodeId": "dashboard",
               "portName": "edge_strength.numbers"
+            }
+          ],
+          "hot.out": [
+            {
+              "nodeId": "live_with_tokens",
+              "portName": "json"
+            }
+          ],
+          "peak.settled.vocabulary": [
+            {
+              "nodeId": "live_with_vocab",
+              "portName": "json"
             }
           ]
         }
@@ -1446,6 +1440,765 @@
             {
               "nodeId": "learning",
               "portName": "frames.out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "excursion": {
+      "id": "excursion",
+      "type": "temporal.Excursion",
+      "width": 280,
+      "height": 172,
+      "x": 800.0,
+      "y": 700.0,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "last",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "move.anchor": [
+            {
+              "nodeId": "excursion_row_anchor",
+              "portName": "value"
+            }
+          ],
+          "move.ignition": [
+            {
+              "nodeId": "excursion_row_ignition",
+              "portName": "value"
+            }
+          ],
+          "move.extremum": [
+            {
+              "nodeId": "excursion_row_extremum",
+              "portName": "value"
+            }
+          ],
+          "move.excursion": [
+            {
+              "nodeId": "excursion_row_move",
+              "portName": "value"
+            },
+            {
+              "nodeId": "measurement_row_excursion",
+              "portName": "value"
+            }
+          ],
+          "qualifying": [
+            {
+              "nodeId": "excursion_row_qualifying",
+              "portName": "value"
+            }
+          ],
+          "sigma": [
+            {
+              "nodeId": "excursion_row_sigma",
+              "portName": "value"
+            }
+          ],
+          "horizon": [
+            {
+              "nodeId": "excursion_row_horizon",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "token_sequence": {
+      "id": "token_sequence",
+      "type": "cognition.TokenSequence",
+      "width": 280,
+      "height": 172,
+      "x": 800.0,
+      "y": 400.0,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "tokens": [
+            {
+              "nodeId": "live_map",
+              "portName": "hot.hot"
+            }
+          ]
+        },
+        "outputs": {
+          "step.out": [
+            {
+              "nodeId": "live_with_seq",
+              "portName": "json"
+            }
+          ]
+        }
+      }
+    },
+    "live_event_seed": {
+      "id": "live_event_seed",
+      "type": "store.Constant",
+      "width": 240,
+      "height": 120,
+      "x": 1000.0,
+      "y": 400.0,
+      "inputData": {
+        "data": {
+          "value": "{\"symbol\":\"BTC/USD\",\"capture\":{\"session\":\"live\",\"endpoint\":\"live\"},\"cursor\":{\"sequence\":0},\"event\":{\"seed\":\"live\",\"record\":\"live\"},\"settled\":{\"vocabulary\":\"live\"}}"
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "live_with_tokens",
+              "portName": "data"
+            }
+          ]
+        }
+      }
+    },
+    "live_with_tokens": {
+      "id": "live_with_tokens",
+      "type": "data.Insert",
+      "width": 240,
+      "height": 120,
+      "x": 1260.0,
+      "y": 400.0,
+      "inputData": {
+        "path": {
+          "value": "settled.tokens"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "live_event_seed",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "live_map",
+              "portName": "hot.out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "live_with_vocab",
+              "portName": "data"
+            }
+          ]
+        }
+      }
+    },
+    "live_with_vocab": {
+      "id": "live_with_vocab",
+      "type": "data.Insert",
+      "width": 240,
+      "height": 120,
+      "x": 1520.0,
+      "y": 400.0,
+      "inputData": {
+        "path": {
+          "value": "settled.vocabulary"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "live_with_tokens",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "live_map",
+              "portName": "peak.settled.vocabulary"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "live_with_seq",
+              "portName": "data"
+            }
+          ]
+        }
+      }
+    },
+    "live_with_seq": {
+      "id": "live_with_seq",
+      "type": "data.Insert",
+      "width": 240,
+      "height": 120,
+      "x": 1780.0,
+      "y": 400.0,
+      "inputData": {
+        "path": {
+          "value": "settled.sequence"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "live_with_vocab",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "token_sequence",
+              "portName": "step.out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "live_with_holding",
+              "portName": "data"
+            }
+          ]
+        }
+      }
+    },
+    "live_with_holding": {
+      "id": "live_with_holding",
+      "type": "data.Insert",
+      "width": 240,
+      "height": 120,
+      "x": 2040.0,
+      "y": 400.0,
+      "inputData": {
+        "path": {
+          "value": "holding"
+        },
+        "json": {
+          "value": "\"flat\""
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "live_with_seq",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "live_reinforce",
+              "portName": "input.data"
+            }
+          ]
+        }
+      }
+    },
+    "live_reinforce": {
+      "id": "live_reinforce",
+      "type": "definition:training_reinforce",
+      "width": 320,
+      "height": 280,
+      "x": 2300.0,
+      "y": 400.0,
+      "connections": {
+        "inputs": {
+          "input.data": [
+            {
+              "nodeId": "live_with_holding",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "inventory.out": [
+            {
+              "nodeId": "dashboard",
+              "portName": "examples.data"
+            }
+          ]
+        }
+      }
+    },
+    "excursion_seed": {
+      "id": "excursion_seed",
+      "type": "store.Constant",
+      "width": 240,
+      "height": 120,
+      "x": 800.0,
+      "y": 900.0,
+      "inputData": {
+        "data": {
+          "value": "{\"symbol\":\"BTC/USD\"}"
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "excursion_row_anchor",
+              "portName": "data"
+            },
+            {
+              "nodeId": "measurement_row_excursion",
+              "portName": "data"
+            }
+          ]
+        }
+      }
+    },
+    "excursion_row_anchor": {
+      "id": "excursion_row_anchor",
+      "type": "data.Insert",
+      "width": 240,
+      "height": 120,
+      "x": 1060.0,
+      "y": 900.0,
+      "inputData": {
+        "path": {
+          "value": "anchor"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "excursion_seed",
+              "portName": "out"
+            }
+          ],
+          "value": [
+            {
+              "nodeId": "excursion",
+              "portName": "move.anchor"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "excursion_row_ignition",
+              "portName": "data"
+            }
+          ]
+        }
+      }
+    },
+    "excursion_row_ignition": {
+      "id": "excursion_row_ignition",
+      "type": "data.Insert",
+      "width": 240,
+      "height": 120,
+      "x": 1320.0,
+      "y": 900.0,
+      "inputData": {
+        "path": {
+          "value": "ignition"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "excursion_row_anchor",
+              "portName": "out"
+            }
+          ],
+          "value": [
+            {
+              "nodeId": "excursion",
+              "portName": "move.ignition"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "excursion_row_extremum",
+              "portName": "data"
+            }
+          ]
+        }
+      }
+    },
+    "excursion_row_extremum": {
+      "id": "excursion_row_extremum",
+      "type": "data.Insert",
+      "width": 240,
+      "height": 120,
+      "x": 1580.0,
+      "y": 900.0,
+      "inputData": {
+        "path": {
+          "value": "extremum"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "excursion_row_ignition",
+              "portName": "out"
+            }
+          ],
+          "value": [
+            {
+              "nodeId": "excursion",
+              "portName": "move.extremum"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "excursion_row_move",
+              "portName": "data"
+            }
+          ]
+        }
+      }
+    },
+    "excursion_row_move": {
+      "id": "excursion_row_move",
+      "type": "data.Insert",
+      "width": 240,
+      "height": 120,
+      "x": 1840.0,
+      "y": 900.0,
+      "inputData": {
+        "path": {
+          "value": "excursion"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "excursion_row_extremum",
+              "portName": "out"
+            }
+          ],
+          "value": [
+            {
+              "nodeId": "excursion",
+              "portName": "move.excursion"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "excursion_row_confirmed",
+              "portName": "data"
+            }
+          ]
+        }
+      }
+    },
+    "excursion_row_confirmed": {
+      "id": "excursion_row_confirmed",
+      "type": "data.Insert",
+      "width": 240,
+      "height": 120,
+      "x": 2100.0,
+      "y": 900.0,
+      "inputData": {
+        "path": {
+          "value": "confirmed"
+        },
+        "json": {
+          "value": "true"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "excursion_row_move",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "excursion_row_qualifying",
+              "portName": "data"
+            }
+          ]
+        }
+      }
+    },
+    "excursion_row_qualifying": {
+      "id": "excursion_row_qualifying",
+      "type": "data.Insert",
+      "width": 240,
+      "height": 120,
+      "x": 2360.0,
+      "y": 900.0,
+      "inputData": {
+        "path": {
+          "value": "qualifying"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "excursion_row_confirmed",
+              "portName": "out"
+            }
+          ],
+          "value": [
+            {
+              "nodeId": "excursion",
+              "portName": "qualifying"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "excursion_row_sigma",
+              "portName": "data"
+            }
+          ]
+        }
+      }
+    },
+    "excursion_row_sigma": {
+      "id": "excursion_row_sigma",
+      "type": "data.Insert",
+      "width": 240,
+      "height": 120,
+      "x": 2620.0,
+      "y": 900.0,
+      "inputData": {
+        "path": {
+          "value": "sigma"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "excursion_row_qualifying",
+              "portName": "out"
+            }
+          ],
+          "value": [
+            {
+              "nodeId": "excursion",
+              "portName": "sigma"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "excursion_row_horizon",
+              "portName": "data"
+            }
+          ]
+        }
+      }
+    },
+    "excursion_row_horizon": {
+      "id": "excursion_row_horizon",
+      "type": "data.Insert",
+      "width": 240,
+      "height": 120,
+      "x": 2880.0,
+      "y": 900.0,
+      "inputData": {
+        "path": {
+          "value": "horizon"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "excursion_row_sigma",
+              "portName": "out"
+            }
+          ],
+          "value": [
+            {
+              "nodeId": "excursion",
+              "portName": "horizon"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "table_excursions",
+              "portName": "payload"
+            }
+          ]
+        }
+      }
+    },
+    "table_excursions": {
+      "id": "table_excursions",
+      "type": "tables.IcebergTable",
+      "width": 320,
+      "height": 280,
+      "x": 3140.0,
+      "y": 900.0,
+      "inputData": {
+        "config": {
+          "value": "{\"namespace\": \"symm\", \"table\": \"excursions_v1\", \"fields\": [{\"id\": 1, \"name\": \"symbol\", \"type\": \"string\", \"required\": true}, {\"id\": 2, \"name\": \"anchor\", \"type\": \"double\", \"required\": true}, {\"id\": 3, \"name\": \"ignition\", \"type\": \"double\", \"required\": true}, {\"id\": 4, \"name\": \"extremum\", \"type\": \"double\", \"required\": true}, {\"id\": 5, \"name\": \"excursion\", \"type\": \"double\", \"required\": true}, {\"id\": 6, \"name\": \"confirmed\", \"type\": \"boolean\", \"required\": true}, {\"id\": 7, \"name\": \"qualifying\", \"type\": \"double\", \"required\": true}, {\"id\": 8, \"name\": \"sigma\", \"type\": \"double\", \"required\": true}, {\"id\": 9, \"name\": \"horizon\", \"type\": \"double\", \"required\": true}], \"catalog\": \"symmtables\", \"properties\": {\"type\": \"rest\", \"uri\": \"http://iceberg.seaweed.home.arpa\", \"warehouse\": \"s3://symmtables/\", \"s3.endpoint\": \"http://s3.seaweed.home.arpa\", \"s3.region\": \"us-east-1\", \"s3.access-key-id\": \"anonymous\", \"s3.secret-access-key\": \"anonymous\"}, \"appendBytes\": 16777216}"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "payload": [
+            {
+              "nodeId": "excursion_row_horizon",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "measurements_array": {
+      "id": "measurements_array",
+      "type": "data.Array",
+      "width": 240,
+      "height": 120,
+      "x": 800.0,
+      "y": 1100.0,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "numbers": [
+            {
+              "nodeId": "signals",
+              "portName": "gather.gathered.values"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "measurement_row_cut",
+              "portName": "json"
+            }
+          ]
+        }
+      }
+    },
+    "measurement_row_excursion": {
+      "id": "measurement_row_excursion",
+      "type": "data.Insert",
+      "width": 240,
+      "height": 120,
+      "x": 1060.0,
+      "y": 1100.0,
+      "inputData": {
+        "path": {
+          "value": "excursion"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "excursion_seed",
+              "portName": "out"
+            }
+          ],
+          "value": [
+            {
+              "nodeId": "excursion",
+              "portName": "move.excursion"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "measurement_row_cut",
+              "portName": "data"
+            }
+          ]
+        }
+      }
+    },
+    "measurement_row_cut": {
+      "id": "measurement_row_cut",
+      "type": "data.Insert",
+      "width": 240,
+      "height": 120,
+      "x": 1320.0,
+      "y": 1100.0,
+      "inputData": {
+        "path": {
+          "value": "metrics"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "measurement_row_excursion",
+              "portName": "out"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "measurements_array",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "table_measurements",
+              "portName": "payload"
+            }
+          ]
+        }
+      }
+    },
+    "table_measurements": {
+      "id": "table_measurements",
+      "type": "tables.IcebergTable",
+      "width": 320,
+      "height": 280,
+      "x": 1580.0,
+      "y": 1100.0,
+      "inputData": {
+        "config": {
+          "value": "{\"namespace\": \"symm\", \"table\": \"measurements_v1\", \"fields\": [{\"id\": 1, \"name\": \"symbol\", \"type\": \"string\", \"required\": true}, {\"id\": 2, \"name\": \"excursion\", \"type\": \"double\", \"required\": true}, {\"id\": 3, \"name\": \"metrics\", \"type\": {\"type\": \"list\", \"element-id\": 4, \"element\": \"double\", \"element-required\": true}, \"required\": true}], \"catalog\": \"symmtables\", \"properties\": {\"type\": \"rest\", \"uri\": \"http://iceberg.seaweed.home.arpa\", \"warehouse\": \"s3://symmtables/\", \"s3.endpoint\": \"http://s3.seaweed.home.arpa\", \"s3.region\": \"us-east-1\", \"s3.access-key-id\": \"anonymous\", \"s3.secret-access-key\": \"anonymous\"}, \"appendBytes\": 16777216}"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "payload": [
+            {
+              "nodeId": "measurement_row_cut",
+              "portName": "out"
             }
           ]
         },

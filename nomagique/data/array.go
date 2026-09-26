@@ -96,6 +96,10 @@ func (server *ArrayServer) Write(ctx context.Context, call Array_write) error {
 		elements = append(elements, flags.At(index))
 	}
 
+	if len(elements) == 0 {
+		return nil
+	}
+
 	encoded, err := json.Marshal(elements)
 
 	if err != nil {

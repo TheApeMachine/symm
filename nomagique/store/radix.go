@@ -3,6 +3,7 @@ package store
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"sync/atomic"
 
 	capnp "capnproto.org/go/capnp/v3"
@@ -58,8 +59,14 @@ func (server *RadixServer) Write(ctx context.Context, call Radix_write) error {
 			return errnie.Error(errnie.Err(errnie.Validation, "radix: key", err))
 		}
 
-		if key == "" || seen[key] {
-			return errnie.Error(errnie.Err(errnie.Validation, "radix: keys must be nonempty and distinct", nil))
+		if key == "" {
+			server.out[index] = nil
+			server.found[index] = false
+			continue
+		}
+
+		if seen[key] {
+			return errnie.Error(errnie.Err(errnie.Validation, fmt.Sprintf("radix: keys must be distinct (index %d: duplicate key %q)", index, key), nil))
 		}
 
 		seen[key] = true

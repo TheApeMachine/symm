@@ -133,7 +133,8 @@ func TestGather(t *testing.T) {
 			return isGathered, phase, meta
 		}
 
-		Convey("Phase 1: stays idle while only a subset of families has contributed", func() {
+		Convey("Produces output once all declared families have contributed", func() {
+			// Step 1: ticker_fam contributes
 			gathered, phase, meta := step([]float64{10, 20, 0, 0}, []bool{true, true, false, false})
 			So(gathered, ShouldBeFalse)
 			So(phase, ShouldEqual, "WARMING_SIGNALS")
@@ -141,28 +142,22 @@ func TestGather(t *testing.T) {
 			So(meta["contributing"], ShouldEqual, 1)
 			So(meta["total"], ShouldEqual, 2)
 			So(meta["missing"], ShouldResemble, []any{"trade_fam"})
-		})
 
-		Convey("Phase 2: once all families contribute, map formation begins and stays ready", func() {
-			// Step 1: ticker_fam contributes
-			gathered, phase, _ := step([]float64{10, 20, 0, 0}, []bool{true, true, false, false})
-			So(gathered, ShouldBeFalse)
-			So(phase, ShouldEqual, "WARMING_SIGNALS")
-
-			// Step 2: trade_fam contributes
-			gathered, phase, meta := step([]float64{0, 0, 30, 40}, []bool{false, false, true, true})
+			// Step 2: trade_fam contributes, completing all families
+			gathered, phase, meta = step([]float64{0, 0, 30, 40}, []bool{false, false, true, true})
 			So(gathered, ShouldBeTrue)
 			So(phase, ShouldEqual, "FORMING_MAP")
 			So(meta["ready"], ShouldEqual, true)
 			So(meta["contributing"], ShouldEqual, 2)
 			So(meta["missing"], ShouldBeEmpty)
 
-			// Step 3: asynchronous arrival with only ticker present retains readiness
+			// Step 3: asynchronous arrival with only ticker present produces output and stays ready
 			gathered, phase, meta = step([]float64{15, 25, 0, 0}, []bool{true, true, false, false})
 			So(gathered, ShouldBeTrue)
 			So(phase, ShouldEqual, "FORMING_MAP")
 			So(meta["ready"], ShouldEqual, true)
 			So(meta["contributing"], ShouldEqual, 2)
+			So(meta["missing"], ShouldBeEmpty)
 		})
 	})
 }

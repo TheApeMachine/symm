@@ -41,6 +41,7 @@ func (server *TokenSequenceServer) Write(ctx context.Context, call TokenSequence
 	server.out = nil
 
 	scope, err := args.Scope()
+
 	if err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -49,8 +50,25 @@ func (server *TokenSequenceServer) Write(ctx context.Context, call TokenSequence
 		))
 	}
 
-	token, _ := args.Token()
-	tokensList, _ := args.Tokens()
+	token, err := args.Token()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"cognition.token_sequence: failed to read token",
+			err,
+		))
+	}
+
+	tokensList, err := args.Tokens()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"cognition.token_sequence: failed to read tokens",
+			err,
+		))
+	}
 
 	// A reset starts a new window: no scope carries history into it.
 	if args.Reset() {
@@ -98,6 +116,7 @@ func (server *TokenSequenceServer) Write(ctx context.Context, call TokenSequence
 	server.depth = int64(len(updated))
 
 	encoded, err := sonic.Marshal(server.path)
+
 	if err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.Internal,
@@ -112,6 +131,7 @@ func (server *TokenSequenceServer) Write(ctx context.Context, call TokenSequence
 
 func (server *TokenSequenceServer) Done(ctx context.Context, call TokenSequence_done) error {
 	results, err := call.AllocResults()
+
 	if err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.Internal,
@@ -139,6 +159,7 @@ func (server *TokenSequenceServer) Done(ctx context.Context, call TokenSequence_
 	}
 
 	seqList, err := step.NewSequence(int32(len(server.sequence)))
+	
 	if err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.Internal,
