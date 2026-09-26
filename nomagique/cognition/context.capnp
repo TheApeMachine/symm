@@ -6,7 +6,7 @@ using import "precursor.capnp".Context;
 # Constructs the two legal inventory contexts for one causal observation.
 # An inactive token set emits idle. Replay requires a nonempty explicit history.
 interface ContextBuilder {
- write @0 (symbol :Text, vocabulary :Text, tokens :List(Text), history :List(Text), replay :Bool) -> stream;
+ write @0 (symbol :Text, vocabulary :Text, tokens :List(Text), history :List(Text), replay :Bool, epoch :Int64, sequence :Int64) -> stream;
  done @1 () -> Contexts;
 }
 struct Contexts {

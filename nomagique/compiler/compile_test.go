@@ -18,6 +18,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/compiler"
+	"github.com/theapemachine/symm/nomagique/financial/kraken"
 	"github.com/theapemachine/symm/nomagique/network/websocket"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/store"
@@ -557,8 +558,8 @@ func TestCompileTraining(t *testing.T) {
 			defer program.Release()
 
 			if name == "capture" {
-				// All three sockets (spot, level3, futures) record into one
-				// session and one table, and nothing that grades or learns
+				// Spot, futures, and the dynamic Level 3 source share one
+				// capture owner and table; nothing that grades or learns
 				// runs inside capture.
 				kinds := map[string]int{}
 
@@ -569,7 +570,8 @@ func TestCompileTraining(t *testing.T) {
 				}
 				So(kinds["store.Capture"], ShouldEqual, 1)
 				So(kinds["tables.IcebergTable"], ShouldEqual, 1)
-				So(kinds["websocket.WebSocketClient"], ShouldEqual, 5)
+				So(kinds["websocket.WebSocketClient"], ShouldEqual, 2)
+				So(kinds["websocket.Shards"], ShouldEqual, 1)
 				continue
 			}
 
@@ -787,7 +789,7 @@ func TestCompileCaptureWiring(t *testing.T) {
 			captureIndex := program.NodeMap["envelope"]
 			capture := store.Capture_ServerToClient(store.NewCapture(context.Background()))
 			defer capture.Release()
-			sources := []string{"spot__socket", "level3__shard_0__socket", "futures__socket", "level3__shard_1__socket", "level3__shard_2__socket"}
+			sources := []string{"spot__socket", "level3__shards", "futures__socket"}
 
 			// A second generation represents reconnect snapshots from every socket.
 			for generation := range 2 {
@@ -862,10 +864,19 @@ func TestCompileFuturesReconnect(t *testing.T) {
 	Convey("The authored futures node sends both subscriptions on every connection", t, func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
+		var requests atomic.Int64
 		received := make(chan string, 4)
 		failures := make(chan error, 4)
 		upgrader := gorillaws.Upgrader{}
 		venue := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			if request.URL.Path == "/instruments" {
+				requests.Add(1)
+				_, err := writer.Write([]byte(`{"result":"success","instruments":[{"symbol":"PF_XBTUSD","pair":"BTC:USD","tradeable":true},{"symbol":"PF_ETHUSD","pair":"ETH:USD","tradeable":true},{"symbol":"PF_USDTUSD","pair":"USDT:USD","tradeable":true}]}`))
+				if err != nil {
+					failures <- err
+				}
+				return
+			}
 			connection, err := upgrader.Upgrade(writer, request, nil)
 
 			if err != nil {
@@ -900,10 +911,30 @@ func TestCompileFuturesReconnect(t *testing.T) {
 		socket := graph.Nodes["socket"]
 		socket.InputData["endpoint"] = endpoint
 		graph.Nodes["socket"] = socket
+		instruments := graph.Nodes["instruments"]
+		address, err := json.Marshal(venue.URL + "/instruments")
+		So(err, ShouldBeNil)
+		instruments.InputData["url"] = address
+		graph.Nodes["instruments"] = instruments
+		graph.Nodes["eligible"] = compiler.Node{ID: "eligible", Type: "kraken.Universe", InputData: map[string]json.RawMessage{"quote": json.RawMessage(`"USD"`)}, Connections: compiler.Connections{Outputs: map[string][]compiler.ConnectionTarget{"ready.symbols": {{NodeID: "products", PortName: "symbols"}}}}}
+		products := graph.Nodes["products"]
+		products.Connections.Inputs["symbols"] = []compiler.ConnectionTarget{{NodeID: "eligible", PortName: "ready.symbols"}}
+		graph.Nodes["products"] = products
+
 		program, err := compiler.Compile(graph, nil, compiler.DefaultRepository())
 		So(err, ShouldBeNil)
 		defer program.Release()
 		So(program.Execute(ctx, nil), ShouldBeNil)
+		// The HTTP catalogue arrives before spot discovery, as it can at startup.
+		message, segment, err := capnp.NewMessage(capnp.SingleSegment(nil))
+		So(err, ShouldBeNil)
+		defer message.Release()
+
+		admission, err := kraken.NewRootUniverse_write_Params(segment)
+		So(err, ShouldBeNil)
+		So(admission.SetQuote("USD"), ShouldBeNil)
+		So(admission.SetData([]byte(`{"channel":"instrument","data":{"pairs":[{"symbol":"BTC/USD","base":"BTC","quote":"USD","status":"online"},{"symbol":"ETH/USD","base":"ETH","quote":"USD","status":"online"},{"symbol":"NOFUTURE/USD","base":"NOFUTURE","quote":"USD","status":"online"}]}}`)), ShouldBeNil)
+		So(program.Execute(ctx, map[compiler.NodeID]capnp.Struct{program.NodeMap["eligible"]: capnp.Struct(admission)}), ShouldBeNil)
 
 		for range 2 {
 			for _, feed := range []string{"ticker", "trade"} {
@@ -917,7 +948,7 @@ func TestCompileFuturesReconnect(t *testing.T) {
 					So(json.Unmarshal([]byte(payload), &subscription), ShouldBeNil)
 					So(subscription.Event, ShouldEqual, "subscribe")
 					So(subscription.Feed, ShouldEqual, feed)
-					So(subscription.Products, ShouldResemble, []string{"PI_XBTUSD"})
+					So(subscription.Products, ShouldResemble, []string{"PF_ETHUSD", "PF_XBTUSD"})
 				case err := <-failures:
 					So(err, ShouldBeNil)
 				case <-ctx.Done():
@@ -925,6 +956,11 @@ func TestCompileFuturesReconnect(t *testing.T) {
 				}
 			}
 		}
+		for range 3 {
+			So(program.Execute(ctx, nil), ShouldBeNil)
+		}
+		So(requests.Load(), ShouldEqual, 1)
+
 	})
 }
 

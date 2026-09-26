@@ -498,3 +498,95 @@ func TestGridWriteConcurrent(t *testing.T) {
 		So(err.Error(), ShouldContainSubstring, "separate Workspace observations")
 	})
 }
+
+/* TestGridWriteMarkets keeps held spot readings local to the market in each raw record. */
+func TestGridWriteMarkets(t *testing.T) {
+	Convey("Interleaved feeds share a projector without sharing retained readings", t, func() {
+		client := store.Grid_ServerToClient(store.NewGrid(context.Background()))
+		defer client.Release()
+		for _, sample := range []struct {
+			payload, symbol string
+			held            float64
+			present         bool
+		}{
+			{`{"channel":"ticker","data":{"symbol":"BTC/USD","last":100}}`, "BTC/USD", 100, true},
+			{`{"channel":"futures_ticker","data":{"symbol":"ETH/USD","last":2000}}`, "ETH/USD", 0, false},
+			{`{"channel":"ticker","data":{"symbol":"ETH/USD","last":1900}}`, "ETH/USD", 1900, true},
+			{`{"channel":"futures_ticker","data":{"symbol":"BTC/USD","last":110}}`, "BTC/USD", 100, true},
+			{`{"channel":"futures_ticker","data":{"symbol":"ETH/USD","last":2100}}`, "ETH/USD", 1900, true},
+		} {
+			held, present, symbol, err := projectMarket(client, sample.payload)
+			So(err, ShouldBeNil)
+			So(symbol, ShouldEqual, sample.symbol)
+			So(present, ShouldEqual, sample.present)
+			So(held, ShouldEqual, sample.held)
+		}
+	})
+	Convey("An unidentifiable record cannot reuse the previous market", t, func() {
+		client := store.Grid_ServerToClient(store.NewGrid(context.Background()))
+		defer client.Release()
+		_, _, _, err := projectMarket(client, `{"channel":"ticker","data":{"last":100}}`)
+		So(err, ShouldNotBeNil)
+	})
+}
+
+/* projectMarket exercises the native write/done pair used by live projection. */
+func projectMarket(client store.Grid, payload string) (float64, bool, string, error) {
+	err := client.Write(context.Background(), func(args store.Grid_write_Params) error {
+		if err := args.SetScopePath("data.symbol"); err != nil {
+			return err
+		}
+		if err := args.SetInterests("held:ticker.data.last,futures_ticker.data.last"); err != nil {
+			return err
+		}
+		data, err := args.NewData(1)
+		if err != nil {
+			return err
+		}
+		return data.Set(0, []byte(payload))
+	})
+	if err != nil {
+		return 0, false, "", err
+	}
+	if err := client.WaitStreaming(); err != nil {
+		return 0, false, "", err
+	}
+	future, release := client.Done(context.Background(), nil)
+	defer release()
+	result, err := future.Struct()
+	if err != nil {
+		return 0, false, "", err
+	}
+	values, err := result.Values()
+	if err != nil {
+		return 0, false, "", err
+	}
+	present, err := result.Present()
+	if err != nil {
+		return 0, false, "", err
+	}
+	symbol, err := result.Scope()
+	if err != nil {
+		return 0, false, "", err
+	}
+	return values.At(0), present.At(0), symbol, nil
+}
+
+/* BenchmarkGridWriteMarkets includes actual raw projection and market switching. */
+func BenchmarkGridWriteMarkets(b *testing.B) {
+	client := store.Grid_ServerToClient(store.NewGrid(context.Background()))
+	defer client.Release()
+	records := []string{`{"channel":"ticker","data":{"symbol":"BTC/USD","last":100}}`, `{"channel":"ticker","data":{"symbol":"ETH/USD","last":1900}}`}
+	for _, record := range records {
+		if _, _, _, err := projectMarket(client, record); err != nil {
+			b.Fatal(err)
+		}
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for index := 0; index < b.N; index++ {
+		if _, _, _, err := projectMarket(client, records[index%len(records)]); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

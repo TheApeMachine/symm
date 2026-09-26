@@ -37,8 +37,8 @@ func (server *ContextBuilderServer) Write(ctx context.Context, call ContextBuild
 	if err != nil {
 		return errnie.Error(err)
 	}
-	if symbol == "" || vocabulary == "" || args.Replay() && history.Len() == 0 {
-		return errnie.Error(errnie.Err(errnie.Validation, "context: symbol, vocabulary and replay history are required", nil))
+	if symbol == "" || vocabulary == "" || args.Replay() && history.Len() == 0 || args.Epoch() <= 0 || args.Sequence() < 0 {
+		return errnie.Error(errnie.Err(errnie.Validation, "context: symbol, vocabulary, causal stamp and replay history are required", nil))
 	}
 	for _, values := range []capnp.TextList{tokens, history} {
 		for index := range values.Len() {
@@ -65,6 +65,8 @@ func (server *ContextBuilderServer) Write(ctx context.Context, call ContextBuild
 			return errnie.Error(err)
 		}
 	}
+	server.flat.SetEpoch(args.Epoch())
+	server.flat.SetSequence(args.Sequence())
 	server.flat.SetLive()
 	if args.Replay() {
 		if err := server.flat.SetHistory(history); err != nil {

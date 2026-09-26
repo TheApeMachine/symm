@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,12 +18,14 @@ import (
 	sqlcat "github.com/apache/iceberg-go/catalog/sql"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/arithmetic"
+	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/cognition"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/geometry"
 	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/store/tables"
+	"github.com/theapemachine/symm/nomagique/temporal"
 
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/ui"
@@ -437,13 +440,21 @@ func TestProgramStepDurable(t *testing.T) {
 		server := graph.Nodes["server"]
 		server.InputData["address"] = json.RawMessage(`"127.0.0.1:0"`)
 		graph.Nodes["server"] = server
+		forward := graph.Nodes["forward_consumer"]
+		var selected struct {
+			Value []string `json:"value"`
+		}
+		So(json.Unmarshal(forward.InputData["outputs"], &selected), ShouldBeNil)
+		forward.InputData["outputs"], err = json.Marshal(append(selected.Value, "excursion"))
+		So(err, ShouldBeNil)
+		graph.Nodes["forward_consumer"] = forward
 		program, err := Compile(graph, registry, repository)
 		So(err, ShouldBeNil)
 		defer program.Release()
 		So(program.Execute(ctx, nil), ShouldBeNil)
 		workspace := runtime.Workspace(program.Nodes[program.NodeMap["workspace"]].Client)
 		So(workspace.Write(ctx, func(args runtime.Workspace_write_Params) error {
-			arrivals, err := args.NewData(3)
+			arrivals, err := args.NewData(6)
 			if err != nil {
 				return err
 			}
@@ -451,6 +462,9 @@ func TestProgramStepDurable(t *testing.T) {
 				`{"channel":"ticker","capture":{"session":"spot","sequence":0,"record":0,"endpoint":"wss://fixture","receivedAt":"2026-09-26T00:00:00Z"},"data":{"symbol":"BTC/USD","last":101,"bid":100,"ask":102}}`,
 				`{"channel":"trade","capture":{"session":"spot","sequence":1,"record":0,"endpoint":"wss://fixture","receivedAt":"2026-09-26T00:00:01Z"},"data":{"symbol":"BTC/USD","price":101,"qty":2,"side":"buy","timestamp":"2026-09-26T00:00:01Z"}}`,
 				`{"channel":"ticker","capture":{"session":"spot","sequence":2,"record":0,"endpoint":"wss://fixture","receivedAt":"2026-09-26T00:00:02Z"},"data":{"symbol":"BTC/USD","last":106,"bid":104,"ask":109}}`,
+				`{"channel":"ticker","capture":{"session":"spot","sequence":3,"record":0,"endpoint":"wss://fixture","receivedAt":"2026-09-26T00:00:03Z"},"data":{"symbol":"ETH/USD","last":2000,"bid":1990,"ask":2010}}`,
+				`{"channel":"futures_ticker","capture":{"session":"futures","sequence":55,"record":0,"endpoint":"wss://fixture","receivedAt":"2026-09-26T00:00:04Z"},"data":{"symbol":"BTC/USD","last":99999}}`,
+				`{"channel":"ticker","capture":{"session":"spot","sequence":5,"record":0,"endpoint":"wss://fixture","receivedAt":"2026-09-26T00:00:05Z"},"data":{"symbol":"BTC/USD","last":108,"bid":107,"ask":109}}`,
 			} {
 				if err := arrivals.Set(index, []byte(payload)); err != nil {
 					return err
@@ -460,10 +474,33 @@ func TestProgramStepDurable(t *testing.T) {
 		}), ShouldBeNil)
 		So(workspace.WaitStreaming(), ShouldBeNil)
 		So(program.Flush(ctx), ShouldBeNil)
+		forwardConsumer := runtime.Consumer(program.Nodes[program.NodeMap["forward_consumer"]].Client)
+		completed, release := forwardConsumer.Done(ctx, nil)
+		progress, err := completed.Struct()
+		So(err, ShouldBeNil)
+		results, err := progress.Outputs()
+		So(err, ShouldBeNil)
+		observedExcursion := false
+		for index := range results.Len() {
+			name, err := results.At(index).Node()
+			So(err, ShouldBeNil)
+			if name != "excursion" {
+				continue
+			}
+			observedExcursion = true
+			pointer, err := results.At(index).Value()
+			So(err, ShouldBeNil)
+			excursion := temporal.ExcursionResult(pointer.Struct())
+			// Three spot ticks produce two steps; the futures tick is not a spot-price step.
+			So(excursion.Steps(), ShouldEqual, 2)
+			So(excursion.Legs(), ShouldEqual, 0)
+		}
+		release()
+		So(observedExcursion, ShouldBeTrue)
 		table, err := catalog.LoadTable(ctx, []string{"symm", "metric_cuts_v2"})
 		So(err, ShouldBeNil)
 		So(table.CurrentSnapshot(), ShouldNotBeNil)
-		So(table.CurrentSnapshot().Summary.Properties["total-records"], ShouldEqual, "3")
+		So(table.CurrentSnapshot().Summary.Properties["total-records"], ShouldEqual, "6")
 		_, batches, err := table.Scan().ToArrowRecords(ctx)
 		So(err, ShouldBeNil)
 		seen := make(map[int64]bool)
@@ -474,14 +511,25 @@ func TestProgramStepDurable(t *testing.T) {
 				sequence := batch.Column(1).(*array.Int64).Value(index)
 				So(epoch, ShouldBeGreaterThan, int64(1)<<53)
 				seen[sequence] = true
+				symbol := batch.Column(2).(*array.String).Value(index)
+				expectedSymbol := "BTC/USD"
+				if sequence == 3 {
+					expectedSymbol = "ETH/USD"
+				}
+				So(symbol, ShouldEqual, expectedSymbol)
+
 				var origin struct {
 					Session  string
 					Sequence int64
 					Record   int64
 				}
 				So(json.Unmarshal([]byte(batch.Column(5).(*array.String).Value(index)), &origin), ShouldBeNil)
-				So(origin.Session, ShouldEqual, "spot")
-				So(origin.Sequence, ShouldEqual, sequence)
+				expectedSession, sourceSequence := "spot", sequence
+				if sequence == 4 {
+					expectedSession, sourceSequence = "futures", 55
+				}
+				So(origin.Session, ShouldEqual, expectedSession)
+				So(origin.Sequence, ShouldEqual, sourceSequence)
 				So(origin.Record, ShouldEqual, 0)
 				metrics := batch.Column(4).(*array.List)
 				start, end := metrics.ValueOffsets(index)
@@ -494,6 +542,9 @@ func TestProgramStepDurable(t *testing.T) {
 					So(rows.Field(3).(*array.Int64).Value(slot), ShouldEqual, epoch)
 					stamp := rows.Field(4).(*array.Int64).Value(slot)
 					So(stamp, ShouldBeLessThanOrEqualTo, sequence)
+					if symbol == "ETH/USD" {
+						So(stamp, ShouldEqual, 3)
+					}
 					identity := rows.Field(0).(*array.String).Value(slot)
 					if sequence == 2 && identity == "liquidity_ticker:spread.out" {
 						So(rows.Field(1).(*array.Float64).Value(slot), ShouldEqual, 5)
@@ -507,7 +558,7 @@ func TestProgramStepDurable(t *testing.T) {
 			}
 			batch.Release()
 		}
-		So(seen, ShouldResemble, map[int64]bool{0: true, 1: true, 2: true})
+		So(seen, ShouldResemble, map[int64]bool{0: true, 1: true, 2: true, 3: true, 4: true, 5: true})
 	})
 }
 
@@ -859,5 +910,202 @@ func TestProgramStepReplay(t *testing.T) {
 		}
 		So(ctx.Err(), ShouldBeNil)
 		So(step, ShouldEqual, 5)
+	})
+}
+
+/* TestProgramStepMarkets proves symbol isolation through the shipping LMAX metric groups. */
+func TestProgramStepMarkets(t *testing.T) {
+	Convey("Alternating markets survive ring wrap without sharing metric history", t, func() {
+		graph, err := DefaultRepository().Load("system")
+		So(err, ShouldBeNil)
+		for identifier, node := range graph.Nodes {
+			if !strings.HasPrefix(node.Type, "runtime.") && !strings.HasSuffix(identifier, "_graph") {
+				withoutNodes(graph, identifier)
+			}
+		}
+		withoutLearningStages(graph)
+		workspaceNode := graph.Nodes["workspace"]
+		workspaceNode.InputData["capacity"] = json.RawMessage(`8`)
+		graph.Nodes["workspace"] = workspaceNode
+		program, err := Compile(graph, nil, DefaultRepository())
+		So(err, ShouldBeNil)
+		defer program.Release()
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		So(program.Execute(ctx, nil), ShouldBeNil)
+		workspace := runtime.Workspace(program.Nodes[program.NodeMap["workspace"]].Client)
+		// Sixty-four alternating ticks wrap the eight-slot ring eight times.
+		So(workspace.Write(ctx, func(args runtime.Workspace_write_Params) error {
+			arrivals, err := args.NewData(64)
+			if err != nil {
+				return err
+			}
+			for sequence := range 64 {
+				symbol, price := "BTC/USD", float64(100+sequence)
+				if sequence%2 == 1 {
+					symbol, price = "ETH/USD", float64(1000+10*sequence)
+				}
+				payload := fmt.Sprintf(`{"channel":"ticker","capture":{"session":"spot","sequence":%d,"record":0,"endpoint":"wss://fixture","receivedAt":"2026-09-26T00:00:00Z"},"data":{"symbol":%q,"last":%g,"bid":%g,"ask":%g}}`, sequence, symbol, price, price-1, price+1)
+				if err := arrivals.Set(sequence, []byte(payload)); err != nil {
+					return err
+				}
+			}
+			return nil
+		}), ShouldBeNil)
+		So(workspace.WaitStreaming(), ShouldBeNil)
+		So(program.Flush(ctx), ShouldBeNil)
+		consumer := runtime.Consumer(program.Nodes[program.NodeMap["definition-pumpdump_ticker_consumer"]].Client)
+		future, release := consumer.Done(ctx, nil)
+		defer release()
+		completed, err := future.Struct()
+		So(err, ShouldBeNil)
+		So(completed.Completed(), ShouldEqual, 64)
+		outputs, err := completed.Outputs()
+		So(err, ShouldBeNil)
+		found := false
+		for index := range outputs.Len() {
+			output := outputs.At(index)
+			name, err := output.Node()
+			So(err, ShouldBeNil)
+			if name != "midpoint_log_return" {
+				continue
+			}
+			found = true
+			value, err := output.Value()
+			So(err, ShouldBeNil)
+			So(temporal.LogReturns_done_Results(value.Struct()).Out(), ShouldAlmostEqual, math.Log(1630.0/1610.0))
+			So(output.Sequence(), ShouldEqual, 63)
+		}
+		So(found, ShouldBeTrue)
+		cutConsumer := runtime.Consumer(program.Nodes[program.NodeMap["cut_consumer"]].Client)
+		cutFuture, release := cutConsumer.Done(ctx, nil)
+		defer release()
+		cutDone, err := cutFuture.Struct()
+		So(err, ShouldBeNil)
+		cuts, err := cutDone.Outputs()
+		So(err, ShouldBeNil)
+		So(cuts.Len(), ShouldEqual, 1)
+		pointer, err := cuts.At(0).Value()
+		So(err, ShouldBeNil)
+		cut := data.Gathered(pointer.Struct())
+		So(cut.Which(), ShouldEqual, data.Gathered_Which_idle)
+		row, err := cut.Row()
+		So(err, ShouldBeNil)
+		var stored struct {
+			Symbol   string
+			Sequence int64
+			Metrics  []struct {
+				Identity string
+				Present  bool
+				Sequence int64
+			}
+		}
+		So(json.Unmarshal(row, &stored), ShouldBeNil)
+		So(stored.Symbol, ShouldEqual, "ETH/USD")
+		So(stored.Sequence, ShouldEqual, 63)
+		for _, metric := range stored.Metrics {
+			if metric.Present {
+				So(metric.Sequence%2, ShouldEqual, 1)
+			}
+		}
+		for _, identifier := range []string{"definition-pumpdump_ticker_graph", "cut_graph"} {
+			factory := runtime.StageFactory(program.Nodes[program.NodeMap[identifier]].Client)
+			future, release := factory.Done(ctx, nil)
+			result, err := future.Struct()
+			So(err, ShouldBeNil)
+			So(result.Partitions(), ShouldEqual, 2)
+			release()
+		}
+	})
+}
+
+/* TestProgramStepSharedGrid preserves per-market differences in the one shared region graph. */
+func TestProgramStepSharedGrid(t *testing.T) {
+	Convey("The shared grid compares each metric with the same market's previous cut", t, func() {
+		graph, err := DefaultRepository().Load("impulse_map")
+		So(err, ShouldBeNil)
+		for identifier := range graph.Nodes {
+			if identifier != "previous" && identifier != "change" {
+				withoutNodes(graph, identifier)
+			}
+		}
+		program, err := Compile(graph, nil, DefaultRepository())
+		So(err, ShouldBeNil)
+		client := runtime.StageNode_ServerToClient(program)
+		defer client.Release()
+		for _, sample := range []struct {
+			symbol        string
+			value, change float64
+			defined       bool
+		}{
+			{"BTC/USD", 10, 0, false}, {"ETH/USD", 1000, 0, false}, {"BTC/USD", 13, 3, true}, {"ETH/USD", 990, -10, true}, {"BTC/USD", 18, 5, true},
+		} {
+			future, release := client.Step(context.Background(), func(args runtime.StageNode_step_Params) error {
+				bindings, err := args.NewBindings(3)
+				if err != nil {
+					return err
+				}
+				for index, binding := range []struct{ field, target string }{{"values", "change.value"}, {"scope", "previous.scope_0"}, {"present", "change.present"}} {
+					for _, err := range []error{bindings.At(index).SetProducer("cut"), bindings.At(index).SetNode("grid"), bindings.At(index).SetField(binding.field), bindings.At(index).SetTarget(binding.target)} {
+						if err != nil {
+							return err
+						}
+					}
+				}
+				upstream, err := args.NewUpstream(1)
+				if err != nil {
+					return err
+				}
+				result := upstream.At(0)
+				result.SetInterfaceId(store.Grid_TypeID)
+				if err := result.SetProducer("cut"); err != nil {
+					return err
+				}
+				if err := result.SetNode("grid"); err != nil {
+					return err
+				}
+				grid, err := store.NewGrid_done_Results(args.Segment())
+				if err != nil {
+					return err
+				}
+				if err := grid.SetScope(sample.symbol); err != nil {
+					return err
+				}
+				values, err := grid.NewValues(1)
+				if err != nil {
+					return err
+				}
+				values.Set(0, sample.value)
+				present, err := grid.NewPresent(1)
+				if err != nil {
+					return err
+				}
+				present.Set(0, true)
+				if err := result.SetValue(capnp.Struct(grid).ToPtr()); err != nil {
+					return err
+				}
+				selected, err := args.NewOutputs(1)
+				if err != nil {
+					return err
+				}
+				return selected.Set(0, "change")
+			})
+			result, err := future.Struct()
+			So(err, ShouldBeNil)
+			outputs, err := result.Outputs()
+			So(err, ShouldBeNil)
+			So(outputs.Len(), ShouldEqual, 1)
+			pointer, err := outputs.At(0).Value()
+			So(err, ShouldBeNil)
+			changed := calculus.Changed(pointer.Struct())
+			values, err := changed.Change()
+			So(err, ShouldBeNil)
+			defined, err := changed.Defined()
+			So(err, ShouldBeNil)
+			So(values.Len(), ShouldEqual, 1)
+			So(defined.At(0), ShouldEqual, sample.defined)
+			So(values.At(0), ShouldEqual, sample.change)
+			release()
+		}
 	})
 }

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	capnp "capnproto.org/go/capnp/v3"
 	"github.com/theapemachine/errnie"
@@ -13,16 +14,23 @@ import (
 VectorServer retains numeric records of a fixed width, addressed by position.
 */
 type VectorServer struct {
+	*vectorSeries
+	series    map[string]*vectorSeries
 	scope     string
 	width     int
-	values    []float64
-	written   []bool
 	request   []int64
 	requested bool
 }
 
+/* vectorSeries owns the records retained under one native scope. */
+type vectorSeries struct {
+	values  []float64
+	written []bool
+}
+
 func NewVector() *VectorServer {
-	return &VectorServer{}
+	series := &vectorSeries{}
+	return &VectorServer{vectorSeries: series, series: map[string]*vectorSeries{"": series}}
 }
 
 /*
@@ -116,8 +124,8 @@ func (server *VectorServer) Write(ctx context.Context, call Vector_write) error 
 }
 
 /*
-enter moves the vector to the series its records belong to. A new series
-starts from nothing.
+enter selects the series its records belong to, resuming its retained records.
+A previously unseen series starts from nothing.
 */
 func (server *VectorServer) enter(args Vector_write_Params) error {
 	scopes, err := args.Scope()
@@ -156,9 +164,13 @@ func (server *VectorServer) enter(args Vector_write_Params) error {
 		return nil
 	}
 
-	server.scope = scope
-	server.values = server.values[:0]
-	server.written = server.written[:0]
+	series, found := server.series[scope]
+
+	if !found {
+		series = &vectorSeries{}
+		server.series[scope] = series
+	}
+	server.vectorSeries, server.scope = series, scope
 	return nil
 }
 
@@ -234,23 +246,25 @@ func (server *VectorServer) Snapshot(ctx context.Context, call runtime.Snapshot_
 	if err != nil {
 		return errnie.Error(err)
 	}
-	snapshot.SetWidth(uint32(server.width))
-	if err := snapshot.SetScope(server.scope); err != nil {
-		return errnie.Error(err)
+
+	if err := server.vectorSeries.snapshot(snapshot, server.scope, server.width); err != nil {
+		return err
 	}
-	values, err := snapshot.NewValues(int32(len(server.values)))
+	keys := make([]string, 0, len(server.series))
+	for scope := range server.series {
+		if scope != server.scope {
+			keys = append(keys, scope)
+		}
+	}
+	slices.Sort(keys)
+	others, err := snapshot.NewOthers(int32(len(keys)))
 	if err != nil {
 		return errnie.Error(err)
 	}
-	for index, value := range server.values {
-		values.Set(index, value)
-	}
-	written, err := snapshot.NewWritten(int32(len(server.written)))
-	if err != nil {
-		return errnie.Error(err)
-	}
-	for index, value := range server.written {
-		written.Set(index, value)
+	for index, scope := range keys {
+		if err := server.series[scope].snapshot(others.At(index), scope, server.width); err != nil {
+			return err
+		}
 	}
 	encoded, err := message.Marshal()
 	if err != nil {
@@ -278,31 +292,93 @@ func (server *VectorServer) Restore(ctx context.Context, call runtime.Snapshot_r
 	if err != nil {
 		return errnie.Error(err)
 	}
-	values, err := snapshot.Values()
-	if err != nil {
-		return errnie.Error(err)
-	}
-	written, err := snapshot.Written()
-	if err != nil {
-		return errnie.Error(err)
+
+	width := int(snapshot.Width())
+	if server.width != 0 && server.width != width {
+		return errnie.Error(errnie.Err(errnie.Validation, "vector: snapshot width differs", nil))
 	}
 	scope, err := snapshot.Scope()
 	if err != nil {
 		return errnie.Error(err)
 	}
-	width := int(snapshot.Width())
-	if values.Len() != written.Len()*width || (width == 0 && written.Len() != 0) || (server.width != 0 && server.width != width) {
-		return errnie.Error(errnie.Err(errnie.Validation, "vector: snapshot dimensions differ", nil))
+	active, err := restoreVectorSeries(snapshot, width)
+	if err != nil {
+		return err
 	}
-	restored := make([]float64, values.Len())
-	for index := range values.Len() {
-		restored[index] = values.At(index)
+	restored := map[string]*vectorSeries{scope: active}
+	others, err := snapshot.Others()
+	if err != nil {
+		return errnie.Error(err)
 	}
-	known := make([]bool, written.Len())
-	for index := range written.Len() {
-		known[index] = written.At(index)
+	for index := range others.Len() {
+		item := others.At(index)
+		name, err := item.Scope()
+		if err != nil {
+			return errnie.Error(err)
+		}
+		if _, found := restored[name]; found {
+			return errnie.Error(errnie.Err(errnie.Validation, "vector: duplicate snapshot scope", nil))
+		}
+		nested, err := item.Others()
+		if err != nil {
+			return errnie.Error(err)
+		}
+		if nested.Len() != 0 {
+			return errnie.Error(errnie.Err(errnie.Validation, "vector: nested snapshot scopes", nil))
+		}
+		series, err := restoreVectorSeries(item, width)
+		if err != nil {
+			return err
+		}
+		restored[name] = series
 	}
-	server.values, server.written, server.width, server.scope = restored, known, width, scope
+	server.vectorSeries, server.series, server.width, server.scope = active, restored, width, scope
 	server.request, server.requested = nil, false
 	return nil
+}
+
+/* snapshot writes one series in the existing native record representation. */
+func (series *vectorSeries) snapshot(snapshot VectorSnapshot, scope string, width int) error {
+	snapshot.SetWidth(uint32(width))
+	if err := snapshot.SetScope(scope); err != nil {
+		return errnie.Error(err)
+	}
+	values, err := snapshot.NewValues(int32(len(series.values)))
+	if err != nil {
+		return errnie.Error(err)
+	}
+	for index, value := range series.values {
+		values.Set(index, value)
+	}
+	written, err := snapshot.NewWritten(int32(len(series.written)))
+	if err != nil {
+		return errnie.Error(err)
+	}
+	for index, value := range series.written {
+		written.Set(index, value)
+	}
+	return nil
+}
+
+/* restoreVectorSeries validates and copies one owned series before installation. */
+func restoreVectorSeries(snapshot VectorSnapshot, width int) (*vectorSeries, error) {
+	values, err := snapshot.Values()
+	if err != nil {
+		return nil, errnie.Error(err)
+	}
+	written, err := snapshot.Written()
+	if err != nil {
+		return nil, errnie.Error(err)
+	}
+	if int(snapshot.Width()) != width || values.Len() != written.Len()*width || width == 0 && written.Len() != 0 {
+		return nil, errnie.Error(errnie.Err(errnie.Validation, "vector: snapshot dimensions differ", nil))
+	}
+	series := &vectorSeries{values: make([]float64, values.Len()), written: make([]bool, written.Len())}
+	for index := range values.Len() {
+		series.values[index] = values.At(index)
+	}
+	for index := range written.Len() {
+		series.written[index] = written.At(index)
+	}
+	return series, nil
 }

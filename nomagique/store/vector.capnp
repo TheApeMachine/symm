@@ -18,11 +18,11 @@ using import "radix.capnp".Retained;
 #
 # scope names the series the records belong to; it gathers, and every scope
 # written together must agree. Records written under one scope are never
-# handed out under another: a new scope starts from nothing. No scope arriving
+# handed out under another. Switching back resumes that scope's records. No scope arriving
 # keeps the current series; an unwired scope is one series.
 using import "../runtime/snapshot.capnp".Snapshot;
 
-struct VectorSnapshot { width @0 :UInt32; scope @1 :Text; values @2 :List(Float64); written @3 :List(Bool); }
+struct VectorSnapshot { width @0 :UInt32; scope @1 :Text; values @2 :List(Float64); written @3 :List(Bool); others @4 :List(VectorSnapshot); }
 
 interface Vector extends(Retained, Snapshot) {
   write @0 (

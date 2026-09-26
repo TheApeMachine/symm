@@ -67,6 +67,7 @@ export const uiComponents = {
 	"HeatmapRow.Strip": (UI.HeatmapRow as any).Strip,
 	"HeatmapRowMetric": UI.HeatmapRowMetric,
 	"HeatmapStrip": UI.HeatmapStrip,
+	"HierarchyLanes": UI.HierarchyLanes,
 	"Icon": UI.Icon,
 	"ImpulseMap": UI.ImpulseMap,
 	"Input": UI.Input,
@@ -101,6 +102,7 @@ export const uiComponents = {
 	"PolicyBranches": UI.PolicyBranches,
 	"PositionList": UI.PositionList,
 	"Positions": UI.Positions,
+	"PredictionChart": UI.PredictionChart,
 	"PredictiveCodingCanvas": UI.PredictiveCodingCanvas,
 	"Pulse": UI.Pulse,
 	"Radar": UI.Radar,
@@ -112,6 +114,7 @@ export const uiComponents = {
 	"Readout": UI.Readout,
 	"RecognitionPanel": UI.RecognitionPanel,
 	"RecognitionView": UI.RecognitionView,
+	"ScalarDiagnostics": UI.ScalarDiagnostics,
 	"Scanlines": UI.Scanlines,
 	"Section": UI.Section,
 	"Section.Body": (UI.Section as any).Body,
@@ -125,6 +128,7 @@ export const uiComponents = {
 	"StepCard": UI.StepCard,
 	"Tabs": UI.Tabs,
 	"Tabs.Tab": (UI.Tabs as any).Tab,
+	"TerminalPredictionChart": UI.TerminalPredictionChart,
 	"TerminalSignalHeatmap": UI.TerminalSignalHeatmap,
 	"Text": UI.Text,
 	"ThesisModal": UI.ThesisModal,
@@ -153,6 +157,8 @@ export const uiComponents = {
 	"Typography.Span": (UI.Typography as any).Span,
 	"Typography.Subtitle": (UI.Typography as any).Subtitle,
 	"Typography.Title": (UI.Typography as any).Title,
+	"VectorLane": UI.VectorLane,
+	"VerdictRow": UI.VerdictRow,
 } as const satisfies Record<string, React.ComponentType<any>>;
 
 export type UIComponentName = keyof typeof uiComponents;

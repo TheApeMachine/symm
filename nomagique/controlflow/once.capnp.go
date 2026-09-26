@@ -9,6 +9,7 @@ import (
 	server "capnproto.org/go/capnp/v3/server"
 	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
 	context "context"
+	strconv "strconv"
 )
 
 type Once capnp.Client
@@ -34,7 +35,7 @@ func (c Once) Write(ctx context.Context, params func(Once_write_Params) error) e
 
 }
 
-func (c Once) Done(ctx context.Context, params func(Once_done_Params) error) (Once_done_Results_Future, capnp.ReleaseFunc) {
+func (c Once) Done(ctx context.Context, params func(Once_done_Params) error) (OnceResult_Future, capnp.ReleaseFunc) {
 
 	s := capnp.Send{
 		Method: capnp.Method{
@@ -50,7 +51,7 @@ func (c Once) Done(ctx context.Context, params func(Once_done_Params) error) (On
 	}
 
 	ans, release := capnp.Client(c).SendCall(ctx, s)
-	return Once_done_Results_Future{Future: ans.Future()}, release
+	return OnceResult_Future{Future: ans.Future()}, release
 
 }
 
@@ -207,9 +208,9 @@ func (c Once_done) Args() Once_done_Params {
 }
 
 // AllocResults allocates the results struct.
-func (c Once_done) AllocResults() (Once_done_Results, error) {
+func (c Once_done) AllocResults() (OnceResult, error) {
 	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 1})
-	return Once_done_Results(r), err
+	return OnceResult(r), err
 }
 
 // Once_List is a list of Once.
@@ -379,87 +380,121 @@ func (f Once_done_Params_Future) Struct() (Once_done_Params, error) {
 	return Once_done_Params(p.Struct()), err
 }
 
-type Once_done_Results capnp.Struct
+type OnceResult capnp.Struct
+type OnceResult_Which uint16
 
-// Once_done_Results_TypeID is the unique identifier for the type Once_done_Results.
-const Once_done_Results_TypeID = 0xdbdc535d1a0d79da
+const (
+	OnceResult_Which_out  OnceResult_Which = 0
+	OnceResult_Which_idle OnceResult_Which = 1
+)
 
-func NewOnce_done_Results(s *capnp.Segment) (Once_done_Results, error) {
+func (w OnceResult_Which) String() string {
+	const s = "outidle"
+	switch w {
+	case OnceResult_Which_out:
+		return s[0:3]
+	case OnceResult_Which_idle:
+		return s[3:7]
+
+	}
+	return "OnceResult_Which(" + strconv.FormatUint(uint64(w), 10) + ")"
+}
+
+// OnceResult_TypeID is the unique identifier for the type OnceResult.
+const OnceResult_TypeID = 0xa478f8b042fb266b
+
+func NewOnceResult(s *capnp.Segment) (OnceResult, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
-	return Once_done_Results(st), err
+	return OnceResult(st), err
 }
 
-func NewRootOnce_done_Results(s *capnp.Segment) (Once_done_Results, error) {
+func NewRootOnceResult(s *capnp.Segment) (OnceResult, error) {
 	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
-	return Once_done_Results(st), err
+	return OnceResult(st), err
 }
 
-func ReadRootOnce_done_Results(msg *capnp.Message) (Once_done_Results, error) {
+func ReadRootOnceResult(msg *capnp.Message) (OnceResult, error) {
 	root, err := msg.Root()
-	return Once_done_Results(root.Struct()), err
+	return OnceResult(root.Struct()), err
 }
 
-func (s Once_done_Results) String() string {
-	str, _ := text.Marshal(0xdbdc535d1a0d79da, capnp.Struct(s))
+func (s OnceResult) String() string {
+	str, _ := text.Marshal(0xa478f8b042fb266b, capnp.Struct(s))
 	return str
 }
 
-func (s Once_done_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+func (s OnceResult) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
 	return capnp.Struct(s).EncodeAsPtr(seg)
 }
 
-func (Once_done_Results) DecodeFromPtr(p capnp.Ptr) Once_done_Results {
-	return Once_done_Results(capnp.Struct{}.DecodeFromPtr(p))
+func (OnceResult) DecodeFromPtr(p capnp.Ptr) OnceResult {
+	return OnceResult(capnp.Struct{}.DecodeFromPtr(p))
 }
 
-func (s Once_done_Results) ToPtr() capnp.Ptr {
+func (s OnceResult) ToPtr() capnp.Ptr {
 	return capnp.Struct(s).ToPtr()
 }
-func (s Once_done_Results) IsValid() bool {
+
+func (s OnceResult) Which() OnceResult_Which {
+	return OnceResult_Which(capnp.Struct(s).Uint16(2))
+}
+func (s OnceResult) IsValid() bool {
 	return capnp.Struct(s).IsValid()
 }
 
-func (s Once_done_Results) Message() *capnp.Message {
+func (s OnceResult) Message() *capnp.Message {
 	return capnp.Struct(s).Message()
 }
 
-func (s Once_done_Results) Segment() *capnp.Segment {
+func (s OnceResult) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Once_done_Results) Out() ([]byte, error) {
+func (s OnceResult) Out() ([]byte, error) {
+	if capnp.Struct(s).Uint16(2) != 0 {
+		panic("Which() != out")
+	}
 	p, err := capnp.Struct(s).Ptr(0)
 	return []byte(p.Data()), err
 }
 
-func (s Once_done_Results) HasOut() bool {
+func (s OnceResult) HasOut() bool {
+	if capnp.Struct(s).Uint16(2) != 0 {
+		return false
+	}
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s Once_done_Results) SetOut(v []byte) error {
+func (s OnceResult) SetOut(v []byte) error {
+	capnp.Struct(s).SetUint16(2, 0)
 	return capnp.Struct(s).SetData(0, v)
 }
 
-func (s Once_done_Results) Fired() bool {
+func (s OnceResult) SetIdle() {
+	capnp.Struct(s).SetUint16(2, 1)
+
+}
+
+func (s OnceResult) Fired() bool {
 	return capnp.Struct(s).Bit(0)
 }
 
-func (s Once_done_Results) SetFired(v bool) {
+func (s OnceResult) SetFired(v bool) {
 	capnp.Struct(s).SetBit(0, v)
 }
 
-// Once_done_Results_List is a list of Once_done_Results.
-type Once_done_Results_List = capnp.StructList[Once_done_Results]
+// OnceResult_List is a list of OnceResult.
+type OnceResult_List = capnp.StructList[OnceResult]
 
-// NewOnce_done_Results creates a new list of Once_done_Results.
-func NewOnce_done_Results_List(s *capnp.Segment, sz int32) (Once_done_Results_List, error) {
+// NewOnceResult creates a new list of OnceResult.
+func NewOnceResult_List(s *capnp.Segment, sz int32) (OnceResult_List, error) {
 	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1}, sz)
-	return capnp.StructList[Once_done_Results](l), err
+	return capnp.StructList[OnceResult](l), err
 }
 
-// Once_done_Results_Future is a wrapper for a Once_done_Results promised by a client call.
-type Once_done_Results_Future struct{ *capnp.Future }
+// OnceResult_Future is a wrapper for a OnceResult promised by a client call.
+type OnceResult_Future struct{ *capnp.Future }
 
-func (f Once_done_Results_Future) Struct() (Once_done_Results, error) {
+func (f OnceResult_Future) Struct() (OnceResult, error) {
 	p, err := f.Future.Ptr()
-	return Once_done_Results(p.Struct()), err
+	return OnceResult(p.Struct()), err
 }

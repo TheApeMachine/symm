@@ -8,7 +8,7 @@ import (
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
-func TestOnceServer(t *testing.T) {
+func TestOnceWrite(t *testing.T) {
 	Convey("Given a OnceServer", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
@@ -73,6 +73,7 @@ func TestOnceServer(t *testing.T) {
 				So(err, ShouldBeNil)
 				So(results2.Fired(), ShouldBeTrue)
 				So(results2.HasOut(), ShouldBeFalse)
+				So(results2.Which(), ShouldEqual, OnceResult_Which_idle)
 			})
 
 			Convey("Reset allows it to fire again", func() {
@@ -93,4 +94,36 @@ func TestOnceServer(t *testing.T) {
 			})
 		})
 	})
+}
+
+func BenchmarkOnceWrite(b *testing.B) {
+	client := Once_ServerToClient(NewOnce(context.Background()))
+	defer client.Release()
+	payload := []byte(`{"method":"instrument"}`)
+	b.ReportAllocs()
+	for b.Loop() {
+		for _, reset := range []bool{true, false} {
+			if err := client.Write(context.Background(), func(params Once_write_Params) error {
+				params.SetTrigger(true)
+				params.SetReset(reset)
+				return params.SetThrough(payload)
+			}); err != nil {
+				b.Fatal(err)
+			}
+			if err := client.WaitStreaming(); err != nil {
+				b.Fatal(err)
+			}
+			future, release := client.Done(context.Background(), nil)
+			result, err := future.Struct()
+			if err != nil {
+				release()
+				b.Fatal(err)
+			}
+			if result.HasOut() != reset {
+				release()
+				b.Fatal("one-shot output violated")
+			}
+			release()
+		}
+	}
 }

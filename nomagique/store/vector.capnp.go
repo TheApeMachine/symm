@@ -18,12 +18,12 @@ type VectorSnapshot capnp.Struct
 const VectorSnapshot_TypeID = 0xc5768892585d5e49
 
 func NewVectorSnapshot(s *capnp.Segment) (VectorSnapshot, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 3})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 4})
 	return VectorSnapshot(st), err
 }
 
 func NewRootVectorSnapshot(s *capnp.Segment) (VectorSnapshot, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 3})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 4})
 	return VectorSnapshot(st), err
 }
 
@@ -131,13 +131,36 @@ func (s VectorSnapshot) NewWritten(n int32) (capnp.BitList, error) {
 	err = capnp.Struct(s).SetPtr(2, l.ToPtr())
 	return l, err
 }
+func (s VectorSnapshot) Others() (VectorSnapshot_List, error) {
+	p, err := capnp.Struct(s).Ptr(3)
+	return VectorSnapshot_List(p.List()), err
+}
+
+func (s VectorSnapshot) HasOthers() bool {
+	return capnp.Struct(s).HasPtr(3)
+}
+
+func (s VectorSnapshot) SetOthers(v VectorSnapshot_List) error {
+	return capnp.Struct(s).SetPtr(3, v.ToPtr())
+}
+
+// NewOthers sets the others field to a newly
+// allocated VectorSnapshot_List, preferring placement in s's segment.
+func (s VectorSnapshot) NewOthers(n int32) (VectorSnapshot_List, error) {
+	l, err := NewVectorSnapshot_List(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return VectorSnapshot_List{}, err
+	}
+	err = capnp.Struct(s).SetPtr(3, l.ToPtr())
+	return l, err
+}
 
 // VectorSnapshot_List is a list of VectorSnapshot.
 type VectorSnapshot_List = capnp.StructList[VectorSnapshot]
 
 // NewVectorSnapshot creates a new list of VectorSnapshot.
 func NewVectorSnapshot_List(s *capnp.Segment, sz int32) (VectorSnapshot_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 3}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 4}, sz)
 	return capnp.StructList[VectorSnapshot](l), err
 }
 

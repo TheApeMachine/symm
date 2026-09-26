@@ -55,77 +55,6 @@
         "outputs": {}
       }
     },
-    "focus_spot_tag": {
-      "id": "focus_spot_tag",
-      "type": "data.Insert",
-      "width": 280,
-      "height": 172,
-      "x": 200.0,
-      "y": 600.0,
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "spot",
-              "portName": "records.out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "focus_spot",
-              "portName": "data"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "path": {
-          "value": "_focus"
-        },
-        "json": {
-          "value": "\"BTC/USD\""
-        }
-      }
-    },
-    "focus_level3": {
-      "id": "focus_level3",
-      "type": "data.Filter",
-      "width": 280,
-      "height": 172,
-      "x": 500.0,
-      "y": 800.0,
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "focus_level3_tag",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "workspace",
-              "portName": "data_1"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "path": {
-          "value": "data.symbol"
-        },
-        "operator": {
-          "value": "=="
-        },
-        "referencePath": {
-          "value": "_focus"
-        }
-      }
-    },
     "level3": {
       "id": "level3",
       "type": "definition:live_level3",
@@ -150,16 +79,16 @@
               "portName": "payload_1"
             }
           ],
-          "records.out": [
-            {
-              "nodeId": "focus_level3_tag",
-              "portName": "data"
-            }
-          ],
           "shards.frame.provenance": [
             {
               "nodeId": "envelope",
               "portName": "provenance_1"
+            }
+          ],
+          "records.out": [
+            {
+              "nodeId": "workspace",
+              "portName": "data_1"
             }
           ]
         }
@@ -231,7 +160,14 @@
       "y": 800.0,
       "inputData": {},
       "connections": {
-        "inputs": {},
+        "inputs": {
+          "products.symbols": [
+            {
+              "nodeId": "spot",
+              "portName": "universe.ready.symbols"
+            }
+          ]
+        },
         "outputs": {
           "socket.frame.read": [
             {
@@ -239,16 +175,16 @@
               "portName": "payload_2"
             }
           ],
-          "record.out": [
-            {
-              "nodeId": "workspace",
-              "portName": "data_2"
-            }
-          ],
           "socket.frame.provenance": [
             {
               "nodeId": "envelope",
               "portName": "provenance_2"
+            }
+          ],
+          "record.out": [
+            {
+              "nodeId": "workspace",
+              "portName": "data_2"
             }
           ]
         }
@@ -269,7 +205,7 @@
           "value": 200
         },
         "routes": {
-          "value": "{\"/hindsight/runs\":{\"sql\":\"SELECT epoch::VARCHAR AS id, epoch::VARCHAR AS epoch, started_at AS \\\"startedAt\\\", code_commit AS \\\"codeCommit\\\", build_id AS \\\"buildId\\\", config_digest AS \\\"configDigest\\\", status FROM symmtables.hindsight.runs ORDER BY epoch DESC\",\"shape\":\"rows\"},\"/hindsight/symbols\":{\"sql\":\"SELECT DISTINCT symbol FROM symmtables.hindsight.measurements WHERE epoch = CAST(? AS BIGINT) ORDER BY symbol\",\"parameter\":\"run\",\"shape\":\"symbols\"},\"/hindsight/excursions\":{\"sql\":\"SELECT * REPLACE(epoch::VARCHAR AS epoch) FROM symmtables.hindsight.excursions WHERE epoch = CAST(? AS BIGINT) ORDER BY anchor_tick, id\",\"parameter\":\"run\",\"shape\":\"rows\"},\"/trades\":{\"sql\":\"SELECT 'paper' AS execution, * FROM symmtables.symm.paper_round_trips_v1 ORDER BY closed DESC, symbol\",\"shape\":\"rows\"},\"/hindsight/metric-map\":{\"sql\":\"WITH document AS (SELECT content FROM read_text('manifest/signals.json')), coordinates AS (SELECT ports.key AS slot, replace(json_extract_string(document.content, '$.nodes.' || json_extract_string(source.value, '$.nodeId') || '.type'), 'definition:', '') AS source, json_extract_string(source.value, '$.portName') AS metric FROM document, json_each(document.content, '$.nodes.gather.connections.inputs') AS ports, json_each(ports.value) AS source WHERE ports.key = 'values' OR starts_with(ports.key, 'values_')), metrics AS (SELECT source, metric, source || ':' || metric AS identity, string_agg('gather.' || slot, ', ' ORDER BY slot) AS destinations FROM coordinates GROUP BY source, metric) SELECT (SELECT sha256(content) FROM document) AS graphDigest, (SELECT json_group_object(identity, json_object('identity', identity, 'source', source, 'metric', metric, 'destinations', destinations)) FROM metrics) AS metrics, (SELECT json_group_object(source, json_object('source', source)) FROM (SELECT DISTINCT source FROM coordinates)) AS signals\",\"shape\":\"object\"}}"
+          "value": "{\"/hindsight/runs\":{\"sql\":\"SELECT epoch::VARCHAR AS id, epoch::VARCHAR AS epoch, min(CAST(json_extract_string(provenance, '$.receivedAt') AS TIMESTAMPTZ)) AS \\\"startedAt\\\", min(sequence) AS \\\"firstSequence\\\", max(sequence) AS \\\"lastSequence\\\", count(*) AS cuts, count(*) FILTER (WHERE complete) AS \\\"completeCuts\\\" FROM symmtables.symm.metric_cuts_v2 GROUP BY epoch ORDER BY epoch DESC\",\"shape\":\"rows\"},\"/hindsight/symbols\":{\"sql\":\"SELECT DISTINCT symbol FROM symmtables.symm.metric_cuts_v2 WHERE epoch = CAST(? AS BIGINT) ORDER BY symbol\",\"parameter\":\"run\",\"shape\":\"symbols\"},\"/hindsight/excursions\":{\"sql\":\"SELECT f.* REPLACE(f.epoch::VARCHAR AS epoch), concat(f.epoch::VARCHAR, '/', f.symbol, '/', f.confirmation_sequence::VARCHAR) AS id, (SELECT count(*) FROM symmtables.symm.metric_cuts_v2 c WHERE c.epoch=f.epoch AND c.symbol=f.symbol AND c.sequence BETWEEN f.anchor_sequence AND f.confirmation_sequence) AS observation_count FROM symmtables.symm.excursion_fragments_v1 f WHERE f.epoch = CAST(? AS BIGINT) ORDER BY f.anchor_sequence, f.symbol, f.confirmation_sequence\",\"parameter\":\"run\",\"shape\":\"rows\"},\"/trades\":{\"sql\":\"SELECT 'paper' AS execution, * FROM symmtables.symm.paper_round_trips_v1 ORDER BY closed DESC, symbol\",\"shape\":\"rows\"},\"/hindsight/metric-map\":{\"sql\":\"WITH document AS (SELECT content FROM read_text('manifest/signals.json')), coordinates AS (SELECT ports.key AS slot, replace(json_extract_string(document.content, '$.nodes.' || json_extract_string(source.value, '$.nodeId') || '.type'), 'definition:', '') AS source, json_extract_string(source.value, '$.portName') AS metric FROM document, json_each(document.content, '$.nodes.gather.connections.inputs') AS ports, json_each(ports.value) AS source WHERE ports.key = 'values' OR starts_with(ports.key, 'values_')), metrics AS (SELECT source, metric, source || ':' || metric AS identity, string_agg('gather.' || slot, ', ' ORDER BY slot) AS destinations FROM coordinates GROUP BY source, metric) SELECT (SELECT sha256(content) FROM document) AS graphDigest, (SELECT json_group_object(identity, json_object('identity', identity, 'source', source, 'metric', metric, 'destinations', destinations)) FROM metrics) AS metrics, (SELECT json_group_object(source, json_object('source', source)) FROM (SELECT DISTINCT source FROM coordinates)) AS signals\",\"shape\":\"object\"}}"
         },
         "address": {
           "value": ":8765"
@@ -309,12 +245,10 @@
             {
               "nodeId": "level3",
               "portName": "shards.symbols"
-            }
-          ],
-          "records.out": [
+            },
             {
-              "nodeId": "focus_spot_tag",
-              "portName": "data"
+              "nodeId": "futures",
+              "portName": "products.symbols"
             }
           ],
           "socket.frame.read": [
@@ -328,78 +262,13 @@
               "nodeId": "envelope",
               "portName": "provenance_0"
             }
-          ]
-        }
-      }
-    },
-    "focus_spot": {
-      "id": "focus_spot",
-      "type": "data.Filter",
-      "width": 280,
-      "height": 172,
-      "x": 500.0,
-      "y": 600.0,
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "focus_spot_tag",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
+          ],
+          "records.out": [
             {
               "nodeId": "workspace",
               "portName": "data_0"
             }
           ]
-        }
-      },
-      "inputData": {
-        "path": {
-          "value": "data.symbol"
-        },
-        "operator": {
-          "value": "=="
-        },
-        "referencePath": {
-          "value": "_focus"
-        }
-      }
-    },
-    "focus_level3_tag": {
-      "id": "focus_level3_tag",
-      "type": "data.Insert",
-      "width": 280,
-      "height": 172,
-      "x": 200.0,
-      "y": 800.0,
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "level3",
-              "portName": "records.out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "focus_level3",
-              "portName": "data"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "path": {
-          "value": "_focus"
-        },
-        "json": {
-          "value": "\"BTC/USD\""
         }
       }
     },
@@ -635,8 +504,18 @@
     },
     "definition-leadlag_ticker_graph": {
       "id": "definition-leadlag_ticker_graph",
-      "type": "definition:leadlag_ticker",
-      "inputData": {},
+      "type": "factory:leadlag_ticker",
+      "inputData": {
+        "producer": {
+          "value": "projection"
+        },
+        "node": {
+          "value": "grid"
+        },
+        "field": {
+          "value": "scope"
+        }
+      },
       "connections": {
         "inputs": {},
         "outputs": {
@@ -710,8 +589,18 @@
     },
     "definition-pumpdump_ticker_graph": {
       "id": "definition-pumpdump_ticker_graph",
-      "type": "definition:pumpdump_ticker",
-      "inputData": {},
+      "type": "factory:pumpdump_ticker",
+      "inputData": {
+        "producer": {
+          "value": "projection"
+        },
+        "node": {
+          "value": "grid"
+        },
+        "field": {
+          "value": "scope"
+        }
+      },
       "connections": {
         "inputs": {},
         "outputs": {
@@ -781,8 +670,18 @@
     },
     "definition-morphology_level3_graph": {
       "id": "definition-morphology_level3_graph",
-      "type": "definition:morphology_level3",
-      "inputData": {},
+      "type": "factory:morphology_level3",
+      "inputData": {
+        "producer": {
+          "value": "projection"
+        },
+        "node": {
+          "value": "grid"
+        },
+        "field": {
+          "value": "scope"
+        }
+      },
       "connections": {
         "inputs": {},
         "outputs": {
@@ -843,8 +742,18 @@
     },
     "definition-correlation_ticker_graph": {
       "id": "definition-correlation_ticker_graph",
-      "type": "definition:correlation_ticker",
-      "inputData": {},
+      "type": "factory:correlation_ticker",
+      "inputData": {
+        "producer": {
+          "value": "projection"
+        },
+        "node": {
+          "value": "grid"
+        },
+        "field": {
+          "value": "scope"
+        }
+      },
       "connections": {
         "inputs": {},
         "outputs": {
@@ -913,8 +822,18 @@
     },
     "definition-pumpdump_level3_graph": {
       "id": "definition-pumpdump_level3_graph",
-      "type": "definition:pumpdump_level3",
-      "inputData": {},
+      "type": "factory:pumpdump_level3",
+      "inputData": {
+        "producer": {
+          "value": "projection"
+        },
+        "node": {
+          "value": "grid"
+        },
+        "field": {
+          "value": "scope"
+        }
+      },
       "connections": {
         "inputs": {},
         "outputs": {
@@ -974,8 +893,18 @@
     },
     "definition-pumpdump_trade_graph": {
       "id": "definition-pumpdump_trade_graph",
-      "type": "definition:pumpdump_trade",
-      "inputData": {},
+      "type": "factory:pumpdump_trade",
+      "inputData": {
+        "producer": {
+          "value": "projection"
+        },
+        "node": {
+          "value": "grid"
+        },
+        "field": {
+          "value": "scope"
+        }
+      },
       "connections": {
         "inputs": {},
         "outputs": {
@@ -1047,8 +976,18 @@
     },
     "definition-hawkes_trade_graph": {
       "id": "definition-hawkes_trade_graph",
-      "type": "definition:hawkes_trade",
-      "inputData": {},
+      "type": "factory:hawkes_trade",
+      "inputData": {
+        "producer": {
+          "value": "projection"
+        },
+        "node": {
+          "value": "grid"
+        },
+        "field": {
+          "value": "scope"
+        }
+      },
       "connections": {
         "inputs": {},
         "outputs": {
@@ -1149,8 +1088,18 @@
     },
     "definition-toxicity_level3_graph": {
       "id": "definition-toxicity_level3_graph",
-      "type": "definition:toxicity_level3",
-      "inputData": {},
+      "type": "factory:toxicity_level3",
+      "inputData": {
+        "producer": {
+          "value": "projection"
+        },
+        "node": {
+          "value": "grid"
+        },
+        "field": {
+          "value": "scope"
+        }
+      },
       "connections": {
         "inputs": {},
         "outputs": {
@@ -1245,8 +1194,18 @@
     },
     "definition-derivatives_trade_graph": {
       "id": "definition-derivatives_trade_graph",
-      "type": "definition:derivatives_trade",
-      "inputData": {},
+      "type": "factory:derivatives_trade",
+      "inputData": {
+        "producer": {
+          "value": "projection"
+        },
+        "node": {
+          "value": "grid"
+        },
+        "field": {
+          "value": "scope"
+        }
+      },
       "connections": {
         "inputs": {},
         "outputs": {
@@ -1307,8 +1266,18 @@
     },
     "definition-depthflow_level3_graph": {
       "id": "definition-depthflow_level3_graph",
-      "type": "definition:depthflow_level3",
-      "inputData": {},
+      "type": "factory:depthflow_level3",
+      "inputData": {
+        "producer": {
+          "value": "projection"
+        },
+        "node": {
+          "value": "grid"
+        },
+        "field": {
+          "value": "scope"
+        }
+      },
       "connections": {
         "inputs": {},
         "outputs": {
@@ -1375,8 +1344,18 @@
     },
     "definition-liquidity_ticker_graph": {
       "id": "definition-liquidity_ticker_graph",
-      "type": "definition:liquidity_ticker",
-      "inputData": {},
+      "type": "factory:liquidity_ticker",
+      "inputData": {
+        "producer": {
+          "value": "projection"
+        },
+        "node": {
+          "value": "grid"
+        },
+        "field": {
+          "value": "scope"
+        }
+      },
       "connections": {
         "inputs": {},
         "outputs": {
@@ -1454,8 +1433,18 @@
     },
     "definition-toxicity_trade_graph": {
       "id": "definition-toxicity_trade_graph",
-      "type": "definition:toxicity_trade",
-      "inputData": {},
+      "type": "factory:toxicity_trade",
+      "inputData": {
+        "producer": {
+          "value": "projection"
+        },
+        "node": {
+          "value": "grid"
+        },
+        "field": {
+          "value": "scope"
+        }
+      },
       "connections": {
         "inputs": {},
         "outputs": {
@@ -1525,8 +1514,18 @@
     },
     "definition-sentiment_ticker_graph": {
       "id": "definition-sentiment_ticker_graph",
-      "type": "definition:sentiment_ticker",
-      "inputData": {},
+      "type": "factory:sentiment_ticker",
+      "inputData": {
+        "producer": {
+          "value": "projection"
+        },
+        "node": {
+          "value": "grid"
+        },
+        "field": {
+          "value": "scope"
+        }
+      },
       "connections": {
         "inputs": {},
         "outputs": {
@@ -1628,8 +1627,18 @@
     },
     "definition-derivatives_ticker_graph": {
       "id": "definition-derivatives_ticker_graph",
-      "type": "definition:derivatives_ticker",
-      "inputData": {},
+      "type": "factory:derivatives_ticker",
+      "inputData": {
+        "producer": {
+          "value": "projection"
+        },
+        "node": {
+          "value": "grid"
+        },
+        "field": {
+          "value": "scope"
+        }
+      },
       "connections": {
         "inputs": {},
         "outputs": {
@@ -1703,8 +1712,18 @@
     },
     "definition-cvd_trade_graph": {
       "id": "definition-cvd_trade_graph",
-      "type": "definition:cvd_trade",
-      "inputData": {},
+      "type": "factory:cvd_trade",
+      "inputData": {
+        "producer": {
+          "value": "projection"
+        },
+        "node": {
+          "value": "grid"
+        },
+        "field": {
+          "value": "scope"
+        }
+      },
       "connections": {
         "inputs": {},
         "outputs": {
@@ -1792,8 +1811,18 @@
     },
     "cut_graph": {
       "id": "cut_graph",
-      "type": "definition:cut",
-      "inputData": {},
+      "type": "factory:cut",
+      "inputData": {
+        "producer": {
+          "value": "projection"
+        },
+        "node": {
+          "value": "grid"
+        },
+        "field": {
+          "value": "scope"
+        }
+      },
       "connections": {
         "inputs": {},
         "outputs": {
@@ -1875,7 +1904,7 @@
           "value": ""
         },
         "bindings": {
-          "value": "[{\"producer\":\"projection\",\"node\":\"grid\",\"field\":\"data\",\"target\":\"last.data\"},{\"producer\":\"cut\",\"node\":\"gather\",\"field\":\"gathered.values\",\"target\":\"live_map__change.value\"},{\"producer\":\"cut\",\"node\":\"gather\",\"field\":\"gathered.present\",\"target\":\"live_map__change.present\"},{\"producer\":\"projection\",\"node\":\"grid\",\"field\":\"data\",\"target\":\"symbol.data\"},{\"producer\":\"cut\",\"node\":\"gather\",\"field\":\"row\",\"target\":\"table_measurements.payload\"},{\"producer\":\"projection\",\"node\":\"grid\",\"stamp\":\"epoch\",\"target\":\"excursion.epoch\"},{\"producer\":\"projection\",\"node\":\"grid\",\"stamp\":\"sequence\",\"target\":\"excursion.sequence\"},{\"producer\":\"projection\",\"node\":\"grid\",\"field\":\"scope\",\"target\":\"excursion.scope\"},{\"producer\":\"projection\",\"node\":\"grid\",\"field\":\"scope\",\"target\":\"contexts.symbol\"}]"
+          "value": "[{\"producer\":\"projection\",\"node\":\"grid\",\"field\":\"data\",\"target\":\"last.data\"},{\"producer\":\"cut\",\"node\":\"gather\",\"field\":\"gathered.values\",\"target\":\"live_map__change.value\"},{\"producer\":\"cut\",\"node\":\"gather\",\"field\":\"gathered.present\",\"target\":\"live_map__change.present\"},{\"producer\":\"projection\",\"node\":\"grid\",\"field\":\"data\",\"target\":\"symbol.data\"},{\"producer\":\"cut\",\"node\":\"gather\",\"field\":\"row\",\"target\":\"table_measurements.payload\"},{\"producer\":\"projection\",\"node\":\"grid\",\"stamp\":\"epoch\",\"target\":\"excursion.epoch\"},{\"producer\":\"projection\",\"node\":\"grid\",\"stamp\":\"sequence\",\"target\":\"excursion.sequence\"},{\"producer\":\"projection\",\"node\":\"grid\",\"field\":\"scope\",\"target\":\"excursion.scope\"},{\"producer\":\"projection\",\"node\":\"grid\",\"field\":\"scope\",\"target\":\"contexts.symbol\"},{\"producer\":\"projection\",\"node\":\"grid\",\"stamp\":\"epoch\",\"target\":\"contexts.epoch\"},{\"producer\":\"projection\",\"node\":\"grid\",\"stamp\":\"sequence\",\"target\":\"contexts.sequence\"},{\"producer\":\"projection\",\"node\":\"grid\",\"field\":\"values_1\",\"target\":\"excursion.value\"}]"
         },
         "outputs": {
           "value": [
@@ -1946,8 +1975,8 @@
         "inputs": {
           "data_1": [
             {
-              "nodeId": "focus_level3",
-              "portName": "out"
+              "nodeId": "level3",
+              "portName": "records.out"
             }
           ],
           "data_2": [
@@ -1958,8 +1987,8 @@
           ],
           "data_0": [
             {
-              "nodeId": "focus_spot",
-              "portName": "out"
+              "nodeId": "spot",
+              "portName": "records.out"
             }
           ],
           "groups_0": [

@@ -37,12 +37,12 @@ func (w Context_Which) String() string {
 const Context_TypeID = 0xc784ac30c936d1c3
 
 func NewContext(s *capnp.Segment) (Context, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 4})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 4})
 	return Context(st), err
 }
 
 func NewRootContext(s *capnp.Segment) (Context, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 4})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 4})
 	return Context(st), err
 }
 
@@ -149,6 +149,22 @@ func (s Context) NewTokens(n int32) (capnp.TextList, error) {
 	err = capnp.Struct(s).SetPtr(2, l.ToPtr())
 	return l, err
 }
+func (s Context) Epoch() int64 {
+	return int64(capnp.Struct(s).Uint64(8))
+}
+
+func (s Context) SetEpoch(v int64) {
+	capnp.Struct(s).SetUint64(8, uint64(v))
+}
+
+func (s Context) Sequence() int64 {
+	return int64(capnp.Struct(s).Uint64(16))
+}
+
+func (s Context) SetSequence(v int64) {
+	capnp.Struct(s).SetUint64(16, uint64(v))
+}
+
 func (s Context) SetLive() {
 	capnp.Struct(s).SetUint16(2, 0)
 
@@ -191,7 +207,7 @@ type Context_List = capnp.StructList[Context]
 
 // NewContext creates a new list of Context.
 func NewContext_List(s *capnp.Segment, sz int32) (Context_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 4}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 24, PointerCount: 4}, sz)
 	return capnp.StructList[Context](l), err
 }
 

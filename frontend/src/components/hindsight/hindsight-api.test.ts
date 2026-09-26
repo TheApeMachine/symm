@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { Measurement } from "#/providers/telemetry/telemetry/measurement";
 import { MeasurementsFrame } from "#/providers/telemetry/telemetry/measurements-frame";
 import {
+	adaptMeasurementsToTimeline,
+	fetchHindsightExcursions,
 	fetchHindsightCaptures,
 	fetchHindsightEnvelope,
 	fetchHindsightGaps,
@@ -41,6 +43,7 @@ describe("Hindsight archive reads", () => {
 
 	it.each([
 		["runs", () => fetchHindsightRuns()],
+		["excursions", () => fetchHindsightExcursions("1")],
 		["captures", () => fetchHindsightCaptures("run")],
 		["states", () => fetchHindsightStates("run")],
 		["state", () => fetchHindsightState("run", 2, 1)],
@@ -136,5 +139,49 @@ describe("Hindsight archive reads", () => {
 		respond(404, "not found");
 		expect(await fetchHindsightState("run", 2, 1)).toBeNull();
 		expect(await fetchHindsightEnvelope("run", 2)).toBeNull();
+	});
+});
+
+describe("adaptMeasurementsToTimeline", () => {
+	it.each([
+		0.2, -0.2,
+	])("preserves confirmed fragment coordinates without claiming executed profit (%s)", (excursion) => {
+		const epoch = "1790412345678901234";
+		const timeline = adaptMeasurementsToTimeline(
+			[],
+			{ run: epoch, symbol: "BTC/USD" },
+			["BTC/USD"],
+			[
+				{
+					epoch,
+					id: `${epoch}/BTC/USD/40`,
+					symbol: "BTC/USD",
+					anchor_sequence: 10,
+					ignition_sequence: 20,
+					extremum_sequence: 30,
+					confirmation_sequence: 40,
+					anchor: 90,
+					ignition: 100,
+					extremum: 100 * (1 + excursion),
+					excursion,
+					has_precursor: true,
+					observation_count: 4,
+				},
+			],
+		);
+		const episode = timeline.discovery.episodes[0];
+		expect(episode.fromSequence).toBe(10);
+		expect(episode.toSequence).toBe(40);
+		expect(episode.observedExcursion).toBe(excursion);
+		expect(episode.confirmed).toBe(true);
+		expect(episode.hasThreshold).toBe(false);
+		expect(episode.hasTraversed).toBe(false);
+		expect(
+			episode.references.map((point) => point.capture.streamEpoch),
+		).toEqual([epoch, epoch, epoch]);
+		expect(episode.references[1].role).toBe(excursion > 0 ? "peak" : "trough");
+		expect(episode.references[2].role).toBe("ignition");
+		expect(episode.references[2].capture.sequence).toBe(20);
+		expect(episode.references[2].value).toBe(100);
 	});
 });

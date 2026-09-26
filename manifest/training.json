@@ -160,10 +160,6 @@
         "outputs": {
           "out": [
             {
-              "nodeId": "position_value",
-              "portName": "data"
-            },
-            {
               "nodeId": "cut",
               "portName": "data"
             },
@@ -177,6 +173,10 @@
             },
             {
               "nodeId": "window_start",
+              "portName": "data"
+            },
+            {
+              "nodeId": "position_value",
               "portName": "data"
             }
           ]
@@ -781,6 +781,18 @@
             {
               "nodeId": "change",
               "portName": "present"
+            }
+          ],
+          "epoch": [
+            {
+              "nodeId": "contexts",
+              "portName": "epoch"
+            }
+          ],
+          "sequence": [
+            {
+              "nodeId": "contexts",
+              "portName": "sequence"
             }
           ]
         }
@@ -1552,6 +1564,18 @@
             {
               "nodeId": "scope",
               "portName": "text"
+            }
+          ],
+          "epoch": [
+            {
+              "nodeId": "gather",
+              "portName": "epoch"
+            }
+          ],
+          "sequence": [
+            {
+              "nodeId": "gather",
+              "portName": "sequence"
             }
           ]
         },

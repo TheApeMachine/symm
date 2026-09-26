@@ -11,8 +11,11 @@ using import "../../store/radix.capnp".Retained;
 
 # Each onConnect frame is sent in order once on every physical connection before ordinary writes.
 # write gathers outbound frames; the JSON graph owns their protocol content.
+# connectedWrite accompanies a replacement onConnect handshake: send its delta only
+# on an established connection; a new connection sends the complete handshake.
+# awaitHandshake keeps discovery from opening an unsubscribed connection.
 interface WebSocketClient extends(Source, Retained) {
-  write @0 (endpoint :Text, write :List(Data), onConnect :List(Data)) -> stream;
+  write @0 (endpoint :Text, write :List(Data), onConnect :List(Data), awaitHandshake :Bool, connectedWrite :List(Data)) -> stream;
   done @1 () -> Received;
 }
 

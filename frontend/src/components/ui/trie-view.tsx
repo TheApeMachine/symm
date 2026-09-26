@@ -90,7 +90,7 @@ export const selectTriePath = (root: TrieNode): Set<string> => {
 export const TrieView = ({
 	root: suppliedRoot,
 	candidates: suppliedCandidates,
-	fallback = false,
+	fallback: _fallback = false,
 	className,
 }: TrieViewProps) => {
 	const root = suppliedRoot != null ? suppliedRoot : null;

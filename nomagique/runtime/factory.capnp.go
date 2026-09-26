@@ -7,6 +7,7 @@ import (
 	text "capnproto.org/go/capnp/v3/encoding/text"
 	fc "capnproto.org/go/capnp/v3/flowcontrol"
 	server "capnproto.org/go/capnp/v3/server"
+	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
 	context "context"
 )
 
@@ -32,6 +33,84 @@ func (c StageFactory) Create(ctx context.Context, params func(StageFactory_creat
 
 	ans, release := capnp.Client(c).SendCall(ctx, s)
 	return StageFactory_create_Results_Future{Future: ans.Future()}, release
+
+}
+
+func (c StageFactory) Write(ctx context.Context, params func(StageFactory_write_Params) error) error {
+	s := capnp.Send{
+		Method: capnp.Method{
+			InterfaceID:   0x9d730c77e41883c9,
+			MethodID:      1,
+			InterfaceName: "nomagique/runtime/factory.capnp:StageFactory",
+			MethodName:    "write",
+		},
+	}
+	if params != nil {
+		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 3}
+		s.PlaceArgs = func(s capnp.Struct) error { return params(StageFactory_write_Params(s)) }
+	}
+
+	return capnp.Client(c).SendStreamCall(ctx, s)
+
+}
+
+func (c StageFactory) Done(ctx context.Context, params func(StageFactory_done_Params) error) (StageFactory_done_Results_Future, capnp.ReleaseFunc) {
+
+	s := capnp.Send{
+		Method: capnp.Method{
+			InterfaceID:   0x9d730c77e41883c9,
+			MethodID:      2,
+			InterfaceName: "nomagique/runtime/factory.capnp:StageFactory",
+			MethodName:    "done",
+		},
+	}
+	if params != nil {
+		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 0}
+		s.PlaceArgs = func(s capnp.Struct) error { return params(StageFactory_done_Params(s)) }
+	}
+
+	ans, release := capnp.Client(c).SendCall(ctx, s)
+	return StageFactory_done_Results_Future{Future: ans.Future()}, release
+
+}
+
+func (c StageFactory) Step(ctx context.Context, params func(StageNode_step_Params) error) (Completion_Future, capnp.ReleaseFunc) {
+
+	s := capnp.Send{
+		Method: capnp.Method{
+			InterfaceID:   0xeb53e1a7afcb695c,
+			MethodID:      0,
+			InterfaceName: "nomagique/runtime/consumer.capnp:Stage",
+			MethodName:    "step",
+		},
+	}
+	if params != nil {
+		s.ArgsSize = capnp.ObjectSize{DataSize: 16, PointerCount: 6}
+		s.PlaceArgs = func(s capnp.Struct) error { return params(StageNode_step_Params(s)) }
+	}
+
+	ans, release := capnp.Client(c).SendCall(ctx, s)
+	return Completion_Future{Future: ans.Future()}, release
+
+}
+
+func (c StageFactory) Fence(ctx context.Context, params func(StageNode_fence_Params) error) (StageNode_fence_Results_Future, capnp.ReleaseFunc) {
+
+	s := capnp.Send{
+		Method: capnp.Method{
+			InterfaceID:   0xeb53e1a7afcb695c,
+			MethodID:      1,
+			InterfaceName: "nomagique/runtime/consumer.capnp:Stage",
+			MethodName:    "fence",
+		},
+	}
+	if params != nil {
+		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 0}
+		s.PlaceArgs = func(s capnp.Struct) error { return params(StageNode_fence_Params(s)) }
+	}
+
+	ans, release := capnp.Client(c).SendCall(ctx, s)
+	return StageNode_fence_Results_Future{Future: ans.Future()}, release
 
 }
 
@@ -109,6 +188,14 @@ func (c StageFactory) GetFlowLimiter() fc.FlowLimiter {
 // A StageFactory_Server is a StageFactory with a local implementation.
 type StageFactory_Server interface {
 	Create(context.Context, StageFactory_create) error
+
+	Write(context.Context, StageFactory_write) error
+
+	Done(context.Context, StageFactory_done) error
+
+	Step(context.Context, StageNode_step) error
+
+	Fence(context.Context, StageNode_fence) error
 }
 
 // StageFactory_NewServer creates a new Server from an implementation of StageFactory_Server.
@@ -127,7 +214,7 @@ func StageFactory_ServerToClient(s StageFactory_Server) StageFactory {
 // This can be used to create a more complicated Server.
 func StageFactory_Methods(methods []server.Method, s StageFactory_Server) []server.Method {
 	if cap(methods) == 0 {
-		methods = make([]server.Method, 0, 1)
+		methods = make([]server.Method, 0, 5)
 	}
 
 	methods = append(methods, server.Method{
@@ -139,6 +226,54 @@ func StageFactory_Methods(methods []server.Method, s StageFactory_Server) []serv
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
 			return s.Create(ctx, StageFactory_create{call})
+		},
+	})
+
+	methods = append(methods, server.Method{
+		Method: capnp.Method{
+			InterfaceID:   0x9d730c77e41883c9,
+			MethodID:      1,
+			InterfaceName: "nomagique/runtime/factory.capnp:StageFactory",
+			MethodName:    "write",
+		},
+		Impl: func(ctx context.Context, call *server.Call) error {
+			return s.Write(ctx, StageFactory_write{call})
+		},
+	})
+
+	methods = append(methods, server.Method{
+		Method: capnp.Method{
+			InterfaceID:   0x9d730c77e41883c9,
+			MethodID:      2,
+			InterfaceName: "nomagique/runtime/factory.capnp:StageFactory",
+			MethodName:    "done",
+		},
+		Impl: func(ctx context.Context, call *server.Call) error {
+			return s.Done(ctx, StageFactory_done{call})
+		},
+	})
+
+	methods = append(methods, server.Method{
+		Method: capnp.Method{
+			InterfaceID:   0xeb53e1a7afcb695c,
+			MethodID:      0,
+			InterfaceName: "nomagique/runtime/consumer.capnp:Stage",
+			MethodName:    "step",
+		},
+		Impl: func(ctx context.Context, call *server.Call) error {
+			return s.Step(ctx, StageNode_step{call})
+		},
+	})
+
+	methods = append(methods, server.Method{
+		Method: capnp.Method{
+			InterfaceID:   0xeb53e1a7afcb695c,
+			MethodID:      1,
+			InterfaceName: "nomagique/runtime/consumer.capnp:Stage",
+			MethodName:    "fence",
+		},
+		Impl: func(ctx context.Context, call *server.Call) error {
+			return s.Fence(ctx, StageNode_fence{call})
 		},
 	})
 
@@ -160,6 +295,40 @@ func (c StageFactory_create) Args() StageFactory_create_Params {
 func (c StageFactory_create) AllocResults() (StageFactory_create_Results, error) {
 	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return StageFactory_create_Results(r), err
+}
+
+// StageFactory_write holds the state for a server call to StageFactory.write.
+// See server.Call for documentation.
+type StageFactory_write struct {
+	*server.Call
+}
+
+// Args returns the call's arguments.
+func (c StageFactory_write) Args() StageFactory_write_Params {
+	return StageFactory_write_Params(c.Call.Args())
+}
+
+// AllocResults allocates the results struct.
+func (c StageFactory_write) AllocResults() (stream.StreamResult, error) {
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	return stream.StreamResult(r), err
+}
+
+// StageFactory_done holds the state for a server call to StageFactory.done.
+// See server.Call for documentation.
+type StageFactory_done struct {
+	*server.Call
+}
+
+// Args returns the call's arguments.
+func (c StageFactory_done) Args() StageFactory_done_Params {
+	return StageFactory_done_Params(c.Call.Args())
+}
+
+// AllocResults allocates the results struct.
+func (c StageFactory_done) AllocResults() (StageFactory_done_Results, error) {
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 0})
+	return StageFactory_done_Results(r), err
 }
 
 // StageFactory_List is a list of StageFactory.
@@ -319,4 +488,259 @@ func (f StageFactory_create_Results_Future) Struct() (StageFactory_create_Result
 }
 func (p StageFactory_create_Results_Future) Stage() StageNode {
 	return StageNode(p.Future.Field(0, nil).Client())
+}
+
+type StageFactory_write_Params capnp.Struct
+
+// StageFactory_write_Params_TypeID is the unique identifier for the type StageFactory_write_Params.
+const StageFactory_write_Params_TypeID = 0xa6cb3c19b8aa75b7
+
+func NewStageFactory_write_Params(s *capnp.Segment) (StageFactory_write_Params, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 3})
+	return StageFactory_write_Params(st), err
+}
+
+func NewRootStageFactory_write_Params(s *capnp.Segment) (StageFactory_write_Params, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 3})
+	return StageFactory_write_Params(st), err
+}
+
+func ReadRootStageFactory_write_Params(msg *capnp.Message) (StageFactory_write_Params, error) {
+	root, err := msg.Root()
+	return StageFactory_write_Params(root.Struct()), err
+}
+
+func (s StageFactory_write_Params) String() string {
+	str, _ := text.Marshal(0xa6cb3c19b8aa75b7, capnp.Struct(s))
+	return str
+}
+
+func (s StageFactory_write_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+	return capnp.Struct(s).EncodeAsPtr(seg)
+}
+
+func (StageFactory_write_Params) DecodeFromPtr(p capnp.Ptr) StageFactory_write_Params {
+	return StageFactory_write_Params(capnp.Struct{}.DecodeFromPtr(p))
+}
+
+func (s StageFactory_write_Params) ToPtr() capnp.Ptr {
+	return capnp.Struct(s).ToPtr()
+}
+func (s StageFactory_write_Params) IsValid() bool {
+	return capnp.Struct(s).IsValid()
+}
+
+func (s StageFactory_write_Params) Message() *capnp.Message {
+	return capnp.Struct(s).Message()
+}
+
+func (s StageFactory_write_Params) Segment() *capnp.Segment {
+	return capnp.Struct(s).Segment()
+}
+func (s StageFactory_write_Params) Producer() (string, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return p.Text(), err
+}
+
+func (s StageFactory_write_Params) HasProducer() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s StageFactory_write_Params) ProducerBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return p.TextBytes(), err
+}
+
+func (s StageFactory_write_Params) SetProducer(v string) error {
+	return capnp.Struct(s).SetText(0, v)
+}
+
+func (s StageFactory_write_Params) Node() (string, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return p.Text(), err
+}
+
+func (s StageFactory_write_Params) HasNode() bool {
+	return capnp.Struct(s).HasPtr(1)
+}
+
+func (s StageFactory_write_Params) NodeBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return p.TextBytes(), err
+}
+
+func (s StageFactory_write_Params) SetNode(v string) error {
+	return capnp.Struct(s).SetText(1, v)
+}
+
+func (s StageFactory_write_Params) Field() (string, error) {
+	p, err := capnp.Struct(s).Ptr(2)
+	return p.Text(), err
+}
+
+func (s StageFactory_write_Params) HasField() bool {
+	return capnp.Struct(s).HasPtr(2)
+}
+
+func (s StageFactory_write_Params) FieldBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(2)
+	return p.TextBytes(), err
+}
+
+func (s StageFactory_write_Params) SetField(v string) error {
+	return capnp.Struct(s).SetText(2, v)
+}
+
+// StageFactory_write_Params_List is a list of StageFactory_write_Params.
+type StageFactory_write_Params_List = capnp.StructList[StageFactory_write_Params]
+
+// NewStageFactory_write_Params creates a new list of StageFactory_write_Params.
+func NewStageFactory_write_Params_List(s *capnp.Segment, sz int32) (StageFactory_write_Params_List, error) {
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 3}, sz)
+	return capnp.StructList[StageFactory_write_Params](l), err
+}
+
+// StageFactory_write_Params_Future is a wrapper for a StageFactory_write_Params promised by a client call.
+type StageFactory_write_Params_Future struct{ *capnp.Future }
+
+func (f StageFactory_write_Params_Future) Struct() (StageFactory_write_Params, error) {
+	p, err := f.Future.Ptr()
+	return StageFactory_write_Params(p.Struct()), err
+}
+
+type StageFactory_done_Params capnp.Struct
+
+// StageFactory_done_Params_TypeID is the unique identifier for the type StageFactory_done_Params.
+const StageFactory_done_Params_TypeID = 0xaaff5e5e9d8647af
+
+func NewStageFactory_done_Params(s *capnp.Segment) (StageFactory_done_Params, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	return StageFactory_done_Params(st), err
+}
+
+func NewRootStageFactory_done_Params(s *capnp.Segment) (StageFactory_done_Params, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	return StageFactory_done_Params(st), err
+}
+
+func ReadRootStageFactory_done_Params(msg *capnp.Message) (StageFactory_done_Params, error) {
+	root, err := msg.Root()
+	return StageFactory_done_Params(root.Struct()), err
+}
+
+func (s StageFactory_done_Params) String() string {
+	str, _ := text.Marshal(0xaaff5e5e9d8647af, capnp.Struct(s))
+	return str
+}
+
+func (s StageFactory_done_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+	return capnp.Struct(s).EncodeAsPtr(seg)
+}
+
+func (StageFactory_done_Params) DecodeFromPtr(p capnp.Ptr) StageFactory_done_Params {
+	return StageFactory_done_Params(capnp.Struct{}.DecodeFromPtr(p))
+}
+
+func (s StageFactory_done_Params) ToPtr() capnp.Ptr {
+	return capnp.Struct(s).ToPtr()
+}
+func (s StageFactory_done_Params) IsValid() bool {
+	return capnp.Struct(s).IsValid()
+}
+
+func (s StageFactory_done_Params) Message() *capnp.Message {
+	return capnp.Struct(s).Message()
+}
+
+func (s StageFactory_done_Params) Segment() *capnp.Segment {
+	return capnp.Struct(s).Segment()
+}
+
+// StageFactory_done_Params_List is a list of StageFactory_done_Params.
+type StageFactory_done_Params_List = capnp.StructList[StageFactory_done_Params]
+
+// NewStageFactory_done_Params creates a new list of StageFactory_done_Params.
+func NewStageFactory_done_Params_List(s *capnp.Segment, sz int32) (StageFactory_done_Params_List, error) {
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	return capnp.StructList[StageFactory_done_Params](l), err
+}
+
+// StageFactory_done_Params_Future is a wrapper for a StageFactory_done_Params promised by a client call.
+type StageFactory_done_Params_Future struct{ *capnp.Future }
+
+func (f StageFactory_done_Params_Future) Struct() (StageFactory_done_Params, error) {
+	p, err := f.Future.Ptr()
+	return StageFactory_done_Params(p.Struct()), err
+}
+
+type StageFactory_done_Results capnp.Struct
+
+// StageFactory_done_Results_TypeID is the unique identifier for the type StageFactory_done_Results.
+const StageFactory_done_Results_TypeID = 0xc1ddd99fdbb12c82
+
+func NewStageFactory_done_Results(s *capnp.Segment) (StageFactory_done_Results, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
+	return StageFactory_done_Results(st), err
+}
+
+func NewRootStageFactory_done_Results(s *capnp.Segment) (StageFactory_done_Results, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
+	return StageFactory_done_Results(st), err
+}
+
+func ReadRootStageFactory_done_Results(msg *capnp.Message) (StageFactory_done_Results, error) {
+	root, err := msg.Root()
+	return StageFactory_done_Results(root.Struct()), err
+}
+
+func (s StageFactory_done_Results) String() string {
+	str, _ := text.Marshal(0xc1ddd99fdbb12c82, capnp.Struct(s))
+	return str
+}
+
+func (s StageFactory_done_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+	return capnp.Struct(s).EncodeAsPtr(seg)
+}
+
+func (StageFactory_done_Results) DecodeFromPtr(p capnp.Ptr) StageFactory_done_Results {
+	return StageFactory_done_Results(capnp.Struct{}.DecodeFromPtr(p))
+}
+
+func (s StageFactory_done_Results) ToPtr() capnp.Ptr {
+	return capnp.Struct(s).ToPtr()
+}
+func (s StageFactory_done_Results) IsValid() bool {
+	return capnp.Struct(s).IsValid()
+}
+
+func (s StageFactory_done_Results) Message() *capnp.Message {
+	return capnp.Struct(s).Message()
+}
+
+func (s StageFactory_done_Results) Segment() *capnp.Segment {
+	return capnp.Struct(s).Segment()
+}
+func (s StageFactory_done_Results) Partitions() uint64 {
+	return capnp.Struct(s).Uint64(0)
+}
+
+func (s StageFactory_done_Results) SetPartitions(v uint64) {
+	capnp.Struct(s).SetUint64(0, v)
+}
+
+// StageFactory_done_Results_List is a list of StageFactory_done_Results.
+type StageFactory_done_Results_List = capnp.StructList[StageFactory_done_Results]
+
+// NewStageFactory_done_Results creates a new list of StageFactory_done_Results.
+func NewStageFactory_done_Results_List(s *capnp.Segment, sz int32) (StageFactory_done_Results_List, error) {
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0}, sz)
+	return capnp.StructList[StageFactory_done_Results](l), err
+}
+
+// StageFactory_done_Results_Future is a wrapper for a StageFactory_done_Results promised by a client call.
+type StageFactory_done_Results_Future struct{ *capnp.Future }
+
+func (f StageFactory_done_Results_Future) Struct() (StageFactory_done_Results, error) {
+	p, err := f.Future.Ptr()
+	return StageFactory_done_Results(p.Struct()), err
 }

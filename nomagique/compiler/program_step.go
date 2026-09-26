@@ -49,7 +49,7 @@ func (p *Program) Step(ctx context.Context, call runtime.StageNode_step) error {
 	return p.exportStep(call)
 }
 
-/* seedEntry supplies one raw observation through the definition's authored input. */
+/* seedEntry supplies raw observations or native text lists through authored inputs. */
 func (p *Program) seedEntry(frames []nodeFrame, entry string, input runtime.StageNode_step_Params) error {
 	index, field, err := p.entry(entry)
 

@@ -11,15 +11,25 @@
         "endpoint": {
           "value": "wss://futures.kraken.com/ws/v1"
         },
-        "onConnect": {
-          "value": [
-            "{\"event\":\"subscribe\",\"feed\":\"ticker\",\"product_ids\":[\"PI_XBTUSD\"]}",
-            "{\"event\":\"subscribe\",\"feed\":\"trade\",\"product_ids\":[\"PI_XBTUSD\"]}"
-          ]
+        "awaitHandshake": {
+          "value": true
         }
       },
       "connections": {
-        "inputs": {},
+        "inputs": {
+          "onConnect": [
+            {
+              "nodeId": "products",
+              "portName": "onConnect"
+            }
+          ],
+          "connectedWrite": [
+            {
+              "nodeId": "products",
+              "portName": "subscribe"
+            }
+          ]
+        },
         "outputs": {
           "frame.read": [
             {
@@ -50,6 +60,12 @@
             {
               "nodeId": "socket_received",
               "portName": "out"
+            }
+          ],
+          "products": [
+            {
+              "nodeId": "products",
+              "portName": "self"
             }
           ]
         },
@@ -125,6 +141,100 @@
         },
         "outputs": {}
       }
+    },
+    "discovery": {
+      "id": "discovery",
+      "type": "controlflow.Once",
+      "inputData": {
+        "trigger": {
+          "value": true
+        },
+        "through": {
+          "value": "{}"
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "instruments",
+              "portName": "body"
+            }
+          ]
+        }
+      },
+      "x": 0,
+      "y": 0
+    },
+    "instruments": {
+      "id": "instruments",
+      "type": "http.HTTPClient",
+      "inputData": {
+        "url": {
+          "value": "https://futures.kraken.com/derivatives/api/v3/instruments"
+        },
+        "method": {
+          "value": "GET"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "body": [
+            {
+              "nodeId": "discovery",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "products",
+              "portName": "instruments_0"
+            }
+          ]
+        }
+      },
+      "x": 0,
+      "y": 0
+    },
+    "products": {
+      "id": "products",
+      "type": "kraken.Products",
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "instruments_0": [
+            {
+              "nodeId": "instruments",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "onConnect": [
+            {
+              "nodeId": "socket",
+              "portName": "onConnect"
+            }
+          ],
+          "subscribe": [
+            {
+              "nodeId": "socket",
+              "portName": "connectedWrite"
+            }
+          ],
+          "self": [
+            {
+              "nodeId": "records",
+              "portName": "products"
+            }
+          ]
+        }
+      },
+      "x": 0,
+      "y": 0
     }
   }
 }

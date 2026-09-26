@@ -11,14 +11,7 @@
       "y": 700.0,
       "inputData": {},
       "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "last",
-              "portName": "out"
-            }
-          ]
-        },
+        "inputs": {},
         "outputs": {
           "move.row": [
             {
@@ -63,14 +56,7 @@
       },
       "connections": {
         "inputs": {},
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "excursion",
-              "portName": "value"
-            }
-          ]
-        }
+        "outputs": {}
       }
     },
     "table_excursions": {
@@ -114,7 +100,14 @@
       },
       "connections": {
         "inputs": {},
-        "outputs": {}
+        "outputs": {
+          "text": [
+            {
+              "nodeId": "live_map",
+              "portName": "previous.scope"
+            }
+          ]
+        }
       }
     },
     "live_map": {
@@ -125,7 +118,14 @@
       "x": 400.0,
       "y": 400.0,
       "connections": {
-        "inputs": {},
+        "inputs": {
+          "previous.scope": [
+            {
+              "nodeId": "symbol",
+              "portName": "text"
+            }
+          ]
+        },
         "outputs": {
           "peak.settled.vocabulary": [
             {

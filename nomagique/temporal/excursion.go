@@ -22,6 +22,12 @@ All comparisons use log returns; the reported excursion remains a price ratio.
 */
 type ExcursionServer struct {
 	*runtime.System
+	*excursionPath
+	paths map[string]*excursionPath
+}
+
+/* excursionPath retains one market's sufficient statistics and open leg. */
+type excursionPath struct {
 	epoch            int64
 	scope            string
 	sequence         int64
@@ -80,10 +86,12 @@ type ExcursionServer struct {
 
 func NewExcursion(ctx context.Context) *ExcursionServer {
 	server := &ExcursionServer{
-		System: runtime.NewSystem(ctx, "temporal.excursion"),
-		rising: true,
+		System:        runtime.NewSystem(ctx, "temporal.excursion"),
+		excursionPath: &excursionPath{rising: true},
+		paths:         make(map[string]*excursionPath),
 	}
 
+	server.paths[""] = server.excursionPath
 	server.Transition(runtime.READY)
 	return server
 }
@@ -100,9 +108,12 @@ func (server *ExcursionServer) Write(ctx context.Context, call Excursion_write) 
 	if args.Epoch() < 0 || args.Sequence() < 0 {
 		return errnie.Error(errnie.Err(errnie.Validation, "excursion: invalid stamp", nil))
 	}
-	if server.epoch != args.Epoch() || server.scope != scope {
-		*server = ExcursionServer{System: server.System, rising: true, epoch: args.Epoch(), scope: scope}
+	path, found := server.paths[scope]
+	if !found || path.epoch != args.Epoch() {
+		path = &excursionPath{rising: true, epoch: args.Epoch(), scope: scope}
+		server.paths[scope] = path
 	}
+	server.excursionPath = path
 	if server.opened && server.epoch > 0 && args.Sequence() <= server.sequence {
 		return errnie.Error(errnie.Err(errnie.Validation, "excursion: sequence must advance", nil))
 	}

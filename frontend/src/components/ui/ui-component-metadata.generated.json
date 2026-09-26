@@ -864,7 +864,13 @@
     "name": "Decisions",
     "exportName": "Decisions",
     "hasChildren": false,
-    "props": []
+    "props": [
+      {
+        "name": "className",
+        "type": "string",
+        "optional": true
+      }
+    ]
   },
   "DistributionCurve": {
     "name": "DistributionCurve",
@@ -5887,6 +5893,23 @@
       }
     ]
   },
+  "HierarchyLanes": {
+    "name": "HierarchyLanes",
+    "exportName": "HierarchyLanes",
+    "hasChildren": false,
+    "props": [
+      {
+        "name": "latent",
+        "type": "data",
+        "optional": true
+      },
+      {
+        "name": "forwardCurve",
+        "type": "data",
+        "optional": true
+      }
+    ]
+  },
   "Icon": {
     "name": "Icon",
     "exportName": "Icon",
@@ -7904,7 +7927,100 @@
     "name": "Positions",
     "exportName": "Positions",
     "hasChildren": false,
-    "props": []
+    "props": [
+      {
+        "name": "className",
+        "type": "string",
+        "optional": true
+      }
+    ]
+  },
+  "PredictionChart": {
+    "name": "PredictionChart",
+    "exportName": "PredictionChart",
+    "hasChildren": false,
+    "props": [
+      {
+        "name": "latent",
+        "type": "data",
+        "optional": true
+      },
+      {
+        "name": "forwardCurve",
+        "type": "data",
+        "optional": true
+      },
+      {
+        "name": "skill",
+        "type": "number",
+        "optional": true
+      },
+      {
+        "name": "relativePrecision",
+        "type": "number",
+        "optional": true
+      },
+      {
+        "name": "issued",
+        "type": "number",
+        "optional": true
+      },
+      {
+        "name": "realized",
+        "type": "number",
+        "optional": true
+      },
+      {
+        "name": "error",
+        "type": "number",
+        "optional": true
+      },
+      {
+        "name": "horizon",
+        "type": "number",
+        "optional": true
+      },
+      {
+        "name": "reach",
+        "type": "number",
+        "optional": true
+      },
+      {
+        "name": "surprise",
+        "type": "number",
+        "optional": true
+      },
+      {
+        "name": "energy",
+        "type": "number",
+        "optional": true
+      },
+      {
+        "name": "confidence",
+        "type": "number",
+        "optional": true
+      },
+      {
+        "name": "status",
+        "type": "string",
+        "optional": true
+      },
+      {
+        "name": "skillStatus",
+        "type": "string",
+        "optional": true
+      },
+      {
+        "name": "forecast",
+        "type": "number",
+        "optional": true
+      },
+      {
+        "name": "className",
+        "type": "string",
+        "optional": true
+      }
+    ]
   },
   "PredictiveCodingCanvas": {
     "name": "PredictiveCodingCanvas",
@@ -7939,6 +8055,81 @@
       {
         "name": "scanlines",
         "type": "boolean",
+        "optional": true
+      },
+      {
+        "name": "latent",
+        "type": "data",
+        "optional": true
+      },
+      {
+        "name": "forwardCurve",
+        "type": "data",
+        "optional": true
+      },
+      {
+        "name": "skill",
+        "type": "number",
+        "optional": true
+      },
+      {
+        "name": "relativePrecision",
+        "type": "number",
+        "optional": true
+      },
+      {
+        "name": "issued",
+        "type": "number",
+        "optional": true
+      },
+      {
+        "name": "realized",
+        "type": "number",
+        "optional": true
+      },
+      {
+        "name": "error",
+        "type": "number",
+        "optional": true
+      },
+      {
+        "name": "horizon",
+        "type": "number",
+        "optional": true
+      },
+      {
+        "name": "reach",
+        "type": "number",
+        "optional": true
+      },
+      {
+        "name": "surprise",
+        "type": "number",
+        "optional": true
+      },
+      {
+        "name": "energy",
+        "type": "number",
+        "optional": true
+      },
+      {
+        "name": "confidence",
+        "type": "number",
+        "optional": true
+      },
+      {
+        "name": "status",
+        "type": "string",
+        "optional": true
+      },
+      {
+        "name": "skillStatus",
+        "type": "string",
+        "optional": true
+      },
+      {
+        "name": "forecast",
+        "type": "number",
         "optional": true
       },
       {
@@ -8254,6 +8445,63 @@
       {
         "name": "recentActivity",
         "type": "data",
+        "optional": true
+      }
+    ]
+  },
+  "ScalarDiagnostics": {
+    "name": "ScalarDiagnostics",
+    "exportName": "ScalarDiagnostics",
+    "hasChildren": false,
+    "props": [
+      {
+        "name": "relativePrecision",
+        "type": "number",
+        "optional": true
+      },
+      {
+        "name": "skill",
+        "type": "number",
+        "optional": true
+      },
+      {
+        "name": "issued",
+        "type": "number",
+        "optional": true
+      },
+      {
+        "name": "realized",
+        "type": "number",
+        "optional": true
+      },
+      {
+        "name": "error",
+        "type": "number",
+        "optional": true
+      },
+      {
+        "name": "horizon",
+        "type": "number",
+        "optional": true
+      },
+      {
+        "name": "reach",
+        "type": "number",
+        "optional": true
+      },
+      {
+        "name": "surprise",
+        "type": "number",
+        "optional": true
+      },
+      {
+        "name": "energy",
+        "type": "number",
+        "optional": true
+      },
+      {
+        "name": "confidence",
+        "type": "number",
         "optional": true
       }
     ]
@@ -9012,6 +9260,93 @@
       {
         "name": "active",
         "type": "boolean",
+        "optional": true
+      }
+    ]
+  },
+  "TerminalPredictionChart": {
+    "name": "TerminalPredictionChart",
+    "exportName": "TerminalPredictionChart",
+    "hasChildren": false,
+    "props": [
+      {
+        "name": "latent",
+        "type": "data",
+        "optional": true
+      },
+      {
+        "name": "forwardCurve",
+        "type": "data",
+        "optional": true
+      },
+      {
+        "name": "skill",
+        "type": "number",
+        "optional": true
+      },
+      {
+        "name": "relativePrecision",
+        "type": "number",
+        "optional": true
+      },
+      {
+        "name": "issued",
+        "type": "number",
+        "optional": true
+      },
+      {
+        "name": "realized",
+        "type": "number",
+        "optional": true
+      },
+      {
+        "name": "error",
+        "type": "number",
+        "optional": true
+      },
+      {
+        "name": "horizon",
+        "type": "number",
+        "optional": true
+      },
+      {
+        "name": "reach",
+        "type": "number",
+        "optional": true
+      },
+      {
+        "name": "surprise",
+        "type": "number",
+        "optional": true
+      },
+      {
+        "name": "energy",
+        "type": "number",
+        "optional": true
+      },
+      {
+        "name": "confidence",
+        "type": "number",
+        "optional": true
+      },
+      {
+        "name": "status",
+        "type": "string",
+        "optional": true
+      },
+      {
+        "name": "skillStatus",
+        "type": "string",
+        "optional": true
+      },
+      {
+        "name": "forecast",
+        "type": "number",
+        "optional": true
+      },
+      {
+        "name": "className",
+        "type": "string",
         "optional": true
       }
     ]
@@ -10848,6 +11183,65 @@
       {
         "name": "leading",
         "type": "string",
+        "optional": true
+      }
+    ]
+  },
+  "VectorLane": {
+    "name": "VectorLane",
+    "exportName": "VectorLane",
+    "hasChildren": false,
+    "props": [
+      {
+        "name": "values",
+        "type": "data",
+        "optional": false
+      },
+      {
+        "name": "ghost",
+        "type": "data",
+        "optional": true
+      },
+      {
+        "name": "label",
+        "type": "string",
+        "optional": false
+      },
+      {
+        "name": "meta",
+        "type": "string",
+        "optional": false
+      },
+      {
+        "name": "color",
+        "type": "string",
+        "optional": false
+      },
+      {
+        "name": "className",
+        "type": "string",
+        "optional": true
+      }
+    ]
+  },
+  "VerdictRow": {
+    "name": "VerdictRow",
+    "exportName": "VerdictRow",
+    "hasChildren": false,
+    "props": [
+      {
+        "name": "status",
+        "type": "string",
+        "optional": true
+      },
+      {
+        "name": "skillStatus",
+        "type": "string",
+        "optional": true
+      },
+      {
+        "name": "forecast",
+        "type": "number",
         "optional": true
       }
     ]

@@ -23,10 +23,12 @@ import (
 	gorillaws "github.com/gorilla/websocket"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/manifest"
+	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/geometry"
+	netws "github.com/theapemachine/symm/nomagique/network/websocket"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
@@ -143,7 +145,9 @@ func (venue *fakeKraken) socketServer() *httptest.Server {
 				return
 			case <-subscribed:
 			}
-			ticker := time.NewTicker(5 * time.Millisecond)
+			// Match the venue idle heartbeat cadence:
+			// https://docs.kraken.com/api/docs/websocket-v2/heartbeat/
+			ticker := time.NewTicker(time.Second)
 			defer ticker.Stop()
 
 			for {
@@ -189,10 +193,17 @@ func (venue *fakeKraken) socketServer() *httptest.Server {
 			venue.mu.Unlock()
 
 			if limit {
-				send(`{"method":"subscribe","success":false,"symbol":"RATE/USD","error":"Rate limit for snapshot requests exceeded"}`)
+				if err := send(`{"method":"subscribe","success":false,"symbol":"RATE/USD","error":"Rate limit for snapshot requests exceeded"}`); err != nil {
+					return
+				}
 				continue
 			}
-			send(`{"method":"subscribe","success":true,"result":{"channel":"level3","symbol":"` + symbol + `"}}`)
+			if err := send(`{"method":"subscribe","success":true,"result":{"channel":"level3","symbol":"` + symbol + `"}}`); err != nil {
+				return
+			}
+			if err := send(`{"channel":"level3","type":"snapshot","data":[{"symbol":"` + symbol + `","bids":[],"asks":[]}]}`); err != nil {
+				return
+			}
 		}
 	}))
 }
@@ -231,10 +242,16 @@ func TestLiveLevel3Manifest(t *testing.T) {
 
 		_, segment, err := capnp.NewMessage(capnp.SingleSegment(nil))
 		So(err, ShouldBeNil)
-		symbols, err := transport.NewFan_write_Params(segment)
+		symbols, err := netws.NewShards_write_Params(segment)
 		So(err, ShouldBeNil)
-		So(symbols.SetData([]byte(`["BTC/USD","RATE/USD","ETH/USD"]`)), ShouldBeNil)
-		So(program.Execute(context.Background(), map[NodeID]capnp.Struct{program.NodeMap["symbols"]: capnp.Struct(symbols)}), ShouldBeNil)
+		values, err := symbols.NewSymbols(3)
+		So(err, ShouldBeNil)
+		for index, name := range []string{"BTC/USD", "RATE/USD", "ETH/USD"} {
+			So(values.Set(index, name), ShouldBeNil)
+		}
+		symbols.SetCapacity(200)
+		So(symbols.SetFactory(runtime.StageFactory(program.Nodes[program.NodeMap["factory"]].Client).AddRef()), ShouldBeNil)
+		So(program.Execute(context.Background(), map[NodeID]capnp.Struct{program.NodeMap["shards"]: capnp.Struct(symbols)}), ShouldBeNil)
 
 		deadline := time.Now().Add(10 * time.Second)
 
@@ -260,8 +277,8 @@ func TestLiveLevel3Manifest(t *testing.T) {
 	})
 }
 
-func TestLiveLevel3Manifest_Sharded451(t *testing.T) {
-	Convey("Given 451 online USD symbols across the sharded level 3 ingress graph", t, func() {
+func TestLiveLevel3Manifest_Sharded1001(t *testing.T) {
+	Convey("Given 1001 online USD symbols across the sharded level 3 ingress graph", t, func() {
 		secret := []byte("level three secret")
 		t.Setenv("L3_API_KEY", "level-three-key")
 		t.Setenv("L3_API_SECRET", base64.StdEncoding.EncodeToString(secret))
@@ -292,60 +309,86 @@ func TestLiveLevel3Manifest_Sharded451(t *testing.T) {
 		So(err, ShouldBeNil)
 		defer program.Release()
 
-		// Generate 451 distinct symbols with RATE/USD in shard 0
-		symbolList := make([]string, 451)
-		for i := 0; i < 451; i++ {
-			if i == 50 {
-				symbolList[i] = "RATE/USD"
-			} else {
-				symbolList[i] = fmt.Sprintf("SYM%03d/USD", i)
+		// Generate 1001 distinct symbols with RATE/USD in shard 0
+		symbolList := make([]string, 1001)
+		for index := range symbolList {
+			symbolList[index] = fmt.Sprintf("SYM%03d/USD", index)
+
+			if index == 50 {
+				symbolList[index] = "RATE/USD"
 			}
 		}
 
-		symbolsJSON, err := json.Marshal(symbolList)
-		So(err, ShouldBeNil)
-
 		_, segment, err := capnp.NewMessage(capnp.SingleSegment(nil))
 		So(err, ShouldBeNil)
-		symbols, err := transport.NewFan_write_Params(segment)
+		symbols, err := netws.NewShards_write_Params(segment)
 		So(err, ShouldBeNil)
-		So(symbols.SetData(symbolsJSON), ShouldBeNil)
-		So(program.Execute(context.Background(), map[NodeID]capnp.Struct{program.NodeMap["symbols"]: capnp.Struct(symbols)}), ShouldBeNil)
+		values, err := symbols.NewSymbols(int32(len(symbolList)))
+		So(err, ShouldBeNil)
+		for index, name := range symbolList {
+			So(values.Set(index, name), ShouldBeNil)
+		}
+		symbols.SetCapacity(200)
+		So(symbols.SetFactory(runtime.StageFactory(program.Nodes[program.NodeMap["factory"]].Client).AddRef()), ShouldBeNil)
+		So(program.Execute(context.Background(), map[NodeID]capnp.Struct{program.NodeMap["shards"]: capnp.Struct(symbols)}), ShouldBeNil)
 
-		deadline := time.Now().Add(10 * time.Second)
+		deadline := time.Now().Add(30 * time.Second)
+		received := make(map[string]bool)
+		sessions := make(map[string]bool)
 
 		for time.Now().Before(deadline) {
 			So(program.Execute(context.Background(), nil), ShouldBeNil)
+			if result, present := program.Result("records"); present {
+				payload, err := data.Iterate_done_Results(result).Out()
+				So(err, ShouldBeNil)
+
+				if len(payload) > 0 {
+					var frame struct {
+						Data    struct{ Symbol string }
+						Capture struct {
+							Session  string
+							Sequence int64
+							Record   int
+						}
+					}
+					So(json.Unmarshal(payload, &frame), ShouldBeNil)
+					So(received[frame.Data.Symbol], ShouldBeFalse)
+					So(frame.Capture.Session, ShouldNotBeEmpty)
+					So(frame.Capture.Sequence, ShouldBeGreaterThan, 0)
+					received[frame.Data.Symbol] = true
+					sessions[frame.Capture.Session] = true
+				}
+			}
 			venue.mu.Lock()
-			done := len(venue.accepted) == 451
+			done := len(venue.accepted) == 1001 && len(received) == 1001
 			venue.mu.Unlock()
 
 			if done {
 				break
 			}
-			time.Sleep(2 * time.Millisecond)
 		}
 
-		Convey("Then exactly 3 physical connections are created with 200 / 200 / 51 membership", func() {
+		Convey("Then six physical connections cover all 1001 symbols without a universe ceiling", func() {
 			venue.mu.Lock()
 			defer venue.mu.Unlock()
-			So(venue.connections, ShouldEqual, 3)
-			lengths := []int{
-				len(venue.connectionSymbols[0]),
-				len(venue.connectionSymbols[1]),
-				len(venue.connectionSymbols[2]),
+			So(venue.connections, ShouldEqual, 6)
+			So(len(received), ShouldEqual, 1001)
+			So(len(sessions), ShouldEqual, 6)
+			lengths := make([]int, venue.connections)
+			for index := range lengths {
+				lengths[index] = len(venue.connectionSymbols[index])
 			}
 			sort.Ints(lengths)
-			So(lengths, ShouldResemble, []int{51, 200, 200})
-			So(len(venue.accepted), ShouldEqual, 451)
+			So(lengths, ShouldResemble, []int{1, 200, 200, 200, 200, 200})
+			So(len(venue.accepted), ShouldEqual, 1001)
 			So(venue.limited, ShouldBeTrue)
 
 			seen := make(map[string]bool)
-			for _, s := range venue.accepted {
-				So(seen[s], ShouldBeFalse)
-				seen[s] = true
+			for _, symbol := range venue.accepted {
+				So(seen[symbol], ShouldBeFalse)
+				seen[symbol] = true
 			}
-			So(len(seen), ShouldEqual, 451)
+			So(len(seen), ShouldEqual, 1001)
 		})
 	})
 }

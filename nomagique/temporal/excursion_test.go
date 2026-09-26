@@ -1,6 +1,7 @@
 package temporal_test
 
 import (
+	capnp "capnproto.org/go/capnp/v3"
 	"context"
 	"math"
 	"testing"
@@ -249,4 +250,104 @@ func TestExcursionWriteStamped(t *testing.T) {
 		}
 		So(moves, ShouldBeGreaterThanOrEqualTo, 2)
 	})
+}
+
+/* TestExcursionWriteMarkets compares interleaved paths with their isolated native owners. */
+func TestExcursionWriteMarkets(t *testing.T) {
+	Convey("Each market resumes its open legs and measured baseline", t, func() {
+		shared := temporal.Excursion_ServerToClient(temporal.NewExcursion(context.Background()))
+		defer shared.Release()
+		markets := []string{"BTC/USD", "ETH/USD"}
+		owners := make([]temporal.Excursion, len(markets))
+		for index := range owners {
+			owners[index] = temporal.Excursion_ServerToClient(temporal.NewExcursion(context.Background()))
+			defer owners[index].Release()
+		}
+		moves := make([]int, len(markets))
+		for index, value := range market.Reversal() {
+			for marketIndex, symbol := range markets {
+				price := value
+				if marketIndex == 1 {
+					price = 10000 / value
+				}
+				sequence := int64(index*len(markets) + marketIndex)
+				result, err := walkMarket(shared, symbol, 91, sequence, price)
+				So(err, ShouldBeNil)
+				expected, err := walkMarket(owners[marketIndex], symbol, 91, sequence, price)
+				So(err, ShouldBeNil)
+				So(result.String(), ShouldEqual, expected.String())
+				if result.Which() == temporal.ExcursionResult_Which_move {
+					moves[marketIndex]++
+				}
+				result.Message().Release()
+				expected.Message().Release()
+			}
+		}
+		for _, count := range moves {
+			So(count, ShouldBeGreaterThan, 0)
+		}
+		result, err := walkMarket(shared, "BTC/USD", 92, 0, 100)
+		So(err, ShouldBeNil)
+		So(result.Steps(), ShouldEqual, 0)
+		result.Message().Release()
+		result, err = walkMarket(shared, "ETH/USD", 91, 100000, 100)
+		So(err, ShouldBeNil)
+		expected, err := walkMarket(owners[1], "ETH/USD", 91, 100000, 100)
+		So(err, ShouldBeNil)
+		So(result.String(), ShouldEqual, expected.String())
+		expected.Message().Release()
+		result.Message().Release()
+	})
+}
+
+/* walkMarket drives one stamped observation and retains its native reply. */
+func walkMarket(client temporal.Excursion, symbol string, epoch, sequence int64, value float64) (temporal.ExcursionResult, error) {
+	err := client.Write(context.Background(), func(args temporal.Excursion_write_Params) error {
+		args.SetEpoch(epoch)
+		args.SetSequence(sequence)
+		args.SetValue(value)
+		return args.SetScope(symbol)
+	})
+	if err != nil {
+		return temporal.ExcursionResult{}, err
+	}
+	if err := client.WaitStreaming(); err != nil {
+		return temporal.ExcursionResult{}, err
+	}
+	future, release := client.Done(context.Background(), nil)
+	defer release()
+	result, err := future.Struct()
+	if err != nil {
+		return temporal.ExcursionResult{}, err
+	}
+	message, segment, err := capnp.NewMessage(capnp.SingleSegment(nil))
+	if err != nil {
+		return temporal.ExcursionResult{}, err
+	}
+	cloned, err := temporal.NewRootExcursionResult(segment)
+	if err == nil {
+		err = capnp.Struct(cloned).CopyFrom(capnp.Struct(result))
+	}
+	if err != nil {
+		message.Release()
+		return temporal.ExcursionResult{}, err
+	}
+	return cloned, nil
+}
+
+/* BenchmarkExcursionWriteMarkets exercises online multi-leg paths through the node protocol. */
+func BenchmarkExcursionWriteMarkets(b *testing.B) {
+	client := temporal.Excursion_ServerToClient(temporal.NewExcursion(context.Background()))
+	defer client.Release()
+	path := market.Reversal()
+	markets := []string{"BTC/USD", "ETH/USD"}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for index := 0; index < b.N; index++ {
+		result, err := walkMarket(client, markets[index%len(markets)], 91, int64(index), path[(index/len(markets))%len(path)])
+		if err != nil {
+			b.Fatal(err)
+		}
+		result.Message().Release()
+	}
 }

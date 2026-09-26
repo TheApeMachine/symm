@@ -18,7 +18,7 @@ $Go.import("github.com/theapemachine/symm/nomagique/financial/kraken");
 # (subscription replies, heartbeats) is idle; a frame that is not JSON is an
 # error.
 interface Futures {
-  write @0 (data :Data) -> stream;
+  write @0 (data :Data, products :import "products.capnp".Products) -> stream;
   done @1 () -> Records;
 }
 

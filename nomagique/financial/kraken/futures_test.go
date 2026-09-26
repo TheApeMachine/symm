@@ -8,15 +8,19 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
-func TestFutures(t *testing.T) {
+func TestFuturesWrite(t *testing.T) {
 	ctx := context.Background()
 
 	Convey("Given Kraken Futures frames", t, func() {
+		products := productsClient(t)
 		client := Futures_ServerToClient(NewFutures())
 		defer client.Release()
 
 		read := func(frame string) []map[string]any {
 			So(client.Write(ctx, func(params Futures_write_Params) error {
+				if err := params.SetProducts(products.AddRef()); err != nil {
+					return err
+				}
 				return params.SetData([]byte(frame))
 			}), ShouldBeNil)
 			So(client.WaitStreaming(), ShouldBeNil)
@@ -51,6 +55,7 @@ func TestFutures(t *testing.T) {
 			So(records, ShouldHaveLength, 1)
 			So(records[0]["channel"], ShouldEqual, "futures_ticker")
 			data := records[0]["data"].(map[string]any)
+			So(data["symbol"], ShouldEqual, "BTC/USD")
 			So(data["mark"], ShouldEqual, 60000.2)
 			So(data["bid_qty"], ShouldEqual, 10)
 			So(data["timestamp"], ShouldEqual, "2023-07-22T04:26:40Z")
@@ -74,6 +79,13 @@ func TestFutures(t *testing.T) {
 			So(read(`{"event":"subscribed","feed":"ticker"}`), ShouldBeEmpty)
 		})
 
+		Convey("A refused subscription cannot look like an idle healthy feed", func() {
+			So(client.Write(ctx, func(params Futures_write_Params) error {
+				return params.SetData([]byte(`{"event":"subscribed_failed","feed":"ticker","product_ids":["PF_UNKNOWNUSD"]}`))
+			}), ShouldBeNil)
+			So(client.WaitStreaming(), ShouldNotBeNil)
+		})
+
 		Convey("A frame that is not JSON is an error", func() {
 			So(client.Write(ctx, func(params Futures_write_Params) error {
 				return params.SetData([]byte("not json"))
@@ -81,4 +93,42 @@ func TestFutures(t *testing.T) {
 			So(client.WaitStreaming(), ShouldNotBeNil)
 		})
 	})
+}
+
+func BenchmarkFuturesWrite(b *testing.B) {
+	products := productsClient(b)
+	client := Futures_ServerToClient(NewFutures())
+	defer client.Release()
+	payload := []byte(`{"feed":"trade","product_id":"PF_XBTUSD","price":60000,"qty":0.1,"side":"buy","type":"fill","time":1690000000000,"capture":{"session":"benchmark","sequence":9007199254740993,"record":0}}`)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		if err := client.Write(context.Background(), func(params Futures_write_Params) error {
+			if err := params.SetProducts(products.AddRef()); err != nil {
+				return err
+			}
+			return params.SetData(payload)
+		}); err != nil {
+			b.Fatal(err)
+		}
+		if err := client.WaitStreaming(); err != nil {
+			b.Fatal(err)
+		}
+		future, release := client.Done(context.Background(), nil)
+		result, err := future.Struct()
+		if err != nil {
+			release()
+			b.Fatal(err)
+		}
+		records, err := result.Records()
+		if err != nil {
+			release()
+			b.Fatal(err)
+		}
+		if records.Len() != 1 {
+			release()
+			b.Fatal("missing futures record")
+		}
+		release()
+	}
 }

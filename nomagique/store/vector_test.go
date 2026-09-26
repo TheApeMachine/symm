@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/store"
 )
 
@@ -149,4 +150,103 @@ func TestVector(t *testing.T) {
 			So(client.WaitStreaming(), ShouldNotBeNil)
 		})
 	})
+}
+
+/* TestVectorSnapshotMarkets keeps every market's previous cut across a restart. */
+func TestVectorSnapshotMarkets(t *testing.T) {
+	Convey("The shared grid's previous readings are addressed by market", t, func() {
+		client := store.Vector_ServerToClient(store.NewVector())
+		defer client.Release()
+		for index, symbol := range []string{"BTC/USD", "ETH/USD"} {
+			So(writeVectorMarket(client, symbol, []float64{float64(index + 1)}), ShouldBeNil)
+		}
+		snapshot, release := client.Snapshot(context.Background(), nil)
+		defer release()
+		saved, err := snapshot.Struct()
+		So(err, ShouldBeNil)
+		encoded, err := saved.Data()
+		So(err, ShouldBeNil)
+		restored := store.Vector_ServerToClient(store.NewVector())
+		defer restored.Release()
+		future, release := restored.Restore(context.Background(), func(args runtime.Snapshot_restore_Params) error { return args.SetData(encoded) })
+		_, err = future.Struct()
+		release()
+		So(err, ShouldBeNil)
+		for _, owner := range []store.Vector{client, restored} {
+			for index, symbol := range []string{"BTC/USD", "ETH/USD", "BTC/USD"} {
+				So(writeVectorMarket(owner, symbol, nil), ShouldBeNil)
+				future, release := owner.Done(context.Background(), nil)
+				result, err := future.Struct()
+				So(err, ShouldBeNil)
+				values, err := result.Values()
+				So(err, ShouldBeNil)
+				So(values.Len(), ShouldEqual, 1)
+				So(values.At(0), ShouldEqual, index%2+1)
+				release()
+			}
+		}
+	})
+}
+
+/* writeVectorMarket selects one series and optionally replaces its reading. */
+func writeVectorMarket(client store.Vector, symbol string, values []float64) error {
+	err := client.Write(context.Background(), func(args store.Vector_write_Params) error {
+		args.SetWidth(1)
+		scopes, err := args.NewScope(1)
+		if err != nil {
+			return err
+		}
+		if err := scopes.Set(0, symbol); err != nil {
+			return err
+		}
+		if values == nil {
+			return nil
+		}
+		indices, err := args.NewIndex(int32(len(values)))
+		if err != nil {
+			return err
+		}
+		records, err := args.NewValues(int32(len(values)))
+		if err != nil {
+			return err
+		}
+		for index, value := range values {
+			indices.Set(index, int64(index))
+			records.Set(index, value)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	return client.WaitStreaming()
+}
+
+/* BenchmarkVectorWriteMarkets retains the shipping 411-coordinate previous cut per market. */
+func BenchmarkVectorWriteMarkets(b *testing.B) {
+	client := store.Vector_ServerToClient(store.NewVector())
+	defer client.Release()
+	values := make([]float64, 411)
+	for index := range values {
+		values[index] = float64(index)
+	}
+	markets := []string{"BTC/USD", "ETH/USD"}
+	for _, symbol := range markets {
+		if err := writeVectorMarket(client, symbol, values); err != nil {
+			b.Fatal(err)
+		}
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for index := 0; index < b.N; index++ {
+		if err := writeVectorMarket(client, markets[index%len(markets)], values); err != nil {
+			b.Fatal(err)
+		}
+		future, release := client.Done(context.Background(), nil)
+		_, err := future.Struct()
+		release()
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
 }

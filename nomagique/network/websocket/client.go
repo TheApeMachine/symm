@@ -96,6 +96,26 @@ func (server *WebSocketClientServer) Write(ctx context.Context, call WebSocketCl
 		}
 		server.onConnect = handshake
 	}
+	connected, err := call.Args().ConnectedWrite()
+
+	if err != nil {
+		return errnie.Error(err)
+	}
+
+	if connected.Len() > 0 && !call.Args().HasOnConnect() {
+		return errnie.Error(errnie.Err(errnie.Validation, "websocket: connected writes require their complete reconnect handshake", nil))
+	}
+
+	if server.conn != nil {
+		for index := range connected.Len() {
+			payload, err := connected.At(index)
+
+			if err != nil {
+				return errnie.Error(err)
+			}
+			server.pending = append(server.pending, bytes.Clone(payload))
+		}
+	}
 	for index := range frames.Len() {
 		payload, err := frames.At(index)
 
@@ -108,7 +128,7 @@ func (server *WebSocketClientServer) Write(ctx context.Context, call WebSocketCl
 		}
 	}
 
-	if server.endpoint == "" {
+	if server.endpoint == "" || (call.Args().AwaitHandshake() && len(server.onConnect) == 0) {
 		return nil
 	}
 

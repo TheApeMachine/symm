@@ -24,31 +24,31 @@ using import "radix.capnp".Retained;
 # a zero standing in for a field that was not there, and never reads its
 # neighbour's field because an absent one closed the gap.
 #
-# The grid holds no values of its own. A metric is not a cell holding a number
-# but a capability the grid calls, so reading the grid is asking every metric
-# wired into it for its current state. Wiring another metric in is what makes
-# the grid wider; nothing here enumerates them.
+# The grid retains explicitly held input fields and reported observations for
+# each named series. Metric calculations belong to the wired nodes.
 # The grid is Retained: what it hands out is what it was holding when the
 # evaluation began. That is what lets the same grid feed the metrics and
 # collect them, without the two closing a cycle around each other.
 #
 # An interest written held:field keeps the last reading of field: once any
 # record has carried it, it is delivered with every record, so a reading from
-# one feed can be read beside another feed's. A new scope forgets it.
+# one feed can be read beside another feed's. Each scope retains its own readings.
 #
 # scope names the series the written data belongs to; like data it gathers,
 # and every scope written together must agree. A new scope starts the grid
 # from no retained readings, so nothing observed under one series is handed
 # out under the next, and scope is handed back out so every metric reading the
 # grid reads under the same one. No scope arriving keeps the current series;
-# an unwired scope is one series.
+# an unwired scope is one series. scopePath selects the scope from the raw
+# record when supplied; missing or empty record scopes are rejected.
 interface Grid extends(Retained) {
   write @0 (
     data      :List(Data),
     interests :Text,
     metrics   :List(Float64),
     present   :List(Bool),
-    scope     :List(Text)
+    scope     :List(Text),
+    scopePath :Text
   ) -> stream;
   done @1 () -> (
     values       :List(Float64),

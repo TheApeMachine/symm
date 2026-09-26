@@ -212,26 +212,19 @@ export const fetchHindsightLifecycle = async (
 };
 
 export type RawExcursionRecord = {
-	epoch: number;
+	epoch: string;
 	id: string;
 	symbol: string;
-	direction: string;
-	clears_friction: boolean;
-	precursor_start_tick: number;
-	anchor_tick: number;
-	extremum_tick: number;
-	exit_tick: number;
-	post_end_tick: number;
-	entry_price: number;
-	extremum_price: number;
-	exit_price: number;
-	position_size: number;
-	fee: number;
-	profit: number;
-	profit_fraction: number;
-	gross_excursion: number;
+	anchor_sequence: number;
+	ignition_sequence: number;
+	extremum_sequence: number;
+	confirmation_sequence: number;
+	anchor: number;
+	ignition: number;
+	extremum: number;
+	excursion: number;
+	has_precursor: boolean;
 	observation_count: number;
-	status: string;
 };
 
 export const fetchHindsightExcursions = async (
@@ -242,7 +235,9 @@ export const fetchHindsightExcursions = async (
 	);
 
 	if (!response.ok) {
-		return [];
+		throw new Error(
+			`Hindsight request failed (${response.status}): ${await response.text()}`,
+		);
 	}
 
 	return (await response.json()) as RawExcursionRecord[];
@@ -396,70 +391,70 @@ export const adaptMeasurementsToTimeline = (
 		id: e.id,
 		symbol: e.symbol,
 		kind:
-			e.direction === "upward"
+			e.excursion > 0
 				? "upward_excursion"
-				: e.direction === "downward"
+				: e.excursion < 0
 					? "downward_excursion"
 					: "reversal",
 		coordinate: "last" as MarketCoordinate,
-		fromSequence: e.anchor_tick,
-		toSequence: e.exit_tick,
+		fromSequence: e.anchor_sequence,
+		toSequence: e.confirmation_sequence,
 		fromAt: "",
 		toAt: "",
 		observations: e.observation_count,
-		observedExcursion: e.gross_excursion,
+		observedExcursion: e.excursion,
 		hasObservedExcursion: true,
-		confirmed: e.clears_friction,
-		ratio: e.profit_fraction,
+		confirmed: true,
+		ratio: e.excursion,
 		hasRatio: true,
-		traversed: e.profit_fraction,
-		hasTraversed: true,
-		threshold: 0.0052,
-		hasThreshold: true,
+		traversed: 0,
+		hasTraversed: false,
+		threshold: 0,
+		hasThreshold: false,
 		references: [
 			{
 				role: "anchor" as ReferenceRole,
 				capture: {
 					run: String(e.epoch),
-					sequence: e.anchor_tick,
+					sequence: e.anchor_sequence,
 					stream: "excursions",
 					streamEpoch: e.epoch,
-					streamSequence: e.anchor_tick,
+					streamSequence: e.anchor_sequence,
 				},
-				ordinal: e.anchor_tick,
+				ordinal: e.anchor_sequence,
 				venueAt: "",
 				receivedAt: "",
-				value: e.entry_price,
+				value: e.anchor,
 				hasValue: true,
 			},
 			{
-				role: "peak" as ReferenceRole,
+				role: (e.excursion > 0 ? "peak" : "trough") as ReferenceRole,
 				capture: {
 					run: String(e.epoch),
-					sequence: e.extremum_tick,
+					sequence: e.extremum_sequence,
 					stream: "excursions",
 					streamEpoch: e.epoch,
-					streamSequence: e.extremum_tick,
+					streamSequence: e.extremum_sequence,
 				},
-				ordinal: e.extremum_tick,
+				ordinal: e.extremum_sequence,
 				venueAt: "",
 				receivedAt: "",
-				value: e.extremum_price,
+				value: e.extremum,
 				hasValue: true,
 			},
 			{
-				role: "exit_anchor" as ReferenceRole,
+				role: "ignition" as ReferenceRole,
 				capture: {
 					run: String(e.epoch),
-					sequence: e.exit_tick,
+					sequence: e.ignition_sequence,
 					stream: "excursions",
 					streamEpoch: e.epoch,
-					streamSequence: e.exit_tick,
+					streamSequence: e.ignition_sequence,
 				},
-				ordinal: e.exit_tick,
+				ordinal: e.ignition_sequence,
 				venueAt: "",
 				receivedAt: "",
-				value: e.exit_price,
+				value: e.ignition,
 				hasValue: true,
 			},
 		],
@@ -469,12 +464,12 @@ export const adaptMeasurementsToTimeline = (
 	const symbolSummaries: HindsightSymbolSummary[] = allSymbols.map((sym) => {
 		const symExcursions = excursions.filter((e) => e.symbol === sym);
 		const topExcursion = symExcursions.reduce(
-			(max, e) => Math.max(max, e.gross_excursion),
+			(max, e) => Math.max(max, e.excursion),
 			0,
 		);
 		const topKind =
 			symExcursions.length > 0
-				? symExcursions[0].direction === "upward"
+				? symExcursions[0].excursion > 0
 					? ("upward_excursion" as EpisodeKind)
 					: ("downward_excursion" as EpisodeKind)
 				: undefined;
@@ -685,12 +680,7 @@ export const fetchHindsightTimeline = async (
 		}
 	}
 
-	let excursions: RawExcursionRecord[] = [];
-	try {
-		excursions = await fetchHindsightExcursions(query.run);
-	} catch {
-		// optional discovery
-	}
+	const excursions = await fetchHindsightExcursions(query.run);
 
 	return new Promise((resolve, reject) => {
 		if (options?.signal?.aborted) {

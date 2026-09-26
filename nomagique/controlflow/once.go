@@ -42,7 +42,11 @@ func (server *OnceServer) Write(ctx context.Context, call Once_write) error {
 
 	through, err := call.Args().Through()
 
-	if err == nil && len(through) > 0 {
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.Validation, "controlflow.once: payload", err))
+	}
+
+	if len(through) > 0 {
 		server.through = bytes.Clone(through)
 	}
 
@@ -70,6 +74,7 @@ func (server *OnceServer) Done(ctx context.Context, call Once_done) error {
 		))
 	}
 
+	results.SetIdle()
 	results.SetFired(server.hasFired)
 
 	if server.shouldEmit && len(server.through) > 0 {

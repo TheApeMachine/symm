@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/theapemachine/errnie"
@@ -51,18 +52,42 @@ func (server *FuturesServer) Write(ctx context.Context, call Futures_write) erro
 
 	// Subscription replies, alerts and info name an event; only data frames
 	// carry readings.
-	if _, control := frame["event"]; control {
+	if event, control := frame["event"].(string); control {
+		if event == "error" || event == "subscribed_failed" || event == "unsubscribed_failed" {
+			return errnie.Error(errnie.Err(errnie.IO, fmt.Sprintf("kraken.futures: venue rejected request: %s", payload), nil))
+		}
 		return nil
 	}
 
 	feed, _ := frame["feed"].(string)
 	product, _ := frame["product_id"].(string)
 
+	if feed != "ticker" && feed != "ticker_lite" && feed != "trade" && feed != "trade_snapshot" {
+		return nil
+	}
+	products := call.Args().Products()
+
+	if !products.IsValid() {
+		return errnie.Error(errnie.Err(errnie.Validation, "kraken.futures: product catalogue is required", nil))
+	}
+	future, release := products.Lookup(ctx, func(params Products_lookup_Params) error { return params.SetProduct(product) })
+	defer release()
+	resolved, err := future.Struct()
+
+	if err != nil {
+		return errnie.Error(err)
+	}
+	symbol, err := resolved.Symbol()
+
+	if err != nil {
+		return errnie.Error(err)
+	}
+
 	switch feed {
 	case "ticker", "ticker_lite":
-		return server.record(frame, "futures_ticker", product, frame, tickerFields, 0)
+		return server.record(frame, "futures_ticker", symbol, frame, tickerFields, 0)
 	case "trade":
-		return server.record(frame, "futures_trade", product, frame, tradeFields, 0)
+		return server.record(frame, "futures_trade", symbol, frame, tradeFields, 0)
 	case "trade_snapshot":
 		trades, _ := frame["trades"].([]any)
 
@@ -73,7 +98,7 @@ func (server *FuturesServer) Write(ctx context.Context, call Futures_write) erro
 				return errnie.Error(errnie.Err(errnie.Validation, "kraken.futures: a snapshot trade is not an object", nil))
 			}
 
-			if err := server.record(frame, "futures_trade", product, trade, tradeFields, index); err != nil {
+			if err := server.record(frame, "futures_trade", symbol, trade, tradeFields, index); err != nil {
 				return err
 			}
 		}

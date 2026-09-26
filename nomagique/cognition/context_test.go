@@ -13,6 +13,8 @@ func TestContextBuilderWrite(t *testing.T) {
 		for _, replay := range []bool{false, true, false} {
 			So(client.Write(context.Background(), func(args ContextBuilder_write_Params) error {
 				args.SetReplay(replay)
+				args.SetEpoch(1790412345678901234)
+				args.SetSequence(9007199254740993)
 				if err := args.SetSymbol("BTC/USD"); err != nil {
 					return err
 				}
@@ -52,6 +54,8 @@ func TestContextBuilderWrite(t *testing.T) {
 			So(flat.Holding(), ShouldBeFalse)
 			So(held.Holding(), ShouldBeTrue)
 			for _, input := range []Context{flat, held} {
+				So(input.Epoch(), ShouldEqual, int64(1790412345678901234))
+				So(input.Sequence(), ShouldEqual, int64(9007199254740993))
 				vocabulary, err := input.Vocabulary()
 				So(err, ShouldBeNil)
 				So(vocabulary, ShouldEqual, "region:[]\"/identity")
@@ -80,6 +84,7 @@ func BenchmarkContextBuilderWrite(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
 		if err := client.Write(context.Background(), func(args ContextBuilder_write_Params) error {
+			args.SetEpoch(1)
 			if err := args.SetSymbol("BTC/USD"); err != nil {
 				return err
 			}

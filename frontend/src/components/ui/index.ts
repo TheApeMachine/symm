@@ -199,6 +199,20 @@ export {
 } from "./position-list";
 export { Positions, type PositionsProps } from "./positions";
 export {
+	HierarchyLanes,
+	type HierarchyLanesProps,
+	PredictionChart,
+	type PredictionChartProps,
+	type PredictionLayer,
+	ScalarDiagnostics,
+	type ScalarDiagnosticsProps,
+	TerminalPredictionChart,
+	VectorLane,
+	type VectorLaneProps,
+	VerdictRow,
+	type VerdictRowProps,
+} from "./prediction-chart";
+export {
 	PredictiveCodingCanvas,
 	type PredictiveCodingCanvasProps,
 } from "./predictive-coding-canvas";

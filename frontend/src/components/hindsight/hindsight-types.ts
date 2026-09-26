@@ -23,7 +23,7 @@ export type Metric<Value = number> = {
 };
 
 export type HindsightRun = {
-	epoch?: number;
+	epoch?: number | string;
 	id: string;
 	startedAt: string;
 	codeCommit?: string;
@@ -85,7 +85,7 @@ export type HindsightCaptureIdentity = {
 	run: string;
 	sequence: number;
 	stream: string;
-	streamEpoch: number;
+	streamEpoch: number | string;
 	streamSequence: number;
 };
 
@@ -208,6 +208,7 @@ export type EpisodeKind =
 	| "arrival_cluster";
 
 export type ReferenceRole =
+	| "ignition"
 	| "anchor"
 	| "peak"
 	| "trough"

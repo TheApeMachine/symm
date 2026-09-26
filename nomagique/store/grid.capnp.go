@@ -27,7 +27,7 @@ func (c Grid) Write(ctx context.Context, params func(Grid_write_Params) error) e
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 5}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 6}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(Grid_write_Params(s)) }
 	}
 
@@ -228,12 +228,12 @@ type Grid_write_Params capnp.Struct
 const Grid_write_Params_TypeID = 0x8b2a68e19c111ac0
 
 func NewGrid_write_Params(s *capnp.Segment) (Grid_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 5})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 6})
 	return Grid_write_Params(st), err
 }
 
 func NewRootGrid_write_Params(s *capnp.Segment) (Grid_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 5})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 6})
 	return Grid_write_Params(st), err
 }
 
@@ -379,13 +379,30 @@ func (s Grid_write_Params) NewScope(n int32) (capnp.TextList, error) {
 	err = capnp.Struct(s).SetPtr(4, l.ToPtr())
 	return l, err
 }
+func (s Grid_write_Params) ScopePath() (string, error) {
+	p, err := capnp.Struct(s).Ptr(5)
+	return p.Text(), err
+}
+
+func (s Grid_write_Params) HasScopePath() bool {
+	return capnp.Struct(s).HasPtr(5)
+}
+
+func (s Grid_write_Params) ScopePathBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(5)
+	return p.TextBytes(), err
+}
+
+func (s Grid_write_Params) SetScopePath(v string) error {
+	return capnp.Struct(s).SetText(5, v)
+}
 
 // Grid_write_Params_List is a list of Grid_write_Params.
 type Grid_write_Params_List = capnp.StructList[Grid_write_Params]
 
 // NewGrid_write_Params creates a new list of Grid_write_Params.
 func NewGrid_write_Params_List(s *capnp.Segment, sz int32) (Grid_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 5}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 6}, sz)
 	return capnp.StructList[Grid_write_Params](l), err
 }
 

@@ -40,13 +40,11 @@ func inspectionFixture(t testing.TB, live bool) *HTTPServerServer {
 		t.Fatal(err)
 	}
 	setup := []string{
-		"LOAD arrow", "ATTACH ':memory:' AS symmtables", "CREATE SCHEMA symmtables.hindsight", "CREATE SCHEMA symmtables.symm",
-		"CREATE TABLE symmtables.hindsight.runs(epoch BIGINT, started_at TIMESTAMPTZ, code_commit VARCHAR, build_id VARCHAR, config_digest VARCHAR, status VARCHAR)",
-		"INSERT INTO symmtables.hindsight.runs VALUES (1, '2026-09-26 07:00:00+00', 'commit-one', 'build-one', 'config-one', 'closed'), (2, '2026-09-26 08:00:00+00', 'commit-two', 'build-two', 'config-two', 'running')",
-		"CREATE TABLE symmtables.hindsight.measurements(epoch BIGINT, symbol VARCHAR)",
-		"INSERT INTO symmtables.hindsight.measurements VALUES (1,'BTC/USD'),(1,'BTC/USD'),(2,'ETH/USD')",
-		"CREATE TABLE symmtables.hindsight.excursions(epoch BIGINT, id VARCHAR, symbol VARCHAR, anchor_tick BIGINT, profit DECIMAL(18,4))",
-		"INSERT INTO symmtables.hindsight.excursions VALUES (1,'fragment-one','BTC/USD',10,12.3456),(2,'fragment-two','ETH/USD',20,-4.50)",
+		"LOAD arrow", "ATTACH ':memory:' AS symmtables", "CREATE SCHEMA symmtables.symm",
+		"CREATE TABLE symmtables.symm.metric_cuts_v2(epoch BIGINT, sequence BIGINT, symbol VARCHAR, complete BOOLEAN, provenance VARCHAR)",
+		`INSERT INTO symmtables.symm.metric_cuts_v2 VALUES (1,10,'BTC/USD',true,'{"receivedAt":"2026-09-26T07:00:00Z"}'),(1,20,'BTC/USD',false,'{"receivedAt":"2026-09-26T07:00:01Z"}'),(2,30,'ETH/USD',true,'{"receivedAt":"2026-09-26T08:00:00Z"}')`,
+		"CREATE TABLE symmtables.symm.excursion_fragments_v1(epoch BIGINT, symbol VARCHAR, anchor_sequence BIGINT, ignition_sequence BIGINT, extremum_sequence BIGINT, confirmation_sequence BIGINT, anchor DOUBLE, ignition DOUBLE, extremum DOUBLE, excursion DOUBLE, has_precursor BOOLEAN)",
+		"INSERT INTO symmtables.symm.excursion_fragments_v1 VALUES (1,'BTC/USD',10,11,19,20,95,100,112.3456,0.123456,true),(2,'ETH/USD',30,31,39,40,110,100,95.5,-0.045,true)",
 		"CREATE TABLE symmtables.symm.paper_round_trips_v1(symbol VARCHAR, opened TIMESTAMP, closed TIMESTAMP, basis VARCHAR, proceeds VARCHAR, pnl VARCHAR)",
 		"INSERT INTO symmtables.symm.paper_round_trips_v1 VALUES ('BTC/USD','2026-09-26 07:00:00','2026-09-26 08:00:00','100.00','112.3456','12.3456')",
 	}
@@ -107,7 +105,7 @@ func TestInspectionServeHTTP(t *testing.T) {
 			cases := []struct{ path, contains, excludes string }{
 				{"/hindsight/runs", `"startedAt":"2026-09-26`, "missing"},
 				{"/hindsight/symbols?run=1", `["BTC/USD"]`, "ETH/USD"},
-				{"/hindsight/excursions?epoch=1", `"profit":12.3456`, "fragment-two"},
+				{"/hindsight/excursions?epoch=1", `"excursion":0.123456`, "ETH/USD"},
 				{"/trades", `"execution":"paper"`, "missing"},
 				{"/hindsight/metric-map", `"graphDigest":`, "missing"},
 			}
@@ -121,7 +119,7 @@ func TestInspectionServeHTTP(t *testing.T) {
 			}
 		})
 		Convey("Workbench SQL returns decodable Arrow and keeps session views", func() {
-			for _, statement := range []string{"CREATE TEMP VIEW selected AS SELECT * FROM symmtables.hindsight.runs WHERE epoch=2", "SELECT epoch FROM selected"} {
+			for _, statement := range []string{"CREATE TEMP VIEW selected AS SELECT * FROM symmtables.symm.metric_cuts_v2 WHERE epoch=2", "SELECT epoch FROM selected"} {
 				requestBody, err := json.Marshal(map[string]string{"sql": statement})
 				So(err, ShouldBeNil)
 				response := httptest.NewRecorder()
@@ -185,4 +183,19 @@ func TestInspectionServeHTTPWarehouse(t *testing.T) {
 			t.Logf("%s: HTTP %d, %d bytes", path, response.Code, response.Body.Len())
 		}
 	})
+}
+
+func BenchmarkInspectionServeHTTP(b *testing.B) {
+	b.Chdir("../../..")
+	server := inspectionFixture(b, false)
+	handler := server.Handler()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest("GET", "/hindsight/excursions?run=1", nil))
+		if response.Code != 200 {
+			b.Fatal(response.Body.String())
+		}
+	}
 }

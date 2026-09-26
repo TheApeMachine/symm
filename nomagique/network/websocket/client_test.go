@@ -230,3 +230,93 @@ func TestWebSocketClientWrite(t *testing.T) {
 		So(server.Close(), ShouldBeNil)
 	})
 }
+
+func TestWebSocketClientWriteHandshake(t *testing.T) {
+	Convey("Discovery updates are atomic with reconnect handshakes", t, func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		received := make(chan string, 8)
+		failures := make(chan error, 8)
+		upgrader := gorillaws.Upgrader{}
+		venue := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			conn, err := upgrader.Upgrade(writer, request, nil)
+			if err != nil {
+				failures <- err
+				return
+			}
+			defer func() {
+				if err := conn.Close(); err != nil {
+					failures <- err
+				}
+			}()
+			for {
+				_, payload, err := conn.ReadMessage()
+				if err != nil {
+					return
+				}
+				received <- string(payload)
+				if string(payload) == "disconnect" {
+					return
+				}
+			}
+		}))
+		defer venue.Close()
+		server := NewWebSocketClient(ctx)
+		client := WebSocketClient_ServerToClient(server)
+		defer client.Release()
+		configure := func(full, delta string) {
+			So(client.Write(ctx, func(params WebSocketClient_write_Params) error {
+				params.SetAwaitHandshake(true)
+				if err := params.SetEndpoint("ws" + strings.TrimPrefix(venue.URL, "http")); err != nil {
+					return err
+				}
+				if full == "" {
+					return nil
+				}
+				handshake, err := params.NewOnConnect(1)
+				if err != nil {
+					return err
+				}
+				if err := handshake.Set(0, []byte(full)); err != nil {
+					return err
+				}
+				updates, err := params.NewConnectedWrite(1)
+				if err != nil {
+					return err
+				}
+				return updates.Set(0, []byte(delta))
+			}), ShouldBeNil)
+			So(client.WaitStreaming(), ShouldBeNil)
+		}
+		next := func(want string) {
+			select {
+			case value := <-received:
+				So(value, ShouldEqual, want)
+			case err := <-failures:
+				So(err, ShouldBeNil)
+			case <-ctx.Done():
+				t.Fatal(ctx.Err())
+			}
+		}
+		configure("", "")
+		server.mu.Lock()
+		So(server.conn, ShouldBeNil)
+		So(server.dialing.Load(), ShouldBeFalse)
+		server.mu.Unlock()
+		configure("BTC", "BTC")
+		next("BTC")
+		configure("BTC,ETH", "ETH")
+		next("ETH")
+		So(client.Write(ctx, func(params WebSocketClient_write_Params) error {
+			frames, err := params.NewWrite(1)
+			if err != nil {
+				return err
+			}
+			return frames.Set(0, []byte("disconnect"))
+		}), ShouldBeNil)
+		So(client.WaitStreaming(), ShouldBeNil)
+		next("disconnect")
+		next("BTC,ETH")
+		So(server.Close(), ShouldBeNil)
+	})
+}

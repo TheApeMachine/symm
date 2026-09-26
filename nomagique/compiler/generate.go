@@ -729,6 +729,12 @@ func emitDefinitionNodeTypes(buf *strings.Builder, schemas map[string]Schema) {
 		emitDefinitionPorts(buf, "outputs", outputs)
 
 		buf.WriteString("\t});\n")
+		// Factories expose the same native partition selector in the editor and runtime.
+		fmt.Fprintf(buf, "\tconfig.addNodeType({\n\t\ttype: %q,\n\t\tlabel: %q,\n", "factory:"+identifier, identifier+" factory")
+		buf.WriteString("\t\tcategory: \"Definitions\",\n\t\tinitialWidth: 320,\n")
+		emitDefinitionPorts(buf, "inputs", []definitionPort{{Name: "producer", Type: "Text"}, {Name: "node", Type: "Text"}, {Name: "field", Type: "Text"}})
+		emitDefinitionPorts(buf, "outputs", []definitionPort{{Name: "self", Type: "Capability"}, {Name: "partitions", Type: "UInt64"}})
+		buf.WriteString("\t});\n")
 	}
 }
 

@@ -18,8 +18,10 @@ type PrecursorServer struct {
 }
 
 type precursorHistory struct {
-	scope string
-	steps []string
+	epoch    int64
+	sequence int64
+	scope    string
+	steps    []string
 }
 
 func NewPrecursor() *PrecursorServer {
@@ -49,8 +51,8 @@ func (server *PrecursorServer) Write(ctx context.Context, call Precursor_write) 
 	if err != nil {
 		return errnie.Error(err)
 	}
-	if symbol == "" || vocabulary == "" || tokens.Len() == 0 {
-		return errnie.Error(errnie.Err(errnie.Validation, "precursor: symbol, vocabulary and active tokens are required", nil))
+	if symbol == "" || vocabulary == "" || tokens.Len() == 0 || input.Epoch() <= 0 || input.Sequence() < 0 {
+		return errnie.Error(errnie.Err(errnie.Validation, "precursor: symbol, vocabulary, causal stamp and active tokens are required", nil))
 	}
 	model := call.Args().Model()
 	if !model.IsValid() {
@@ -90,10 +92,17 @@ func (server *PrecursorServer) Write(ctx context.Context, call Precursor_write) 
 			return err
 		}
 		history := server.histories[symbol]
-		if history.scope != scope.String() {
-			history = precursorHistory{scope: scope.String()}
+		if history.scope != vocabulary || history.epoch != input.Epoch() {
+			history = precursorHistory{scope: vocabulary, epoch: input.Epoch(), sequence: input.Sequence()}
+		}
+		if input.Sequence() < history.sequence {
+			return errnie.Error(errnie.Err(errnie.Validation, "precursor: live sequence moved backwards", nil))
 		}
 		step := strings.Join(current, ",")
+		if input.Sequence() == history.sequence && len(history.steps) > 0 && history.steps[len(history.steps)-1] != step {
+			return errnie.Error(errnie.Err(errnie.Validation, "precursor: conflicting token sets at one causal stamp", nil))
+		}
+		history.sequence = input.Sequence()
 		if len(history.steps) == 0 || history.steps[len(history.steps)-1] != step {
 			history.steps = append(history.steps, step)
 		}

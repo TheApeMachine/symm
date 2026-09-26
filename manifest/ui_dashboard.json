@@ -16,6 +16,10 @@
             {
               "nodeId": "points",
               "portName": "columns"
+            },
+            {
+              "nodeId": "predictiveCanvas",
+              "portName": "latent"
             }
           ]
         }
@@ -43,6 +47,10 @@
             {
               "nodeId": "points",
               "portName": "columns_1"
+            },
+            {
+              "nodeId": "predictiveCanvas",
+              "portName": "forwardCurve"
             }
           ]
         }
@@ -70,6 +78,10 @@
             {
               "nodeId": "points",
               "portName": "columns_2"
+            },
+            {
+              "nodeId": "predictiveCanvas",
+              "portName": "energy"
             }
           ]
         }
@@ -89,6 +101,10 @@
             {
               "nodeId": "points",
               "portName": "columns_3"
+            },
+            {
+              "nodeId": "predictiveCanvas",
+              "portName": "skill"
             }
           ]
         }
@@ -108,6 +124,10 @@
             {
               "nodeId": "points",
               "portName": "columns_4"
+            },
+            {
+              "nodeId": "predictiveCanvas",
+              "portName": "relativePrecision"
             }
           ]
         }
@@ -1018,6 +1038,10 @@
             {
               "nodeId": "points",
               "portName": "columns_8"
+            },
+            {
+              "nodeId": "predictiveCanvas",
+              "portName": "confidence"
             }
           ]
         }
@@ -1166,7 +1190,7 @@
         "outputs": {
           "out": [
             {
-              "nodeId": "impulse",
+              "nodeId": "predictiveCanvas",
               "portName": "points"
             }
           ]
@@ -1197,14 +1221,7 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "impulse",
-              "portName": "regions"
-            }
-          ]
-        }
+        "outputs": {}
       },
       "inputData": {
         "names": {
@@ -1243,14 +1260,7 @@
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "impulse",
-              "portName": "connections"
-            }
-          ]
-        }
+        "outputs": {}
       },
       "inputData": {
         "names": {
@@ -1801,7 +1811,7 @@
         "outputs": {
           "out": [
             {
-              "nodeId": "decisionList",
+              "nodeId": "liveDecisions",
               "portName": "decisions"
             }
           ]
@@ -2361,7 +2371,7 @@
         "outputs": {
           "out": [
             {
-              "nodeId": "positionList",
+              "nodeId": "livePositions",
               "portName": "positions"
             }
           ]
@@ -3373,23 +3383,6 @@
             }
           ]
         },
-        "outputs": {}
-      },
-      "inputData": {
-        "className": {
-          "value": "min-h-0 flex-1 overflow-auto"
-        }
-      }
-    },
-    "kernelList": {
-      "id": "kernelList",
-      "type": "ui.KernelList",
-      "width": 280,
-      "height": 172,
-      "x": 2040.0,
-      "y": 3200.0,
-      "connections": {
-        "inputs": {},
         "outputs": {
           "self": [
             {
@@ -3399,7 +3392,11 @@
           ]
         }
       },
-      "inputData": {}
+      "inputData": {
+        "className": {
+          "value": "min-h-0 flex-1 overflow-auto"
+        }
+      }
     },
     "kernels": {
       "id": "kernels",
@@ -3418,7 +3415,7 @@
           ],
           "components_1": [
             {
-              "nodeId": "kernelList",
+              "nodeId": "kernelRows",
               "portName": "self"
             }
           ]
@@ -3489,7 +3486,50 @@
       "x": 2040.0,
       "y": 3800.0,
       "connections": {
-        "inputs": {},
+        "inputs": {
+          "latent": [
+            {
+              "nodeId": "xs",
+              "portName": "out"
+            }
+          ],
+          "forwardCurve": [
+            {
+              "nodeId": "ys",
+              "portName": "out"
+            }
+          ],
+          "energy": [
+            {
+              "nodeId": "energy",
+              "portName": "out"
+            }
+          ],
+          "skill": [
+            {
+              "nodeId": "authority",
+              "portName": "out"
+            }
+          ],
+          "relativePrecision": [
+            {
+              "nodeId": "snr",
+              "portName": "out"
+            }
+          ],
+          "confidence": [
+            {
+              "nodeId": "activation",
+              "portName": "out"
+            }
+          ],
+          "points": [
+            {
+              "nodeId": "points",
+              "portName": "out"
+            }
+          ]
+        },
         "outputs": {
           "self": [
             {
@@ -3547,7 +3587,14 @@
       "x": 2040.0,
       "y": 4300.0,
       "connections": {
-        "inputs": {},
+        "inputs": {
+          "decisions": [
+            {
+              "nodeId": "decisions",
+              "portName": "out"
+            }
+          ]
+        },
         "outputs": {
           "self": [
             {
@@ -3622,7 +3669,14 @@
       "x": 2040.0,
       "y": 4800.0,
       "connections": {
-        "inputs": {},
+        "inputs": {
+          "positions": [
+            {
+              "nodeId": "closed",
+              "portName": "out"
+            }
+          ]
+        },
         "outputs": {
           "self": [
             {

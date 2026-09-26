@@ -8,6 +8,7 @@ $Go.import("github.com/theapemachine/symm/nomagique/store");
 #
 # Every port gathers, so any of them may arrive alone and the queue is asked
 # whenever one does. Each arrival on offer, retry and rewind is a JSON array.
+# texts admits native text atoms for protocol subscriptions, without a JSON array roundtrip.
 # Offered values join the queue once: a value the queue already knows is not
 # queued again. Retried values rejoin at the back. Any arrival on rewind queues
 # every known value again, in the order they were first offered. A release

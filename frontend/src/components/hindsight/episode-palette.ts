@@ -94,6 +94,7 @@ export const EPISODE_DESCRIPTORS: Record<EpisodeKind, EpisodeDescriptor> = {
 };
 
 export const REFERENCE_GLYPHS: Record<ReferenceRole, string> = {
+	ignition: "◇",
 	anchor: "◤",
 	peak: "▲",
 	trough: "▼",
@@ -103,6 +104,7 @@ export const REFERENCE_GLYPHS: Record<ReferenceRole, string> = {
 };
 
 export const REFERENCE_MEANING: Record<ReferenceRole, string> = {
+	ignition: "Start of the confirmed excursion leg, following its precursor.",
 	anchor: "Retrospective start of the selected excursion. Not a buy point.",
 	peak: "Retrospective maximum of the selected excursion.",
 	trough: "Retrospective minimum of the selected excursion.",

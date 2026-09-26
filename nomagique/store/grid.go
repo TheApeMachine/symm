@@ -15,9 +15,9 @@ import (
 GridServer is the virtual grid. Raw market data is written to it and the
 metrics wired into it observe the fields the grid was told to deliver.
 
-The grid holds no values of its own. A metric is the value its last operation
-produced. Wiring another metric in is what makes the grid wider, which is why
-nothing here enumerates them by name.
+The grid retains explicitly held input fields and reported metric observations
+for each named series. Metric calculations remain owned by the wired nodes;
+this projector does not enumerate or calculate them.
 
 A metric that asked for a field the written data does not carry observes
 nothing, so a metric is never handed a frame it cannot read and never has to
@@ -25,24 +25,33 @@ recognise one it should ignore.
 */
 type GridServer struct {
 	*runtime.System
+	*gridSeries
+	series    map[string]*gridSeries
 	scope     string
+	scopePath string
 	interests []string
 	declared  string
-	metrics   []float64
-	observed  []bool
 	values    []float64
 	present   []bool
 	out       []byte
 	raw       []byte
 	delivered int64
-	held      map[string]float64
+}
+
+/* gridSeries owns only the retained readings for one named market. */
+type gridSeries struct {
+	metrics  []float64
+	observed []bool
+	held     map[string]float64
 }
 
 func NewGrid(ctx context.Context) *GridServer {
 	server := &GridServer{
 		System: runtime.NewSystem(ctx, "store.grid"),
+		series: make(map[string]*gridSeries),
 	}
 
+	server.selectScope("")
 	server.Transition(runtime.READY)
 	return server
 }
@@ -62,44 +71,15 @@ func (server *GridServer) Write(ctx context.Context, call Grid_write) error {
 	}
 
 	server.declare(interests)
+	scopePath, err := call.Args().ScopePath()
+
+	if err != nil {
+		return errnie.Error(err)
+	}
+	server.scopePath = scopePath
 
 	if err := server.enter(call.Args()); err != nil {
 		return err
-	}
-
-	metrics, err := call.Args().Metrics()
-
-	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.BadRequest,
-			"[store.grid.Write] failed to read metrics argument",
-			err,
-		))
-	}
-
-	present, err := call.Args().Present()
-	if err != nil {
-		return errnie.Error(errnie.Err(errnie.Validation, "grid: metric presence", err))
-	}
-
-	if metrics.IsValid() {
-		if len(server.metrics) != metrics.Len() {
-			server.metrics = make([]float64, metrics.Len())
-			server.observed = make([]bool, metrics.Len())
-		}
-
-		// Observed marks what reported since the grid last handed its
-		// readings out; done clears it. A metric that did not report is
-		// unknown, however recently it last reported: its last value stays in
-		// metrics but is never handed out as a fresh reading.
-		for index := range metrics.Len() {
-			if present.IsValid() && index < present.Len() && !present.At(index) {
-				continue
-			}
-
-			server.metrics[index] = metrics.At(index)
-			server.observed[index] = true
-		}
 	}
 
 	feeds, err := call.Args().Data()
@@ -119,7 +99,7 @@ func (server *GridServer) Write(ctx context.Context, call Grid_write) error {
 	server.delivered = 0
 
 	if !feeds.IsValid() {
-		return nil
+		return server.observe(call.Args())
 	}
 
 	// Each Workspace observation carries one record. The native sequencer
@@ -157,7 +137,47 @@ func (server *GridServer) Write(ctx context.Context, call Grid_write) error {
 		}
 
 		if server.delivered > 0 {
-			return nil
+			return server.observe(call.Args())
+		}
+	}
+
+	return server.observe(call.Args())
+}
+
+/* observe applies reported metrics after selecting their market from the record. */
+func (server *GridServer) observe(args Grid_write_Params) error {
+	metrics, err := args.Metrics()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.BadRequest,
+			"[store.grid.Write] failed to read metrics argument",
+			err,
+		))
+	}
+
+	present, err := args.Present()
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.Validation, "grid: metric presence", err))
+	}
+
+	if metrics.IsValid() {
+		if len(server.metrics) != metrics.Len() {
+			server.metrics = make([]float64, metrics.Len())
+			server.observed = make([]bool, metrics.Len())
+		}
+
+		// Observed marks what reported since the grid last handed its
+		// readings out; done clears it. A metric that did not report is
+		// unknown, however recently it last reported: its last value stays in
+		// metrics but is never handed out as a fresh reading.
+		for index := range metrics.Len() {
+			if present.IsValid() && index < present.Len() && !present.At(index) {
+				continue
+			}
+
+			server.metrics[index] = metrics.At(index)
+			server.observed[index] = true
 		}
 	}
 
@@ -209,11 +229,19 @@ func (server *GridServer) enter(args Grid_write_Params) error {
 		return nil
 	}
 
-	server.scope = scope
-	clear(server.metrics)
-	clear(server.observed)
-	server.held = nil
+	server.selectScope(scope)
 	return nil
+}
+
+/* selectScope resumes the retained readings owned by exactly this market. */
+func (server *GridServer) selectScope(scope string) {
+	series, found := server.series[scope]
+
+	if !found {
+		series = &gridSeries{}
+		server.series[scope] = series
+	}
+	server.gridSeries, server.scope = series, scope
 }
 
 /*
@@ -340,6 +368,16 @@ func (server *GridServer) resolve(payload []byte) error {
 		))
 	}
 
+	if server.scopePath != "" {
+		value, found := walkInterest(document, strings.Split(server.scopePath, "."))
+		scope, textual := value.(string)
+
+		if !found || !textual || scope == "" {
+			return errnie.Error(errnie.Err(errnie.Validation, "grid: record requires a nonempty Text scope at "+server.scopePath, nil))
+		}
+		server.selectScope(scope)
+	}
+
 	resolved := resolveInterests(document, server.interests)
 
 	if len(resolved) == 0 {
@@ -433,8 +471,8 @@ func (server *GridServer) deliver(results Grid_done_Results) error {
 
 /*
 heldPrefix marks an interest whose last reading the grid keeps: held:field is
-delivered with every record once any record has carried field, until a new
-scope starts a new series. It is how one feed's reading is read beside
+delivered with every record once any record has carried field, within its own
+scope, including after another scope has been processed. It is how one feed's reading is read beside
 another's, which arrive on different records.
 */
 const heldPrefix = "held:"

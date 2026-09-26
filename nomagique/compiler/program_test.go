@@ -689,6 +689,7 @@ func TestProgramExecuteReinforcement(t *testing.T) {
 				}
 				native, err := modelContextFixture(segment, vocabulary, holding, tokens, steps)
 				So(err, ShouldBeNil)
+				native.SetSequence(int64(offset + cursor))
 				causal, err := cognition.NewPrecursor_write_Params(segment)
 				So(err, ShouldBeNil)
 				So(causal.SetContext(native), ShouldBeNil)
@@ -711,9 +712,9 @@ func TestProgramExecuteReinforcement(t *testing.T) {
 		Convey("Live prediction recognizes a learned precursor after unrelated earlier tokens", func() {
 			So(execute("entry", 3, "A/B"), ShouldBeNil)
 			live = true
-			for _, token := range []string{"C", "A", "B"} {
+			for index, token := range []string{"C", "A", "B"} {
 				liveToken = token
-				So(execute("live", 8, ""), ShouldBeNil)
+				So(execute("live", 8+index, ""), ShouldBeNil)
 			}
 			prediction("ENTER", 1)
 			_, learned := program.Result("reinforce")
@@ -1040,7 +1041,7 @@ func TestProgramExecuteLiveSpot(t *testing.T) {
 					return
 				}
 				if command.Params.Channel == "instrument" {
-					err = connection.WriteMessage(gorillaws.TextMessage, []byte(`{"channel":"instrument","type":"snapshot","data":{"pairs":[{"symbol":"BTC/USD","quote":"USD","status":"online"},{"symbol":"ETH/USD","quote":"USD","status":"online"},{"symbol":"BTC/EUR","quote":"EUR","status":"online"},{"symbol":"OLD/USD","quote":"USD","status":"delisted"}]}}`))
+					err = connection.WriteMessage(gorillaws.TextMessage, []byte(`{"channel":"instrument","type":"snapshot","data":{"pairs":[{"symbol":"BTC/USD","base":"BTC","quote":"USD","status":"online"},{"symbol":"ETH/USD","base":"ETH","quote":"USD","status":"online"},{"symbol":"BTC/EUR","base":"BTC","quote":"EUR","status":"online"},{"symbol":"OLD/USD","base":"OLD","quote":"USD","status":"delisted"},{"symbol":"GBP/USD","base":"GBP","quote":"USD","status":"online"},{"symbol":"EUR/USD","base":"EUR","quote":"USD","status":"online"},{"symbol":"USDT/USD","base":"USDT","quote":"USD","status":"online"},{"symbol":"USDC/USD","base":"USDC","quote":"USD","status":"online"}]}}`))
 					if err != nil {
 						failures <- err
 						return
@@ -1362,6 +1363,7 @@ func modelContextFixture(segment *capnp.Segment, vocabulary string, holding bool
 	if err := input.SetVocabulary(vocabulary); err != nil {
 		return input, err
 	}
+	input.SetEpoch(1)
 	input.SetHolding(holding)
 	values, err := input.NewTokens(int32(len(tokens)))
 	if err != nil {

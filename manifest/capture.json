@@ -13,10 +13,14 @@
       "connections": {
         "inputs": {},
         "outputs": {
-          "symbols.out": [
+          "universe.ready.symbols": [
             {
               "nodeId": "level3",
-              "portName": "symbols.data"
+              "portName": "shards.symbols"
+            },
+            {
+              "nodeId": "futures",
+              "portName": "products.symbols"
             }
           ],
           "socket.frame.read": [
@@ -44,48 +48,24 @@
       "inputData": {},
       "connections": {
         "inputs": {
-          "symbols.data": [
+          "shards.symbols": [
             {
               "nodeId": "spot",
-              "portName": "symbols.out"
+              "portName": "universe.ready.symbols"
             }
           ]
         },
         "outputs": {
-          "shard_0.socket.frame.read": [
+          "shards.frame.read": [
             {
               "nodeId": "envelope",
               "portName": "payload_1"
             }
           ],
-          "shard_1.socket.frame.read": [
-            {
-              "nodeId": "envelope",
-              "portName": "payload_3"
-            }
-          ],
-          "shard_2.socket.frame.read": [
-            {
-              "nodeId": "envelope",
-              "portName": "payload_4"
-            }
-          ],
-          "shard_0.socket.frame.provenance": [
+          "shards.frame.provenance": [
             {
               "nodeId": "envelope",
               "portName": "provenance_1"
-            }
-          ],
-          "shard_1.socket.frame.provenance": [
-            {
-              "nodeId": "envelope",
-              "portName": "provenance_3"
-            }
-          ],
-          "shard_2.socket.frame.provenance": [
-            {
-              "nodeId": "envelope",
-              "portName": "provenance_4"
             }
           ]
         }
@@ -100,7 +80,14 @@
       "y": 800.0,
       "inputData": {},
       "connections": {
-        "inputs": {},
+        "inputs": {
+          "products.symbols": [
+            {
+              "nodeId": "spot",
+              "portName": "universe.ready.symbols"
+            }
+          ]
+        },
         "outputs": {
           "socket.frame.read": [
             {
@@ -133,10 +120,22 @@
               "portName": "socket.frame.read"
             }
           ],
+          "provenance_0": [
+            {
+              "nodeId": "spot",
+              "portName": "socket.frame.provenance"
+            }
+          ],
           "payload_1": [
             {
               "nodeId": "level3",
-              "portName": "shard_0.socket.frame.read"
+              "portName": "shards.frame.read"
+            }
+          ],
+          "provenance_1": [
+            {
+              "nodeId": "level3",
+              "portName": "shards.frame.provenance"
             }
           ],
           "payload_2": [
@@ -145,46 +144,10 @@
               "portName": "socket.frame.read"
             }
           ],
-          "payload_3": [
-            {
-              "nodeId": "level3",
-              "portName": "shard_1.socket.frame.read"
-            }
-          ],
-          "payload_4": [
-            {
-              "nodeId": "level3",
-              "portName": "shard_2.socket.frame.read"
-            }
-          ],
-          "provenance_0": [
-            {
-              "nodeId": "spot",
-              "portName": "socket.frame.provenance"
-            }
-          ],
-          "provenance_1": [
-            {
-              "nodeId": "level3",
-              "portName": "shard_0.socket.frame.provenance"
-            }
-          ],
           "provenance_2": [
             {
               "nodeId": "futures",
               "portName": "socket.frame.provenance"
-            }
-          ],
-          "provenance_3": [
-            {
-              "nodeId": "level3",
-              "portName": "shard_1.socket.frame.provenance"
-            }
-          ],
-          "provenance_4": [
-            {
-              "nodeId": "level3",
-              "portName": "shard_2.socket.frame.provenance"
             }
           ]
         },

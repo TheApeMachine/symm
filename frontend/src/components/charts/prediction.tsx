@@ -1,60 +1,26 @@
 import { useSelector } from "@tanstack/react-store";
-import { type CSSProperties, useRef } from "react";
+import { useRef } from "react";
 import { focusAtom, signals } from "#/collections/app";
-import { semanticLayerName } from "#/components/terminal/xray-layers";
-import { ResonanceLayer } from "#/providers/telemetry/telemetry/resonance-layer";
+import {
+	HierarchyLanes as BaseHierarchyLanes,
+	type HierarchyLanesProps,
+	PredictionChart as BasePredictionChart,
+	type PredictionChartProps,
+	ScalarDiagnostics as BaseScalarDiagnostics,
+	type ScalarDiagnosticsProps,
+	VerdictRow as BaseVerdictRow,
+	type VerdictRowProps,
+} from "#/components/ui/prediction-chart";
 
-export const vectorSlotTransform = (slot: number, slotCount: number): string =>
-	`translateX(${(slot / slotCount) * 100}%) scaleX(${1 / slotCount})`;
+export * from "#/components/ui/prediction-chart";
 
-export const signedVectorTransform = "scaleY(calc(var(--value, 0) * -1))";
-
-interface VectorBarStyle extends CSSProperties {
-	"--value": number;
-}
-
-const vectorBarStyle = (value: number): VectorBarStyle => ({
-	transform: signedVectorTransform,
-	"--value": value,
-});
-
-const fmt = (value: number | undefined | null, digits: number): string =>
-	value === undefined || value === null || !Number.isFinite(value)
-		? "—"
-		: value.toFixed(digits);
-
-const dir = (value: number | undefined | null): string => {
-	if (value === undefined || value === null) return "—";
-	if (value > 0) return "up";
-	if (value < 0) return "down";
-	return "flat";
-};
-
-const layerObj = new ResonanceLayer();
-
-/*
-The resonance artifact rides every envelope (types.Envelope.Resonance), and the
-artifact store is not pre-scoped to one symbol — the solver keys its coder per
-symbol across the cross-section — so the focused symbol is selected here, the
-same way the other resonance surfaces do it.
-*/
-const useArtifact = (): any => {
+export const useArtifact = (): any => {
 	const symbol = useSelector(focusAtom, (state) => state);
-
 	const row = useSelector(signals.resonance, (state) => {
 		const ring = state[symbol];
 		return ring && !ring.isEmpty() ? (ring.getLast() as any) : undefined;
 	});
 
-	/*
-	The artifact ring is shared across the whole cross-section, so the focused
-	symbol's row is evicted whenever the other symbols out-produce it for a few
-	frames. That is sparsity, not an absence of state: the coder still holds the
-	values it last published. Latching the last row for the focused symbol keeps
-	the panel showing that state instead of blanking out until the symbol is
-	quoted again. The latch is cleared on a focus change so a new symbol never
-	inherits the previous one's numbers.
-	*/
 	const held = useRef<{
 		symbol: string | undefined;
 		row: any;
@@ -63,441 +29,32 @@ const useArtifact = (): any => {
 	if (held.current.symbol !== symbol) {
 		held.current = { symbol, row: undefined };
 	}
-
 	if (row !== undefined) {
 		held.current.row = row;
 	}
-
 	return held.current.row;
 };
 
-const readBool = (obj: any, key: string): boolean => {
-	if (!obj) return false;
-	if (typeof obj[key] === "function") return Boolean(obj[key]());
-	return Boolean(obj[key]);
+export const ScalarDiagnostics = (props: ScalarDiagnosticsProps = {}) => {
+	const fallbackArtifact = useArtifact();
+	const artifact = props.artifact !== undefined ? props.artifact : fallbackArtifact;
+	return <BaseScalarDiagnostics {...props} artifact={artifact} />;
 };
 
-const readNum = (obj: any, key: string): number | undefined => {
-	if (!obj) return undefined;
-	if (typeof obj[key] === "function") {
-		const val = obj[key]();
-		return typeof val === "number" ? val : undefined;
-	}
-	if (typeof obj[key] === "number") return obj[key];
-	if (typeof obj[key] === "bigint") return Number(obj[key]);
-	if (Array.isArray(obj.metrics)) {
-		const metric = obj.metrics.find((m: any) => m?.name === key);
-		if (metric && typeof metric.raw === "number") return metric.raw;
-	}
-	return undefined;
+export const VerdictRow = (props: VerdictRowProps = {}) => {
+	const fallbackArtifact = useArtifact();
+	const artifact = props.artifact !== undefined ? props.artifact : fallbackArtifact;
+	return <BaseVerdictRow {...props} artifact={artifact} />;
 };
 
-const readString = (obj: any, key: string): string | undefined => {
-	if (!obj) return undefined;
-	if (typeof obj[key] === "function") {
-		const val = obj[key]();
-		return typeof val === "string" ? val : undefined;
-	}
-	if (typeof obj[key] === "string") return obj[key];
-	return undefined;
+export const HierarchyLanes = (props: HierarchyLanesProps = {}) => {
+	const fallbackArtifact = useArtifact();
+	const artifact = props.artifact !== undefined ? props.artifact : fallbackArtifact;
+	return <BaseHierarchyLanes {...props} artifact={artifact} />;
 };
 
-/*
-taskCalibration and taskSkillStatus read the coder's own readiness as words.
-They were assembled backend-side when the panel had a curated frame of its own;
-with the artifact carrying the raw quantities, the wording belongs here — it is
-presentation, and the envelope stays the numbers it measured.
-*/
-const taskCalibration = (artifact: any): string => {
-	const calString = readString(artifact, "taskCalibration");
-	if (calString) return calString;
-	return readBool(artifact, "calibrated") ? "calibrated" : "calibrating";
+export const TerminalPredictionChart = (props: PredictionChartProps = {}) => {
+	const fallbackArtifact = useArtifact();
+	const artifact = props.artifact !== undefined ? props.artifact : fallbackArtifact;
+	return <BasePredictionChart {...props} artifact={artifact} />;
 };
-
-const taskSkillStatus = (artifact: any): string => {
-	const statusString = readString(artifact, "taskSkillStatus");
-	if (statusString) return statusString;
-
-	if (!readBool(artifact, "taskSkillReady")) return "calibrating";
-
-	const skill = readNum(artifact, "taskSkill") ?? 0;
-
-	if (skill > 1) return "above baseline";
-	if (skill >= 0.5) return "baseline";
-
-	return "below baseline";
-};
-
-/*
-The forward curve is cumulative per horizon: element k predicts the direction of
-the move over the next k+1 ticks, so the call for the supported horizon is the
-curve's last element.
-*/
-const horizonCall = (artifact: any): number | null => {
-	if (!artifact) return null;
-	if (typeof artifact.forwardCurveLength === "function") {
-		const length = artifact.forwardCurveLength();
-		return length === 0 ? null : artifact.forwardCurve(length - 1);
-	}
-	if (Array.isArray(artifact.forwardCurve)) {
-		return artifact.forwardCurve.length === 0
-			? null
-			: artifact.forwardCurve[artifact.forwardCurve.length - 1];
-	}
-	return null;
-};
-
-const ScalarDiagnostics = () => {
-	const res = useArtifact();
-
-	const prec = readNum(res, "taskRelativePrecision");
-	const skill = readNum(res, "taskSkill");
-	const issued = readNum(res, "lastResolutionPrediction");
-	const realized = readNum(res, "lastResolutionTarget");
-	const error = readNum(res, "lastResolutionError");
-	const horizon = readNum(res, "supportedHorizon");
-	const reach = res
-		? typeof res.forwardCurveLength === "function"
-			? res.forwardCurveLength()
-			: Array.isArray(res.forwardCurve)
-				? res.forwardCurve.length
-				: undefined
-		: undefined;
-	const samples = res
-		? typeof res.resolvedSteps === "function"
-			? String(res.resolvedSteps())
-			: res.resolvedSteps !== undefined
-				? String(res.resolvedSteps)
-				: "—"
-		: "—";
-	const surprise = readNum(res, "surprise");
-	const energy = readNum(res, "energy");
-	const confidence = readNum(res, "confidence");
-
-	return (
-		<div className="grid grid-cols-5 gap-px overflow-hidden border border-(--line) bg-(--line)">
-			<div className="bg-(--sunken) px-2 py-1.5">
-				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
-					relative precision
-				</div>
-				<div data-p="prec" className="mt-0.5 font-mono text-[11px] text-(--up)">
-					{fmt(prec, 3)}
-				</div>
-			</div>
-			<div className="bg-(--sunken) px-2 py-1.5">
-				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
-					task skill
-				</div>
-				<div
-					data-p="skill"
-					className="mt-0.5 font-mono text-[11px] text-(--f2)"
-				>
-					{fmt(skill, 3)}
-				</div>
-			</div>
-			<div className="bg-(--sunken) px-2 py-1.5">
-				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
-					issued t
-				</div>
-				<div
-					data-p="issued"
-					className="mt-0.5 font-mono text-[11px] text-(--f2)"
-				>
-					{dir(issued)}
-				</div>
-			</div>
-			<div className="bg-(--sunken) px-2 py-1.5">
-				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
-					realized t+1
-				</div>
-				<div
-					data-p="realized"
-					className="mt-0.5 font-mono text-[11px] text-(--f2)"
-				>
-					{dir(realized)}
-				</div>
-			</div>
-			<div className="bg-(--sunken) px-2 py-1.5">
-				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
-					forecast error
-				</div>
-				<div
-					data-p="error"
-					className="mt-0.5 font-mono text-[11px] text-(--f2)"
-				>
-					{fmt(error, 0)}
-				</div>
-			</div>
-			<div className="bg-(--sunken) px-2 py-1.5">
-				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
-					horizon / reach
-				</div>
-				<div className="mt-0.5 flex gap-1 font-mono text-[11px] text-(--f2)">
-					<span data-p="horizon">{fmt(horizon, 0)}</span>
-					<span>/</span>
-					<span data-p="reach">{fmt(reach, 0)}</span>
-				</div>
-			</div>
-			<div className="bg-(--sunken) px-2 py-1.5">
-				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
-					resolved samples
-				</div>
-				<div
-					data-p="samples"
-					className="mt-0.5 font-mono text-[11px] text-(--acc)"
-				>
-					{samples}
-				</div>
-			</div>
-			<div className="bg-(--sunken) px-2 py-1.5">
-				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
-					surprise
-				</div>
-				<div
-					data-p="surprise"
-					className="mt-0.5 truncate font-mono text-[11px] text-(--warning)"
-				>
-					{fmt(surprise, 2)}
-				</div>
-			</div>
-			<div className="bg-(--sunken) px-2 py-1.5">
-				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
-					energy
-				</div>
-				<div
-					data-p="energy"
-					className="mt-0.5 truncate font-mono text-[11px] text-(--info)"
-				>
-					{fmt(energy, 2)}
-				</div>
-			</div>
-			<div className="bg-(--sunken) px-2 py-1.5">
-				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
-					confidence
-				</div>
-				<div
-					data-p="confidence"
-					className="mt-0.5 truncate font-mono text-[11px] text-(--f2)"
-				>
-					{fmt(confidence, 3)}
-				</div>
-			</div>
-		</div>
-	);
-};
-
-const VerdictRow = () => {
-	const res = useArtifact();
-
-	return (
-		<div className="grid grid-cols-3 gap-px border border-(--line) bg-(--line)">
-			<div className="flex flex-col justify-between gap-1.5 bg-(--sunken) px-3 py-2">
-				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
-					residual model
-				</div>
-				<div className="flex items-baseline gap-2">
-					<span className="size-1.5 shrink-0 self-center rounded-full bg-(--acc)" />
-					<span
-						data-p="calibration"
-						className="truncate font-mono text-[13px] uppercase tracking-wide text-(--f2)"
-					>
-						{res ? taskCalibration(res) : "—"}
-					</span>
-				</div>
-			</div>
-			<div className="flex flex-col justify-between gap-1.5 bg-(--sunken) px-3 py-2">
-				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
-					direction skill
-				</div>
-				<div className="flex items-baseline gap-2">
-					<span className="size-1.5 shrink-0 self-center rounded-full bg-(--acc)" />
-					<span
-						data-p="skillStatus"
-						className="truncate font-mono text-[13px] uppercase tracking-wide text-(--f2)"
-					>
-						{res ? taskSkillStatus(res) : "—"}
-					</span>
-				</div>
-			</div>
-			<div className="flex flex-col justify-between gap-1.5 bg-(--sunken) px-3 py-2">
-				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
-					forecast
-				</div>
-				<div className="flex items-center gap-2">
-					<span className="inline-block shrink-0 text-[15px] leading-none text-(--acc)">
-						▶
-					</span>
-					<span
-						data-p="forecast"
-						className="truncate font-mono text-[13px] text-(--acc)"
-					>
-						{res ? dir(horizonCall(res)) : "—"}
-					</span>
-				</div>
-			</div>
-		</div>
-	);
-};
-
-const toVector = (
-	value: Float64Array | number[] | null | undefined,
-): number[] => (value === null || value === undefined ? [] : Array.from(value));
-
-/*
-Each lane is normalized against its own largest component because every layer's
-state has a different width and magnitude; a shared scale would flatten the
-quieter lanes onto the zero line.
-*/
-const maxAbsExtent = (values: number[]): number =>
-	Math.max(...values.map((value) => Math.abs(value)), Number.EPSILON);
-
-/*
-VectorLane unrolls one vector into a bar per component straddling a zero line.
-The forward curve is legible because bar k is the direction lean k steps out.
-An optional ghost vector — the top-down prediction for a layer — is drawn
-full-slot behind the narrower settled bar so the residual reads as the exposed
-shoulder of the ghost rather than as a number to subtract by eye.
-*/
-const VectorLane = ({
-	values,
-	ghost,
-	label,
-	meta,
-	color,
-}: {
-	values: number[];
-	ghost?: number[];
-	label: string;
-	meta: string;
-	color: string;
-}) => {
-	const stateExtent = maxAbsExtent(values);
-	const ghostExtent =
-		ghost === undefined ? Number.EPSILON : maxAbsExtent(ghost);
-
-	return (
-		<div className="flex min-h-0 flex-1 items-stretch gap-3">
-			<div className="flex w-36 shrink-0 flex-col justify-center gap-0.5 font-mono text-[9px] leading-tight">
-				<span className="font-semibold uppercase tracking-widest text-(--f3)">
-					{label}
-				</span>
-				<span className="text-(--f4)">{meta}</span>
-			</div>
-			<div className="relative min-h-0 flex-1 overflow-hidden border border-(--line) bg-[linear-gradient(to_bottom,transparent_calc(50%-0.5px),var(--line2)_calc(50%-0.5px),var(--line2)_calc(50%+0.5px),transparent_calc(50%+0.5px))]">
-				{ghost !== undefined ? (
-					<div className="absolute inset-0">
-						{ghost.map((value, index) => (
-							<div
-								// biome-ignore lint/suspicious/noArrayIndexKey: vector slots are positional and never reordered
-								key={`ghost-${index}`}
-								className="absolute inset-y-0 right-1 left-1 origin-left"
-								style={{ transform: vectorSlotTransform(index, ghost.length) }}
-							>
-								<div
-									className="absolute top-1/2 right-px left-0 h-[calc(50%-1px)] origin-top bg-(--line2)"
-									style={vectorBarStyle(value / ghostExtent)}
-								/>
-							</div>
-						))}
-					</div>
-				) : null}
-				{values.map((value, index) => (
-					<div
-						// biome-ignore lint/suspicious/noArrayIndexKey: vector slots are positional and never reordered
-						key={`state-${index}`}
-						className="absolute inset-y-0 right-1 left-1 origin-left"
-						style={{ transform: vectorSlotTransform(index, values.length) }}
-					>
-						<div
-							className={`absolute top-1/2 right-1.5 left-1 h-[calc(50%-1px)] origin-top ${color}`}
-							style={vectorBarStyle(value / stateExtent)}
-						/>
-					</div>
-				))}
-			</div>
-		</div>
-	);
-};
-
-/*
-HierarchyLanes paints every emitted predictive-coding layer as a state/prediction
-pair, followed by the settled latent vector and the signed forward-direction
-curve. All lanes read the focused carrier row from the resonance store.
-*/
-const HierarchyLanes = () => {
-	const res = useArtifact();
-
-	const layerCount = res
-		? typeof res.layersLength === "function"
-			? res.layersLength()
-			: Array.isArray(res.layers)
-				? res.layers.length
-				: 0
-		: 0;
-
-	const layers = Array.from({ length: layerCount }, (_, index) => {
-		let stateVec: number[] = [];
-		let predVec: number[] = [];
-
-		if (res) {
-			if (typeof res.layers === "function") {
-				const layer = res.layers(index, layerObj);
-				stateVec = toVector(layer?.stateArray());
-				predVec = toVector(layer?.predictionArray());
-			} else if (Array.isArray(res.layers)) {
-				const layer = res.layers[index];
-				stateVec = toVector(layer?.state);
-				predVec = toVector(layer?.prediction);
-			}
-		}
-
-		return {
-			label: `L${index} · ${semanticLayerName(index, layerCount)}`,
-			meta:
-				index < layerCount - 1 ? "adjacent generative link" : "context state",
-			color: "bg-(--f3)",
-			values: stateVec,
-			ghost: predVec,
-		};
-	});
-
-	const latentVec = res
-		? typeof res.latentArray === "function"
-			? toVector(res.latentArray())
-			: toVector(res.latent)
-		: [];
-
-	const forwardVec = res
-		? typeof res.forwardCurveArray === "function"
-			? toVector(res.forwardCurveArray())
-			: toVector(res.forwardCurve)
-		: [];
-
-	return (
-		<>
-			{layers.map((layer) => (
-				<VectorLane key={layer.label} {...layer} />
-			))}
-			<VectorLane
-				label="Latent state z"
-				meta="settled predictive state · zero centered"
-				color="bg-(--info)"
-				values={latentVec}
-			/>
-			<VectorLane
-				label="Forward direction shape"
-				meta="signed direction lean · t+1 → t+k"
-				color="bg-(--acc)"
-				values={forwardVec}
-			/>
-		</>
-	);
-};
-
-export const TerminalPredictionChart = () => (
-	<div className="flex size-full flex-col gap-3 px-4 pt-14 pb-3">
-		<VerdictRow />
-		<ScalarDiagnostics />
-		<HierarchyLanes />
-	</div>
-);

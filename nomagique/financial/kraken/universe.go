@@ -17,55 +17,62 @@ func NewUniverse() *UniverseServer { return &UniverseServer{} }
 func (server *UniverseServer) Write(ctx context.Context, call Universe_write) error {
 	server.symbols = nil
 	payload, err := call.Args().Data()
+
 	if err != nil {
 		return errnie.Error(err)
 	}
+
 	if len(payload) == 0 {
 		return nil
 	}
 	quote, err := call.Args().Quote()
+
 	if err != nil {
 		return errnie.Error(err)
 	}
+
 	if quote == "" {
 		return errnie.Error(errnie.Err(errnie.Validation, "universe: quote is required", nil))
 	}
 	excluded, err := call.Args().Excluded()
+
 	if err != nil {
 		return errnie.Error(err)
 	}
 	blocked := make(map[string]bool, excluded.Len())
 	for index := range excluded.Len() {
 		asset, err := excluded.At(index)
+
 		if err != nil {
 			return errnie.Error(err)
 		}
 		blocked[strings.ToUpper(asset)] = true
 	}
 	var frame struct {
-		Channel string `json:"channel"`
-		Data    struct {
-			Pairs []struct{ Symbol, Base, Quote, Status string } `json:"pairs"`
-		} `json:"data"`
+		Channel string          `json:"channel"`
+		Data    json.RawMessage `json:"data"`
 	}
-	// Only instrument frames have an object-shaped data field; other channels use arrays.
-	var header struct {
-		Channel string `json:"channel"`
-	}
-	if err := json.Unmarshal(payload, &header); err != nil {
+
+	if err := json.Unmarshal(payload, &frame); err != nil {
 		return errnie.Error(errnie.Err(errnie.Validation, "universe: invalid venue frame", err))
 	}
-	if header.Channel != "instrument" {
+
+	if frame.Channel != "instrument" {
 		return nil
 	}
-	if err := json.Unmarshal(payload, &frame); err != nil {
+	var instruments struct {
+		Pairs []struct{ Symbol, Base, Quote, Status string } `json:"pairs"`
+	}
+
+	if err := json.Unmarshal(frame.Data, &instruments); err != nil {
 		return errnie.Error(errnie.Err(errnie.Validation, "universe: invalid instruments", err))
 	}
 	seen := make(map[string]bool)
-	for _, pair := range frame.Data.Pairs {
+	for _, pair := range instruments.Pairs {
 		if pair.Symbol == "" || pair.Base == "" || pair.Quote == "" || pair.Status == "" {
 			return errnie.Error(errnie.Err(errnie.Validation, "universe: incomplete instrument pair", nil))
 		}
+
 		if pair.Quote != quote || pair.Status != "online" || blocked[strings.ToUpper(pair.Base)] || seen[pair.Symbol] {
 			continue
 		}
@@ -78,9 +85,11 @@ func (server *UniverseServer) Write(ctx context.Context, call Universe_write) er
 /* Done publishes native membership and the two external Kraken subscription messages. */
 func (server *UniverseServer) Done(ctx context.Context, call Universe_done) error {
 	result, err := call.AllocResults()
+
 	if err != nil {
 		return errnie.Error(err)
 	}
+
 	if len(server.symbols) == 0 {
 		result.SetIdle()
 		return nil
@@ -88,6 +97,7 @@ func (server *UniverseServer) Done(ctx context.Context, call Universe_done) erro
 	defer func() { server.symbols = nil }()
 	result.SetReady()
 	symbols, err := result.Ready().NewSymbols(int32(len(server.symbols)))
+
 	if err != nil {
 		return errnie.Error(err)
 	}
@@ -107,20 +117,25 @@ func (server *UniverseServer) Done(ctx context.Context, call Universe_done) erro
 			} `json:"params"`
 		}{Method: "subscribe"}
 		message.Params.Channel, message.Params.Symbol = channel, server.symbols
+
 		if channel == "ticker" {
 			message.Params.Snapshot = true
 			message.Params.EventTrigger = "bbo"
 		}
 		encoded, err := json.Marshal(message)
+
 		if err != nil {
 			return errnie.Error(err)
 		}
+
 		if channel == "ticker" {
 			err = result.Ready().SetTicker(encoded)
 		}
+
 		if channel == "trade" {
 			err = result.Ready().SetTrade(encoded)
 		}
+
 		if err != nil {
 			return errnie.Error(err)
 		}

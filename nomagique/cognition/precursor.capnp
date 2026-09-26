@@ -10,6 +10,8 @@ struct Context {
  holding @1 :Bool;
  vocabulary @2 :Text;
  tokens @3 :List(Text);
+ epoch @6 :Int64;
+ sequence @7 :Int64;
  union {
   live @4 :Void;
   history @5 :List(Text);
