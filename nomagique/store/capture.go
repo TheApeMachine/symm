@@ -3,9 +3,7 @@ package store
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"fmt"
-	"math"
 	"time"
 
 	capnp "capnproto.org/go/capnp/v3"
@@ -15,13 +13,11 @@ import (
 )
 
 /*
-CaptureServer owns one capture session and assigns each ingress frame an identity.
+CaptureServer persists exact raw bytes under their source-owned identities.
 */
 type CaptureServer struct {
 	*runtime.System
-	session  string
-	sequence int64
-	rows     []CaptureRecord
+	rows []CaptureRecord
 }
 
 /*
@@ -29,8 +25,7 @@ NewCapture creates an idle capture session; no frame exists until Write.
 */
 func NewCapture(ctx context.Context) *CaptureServer {
 	return &CaptureServer{
-		System:  runtime.NewSystem(ctx, "store.capture"),
-		session: rand.Text(),
+		System: runtime.NewSystem(ctx, "store.capture"),
 	}
 }
 
@@ -47,20 +42,9 @@ func (server *CaptureServer) Write(ctx context.Context, call Capture_write) erro
 		))
 	}
 
-	endpoints, err := args.Endpoint()
-
+	provenance, err := args.Provenance()
 	if err != nil {
-		return server.Error(errnie.Err(
-			errnie.Validation, "capture: read endpoint", err,
-		))
-	}
-
-	times, err := args.ReceivedAt()
-
-	if err != nil {
-		return server.Error(errnie.Err(
-			errnie.Validation, "capture: read receive time", err,
-		))
+		return server.Error(errnie.Err(errnie.Validation, "capture: provenance", err))
 	}
 
 	symbols, err := args.Symbol()
@@ -93,7 +77,7 @@ func (server *CaptureServer) Write(ctx context.Context, call Capture_write) erro
 		}
 
 		row, err := server.admit(
-			slot, bytes.Clone(payload), endpoints, times, symbols, kinds,
+			slot, bytes.Clone(payload), provenance, symbols, kinds,
 		)
 
 		if err != nil {
@@ -106,56 +90,43 @@ func (server *CaptureServer) Write(ctx context.Context, call Capture_write) erro
 }
 
 func (server *CaptureServer) admit(
-	slot int, payload []byte, endpoints, times, symbols, kinds capnp.TextList,
+	slot int, payload []byte, provenance capnp.DataList, symbols, kinds capnp.TextList,
 ) (CaptureRecord, error) {
-	var metadata [4]string
-
-	for index, list := range []capnp.TextList{endpoints, times, symbols, kinds} {
-		value, err := server.slotText(list, slot)
-
-		if err != nil {
-			return CaptureRecord{}, server.Error(err)
-		}
-
-		metadata[index] = value
+	if slot >= provenance.Len() {
+		return CaptureRecord{}, server.Error(errnie.Err(errnie.Validation, "capture: source provenance is required", nil))
 	}
-
-	endpoint, receivedAt := metadata[0], metadata[1]
-
-	if endpoint == "" {
-		return CaptureRecord{}, server.Error(errnie.Err(
-			errnie.Validation, "capture: endpoint is required", nil,
-		))
+	encoded, err := provenance.At(slot)
+	if err != nil {
+		return CaptureRecord{}, server.Error(err)
 	}
-
-	if _, err := time.Parse(time.RFC3339Nano, receivedAt); err != nil {
-		return CaptureRecord{}, server.Error(errnie.Err(
-			errnie.Validation,
-			"capture: receive time must be supplied by ingress",
-			err,
-		))
+	var origin struct {
+		Session    string `json:"session"`
+		Sequence   *int64 `json:"sequence"`
+		Endpoint   string `json:"endpoint"`
+		ReceivedAt string `json:"receivedAt"`
 	}
-
-	if server.sequence == math.MaxInt64 {
-		return CaptureRecord{}, server.Error(errnie.Err(
-			errnie.Validation, "capture: session sequence exhausted", nil,
-		))
+	if err := sonic.Unmarshal(encoded, &origin); err != nil {
+		return CaptureRecord{}, server.Error(err)
 	}
-
-	row := CaptureRecord{
-		ID:           fmt.Sprintf("%s:%d", server.session, server.sequence),
-		Session:      server.session,
-		Sequence:     server.sequence,
-		ReceivedAt:   receivedAt,
-		ReceivedTime: receivedAt,
-		Endpoint:     endpoint,
-		Symbol:       metadata[2],
-		Kind:         metadata[3],
-		Payload:      payload,
+	if origin.Session == "" || origin.Sequence == nil || *origin.Sequence < 0 || origin.Endpoint == "" {
+		return CaptureRecord{}, server.Error(errnie.Err(errnie.Validation, "capture: invalid source provenance", nil))
 	}
-
-	server.sequence++
-	return row, nil
+	if _, err := time.Parse(time.RFC3339Nano, origin.ReceivedAt); err != nil {
+		return CaptureRecord{}, server.Error(errnie.Err(errnie.Validation, "capture: invalid ingress time", err))
+	}
+	symbol, err := server.slotText(symbols, slot)
+	if err != nil {
+		return CaptureRecord{}, err
+	}
+	kind, err := server.slotText(kinds, slot)
+	if err != nil {
+		return CaptureRecord{}, err
+	}
+	return CaptureRecord{
+		ID: fmt.Sprintf("%s:%d", origin.Session, *origin.Sequence), Session: origin.Session, Sequence: *origin.Sequence,
+		ReceivedAt: origin.ReceivedAt, ReceivedTime: origin.ReceivedAt, Endpoint: origin.Endpoint,
+		Symbol: symbol, Kind: kind, Payload: payload,
+	}, nil
 }
 
 /*

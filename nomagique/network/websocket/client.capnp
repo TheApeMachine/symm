@@ -9,10 +9,10 @@ using import "../../runtime/status.capnp".Source;
 
 using import "../../store/radix.capnp".Retained;
 
-# onConnect is sent once on every physical connection before ordinary writes.
+# Each onConnect frame is sent in order once on every physical connection before ordinary writes.
 # write gathers outbound frames; the JSON graph owns their protocol content.
 interface WebSocketClient extends(Source, Retained) {
-  write @0 (endpoint :Text, write :List(Data), onConnect :Data) -> stream;
+  write @0 (endpoint :Text, write :List(Data), onConnect :List(Data)) -> stream;
   done @1 () -> Received;
 }
 
@@ -30,6 +30,7 @@ struct Received {
       receivedAt @3 :Text;
       endpoint @4 :Text;
       generation @5 :UInt64;
+      provenance @7 :Data; # Source session and sequence, stable across reconnects.
     }
   }
 }

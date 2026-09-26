@@ -5,10 +5,24 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/store"
 )
 
 func TestReflectPorts(t *testing.T) {
+	Convey("A configured Group also exposes its own capability for Workspace wiring", t, func() {
+		_, outputs, _, found := reflectPorts(runtime.Group_TypeID)
+		So(found, ShouldBeTrue)
+		capabilities := 0
+
+		for _, port := range outputs {
+			if port.Name == "self" {
+				So(port.Type, ShouldEqual, "Capability")
+				capabilities++
+			}
+		}
+		So(capabilities, ShouldEqual, 1)
+	})
 	Convey("Given a capability-only Transform resource", t, func() {
 		inputs, outputs, _, found := reflectPorts(data.Transform_TypeID)
 		So(found, ShouldBeTrue)

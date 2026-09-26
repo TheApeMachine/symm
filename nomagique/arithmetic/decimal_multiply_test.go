@@ -34,7 +34,7 @@ func decimalMultiply(a, b string) (string, error) {
 
 func TestDecimalMultiplyWrite(t *testing.T) {
 	Convey("Given a price and a quantity", t, func() {
-		Convey("Then an odd whole product is not rounded, unlike the exchange SDK's Decimal", func() {
+		Convey("Then the SDK rounding policy preserves an odd whole product", func() {
 			product, err := decimalMultiply("99", "1")
 			So(err, ShouldBeNil)
 			So(product, ShouldEqual, "99")
@@ -46,4 +46,12 @@ func TestDecimalMultiplyWrite(t *testing.T) {
 			So(product, ShouldEqual, "99.2022")
 		})
 	})
+}
+
+func BenchmarkDecimalMultiplyWrite(b *testing.B) {
+	for b.Loop() {
+		if _, err := decimalMultiply("65000.12345", "0.00012345678"); err != nil {
+			b.Fatal(err)
+		}
+	}
 }

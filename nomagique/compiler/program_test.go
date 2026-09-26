@@ -256,13 +256,11 @@ func TestProgramExecuteIdleCapture(t *testing.T) {
 		program, err := CompileJSON([]byte(`{"nodes":{
  "feed":{"id":"feed","type":"websocket.WebSocketClient","connections":{"outputs":{
   "frame.read":[{"nodeId":"capture","portName":"payload"}],
-  "frame.endpoint":[{"nodeId":"capture","portName":"endpoint"}],
-  "frame.receivedAt":[{"nodeId":"capture","portName":"receivedAt"}]
+  "frame.provenance":[{"nodeId":"capture","portName":"provenance"}]
  }}},
  "capture":{"id":"capture","type":"store.Capture","connections":{"inputs":{
   "payload":[{"nodeId":"feed","portName":"frame.read"}],
-  "endpoint":[{"nodeId":"feed","portName":"frame.endpoint"}],
-  "receivedAt":[{"nodeId":"feed","portName":"frame.receivedAt"}]
+  "provenance":[{"nodeId":"feed","portName":"frame.provenance"}]
  }}}
 }}`), nil)
 		So(err, ShouldBeNil)
@@ -650,6 +648,8 @@ func TestProgramExecuteReinforcement(t *testing.T) {
 		holding := false
 		settled := true
 		vocabulary := "v1"
+		live := false
+		liveToken := ""
 		execute := func(identity string, cursor int, history string) error {
 			input := map[string]any{
 				"capture": map[string]string{"session": identity, "endpoint": "spot"},
@@ -663,6 +663,13 @@ func TestProgramExecuteReinforcement(t *testing.T) {
 					"d": map[string]int{"sequence": offset + 7, "record": 0}, "excursion": 1, "seed": 1,
 				},
 			}
+			if live {
+				delete(input, "event")
+				context := input["settled"].(map[string]any)
+				delete(context, "sequence")
+				context["tokens"] = []string{liveToken}
+			}
+
 			if !settled {
 				delete(input, "settled")
 			}
@@ -674,7 +681,21 @@ func TestProgramExecuteReinforcement(t *testing.T) {
 			params, err := transport.NewFan_write_Params(segment)
 			So(err, ShouldBeNil)
 			So(params.SetData(payload), ShouldBeNil)
-			return program.Execute(context.Background(), map[NodeID]capnp.Struct{program.NodeMap["input"]: capnp.Struct(params)})
+			inputs := map[NodeID]capnp.Struct{program.NodeMap["input"]: capnp.Struct(params)}
+			if settled {
+				tokens, steps := []string{"A", "B"}, strings.Split(history, "/")
+				if live {
+					tokens, steps = []string{liveToken}, nil
+				}
+				native, err := modelContextFixture(segment, vocabulary, holding, tokens, steps)
+				So(err, ShouldBeNil)
+				causal, err := cognition.NewPrecursor_write_Params(segment)
+				So(err, ShouldBeNil)
+				So(causal.SetContext(native), ShouldBeNil)
+				So(causal.SetModel(store.Radix(program.Nodes[program.NodeMap["memory"]].Client).AddRef()), ShouldBeNil)
+				inputs[program.NodeMap["context"]] = capnp.Struct(causal)
+			}
+			return program.Execute(context.Background(), inputs)
 		}
 		prediction := func(expected string, total uint64) {
 			result, found := program.Result("prediction")
@@ -686,6 +707,18 @@ func TestProgramExecuteReinforcement(t *testing.T) {
 			So(found, ShouldBeTrue)
 			So(statistic.Tally_done_Results(counts).Total(), ShouldEqual, total)
 		}
+
+		Convey("Live prediction recognizes a learned precursor after unrelated earlier tokens", func() {
+			So(execute("entry", 3, "A/B"), ShouldBeNil)
+			live = true
+			for _, token := range []string{"C", "A", "B"} {
+				liveToken = token
+				So(execute("live", 8, ""), ShouldBeNil)
+			}
+			prediction("ENTER", 1)
+			_, learned := program.Result("reinforce")
+			So(learned, ShouldBeFalse)
+		})
 
 		Convey("Then truth bootstraps an empty trie and incorrect predictions still learn", func() {
 			So(execute("entry-1", 3, "A/B"), ShouldBeNil)
@@ -739,11 +772,8 @@ func TestProgramExecuteReinforcement(t *testing.T) {
 				So(execute("unsettled", 3, "A/B"), ShouldBeNil)
 				_, updated := program.Result("reinforce")
 				So(updated, ShouldBeFalse)
-				result, read := program.Result("memory")
-				So(read, ShouldBeTrue)
-				pointer, err := result.Ptr(0)
-				So(err, ShouldBeNil)
-				So(pointer.List().Len(), ShouldEqual, 0)
+				_, predicted := program.Result("prediction")
+				So(predicted, ShouldBeFalse)
 			})
 
 			Convey("And a contradictory label for the same example is rejected", func() {
@@ -775,7 +805,13 @@ func TestProgramExecuteReinforcement(t *testing.T) {
 					params, err := transport.NewFan_write_Params(segment)
 					So(err, ShouldBeNil)
 					So(params.SetData(payload), ShouldBeNil)
-					return program.Execute(context.Background(), map[NodeID]capnp.Struct{program.NodeMap["input"]: capnp.Struct(params)})
+					native, err := modelContextFixture(segment, vocabulary, holding, tokens, strings.Split(seq, "/"))
+					So(err, ShouldBeNil)
+					causal, err := cognition.NewPrecursor_write_Params(segment)
+					So(err, ShouldBeNil)
+					So(causal.SetContext(native), ShouldBeNil)
+					So(causal.SetModel(store.Radix(program.Nodes[program.NodeMap["memory"]].Client).AddRef()), ShouldBeNil)
+					return program.Execute(context.Background(), map[NodeID]capnp.Struct{program.NodeMap["input"]: capnp.Struct(params), program.NodeMap["context"]: capnp.Struct(causal)})
 				}
 
 				// History 1: R1 -> R4 -> [R7,R9], ending at [R7,R9], trained to ENTER (cursor == ignition == 3)
@@ -845,7 +881,21 @@ func BenchmarkProgramExecuteReinforcement(b *testing.B) {
 			b.Fatal(err)
 		}
 
-		if err := program.Execute(context.Background(), map[NodeID]capnp.Struct{program.NodeMap["input"]: capnp.Struct(params)}); err != nil {
+		native, err := modelContextFixture(segment, "v1", false, []string{"region-A", "region-B"}, []string{"region-A", "region-B"})
+		if err != nil {
+			b.Fatal(err)
+		}
+		causal, err := cognition.NewPrecursor_write_Params(segment)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if err := causal.SetContext(native); err != nil {
+			b.Fatal(err)
+		}
+		if err := causal.SetModel(store.Radix(program.Nodes[program.NodeMap["memory"]].Client).AddRef()); err != nil {
+			b.Fatal(err)
+		}
+		if err := program.Execute(context.Background(), map[NodeID]capnp.Struct{program.NodeMap["input"]: capnp.Struct(params), program.NodeMap["context"]: capnp.Struct(causal)}); err != nil {
 			b.Fatal(err)
 		}
 
@@ -953,262 +1003,6 @@ func TestProgramExecuteRecords(t *testing.T) {
 	})
 }
 
-/* TestProgramExecuteFragment verifies the causal/truth separation on the actual JSON graph. */
-func TestProgramExecuteFragment(t *testing.T) {
-	Convey("Given an archived fragment with A before B before C and confirmation at D", t, func() {
-		program, err := CompileFile("../../manifest/training_fragment.json", nil, NewRepository())
-		So(err, ShouldBeNil)
-		defer program.Release()
-		sequence := int64(9007199254740993)
-		confirmation := sequence + 3
-		excursion := 1.0
-		session, endpoint, symbol := "capture", "spot", "BTC/USD"
-		execute := func(at int64, record int) (string, bool) {
-			cursor := func(offset int64, position int) map[string]any {
-				return map[string]any{"sequence": sequence + offset, "record": position}
-			}
-			observation := map[string]any{"capture": map[string]string{"session": session, "endpoint": endpoint}, "cursor": map[string]any{"sequence": at, "record": record}, "market": map[string]any{"channel": "ticker", "data": map[string]any{"symbol": symbol, "last": 100}}}
-			fragment := map[string]any{"capture": map[string]string{"session": "capture", "endpoint": "spot"}, "event": map[string]any{"symbol": "BTC/USD", "a": cursor(0, 1), "b": cursor(1, 0), "c": cursor(2, 0), "d": map[string]any{"sequence": confirmation, "record": 0}, "excursion": excursion}}
-			inputs := make(map[NodeID]capnp.Struct)
-			for name, document := range map[string]any{"record": observation, "fragment": fragment} {
-				payload, err := json.Marshal(document)
-				So(err, ShouldBeNil)
-				_, segment, err := capnp.NewMessage(capnp.SingleSegment(nil))
-				So(err, ShouldBeNil)
-				params, err := transport.NewFan_write_Params(segment)
-				So(err, ShouldBeNil)
-				So(params.SetData(payload), ShouldBeNil)
-				inputs[program.NodeMap[name]] = capnp.Struct(params)
-			}
-			So(program.Execute(context.Background(), inputs), ShouldBeNil)
-			truth, graded := program.Result("truth")
-			if graded {
-				payload, err := data.Insert_done_Results(truth).Out()
-				So(err, ShouldBeNil)
-				So(string(payload), ShouldContainSubstring, `"event"`)
-			}
-			result, found := program.Result("observation")
-			if !found {
-				return "", graded
-			}
-			payload, err := transport.Fan_done_Results(result).Out()
-			So(err, ShouldBeNil)
-			So(string(payload), ShouldNotContainSubstring, `"event"`)
-			So(string(payload), ShouldNotContainSubstring, `"fragment"`)
-			return string(payload), graded
-		}
-		Convey("Only A through C enter the predictor, including record-index boundaries", func() {
-			for _, test := range []struct {
-				offset   int64
-				record   int
-				accepted bool
-			}{{-1, 1, false}, {0, 0, false}, {0, 1, true}, {1, 0, true}, {2, 0, true}, {2, 1, false}, {3, 0, false}} {
-				output, graded := execute(sequence+test.offset, test.record)
-				So(output != "", ShouldEqual, test.accepted)
-				So(graded, ShouldEqual, test.accepted)
-			}
-		})
-		Convey("Changing future confirmation or outcome leaves precursor input unchanged", func() {
-			original, graded := execute(sequence, 1)
-			So(graded, ShouldBeTrue)
-			confirmation += 10
-			excursion = -2
-			changed, graded := execute(sequence, 1)
-			So(graded, ShouldBeTrue)
-			var originalFields, changedFields map[string]any
-			So(json.Unmarshal([]byte(original), &originalFields), ShouldBeNil)
-			So(json.Unmarshal([]byte(changed), &changedFields), ShouldBeNil)
-			So(changedFields, ShouldResemble, originalFields)
-		})
-		Convey("Other feeds contribute observations but cannot receive another instrument's truth", func() {
-			endpoint = "futures"
-			output, graded := execute(sequence, 1)
-			So(output, ShouldNotBeEmpty)
-			So(graded, ShouldBeFalse)
-			endpoint = "spot"
-			symbol = "ETH/USD"
-			output, graded = execute(sequence, 1)
-			So(output, ShouldNotBeEmpty)
-			So(graded, ShouldBeFalse)
-			session = "another capture"
-			output, graded = execute(sequence, 1)
-			So(output, ShouldBeEmpty)
-			So(graded, ShouldBeFalse)
-		})
-		Convey("Unconfirmed event ordering cannot emit a training observation", func() {
-			confirmation = sequence + 1
-			output, graded := execute(sequence, 1)
-			So(output, ShouldBeEmpty)
-			So(graded, ShouldBeFalse)
-		})
-	})
-}
-
-/* TestProgramExecuteReplay traverses records once, with future events confined to truth. */
-func TestProgramExecuteReplay(t *testing.T) {
-	Convey("Given overlapping confirmed fragments and a captured market tape", t, func() {
-		program, err := CompileFile("../../manifest/training_replay.json", nil, NewRepository())
-		So(err, ShouldBeNil)
-		defer program.Release()
-		execute := func(record, event []byte, ready bool) {
-			inputs := make(map[NodeID]capnp.Struct)
-			arrivals := map[string][]byte{"event": event}
-			if ready {
-				arrivals["ready"] = []byte(`{"ready":1}`)
-			}
-			for name, payload := range arrivals {
-				if len(payload) == 0 {
-					continue
-				}
-				_, segment, err := capnp.NewMessage(capnp.SingleSegment(nil))
-				So(err, ShouldBeNil)
-				args, err := transport.NewFan_write_Params(segment)
-				So(err, ShouldBeNil)
-				So(args.SetData(payload), ShouldBeNil)
-				inputs[program.NodeMap[name]] = capnp.Struct(args)
-			}
-			// The root graph appends a frame's records to the index directly.
-			if len(record) > 0 {
-				_, segment, err := capnp.NewMessage(capnp.SingleSegment(nil))
-				So(err, ShouldBeNil)
-				args, err := store.NewIndex_write_Params(segment)
-				So(err, ShouldBeNil)
-				appended, err := args.NewAppend(1)
-				So(err, ShouldBeNil)
-				So(appended.Set(0, record), ShouldBeNil)
-				So(args.SetPartition("capture.session,market.data.symbol"), ShouldBeNil)
-				So(args.SetOrder("cursor.sequence,cursor.record"), ShouldBeNil)
-				inputs[program.NodeMap["index"]] = capnp.Struct(args)
-			}
-			So(program.Execute(context.Background(), inputs), ShouldBeNil)
-		}
-		// Two instruments share the tape; both fragments are BTC/USD's, so ETH/USD is never replayed.
-		for sequence := 0; sequence < 6; sequence++ {
-			for _, symbol := range []string{"BTC/USD", "ETH/USD"} {
-				record, err := json.Marshal(map[string]any{"capture": map[string]string{"session": "capture", "endpoint": "spot"}, "cursor": map[string]int{"sequence": sequence, "record": map[string]int{"BTC/USD": 0, "ETH/USD": 1}[symbol]}, "market": map[string]any{"channel": "ticker", "data": map[string]any{"symbol": symbol, "last": 100 + sequence}}})
-				So(err, ShouldBeNil)
-				var event []byte
-				if sequence < 2 && symbol == "BTC/USD" {
-					cursor := func(offset int) map[string]int { return map[string]int{"sequence": offset + sequence, "record": 0} }
-					event, err = json.Marshal(map[string]any{"capture": map[string]string{"session": "capture", "endpoint": "spot"}, "event": map[string]any{"symbol": "BTC/USD", "a": cursor(0), "b": cursor(2), "c": cursor(3), "d": cursor(4), "excursion": 1}})
-					So(err, ShouldBeNil)
-				}
-				execute(record, event, false)
-				_, observed := program.Result("observation")
-				So(observed, ShouldBeFalse)
-				_, graded := program.Result("fragment__truth")
-				So(graded, ShouldBeFalse)
-			}
-		}
-		observations := make([]int, 0, 10)
-		grades := 0
-		// Each fragment is one seek, then one evaluation per record from A through D.
-		for range 2*(1+5) + 2 {
-			execute(nil, nil, true)
-			if result, observed := program.Result("observation"); observed {
-				payload, err := data.Extracted(result).Json()
-				So(err, ShouldBeNil)
-				var observation struct {
-					Cursor struct{ Sequence int }
-					Market struct{ Data struct{ Symbol string } }
-				}
-				So(json.Unmarshal(payload, &observation), ShouldBeNil)
-				So(observation.Market.Data.Symbol, ShouldEqual, "BTC/USD")
-				observations = append(observations, observation.Cursor.Sequence)
-				So(string(payload), ShouldNotContainSubstring, `"event"`)
-			}
-			if _, graded := program.Result("fragment__truth"); graded {
-				grades++
-			}
-		}
-
-		Convey("Then each fragment walks only its own instrument's records, A through D", func() {
-			So(observations, ShouldResemble, []int{0, 1, 2, 3, 4, 1, 2, 3, 4, 5})
-		})
-
-		Convey("Then only records between A and C are graded against their fragment", func() {
-			So(grades, ShouldEqual, 8)
-		})
-
-		Convey("Then nothing is replayed before the tape is ready", func() {
-			execute(nil, nil, false)
-			_, observed := program.Result("observation")
-			So(observed, ShouldBeFalse)
-		})
-	})
-}
-
-/* BenchmarkProgramExecuteReplay measures the compiled traversal, including fragment predicates. */
-func BenchmarkProgramExecuteReplay(b *testing.B) {
-	errnie.Apply(&errnie.Config{Level: "error"})
-	defer errnie.Apply(&errnie.Config{Level: "info"})
-	program, err := CompileFile("../../manifest/training_replay.json", nil, NewRepository())
-	if err != nil {
-		b.Fatal(err)
-	}
-	defer program.Release()
-	makeInput := func(node, payload string) map[NodeID]capnp.Struct {
-		_, segment, err := capnp.NewMessage(capnp.SingleSegment(nil))
-		if err != nil {
-			b.Fatal(err)
-		}
-		args, err := transport.NewFan_write_Params(segment)
-		if err != nil {
-			b.Fatal(err)
-		}
-		if err := args.SetData([]byte(payload)); err != nil {
-			b.Fatal(err)
-		}
-		return map[NodeID]capnp.Struct{program.NodeMap[node]: capnp.Struct(args)}
-	}
-	// The fixed two fragments are fixture topology; timed record count grows with b.N.
-	for _, payload := range []string{
-		`{"capture":{"session":"capture","endpoint":"spot"},"event":{"symbol":"BTC/USD","a":{"sequence":0,"record":0},"b":{"sequence":1,"record":0},"c":{"sequence":2,"record":0},"d":{"sequence":3,"record":0},"excursion":1}}`,
-		`{"capture":{"session":"capture","endpoint":"spot"},"event":{"symbol":"BTC/USD","a":{"sequence":1,"record":0},"b":{"sequence":2,"record":0},"c":{"sequence":3,"record":0},"d":{"sequence":4,"record":0},"excursion":-1}}`,
-	} {
-		if err := program.Execute(context.Background(), makeInput("event", payload)); err != nil {
-			b.Fatal(err)
-		}
-	}
-	for index := 0; index < b.N; index++ {
-		payload, err := json.Marshal(map[string]any{"capture": map[string]string{"session": "capture", "endpoint": "spot"}, "cursor": map[string]int{"sequence": index, "record": 0}, "market": map[string]any{"channel": "ticker", "data": map[string]any{"symbol": "BTC/USD", "last": 100 + index}}})
-		if err != nil {
-			b.Fatal(err)
-		}
-		// The root graph appends a frame's records to the index directly.
-		_, segment, err := capnp.NewMessage(capnp.SingleSegment(nil))
-		if err != nil {
-			b.Fatal(err)
-		}
-		args, err := store.NewIndex_write_Params(segment)
-		if err != nil {
-			b.Fatal(err)
-		}
-		appended, err := args.NewAppend(1)
-		if err != nil {
-			b.Fatal(err)
-		}
-		for _, err := range []error{appended.Set(0, payload), args.SetPartition("capture.session,market.data.symbol"), args.SetOrder("cursor.sequence,cursor.record")} {
-			if err != nil {
-				b.Fatal(err)
-			}
-		}
-		if err := program.Execute(context.Background(), map[NodeID]capnp.Struct{program.NodeMap["index"]: capnp.Struct(args)}); err != nil {
-			b.Fatal(err)
-		}
-	}
-	ready := makeInput("ready", `{"ready":1}`)
-	b.ReportAllocs()
-	b.ResetTimer()
-	for index := 0; index < b.N; index++ {
-		for range 3 {
-			if err := program.Execute(context.Background(), ready); err != nil {
-				b.Fatal(err)
-			}
-		}
-	}
-}
-
 func TestProgramExecuteLiveSpot(t *testing.T) {
 	Convey("Given the shipping system graph and a real WebSocket venue", t, func() {
 		failures := make(chan error, 16)
@@ -1285,11 +1079,12 @@ func TestProgramExecuteLiveSpot(t *testing.T) {
 		So(err, ShouldBeNil)
 		for id, node := range graph.Nodes {
 			if node.Type == "http.HTTPServer" {
-				delete(graph.Nodes, id)
+				withoutNodes(graph, id)
 			}
 		}
 		// Only the spot venue is faked; every other outside source leaves.
-		withoutNodes(graph, "level3", "futures", "envelope", "capture", "training")
+		withoutNodes(graph, "level3", "futures", "envelope", "capture")
+		withoutLearningStages(graph)
 		spot := graph.Nodes["spot"]
 		endpoint, err := json.Marshal(map[string]string{"value": "ws" + strings.TrimPrefix(venue.URL, "http")})
 		So(err, ShouldBeNil)
@@ -1301,15 +1096,33 @@ func TestProgramExecuteLiveSpot(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		var spreads []float64
-		// Only the focused symbol reaches the live signals: BTC/USD's frame
-		// carries two records, and ETH/USD's never arrives.
+		var completed uint64
+		workspace := runtime.Workspace(program.Nodes[program.NodeMap["workspace"]].Client)
+		consumer := runtime.Consumer(program.Nodes[program.NodeMap["definition-liquidity_ticker_consumer"]].Client)
 		for len(spreads) < 2 && ctx.Err() == nil {
 			So(program.Execute(ctx, nil), ShouldBeNil)
-			if _, found := program.Result("signals__definition-liquidity_ticker__spread"); found {
-				spread, err := program.Float64Result("signals__definition-liquidity_ticker__spread", "out")
+			future, release := workspace.Flush(ctx, nil)
+			_, err := future.Struct()
+			release()
+			So(err, ShouldBeNil)
+			result, release := consumer.Done(ctx, nil)
+			done, err := result.Struct()
+			So(err, ShouldBeNil)
+			if done.Completed() > completed {
+				completed = done.Completed()
+				outputs, err := done.Outputs()
 				So(err, ShouldBeNil)
-				spreads = append(spreads, spread)
+				for index := range outputs.Len() {
+					name, err := outputs.At(index).Node()
+					So(err, ShouldBeNil)
+					if name == "spread" {
+						pointer, err := outputs.At(index).Value()
+						So(err, ShouldBeNil)
+						spreads = append(spreads, arithmetic.Subtract_done_Results(pointer.Struct()).Out())
+					}
+				}
 			}
+			release()
 			time.Sleep(time.Millisecond)
 		}
 		So(spreads, ShouldResemble, []float64{2, 5})
@@ -1377,7 +1190,7 @@ func TestProgramExecuteKraken(t *testing.T) {
 		}
 		for id, node := range graph.Nodes {
 			if node.Type == "http.HTTPServer" {
-				delete(graph.Nodes, id)
+				withoutNodes(graph, id)
 			}
 		}
 		program, err := Compile(graph, nil, NewRepository())
@@ -1527,4 +1340,50 @@ func withoutNodes(graph Graph, ids ...string) {
 
 		graph.Nodes[id] = node
 	}
+}
+
+/* withoutLearningStages isolates the production feed-to-cut ownership chain. */
+func withoutLearningStages(graph Graph) {
+	withoutNodes(graph, "forward_graph", "forward_consumer", "forward_group",
+		"training_graph", "training_consumer", "training_group", "model_graph",
+		"model_live_consumer", "model_train_consumer", "model_held_consumer", "model_group",
+		"view_graph", "view_consumer", "view_group")
+}
+
+/* modelContextFixture supplies causal data through native Cap'n Proto fields. */
+func modelContextFixture(segment *capnp.Segment, vocabulary string, holding bool, tokens, history []string) (cognition.Context, error) {
+	input, err := cognition.NewContext(segment)
+	if err != nil {
+		return input, err
+	}
+	if err := input.SetSymbol("BTC/USD"); err != nil {
+		return input, err
+	}
+	if err := input.SetVocabulary(vocabulary); err != nil {
+		return input, err
+	}
+	input.SetHolding(holding)
+	values, err := input.NewTokens(int32(len(tokens)))
+	if err != nil {
+		return input, err
+	}
+	for index, value := range tokens {
+		if err := values.Set(index, value); err != nil {
+			return input, err
+		}
+	}
+	input.SetLive()
+	if history == nil {
+		return input, nil
+	}
+	steps, err := input.NewHistory(int32(len(history)))
+	if err != nil {
+		return input, err
+	}
+	for index, value := range history {
+		if err := steps.Set(index, value); err != nil {
+			return input, err
+		}
+	}
+	return input, nil
 }

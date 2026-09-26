@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -12,6 +13,7 @@ import (
 type ingress struct {
 	payload            []byte
 	endpoint, received string
+	sequence           int64
 }
 
 /* admit writes the frames that arrived in one evaluation, one slot per socket. */
@@ -22,20 +24,14 @@ func admit(client Capture, frames ...ingress) error {
 		if err != nil {
 			return err
 		}
-		endpoints, err := params.NewEndpoint(int32(len(frames)))
-
-		if err != nil {
-			return err
-		}
-		times, err := params.NewReceivedAt(int32(len(frames)))
-
+		provenance, err := params.NewProvenance(int32(len(frames)))
 		if err != nil {
 			return err
 		}
 
 		for slot, frame := range frames {
 			for _, err := range []error{
-				payloads.Set(slot, frame.payload), endpoints.Set(slot, frame.endpoint), times.Set(slot, frame.received),
+				payloads.Set(slot, frame.payload), provenance.Set(slot, []byte(fmt.Sprintf(`{"session":%q,"sequence":%d,"endpoint":%q,"receivedAt":%q}`, frame.endpoint, frame.sequence, frame.endpoint, frame.received))),
 			} {
 				if err != nil {
 					return err
@@ -85,8 +81,8 @@ func TestCaptureWrite(t *testing.T) {
 		Convey("Every raw frame retains its bytes and gets a distinct identity", func() {
 			identifiers := map[string]bool{}
 
-			for _, payload := range [][]byte{[]byte(" {\"channel\":\"ticker\"}\n"), {0, 255, 7}} {
-				So(admit(client, ingress{payload, "wss://test.local", "2026-09-22T12:00:00.123456789Z"}), ShouldBeNil)
+			for index, payload := range [][]byte{[]byte(" {\"channel\":\"ticker\"}\n"), {0, 255, 7}} {
+				So(admit(client, ingress{payload, "wss://test.local", "2026-09-22T12:00:00.123456789Z", int64(index)}), ShouldBeNil)
 				row, _ := handOut(client)
 				So(row, ShouldNotBeNil)
 				So(row.Payload, ShouldResemble, payload)
@@ -103,10 +99,10 @@ func TestCaptureWrite(t *testing.T) {
 			})
 		})
 
-		Convey("Frames from two sockets in one evaluation share the session in slot order", func() {
+		Convey("Frames from two sockets in one evaluation retain their independent source identities in slot order", func() {
 			So(admit(client,
-				ingress{[]byte(`{"channel":"instrument"}`), "wss://ws.kraken.com/v2", "2026-09-22T12:00:00Z"},
-				ingress{[]byte(`{"channel":"level3"}`), "wss://ws-l3.kraken.com/v2", "2026-09-22T12:00:00.5Z"},
+				ingress{[]byte(`{"channel":"instrument"}`), "wss://ws.kraken.com/v2", "2026-09-22T12:00:00Z", 41},
+				ingress{[]byte(`{"channel":"level3"}`), "wss://ws-l3.kraken.com/v2", "2026-09-22T12:00:00.5Z", 9},
 			), ShouldBeNil)
 			first, pending := handOut(client)
 			So(first.Endpoint, ShouldEqual, "wss://ws.kraken.com/v2")
@@ -115,13 +111,14 @@ func TestCaptureWrite(t *testing.T) {
 			So(admit(client), ShouldBeNil)
 			second, pending := handOut(client)
 			So(second.Endpoint, ShouldEqual, "wss://ws-l3.kraken.com/v2")
-			So(second.Session, ShouldEqual, first.Session)
-			So(second.Sequence, ShouldEqual, first.Sequence+1)
+			So(second.Session, ShouldNotEqual, first.Session)
+			So(first.Sequence, ShouldEqual, 41)
+			So(second.Sequence, ShouldEqual, 9)
 			So(pending, ShouldEqual, 0)
 		})
 
 		Convey("Missing ingress identity is rejected", func() {
-			So(admit(client, ingress{[]byte("frame"), "", ""}), ShouldNotBeNil)
+			So(admit(client, ingress{[]byte("frame"), "", "", 0}), ShouldNotBeNil)
 		})
 	})
 }
@@ -130,7 +127,7 @@ func BenchmarkCaptureWrite(b *testing.B) {
 	client := Capture_ServerToClient(NewCapture(context.Background()))
 	defer client.Release()
 	ctx := context.Background()
-	frame := ingress{[]byte(`{"channel":"ticker","data":[{"symbol":"BTC/USD","last":123.45}]}`), "wss://fixture.test", "2026-09-22T12:00:00Z"}
+	frame := ingress{[]byte(`{"channel":"ticker","data":[{"symbol":"BTC/USD","last":123.45}]}`), "wss://fixture.test", "2026-09-22T12:00:00Z", 0}
 	b.ReportAllocs()
 
 	for b.Loop() {

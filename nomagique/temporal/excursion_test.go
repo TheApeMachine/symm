@@ -7,6 +7,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/temporal"
+	"github.com/theapemachine/symm/tests/market"
 )
 
 func TestExcursionWrite(t *testing.T) {
@@ -49,21 +50,10 @@ func TestExcursionWrite(t *testing.T) {
 		// A trend is many small steps in one direction. The bar is read from
 		// the size of a step, so a path that eases upward has a low bar to
 		// clear and a violent one has a high bar.
-		trend := func(from float64, steps int, rate float64) []float64 {
-			path := make([]float64, 0, steps)
-			value := from
-
-			for range steps {
-				value *= 1 + rate
-				path = append(path, value)
-			}
-
-			return path
-		}
 
 		Convey("When the path rises and then gives back half of it", func() {
-			path := trend(100, 60, 0.005)
-			path = append(path, trend(path[len(path)-1], 40, -0.005)...)
+			path := market.Trend(100, 60, 0.005)
+			path = append(path, market.Trend(path[len(path)-1], 40, -0.005)...)
 
 			So(walk(path), ShouldBeNil)
 
@@ -82,7 +72,7 @@ func TestExcursionWrite(t *testing.T) {
 		})
 
 		Convey("When the path is still running", func() {
-			So(walk(trend(100, 60, 0.005)), ShouldBeNil)
+			So(walk(market.Trend(100, 60, 0.005)), ShouldBeNil)
 
 			_, _, _, _, found, legs := read()
 
@@ -95,7 +85,7 @@ func TestExcursionWrite(t *testing.T) {
 		})
 
 		Convey("When the first leg falls without reversing", func() {
-			So(walk(trend(100, 60, -0.005)), ShouldBeNil)
+			So(walk(market.Trend(100, 60, -0.005)), ShouldBeNil)
 			_, _, _, _, found, legs := read()
 			So(found, ShouldBeFalse)
 			So(legs, ShouldEqual, 0)
@@ -118,11 +108,11 @@ func TestExcursionWrite(t *testing.T) {
 		})
 
 		Convey("When a second move follows the first", func() {
-			path := trend(100, 60, 0.005)
+			path := market.Trend(100, 60, 0.005)
 			peak := path[len(path)-1]
-			path = append(path, trend(peak, 60, -0.005)...)
+			path = append(path, market.Trend(peak, 60, -0.005)...)
 			trough := path[len(path)-1]
-			path = append(path, trend(trough, 40, 0.005)...)
+			path = append(path, market.Trend(trough, 40, 0.005)...)
 
 			So(walk(path), ShouldBeNil)
 
@@ -222,4 +212,41 @@ func BenchmarkExcursionWrite(b *testing.B) {
 			}
 		}
 	}
+}
+
+func TestExcursionWriteStamped(t *testing.T) {
+	Convey("Excursion boundaries retain global sequence positions across interleaved feeds", t, func() {
+		client := temporal.Excursion_ServerToClient(temporal.NewExcursion(context.Background()))
+		defer client.Release()
+		path := market.Reversal()
+		observed := make(map[int64]float64, len(path))
+		moves := 0
+		for index, value := range path {
+			// Two observations from other feeds occur between these ticker observations.
+			sequence := int64(100 + index*3)
+			observed[sequence] = value
+			So(client.Write(context.Background(), func(args temporal.Excursion_write_Params) error {
+				args.SetValue(value)
+				args.SetEpoch(91)
+				args.SetSequence(sequence)
+				return args.SetScope("BTC/USD")
+			}), ShouldBeNil)
+			So(client.WaitStreaming(), ShouldBeNil)
+			future, release := client.Done(context.Background(), nil)
+			result, err := future.Struct()
+			So(err, ShouldBeNil)
+			if result.Which() == temporal.ExcursionResult_Which_move {
+				move := result.Move()
+				moves++
+				So(move.ConfirmationSequence(), ShouldEqual, sequence)
+				So(observed[move.AnchorSequence()], ShouldEqual, move.Anchor())
+				So(observed[move.IgnitionSequence()], ShouldEqual, move.Ignition())
+				So(observed[move.ExtremumSequence()], ShouldEqual, move.Extremum())
+				So(move.ExtremumSequence(), ShouldBeLessThan, move.ConfirmationSequence())
+				So(result.Epoch(), ShouldEqual, 91)
+			}
+			release()
+		}
+		So(moves, ShouldBeGreaterThanOrEqualTo, 2)
+	})
 }

@@ -38,6 +38,7 @@ export type EpisodeTapeProps = Omit<
 	exited?: number;
 	/** The confirmed excursion as a signed fraction; its sign names it. */
 	outcome?: number;
+	fallback?: boolean;
 };
 
 /* Geometry only: the producer owns the observations and annotation coordinates. */
@@ -175,13 +176,25 @@ export const EpisodeTape = ({
 	exited,
 	outcome,
 	className,
+	fallback = false,
 	...props
 }: EpisodeTapeProps) => {
 	const { ref, size } = useMeasured();
+	const activePoints = episode?.points ?? [];
+	const hasSuppliedPoints = activePoints.length > 0;
+
+	const effectiveEpisode: TrainingEpisode = {
+		id: episode?.id ?? "empty",
+		label: episode?.label ?? "Episodic tape",
+		points: activePoints,
+		markers: episode?.markers,
+	};
+
 	const projected =
-		episode && size.width > 0
-			? projectEpisodeTape(episode, size.width, size.height)
+		activePoints.length > 0 && size.width > 0
+			? projectEpisodeTape(effectiveEpisode, size.width, size.height)
 			: null;
+
 	const rising = outcome !== undefined && outcome !== null && outcome > 0;
 
 	return (
@@ -196,17 +209,21 @@ export const EpisodeTape = ({
 				<Flex.Row className="items-center gap-2">
 					<span className="font-bold text-(--acc)">RUN</span>
 					<span className="rounded border border-(--line) bg-(--raised) px-1.5 py-0.5 text-[10px] text-(--f2)">
-						{run === undefined || run === null ? "—" : `EP-${run}`}
+						{run !== undefined && run !== null
+							? `EP-${run}`
+							: "—"}
 					</span>
 					<span className="text-(--f4)">›</span>
 					<span className="text-(--f1)">{phase}</span>
 				</Flex.Row>
-				<span className="text-[10px] uppercase tracking-widest text-(--f4)">
-					Coordinate
-					<span className="ml-1 rounded border border-(--f4) px-1 text-(--f3)">
-						{coordinate}
+				<Flex.Row className="items-center gap-3">
+					<span className="text-[10px] uppercase tracking-widest text-(--f4)">
+						Coordinate
+						<span className="ml-1 rounded border border-(--f4) px-1 text-(--f3)">
+							{coordinate}
+						</span>
 					</span>
-				</span>
+				</Flex.Row>
 			</Flex.Row>
 
 			{outcome !== undefined && outcome !== null && (
@@ -230,7 +247,7 @@ export const EpisodeTape = ({
 			)}
 
 			<div ref={ref} className="relative min-h-0 flex-1 overflow-hidden">
-				{!episode?.points.length && (
+				{!hasSuppliedPoints && (
 					<span className="absolute inset-0 flex items-center justify-center text-(--f4) tracking-widest">
 						NO EPISODE OBSERVATIONS
 					</span>
@@ -240,10 +257,10 @@ export const EpisodeTape = ({
 						width={size.width}
 						height={size.height}
 						role="img"
-						aria-label={episode?.label ?? "Episode tape"}
+						aria-label={effectiveEpisode.label ?? "Episode tape"}
 						className="absolute inset-0"
 					>
-						<title>{episode?.label ?? "Episode tape"}</title>
+						<title>{effectiveEpisode.label ?? "Episode tape"}</title>
 						<line
 							x1={0}
 							x2={size.width}
@@ -274,7 +291,7 @@ export const EpisodeTape = ({
 									label={name}
 								/>
 							))}
-						{episode?.markers
+						{effectiveEpisode.markers
 							?.filter((marker) => projected.within(marker.x))
 							.map((marker) => (
 								<Mark

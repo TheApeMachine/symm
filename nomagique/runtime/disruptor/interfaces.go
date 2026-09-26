@@ -33,7 +33,8 @@ type WaitStrategy interface {
 	Reserve(int64)
 }
 
-// Handler is the consumer callback invoked by a Listener with each batch of available sequences from the ring buffer.
+// Handler is invoked with each available batch. A nil result stops the listener
+// without acknowledging that batch; successful handlers return the input sequence.
 type Handler interface {
 	Next(iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
 }
@@ -83,3 +84,11 @@ const (
 	// have not yet advanced far enough and the ring buffer has insufficient capacity.
 	ErrCapacityUnavailable = -2
 )
+
+/* HandlerFunc binds a native batch to the owning node's operation. */
+type HandlerFunc func(iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
+
+/* Next runs the handler supplied by the ring owner. */
+func (handler HandlerFunc) Next(batch iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return handler(batch)
+}

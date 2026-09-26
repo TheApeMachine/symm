@@ -20,7 +20,11 @@ using import "radix.capnp".Retained;
 # written together must agree. Records written under one scope are never
 # handed out under another: a new scope starts from nothing. No scope arriving
 # keeps the current series; an unwired scope is one series.
-interface Vector extends(Retained) {
+using import "../runtime/snapshot.capnp".Snapshot;
+
+struct VectorSnapshot { width @0 :UInt32; scope @1 :Text; values @2 :List(Float64); written @3 :List(Bool); }
+
+interface Vector extends(Retained, Snapshot) {
   write @0 (
     width  :UInt32,
     read   :List(Int64),

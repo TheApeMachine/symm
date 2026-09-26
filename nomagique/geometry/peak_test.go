@@ -122,7 +122,7 @@ func TestPeak(t *testing.T) {
 			So(err, ShouldBeNil)
 			vocabulary, err := results.Settled().Vocabulary()
 			So(err, ShouldBeNil)
-			So(string(vocabulary), ShouldStartWith, `"`)
+			So(len(vocabulary), ShouldEqual, 64)
 			vocabularies = append(vocabularies, string(vocabulary))
 
 			names := []string{}

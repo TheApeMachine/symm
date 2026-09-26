@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
 )
 
@@ -15,7 +14,6 @@ between-class variance peaks.
 */
 type OtsuServer struct {
 	hot       []string
-	out       []byte
 	threshold float64
 }
 
@@ -100,13 +98,6 @@ func (server *OtsuServer) Write(ctx context.Context, call Otsu_write) error {
 
 	slices.Sort(server.hot)
 
-	encoded, err := sonic.Marshal(server.hot)
-
-	if err != nil {
-		return errnie.Error(errnie.Err(errnie.Internal, "statistic.otsu: failed to encode out", err))
-	}
-
-	server.out = encoded
 	return nil
 }
 
@@ -129,11 +120,7 @@ func (server *OtsuServer) Done(ctx context.Context, call Otsu_done) error {
 		}
 	}
 
-	if err := results.SetOut(server.out); err != nil {
-		return errnie.Error(errnie.Err(errnie.Internal, "statistic.otsu: failed to set out", err))
-	}
-
 	results.SetThreshold(server.threshold)
-	server.hot, server.out, server.threshold = server.hot[:0], nil, 0
+	server.hot, server.threshold = server.hot[:0], 0
 	return nil
 }

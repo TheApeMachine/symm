@@ -19,3 +19,8 @@ struct Bound {
 struct Bindings {
 	values @0 :List(Bound);
 }
+
+# A graph publishes component bindings through its configured UI node.
+interface Receiver {
+  publish @0 (data :Data) -> ();
+}

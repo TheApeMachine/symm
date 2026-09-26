@@ -3,7 +3,8 @@ package paper
 import (
 	"context"
 	"encoding/json"
-	"math/big"
+
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/core"
@@ -47,37 +48,42 @@ func (server *SweepServer) Write(ctx context.Context, call Sweep_write) error {
 	if amount.Sign() < 0 || increment.Sign() <= 0 {
 		return server.Error(errnie.Err(errnie.Validation, "paper.sweep: amount must not be negative and increment must be positive", nil))
 	}
-	quantity, cost, unfilled := new(big.Rat), new(big.Rat), new(big.Rat).Set(amount)
+	quantity, cost, unfilled := decimal.NewFromInt64(0).SetRounding(core.FloorDecimal), decimal.NewFromInt64(0).SetRounding(core.FloorDecimal), amount.Copy()
 
 	for _, level := range levels {
 		if unfilled.Sign() == 0 {
 			break
 		}
-		price, ok := new(big.Rat).SetString(level[0])
-		size, sized := new(big.Rat).SetString(level[1])
-
-		if !ok || !sized {
-			return server.Error(errnie.Err(errnie.Validation, "paper.sweep: level is not two decimals", nil))
+		price, err := core.ReadDecimal([]byte(level[0]), "level price")
+		if err != nil {
+			return server.Error(err)
+		}
+		size, err := core.ReadDecimal([]byte(level[1]), "level size")
+		if err != nil {
+			return server.Error(err)
+		}
+		if price.Sign() <= 0 || size.Sign() < 0 {
+			return server.Error(errnie.Err(errnie.Validation, "paper.sweep: level price must be positive and size nonnegative", nil))
 		}
 		take := takeFrom(price, size, unfilled, increment, call.Args().Spend())
 
 		if take.Sign() == 0 {
 			break
 		}
-		spent := new(big.Rat).Mul(price, take)
-		quantity.Add(quantity, take)
-		cost.Add(cost, spent)
+		spent := price.SetScale(price.GetScale() + take.GetScale()).Mul(take)
+		quantity = quantity.SetScale(max(quantity.GetScale(), take.GetScale())).Add(take)
+		cost = cost.SetScale(max(cost.GetScale(), spent.GetScale())).Add(spent)
 
 		if call.Args().Spend() {
-			unfilled.Sub(unfilled, spent)
+			unfilled = unfilled.SetScale(max(unfilled.GetScale(), spent.GetScale())).Sub(spent)
 			continue
 		}
-		unfilled.Sub(unfilled, take)
+		unfilled = unfilled.SetScale(max(unfilled.GetScale(), take.GetScale())).Sub(take)
 	}
 
 	for _, rendered := range []struct {
 		target *[]byte
-		value  *big.Rat
+		value  *decimal.Decimal
 	}{{&server.quantity, quantity}, {&server.cost, cost}, {&server.unfilled, unfilled}} {
 		*rendered.target, err = core.WriteDecimal(rendered.value)
 
@@ -89,23 +95,25 @@ func (server *SweepServer) Write(ctx context.Context, call Sweep_write) error {
 }
 
 /* takeFrom is how much of one level the order takes: all of it, or what remains. */
-func takeFrom(price, size, unfilled, increment *big.Rat, spend bool) *big.Rat {
+func takeFrom(price, size, unfilled, increment *decimal.Decimal, spend bool) *decimal.Decimal {
 	if !spend {
 		if size.Cmp(unfilled) > 0 {
-			return new(big.Rat).Set(unfilled)
+			return unfilled.Copy()
 		}
-		return new(big.Rat).Set(size)
+		return size.Copy()
 	}
 
-	if new(big.Rat).Mul(price, size).Cmp(unfilled) <= 0 {
-		return new(big.Rat).Set(size)
+	if price.SetScale(price.GetScale()+size.GetScale()).Mul(size).Cmp(unfilled) <= 0 {
+		return size.Copy()
 	}
-	units := new(big.Rat).Quo(new(big.Rat).Quo(unfilled, price), increment)
-	whole := new(big.Int).Div(units.Num(), units.Denom())
-	return new(big.Rat).Mul(new(big.Rat).SetInt(whole), increment)
+
+	unitCost := price.SetScale(price.GetScale() + increment.GetScale()).Mul(increment)
+	scale := max(unfilled.GetScale(), unitCost.GetScale())
+	units := unfilled.SetScale(scale).Div(unitCost).SetScale(0)
+	return units.SetScale(increment.GetScale()).Mul(increment)
 }
 
-func decimalArgument(read func() ([]byte, error), name string) (*big.Rat, error) {
+func decimalArgument(read func() ([]byte, error), name string) (*decimal.Decimal, error) {
 	raw, err := read()
 
 	if err != nil {

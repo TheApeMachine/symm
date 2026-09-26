@@ -729,23 +729,11 @@ func reflectPorts(interfaceID uint64) (inputs, outputs []Port, extends string, o
 	inputs = portsOf(reflected.Inputs, true)
 	outputs = portsOf(reflected.Outputs, false)
 
-	if (!reflected.HasWrite || !reflected.HasDone) && superclassOf(interfaceID) == "" {
-		outputs = append(outputs, Port{
-			Name: "self", Type: "Capability", RawType: reflected.Name,
-			Description: "Resource capability, bound into consumers without evaluation",
-		})
-	}
-
-	if super := superclassOf(interfaceID); super != "" {
-		extends = super
-
-		outputs = append(outputs, Port{
-			Name:        "self",
-			Type:        "Capability",
-			RawType:     super,
-			Description: "This primitive as a " + super + ", to wire into a capability port",
-		})
-	}
+	extends = superclassOf(interfaceID)
+	outputs = append(outputs, Port{
+		Name: "self", Type: "Capability", RawType: reflected.Name,
+		Description: "This node's Cap'n Proto capability",
+	})
 
 	return inputs, outputs, extends, true
 }

@@ -2,7 +2,6 @@ package arithmetic
 
 import (
 	"context"
-	"math/big"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/core"
@@ -36,7 +35,7 @@ func (server *DecimalMultiplyServer) Write(ctx context.Context, call DecimalMult
 	if err != nil {
 		return server.Error(err)
 	}
-	server.out, err = core.WriteDecimal(new(big.Rat).Mul(a, b))
+	server.out, err = core.WriteDecimal(a.SetScale(a.GetScale() + b.GetScale()).Mul(b))
 
 	if err != nil {
 		return server.Error(err)

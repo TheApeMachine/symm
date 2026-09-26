@@ -171,6 +171,13 @@ export const Grid = ({
 }: GridProps) => {
 	// Generate responsive classes when responsive is true
 	const getResponsiveColsClass = () => {
+		if (
+			className?.includes("grid-cols-") ||
+			className?.includes("dashboard-grid")
+		) {
+			return undefined;
+		}
+
 		if (!responsive) {
 			return cols ? colsClasses[cols] : undefined;
 		}

@@ -67,6 +67,16 @@ func CompileWithPrevious(
 	}
 
 	graph = expandedGraph
+	registry, err = compileFactories(graph, registry, repo)
+
+	if err != nil {
+		return nil, err
+	}
+	registry, err = compileDefinitionCapabilities(graph, registry, repo)
+
+	if err != nil {
+		return nil, err
+	}
 
 	if len(graph.Nodes) == 0 {
 		return &Program{
@@ -170,19 +180,19 @@ func CompileWithPrevious(
 	for id, node := range backendNodes {
 		for _, targets := range node.Connections.Outputs {
 			for _, target := range targets {
-				consumer, exists := backendNodes[target.NodeID]
+				_, exists := backendNodes[target.NodeID]
 
 				if !exists {
 					continue
 				}
 
-				// Handing a node to another is not a dependency on it. The
-				// consumer holds a reference and calls it when it decides to,
-				// so the two do not have to be ordered against each other and
-				// a node may be handed to something it also reads from.
-				if carriesCapability(registry, consumer, target.PortName) {
+				// A retained owner's capability can read the prior revision
+				// before this observation supplies its lookup keys. Requiring
+				// those keys first would turn a valid read into a value cycle.
+				if holdsRetained(registry, node) && carriesCapability(registry, backendNodes[target.NodeID], target.PortName) {
 					continue
 				}
+				// Other capability providers configure before invocation.
 
 				if feedback[target.NodeID][id] {
 					continue
@@ -284,6 +294,7 @@ func CompileWithPrevious(
 		schemasMap[i] = ifaceSchema
 
 		compiledNode := CompiledNode{
+			Configured:   Implements(factory.InterfaceID, runtime.Configured_TypeID),
 			ID:           id,
 			Index:        NodeID(i),
 			Source:       Implements(factory.InterfaceID, runtime.Source_TypeID),
@@ -296,7 +307,7 @@ func CompileWithPrevious(
 
 		if ifaceSchema != nil {
 			compiledNode.Resource = !ifaceSchema.HasWrite || !ifaceSchema.HasDone
-			
+
 			compiledNode.Write = CompiledMethod{
 				InterfaceID: ifaceSchema.InterfaceID,
 				MethodID:    ifaceSchema.WriteMethod,
@@ -480,6 +491,7 @@ func CompileWithPrevious(
 						consumer: NodeID(vIdx),
 						field:    uint16(toField.Offset),
 						port:     target.PortName,
+						list:     toField.CapabilityList,
 					})
 
 					continue
@@ -676,10 +688,36 @@ func CompileWithPrevious(
 		var configBytes []byte
 
 		if len(node.InputData) > 0 {
-			configBytes, _ = sonic.Marshal(node.InputData)
+			var err error
+			configBytes, err = json.Marshal(node.InputData)
+
+			if err != nil {
+				return nil, errnie.Error(errnie.Err(errnie.Validation, "compiler: node configuration", err))
+			}
 		}
 
-		configDigest := sha256.Sum256(configBytes)
+		// A capability owner must be replaced when any capability it owns changes.
+		// Providers precede their consumers in execOrder, so this also covers
+		// definition -> Consumer -> Group -> Workspace transitively.
+		dependencies := make([]string, 0)
+
+		for _, edge := range capabilityEdges {
+			if edge.consumer == NodeID(i) {
+				provider := compiledNodes[edge.provider].Identity
+				dependencies = append(dependencies, fmt.Sprintf("%d:%s:%s:%s:%x:%x", edge.field, edge.port,
+					provider.ID, provider.Type, provider.InterfaceID, provider.ConfigDigest))
+			}
+		}
+		sort.Strings(dependencies)
+		fingerprint, err := json.Marshal(struct {
+			Configuration json.RawMessage
+			Capabilities  []string
+		}{configBytes, dependencies})
+
+		if err != nil {
+			return nil, errnie.Error(errnie.Err(errnie.Internal, "compiler: capability identity", err))
+		}
+		configDigest := sha256.Sum256(fingerprint)
 
 		identity := NodeIdentity{
 			ID:           id,
@@ -1075,7 +1113,7 @@ func expandDefinitions(
 		found := false
 
 		for id, node := range graph.Nodes {
-			if strings.HasPrefix(node.Type, "definition:") {
+			if strings.HasPrefix(node.Type, "definition:") && len(node.Connections.Outputs["self"]) == 0 {
 				defID = id
 				defNode = node
 				found = true
@@ -1225,6 +1263,7 @@ The provider is bound into the consumer's arguments as a live reference, so
 the consumer invokes it as a function instead of reading a copied value.
 */
 type capabilityEdge struct {
+	list     bool
 	provider NodeID
 	consumer NodeID
 	field    uint16
@@ -1238,12 +1277,66 @@ reference for as long as the program does, and releasing the program releases
 it.
 */
 func bindCapabilities(nodes []CompiledNode, edges []capabilityEdge) error {
+	grouped := make(map[capabilitySlot][]capabilityEdge)
+
 	for _, edge := range edges {
-		if err := bindCapability(nodes, edge); err != nil {
+		slot := capabilitySlot{consumer: edge.consumer, field: edge.field}
+		grouped[slot] = append(grouped[slot], edge)
+	}
+
+	for _, group := range grouped {
+		if group[0].list {
+			if err := bindCapabilityList(nodes, group); err != nil {
+				return err
+			}
+			continue
+		}
+
+		if len(group) != 1 {
+			return errnie.Error(errnie.Err(errnie.Validation, "compiler: scalar capability port has multiple providers", nil))
+		}
+
+		if err := bindCapability(nodes, group[0]); err != nil {
 			return err
 		}
 	}
+	return nil
+}
 
+/* bindCapabilityList preserves every wired provider in numbered-port order. */
+func bindCapabilityList(nodes []CompiledNode, edges []capabilityEdge) error {
+	sort.SliceStable(edges, func(left, right int) bool {
+		first, _ := outputSlot(edges[left].port)
+		second, _ := outputSlot(edges[right].port)
+
+		if first != second {
+			return first < second
+		}
+		return nodes[edges[left].provider].ID < nodes[edges[right].provider].ID
+	})
+	consumer := &nodes[edges[0].consumer]
+	list, err := capnp.NewPointerList(consumer.ArgsTemplate.Segment(), int32(len(edges)))
+
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.Internal, "compiler: allocate capability list", err))
+	}
+
+	for index, edge := range edges {
+		provider, _, err := capabilityEnds(nodes, edge)
+
+		if err != nil {
+			return err
+		}
+		interfaceID := list.Segment().Message().CapTable().Add(provider.Client.AddRef())
+
+		if err := list.Set(index, capnp.NewInterface(list.Segment(), interfaceID).ToPtr()); err != nil {
+			return errnie.Error(errnie.Err(errnie.Internal, "compiler: bind capability list member", err))
+		}
+	}
+
+	if err := consumer.ArgsTemplate.SetPtr(edges[0].field, list.ToPtr()); err != nil {
+		return errnie.Error(errnie.Err(errnie.Internal, "compiler: bind capability list", err))
+	}
 	return nil
 }
 
@@ -1629,6 +1722,17 @@ func carriesCapability(registry *Registry, consumer Node, port string) bool {
 }
 
 func lowerUIAndBindings(graph Graph) (*UIPlan, *BindingPlan) {
+	inputs := make(map[string]Origin)
+	for id, node := range graph.Nodes {
+		if !strings.HasPrefix(node.Type, "ui.") {
+			continue
+		}
+		origin, known := graph.Origins[id]
+		if !known {
+			origin = Origin{Definition: graph.ID, Node: id}
+		}
+		inputs[id] = origin
+	}
 	bindings := make([]BindingEntry, 0)
 	routes := make([]UIRoutePlan, 0)
 
@@ -1763,7 +1867,7 @@ func lowerUIAndBindings(graph Graph) (*UIPlan, *BindingPlan) {
 		}
 	}
 
-	return &UIPlan{Routes: routes}, &BindingPlan{Bindings: bindings}
+	return &UIPlan{Routes: routes}, &BindingPlan{Bindings: bindings, Inputs: inputs}
 }
 
 func lowerUIChildren(graph Graph, parentID string) []UINodePlan {

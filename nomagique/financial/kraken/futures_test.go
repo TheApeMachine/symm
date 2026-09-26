@@ -62,10 +62,12 @@ func TestFutures(t *testing.T) {
 			So(trade[0]["channel"], ShouldEqual, "futures_trade")
 			So(trade[0]["data"].(map[string]any)["type"], ShouldEqual, "liquidation")
 
-			snapshot := read(`{"feed":"trade_snapshot","product_id":"PI_XBTUSD","trades":[{"price":2,"qty":1,"side":"buy","type":"fill","time":1690000002000},{"price":1,"qty":1,"side":"buy","type":"fill","time":1690000001000}]}`)
+			snapshot := read(`{"feed":"trade_snapshot","product_id":"PI_XBTUSD","capture":{"session":"future","sequence":9007199254740993},"trades":[{"price":2,"qty":1,"side":"buy","type":"fill","time":1690000002000},{"price":1,"qty":1,"side":"buy","type":"fill","time":1690000001000}]}`)
 			So(snapshot, ShouldHaveLength, 2)
 			So(snapshot[0]["data"].(map[string]any)["price"], ShouldEqual, 1)
 			So(snapshot[1]["data"].(map[string]any)["price"], ShouldEqual, 2)
+			So(snapshot[0]["capture"].(map[string]any)["record"], ShouldEqual, 1)
+			So(snapshot[1]["capture"].(map[string]any)["record"], ShouldEqual, 0)
 		})
 
 		Convey("A subscription reply is idle, and the next frame starts clean", func() {

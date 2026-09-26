@@ -860,6 +860,12 @@
       }
     ]
   },
+  "Decisions": {
+    "name": "Decisions",
+    "exportName": "Decisions",
+    "hasChildren": false,
+    "props": []
+  },
   "DistributionCurve": {
     "name": "DistributionCurve",
     "exportName": "DistributionCurve",
@@ -1220,6 +1226,11 @@
       {
         "name": "outcome",
         "type": "number",
+        "optional": true
+      },
+      {
+        "name": "fallback",
+        "type": "boolean",
         "optional": true
       }
     ]
@@ -6104,6 +6115,16 @@
         "name": "connections",
         "type": "data",
         "optional": true
+      },
+      {
+        "name": "phase",
+        "type": "string",
+        "optional": true
+      },
+      {
+        "name": "fallback",
+        "type": "boolean",
+        "optional": true
       }
     ]
   },
@@ -6467,6 +6488,18 @@
         "optional": true
       }
     ]
+  },
+  "KernelInspector": {
+    "name": "KernelInspector",
+    "exportName": "KernelInspector",
+    "hasChildren": false,
+    "props": []
+  },
+  "KernelList": {
+    "name": "KernelList",
+    "exportName": "KernelList",
+    "hasChildren": false,
+    "props": []
   },
   "Key": {
     "name": "Key",
@@ -7398,6 +7431,11 @@
         "name": "note",
         "type": "string",
         "optional": true
+      },
+      {
+        "name": "showFit",
+        "type": "boolean",
+        "optional": true
       }
     ]
   },
@@ -7827,6 +7865,11 @@
         "name": "branches",
         "type": "data",
         "optional": true
+      },
+      {
+        "name": "fallback",
+        "type": "boolean",
+        "optional": true
       }
     ]
   },
@@ -7856,6 +7899,60 @@
         "optional": true
       }
     ]
+  },
+  "Positions": {
+    "name": "Positions",
+    "exportName": "Positions",
+    "hasChildren": false,
+    "props": []
+  },
+  "PredictiveCodingCanvas": {
+    "name": "PredictiveCodingCanvas",
+    "exportName": "PredictiveCodingCanvas",
+    "hasChildren": false,
+    "props": [
+      {
+        "name": "footer",
+        "type": "slot",
+        "optional": true
+      },
+      {
+        "name": "legend",
+        "type": "slot",
+        "optional": true
+      },
+      {
+        "name": "meta",
+        "type": "slot",
+        "optional": true
+      },
+      {
+        "name": "className",
+        "type": "string",
+        "optional": true
+      },
+      {
+        "name": "topRight",
+        "type": "slot",
+        "optional": true
+      },
+      {
+        "name": "scanlines",
+        "type": "boolean",
+        "optional": true
+      },
+      {
+        "name": "title",
+        "type": "string",
+        "optional": true
+      }
+    ]
+  },
+  "Pulse": {
+    "name": "Pulse",
+    "exportName": "Pulse",
+    "hasChildren": false,
+    "props": []
   },
   "Radar": {
     "name": "Radar",
@@ -8958,6 +9055,12 @@
       }
     ]
   },
+  "ThesisModal": {
+    "name": "ThesisModal",
+    "exportName": "ThesisModal",
+    "hasChildren": false,
+    "props": []
+  },
   "Toolbar": {
     "name": "Toolbar",
     "exportName": "Toolbar",
@@ -9048,6 +9151,11 @@
       {
         "name": "className",
         "type": "string",
+        "optional": true
+      },
+      {
+        "name": "fallback",
+        "type": "boolean",
         "optional": true
       }
     ]

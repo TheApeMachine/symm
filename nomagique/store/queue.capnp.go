@@ -6,6 +6,7 @@ import (
 	capnp "capnproto.org/go/capnp/v3"
 	text "capnproto.org/go/capnp/v3/encoding/text"
 	fc "capnproto.org/go/capnp/v3/flowcontrol"
+	schemas "capnproto.org/go/capnp/v3/schemas"
 	server "capnproto.org/go/capnp/v3/server"
 	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
 	context "context"
@@ -27,7 +28,7 @@ func (c Queue) Write(ctx context.Context, params func(Queue_write_Params) error)
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 4}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 5}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(Queue_write_Params(s)) }
 	}
 
@@ -228,12 +229,12 @@ type Queue_write_Params capnp.Struct
 const Queue_write_Params_TypeID = 0xe0a56f91286e7269
 
 func NewQueue_write_Params(s *capnp.Segment) (Queue_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 4})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 5})
 	return Queue_write_Params(st), err
 }
 
 func NewRootQueue_write_Params(s *capnp.Segment) (Queue_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 4})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 5})
 	return Queue_write_Params(st), err
 }
 
@@ -361,13 +362,36 @@ func (s Queue_write_Params) NewRelease(n int32) (capnp.DataList, error) {
 	err = capnp.Struct(s).SetPtr(3, l.ToPtr())
 	return l, err
 }
+func (s Queue_write_Params) Texts() (capnp.TextList, error) {
+	p, err := capnp.Struct(s).Ptr(4)
+	return capnp.TextList(p.List()), err
+}
+
+func (s Queue_write_Params) HasTexts() bool {
+	return capnp.Struct(s).HasPtr(4)
+}
+
+func (s Queue_write_Params) SetTexts(v capnp.TextList) error {
+	return capnp.Struct(s).SetPtr(4, v.ToPtr())
+}
+
+// NewTexts sets the texts field to a newly
+// allocated capnp.TextList, preferring placement in s's segment.
+func (s Queue_write_Params) NewTexts(n int32) (capnp.TextList, error) {
+	l, err := capnp.NewTextList(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return capnp.TextList{}, err
+	}
+	err = capnp.Struct(s).SetPtr(4, l.ToPtr())
+	return l, err
+}
 
 // Queue_write_Params_List is a list of Queue_write_Params.
 type Queue_write_Params_List = capnp.StructList[Queue_write_Params]
 
 // NewQueue_write_Params creates a new list of Queue_write_Params.
 func NewQueue_write_Params_List(s *capnp.Segment, sz int32) (Queue_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 4}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 5}, sz)
 	return capnp.StructList[Queue_write_Params](l), err
 }
 
@@ -569,4 +593,56 @@ type Released_Future struct{ *capnp.Future }
 func (f Released_Future) Struct() (Released, error) {
 	p, err := f.Future.Ptr()
 	return Released(p.Struct()), err
+}
+
+const schema_deb1c5afe904dc3f = "x\xda\x8c\x91AH\x14Q\x18\xc7\xbf\xff{\xb3N\x82" +
+	";\xd3k\xb7C`\x0c\x88Ax\xc8tovP\xa2" +
+	"\xae1\xcf.\x05B\x0d\xedS\x87\xdc\x99uv\x96]" +
+	"\x83\xf2\xa6D\x12H\x11$\x04AHy\x08\x13\"0" +
+	"\x12\xbc\x04\x15\x08\xd5\xd9\xa2 \x08\x0fR\x97\x88\xa2\x9a" +
+	"x\xb3\xad\x88A\xc40\xf0\xde\x9f\xff\xf7\xff\xde\xf7\xfb" +
+	"\x0e\xdf0\x06\x8c\x9e\xec\xa7\xfd\xc4N\x0e!\xd3\x92\xac" +
+	"\x1e\xa9\xbf\xb8r\xea\xf2U\x12\xed<\xb1N\xaf\xbf^" +
+	"X\x16\xdf\x89Pxcu!\xb7i\x99D\xb9\x0d\xcb" +
+	"\xd4?Q\xf2\xe8\xcb\xcf\x07S\x97\x16\xaf\x91\xe8\x00\x91" +
+	"a\x12\x15^Y\x11\xc8HV\xec\xb9\xafK\x9f\xa7\xee" +
+	"\x90l\x07O\xfa\xd7\x8d\x8d\xc5\xa7Ko\xe98LF" +
+	"TX\xd1aki\xd8s\xeb#!\xb9\xfbc\xe6\xd8" +
+	"\x89\x91\xbd\x8f\xd3\xb6[nB\xe1\x96\xbd\x07\xb9\xfb\xb6" +
+	"v.\xd8\xd3\xb9o\xfa\x94\xf8Qpp6\x9c\x7f\xd7" +
+	"h\x9b\xc9\xe8\xbe\xef\xed\x0b \x146m\x07\x94\xa4\xdf" +
+	"t\x12\x84%o\xc4\x1f\xafr\xd5]\x89\xc3HuG" +
+	"^\xd1\xaf\x1f:\xe7\x95\x83r\xdf\xa0\x8a=\xdb\x0fT" +
+	"\xd1\x05\\\x9eq\x81-\xbf\xd1\xf4\x8fWUU\xfd\xf1" +
+	"\xcb\xf4\\\x0c\x03\xd5\xe9:^\xe4\x95*\x7f\xe7o\xf7" +
+	"\x0f\xaa1e{\x954_\xee\xe6F[\x92\x18 \x12" +
+	"^/\x91\x1c\xe2\x90\xa3\x0cY\xfcJ\xf2\xd0\xaa\xea " +
+	"\x92g9\xe4\x18\x83`\xc8\x83\x11\x09\xff(\x91,r" +
+	"\xc82\x83\xe0,\x0fN$J\xba~\x94C\xc6\x0c\x8e" +
+	"*\x95\xe3\x09j1\xc3j\x8c,1d\x09\x935\xcf" +
+	"\x8f\xfd`\x04\xad\xc4\xd0Jp\xce\x07a-h\xde\xfe" +
+	"\xfdf=#\x94~\xf0.\x9e\xd9\x06\x1a\xc1\xd2j\xad" +
+	"0w\xe6\xa6\xe8\xe9%&\x0e\x98\xc0\xd6\xee\xd1\\\xb5" +
+	"\xd8\xd7ELdM\xa7\x16\xf9\xb1\x1a\x80\xadY\x0d\xe0" +
+	"?\xc1\xa6E\x9d\xfdnJV\xe6\xb9A\x94\xe2\xba\xa8" +
+	"\xc7\xads\xc8\xeb\x0c\x02h\xd0\x9a\xd5\xe2\x0c\x87\xbc\xa7" +
+	"i\xb1\x06\xad\xf9>\"y\x9bC>\xd1\xb4x\x83\xd6" +
+	"\xb2F\xf8\x90C\xbed\x10\x86\x91\x87A$\xd6t\xf9" +
+	"3\x0e\xf9\x81\xc1\x09\x87\x87U\x04\x8b\xe0r\xa4\x0c-" +
+	"\x82\x13\xa98\x9a\xd8!\xf6G\xaa\xe6\x07\xc5\x1d\xead" +
+	"\xa4\xc6\x94WQ;\x13bU\x8f+M\xb1\xad!\xfe" +
+	"\x0e\x00\x00\xff\xff\xbd\x80\xec2"
+
+func RegisterSchema(reg *schemas.Registry) {
+	reg.Register(&schemas.Schema{
+		String: schema_deb1c5afe904dc3f,
+		Nodes: []uint64{
+			0x8e89588bca783bc0,
+			0x93af7e86b0fdf5b6,
+			0xa386f0b1f79a0fbd,
+			0xba15674e448cfca7,
+			0xe0a56f91286e7269,
+		},
+		Compressed: true,
+	})
 }

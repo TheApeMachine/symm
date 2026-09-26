@@ -8,7 +8,7 @@ $Go.import("github.com/theapemachine/symm/nomagique/statistic");
 #
 # Only positive values are candidates. A single candidate is the strong class
 # on its own; candidates that are all equal are all strong. hot is the strong
-# class's labels in label order, and out is the same labels as a JSON array.
+# class's labels in label order, without an intermediate encoding.
 # threshold is the smallest value in the strong class.
 interface Otsu {
   write @0 (
@@ -17,7 +17,6 @@ interface Otsu {
   ) -> stream;
   done @1 () -> (
     hot       :List(Text),
-    out       :Data,
     threshold :Float64
   );
 }

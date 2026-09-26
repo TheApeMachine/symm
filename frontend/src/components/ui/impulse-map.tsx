@@ -58,7 +58,9 @@ export type ImpulseMapProps = Omit<
 	 * Without one the drawing fits the supplied points.
 	 */
 	viewport?: { width: number; height: number };
+	fallback?: boolean;
 };
+
 
 /* Heat from the panel line through blue and green to the accent. */
 const HEAT = ["#3a342b", "#7fbacb", "#9cc06e", "#e8a33d"];
@@ -88,13 +90,14 @@ come from the producer. The view owns only the layout toggle (the original
 lattice or the arrangement sympathy produced) and hover inspection.
 */
 export const ImpulseMap = ({
-	points,
-	regions,
+	points: suppliedPoints,
+	regions: suppliedRegions,
 	contours,
-	connections,
+	connections: suppliedConnections,
 	title = "Map",
 	phase,
 	viewport,
+	fallback = false,
 	className,
 	...props
 }: ImpulseMapProps) => {
@@ -102,6 +105,10 @@ export const ImpulseMap = ({
 	const [size, setSize] = useState({ width: 640, height: 400 });
 	const [layout, setLayout] = useState<"grid" | "regions">("regions");
 	const [selected, setSelected] = useState<number | null>(null);
+
+	const points = suppliedPoints ?? [];
+	const regions = suppliedRegions ?? [];
+	const connections = suppliedConnections ?? [];
 
 	useEffect(() => {
 		const target = ref.current;

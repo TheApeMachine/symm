@@ -3,70 +3,49 @@ package core
 import (
 	"bytes"
 	"math/big"
+	"strings"
 
+	"github.com/cockroachdb/apd/v3"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 )
 
-/*
-ReadDecimal reads a decimal travelling as JSON number text, bare or quoted as
-exchanges write it, into an exact rational. Decimal arithmetic stays exact
-this way; the exchange SDK's Decimal rounds odd results at scale 0 and is not
-used for arithmetic.
-*/
-func ReadDecimal(raw []byte, operand string) (*big.Rat, error) {
+/* ReadDecimal uses the venue SDK representation for every monetary operand. */
+func ReadDecimal(raw []byte, operand string) (*decimal.Decimal, error) {
 	text := string(bytes.Trim(bytes.TrimSpace(raw), `"`))
-
 	if text == "" {
-		return nil, errnie.Err(
-			errnie.Validation,
-			"decimal: "+operand+" did not arrive",
-			nil,
-		)
+		return nil, errnie.Error(errnie.Err(errnie.Validation, "decimal: "+operand+" did not arrive", nil))
 	}
-
-	value, ok := new(big.Rat).SetString(text)
-
-	if !ok {
-		return nil, errnie.Err(
-			errnie.Validation,
-			"decimal: "+operand+" is not a decimal: "+text,
-			nil,
-		)
+	// The installed SDK parses exponent notation through binary big.Float;
+	// 1e-8 loses precision there. APD, already used by the storage dependency,
+	// supplies exact fixed decimal text before constructing the SDK value.
+	parsed, _, err := apd.NewFromString(text)
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(errnie.Validation, "decimal: invalid "+operand, err))
 	}
-
+	canonical := parsed.Text('f')
+	magnitude := strings.TrimPrefix(canonical, "-")
+	value, err := decimal.NewFromString(magnitude)
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(errnie.Validation, "decimal: invalid "+operand, err))
+	}
+	// Arithmetic nodes choose a sufficient scale for exact sums and products.
+	// Quotients explicitly floor at the authored precision using the SDK hook.
+	value = value.SetRounding(FloorDecimal)
+	if parsed.Negative {
+		value = value.Mul(decimal.NewFromInt64(-1))
+	}
 	return value, nil
 }
 
-/*
-WriteDecimal renders a terminating rational with the fewest
-places that hold it exactly.
-*/
-func WriteDecimal(value *big.Rat) ([]byte, error) {
-	denominator := new(big.Int).Set(value.Denom())
-	places := 0
-	one := big.NewInt(1)
+/* FloorDecimal is the SDK rounding policy for amounts that must fit a budget. */
+func FloorDecimal(value, scale *big.Int) *big.Int { return new(big.Int).Div(value, scale) }
 
-	for _, factor := range []*big.Int{big.NewInt(2), big.NewInt(5)} {
-		count := 0
-		remainder := new(big.Int)
-
-		for denominator.Cmp(one) != 0 && remainder.Mod(
-			denominator, factor,
-		).Sign() == 0 {
-			denominator.Quo(denominator, factor)
-			count++
-		}
-
-		places = max(places, count)
+/* WriteDecimal emits the SDK value as canonical JSON decimal text. */
+func WriteDecimal(value *decimal.Decimal) ([]byte, error) {
+	text := value.String()
+	if strings.Contains(text, ".") {
+		text = strings.TrimRight(strings.TrimRight(text, "0"), ".")
 	}
-
-	if denominator.Cmp(one) != 0 {
-		return nil, errnie.Err(
-			errnie.Validation,
-			"decimal: "+value.String()+" has no finite decimal form",
-			nil,
-		)
-	}
-
-	return []byte(value.FloatString(places)), nil
+	return []byte(text), nil
 }

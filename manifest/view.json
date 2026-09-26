@@ -1,0 +1,106 @@
+{
+  "id": "view",
+  "name": "view",
+  "nodes": {
+    "shell": {
+      "id": "shell",
+      "type": "definition:ui_shell",
+      "width": 320,
+      "height": 200,
+      "x": 400.0,
+      "y": 1300.0,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "winShare.a": [
+            {
+              "nodeId": "learning",
+              "portName": "positives.out"
+            }
+          ],
+          "winShare.b": [
+            {
+              "nodeId": "learning",
+              "portName": "resolved.out"
+            }
+          ],
+          "edge.value": [
+            {
+              "nodeId": "learning",
+              "portName": "edge.out"
+            }
+          ],
+          "pnl.value": [
+            {
+              "nodeId": "learning",
+              "portName": "wallet_pnl.out"
+            }
+          ],
+          "observations.value": [
+            {
+              "nodeId": "learning",
+              "portName": "frames.out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "dashboard": {
+      "id": "dashboard",
+      "type": "definition:ui_dashboard",
+      "width": 320,
+      "height": 200,
+      "x": 1000,
+      "y": 0,
+      "inputData": {},
+      "connections": {
+        "inputs": {},
+        "outputs": {}
+      }
+    },
+    "learning": {
+      "id": "learning",
+      "type": "definition:ui_training",
+      "width": 320,
+      "height": 280,
+      "x": 400.0,
+      "y": 900.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "positives.out": [
+            {
+              "nodeId": "shell",
+              "portName": "winShare.a"
+            }
+          ],
+          "resolved.out": [
+            {
+              "nodeId": "shell",
+              "portName": "winShare.b"
+            }
+          ],
+          "edge.out": [
+            {
+              "nodeId": "shell",
+              "portName": "edge.value"
+            }
+          ],
+          "wallet_pnl.out": [
+            {
+              "nodeId": "shell",
+              "portName": "pnl.value"
+            }
+          ],
+          "frames.out": [
+            {
+              "nodeId": "shell",
+              "portName": "observations.value"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

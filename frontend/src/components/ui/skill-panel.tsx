@@ -104,10 +104,12 @@ export const SkillPanel = ({
 }: SkillPanelProps) => {
 	const wins = number(positive) ?? 0;
 	const losses = number(negative) ?? 0;
-	const total = wins + losses;
+	const total = wins + losses || 1;
 	const benefit = number(edge);
 	const wallet = number(balance);
 	const change = number(pnl);
+	const count = number(evaluated) ?? 0;
+	const activeActivity = activity ?? [];
 
 	return (
 		<Flex.Column
@@ -119,7 +121,7 @@ export const SkillPanel = ({
 		>
 			<Flex.Row className="h-8 shrink-0 items-center justify-between border-(--line) border-b bg-(--sunken) px-3">
 				<span className="uppercase tracking-widest">{title}</span>
-				<span>{number(evaluated)?.toLocaleString() ?? 0} evaluated</span>
+				<span>{count.toLocaleString()} evaluated</span>
 			</Flex.Row>
 			<Flex.Column className="min-h-0 flex-1 gap-5 overflow-y-auto p-4">
 				<Block
@@ -140,11 +142,11 @@ export const SkillPanel = ({
 					<div className="flex h-1.5 w-full overflow-hidden rounded-full bg-(--raised)">
 						<div
 							className="bg-(--up)"
-							style={{ width: total ? `${(wins / total) * 100}%` : "0%" }}
+							style={{ width: `${(wins / total) * 100}%` }}
 						/>
 						<div
 							className="bg-(--down)"
-							style={{ width: total ? `${(losses / total) * 100}%` : "0%" }}
+							style={{ width: `${(losses / total) * 100}%` }}
 						/>
 					</div>
 				</Block>
@@ -165,14 +167,14 @@ export const SkillPanel = ({
 					<div className="mb-3 text-[10px] uppercase tracking-widest text-(--f4)">
 						Recent learning activity
 					</div>
-					{!activity?.length && (
+					{!activeActivity.length && (
 						<div className="text-[10px] text-(--f4)">
 							No completed decisions
 						</div>
 					)}
 					<Flex.Column className="gap-3">
-						{activity?.map((entry) => {
-							const change = number(entry.pnl);
+						{activeActivity.map((entry) => {
+							const itemChange = number(entry.pnl);
 							return (
 								<div key={entry.id} className="text-[10px]">
 									<div className="mb-0.5 truncate text-(--f2)">
@@ -181,7 +183,7 @@ export const SkillPanel = ({
 									</div>
 									<div className="text-(--f3)">
 										Wallet P&amp;L{" "}
-										<span className={tone(change)}>{signed(change)}</span>
+										<span className={tone(itemChange)}>{signed(itemChange)}</span>
 									</div>
 								</div>
 							);

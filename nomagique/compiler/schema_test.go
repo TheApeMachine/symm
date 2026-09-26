@@ -1,12 +1,14 @@
 package compiler
 
 import (
+	"github.com/theapemachine/symm/nomagique/runtime"
 	"math"
 	"testing"
 
 	capnp "capnproto.org/go/capnp/v3"
 	"capnproto.org/go/capnp/v3/std/capnp/schema"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique/store"
 )
 
 func TestCompileFanOutCopier(t *testing.T) {
@@ -60,6 +62,19 @@ func TestCompileFanOutCopier(t *testing.T) {
 }
 
 func TestSetStaticField(t *testing.T) {
+	Convey("Given an UInt8 configuration field", t, func() {
+		message, segment, err := capnp.NewMessage(capnp.SingleSegment(nil))
+		So(err, ShouldBeNil)
+		defer message.Release()
+		target, err := capnp.NewRootStruct(segment, capnp.ObjectSize{DataSize: 8})
+		So(err, ShouldBeNil)
+		field := FieldInfo{Which: schema.Type_Which_uint8, Offset: 3}
+		So(SetStaticField(target, field, `255`), ShouldBeNil)
+		So(target.Uint8(3), ShouldEqual, 255)
+		So(SetStaticField(target, field, `256`), ShouldNotBeNil)
+		So(SetStaticField(target, field, `-1`), ShouldNotBeNil)
+		So(SetStaticField(target, field, `1.5`), ShouldNotBeNil)
+	})
 	Convey("Given an explicit list of Text in graph configuration", t, func() {
 		_, segment, err := capnp.NewMessage(capnp.SingleSegment(nil))
 		So(err, ShouldBeNil)
@@ -219,4 +234,44 @@ func BenchmarkCompileFanInCopier(b *testing.B) {
 		}
 		message.Release()
 	}
+}
+
+/* TestImplements verifies transitive protocol ownership, including durable state. */
+func TestImplements(t *testing.T) {
+	Convey("Capabilities satisfy inherited interfaces transitively", t, func() {
+		So(Implements(store.Radix_TypeID, runtime.Durable_TypeID), ShouldBeTrue)
+		So(Implements(runtime.State_TypeID, runtime.StageNode_TypeID), ShouldBeTrue)
+		So(Implements(runtime.State_TypeID, runtime.Snapshot_TypeID), ShouldBeTrue)
+		So(Implements(store.Vector_TypeID, runtime.Snapshot_TypeID), ShouldBeTrue)
+		So(Implements(store.Vector_TypeID, runtime.Checkpoint_TypeID), ShouldBeFalse)
+	})
+}
+
+func TestCompileFanInCopierWidths(t *testing.T) {
+	Convey("Stage and internal text inputs retain each other's slots regardless of arrival order", t, func() {
+		for _, order := range [][]int{{0, 1}, {1, 0}} {
+			message, segment, err := capnp.NewMessage(capnp.SingleSegment(nil))
+			So(err, ShouldBeNil)
+			source, err := capnp.NewRootStruct(segment, capnp.ObjectSize{PointerCount: 1})
+			So(err, ShouldBeNil)
+			target, err := capnp.NewStruct(segment, capnp.ObjectSize{PointerCount: 1})
+			So(err, ShouldBeNil)
+			for _, slot := range order {
+				So(source.SetText(0, []string{"cursor", "vocabulary"}[slot]), ShouldBeNil)
+				copier, err := CompileFanInCopier(FieldInfo{Which: schema.Type_Which_text}, FieldInfo{Which: schema.Type_Which_list, ElementWhich: schema.Type_Which_text}, nil, slot, slot+1)
+				So(err, ShouldBeNil)
+				So(copier(source, target), ShouldBeNil)
+			}
+			pointer, err := target.Ptr(0)
+			So(err, ShouldBeNil)
+			values := capnp.TextList(pointer.List())
+			So(values.Len(), ShouldEqual, 2)
+			for slot, expected := range []string{"cursor", "vocabulary"} {
+				value, err := values.At(slot)
+				So(err, ShouldBeNil)
+				So(value, ShouldEqual, expected)
+			}
+			message.Release()
+		}
+	})
 }

@@ -66,11 +66,6 @@ func TestProgramBindings(t *testing.T) {
 			So(publish(), ShouldResemble, []string{`label.value={"a":1}`})
 			So(publish(), ShouldBeNil)
 
-			Convey("And a surface that joins is told what every port shows, once", func() {
-				program.Refresh()
-				So(publish(), ShouldResemble, []string{`label.value={"a":1}`})
-				So(publish(), ShouldBeNil)
-			})
 		})
 	})
 }

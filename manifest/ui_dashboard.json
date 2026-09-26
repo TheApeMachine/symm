@@ -3373,6 +3373,23 @@
             }
           ]
         },
+        "outputs": {}
+      },
+      "inputData": {
+        "className": {
+          "value": "min-h-0 flex-1 overflow-auto"
+        }
+      }
+    },
+    "kernelList": {
+      "id": "kernelList",
+      "type": "ui.KernelList",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 3200.0,
+      "connections": {
+        "inputs": {},
         "outputs": {
           "self": [
             {
@@ -3382,11 +3399,7 @@
           ]
         }
       },
-      "inputData": {
-        "className": {
-          "value": "min-h-0 flex-1 overflow-auto"
-        }
-      }
+      "inputData": {}
     },
     "kernels": {
       "id": "kernels",
@@ -3405,7 +3418,7 @@
           ],
           "components_1": [
             {
-              "nodeId": "kernelRows",
+              "nodeId": "kernelList",
               "portName": "self"
             }
           ]
@@ -3424,7 +3437,7 @@
           "value": "pane"
         },
         "className": {
-          "value": "min-h-0 border-(--line) border-r"
+          "value": "min-h-0 h-full border-(--line) border-r flex flex-col"
         }
       }
     },
@@ -3437,14 +3450,7 @@
       "y": 0.0,
       "connections": {
         "inputs": {},
-        "outputs": {
-          "self": [
-            {
-              "nodeId": "market",
-              "portName": "components"
-            }
-          ]
-        }
+        "outputs": {}
       },
       "inputData": {
         "value": {
@@ -3464,14 +3470,7 @@
       "y": 200.0,
       "connections": {
         "inputs": {},
-        "outputs": {
-          "self": [
-            {
-              "nodeId": "market",
-              "portName": "components_1"
-            }
-          ]
-        }
+        "outputs": {}
       },
       "inputData": {
         "value": {
@@ -3482,28 +3481,15 @@
         }
       }
     },
-    "market": {
-      "id": "market",
-      "type": "ui.Flex.Row",
+    "predictiveCanvas": {
+      "id": "predictiveCanvas",
+      "type": "ui.PredictiveCodingCanvas",
       "width": 280,
       "height": 172,
       "x": 2040.0,
-      "y": 3600.0,
+      "y": 3800.0,
       "connections": {
-        "inputs": {
-          "components": [
-            {
-              "nodeId": "marketSymbol",
-              "portName": "self"
-            }
-          ],
-          "components_1": [
-            {
-              "nodeId": "marketPrice",
-              "portName": "self"
-            }
-          ]
-        },
+        "inputs": {},
         "outputs": {
           "self": [
             {
@@ -3515,53 +3501,10 @@
       },
       "inputData": {
         "className": {
-          "value": "items-center gap-3 px-4 py-2 text-xs"
-        }
-      }
-    },
-    "impulse": {
-      "id": "impulse",
-      "type": "ui.ImpulseMap",
-      "width": 280,
-      "height": 172,
-      "x": 2040.0,
-      "y": 3800.0,
-      "connections": {
-        "inputs": {
-          "points": [
-            {
-              "nodeId": "points",
-              "portName": "out"
-            }
-          ],
-          "regions": [
-            {
-              "nodeId": "regions",
-              "portName": "out"
-            }
-          ],
-          "connections": [
-            {
-              "nodeId": "links",
-              "portName": "out"
-            }
-          ]
+          "value": "h-full min-h-0 flex-1"
         },
-        "outputs": {
-          "self": [
-            {
-              "nodeId": "centre",
-              "portName": "components_1"
-            }
-          ]
-        }
-      },
-      "inputData": {
         "title": {
-          "value": "Impulse map \u00b7 live"
-        },
-        "className": {
-          "value": "min-h-0 flex-1"
+          "value": "Predictive coding"
         }
       }
     },
@@ -3576,13 +3519,7 @@
         "inputs": {
           "components": [
             {
-              "nodeId": "market",
-              "portName": "self"
-            }
-          ],
-          "components_1": [
-            {
-              "nodeId": "impulse",
+              "nodeId": "predictiveCanvas",
               "portName": "self"
             }
           ]
@@ -3598,26 +3535,19 @@
       },
       "inputData": {
         "className": {
-          "value": "min-h-0 gap-2 border-(--line) border-r bg-(--bg) p-2"
+          "value": "min-h-0 h-full border-(--line) border-r bg-(--sunken) flex-1 flex flex-col"
         }
       }
     },
-    "decisionList": {
-      "id": "decisionList",
-      "type": "ui.DecisionList",
+    "liveDecisions": {
+      "id": "liveDecisions",
+      "type": "ui.Decisions",
       "width": 280,
       "height": 172,
       "x": 2040.0,
-      "y": 4200.0,
+      "y": 4300.0,
       "connections": {
-        "inputs": {
-          "decisions": [
-            {
-              "nodeId": "decisions",
-              "portName": "out"
-            }
-          ]
-        },
+        "inputs": {},
         "outputs": {
           "self": [
             {
@@ -3627,14 +3557,7 @@
           ]
         }
       },
-      "inputData": {
-        "title": {
-          "value": "DECISIONS"
-        },
-        "emptyLabel": {
-          "value": "No decisions yet"
-        }
-      }
+      "inputData": {}
     },
     "decisionPane": {
       "id": "decisionPane",
@@ -3647,7 +3570,7 @@
         "inputs": {
           "components": [
             {
-              "nodeId": "decisionList",
+              "nodeId": "liveDecisions",
               "portName": "self"
             }
           ]
@@ -3663,7 +3586,7 @@
       },
       "inputData": {
         "className": {
-          "value": "min-h-0 flex-[1.15] overflow-auto border-(--line) border-b"
+          "value": "min-h-0 flex-[1.15] border-(--line) border-b"
         }
       }
     },
@@ -3679,7 +3602,7 @@
         "outputs": {
           "self": [
             {
-              "nodeId": "positions",
+              "nodeId": "positionsSection",
               "portName": "components"
             }
           ]
@@ -3687,43 +3610,32 @@
       },
       "inputData": {
         "title": {
-          "value": "Closed round trips"
+          "value": "Open positions"
         }
       }
     },
-    "positionList": {
-      "id": "positionList",
-      "type": "ui.PositionList",
+    "livePositions": {
+      "id": "livePositions",
+      "type": "ui.Positions",
       "width": 280,
       "height": 172,
       "x": 2040.0,
       "y": 4800.0,
       "connections": {
-        "inputs": {
-          "positions": [
-            {
-              "nodeId": "closed",
-              "portName": "out"
-            }
-          ]
-        },
+        "inputs": {},
         "outputs": {
           "self": [
             {
-              "nodeId": "positions",
+              "nodeId": "positionsSection",
               "portName": "components_1"
             }
           ]
         }
       },
-      "inputData": {
-        "emptyLabel": {
-          "value": "No round trips yet"
-        }
-      }
+      "inputData": {}
     },
-    "positions": {
-      "id": "positions",
+    "positionsSection": {
+      "id": "positionsSection",
       "type": "ui.Section",
       "width": 280,
       "height": 172,
@@ -3739,7 +3651,7 @@
           ],
           "components_1": [
             {
-              "nodeId": "positionList",
+              "nodeId": "livePositions",
               "portName": "self"
             }
           ]
@@ -3776,7 +3688,7 @@
           ],
           "components_1": [
             {
-              "nodeId": "positions",
+              "nodeId": "positionsSection",
               "portName": "self"
             }
           ]
@@ -3792,9 +3704,49 @@
       },
       "inputData": {
         "className": {
-          "value": "min-h-0 overflow-hidden bg-(--surface)"
+          "value": "min-h-0 h-full overflow-hidden bg-(--surface) flex flex-col"
         }
       }
+    },
+    "inspector": {
+      "id": "inspector",
+      "type": "ui.KernelInspector",
+      "width": 280,
+      "height": 172,
+      "x": 1700.0,
+      "y": 5400.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "body",
+              "portName": "components"
+            }
+          ]
+        }
+      },
+      "inputData": {}
+    },
+    "thesisModal": {
+      "id": "thesisModal",
+      "type": "ui.ThesisModal",
+      "width": 280,
+      "height": 172,
+      "x": 1700.0,
+      "y": 5600.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "body",
+              "portName": "components_1"
+            }
+          ]
+        }
+      },
+      "inputData": {}
     },
     "grid": {
       "id": "grid",
@@ -3827,8 +3779,8 @@
         "outputs": {
           "self": [
             {
-              "nodeId": "page",
-              "portName": "components"
+              "nodeId": "body",
+              "portName": "components_2"
             }
           ]
         }
@@ -3837,14 +3789,17 @@
         "responsive": {
           "value": false
         },
+        "fullWidth": {
+          "value": true
+        },
         "className": {
-          "value": "h-full min-h-0 min-w-0 flex-1 grid-cols-[282px_minmax(360px,1fr)_332px]"
+          "value": "dashboard-grid grid-cols-[282px_minmax(360px,1fr)_332px] h-full min-h-0 min-w-0 flex-1"
         }
       }
     },
-    "page": {
-      "id": "page",
-      "type": "ui.Flex.Column",
+    "body": {
+      "id": "body",
+      "type": "ui.Flex",
       "width": 280,
       "height": 172,
       "x": 2040.0,
@@ -3853,7 +3808,79 @@
         "inputs": {
           "components": [
             {
+              "nodeId": "inspector",
+              "portName": "self"
+            }
+          ],
+          "components_1": [
+            {
+              "nodeId": "thesisModal",
+              "portName": "self"
+            }
+          ],
+          "components_2": [
+            {
               "nodeId": "grid",
+              "portName": "self"
+            }
+          ]
+        },
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "page",
+              "portName": "components_1"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "fullWidth": {
+          "value": true
+        },
+        "className": {
+          "value": "relative min-h-0 flex-1"
+        }
+      }
+    },
+    "pulse": {
+      "id": "pulse",
+      "type": "ui.Pulse",
+      "width": 280,
+      "height": 172,
+      "x": 1700.0,
+      "y": 5800.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "self": [
+            {
+              "nodeId": "page",
+              "portName": "components"
+            }
+          ]
+        }
+      },
+      "inputData": {}
+    },
+    "page": {
+      "id": "page",
+      "type": "ui.Flex.Column",
+      "width": 280,
+      "height": 172,
+      "x": 2040.0,
+      "y": 5800.0,
+      "connections": {
+        "inputs": {
+          "components": [
+            {
+              "nodeId": "pulse",
+              "portName": "self"
+            }
+          ],
+          "components_1": [
+            {
+              "nodeId": "body",
               "portName": "self"
             }
           ]

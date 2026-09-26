@@ -73,12 +73,14 @@ func (this *defaultListener) Listen() {
 	var gatedCount, idlingCount, lowerSequence, upperSequence int64
 	var handledSequence = this.handledSequence.Load()
 
-	for {
+	for this.running.Load() == stateRunning {
 		lowerSequence = handledSequence + 1
 		upperSequence = this.upstreamBarrier.Load(lowerSequence)
 
 		if lowerSequence <= upperSequence {
-			this.handler.Next(sequenceRange(lowerSequence, upperSequence))
+			if this.handler.Next(sequenceRange(lowerSequence, upperSequence)) == nil {
+				return
+			}
 			this.handledSequence.Store(upperSequence)
 			handledSequence = upperSequence
 			gatedCount = 0

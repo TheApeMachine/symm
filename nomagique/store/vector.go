@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 
+	capnp "capnproto.org/go/capnp/v3"
 	"github.com/theapemachine/errnie"
+	runtime "github.com/theapemachine/symm/nomagique/runtime"
 )
 
 /*
@@ -218,5 +220,89 @@ func (server *VectorServer) Done(ctx context.Context, call Vector_done) error {
 		}
 	}
 
+	return nil
+}
+
+/* Snapshot serializes the retained vector, excluding transient read requests. */
+func (server *VectorServer) Snapshot(ctx context.Context, call runtime.Snapshot_snapshot) error {
+	message, segment, err := capnp.NewMessage(capnp.SingleSegment(nil))
+	if err != nil {
+		return errnie.Error(err)
+	}
+	defer message.Release()
+	snapshot, err := NewRootVectorSnapshot(segment)
+	if err != nil {
+		return errnie.Error(err)
+	}
+	snapshot.SetWidth(uint32(server.width))
+	if err := snapshot.SetScope(server.scope); err != nil {
+		return errnie.Error(err)
+	}
+	values, err := snapshot.NewValues(int32(len(server.values)))
+	if err != nil {
+		return errnie.Error(err)
+	}
+	for index, value := range server.values {
+		values.Set(index, value)
+	}
+	written, err := snapshot.NewWritten(int32(len(server.written)))
+	if err != nil {
+		return errnie.Error(err)
+	}
+	for index, value := range server.written {
+		written.Set(index, value)
+	}
+	encoded, err := message.Marshal()
+	if err != nil {
+		return errnie.Error(err)
+	}
+	result, err := call.AllocResults()
+	if err != nil {
+		return errnie.Error(err)
+	}
+	return errnie.Error(result.SetData(encoded))
+}
+
+/* Restore validates the entire vector before replacing its retained state. */
+func (server *VectorServer) Restore(ctx context.Context, call runtime.Snapshot_restore) error {
+	encoded, err := call.Args().Data()
+	if err != nil {
+		return errnie.Error(err)
+	}
+	message, err := capnp.Unmarshal(encoded)
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.Validation, "vector: invalid snapshot", err))
+	}
+	defer message.Release()
+	snapshot, err := ReadRootVectorSnapshot(message)
+	if err != nil {
+		return errnie.Error(err)
+	}
+	values, err := snapshot.Values()
+	if err != nil {
+		return errnie.Error(err)
+	}
+	written, err := snapshot.Written()
+	if err != nil {
+		return errnie.Error(err)
+	}
+	scope, err := snapshot.Scope()
+	if err != nil {
+		return errnie.Error(err)
+	}
+	width := int(snapshot.Width())
+	if values.Len() != written.Len()*width || (width == 0 && written.Len() != 0) || (server.width != 0 && server.width != width) {
+		return errnie.Error(errnie.Err(errnie.Validation, "vector: snapshot dimensions differ", nil))
+	}
+	restored := make([]float64, values.Len())
+	for index := range values.Len() {
+		restored[index] = values.At(index)
+	}
+	known := make([]bool, written.Len())
+	for index := range written.Len() {
+		known[index] = written.At(index)
+	}
+	server.values, server.written, server.width, server.scope = restored, known, width, scope
+	server.request, server.requested = nil, false
 	return nil
 }

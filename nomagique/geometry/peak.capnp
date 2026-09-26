@@ -34,7 +34,7 @@ $Go.import("github.com/theapemachine/symm/nomagique/geometry");
 # moving is reported and nothing is published. settled.regions names each
 # point's region by its peak's index, which is the peak's original
 # coordinate. settled.vocabulary identifies the partition those names belong
-# to, as a JSON string: the same name under another partition may cover other
+# to, as text: the same name under another partition may cover other
 # ground, so anything that remembers names must remember the vocabulary too.
 interface Peak {
   write @0 (
@@ -57,7 +57,7 @@ struct Watershed {
     moving  @2 :Void;
     settled :group {
       regions    @3 :List(Text);
-      vocabulary @4 :Data;
+      vocabulary @4 :Text;
     }
   }
 }

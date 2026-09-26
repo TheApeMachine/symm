@@ -218,7 +218,9 @@ func generateRegistrySource(schemas map[string]Schema) ([]byte, error) {
 		fmt.Fprintf(&buf, "\tr.Register(%q, Factory{\n", s.Op)
 		fmt.Fprintf(&buf, "\t\tInterfaceID: %s.%s_TypeID,\n", alias, s.Name)
 		buf.WriteString("\t\tNew: func(ctx context.Context, cfg []byte) (capnp.Client, error) {\n")
-		fmt.Fprintf(&buf, "\t\t\treturn capnp.Client(%s.%s_ServerToClient(%s)), nil\n", alias, s.Name, constructorCall)
+		fmt.Fprintf(&buf, "\t\t\tserver := %s.%s_NewServer(%s)\n", alias, s.Name, constructorCall)
+		buf.WriteString("\t\t\tserver.NewArena = func() capnp.Arena { return capnp.MultiSegment(nil) }\n")
+		buf.WriteString("\t\t\treturn capnp.NewClient(server), nil\n")
 		buf.WriteString("\t\t},\n")
 		buf.WriteString("\t})\n")
 	}

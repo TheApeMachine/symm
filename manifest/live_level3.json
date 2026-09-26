@@ -1,115 +1,144 @@
 {
   "id": "live_level3",
-  "name": "Kraken level 3 universe: chunked across 200-symbol shard connections",
+  "name": "Kraken level 3 universe: dynamically instantiated shard nodes",
   "nodes": {
-    "symbols": {
-      "id": "symbols",
-      "type": "transport.Fan",
-      "width": 280,
-      "height": 172,
-      "x": 0.0,
-      "y": 0.0,
+    "factory": {
+      "id": "factory",
+      "type": "factory:live_level3_shard",
       "inputData": {},
       "connections": {
         "inputs": {},
         "outputs": {
-          "out": [
+          "self": [
             {
-              "nodeId": "chunk",
-              "portName": "data"
+              "nodeId": "shards",
+              "portName": "factory"
             }
           ]
         }
       }
     },
-    "chunk": {
-      "id": "chunk",
-      "type": "data.Chunk",
-      "width": 280,
-      "height": 172,
-      "x": 340.0,
-      "y": 0.0,
+    "shards": {
+      "id": "shards",
+      "type": "websocket.Shards",
       "inputData": {
-        "size": {
+        "capacity": {
           "value": 200
+        }
+      },
+      "connections": {
+        "inputs": {
+          "factory": [
+            {
+              "nodeId": "factory",
+              "portName": "self"
+            }
+          ]
         },
-        "endpoint": {
-          "value": "wss://ws-l3.kraken.com/v2"
+        "outputs": {
+          "frame.read": [
+            {
+              "nodeId": "received",
+              "portName": "data"
+            }
+          ],
+          "frame.provenance": [
+            {
+              "nodeId": "received",
+              "portName": "json"
+            }
+          ]
+        }
+      }
+    },
+    "received": {
+      "id": "received",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "capture"
         }
       },
       "connections": {
         "inputs": {
           "data": [
             {
-              "nodeId": "symbols",
-              "portName": "out"
+              "nodeId": "shards",
+              "portName": "frame.read"
+            }
+          ],
+          "json": [
+            {
+              "nodeId": "shards",
+              "portName": "frame.provenance"
             }
           ]
         },
         "outputs": {
-          "out0": [
+          "out": [
             {
-              "nodeId": "shard_0",
-              "portName": "symbols.data"
-            }
-          ],
-          "endpoint0": [
-            {
-              "nodeId": "shard_0",
-              "portName": "socket.endpoint"
-            }
-          ],
-          "out1": [
-            {
-              "nodeId": "shard_1",
-              "portName": "symbols.data"
-            }
-          ],
-          "endpoint1": [
-            {
-              "nodeId": "shard_1",
-              "portName": "socket.endpoint"
-            }
-          ],
-          "out2": [
-            {
-              "nodeId": "shard_2",
-              "portName": "symbols.data"
-            }
-          ],
-          "endpoint2": [
-            {
-              "nodeId": "shard_2",
-              "portName": "socket.endpoint"
+              "nodeId": "classified",
+              "portName": "data"
             }
           ]
         }
       }
     },
-    "shard_0": {
-      "id": "shard_0",
-      "type": "definition:live_level3_shard",
-      "width": 320,
-      "height": 200,
-      "x": 680.0,
-      "y": 0.0,
+    "classified": {
+      "id": "classified",
+      "type": "data.Insert",
+      "inputData": {
+        "path": {
+          "value": "_level3"
+        },
+        "json": {
+          "value": "\"level3\""
+        }
+      },
       "connections": {
         "inputs": {
-          "symbols.data": [
+          "data": [
             {
-              "nodeId": "chunk",
-              "portName": "out0"
-            }
-          ],
-          "socket.endpoint": [
-            {
-              "nodeId": "chunk",
-              "portName": "endpoint0"
+              "nodeId": "received",
+              "portName": "out"
             }
           ]
         },
         "outputs": {
-          "books.out": [
+          "out": [
+            {
+              "nodeId": "books",
+              "portName": "data"
+            }
+          ]
+        }
+      }
+    },
+    "books": {
+      "id": "books",
+      "type": "data.Filter",
+      "inputData": {
+        "path": {
+          "value": "channel"
+        },
+        "operator": {
+          "value": "=="
+        },
+        "referencePath": {
+          "value": "_level3"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "data": [
+            {
+              "nodeId": "classified",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
             {
               "nodeId": "records",
               "portName": "data_0"
@@ -118,103 +147,26 @@
         }
       }
     },
-    "shard_1": {
-      "id": "shard_1",
-      "type": "definition:live_level3_shard",
-      "width": 320,
-      "height": 200,
-      "x": 680.0,
-      "y": 250.0,
-      "connections": {
-        "inputs": {
-          "symbols.data": [
-            {
-              "nodeId": "chunk",
-              "portName": "out1"
-            }
-          ],
-          "socket.endpoint": [
-            {
-              "nodeId": "chunk",
-              "portName": "endpoint1"
-            }
-          ]
-        },
-        "outputs": {
-          "books.out": [
-            {
-              "nodeId": "records",
-              "portName": "data_1"
-            }
-          ]
-        }
-      }
-    },
-    "shard_2": {
-      "id": "shard_2",
-      "type": "definition:live_level3_shard",
-      "width": 320,
-      "height": 200,
-      "x": 680.0,
-      "y": 500.0,
-      "connections": {
-        "inputs": {
-          "symbols.data": [
-            {
-              "nodeId": "chunk",
-              "portName": "out2"
-            }
-          ],
-          "socket.endpoint": [
-            {
-              "nodeId": "chunk",
-              "portName": "endpoint2"
-            }
-          ]
-        },
-        "outputs": {
-          "books.out": [
-            {
-              "nodeId": "records",
-              "portName": "data_2"
-            }
-          ]
-        }
-      }
-    },
     "records": {
       "id": "records",
       "type": "data.Iterate",
-      "width": 280,
-      "height": 172,
-      "x": 1050.0,
-      "y": 250.0,
       "inputData": {
         "path": {
           "value": "data"
         },
         "envelope": {
           "value": true
+        },
+        "indexPath": {
+          "value": "capture.record"
         }
       },
       "connections": {
         "inputs": {
           "data_0": [
             {
-              "nodeId": "shard_0",
-              "portName": "books.out"
-            }
-          ],
-          "data_1": [
-            {
-              "nodeId": "shard_1",
-              "portName": "books.out"
-            }
-          ],
-          "data_2": [
-            {
-              "nodeId": "shard_2",
-              "portName": "books.out"
+              "nodeId": "books",
+              "portName": "out"
             }
           ]
         },

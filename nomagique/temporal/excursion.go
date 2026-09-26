@@ -2,6 +2,7 @@ package temporal
 
 import (
 	"context"
+	"encoding/json"
 	"math"
 
 	"github.com/theapemachine/errnie"
@@ -21,6 +22,12 @@ All comparisons use log returns; the reported excursion remains a price ratio.
 */
 type ExcursionServer struct {
 	*runtime.System
+	epoch            int64
+	scope            string
+	sequence         int64
+	anchorSequence   int64
+	ignitionSequence int64
+	extremumSequence int64
 
 	// The path, held as the three positions a move is made of rather than as
 	// the steps between them. History is not retained: a leg is summarised by
@@ -54,16 +61,20 @@ type ExcursionServer struct {
 	legSquares float64
 
 	reported struct {
-		anchorIndex   int
-		ignitionIndex int
-		extremumIndex int
-		anchor        float64
-		ignition      float64
-		extremum      float64
-		excursion     float64
-		qualifying    float64
-		confirmed     bool
-		found         bool
+		anchorSequence       int64
+		ignitionSequence     int64
+		extremumSequence     int64
+		confirmationSequence int64
+		anchorIndex          int
+		ignitionIndex        int
+		extremumIndex        int
+		anchor               float64
+		ignition             float64
+		extremum             float64
+		excursion            float64
+		qualifying           float64
+		confirmed            bool
+		found                bool
 	}
 }
 
@@ -81,7 +92,22 @@ func NewExcursion(ctx context.Context) *ExcursionServer {
 Write advances the path by one step.
 */
 func (server *ExcursionServer) Write(ctx context.Context, call Excursion_write) error {
-	return server.Step(call.Args().Value())
+	args := call.Args()
+	scope, err := args.Scope()
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.Validation, "excursion: scope", err))
+	}
+	if args.Epoch() < 0 || args.Sequence() < 0 {
+		return errnie.Error(errnie.Err(errnie.Validation, "excursion: invalid stamp", nil))
+	}
+	if server.epoch != args.Epoch() || server.scope != scope {
+		*server = ExcursionServer{System: server.System, rising: true, epoch: args.Epoch(), scope: scope}
+	}
+	if server.opened && server.epoch > 0 && args.Sequence() <= server.sequence {
+		return errnie.Error(errnie.Err(errnie.Validation, "excursion: sequence must advance", nil))
+	}
+	server.sequence = args.Sequence()
+	return server.Step(args.Value())
 }
 
 /* Step advances the canonical excursion calculation with one positive observation. */
@@ -97,11 +123,15 @@ func (server *ExcursionServer) Step(value float64) error {
 		))
 	}
 
+	if server.epoch == 0 {
+		server.sequence = int64(server.observations)
+	}
 	server.observations++
 	server.observe(value)
 
 	if !server.opened {
 		server.anchor, server.ignition, server.extremum = value, value, value
+		server.anchorSequence, server.ignitionSequence, server.extremumSequence = server.sequence, server.sequence, server.sequence
 		server.opened = true
 		return nil
 	}
@@ -195,12 +225,14 @@ func (server *ExcursionServer) step(value, confirm, qualifying float64) {
 	if server.rising && travelled >= 0 {
 		server.extremum = value
 		server.extremumIndex = server.observations - 1
+		server.extremumSequence = server.sequence
 		return
 	}
 
 	if !server.rising && travelled <= 0 {
 		server.extremum = value
 		server.extremumIndex = server.observations - 1
+		server.extremumSequence = server.sequence
 		return
 	}
 
@@ -210,9 +242,12 @@ func (server *ExcursionServer) step(value, confirm, qualifying float64) {
 
 	server.close(qualifying)
 
+	server.anchorSequence = server.ignitionSequence
+	server.ignitionSequence = server.extremumSequence
 	server.anchorIndex = server.ignitionIndex
 	server.ignitionIndex = server.extremumIndex
 	server.extremumIndex = server.observations - 1
+	server.extremumSequence = server.sequence
 	server.anchor = server.ignition
 	server.ignition = server.extremum
 	server.extremum = value
@@ -233,6 +268,10 @@ func (server *ExcursionServer) close(qualifying float64) {
 		return
 	}
 
+	server.reported.anchorSequence = server.anchorSequence
+	server.reported.ignitionSequence = server.ignitionSequence
+	server.reported.extremumSequence = server.extremumSequence
+	server.reported.confirmationSequence = server.sequence
 	server.reported.anchorIndex = server.anchorIndex
 	server.reported.ignitionIndex = server.ignitionIndex
 	server.reported.extremumIndex = server.extremumIndex
@@ -262,6 +301,10 @@ func (server *ExcursionServer) Done(ctx context.Context, call Excursion_done) er
 		))
 	}
 
+	results.SetEpoch(server.epoch)
+	if err := results.SetScope(server.scope); err != nil {
+		return errnie.Error(err)
+	}
 	results.SetSteps(int64(server.count))
 	results.SetLegs(server.legs)
 	results.SetQualifying(server.reported.qualifying)
@@ -285,6 +328,31 @@ func (server *ExcursionServer) Done(ctx context.Context, call Excursion_done) er
 	move.SetExtremum(server.reported.extremum)
 	move.SetExcursion(server.reported.excursion)
 	move.SetConfirmed(server.reported.confirmed)
+	move.SetAnchorSequence(server.reported.anchorSequence)
+	move.SetIgnitionSequence(server.reported.ignitionSequence)
+	move.SetExtremumSequence(server.reported.extremumSequence)
+	move.SetConfirmationSequence(server.reported.confirmationSequence)
+	hasPrecursor := server.reported.anchorSequence < server.reported.ignitionSequence
+	move.SetHasPrecursor(hasPrecursor)
+	row, err := json.Marshal(struct {
+		Epoch                int64   `json:"epoch"`
+		HasPrecursor         bool    `json:"has_precursor"`
+		Symbol               string  `json:"symbol"`
+		AnchorSequence       int64   `json:"anchor_sequence"`
+		IgnitionSequence     int64   `json:"ignition_sequence"`
+		ExtremumSequence     int64   `json:"extremum_sequence"`
+		ConfirmationSequence int64   `json:"confirmation_sequence"`
+		Anchor               float64 `json:"anchor"`
+		Ignition             float64 `json:"ignition"`
+		Extremum             float64 `json:"extremum"`
+		Excursion            float64 `json:"excursion"`
+	}{server.epoch, hasPrecursor, server.scope, server.reported.anchorSequence, server.reported.ignitionSequence, server.reported.extremumSequence, server.reported.confirmationSequence, server.reported.anchor, server.reported.ignition, server.reported.extremum, server.reported.excursion})
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.Validation, "excursion: encode fragment", err))
+	}
+	if err := move.SetRow(row); err != nil {
+		return errnie.Error(err)
+	}
 
 	server.reported.found = false
 	return nil

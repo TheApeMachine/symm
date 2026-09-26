@@ -38,6 +38,16 @@ describe("the UI graphs that ship", () => {
 				expect(compiled.diagnostics).toEqual([]);
 			});
 
+			it("inspects tree", () => {
+				if (name === "ui_dashboard") {
+					const printTree = (n: any, indent = 0) => {
+						console.log("  ".repeat(indent) + `${n.id ?? ""} (${n.name}): className=${n.className ?? n.props?.className ?? ""}`);
+						for (const c of n.children ?? []) printTree(c, indent + 1);
+					};
+					for (const c of compiled.routes[0].components) printTree(c);
+				}
+			});
+
 			it("declares the path it draws", () => {
 				expect(compiled.routes).toHaveLength(1);
 				expect(compiled.routes[0].path).toMatch(/^\//);

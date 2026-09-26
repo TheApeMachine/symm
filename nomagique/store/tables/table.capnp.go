@@ -495,17 +495,22 @@ func (s IcebergTable_done_Results) Message() *capnp.Message {
 func (s IcebergTable_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s IcebergTable_done_Results) Out() ([]byte, error) {
+func (s IcebergTable_done_Results) Table() (string, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return []byte(p.Data()), err
+	return p.Text(), err
 }
 
-func (s IcebergTable_done_Results) HasOut() bool {
+func (s IcebergTable_done_Results) HasTable() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s IcebergTable_done_Results) SetOut(v []byte) error {
-	return capnp.Struct(s).SetData(0, v)
+func (s IcebergTable_done_Results) TableBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return p.TextBytes(), err
+}
+
+func (s IcebergTable_done_Results) SetTable(v string) error {
+	return capnp.Struct(s).SetText(0, v)
 }
 
 func (s IcebergTable_done_Results) Pending() int64 {

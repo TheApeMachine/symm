@@ -161,6 +161,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.float64({ name: "x1", label: "x1" }),
 			ports.float64({ name: "x2", label: "x2" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -191,6 +192,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports["[]byte"]({ name: "state", label: "state" }),
 			ports.Status({ name: "status", label: "status" }),
 			ports.float64({ name: "support", label: "support" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -204,6 +206,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -218,6 +221,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -231,6 +235,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -244,6 +249,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports["[]byte"]({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -257,6 +263,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports["[]byte"]({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -271,6 +278,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports["[]byte"]({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -284,6 +292,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports["[]byte"]({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -298,6 +307,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.float64({ name: "out", label: "out" }),
 			ports.int64({ name: "undefined", label: "undefined" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -311,6 +321,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -324,6 +335,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -336,6 +348,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -348,6 +361,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -362,6 +376,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -400,6 +415,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.int64({ name: "idle", label: "idle" }),
 			ports.data({ name: "read.index", label: "read.index" }),
 			ports.data({ name: "read.latest", label: "read.latest" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -413,6 +429,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -425,6 +442,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -437,6 +455,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -450,6 +469,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.float64({ name: "out", label: "out" }),
 			ports.int64({ name: "undefined", label: "undefined" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -463,6 +483,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -476,6 +497,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -488,6 +510,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -501,6 +524,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -514,6 +538,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.float64({ name: "out", label: "out" }),
 			ports.int64({ name: "undefined", label: "undefined" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -527,6 +552,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -541,6 +567,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -553,6 +580,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -566,6 +594,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.float64({ name: "out", label: "out" }),
 			ports.int64({ name: "undefined", label: "undefined" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -578,6 +607,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -590,6 +620,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -603,6 +634,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports["[]byte"]({ name: "current", label: "current" }),
 			ports["[]byte"]({ name: "precursor", label: "precursor" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -629,6 +661,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports["[]byte"]({ name: "class", label: "class" }),
 			ports.int64({ name: "count", label: "count" }),
 			ports.float64({ name: "prob", label: "prob" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -643,6 +676,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports["[]byte"]({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -662,8 +696,40 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports["[]byte"]({ name: "runnerUp", label: "runnerUp" }),
 			ports.int64({ name: "support", label: "support" }),
 			ports["[]byte"]({ name: "winner", label: "winner" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
+	config.addNodeType({
+		type: "cognition.ContextBuilder",
+		label: "Context Builder",
+		category: "cognition",
+		initialWidth: 340,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.bool({ name: "replay", label: "replay" }),
+				ports.string({ name: "symbol", label: "symbol" }),
+				ports.string({ name: "vocabulary", label: "vocabulary" }),
+			];
+			const wiredHistory = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("history"));
+			for (let index = 0; index < Math.max(1, wiredHistory.length + 1); index++) {
+				const portName = index === 0 ? "history" : `history_${index}`;
+				dynamicPorts.push(ports.string({ name: portName, label: portName }));
+			}
+			const wiredTokens = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("tokens"));
+			for (let index = 0; index < Math.max(1, wiredTokens.length + 1); index++) {
+				const portName = index === 0 ? "tokens" : `tokens_${index}`;
+				dynamicPorts.push(ports.string({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.int64({ name: "idle", label: "idle" }),
+			ports.data({ name: "ready.flat", label: "ready.flat" }),
+			ports.data({ name: "ready.held", label: "ready.held" }),
+			ports.Capability({ name: "self", label: "self" }),
+		],
+	});
+
 	config.addNodeType({
 		type: "cognition.Lookahead",
 		label: "Lookahead",
@@ -675,6 +741,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.float64({ name: "logP", label: "logP" }),
 			ports["[]byte"]({ name: "seq", label: "seq" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -689,6 +756,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports["[]byte"]({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -703,6 +771,23 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports["[]byte"]({ name: "class", label: "class" }),
 			ports["[]byte"]({ name: "contextBytes", label: "contextBytes" }),
 			ports.bool({ name: "ok", label: "ok" }),
+			ports.Capability({ name: "self", label: "self" }),
+		],
+	});
+	config.addNodeType({
+		type: "cognition.Precursor",
+		label: "Precursor",
+		category: "cognition",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.data({ name: "context", label: "context" }),
+			ports.Capability({ name: "model", label: "model" }),
+		],
+		outputs: (ports) => [
+			ports.int64({ name: "idle", label: "idle" }),
+			ports.string({ name: "ready.key", label: "ready.key" }),
+			ports.bool({ name: "ready.prefix", label: "ready.prefix" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -715,6 +800,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports["[]byte"]({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -727,6 +813,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -750,9 +837,9 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.int64({ name: "idle", label: "idle" }),
 			ports.int64({ name: "step.depth", label: "step.depth" }),
-			ports["[]byte"]({ name: "step.out", label: "step.out" }),
 			ports.string({ name: "step.path", label: "step.path" }),
 			ports.data({ name: "step.sequence", label: "step.sequence" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -768,6 +855,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.int64({ name: "count", label: "count" }),
 			ports.int64({ name: "mass", label: "mass" }),
 			ports.int64({ name: "writeStep", label: "writeStep" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -793,6 +881,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.int64({ name: "count", label: "count" }),
 			ports["[]byte"]({ name: "out", label: "out" }),
 			ports.bool({ name: "ready", label: "ready" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -810,6 +899,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.bool({ name: "error", label: "error" }),
 			ports.bool({ name: "ready", label: "ready" }),
 			ports.bool({ name: "waiting", label: "waiting" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -824,6 +914,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports["[]byte"]({ name: "out", label: "out" }),
 			ports.bool({ name: "ready", label: "ready" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -840,6 +931,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.bool({ name: "done", label: "done" }),
 			ports.int64({ name: "index", label: "index" }),
 			ports["[]byte"]({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -854,6 +946,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.bool({ name: "matched", label: "matched" }),
 			ports["[]byte"]({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -869,6 +962,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.bool({ name: "fired", label: "fired" }),
 			ports["[]byte"]({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -884,6 +978,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports["[]byte"]({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -910,6 +1005,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.int64({ name: "absent", label: "absent" }),
 			ports["[]byte"]({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -923,6 +1019,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports["[]byte"]({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -935,6 +1032,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports["[]byte"]({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -948,6 +1046,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports["[]byte"]({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -961,6 +1060,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports["[]byte"]({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -973,6 +1073,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports["[]byte"]({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -985,6 +1086,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports["[]byte"]({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -998,6 +1100,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports["[]byte"]({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -1034,6 +1137,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		},
 		outputs: (ports) => [
 			ports["[]byte"]({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -1048,6 +1152,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.data({ name: "rows", label: "rows" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -1057,13 +1162,19 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		initialWidth: 340,
 		inputs: (ports) => [
 			ports["[]byte"]({ name: "data", label: "data" }),
+			ports.string({ name: "endpoint", label: "endpoint" }),
 			ports.int64({ name: "size", label: "size" }),
 		],
 		outputs: (ports) => [
+			ports.string({ name: "endpoint0", label: "endpoint0" }),
+			ports.string({ name: "endpoint1", label: "endpoint1" }),
+			ports.string({ name: "endpoint2", label: "endpoint2" }),
+			ports.string({ name: "endpoint3", label: "endpoint3" }),
 			ports["[]byte"]({ name: "out0", label: "out0" }),
 			ports["[]byte"]({ name: "out1", label: "out1" }),
 			ports["[]byte"]({ name: "out2", label: "out2" }),
 			ports["[]byte"]({ name: "out3", label: "out3" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -1086,6 +1197,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.int64({ name: "idle", label: "idle" }),
 			ports["[]byte"]({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -1109,6 +1221,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.int64({ name: "idle", label: "idle" }),
 			ports["[]byte"]({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -1131,6 +1244,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.bool({ name: "found", label: "found" }),
 			ports.float64({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -1144,6 +1258,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports["[]byte"]({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -1164,6 +1279,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.Status({ name: "status", label: "status" }),
 			ports.string({ name: "text", label: "text" }),
 			ports.int64({ name: "unsigned", label: "unsigned" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -1183,6 +1299,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.bool({ name: "passed", label: "passed" }),
 			ports.int64({ name: "rejected", label: "rejected" }),
 			ports.Status({ name: "status", label: "status" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -1204,6 +1321,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.int64({ name: "idle", label: "idle" }),
 			ports["[]byte"]({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -1214,8 +1332,19 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		initialWidth: 340,
 		inputs: (ports) => (_inputData, connections) => {
 			const dynamicPorts = [
+				ports.int64({ name: "epoch", label: "epoch" }),
 				ports.string({ name: "families", label: "families" }),
+				ports["[]byte"]({ name: "observation", label: "observation" }),
+				ports.bool({ name: "requireProvenance", label: "requireProvenance" }),
+				ports["[]byte"]({ name: "row", label: "row" }),
+				ports.string({ name: "scope", label: "scope" }),
+				ports.int64({ name: "sequence", label: "sequence" }),
 			];
+			const wiredIdentities = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("identities"));
+			for (let index = 0; index < Math.max(1, wiredIdentities.length + 1); index++) {
+				const portName = index === 0 ? "identities" : `identities_${index}`;
+				dynamicPorts.push(ports.string({ name: portName, label: portName }));
+			}
 			const wiredPresent = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("present"));
 			for (let index = 0; index < Math.max(1, wiredPresent.length + 1); index++) {
 				const portName = index === 0 ? "present" : `present_${index}`;
@@ -1229,11 +1358,18 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			return dynamicPorts;
 		},
 		outputs: (ports) => [
+			ports.int64({ name: "epoch", label: "epoch" }),
+			ports.data({ name: "epochs", label: "epochs" }),
 			ports.data({ name: "gathered.present", label: "gathered.present" }),
 			ports.data({ name: "gathered.values", label: "gathered.values" }),
 			ports.int64({ name: "idle", label: "idle" }),
 			ports.string({ name: "phase", label: "phase" }),
 			ports["[]byte"]({ name: "readiness", label: "readiness" }),
+			ports["[]byte"]({ name: "row", label: "row" }),
+			ports.string({ name: "scope", label: "scope" }),
+			ports.int64({ name: "sequence", label: "sequence" }),
+			ports.data({ name: "sequences", label: "sequences" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -1256,6 +1392,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.bool({ name: "inserted", label: "inserted" }),
 			ports["[]byte"]({ name: "out", label: "out" }),
 			ports.Status({ name: "status", label: "status" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -1287,6 +1424,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports["[]byte"]({ name: "out", label: "out" }),
 			ports.int64({ name: "pending", label: "pending" }),
 			ports.Status({ name: "status", label: "status" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -1304,6 +1442,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.int64({ name: "count", label: "count" }),
 			ports["[]byte"]({ name: "out", label: "out" }),
 			ports.Status({ name: "status", label: "status" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -1335,6 +1474,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports["[]byte"]({ name: "read", label: "read" }),
 			ports.Status({ name: "status", label: "status" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -1350,6 +1490,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports["[]byte"]({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -1365,6 +1506,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports["[]byte"]({ name: "read", label: "read" }),
 			ports.Status({ name: "status", label: "status" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -1386,6 +1528,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.int64({ name: "idle", label: "idle" }),
 			ports["[]byte"]({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -1406,6 +1549,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "maturity", label: "maturity" }),
 			ports.float64({ name: "snr", label: "snr" }),
 			ports.bool({ name: "snrDefined", label: "snrDefined" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -1426,6 +1570,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "out", label: "out" }),
 			ports.bool({ name: "ready", label: "ready" }),
 			ports.Status({ name: "status", label: "status" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -1459,6 +1604,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "nsec", label: "nsec" }),
 			ports.float64({ name: "sec", label: "sec" }),
 			ports.float64({ name: "value", label: "value" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -1475,6 +1621,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports["[]byte"]({ name: "grown.candidates", label: "grown.candidates" }),
 			ports["[]byte"]({ name: "grown.root", label: "grown.root" }),
 			ports.int64({ name: "idle", label: "idle" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -1497,6 +1644,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.int64({ name: "idle", label: "idle" }),
 			ports.data({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -1519,6 +1667,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.float64({ name: "deriv", label: "deriv" }),
 			ports.float64({ name: "deriv2", label: "deriv2" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -1542,6 +1691,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.data({ name: "backward", label: "backward" }),
 			ports.data({ name: "central", label: "central" }),
 			ports.data({ name: "forward", label: "forward" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -1567,6 +1717,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		},
 		outputs: (ports) => [
 			ports.data({ name: "gradient", label: "gradient" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -1593,6 +1744,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		},
 		outputs: (ports) => [
 			ports.data({ name: "hessian", label: "hessian" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -1620,6 +1772,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		},
 		outputs: (ports) => [
 			ports.data({ name: "jacobian", label: "jacobian" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -1645,6 +1798,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		},
 		outputs: (ports) => [
 			ports.float64({ name: "laplacian", label: "laplacian" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -1673,6 +1827,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.data({ name: "mean", label: "mean" }),
 			ports.float64({ name: "prob", label: "prob" }),
 			ports.data({ name: "rand", label: "rand" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -1698,6 +1853,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		},
 		outputs: (ports) => [
 			ports.float64({ name: "kl", label: "kl" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -1740,6 +1896,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "prob", label: "prob" }),
 			ports.data({ name: "quantile", label: "quantile" }),
 			ports.data({ name: "rand", label: "rand" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -1776,6 +1933,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		},
 		outputs: (ports) => [
 			ports.float64({ name: "bhattacharyya", label: "bhattacharyya" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -1812,6 +1970,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		},
 		outputs: (ports) => [
 			ports.float64({ name: "crossEntropy", label: "crossEntropy" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -1848,6 +2007,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		},
 		outputs: (ports) => [
 			ports.float64({ name: "hellinger", label: "hellinger" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -1884,6 +2044,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		},
 		outputs: (ports) => [
 			ports.float64({ name: "kl", label: "kl" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -1915,6 +2076,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		},
 		outputs: (ports) => [
 			ports.float64({ name: "logProb", label: "logProb" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -1952,6 +2114,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		},
 		outputs: (ports) => [
 			ports.float64({ name: "renyi", label: "renyi" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -1988,6 +2151,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		},
 		outputs: (ports) => [
 			ports.float64({ name: "wasserstein", label: "wasserstein" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -2024,6 +2188,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.data({ name: "mean", label: "mean" }),
 			ports.float64({ name: "prob", label: "prob" }),
 			ports.data({ name: "rand", label: "rand" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -2066,6 +2231,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "prob", label: "prob" }),
 			ports.data({ name: "quantile", label: "quantile" }),
 			ports.data({ name: "rand", label: "rand" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -2102,6 +2268,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		},
 		outputs: (ports) => [
 			ports.float64({ name: "bhattacharyya", label: "bhattacharyya" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -2138,6 +2305,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		},
 		outputs: (ports) => [
 			ports.float64({ name: "kl", label: "kl" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -2154,6 +2322,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.bool({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -2173,6 +2342,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		},
 		outputs: (ports) => [
 			ports.data({ name: "distance", label: "distance" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -2245,8 +2415,9 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.data({ name: "index", label: "index" }),
 			ports.int64({ name: "moving", label: "moving" }),
 			ports.data({ name: "settled.regions", label: "settled.regions" }),
-			ports["[]byte"]({ name: "settled.vocabulary", label: "settled.vocabulary" }),
+			ports.string({ name: "settled.vocabulary", label: "settled.vocabulary" }),
 			ports.data({ name: "state", label: "state" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -2308,6 +2479,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.data({ name: "index", label: "index" }),
 			ports.data({ name: "positions", label: "positions" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -2339,6 +2511,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.data({ name: "distances", label: "distances" }),
 			ports.int64({ name: "nodeCount", label: "nodeCount" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -2370,6 +2543,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.data({ name: "nodes", label: "nodes" }),
 			ports.data({ name: "scores", label: "scores" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -2401,6 +2575,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.data({ name: "nodes", label: "nodes" }),
 			ports.data({ name: "scores", label: "scores" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -2425,6 +2600,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.data({ name: "joint", label: "joint" }),
 			ports.data({ name: "pairs", label: "pairs" }),
 			ports.data({ name: "toNodes", label: "toNodes" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -2453,6 +2629,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.data({ name: "componentSizes", label: "componentSizes" }),
 			ports.data({ name: "memberOf", label: "memberOf" }),
 			ports.data({ name: "members", label: "members" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -2479,6 +2656,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.int64({ name: "cycleCount", label: "cycleCount" }),
 			ports.bool({ name: "hasCycles", label: "hasCycles" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -2506,6 +2684,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "kept", label: "kept" }),
 			ports.data({ name: "toNodes", label: "toNodes" }),
 			ports.data({ name: "weights", label: "weights" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -2534,6 +2713,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.data({ name: "authorities", label: "authorities" }),
 			ports.data({ name: "hubs", label: "hubs" }),
 			ports.data({ name: "nodes", label: "nodes" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -2566,6 +2746,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.data({ name: "mstFrom", label: "mstFrom" }),
 			ports.data({ name: "mstTo", label: "mstTo" }),
 			ports.float64({ name: "totalWeight", label: "totalWeight" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -2594,6 +2775,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.data({ name: "nodes", label: "nodes" }),
 			ports.data({ name: "ranks", label: "ranks" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -2627,6 +2809,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.data({ name: "path", label: "path" }),
 			ports.float64({ name: "weight", label: "weight" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -2653,6 +2836,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.bool({ name: "hasCycle", label: "hasCycle" }),
 			ports.data({ name: "order", label: "order" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -2675,6 +2859,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		},
 		outputs: (ports) => [
 			ports.data({ name: "branching", label: "branching" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -2708,6 +2893,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		},
 		outputs: (ports) => [
 			ports.data({ name: "compensator", label: "compensator" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -2730,6 +2916,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.bool({ name: "defined", label: "defined" }),
 			ports.data({ name: "descendants", label: "descendants" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -2762,6 +2949,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.data({ name: "lower", label: "lower" }),
 			ports.data({ name: "seed", label: "seed" }),
 			ports.data({ name: "upper", label: "upper" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -2784,6 +2972,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "origin", label: "origin" }),
 			ports.float64({ name: "span", label: "span" }),
 			ports.data({ name: "times", label: "times" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -2811,6 +3000,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		},
 		outputs: (ports) => [
 			ports.data({ name: "support", label: "support" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -2842,6 +3032,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		},
 		outputs: (ports) => [
 			ports.data({ name: "intensity", label: "intensity" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -2872,6 +3063,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.data({ name: "decayDerivative", label: "decayDerivative" }),
 			ports.data({ name: "support", label: "support" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -2923,6 +3115,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.bool({ name: "defined", label: "defined" }),
 			ports.data({ name: "gradient", label: "gradient" }),
 			ports.float64({ name: "value", label: "value" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -2957,6 +3150,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "decay", label: "decay" }),
 			ports.data({ name: "excitation", label: "excitation" }),
 			ports.data({ name: "jacobian", label: "jacobian" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -2978,6 +3172,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		},
 		outputs: (ports) => [
 			ports.float64({ name: "radius", label: "radius" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -3005,6 +3200,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.bool({ name: "defined", label: "defined" }),
 			ports.data({ name: "intensity", label: "intensity" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -3030,6 +3226,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports["[]byte"]({ name: "out", label: "out" }),
 			ports.int64({ name: "status", label: "status" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -3039,13 +3236,17 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		category: "http",
 		initialWidth: 340,
 		inputs: (ports) => [
+			ports.string({ name: "address", label: "address" }),
 			ports["[]byte"]({ name: "data", label: "data" }),
 			ports.string({ name: "path", label: "path" }),
+			ports.Capability({ name: "query", label: "query" }),
+			ports.string({ name: "routes", label: "routes" }),
 			ports.int64({ name: "status", label: "status" }),
 		],
 		outputs: (ports) => [
 			ports["[]byte"]({ name: "out", label: "out" }),
 			ports.Status({ name: "status", label: "status" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -3071,6 +3272,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.data({ name: "cumulative", label: "cumulative" }),
 			ports.float64({ name: "total", label: "total" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -3092,6 +3294,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		},
 		outputs: (ports) => [
 			ports.float64({ name: "integral", label: "integral" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -3115,6 +3318,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		},
 		outputs: (ports) => [
 			ports.float64({ name: "integral", label: "integral" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -3136,6 +3340,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		},
 		outputs: (ports) => [
 			ports.float64({ name: "integral", label: "integral" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -3161,6 +3366,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		},
 		outputs: (ports) => [
 			ports.float64({ name: "integral", label: "integral" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -3186,6 +3392,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		},
 		outputs: (ports) => [
 			ports.float64({ name: "integral", label: "integral" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -3200,6 +3407,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.int64({ name: "idle", label: "idle" }),
 			ports.data({ name: "records", label: "records" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -3215,6 +3423,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.float64({ name: "effect", label: "effect" }),
 			ports.float64({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -3228,6 +3437,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -3243,6 +3453,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.float64({ name: "effect", label: "effect" }),
 			ports.float64({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -3256,6 +3467,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -3269,6 +3481,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -3285,6 +3498,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "out", label: "out" }),
 			ports.float64({ name: "skewness", label: "skewness" }),
 			ports.float64({ name: "variance", label: "variance" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -3298,6 +3512,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -3313,6 +3528,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "intercept", label: "intercept" }),
 			ports.float64({ name: "r2", label: "r2" }),
 			ports.float64({ name: "slope", label: "slope" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -3327,6 +3543,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -3339,6 +3556,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -3355,6 +3573,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -3368,17 +3587,20 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
 		type: "learning.ResonanceManifold",
 		label: "Resonance Manifold",
 		category: "learning",
-		initialWidth: 280,
+		initialWidth: 340,
 		inputs: (ports) => [
 			ports.data({ name: "command", label: "command" }),
 		],
-		outputs: [],
+		outputs: (ports) => [
+			ports.Capability({ name: "self", label: "self" }),
+		],
 	});
 	config.addNodeType({
 		type: "learning.TaskLearner",
@@ -3392,6 +3614,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -3407,6 +3630,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -3420,6 +3644,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.data({ name: "c", label: "c" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -3432,6 +3657,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.data({ name: "l", label: "l" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -3444,6 +3670,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "det", label: "det" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -3457,6 +3684,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.data({ name: "c", label: "c" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -3470,6 +3698,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "dot", label: "dot" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -3483,6 +3712,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.data({ name: "values", label: "values" }),
 			ports.data({ name: "vectors", label: "vectors" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -3495,6 +3725,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.data({ name: "c", label: "c" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -3508,6 +3739,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.data({ name: "l", label: "l" }),
 			ports.data({ name: "u", label: "u" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -3521,6 +3753,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.data({ name: "y", label: "y" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -3534,6 +3767,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.data({ name: "c", label: "c" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -3547,6 +3781,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.data({ name: "c", label: "c" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -3560,6 +3795,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "norm", label: "norm" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -3574,6 +3810,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.data({ name: "c", label: "c" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -3587,6 +3824,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.data({ name: "q", label: "q" }),
 			ports.data({ name: "r", label: "r" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -3601,6 +3839,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.data({ name: "s", label: "s" }),
 			ports.data({ name: "u", label: "u" }),
 			ports.data({ name: "v", label: "v" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -3614,6 +3853,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.data({ name: "c", label: "c" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -3627,6 +3867,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.data({ name: "x", label: "x" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -3640,6 +3881,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.data({ name: "x", label: "x" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -3653,6 +3895,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.data({ name: "c", label: "c" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -3665,6 +3908,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "trace", label: "trace" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -3677,6 +3921,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.data({ name: "c", label: "c" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -3690,6 +3935,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.data({ name: "w", label: "w" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -3703,6 +3949,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "norm", label: "norm" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -3716,6 +3963,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.data({ name: "w", label: "w" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -3729,6 +3977,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -3745,6 +3994,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.float64({ name: "ad", label: "ad" }),
 			ports.float64({ name: "co", label: "co" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -3757,6 +4007,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -3769,6 +4020,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -3782,6 +4034,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -3797,6 +4050,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.float64({ name: "bearPower", label: "bearPower" }),
 			ports.float64({ name: "bullPower", label: "bullPower" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -3809,6 +4063,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -3827,6 +4082,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "laggingLine", label: "laggingLine" }),
 			ports.float64({ name: "leadingSpanA", label: "leadingSpanA" }),
 			ports.float64({ name: "leadingSpanB", label: "leadingSpanB" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -3841,6 +4097,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -3855,6 +4112,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "histogram", label: "histogram" }),
 			ports.float64({ name: "ppo", label: "ppo" }),
 			ports.float64({ name: "signal", label: "signal" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -3867,6 +4125,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -3881,6 +4140,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "histogram", label: "histogram" }),
 			ports.float64({ name: "pvo", label: "pvo" }),
 			ports.float64({ name: "signal", label: "signal" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -3894,6 +4154,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -3906,6 +4167,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -3922,6 +4184,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.float64({ name: "rvi", label: "rvi" }),
 			ports.float64({ name: "signal", label: "signal" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -3937,6 +4200,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.float64({ name: "d", label: "d" }),
 			ports.float64({ name: "k", label: "k" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -3949,6 +4213,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -3961,6 +4226,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -3976,6 +4242,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "buySetup", label: "buySetup" }),
 			ports.float64({ name: "sellCountdown", label: "sellCountdown" }),
 			ports.float64({ name: "sellSetup", label: "sellSetup" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -3990,6 +4257,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -4004,6 +4272,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -4036,6 +4305,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "fVal", label: "fVal" }),
 			ports.int64({ name: "iterations", label: "iterations" }),
 			ports.data({ name: "x", label: "x" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -4069,6 +4339,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "fVal", label: "fVal" }),
 			ports.int64({ name: "iterations", label: "iterations" }),
 			ports.data({ name: "x", label: "x" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -4102,6 +4373,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "fVal", label: "fVal" }),
 			ports.int64({ name: "iterations", label: "iterations" }),
 			ports.data({ name: "x", label: "x" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -4135,6 +4407,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "fVal", label: "fVal" }),
 			ports.int64({ name: "iterations", label: "iterations" }),
 			ports.data({ name: "x", label: "x" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -4166,6 +4439,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "fVal", label: "fVal" }),
 			ports.int64({ name: "iterations", label: "iterations" }),
 			ports.data({ name: "x", label: "x" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -4199,6 +4473,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "fVal", label: "fVal" }),
 			ports.int64({ name: "iterations", label: "iterations" }),
 			ports.data({ name: "x", label: "x" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -4232,6 +4507,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "fVal", label: "fVal" }),
 			ports.int64({ name: "iterations", label: "iterations" }),
 			ports.data({ name: "x", label: "x" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -4260,6 +4536,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.float64({ name: "fVal", label: "fVal" }),
 			ports.data({ name: "gradient", label: "gradient" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -4284,6 +4561,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "fVal", label: "fVal" }),
 			ports.int64({ name: "iterations", label: "iterations" }),
 			ports.data({ name: "x", label: "x" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -4305,6 +4583,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		},
 		outputs: (ports) => [
 			ports["[]byte"]({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -4323,6 +4602,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports["[]byte"]({ name: "cost", label: "cost" }),
 			ports["[]byte"]({ name: "quantity", label: "quantity" }),
 			ports["[]byte"]({ name: "unfilled", label: "unfilled" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -4335,6 +4615,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports["[]byte"]({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -4357,6 +4638,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "skewness", label: "skewness" }),
 			ports.float64({ name: "stdDev", label: "stdDev" }),
 			ports.float64({ name: "variance", label: "variance" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -4380,6 +4662,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "stdDev", label: "stdDev" }),
 			ports.float64({ name: "survival", label: "survival" }),
 			ports.float64({ name: "variance", label: "variance" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -4404,6 +4687,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "stdDev", label: "stdDev" }),
 			ports.float64({ name: "survival", label: "survival" }),
 			ports.float64({ name: "variance", label: "variance" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -4419,6 +4703,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "bhattacharyya", label: "bhattacharyya" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -4434,6 +4719,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "hellinger", label: "hellinger" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -4449,6 +4735,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "kl", label: "kl" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -4470,6 +4757,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "stdDev", label: "stdDev" }),
 			ports.float64({ name: "survival", label: "survival" }),
 			ports.float64({ name: "variance", label: "variance" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -4495,6 +4783,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "mean", label: "mean" }),
 			ports.float64({ name: "prob", label: "prob" }),
 			ports.float64({ name: "rand", label: "rand" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -4519,6 +4808,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "stdDev", label: "stdDev" }),
 			ports.float64({ name: "survival", label: "survival" }),
 			ports.float64({ name: "variance", label: "variance" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -4541,6 +4831,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "stdDev", label: "stdDev" }),
 			ports.float64({ name: "survival", label: "survival" }),
 			ports.float64({ name: "variance", label: "variance" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -4553,6 +4844,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -4569,6 +4861,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "out", label: "out" }),
 			ports.float64({ name: "sharpness", label: "sharpness" }),
 			ports.int64({ name: "winner", label: "winner" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -4581,6 +4874,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -4604,6 +4898,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "stdDev", label: "stdDev" }),
 			ports.float64({ name: "survival", label: "survival" }),
 			ports.float64({ name: "variance", label: "variance" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -4627,6 +4922,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "stdDev", label: "stdDev" }),
 			ports.float64({ name: "survival", label: "survival" }),
 			ports.float64({ name: "variance", label: "variance" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -4650,6 +4946,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "stdDev", label: "stdDev" }),
 			ports.float64({ name: "survival", label: "survival" }),
 			ports.float64({ name: "variance", label: "variance" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -4662,6 +4959,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -4686,6 +4984,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "stdDev", label: "stdDev" }),
 			ports.float64({ name: "survival", label: "survival" }),
 			ports.float64({ name: "variance", label: "variance" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -4709,6 +5008,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "stdDev", label: "stdDev" }),
 			ports.float64({ name: "survival", label: "survival" }),
 			ports.float64({ name: "variance", label: "variance" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -4721,6 +5021,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -4745,6 +5046,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "stdDev", label: "stdDev" }),
 			ports.float64({ name: "survival", label: "survival" }),
 			ports.float64({ name: "variance", label: "variance" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -4769,6 +5071,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "stdDev", label: "stdDev" }),
 			ports.float64({ name: "survival", label: "survival" }),
 			ports.float64({ name: "variance", label: "variance" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -4791,6 +5094,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "stdDev", label: "stdDev" }),
 			ports.float64({ name: "survival", label: "survival" }),
 			ports.float64({ name: "variance", label: "variance" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -4811,6 +5115,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "prob", label: "prob" }),
 			ports.float64({ name: "quantile", label: "quantile" }),
 			ports.float64({ name: "variance", label: "variance" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -4835,6 +5140,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "stdDev", label: "stdDev" }),
 			ports.float64({ name: "survival", label: "survival" }),
 			ports.float64({ name: "variance", label: "variance" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -4850,6 +5156,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "bhattacharyya", label: "bhattacharyya" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -4865,6 +5172,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "hellinger", label: "hellinger" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -4880,6 +5188,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "kl", label: "kl" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -4904,6 +5213,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "stdDev", label: "stdDev" }),
 			ports.float64({ name: "survival", label: "survival" }),
 			ports.float64({ name: "variance", label: "variance" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -4924,6 +5234,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "stdDev", label: "stdDev" }),
 			ports.float64({ name: "survival", label: "survival" }),
 			ports.float64({ name: "variance", label: "variance" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -4936,6 +5247,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -4960,6 +5272,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "stdDev", label: "stdDev" }),
 			ports.float64({ name: "survival", label: "survival" }),
 			ports.float64({ name: "variance", label: "variance" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -4985,6 +5298,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "stdDev", label: "stdDev" }),
 			ports.float64({ name: "survival", label: "survival" }),
 			ports.float64({ name: "variance", label: "variance" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -5009,6 +5323,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "stdDev", label: "stdDev" }),
 			ports.float64({ name: "survival", label: "survival" }),
 			ports.float64({ name: "variance", label: "variance" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -5033,8 +5348,100 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "stdDev", label: "stdDev" }),
 			ports.float64({ name: "survival", label: "survival" }),
 			ports.float64({ name: "variance", label: "variance" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
+	config.addNodeType({
+		type: "runtime.Consumer",
+		label: "Consumer",
+		category: "runtime",
+		description: "/* NewConsumer constructs an idle Cap'n Proto consumer. */",
+		initialWidth: 340,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "bindings", label: "bindings" }),
+				ports.Capability({ name: "checkpoint", label: "checkpoint" }),
+				ports.bool({ name: "checkpointReady", label: "checkpointReady" }),
+				ports.string({ name: "entry", label: "entry" }),
+				ports.string({ name: "name", label: "name" }),
+				ports.Capability({ name: "receiver", label: "receiver" }),
+				ports.Capability({ name: "snapshot", label: "snapshot" }),
+				ports.Capability({ name: "target", label: "target" }),
+			];
+			const wiredOutputs = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("outputs"));
+			for (let index = 0; index < Math.max(1, wiredOutputs.length + 1); index++) {
+				const portName = index === 0 ? "outputs" : `outputs_${index}`;
+				dynamicPorts.push(ports.string({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.int64({ name: "completed", label: "completed" }),
+			ports.int64({ name: "epoch", label: "epoch" }),
+			ports.data({ name: "outputs", label: "outputs" }),
+			ports.int64({ name: "sequence", label: "sequence" }),
+			ports.Status({ name: "status", label: "status" }),
+			ports.Capability({ name: "self", label: "self" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "runtime.Group",
+		label: "Group",
+		category: "runtime",
+		description: "/* NewGroup constructs an unconfigured Cap'n Proto group. */",
+		initialWidth: 340,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+			];
+			const wiredConsumers = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("consumers"));
+			for (let index = 0; index < Math.max(1, wiredConsumers.length + 1); index++) {
+				const portName = index === 0 ? "consumers" : `consumers_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.int64({ name: "count", label: "count" }),
+			ports.Capability({ name: "self", label: "self" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "runtime.Workspace",
+		label: "Workspace",
+		category: "runtime",
+		description: "/* NewWorkspace constructs an idle node. Write supplies its graph connections. */",
+		initialWidth: 340,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.bool({ name: "admit", label: "admit" }),
+				ports.int64({ name: "capacity", label: "capacity" }),
+				ports.int64({ name: "epoch", label: "epoch" }),
+				ports.int64({ name: "writers", label: "writers" }),
+			];
+			const wiredData = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("data"));
+			for (let index = 0; index < Math.max(1, wiredData.length + 1); index++) {
+				const portName = index === 0 ? "data" : `data_${index}`;
+				dynamicPorts.push(ports["[]byte"]({ name: portName, label: portName }));
+			}
+			const wiredGroups = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("groups"));
+			for (let index = 0; index < Math.max(1, wiredGroups.length + 1); index++) {
+				const portName = index === 0 ? "groups" : `groups_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.int64({ name: "completed", label: "completed" }),
+			ports.int64({ name: "epoch", label: "epoch" }),
+			ports.int64({ name: "pending", label: "pending" }),
+			ports.int64({ name: "published", label: "published" }),
+			ports.Status({ name: "status", label: "status" }),
+			ports.Capability({ name: "self", label: "self" }),
+		],
+	});
+
 	config.addNodeType({
 		type: "sampling.IID",
 		label: "I I D",
@@ -5047,6 +5454,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.data({ name: "samples", label: "samples" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -5064,6 +5472,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.data({ name: "samples", label: "samples" }),
 			ports.data({ name: "weights", label: "weights" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -5076,6 +5485,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.data({ name: "samples", label: "samples" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -5091,6 +5501,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.data({ name: "samples", label: "samples" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -5107,6 +5518,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.int64({ name: "proposed", label: "proposed" }),
 			ports.data({ name: "samples", label: "samples" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -5127,6 +5539,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		},
 		outputs: (ports) => [
 			ports.data({ name: "indices", label: "indices" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -5141,6 +5554,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.data({ name: "indices", label: "indices" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -5170,6 +5584,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.data({ name: "out", label: "out" }),
 			ports.int64({ name: "rows", label: "rows" }),
 			ports.Status({ name: "status", label: "status" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -5212,6 +5627,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.data({ name: "snrFraction", label: "snrFraction" }),
 			ports.data({ name: "standard", label: "standard" }),
 			ports.data({ name: "state", label: "state" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -5237,6 +5653,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		},
 		outputs: (ports) => [
 			ports.float64({ name: "bhattacharyya", label: "bhattacharyya" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -5264,6 +5681,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		},
 		outputs: (ports) => [
 			ports.float64({ name: "moment", label: "moment" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -5278,6 +5696,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -5291,6 +5710,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -5315,6 +5735,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		},
 		outputs: (ports) => [
 			ports.float64({ name: "chiSquare", label: "chiSquare" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -5328,6 +5749,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "meanAngle", label: "meanAngle" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -5382,6 +5804,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.data({ name: "state", label: "state" }),
 			ports.data({ name: "strength", label: "strength" }),
 			ports.data({ name: "toNodes", label: "toNodes" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -5396,6 +5819,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "correlation", label: "correlation" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -5418,6 +5842,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.data({ name: "corr", label: "corr" }),
 			ports.int64({ name: "dim", label: "dim" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -5432,6 +5857,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "covariance", label: "covariance" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -5454,6 +5880,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.data({ name: "cov", label: "cov" }),
 			ports.int64({ name: "dim", label: "dim" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -5479,6 +5906,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		},
 		outputs: (ports) => [
 			ports.float64({ name: "crossEntropy", label: "crossEntropy" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -5499,6 +5927,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		},
 		outputs: (ports) => [
 			ports.float64({ name: "entropy", label: "entropy" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -5512,6 +5941,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "geometricMean", label: "geometricMean" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -5542,6 +5972,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.data({ name: "labels", label: "labels" }),
 			ports.data({ name: "sums", label: "sums" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -5555,6 +5986,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "harmonicMean", label: "harmonicMean" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -5579,6 +6011,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		},
 		outputs: (ports) => [
 			ports.float64({ name: "hellinger", label: "hellinger" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -5593,6 +6026,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.int64({ name: "idle", label: "idle" }),
 			ports["[]byte"]({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -5617,6 +6051,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		},
 		outputs: (ports) => [
 			ports.float64({ name: "jensenShannon", label: "jensenShannon" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -5642,6 +6077,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		},
 		outputs: (ports) => [
 			ports.float64({ name: "kendall", label: "kendall" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -5667,6 +6103,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		},
 		outputs: (ports) => [
 			ports.float64({ name: "statistic", label: "statistic" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -5692,6 +6129,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		},
 		outputs: (ports) => [
 			ports.float64({ name: "kullbackLeibler", label: "kullbackLeibler" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -5705,6 +6143,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "kurtosis", label: "kurtosis" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -5719,6 +6158,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.float64({ name: "alpha", label: "alpha" }),
 			ports.float64({ name: "beta", label: "beta" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -5749,6 +6189,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		},
 		outputs: (ports) => [
 			ports.float64({ name: "distance", label: "distance" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -5762,6 +6203,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -5775,6 +6217,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.int64({ name: "frequency", label: "frequency" }),
 			ports.float64({ name: "mode", label: "mode" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -5788,6 +6231,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "moment", label: "moment" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -5802,6 +6246,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "moment", label: "moment" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -5834,6 +6279,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "positive", label: "positive" }),
 			ports.float64({ name: "upperQuartile", label: "upperQuartile" }),
 			ports.float64({ name: "zero", label: "zero" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -5859,8 +6305,8 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		},
 		outputs: (ports) => [
 			ports.data({ name: "hot", label: "hot" }),
-			ports["[]byte"]({ name: "out", label: "out" }),
 			ports.float64({ name: "threshold", label: "threshold" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -5882,6 +6328,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		},
 		outputs: (ports) => [
 			ports.float64({ name: "quantile", label: "quantile" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -5896,6 +6343,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "rSquared", label: "rSquared" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -5908,6 +6356,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "skew", label: "skew" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -5920,6 +6369,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "stdDev", label: "stdDev" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -5932,6 +6382,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "stdErr", label: "stdErr" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -5949,6 +6400,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports["[]byte"]({ name: "counts", label: "counts" }),
 			ports.int64({ name: "total", label: "total" }),
 			ports.data({ name: "weights", label: "weights" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -5961,6 +6413,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -5985,6 +6438,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		},
 		outputs: (ports) => [
 			ports.float64({ name: "wassersteinDistance", label: "wassersteinDistance" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -6014,6 +6468,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "mean", label: "mean" }),
 			ports.float64({ name: "total", label: "total" }),
 			ports.float64({ name: "variance", label: "variance" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -6027,6 +6482,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -6038,11 +6494,6 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		inputs: (ports) => (_inputData, connections) => {
 			const dynamicPorts = [
 			];
-			const wiredEndpoint = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("endpoint"));
-			for (let index = 0; index < Math.max(1, wiredEndpoint.length + 1); index++) {
-				const portName = index === 0 ? "endpoint" : `endpoint_${index}`;
-				dynamicPorts.push(ports.string({ name: portName, label: portName }));
-			}
 			const wiredKind = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("kind"));
 			for (let index = 0; index < Math.max(1, wiredKind.length + 1); index++) {
 				const portName = index === 0 ? "kind" : `kind_${index}`;
@@ -6053,10 +6504,10 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 				const portName = index === 0 ? "payload" : `payload_${index}`;
 				dynamicPorts.push(ports["[]byte"]({ name: portName, label: portName }));
 			}
-			const wiredReceivedAt = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("receivedAt"));
-			for (let index = 0; index < Math.max(1, wiredReceivedAt.length + 1); index++) {
-				const portName = index === 0 ? "receivedAt" : `receivedAt_${index}`;
-				dynamicPorts.push(ports.string({ name: portName, label: portName }));
+			const wiredProvenance = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("provenance"));
+			for (let index = 0; index < Math.max(1, wiredProvenance.length + 1); index++) {
+				const portName = index === 0 ? "provenance" : `provenance_${index}`;
+				dynamicPorts.push(ports["[]byte"]({ name: portName, label: portName }));
 			}
 			const wiredSymbol = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("symbol"));
 			for (let index = 0; index < Math.max(1, wiredSymbol.length + 1); index++) {
@@ -6073,6 +6524,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports["[]byte"]({ name: "row.payload", label: "row.payload" }),
 			ports.int64({ name: "row.sequence", label: "row.sequence" }),
 			ports.string({ name: "row.session", label: "row.session" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -6086,6 +6538,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports["[]byte"]({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -6120,6 +6573,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			return dynamicPorts;
 		},
 		outputs: (ports) => [
+			ports["[]byte"]({ name: "data", label: "data" }),
 			ports.int64({ name: "delivered", label: "delivered" }),
 			ports.int64({ name: "metrics", label: "metrics" }),
 			ports.data({ name: "observations", label: "observations" }),
@@ -6157,6 +6611,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		},
 		outputs: (ports) => [
 			ports.data({ name: "answers", label: "answers" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -6172,6 +6627,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.bool({ name: "found", label: "found" }),
 			ports.float64({ name: "value", label: "value" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -6209,6 +6665,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.int64({ name: "known", label: "known" }),
 			ports["[]byte"]({ name: "out", label: "out" }),
 			ports.int64({ name: "waiting", label: "waiting" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -6219,6 +6676,9 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		initialWidth: 340,
 		inputs: (ports) => (_inputData, connections) => {
 			const dynamicPorts = [
+				ports.string({ name: "contract", label: "contract" }),
+				ports.string({ name: "path", label: "path" }),
+				ports.bool({ name: "prefix", label: "prefix" }),
 			];
 			const wiredKey = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("key"));
 			for (let index = 0; index < Math.max(1, wiredKey.length + 1); index++) {
@@ -6233,6 +6693,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			return dynamicPorts;
 		},
 		outputs: (ports) => [
+			ports.bool({ name: "durable", label: "durable" }),
 			ports.data({ name: "found", label: "found" }),
 			ports.data({ name: "out", label: "out" }),
 			ports.Capability({ name: "self", label: "self" }),
@@ -6262,6 +6723,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.int64({ name: "item.next", label: "item.next" }),
 			ports["[]byte"]({ name: "item.out", label: "item.out" }),
 			ports.int64({ name: "missing", label: "missing" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -6293,6 +6755,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.string({ name: "frames.session", label: "frames.session" }),
 			ports.int64({ name: "idle", label: "idle" }),
 			ports.int64({ name: "pending", label: "pending" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -6330,6 +6793,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.int64({ name: "idle", label: "idle" }),
 			ports["[]byte"]({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -6382,6 +6846,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.string({ name: "annotation", label: "annotation" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -6395,6 +6860,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.int64({ name: "action", label: "action" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -6411,6 +6877,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.int64({ name: "action", label: "action" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -6423,6 +6890,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.int64({ name: "count", label: "count" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -6435,6 +6903,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.int64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -6449,6 +6918,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.int64({ name: "action", label: "action" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -6461,6 +6931,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.int64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -6474,6 +6945,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.int64({ name: "action", label: "action" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -6487,6 +6959,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -6499,6 +6972,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "ratio", label: "ratio" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -6511,6 +6985,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "ratio", label: "ratio" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -6524,6 +6999,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.int64({ name: "action", label: "action" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -6552,6 +7028,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.int64({ name: "idle", label: "idle" }),
 			ports["[]byte"]({ name: "out", label: "out" }),
 			ports.int64({ name: "pending", label: "pending" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -6576,8 +7053,40 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.int64({ name: "bytes", label: "bytes" }),
 			ports.int64({ name: "committed", label: "committed" }),
-			ports["[]byte"]({ name: "out", label: "out" }),
 			ports.int64({ name: "pending", label: "pending" }),
+			ports.string({ name: "table", label: "table" }),
+			ports.Capability({ name: "self", label: "self" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "tables.Query",
+		label: "Query",
+		category: "tables",
+		description: "/*\nNewQuery constructs the engine without connecting.\n*/",
+		initialWidth: 340,
+		inputs: (ports) => (_inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "sql", label: "sql" }),
+			];
+			const wiredParameters = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("parameters"));
+			for (let index = 0; index < Math.max(1, wiredParameters.length + 1); index++) {
+				const portName = index === 0 ? "parameters" : `parameters_${index}`;
+				dynamicPorts.push(ports.string({ name: portName, label: portName }));
+			}
+			const wiredSetup = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("setup"));
+			for (let index = 0; index < Math.max(1, wiredSetup.length + 1); index++) {
+				const portName = index === 0 ? "setup" : `setup_${index}`;
+				dynamicPorts.push(ports.string({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.bool({ name: "configured", label: "configured" }),
+			ports["[]byte"]({ name: "out", label: "out" }),
+			ports.bool({ name: "pending", label: "pending" }),
+			ports.int64({ name: "superseded", label: "superseded" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -6592,6 +7101,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -6606,6 +7116,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -6614,21 +7125,33 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		category: "temporal",
 		initialWidth: 340,
 		inputs: (ports) => [
+			ports.int64({ name: "epoch", label: "epoch" }),
+			ports.string({ name: "scope", label: "scope" }),
+			ports.int64({ name: "sequence", label: "sequence" }),
 			ports.float64({ name: "value", label: "value" }),
 		],
 		outputs: (ports) => [
+			ports.int64({ name: "epoch", label: "epoch" }),
 			ports.float64({ name: "floor", label: "floor" }),
 			ports.float64({ name: "horizon", label: "horizon" }),
 			ports.int64({ name: "legs", label: "legs" }),
 			ports.float64({ name: "move.anchor", label: "move.anchor" }),
+			ports.int64({ name: "move.anchorSequence", label: "move.anchorSequence" }),
+			ports.int64({ name: "move.confirmationSequence", label: "move.confirmationSequence" }),
 			ports.bool({ name: "move.confirmed", label: "move.confirmed" }),
 			ports.float64({ name: "move.excursion", label: "move.excursion" }),
 			ports.float64({ name: "move.extremum", label: "move.extremum" }),
+			ports.int64({ name: "move.extremumSequence", label: "move.extremumSequence" }),
+			ports.bool({ name: "move.hasPrecursor", label: "move.hasPrecursor" }),
 			ports.float64({ name: "move.ignition", label: "move.ignition" }),
+			ports.int64({ name: "move.ignitionSequence", label: "move.ignitionSequence" }),
+			ports["[]byte"]({ name: "move.row", label: "move.row" }),
 			ports.int64({ name: "none", label: "none" }),
 			ports.float64({ name: "qualifying", label: "qualifying" }),
+			ports.string({ name: "scope", label: "scope" }),
 			ports.float64({ name: "sigma", label: "sigma" }),
 			ports.int64({ name: "steps", label: "steps" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -6642,6 +7165,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -6676,6 +7200,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.data({ name: "events.batch", label: "events.batch" }),
 			ports.data({ name: "events.out", label: "events.out" }),
 			ports.int64({ name: "none", label: "none" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -6689,6 +7214,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports["[]byte"]({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -6705,6 +7231,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.bool({ name: "defined", label: "defined" }),
 			ports.float64({ name: "out", label: "out" }),
 			ports.float64({ name: "snr", label: "snr" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -6717,6 +7244,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports["[]byte"]({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -6729,26 +7257,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports["[]byte"]({ name: "out", label: "out" }),
-		],
-	});
-	config.addNodeType({
-		type: "transport.Disruptor",
-		label: "Disruptor",
-		category: "transport",
-		initialWidth: 340,
-		inputs: (ports) => [
-			ports.bool({ name: "admit", label: "admit" }),
-			ports.int64({ name: "capacity", label: "capacity" }),
-			ports["[]byte"]({ name: "data", label: "data" }),
-			ports.int64({ name: "writers", label: "writers" }),
-		],
-		outputs: (ports) => [
-			ports.int64({ name: "backlog", label: "backlog" }),
-			ports["[]byte"]({ name: "stage1", label: "stage1" }),
-			ports["[]byte"]({ name: "stage2", label: "stage2" }),
-			ports["[]byte"]({ name: "stage3", label: "stage3" }),
-			ports["[]byte"]({ name: "stage4", label: "stage4" }),
-			ports.Status({ name: "status", label: "status" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -6761,6 +7270,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports["[]byte"]({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -6773,6 +7283,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports["[]byte"]({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -6785,6 +7296,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports["[]byte"]({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -6797,6 +7309,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports["[]byte"]({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -6809,6 +7322,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports["[]byte"]({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -6821,6 +7335,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports["[]byte"]({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -6833,6 +7348,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports["[]byte"]({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -6845,6 +7361,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports["[]byte"]({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -6859,6 +7376,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports["[]byte"]({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -6871,6 +7389,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports["[]byte"]({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -6883,6 +7402,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports["[]byte"]({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -6895,6 +7415,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -6909,6 +7430,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.float64({ name: "down", label: "down" }),
 			ports.float64({ name: "up", label: "up" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -6924,6 +7446,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -6938,6 +7461,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -6950,6 +7474,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -6962,6 +7487,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -6974,6 +7500,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -6986,6 +7513,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7000,6 +7528,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "lower", label: "lower" }),
 			ports.float64({ name: "middle", label: "middle" }),
 			ports.float64({ name: "upper", label: "upper" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7012,6 +7541,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7024,6 +7554,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7040,6 +7571,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "d", label: "d" }),
 			ports.float64({ name: "j", label: "j" }),
 			ports.float64({ name: "k", label: "k" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7053,6 +7585,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.float64({ name: "kst", label: "kst" }),
 			ports.float64({ name: "signal", label: "signal" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7066,6 +7599,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.float64({ name: "macd", label: "macd" }),
 			ports.float64({ name: "signal", label: "signal" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7079,6 +7613,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7091,6 +7626,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7104,6 +7640,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7118,6 +7655,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.float64({ name: "b", label: "b" }),
 			ports.float64({ name: "m", label: "m" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7130,6 +7668,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7142,6 +7681,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7154,6 +7694,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7177,6 +7718,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "s2", label: "s2" }),
 			ports.float64({ name: "s3", label: "s3" }),
 			ports.float64({ name: "s4", label: "s4" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7189,6 +7731,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7201,6 +7744,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7213,6 +7757,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7226,6 +7771,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.float64({ name: "d", label: "d" }),
 			ports.float64({ name: "k", label: "k" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7238,6 +7784,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7250,6 +7797,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7262,6 +7810,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7275,6 +7824,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.float64({ name: "d", label: "d" }),
 			ports.float64({ name: "k", label: "k" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7287,6 +7837,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7299,6 +7850,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7311,6 +7863,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7323,6 +7876,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7335,6 +7889,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7349,6 +7904,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7362,6 +7918,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7376,6 +7933,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7388,6 +7946,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7400,6 +7959,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports["[]byte"]({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7412,6 +7972,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports["[]byte"]({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7435,6 +7996,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		},
 		outputs: (ports) => [
 			ports.data({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -7458,6 +8020,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		},
 		outputs: (ports) => [
 			ports.data({ name: "out", label: "out" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -7475,6 +8038,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "lower", label: "lower" }),
 			ports.float64({ name: "middle", label: "middle" }),
 			ports.float64({ name: "upper", label: "upper" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7487,6 +8051,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7501,6 +8066,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7513,6 +8079,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7527,6 +8094,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "lower", label: "lower" }),
 			ports.float64({ name: "middle", label: "middle" }),
 			ports.float64({ name: "upper", label: "upper" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7542,6 +8110,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.float64({ name: "exitLong", label: "exitLong" }),
 			ports.float64({ name: "exitShort", label: "exitShort" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7556,6 +8125,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7571,6 +8141,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "lower", label: "lower" }),
 			ports.float64({ name: "middle", label: "middle" }),
 			ports.float64({ name: "upper", label: "upper" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7583,6 +8154,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7599,6 +8171,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "lower", label: "lower" }),
 			ports.float64({ name: "middle", label: "middle" }),
 			ports.float64({ name: "upper", label: "upper" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7611,6 +8184,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7623,6 +8197,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7637,6 +8212,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7651,6 +8227,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7665,6 +8242,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7677,6 +8255,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7689,6 +8268,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7704,6 +8284,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7719,6 +8300,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7733,6 +8315,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7746,6 +8329,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7761,6 +8345,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.float64({ name: "kvo", label: "kvo" }),
 			ports.float64({ name: "signal", label: "signal" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7776,6 +8361,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7790,6 +8376,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7805,6 +8392,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7818,6 +8406,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7831,6 +8420,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7844,6 +8434,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7857,6 +8448,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "result", label: "result" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7871,6 +8463,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports["[]byte"]({ name: "out", label: "out" }),
 			ports.Status({ name: "status", label: "status" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({
@@ -7881,8 +8474,12 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		inputs: (ports) => (_inputData, connections) => {
 			const dynamicPorts = [
 				ports.string({ name: "endpoint", label: "endpoint" }),
-				ports["[]byte"]({ name: "onConnect", label: "onConnect" }),
 			];
+			const wiredOnConnect = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("onConnect"));
+			for (let index = 0; index < Math.max(1, wiredOnConnect.length + 1); index++) {
+				const portName = index === 0 ? "onConnect" : `onConnect_${index}`;
+				dynamicPorts.push(ports["[]byte"]({ name: portName, label: portName }));
+			}
 			const wiredWrite = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("write"));
 			for (let index = 0; index < Math.max(1, wiredWrite.length + 1); index++) {
 				const portName = index === 0 ? "write" : `write_${index}`;
@@ -7894,10 +8491,12 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.int64({ name: "connection", label: "connection" }),
 			ports.string({ name: "frame.endpoint", label: "frame.endpoint" }),
 			ports.int64({ name: "frame.generation", label: "frame.generation" }),
+			ports["[]byte"]({ name: "frame.provenance", label: "frame.provenance" }),
 			ports["[]byte"]({ name: "frame.read", label: "frame.read" }),
 			ports.string({ name: "frame.receivedAt", label: "frame.receivedAt" }),
 			ports.int64({ name: "idle", label: "idle" }),
 			ports.Status({ name: "status", label: "status" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -7914,6 +8513,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports["[]byte"]({ name: "out", label: "out" }),
 			ports.Status({ name: "status", label: "status" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 
@@ -7940,7 +8540,9 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.bool({ name: "instrument.last", label: "instrument.last" }),
 			ports["[]byte"]({ name: "instrument.out", label: "instrument.out" }),
 			ports.int64({ name: "instrument.pending", label: "instrument.pending" }),
+			ports.Capability({ name: "instrument.self", label: "instrument.self" }),
 			ports.int64({ name: "instruments.idle", label: "instruments.idle" }),
+			ports.Capability({ name: "instruments.self", label: "instruments.self" }),
 			ports.data({ name: "records.all", label: "records.all" }),
 			ports.int64({ name: "records.count", label: "records.count" }),
 			ports.bool({ name: "records.found", label: "records.found" }),
@@ -7949,6 +8551,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.bool({ name: "records.last", label: "records.last" }),
 			ports["[]byte"]({ name: "records.out", label: "records.out" }),
 			ports.int64({ name: "records.pending", label: "records.pending" }),
+			ports.Capability({ name: "records.self", label: "records.self" }),
 		],
 	});
 	config.addNodeType({
@@ -7972,48 +8575,64 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => (_inputData, _connections) => [
 			ports.int64({ name: "catalog.status", label: "catalog.status" }),
+			ports.Capability({ name: "catalog.self", label: "catalog.self" }),
 			ports.bool({ name: "catalog_url.found", label: "catalog_url.found" }),
 			ports["[]byte"]({ name: "catalog_url.json", label: "catalog_url.json" }),
 			ports.int64({ name: "catalog_url.missing", label: "catalog_url.missing" }),
 			ports.float64({ name: "catalog_url.out", label: "catalog_url.out" }),
 			ports.int64({ name: "catalog_url.unsigned", label: "catalog_url.unsigned" }),
+			ports.Capability({ name: "catalog_url.self", label: "catalog_url.self" }),
+			ports.Capability({ name: "configured.self", label: "configured.self" }),
 			ports.bool({ name: "defaults.found", label: "defaults.found" }),
 			ports.int64({ name: "defaults.missing", label: "defaults.missing" }),
 			ports.float64({ name: "defaults.out", label: "defaults.out" }),
 			ports.string({ name: "defaults.text", label: "defaults.text" }),
 			ports.int64({ name: "defaults.unsigned", label: "defaults.unsigned" }),
+			ports.Capability({ name: "defaults.self", label: "defaults.self" }),
+			ports.Capability({ name: "file_properties.self", label: "file_properties.self" }),
 			ports.bool({ name: "input.fired", label: "input.fired" }),
+			ports.Capability({ name: "input.self", label: "input.self" }),
 			ports.bool({ name: "loaded_catalog.inserted", label: "loaded_catalog.inserted" }),
+			ports.Capability({ name: "loaded_catalog.self", label: "loaded_catalog.self" }),
 			ports.bool({ name: "metadata.found", label: "metadata.found" }),
 			ports.int64({ name: "metadata.missing", label: "metadata.missing" }),
 			ports.float64({ name: "metadata.out", label: "metadata.out" }),
 			ports.string({ name: "metadata.text", label: "metadata.text" }),
 			ports.int64({ name: "metadata.unsigned", label: "metadata.unsigned" }),
+			ports.Capability({ name: "metadata.self", label: "metadata.self" }),
+			ports.Capability({ name: "overridden.self", label: "overridden.self" }),
 			ports.bool({ name: "overrides.found", label: "overrides.found" }),
 			ports.int64({ name: "overrides.missing", label: "overrides.missing" }),
 			ports.float64({ name: "overrides.out", label: "overrides.out" }),
 			ports.string({ name: "overrides.text", label: "overrides.text" }),
 			ports.int64({ name: "overrides.unsigned", label: "overrides.unsigned" }),
+			ports.Capability({ name: "overrides.self", label: "overrides.self" }),
 			ports.data({ name: "project.rows", label: "project.rows" }),
+			ports.Capability({ name: "project.self", label: "project.self" }),
 			ports.bool({ name: "properties.found", label: "properties.found" }),
 			ports.int64({ name: "properties.missing", label: "properties.missing" }),
 			ports.float64({ name: "properties.out", label: "properties.out" }),
 			ports.string({ name: "properties.text", label: "properties.text" }),
 			ports.int64({ name: "properties.unsigned", label: "properties.unsigned" }),
+			ports.Capability({ name: "properties.self", label: "properties.self" }),
 			ports.bool({ name: "scan.exhausted", label: "scan.exhausted" }),
 			ports.int64({ name: "scan.idle", label: "scan.idle" }),
 			ports.int64({ name: "scan.pending", label: "scan.pending" }),
+			ports.Capability({ name: "scan.self", label: "scan.self" }),
 			ports.int64({ name: "table.status", label: "table.status" }),
+			ports.Capability({ name: "table.self", label: "table.self" }),
 			ports.bool({ name: "table_properties.found", label: "table_properties.found" }),
 			ports.int64({ name: "table_properties.missing", label: "table_properties.missing" }),
 			ports.float64({ name: "table_properties.out", label: "table_properties.out" }),
 			ports.string({ name: "table_properties.text", label: "table_properties.text" }),
 			ports.int64({ name: "table_properties.unsigned", label: "table_properties.unsigned" }),
+			ports.Capability({ name: "table_properties.self", label: "table_properties.self" }),
 			ports.bool({ name: "table_url.found", label: "table_url.found" }),
 			ports["[]byte"]({ name: "table_url.json", label: "table_url.json" }),
 			ports.int64({ name: "table_url.missing", label: "table_url.missing" }),
 			ports.float64({ name: "table_url.out", label: "table_url.out" }),
 			ports.int64({ name: "table_url.unsigned", label: "table_url.unsigned" }),
+			ports.Capability({ name: "table_url.self", label: "table_url.self" }),
 		],
 	});
 	config.addNodeType({
@@ -8025,23 +8644,24 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		inputs: (ports) => (_inputData, _connections) => [
 			ports.bool({ name: "capture.commit", label: "capture.commit" }),
 			ports["[]byte"]({ name: "capture.rows", label: "capture.rows" }),
-			ports.string({ name: "envelope.endpoint", label: "envelope.endpoint" }),
 			ports.string({ name: "envelope.kind", label: "envelope.kind" }),
 			ports["[]byte"]({ name: "envelope.payload", label: "envelope.payload" }),
-			ports.string({ name: "envelope.receivedAt", label: "envelope.receivedAt" }),
+			ports["[]byte"]({ name: "envelope.provenance", label: "envelope.provenance" }),
 			ports.string({ name: "envelope.symbol", label: "envelope.symbol" }),
 		],
 		outputs: (ports) => (_inputData, _connections) => [
 			ports.int64({ name: "capture.bytes", label: "capture.bytes" }),
 			ports.int64({ name: "capture.committed", label: "capture.committed" }),
-			ports["[]byte"]({ name: "capture.out", label: "capture.out" }),
 			ports.int64({ name: "capture.pending", label: "capture.pending" }),
+			ports.string({ name: "capture.table", label: "capture.table" }),
+			ports.Capability({ name: "capture.self", label: "capture.self" }),
 			ports.int64({ name: "envelope.idle", label: "envelope.idle" }),
 			ports.int64({ name: "envelope.pending", label: "envelope.pending" }),
 			ports.string({ name: "envelope.row.endpoint", label: "envelope.row.endpoint" }),
 			ports["[]byte"]({ name: "envelope.row.payload", label: "envelope.row.payload" }),
 			ports.int64({ name: "envelope.row.sequence", label: "envelope.row.sequence" }),
 			ports.string({ name: "envelope.row.session", label: "envelope.row.session" }),
+			ports.Capability({ name: "envelope.self", label: "envelope.self" }),
 		],
 	});
 	config.addNodeType({
@@ -8054,6 +8674,9 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.string({ name: "baseline.scope", label: "baseline.scope" }),
 			ports.float64({ name: "hy.boundsEnd1", label: "hy.boundsEnd1" }),
 			ports.float64({ name: "hy.boundsEnd2", label: "hy.boundsEnd2" }),
+			ports.string({ name: "pairHistory.contract", label: "pairHistory.contract" }),
+			ports.string({ name: "pairHistory.path", label: "pairHistory.path" }),
+			ports.bool({ name: "pairHistory.prefix", label: "pairHistory.prefix" }),
 			ports.string({ name: "prevReferenceTimestamp.scope", label: "prevReferenceTimestamp.scope" }),
 			ports.float64({ name: "prevReferenceTimestamp.value", label: "prevReferenceTimestamp.value" }),
 			ports.string({ name: "prevTimestamp.scope", label: "prevTimestamp.scope" }),
@@ -8070,33 +8693,51 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => (_inputData, _connections) => [
 			ports.float64({ name: "absolute.out", label: "absolute.out" }),
+			ports.Capability({ name: "absolute.self", label: "absolute.self" }),
+			ports.Capability({ name: "atanh.self", label: "atanh.self" }),
+			ports.Capability({ name: "baseline.self", label: "baseline.self" }),
 			ports.float64({ name: "baselineCorrelation.out", label: "baselineCorrelation.out" }),
+			ports.Capability({ name: "baselineCorrelation.self", label: "baselineCorrelation.self" }),
 			ports.float64({ name: "cohortAbsolute.count", label: "cohortAbsolute.count" }),
 			ports.float64({ name: "cohortAbsolute.effective", label: "cohortAbsolute.effective" }),
 			ports.float64({ name: "cohortAbsolute.mean", label: "cohortAbsolute.mean" }),
 			ports.float64({ name: "cohortAbsolute.total", label: "cohortAbsolute.total" }),
 			ports.float64({ name: "cohortAbsolute.variance", label: "cohortAbsolute.variance" }),
+			ports.Capability({ name: "cohortAbsolute.self", label: "cohortAbsolute.self" }),
+			ports.Capability({ name: "cohortAbsoluteValue.self", label: "cohortAbsoluteValue.self" }),
 			ports.float64({ name: "cohortDispersion.out", label: "cohortDispersion.out" }),
 			ports.int64({ name: "cohortDispersion.undefined", label: "cohortDispersion.undefined" }),
+			ports.Capability({ name: "cohortDispersion.self", label: "cohortDispersion.self" }),
 			ports.float64({ name: "cohortEnergy.count", label: "cohortEnergy.count" }),
 			ports.float64({ name: "cohortEnergy.effective", label: "cohortEnergy.effective" }),
 			ports.float64({ name: "cohortEnergy.total", label: "cohortEnergy.total" }),
 			ports.float64({ name: "cohortEnergy.variance", label: "cohortEnergy.variance" }),
+			ports.Capability({ name: "cohortEnergy.self", label: "cohortEnergy.self" }),
 			ports.float64({ name: "cohortFisher.count", label: "cohortFisher.count" }),
 			ports.float64({ name: "cohortFisher.effective", label: "cohortFisher.effective" }),
 			ports.float64({ name: "cohortFisher.mean", label: "cohortFisher.mean" }),
 			ports.float64({ name: "cohortFisher.total", label: "cohortFisher.total" }),
+			ports.Capability({ name: "cohortFisher.self", label: "cohortFisher.self" }),
 			ports.float64({ name: "cohortSigned.count", label: "cohortSigned.count" }),
 			ports.float64({ name: "cohortSigned.effective", label: "cohortSigned.effective" }),
 			ports.float64({ name: "cohortSigned.mean", label: "cohortSigned.mean" }),
 			ports.float64({ name: "cohortSigned.total", label: "cohortSigned.total" }),
 			ports.float64({ name: "cohortSigned.variance", label: "cohortSigned.variance" }),
+			ports.Capability({ name: "cohortSigned.self", label: "cohortSigned.self" }),
 			ports.float64({ name: "divergence.out", label: "divergence.out" }),
+			ports.Capability({ name: "divergence.self", label: "divergence.self" }),
 			ports.int64({ name: "fisherDegrees.undefined", label: "fisherDegrees.undefined" }),
+			ports.Capability({ name: "fisherDegrees.self", label: "fisherDegrees.self" }),
+			ports.Capability({ name: "fisherDegreesOfFreedom.self", label: "fisherDegreesOfFreedom.self" }),
 			ports.int64({ name: "fisherHalfWidth.undefined", label: "fisherHalfWidth.undefined" }),
+			ports.Capability({ name: "fisherHalfWidth.self", label: "fisherHalfWidth.self" }),
+			ports.Capability({ name: "fisherMagnitude.self", label: "fisherMagnitude.self" }),
 			ports.float64({ name: "fisherPValue.out", label: "fisherPValue.out" }),
+			ports.Capability({ name: "fisherPValue.self", label: "fisherPValue.self" }),
 			ports.float64({ name: "fisherStandardError.out", label: "fisherStandardError.out" }),
 			ports.int64({ name: "fisherStandardError.undefined", label: "fisherStandardError.undefined" }),
+			ports.Capability({ name: "fisherStandardError.self", label: "fisherStandardError.self" }),
+			ports.Capability({ name: "fisherStatistic.self", label: "fisherStatistic.self" }),
 			ports.float64({ name: "hy.covariance", label: "hy.covariance" }),
 			ports.float64({ name: "hy.leftEnergy", label: "hy.leftEnergy" }),
 			ports.float64({ name: "hy.leftReturns", label: "hy.leftReturns" }),
@@ -8105,19 +8746,62 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "hy.rightEnergyRate", label: "hy.rightEnergyRate" }),
 			ports.float64({ name: "hy.rightReturns", label: "hy.rightReturns" }),
 			ports.float64({ name: "hy.sharedTime", label: "hy.sharedTime" }),
+			ports.Capability({ name: "hy.self", label: "hy.self" }),
+			ports.bool({ name: "pairHistory.durable", label: "pairHistory.durable" }),
 			ports.data({ name: "pairHistory.found", label: "pairHistory.found" }),
 			ports.data({ name: "pairHistory.out", label: "pairHistory.out" }),
 			ports.Capability({ name: "pairHistory.self", label: "pairHistory.self" }),
+			ports.Capability({ name: "prevReferenceTimestamp.self", label: "prevReferenceTimestamp.self" }),
+			ports.Capability({ name: "prevTimestamp.self", label: "prevTimestamp.self" }),
+			ports.Capability({ name: "referenceReturns.self", label: "referenceReturns.self" }),
+			ports.Capability({ name: "relativeBaseline.self", label: "relativeBaseline.self" }),
 			ports.float64({ name: "relativeDivergence.out", label: "relativeDivergence.out" }),
+			ports.Capability({ name: "relativeDivergence.self", label: "relativeDivergence.self" }),
 			ports.int64({ name: "relativeReturnEnergy.undefined", label: "relativeReturnEnergy.undefined" }),
+			ports.Capability({ name: "relativeReturnEnergy.self", label: "relativeReturnEnergy.self" }),
 			ports.bool({ name: "relativeVelocity.defined", label: "relativeVelocity.defined" }),
 			ports.float64({ name: "relativeVelocity.out", label: "relativeVelocity.out" }),
 			ports.float64({ name: "relativeVelocity.snr", label: "relativeVelocity.snr" }),
+			ports.Capability({ name: "relativeVelocity.self", label: "relativeVelocity.self" }),
 			ports.float64({ name: "relativeZScore.out", label: "relativeZScore.out" }),
+			ports.Capability({ name: "relativeZScore.self", label: "relativeZScore.self" }),
+			ports.Capability({ name: "returns.self", label: "returns.self" }),
 			ports.bool({ name: "velocity.defined", label: "velocity.defined" }),
 			ports.float64({ name: "velocity.out", label: "velocity.out" }),
 			ports.float64({ name: "velocity.snr", label: "velocity.snr" }),
+			ports.Capability({ name: "velocity.self", label: "velocity.self" }),
 			ports.float64({ name: "zscore.out", label: "zscore.out" }),
+			ports.Capability({ name: "zscore.self", label: "zscore.self" }),
+		],
+	});
+	config.addNodeType({
+		type: "definition:cut",
+		label: "cut",
+		category: "Definitions",
+		description: "Sub-graph: cut",
+		initialWidth: 320,
+		inputs: (ports) => (_inputData, _connections) => [
+			ports.int64({ name: "gather.epoch", label: "gather.epoch" }),
+			ports["[]byte"]({ name: "gather.observation", label: "gather.observation" }),
+			ports.bool({ name: "gather.present", label: "gather.present" }),
+			ports["[]byte"]({ name: "gather.row", label: "gather.row" }),
+			ports.string({ name: "gather.scope", label: "gather.scope" }),
+			ports.int64({ name: "gather.sequence", label: "gather.sequence" }),
+			ports.float64({ name: "gather.values", label: "gather.values" }),
+		],
+		outputs: (ports) => (_inputData, _connections) => [
+			ports.int64({ name: "gather.epoch", label: "gather.epoch" }),
+			ports.data({ name: "gather.epochs", label: "gather.epochs" }),
+			ports.data({ name: "gather.gathered.present", label: "gather.gathered.present" }),
+			ports.data({ name: "gather.gathered.values", label: "gather.gathered.values" }),
+			ports.int64({ name: "gather.idle", label: "gather.idle" }),
+			ports.string({ name: "gather.phase", label: "gather.phase" }),
+			ports["[]byte"]({ name: "gather.readiness", label: "gather.readiness" }),
+			ports["[]byte"]({ name: "gather.row", label: "gather.row" }),
+			ports.string({ name: "gather.scope", label: "gather.scope" }),
+			ports.int64({ name: "gather.sequence", label: "gather.sequence" }),
+			ports.data({ name: "gather.sequences", label: "gather.sequences" }),
+			ports.Capability({ name: "gather.self", label: "gather.self" }),
 		],
 	});
 	config.addNodeType({
@@ -8167,65 +8851,122 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.int64({ name: "aggressive_notional:buy.count", label: "aggressive_notional:buy.count" }),
 			ports.int64({ name: "aggressive_notional:buy.idle", label: "aggressive_notional:buy.idle" }),
 			ports.bool({ name: "aggressive_notional:buy.ready", label: "aggressive_notional:buy.ready" }),
+			ports.Capability({ name: "aggressive_notional:buy.self", label: "aggressive_notional:buy.self" }),
 			ports.int64({ name: "aggressive_notional:sell.count", label: "aggressive_notional:sell.count" }),
 			ports.int64({ name: "aggressive_notional:sell.idle", label: "aggressive_notional:sell.idle" }),
 			ports.bool({ name: "aggressive_notional:sell.ready", label: "aggressive_notional:sell.ready" }),
+			ports.Capability({ name: "aggressive_notional:sell.self", label: "aggressive_notional:sell.self" }),
 			ports.int64({ name: "buyIndicator.undefined", label: "buyIndicator.undefined" }),
+			ports.Capability({ name: "buyIndicator.self", label: "buyIndicator.self" }),
+			ports.Capability({ name: "buyQuantity.self", label: "buyQuantity.self" }),
+			ports.Capability({ name: "buyShare.self", label: "buyShare.self" }),
+			ports.Capability({ name: "buyTradeNotional.self", label: "buyTradeNotional.self" }),
 			ports.float64({ name: "buy_notional_rate.out", label: "buy_notional_rate.out" }),
 			ports.int64({ name: "buy_notional_rate.undefined", label: "buy_notional_rate.undefined" }),
+			ports.Capability({ name: "buy_notional_rate.self", label: "buy_notional_rate.self" }),
+			ports.Capability({ name: "countDifference.self", label: "countDifference.self" }),
+			ports.Capability({ name: "elapsed.self", label: "elapsed.self" }),
 			ports.int64({ name: "executed_quantity:buy.count", label: "executed_quantity:buy.count" }),
 			ports.int64({ name: "executed_quantity:buy.idle", label: "executed_quantity:buy.idle" }),
 			ports.bool({ name: "executed_quantity:buy.ready", label: "executed_quantity:buy.ready" }),
+			ports.Capability({ name: "executed_quantity:buy.self", label: "executed_quantity:buy.self" }),
 			ports.int64({ name: "executed_quantity:sell.count", label: "executed_quantity:sell.count" }),
 			ports.int64({ name: "executed_quantity:sell.idle", label: "executed_quantity:sell.idle" }),
 			ports.bool({ name: "executed_quantity:sell.ready", label: "executed_quantity:sell.ready" }),
+			ports.Capability({ name: "executed_quantity:sell.self", label: "executed_quantity:sell.self" }),
+			ports.Capability({ name: "flowDirection.self", label: "flowDirection.self" }),
 			ports.float64({ name: "flow_aligned_midpoint_return.out", label: "flow_aligned_midpoint_return.out" }),
+			ports.Capability({ name: "flow_aligned_midpoint_return.self", label: "flow_aligned_midpoint_return.self" }),
+			ports.Capability({ name: "fractionBaseline.self", label: "fractionBaseline.self" }),
 			ports.int64({ name: "fractionNoise.undefined", label: "fractionNoise.undefined" }),
+			ports.Capability({ name: "fractionNoise.self", label: "fractionNoise.self" }),
+			ports.Capability({ name: "fractionVariance.self", label: "fractionVariance.self" }),
+			ports.Capability({ name: "grossRateMean.self", label: "grossRateMean.self" }),
 			ports.int64({ name: "grossRateNoise.undefined", label: "grossRateNoise.undefined" }),
+			ports.Capability({ name: "grossRateNoise.self", label: "grossRateNoise.self" }),
+			ports.Capability({ name: "grossRateVar.self", label: "grossRateVar.self" }),
 			ports.float64({ name: "gross_executed_quantity.out", label: "gross_executed_quantity.out" }),
+			ports.Capability({ name: "gross_executed_quantity.self", label: "gross_executed_quantity.self" }),
+			ports.Capability({ name: "gross_notional.self", label: "gross_notional.self" }),
 			ports.int64({ name: "gross_notional_rate.undefined", label: "gross_notional_rate.undefined" }),
+			ports.Capability({ name: "gross_notional_rate.self", label: "gross_notional_rate.self" }),
+			ports.Capability({ name: "gross_notional_rate_baseline.self", label: "gross_notional_rate_baseline.self" }),
+			ports.Capability({ name: "gross_notional_rate_divergence.self", label: "gross_notional_rate_divergence.self" }),
 			ports.float64({ name: "gross_notional_rate_ratio.out", label: "gross_notional_rate_ratio.out" }),
 			ports.int64({ name: "gross_notional_rate_ratio.undefined", label: "gross_notional_rate_ratio.undefined" }),
+			ports.Capability({ name: "gross_notional_rate_ratio.self", label: "gross_notional_rate_ratio.self" }),
 			ports.bool({ name: "gross_notional_rate_velocity.defined", label: "gross_notional_rate_velocity.defined" }),
 			ports.float64({ name: "gross_notional_rate_velocity.out", label: "gross_notional_rate_velocity.out" }),
 			ports.float64({ name: "gross_notional_rate_velocity.snr", label: "gross_notional_rate_velocity.snr" }),
+			ports.Capability({ name: "gross_notional_rate_velocity.self", label: "gross_notional_rate_velocity.self" }),
 			ports.float64({ name: "gross_notional_rate_zscore.out", label: "gross_notional_rate_zscore.out" }),
 			ports.int64({ name: "gross_notional_rate_zscore.undefined", label: "gross_notional_rate_zscore.undefined" }),
+			ports.Capability({ name: "gross_notional_rate_zscore.self", label: "gross_notional_rate_zscore.self" }),
 			ports.float64({ name: "mean_trade_notional.out", label: "mean_trade_notional.out" }),
 			ports.int64({ name: "mean_trade_notional.undefined", label: "mean_trade_notional.undefined" }),
+			ports.Capability({ name: "mean_trade_notional.self", label: "mean_trade_notional.self" }),
+			ports.Capability({ name: "midpoint_log_return.self", label: "midpoint_log_return.self" }),
 			ports.float64({ name: "midpoint_response_per_net_notional.out", label: "midpoint_response_per_net_notional.out" }),
 			ports.int64({ name: "midpoint_response_per_net_notional.undefined", label: "midpoint_response_per_net_notional.undefined" }),
+			ports.Capability({ name: "midpoint_response_per_net_notional.self", label: "midpoint_response_per_net_notional.self" }),
 			ports.int64({ name: "midpoint_return_rate.undefined", label: "midpoint_return_rate.undefined" }),
+			ports.Capability({ name: "midpoint_return_rate.self", label: "midpoint_return_rate.self" }),
 			ports.float64({ name: "midpoint_return_rate_baseline.out", label: "midpoint_return_rate_baseline.out" }),
+			ports.Capability({ name: "midpoint_return_rate_baseline.self", label: "midpoint_return_rate_baseline.self" }),
+			ports.Capability({ name: "midpoint_return_rate_divergence.self", label: "midpoint_return_rate_divergence.self" }),
 			ports.float64({ name: "midpoint_return_rate_zscore.out", label: "midpoint_return_rate_zscore.out" }),
 			ports.int64({ name: "midpoint_return_rate_zscore.undefined", label: "midpoint_return_rate_zscore.undefined" }),
+			ports.Capability({ name: "midpoint_return_rate_zscore.self", label: "midpoint_return_rate_zscore.self" }),
 			ports.float64({ name: "net_executed_quantity.out", label: "net_executed_quantity.out" }),
+			ports.Capability({ name: "net_executed_quantity.self", label: "net_executed_quantity.self" }),
+			ports.Capability({ name: "net_notional.self", label: "net_notional.self" }),
 			ports.int64({ name: "net_notional_rate.undefined", label: "net_notional_rate.undefined" }),
+			ports.Capability({ name: "net_notional_rate.self", label: "net_notional_rate.self" }),
 			ports.bool({ name: "net_notional_rate_velocity.defined", label: "net_notional_rate_velocity.defined" }),
 			ports.float64({ name: "net_notional_rate_velocity.out", label: "net_notional_rate_velocity.out" }),
 			ports.float64({ name: "net_notional_rate_velocity.snr", label: "net_notional_rate_velocity.snr" }),
+			ports.Capability({ name: "net_notional_rate_velocity.self", label: "net_notional_rate_velocity.self" }),
+			ports.Capability({ name: "responseRateMean.self", label: "responseRateMean.self" }),
 			ports.int64({ name: "responseRateNoise.undefined", label: "responseRateNoise.undefined" }),
+			ports.Capability({ name: "responseRateNoise.self", label: "responseRateNoise.self" }),
+			ports.Capability({ name: "responseRateVar.self", label: "responseRateVar.self" }),
 			ports.int64({ name: "sellIndicator.undefined", label: "sellIndicator.undefined" }),
+			ports.Capability({ name: "sellIndicator.self", label: "sellIndicator.self" }),
+			ports.Capability({ name: "sellQuantity.self", label: "sellQuantity.self" }),
+			ports.Capability({ name: "sellShare.self", label: "sellShare.self" }),
+			ports.Capability({ name: "sellTradeNotional.self", label: "sellTradeNotional.self" }),
 			ports.float64({ name: "sell_notional_rate.out", label: "sell_notional_rate.out" }),
 			ports.int64({ name: "sell_notional_rate.undefined", label: "sell_notional_rate.undefined" }),
+			ports.Capability({ name: "sell_notional_rate.self", label: "sell_notional_rate.self" }),
 			ports.float64({ name: "signed_count_fraction.out", label: "signed_count_fraction.out" }),
 			ports.int64({ name: "signed_count_fraction.undefined", label: "signed_count_fraction.undefined" }),
+			ports.Capability({ name: "signed_count_fraction.self", label: "signed_count_fraction.self" }),
 			ports.int64({ name: "signed_net_fraction.undefined", label: "signed_net_fraction.undefined" }),
+			ports.Capability({ name: "signed_net_fraction.self", label: "signed_net_fraction.self" }),
 			ports.float64({ name: "signed_net_fraction_baseline.out", label: "signed_net_fraction_baseline.out" }),
+			ports.Capability({ name: "signed_net_fraction_baseline.self", label: "signed_net_fraction_baseline.self" }),
+			ports.Capability({ name: "signed_net_fraction_divergence.self", label: "signed_net_fraction_divergence.self" }),
 			ports.float64({ name: "signed_net_fraction_mean.out", label: "signed_net_fraction_mean.out" }),
+			ports.Capability({ name: "signed_net_fraction_mean.self", label: "signed_net_fraction_mean.self" }),
 			ports.float64({ name: "signed_net_fraction_zscore.out", label: "signed_net_fraction_zscore.out" }),
 			ports.int64({ name: "signed_net_fraction_zscore.undefined", label: "signed_net_fraction_zscore.undefined" }),
+			ports.Capability({ name: "signed_net_fraction_zscore.self", label: "signed_net_fraction_zscore.self" }),
+			ports.Capability({ name: "tradeNotional.self", label: "tradeNotional.self" }),
 			ports.int64({ name: "trade_count.count", label: "trade_count.count" }),
 			ports.int64({ name: "trade_count.idle", label: "trade_count.idle" }),
 			ports.bool({ name: "trade_count.ready", label: "trade_count.ready" }),
+			ports.Capability({ name: "trade_count.self", label: "trade_count.self" }),
 			ports.int64({ name: "trade_count:buy.count", label: "trade_count:buy.count" }),
 			ports.int64({ name: "trade_count:buy.idle", label: "trade_count:buy.idle" }),
 			ports.bool({ name: "trade_count:buy.ready", label: "trade_count:buy.ready" }),
+			ports.Capability({ name: "trade_count:buy.self", label: "trade_count:buy.self" }),
 			ports.int64({ name: "trade_count:sell.count", label: "trade_count:sell.count" }),
 			ports.int64({ name: "trade_count:sell.idle", label: "trade_count:sell.idle" }),
 			ports.bool({ name: "trade_count:sell.ready", label: "trade_count:sell.ready" }),
+			ports.Capability({ name: "trade_count:sell.self", label: "trade_count:sell.self" }),
 			ports.float64({ name: "trade_rate.out", label: "trade_rate.out" }),
 			ports.int64({ name: "trade_rate.undefined", label: "trade_rate.undefined" }),
+			ports.Capability({ name: "trade_rate.self", label: "trade_rate.self" }),
 		],
 	});
 	config.addNodeType({
@@ -8252,20 +8993,42 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.string({ name: "rateVariance.scope", label: "rateVariance.scope" }),
 		],
 		outputs: (ports) => (_inputData, _connections) => [
+			ports.Capability({ name: "elapsed.self", label: "elapsed.self" }),
+			ports.Capability({ name: "imbalanceBaseline.self", label: "imbalanceBaseline.self" }),
 			ports.int64({ name: "imbalanceNoise.undefined", label: "imbalanceNoise.undefined" }),
+			ports.Capability({ name: "imbalanceNoise.self", label: "imbalanceNoise.self" }),
+			ports.Capability({ name: "imbalanceVariance.self", label: "imbalanceVariance.self" }),
 			ports.float64({ name: "mutation_activity_imbalance.out", label: "mutation_activity_imbalance.out" }),
 			ports.int64({ name: "mutation_activity_imbalance.undefined", label: "mutation_activity_imbalance.undefined" }),
+			ports.Capability({ name: "mutation_activity_imbalance.self", label: "mutation_activity_imbalance.self" }),
+			ports.Capability({ name: "mutation_count.self", label: "mutation_count.self" }),
+			ports.Capability({ name: "mutation_count_diff.self", label: "mutation_count_diff.self" }),
+			ports.Capability({ name: "observed_notional.self", label: "observed_notional.self" }),
+			ports.Capability({ name: "observed_notional_diff.self", label: "observed_notional_diff.self" }),
 			ports.int64({ name: "observed_notional_imbalance.undefined", label: "observed_notional_imbalance.undefined" }),
+			ports.Capability({ name: "observed_notional_imbalance.self", label: "observed_notional_imbalance.self" }),
 			ports.float64({ name: "observed_notional_imbalance_baseline.out", label: "observed_notional_imbalance_baseline.out" }),
+			ports.Capability({ name: "observed_notional_imbalance_baseline.self", label: "observed_notional_imbalance_baseline.self" }),
+			ports.Capability({ name: "observed_notional_imbalance_divergence.self", label: "observed_notional_imbalance_divergence.self" }),
 			ports.float64({ name: "observed_notional_imbalance_mean.out", label: "observed_notional_imbalance_mean.out" }),
+			ports.Capability({ name: "observed_notional_imbalance_mean.self", label: "observed_notional_imbalance_mean.self" }),
 			ports.float64({ name: "observed_notional_imbalance_zscore.out", label: "observed_notional_imbalance_zscore.out" }),
 			ports.int64({ name: "observed_notional_imbalance_zscore.undefined", label: "observed_notional_imbalance_zscore.undefined" }),
+			ports.Capability({ name: "observed_notional_imbalance_zscore.self", label: "observed_notional_imbalance_zscore.self" }),
 			ports.int64({ name: "observed_notional_rate.undefined", label: "observed_notional_rate.undefined" }),
+			ports.Capability({ name: "observed_notional_rate.self", label: "observed_notional_rate.self" }),
 			ports.float64({ name: "observed_notional_rate_baseline.out", label: "observed_notional_rate_baseline.out" }),
+			ports.Capability({ name: "observed_notional_rate_baseline.self", label: "observed_notional_rate_baseline.self" }),
+			ports.Capability({ name: "observed_notional_rate_divergence.self", label: "observed_notional_rate_divergence.self" }),
 			ports.float64({ name: "observed_notional_rate_mean.out", label: "observed_notional_rate_mean.out" }),
+			ports.Capability({ name: "observed_notional_rate_mean.self", label: "observed_notional_rate_mean.self" }),
 			ports.float64({ name: "observed_notional_rate_zscore.out", label: "observed_notional_rate_zscore.out" }),
 			ports.int64({ name: "observed_notional_rate_zscore.undefined", label: "observed_notional_rate_zscore.undefined" }),
+			ports.Capability({ name: "observed_notional_rate_zscore.self", label: "observed_notional_rate_zscore.self" }),
+			ports.Capability({ name: "rateBaseline.self", label: "rateBaseline.self" }),
 			ports.int64({ name: "rateNoise.undefined", label: "rateNoise.undefined" }),
+			ports.Capability({ name: "rateNoise.self", label: "rateNoise.self" }),
+			ports.Capability({ name: "rateVariance.self", label: "rateVariance.self" }),
 		],
 	});
 	config.addNodeType({
@@ -8311,40 +9074,81 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => (_inputData, _connections) => [
 			ports.int64({ name: "basis.undefined", label: "basis.undefined" }),
+			ports.Capability({ name: "basis.self", label: "basis.self" }),
+			ports.Capability({ name: "basisBaseline.self", label: "basisBaseline.self" }),
+			ports.Capability({ name: "basisChain.self", label: "basisChain.self" }),
+			ports.Capability({ name: "basisDifference.self", label: "basisDifference.self" }),
+			ports.Capability({ name: "basisDivergence.self", label: "basisDivergence.self" }),
 			ports.int64({ name: "basisNoise.undefined", label: "basisNoise.undefined" }),
+			ports.Capability({ name: "basisNoise.self", label: "basisNoise.self" }),
+			ports.Capability({ name: "basisVariance.self", label: "basisVariance.self" }),
 			ports.float64({ name: "basis_baseline.out", label: "basis_baseline.out" }),
+			ports.Capability({ name: "basis_baseline.self", label: "basis_baseline.self" }),
+			ports.Capability({ name: "basis_change.self", label: "basis_change.self" }),
 			ports.float64({ name: "basis_closure_error.out", label: "basis_closure_error.out" }),
+			ports.Capability({ name: "basis_closure_error.self", label: "basis_closure_error.self" }),
 			ports.float64({ name: "basis_rate.out", label: "basis_rate.out" }),
 			ports.int64({ name: "basis_rate.undefined", label: "basis_rate.undefined" }),
+			ports.Capability({ name: "basis_rate.self", label: "basis_rate.self" }),
 			ports.bool({ name: "basis_velocity.defined", label: "basis_velocity.defined" }),
 			ports.float64({ name: "basis_velocity.out", label: "basis_velocity.out" }),
 			ports.float64({ name: "basis_velocity.snr", label: "basis_velocity.snr" }),
+			ports.Capability({ name: "basis_velocity.self", label: "basis_velocity.self" }),
 			ports.float64({ name: "basis_zscore.out", label: "basis_zscore.out" }),
 			ports.int64({ name: "basis_zscore.undefined", label: "basis_zscore.undefined" }),
+			ports.Capability({ name: "basis_zscore.self", label: "basis_zscore.self" }),
 			ports.int64({ name: "derivativeIndexRatio.undefined", label: "derivativeIndexRatio.undefined" }),
+			ports.Capability({ name: "derivativeIndexRatio.self", label: "derivativeIndexRatio.self" }),
 			ports.int64({ name: "derivativeSpotRatio.undefined", label: "derivativeSpotRatio.undefined" }),
+			ports.Capability({ name: "derivativeSpotRatio.self", label: "derivativeSpotRatio.self" }),
 			ports.int64({ name: "derivative_index_log_basis.undefined", label: "derivative_index_log_basis.undefined" }),
+			ports.Capability({ name: "derivative_index_log_basis.self", label: "derivative_index_log_basis.self" }),
+			ports.Capability({ name: "derivative_log_return.self", label: "derivative_log_return.self" }),
 			ports.int64({ name: "derivative_spot_log_basis.undefined", label: "derivative_spot_log_basis.undefined" }),
+			ports.Capability({ name: "derivative_spot_log_basis.self", label: "derivative_spot_log_basis.self" }),
+			ports.Capability({ name: "elapsed.self", label: "elapsed.self" }),
+			ports.Capability({ name: "gapBaseline.self", label: "gapBaseline.self" }),
+			ports.Capability({ name: "gapDivergence.self", label: "gapDivergence.self" }),
 			ports.int64({ name: "gapNoise.undefined", label: "gapNoise.undefined" }),
+			ports.Capability({ name: "gapNoise.self", label: "gapNoise.self" }),
+			ports.Capability({ name: "gapVariance.self", label: "gapVariance.self" }),
+			ports.Capability({ name: "growthBaseline.self", label: "growthBaseline.self" }),
+			ports.Capability({ name: "growthDivergence.self", label: "growthDivergence.self" }),
 			ports.int64({ name: "growthNoise.undefined", label: "growthNoise.undefined" }),
+			ports.Capability({ name: "growthNoise.self", label: "growthNoise.self" }),
+			ports.Capability({ name: "growthVariance.self", label: "growthVariance.self" }),
 			ports.int64({ name: "indexSpotRatio.undefined", label: "indexSpotRatio.undefined" }),
+			ports.Capability({ name: "indexSpotRatio.self", label: "indexSpotRatio.self" }),
 			ports.int64({ name: "index_spot_log_basis.undefined", label: "index_spot_log_basis.undefined" }),
+			ports.Capability({ name: "index_spot_log_basis.self", label: "index_spot_log_basis.self" }),
 			ports.float64({ name: "log_basis.out", label: "log_basis.out" }),
 			ports.int64({ name: "log_basis.undefined", label: "log_basis.undefined" }),
+			ports.Capability({ name: "log_basis.self", label: "log_basis.self" }),
 			ports.float64({ name: "open_interest_change.out", label: "open_interest_change.out" }),
+			ports.Capability({ name: "open_interest_change.self", label: "open_interest_change.self" }),
 			ports.float64({ name: "open_interest_growth_baseline.out", label: "open_interest_growth_baseline.out" }),
+			ports.Capability({ name: "open_interest_growth_baseline.self", label: "open_interest_growth_baseline.self" }),
 			ports.int64({ name: "open_interest_growth_rate.undefined", label: "open_interest_growth_rate.undefined" }),
+			ports.Capability({ name: "open_interest_growth_rate.self", label: "open_interest_growth_rate.self" }),
 			ports.bool({ name: "open_interest_growth_velocity.defined", label: "open_interest_growth_velocity.defined" }),
 			ports.float64({ name: "open_interest_growth_velocity.out", label: "open_interest_growth_velocity.out" }),
 			ports.float64({ name: "open_interest_growth_velocity.snr", label: "open_interest_growth_velocity.snr" }),
+			ports.Capability({ name: "open_interest_growth_velocity.self", label: "open_interest_growth_velocity.self" }),
 			ports.float64({ name: "open_interest_growth_zscore.out", label: "open_interest_growth_zscore.out" }),
 			ports.int64({ name: "open_interest_growth_zscore.undefined", label: "open_interest_growth_zscore.undefined" }),
+			ports.Capability({ name: "open_interest_growth_zscore.self", label: "open_interest_growth_zscore.self" }),
+			ports.Capability({ name: "open_interest_log_change.self", label: "open_interest_log_change.self" }),
+			ports.Capability({ name: "reference_log_return.self", label: "reference_log_return.self" }),
+			ports.Capability({ name: "return_gap.self", label: "return_gap.self" }),
 			ports.float64({ name: "return_gap_baseline.out", label: "return_gap_baseline.out" }),
+			ports.Capability({ name: "return_gap_baseline.self", label: "return_gap_baseline.self" }),
 			ports.bool({ name: "return_gap_velocity.defined", label: "return_gap_velocity.defined" }),
 			ports.float64({ name: "return_gap_velocity.out", label: "return_gap_velocity.out" }),
 			ports.float64({ name: "return_gap_velocity.snr", label: "return_gap_velocity.snr" }),
+			ports.Capability({ name: "return_gap_velocity.self", label: "return_gap_velocity.self" }),
 			ports.float64({ name: "return_gap_zscore.out", label: "return_gap_zscore.out" }),
 			ports.int64({ name: "return_gap_zscore.undefined", label: "return_gap_zscore.undefined" }),
+			ports.Capability({ name: "return_gap_zscore.self", label: "return_gap_zscore.self" }),
 		],
 	});
 	config.addNodeType({
@@ -8374,28 +9178,123 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => (_inputData, _connections) => [
 			ports.int64({ name: "buyIndicator.undefined", label: "buyIndicator.undefined" }),
+			ports.Capability({ name: "buyIndicator.self", label: "buyIndicator.self" }),
+			ports.Capability({ name: "buyShare.self", label: "buyShare.self" }),
+			ports.Capability({ name: "elapsed.self", label: "elapsed.self" }),
 			ports.int64({ name: "gross_derivative_trade_notional.count", label: "gross_derivative_trade_notional.count" }),
 			ports.int64({ name: "gross_derivative_trade_notional.idle", label: "gross_derivative_trade_notional.idle" }),
 			ports.bool({ name: "gross_derivative_trade_notional.ready", label: "gross_derivative_trade_notional.ready" }),
+			ports.Capability({ name: "gross_derivative_trade_notional.self", label: "gross_derivative_trade_notional.self" }),
+			ports.Capability({ name: "gross_liquidation_notional.self", label: "gross_liquidation_notional.self" }),
+			ports.Capability({ name: "liquidatedNotional.self", label: "liquidatedNotional.self" }),
+			ports.Capability({ name: "liquidationNotional:buy.self", label: "liquidationNotional:buy.self" }),
+			ports.Capability({ name: "liquidationNotional:sell.self", label: "liquidationNotional:sell.self" }),
 			ports.int64({ name: "liquidation_notional:buy.count", label: "liquidation_notional:buy.count" }),
 			ports.int64({ name: "liquidation_notional:buy.idle", label: "liquidation_notional:buy.idle" }),
 			ports.bool({ name: "liquidation_notional:buy.ready", label: "liquidation_notional:buy.ready" }),
+			ports.Capability({ name: "liquidation_notional:buy.self", label: "liquidation_notional:buy.self" }),
 			ports.int64({ name: "liquidation_notional:sell.count", label: "liquidation_notional:sell.count" }),
 			ports.int64({ name: "liquidation_notional:sell.idle", label: "liquidation_notional:sell.idle" }),
 			ports.bool({ name: "liquidation_notional:sell.ready", label: "liquidation_notional:sell.ready" }),
+			ports.Capability({ name: "liquidation_notional:sell.self", label: "liquidation_notional:sell.self" }),
 			ports.float64({ name: "liquidation_notional_rate.out", label: "liquidation_notional_rate.out" }),
 			ports.int64({ name: "liquidation_notional_rate.undefined", label: "liquidation_notional_rate.undefined" }),
+			ports.Capability({ name: "liquidation_notional_rate.self", label: "liquidation_notional_rate.self" }),
 			ports.int64({ name: "liquidation_share.undefined", label: "liquidation_share.undefined" }),
+			ports.Capability({ name: "liquidation_share.self", label: "liquidation_share.self" }),
 			ports.float64({ name: "liquidation_share_baseline.out", label: "liquidation_share_baseline.out" }),
+			ports.Capability({ name: "liquidation_share_baseline.self", label: "liquidation_share_baseline.self" }),
+			ports.Capability({ name: "liquidation_share_divergence.self", label: "liquidation_share_divergence.self" }),
 			ports.bool({ name: "liquidation_share_velocity.defined", label: "liquidation_share_velocity.defined" }),
 			ports.float64({ name: "liquidation_share_velocity.out", label: "liquidation_share_velocity.out" }),
 			ports.float64({ name: "liquidation_share_velocity.snr", label: "liquidation_share_velocity.snr" }),
+			ports.Capability({ name: "liquidation_share_velocity.self", label: "liquidation_share_velocity.self" }),
 			ports.float64({ name: "liquidation_share_zscore.out", label: "liquidation_share_zscore.out" }),
 			ports.int64({ name: "liquidation_share_zscore.undefined", label: "liquidation_share_zscore.undefined" }),
+			ports.Capability({ name: "liquidation_share_zscore.self", label: "liquidation_share_zscore.self" }),
 			ports.float64({ name: "liquidation_signed_fraction.out", label: "liquidation_signed_fraction.out" }),
 			ports.int64({ name: "liquidation_signed_fraction.undefined", label: "liquidation_signed_fraction.undefined" }),
+			ports.Capability({ name: "liquidation_signed_fraction.self", label: "liquidation_signed_fraction.self" }),
+			ports.Capability({ name: "net_liquidation_notional.self", label: "net_liquidation_notional.self" }),
 			ports.int64({ name: "sellIndicator.undefined", label: "sellIndicator.undefined" }),
+			ports.Capability({ name: "sellIndicator.self", label: "sellIndicator.self" }),
+			ports.Capability({ name: "sellShare.self", label: "sellShare.self" }),
+			ports.Capability({ name: "shareBaseline.self", label: "shareBaseline.self" }),
 			ports.int64({ name: "shareNoise.undefined", label: "shareNoise.undefined" }),
+			ports.Capability({ name: "shareNoise.self", label: "shareNoise.self" }),
+			ports.Capability({ name: "shareVariance.self", label: "shareVariance.self" }),
+			ports.Capability({ name: "tradeNotional.self", label: "tradeNotional.self" }),
+		],
+	});
+	config.addNodeType({
+		type: "definition:forward",
+		label: "forward",
+		category: "Definitions",
+		description: "Sub-graph: forward",
+		initialWidth: 320,
+		inputs: (ports) => (_inputData, _connections) => [
+			ports.string({ name: "contexts.history", label: "contexts.history" }),
+			ports.bool({ name: "contexts.replay", label: "contexts.replay" }),
+			ports.string({ name: "contexts.symbol", label: "contexts.symbol" }),
+			ports.int64({ name: "excursion.epoch", label: "excursion.epoch" }),
+			ports.string({ name: "excursion.scope", label: "excursion.scope" }),
+			ports.int64({ name: "excursion.sequence", label: "excursion.sequence" }),
+			ports["[]byte"]({ name: "last.data", label: "last.data" }),
+			ports["[]byte"]({ name: "symbol.data", label: "symbol.data" }),
+			ports.bool({ name: "table_excursions.commit", label: "table_excursions.commit" }),
+			ports["[]byte"]({ name: "table_excursions.rows", label: "table_excursions.rows" }),
+			ports.bool({ name: "table_measurements.commit", label: "table_measurements.commit" }),
+			ports["[]byte"]({ name: "table_measurements.payload", label: "table_measurements.payload" }),
+			ports["[]byte"]({ name: "table_measurements.rows", label: "table_measurements.rows" }),
+		],
+		outputs: (ports) => (_inputData, _connections) => [
+			ports.int64({ name: "contexts.idle", label: "contexts.idle" }),
+			ports.data({ name: "contexts.ready.flat", label: "contexts.ready.flat" }),
+			ports.data({ name: "contexts.ready.held", label: "contexts.ready.held" }),
+			ports.Capability({ name: "contexts.self", label: "contexts.self" }),
+			ports.int64({ name: "excursion.epoch", label: "excursion.epoch" }),
+			ports.float64({ name: "excursion.floor", label: "excursion.floor" }),
+			ports.float64({ name: "excursion.horizon", label: "excursion.horizon" }),
+			ports.int64({ name: "excursion.legs", label: "excursion.legs" }),
+			ports.float64({ name: "excursion.move.anchor", label: "excursion.move.anchor" }),
+			ports.int64({ name: "excursion.move.anchorSequence", label: "excursion.move.anchorSequence" }),
+			ports.int64({ name: "excursion.move.confirmationSequence", label: "excursion.move.confirmationSequence" }),
+			ports.bool({ name: "excursion.move.confirmed", label: "excursion.move.confirmed" }),
+			ports.float64({ name: "excursion.move.excursion", label: "excursion.move.excursion" }),
+			ports.float64({ name: "excursion.move.extremum", label: "excursion.move.extremum" }),
+			ports.int64({ name: "excursion.move.extremumSequence", label: "excursion.move.extremumSequence" }),
+			ports.bool({ name: "excursion.move.hasPrecursor", label: "excursion.move.hasPrecursor" }),
+			ports.float64({ name: "excursion.move.ignition", label: "excursion.move.ignition" }),
+			ports.int64({ name: "excursion.move.ignitionSequence", label: "excursion.move.ignitionSequence" }),
+			ports.int64({ name: "excursion.none", label: "excursion.none" }),
+			ports.float64({ name: "excursion.qualifying", label: "excursion.qualifying" }),
+			ports.string({ name: "excursion.scope", label: "excursion.scope" }),
+			ports.float64({ name: "excursion.sigma", label: "excursion.sigma" }),
+			ports.int64({ name: "excursion.steps", label: "excursion.steps" }),
+			ports.Capability({ name: "excursion.self", label: "excursion.self" }),
+			ports.bool({ name: "last.found", label: "last.found" }),
+			ports["[]byte"]({ name: "last.json", label: "last.json" }),
+			ports.int64({ name: "last.missing", label: "last.missing" }),
+			ports.string({ name: "last.text", label: "last.text" }),
+			ports.int64({ name: "last.unsigned", label: "last.unsigned" }),
+			ports.Capability({ name: "last.self", label: "last.self" }),
+			ports.bool({ name: "symbol.found", label: "symbol.found" }),
+			ports["[]byte"]({ name: "symbol.json", label: "symbol.json" }),
+			ports.int64({ name: "symbol.missing", label: "symbol.missing" }),
+			ports.float64({ name: "symbol.out", label: "symbol.out" }),
+			ports.string({ name: "symbol.text", label: "symbol.text" }),
+			ports.int64({ name: "symbol.unsigned", label: "symbol.unsigned" }),
+			ports.Capability({ name: "symbol.self", label: "symbol.self" }),
+			ports.int64({ name: "table_excursions.bytes", label: "table_excursions.bytes" }),
+			ports.int64({ name: "table_excursions.committed", label: "table_excursions.committed" }),
+			ports.int64({ name: "table_excursions.pending", label: "table_excursions.pending" }),
+			ports.string({ name: "table_excursions.table", label: "table_excursions.table" }),
+			ports.Capability({ name: "table_excursions.self", label: "table_excursions.self" }),
+			ports.int64({ name: "table_measurements.bytes", label: "table_measurements.bytes" }),
+			ports.int64({ name: "table_measurements.committed", label: "table_measurements.committed" }),
+			ports.int64({ name: "table_measurements.pending", label: "table_measurements.pending" }),
+			ports.string({ name: "table_measurements.table", label: "table_measurements.table" }),
+			ports.Capability({ name: "table_measurements.self", label: "table_measurements.self" }),
 		],
 	});
 	config.addNodeType({
@@ -8415,88 +9314,174 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => (_inputData, _connections) => [
 			ports.bool({ name: "alpha:buybuy.found", label: "alpha:buybuy.found" }),
 			ports.float64({ name: "alpha:buybuy.out", label: "alpha:buybuy.out" }),
+			ports.Capability({ name: "alpha:buybuy.self", label: "alpha:buybuy.self" }),
 			ports.bool({ name: "alpha:buysell.found", label: "alpha:buysell.found" }),
 			ports.float64({ name: "alpha:buysell.out", label: "alpha:buysell.out" }),
+			ports.Capability({ name: "alpha:buysell.self", label: "alpha:buysell.self" }),
 			ports.bool({ name: "alpha:sellbuy.found", label: "alpha:sellbuy.found" }),
 			ports.float64({ name: "alpha:sellbuy.out", label: "alpha:sellbuy.out" }),
+			ports.Capability({ name: "alpha:sellbuy.self", label: "alpha:sellbuy.self" }),
 			ports.bool({ name: "alpha:sellsell.found", label: "alpha:sellsell.found" }),
 			ports.float64({ name: "alpha:sellsell.out", label: "alpha:sellsell.out" }),
+			ports.Capability({ name: "alpha:sellsell.self", label: "alpha:sellsell.self" }),
 			ports.int64({ name: "arrival_rate.undefined", label: "arrival_rate.undefined" }),
+			ports.Capability({ name: "arrival_rate.self", label: "arrival_rate.self" }),
 			ports.bool({ name: "baseline:buy.found", label: "baseline:buy.found" }),
+			ports.Capability({ name: "baseline:buy.self", label: "baseline:buy.self" }),
 			ports.bool({ name: "baseline:sell.found", label: "baseline:sell.found" }),
+			ports.Capability({ name: "baseline:sell.self", label: "baseline:sell.self" }),
+			ports.Capability({ name: "baseline_mass:buy.self", label: "baseline_mass:buy.self" }),
+			ports.Capability({ name: "baseline_mass:sell.self", label: "baseline_mass:sell.self" }),
+			ports.Capability({ name: "branching.self", label: "branching.self" }),
+			ports.Capability({ name: "compensator.self", label: "compensator.self" }),
 			ports.bool({ name: "compensator:buy.found", label: "compensator:buy.found" }),
+			ports.Capability({ name: "compensator:buy.self", label: "compensator:buy.self" }),
 			ports.bool({ name: "compensator:sell.found", label: "compensator:sell.found" }),
+			ports.Capability({ name: "compensator:sell.self", label: "compensator:sell.self" }),
 			ports.int64({ name: "compensator_root:buy.undefined", label: "compensator_root:buy.undefined" }),
+			ports.Capability({ name: "compensator_root:buy.self", label: "compensator_root:buy.self" }),
 			ports.int64({ name: "compensator_root:sell.undefined", label: "compensator_root:sell.undefined" }),
+			ports.Capability({ name: "compensator_root:sell.self", label: "compensator_root:sell.self" }),
 			ports.bool({ name: "conditional_intensity_velocity.defined", label: "conditional_intensity_velocity.defined" }),
 			ports.float64({ name: "conditional_intensity_velocity.out", label: "conditional_intensity_velocity.out" }),
 			ports.float64({ name: "conditional_intensity_velocity.snr", label: "conditional_intensity_velocity.snr" }),
+			ports.Capability({ name: "conditional_intensity_velocity.self", label: "conditional_intensity_velocity.self" }),
 			ports.bool({ name: "count:buy.found", label: "count:buy.found" }),
+			ports.Capability({ name: "count:buy.self", label: "count:buy.self" }),
 			ports.bool({ name: "count:sell.found", label: "count:sell.found" }),
+			ports.Capability({ name: "count:sell.self", label: "count:sell.self" }),
+			ports.Capability({ name: "count_innovation:buy.self", label: "count_innovation:buy.self" }),
+			ports.Capability({ name: "count_innovation:sell.self", label: "count_innovation:sell.self" }),
 			ports.bool({ name: "descendants.defined", label: "descendants.defined" }),
+			ports.Capability({ name: "descendants.self", label: "descendants.self" }),
 			ports.bool({ name: "descendants:buy.found", label: "descendants:buy.found" }),
 			ports.float64({ name: "descendants:buy.out", label: "descendants:buy.out" }),
+			ports.Capability({ name: "descendants:buy.self", label: "descendants:buy.self" }),
 			ports.bool({ name: "descendants:sell.found", label: "descendants:sell.found" }),
 			ports.float64({ name: "descendants:sell.out", label: "descendants:sell.out" }),
+			ports.Capability({ name: "descendants:sell.self", label: "descendants:sell.self" }),
+			ports.Capability({ name: "descendants_remainder.self", label: "descendants_remainder.self" }),
 			ports.bool({ name: "domain.defined", label: "domain.defined" }),
+			ports.Capability({ name: "domain.self", label: "domain.self" }),
 			ports.bool({ name: "domain_uncoupled.defined", label: "domain_uncoupled.defined" }),
+			ports.Capability({ name: "domain_uncoupled.self", label: "domain_uncoupled.self" }),
+			ports.Capability({ name: "events.self", label: "events.self" }),
+			ports.Capability({ name: "excess:buy.self", label: "excess:buy.self" }),
+			ports.Capability({ name: "excess:sell.self", label: "excess:sell.self" }),
+			ports.Capability({ name: "excess_mass:buy.self", label: "excess_mass:buy.self" }),
+			ports.Capability({ name: "excess_mass:sell.self", label: "excess_mass:sell.self" }),
+			ports.Capability({ name: "excess_mass_squared:buy.self", label: "excess_mass_squared:buy.self" }),
+			ports.Capability({ name: "excess_mass_squared:sell.self", label: "excess_mass_squared:sell.self" }),
+			ports.Capability({ name: "excitation.self", label: "excitation.self" }),
 			ports.float64({ name: "excitation_fraction:buy.out", label: "excitation_fraction:buy.out" }),
 			ports.int64({ name: "excitation_fraction:buy.undefined", label: "excitation_fraction:buy.undefined" }),
+			ports.Capability({ name: "excitation_fraction:buy.self", label: "excitation_fraction:buy.self" }),
 			ports.float64({ name: "excitation_fraction:sell.out", label: "excitation_fraction:sell.out" }),
 			ports.int64({ name: "excitation_fraction:sell.undefined", label: "excitation_fraction:sell.undefined" }),
+			ports.Capability({ name: "excitation_fraction:sell.self", label: "excitation_fraction:sell.self" }),
+			ports.Capability({ name: "excitation_intensity.self", label: "excitation_intensity.self" }),
+			ports.Capability({ name: "excitation_intensity:buy.self", label: "excitation_intensity:buy.self" }),
+			ports.Capability({ name: "excitation_intensity:sell.self", label: "excitation_intensity:sell.self" }),
 			ports.float64({ name: "excitation_share.out", label: "excitation_share.out" }),
 			ports.int64({ name: "excitation_share.undefined", label: "excitation_share.undefined" }),
+			ports.Capability({ name: "excitation_share.self", label: "excitation_share.self" }),
 			ports.float64({ name: "excitation_share:buy.out", label: "excitation_share:buy.out" }),
 			ports.int64({ name: "excitation_share:buy.undefined", label: "excitation_share:buy.undefined" }),
+			ports.Capability({ name: "excitation_share:buy.self", label: "excitation_share:buy.self" }),
 			ports.float64({ name: "excitation_share:sell.out", label: "excitation_share:sell.out" }),
 			ports.int64({ name: "excitation_share:sell.undefined", label: "excitation_share:sell.undefined" }),
+			ports.Capability({ name: "excitation_share:sell.self", label: "excitation_share:sell.self" }),
 			ports.float64({ name: "expected_descendants.out", label: "expected_descendants.out" }),
 			ports.int64({ name: "expected_descendants.undefined", label: "expected_descendants.undefined" }),
+			ports.Capability({ name: "expected_descendants.self", label: "expected_descendants.self" }),
 			ports.float64({ name: "fraction:buy.out", label: "fraction:buy.out" }),
 			ports.int64({ name: "fraction:buy.undefined", label: "fraction:buy.undefined" }),
+			ports.Capability({ name: "fraction:buy.self", label: "fraction:buy.self" }),
 			ports.float64({ name: "fraction:sell.out", label: "fraction:sell.out" }),
 			ports.int64({ name: "fraction:sell.undefined", label: "fraction:sell.undefined" }),
+			ports.Capability({ name: "fraction:sell.self", label: "fraction:sell.self" }),
+			ports.Capability({ name: "integral.self", label: "integral.self" }),
+			ports.Capability({ name: "integral_uncoupled.self", label: "integral_uncoupled.self" }),
+			ports.Capability({ name: "intensity.self", label: "intensity.self" }),
+			ports.Capability({ name: "lambda.self", label: "lambda.self" }),
 			ports.bool({ name: "lambda:buy.found", label: "lambda:buy.found" }),
+			ports.Capability({ name: "lambda:buy.self", label: "lambda:buy.self" }),
 			ports.bool({ name: "lambda:sell.found", label: "lambda:sell.found" }),
+			ports.Capability({ name: "lambda:sell.self", label: "lambda:sell.self" }),
 			ports.bool({ name: "likelihood.defined", label: "likelihood.defined" }),
+			ports.Capability({ name: "likelihood.self", label: "likelihood.self" }),
 			ports.bool({ name: "likelihood_uncoupled.defined", label: "likelihood_uncoupled.defined" }),
+			ports.Capability({ name: "likelihood_uncoupled.self", label: "likelihood_uncoupled.self" }),
 			ports.float64({ name: "log_likelihood_gain_per_event_vs_poisson.out", label: "log_likelihood_gain_per_event_vs_poisson.out" }),
 			ports.int64({ name: "log_likelihood_gain_per_event_vs_poisson.undefined", label: "log_likelihood_gain_per_event_vs_poisson.undefined" }),
+			ports.Capability({ name: "log_likelihood_gain_per_event_vs_poisson.self", label: "log_likelihood_gain_per_event_vs_poisson.self" }),
 			ports.float64({ name: "log_likelihood_gain_per_event_vs_self_only.out", label: "log_likelihood_gain_per_event_vs_self_only.out" }),
 			ports.int64({ name: "log_likelihood_gain_per_event_vs_self_only.undefined", label: "log_likelihood_gain_per_event_vs_self_only.undefined" }),
+			ports.Capability({ name: "log_likelihood_gain_per_event_vs_self_only.self", label: "log_likelihood_gain_per_event_vs_self_only.self" }),
+			ports.Capability({ name: "log_likelihood_gain_vs_poisson.self", label: "log_likelihood_gain_vs_poisson.self" }),
+			ports.Capability({ name: "log_likelihood_gain_vs_self_only.self", label: "log_likelihood_gain_vs_self_only.self" }),
 			ports.float64({ name: "log_likelihood_per_event.out", label: "log_likelihood_per_event.out" }),
 			ports.int64({ name: "log_likelihood_per_event.undefined", label: "log_likelihood_per_event.undefined" }),
+			ports.Capability({ name: "log_likelihood_per_event.self", label: "log_likelihood_per_event.self" }),
+			ports.Capability({ name: "log_likelihood_poisson.self", label: "log_likelihood_poisson.self" }),
 			ports.int64({ name: "log_rate:buy.undefined", label: "log_rate:buy.undefined" }),
+			ports.Capability({ name: "log_rate:buy.self", label: "log_rate:buy.self" }),
 			ports.int64({ name: "log_rate:sell.undefined", label: "log_rate:sell.undefined" }),
+			ports.Capability({ name: "log_rate:sell.self", label: "log_rate:sell.self" }),
 			ports.int64({ name: "noise_ratio:buy.undefined", label: "noise_ratio:buy.undefined" }),
+			ports.Capability({ name: "noise_ratio:buy.self", label: "noise_ratio:buy.self" }),
 			ports.int64({ name: "noise_ratio:sell.undefined", label: "noise_ratio:sell.undefined" }),
+			ports.Capability({ name: "noise_ratio:sell.self", label: "noise_ratio:sell.self" }),
+			ports.Capability({ name: "noise_sum.self", label: "noise_sum.self" }),
+			ports.Capability({ name: "objective.self", label: "objective.self" }),
+			ports.Capability({ name: "objective_uncoupled.self", label: "objective_uncoupled.self" }),
 			ports.bool({ name: "offspring:buybuy.found", label: "offspring:buybuy.found" }),
 			ports.float64({ name: "offspring:buybuy.out", label: "offspring:buybuy.out" }),
+			ports.Capability({ name: "offspring:buybuy.self", label: "offspring:buybuy.self" }),
 			ports.bool({ name: "offspring:buysell.found", label: "offspring:buysell.found" }),
 			ports.float64({ name: "offspring:buysell.out", label: "offspring:buysell.out" }),
+			ports.Capability({ name: "offspring:buysell.self", label: "offspring:buysell.self" }),
 			ports.bool({ name: "offspring:sellbuy.found", label: "offspring:sellbuy.found" }),
 			ports.float64({ name: "offspring:sellbuy.out", label: "offspring:sellbuy.out" }),
+			ports.Capability({ name: "offspring:sellbuy.self", label: "offspring:sellbuy.self" }),
 			ports.bool({ name: "offspring:sellsell.found", label: "offspring:sellsell.found" }),
 			ports.float64({ name: "offspring:sellsell.out", label: "offspring:sellsell.out" }),
+			ports.Capability({ name: "offspring:sellsell.self", label: "offspring:sellsell.self" }),
+			ports.Capability({ name: "parameters.self", label: "parameters.self" }),
+			ports.Capability({ name: "parameters_uncoupled.self", label: "parameters_uncoupled.self" }),
+			ports.Capability({ name: "poisson_mass:buy.self", label: "poisson_mass:buy.self" }),
+			ports.Capability({ name: "poisson_mass:sell.self", label: "poisson_mass:sell.self" }),
+			ports.Capability({ name: "poisson_term:buy.self", label: "poisson_term:buy.self" }),
+			ports.Capability({ name: "poisson_term:sell.self", label: "poisson_term:sell.self" }),
+			ports.Capability({ name: "radius.self", label: "radius.self" }),
 			ports.int64({ name: "rate:buy.undefined", label: "rate:buy.undefined" }),
+			ports.Capability({ name: "rate:buy.self", label: "rate:buy.self" }),
 			ports.int64({ name: "rate:sell.undefined", label: "rate:sell.undefined" }),
+			ports.Capability({ name: "rate:sell.self", label: "rate:sell.self" }),
 			ports.float64({ name: "snr.out", label: "snr.out" }),
 			ports.int64({ name: "snr.undefined", label: "snr.undefined" }),
+			ports.Capability({ name: "snr.self", label: "snr.self" }),
 			ports.bool({ name: "spectral_radius_velocity.defined", label: "spectral_radius_velocity.defined" }),
 			ports.float64({ name: "spectral_radius_velocity.out", label: "spectral_radius_velocity.out" }),
 			ports.float64({ name: "spectral_radius_velocity.snr", label: "spectral_radius_velocity.snr" }),
+			ports.Capability({ name: "spectral_radius_velocity.self", label: "spectral_radius_velocity.self" }),
 			ports.float64({ name: "standardized_innovation:buy.out", label: "standardized_innovation:buy.out" }),
 			ports.int64({ name: "standardized_innovation:buy.undefined", label: "standardized_innovation:buy.undefined" }),
+			ports.Capability({ name: "standardized_innovation:buy.self", label: "standardized_innovation:buy.self" }),
 			ports.float64({ name: "standardized_innovation:sell.out", label: "standardized_innovation:sell.out" }),
 			ports.int64({ name: "standardized_innovation:sell.undefined", label: "standardized_innovation:sell.undefined" }),
+			ports.Capability({ name: "standardized_innovation:sell.self", label: "standardized_innovation:sell.self" }),
 			ports.bool({ name: "stepper.converged", label: "stepper.converged" }),
 			ports.float64({ name: "stepper.fVal", label: "stepper.fVal" }),
 			ports.int64({ name: "stepper.iterations", label: "stepper.iterations" }),
+			ports.Capability({ name: "stepper.self", label: "stepper.self" }),
 			ports.bool({ name: "stepper_uncoupled.converged", label: "stepper_uncoupled.converged" }),
 			ports.float64({ name: "stepper_uncoupled.fVal", label: "stepper_uncoupled.fVal" }),
 			ports.int64({ name: "stepper_uncoupled.iterations", label: "stepper_uncoupled.iterations" }),
+			ports.Capability({ name: "stepper_uncoupled.self", label: "stepper_uncoupled.self" }),
 			ports.float64({ name: "timescale.out", label: "timescale.out" }),
 			ports.int64({ name: "timescale.undefined", label: "timescale.undefined" }),
+			ports.Capability({ name: "timescale.self", label: "timescale.self" }),
 		],
 	});
 	config.addNodeType({
@@ -8519,26 +9504,34 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.string({ name: "previous.scope", label: "previous.scope" }),
 		],
 		outputs: (ports) => (_inputData, _connections) => [
+			ports.Capability({ name: "activation.self", label: "activation.self" }),
 			ports.data({ name: "authority.maturity", label: "authority.maturity" }),
 			ports.data({ name: "authority.snrFraction", label: "authority.snrFraction" }),
+			ports.Capability({ name: "authority.self", label: "authority.self" }),
 			ports.int64({ name: "authority_state.records", label: "authority_state.records" }),
 			ports.Capability({ name: "authority_state.self", label: "authority_state.self" }),
 			ports.int64({ name: "change.idle", label: "change.idle" }),
+			ports.Capability({ name: "change.self", label: "change.self" }),
 			ports.data({ name: "concordance.orientation", label: "concordance.orientation" }),
+			ports.Capability({ name: "concordance.self", label: "concordance.self" }),
 			ports.data({ name: "hot.hot", label: "hot.hot" }),
-			ports["[]byte"]({ name: "hot.out", label: "hot.out" }),
 			ports.float64({ name: "hot.threshold", label: "hot.threshold" }),
+			ports.Capability({ name: "hot.self", label: "hot.self" }),
+			ports.Capability({ name: "inversion.self", label: "inversion.self" }),
 			ports.int64({ name: "pair_state.records", label: "pair_state.records" }),
 			ports.Capability({ name: "pair_state.self", label: "pair_state.self" }),
 			ports.data({ name: "pairs.joint", label: "pairs.joint" }),
+			ports.Capability({ name: "pairs.self", label: "pairs.self" }),
 			ports.int64({ name: "partition.records", label: "partition.records" }),
 			ports.Capability({ name: "partition.self", label: "partition.self" }),
 			ports.int64({ name: "peak.moving", label: "peak.moving" }),
-			ports["[]byte"]({ name: "peak.settled.vocabulary", label: "peak.settled.vocabulary" }),
+			ports.string({ name: "peak.settled.vocabulary", label: "peak.settled.vocabulary" }),
+			ports.Capability({ name: "peak.self", label: "peak.self" }),
 			ports.int64({ name: "positions.records", label: "positions.records" }),
 			ports.Capability({ name: "positions.self", label: "positions.self" }),
 			ports.int64({ name: "previous.records", label: "previous.records" }),
 			ports.Capability({ name: "previous.self", label: "previous.self" }),
+			ports.Capability({ name: "relaxation.self", label: "relaxation.self" }),
 		],
 	});
 	config.addNodeType({
@@ -8595,11 +9588,31 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "shiftEnd_8.a", label: "shiftEnd_8.a" }),
 		],
 		outputs: (ports) => (_inputData, _connections) => [
+			ports.Capability({ name: "absolute_correlation_gain.self", label: "absolute_correlation_gain.self" }),
+			ports.Capability({ name: "bestDivergence.self", label: "bestDivergence.self" }),
+			ports.Capability({ name: "bestLagOffset.self", label: "bestLagOffset.self" }),
+			ports.Capability({ name: "bestMean.self", label: "bestMean.self" }),
 			ports.int64({ name: "bestNoise.undefined", label: "bestNoise.undefined" }),
+			ports.Capability({ name: "bestNoise.self", label: "bestNoise.self" }),
+			ports.Capability({ name: "bestVar.self", label: "bestVar.self" }),
+			ports.Capability({ name: "best_lag_correlation.self", label: "best_lag_correlation.self" }),
 			ports.float64({ name: "best_lag_correlation_baseline.out", label: "best_lag_correlation_baseline.out" }),
+			ports.Capability({ name: "best_lag_correlation_baseline.self", label: "best_lag_correlation_baseline.self" }),
 			ports.float64({ name: "best_lag_correlation_zscore.out", label: "best_lag_correlation_zscore.out" }),
 			ports.int64({ name: "best_lag_correlation_zscore.undefined", label: "best_lag_correlation_zscore.undefined" }),
+			ports.Capability({ name: "best_lag_correlation_zscore.self", label: "best_lag_correlation_zscore.self" }),
 			ports.float64({ name: "best_lag_index.out", label: "best_lag_index.out" }),
+			ports.Capability({ name: "best_lag_index.self", label: "best_lag_index.self" }),
+			ports.Capability({ name: "best_lag_seconds.self", label: "best_lag_seconds.self" }),
+			ports.Capability({ name: "candidateStrength_0.self", label: "candidateStrength_0.self" }),
+			ports.Capability({ name: "candidateStrength_1.self", label: "candidateStrength_1.self" }),
+			ports.Capability({ name: "candidateStrength_2.self", label: "candidateStrength_2.self" }),
+			ports.Capability({ name: "candidateStrength_3.self", label: "candidateStrength_3.self" }),
+			ports.Capability({ name: "candidateStrength_4.self", label: "candidateStrength_4.self" }),
+			ports.Capability({ name: "candidateStrength_5.self", label: "candidateStrength_5.self" }),
+			ports.Capability({ name: "candidateStrength_6.self", label: "candidateStrength_6.self" }),
+			ports.Capability({ name: "candidateStrength_7.self", label: "candidateStrength_7.self" }),
+			ports.Capability({ name: "candidateStrength_8.self", label: "candidateStrength_8.self" }),
 			ports.float64({ name: "candidate_0.covariance", label: "candidate_0.covariance" }),
 			ports.float64({ name: "candidate_0.leftEnergy", label: "candidate_0.leftEnergy" }),
 			ports.float64({ name: "candidate_0.leftEnergyRate", label: "candidate_0.leftEnergyRate" }),
@@ -8611,6 +9624,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "candidate_0.sharedTime", label: "candidate_0.sharedTime" }),
 			ports["[]byte"]({ name: "candidate_0.state", label: "candidate_0.state" }),
 			ports.float64({ name: "candidate_0.support", label: "candidate_0.support" }),
+			ports.Capability({ name: "candidate_0.self", label: "candidate_0.self" }),
 			ports.float64({ name: "candidate_1.covariance", label: "candidate_1.covariance" }),
 			ports.float64({ name: "candidate_1.leftEnergy", label: "candidate_1.leftEnergy" }),
 			ports.float64({ name: "candidate_1.leftEnergyRate", label: "candidate_1.leftEnergyRate" }),
@@ -8622,6 +9636,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "candidate_1.sharedTime", label: "candidate_1.sharedTime" }),
 			ports["[]byte"]({ name: "candidate_1.state", label: "candidate_1.state" }),
 			ports.float64({ name: "candidate_1.support", label: "candidate_1.support" }),
+			ports.Capability({ name: "candidate_1.self", label: "candidate_1.self" }),
 			ports.float64({ name: "candidate_2.covariance", label: "candidate_2.covariance" }),
 			ports.float64({ name: "candidate_2.leftEnergy", label: "candidate_2.leftEnergy" }),
 			ports.float64({ name: "candidate_2.leftEnergyRate", label: "candidate_2.leftEnergyRate" }),
@@ -8633,6 +9648,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "candidate_2.sharedTime", label: "candidate_2.sharedTime" }),
 			ports["[]byte"]({ name: "candidate_2.state", label: "candidate_2.state" }),
 			ports.float64({ name: "candidate_2.support", label: "candidate_2.support" }),
+			ports.Capability({ name: "candidate_2.self", label: "candidate_2.self" }),
 			ports.float64({ name: "candidate_3.covariance", label: "candidate_3.covariance" }),
 			ports.float64({ name: "candidate_3.leftEnergy", label: "candidate_3.leftEnergy" }),
 			ports.float64({ name: "candidate_3.leftEnergyRate", label: "candidate_3.leftEnergyRate" }),
@@ -8644,6 +9660,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "candidate_3.sharedTime", label: "candidate_3.sharedTime" }),
 			ports["[]byte"]({ name: "candidate_3.state", label: "candidate_3.state" }),
 			ports.float64({ name: "candidate_3.support", label: "candidate_3.support" }),
+			ports.Capability({ name: "candidate_3.self", label: "candidate_3.self" }),
 			ports.float64({ name: "candidate_4.covariance", label: "candidate_4.covariance" }),
 			ports.float64({ name: "candidate_4.leftEnergy", label: "candidate_4.leftEnergy" }),
 			ports.float64({ name: "candidate_4.leftEnergyRate", label: "candidate_4.leftEnergyRate" }),
@@ -8654,6 +9671,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "candidate_4.rightReturns", label: "candidate_4.rightReturns" }),
 			ports.float64({ name: "candidate_4.sharedTime", label: "candidate_4.sharedTime" }),
 			ports["[]byte"]({ name: "candidate_4.state", label: "candidate_4.state" }),
+			ports.Capability({ name: "candidate_4.self", label: "candidate_4.self" }),
 			ports.float64({ name: "candidate_5.covariance", label: "candidate_5.covariance" }),
 			ports.float64({ name: "candidate_5.leftEnergy", label: "candidate_5.leftEnergy" }),
 			ports.float64({ name: "candidate_5.leftEnergyRate", label: "candidate_5.leftEnergyRate" }),
@@ -8665,6 +9683,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "candidate_5.sharedTime", label: "candidate_5.sharedTime" }),
 			ports["[]byte"]({ name: "candidate_5.state", label: "candidate_5.state" }),
 			ports.float64({ name: "candidate_5.support", label: "candidate_5.support" }),
+			ports.Capability({ name: "candidate_5.self", label: "candidate_5.self" }),
 			ports.float64({ name: "candidate_6.covariance", label: "candidate_6.covariance" }),
 			ports.float64({ name: "candidate_6.leftEnergy", label: "candidate_6.leftEnergy" }),
 			ports.float64({ name: "candidate_6.leftEnergyRate", label: "candidate_6.leftEnergyRate" }),
@@ -8676,6 +9695,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "candidate_6.sharedTime", label: "candidate_6.sharedTime" }),
 			ports["[]byte"]({ name: "candidate_6.state", label: "candidate_6.state" }),
 			ports.float64({ name: "candidate_6.support", label: "candidate_6.support" }),
+			ports.Capability({ name: "candidate_6.self", label: "candidate_6.self" }),
 			ports.float64({ name: "candidate_7.covariance", label: "candidate_7.covariance" }),
 			ports.float64({ name: "candidate_7.leftEnergy", label: "candidate_7.leftEnergy" }),
 			ports.float64({ name: "candidate_7.leftEnergyRate", label: "candidate_7.leftEnergyRate" }),
@@ -8687,6 +9707,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "candidate_7.sharedTime", label: "candidate_7.sharedTime" }),
 			ports["[]byte"]({ name: "candidate_7.state", label: "candidate_7.state" }),
 			ports.float64({ name: "candidate_7.support", label: "candidate_7.support" }),
+			ports.Capability({ name: "candidate_7.self", label: "candidate_7.self" }),
 			ports.float64({ name: "candidate_8.covariance", label: "candidate_8.covariance" }),
 			ports.float64({ name: "candidate_8.leftEnergy", label: "candidate_8.leftEnergy" }),
 			ports.float64({ name: "candidate_8.leftEnergyRate", label: "candidate_8.leftEnergyRate" }),
@@ -8698,25 +9719,54 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "candidate_8.sharedTime", label: "candidate_8.sharedTime" }),
 			ports["[]byte"]({ name: "candidate_8.state", label: "candidate_8.state" }),
 			ports.float64({ name: "candidate_8.support", label: "candidate_8.support" }),
+			ports.Capability({ name: "candidate_8.self", label: "candidate_8.self" }),
+			ports.Capability({ name: "contemporaneous_correlation.self", label: "contemporaneous_correlation.self" }),
 			ports.float64({ name: "correlation_gain_baseline.out", label: "correlation_gain_baseline.out" }),
+			ports.Capability({ name: "correlation_gain_baseline.self", label: "correlation_gain_baseline.self" }),
+			ports.Capability({ name: "correlation_gain_divergence.self", label: "correlation_gain_divergence.self" }),
 			ports.int64({ name: "correlation_gain_noise.undefined", label: "correlation_gain_noise.undefined" }),
+			ports.Capability({ name: "correlation_gain_noise.self", label: "correlation_gain_noise.self" }),
 			ports.bool({ name: "correlation_gain_velocity.defined", label: "correlation_gain_velocity.defined" }),
 			ports.float64({ name: "correlation_gain_velocity.out", label: "correlation_gain_velocity.out" }),
 			ports.float64({ name: "correlation_gain_velocity.snr", label: "correlation_gain_velocity.snr" }),
+			ports.Capability({ name: "correlation_gain_velocity.self", label: "correlation_gain_velocity.self" }),
 			ports.float64({ name: "correlation_gain_zscore.out", label: "correlation_gain_zscore.out" }),
 			ports.int64({ name: "correlation_gain_zscore.undefined", label: "correlation_gain_zscore.undefined" }),
+			ports.Capability({ name: "correlation_gain_zscore.self", label: "correlation_gain_zscore.self" }),
+			ports.Capability({ name: "correlation_p_value.self", label: "correlation_p_value.self" }),
+			ports.Capability({ name: "fisherCoordinate.self", label: "fisherCoordinate.self" }),
 			ports.int64({ name: "fisherDegrees.undefined", label: "fisherDegrees.undefined" }),
+			ports.Capability({ name: "fisherDegrees.self", label: "fisherDegrees.self" }),
+			ports.Capability({ name: "fisherDegreesOfFreedom.self", label: "fisherDegreesOfFreedom.self" }),
 			ports.int64({ name: "fisherHalfWidth.undefined", label: "fisherHalfWidth.undefined" }),
+			ports.Capability({ name: "fisherHalfWidth.self", label: "fisherHalfWidth.self" }),
+			ports.Capability({ name: "fisherMagnitude.self", label: "fisherMagnitude.self" }),
+			ports.Capability({ name: "fisherStatistic.self", label: "fisherStatistic.self" }),
+			ports.Capability({ name: "gainMean.self", label: "gainMean.self" }),
+			ports.Capability({ name: "gainVar.self", label: "gainVar.self" }),
+			ports.Capability({ name: "lagMean.self", label: "lagMean.self" }),
+			ports.Capability({ name: "lagVar.self", label: "lagVar.self" }),
 			ports.float64({ name: "lag_baseline_seconds.out", label: "lag_baseline_seconds.out" }),
+			ports.Capability({ name: "lag_baseline_seconds.self", label: "lag_baseline_seconds.self" }),
+			ports.Capability({ name: "lag_divergence_seconds.self", label: "lag_divergence_seconds.self" }),
 			ports.float64({ name: "lag_fraction.out", label: "lag_fraction.out" }),
 			ports.int64({ name: "lag_fraction.undefined", label: "lag_fraction.undefined" }),
+			ports.Capability({ name: "lag_fraction.self", label: "lag_fraction.self" }),
 			ports.int64({ name: "lag_noise_scale_seconds.undefined", label: "lag_noise_scale_seconds.undefined" }),
+			ports.Capability({ name: "lag_noise_scale_seconds.self", label: "lag_noise_scale_seconds.self" }),
 			ports.float64({ name: "lag_search_span.out", label: "lag_search_span.out" }),
+			ports.Capability({ name: "lag_search_span.self", label: "lag_search_span.self" }),
 			ports.bool({ name: "lag_velocity.defined", label: "lag_velocity.defined" }),
 			ports.float64({ name: "lag_velocity.out", label: "lag_velocity.out" }),
 			ports.float64({ name: "lag_velocity.snr", label: "lag_velocity.snr" }),
+			ports.Capability({ name: "lag_velocity.self", label: "lag_velocity.self" }),
 			ports.float64({ name: "lag_zscore.out", label: "lag_zscore.out" }),
 			ports.int64({ name: "lag_zscore.undefined", label: "lag_zscore.undefined" }),
+			ports.Capability({ name: "lag_zscore.self", label: "lag_zscore.self" }),
+			ports.Capability({ name: "previousReferenceTimestamp.self", label: "previousReferenceTimestamp.self" }),
+			ports.Capability({ name: "previousTimestamp.self", label: "previousTimestamp.self" }),
+			ports.Capability({ name: "referenceReturns.self", label: "referenceReturns.self" }),
+			ports.Capability({ name: "returns.self", label: "returns.self" }),
 			ports.float64({ name: "searchProfile.extremeCurvature", label: "searchProfile.extremeCurvature" }),
 			ports.float64({ name: "searchProfile.extremeProminence", label: "searchProfile.extremeProminence" }),
 			ports.float64({ name: "searchProfile.extremeSigned", label: "searchProfile.extremeSigned" }),
@@ -8728,7 +9778,28 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "searchProfile.positive", label: "searchProfile.positive" }),
 			ports.float64({ name: "searchProfile.upperQuartile", label: "searchProfile.upperQuartile" }),
 			ports.float64({ name: "searchProfile.zero", label: "searchProfile.zero" }),
+			ports.Capability({ name: "searchProfile.self", label: "searchProfile.self" }),
 			ports.float64({ name: "search_adjusted_p_value.out", label: "search_adjusted_p_value.out" }),
+			ports.Capability({ name: "search_adjusted_p_value.self", label: "search_adjusted_p_value.self" }),
+			ports.Capability({ name: "search_count.self", label: "search_count.self" }),
+			ports.Capability({ name: "shiftEnd_0.self", label: "shiftEnd_0.self" }),
+			ports.Capability({ name: "shiftEnd_1.self", label: "shiftEnd_1.self" }),
+			ports.Capability({ name: "shiftEnd_2.self", label: "shiftEnd_2.self" }),
+			ports.Capability({ name: "shiftEnd_3.self", label: "shiftEnd_3.self" }),
+			ports.Capability({ name: "shiftEnd_4.self", label: "shiftEnd_4.self" }),
+			ports.Capability({ name: "shiftEnd_5.self", label: "shiftEnd_5.self" }),
+			ports.Capability({ name: "shiftEnd_6.self", label: "shiftEnd_6.self" }),
+			ports.Capability({ name: "shiftEnd_7.self", label: "shiftEnd_7.self" }),
+			ports.Capability({ name: "shiftEnd_8.self", label: "shiftEnd_8.self" }),
+			ports.Capability({ name: "shiftStart_0.self", label: "shiftStart_0.self" }),
+			ports.Capability({ name: "shiftStart_1.self", label: "shiftStart_1.self" }),
+			ports.Capability({ name: "shiftStart_2.self", label: "shiftStart_2.self" }),
+			ports.Capability({ name: "shiftStart_3.self", label: "shiftStart_3.self" }),
+			ports.Capability({ name: "shiftStart_4.self", label: "shiftStart_4.self" }),
+			ports.Capability({ name: "shiftStart_5.self", label: "shiftStart_5.self" }),
+			ports.Capability({ name: "shiftStart_6.self", label: "shiftStart_6.self" }),
+			ports.Capability({ name: "shiftStart_7.self", label: "shiftStart_7.self" }),
+			ports.Capability({ name: "shiftStart_8.self", label: "shiftStart_8.self" }),
 		],
 	});
 	config.addNodeType({
@@ -8760,39 +9831,77 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "touch_notional:bid.b", label: "touch_notional:bid.b" }),
 		],
 		outputs: (ports) => (_inputData, _connections) => [
+			ports.Capability({ name: "askBaselineLog.self", label: "askBaselineLog.self" }),
 			ports.int64({ name: "askLog.undefined", label: "askLog.undefined" }),
+			ports.Capability({ name: "askLog.self", label: "askLog.self" }),
+			ports.Capability({ name: "askVariance.self", label: "askVariance.self" }),
+			ports.Capability({ name: "bidBaselineLog.self", label: "bidBaselineLog.self" }),
 			ports.int64({ name: "bidLog.undefined", label: "bidLog.undefined" }),
+			ports.Capability({ name: "bidLog.self", label: "bidLog.self" }),
+			ports.Capability({ name: "bidVariance.self", label: "bidVariance.self" }),
+			ports.Capability({ name: "depth_divergence:ask.self", label: "depth_divergence:ask.self" }),
+			ports.Capability({ name: "depth_divergence:bid.self", label: "depth_divergence:bid.self" }),
 			ports.int64({ name: "depth_noise_scale:ask.undefined", label: "depth_noise_scale:ask.undefined" }),
+			ports.Capability({ name: "depth_noise_scale:ask.self", label: "depth_noise_scale:ask.self" }),
 			ports.int64({ name: "depth_noise_scale:bid.undefined", label: "depth_noise_scale:bid.undefined" }),
+			ports.Capability({ name: "depth_noise_scale:bid.self", label: "depth_noise_scale:bid.self" }),
 			ports.float64({ name: "depth_ratio:ask.out", label: "depth_ratio:ask.out" }),
 			ports.int64({ name: "depth_ratio:ask.undefined", label: "depth_ratio:ask.undefined" }),
+			ports.Capability({ name: "depth_ratio:ask.self", label: "depth_ratio:ask.self" }),
 			ports.float64({ name: "depth_ratio:bid.out", label: "depth_ratio:bid.out" }),
 			ports.int64({ name: "depth_ratio:bid.undefined", label: "depth_ratio:bid.undefined" }),
+			ports.Capability({ name: "depth_ratio:bid.self", label: "depth_ratio:bid.self" }),
 			ports.float64({ name: "depth_zscore:ask.out", label: "depth_zscore:ask.out" }),
 			ports.int64({ name: "depth_zscore:ask.undefined", label: "depth_zscore:ask.undefined" }),
+			ports.Capability({ name: "depth_zscore:ask.self", label: "depth_zscore:ask.self" }),
 			ports.float64({ name: "depth_zscore:bid.out", label: "depth_zscore:bid.out" }),
 			ports.int64({ name: "depth_zscore:bid.undefined", label: "depth_zscore:bid.undefined" }),
+			ports.Capability({ name: "depth_zscore:bid.self", label: "depth_zscore:bid.self" }),
 			ports.bool({ name: "divergence_velocity:ask.defined", label: "divergence_velocity:ask.defined" }),
 			ports.float64({ name: "divergence_velocity:ask.out", label: "divergence_velocity:ask.out" }),
 			ports.float64({ name: "divergence_velocity:ask.snr", label: "divergence_velocity:ask.snr" }),
+			ports.Capability({ name: "divergence_velocity:ask.self", label: "divergence_velocity:ask.self" }),
 			ports.bool({ name: "divergence_velocity:bid.defined", label: "divergence_velocity:bid.defined" }),
 			ports.float64({ name: "divergence_velocity:bid.out", label: "divergence_velocity:bid.out" }),
 			ports.float64({ name: "divergence_velocity:bid.snr", label: "divergence_velocity:bid.snr" }),
+			ports.Capability({ name: "divergence_velocity:bid.self", label: "divergence_velocity:bid.self" }),
 			ports.int64({ name: "midpoint.undefined", label: "midpoint.undefined" }),
+			ports.Capability({ name: "midpoint.self", label: "midpoint.self" }),
+			ports.Capability({ name: "midpointSum.self", label: "midpointSum.self" }),
+			ports.Capability({ name: "notionalDifference.self", label: "notionalDifference.self" }),
+			ports.Capability({ name: "notionalTotal.self", label: "notionalTotal.self" }),
 			ports.int64({ name: "relative_spread.undefined", label: "relative_spread.undefined" }),
+			ports.Capability({ name: "relative_spread.self", label: "relative_spread.self" }),
+			ports.Capability({ name: "relative_spread_baseline.self", label: "relative_spread_baseline.self" }),
+			ports.Capability({ name: "spread.self", label: "spread.self" }),
+			ports.Capability({ name: "spreadHistoryBaselineLog.self", label: "spreadHistoryBaselineLog.self" }),
 			ports.int64({ name: "spreadHistoryLog.undefined", label: "spreadHistoryLog.undefined" }),
+			ports.Capability({ name: "spreadHistoryLog.self", label: "spreadHistoryLog.self" }),
+			ports.Capability({ name: "spreadHistoryVariance.self", label: "spreadHistoryVariance.self" }),
 			ports.float64({ name: "spread_baseline.out", label: "spread_baseline.out" }),
+			ports.Capability({ name: "spread_baseline.self", label: "spread_baseline.self" }),
+			ports.Capability({ name: "spread_divergence.self", label: "spread_divergence.self" }),
 			ports.bool({ name: "spread_divergence_velocity.defined", label: "spread_divergence_velocity.defined" }),
 			ports.float64({ name: "spread_divergence_velocity.out", label: "spread_divergence_velocity.out" }),
 			ports.float64({ name: "spread_divergence_velocity.snr", label: "spread_divergence_velocity.snr" }),
+			ports.Capability({ name: "spread_divergence_velocity.self", label: "spread_divergence_velocity.self" }),
 			ports.int64({ name: "spread_noise_scale.undefined", label: "spread_noise_scale.undefined" }),
+			ports.Capability({ name: "spread_noise_scale.self", label: "spread_noise_scale.self" }),
 			ports.float64({ name: "spread_ratio.out", label: "spread_ratio.out" }),
 			ports.int64({ name: "spread_ratio.undefined", label: "spread_ratio.undefined" }),
+			ports.Capability({ name: "spread_ratio.self", label: "spread_ratio.self" }),
 			ports.float64({ name: "spread_zscore.out", label: "spread_zscore.out" }),
 			ports.int64({ name: "spread_zscore.undefined", label: "spread_zscore.undefined" }),
+			ports.Capability({ name: "spread_zscore.self", label: "spread_zscore.self" }),
+			ports.Capability({ name: "touch_notional:ask.self", label: "touch_notional:ask.self" }),
+			ports.Capability({ name: "touch_notional:bid.self", label: "touch_notional:bid.self" }),
+			ports.Capability({ name: "touch_notional_baseline:ask.self", label: "touch_notional_baseline:ask.self" }),
+			ports.Capability({ name: "touch_notional_baseline:bid.self", label: "touch_notional_baseline:bid.self" }),
 			ports.float64({ name: "touch_notional_imbalance.out", label: "touch_notional_imbalance.out" }),
 			ports.int64({ name: "touch_notional_imbalance.undefined", label: "touch_notional_imbalance.undefined" }),
+			ports.Capability({ name: "touch_notional_imbalance.self", label: "touch_notional_imbalance.self" }),
 			ports.float64({ name: "two_sided_touch_notional.out", label: "two_sided_touch_notional.out" }),
+			ports.Capability({ name: "two_sided_touch_notional.self", label: "two_sided_touch_notional.self" }),
 		],
 	});
 	config.addNodeType({
@@ -8806,7 +9915,8 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.string({ name: "record.indexPath", label: "record.indexPath" }),
 			ports.bool({ name: "record.whole", label: "record.whole" }),
 			ports["[]byte"]({ name: "socket.write", label: "socket.write" }),
-			ports["[]byte"]({ name: "socket_received.json", label: "socket_received.json" }),
+			ports.string({ name: "socket_received.encoding", label: "socket_received.encoding" }),
+			ports.string({ name: "socket_received.text", label: "socket_received.text" }),
 			ports.bool({ name: "socket_received.unique", label: "socket_received.unique" }),
 			ports.int64({ name: "socket_received.unsigned", label: "socket_received.unsigned" }),
 			ports.float64({ name: "socket_received.value", label: "socket_received.value" }),
@@ -8820,12 +9930,17 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.bool({ name: "record.last", label: "record.last" }),
 			ports["[]byte"]({ name: "record.out", label: "record.out" }),
 			ports.int64({ name: "record.pending", label: "record.pending" }),
+			ports.Capability({ name: "record.self", label: "record.self" }),
 			ports.int64({ name: "records.idle", label: "records.idle" }),
+			ports.Capability({ name: "records.self", label: "records.self" }),
 			ports.int64({ name: "socket.connection", label: "socket.connection" }),
 			ports.string({ name: "socket.frame.endpoint", label: "socket.frame.endpoint" }),
 			ports.int64({ name: "socket.frame.generation", label: "socket.frame.generation" }),
+			ports.string({ name: "socket.frame.receivedAt", label: "socket.frame.receivedAt" }),
 			ports.int64({ name: "socket.idle", label: "socket.idle" }),
+			ports.Capability({ name: "socket.self", label: "socket.self" }),
 			ports.bool({ name: "socket_received.inserted", label: "socket_received.inserted" }),
+			ports.Capability({ name: "socket_received.self", label: "socket_received.self" }),
 		],
 	});
 	config.addNodeType({
@@ -8833,6 +9948,33 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		label: "live_level3",
 		category: "Definitions",
 		description: "Sub-graph: live_level3",
+		initialWidth: 320,
+		inputs: (ports) => (_inputData, _connections) => [
+			ports["[]byte"]({ name: "records.data", label: "records.data" }),
+			ports.bool({ name: "records.whole", label: "records.whole" }),
+			ports["[]byte"]({ name: "symbols.data", label: "symbols.data" }),
+		],
+		outputs: (ports) => (_inputData, _connections) => [
+			ports.string({ name: "chunk.endpoint3", label: "chunk.endpoint3" }),
+			ports["[]byte"]({ name: "chunk.out3", label: "chunk.out3" }),
+			ports.Capability({ name: "chunk.self", label: "chunk.self" }),
+			ports.data({ name: "records.all", label: "records.all" }),
+			ports.int64({ name: "records.count", label: "records.count" }),
+			ports.bool({ name: "records.found", label: "records.found" }),
+			ports.int64({ name: "records.ignored", label: "records.ignored" }),
+			ports.int64({ name: "records.index", label: "records.index" }),
+			ports.bool({ name: "records.last", label: "records.last" }),
+			ports["[]byte"]({ name: "records.out", label: "records.out" }),
+			ports.int64({ name: "records.pending", label: "records.pending" }),
+			ports.Capability({ name: "records.self", label: "records.self" }),
+			ports.Capability({ name: "symbols.self", label: "symbols.self" }),
+		],
+	});
+	config.addNodeType({
+		type: "definition:live_level3_shard",
+		label: "live_level3_shard",
+		category: "Definitions",
+		description: "Sub-graph: live_level3_shard",
 		initialWidth: 320,
 		inputs: (ports) => (_inputData, _connections) => [
 			ports.float64({ name: "accepted.threshold", label: "accepted.threshold" }),
@@ -8878,9 +10020,11 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "retried.value", label: "retried.value" }),
 			ports["[]byte"]({ name: "sign_header.values", label: "sign_header.values" }),
 			ports["[]byte"]({ name: "signed_path.values", label: "signed_path.values" }),
+			ports.string({ name: "socket.endpoint", label: "socket.endpoint" }),
 			ports["[]byte"]({ name: "socket.onConnect", label: "socket.onConnect" }),
 			ports["[]byte"]({ name: "socket.write", label: "socket.write" }),
-			ports["[]byte"]({ name: "socket_received.json", label: "socket_received.json" }),
+			ports.string({ name: "socket_received.encoding", label: "socket_received.encoding" }),
+			ports.string({ name: "socket_received.text", label: "socket_received.text" }),
 			ports.bool({ name: "socket_received.unique", label: "socket_received.unique" }),
 			ports.int64({ name: "socket_received.unsigned", label: "socket_received.unsigned" }),
 			ports.float64({ name: "socket_received.value", label: "socket_received.value" }),
@@ -8903,37 +10047,61 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports["[]byte"]({ name: "token_response.headers", label: "token_response.headers" }),
 			ports["[]byte"]({ name: "tokenless.no", label: "tokenless.no" }),
 			ports["[]byte"]({ name: "tokenless.yes", label: "tokenless.yes" }),
+			ports.string({ name: "tokens.contract", label: "tokens.contract" }),
 			ports.string({ name: "tokens.key", label: "tokens.key" }),
+			ports.string({ name: "tokens.path", label: "tokens.path" }),
+			ports.bool({ name: "tokens.prefix", label: "tokens.prefix" }),
 			ports["[]byte"]({ name: "tokens.value", label: "tokens.value" }),
 		],
 		outputs: (ports) => (_inputData, _connections) => [
 			ports.bool({ name: "accepted.passed", label: "accepted.passed" }),
 			ports.int64({ name: "accepted.rejected", label: "accepted.rejected" }),
+			ports.Capability({ name: "accepted.self", label: "accepted.self" }),
 			ports.int64({ name: "admission.empty", label: "admission.empty" }),
 			ports.int64({ name: "admission.known", label: "admission.known" }),
 			ports.int64({ name: "admission.waiting", label: "admission.waiting" }),
+			ports.Capability({ name: "admission.self", label: "admission.self" }),
 			ports.bool({ name: "answered.passed", label: "answered.passed" }),
 			ports.int64({ name: "answered.rejected", label: "answered.rejected" }),
+			ports.Capability({ name: "answered.self", label: "answered.self" }),
+			ports.Capability({ name: "api_key.self", label: "api_key.self" }),
+			ports.Capability({ name: "api_secret.self", label: "api_secret.self" }),
 			ports.bool({ name: "books.passed", label: "books.passed" }),
 			ports.int64({ name: "books.rejected", label: "books.rejected" }),
+			ports.Capability({ name: "books.self", label: "books.self" }),
 			ports.bool({ name: "classified.inserted", label: "classified.inserted" }),
+			ports.Capability({ name: "classified.self", label: "classified.self" }),
 			ports.bool({ name: "connection_document.inserted", label: "connection_document.inserted" }),
+			ports.Capability({ name: "connection_document.self", label: "connection_document.self" }),
 			ports.bool({ name: "connection_generation.inserted", label: "connection_generation.inserted" }),
+			ports.Capability({ name: "connection_generation.self", label: "connection_generation.self" }),
 			ports.bool({ name: "connection_key.found", label: "connection_key.found" }),
 			ports["[]byte"]({ name: "connection_key.json", label: "connection_key.json" }),
 			ports.int64({ name: "connection_key.missing", label: "connection_key.missing" }),
 			ports.float64({ name: "connection_key.out", label: "connection_key.out" }),
 			ports.int64({ name: "connection_key.unsigned", label: "connection_key.unsigned" }),
+			ports.Capability({ name: "connection_key.self", label: "connection_key.self" }),
 			ports.int64({ name: "current_token.absent", label: "current_token.absent" }),
+			ports.Capability({ name: "current_token.self", label: "current_token.self" }),
+			ports.Capability({ name: "digest.self", label: "digest.self" }),
+			ports.Capability({ name: "encoded_signature.self", label: "encoded_signature.self" }),
 			ports.int64({ name: "form_header.idle", label: "form_header.idle" }),
+			ports.Capability({ name: "form_header.self", label: "form_header.self" }),
 			ports.bool({ name: "frame.inserted", label: "frame.inserted" }),
+			ports.Capability({ name: "frame.self", label: "frame.self" }),
 			ports.bool({ name: "heartbeat.passed", label: "heartbeat.passed" }),
 			ports.int64({ name: "heartbeat.rejected", label: "heartbeat.rejected" }),
+			ports.Capability({ name: "heartbeat.self", label: "heartbeat.self" }),
 			ports.int64({ name: "key_header.idle", label: "key_header.idle" }),
+			ports.Capability({ name: "key_header.self", label: "key_header.self" }),
+			ports.Capability({ name: "nonce.self", label: "nonce.self" }),
 			ports.int64({ name: "nonced_post.idle", label: "nonced_post.idle" }),
+			ports.Capability({ name: "nonced_post.self", label: "nonced_post.self" }),
 			ports.int64({ name: "post.idle", label: "post.idle" }),
+			ports.Capability({ name: "post.self", label: "post.self" }),
 			ports.bool({ name: "rate_limited.passed", label: "rate_limited.passed" }),
 			ports.int64({ name: "rate_limited.rejected", label: "rate_limited.rejected" }),
+			ports.Capability({ name: "rate_limited.self", label: "rate_limited.self" }),
 			ports.data({ name: "records.all", label: "records.all" }),
 			ports.int64({ name: "records.count", label: "records.count" }),
 			ports.bool({ name: "records.found", label: "records.found" }),
@@ -8942,44 +10110,68 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.bool({ name: "records.last", label: "records.last" }),
 			ports["[]byte"]({ name: "records.out", label: "records.out" }),
 			ports.int64({ name: "records.pending", label: "records.pending" }),
+			ports.Capability({ name: "records.self", label: "records.self" }),
 			ports.bool({ name: "refused.passed", label: "refused.passed" }),
 			ports.int64({ name: "refused.rejected", label: "refused.rejected" }),
+			ports.Capability({ name: "refused.self", label: "refused.self" }),
 			ports.bool({ name: "refused_symbol.found", label: "refused_symbol.found" }),
 			ports.int64({ name: "refused_symbol.missing", label: "refused_symbol.missing" }),
 			ports.float64({ name: "refused_symbol.out", label: "refused_symbol.out" }),
 			ports.string({ name: "refused_symbol.text", label: "refused_symbol.text" }),
 			ports.int64({ name: "refused_symbol.unsigned", label: "refused_symbol.unsigned" }),
+			ports.Capability({ name: "refused_symbol.self", label: "refused_symbol.self" }),
 			ports.bool({ name: "retried.inserted", label: "retried.inserted" }),
+			ports.Capability({ name: "retried.self", label: "retried.self" }),
 			ports.bool({ name: "retry.found", label: "retry.found" }),
 			ports.int64({ name: "retry.missing", label: "retry.missing" }),
 			ports.float64({ name: "retry.out", label: "retry.out" }),
 			ports.string({ name: "retry.text", label: "retry.text" }),
 			ports.int64({ name: "retry.unsigned", label: "retry.unsigned" }),
+			ports.Capability({ name: "retry.self", label: "retry.self" }),
+			ports.Capability({ name: "secret_key.self", label: "secret_key.self" }),
 			ports.int64({ name: "sign_header.idle", label: "sign_header.idle" }),
+			ports.Capability({ name: "sign_header.self", label: "sign_header.self" }),
+			ports.Capability({ name: "signature.self", label: "signature.self" }),
 			ports.int64({ name: "signed_path.idle", label: "signed_path.idle" }),
+			ports.Capability({ name: "signed_path.self", label: "signed_path.self" }),
 			ports.string({ name: "socket.frame.endpoint", label: "socket.frame.endpoint" }),
+			ports.string({ name: "socket.frame.receivedAt", label: "socket.frame.receivedAt" }),
 			ports.int64({ name: "socket.idle", label: "socket.idle" }),
+			ports.Capability({ name: "socket.self", label: "socket.self" }),
 			ports.bool({ name: "socket_received.inserted", label: "socket_received.inserted" }),
+			ports.Capability({ name: "socket_received.self", label: "socket_received.self" }),
 			ports.bool({ name: "status.passed", label: "status.passed" }),
 			ports.int64({ name: "status.rejected", label: "status.rejected" }),
+			ports.Capability({ name: "status.self", label: "status.self" }),
 			ports.bool({ name: "subscription.inserted", label: "subscription.inserted" }),
+			ports.Capability({ name: "subscription.self", label: "subscription.self" }),
 			ports.bool({ name: "subscription_symbol.inserted", label: "subscription_symbol.inserted" }),
+			ports.Capability({ name: "subscription_symbol.self", label: "subscription_symbol.self" }),
 			ports.int64({ name: "subscription_token.absent", label: "subscription_token.absent" }),
+			ports.Capability({ name: "subscription_token.self", label: "subscription_token.self" }),
+			ports.Capability({ name: "symbols.self", label: "symbols.self" }),
 			ports.bool({ name: "token.found", label: "token.found" }),
 			ports.int64({ name: "token.missing", label: "token.missing" }),
 			ports.float64({ name: "token.out", label: "token.out" }),
 			ports.string({ name: "token.text", label: "token.text" }),
 			ports.int64({ name: "token.unsigned", label: "token.unsigned" }),
+			ports.Capability({ name: "token.self", label: "token.self" }),
 			ports["[]byte"]({ name: "token_accepted.out", label: "token_accepted.out" }),
+			ports.Capability({ name: "token_accepted.self", label: "token_accepted.self" }),
 			ports.bool({ name: "token_error.found", label: "token_error.found" }),
 			ports["[]byte"]({ name: "token_error.json", label: "token_error.json" }),
 			ports.int64({ name: "token_error.missing", label: "token_error.missing" }),
 			ports.float64({ name: "token_error.out", label: "token_error.out" }),
 			ports.int64({ name: "token_error.unsigned", label: "token_error.unsigned" }),
+			ports.Capability({ name: "token_error.self", label: "token_error.self" }),
 			ports.bool({ name: "token_rejected.passed", label: "token_rejected.passed" }),
 			ports.int64({ name: "token_rejected.rejected", label: "token_rejected.rejected" }),
+			ports.Capability({ name: "token_rejected.self", label: "token_rejected.self" }),
 			ports.int64({ name: "token_response.status", label: "token_response.status" }),
+			ports.Capability({ name: "token_response.self", label: "token_response.self" }),
 			ports.int64({ name: "tokenless.absent", label: "tokenless.absent" }),
+			ports.Capability({ name: "tokenless.self", label: "tokenless.self" }),
+			ports.bool({ name: "tokens.durable", label: "tokens.durable" }),
 			ports.data({ name: "tokens.found", label: "tokens.found" }),
 			ports.data({ name: "tokens.out", label: "tokens.out" }),
 			ports.Capability({ name: "tokens.self", label: "tokens.self" }),
@@ -9004,11 +10196,10 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.bool({ name: "pairs.envelope", label: "pairs.envelope" }),
 			ports.string({ name: "pairs.indexPath", label: "pairs.indexPath" }),
 			ports["[]byte"]({ name: "records.data", label: "records.data" }),
-			ports.string({ name: "records.indexPath", label: "records.indexPath" }),
 			ports.bool({ name: "records.whole", label: "records.whole" }),
-			ports.string({ name: "rejection.referencePath", label: "rejection.referencePath" }),
 			ports["[]byte"]({ name: "socket.write", label: "socket.write" }),
-			ports["[]byte"]({ name: "socket_received.json", label: "socket_received.json" }),
+			ports.string({ name: "socket_received.encoding", label: "socket_received.encoding" }),
+			ports.string({ name: "socket_received.text", label: "socket_received.text" }),
 			ports.bool({ name: "socket_received.unique", label: "socket_received.unique" }),
 			ports.int64({ name: "socket_received.unsigned", label: "socket_received.unsigned" }),
 			ports.float64({ name: "socket_received.value", label: "socket_received.value" }),
@@ -9024,10 +10215,12 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "trade.value", label: "trade.value" }),
 		],
 		outputs: (ports) => (_inputData, _connections) => [
-			ports["[]byte"]({ name: "accepted.out", label: "accepted.out" }),
 			ports.bool({ name: "channels.inserted", label: "channels.inserted" }),
+			ports.Capability({ name: "channels.self", label: "channels.self" }),
 			ports.bool({ name: "generation.inserted", label: "generation.inserted" }),
+			ports.Capability({ name: "generation.self", label: "generation.self" }),
 			ports.int64({ name: "online.idle", label: "online.idle" }),
+			ports.Capability({ name: "online.self", label: "online.self" }),
 			ports.int64({ name: "pairs.count", label: "pairs.count" }),
 			ports.bool({ name: "pairs.found", label: "pairs.found" }),
 			ports.int64({ name: "pairs.ignored", label: "pairs.ignored" }),
@@ -9035,11 +10228,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.bool({ name: "pairs.last", label: "pairs.last" }),
 			ports["[]byte"]({ name: "pairs.out", label: "pairs.out" }),
 			ports.int64({ name: "pairs.pending", label: "pairs.pending" }),
-			ports.bool({ name: "reason.found", label: "reason.found" }),
-			ports["[]byte"]({ name: "reason.json", label: "reason.json" }),
-			ports.int64({ name: "reason.missing", label: "reason.missing" }),
-			ports.float64({ name: "reason.out", label: "reason.out" }),
-			ports.int64({ name: "reason.unsigned", label: "reason.unsigned" }),
+			ports.Capability({ name: "pairs.self", label: "pairs.self" }),
 			ports.data({ name: "records.all", label: "records.all" }),
 			ports.int64({ name: "records.count", label: "records.count" }),
 			ports.bool({ name: "records.found", label: "records.found" }),
@@ -9048,20 +10237,28 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.bool({ name: "records.last", label: "records.last" }),
 			ports["[]byte"]({ name: "records.out", label: "records.out" }),
 			ports.int64({ name: "records.pending", label: "records.pending" }),
-			ports.bool({ name: "rejection.passed", label: "rejection.passed" }),
-			ports.int64({ name: "rejection.rejected", label: "rejection.rejected" }),
+			ports.Capability({ name: "records.self", label: "records.self" }),
 			ports.int64({ name: "socket.connection", label: "socket.connection" }),
 			ports.string({ name: "socket.frame.endpoint", label: "socket.frame.endpoint" }),
+			ports.string({ name: "socket.frame.receivedAt", label: "socket.frame.receivedAt" }),
 			ports.int64({ name: "socket.idle", label: "socket.idle" }),
+			ports.Capability({ name: "socket.self", label: "socket.self" }),
 			ports.bool({ name: "socket_received.inserted", label: "socket_received.inserted" }),
+			ports.Capability({ name: "socket_received.self", label: "socket_received.self" }),
 			ports.int64({ name: "symbols.idle", label: "symbols.idle" }),
+			ports.Capability({ name: "symbols.self", label: "symbols.self" }),
 			ports.bool({ name: "ticker.inserted", label: "ticker.inserted" }),
+			ports.Capability({ name: "ticker.self", label: "ticker.self" }),
 			ports.bool({ name: "ticker_frames.passed", label: "ticker_frames.passed" }),
 			ports.int64({ name: "ticker_frames.rejected", label: "ticker_frames.rejected" }),
+			ports.Capability({ name: "ticker_frames.self", label: "ticker_frames.self" }),
 			ports.bool({ name: "trade.inserted", label: "trade.inserted" }),
+			ports.Capability({ name: "trade.self", label: "trade.self" }),
 			ports.bool({ name: "trade_frames.passed", label: "trade_frames.passed" }),
 			ports.int64({ name: "trade_frames.rejected", label: "trade_frames.rejected" }),
+			ports.Capability({ name: "trade_frames.self", label: "trade_frames.self" }),
 			ports.int64({ name: "usd.idle", label: "usd.idle" }),
+			ports.Capability({ name: "usd.self", label: "usd.self" }),
 		],
 	});
 	config.addNodeType({
@@ -9097,12 +10294,21 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "book_shape_distance.out", label: "book_shape_distance.out" }),
 			ports.float64({ name: "book_shape_distance.sharpness", label: "book_shape_distance.sharpness" }),
 			ports.int64({ name: "book_shape_distance.winner", label: "book_shape_distance.winner" }),
+			ports.Capability({ name: "book_shape_distance.self", label: "book_shape_distance.self" }),
 			ports.float64({ name: "book_shape_ks.out", label: "book_shape_ks.out" }),
+			ports.Capability({ name: "book_shape_ks.self", label: "book_shape_ks.self" }),
 			ports.float64({ name: "concentration:ask.out", label: "concentration:ask.out" }),
+			ports.Capability({ name: "concentration:ask.self", label: "concentration:ask.self" }),
+			ports.Capability({ name: "concentration:bid.self", label: "concentration:bid.self" }),
 			ports.float64({ name: "entropy:ask.out", label: "entropy:ask.out" }),
+			ports.Capability({ name: "entropy:ask.self", label: "entropy:ask.self" }),
 			ports.float64({ name: "entropy:bid.out", label: "entropy:bid.out" }),
+			ports.Capability({ name: "entropy:bid.self", label: "entropy:bid.self" }),
+			ports.Capability({ name: "morphology_change.self", label: "morphology_change.self" }),
 			ports.float64({ name: "morphology_change_baseline.out", label: "morphology_change_baseline.out" }),
+			ports.Capability({ name: "morphology_change_baseline.self", label: "morphology_change_baseline.self" }),
 			ports.float64({ name: "morphology_change_zscore.out", label: "morphology_change_zscore.out" }),
+			ports.Capability({ name: "morphology_change_zscore.self", label: "morphology_change_zscore.self" }),
 		],
 	});
 	config.addNodeType({
@@ -9112,7 +10318,10 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		description: "Sub-graph: paper_exchange",
 		initialWidth: 320,
 		inputs: (ports) => (_inputData, _connections) => [
+			ports.string({ name: "account.contract", label: "account.contract" }),
 			ports.string({ name: "account.key", label: "account.key" }),
+			ports.string({ name: "account.path", label: "account.path" }),
+			ports.bool({ name: "account.prefix", label: "account.prefix" }),
 			ports["[]byte"]({ name: "account.value", label: "account.value" }),
 			ports["[]byte"]({ name: "book.frame", label: "book.frame" }),
 			ports.string({ name: "buy_cost.encoding", label: "buy_cost.encoding" }),
@@ -9463,341 +10672,537 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "trip_symbol.value", label: "trip_symbol.value" }),
 		],
 		outputs: (ports) => (_inputData, _connections) => [
+			ports.bool({ name: "account.durable", label: "account.durable" }),
 			ports.data({ name: "account.found", label: "account.found" }),
 			ports.data({ name: "account.out", label: "account.out" }),
 			ports.Capability({ name: "account.self", label: "account.self" }),
+			ports.Capability({ name: "book.self", label: "book.self" }),
 			ports.bool({ name: "buy_amount.found", label: "buy_amount.found" }),
 			ports.int64({ name: "buy_amount.missing", label: "buy_amount.missing" }),
 			ports.float64({ name: "buy_amount.out", label: "buy_amount.out" }),
 			ports.string({ name: "buy_amount.text", label: "buy_amount.text" }),
 			ports.int64({ name: "buy_amount.unsigned", label: "buy_amount.unsigned" }),
+			ports.Capability({ name: "buy_amount.self", label: "buy_amount.self" }),
+			ports.Capability({ name: "buy_cash.self", label: "buy_cash.self" }),
 			ports.bool({ name: "buy_cost.inserted", label: "buy_cost.inserted" }),
+			ports.Capability({ name: "buy_cost.self", label: "buy_cost.self" }),
+			ports.Capability({ name: "buy_fee.self", label: "buy_fee.self" }),
 			ports.bool({ name: "buy_fill_cost.found", label: "buy_fill_cost.found" }),
 			ports.int64({ name: "buy_fill_cost.missing", label: "buy_fill_cost.missing" }),
 			ports.float64({ name: "buy_fill_cost.out", label: "buy_fill_cost.out" }),
 			ports.string({ name: "buy_fill_cost.text", label: "buy_fill_cost.text" }),
 			ports.int64({ name: "buy_fill_cost.unsigned", label: "buy_fill_cost.unsigned" }),
+			ports.Capability({ name: "buy_fill_cost.self", label: "buy_fill_cost.self" }),
 			ports.bool({ name: "buy_fill_quantity.found", label: "buy_fill_quantity.found" }),
 			ports.int64({ name: "buy_fill_quantity.missing", label: "buy_fill_quantity.missing" }),
 			ports.float64({ name: "buy_fill_quantity.out", label: "buy_fill_quantity.out" }),
 			ports.string({ name: "buy_fill_quantity.text", label: "buy_fill_quantity.text" }),
 			ports.int64({ name: "buy_fill_quantity.unsigned", label: "buy_fill_quantity.unsigned" }),
+			ports.Capability({ name: "buy_fill_quantity.self", label: "buy_fill_quantity.self" }),
 			ports.bool({ name: "buy_increment.found", label: "buy_increment.found" }),
 			ports.int64({ name: "buy_increment.missing", label: "buy_increment.missing" }),
 			ports.float64({ name: "buy_increment.out", label: "buy_increment.out" }),
 			ports.string({ name: "buy_increment.text", label: "buy_increment.text" }),
 			ports.int64({ name: "buy_increment.unsigned", label: "buy_increment.unsigned" }),
+			ports.Capability({ name: "buy_increment.self", label: "buy_increment.self" }),
 			ports.bool({ name: "buy_levels.found", label: "buy_levels.found" }),
 			ports.int64({ name: "buy_levels.missing", label: "buy_levels.missing" }),
 			ports.float64({ name: "buy_levels.out", label: "buy_levels.out" }),
 			ports.string({ name: "buy_levels.text", label: "buy_levels.text" }),
 			ports.int64({ name: "buy_levels.unsigned", label: "buy_levels.unsigned" }),
+			ports.Capability({ name: "buy_levels.self", label: "buy_levels.self" }),
 			ports.int64({ name: "buy_minimum_cost.rejected", label: "buy_minimum_cost.rejected" }),
+			ports.Capability({ name: "buy_minimum_cost.self", label: "buy_minimum_cost.self" }),
 			ports.int64({ name: "buy_minimum_cost_not.absent", label: "buy_minimum_cost_not.absent" }),
+			ports.Capability({ name: "buy_minimum_cost_not.self", label: "buy_minimum_cost_not.self" }),
 			ports.int64({ name: "buy_minimum_quantity.rejected", label: "buy_minimum_quantity.rejected" }),
+			ports.Capability({ name: "buy_minimum_quantity.self", label: "buy_minimum_quantity.self" }),
 			ports.int64({ name: "buy_minimum_quantity_not.absent", label: "buy_minimum_quantity_not.absent" }),
+			ports.Capability({ name: "buy_minimum_quantity_not.self", label: "buy_minimum_quantity_not.self" }),
+			ports.Capability({ name: "buy_outlay.self", label: "buy_outlay.self" }),
 			ports.bool({ name: "buy_prior_cash.found", label: "buy_prior_cash.found" }),
 			ports.int64({ name: "buy_prior_cash.missing", label: "buy_prior_cash.missing" }),
 			ports.float64({ name: "buy_prior_cash.out", label: "buy_prior_cash.out" }),
 			ports.string({ name: "buy_prior_cash.text", label: "buy_prior_cash.text" }),
 			ports.int64({ name: "buy_prior_cash.unsigned", label: "buy_prior_cash.unsigned" }),
+			ports.Capability({ name: "buy_prior_cash.self", label: "buy_prior_cash.self" }),
 			ports.bool({ name: "buy_quantity.inserted", label: "buy_quantity.inserted" }),
+			ports.Capability({ name: "buy_quantity.self", label: "buy_quantity.self" }),
+			ports.Capability({ name: "buy_refund.self", label: "buy_refund.self" }),
 			ports.bool({ name: "buy_refusal.inserted", label: "buy_refusal.inserted" }),
+			ports.Capability({ name: "buy_refusal.self", label: "buy_refusal.self" }),
 			ports.int64({ name: "buy_refused.absent", label: "buy_refused.absent" }),
+			ports.Capability({ name: "buy_refused.self", label: "buy_refused.self" }),
 			ports.bool({ name: "buy_refused_cash.inserted", label: "buy_refused_cash.inserted" }),
+			ports.Capability({ name: "buy_refused_cash.self", label: "buy_refused_cash.self" }),
 			ports.bool({ name: "buy_refused_order.inserted", label: "buy_refused_order.inserted" }),
+			ports.Capability({ name: "buy_refused_order.self", label: "buy_refused_order.self" }),
 			ports.bool({ name: "buy_refused_outcome.inserted", label: "buy_refused_outcome.inserted" }),
+			ports.Capability({ name: "buy_refused_outcome.self", label: "buy_refused_outcome.self" }),
 			ports.bool({ name: "buy_refused_symbol.found", label: "buy_refused_symbol.found" }),
 			ports.int64({ name: "buy_refused_symbol.missing", label: "buy_refused_symbol.missing" }),
 			ports.float64({ name: "buy_refused_symbol.out", label: "buy_refused_symbol.out" }),
 			ports.string({ name: "buy_refused_symbol.text", label: "buy_refused_symbol.text" }),
 			ports.int64({ name: "buy_refused_symbol.unsigned", label: "buy_refused_symbol.unsigned" }),
+			ports.Capability({ name: "buy_refused_symbol.self", label: "buy_refused_symbol.self" }),
 			ports.bool({ name: "buy_reserved.found", label: "buy_reserved.found" }),
 			ports.int64({ name: "buy_reserved.missing", label: "buy_reserved.missing" }),
 			ports.float64({ name: "buy_reserved.out", label: "buy_reserved.out" }),
 			ports.string({ name: "buy_reserved.text", label: "buy_reserved.text" }),
 			ports.int64({ name: "buy_reserved.unsigned", label: "buy_reserved.unsigned" }),
+			ports.Capability({ name: "buy_reserved.self", label: "buy_reserved.self" }),
+			ports.Capability({ name: "buy_returned.self", label: "buy_returned.self" }),
 			ports.bool({ name: "buy_settled_cash.inserted", label: "buy_settled_cash.inserted" }),
+			ports.Capability({ name: "buy_settled_cash.self", label: "buy_settled_cash.self" }),
 			ports.bool({ name: "buy_settled_holding.inserted", label: "buy_settled_holding.inserted" }),
+			ports.Capability({ name: "buy_settled_holding.self", label: "buy_settled_holding.self" }),
 			ports.bool({ name: "buy_settled_order.inserted", label: "buy_settled_order.inserted" }),
+			ports.Capability({ name: "buy_settled_order.self", label: "buy_settled_order.self" }),
+			ports.Capability({ name: "buy_sweep.self", label: "buy_sweep.self" }),
 			ports.bool({ name: "buy_time.found", label: "buy_time.found" }),
 			ports.int64({ name: "buy_time.missing", label: "buy_time.missing" }),
 			ports.float64({ name: "buy_time.out", label: "buy_time.out" }),
 			ports.string({ name: "buy_time.text", label: "buy_time.text" }),
 			ports.int64({ name: "buy_time.unsigned", label: "buy_time.unsigned" }),
+			ports.Capability({ name: "buy_time.self", label: "buy_time.self" }),
 			ports.bool({ name: "buy_unfilled.inserted", label: "buy_unfilled.inserted" }),
+			ports.Capability({ name: "buy_unfilled.self", label: "buy_unfilled.self" }),
 			ports.bool({ name: "cash_key.found", label: "cash_key.found" }),
 			ports["[]byte"]({ name: "cash_key.json", label: "cash_key.json" }),
 			ports.int64({ name: "cash_key.missing", label: "cash_key.missing" }),
 			ports.float64({ name: "cash_key.out", label: "cash_key.out" }),
 			ports.int64({ name: "cash_key.unsigned", label: "cash_key.unsigned" }),
+			ports.Capability({ name: "cash_key.self", label: "cash_key.self" }),
 			ports.bool({ name: "cash_key_document.inserted", label: "cash_key_document.inserted" }),
+			ports.Capability({ name: "cash_key_document.self", label: "cash_key_document.self" }),
 			ports.bool({ name: "cash_value.found", label: "cash_value.found" }),
 			ports.int64({ name: "cash_value.missing", label: "cash_value.missing" }),
 			ports.float64({ name: "cash_value.out", label: "cash_value.out" }),
 			ports.string({ name: "cash_value.text", label: "cash_value.text" }),
 			ports.int64({ name: "cash_value.unsigned", label: "cash_value.unsigned" }),
+			ports.Capability({ name: "cash_value.self", label: "cash_value.self" }),
 			ports.bool({ name: "closing_basis.found", label: "closing_basis.found" }),
 			ports.int64({ name: "closing_basis.missing", label: "closing_basis.missing" }),
 			ports.float64({ name: "closing_basis.out", label: "closing_basis.out" }),
 			ports.string({ name: "closing_basis.text", label: "closing_basis.text" }),
 			ports.int64({ name: "closing_basis.unsigned", label: "closing_basis.unsigned" }),
+			ports.Capability({ name: "closing_basis.self", label: "closing_basis.self" }),
 			ports.bool({ name: "closing_opened.found", label: "closing_opened.found" }),
 			ports.int64({ name: "closing_opened.missing", label: "closing_opened.missing" }),
 			ports.float64({ name: "closing_opened.out", label: "closing_opened.out" }),
 			ports.string({ name: "closing_opened.text", label: "closing_opened.text" }),
 			ports.int64({ name: "closing_opened.unsigned", label: "closing_opened.unsigned" }),
+			ports.Capability({ name: "closing_opened.self", label: "closing_opened.self" }),
 			ports.bool({ name: "closing_proceeds.found", label: "closing_proceeds.found" }),
 			ports.int64({ name: "closing_proceeds.missing", label: "closing_proceeds.missing" }),
 			ports.float64({ name: "closing_proceeds.out", label: "closing_proceeds.out" }),
 			ports.string({ name: "closing_proceeds.text", label: "closing_proceeds.text" }),
 			ports.int64({ name: "closing_proceeds.unsigned", label: "closing_proceeds.unsigned" }),
+			ports.Capability({ name: "closing_proceeds.self", label: "closing_proceeds.self" }),
 			ports.bool({ name: "closing_spent.found", label: "closing_spent.found" }),
 			ports.int64({ name: "closing_spent.missing", label: "closing_spent.missing" }),
 			ports.float64({ name: "closing_spent.out", label: "closing_spent.out" }),
 			ports.string({ name: "closing_spent.text", label: "closing_spent.text" }),
 			ports.int64({ name: "closing_spent.unsigned", label: "closing_spent.unsigned" }),
+			ports.Capability({ name: "closing_spent.self", label: "closing_spent.self" }),
 			ports.bool({ name: "closing_symbol.found", label: "closing_symbol.found" }),
 			ports.int64({ name: "closing_symbol.missing", label: "closing_symbol.missing" }),
 			ports.float64({ name: "closing_symbol.out", label: "closing_symbol.out" }),
 			ports.string({ name: "closing_symbol.text", label: "closing_symbol.text" }),
 			ports.int64({ name: "closing_symbol.unsigned", label: "closing_symbol.unsigned" }),
+			ports.Capability({ name: "closing_symbol.self", label: "closing_symbol.self" }),
 			ports.bool({ name: "closing_time.found", label: "closing_time.found" }),
 			ports.int64({ name: "closing_time.missing", label: "closing_time.missing" }),
 			ports.float64({ name: "closing_time.out", label: "closing_time.out" }),
 			ports.string({ name: "closing_time.text", label: "closing_time.text" }),
 			ports.int64({ name: "closing_time.unsigned", label: "closing_time.unsigned" }),
+			ports.Capability({ name: "closing_time.self", label: "closing_time.self" }),
 			ports.bool({ name: "closing_trip_proceeds.found", label: "closing_trip_proceeds.found" }),
 			ports.int64({ name: "closing_trip_proceeds.missing", label: "closing_trip_proceeds.missing" }),
 			ports.float64({ name: "closing_trip_proceeds.out", label: "closing_trip_proceeds.out" }),
 			ports.string({ name: "closing_trip_proceeds.text", label: "closing_trip_proceeds.text" }),
 			ports.int64({ name: "closing_trip_proceeds.unsigned", label: "closing_trip_proceeds.unsigned" }),
+			ports.Capability({ name: "closing_trip_proceeds.self", label: "closing_trip_proceeds.self" }),
 			ports.int64({ name: "committed.absent", label: "committed.absent" }),
+			ports.Capability({ name: "committed.self", label: "committed.self" }),
 			ports.int64({ name: "enter_action.rejected", label: "enter_action.rejected" }),
+			ports.Capability({ name: "enter_action.self", label: "enter_action.self" }),
 			ports.int64({ name: "enter_action_not.absent", label: "enter_action_not.absent" }),
+			ports.Capability({ name: "enter_action_not.self", label: "enter_action_not.self" }),
 			ports.int64({ name: "enter_flat.rejected", label: "enter_flat.rejected" }),
+			ports.Capability({ name: "enter_flat.self", label: "enter_flat.self" }),
 			ports.int64({ name: "enter_flat_not.absent", label: "enter_flat_not.absent" }),
+			ports.Capability({ name: "enter_flat_not.self", label: "enter_flat_not.self" }),
 			ports.int64({ name: "enter_free.rejected", label: "enter_free.rejected" }),
+			ports.Capability({ name: "enter_free.self", label: "enter_free.self" }),
 			ports.int64({ name: "enter_free_not.absent", label: "enter_free_not.absent" }),
+			ports.Capability({ name: "enter_free_not.self", label: "enter_free_not.self" }),
 			ports.int64({ name: "enter_quoted.rejected", label: "enter_quoted.rejected" }),
+			ports.Capability({ name: "enter_quoted.self", label: "enter_quoted.self" }),
 			ports.int64({ name: "enter_quoted_not.absent", label: "enter_quoted_not.absent" }),
+			ports.Capability({ name: "enter_quoted_not.self", label: "enter_quoted_not.self" }),
 			ports.bool({ name: "entered_cash.inserted", label: "entered_cash.inserted" }),
+			ports.Capability({ name: "entered_cash.self", label: "entered_cash.self" }),
 			ports.bool({ name: "entered_order.inserted", label: "entered_order.inserted" }),
+			ports.Capability({ name: "entered_order.self", label: "entered_order.self" }),
 			ports.bool({ name: "entry_amount.inserted", label: "entry_amount.inserted" }),
+			ports.Capability({ name: "entry_amount.self", label: "entry_amount.self" }),
+			ports.Capability({ name: "entry_budget.self", label: "entry_budget.self" }),
 			ports.bool({ name: "entry_cash.found", label: "entry_cash.found" }),
 			ports.int64({ name: "entry_cash.missing", label: "entry_cash.missing" }),
 			ports.float64({ name: "entry_cash.out", label: "entry_cash.out" }),
 			ports.string({ name: "entry_cash.text", label: "entry_cash.text" }),
 			ports.int64({ name: "entry_cash.unsigned", label: "entry_cash.unsigned" }),
+			ports.Capability({ name: "entry_cash.self", label: "entry_cash.self" }),
+			ports.Capability({ name: "entry_committed.self", label: "entry_committed.self" }),
+			ports.Capability({ name: "entry_gross.self", label: "entry_gross.self" }),
+			ports.Capability({ name: "entry_notional.self", label: "entry_notional.self" }),
 			ports.bool({ name: "entry_placed.inserted", label: "entry_placed.inserted" }),
+			ports.Capability({ name: "entry_placed.self", label: "entry_placed.self" }),
 			ports.bool({ name: "entry_places.found", label: "entry_places.found" }),
 			ports["[]byte"]({ name: "entry_places.json", label: "entry_places.json" }),
 			ports.int64({ name: "entry_places.missing", label: "entry_places.missing" }),
 			ports.float64({ name: "entry_places.out", label: "entry_places.out" }),
 			ports.string({ name: "entry_places.text", label: "entry_places.text" }),
+			ports.Capability({ name: "entry_places.self", label: "entry_places.self" }),
 			ports.bool({ name: "entry_reserved.inserted", label: "entry_reserved.inserted" }),
+			ports.Capability({ name: "entry_reserved.self", label: "entry_reserved.self" }),
 			ports.bool({ name: "entry_time.found", label: "entry_time.found" }),
 			ports.int64({ name: "entry_time.missing", label: "entry_time.missing" }),
 			ports.float64({ name: "entry_time.out", label: "entry_time.out" }),
 			ports.string({ name: "entry_time.text", label: "entry_time.text" }),
 			ports.int64({ name: "entry_time.unsigned", label: "entry_time.unsigned" }),
+			ports.Capability({ name: "entry_time.self", label: "entry_time.self" }),
+			ports.Capability({ name: "event.self", label: "event.self" }),
 			ports.int64({ name: "exit_action.rejected", label: "exit_action.rejected" }),
+			ports.Capability({ name: "exit_action.self", label: "exit_action.self" }),
 			ports.int64({ name: "exit_action_not.absent", label: "exit_action_not.absent" }),
+			ports.Capability({ name: "exit_action_not.self", label: "exit_action_not.self" }),
 			ports.bool({ name: "exit_amount.inserted", label: "exit_amount.inserted" }),
+			ports.Capability({ name: "exit_amount.self", label: "exit_amount.self" }),
 			ports.int64({ name: "exit_free.rejected", label: "exit_free.rejected" }),
+			ports.Capability({ name: "exit_free.self", label: "exit_free.self" }),
 			ports.int64({ name: "exit_free_not.absent", label: "exit_free_not.absent" }),
+			ports.Capability({ name: "exit_free_not.self", label: "exit_free_not.self" }),
 			ports.int64({ name: "exit_held.rejected", label: "exit_held.rejected" }),
+			ports.Capability({ name: "exit_held.self", label: "exit_held.self" }),
 			ports.int64({ name: "exit_held_not.absent", label: "exit_held_not.absent" }),
+			ports.Capability({ name: "exit_held_not.self", label: "exit_held_not.self" }),
 			ports.bool({ name: "exit_placed.inserted", label: "exit_placed.inserted" }),
+			ports.Capability({ name: "exit_placed.self", label: "exit_placed.self" }),
 			ports.bool({ name: "exit_quantity.found", label: "exit_quantity.found" }),
 			ports.int64({ name: "exit_quantity.missing", label: "exit_quantity.missing" }),
 			ports.float64({ name: "exit_quantity.out", label: "exit_quantity.out" }),
 			ports.string({ name: "exit_quantity.text", label: "exit_quantity.text" }),
 			ports.int64({ name: "exit_quantity.unsigned", label: "exit_quantity.unsigned" }),
+			ports.Capability({ name: "exit_quantity.self", label: "exit_quantity.self" }),
 			ports.bool({ name: "exit_time.found", label: "exit_time.found" }),
 			ports.int64({ name: "exit_time.missing", label: "exit_time.missing" }),
 			ports.float64({ name: "exit_time.out", label: "exit_time.out" }),
 			ports.string({ name: "exit_time.text", label: "exit_time.text" }),
 			ports.int64({ name: "exit_time.unsigned", label: "exit_time.unsigned" }),
+			ports.Capability({ name: "exit_time.self", label: "exit_time.self" }),
 			ports.bool({ name: "exited_order.inserted", label: "exited_order.inserted" }),
+			ports.Capability({ name: "exited_order.self", label: "exited_order.self" }),
+			ports.Capability({ name: "fee.self", label: "fee.self" }),
 			ports.int64({ name: "fill_booked.rejected", label: "fill_booked.rejected" }),
+			ports.Capability({ name: "fill_booked.self", label: "fill_booked.self" }),
 			ports.int64({ name: "fill_booked_not.absent", label: "fill_booked_not.absent" }),
+			ports.Capability({ name: "fill_booked_not.self", label: "fill_booked_not.self" }),
 			ports.bool({ name: "fill_buy.passed", label: "fill_buy.passed" }),
 			ports.int64({ name: "fill_buy.rejected", label: "fill_buy.rejected" }),
+			ports.Capability({ name: "fill_buy.self", label: "fill_buy.self" }),
 			ports.int64({ name: "fill_resting.rejected", label: "fill_resting.rejected" }),
+			ports.Capability({ name: "fill_resting.self", label: "fill_resting.self" }),
 			ports.int64({ name: "fill_resting_not.absent", label: "fill_resting_not.absent" }),
+			ports.Capability({ name: "fill_resting_not.self", label: "fill_resting_not.self" }),
 			ports.int64({ name: "fill_ruled.rejected", label: "fill_ruled.rejected" }),
+			ports.Capability({ name: "fill_ruled.self", label: "fill_ruled.self" }),
 			ports.int64({ name: "fill_ruled_not.absent", label: "fill_ruled_not.absent" }),
+			ports.Capability({ name: "fill_ruled_not.self", label: "fill_ruled_not.self" }),
 			ports.bool({ name: "fill_sell.passed", label: "fill_sell.passed" }),
 			ports.int64({ name: "fill_sell.rejected", label: "fill_sell.rejected" }),
+			ports.Capability({ name: "fill_sell.self", label: "fill_sell.self" }),
+			ports.Capability({ name: "fraction.self", label: "fraction.self" }),
 			ports.bool({ name: "frame.found", label: "frame.found" }),
 			ports.int64({ name: "frame.missing", label: "frame.missing" }),
 			ports.float64({ name: "frame.out", label: "frame.out" }),
 			ports.string({ name: "frame.text", label: "frame.text" }),
 			ports.int64({ name: "frame.unsigned", label: "frame.unsigned" }),
+			ports.Capability({ name: "frame.self", label: "frame.self" }),
 			ports.bool({ name: "holding_key.found", label: "holding_key.found" }),
 			ports["[]byte"]({ name: "holding_key.json", label: "holding_key.json" }),
 			ports.int64({ name: "holding_key.missing", label: "holding_key.missing" }),
 			ports.float64({ name: "holding_key.out", label: "holding_key.out" }),
 			ports.int64({ name: "holding_key.unsigned", label: "holding_key.unsigned" }),
+			ports.Capability({ name: "holding_key.self", label: "holding_key.self" }),
 			ports.bool({ name: "holding_key_document.inserted", label: "holding_key_document.inserted" }),
+			ports.Capability({ name: "holding_key_document.self", label: "holding_key_document.self" }),
 			ports.bool({ name: "holding_key_slot.inserted", label: "holding_key_slot.inserted" }),
+			ports.Capability({ name: "holding_key_slot.self", label: "holding_key_slot.self" }),
 			ports.bool({ name: "holding_value.found", label: "holding_value.found" }),
 			ports.int64({ name: "holding_value.missing", label: "holding_value.missing" }),
 			ports.float64({ name: "holding_value.out", label: "holding_value.out" }),
 			ports.string({ name: "holding_value.text", label: "holding_value.text" }),
 			ports.int64({ name: "holding_value.unsigned", label: "holding_value.unsigned" }),
+			ports.Capability({ name: "holding_value.self", label: "holding_value.self" }),
 			ports.int64({ name: "market.absent", label: "market.absent" }),
+			ports.Capability({ name: "market.self", label: "market.self" }),
 			ports.bool({ name: "order_key.found", label: "order_key.found" }),
 			ports["[]byte"]({ name: "order_key.json", label: "order_key.json" }),
 			ports.int64({ name: "order_key.missing", label: "order_key.missing" }),
 			ports.float64({ name: "order_key.out", label: "order_key.out" }),
 			ports.int64({ name: "order_key.unsigned", label: "order_key.unsigned" }),
+			ports.Capability({ name: "order_key.self", label: "order_key.self" }),
 			ports.bool({ name: "order_key_document.inserted", label: "order_key_document.inserted" }),
+			ports.Capability({ name: "order_key_document.self", label: "order_key_document.self" }),
 			ports.bool({ name: "order_key_slot.inserted", label: "order_key_slot.inserted" }),
+			ports.Capability({ name: "order_key_slot.self", label: "order_key_slot.self" }),
 			ports.bool({ name: "order_value.found", label: "order_value.found" }),
 			ports.int64({ name: "order_value.missing", label: "order_value.missing" }),
 			ports.float64({ name: "order_value.out", label: "order_value.out" }),
 			ports.string({ name: "order_value.text", label: "order_value.text" }),
 			ports.int64({ name: "order_value.unsigned", label: "order_value.unsigned" }),
+			ports.Capability({ name: "order_value.self", label: "order_value.self" }),
 			ports.int64({ name: "pair_book.rejected", label: "pair_book.rejected" }),
+			ports.Capability({ name: "pair_book.self", label: "pair_book.self" }),
 			ports.int64({ name: "pair_book_not.absent", label: "pair_book_not.absent" }),
+			ports.Capability({ name: "pair_book_not.self", label: "pair_book_not.self" }),
 			ports.bool({ name: "pair_key.found", label: "pair_key.found" }),
 			ports["[]byte"]({ name: "pair_key.json", label: "pair_key.json" }),
 			ports.int64({ name: "pair_key.missing", label: "pair_key.missing" }),
 			ports.float64({ name: "pair_key.out", label: "pair_key.out" }),
 			ports.int64({ name: "pair_key.unsigned", label: "pair_key.unsigned" }),
+			ports.Capability({ name: "pair_key.self", label: "pair_key.self" }),
 			ports.bool({ name: "pair_key_document.inserted", label: "pair_key_document.inserted" }),
+			ports.Capability({ name: "pair_key_document.self", label: "pair_key_document.self" }),
 			ports.bool({ name: "pair_key_slot.inserted", label: "pair_key_slot.inserted" }),
+			ports.Capability({ name: "pair_key_slot.self", label: "pair_key_slot.self" }),
 			ports.bool({ name: "pair_latest.found", label: "pair_latest.found" }),
 			ports.int64({ name: "pair_latest.missing", label: "pair_latest.missing" }),
 			ports.float64({ name: "pair_latest.out", label: "pair_latest.out" }),
 			ports.string({ name: "pair_latest.text", label: "pair_latest.text" }),
 			ports.int64({ name: "pair_latest.unsigned", label: "pair_latest.unsigned" }),
+			ports.Capability({ name: "pair_latest.self", label: "pair_latest.self" }),
 			ports.int64({ name: "pair_record.rejected", label: "pair_record.rejected" }),
+			ports.Capability({ name: "pair_record.self", label: "pair_record.self" }),
 			ports.int64({ name: "pair_record_not.absent", label: "pair_record_not.absent" }),
+			ports.Capability({ name: "pair_record_not.self", label: "pair_record_not.self" }),
 			ports.bool({ name: "pair_refreshed.inserted", label: "pair_refreshed.inserted" }),
+			ports.Capability({ name: "pair_refreshed.self", label: "pair_refreshed.self" }),
 			ports.bool({ name: "pair_value.found", label: "pair_value.found" }),
 			ports.int64({ name: "pair_value.missing", label: "pair_value.missing" }),
 			ports.float64({ name: "pair_value.out", label: "pair_value.out" }),
 			ports.string({ name: "pair_value.text", label: "pair_value.text" }),
 			ports.int64({ name: "pair_value.unsigned", label: "pair_value.unsigned" }),
+			ports.Capability({ name: "pair_value.self", label: "pair_value.self" }),
+			ports.Capability({ name: "partial_allocated.self", label: "partial_allocated.self" }),
 			ports.bool({ name: "partial_basis.found", label: "partial_basis.found" }),
 			ports.int64({ name: "partial_basis.missing", label: "partial_basis.missing" }),
 			ports.float64({ name: "partial_basis.out", label: "partial_basis.out" }),
 			ports.string({ name: "partial_basis.text", label: "partial_basis.text" }),
 			ports.int64({ name: "partial_basis.unsigned", label: "partial_basis.unsigned" }),
+			ports.Capability({ name: "partial_basis.self", label: "partial_basis.self" }),
 			ports.bool({ name: "partial_held.found", label: "partial_held.found" }),
 			ports.int64({ name: "partial_held.missing", label: "partial_held.missing" }),
 			ports.float64({ name: "partial_held.out", label: "partial_held.out" }),
 			ports.string({ name: "partial_held.text", label: "partial_held.text" }),
 			ports.int64({ name: "partial_held.unsigned", label: "partial_held.unsigned" }),
+			ports.Capability({ name: "partial_held.self", label: "partial_held.self" }),
 			ports.bool({ name: "partial_places.found", label: "partial_places.found" }),
 			ports["[]byte"]({ name: "partial_places.json", label: "partial_places.json" }),
 			ports.int64({ name: "partial_places.missing", label: "partial_places.missing" }),
 			ports.float64({ name: "partial_places.out", label: "partial_places.out" }),
 			ports.string({ name: "partial_places.text", label: "partial_places.text" }),
+			ports.Capability({ name: "partial_places.self", label: "partial_places.self" }),
+			ports.Capability({ name: "partial_remaining.self", label: "partial_remaining.self" }),
+			ports.Capability({ name: "partial_share.self", label: "partial_share.self" }),
 			ports.bool({ name: "partial_sold.found", label: "partial_sold.found" }),
 			ports.int64({ name: "partial_sold.missing", label: "partial_sold.missing" }),
 			ports.float64({ name: "partial_sold.out", label: "partial_sold.out" }),
 			ports.string({ name: "partial_sold.text", label: "partial_sold.text" }),
 			ports.int64({ name: "partial_sold.unsigned", label: "partial_sold.unsigned" }),
+			ports.Capability({ name: "partial_sold.self", label: "partial_sold.self" }),
 			ports.bool({ name: "partial_unfilled.found", label: "partial_unfilled.found" }),
 			ports.int64({ name: "partial_unfilled.missing", label: "partial_unfilled.missing" }),
 			ports.float64({ name: "partial_unfilled.out", label: "partial_unfilled.out" }),
 			ports.string({ name: "partial_unfilled.text", label: "partial_unfilled.text" }),
 			ports.int64({ name: "partial_unfilled.unsigned", label: "partial_unfilled.unsigned" }),
+			ports.Capability({ name: "partial_unfilled.self", label: "partial_unfilled.self" }),
 			ports.bool({ name: "position_basis.inserted", label: "position_basis.inserted" }),
+			ports.Capability({ name: "position_basis.self", label: "position_basis.self" }),
 			ports.bool({ name: "position_opened.inserted", label: "position_opened.inserted" }),
+			ports.Capability({ name: "position_opened.self", label: "position_opened.self" }),
 			ports.bool({ name: "position_quantity.inserted", label: "position_quantity.inserted" }),
+			ports.Capability({ name: "position_quantity.self", label: "position_quantity.self" }),
 			ports.bool({ name: "position_spent.inserted", label: "position_spent.inserted" }),
+			ports.Capability({ name: "position_spent.self", label: "position_spent.self" }),
 			ports.int64({ name: "prior_cash.absent", label: "prior_cash.absent" }),
+			ports.Capability({ name: "prior_cash.self", label: "prior_cash.self" }),
 			ports.int64({ name: "prior_holding.absent", label: "prior_holding.absent" }),
+			ports.Capability({ name: "prior_holding.self", label: "prior_holding.self" }),
 			ports.int64({ name: "prior_order.absent", label: "prior_order.absent" }),
+			ports.Capability({ name: "prior_order.self", label: "prior_order.self" }),
 			ports.int64({ name: "prior_pair.absent", label: "prior_pair.absent" }),
+			ports.Capability({ name: "prior_pair.self", label: "prior_pair.self" }),
 			ports.bool({ name: "refused_buy_cash.found", label: "refused_buy_cash.found" }),
 			ports.int64({ name: "refused_buy_cash.missing", label: "refused_buy_cash.missing" }),
 			ports.float64({ name: "refused_buy_cash.out", label: "refused_buy_cash.out" }),
 			ports.string({ name: "refused_buy_cash.text", label: "refused_buy_cash.text" }),
 			ports.int64({ name: "refused_buy_cash.unsigned", label: "refused_buy_cash.unsigned" }),
+			ports.Capability({ name: "refused_buy_cash.self", label: "refused_buy_cash.self" }),
 			ports.bool({ name: "refused_buy_reserved.found", label: "refused_buy_reserved.found" }),
 			ports.int64({ name: "refused_buy_reserved.missing", label: "refused_buy_reserved.missing" }),
 			ports.float64({ name: "refused_buy_reserved.out", label: "refused_buy_reserved.out" }),
 			ports.string({ name: "refused_buy_reserved.text", label: "refused_buy_reserved.text" }),
 			ports.int64({ name: "refused_buy_reserved.unsigned", label: "refused_buy_reserved.unsigned" }),
+			ports.Capability({ name: "refused_buy_reserved.self", label: "refused_buy_reserved.self" }),
+			ports.Capability({ name: "round_trip_pnl.self", label: "round_trip_pnl.self" }),
 			ports.bool({ name: "sell_amount.found", label: "sell_amount.found" }),
 			ports.int64({ name: "sell_amount.missing", label: "sell_amount.missing" }),
 			ports.float64({ name: "sell_amount.out", label: "sell_amount.out" }),
 			ports.string({ name: "sell_amount.text", label: "sell_amount.text" }),
 			ports.int64({ name: "sell_amount.unsigned", label: "sell_amount.unsigned" }),
+			ports.Capability({ name: "sell_amount.self", label: "sell_amount.self" }),
+			ports.Capability({ name: "sell_cash.self", label: "sell_cash.self" }),
 			ports.int64({ name: "sell_closed.rejected", label: "sell_closed.rejected" }),
+			ports.Capability({ name: "sell_closed.self", label: "sell_closed.self" }),
 			ports.bool({ name: "sell_closed_holding.inserted", label: "sell_closed_holding.inserted" }),
+			ports.Capability({ name: "sell_closed_holding.self", label: "sell_closed_holding.self" }),
 			ports.int64({ name: "sell_closed_not.absent", label: "sell_closed_not.absent" }),
+			ports.Capability({ name: "sell_closed_not.self", label: "sell_closed_not.self" }),
 			ports.bool({ name: "sell_closed_outcome.inserted", label: "sell_closed_outcome.inserted" }),
+			ports.Capability({ name: "sell_closed_outcome.self", label: "sell_closed_outcome.self" }),
 			ports.bool({ name: "sell_cost.inserted", label: "sell_cost.inserted" }),
+			ports.Capability({ name: "sell_cost.self", label: "sell_cost.self" }),
+			ports.Capability({ name: "sell_fee.self", label: "sell_fee.self" }),
 			ports.bool({ name: "sell_fill_cost.found", label: "sell_fill_cost.found" }),
 			ports.int64({ name: "sell_fill_cost.missing", label: "sell_fill_cost.missing" }),
 			ports.float64({ name: "sell_fill_cost.out", label: "sell_fill_cost.out" }),
 			ports.string({ name: "sell_fill_cost.text", label: "sell_fill_cost.text" }),
 			ports.int64({ name: "sell_fill_cost.unsigned", label: "sell_fill_cost.unsigned" }),
+			ports.Capability({ name: "sell_fill_cost.self", label: "sell_fill_cost.self" }),
 			ports.bool({ name: "sell_increment.found", label: "sell_increment.found" }),
 			ports.int64({ name: "sell_increment.missing", label: "sell_increment.missing" }),
 			ports.float64({ name: "sell_increment.out", label: "sell_increment.out" }),
 			ports.string({ name: "sell_increment.text", label: "sell_increment.text" }),
 			ports.int64({ name: "sell_increment.unsigned", label: "sell_increment.unsigned" }),
+			ports.Capability({ name: "sell_increment.self", label: "sell_increment.self" }),
 			ports.bool({ name: "sell_levels.found", label: "sell_levels.found" }),
 			ports.int64({ name: "sell_levels.missing", label: "sell_levels.missing" }),
 			ports.float64({ name: "sell_levels.out", label: "sell_levels.out" }),
 			ports.string({ name: "sell_levels.text", label: "sell_levels.text" }),
 			ports.int64({ name: "sell_levels.unsigned", label: "sell_levels.unsigned" }),
+			ports.Capability({ name: "sell_levels.self", label: "sell_levels.self" }),
 			ports.int64({ name: "sell_minimum_cost.rejected", label: "sell_minimum_cost.rejected" }),
+			ports.Capability({ name: "sell_minimum_cost.self", label: "sell_minimum_cost.self" }),
 			ports.int64({ name: "sell_minimum_cost_not.absent", label: "sell_minimum_cost_not.absent" }),
+			ports.Capability({ name: "sell_minimum_cost_not.self", label: "sell_minimum_cost_not.self" }),
 			ports.int64({ name: "sell_minimum_quantity.rejected", label: "sell_minimum_quantity.rejected" }),
+			ports.Capability({ name: "sell_minimum_quantity.self", label: "sell_minimum_quantity.self" }),
 			ports.int64({ name: "sell_minimum_quantity_not.absent", label: "sell_minimum_quantity_not.absent" }),
+			ports.Capability({ name: "sell_minimum_quantity_not.self", label: "sell_minimum_quantity_not.self" }),
+			ports.Capability({ name: "sell_net.self", label: "sell_net.self" }),
 			ports.bool({ name: "sell_partial_basis.inserted", label: "sell_partial_basis.inserted" }),
+			ports.Capability({ name: "sell_partial_basis.self", label: "sell_partial_basis.self" }),
 			ports.bool({ name: "sell_partial_quantity.inserted", label: "sell_partial_quantity.inserted" }),
+			ports.Capability({ name: "sell_partial_quantity.self", label: "sell_partial_quantity.self" }),
 			ports.bool({ name: "sell_prior_cash.found", label: "sell_prior_cash.found" }),
 			ports.int64({ name: "sell_prior_cash.missing", label: "sell_prior_cash.missing" }),
 			ports.float64({ name: "sell_prior_cash.out", label: "sell_prior_cash.out" }),
 			ports.string({ name: "sell_prior_cash.text", label: "sell_prior_cash.text" }),
 			ports.int64({ name: "sell_prior_cash.unsigned", label: "sell_prior_cash.unsigned" }),
+			ports.Capability({ name: "sell_prior_cash.self", label: "sell_prior_cash.self" }),
 			ports.bool({ name: "sell_prior_proceeds.found", label: "sell_prior_proceeds.found" }),
 			ports.int64({ name: "sell_prior_proceeds.missing", label: "sell_prior_proceeds.missing" }),
 			ports.float64({ name: "sell_prior_proceeds.out", label: "sell_prior_proceeds.out" }),
 			ports.string({ name: "sell_prior_proceeds.text", label: "sell_prior_proceeds.text" }),
 			ports.int64({ name: "sell_prior_proceeds.unsigned", label: "sell_prior_proceeds.unsigned" }),
+			ports.Capability({ name: "sell_prior_proceeds.self", label: "sell_prior_proceeds.self" }),
+			ports.Capability({ name: "sell_proceeds.self", label: "sell_proceeds.self" }),
 			ports.bool({ name: "sell_quantity.inserted", label: "sell_quantity.inserted" }),
+			ports.Capability({ name: "sell_quantity.self", label: "sell_quantity.self" }),
 			ports.bool({ name: "sell_refusal.inserted", label: "sell_refusal.inserted" }),
+			ports.Capability({ name: "sell_refusal.self", label: "sell_refusal.self" }),
 			ports.int64({ name: "sell_refused.absent", label: "sell_refused.absent" }),
+			ports.Capability({ name: "sell_refused.self", label: "sell_refused.self" }),
 			ports.bool({ name: "sell_refused_order.inserted", label: "sell_refused_order.inserted" }),
+			ports.Capability({ name: "sell_refused_order.self", label: "sell_refused_order.self" }),
 			ports.bool({ name: "sell_refused_outcome.inserted", label: "sell_refused_outcome.inserted" }),
+			ports.Capability({ name: "sell_refused_outcome.self", label: "sell_refused_outcome.self" }),
 			ports.bool({ name: "sell_refused_symbol.found", label: "sell_refused_symbol.found" }),
 			ports.int64({ name: "sell_refused_symbol.missing", label: "sell_refused_symbol.missing" }),
 			ports.float64({ name: "sell_refused_symbol.out", label: "sell_refused_symbol.out" }),
 			ports.string({ name: "sell_refused_symbol.text", label: "sell_refused_symbol.text" }),
 			ports.int64({ name: "sell_refused_symbol.unsigned", label: "sell_refused_symbol.unsigned" }),
+			ports.Capability({ name: "sell_refused_symbol.self", label: "sell_refused_symbol.self" }),
 			ports.bool({ name: "sell_settled_cash.inserted", label: "sell_settled_cash.inserted" }),
+			ports.Capability({ name: "sell_settled_cash.self", label: "sell_settled_cash.self" }),
 			ports.bool({ name: "sell_settled_order.inserted", label: "sell_settled_order.inserted" }),
+			ports.Capability({ name: "sell_settled_order.self", label: "sell_settled_order.self" }),
 			ports.bool({ name: "sell_settled_proceeds.inserted", label: "sell_settled_proceeds.inserted" }),
+			ports.Capability({ name: "sell_settled_proceeds.self", label: "sell_settled_proceeds.self" }),
+			ports.Capability({ name: "sell_sweep.self", label: "sell_sweep.self" }),
 			ports.bool({ name: "sell_unfilled.inserted", label: "sell_unfilled.inserted" }),
+			ports.Capability({ name: "sell_unfilled.self", label: "sell_unfilled.self" }),
 			ports.int64({ name: "settled.absent", label: "settled.absent" }),
+			ports.Capability({ name: "settled.self", label: "settled.self" }),
+			ports.Capability({ name: "state.self", label: "state.self" }),
 			ports.bool({ name: "state_book.inserted", label: "state_book.inserted" }),
+			ports.Capability({ name: "state_book.self", label: "state_book.self" }),
 			ports.bool({ name: "state_cash.inserted", label: "state_cash.inserted" }),
+			ports.Capability({ name: "state_cash.self", label: "state_cash.self" }),
 			ports.bool({ name: "state_constants.inserted", label: "state_constants.inserted" }),
+			ports.Capability({ name: "state_constants.self", label: "state_constants.self" }),
 			ports.bool({ name: "state_holding.inserted", label: "state_holding.inserted" }),
+			ports.Capability({ name: "state_holding.self", label: "state_holding.self" }),
 			ports.bool({ name: "state_order.inserted", label: "state_order.inserted" }),
+			ports.Capability({ name: "state_order.self", label: "state_order.self" }),
 			ports.bool({ name: "state_pair.inserted", label: "state_pair.inserted" }),
+			ports.Capability({ name: "state_pair.self", label: "state_pair.self" }),
 			ports.bool({ name: "symbol.found", label: "symbol.found" }),
 			ports.int64({ name: "symbol.missing", label: "symbol.missing" }),
 			ports.float64({ name: "symbol.out", label: "symbol.out" }),
 			ports.string({ name: "symbol.text", label: "symbol.text" }),
 			ports.int64({ name: "symbol.unsigned", label: "symbol.unsigned" }),
+			ports.Capability({ name: "symbol.self", label: "symbol.self" }),
 			ports.bool({ name: "trip_basis.inserted", label: "trip_basis.inserted" }),
+			ports.Capability({ name: "trip_basis.self", label: "trip_basis.self" }),
 			ports.bool({ name: "trip_closed.inserted", label: "trip_closed.inserted" }),
+			ports.Capability({ name: "trip_closed.self", label: "trip_closed.self" }),
 			ports.bool({ name: "trip_opened.inserted", label: "trip_opened.inserted" }),
+			ports.Capability({ name: "trip_opened.self", label: "trip_opened.self" }),
 			ports.bool({ name: "trip_pnl.inserted", label: "trip_pnl.inserted" }),
+			ports.Capability({ name: "trip_pnl.self", label: "trip_pnl.self" }),
 			ports.bool({ name: "trip_proceeds.inserted", label: "trip_proceeds.inserted" }),
+			ports.Capability({ name: "trip_proceeds.self", label: "trip_proceeds.self" }),
 			ports.bool({ name: "trip_symbol.inserted", label: "trip_symbol.inserted" }),
+			ports.Capability({ name: "trip_symbol.self", label: "trip_symbol.self" }),
+			ports.Capability({ name: "unit.self", label: "unit.self" }),
+		],
+	});
+	config.addNodeType({
+		type: "definition:projection",
+		label: "projection",
+		category: "Definitions",
+		description: "Sub-graph: projection",
+		initialWidth: 320,
+		inputs: (ports) => (_inputData, _connections) => [
+			ports["[]byte"]({ name: "grid.data", label: "grid.data" }),
+			ports.float64({ name: "grid.metrics", label: "grid.metrics" }),
+			ports.bool({ name: "grid.present", label: "grid.present" }),
+		],
+		outputs: (ports) => (_inputData, _connections) => [
+			ports["[]byte"]({ name: "grid.data", label: "grid.data" }),
+			ports.int64({ name: "grid.delivered", label: "grid.delivered" }),
+			ports.int64({ name: "grid.metrics", label: "grid.metrics" }),
+			ports.data({ name: "grid.observations", label: "grid.observations" }),
+			ports.data({ name: "grid.observed", label: "grid.observed" }),
+			ports["[]byte"]({ name: "grid.out", label: "grid.out" }),
+			ports.data({ name: "grid.present", label: "grid.present" }),
+			ports.string({ name: "grid.scope", label: "grid.scope" }),
+			ports.data({ name: "grid.values", label: "grid.values" }),
+			ports.Capability({ name: "grid.self", label: "grid.self" }),
 		],
 	});
 	config.addNodeType({
@@ -9818,15 +11223,27 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => (_inputData, _connections) => [
 			ports.int64({ name: "midpoint.undefined", label: "midpoint.undefined" }),
+			ports.Capability({ name: "midpoint.self", label: "midpoint.self" }),
+			ports.Capability({ name: "midpointSum.self", label: "midpointSum.self" }),
 			ports.int64({ name: "relative_spread.undefined", label: "relative_spread.undefined" }),
+			ports.Capability({ name: "relative_spread.self", label: "relative_spread.self" }),
+			ports.Capability({ name: "relative_spread_baseline.self", label: "relative_spread_baseline.self" }),
+			ports.Capability({ name: "spread.self", label: "spread.self" }),
+			ports.Capability({ name: "spreadHistoryBaseline.self", label: "spreadHistoryBaseline.self" }),
 			ports.int64({ name: "spreadHistoryNoise.undefined", label: "spreadHistoryNoise.undefined" }),
+			ports.Capability({ name: "spreadHistoryNoise.self", label: "spreadHistoryNoise.self" }),
+			ports.Capability({ name: "spreadHistoryVariance.self", label: "spreadHistoryVariance.self" }),
+			ports.Capability({ name: "spread_divergence.self", label: "spread_divergence.self" }),
 			ports.bool({ name: "spread_divergence_velocity.defined", label: "spread_divergence_velocity.defined" }),
 			ports.float64({ name: "spread_divergence_velocity.out", label: "spread_divergence_velocity.out" }),
 			ports.float64({ name: "spread_divergence_velocity.snr", label: "spread_divergence_velocity.snr" }),
+			ports.Capability({ name: "spread_divergence_velocity.self", label: "spread_divergence_velocity.self" }),
 			ports.float64({ name: "spread_ratio.out", label: "spread_ratio.out" }),
 			ports.int64({ name: "spread_ratio.undefined", label: "spread_ratio.undefined" }),
+			ports.Capability({ name: "spread_ratio.self", label: "spread_ratio.self" }),
 			ports.float64({ name: "spread_zscore.out", label: "spread_zscore.out" }),
 			ports.int64({ name: "spread_zscore.undefined", label: "spread_zscore.undefined" }),
+			ports.Capability({ name: "spread_zscore.self", label: "spread_zscore.self" }),
 		],
 	});
 	config.addNodeType({
@@ -9858,33 +11275,64 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "spread_divergence_velocity.ts", label: "spread_divergence_velocity.ts" }),
 		],
 		outputs: (ports) => (_inputData, _connections) => [
+			ports.Capability({ name: "elapsed.self", label: "elapsed.self" }),
 			ports.int64({ name: "midpoint.undefined", label: "midpoint.undefined" }),
+			ports.Capability({ name: "midpoint.self", label: "midpoint.self" }),
+			ports.Capability({ name: "midpointSum.self", label: "midpointSum.self" }),
+			ports.Capability({ name: "midpoint_log_return.self", label: "midpoint_log_return.self" }),
 			ports.float64({ name: "midpoint_return_baseline.out", label: "midpoint_return_baseline.out" }),
+			ports.Capability({ name: "midpoint_return_baseline.self", label: "midpoint_return_baseline.self" }),
+			ports.Capability({ name: "midpoint_return_divergence.self", label: "midpoint_return_divergence.self" }),
 			ports.int64({ name: "midpoint_return_rate.undefined", label: "midpoint_return_rate.undefined" }),
+			ports.Capability({ name: "midpoint_return_rate.self", label: "midpoint_return_rate.self" }),
 			ports.float64({ name: "midpoint_return_rate_baseline.out", label: "midpoint_return_rate_baseline.out" }),
+			ports.Capability({ name: "midpoint_return_rate_baseline.self", label: "midpoint_return_rate_baseline.self" }),
+			ports.Capability({ name: "midpoint_return_rate_divergence.self", label: "midpoint_return_rate_divergence.self" }),
 			ports.bool({ name: "midpoint_return_rate_velocity.defined", label: "midpoint_return_rate_velocity.defined" }),
 			ports.float64({ name: "midpoint_return_rate_velocity.out", label: "midpoint_return_rate_velocity.out" }),
 			ports.float64({ name: "midpoint_return_rate_velocity.snr", label: "midpoint_return_rate_velocity.snr" }),
+			ports.Capability({ name: "midpoint_return_rate_velocity.self", label: "midpoint_return_rate_velocity.self" }),
 			ports.float64({ name: "midpoint_return_rate_zscore.out", label: "midpoint_return_rate_zscore.out" }),
 			ports.int64({ name: "midpoint_return_rate_zscore.undefined", label: "midpoint_return_rate_zscore.undefined" }),
+			ports.Capability({ name: "midpoint_return_rate_zscore.self", label: "midpoint_return_rate_zscore.self" }),
 			ports.bool({ name: "midpoint_return_velocity.defined", label: "midpoint_return_velocity.defined" }),
 			ports.float64({ name: "midpoint_return_velocity.out", label: "midpoint_return_velocity.out" }),
 			ports.float64({ name: "midpoint_return_velocity.snr", label: "midpoint_return_velocity.snr" }),
+			ports.Capability({ name: "midpoint_return_velocity.self", label: "midpoint_return_velocity.self" }),
 			ports.float64({ name: "midpoint_return_zscore.out", label: "midpoint_return_zscore.out" }),
 			ports.int64({ name: "midpoint_return_zscore.undefined", label: "midpoint_return_zscore.undefined" }),
+			ports.Capability({ name: "midpoint_return_zscore.self", label: "midpoint_return_zscore.self" }),
 			ports.float64({ name: "negative_midpoint_return.out", label: "negative_midpoint_return.out" }),
+			ports.Capability({ name: "negative_midpoint_return.self", label: "negative_midpoint_return.self" }),
 			ports.float64({ name: "positive_midpoint_return.out", label: "positive_midpoint_return.out" }),
+			ports.Capability({ name: "positive_midpoint_return.self", label: "positive_midpoint_return.self" }),
+			ports.Capability({ name: "rateHistoryBaseline.self", label: "rateHistoryBaseline.self" }),
 			ports.int64({ name: "rateHistoryNoise.undefined", label: "rateHistoryNoise.undefined" }),
+			ports.Capability({ name: "rateHistoryNoise.self", label: "rateHistoryNoise.self" }),
+			ports.Capability({ name: "rateHistoryVariance.self", label: "rateHistoryVariance.self" }),
 			ports.int64({ name: "relative_spread.undefined", label: "relative_spread.undefined" }),
+			ports.Capability({ name: "relative_spread.self", label: "relative_spread.self" }),
+			ports.Capability({ name: "relative_spread_baseline.self", label: "relative_spread_baseline.self" }),
+			ports.Capability({ name: "returnHistoryBaseline.self", label: "returnHistoryBaseline.self" }),
 			ports.int64({ name: "returnHistoryNoise.undefined", label: "returnHistoryNoise.undefined" }),
+			ports.Capability({ name: "returnHistoryNoise.self", label: "returnHistoryNoise.self" }),
+			ports.Capability({ name: "returnHistoryVariance.self", label: "returnHistoryVariance.self" }),
+			ports.Capability({ name: "spread.self", label: "spread.self" }),
+			ports.Capability({ name: "spreadHistoryBaseline.self", label: "spreadHistoryBaseline.self" }),
 			ports.int64({ name: "spreadHistoryNoise.undefined", label: "spreadHistoryNoise.undefined" }),
+			ports.Capability({ name: "spreadHistoryNoise.self", label: "spreadHistoryNoise.self" }),
+			ports.Capability({ name: "spreadHistoryVariance.self", label: "spreadHistoryVariance.self" }),
+			ports.Capability({ name: "spread_divergence.self", label: "spread_divergence.self" }),
 			ports.bool({ name: "spread_divergence_velocity.defined", label: "spread_divergence_velocity.defined" }),
 			ports.float64({ name: "spread_divergence_velocity.out", label: "spread_divergence_velocity.out" }),
 			ports.float64({ name: "spread_divergence_velocity.snr", label: "spread_divergence_velocity.snr" }),
+			ports.Capability({ name: "spread_divergence_velocity.self", label: "spread_divergence_velocity.self" }),
 			ports.float64({ name: "spread_ratio.out", label: "spread_ratio.out" }),
 			ports.int64({ name: "spread_ratio.undefined", label: "spread_ratio.undefined" }),
+			ports.Capability({ name: "spread_ratio.self", label: "spread_ratio.self" }),
 			ports.float64({ name: "spread_zscore.out", label: "spread_zscore.out" }),
 			ports.int64({ name: "spread_zscore.undefined", label: "spread_zscore.undefined" }),
+			ports.Capability({ name: "spread_zscore.self", label: "spread_zscore.self" }),
 		],
 	});
 	config.addNodeType({
@@ -9921,40 +11369,66 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "volume_bar_trade_count.value", label: "volume_bar_trade_count.value" }),
 		],
 		outputs: (ports) => (_inputData, _connections) => [
+			ports.Capability({ name: "midpoint_log_return.self", label: "midpoint_log_return.self" }),
 			ports.float64({ name: "midpoint_return_baseline.out", label: "midpoint_return_baseline.out" }),
+			ports.Capability({ name: "midpoint_return_baseline.self", label: "midpoint_return_baseline.self" }),
+			ports.Capability({ name: "midpoint_return_divergence.self", label: "midpoint_return_divergence.self" }),
 			ports.float64({ name: "midpoint_return_rate.out", label: "midpoint_return_rate.out" }),
 			ports.int64({ name: "midpoint_return_rate.undefined", label: "midpoint_return_rate.undefined" }),
+			ports.Capability({ name: "midpoint_return_rate.self", label: "midpoint_return_rate.self" }),
 			ports.bool({ name: "midpoint_return_velocity.defined", label: "midpoint_return_velocity.defined" }),
 			ports.float64({ name: "midpoint_return_velocity.out", label: "midpoint_return_velocity.out" }),
 			ports.float64({ name: "midpoint_return_velocity.snr", label: "midpoint_return_velocity.snr" }),
+			ports.Capability({ name: "midpoint_return_velocity.self", label: "midpoint_return_velocity.self" }),
 			ports.float64({ name: "midpoint_return_zscore.out", label: "midpoint_return_zscore.out" }),
 			ports.int64({ name: "midpoint_return_zscore.undefined", label: "midpoint_return_zscore.undefined" }),
+			ports.Capability({ name: "midpoint_return_zscore.self", label: "midpoint_return_zscore.self" }),
+			ports.Capability({ name: "notionalHistoryBaseline.self", label: "notionalHistoryBaseline.self" }),
 			ports.int64({ name: "notionalHistoryNoise.undefined", label: "notionalHistoryNoise.undefined" }),
+			ports.Capability({ name: "notionalHistoryNoise.self", label: "notionalHistoryNoise.self" }),
+			ports.Capability({ name: "notionalHistoryVariance.self", label: "notionalHistoryVariance.self" }),
 			ports.int64({ name: "notional_rate.undefined", label: "notional_rate.undefined" }),
+			ports.Capability({ name: "notional_rate.self", label: "notional_rate.self" }),
+			ports.Capability({ name: "notional_rate_baseline.self", label: "notional_rate_baseline.self" }),
+			ports.Capability({ name: "notional_rate_divergence.self", label: "notional_rate_divergence.self" }),
 			ports.float64({ name: "notional_rate_ratio.out", label: "notional_rate_ratio.out" }),
 			ports.int64({ name: "notional_rate_ratio.undefined", label: "notional_rate_ratio.undefined" }),
+			ports.Capability({ name: "notional_rate_ratio.self", label: "notional_rate_ratio.self" }),
 			ports.bool({ name: "notional_rate_velocity.defined", label: "notional_rate_velocity.defined" }),
 			ports.float64({ name: "notional_rate_velocity.out", label: "notional_rate_velocity.out" }),
 			ports.float64({ name: "notional_rate_velocity.snr", label: "notional_rate_velocity.snr" }),
+			ports.Capability({ name: "notional_rate_velocity.self", label: "notional_rate_velocity.self" }),
 			ports.float64({ name: "notional_rate_zscore.out", label: "notional_rate_zscore.out" }),
 			ports.int64({ name: "notional_rate_zscore.undefined", label: "notional_rate_zscore.undefined" }),
+			ports.Capability({ name: "notional_rate_zscore.self", label: "notional_rate_zscore.self" }),
+			ports.Capability({ name: "returnHistoryBaseline.self", label: "returnHistoryBaseline.self" }),
 			ports.int64({ name: "returnHistoryNoise.undefined", label: "returnHistoryNoise.undefined" }),
+			ports.Capability({ name: "returnHistoryNoise.self", label: "returnHistoryNoise.self" }),
+			ports.Capability({ name: "returnHistoryVariance.self", label: "returnHistoryVariance.self" }),
+			ports.Capability({ name: "trade_interval_seconds.self", label: "trade_interval_seconds.self" }),
+			ports.Capability({ name: "trade_notional.self", label: "trade_notional.self" }),
 			ports.float64({ name: "trade_rate.out", label: "trade_rate.out" }),
 			ports.int64({ name: "trade_rate.undefined", label: "trade_rate.undefined" }),
+			ports.Capability({ name: "trade_rate.self", label: "trade_rate.self" }),
 			ports.int64({ name: "volume_bar_duration.count", label: "volume_bar_duration.count" }),
 			ports.int64({ name: "volume_bar_duration.idle", label: "volume_bar_duration.idle" }),
 			ports.bool({ name: "volume_bar_duration.ready", label: "volume_bar_duration.ready" }),
+			ports.Capability({ name: "volume_bar_duration.self", label: "volume_bar_duration.self" }),
 			ports.int64({ name: "volume_bar_notional.count", label: "volume_bar_notional.count" }),
 			ports.int64({ name: "volume_bar_notional.idle", label: "volume_bar_notional.idle" }),
 			ports.bool({ name: "volume_bar_notional.ready", label: "volume_bar_notional.ready" }),
+			ports.Capability({ name: "volume_bar_notional.self", label: "volume_bar_notional.self" }),
 			ports.int64({ name: "volume_bar_quantity.count", label: "volume_bar_quantity.count" }),
 			ports.int64({ name: "volume_bar_quantity.idle", label: "volume_bar_quantity.idle" }),
 			ports.bool({ name: "volume_bar_quantity.ready", label: "volume_bar_quantity.ready" }),
+			ports.Capability({ name: "volume_bar_quantity.self", label: "volume_bar_quantity.self" }),
 			ports.int64({ name: "volume_bar_trade_count.count", label: "volume_bar_trade_count.count" }),
 			ports.int64({ name: "volume_bar_trade_count.idle", label: "volume_bar_trade_count.idle" }),
 			ports.bool({ name: "volume_bar_trade_count.ready", label: "volume_bar_trade_count.ready" }),
+			ports.Capability({ name: "volume_bar_trade_count.self", label: "volume_bar_trade_count.self" }),
 			ports.float64({ name: "volume_rate.out", label: "volume_rate.out" }),
 			ports.int64({ name: "volume_rate.undefined", label: "volume_rate.undefined" }),
+			ports.Capability({ name: "volume_rate.self", label: "volume_rate.self" }),
 		],
 	});
 	config.addNodeType({
@@ -9990,23 +11464,39 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.string({ name: "shareVar.scope", label: "shareVar.scope" }),
 		],
 		outputs: (ports) => (_inputData, _connections) => [
+			ports.Capability({ name: "absoluteDeviation.self", label: "absoluteDeviation.self" }),
+			ports.Capability({ name: "absoluteMagnitudeDeviation.self", label: "absoluteMagnitudeDeviation.self" }),
+			ports.Capability({ name: "absolute_return.self", label: "absolute_return.self" }),
 			ports.float64({ name: "advance_fraction.out", label: "advance_fraction.out" }),
 			ports.int64({ name: "advance_fraction.undefined", label: "advance_fraction.undefined" }),
+			ports.Capability({ name: "advance_fraction.self", label: "advance_fraction.self" }),
 			ports.int64({ name: "breadth.undefined", label: "breadth.undefined" }),
+			ports.Capability({ name: "breadth.self", label: "breadth.self" }),
+			ports.Capability({ name: "breadthBaseline.self", label: "breadthBaseline.self" }),
 			ports.int64({ name: "breadthNoise.undefined", label: "breadthNoise.undefined" }),
+			ports.Capability({ name: "breadthNoise.self", label: "breadthNoise.self" }),
+			ports.Capability({ name: "breadthVariance.self", label: "breadthVariance.self" }),
 			ports.float64({ name: "breadth_baseline.out", label: "breadth_baseline.out" }),
+			ports.Capability({ name: "breadth_baseline.self", label: "breadth_baseline.self" }),
+			ports.Capability({ name: "breadth_divergence.self", label: "breadth_divergence.self" }),
 			ports.bool({ name: "breadth_velocity.defined", label: "breadth_velocity.defined" }),
 			ports.float64({ name: "breadth_velocity.out", label: "breadth_velocity.out" }),
 			ports.float64({ name: "breadth_velocity.snr", label: "breadth_velocity.snr" }),
+			ports.Capability({ name: "breadth_velocity.self", label: "breadth_velocity.self" }),
 			ports.float64({ name: "breadth_zscore.out", label: "breadth_zscore.out" }),
 			ports.int64({ name: "breadth_zscore.undefined", label: "breadth_zscore.undefined" }),
+			ports.Capability({ name: "breadth_zscore.self", label: "breadth_zscore.self" }),
+			ports.Capability({ name: "cohortDirection.self", label: "cohortDirection.self" }),
 			ports.float64({ name: "crossSection.extremeCurvature", label: "crossSection.extremeCurvature" }),
 			ports.float64({ name: "crossSection.extremeIndex", label: "crossSection.extremeIndex" }),
 			ports.float64({ name: "crossSection.extremeProminence", label: "crossSection.extremeProminence" }),
 			ports.float64({ name: "crossSection.lowerQuartile", label: "crossSection.lowerQuartile" }),
 			ports.float64({ name: "crossSection.upperQuartile", label: "crossSection.upperQuartile" }),
+			ports.Capability({ name: "crossSection.self", label: "crossSection.self" }),
 			ports.float64({ name: "decline_fraction.out", label: "decline_fraction.out" }),
 			ports.int64({ name: "decline_fraction.undefined", label: "decline_fraction.undefined" }),
+			ports.Capability({ name: "decline_fraction.self", label: "decline_fraction.self" }),
+			ports.Capability({ name: "deviationFromMedian.self", label: "deviationFromMedian.self" }),
 			ports.float64({ name: "deviationSpread.count", label: "deviationSpread.count" }),
 			ports.float64({ name: "deviationSpread.extremeCurvature", label: "deviationSpread.extremeCurvature" }),
 			ports.float64({ name: "deviationSpread.extremeIndex", label: "deviationSpread.extremeIndex" }),
@@ -10021,27 +11511,52 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "deviationSpread.positive", label: "deviationSpread.positive" }),
 			ports.float64({ name: "deviationSpread.upperQuartile", label: "deviationSpread.upperQuartile" }),
 			ports.float64({ name: "deviationSpread.zero", label: "deviationSpread.zero" }),
+			ports.Capability({ name: "deviationSpread.self", label: "deviationSpread.self" }),
+			ports.Capability({ name: "directionalDifference.self", label: "directionalDifference.self" }),
 			ports.float64({ name: "directional_agreement.out", label: "directional_agreement.out" }),
+			ports.Capability({ name: "directional_agreement.self", label: "directional_agreement.self" }),
 			ports.float64({ name: "directional_consensus.out", label: "directional_consensus.out" }),
 			ports.int64({ name: "directional_consensus.undefined", label: "directional_consensus.undefined" }),
+			ports.Capability({ name: "directional_consensus.self", label: "directional_consensus.self" }),
+			ports.Capability({ name: "directional_participation.self", label: "directional_participation.self" }),
+			ports.Capability({ name: "dispersionBaseline.self", label: "dispersionBaseline.self" }),
 			ports.int64({ name: "dispersionNoise.undefined", label: "dispersionNoise.undefined" }),
+			ports.Capability({ name: "dispersionNoise.self", label: "dispersionNoise.self" }),
+			ports.Capability({ name: "dispersionVariance.self", label: "dispersionVariance.self" }),
 			ports.float64({ name: "excluded_member_count.out", label: "excluded_member_count.out" }),
+			ports.Capability({ name: "excluded_member_count.self", label: "excluded_member_count.self" }),
+			ports.Capability({ name: "extremeRatioBaseline.self", label: "extremeRatioBaseline.self" }),
 			ports.int64({ name: "extremeRatioNoise.undefined", label: "extremeRatioNoise.undefined" }),
+			ports.Capability({ name: "extremeRatioNoise.self", label: "extremeRatioNoise.self" }),
+			ports.Capability({ name: "extremeRatioVariance.self", label: "extremeRatioVariance.self" }),
 			ports.float64({ name: "largest_absolute_return.out", label: "largest_absolute_return.out" }),
+			ports.Capability({ name: "largest_absolute_return.self", label: "largest_absolute_return.self" }),
+			ports.Capability({ name: "largest_move_excess.self", label: "largest_move_excess.self" }),
 			ports.float64({ name: "largest_move_mad_excess.out", label: "largest_move_mad_excess.out" }),
 			ports.int64({ name: "largest_move_mad_excess.undefined", label: "largest_move_mad_excess.undefined" }),
+			ports.Capability({ name: "largest_move_mad_excess.self", label: "largest_move_mad_excess.self" }),
 			ports.int64({ name: "largest_move_ratio.undefined", label: "largest_move_ratio.undefined" }),
+			ports.Capability({ name: "largest_move_ratio.self", label: "largest_move_ratio.self" }),
 			ports.float64({ name: "largest_move_ratio_baseline.out", label: "largest_move_ratio_baseline.out" }),
+			ports.Capability({ name: "largest_move_ratio_baseline.self", label: "largest_move_ratio_baseline.self" }),
+			ports.Capability({ name: "largest_move_ratio_divergence.self", label: "largest_move_ratio_divergence.self" }),
 			ports.bool({ name: "largest_move_ratio_velocity.defined", label: "largest_move_ratio_velocity.defined" }),
 			ports.float64({ name: "largest_move_ratio_velocity.out", label: "largest_move_ratio_velocity.out" }),
 			ports.float64({ name: "largest_move_ratio_velocity.snr", label: "largest_move_ratio_velocity.snr" }),
+			ports.Capability({ name: "largest_move_ratio_velocity.self", label: "largest_move_ratio_velocity.self" }),
 			ports.float64({ name: "largest_move_ratio_zscore.out", label: "largest_move_ratio_zscore.out" }),
 			ports.int64({ name: "largest_move_ratio_zscore.undefined", label: "largest_move_ratio_zscore.undefined" }),
+			ports.Capability({ name: "largest_move_ratio_zscore.self", label: "largest_move_ratio_zscore.self" }),
 			ports.int64({ name: "largest_move_share.undefined", label: "largest_move_share.undefined" }),
+			ports.Capability({ name: "largest_move_share.self", label: "largest_move_share.self" }),
 			ports.float64({ name: "largest_move_share_baseline.out", label: "largest_move_share_baseline.out" }),
+			ports.Capability({ name: "largest_move_share_baseline.self", label: "largest_move_share_baseline.self" }),
 			ports.float64({ name: "largest_move_share_zscore.out", label: "largest_move_share_zscore.out" }),
 			ports.int64({ name: "largest_move_share_zscore.undefined", label: "largest_move_share_zscore.undefined" }),
+			ports.Capability({ name: "largest_move_share_zscore.self", label: "largest_move_share_zscore.self" }),
 			ports.float64({ name: "largest_signed_return.out", label: "largest_signed_return.out" }),
+			ports.Capability({ name: "largest_signed_return.self", label: "largest_signed_return.self" }),
+			ports.Capability({ name: "magnitudeDeviation.self", label: "magnitudeDeviation.self" }),
 			ports.float64({ name: "magnitudeSpread.count", label: "magnitudeSpread.count" }),
 			ports.float64({ name: "magnitudeSpread.extremeCurvature", label: "magnitudeSpread.extremeCurvature" }),
 			ports.float64({ name: "magnitudeSpread.extremeIndex", label: "magnitudeSpread.extremeIndex" }),
@@ -10055,42 +11570,85 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "magnitudeSpread.positive", label: "magnitudeSpread.positive" }),
 			ports.float64({ name: "magnitudeSpread.upperQuartile", label: "magnitudeSpread.upperQuartile" }),
 			ports.float64({ name: "magnitudeSpread.zero", label: "magnitudeSpread.zero" }),
+			ports.Capability({ name: "magnitudeSpread.self", label: "magnitudeSpread.self" }),
+			ports.Capability({ name: "meanSquaredReturn.self", label: "meanSquaredReturn.self" }),
+			ports.Capability({ name: "mean_absolute_return.self", label: "mean_absolute_return.self" }),
+			ports.Capability({ name: "medianAbsoluteBaseline.self", label: "medianAbsoluteBaseline.self" }),
 			ports.int64({ name: "medianAbsoluteNoise.undefined", label: "medianAbsoluteNoise.undefined" }),
+			ports.Capability({ name: "medianAbsoluteNoise.self", label: "medianAbsoluteNoise.self" }),
+			ports.Capability({ name: "medianAbsoluteVariance.self", label: "medianAbsoluteVariance.self" }),
+			ports.Capability({ name: "medianBaseline.self", label: "medianBaseline.self" }),
 			ports.int64({ name: "medianNoise.undefined", label: "medianNoise.undefined" }),
+			ports.Capability({ name: "medianNoise.self", label: "medianNoise.self" }),
+			ports.Capability({ name: "medianVariance.self", label: "medianVariance.self" }),
 			ports.float64({ name: "median_absolute_return.out", label: "median_absolute_return.out" }),
+			ports.Capability({ name: "median_absolute_return.self", label: "median_absolute_return.self" }),
+			ports.Capability({ name: "median_absolute_return_baseline.self", label: "median_absolute_return_baseline.self" }),
+			ports.Capability({ name: "median_absolute_return_divergence.self", label: "median_absolute_return_divergence.self" }),
 			ports.float64({ name: "median_absolute_return_ratio.out", label: "median_absolute_return_ratio.out" }),
 			ports.int64({ name: "median_absolute_return_ratio.undefined", label: "median_absolute_return_ratio.undefined" }),
+			ports.Capability({ name: "median_absolute_return_ratio.self", label: "median_absolute_return_ratio.self" }),
 			ports.bool({ name: "median_absolute_return_velocity.defined", label: "median_absolute_return_velocity.defined" }),
 			ports.float64({ name: "median_absolute_return_velocity.out", label: "median_absolute_return_velocity.out" }),
 			ports.float64({ name: "median_absolute_return_velocity.snr", label: "median_absolute_return_velocity.snr" }),
+			ports.Capability({ name: "median_absolute_return_velocity.self", label: "median_absolute_return_velocity.self" }),
 			ports.float64({ name: "median_absolute_return_zscore.out", label: "median_absolute_return_zscore.out" }),
 			ports.int64({ name: "median_absolute_return_zscore.undefined", label: "median_absolute_return_zscore.undefined" }),
+			ports.Capability({ name: "median_absolute_return_zscore.self", label: "median_absolute_return_zscore.self" }),
 			ports.float64({ name: "median_return.out", label: "median_return.out" }),
+			ports.Capability({ name: "median_return.self", label: "median_return.self" }),
 			ports.float64({ name: "median_return_baseline.out", label: "median_return_baseline.out" }),
+			ports.Capability({ name: "median_return_baseline.self", label: "median_return_baseline.self" }),
+			ports.Capability({ name: "median_return_divergence.self", label: "median_return_divergence.self" }),
 			ports.bool({ name: "median_return_velocity.defined", label: "median_return_velocity.defined" }),
 			ports.float64({ name: "median_return_velocity.out", label: "median_return_velocity.out" }),
 			ports.float64({ name: "median_return_velocity.snr", label: "median_return_velocity.snr" }),
+			ports.Capability({ name: "median_return_velocity.self", label: "median_return_velocity.self" }),
 			ports.float64({ name: "median_return_zscore.out", label: "median_return_zscore.out" }),
 			ports.int64({ name: "median_return_zscore.undefined", label: "median_return_zscore.undefined" }),
+			ports.Capability({ name: "median_return_zscore.self", label: "median_return_zscore.self" }),
+			ports.Capability({ name: "oppositeShare.self", label: "oppositeShare.self" }),
+			ports.Capability({ name: "opposite_direction_peer_count.self", label: "opposite_direction_peer_count.self" }),
 			ports.float64({ name: "opposite_direction_peer_fraction.out", label: "opposite_direction_peer_fraction.out" }),
 			ports.int64({ name: "opposite_direction_peer_fraction.undefined", label: "opposite_direction_peer_fraction.undefined" }),
+			ports.Capability({ name: "opposite_direction_peer_fraction.self", label: "opposite_direction_peer_fraction.self" }),
+			ports.Capability({ name: "ownDirection.self", label: "ownDirection.self" }),
+			ports.Capability({ name: "peerAgreement.self", label: "peerAgreement.self" }),
+			ports.Capability({ name: "peerCount.self", label: "peerCount.self" }),
+			ports.Capability({ name: "return.self", label: "return.self" }),
+			ports.Capability({ name: "return_dispersion_baseline.self", label: "return_dispersion_baseline.self" }),
+			ports.Capability({ name: "return_dispersion_divergence.self", label: "return_dispersion_divergence.self" }),
 			ports.float64({ name: "return_dispersion_ratio.out", label: "return_dispersion_ratio.out" }),
 			ports.int64({ name: "return_dispersion_ratio.undefined", label: "return_dispersion_ratio.undefined" }),
+			ports.Capability({ name: "return_dispersion_ratio.self", label: "return_dispersion_ratio.self" }),
 			ports.bool({ name: "return_dispersion_velocity.defined", label: "return_dispersion_velocity.defined" }),
 			ports.float64({ name: "return_dispersion_velocity.out", label: "return_dispersion_velocity.out" }),
 			ports.float64({ name: "return_dispersion_velocity.snr", label: "return_dispersion_velocity.snr" }),
+			ports.Capability({ name: "return_dispersion_velocity.self", label: "return_dispersion_velocity.self" }),
 			ports.float64({ name: "return_dispersion_zscore.out", label: "return_dispersion_zscore.out" }),
 			ports.int64({ name: "return_dispersion_zscore.undefined", label: "return_dispersion_zscore.undefined" }),
+			ports.Capability({ name: "return_dispersion_zscore.self", label: "return_dispersion_zscore.self" }),
 			ports.float64({ name: "return_interquartile_range.out", label: "return_interquartile_range.out" }),
+			ports.Capability({ name: "return_interquartile_range.self", label: "return_interquartile_range.self" }),
 			ports.float64({ name: "rms_return.out", label: "rms_return.out" }),
 			ports.int64({ name: "rms_return.undefined", label: "rms_return.undefined" }),
+			ports.Capability({ name: "rms_return.self", label: "rms_return.self" }),
+			ports.Capability({ name: "same_direction_peer_count.self", label: "same_direction_peer_count.self" }),
 			ports.float64({ name: "same_direction_peer_fraction.out", label: "same_direction_peer_fraction.out" }),
 			ports.int64({ name: "same_direction_peer_fraction.undefined", label: "same_direction_peer_fraction.undefined" }),
+			ports.Capability({ name: "same_direction_peer_fraction.self", label: "same_direction_peer_fraction.self" }),
+			ports.Capability({ name: "shareDivergence.self", label: "shareDivergence.self" }),
+			ports.Capability({ name: "shareMean.self", label: "shareMean.self" }),
 			ports.int64({ name: "shareNoise.undefined", label: "shareNoise.undefined" }),
+			ports.Capability({ name: "shareNoise.self", label: "shareNoise.self" }),
+			ports.Capability({ name: "shareVar.self", label: "shareVar.self" }),
+			ports.Capability({ name: "squaredReturn.self", label: "squaredReturn.self" }),
 			ports.float64({ name: "unchanged_fraction.out", label: "unchanged_fraction.out" }),
 			ports.int64({ name: "unchanged_fraction.undefined", label: "unchanged_fraction.undefined" }),
+			ports.Capability({ name: "unchanged_fraction.self", label: "unchanged_fraction.self" }),
 			ports.float64({ name: "zero_return_peer_fraction.out", label: "zero_return_peer_fraction.out" }),
 			ports.int64({ name: "zero_return_peer_fraction.undefined", label: "zero_return_peer_fraction.undefined" }),
+			ports.Capability({ name: "zero_return_peer_fraction.self", label: "zero_return_peer_fraction.self" }),
 		],
 	});
 	config.addNodeType({
@@ -10100,17 +11658,32 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		description: "Sub-graph: signals",
 		initialWidth: 320,
 		inputs: (ports) => (_inputData, _connections) => [
+			ports.int64({ name: "gather.epoch", label: "gather.epoch" }),
+			ports.string({ name: "gather.identities", label: "gather.identities" }),
+			ports["[]byte"]({ name: "gather.observation", label: "gather.observation" }),
 			ports.bool({ name: "gather.present", label: "gather.present" }),
+			ports.bool({ name: "gather.requireProvenance", label: "gather.requireProvenance" }),
+			ports["[]byte"]({ name: "gather.row", label: "gather.row" }),
+			ports.string({ name: "gather.scope", label: "gather.scope" }),
+			ports.int64({ name: "gather.sequence", label: "gather.sequence" }),
 			ports["[]byte"]({ name: "grid.data", label: "grid.data" }),
 			ports.bool({ name: "grid.present", label: "grid.present" }),
 			ports.string({ name: "grid.scope", label: "grid.scope" }),
 		],
 		outputs: (ports) => (_inputData, _connections) => [
+			ports.int64({ name: "gather.epoch", label: "gather.epoch" }),
+			ports.data({ name: "gather.epochs", label: "gather.epochs" }),
 			ports.data({ name: "gather.gathered.present", label: "gather.gathered.present" }),
 			ports.data({ name: "gather.gathered.values", label: "gather.gathered.values" }),
 			ports.int64({ name: "gather.idle", label: "gather.idle" }),
 			ports.string({ name: "gather.phase", label: "gather.phase" }),
 			ports["[]byte"]({ name: "gather.readiness", label: "gather.readiness" }),
+			ports["[]byte"]({ name: "gather.row", label: "gather.row" }),
+			ports.string({ name: "gather.scope", label: "gather.scope" }),
+			ports.int64({ name: "gather.sequence", label: "gather.sequence" }),
+			ports.data({ name: "gather.sequences", label: "gather.sequences" }),
+			ports.Capability({ name: "gather.self", label: "gather.self" }),
+			ports["[]byte"]({ name: "grid.data", label: "grid.data" }),
 			ports.int64({ name: "grid.delivered", label: "grid.delivered" }),
 			ports.int64({ name: "grid.metrics", label: "grid.metrics" }),
 			ports.data({ name: "grid.observations", label: "grid.observations" }),
@@ -10163,53 +11736,111 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.string({ name: "withdrawbidVariance.scope", label: "withdrawbidVariance.scope" }),
 		],
 		outputs: (ports) => (_inputData, _connections) => [
+			ports.Capability({ name: "elapsed.self", label: "elapsed.self" }),
+			ports.Capability({ name: "net_replenished_quantity:ask.self", label: "net_replenished_quantity:ask.self" }),
+			ports.Capability({ name: "net_replenished_quantity:bid.self", label: "net_replenished_quantity:bid.self" }),
 			ports.float64({ name: "net_replenishment_fraction:ask.out", label: "net_replenishment_fraction:ask.out" }),
 			ports.int64({ name: "net_replenishment_fraction:ask.undefined", label: "net_replenishment_fraction:ask.undefined" }),
+			ports.Capability({ name: "net_replenishment_fraction:ask.self", label: "net_replenishment_fraction:ask.self" }),
 			ports.float64({ name: "net_replenishment_fraction:bid.out", label: "net_replenishment_fraction:bid.out" }),
 			ports.int64({ name: "net_replenishment_fraction:bid.undefined", label: "net_replenishment_fraction:bid.undefined" }),
+			ports.Capability({ name: "net_replenishment_fraction:bid.self", label: "net_replenishment_fraction:bid.self" }),
 			ports.float64({ name: "net_replenishment_rate:ask.out", label: "net_replenishment_rate:ask.out" }),
 			ports.int64({ name: "net_replenishment_rate:ask.undefined", label: "net_replenishment_rate:ask.undefined" }),
+			ports.Capability({ name: "net_replenishment_rate:ask.self", label: "net_replenishment_rate:ask.self" }),
 			ports.float64({ name: "net_replenishment_rate:bid.out", label: "net_replenishment_rate:bid.out" }),
 			ports.int64({ name: "net_replenishment_rate:bid.undefined", label: "net_replenishment_rate:bid.undefined" }),
+			ports.Capability({ name: "net_replenishment_rate:bid.self", label: "net_replenishment_rate:bid.self" }),
 			ports.int64({ name: "net_withdrawal_fraction:ask.undefined", label: "net_withdrawal_fraction:ask.undefined" }),
+			ports.Capability({ name: "net_withdrawal_fraction:ask.self", label: "net_withdrawal_fraction:ask.self" }),
 			ports.int64({ name: "net_withdrawal_fraction:bid.undefined", label: "net_withdrawal_fraction:bid.undefined" }),
+			ports.Capability({ name: "net_withdrawal_fraction:bid.self", label: "net_withdrawal_fraction:bid.self" }),
 			ports.float64({ name: "net_withdrawal_rate:ask.out", label: "net_withdrawal_rate:ask.out" }),
 			ports.int64({ name: "net_withdrawal_rate:ask.undefined", label: "net_withdrawal_rate:ask.undefined" }),
+			ports.Capability({ name: "net_withdrawal_rate:ask.self", label: "net_withdrawal_rate:ask.self" }),
 			ports.float64({ name: "net_withdrawal_rate:bid.out", label: "net_withdrawal_rate:bid.out" }),
 			ports.int64({ name: "net_withdrawal_rate:bid.undefined", label: "net_withdrawal_rate:bid.undefined" }),
+			ports.Capability({ name: "net_withdrawal_rate:bid.self", label: "net_withdrawal_rate:bid.self" }),
+			ports.Capability({ name: "net_withdrawn_quantity:ask.self", label: "net_withdrawn_quantity:ask.self" }),
+			ports.Capability({ name: "net_withdrawn_quantity:bid.self", label: "net_withdrawn_quantity:bid.self" }),
 			ports.float64({ name: "previous_best_price:ask.out", label: "previous_best_price:ask.out" }),
+			ports.Capability({ name: "previous_best_price:ask.self", label: "previous_best_price:ask.self" }),
 			ports.float64({ name: "previous_best_price:bid.out", label: "previous_best_price:bid.out" }),
+			ports.Capability({ name: "previous_best_price:bid.self", label: "previous_best_price:bid.self" }),
+			ports.Capability({ name: "previous_touch_quantity:ask.self", label: "previous_touch_quantity:ask.self" }),
+			ports.Capability({ name: "previous_touch_quantity:bid.self", label: "previous_touch_quantity:bid.self" }),
+			ports.Capability({ name: "quantityChange:ask.self", label: "quantityChange:ask.self" }),
+			ports.Capability({ name: "quantityChange:bid.self", label: "quantityChange:bid.self" }),
 			ports.int64({ name: "retreat_fraction:ask.undefined", label: "retreat_fraction:ask.undefined" }),
+			ports.Capability({ name: "retreat_fraction:ask.self", label: "retreat_fraction:ask.self" }),
 			ports.int64({ name: "retreat_fraction:bid.undefined", label: "retreat_fraction:bid.undefined" }),
+			ports.Capability({ name: "retreat_fraction:bid.self", label: "retreat_fraction:bid.self" }),
 			ports.float64({ name: "retreat_fraction_baseline.out", label: "retreat_fraction_baseline.out" }),
+			ports.Capability({ name: "retreat_fraction_baseline.self", label: "retreat_fraction_baseline.self" }),
 			ports.float64({ name: "retreat_fraction_baseline:ask.out", label: "retreat_fraction_baseline:ask.out" }),
+			ports.Capability({ name: "retreat_fraction_baseline:ask.self", label: "retreat_fraction_baseline:ask.self" }),
 			ports.float64({ name: "retreat_fraction_baseline:bid.out", label: "retreat_fraction_baseline:bid.out" }),
+			ports.Capability({ name: "retreat_fraction_baseline:bid.self", label: "retreat_fraction_baseline:bid.self" }),
 			ports.float64({ name: "retreat_fraction_divergence.out", label: "retreat_fraction_divergence.out" }),
+			ports.Capability({ name: "retreat_fraction_divergence.self", label: "retreat_fraction_divergence.self" }),
+			ports.Capability({ name: "retreat_fraction_divergence:ask.self", label: "retreat_fraction_divergence:ask.self" }),
+			ports.Capability({ name: "retreat_fraction_divergence:bid.self", label: "retreat_fraction_divergence:bid.self" }),
 			ports.float64({ name: "retreat_fraction_zscore:ask.out", label: "retreat_fraction_zscore:ask.out" }),
 			ports.int64({ name: "retreat_fraction_zscore:ask.undefined", label: "retreat_fraction_zscore:ask.undefined" }),
+			ports.Capability({ name: "retreat_fraction_zscore:ask.self", label: "retreat_fraction_zscore:ask.self" }),
 			ports.float64({ name: "retreat_fraction_zscore:bid.out", label: "retreat_fraction_zscore:bid.out" }),
 			ports.int64({ name: "retreat_fraction_zscore:bid.undefined", label: "retreat_fraction_zscore:bid.undefined" }),
+			ports.Capability({ name: "retreat_fraction_zscore:bid.self", label: "retreat_fraction_zscore:bid.self" }),
 			ports.float64({ name: "retreat_rate:ask.out", label: "retreat_rate:ask.out" }),
 			ports.int64({ name: "retreat_rate:ask.undefined", label: "retreat_rate:ask.undefined" }),
+			ports.Capability({ name: "retreat_rate:ask.self", label: "retreat_rate:ask.self" }),
 			ports.float64({ name: "retreat_rate:bid.out", label: "retreat_rate:bid.out" }),
 			ports.int64({ name: "retreat_rate:bid.undefined", label: "retreat_rate:bid.undefined" }),
+			ports.Capability({ name: "retreat_rate:bid.self", label: "retreat_rate:bid.self" }),
+			ports.Capability({ name: "retreataskBaseline.self", label: "retreataskBaseline.self" }),
 			ports.int64({ name: "retreataskNoise.undefined", label: "retreataskNoise.undefined" }),
+			ports.Capability({ name: "retreataskNoise.self", label: "retreataskNoise.self" }),
+			ports.Capability({ name: "retreataskVariance.self", label: "retreataskVariance.self" }),
+			ports.Capability({ name: "retreatbidBaseline.self", label: "retreatbidBaseline.self" }),
 			ports.int64({ name: "retreatbidNoise.undefined", label: "retreatbidNoise.undefined" }),
+			ports.Capability({ name: "retreatbidNoise.self", label: "retreatbidNoise.self" }),
+			ports.Capability({ name: "retreatbidVariance.self", label: "retreatbidVariance.self" }),
+			ports.Capability({ name: "retreated_quantity:ask.self", label: "retreated_quantity:ask.self" }),
+			ports.Capability({ name: "retreated_quantity:bid.self", label: "retreated_quantity:bid.self" }),
+			ports.Capability({ name: "touch_price_log_change:ask.self", label: "touch_price_log_change:ask.self" }),
+			ports.Capability({ name: "touch_price_log_change:bid.self", label: "touch_price_log_change:bid.self" }),
+			ports.Capability({ name: "unfilled_residual_quantity:ask.self", label: "unfilled_residual_quantity:ask.self" }),
+			ports.Capability({ name: "unfilled_residual_quantity:bid.self", label: "unfilled_residual_quantity:bid.self" }),
 			ports.float64({ name: "withdrawal_fraction_baseline.out", label: "withdrawal_fraction_baseline.out" }),
+			ports.Capability({ name: "withdrawal_fraction_baseline.self", label: "withdrawal_fraction_baseline.self" }),
 			ports.float64({ name: "withdrawal_fraction_baseline:ask.out", label: "withdrawal_fraction_baseline:ask.out" }),
+			ports.Capability({ name: "withdrawal_fraction_baseline:ask.self", label: "withdrawal_fraction_baseline:ask.self" }),
 			ports.float64({ name: "withdrawal_fraction_baseline:bid.out", label: "withdrawal_fraction_baseline:bid.out" }),
+			ports.Capability({ name: "withdrawal_fraction_baseline:bid.self", label: "withdrawal_fraction_baseline:bid.self" }),
+			ports.Capability({ name: "withdrawal_fraction_divergence:ask.self", label: "withdrawal_fraction_divergence:ask.self" }),
+			ports.Capability({ name: "withdrawal_fraction_divergence:bid.self", label: "withdrawal_fraction_divergence:bid.self" }),
 			ports.bool({ name: "withdrawal_fraction_velocity:ask.defined", label: "withdrawal_fraction_velocity:ask.defined" }),
 			ports.float64({ name: "withdrawal_fraction_velocity:ask.out", label: "withdrawal_fraction_velocity:ask.out" }),
 			ports.float64({ name: "withdrawal_fraction_velocity:ask.snr", label: "withdrawal_fraction_velocity:ask.snr" }),
+			ports.Capability({ name: "withdrawal_fraction_velocity:ask.self", label: "withdrawal_fraction_velocity:ask.self" }),
 			ports.bool({ name: "withdrawal_fraction_velocity:bid.defined", label: "withdrawal_fraction_velocity:bid.defined" }),
 			ports.float64({ name: "withdrawal_fraction_velocity:bid.out", label: "withdrawal_fraction_velocity:bid.out" }),
 			ports.float64({ name: "withdrawal_fraction_velocity:bid.snr", label: "withdrawal_fraction_velocity:bid.snr" }),
+			ports.Capability({ name: "withdrawal_fraction_velocity:bid.self", label: "withdrawal_fraction_velocity:bid.self" }),
 			ports.float64({ name: "withdrawal_fraction_zscore:ask.out", label: "withdrawal_fraction_zscore:ask.out" }),
 			ports.int64({ name: "withdrawal_fraction_zscore:ask.undefined", label: "withdrawal_fraction_zscore:ask.undefined" }),
+			ports.Capability({ name: "withdrawal_fraction_zscore:ask.self", label: "withdrawal_fraction_zscore:ask.self" }),
 			ports.float64({ name: "withdrawal_fraction_zscore:bid.out", label: "withdrawal_fraction_zscore:bid.out" }),
 			ports.int64({ name: "withdrawal_fraction_zscore:bid.undefined", label: "withdrawal_fraction_zscore:bid.undefined" }),
+			ports.Capability({ name: "withdrawal_fraction_zscore:bid.self", label: "withdrawal_fraction_zscore:bid.self" }),
+			ports.Capability({ name: "withdrawaskBaseline.self", label: "withdrawaskBaseline.self" }),
 			ports.int64({ name: "withdrawaskNoise.undefined", label: "withdrawaskNoise.undefined" }),
+			ports.Capability({ name: "withdrawaskNoise.self", label: "withdrawaskNoise.self" }),
+			ports.Capability({ name: "withdrawaskVariance.self", label: "withdrawaskVariance.self" }),
+			ports.Capability({ name: "withdrawbidBaseline.self", label: "withdrawbidBaseline.self" }),
 			ports.int64({ name: "withdrawbidNoise.undefined", label: "withdrawbidNoise.undefined" }),
+			ports.Capability({ name: "withdrawbidNoise.self", label: "withdrawbidNoise.self" }),
+			ports.Capability({ name: "withdrawbidVariance.self", label: "withdrawbidVariance.self" }),
 		],
 	});
 	config.addNodeType({
@@ -10243,33 +11874,58 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.int64({ name: "bracket_trade_quantity.count", label: "bracket_trade_quantity.count" }),
 			ports.int64({ name: "bracket_trade_quantity.idle", label: "bracket_trade_quantity.idle" }),
 			ports.bool({ name: "bracket_trade_quantity.ready", label: "bracket_trade_quantity.ready" }),
+			ports.Capability({ name: "bracket_trade_quantity.self", label: "bracket_trade_quantity.self" }),
+			ports.Capability({ name: "elapsed.self", label: "elapsed.self" }),
 			ports.float64({ name: "fill_fraction_baseline:ask.out", label: "fill_fraction_baseline:ask.out" }),
+			ports.Capability({ name: "fill_fraction_baseline:ask.self", label: "fill_fraction_baseline:ask.self" }),
 			ports.float64({ name: "fill_fraction_baseline:bid.out", label: "fill_fraction_baseline:bid.out" }),
+			ports.Capability({ name: "fill_fraction_baseline:bid.self", label: "fill_fraction_baseline:bid.self" }),
+			ports.Capability({ name: "fill_fraction_divergence:ask.self", label: "fill_fraction_divergence:ask.self" }),
+			ports.Capability({ name: "fill_fraction_divergence:bid.self", label: "fill_fraction_divergence:bid.self" }),
 			ports.float64({ name: "fill_fraction_mean.out", label: "fill_fraction_mean.out" }),
+			ports.Capability({ name: "fill_fraction_mean.self", label: "fill_fraction_mean.self" }),
 			ports.bool({ name: "fill_fraction_velocity:ask.defined", label: "fill_fraction_velocity:ask.defined" }),
 			ports.float64({ name: "fill_fraction_velocity:ask.out", label: "fill_fraction_velocity:ask.out" }),
 			ports.float64({ name: "fill_fraction_velocity:ask.snr", label: "fill_fraction_velocity:ask.snr" }),
+			ports.Capability({ name: "fill_fraction_velocity:ask.self", label: "fill_fraction_velocity:ask.self" }),
 			ports.bool({ name: "fill_fraction_velocity:bid.defined", label: "fill_fraction_velocity:bid.defined" }),
 			ports.float64({ name: "fill_fraction_velocity:bid.out", label: "fill_fraction_velocity:bid.out" }),
 			ports.float64({ name: "fill_fraction_velocity:bid.snr", label: "fill_fraction_velocity:bid.snr" }),
+			ports.Capability({ name: "fill_fraction_velocity:bid.self", label: "fill_fraction_velocity:bid.self" }),
 			ports.float64({ name: "fill_fraction_zscore:ask.out", label: "fill_fraction_zscore:ask.out" }),
 			ports.int64({ name: "fill_fraction_zscore:ask.undefined", label: "fill_fraction_zscore:ask.undefined" }),
+			ports.Capability({ name: "fill_fraction_zscore:ask.self", label: "fill_fraction_zscore:ask.self" }),
 			ports.float64({ name: "fill_fraction_zscore:bid.out", label: "fill_fraction_zscore:bid.out" }),
 			ports.int64({ name: "fill_fraction_zscore:bid.undefined", label: "fill_fraction_zscore:bid.undefined" }),
+			ports.Capability({ name: "fill_fraction_zscore:bid.self", label: "fill_fraction_zscore:bid.self" }),
+			ports.Capability({ name: "fillaskBaseline.self", label: "fillaskBaseline.self" }),
 			ports.int64({ name: "fillaskNoise.undefined", label: "fillaskNoise.undefined" }),
+			ports.Capability({ name: "fillaskNoise.self", label: "fillaskNoise.self" }),
+			ports.Capability({ name: "fillaskVariance.self", label: "fillaskVariance.self" }),
+			ports.Capability({ name: "fillbidBaseline.self", label: "fillbidBaseline.self" }),
 			ports.int64({ name: "fillbidNoise.undefined", label: "fillbidNoise.undefined" }),
+			ports.Capability({ name: "fillbidNoise.self", label: "fillbidNoise.self" }),
+			ports.Capability({ name: "fillbidVariance.self", label: "fillbidVariance.self" }),
 			ports.int64({ name: "matched_touch_trade_quantity:ask.count", label: "matched_touch_trade_quantity:ask.count" }),
 			ports.int64({ name: "matched_touch_trade_quantity:ask.idle", label: "matched_touch_trade_quantity:ask.idle" }),
 			ports.bool({ name: "matched_touch_trade_quantity:ask.ready", label: "matched_touch_trade_quantity:ask.ready" }),
+			ports.Capability({ name: "matched_touch_trade_quantity:ask.self", label: "matched_touch_trade_quantity:ask.self" }),
 			ports.int64({ name: "matched_touch_trade_quantity:bid.count", label: "matched_touch_trade_quantity:bid.count" }),
 			ports.int64({ name: "matched_touch_trade_quantity:bid.idle", label: "matched_touch_trade_quantity:bid.idle" }),
 			ports.bool({ name: "matched_touch_trade_quantity:bid.ready", label: "matched_touch_trade_quantity:bid.ready" }),
+			ports.Capability({ name: "matched_touch_trade_quantity:bid.self", label: "matched_touch_trade_quantity:bid.self" }),
 			ports.int64({ name: "touch_fill_fraction:ask.undefined", label: "touch_fill_fraction:ask.undefined" }),
+			ports.Capability({ name: "touch_fill_fraction:ask.self", label: "touch_fill_fraction:ask.self" }),
 			ports.int64({ name: "touch_fill_fraction:bid.undefined", label: "touch_fill_fraction:bid.undefined" }),
+			ports.Capability({ name: "touch_fill_fraction:bid.self", label: "touch_fill_fraction:bid.self" }),
+			ports.Capability({ name: "touch_fill_quantity:ask.self", label: "touch_fill_quantity:ask.self" }),
+			ports.Capability({ name: "touch_fill_quantity:bid.self", label: "touch_fill_quantity:bid.self" }),
 			ports.float64({ name: "touch_fill_rate:ask.out", label: "touch_fill_rate:ask.out" }),
 			ports.int64({ name: "touch_fill_rate:ask.undefined", label: "touch_fill_rate:ask.undefined" }),
+			ports.Capability({ name: "touch_fill_rate:ask.self", label: "touch_fill_rate:ask.self" }),
 			ports.float64({ name: "touch_fill_rate:bid.out", label: "touch_fill_rate:bid.out" }),
 			ports.int64({ name: "touch_fill_rate:bid.undefined", label: "touch_fill_rate:bid.undefined" }),
+			ports.Capability({ name: "touch_fill_rate:bid.self", label: "touch_fill_rate:bid.self" }),
 		],
 	});
 	config.addNodeType({
@@ -10279,491 +11935,160 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		description: "Sub-graph: training",
 		initialWidth: 320,
 		inputs: (ports) => (_inputData, _connections) => [
-			ports.float64({ name: "at_extremum_held.threshold", label: "at_extremum_held.threshold" }),
-			ports.string({ name: "entered_value.encoding", label: "entered_value.encoding" }),
-			ports.string({ name: "entered_value.text", label: "entered_value.text" }),
-			ports.bool({ name: "entered_value.unique", label: "entered_value.unique" }),
-			ports.int64({ name: "entered_value.unsigned", label: "entered_value.unsigned" }),
-			ports.float64({ name: "entered_value.value", label: "entered_value.value" }),
-			ports.bool({ name: "events.commit", label: "events.commit" }),
-			ports["[]byte"]({ name: "events.payload", label: "events.payload" }),
-			ports.string({ name: "exited_value.encoding", label: "exited_value.encoding" }),
-			ports.string({ name: "exited_value.text", label: "exited_value.text" }),
-			ports.bool({ name: "exited_value.unique", label: "exited_value.unique" }),
-			ports.int64({ name: "exited_value.unsigned", label: "exited_value.unsigned" }),
-			ports.float64({ name: "exited_value.value", label: "exited_value.value" }),
-			ports.string({ name: "fragments.indexPath", label: "fragments.indexPath" }),
-			ports.bool({ name: "fragments.whole", label: "fragments.whole" }),
-			ports.string({ name: "inventory.key", label: "inventory.key" }),
-			ports["[]byte"]({ name: "inventory.value", label: "inventory.value" }),
-			ports["[]byte"]({ name: "kept.no", label: "kept.no" }),
-			ports["[]byte"]({ name: "kept.yes", label: "kept.yes" }),
-			ports.string({ name: "kept_value.encoding", label: "kept_value.encoding" }),
-			ports.string({ name: "kept_value.text", label: "kept_value.text" }),
-			ports.bool({ name: "kept_value.unique", label: "kept_value.unique" }),
-			ports.int64({ name: "kept_value.unsigned", label: "kept_value.unsigned" }),
-			ports.float64({ name: "kept_value.value", label: "kept_value.value" }),
-			ports["[]byte"]({ name: "neither.no", label: "neither.no" }),
-			ports["[]byte"]({ name: "neither.yes", label: "neither.yes" }),
-			ports["[]byte"]({ name: "next_holding.no", label: "next_holding.no" }),
-			ports["[]byte"]({ name: "next_holding.yes", label: "next_holding.yes" }),
-			ports["[]byte"]({ name: "no_rise.no", label: "no_rise.no" }),
-			ports["[]byte"]({ name: "no_rise.yes", label: "no_rise.yes" }),
-			ports["[]byte"]({ name: "not_ignition.no", label: "not_ignition.no" }),
-			ports["[]byte"]({ name: "not_ignition.yes", label: "not_ignition.yes" }),
-			ports.float64({ name: "paper_at_extremum.threshold", label: "paper_at_extremum.threshold" }),
-			ports.float64({ name: "paper_at_ignition.threshold", label: "paper_at_ignition.threshold" }),
-			ports.string({ name: "paper_enter_symbol.encoding", label: "paper_enter_symbol.encoding" }),
-			ports.string({ name: "paper_enter_symbol.text", label: "paper_enter_symbol.text" }),
-			ports.bool({ name: "paper_enter_symbol.unique", label: "paper_enter_symbol.unique" }),
-			ports.int64({ name: "paper_enter_symbol.unsigned", label: "paper_enter_symbol.unsigned" }),
-			ports.float64({ name: "paper_enter_symbol.value", label: "paper_enter_symbol.value" }),
-			ports.string({ name: "paper_enter_time.encoding", label: "paper_enter_time.encoding" }),
-			ports.string({ name: "paper_enter_time.text", label: "paper_enter_time.text" }),
-			ports.bool({ name: "paper_enter_time.unique", label: "paper_enter_time.unique" }),
-			ports.int64({ name: "paper_enter_time.unsigned", label: "paper_enter_time.unsigned" }),
-			ports.float64({ name: "paper_enter_time.value", label: "paper_enter_time.value" }),
-			ports.string({ name: "paper_event_frame.encoding", label: "paper_event_frame.encoding" }),
-			ports.string({ name: "paper_event_frame.text", label: "paper_event_frame.text" }),
-			ports.bool({ name: "paper_event_frame.unique", label: "paper_event_frame.unique" }),
-			ports.int64({ name: "paper_event_frame.unsigned", label: "paper_event_frame.unsigned" }),
-			ports.float64({ name: "paper_event_frame.value", label: "paper_event_frame.value" }),
-			ports.string({ name: "paper_event_symbol.encoding", label: "paper_event_symbol.encoding" }),
-			ports.string({ name: "paper_event_symbol.text", label: "paper_event_symbol.text" }),
-			ports.bool({ name: "paper_event_symbol.unique", label: "paper_event_symbol.unique" }),
-			ports.int64({ name: "paper_event_symbol.unsigned", label: "paper_event_symbol.unsigned" }),
-			ports.float64({ name: "paper_event_symbol.value", label: "paper_event_symbol.value" }),
-			ports.string({ name: "paper_event_symbolled.referencePath", label: "paper_event_symbolled.referencePath" }),
-			ports.float64({ name: "paper_event_symbolled.threshold", label: "paper_event_symbolled.threshold" }),
-			ports["[]byte"]({ name: "paper_event_symbolled_not.no", label: "paper_event_symbolled_not.no" }),
-			ports["[]byte"]({ name: "paper_event_symbolled_not.yes", label: "paper_event_symbolled_not.yes" }),
-			ports.string({ name: "paper_event_time.encoding", label: "paper_event_time.encoding" }),
-			ports.string({ name: "paper_event_time.text", label: "paper_event_time.text" }),
-			ports.bool({ name: "paper_event_time.unique", label: "paper_event_time.unique" }),
-			ports.int64({ name: "paper_event_time.unsigned", label: "paper_event_time.unsigned" }),
-			ports.float64({ name: "paper_event_time.value", label: "paper_event_time.value" }),
-			ports["[]byte"]({ name: "paper_events.data", label: "paper_events.data" }),
-			ports.string({ name: "paper_events.indexPath", label: "paper_events.indexPath" }),
-			ports.bool({ name: "paper_events.whole", label: "paper_events.whole" }),
-			ports.string({ name: "paper_exit_symbol.encoding", label: "paper_exit_symbol.encoding" }),
-			ports.string({ name: "paper_exit_symbol.text", label: "paper_exit_symbol.text" }),
-			ports.bool({ name: "paper_exit_symbol.unique", label: "paper_exit_symbol.unique" }),
-			ports.int64({ name: "paper_exit_symbol.unsigned", label: "paper_exit_symbol.unsigned" }),
-			ports.float64({ name: "paper_exit_symbol.value", label: "paper_exit_symbol.value" }),
-			ports.string({ name: "paper_exit_time.encoding", label: "paper_exit_time.encoding" }),
-			ports.string({ name: "paper_exit_time.text", label: "paper_exit_time.text" }),
-			ports.bool({ name: "paper_exit_time.unique", label: "paper_exit_time.unique" }),
-			ports.int64({ name: "paper_exit_time.unsigned", label: "paper_exit_time.unsigned" }),
-			ports.float64({ name: "paper_exit_time.value", label: "paper_exit_time.value" }),
-			ports.string({ name: "paper_instrument_frame.encoding", label: "paper_instrument_frame.encoding" }),
-			ports.string({ name: "paper_instrument_frame.text", label: "paper_instrument_frame.text" }),
-			ports.bool({ name: "paper_instrument_frame.unique", label: "paper_instrument_frame.unique" }),
-			ports.int64({ name: "paper_instrument_frame.unsigned", label: "paper_instrument_frame.unsigned" }),
-			ports.float64({ name: "paper_instrument_frame.value", label: "paper_instrument_frame.value" }),
-			ports.string({ name: "paper_instrument_time.encoding", label: "paper_instrument_time.encoding" }),
-			ports.string({ name: "paper_instrument_time.text", label: "paper_instrument_time.text" }),
-			ports.bool({ name: "paper_instrument_time.unique", label: "paper_instrument_time.unique" }),
-			ports.int64({ name: "paper_instrument_time.unsigned", label: "paper_instrument_time.unsigned" }),
-			ports.float64({ name: "paper_instrument_time.value", label: "paper_instrument_time.value" }),
-			ports["[]byte"]({ name: "paper_observation.no", label: "paper_observation.no" }),
-			ports["[]byte"]({ name: "paper_observation.yes", label: "paper_observation.yes" }),
-			ports.string({ name: "paper_rise.referencePath", label: "paper_rise.referencePath" }),
-			ports.bool({ name: "paper_round_trips.commit", label: "paper_round_trips.commit" }),
-			ports["[]byte"]({ name: "paper_round_trips.rows", label: "paper_round_trips.rows" }),
-			ports.string({ name: "paper_row_basis.encoding", label: "paper_row_basis.encoding" }),
-			ports.string({ name: "paper_row_basis.text", label: "paper_row_basis.text" }),
-			ports.bool({ name: "paper_row_basis.unique", label: "paper_row_basis.unique" }),
-			ports.int64({ name: "paper_row_basis.unsigned", label: "paper_row_basis.unsigned" }),
-			ports.float64({ name: "paper_row_basis.value", label: "paper_row_basis.value" }),
-			ports.string({ name: "paper_row_closed.encoding", label: "paper_row_closed.encoding" }),
-			ports.string({ name: "paper_row_closed.text", label: "paper_row_closed.text" }),
-			ports.bool({ name: "paper_row_closed.unique", label: "paper_row_closed.unique" }),
-			ports.int64({ name: "paper_row_closed.unsigned", label: "paper_row_closed.unsigned" }),
-			ports.float64({ name: "paper_row_closed.value", label: "paper_row_closed.value" }),
-			ports.string({ name: "paper_row_opened.encoding", label: "paper_row_opened.encoding" }),
-			ports.string({ name: "paper_row_opened.text", label: "paper_row_opened.text" }),
-			ports.bool({ name: "paper_row_opened.unique", label: "paper_row_opened.unique" }),
-			ports.int64({ name: "paper_row_opened.unsigned", label: "paper_row_opened.unsigned" }),
-			ports.float64({ name: "paper_row_opened.value", label: "paper_row_opened.value" }),
-			ports.string({ name: "paper_row_pnl.encoding", label: "paper_row_pnl.encoding" }),
-			ports.string({ name: "paper_row_pnl.text", label: "paper_row_pnl.text" }),
-			ports.bool({ name: "paper_row_pnl.unique", label: "paper_row_pnl.unique" }),
-			ports.int64({ name: "paper_row_pnl.unsigned", label: "paper_row_pnl.unsigned" }),
-			ports.float64({ name: "paper_row_pnl.value", label: "paper_row_pnl.value" }),
-			ports.string({ name: "paper_row_proceeds.encoding", label: "paper_row_proceeds.encoding" }),
-			ports.string({ name: "paper_row_proceeds.text", label: "paper_row_proceeds.text" }),
-			ports.bool({ name: "paper_row_proceeds.unique", label: "paper_row_proceeds.unique" }),
-			ports.int64({ name: "paper_row_proceeds.unsigned", label: "paper_row_proceeds.unsigned" }),
-			ports.float64({ name: "paper_row_proceeds.value", label: "paper_row_proceeds.value" }),
-			ports.string({ name: "paper_row_symbol.encoding", label: "paper_row_symbol.encoding" }),
-			ports.string({ name: "paper_row_symbol.text", label: "paper_row_symbol.text" }),
-			ports.bool({ name: "paper_row_symbol.unique", label: "paper_row_symbol.unique" }),
-			ports.int64({ name: "paper_row_symbol.unsigned", label: "paper_row_symbol.unsigned" }),
-			ports.float64({ name: "paper_row_symbol.value", label: "paper_row_symbol.value" }),
-			ports["[]byte"]({ name: "paper_text_basis.values", label: "paper_text_basis.values" }),
-			ports["[]byte"]({ name: "paper_text_pnl.values", label: "paper_text_pnl.values" }),
-			ports["[]byte"]({ name: "paper_text_proceeds.values", label: "paper_text_proceeds.values" }),
-			ports.string({ name: "paper_wrap_enter.encoding", label: "paper_wrap_enter.encoding" }),
-			ports.string({ name: "paper_wrap_enter.text", label: "paper_wrap_enter.text" }),
-			ports.bool({ name: "paper_wrap_enter.unique", label: "paper_wrap_enter.unique" }),
-			ports.int64({ name: "paper_wrap_enter.unsigned", label: "paper_wrap_enter.unsigned" }),
-			ports.float64({ name: "paper_wrap_enter.value", label: "paper_wrap_enter.value" }),
-			ports.string({ name: "paper_wrap_exit.encoding", label: "paper_wrap_exit.encoding" }),
-			ports.string({ name: "paper_wrap_exit.text", label: "paper_wrap_exit.text" }),
-			ports.bool({ name: "paper_wrap_exit.unique", label: "paper_wrap_exit.unique" }),
-			ports.int64({ name: "paper_wrap_exit.unsigned", label: "paper_wrap_exit.unsigned" }),
-			ports.float64({ name: "paper_wrap_exit.value", label: "paper_wrap_exit.value" }),
-			ports.string({ name: "paper_wrap_instrument.encoding", label: "paper_wrap_instrument.encoding" }),
-			ports.string({ name: "paper_wrap_instrument.text", label: "paper_wrap_instrument.text" }),
-			ports.bool({ name: "paper_wrap_instrument.unique", label: "paper_wrap_instrument.unique" }),
-			ports.int64({ name: "paper_wrap_instrument.unsigned", label: "paper_wrap_instrument.unsigned" }),
-			ports.float64({ name: "paper_wrap_instrument.value", label: "paper_wrap_instrument.value" }),
-			ports.string({ name: "paper_wrap_observation.encoding", label: "paper_wrap_observation.encoding" }),
-			ports.string({ name: "paper_wrap_observation.text", label: "paper_wrap_observation.text" }),
-			ports.bool({ name: "paper_wrap_observation.unique", label: "paper_wrap_observation.unique" }),
-			ports.int64({ name: "paper_wrap_observation.unsigned", label: "paper_wrap_observation.unsigned" }),
-			ports.float64({ name: "paper_wrap_observation.value", label: "paper_wrap_observation.value" }),
-			ports.string({ name: "scope_holding.encoding", label: "scope_holding.encoding" }),
-			ports.string({ name: "scope_holding.text", label: "scope_holding.text" }),
-			ports.bool({ name: "scope_holding.unique", label: "scope_holding.unique" }),
-			ports.int64({ name: "scope_holding.unsigned", label: "scope_holding.unsigned" }),
-			ports.float64({ name: "scope_holding.value", label: "scope_holding.value" }),
-			ports.string({ name: "scope_vocabulary.encoding", label: "scope_vocabulary.encoding" }),
-			ports.string({ name: "scope_vocabulary.text", label: "scope_vocabulary.text" }),
-			ports.bool({ name: "scope_vocabulary.unique", label: "scope_vocabulary.unique" }),
-			ports.int64({ name: "scope_vocabulary.unsigned", label: "scope_vocabulary.unsigned" }),
-			ports.float64({ name: "scope_vocabulary.value", label: "scope_vocabulary.value" }),
+			ports.string({ name: "activation.labels", label: "activation.labels" }),
+			ports.bool({ name: "authority.known", label: "authority.known" }),
+			ports.float64({ name: "authority.prior", label: "authority.prior" }),
+			ports.string({ name: "contexts.vocabulary", label: "contexts.vocabulary" }),
+			ports.string({ name: "cursor.contract", label: "cursor.contract" }),
+			ports.string({ name: "cursor.path", label: "cursor.path" }),
+			ports.bool({ name: "cursor.prefix", label: "cursor.prefix" }),
+			ports["[]byte"]({ name: "cursor.value", label: "cursor.value" }),
+			ports.int64({ name: "gather.epoch", label: "gather.epoch" }),
+			ports.string({ name: "gather.families", label: "gather.families" }),
+			ports["[]byte"]({ name: "gather.observation", label: "gather.observation" }),
+			ports.bool({ name: "gather.present", label: "gather.present" }),
+			ports.bool({ name: "gather.requireProvenance", label: "gather.requireProvenance" }),
+			ports.string({ name: "gather.scope", label: "gather.scope" }),
+			ports.int64({ name: "gather.sequence", label: "gather.sequence" }),
+			ports.float64({ name: "gather.values", label: "gather.values" }),
+			ports["[]byte"]({ name: "position.data", label: "position.data" }),
+			ports.string({ name: "position.encoding", label: "position.encoding" }),
+			ports.string({ name: "position.text", label: "position.text" }),
+			ports.bool({ name: "position.unique", label: "position.unique" }),
+			ports.int64({ name: "position.unsigned", label: "position.unsigned" }),
+			ports.float64({ name: "position.value", label: "position.value" }),
+			ports.int64({ name: "prior_cut.epoch", label: "prior_cut.epoch" }),
+			ports.string({ name: "prior_cut.families", label: "prior_cut.families" }),
+			ports["[]byte"]({ name: "prior_cut.observation", label: "prior_cut.observation" }),
+			ports.bool({ name: "prior_cut.present", label: "prior_cut.present" }),
+			ports.bool({ name: "prior_cut.requireProvenance", label: "prior_cut.requireProvenance" }),
+			ports.string({ name: "prior_cut.scope", label: "prior_cut.scope" }),
+			ports.int64({ name: "prior_cut.sequence", label: "prior_cut.sequence" }),
+			ports.float64({ name: "prior_cut.values", label: "prior_cut.values" }),
+			ports.string({ name: "query.parameters", label: "query.parameters" }),
+			ports.string({ name: "row.indexPath", label: "row.indexPath" }),
+			ports.bool({ name: "row.whole", label: "row.whole" }),
 			ports.string({ name: "token_sequence.token", label: "token_sequence.token" }),
 			ports.float64({ name: "window_start.threshold", label: "window_start.threshold" }),
-			ports.string({ name: "with_event_endpoint.encoding", label: "with_event_endpoint.encoding" }),
-			ports.string({ name: "with_event_endpoint.text", label: "with_event_endpoint.text" }),
-			ports.bool({ name: "with_event_endpoint.unique", label: "with_event_endpoint.unique" }),
-			ports.int64({ name: "with_event_endpoint.unsigned", label: "with_event_endpoint.unsigned" }),
-			ports.float64({ name: "with_event_endpoint.value", label: "with_event_endpoint.value" }),
-			ports["[]byte"]({ name: "with_event_session.data", label: "with_event_session.data" }),
-			ports.string({ name: "with_event_session.encoding", label: "with_event_session.encoding" }),
-			ports.string({ name: "with_event_session.text", label: "with_event_session.text" }),
-			ports.bool({ name: "with_event_session.unique", label: "with_event_session.unique" }),
-			ports.int64({ name: "with_event_session.unsigned", label: "with_event_session.unsigned" }),
-			ports.float64({ name: "with_event_session.value", label: "with_event_session.value" }),
-			ports.string({ name: "with_event_truth.encoding", label: "with_event_truth.encoding" }),
-			ports.string({ name: "with_event_truth.text", label: "with_event_truth.text" }),
-			ports.bool({ name: "with_event_truth.unique", label: "with_event_truth.unique" }),
-			ports.int64({ name: "with_event_truth.unsigned", label: "with_event_truth.unsigned" }),
-			ports.float64({ name: "with_event_truth.value", label: "with_event_truth.value" }),
 			ports.string({ name: "with_holding.encoding", label: "with_holding.encoding" }),
 			ports.string({ name: "with_holding.text", label: "with_holding.text" }),
 			ports.bool({ name: "with_holding.unique", label: "with_holding.unique" }),
 			ports.int64({ name: "with_holding.unsigned", label: "with_holding.unsigned" }),
 			ports.float64({ name: "with_holding.value", label: "with_holding.value" }),
-			ports.string({ name: "with_sequence.encoding", label: "with_sequence.encoding" }),
-			ports.string({ name: "with_sequence.text", label: "with_sequence.text" }),
-			ports.bool({ name: "with_sequence.unique", label: "with_sequence.unique" }),
-			ports.int64({ name: "with_sequence.unsigned", label: "with_sequence.unsigned" }),
-			ports.float64({ name: "with_sequence.value", label: "with_sequence.value" }),
-			ports.string({ name: "with_settled.encoding", label: "with_settled.encoding" }),
-			ports.string({ name: "with_settled.text", label: "with_settled.text" }),
-			ports.bool({ name: "with_settled.unique", label: "with_settled.unique" }),
-			ports.int64({ name: "with_settled.unsigned", label: "with_settled.unsigned" }),
-			ports.float64({ name: "with_settled.value", label: "with_settled.value" }),
-			ports.string({ name: "with_vocabulary.encoding", label: "with_vocabulary.encoding" }),
-			ports.string({ name: "with_vocabulary.text", label: "with_vocabulary.text" }),
-			ports.bool({ name: "with_vocabulary.unique", label: "with_vocabulary.unique" }),
-			ports.int64({ name: "with_vocabulary.unsigned", label: "with_vocabulary.unsigned" }),
-			ports.float64({ name: "with_vocabulary.value", label: "with_vocabulary.value" }),
+			ports.string({ name: "with_position.encoding", label: "with_position.encoding" }),
+			ports.string({ name: "with_position.text", label: "with_position.text" }),
+			ports.bool({ name: "with_position.unique", label: "with_position.unique" }),
+			ports.int64({ name: "with_position.unsigned", label: "with_position.unsigned" }),
+			ports.float64({ name: "with_position.value", label: "with_position.value" }),
 		],
 		outputs: (ports) => (_inputData, _connections) => [
-			ports["[]byte"]({ name: "at_extremum_held.out", label: "at_extremum_held.out" }),
-			ports.int64({ name: "at_extremum_held.rejected", label: "at_extremum_held.rejected" }),
-			ports.bool({ name: "entered_value.inserted", label: "entered_value.inserted" }),
-			ports.bool({ name: "event_endpoint.found", label: "event_endpoint.found" }),
-			ports.int64({ name: "event_endpoint.missing", label: "event_endpoint.missing" }),
-			ports.float64({ name: "event_endpoint.out", label: "event_endpoint.out" }),
-			ports.string({ name: "event_endpoint.text", label: "event_endpoint.text" }),
-			ports.int64({ name: "event_endpoint.unsigned", label: "event_endpoint.unsigned" }),
-			ports.bool({ name: "event_session.found", label: "event_session.found" }),
-			ports.int64({ name: "event_session.missing", label: "event_session.missing" }),
-			ports.float64({ name: "event_session.out", label: "event_session.out" }),
-			ports.string({ name: "event_session.text", label: "event_session.text" }),
-			ports.int64({ name: "event_session.unsigned", label: "event_session.unsigned" }),
-			ports.bool({ name: "event_truth.found", label: "event_truth.found" }),
-			ports.int64({ name: "event_truth.missing", label: "event_truth.missing" }),
-			ports.float64({ name: "event_truth.out", label: "event_truth.out" }),
-			ports.string({ name: "event_truth.text", label: "event_truth.text" }),
-			ports.int64({ name: "event_truth.unsigned", label: "event_truth.unsigned" }),
-			ports.int64({ name: "events.bytes", label: "events.bytes" }),
-			ports.int64({ name: "events.committed", label: "events.committed" }),
-			ports["[]byte"]({ name: "events.out", label: "events.out" }),
-			ports.int64({ name: "events.pending", label: "events.pending" }),
-			ports.bool({ name: "exited_value.inserted", label: "exited_value.inserted" }),
-			ports.data({ name: "fragments.all", label: "fragments.all" }),
-			ports.int64({ name: "fragments.count", label: "fragments.count" }),
-			ports.bool({ name: "fragments.found", label: "fragments.found" }),
-			ports.int64({ name: "fragments.ignored", label: "fragments.ignored" }),
-			ports.int64({ name: "fragments.index", label: "fragments.index" }),
-			ports.bool({ name: "fragments.last", label: "fragments.last" }),
-			ports.int64({ name: "fragments.pending", label: "fragments.pending" }),
-			ports.data({ name: "inventory.found", label: "inventory.found" }),
-			ports.data({ name: "inventory.out", label: "inventory.out" }),
-			ports.Capability({ name: "inventory.self", label: "inventory.self" }),
-			ports.bool({ name: "inventory_key.found", label: "inventory_key.found" }),
-			ports["[]byte"]({ name: "inventory_key.json", label: "inventory_key.json" }),
-			ports.int64({ name: "inventory_key.missing", label: "inventory_key.missing" }),
-			ports.float64({ name: "inventory_key.out", label: "inventory_key.out" }),
-			ports.int64({ name: "inventory_key.unsigned", label: "inventory_key.unsigned" }),
-			ports.int64({ name: "kept.absent", label: "kept.absent" }),
-			ports.bool({ name: "kept_value.inserted", label: "kept_value.inserted" }),
-			ports.int64({ name: "mine.none", label: "mine.none" }),
-			ports.int64({ name: "neither.absent", label: "neither.absent" }),
-			ports.int64({ name: "next_holding.absent", label: "next_holding.absent" }),
-			ports.bool({ name: "next_inventory.found", label: "next_inventory.found" }),
-			ports.int64({ name: "next_inventory.missing", label: "next_inventory.missing" }),
-			ports.float64({ name: "next_inventory.out", label: "next_inventory.out" }),
-			ports.string({ name: "next_inventory.text", label: "next_inventory.text" }),
-			ports.int64({ name: "next_inventory.unsigned", label: "next_inventory.unsigned" }),
-			ports.int64({ name: "no_rise.absent", label: "no_rise.absent" }),
-			ports.int64({ name: "not_ignition.absent", label: "not_ignition.absent" }),
-			ports.bool({ name: "paper_at_extremum.passed", label: "paper_at_extremum.passed" }),
-			ports.int64({ name: "paper_at_extremum.rejected", label: "paper_at_extremum.rejected" }),
-			ports.int64({ name: "paper_at_ignition.rejected", label: "paper_at_ignition.rejected" }),
-			ports.bool({ name: "paper_closed.found", label: "paper_closed.found" }),
-			ports.int64({ name: "paper_closed.missing", label: "paper_closed.missing" }),
-			ports.float64({ name: "paper_closed.out", label: "paper_closed.out" }),
-			ports.string({ name: "paper_closed.text", label: "paper_closed.text" }),
-			ports.int64({ name: "paper_closed.unsigned", label: "paper_closed.unsigned" }),
-			ports.bool({ name: "paper_enter_event_symbol.found", label: "paper_enter_event_symbol.found" }),
-			ports.int64({ name: "paper_enter_event_symbol.missing", label: "paper_enter_event_symbol.missing" }),
-			ports.float64({ name: "paper_enter_event_symbol.out", label: "paper_enter_event_symbol.out" }),
-			ports.string({ name: "paper_enter_event_symbol.text", label: "paper_enter_event_symbol.text" }),
-			ports.int64({ name: "paper_enter_event_symbol.unsigned", label: "paper_enter_event_symbol.unsigned" }),
-			ports.bool({ name: "paper_enter_event_time.found", label: "paper_enter_event_time.found" }),
-			ports.int64({ name: "paper_enter_event_time.missing", label: "paper_enter_event_time.missing" }),
-			ports.float64({ name: "paper_enter_event_time.out", label: "paper_enter_event_time.out" }),
-			ports.string({ name: "paper_enter_event_time.text", label: "paper_enter_event_time.text" }),
-			ports.int64({ name: "paper_enter_event_time.unsigned", label: "paper_enter_event_time.unsigned" }),
-			ports.bool({ name: "paper_enter_symbol.inserted", label: "paper_enter_symbol.inserted" }),
-			ports.bool({ name: "paper_enter_time.inserted", label: "paper_enter_time.inserted" }),
-			ports.bool({ name: "paper_event_frame.inserted", label: "paper_event_frame.inserted" }),
-			ports.bool({ name: "paper_event_symbol.inserted", label: "paper_event_symbol.inserted" }),
-			ports.int64({ name: "paper_event_symbolled.rejected", label: "paper_event_symbolled.rejected" }),
-			ports.int64({ name: "paper_event_symbolled_not.absent", label: "paper_event_symbolled_not.absent" }),
-			ports.bool({ name: "paper_event_time.inserted", label: "paper_event_time.inserted" }),
-			ports.data({ name: "paper_events.all", label: "paper_events.all" }),
-			ports.int64({ name: "paper_events.count", label: "paper_events.count" }),
-			ports.bool({ name: "paper_events.found", label: "paper_events.found" }),
-			ports.int64({ name: "paper_events.ignored", label: "paper_events.ignored" }),
-			ports.int64({ name: "paper_events.index", label: "paper_events.index" }),
-			ports.bool({ name: "paper_events.last", label: "paper_events.last" }),
-			ports.int64({ name: "paper_events.pending", label: "paper_events.pending" }),
-			ports.bool({ name: "paper_exit_event_symbol.found", label: "paper_exit_event_symbol.found" }),
-			ports.int64({ name: "paper_exit_event_symbol.missing", label: "paper_exit_event_symbol.missing" }),
-			ports.float64({ name: "paper_exit_event_symbol.out", label: "paper_exit_event_symbol.out" }),
-			ports.string({ name: "paper_exit_event_symbol.text", label: "paper_exit_event_symbol.text" }),
-			ports.int64({ name: "paper_exit_event_symbol.unsigned", label: "paper_exit_event_symbol.unsigned" }),
-			ports.bool({ name: "paper_exit_event_time.found", label: "paper_exit_event_time.found" }),
-			ports.int64({ name: "paper_exit_event_time.missing", label: "paper_exit_event_time.missing" }),
-			ports.float64({ name: "paper_exit_event_time.out", label: "paper_exit_event_time.out" }),
-			ports.string({ name: "paper_exit_event_time.text", label: "paper_exit_event_time.text" }),
-			ports.int64({ name: "paper_exit_event_time.unsigned", label: "paper_exit_event_time.unsigned" }),
-			ports.bool({ name: "paper_exit_symbol.inserted", label: "paper_exit_symbol.inserted" }),
-			ports.bool({ name: "paper_exit_time.inserted", label: "paper_exit_time.inserted" }),
-			ports.bool({ name: "paper_instrument_frame.inserted", label: "paper_instrument_frame.inserted" }),
-			ports.bool({ name: "paper_instrument_market.found", label: "paper_instrument_market.found" }),
-			ports.int64({ name: "paper_instrument_market.missing", label: "paper_instrument_market.missing" }),
-			ports.float64({ name: "paper_instrument_market.out", label: "paper_instrument_market.out" }),
-			ports.string({ name: "paper_instrument_market.text", label: "paper_instrument_market.text" }),
-			ports.int64({ name: "paper_instrument_market.unsigned", label: "paper_instrument_market.unsigned" }),
-			ports.bool({ name: "paper_instrument_received.found", label: "paper_instrument_received.found" }),
-			ports.int64({ name: "paper_instrument_received.missing", label: "paper_instrument_received.missing" }),
-			ports.float64({ name: "paper_instrument_received.out", label: "paper_instrument_received.out" }),
-			ports.string({ name: "paper_instrument_received.text", label: "paper_instrument_received.text" }),
-			ports.int64({ name: "paper_instrument_received.unsigned", label: "paper_instrument_received.unsigned" }),
-			ports.bool({ name: "paper_instrument_time.inserted", label: "paper_instrument_time.inserted" }),
-			ports.int64({ name: "paper_observation.absent", label: "paper_observation.absent" }),
-			ports.bool({ name: "paper_record_market.found", label: "paper_record_market.found" }),
-			ports.int64({ name: "paper_record_market.missing", label: "paper_record_market.missing" }),
-			ports.float64({ name: "paper_record_market.out", label: "paper_record_market.out" }),
-			ports.string({ name: "paper_record_market.text", label: "paper_record_market.text" }),
-			ports.int64({ name: "paper_record_market.unsigned", label: "paper_record_market.unsigned" }),
-			ports.bool({ name: "paper_record_symbol.found", label: "paper_record_symbol.found" }),
-			ports.int64({ name: "paper_record_symbol.missing", label: "paper_record_symbol.missing" }),
-			ports.float64({ name: "paper_record_symbol.out", label: "paper_record_symbol.out" }),
-			ports.string({ name: "paper_record_symbol.text", label: "paper_record_symbol.text" }),
-			ports.int64({ name: "paper_record_symbol.unsigned", label: "paper_record_symbol.unsigned" }),
-			ports.bool({ name: "paper_record_time.found", label: "paper_record_time.found" }),
-			ports.int64({ name: "paper_record_time.missing", label: "paper_record_time.missing" }),
-			ports.float64({ name: "paper_record_time.out", label: "paper_record_time.out" }),
-			ports.string({ name: "paper_record_time.text", label: "paper_record_time.text" }),
-			ports.int64({ name: "paper_record_time.unsigned", label: "paper_record_time.unsigned" }),
-			ports.int64({ name: "paper_rise.rejected", label: "paper_rise.rejected" }),
-			ports.int64({ name: "paper_round_trips.bytes", label: "paper_round_trips.bytes" }),
-			ports.int64({ name: "paper_round_trips.committed", label: "paper_round_trips.committed" }),
-			ports["[]byte"]({ name: "paper_round_trips.out", label: "paper_round_trips.out" }),
-			ports.int64({ name: "paper_round_trips.pending", label: "paper_round_trips.pending" }),
-			ports.bool({ name: "paper_row_basis.inserted", label: "paper_row_basis.inserted" }),
-			ports.bool({ name: "paper_row_closed.inserted", label: "paper_row_closed.inserted" }),
-			ports.bool({ name: "paper_row_opened.inserted", label: "paper_row_opened.inserted" }),
-			ports.bool({ name: "paper_row_pnl.inserted", label: "paper_row_pnl.inserted" }),
-			ports.bool({ name: "paper_row_proceeds.inserted", label: "paper_row_proceeds.inserted" }),
-			ports.bool({ name: "paper_row_symbol.inserted", label: "paper_row_symbol.inserted" }),
-			ports.int64({ name: "paper_text_basis.idle", label: "paper_text_basis.idle" }),
-			ports.int64({ name: "paper_text_pnl.idle", label: "paper_text_pnl.idle" }),
-			ports.int64({ name: "paper_text_proceeds.idle", label: "paper_text_proceeds.idle" }),
-			ports.bool({ name: "paper_trip_basis.found", label: "paper_trip_basis.found" }),
-			ports.int64({ name: "paper_trip_basis.missing", label: "paper_trip_basis.missing" }),
-			ports.float64({ name: "paper_trip_basis.out", label: "paper_trip_basis.out" }),
-			ports.string({ name: "paper_trip_basis.text", label: "paper_trip_basis.text" }),
-			ports.int64({ name: "paper_trip_basis.unsigned", label: "paper_trip_basis.unsigned" }),
-			ports.bool({ name: "paper_trip_closed.found", label: "paper_trip_closed.found" }),
-			ports.int64({ name: "paper_trip_closed.missing", label: "paper_trip_closed.missing" }),
-			ports.float64({ name: "paper_trip_closed.out", label: "paper_trip_closed.out" }),
-			ports.string({ name: "paper_trip_closed.text", label: "paper_trip_closed.text" }),
-			ports.int64({ name: "paper_trip_closed.unsigned", label: "paper_trip_closed.unsigned" }),
-			ports.bool({ name: "paper_trip_opened.found", label: "paper_trip_opened.found" }),
-			ports.int64({ name: "paper_trip_opened.missing", label: "paper_trip_opened.missing" }),
-			ports.float64({ name: "paper_trip_opened.out", label: "paper_trip_opened.out" }),
-			ports.string({ name: "paper_trip_opened.text", label: "paper_trip_opened.text" }),
-			ports.int64({ name: "paper_trip_opened.unsigned", label: "paper_trip_opened.unsigned" }),
-			ports.bool({ name: "paper_trip_pnl.found", label: "paper_trip_pnl.found" }),
-			ports.int64({ name: "paper_trip_pnl.missing", label: "paper_trip_pnl.missing" }),
-			ports.float64({ name: "paper_trip_pnl.out", label: "paper_trip_pnl.out" }),
-			ports.string({ name: "paper_trip_pnl.text", label: "paper_trip_pnl.text" }),
-			ports.int64({ name: "paper_trip_pnl.unsigned", label: "paper_trip_pnl.unsigned" }),
-			ports.bool({ name: "paper_trip_proceeds.found", label: "paper_trip_proceeds.found" }),
-			ports.int64({ name: "paper_trip_proceeds.missing", label: "paper_trip_proceeds.missing" }),
-			ports.float64({ name: "paper_trip_proceeds.out", label: "paper_trip_proceeds.out" }),
-			ports.string({ name: "paper_trip_proceeds.text", label: "paper_trip_proceeds.text" }),
-			ports.int64({ name: "paper_trip_proceeds.unsigned", label: "paper_trip_proceeds.unsigned" }),
-			ports.bool({ name: "paper_trip_symbol.found", label: "paper_trip_symbol.found" }),
-			ports.int64({ name: "paper_trip_symbol.missing", label: "paper_trip_symbol.missing" }),
-			ports.float64({ name: "paper_trip_symbol.out", label: "paper_trip_symbol.out" }),
-			ports.string({ name: "paper_trip_symbol.text", label: "paper_trip_symbol.text" }),
-			ports.int64({ name: "paper_trip_symbol.unsigned", label: "paper_trip_symbol.unsigned" }),
-			ports.bool({ name: "paper_wrap_enter.inserted", label: "paper_wrap_enter.inserted" }),
-			ports.bool({ name: "paper_wrap_exit.inserted", label: "paper_wrap_exit.inserted" }),
-			ports.bool({ name: "paper_wrap_instrument.inserted", label: "paper_wrap_instrument.inserted" }),
-			ports.bool({ name: "paper_wrap_observation.inserted", label: "paper_wrap_observation.inserted" }),
-			ports.int64({ name: "prior_inventory.absent", label: "prior_inventory.absent" }),
-			ports.bool({ name: "scope_holding.inserted", label: "scope_holding.inserted" }),
-			ports.bool({ name: "scope_vocabulary.inserted", label: "scope_vocabulary.inserted" }),
-			ports.int64({ name: "tape.exhausted", label: "tape.exhausted" }),
-			ports.bool({ name: "tape.finished", label: "tape.finished" }),
-			ports.data({ name: "tape.frames.receivedAt", label: "tape.frames.receivedAt" }),
-			ports.int64({ name: "tape.idle", label: "tape.idle" }),
-			ports.int64({ name: "tape.pending", label: "tape.pending" }),
-			ports.bool({ name: "token_scope.found", label: "token_scope.found" }),
-			ports["[]byte"]({ name: "token_scope.json", label: "token_scope.json" }),
-			ports.int64({ name: "token_scope.missing", label: "token_scope.missing" }),
-			ports.float64({ name: "token_scope.out", label: "token_scope.out" }),
-			ports.int64({ name: "token_scope.unsigned", label: "token_scope.unsigned" }),
+			ports.Capability({ name: "activation.self", label: "activation.self" }),
+			ports.data({ name: "authority.authority", label: "authority.authority" }),
+			ports.data({ name: "authority.index", label: "authority.index" }),
+			ports.data({ name: "authority.maturity", label: "authority.maturity" }),
+			ports.data({ name: "authority.snrFraction", label: "authority.snrFraction" }),
+			ports.data({ name: "authority.standard", label: "authority.standard" }),
+			ports.data({ name: "authority.state", label: "authority.state" }),
+			ports.Capability({ name: "authority.self", label: "authority.self" }),
+			ports.int64({ name: "change.idle", label: "change.idle" }),
+			ports.data({ name: "change.read.index", label: "change.read.index" }),
+			ports.data({ name: "change.read.latest", label: "change.read.latest" }),
+			ports.Capability({ name: "change.self", label: "change.self" }),
+			ports.int64({ name: "contexts.idle", label: "contexts.idle" }),
+			ports.data({ name: "contexts.ready.flat", label: "contexts.ready.flat" }),
+			ports.data({ name: "contexts.ready.held", label: "contexts.ready.held" }),
+			ports.Capability({ name: "contexts.self", label: "contexts.self" }),
+			ports.bool({ name: "cursor.durable", label: "cursor.durable" }),
+			ports.data({ name: "cursor.found", label: "cursor.found" }),
+			ports.data({ name: "cursor.out", label: "cursor.out" }),
+			ports.Capability({ name: "cursor.self", label: "cursor.self" }),
+			ports.bool({ name: "cursor_text.found", label: "cursor_text.found" }),
+			ports["[]byte"]({ name: "cursor_text.json", label: "cursor_text.json" }),
+			ports.int64({ name: "cursor_text.missing", label: "cursor_text.missing" }),
+			ports.float64({ name: "cursor_text.out", label: "cursor_text.out" }),
+			ports.int64({ name: "cursor_text.unsigned", label: "cursor_text.unsigned" }),
+			ports.Capability({ name: "cursor_text.self", label: "cursor_text.self" }),
+			ports.bool({ name: "cut.found", label: "cut.found" }),
+			ports.int64({ name: "cut.missing", label: "cut.missing" }),
+			ports.float64({ name: "cut.out", label: "cut.out" }),
+			ports.string({ name: "cut.text", label: "cut.text" }),
+			ports.int64({ name: "cut.unsigned", label: "cut.unsigned" }),
+			ports.Capability({ name: "cut.self", label: "cut.self" }),
+			ports.int64({ name: "gather.epoch", label: "gather.epoch" }),
+			ports.data({ name: "gather.epochs", label: "gather.epochs" }),
+			ports.int64({ name: "gather.idle", label: "gather.idle" }),
+			ports.string({ name: "gather.phase", label: "gather.phase" }),
+			ports["[]byte"]({ name: "gather.readiness", label: "gather.readiness" }),
+			ports["[]byte"]({ name: "gather.row", label: "gather.row" }),
+			ports.string({ name: "gather.scope", label: "gather.scope" }),
+			ports.int64({ name: "gather.sequence", label: "gather.sequence" }),
+			ports.data({ name: "gather.sequences", label: "gather.sequences" }),
+			ports.Capability({ name: "gather.self", label: "gather.self" }),
+			ports.float64({ name: "hot.threshold", label: "hot.threshold" }),
+			ports.Capability({ name: "hot.self", label: "hot.self" }),
+			ports.bool({ name: "observation.found", label: "observation.found" }),
+			ports.int64({ name: "observation.missing", label: "observation.missing" }),
+			ports.float64({ name: "observation.out", label: "observation.out" }),
+			ports.string({ name: "observation.text", label: "observation.text" }),
+			ports.int64({ name: "observation.unsigned", label: "observation.unsigned" }),
+			ports.Capability({ name: "observation.self", label: "observation.self" }),
+			ports.bool({ name: "position.inserted", label: "position.inserted" }),
+			ports.Capability({ name: "position.self", label: "position.self" }),
+			ports.bool({ name: "position_value.found", label: "position_value.found" }),
+			ports.int64({ name: "position_value.missing", label: "position_value.missing" }),
+			ports.float64({ name: "position_value.out", label: "position_value.out" }),
+			ports.string({ name: "position_value.text", label: "position_value.text" }),
+			ports.int64({ name: "position_value.unsigned", label: "position_value.unsigned" }),
+			ports.Capability({ name: "position_value.self", label: "position_value.self" }),
+			ports.bool({ name: "previous.found", label: "previous.found" }),
+			ports.int64({ name: "previous.missing", label: "previous.missing" }),
+			ports.float64({ name: "previous.out", label: "previous.out" }),
+			ports.string({ name: "previous.text", label: "previous.text" }),
+			ports.int64({ name: "previous.unsigned", label: "previous.unsigned" }),
+			ports.Capability({ name: "previous.self", label: "previous.self" }),
+			ports.int64({ name: "prior_cursor.absent", label: "prior_cursor.absent" }),
+			ports.Capability({ name: "prior_cursor.self", label: "prior_cursor.self" }),
+			ports.int64({ name: "prior_cut.epoch", label: "prior_cut.epoch" }),
+			ports.data({ name: "prior_cut.epochs", label: "prior_cut.epochs" }),
+			ports.int64({ name: "prior_cut.idle", label: "prior_cut.idle" }),
+			ports.string({ name: "prior_cut.phase", label: "prior_cut.phase" }),
+			ports["[]byte"]({ name: "prior_cut.readiness", label: "prior_cut.readiness" }),
+			ports["[]byte"]({ name: "prior_cut.row", label: "prior_cut.row" }),
+			ports.string({ name: "prior_cut.scope", label: "prior_cut.scope" }),
+			ports.int64({ name: "prior_cut.sequence", label: "prior_cut.sequence" }),
+			ports.data({ name: "prior_cut.sequences", label: "prior_cut.sequences" }),
+			ports.Capability({ name: "prior_cut.self", label: "prior_cut.self" }),
+			ports.bool({ name: "query.configured", label: "query.configured" }),
+			ports.bool({ name: "query.pending", label: "query.pending" }),
+			ports.int64({ name: "query.superseded", label: "query.superseded" }),
+			ports.Capability({ name: "query.self", label: "query.self" }),
+			ports.data({ name: "row.all", label: "row.all" }),
+			ports.int64({ name: "row.count", label: "row.count" }),
+			ports.bool({ name: "row.found", label: "row.found" }),
+			ports.int64({ name: "row.ignored", label: "row.ignored" }),
+			ports.int64({ name: "row.index", label: "row.index" }),
+			ports.bool({ name: "row.last", label: "row.last" }),
+			ports.int64({ name: "row.pending", label: "row.pending" }),
+			ports.Capability({ name: "row.self", label: "row.self" }),
+			ports.bool({ name: "scope.found", label: "scope.found" }),
+			ports["[]byte"]({ name: "scope.json", label: "scope.json" }),
+			ports.int64({ name: "scope.missing", label: "scope.missing" }),
+			ports.float64({ name: "scope.out", label: "scope.out" }),
+			ports.int64({ name: "scope.unsigned", label: "scope.unsigned" }),
+			ports.Capability({ name: "scope.self", label: "scope.self" }),
 			ports.int64({ name: "token_sequence.idle", label: "token_sequence.idle" }),
 			ports.int64({ name: "token_sequence.step.depth", label: "token_sequence.step.depth" }),
 			ports.string({ name: "token_sequence.step.path", label: "token_sequence.step.path" }),
-			ports.data({ name: "token_sequence.step.sequence", label: "token_sequence.step.sequence" }),
+			ports.Capability({ name: "token_sequence.self", label: "token_sequence.self" }),
 			ports["[]byte"]({ name: "window_start.out", label: "window_start.out" }),
 			ports.int64({ name: "window_start.rejected", label: "window_start.rejected" }),
-			ports.bool({ name: "with_event_endpoint.inserted", label: "with_event_endpoint.inserted" }),
-			ports.bool({ name: "with_event_session.inserted", label: "with_event_session.inserted" }),
-			ports.bool({ name: "with_event_truth.inserted", label: "with_event_truth.inserted" }),
+			ports.Capability({ name: "window_start.self", label: "window_start.self" }),
 			ports.bool({ name: "with_holding.inserted", label: "with_holding.inserted" }),
-			ports.bool({ name: "with_sequence.inserted", label: "with_sequence.inserted" }),
-			ports.bool({ name: "with_settled.inserted", label: "with_settled.inserted" }),
-			ports.bool({ name: "with_vocabulary.inserted", label: "with_vocabulary.inserted" }),
-		],
-	});
-	config.addNodeType({
-		type: "definition:training_fragment",
-		label: "training_fragment",
-		category: "Definitions",
-		description: "Sub-graph: training_fragment",
-		initialWidth: 320,
-		inputs: (ports) => (_inputData, _connections) => [
-			ports.float64({ name: "confirmed.threshold", label: "confirmed.threshold" }),
-			ports.float64({ name: "endpoint.threshold", label: "endpoint.threshold" }),
-			ports["[]byte"]({ name: "fragment.data", label: "fragment.data" }),
-			ports.float64({ name: "from.threshold", label: "from.threshold" }),
-			ports.string({ name: "joined.encoding", label: "joined.encoding" }),
-			ports.string({ name: "joined.text", label: "joined.text" }),
-			ports.bool({ name: "joined.unique", label: "joined.unique" }),
-			ports.int64({ name: "joined.unsigned", label: "joined.unsigned" }),
-			ports.float64({ name: "joined.value", label: "joined.value" }),
-			ports.float64({ name: "order.threshold", label: "order.threshold" }),
-			ports.float64({ name: "precursor.threshold", label: "precursor.threshold" }),
-			ports["[]byte"]({ name: "record.data", label: "record.data" }),
-			ports.float64({ name: "session.threshold", label: "session.threshold" }),
-			ports.float64({ name: "symbol.threshold", label: "symbol.threshold" }),
-			ports.float64({ name: "through.threshold", label: "through.threshold" }),
-			ports.string({ name: "truth.encoding", label: "truth.encoding" }),
-			ports.string({ name: "truth.text", label: "truth.text" }),
-			ports.bool({ name: "truth.unique", label: "truth.unique" }),
-			ports.int64({ name: "truth.unsigned", label: "truth.unsigned" }),
-			ports.float64({ name: "truth.value", label: "truth.value" }),
-			ports["[]byte"]({ name: "with_capture.data", label: "with_capture.data" }),
-			ports.string({ name: "with_capture.encoding", label: "with_capture.encoding" }),
-			ports.string({ name: "with_capture.text", label: "with_capture.text" }),
-			ports.bool({ name: "with_capture.unique", label: "with_capture.unique" }),
-			ports.int64({ name: "with_capture.unsigned", label: "with_capture.unsigned" }),
-			ports.float64({ name: "with_capture.value", label: "with_capture.value" }),
-			ports.string({ name: "with_cursor.encoding", label: "with_cursor.encoding" }),
-			ports.string({ name: "with_cursor.text", label: "with_cursor.text" }),
-			ports.bool({ name: "with_cursor.unique", label: "with_cursor.unique" }),
-			ports.int64({ name: "with_cursor.unsigned", label: "with_cursor.unsigned" }),
-			ports.float64({ name: "with_cursor.value", label: "with_cursor.value" }),
-			ports.string({ name: "with_market.encoding", label: "with_market.encoding" }),
-			ports.string({ name: "with_market.text", label: "with_market.text" }),
-			ports.bool({ name: "with_market.unique", label: "with_market.unique" }),
-			ports.int64({ name: "with_market.unsigned", label: "with_market.unsigned" }),
-			ports.float64({ name: "with_market.value", label: "with_market.value" }),
-		],
-		outputs: (ports) => (_inputData, _connections) => [
-			ports.bool({ name: "causal_capture.found", label: "causal_capture.found" }),
-			ports.int64({ name: "causal_capture.missing", label: "causal_capture.missing" }),
-			ports.float64({ name: "causal_capture.out", label: "causal_capture.out" }),
-			ports.string({ name: "causal_capture.text", label: "causal_capture.text" }),
-			ports.int64({ name: "causal_capture.unsigned", label: "causal_capture.unsigned" }),
-			ports.bool({ name: "causal_cursor.found", label: "causal_cursor.found" }),
-			ports.int64({ name: "causal_cursor.missing", label: "causal_cursor.missing" }),
-			ports.float64({ name: "causal_cursor.out", label: "causal_cursor.out" }),
-			ports.string({ name: "causal_cursor.text", label: "causal_cursor.text" }),
-			ports.int64({ name: "causal_cursor.unsigned", label: "causal_cursor.unsigned" }),
-			ports.bool({ name: "causal_market.found", label: "causal_market.found" }),
-			ports.int64({ name: "causal_market.missing", label: "causal_market.missing" }),
-			ports.float64({ name: "causal_market.out", label: "causal_market.out" }),
-			ports.string({ name: "causal_market.text", label: "causal_market.text" }),
-			ports.int64({ name: "causal_market.unsigned", label: "causal_market.unsigned" }),
-			ports.bool({ name: "confirmed.passed", label: "confirmed.passed" }),
-			ports.int64({ name: "confirmed.rejected", label: "confirmed.rejected" }),
-			ports.bool({ name: "endpoint.passed", label: "endpoint.passed" }),
-			ports.int64({ name: "endpoint.rejected", label: "endpoint.rejected" }),
-			ports.bool({ name: "event.found", label: "event.found" }),
-			ports.int64({ name: "event.missing", label: "event.missing" }),
-			ports.float64({ name: "event.out", label: "event.out" }),
-			ports.string({ name: "event.text", label: "event.text" }),
-			ports.int64({ name: "event.unsigned", label: "event.unsigned" }),
-			ports.bool({ name: "from.passed", label: "from.passed" }),
-			ports.int64({ name: "from.rejected", label: "from.rejected" }),
-			ports.bool({ name: "joined.inserted", label: "joined.inserted" }),
-			ports.bool({ name: "market.found", label: "market.found" }),
-			ports["[]byte"]({ name: "market.json", label: "market.json" }),
-			ports.int64({ name: "market.missing", label: "market.missing" }),
-			ports.float64({ name: "market.out", label: "market.out" }),
-			ports.string({ name: "market.text", label: "market.text" }),
-			ports.int64({ name: "market.unsigned", label: "market.unsigned" }),
-			ports.bool({ name: "order.passed", label: "order.passed" }),
-			ports.int64({ name: "order.rejected", label: "order.rejected" }),
-			ports.bool({ name: "precursor.passed", label: "precursor.passed" }),
-			ports.int64({ name: "precursor.rejected", label: "precursor.rejected" }),
-			ports.bool({ name: "session.passed", label: "session.passed" }),
-			ports.int64({ name: "session.rejected", label: "session.rejected" }),
-			ports.bool({ name: "symbol.passed", label: "symbol.passed" }),
-			ports.int64({ name: "symbol.rejected", label: "symbol.rejected" }),
-			ports.bool({ name: "through.passed", label: "through.passed" }),
-			ports.int64({ name: "through.rejected", label: "through.rejected" }),
-			ports.bool({ name: "truth.inserted", label: "truth.inserted" }),
-			ports["[]byte"]({ name: "truth.out", label: "truth.out" }),
-			ports.bool({ name: "with_capture.inserted", label: "with_capture.inserted" }),
-			ports.bool({ name: "with_cursor.inserted", label: "with_cursor.inserted" }),
-			ports.bool({ name: "with_market.inserted", label: "with_market.inserted" }),
+			ports["[]byte"]({ name: "with_holding.out", label: "with_holding.out" }),
+			ports.Capability({ name: "with_holding.self", label: "with_holding.self" }),
+			ports.bool({ name: "with_position.inserted", label: "with_position.inserted" }),
+			ports["[]byte"]({ name: "with_position.out", label: "with_position.out" }),
+			ports.Capability({ name: "with_position.self", label: "with_position.self" }),
 		],
 	});
 	config.addNodeType({
@@ -10879,14 +12204,21 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => (_inputData, _connections) => [
 			ports.bool({ name: "confirmed.passed", label: "confirmed.passed" }),
 			ports.int64({ name: "confirmed.rejected", label: "confirmed.rejected" }),
+			ports.Capability({ name: "confirmed.self", label: "confirmed.self" }),
 			ports.bool({ name: "flat.passed", label: "flat.passed" }),
 			ports.int64({ name: "flat.rejected", label: "flat.rejected" }),
+			ports.Capability({ name: "flat.self", label: "flat.self" }),
 			ports.bool({ name: "flat_batch.inserted", label: "flat_batch.inserted" }),
+			ports.Capability({ name: "flat_batch.self", label: "flat_batch.self" }),
 			ports.bool({ name: "flat_resolved.passed", label: "flat_resolved.passed" }),
 			ports.int64({ name: "flat_resolved.rejected", label: "flat_resolved.rejected" }),
+			ports.Capability({ name: "flat_resolved.self", label: "flat_resolved.self" }),
 			ports.bool({ name: "flat_start.passed", label: "flat_start.passed" }),
 			ports.int64({ name: "flat_start.rejected", label: "flat_start.rejected" }),
+			ports.Capability({ name: "flat_start.self", label: "flat_start.self" }),
 			ports.bool({ name: "flat_truth.inserted", label: "flat_truth.inserted" }),
+			ports.Capability({ name: "flat_truth.self", label: "flat_truth.self" }),
+			ports.Capability({ name: "input.self", label: "input.self" }),
 			ports.data({ name: "labels.all", label: "labels.all" }),
 			ports.int64({ name: "labels.count", label: "labels.count" }),
 			ports.bool({ name: "labels.found", label: "labels.found" }),
@@ -10895,74 +12227,116 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.bool({ name: "labels.last", label: "labels.last" }),
 			ports["[]byte"]({ name: "labels.out", label: "labels.out" }),
 			ports.int64({ name: "labels.pending", label: "labels.pending" }),
+			ports.Capability({ name: "labels.self", label: "labels.self" }),
 			ports.bool({ name: "sampled_before_ignition.passed", label: "sampled_before_ignition.passed" }),
 			ports.int64({ name: "sampled_before_ignition.rejected", label: "sampled_before_ignition.rejected" }),
+			ports.Capability({ name: "sampled_before_ignition.self", label: "sampled_before_ignition.self" }),
 			ports.bool({ name: "sampled_fall_exit_batch.inserted", label: "sampled_fall_exit_batch.inserted" }),
+			ports.Capability({ name: "sampled_fall_exit_batch.self", label: "sampled_fall_exit_batch.self" }),
 			ports.bool({ name: "sampled_fall_exit_cursor_0.passed", label: "sampled_fall_exit_cursor_0.passed" }),
 			ports.int64({ name: "sampled_fall_exit_cursor_0.rejected", label: "sampled_fall_exit_cursor_0.rejected" }),
+			ports.Capability({ name: "sampled_fall_exit_cursor_0.self", label: "sampled_fall_exit_cursor_0.self" }),
 			ports.bool({ name: "sampled_fall_exit_direction.passed", label: "sampled_fall_exit_direction.passed" }),
 			ports.int64({ name: "sampled_fall_exit_direction.rejected", label: "sampled_fall_exit_direction.rejected" }),
+			ports.Capability({ name: "sampled_fall_exit_direction.self", label: "sampled_fall_exit_direction.self" }),
 			ports.bool({ name: "sampled_fall_exit_leg.passed", label: "sampled_fall_exit_leg.passed" }),
 			ports.int64({ name: "sampled_fall_exit_leg.rejected", label: "sampled_fall_exit_leg.rejected" }),
+			ports.Capability({ name: "sampled_fall_exit_leg.self", label: "sampled_fall_exit_leg.self" }),
 			ports.bool({ name: "sampled_fall_exit_truth.inserted", label: "sampled_fall_exit_truth.inserted" }),
+			ports.Capability({ name: "sampled_fall_exit_truth.self", label: "sampled_fall_exit_truth.self" }),
 			ports.bool({ name: "sampled_fall_hold_batch.inserted", label: "sampled_fall_hold_batch.inserted" }),
+			ports.Capability({ name: "sampled_fall_hold_batch.self", label: "sampled_fall_hold_batch.self" }),
 			ports.bool({ name: "sampled_fall_hold_cursor_0.passed", label: "sampled_fall_hold_cursor_0.passed" }),
 			ports.int64({ name: "sampled_fall_hold_cursor_0.rejected", label: "sampled_fall_hold_cursor_0.rejected" }),
+			ports.Capability({ name: "sampled_fall_hold_cursor_0.self", label: "sampled_fall_hold_cursor_0.self" }),
 			ports.bool({ name: "sampled_fall_hold_direction.passed", label: "sampled_fall_hold_direction.passed" }),
 			ports.int64({ name: "sampled_fall_hold_direction.rejected", label: "sampled_fall_hold_direction.rejected" }),
+			ports.Capability({ name: "sampled_fall_hold_direction.self", label: "sampled_fall_hold_direction.self" }),
 			ports.bool({ name: "sampled_fall_hold_leg.passed", label: "sampled_fall_hold_leg.passed" }),
 			ports.int64({ name: "sampled_fall_hold_leg.rejected", label: "sampled_fall_hold_leg.rejected" }),
+			ports.Capability({ name: "sampled_fall_hold_leg.self", label: "sampled_fall_hold_leg.self" }),
 			ports.bool({ name: "sampled_fall_hold_truth.inserted", label: "sampled_fall_hold_truth.inserted" }),
+			ports.Capability({ name: "sampled_fall_hold_truth.self", label: "sampled_fall_hold_truth.self" }),
 			ports.bool({ name: "sampled_fall_wait_batch.inserted", label: "sampled_fall_wait_batch.inserted" }),
+			ports.Capability({ name: "sampled_fall_wait_batch.self", label: "sampled_fall_wait_batch.self" }),
 			ports.bool({ name: "sampled_fall_wait_cursor_0.passed", label: "sampled_fall_wait_cursor_0.passed" }),
 			ports.int64({ name: "sampled_fall_wait_cursor_0.rejected", label: "sampled_fall_wait_cursor_0.rejected" }),
+			ports.Capability({ name: "sampled_fall_wait_cursor_0.self", label: "sampled_fall_wait_cursor_0.self" }),
 			ports.bool({ name: "sampled_fall_wait_cursor_1.passed", label: "sampled_fall_wait_cursor_1.passed" }),
 			ports.int64({ name: "sampled_fall_wait_cursor_1.rejected", label: "sampled_fall_wait_cursor_1.rejected" }),
+			ports.Capability({ name: "sampled_fall_wait_cursor_1.self", label: "sampled_fall_wait_cursor_1.self" }),
 			ports.bool({ name: "sampled_fall_wait_direction.passed", label: "sampled_fall_wait_direction.passed" }),
 			ports.int64({ name: "sampled_fall_wait_direction.rejected", label: "sampled_fall_wait_direction.rejected" }),
+			ports.Capability({ name: "sampled_fall_wait_direction.self", label: "sampled_fall_wait_direction.self" }),
 			ports.bool({ name: "sampled_fall_wait_leg.passed", label: "sampled_fall_wait_leg.passed" }),
 			ports.int64({ name: "sampled_fall_wait_leg.rejected", label: "sampled_fall_wait_leg.rejected" }),
+			ports.Capability({ name: "sampled_fall_wait_leg.self", label: "sampled_fall_wait_leg.self" }),
 			ports.bool({ name: "sampled_fall_wait_truth.inserted", label: "sampled_fall_wait_truth.inserted" }),
+			ports.Capability({ name: "sampled_fall_wait_truth.self", label: "sampled_fall_wait_truth.self" }),
 			ports.bool({ name: "sampled_precursor.passed", label: "sampled_precursor.passed" }),
 			ports.int64({ name: "sampled_precursor.rejected", label: "sampled_precursor.rejected" }),
+			ports.Capability({ name: "sampled_precursor.self", label: "sampled_precursor.self" }),
 			ports.bool({ name: "sampled_rise_enter_batch.inserted", label: "sampled_rise_enter_batch.inserted" }),
+			ports.Capability({ name: "sampled_rise_enter_batch.self", label: "sampled_rise_enter_batch.self" }),
 			ports.bool({ name: "sampled_rise_enter_cursor_0.passed", label: "sampled_rise_enter_cursor_0.passed" }),
 			ports.int64({ name: "sampled_rise_enter_cursor_0.rejected", label: "sampled_rise_enter_cursor_0.rejected" }),
+			ports.Capability({ name: "sampled_rise_enter_cursor_0.self", label: "sampled_rise_enter_cursor_0.self" }),
 			ports.bool({ name: "sampled_rise_enter_direction.passed", label: "sampled_rise_enter_direction.passed" }),
 			ports.int64({ name: "sampled_rise_enter_direction.rejected", label: "sampled_rise_enter_direction.rejected" }),
+			ports.Capability({ name: "sampled_rise_enter_direction.self", label: "sampled_rise_enter_direction.self" }),
 			ports.bool({ name: "sampled_rise_enter_leg.passed", label: "sampled_rise_enter_leg.passed" }),
 			ports.int64({ name: "sampled_rise_enter_leg.rejected", label: "sampled_rise_enter_leg.rejected" }),
+			ports.Capability({ name: "sampled_rise_enter_leg.self", label: "sampled_rise_enter_leg.self" }),
 			ports.bool({ name: "sampled_rise_enter_truth.inserted", label: "sampled_rise_enter_truth.inserted" }),
+			ports.Capability({ name: "sampled_rise_enter_truth.self", label: "sampled_rise_enter_truth.self" }),
 			ports.bool({ name: "sampled_rise_exit_batch.inserted", label: "sampled_rise_exit_batch.inserted" }),
+			ports.Capability({ name: "sampled_rise_exit_batch.self", label: "sampled_rise_exit_batch.self" }),
 			ports.bool({ name: "sampled_rise_exit_cursor_0.passed", label: "sampled_rise_exit_cursor_0.passed" }),
 			ports.int64({ name: "sampled_rise_exit_cursor_0.rejected", label: "sampled_rise_exit_cursor_0.rejected" }),
+			ports.Capability({ name: "sampled_rise_exit_cursor_0.self", label: "sampled_rise_exit_cursor_0.self" }),
 			ports.bool({ name: "sampled_rise_exit_direction.passed", label: "sampled_rise_exit_direction.passed" }),
 			ports.int64({ name: "sampled_rise_exit_direction.rejected", label: "sampled_rise_exit_direction.rejected" }),
+			ports.Capability({ name: "sampled_rise_exit_direction.self", label: "sampled_rise_exit_direction.self" }),
 			ports.bool({ name: "sampled_rise_exit_leg.passed", label: "sampled_rise_exit_leg.passed" }),
 			ports.int64({ name: "sampled_rise_exit_leg.rejected", label: "sampled_rise_exit_leg.rejected" }),
+			ports.Capability({ name: "sampled_rise_exit_leg.self", label: "sampled_rise_exit_leg.self" }),
 			ports.bool({ name: "sampled_rise_exit_truth.inserted", label: "sampled_rise_exit_truth.inserted" }),
+			ports.Capability({ name: "sampled_rise_exit_truth.self", label: "sampled_rise_exit_truth.self" }),
 			ports.bool({ name: "sampled_rise_hold_batch.inserted", label: "sampled_rise_hold_batch.inserted" }),
+			ports.Capability({ name: "sampled_rise_hold_batch.self", label: "sampled_rise_hold_batch.self" }),
 			ports.bool({ name: "sampled_rise_hold_cursor_0.passed", label: "sampled_rise_hold_cursor_0.passed" }),
 			ports.int64({ name: "sampled_rise_hold_cursor_0.rejected", label: "sampled_rise_hold_cursor_0.rejected" }),
+			ports.Capability({ name: "sampled_rise_hold_cursor_0.self", label: "sampled_rise_hold_cursor_0.self" }),
 			ports.bool({ name: "sampled_rise_hold_cursor_1.passed", label: "sampled_rise_hold_cursor_1.passed" }),
 			ports.int64({ name: "sampled_rise_hold_cursor_1.rejected", label: "sampled_rise_hold_cursor_1.rejected" }),
+			ports.Capability({ name: "sampled_rise_hold_cursor_1.self", label: "sampled_rise_hold_cursor_1.self" }),
 			ports.bool({ name: "sampled_rise_hold_direction.passed", label: "sampled_rise_hold_direction.passed" }),
 			ports.int64({ name: "sampled_rise_hold_direction.rejected", label: "sampled_rise_hold_direction.rejected" }),
+			ports.Capability({ name: "sampled_rise_hold_direction.self", label: "sampled_rise_hold_direction.self" }),
 			ports.bool({ name: "sampled_rise_hold_leg.passed", label: "sampled_rise_hold_leg.passed" }),
 			ports.int64({ name: "sampled_rise_hold_leg.rejected", label: "sampled_rise_hold_leg.rejected" }),
+			ports.Capability({ name: "sampled_rise_hold_leg.self", label: "sampled_rise_hold_leg.self" }),
 			ports.bool({ name: "sampled_rise_hold_truth.inserted", label: "sampled_rise_hold_truth.inserted" }),
+			ports.Capability({ name: "sampled_rise_hold_truth.self", label: "sampled_rise_hold_truth.self" }),
 			ports.bool({ name: "sampled_rise_wait_batch.inserted", label: "sampled_rise_wait_batch.inserted" }),
+			ports.Capability({ name: "sampled_rise_wait_batch.self", label: "sampled_rise_wait_batch.self" }),
 			ports.bool({ name: "sampled_rise_wait_cursor_0.passed", label: "sampled_rise_wait_cursor_0.passed" }),
 			ports.int64({ name: "sampled_rise_wait_cursor_0.rejected", label: "sampled_rise_wait_cursor_0.rejected" }),
+			ports.Capability({ name: "sampled_rise_wait_cursor_0.self", label: "sampled_rise_wait_cursor_0.self" }),
 			ports.bool({ name: "sampled_rise_wait_direction.passed", label: "sampled_rise_wait_direction.passed" }),
 			ports.int64({ name: "sampled_rise_wait_direction.rejected", label: "sampled_rise_wait_direction.rejected" }),
+			ports.Capability({ name: "sampled_rise_wait_direction.self", label: "sampled_rise_wait_direction.self" }),
 			ports.bool({ name: "sampled_rise_wait_leg.passed", label: "sampled_rise_wait_leg.passed" }),
 			ports.int64({ name: "sampled_rise_wait_leg.rejected", label: "sampled_rise_wait_leg.rejected" }),
+			ports.Capability({ name: "sampled_rise_wait_leg.self", label: "sampled_rise_wait_leg.self" }),
 			ports.bool({ name: "sampled_rise_wait_truth.inserted", label: "sampled_rise_wait_truth.inserted" }),
+			ports.Capability({ name: "sampled_rise_wait_truth.self", label: "sampled_rise_wait_truth.self" }),
 			ports.bool({ name: "sampled_start.passed", label: "sampled_start.passed" }),
 			ports.int64({ name: "sampled_start.rejected", label: "sampled_start.rejected" }),
+			ports.Capability({ name: "sampled_start.self", label: "sampled_start.self" }),
 			ports.bool({ name: "within_fragment.passed", label: "within_fragment.passed" }),
 			ports.int64({ name: "within_fragment.rejected", label: "within_fragment.rejected" }),
+			ports.Capability({ name: "within_fragment.self", label: "within_fragment.self" }),
 		],
 	});
 	config.addNodeType({
@@ -10978,15 +12352,19 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.bool({ name: "commit_example.unique", label: "commit_example.unique" }),
 			ports.int64({ name: "commit_example.unsigned", label: "commit_example.unsigned" }),
 			ports.float64({ name: "commit_example.value", label: "commit_example.value" }),
+			ports.data({ name: "context.context", label: "context.context" }),
 			ports.string({ name: "deduplicate.encoding", label: "deduplicate.encoding" }),
 			ports.string({ name: "deduplicate.text", label: "deduplicate.text" }),
 			ports.int64({ name: "deduplicate.unsigned", label: "deduplicate.unsigned" }),
 			ports.float64({ name: "deduplicate.value", label: "deduplicate.value" }),
-			ports.string({ name: "fact.encoding", label: "fact.encoding" }),
-			ports.string({ name: "fact.text", label: "fact.text" }),
+			ports["[]byte"]({ name: "fact.json", label: "fact.json" }),
 			ports.bool({ name: "fact.unique", label: "fact.unique" }),
 			ports.int64({ name: "fact.unsigned", label: "fact.unsigned" }),
 			ports.float64({ name: "fact.value", label: "fact.value" }),
+			ports["[]byte"]({ name: "id_context.json", label: "id_context.json" }),
+			ports.bool({ name: "id_context.unique", label: "id_context.unique" }),
+			ports.int64({ name: "id_context.unsigned", label: "id_context.unsigned" }),
+			ports.float64({ name: "id_context.value", label: "id_context.value" }),
 			ports.string({ name: "id_endpoint.encoding", label: "id_endpoint.encoding" }),
 			ports.string({ name: "id_endpoint.text", label: "id_endpoint.text" }),
 			ports.bool({ name: "id_endpoint.unique", label: "id_endpoint.unique" }),
@@ -11013,44 +12391,16 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.bool({ name: "id_session.unique", label: "id_session.unique" }),
 			ports.int64({ name: "id_session.unsigned", label: "id_session.unsigned" }),
 			ports.float64({ name: "id_session.value", label: "id_session.value" }),
-			ports.string({ name: "id_vocabulary.encoding", label: "id_vocabulary.encoding" }),
-			ports.string({ name: "id_vocabulary.text", label: "id_vocabulary.text" }),
-			ports.bool({ name: "id_vocabulary.unique", label: "id_vocabulary.unique" }),
-			ports.int64({ name: "id_vocabulary.unsigned", label: "id_vocabulary.unsigned" }),
-			ports.float64({ name: "id_vocabulary.value", label: "id_vocabulary.value" }),
 			ports["[]byte"]({ name: "input.data", label: "input.data" }),
 			ports.float64({ name: "inventory.threshold", label: "inventory.threshold" }),
-			ports.string({ name: "key_holding.encoding", label: "key_holding.encoding" }),
-			ports.string({ name: "key_holding.text", label: "key_holding.text" }),
-			ports.bool({ name: "key_holding.unique", label: "key_holding.unique" }),
-			ports.int64({ name: "key_holding.unsigned", label: "key_holding.unsigned" }),
-			ports.float64({ name: "key_holding.value", label: "key_holding.value" }),
-			ports.string({ name: "key_sequence_history.encoding", label: "key_sequence_history.encoding" }),
-			ports.string({ name: "key_sequence_history.text", label: "key_sequence_history.text" }),
-			ports.bool({ name: "key_sequence_history.unique", label: "key_sequence_history.unique" }),
-			ports.int64({ name: "key_sequence_history.unsigned", label: "key_sequence_history.unsigned" }),
-			ports.float64({ name: "key_sequence_history.value", label: "key_sequence_history.value" }),
-			ports.string({ name: "key_tokens.encoding", label: "key_tokens.encoding" }),
-			ports.string({ name: "key_tokens.text", label: "key_tokens.text" }),
-			ports.bool({ name: "key_tokens.unique", label: "key_tokens.unique" }),
-			ports.int64({ name: "key_tokens.unsigned", label: "key_tokens.unsigned" }),
-			ports.float64({ name: "key_tokens.value", label: "key_tokens.value" }),
-			ports["[]byte"]({ name: "key_vocabulary.data", label: "key_vocabulary.data" }),
-			ports.string({ name: "key_vocabulary.encoding", label: "key_vocabulary.encoding" }),
-			ports.string({ name: "key_vocabulary.text", label: "key_vocabulary.text" }),
-			ports.bool({ name: "key_vocabulary.unique", label: "key_vocabulary.unique" }),
-			ports.int64({ name: "key_vocabulary.unsigned", label: "key_vocabulary.unsigned" }),
-			ports.float64({ name: "key_vocabulary.value", label: "key_vocabulary.value" }),
 			ports.string({ name: "memory.key", label: "memory.key" }),
+			ports.string({ name: "memory.path", label: "memory.path" }),
 			ports["[]byte"]({ name: "memory.value", label: "memory.value" }),
-			ports.string({ name: "novel_fact.encoding", label: "novel_fact.encoding" }),
-			ports.string({ name: "novel_fact.text", label: "novel_fact.text" }),
+			ports["[]byte"]({ name: "novel_fact.json", label: "novel_fact.json" }),
 			ports.bool({ name: "novel_fact.unique", label: "novel_fact.unique" }),
 			ports.int64({ name: "novel_fact.unsigned", label: "novel_fact.unsigned" }),
 			ports.float64({ name: "novel_fact.value", label: "novel_fact.value" }),
 			ports.string({ name: "observed.category", label: "observed.category" }),
-			ports.string({ name: "token_available.referencePath", label: "token_available.referencePath" }),
-			ports.float64({ name: "token_available.threshold", label: "token_available.threshold" }),
 		],
 		outputs: (ports) => (_inputData, _connections) => [
 			ports.bool({ name: "action.found", label: "action.found" }),
@@ -11058,527 +12408,101 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.int64({ name: "action.missing", label: "action.missing" }),
 			ports.float64({ name: "action.out", label: "action.out" }),
 			ports.int64({ name: "action.unsigned", label: "action.unsigned" }),
+			ports.Capability({ name: "action.self", label: "action.self" }),
 			ports.bool({ name: "commit_example.inserted", label: "commit_example.inserted" }),
-			ports.bool({ name: "context.found", label: "context.found" }),
-			ports["[]byte"]({ name: "context.json", label: "context.json" }),
-			ports.int64({ name: "context.missing", label: "context.missing" }),
-			ports.float64({ name: "context.out", label: "context.out" }),
-			ports.int64({ name: "context.unsigned", label: "context.unsigned" }),
+			ports.Capability({ name: "commit_example.self", label: "commit_example.self" }),
+			ports.int64({ name: "context.idle", label: "context.idle" }),
+			ports.Capability({ name: "context.self", label: "context.self" }),
 			ports["[]byte"]({ name: "deduplicate.out", label: "deduplicate.out" }),
+			ports.Capability({ name: "deduplicate.self", label: "deduplicate.self" }),
 			ports.bool({ name: "endpoint.found", label: "endpoint.found" }),
 			ports.int64({ name: "endpoint.missing", label: "endpoint.missing" }),
 			ports.float64({ name: "endpoint.out", label: "endpoint.out" }),
 			ports.string({ name: "endpoint.text", label: "endpoint.text" }),
 			ports.int64({ name: "endpoint.unsigned", label: "endpoint.unsigned" }),
+			ports.Capability({ name: "endpoint.self", label: "endpoint.self" }),
 			ports.bool({ name: "fact.inserted", label: "fact.inserted" }),
-			ports.bool({ name: "holding.found", label: "holding.found" }),
-			ports.int64({ name: "holding.missing", label: "holding.missing" }),
-			ports.float64({ name: "holding.out", label: "holding.out" }),
-			ports.string({ name: "holding.text", label: "holding.text" }),
-			ports.int64({ name: "holding.unsigned", label: "holding.unsigned" }),
+			ports.Capability({ name: "fact.self", label: "fact.self" }),
+			ports.bool({ name: "id_context.inserted", label: "id_context.inserted" }),
+			ports.Capability({ name: "id_context.self", label: "id_context.self" }),
 			ports.bool({ name: "id_endpoint.inserted", label: "id_endpoint.inserted" }),
+			ports.Capability({ name: "id_endpoint.self", label: "id_endpoint.self" }),
 			ports.bool({ name: "id_record.inserted", label: "id_record.inserted" }),
+			ports.Capability({ name: "id_record.self", label: "id_record.self" }),
 			ports.bool({ name: "id_seed.inserted", label: "id_seed.inserted" }),
+			ports.Capability({ name: "id_seed.self", label: "id_seed.self" }),
 			ports.bool({ name: "id_sequence.inserted", label: "id_sequence.inserted" }),
+			ports.Capability({ name: "id_sequence.self", label: "id_sequence.self" }),
 			ports.bool({ name: "id_session.inserted", label: "id_session.inserted" }),
-			ports.bool({ name: "id_vocabulary.inserted", label: "id_vocabulary.inserted" }),
+			ports.Capability({ name: "id_session.self", label: "id_session.self" }),
 			ports.bool({ name: "identity.found", label: "identity.found" }),
 			ports["[]byte"]({ name: "identity.json", label: "identity.json" }),
 			ports.int64({ name: "identity.missing", label: "identity.missing" }),
 			ports.float64({ name: "identity.out", label: "identity.out" }),
 			ports.int64({ name: "identity.unsigned", label: "identity.unsigned" }),
+			ports.Capability({ name: "identity.self", label: "identity.self" }),
+			ports.Capability({ name: "input.self", label: "input.self" }),
 			ports.bool({ name: "inventory.passed", label: "inventory.passed" }),
 			ports.int64({ name: "inventory.rejected", label: "inventory.rejected" }),
-			ports.bool({ name: "key_holding.inserted", label: "key_holding.inserted" }),
-			ports.bool({ name: "key_sequence_history.inserted", label: "key_sequence_history.inserted" }),
-			ports.bool({ name: "key_tokens.inserted", label: "key_tokens.inserted" }),
-			ports.bool({ name: "key_vocabulary.inserted", label: "key_vocabulary.inserted" }),
+			ports.Capability({ name: "inventory.self", label: "inventory.self" }),
+			ports.bool({ name: "memory.durable", label: "memory.durable" }),
 			ports.data({ name: "memory.found", label: "memory.found" }),
 			ports.data({ name: "memory.out", label: "memory.out" }),
-			ports.Capability({ name: "memory.self", label: "memory.self" }),
 			ports.int64({ name: "novel.absent", label: "novel.absent" }),
+			ports.Capability({ name: "novel.self", label: "novel.self" }),
 			ports.bool({ name: "novel_fact.inserted", label: "novel_fact.inserted" }),
+			ports.Capability({ name: "novel_fact.self", label: "novel_fact.self" }),
 			ports.bool({ name: "novel_truth.found", label: "novel_truth.found" }),
 			ports.int64({ name: "novel_truth.missing", label: "novel_truth.missing" }),
 			ports.float64({ name: "novel_truth.out", label: "novel_truth.out" }),
 			ports.string({ name: "novel_truth.text", label: "novel_truth.text" }),
 			ports.int64({ name: "novel_truth.unsigned", label: "novel_truth.unsigned" }),
+			ports.Capability({ name: "novel_truth.self", label: "novel_truth.self" }),
 			ports["[]byte"]({ name: "observed.counts", label: "observed.counts" }),
 			ports.int64({ name: "observed.total", label: "observed.total" }),
+			ports.Capability({ name: "observed.self", label: "observed.self" }),
 			ports["[]byte"]({ name: "prediction.class", label: "prediction.class" }),
 			ports.int64({ name: "prediction.count", label: "prediction.count" }),
 			ports.float64({ name: "prediction.prob", label: "prediction.prob" }),
+			ports.Capability({ name: "prediction.self", label: "prediction.self" }),
 			ports.int64({ name: "prior.absent", label: "prior.absent" }),
+			ports.Capability({ name: "prior.self", label: "prior.self" }),
 			ports.int64({ name: "prior_example.absent", label: "prior_example.absent" }),
+			ports.Capability({ name: "prior_example.self", label: "prior_example.self" }),
 			ports.bool({ name: "record.found", label: "record.found" }),
 			ports.int64({ name: "record.missing", label: "record.missing" }),
 			ports.float64({ name: "record.out", label: "record.out" }),
 			ports.string({ name: "record.text", label: "record.text" }),
 			ports.int64({ name: "record.unsigned", label: "record.unsigned" }),
+			ports.Capability({ name: "record.self", label: "record.self" }),
 			ports.data({ name: "reinforce.categories", label: "reinforce.categories" }),
 			ports.int64({ name: "reinforce.total", label: "reinforce.total" }),
 			ports.data({ name: "reinforce.weights", label: "reinforce.weights" }),
+			ports.Capability({ name: "reinforce.self", label: "reinforce.self" }),
 			ports.bool({ name: "seed.found", label: "seed.found" }),
 			ports.int64({ name: "seed.missing", label: "seed.missing" }),
 			ports.float64({ name: "seed.out", label: "seed.out" }),
 			ports.string({ name: "seed.text", label: "seed.text" }),
 			ports.int64({ name: "seed.unsigned", label: "seed.unsigned" }),
+			ports.Capability({ name: "seed.self", label: "seed.self" }),
 			ports.bool({ name: "sequence.found", label: "sequence.found" }),
 			ports.int64({ name: "sequence.missing", label: "sequence.missing" }),
 			ports.float64({ name: "sequence.out", label: "sequence.out" }),
 			ports.string({ name: "sequence.text", label: "sequence.text" }),
 			ports.int64({ name: "sequence.unsigned", label: "sequence.unsigned" }),
-			ports.bool({ name: "sequence_history.found", label: "sequence_history.found" }),
-			ports.int64({ name: "sequence_history.missing", label: "sequence_history.missing" }),
-			ports.float64({ name: "sequence_history.out", label: "sequence_history.out" }),
-			ports.string({ name: "sequence_history.text", label: "sequence_history.text" }),
-			ports.int64({ name: "sequence_history.unsigned", label: "sequence_history.unsigned" }),
+			ports.Capability({ name: "sequence.self", label: "sequence.self" }),
 			ports.bool({ name: "session.found", label: "session.found" }),
 			ports.int64({ name: "session.missing", label: "session.missing" }),
 			ports.float64({ name: "session.out", label: "session.out" }),
 			ports.string({ name: "session.text", label: "session.text" }),
 			ports.int64({ name: "session.unsigned", label: "session.unsigned" }),
-			ports.bool({ name: "token_available.passed", label: "token_available.passed" }),
-			ports.int64({ name: "token_available.rejected", label: "token_available.rejected" }),
-			ports.bool({ name: "tokens.found", label: "tokens.found" }),
-			ports.int64({ name: "tokens.missing", label: "tokens.missing" }),
-			ports.float64({ name: "tokens.out", label: "tokens.out" }),
-			ports.string({ name: "tokens.text", label: "tokens.text" }),
-			ports.int64({ name: "tokens.unsigned", label: "tokens.unsigned" }),
+			ports.Capability({ name: "session.self", label: "session.self" }),
 			ports.bool({ name: "truth.found", label: "truth.found" }),
 			ports.int64({ name: "truth.missing", label: "truth.missing" }),
 			ports.float64({ name: "truth.out", label: "truth.out" }),
 			ports.string({ name: "truth.text", label: "truth.text" }),
 			ports.int64({ name: "truth.unsigned", label: "truth.unsigned" }),
-			ports.bool({ name: "vocabulary.found", label: "vocabulary.found" }),
-			ports.int64({ name: "vocabulary.missing", label: "vocabulary.missing" }),
-			ports.float64({ name: "vocabulary.out", label: "vocabulary.out" }),
-			ports.string({ name: "vocabulary.text", label: "vocabulary.text" }),
-			ports.int64({ name: "vocabulary.unsigned", label: "vocabulary.unsigned" }),
-		],
-	});
-	config.addNodeType({
-		type: "definition:training_replay",
-		label: "training_replay",
-		category: "Definitions",
-		description: "Sub-graph: training_replay",
-		initialWidth: 320,
-		inputs: (ports) => (_inputData, _connections) => [
-			ports["[]byte"]({ name: "begin.no", label: "begin.no" }),
-			ports["[]byte"]({ name: "begin.yes", label: "begin.yes" }),
-			ports.float64({ name: "bounds_booked.threshold", label: "bounds_booked.threshold" }),
-			ports["[]byte"]({ name: "bounds_booked_not.no", label: "bounds_booked_not.no" }),
-			ports["[]byte"]({ name: "bounds_booked_not.yes", label: "bounds_booked_not.yes" }),
-			ports.float64({ name: "bounds_closed.threshold", label: "bounds_closed.threshold" }),
-			ports["[]byte"]({ name: "bounds_closed_not.no", label: "bounds_closed_not.no" }),
-			ports["[]byte"]({ name: "bounds_closed_not.yes", label: "bounds_closed_not.yes" }),
-			ports.string({ name: "bounds_end.encoding", label: "bounds_end.encoding" }),
-			ports.string({ name: "bounds_end.text", label: "bounds_end.text" }),
-			ports.bool({ name: "bounds_end.unique", label: "bounds_end.unique" }),
-			ports.int64({ name: "bounds_end.unsigned", label: "bounds_end.unsigned" }),
-			ports.float64({ name: "bounds_end.value", label: "bounds_end.value" }),
-			ports.float64({ name: "bounds_located.threshold", label: "bounds_located.threshold" }),
-			ports["[]byte"]({ name: "bounds_located_not.no", label: "bounds_located_not.no" }),
-			ports["[]byte"]({ name: "bounds_located_not.yes", label: "bounds_located_not.yes" }),
-			ports.string({ name: "bounds_snapshot.encoding", label: "bounds_snapshot.encoding" }),
-			ports.string({ name: "bounds_snapshot.text", label: "bounds_snapshot.text" }),
-			ports.bool({ name: "bounds_snapshot.unique", label: "bounds_snapshot.unique" }),
-			ports.int64({ name: "bounds_snapshot.unsigned", label: "bounds_snapshot.unsigned" }),
-			ports.float64({ name: "bounds_snapshot.value", label: "bounds_snapshot.value" }),
-			ports.string({ name: "bounds_start.encoding", label: "bounds_start.encoding" }),
-			ports.string({ name: "bounds_start.text", label: "bounds_start.text" }),
-			ports.bool({ name: "bounds_start.unique", label: "bounds_start.unique" }),
-			ports.int64({ name: "bounds_start.unsigned", label: "bounds_start.unsigned" }),
-			ports.float64({ name: "bounds_start.value", label: "bounds_start.value" }),
-			ports.string({ name: "commit_document.encoding", label: "commit_document.encoding" }),
-			ports.string({ name: "commit_document.text", label: "commit_document.text" }),
-			ports.bool({ name: "commit_document.unique", label: "commit_document.unique" }),
-			ports.int64({ name: "commit_document.unsigned", label: "commit_document.unsigned" }),
-			ports.float64({ name: "commit_document.value", label: "commit_document.value" }),
-			ports["[]byte"]({ name: "committed.no", label: "committed.no" }),
-			ports["[]byte"]({ name: "committed.yes", label: "committed.yes" }),
-			ports.string({ name: "context_constants.encoding", label: "context_constants.encoding" }),
-			ports.string({ name: "context_constants.text", label: "context_constants.text" }),
-			ports.bool({ name: "context_constants.unique", label: "context_constants.unique" }),
-			ports.int64({ name: "context_constants.unsigned", label: "context_constants.unsigned" }),
-			ports.float64({ name: "context_constants.value", label: "context_constants.value" }),
-			ports.string({ name: "context_position.encoding", label: "context_position.encoding" }),
-			ports.string({ name: "context_position.text", label: "context_position.text" }),
-			ports.bool({ name: "context_position.unique", label: "context_position.unique" }),
-			ports.int64({ name: "context_position.unsigned", label: "context_position.unsigned" }),
-			ports.float64({ name: "context_position.value", label: "context_position.value" }),
-			ports["[]byte"]({ name: "cursor.value", label: "cursor.value" }),
-			ports.string({ name: "end_request.encoding", label: "end_request.encoding" }),
-			ports.string({ name: "end_request.text", label: "end_request.text" }),
-			ports.bool({ name: "end_request.unique", label: "end_request.unique" }),
-			ports.int64({ name: "end_request.unsigned", label: "end_request.unsigned" }),
-			ports.float64({ name: "end_request.value", label: "end_request.value" }),
-			ports.string({ name: "end_request_partition.encoding", label: "end_request_partition.encoding" }),
-			ports.string({ name: "end_request_partition.text", label: "end_request_partition.text" }),
-			ports.bool({ name: "end_request_partition.unique", label: "end_request_partition.unique" }),
-			ports.int64({ name: "end_request_partition.unsigned", label: "end_request_partition.unsigned" }),
-			ports.float64({ name: "end_request_partition.value", label: "end_request_partition.value" }),
-			ports.string({ name: "end_request_session.encoding", label: "end_request_session.encoding" }),
-			ports.string({ name: "end_request_session.text", label: "end_request_session.text" }),
-			ports.bool({ name: "end_request_session.unique", label: "end_request_session.unique" }),
-			ports.int64({ name: "end_request_session.unsigned", label: "end_request_session.unsigned" }),
-			ports.float64({ name: "end_request_session.value", label: "end_request_session.value" }),
-			ports.string({ name: "end_request_symbol.encoding", label: "end_request_symbol.encoding" }),
-			ports.string({ name: "end_request_symbol.text", label: "end_request_symbol.text" }),
-			ports.bool({ name: "end_request_symbol.unique", label: "end_request_symbol.unique" }),
-			ports.int64({ name: "end_request_symbol.unsigned", label: "end_request_symbol.unsigned" }),
-			ports.float64({ name: "end_request_symbol.value", label: "end_request_symbol.value" }),
-			ports["[]byte"]({ name: "event.data", label: "event.data" }),
-			ports["[]byte"]({ name: "events.append", label: "events.append" }),
-			ports.string({ name: "fragment_end.encoding", label: "fragment_end.encoding" }),
-			ports.string({ name: "fragment_end.text", label: "fragment_end.text" }),
-			ports.bool({ name: "fragment_end.unique", label: "fragment_end.unique" }),
-			ports.int64({ name: "fragment_end.unsigned", label: "fragment_end.unsigned" }),
-			ports.float64({ name: "fragment_end.value", label: "fragment_end.value" }),
-			ports.string({ name: "fragment_event.encoding", label: "fragment_event.encoding" }),
-			ports.string({ name: "fragment_event.text", label: "fragment_event.text" }),
-			ports.bool({ name: "fragment_event.unique", label: "fragment_event.unique" }),
-			ports.int64({ name: "fragment_event.unsigned", label: "fragment_event.unsigned" }),
-			ports.float64({ name: "fragment_event.value", label: "fragment_event.value" }),
-			ports.string({ name: "fragment_index.encoding", label: "fragment_index.encoding" }),
-			ports.string({ name: "fragment_index.text", label: "fragment_index.text" }),
-			ports.bool({ name: "fragment_index.unique", label: "fragment_index.unique" }),
-			ports.int64({ name: "fragment_index.unsigned", label: "fragment_index.unsigned" }),
-			ports.float64({ name: "fragment_index.value", label: "fragment_index.value" }),
-			ports.string({ name: "fragment_partition.encoding", label: "fragment_partition.encoding" }),
-			ports.string({ name: "fragment_partition.text", label: "fragment_partition.text" }),
-			ports.bool({ name: "fragment_partition.unique", label: "fragment_partition.unique" }),
-			ports.int64({ name: "fragment_partition.unsigned", label: "fragment_partition.unsigned" }),
-			ports.float64({ name: "fragment_partition.value", label: "fragment_partition.value" }),
-			ports.string({ name: "fragment_session.encoding", label: "fragment_session.encoding" }),
-			ports.string({ name: "fragment_session.text", label: "fragment_session.text" }),
-			ports.bool({ name: "fragment_session.unique", label: "fragment_session.unique" }),
-			ports.int64({ name: "fragment_session.unsigned", label: "fragment_session.unsigned" }),
-			ports.float64({ name: "fragment_session.value", label: "fragment_session.value" }),
-			ports.string({ name: "fragment_symbol.encoding", label: "fragment_symbol.encoding" }),
-			ports.string({ name: "fragment_symbol.text", label: "fragment_symbol.text" }),
-			ports.bool({ name: "fragment_symbol.unique", label: "fragment_symbol.unique" }),
-			ports.int64({ name: "fragment_symbol.unsigned", label: "fragment_symbol.unsigned" }),
-			ports.float64({ name: "fragment_symbol.value", label: "fragment_symbol.value" }),
-			ports["[]byte"]({ name: "index.append", label: "index.append" }),
-			ports["[]byte"]({ name: "index.request", label: "index.request" }),
-			ports.string({ name: "next_event.encoding", label: "next_event.encoding" }),
-			ports.string({ name: "next_event.text", label: "next_event.text" }),
-			ports.bool({ name: "next_event.unique", label: "next_event.unique" }),
-			ports.int64({ name: "next_event.unsigned", label: "next_event.unsigned" }),
-			ports.float64({ name: "next_event.value", label: "next_event.value" }),
-			ports["[]byte"]({ name: "next_event_index.json", label: "next_event_index.json" }),
-			ports.string({ name: "next_event_index.text", label: "next_event_index.text" }),
-			ports.bool({ name: "next_event_index.unique", label: "next_event_index.unique" }),
-			ports.float64({ name: "next_event_index.value", label: "next_event_index.value" }),
-			ports.string({ name: "passed_over.encoding", label: "passed_over.encoding" }),
-			ports.string({ name: "passed_over.text", label: "passed_over.text" }),
-			ports.bool({ name: "passed_over.unique", label: "passed_over.unique" }),
-			ports.int64({ name: "passed_over.unsigned", label: "passed_over.unsigned" }),
-			ports.float64({ name: "passed_over.value", label: "passed_over.value" }),
-			ports["[]byte"]({ name: "ready.data", label: "ready.data" }),
-			ports.string({ name: "ready_flag.referencePath", label: "ready_flag.referencePath" }),
-			ports.string({ name: "seek_event.encoding", label: "seek_event.encoding" }),
-			ports.string({ name: "seek_event.text", label: "seek_event.text" }),
-			ports.bool({ name: "seek_event.unique", label: "seek_event.unique" }),
-			ports.int64({ name: "seek_event.unsigned", label: "seek_event.unsigned" }),
-			ports.float64({ name: "seek_event.value", label: "seek_event.value" }),
-			ports.string({ name: "seek_precursor.referencePath", label: "seek_precursor.referencePath" }),
-			ports.float64({ name: "seek_precursor.threshold", label: "seek_precursor.threshold" }),
-			ports["[]byte"]({ name: "seek_precursor_not.no", label: "seek_precursor_not.no" }),
-			ports["[]byte"]({ name: "seek_precursor_not.yes", label: "seek_precursor_not.yes" }),
-			ports["[]byte"]({ name: "skipped.no", label: "skipped.no" }),
-			ports["[]byte"]({ name: "skipped.yes", label: "skipped.yes" }),
-			ports.string({ name: "snapshot_request.encoding", label: "snapshot_request.encoding" }),
-			ports.string({ name: "snapshot_request.text", label: "snapshot_request.text" }),
-			ports.bool({ name: "snapshot_request.unique", label: "snapshot_request.unique" }),
-			ports.int64({ name: "snapshot_request.unsigned", label: "snapshot_request.unsigned" }),
-			ports.float64({ name: "snapshot_request.value", label: "snapshot_request.value" }),
-			ports.string({ name: "snapshot_request_partition.encoding", label: "snapshot_request_partition.encoding" }),
-			ports.string({ name: "snapshot_request_partition.text", label: "snapshot_request_partition.text" }),
-			ports.bool({ name: "snapshot_request_partition.unique", label: "snapshot_request_partition.unique" }),
-			ports.int64({ name: "snapshot_request_partition.unsigned", label: "snapshot_request_partition.unsigned" }),
-			ports.float64({ name: "snapshot_request_partition.value", label: "snapshot_request_partition.value" }),
-			ports.string({ name: "snapshot_request_session.encoding", label: "snapshot_request_session.encoding" }),
-			ports.string({ name: "snapshot_request_session.text", label: "snapshot_request_session.text" }),
-			ports.bool({ name: "snapshot_request_session.unique", label: "snapshot_request_session.unique" }),
-			ports.int64({ name: "snapshot_request_session.unsigned", label: "snapshot_request_session.unsigned" }),
-			ports.float64({ name: "snapshot_request_session.value", label: "snapshot_request_session.value" }),
-			ports.string({ name: "snapshot_request_symbol.encoding", label: "snapshot_request_symbol.encoding" }),
-			ports.string({ name: "snapshot_request_symbol.text", label: "snapshot_request_symbol.text" }),
-			ports.bool({ name: "snapshot_request_symbol.unique", label: "snapshot_request_symbol.unique" }),
-			ports.int64({ name: "snapshot_request_symbol.unsigned", label: "snapshot_request_symbol.unsigned" }),
-			ports.float64({ name: "snapshot_request_symbol.value", label: "snapshot_request_symbol.value" }),
-			ports.string({ name: "start_request.encoding", label: "start_request.encoding" }),
-			ports.string({ name: "start_request.text", label: "start_request.text" }),
-			ports.bool({ name: "start_request.unique", label: "start_request.unique" }),
-			ports.int64({ name: "start_request.unsigned", label: "start_request.unsigned" }),
-			ports.float64({ name: "start_request.value", label: "start_request.value" }),
-			ports.string({ name: "start_request_partition.encoding", label: "start_request_partition.encoding" }),
-			ports.string({ name: "start_request_partition.text", label: "start_request_partition.text" }),
-			ports.bool({ name: "start_request_partition.unique", label: "start_request_partition.unique" }),
-			ports.int64({ name: "start_request_partition.unsigned", label: "start_request_partition.unsigned" }),
-			ports.float64({ name: "start_request_partition.value", label: "start_request_partition.value" }),
-			ports.string({ name: "start_request_session.encoding", label: "start_request_session.encoding" }),
-			ports.string({ name: "start_request_session.text", label: "start_request_session.text" }),
-			ports.bool({ name: "start_request_session.unique", label: "start_request_session.unique" }),
-			ports.int64({ name: "start_request_session.unsigned", label: "start_request_session.unsigned" }),
-			ports.float64({ name: "start_request_session.value", label: "start_request_session.value" }),
-			ports.string({ name: "start_request_symbol.encoding", label: "start_request_symbol.encoding" }),
-			ports.string({ name: "start_request_symbol.text", label: "start_request_symbol.text" }),
-			ports.bool({ name: "start_request_symbol.unique", label: "start_request_symbol.unique" }),
-			ports.int64({ name: "start_request_symbol.unsigned", label: "start_request_symbol.unsigned" }),
-			ports.float64({ name: "start_request_symbol.value", label: "start_request_symbol.value" }),
-			ports.string({ name: "step_index.encoding", label: "step_index.encoding" }),
-			ports.string({ name: "step_index.text", label: "step_index.text" }),
-			ports.bool({ name: "step_index.unique", label: "step_index.unique" }),
-			ports.int64({ name: "step_index.unsigned", label: "step_index.unsigned" }),
-			ports.float64({ name: "step_index.value", label: "step_index.value" }),
-			ports.string({ name: "step_position.encoding", label: "step_position.encoding" }),
-			ports.string({ name: "step_position.text", label: "step_position.text" }),
-			ports.bool({ name: "step_position.unique", label: "step_position.unique" }),
-			ports.int64({ name: "step_position.unsigned", label: "step_position.unsigned" }),
-			ports.float64({ name: "step_position.value", label: "step_position.value" }),
-			ports.string({ name: "walk_done.encoding", label: "walk_done.encoding" }),
-			ports.string({ name: "walk_done.text", label: "walk_done.text" }),
-			ports.bool({ name: "walk_done.unique", label: "walk_done.unique" }),
-			ports.int64({ name: "walk_done.unsigned", label: "walk_done.unsigned" }),
-			ports.float64({ name: "walk_done.value", label: "walk_done.value" }),
-			ports.float64({ name: "walk_finished.threshold", label: "walk_finished.threshold" }),
-			ports["[]byte"]({ name: "walk_finished_not.no", label: "walk_finished_not.no" }),
-			ports["[]byte"]({ name: "walk_finished_not.yes", label: "walk_finished_not.yes" }),
-			ports.string({ name: "walk_partition.encoding", label: "walk_partition.encoding" }),
-			ports.string({ name: "walk_partition.text", label: "walk_partition.text" }),
-			ports.bool({ name: "walk_partition.unique", label: "walk_partition.unique" }),
-			ports.int64({ name: "walk_partition.unsigned", label: "walk_partition.unsigned" }),
-			ports.float64({ name: "walk_partition.value", label: "walk_partition.value" }),
-			ports.string({ name: "walk_request.encoding", label: "walk_request.encoding" }),
-			ports.string({ name: "walk_request.text", label: "walk_request.text" }),
-			ports.bool({ name: "walk_request.unique", label: "walk_request.unique" }),
-			ports.int64({ name: "walk_request.unsigned", label: "walk_request.unsigned" }),
-			ports.float64({ name: "walk_request.value", label: "walk_request.value" }),
-			ports.string({ name: "walked.encoding", label: "walked.encoding" }),
-			ports.string({ name: "walked.text", label: "walked.text" }),
-			ports.bool({ name: "walked.unique", label: "walked.unique" }),
-			ports.int64({ name: "walked.unsigned", label: "walked.unsigned" }),
-			ports.float64({ name: "walked.value", label: "walked.value" }),
-			ports.string({ name: "walking.referencePath", label: "walking.referencePath" }),
-			ports.float64({ name: "walking.threshold", label: "walking.threshold" }),
-			ports["[]byte"]({ name: "walking_not.no", label: "walking_not.no" }),
-			ports["[]byte"]({ name: "walking_not.yes", label: "walking_not.yes" }),
-		],
-		outputs: (ports) => (_inputData, _connections) => [
-			ports.int64({ name: "begin.absent", label: "begin.absent" }),
-			ports.int64({ name: "bounds_booked.rejected", label: "bounds_booked.rejected" }),
-			ports.int64({ name: "bounds_booked_not.absent", label: "bounds_booked_not.absent" }),
-			ports.int64({ name: "bounds_closed.rejected", label: "bounds_closed.rejected" }),
-			ports.int64({ name: "bounds_closed_not.absent", label: "bounds_closed_not.absent" }),
-			ports.bool({ name: "bounds_end.inserted", label: "bounds_end.inserted" }),
-			ports.int64({ name: "bounds_located.rejected", label: "bounds_located.rejected" }),
-			ports.int64({ name: "bounds_located_not.absent", label: "bounds_located_not.absent" }),
-			ports.bool({ name: "bounds_snapshot.inserted", label: "bounds_snapshot.inserted" }),
-			ports.bool({ name: "bounds_start.inserted", label: "bounds_start.inserted" }),
-			ports.bool({ name: "commit.found", label: "commit.found" }),
-			ports.int64({ name: "commit.missing", label: "commit.missing" }),
-			ports.float64({ name: "commit.out", label: "commit.out" }),
-			ports.string({ name: "commit.text", label: "commit.text" }),
-			ports.int64({ name: "commit.unsigned", label: "commit.unsigned" }),
-			ports.bool({ name: "commit_document.inserted", label: "commit_document.inserted" }),
-			ports.int64({ name: "committed.absent", label: "committed.absent" }),
-			ports.bool({ name: "context_constants.inserted", label: "context_constants.inserted" }),
-			ports.bool({ name: "context_position.inserted", label: "context_position.inserted" }),
-			ports.data({ name: "cursor.found", label: "cursor.found" }),
-			ports.data({ name: "cursor.out", label: "cursor.out" }),
-			ports.Capability({ name: "cursor.self", label: "cursor.self" }),
-			ports.bool({ name: "done_value.found", label: "done_value.found" }),
-			ports.int64({ name: "done_value.missing", label: "done_value.missing" }),
-			ports.float64({ name: "done_value.out", label: "done_value.out" }),
-			ports.string({ name: "done_value.text", label: "done_value.text" }),
-			ports.int64({ name: "done_value.unsigned", label: "done_value.unsigned" }),
-			ports.bool({ name: "end_request.inserted", label: "end_request.inserted" }),
-			ports.bool({ name: "end_request_bound.found", label: "end_request_bound.found" }),
-			ports.int64({ name: "end_request_bound.missing", label: "end_request_bound.missing" }),
-			ports.float64({ name: "end_request_bound.out", label: "end_request_bound.out" }),
-			ports.string({ name: "end_request_bound.text", label: "end_request_bound.text" }),
-			ports.int64({ name: "end_request_bound.unsigned", label: "end_request_bound.unsigned" }),
-			ports.bool({ name: "end_request_partition.inserted", label: "end_request_partition.inserted" }),
-			ports.bool({ name: "end_request_session.inserted", label: "end_request_session.inserted" }),
-			ports.bool({ name: "end_request_session_value.found", label: "end_request_session_value.found" }),
-			ports.int64({ name: "end_request_session_value.missing", label: "end_request_session_value.missing" }),
-			ports.float64({ name: "end_request_session_value.out", label: "end_request_session_value.out" }),
-			ports.string({ name: "end_request_session_value.text", label: "end_request_session_value.text" }),
-			ports.int64({ name: "end_request_session_value.unsigned", label: "end_request_session_value.unsigned" }),
-			ports.bool({ name: "end_request_symbol.inserted", label: "end_request_symbol.inserted" }),
-			ports.bool({ name: "end_request_symbol_value.found", label: "end_request_symbol_value.found" }),
-			ports.int64({ name: "end_request_symbol_value.missing", label: "end_request_symbol_value.missing" }),
-			ports.float64({ name: "end_request_symbol_value.out", label: "end_request_symbol_value.out" }),
-			ports.string({ name: "end_request_symbol_value.text", label: "end_request_symbol_value.text" }),
-			ports.int64({ name: "end_request_symbol_value.unsigned", label: "end_request_symbol_value.unsigned" }),
-			ports.bool({ name: "event_index.found", label: "event_index.found" }),
-			ports["[]byte"]({ name: "event_index.json", label: "event_index.json" }),
-			ports.int64({ name: "event_index.missing", label: "event_index.missing" }),
-			ports.float64({ name: "event_index.out", label: "event_index.out" }),
-			ports.string({ name: "event_index.text", label: "event_index.text" }),
-			ports.int64({ name: "events.count", label: "events.count" }),
-			ports.bool({ name: "events.found", label: "events.found" }),
-			ports.int64({ name: "events.missing", label: "events.missing" }),
-			ports.bool({ name: "fragment_end.inserted", label: "fragment_end.inserted" }),
-			ports.bool({ name: "fragment_end_position.found", label: "fragment_end_position.found" }),
-			ports.int64({ name: "fragment_end_position.missing", label: "fragment_end_position.missing" }),
-			ports.float64({ name: "fragment_end_position.out", label: "fragment_end_position.out" }),
-			ports.string({ name: "fragment_end_position.text", label: "fragment_end_position.text" }),
-			ports.int64({ name: "fragment_end_position.unsigned", label: "fragment_end_position.unsigned" }),
-			ports.bool({ name: "fragment_event.inserted", label: "fragment_event.inserted" }),
-			ports.bool({ name: "fragment_event_index.found", label: "fragment_event_index.found" }),
-			ports.int64({ name: "fragment_event_index.missing", label: "fragment_event_index.missing" }),
-			ports.float64({ name: "fragment_event_index.out", label: "fragment_event_index.out" }),
-			ports.string({ name: "fragment_event_index.text", label: "fragment_event_index.text" }),
-			ports.int64({ name: "fragment_event_index.unsigned", label: "fragment_event_index.unsigned" }),
-			ports.bool({ name: "fragment_index.inserted", label: "fragment_index.inserted" }),
-			ports.bool({ name: "fragment_partition.inserted", label: "fragment_partition.inserted" }),
-			ports.bool({ name: "fragment_record.found", label: "fragment_record.found" }),
-			ports.int64({ name: "fragment_record.missing", label: "fragment_record.missing" }),
-			ports.float64({ name: "fragment_record.out", label: "fragment_record.out" }),
-			ports.string({ name: "fragment_record.text", label: "fragment_record.text" }),
-			ports.int64({ name: "fragment_record.unsigned", label: "fragment_record.unsigned" }),
-			ports.bool({ name: "fragment_scope.found", label: "fragment_scope.found" }),
-			ports["[]byte"]({ name: "fragment_scope.json", label: "fragment_scope.json" }),
-			ports.int64({ name: "fragment_scope.missing", label: "fragment_scope.missing" }),
-			ports.float64({ name: "fragment_scope.out", label: "fragment_scope.out" }),
-			ports.string({ name: "fragment_scope.text", label: "fragment_scope.text" }),
-			ports.int64({ name: "fragment_scope.unsigned", label: "fragment_scope.unsigned" }),
-			ports.bool({ name: "fragment_session.inserted", label: "fragment_session.inserted" }),
-			ports.bool({ name: "fragment_session_value.found", label: "fragment_session_value.found" }),
-			ports.int64({ name: "fragment_session_value.missing", label: "fragment_session_value.missing" }),
-			ports.float64({ name: "fragment_session_value.out", label: "fragment_session_value.out" }),
-			ports.string({ name: "fragment_session_value.text", label: "fragment_session_value.text" }),
-			ports.int64({ name: "fragment_session_value.unsigned", label: "fragment_session_value.unsigned" }),
-			ports.bool({ name: "fragment_symbol.inserted", label: "fragment_symbol.inserted" }),
-			ports.bool({ name: "fragment_symbol_value.found", label: "fragment_symbol_value.found" }),
-			ports.int64({ name: "fragment_symbol_value.missing", label: "fragment_symbol_value.missing" }),
-			ports.float64({ name: "fragment_symbol_value.out", label: "fragment_symbol_value.out" }),
-			ports.string({ name: "fragment_symbol_value.text", label: "fragment_symbol_value.text" }),
-			ports.int64({ name: "fragment_symbol_value.unsigned", label: "fragment_symbol_value.unsigned" }),
-			ports.bool({ name: "from_snapshot.found", label: "from_snapshot.found" }),
-			ports.int64({ name: "from_snapshot.missing", label: "from_snapshot.missing" }),
-			ports.float64({ name: "from_snapshot.out", label: "from_snapshot.out" }),
-			ports.string({ name: "from_snapshot.text", label: "from_snapshot.text" }),
-			ports.int64({ name: "from_snapshot.unsigned", label: "from_snapshot.unsigned" }),
-			ports.bool({ name: "from_start.found", label: "from_start.found" }),
-			ports.int64({ name: "from_start.missing", label: "from_start.missing" }),
-			ports.float64({ name: "from_start.out", label: "from_start.out" }),
-			ports.string({ name: "from_start.text", label: "from_start.text" }),
-			ports.int64({ name: "from_start.unsigned", label: "from_start.unsigned" }),
-			ports.data({ name: "index.answers", label: "index.answers" }),
-			ports.bool({ name: "market.found", label: "market.found" }),
-			ports["[]byte"]({ name: "market.json", label: "market.json" }),
-			ports.int64({ name: "market.missing", label: "market.missing" }),
-			ports.float64({ name: "market.out", label: "market.out" }),
-			ports.string({ name: "market.text", label: "market.text" }),
-			ports.int64({ name: "market.unsigned", label: "market.unsigned" }),
-			ports.bool({ name: "next_event.inserted", label: "next_event.inserted" }),
-			ports.bool({ name: "next_event_index.inserted", label: "next_event_index.inserted" }),
-			ports.bool({ name: "next_event_value.found", label: "next_event_value.found" }),
-			ports.int64({ name: "next_event_value.missing", label: "next_event_value.missing" }),
-			ports.float64({ name: "next_event_value.out", label: "next_event_value.out" }),
-			ports.string({ name: "next_event_value.text", label: "next_event_value.text" }),
-			ports.int64({ name: "next_event_value.unsigned", label: "next_event_value.unsigned" }),
-			ports.bool({ name: "observation.found", label: "observation.found" }),
-			ports.int64({ name: "observation.missing", label: "observation.missing" }),
-			ports.float64({ name: "observation.out", label: "observation.out" }),
-			ports.string({ name: "observation.text", label: "observation.text" }),
-			ports.int64({ name: "observation.unsigned", label: "observation.unsigned" }),
-			ports.bool({ name: "passed_over.inserted", label: "passed_over.inserted" }),
-			ports.int64({ name: "position.absent", label: "position.absent" }),
-			ports.bool({ name: "ready_flag.passed", label: "ready_flag.passed" }),
-			ports.int64({ name: "ready_flag.rejected", label: "ready_flag.rejected" }),
-			ports.bool({ name: "seek_event.inserted", label: "seek_event.inserted" }),
-			ports.int64({ name: "seek_precursor.rejected", label: "seek_precursor.rejected" }),
-			ports.int64({ name: "seek_precursor_not.absent", label: "seek_precursor_not.absent" }),
-			ports.bool({ name: "skip_position.found", label: "skip_position.found" }),
-			ports.int64({ name: "skip_position.missing", label: "skip_position.missing" }),
-			ports.float64({ name: "skip_position.out", label: "skip_position.out" }),
-			ports.string({ name: "skip_position.text", label: "skip_position.text" }),
-			ports.int64({ name: "skip_position.unsigned", label: "skip_position.unsigned" }),
-			ports.int64({ name: "skipped.absent", label: "skipped.absent" }),
-			ports.bool({ name: "snapshot_request.inserted", label: "snapshot_request.inserted" }),
-			ports.bool({ name: "snapshot_request_bound.found", label: "snapshot_request_bound.found" }),
-			ports.int64({ name: "snapshot_request_bound.missing", label: "snapshot_request_bound.missing" }),
-			ports.float64({ name: "snapshot_request_bound.out", label: "snapshot_request_bound.out" }),
-			ports.string({ name: "snapshot_request_bound.text", label: "snapshot_request_bound.text" }),
-			ports.int64({ name: "snapshot_request_bound.unsigned", label: "snapshot_request_bound.unsigned" }),
-			ports.bool({ name: "snapshot_request_partition.inserted", label: "snapshot_request_partition.inserted" }),
-			ports.bool({ name: "snapshot_request_session.inserted", label: "snapshot_request_session.inserted" }),
-			ports.bool({ name: "snapshot_request_session_value.found", label: "snapshot_request_session_value.found" }),
-			ports.int64({ name: "snapshot_request_session_value.missing", label: "snapshot_request_session_value.missing" }),
-			ports.float64({ name: "snapshot_request_session_value.out", label: "snapshot_request_session_value.out" }),
-			ports.string({ name: "snapshot_request_session_value.text", label: "snapshot_request_session_value.text" }),
-			ports.int64({ name: "snapshot_request_session_value.unsigned", label: "snapshot_request_session_value.unsigned" }),
-			ports.bool({ name: "snapshot_request_symbol.inserted", label: "snapshot_request_symbol.inserted" }),
-			ports.bool({ name: "snapshot_request_symbol_value.found", label: "snapshot_request_symbol_value.found" }),
-			ports.int64({ name: "snapshot_request_symbol_value.missing", label: "snapshot_request_symbol_value.missing" }),
-			ports.float64({ name: "snapshot_request_symbol_value.out", label: "snapshot_request_symbol_value.out" }),
-			ports.string({ name: "snapshot_request_symbol_value.text", label: "snapshot_request_symbol_value.text" }),
-			ports.int64({ name: "snapshot_request_symbol_value.unsigned", label: "snapshot_request_symbol_value.unsigned" }),
-			ports.bool({ name: "start_request.inserted", label: "start_request.inserted" }),
-			ports.bool({ name: "start_request_bound.found", label: "start_request_bound.found" }),
-			ports.int64({ name: "start_request_bound.missing", label: "start_request_bound.missing" }),
-			ports.float64({ name: "start_request_bound.out", label: "start_request_bound.out" }),
-			ports.string({ name: "start_request_bound.text", label: "start_request_bound.text" }),
-			ports.int64({ name: "start_request_bound.unsigned", label: "start_request_bound.unsigned" }),
-			ports.bool({ name: "start_request_partition.inserted", label: "start_request_partition.inserted" }),
-			ports.bool({ name: "start_request_session.inserted", label: "start_request_session.inserted" }),
-			ports.bool({ name: "start_request_session_value.found", label: "start_request_session_value.found" }),
-			ports.int64({ name: "start_request_session_value.missing", label: "start_request_session_value.missing" }),
-			ports.float64({ name: "start_request_session_value.out", label: "start_request_session_value.out" }),
-			ports.string({ name: "start_request_session_value.text", label: "start_request_session_value.text" }),
-			ports.int64({ name: "start_request_session_value.unsigned", label: "start_request_session_value.unsigned" }),
-			ports.bool({ name: "start_request_symbol.inserted", label: "start_request_symbol.inserted" }),
-			ports.bool({ name: "start_request_symbol_value.found", label: "start_request_symbol_value.found" }),
-			ports.int64({ name: "start_request_symbol_value.missing", label: "start_request_symbol_value.missing" }),
-			ports.float64({ name: "start_request_symbol_value.out", label: "start_request_symbol_value.out" }),
-			ports.string({ name: "start_request_symbol_value.text", label: "start_request_symbol_value.text" }),
-			ports.int64({ name: "start_request_symbol_value.unsigned", label: "start_request_symbol_value.unsigned" }),
-			ports.bool({ name: "step_carry.found", label: "step_carry.found" }),
-			ports.int64({ name: "step_carry.missing", label: "step_carry.missing" }),
-			ports.float64({ name: "step_carry.out", label: "step_carry.out" }),
-			ports.string({ name: "step_carry.text", label: "step_carry.text" }),
-			ports.int64({ name: "step_carry.unsigned", label: "step_carry.unsigned" }),
-			ports.bool({ name: "step_index.inserted", label: "step_index.inserted" }),
-			ports.bool({ name: "step_position.inserted", label: "step_position.inserted" }),
-			ports.bool({ name: "step_value.found", label: "step_value.found" }),
-			ports.int64({ name: "step_value.missing", label: "step_value.missing" }),
-			ports.float64({ name: "step_value.out", label: "step_value.out" }),
-			ports.string({ name: "step_value.text", label: "step_value.text" }),
-			ports.int64({ name: "step_value.unsigned", label: "step_value.unsigned" }),
-			ports.bool({ name: "walk_at.found", label: "walk_at.found" }),
-			ports.int64({ name: "walk_at.missing", label: "walk_at.missing" }),
-			ports.float64({ name: "walk_at.out", label: "walk_at.out" }),
-			ports.string({ name: "walk_at.text", label: "walk_at.text" }),
-			ports.int64({ name: "walk_at.unsigned", label: "walk_at.unsigned" }),
-			ports.bool({ name: "walk_done.inserted", label: "walk_done.inserted" }),
-			ports.int64({ name: "walk_finished.rejected", label: "walk_finished.rejected" }),
-			ports.int64({ name: "walk_finished_not.absent", label: "walk_finished_not.absent" }),
-			ports.bool({ name: "walk_index.found", label: "walk_index.found" }),
-			ports.int64({ name: "walk_index.missing", label: "walk_index.missing" }),
-			ports.float64({ name: "walk_index.out", label: "walk_index.out" }),
-			ports.string({ name: "walk_index.text", label: "walk_index.text" }),
-			ports.int64({ name: "walk_index.unsigned", label: "walk_index.unsigned" }),
-			ports.bool({ name: "walk_partition.inserted", label: "walk_partition.inserted" }),
-			ports.bool({ name: "walk_partition_value.found", label: "walk_partition_value.found" }),
-			ports.int64({ name: "walk_partition_value.missing", label: "walk_partition_value.missing" }),
-			ports.float64({ name: "walk_partition_value.out", label: "walk_partition_value.out" }),
-			ports.string({ name: "walk_partition_value.text", label: "walk_partition_value.text" }),
-			ports.int64({ name: "walk_partition_value.unsigned", label: "walk_partition_value.unsigned" }),
-			ports.bool({ name: "walk_record.found", label: "walk_record.found" }),
-			ports.int64({ name: "walk_record.missing", label: "walk_record.missing" }),
-			ports.float64({ name: "walk_record.out", label: "walk_record.out" }),
-			ports.string({ name: "walk_record.text", label: "walk_record.text" }),
-			ports.int64({ name: "walk_record.unsigned", label: "walk_record.unsigned" }),
-			ports.bool({ name: "walk_request.inserted", label: "walk_request.inserted" }),
-			ports.bool({ name: "walked.inserted", label: "walked.inserted" }),
-			ports.int64({ name: "walking.rejected", label: "walking.rejected" }),
-			ports.int64({ name: "walking_not.absent", label: "walking_not.absent" }),
+			ports.Capability({ name: "truth.self", label: "truth.self" }),
 		],
 	});
 	config.addNodeType({
@@ -11627,6 +12551,12 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.int64({ name: "edge_from.offset", label: "edge_from.offset" }),
 			ports.int64({ name: "edge_from.stride", label: "edge_from.stride" }),
 			ports.string({ name: "edge_from.texts", label: "edge_from.texts" }),
+			ports.bool({ name: "edge_strength.flags", label: "edge_strength.flags" }),
+			ports.int64({ name: "edge_strength.integers", label: "edge_strength.integers" }),
+			ports.float64({ name: "edge_strength.numbers", label: "edge_strength.numbers" }),
+			ports.int64({ name: "edge_strength.offset", label: "edge_strength.offset" }),
+			ports.int64({ name: "edge_strength.stride", label: "edge_strength.stride" }),
+			ports.string({ name: "edge_strength.texts", label: "edge_strength.texts" }),
 			ports.bool({ name: "edge_to.flags", label: "edge_to.flags" }),
 			ports.int64({ name: "edge_to.integers", label: "edge_to.integers" }),
 			ports.float64({ name: "edge_to.numbers", label: "edge_to.numbers" }),
@@ -11651,7 +12581,6 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "label.numbers", label: "label.numbers" }),
 			ports.int64({ name: "label.offset", label: "label.offset" }),
 			ports.int64({ name: "label.stride", label: "label.stride" }),
-			ports.string({ name: "label.texts", label: "label.texts" }),
 			ports.string({ name: "links.index", label: "links.index" }),
 			ports.bool({ name: "present.flags", label: "present.flags" }),
 			ports.int64({ name: "present.integers", label: "present.integers" }),
@@ -11697,7 +12626,6 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.float64({ name: "source.numbers", label: "source.numbers" }),
 			ports.int64({ name: "source.offset", label: "source.offset" }),
 			ports.int64({ name: "source.stride", label: "source.stride" }),
-			ports.string({ name: "source.texts", label: "source.texts" }),
 			ports.float64({ name: "trail_correlation.numbers", label: "trail_correlation.numbers" }),
 			ports.bool({ name: "trail_correlation.present", label: "trail_correlation.present" }),
 			ports.string({ name: "trail_correlation.scope", label: "trail_correlation.scope" }),
@@ -11784,112 +12712,176 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.string({ name: "ys.texts", label: "ys.texts" }),
 		],
 		outputs: (ports) => (_inputData, _connections) => [
+			ports.Capability({ name: "activation.self", label: "activation.self" }),
+			ports.Capability({ name: "authority.self", label: "authority.self" }),
 			ports.int64({ name: "closed.idle", label: "closed.idle" }),
+			ports.Capability({ name: "closed.self", label: "closed.self" }),
 			ports.bool({ name: "closed_entryPrice.inserted", label: "closed_entryPrice.inserted" }),
+			ports.Capability({ name: "closed_entryPrice.self", label: "closed_entryPrice.self" }),
 			ports.bool({ name: "closed_mark.inserted", label: "closed_mark.inserted" }),
+			ports.Capability({ name: "closed_mark.self", label: "closed_mark.self" }),
 			ports.bool({ name: "closed_pnl.inserted", label: "closed_pnl.inserted" }),
+			ports.Capability({ name: "closed_pnl.self", label: "closed_pnl.self" }),
 			ports.int64({ name: "decisions.idle", label: "decisions.idle" }),
+			ports.Capability({ name: "decisions.self", label: "decisions.self" }),
+			ports.Capability({ name: "edge_from.self", label: "edge_from.self" }),
+			ports.Capability({ name: "edge_strength.self", label: "edge_strength.self" }),
+			ports.Capability({ name: "edge_to.self", label: "edge_to.self" }),
+			ports.Capability({ name: "energy.self", label: "energy.self" }),
 			ports.bool({ name: "example_action.found", label: "example_action.found" }),
 			ports.int64({ name: "example_action.missing", label: "example_action.missing" }),
 			ports.float64({ name: "example_action.out", label: "example_action.out" }),
 			ports.string({ name: "example_action.text", label: "example_action.text" }),
 			ports.int64({ name: "example_action.unsigned", label: "example_action.unsigned" }),
+			ports.Capability({ name: "example_action.self", label: "example_action.self" }),
 			ports.bool({ name: "example_cursor.found", label: "example_cursor.found" }),
 			ports.int64({ name: "example_cursor.missing", label: "example_cursor.missing" }),
 			ports.float64({ name: "example_cursor.out", label: "example_cursor.out" }),
 			ports.string({ name: "example_cursor.text", label: "example_cursor.text" }),
 			ports.int64({ name: "example_cursor.unsigned", label: "example_cursor.unsigned" }),
+			ports.Capability({ name: "example_cursor.self", label: "example_cursor.self" }),
 			ports.bool({ name: "example_label.found", label: "example_label.found" }),
 			ports["[]byte"]({ name: "example_label.json", label: "example_label.json" }),
 			ports.int64({ name: "example_label.missing", label: "example_label.missing" }),
 			ports.float64({ name: "example_label.out", label: "example_label.out" }),
 			ports.string({ name: "example_label.text", label: "example_label.text" }),
 			ports.int64({ name: "example_label.unsigned", label: "example_label.unsigned" }),
+			ports.Capability({ name: "example_label.self", label: "example_label.self" }),
 			ports.bool({ name: "example_origin.found", label: "example_origin.found" }),
 			ports.int64({ name: "example_origin.missing", label: "example_origin.missing" }),
 			ports.float64({ name: "example_origin.out", label: "example_origin.out" }),
 			ports.string({ name: "example_origin.text", label: "example_origin.text" }),
 			ports.int64({ name: "example_origin.unsigned", label: "example_origin.unsigned" }),
+			ports.Capability({ name: "example_origin.self", label: "example_origin.self" }),
 			ports.bool({ name: "example_path.found", label: "example_path.found" }),
 			ports.int64({ name: "example_path.missing", label: "example_path.missing" }),
 			ports.float64({ name: "example_path.out", label: "example_path.out" }),
 			ports.string({ name: "example_path.text", label: "example_path.text" }),
 			ports.int64({ name: "example_path.unsigned", label: "example_path.unsigned" }),
+			ports.Capability({ name: "example_path.self", label: "example_path.self" }),
 			ports.bool({ name: "example_record.found", label: "example_record.found" }),
 			ports.int64({ name: "example_record.missing", label: "example_record.missing" }),
 			ports.float64({ name: "example_record.out", label: "example_record.out" }),
 			ports.string({ name: "example_record.text", label: "example_record.text" }),
 			ports.int64({ name: "example_record.unsigned", label: "example_record.unsigned" }),
+			ports.Capability({ name: "example_record.self", label: "example_record.self" }),
 			ports.bool({ name: "example_seq.found", label: "example_seq.found" }),
 			ports["[]byte"]({ name: "example_seq.json", label: "example_seq.json" }),
 			ports.int64({ name: "example_seq.missing", label: "example_seq.missing" }),
 			ports.float64({ name: "example_seq.out", label: "example_seq.out" }),
 			ports.string({ name: "example_seq.text", label: "example_seq.text" }),
 			ports.int64({ name: "example_seq.unsigned", label: "example_seq.unsigned" }),
+			ports.Capability({ name: "example_seq.self", label: "example_seq.self" }),
 			ports.bool({ name: "example_symbol.found", label: "example_symbol.found" }),
 			ports.int64({ name: "example_symbol.missing", label: "example_symbol.missing" }),
 			ports.float64({ name: "example_symbol.out", label: "example_symbol.out" }),
 			ports.string({ name: "example_symbol.text", label: "example_symbol.text" }),
 			ports.int64({ name: "example_symbol.unsigned", label: "example_symbol.unsigned" }),
+			ports.Capability({ name: "example_symbol.self", label: "example_symbol.self" }),
+			ports.Capability({ name: "examples.self", label: "examples.self" }),
+			ports.Capability({ name: "hot.self", label: "hot.self" }),
+			ports.Capability({ name: "label.self", label: "label.self" }),
 			ports.int64({ name: "links.idle", label: "links.idle" }),
+			ports.Capability({ name: "links.self", label: "links.self" }),
 			ports.int64({ name: "points.idle", label: "points.idle" }),
+			ports.Capability({ name: "points.self", label: "points.self" }),
+			ports.Capability({ name: "present.self", label: "present.self" }),
 			ports.int64({ name: "regions.idle", label: "regions.idle" }),
+			ports.Capability({ name: "regions.self", label: "regions.self" }),
 			ports.data({ name: "route.out", label: "route.out" }),
+			ports.Capability({ name: "route.self", label: "route.self" }),
 			ports.bool({ name: "row_action.inserted", label: "row_action.inserted" }),
+			ports.Capability({ name: "row_action.self", label: "row_action.self" }),
 			ports.bool({ name: "row_confidence.inserted", label: "row_confidence.inserted" }),
+			ports.Capability({ name: "row_confidence.self", label: "row_confidence.self" }),
 			ports.int64({ name: "row_id.idle", label: "row_id.idle" }),
+			ports.Capability({ name: "row_id.self", label: "row_id.self" }),
 			ports.bool({ name: "row_key.inserted", label: "row_key.inserted" }),
+			ports.Capability({ name: "row_key.self", label: "row_key.self" }),
 			ports.bool({ name: "row_reason.inserted", label: "row_reason.inserted" }),
+			ports.Capability({ name: "row_reason.self", label: "row_reason.self" }),
 			ports.bool({ name: "row_symbol.inserted", label: "row_symbol.inserted" }),
+			ports.Capability({ name: "row_symbol.self", label: "row_symbol.self" }),
+			ports.Capability({ name: "snr.self", label: "snr.self" }),
+			ports.Capability({ name: "source.self", label: "source.self" }),
 			ports.int64({ name: "trail_correlation.idle", label: "trail_correlation.idle" }),
+			ports.Capability({ name: "trail_correlation.self", label: "trail_correlation.self" }),
 			ports.int64({ name: "trail_cvd.idle", label: "trail_cvd.idle" }),
+			ports.Capability({ name: "trail_cvd.self", label: "trail_cvd.self" }),
 			ports.int64({ name: "trail_depthflow.idle", label: "trail_depthflow.idle" }),
+			ports.Capability({ name: "trail_depthflow.self", label: "trail_depthflow.self" }),
 			ports.int64({ name: "trail_derivatives.idle", label: "trail_derivatives.idle" }),
+			ports.Capability({ name: "trail_derivatives.self", label: "trail_derivatives.self" }),
 			ports.int64({ name: "trail_hawkes.idle", label: "trail_hawkes.idle" }),
+			ports.Capability({ name: "trail_hawkes.self", label: "trail_hawkes.self" }),
 			ports.int64({ name: "trail_leadlag.idle", label: "trail_leadlag.idle" }),
+			ports.Capability({ name: "trail_leadlag.self", label: "trail_leadlag.self" }),
 			ports.int64({ name: "trail_liquidations.idle", label: "trail_liquidations.idle" }),
+			ports.Capability({ name: "trail_liquidations.self", label: "trail_liquidations.self" }),
 			ports.int64({ name: "trail_liquidity.idle", label: "trail_liquidity.idle" }),
+			ports.Capability({ name: "trail_liquidity.self", label: "trail_liquidity.self" }),
 			ports.int64({ name: "trail_morphology.idle", label: "trail_morphology.idle" }),
+			ports.Capability({ name: "trail_morphology.self", label: "trail_morphology.self" }),
 			ports.int64({ name: "trail_pumpdump_book.idle", label: "trail_pumpdump_book.idle" }),
+			ports.Capability({ name: "trail_pumpdump_book.self", label: "trail_pumpdump_book.self" }),
 			ports.int64({ name: "trail_pumpdump_ticker.idle", label: "trail_pumpdump_ticker.idle" }),
+			ports.Capability({ name: "trail_pumpdump_ticker.self", label: "trail_pumpdump_ticker.self" }),
 			ports.int64({ name: "trail_pumpdump_trade.idle", label: "trail_pumpdump_trade.idle" }),
+			ports.Capability({ name: "trail_pumpdump_trade.self", label: "trail_pumpdump_trade.self" }),
 			ports.int64({ name: "trail_sentiment.idle", label: "trail_sentiment.idle" }),
+			ports.Capability({ name: "trail_sentiment.self", label: "trail_sentiment.self" }),
 			ports.int64({ name: "trail_toxicity_book.idle", label: "trail_toxicity_book.idle" }),
+			ports.Capability({ name: "trail_toxicity_book.self", label: "trail_toxicity_book.self" }),
 			ports.int64({ name: "trail_toxicity_trade.idle", label: "trail_toxicity_trade.idle" }),
+			ports.Capability({ name: "trail_toxicity_trade.self", label: "trail_toxicity_trade.self" }),
 			ports.bool({ name: "trip_basis.found", label: "trip_basis.found" }),
 			ports["[]byte"]({ name: "trip_basis.json", label: "trip_basis.json" }),
 			ports.int64({ name: "trip_basis.missing", label: "trip_basis.missing" }),
 			ports.string({ name: "trip_basis.text", label: "trip_basis.text" }),
 			ports.int64({ name: "trip_basis.unsigned", label: "trip_basis.unsigned" }),
+			ports.Capability({ name: "trip_basis.self", label: "trip_basis.self" }),
 			ports.bool({ name: "trip_basis_json.found", label: "trip_basis_json.found" }),
 			ports.int64({ name: "trip_basis_json.missing", label: "trip_basis_json.missing" }),
 			ports.float64({ name: "trip_basis_json.out", label: "trip_basis_json.out" }),
 			ports.string({ name: "trip_basis_json.text", label: "trip_basis_json.text" }),
 			ports.int64({ name: "trip_basis_json.unsigned", label: "trip_basis_json.unsigned" }),
+			ports.Capability({ name: "trip_basis_json.self", label: "trip_basis_json.self" }),
+			ports.Capability({ name: "trip_percent.self", label: "trip_percent.self" }),
 			ports.bool({ name: "trip_pnl.found", label: "trip_pnl.found" }),
 			ports["[]byte"]({ name: "trip_pnl.json", label: "trip_pnl.json" }),
 			ports.int64({ name: "trip_pnl.missing", label: "trip_pnl.missing" }),
 			ports.string({ name: "trip_pnl.text", label: "trip_pnl.text" }),
 			ports.int64({ name: "trip_pnl.unsigned", label: "trip_pnl.unsigned" }),
+			ports.Capability({ name: "trip_pnl.self", label: "trip_pnl.self" }),
 			ports.bool({ name: "trip_pnl_json.found", label: "trip_pnl_json.found" }),
 			ports.int64({ name: "trip_pnl_json.missing", label: "trip_pnl_json.missing" }),
 			ports.float64({ name: "trip_pnl_json.out", label: "trip_pnl_json.out" }),
 			ports.string({ name: "trip_pnl_json.text", label: "trip_pnl_json.text" }),
 			ports.int64({ name: "trip_pnl_json.unsigned", label: "trip_pnl_json.unsigned" }),
+			ports.Capability({ name: "trip_pnl_json.self", label: "trip_pnl_json.self" }),
 			ports.bool({ name: "trip_proceeds_json.found", label: "trip_proceeds_json.found" }),
 			ports.int64({ name: "trip_proceeds_json.missing", label: "trip_proceeds_json.missing" }),
 			ports.float64({ name: "trip_proceeds_json.out", label: "trip_proceeds_json.out" }),
 			ports.string({ name: "trip_proceeds_json.text", label: "trip_proceeds_json.text" }),
 			ports.int64({ name: "trip_proceeds_json.unsigned", label: "trip_proceeds_json.unsigned" }),
+			ports.Capability({ name: "trip_proceeds_json.self", label: "trip_proceeds_json.self" }),
 			ports.int64({ name: "trip_return.undefined", label: "trip_return.undefined" }),
+			ports.Capability({ name: "trip_return.self", label: "trip_return.self" }),
 			ports.bool({ name: "trip_returned.inserted", label: "trip_returned.inserted" }),
+			ports.Capability({ name: "trip_returned.self", label: "trip_returned.self" }),
 			ports.bool({ name: "trip_row.inserted", label: "trip_row.inserted" }),
+			ports.Capability({ name: "trip_row.self", label: "trip_row.self" }),
 			ports.bool({ name: "trip_symbol.found", label: "trip_symbol.found" }),
 			ports.int64({ name: "trip_symbol.missing", label: "trip_symbol.missing" }),
 			ports.float64({ name: "trip_symbol.out", label: "trip_symbol.out" }),
 			ports.string({ name: "trip_symbol.text", label: "trip_symbol.text" }),
 			ports.int64({ name: "trip_symbol.unsigned", label: "trip_symbol.unsigned" }),
+			ports.Capability({ name: "trip_symbol.self", label: "trip_symbol.self" }),
 			ports.bool({ name: "trip_value.inserted", label: "trip_value.inserted" }),
+			ports.Capability({ name: "trip_value.self", label: "trip_value.self" }),
+			ports.Capability({ name: "trips.self", label: "trips.self" }),
+			ports.Capability({ name: "xs.self", label: "xs.self" }),
+			ports.Capability({ name: "ys.self", label: "ys.self" }),
 		],
 	});
 	config.addNodeType({
@@ -11902,6 +12894,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => (_inputData, _connections) => [
 			ports.data({ name: "route.out", label: "route.out" }),
+			ports.Capability({ name: "route.self", label: "route.self" }),
 		],
 	});
 	config.addNodeType({
@@ -11916,6 +12909,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => (_inputData, _connections) => [
 			ports.int64({ name: "winShare.undefined", label: "winShare.undefined" }),
+			ports.Capability({ name: "winShare.self", label: "winShare.self" }),
 		],
 	});
 	config.addNodeType({
@@ -11977,6 +12971,12 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.int64({ name: "edge_from.offset", label: "edge_from.offset" }),
 			ports.int64({ name: "edge_from.stride", label: "edge_from.stride" }),
 			ports.string({ name: "edge_from.texts", label: "edge_from.texts" }),
+			ports.bool({ name: "edge_strength.flags", label: "edge_strength.flags" }),
+			ports.int64({ name: "edge_strength.integers", label: "edge_strength.integers" }),
+			ports.float64({ name: "edge_strength.numbers", label: "edge_strength.numbers" }),
+			ports.int64({ name: "edge_strength.offset", label: "edge_strength.offset" }),
+			ports.int64({ name: "edge_strength.stride", label: "edge_strength.stride" }),
+			ports.string({ name: "edge_strength.texts", label: "edge_strength.texts" }),
 			ports.bool({ name: "edge_to.flags", label: "edge_to.flags" }),
 			ports.int64({ name: "edge_to.integers", label: "edge_to.integers" }),
 			ports.float64({ name: "edge_to.numbers", label: "edge_to.numbers" }),
@@ -11989,7 +12989,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.int64({ name: "energy.offset", label: "energy.offset" }),
 			ports.int64({ name: "energy.stride", label: "energy.stride" }),
 			ports.string({ name: "energy.texts", label: "energy.texts" }),
-			ports["[]byte"]({ name: "entered_doc.data", label: "entered_doc.data" }),
+			ports.float64({ name: "enter_filter.threshold", label: "enter_filter.threshold" }),
 			ports.string({ name: "episode.encoding", label: "episode.encoding" }),
 			ports.string({ name: "episode.text", label: "episode.text" }),
 			ports.bool({ name: "episode.unique", label: "episode.unique" }),
@@ -11999,7 +12999,6 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.string({ name: "evaluated.scope", label: "evaluated.scope" }),
 			ports["[]byte"]({ name: "event.data", label: "event.data" }),
 			ports["[]byte"]({ name: "examples.data", label: "examples.data" }),
-			ports["[]byte"]({ name: "exited_doc.data", label: "exited_doc.data" }),
 			ports.bool({ name: "frames.flush", label: "frames.flush" }),
 			ports.string({ name: "frames.scope", label: "frames.scope" }),
 			ports.float64({ name: "hit.threshold", label: "hit.threshold" }),
@@ -12125,6 +13124,11 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.string({ name: "walk_trail.scope", label: "walk_trail.scope" }),
 			ports.bool({ name: "wallet_pnl.flush", label: "wallet_pnl.flush" }),
 			ports.string({ name: "wallet_pnl.scope", label: "wallet_pnl.scope" }),
+			ports.string({ name: "with_target_enter.encoding", label: "with_target_enter.encoding" }),
+			ports.string({ name: "with_target_enter.text", label: "with_target_enter.text" }),
+			ports.bool({ name: "with_target_enter.unique", label: "with_target_enter.unique" }),
+			ports.int64({ name: "with_target_enter.unsigned", label: "with_target_enter.unsigned" }),
+			ports.float64({ name: "with_target_enter.value", label: "with_target_enter.value" }),
 			ports.bool({ name: "xs.flags", label: "xs.flags" }),
 			ports.int64({ name: "xs.integers", label: "xs.integers" }),
 			ports.float64({ name: "xs.numbers", label: "xs.numbers" }),
@@ -12138,201 +13142,305 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.int64({ name: "accuracy.count", label: "accuracy.count" }),
 			ports.int64({ name: "accuracy.idle", label: "accuracy.idle" }),
 			ports.bool({ name: "accuracy.ready", label: "accuracy.ready" }),
+			ports.Capability({ name: "accuracy.self", label: "accuracy.self" }),
+			ports.Capability({ name: "activation.self", label: "activation.self" }),
 			ports.bool({ name: "activity_closed.found", label: "activity_closed.found" }),
 			ports.int64({ name: "activity_closed.missing", label: "activity_closed.missing" }),
 			ports.float64({ name: "activity_closed.out", label: "activity_closed.out" }),
 			ports.string({ name: "activity_closed.text", label: "activity_closed.text" }),
 			ports.int64({ name: "activity_closed.unsigned", label: "activity_closed.unsigned" }),
+			ports.Capability({ name: "activity_closed.self", label: "activity_closed.self" }),
 			ports.bool({ name: "activity_id.inserted", label: "activity_id.inserted" }),
+			ports.Capability({ name: "activity_id.self", label: "activity_id.self" }),
 			ports.int64({ name: "activity_log.idle", label: "activity_log.idle" }),
+			ports.Capability({ name: "activity_log.self", label: "activity_log.self" }),
 			ports.bool({ name: "activity_message.inserted", label: "activity_message.inserted" }),
+			ports.Capability({ name: "activity_message.self", label: "activity_message.self" }),
 			ports.bool({ name: "activity_pnl.found", label: "activity_pnl.found" }),
 			ports.int64({ name: "activity_pnl.missing", label: "activity_pnl.missing" }),
 			ports.float64({ name: "activity_pnl.out", label: "activity_pnl.out" }),
 			ports.string({ name: "activity_pnl.text", label: "activity_pnl.text" }),
 			ports.int64({ name: "activity_pnl.unsigned", label: "activity_pnl.unsigned" }),
+			ports.Capability({ name: "activity_pnl.self", label: "activity_pnl.self" }),
 			ports.bool({ name: "activity_row.inserted", label: "activity_row.inserted" }),
+			ports.Capability({ name: "activity_row.self", label: "activity_row.self" }),
 			ports.bool({ name: "activity_symbol.found", label: "activity_symbol.found" }),
 			ports.int64({ name: "activity_symbol.missing", label: "activity_symbol.missing" }),
 			ports.float64({ name: "activity_symbol.out", label: "activity_symbol.out" }),
 			ports.string({ name: "activity_symbol.text", label: "activity_symbol.text" }),
 			ports.int64({ name: "activity_symbol.unsigned", label: "activity_symbol.unsigned" }),
+			ports.Capability({ name: "activity_symbol.self", label: "activity_symbol.self" }),
 			ports.bool({ name: "activity_time.inserted", label: "activity_time.inserted" }),
+			ports.Capability({ name: "activity_time.self", label: "activity_time.self" }),
+			ports.Capability({ name: "authority.self", label: "authority.self" }),
 			ports.int64({ name: "bins.idle", label: "bins.idle" }),
+			ports.Capability({ name: "bins.self", label: "bins.self" }),
 			ports.int64({ name: "bp_deviation.undefined", label: "bp_deviation.undefined" }),
+			ports.Capability({ name: "bp_deviation.self", label: "bp_deviation.self" }),
 			ports.int64({ name: "bp_mean.count", label: "bp_mean.count" }),
 			ports.int64({ name: "bp_mean.idle", label: "bp_mean.idle" }),
 			ports.bool({ name: "bp_mean.ready", label: "bp_mean.ready" }),
+			ports.Capability({ name: "bp_mean.self", label: "bp_mean.self" }),
+			ports.Capability({ name: "bp_mean_square.self", label: "bp_mean_square.self" }),
 			ports.int64({ name: "bp_second.count", label: "bp_second.count" }),
 			ports.int64({ name: "bp_second.idle", label: "bp_second.idle" }),
 			ports.bool({ name: "bp_second.ready", label: "bp_second.ready" }),
+			ports.Capability({ name: "bp_second.self", label: "bp_second.self" }),
+			ports.Capability({ name: "bp_square.self", label: "bp_square.self" }),
+			ports.Capability({ name: "bp_variance.self", label: "bp_variance.self" }),
 			ports.int64({ name: "decisions.idle", label: "decisions.idle" }),
+			ports.Capability({ name: "decisions.self", label: "decisions.self" }),
 			ports.int64({ name: "edge.count", label: "edge.count" }),
 			ports.int64({ name: "edge.idle", label: "edge.idle" }),
 			ports.bool({ name: "edge.ready", label: "edge.ready" }),
+			ports.Capability({ name: "edge.self", label: "edge.self" }),
+			ports.Capability({ name: "edge_from.self", label: "edge_from.self" }),
+			ports.Capability({ name: "edge_strength.self", label: "edge_strength.self" }),
+			ports.Capability({ name: "edge_to.self", label: "edge_to.self" }),
+			ports.Capability({ name: "energy.self", label: "energy.self" }),
+			ports.bool({ name: "enter_filter.passed", label: "enter_filter.passed" }),
+			ports.int64({ name: "enter_filter.rejected", label: "enter_filter.rejected" }),
+			ports.Capability({ name: "enter_filter.self", label: "enter_filter.self" }),
 			ports.bool({ name: "entered_at.found", label: "entered_at.found" }),
 			ports["[]byte"]({ name: "entered_at.json", label: "entered_at.json" }),
 			ports.int64({ name: "entered_at.missing", label: "entered_at.missing" }),
 			ports.string({ name: "entered_at.text", label: "entered_at.text" }),
 			ports.int64({ name: "entered_at.unsigned", label: "entered_at.unsigned" }),
+			ports.Capability({ name: "entered_at.self", label: "entered_at.self" }),
 			ports.bool({ name: "episode.inserted", label: "episode.inserted" }),
+			ports.Capability({ name: "episode.self", label: "episode.self" }),
 			ports.int64({ name: "evaluated.count", label: "evaluated.count" }),
 			ports.int64({ name: "evaluated.idle", label: "evaluated.idle" }),
 			ports.bool({ name: "evaluated.ready", label: "evaluated.ready" }),
+			ports.Capability({ name: "evaluated.self", label: "evaluated.self" }),
+			ports.Capability({ name: "event.self", label: "event.self" }),
 			ports.bool({ name: "event_excursion.found", label: "event_excursion.found" }),
 			ports["[]byte"]({ name: "event_excursion.json", label: "event_excursion.json" }),
 			ports.int64({ name: "event_excursion.missing", label: "event_excursion.missing" }),
 			ports.string({ name: "event_excursion.text", label: "event_excursion.text" }),
 			ports.int64({ name: "event_excursion.unsigned", label: "event_excursion.unsigned" }),
+			ports.Capability({ name: "event_excursion.self", label: "event_excursion.self" }),
 			ports.bool({ name: "event_symbol.found", label: "event_symbol.found" }),
 			ports["[]byte"]({ name: "event_symbol.json", label: "event_symbol.json" }),
 			ports.int64({ name: "event_symbol.missing", label: "event_symbol.missing" }),
 			ports.float64({ name: "event_symbol.out", label: "event_symbol.out" }),
 			ports.int64({ name: "event_symbol.unsigned", label: "event_symbol.unsigned" }),
+			ports.Capability({ name: "event_symbol.self", label: "event_symbol.self" }),
 			ports.bool({ name: "example_action.found", label: "example_action.found" }),
 			ports.int64({ name: "example_action.missing", label: "example_action.missing" }),
 			ports.float64({ name: "example_action.out", label: "example_action.out" }),
 			ports.string({ name: "example_action.text", label: "example_action.text" }),
 			ports.int64({ name: "example_action.unsigned", label: "example_action.unsigned" }),
+			ports.Capability({ name: "example_action.self", label: "example_action.self" }),
 			ports.bool({ name: "example_cursor.found", label: "example_cursor.found" }),
 			ports.int64({ name: "example_cursor.missing", label: "example_cursor.missing" }),
 			ports.float64({ name: "example_cursor.out", label: "example_cursor.out" }),
 			ports.string({ name: "example_cursor.text", label: "example_cursor.text" }),
 			ports.int64({ name: "example_cursor.unsigned", label: "example_cursor.unsigned" }),
+			ports.Capability({ name: "example_cursor.self", label: "example_cursor.self" }),
 			ports.bool({ name: "example_label.found", label: "example_label.found" }),
 			ports["[]byte"]({ name: "example_label.json", label: "example_label.json" }),
 			ports.int64({ name: "example_label.missing", label: "example_label.missing" }),
 			ports.float64({ name: "example_label.out", label: "example_label.out" }),
 			ports.int64({ name: "example_label.unsigned", label: "example_label.unsigned" }),
+			ports.Capability({ name: "example_label.self", label: "example_label.self" }),
 			ports.bool({ name: "example_origin.found", label: "example_origin.found" }),
 			ports.int64({ name: "example_origin.missing", label: "example_origin.missing" }),
 			ports.float64({ name: "example_origin.out", label: "example_origin.out" }),
 			ports.string({ name: "example_origin.text", label: "example_origin.text" }),
 			ports.int64({ name: "example_origin.unsigned", label: "example_origin.unsigned" }),
+			ports.Capability({ name: "example_origin.self", label: "example_origin.self" }),
 			ports.bool({ name: "example_path.found", label: "example_path.found" }),
 			ports.int64({ name: "example_path.missing", label: "example_path.missing" }),
 			ports.float64({ name: "example_path.out", label: "example_path.out" }),
 			ports.string({ name: "example_path.text", label: "example_path.text" }),
 			ports.int64({ name: "example_path.unsigned", label: "example_path.unsigned" }),
+			ports.Capability({ name: "example_path.self", label: "example_path.self" }),
 			ports.bool({ name: "example_record.found", label: "example_record.found" }),
 			ports.int64({ name: "example_record.missing", label: "example_record.missing" }),
 			ports.float64({ name: "example_record.out", label: "example_record.out" }),
 			ports.string({ name: "example_record.text", label: "example_record.text" }),
 			ports.int64({ name: "example_record.unsigned", label: "example_record.unsigned" }),
+			ports.Capability({ name: "example_record.self", label: "example_record.self" }),
 			ports.bool({ name: "example_seq.found", label: "example_seq.found" }),
 			ports["[]byte"]({ name: "example_seq.json", label: "example_seq.json" }),
 			ports.int64({ name: "example_seq.missing", label: "example_seq.missing" }),
 			ports.string({ name: "example_seq.text", label: "example_seq.text" }),
 			ports.int64({ name: "example_seq.unsigned", label: "example_seq.unsigned" }),
+			ports.Capability({ name: "example_seq.self", label: "example_seq.self" }),
 			ports.bool({ name: "example_symbol.found", label: "example_symbol.found" }),
 			ports.int64({ name: "example_symbol.missing", label: "example_symbol.missing" }),
 			ports.float64({ name: "example_symbol.out", label: "example_symbol.out" }),
 			ports.string({ name: "example_symbol.text", label: "example_symbol.text" }),
 			ports.int64({ name: "example_symbol.unsigned", label: "example_symbol.unsigned" }),
-			ports.bool({ name: "exited_at.found", label: "exited_at.found" }),
-			ports["[]byte"]({ name: "exited_at.json", label: "exited_at.json" }),
-			ports.int64({ name: "exited_at.missing", label: "exited_at.missing" }),
-			ports.string({ name: "exited_at.text", label: "exited_at.text" }),
-			ports.int64({ name: "exited_at.unsigned", label: "exited_at.unsigned" }),
+			ports.Capability({ name: "example_symbol.self", label: "example_symbol.self" }),
+			ports.Capability({ name: "examples.self", label: "examples.self" }),
 			ports.int64({ name: "frames.count", label: "frames.count" }),
 			ports.int64({ name: "frames.idle", label: "frames.idle" }),
 			ports.bool({ name: "frames.ready", label: "frames.ready" }),
+			ports.Capability({ name: "frames.self", label: "frames.self" }),
 			ports["[]byte"]({ name: "hit.out", label: "hit.out" }),
 			ports.int64({ name: "hit.rejected", label: "hit.rejected" }),
+			ports.Capability({ name: "hit.self", label: "hit.self" }),
+			ports.Capability({ name: "hot.self", label: "hot.self" }),
 			ports.bool({ name: "item.inserted", label: "item.inserted" }),
+			ports.Capability({ name: "item.self", label: "item.self" }),
 			ports.bool({ name: "item_path.inserted", label: "item_path.inserted" }),
+			ports.Capability({ name: "item_path.self", label: "item_path.self" }),
 			ports.int64({ name: "items.idle", label: "items.idle" }),
+			ports.Capability({ name: "items.self", label: "items.self" }),
 			ports.bool({ name: "judged.inserted", label: "judged.inserted" }),
+			ports.Capability({ name: "judged.self", label: "judged.self" }),
+			ports.Capability({ name: "label.self", label: "label.self" }),
 			ports.int64({ name: "links.idle", label: "links.idle" }),
+			ports.Capability({ name: "links.self", label: "links.self" }),
 			ports.bool({ name: "mark_A.found", label: "mark_A.found" }),
 			ports.int64({ name: "mark_A.missing", label: "mark_A.missing" }),
 			ports.float64({ name: "mark_A.out", label: "mark_A.out" }),
 			ports.string({ name: "mark_A.text", label: "mark_A.text" }),
 			ports.int64({ name: "mark_A.unsigned", label: "mark_A.unsigned" }),
+			ports.Capability({ name: "mark_A.self", label: "mark_A.self" }),
 			ports.bool({ name: "mark_B.found", label: "mark_B.found" }),
 			ports.int64({ name: "mark_B.missing", label: "mark_B.missing" }),
 			ports.float64({ name: "mark_B.out", label: "mark_B.out" }),
 			ports.string({ name: "mark_B.text", label: "mark_B.text" }),
 			ports.int64({ name: "mark_B.unsigned", label: "mark_B.unsigned" }),
+			ports.Capability({ name: "mark_B.self", label: "mark_B.self" }),
 			ports.bool({ name: "mark_C.found", label: "mark_C.found" }),
 			ports.int64({ name: "mark_C.missing", label: "mark_C.missing" }),
 			ports.float64({ name: "mark_C.out", label: "mark_C.out" }),
 			ports.string({ name: "mark_C.text", label: "mark_C.text" }),
 			ports.int64({ name: "mark_C.unsigned", label: "mark_C.unsigned" }),
+			ports.Capability({ name: "mark_C.self", label: "mark_C.self" }),
 			ports.bool({ name: "marks_A.inserted", label: "marks_A.inserted" }),
+			ports.Capability({ name: "marks_A.self", label: "marks_A.self" }),
 			ports.bool({ name: "marks_B.inserted", label: "marks_B.inserted" }),
+			ports.Capability({ name: "marks_B.self", label: "marks_B.self" }),
 			ports.bool({ name: "marks_C.inserted", label: "marks_C.inserted" }),
+			ports.Capability({ name: "marks_C.self", label: "marks_C.self" }),
 			ports.int64({ name: "negatives.count", label: "negatives.count" }),
 			ports.int64({ name: "negatives.idle", label: "negatives.idle" }),
 			ports.bool({ name: "negatives.ready", label: "negatives.ready" }),
+			ports.Capability({ name: "negatives.self", label: "negatives.self" }),
 			ports.int64({ name: "outcomes.idle", label: "outcomes.idle" }),
+			ports.Capability({ name: "outcomes.self", label: "outcomes.self" }),
 			ports.bool({ name: "point.inserted", label: "point.inserted" }),
+			ports.Capability({ name: "point.self", label: "point.self" }),
 			ports.bool({ name: "point_x.inserted", label: "point_x.inserted" }),
+			ports.Capability({ name: "point_x.self", label: "point_x.self" }),
 			ports.int64({ name: "points.idle", label: "points.idle" }),
+			ports.Capability({ name: "points.self", label: "points.self" }),
 			ports.int64({ name: "positives.count", label: "positives.count" }),
 			ports.int64({ name: "positives.idle", label: "positives.idle" }),
 			ports.bool({ name: "positives.ready", label: "positives.ready" }),
+			ports.Capability({ name: "positives.self", label: "positives.self" }),
 			ports.int64({ name: "predicted.idle", label: "predicted.idle" }),
+			ports.Capability({ name: "predicted.self", label: "predicted.self" }),
+			ports.Capability({ name: "present.self", label: "present.self" }),
 			ports.int64({ name: "regions.idle", label: "regions.idle" }),
+			ports.Capability({ name: "regions.self", label: "regions.self" }),
 			ports.int64({ name: "resolved.count", label: "resolved.count" }),
 			ports.int64({ name: "resolved.idle", label: "resolved.idle" }),
 			ports.bool({ name: "resolved.ready", label: "resolved.ready" }),
+			ports.Capability({ name: "resolved.self", label: "resolved.self" }),
 			ports.data({ name: "route.out", label: "route.out" }),
+			ports.Capability({ name: "route.self", label: "route.self" }),
 			ports.bool({ name: "row_action.inserted", label: "row_action.inserted" }),
+			ports.Capability({ name: "row_action.self", label: "row_action.self" }),
 			ports.bool({ name: "row_confidence.inserted", label: "row_confidence.inserted" }),
+			ports.Capability({ name: "row_confidence.self", label: "row_confidence.self" }),
 			ports.int64({ name: "row_id.idle", label: "row_id.idle" }),
+			ports.Capability({ name: "row_id.self", label: "row_id.self" }),
 			ports.bool({ name: "row_key.inserted", label: "row_key.inserted" }),
+			ports.Capability({ name: "row_key.self", label: "row_key.self" }),
 			ports.bool({ name: "row_reason.inserted", label: "row_reason.inserted" }),
+			ports.Capability({ name: "row_reason.self", label: "row_reason.self" }),
 			ports.bool({ name: "row_symbol.inserted", label: "row_symbol.inserted" }),
+			ports.Capability({ name: "row_symbol.self", label: "row_symbol.self" }),
 			ports.bool({ name: "score.found", label: "score.found" }),
 			ports["[]byte"]({ name: "score.json", label: "score.json" }),
 			ports.int64({ name: "score.missing", label: "score.missing" }),
 			ports.string({ name: "score.text", label: "score.text" }),
 			ports.int64({ name: "score.unsigned", label: "score.unsigned" }),
+			ports.Capability({ name: "score.self", label: "score.self" }),
 			ports.int64({ name: "scored.absent", label: "scored.absent" }),
+			ports.Capability({ name: "scored.self", label: "scored.self" }),
 			ports.int64({ name: "situations.count", label: "situations.count" }),
 			ports.int64({ name: "situations.idle", label: "situations.idle" }),
 			ports.bool({ name: "situations.ready", label: "situations.ready" }),
+			ports.Capability({ name: "situations.self", label: "situations.self" }),
+			ports.Capability({ name: "snr.self", label: "snr.self" }),
+			ports.Capability({ name: "source.self", label: "source.self" }),
 			ports.int64({ name: "tree.idle", label: "tree.idle" }),
+			ports.Capability({ name: "tree.self", label: "tree.self" }),
 			ports.bool({ name: "trip_basis.found", label: "trip_basis.found" }),
 			ports["[]byte"]({ name: "trip_basis.json", label: "trip_basis.json" }),
 			ports.int64({ name: "trip_basis.missing", label: "trip_basis.missing" }),
 			ports.string({ name: "trip_basis.text", label: "trip_basis.text" }),
 			ports.int64({ name: "trip_basis.unsigned", label: "trip_basis.unsigned" }),
+			ports.Capability({ name: "trip_basis.self", label: "trip_basis.self" }),
+			ports.Capability({ name: "trip_bp.self", label: "trip_bp.self" }),
 			ports.bool({ name: "trip_negative.passed", label: "trip_negative.passed" }),
 			ports.int64({ name: "trip_negative.rejected", label: "trip_negative.rejected" }),
+			ports.Capability({ name: "trip_negative.self", label: "trip_negative.self" }),
 			ports.bool({ name: "trip_negative_pnl.found", label: "trip_negative_pnl.found" }),
 			ports["[]byte"]({ name: "trip_negative_pnl.json", label: "trip_negative_pnl.json" }),
 			ports.int64({ name: "trip_negative_pnl.missing", label: "trip_negative_pnl.missing" }),
 			ports.string({ name: "trip_negative_pnl.text", label: "trip_negative_pnl.text" }),
 			ports.int64({ name: "trip_negative_pnl.unsigned", label: "trip_negative_pnl.unsigned" }),
+			ports.Capability({ name: "trip_negative_pnl.self", label: "trip_negative_pnl.self" }),
 			ports.bool({ name: "trip_pnl.found", label: "trip_pnl.found" }),
 			ports["[]byte"]({ name: "trip_pnl.json", label: "trip_pnl.json" }),
 			ports.int64({ name: "trip_pnl.missing", label: "trip_pnl.missing" }),
 			ports.string({ name: "trip_pnl.text", label: "trip_pnl.text" }),
 			ports.int64({ name: "trip_pnl.unsigned", label: "trip_pnl.unsigned" }),
+			ports.Capability({ name: "trip_pnl.self", label: "trip_pnl.self" }),
 			ports.bool({ name: "trip_positive.passed", label: "trip_positive.passed" }),
 			ports.int64({ name: "trip_positive.rejected", label: "trip_positive.rejected" }),
+			ports.Capability({ name: "trip_positive.self", label: "trip_positive.self" }),
 			ports.bool({ name: "trip_positive_pnl.found", label: "trip_positive_pnl.found" }),
 			ports["[]byte"]({ name: "trip_positive_pnl.json", label: "trip_positive_pnl.json" }),
 			ports.int64({ name: "trip_positive_pnl.missing", label: "trip_positive_pnl.missing" }),
 			ports.string({ name: "trip_positive_pnl.text", label: "trip_positive_pnl.text" }),
 			ports.int64({ name: "trip_positive_pnl.unsigned", label: "trip_positive_pnl.unsigned" }),
+			ports.Capability({ name: "trip_positive_pnl.self", label: "trip_positive_pnl.self" }),
 			ports.int64({ name: "trip_return.undefined", label: "trip_return.undefined" }),
+			ports.Capability({ name: "trip_return.self", label: "trip_return.self" }),
+			ports.Capability({ name: "trips.self", label: "trips.self" }),
+			ports.Capability({ name: "walk.self", label: "walk.self" }),
 			ports.bool({ name: "walk_price.found", label: "walk_price.found" }),
 			ports["[]byte"]({ name: "walk_price.json", label: "walk_price.json" }),
 			ports.int64({ name: "walk_price.missing", label: "walk_price.missing" }),
 			ports.string({ name: "walk_price.text", label: "walk_price.text" }),
 			ports.int64({ name: "walk_price.unsigned", label: "walk_price.unsigned" }),
+			ports.Capability({ name: "walk_price.self", label: "walk_price.self" }),
 			ports.int64({ name: "walk_trail.idle", label: "walk_trail.idle" }),
+			ports.Capability({ name: "walk_trail.self", label: "walk_trail.self" }),
 			ports.bool({ name: "walk_x.found", label: "walk_x.found" }),
 			ports["[]byte"]({ name: "walk_x.json", label: "walk_x.json" }),
 			ports.int64({ name: "walk_x.missing", label: "walk_x.missing" }),
 			ports.string({ name: "walk_x.text", label: "walk_x.text" }),
 			ports.int64({ name: "walk_x.unsigned", label: "walk_x.unsigned" }),
+			ports.Capability({ name: "walk_x.self", label: "walk_x.self" }),
 			ports.int64({ name: "wallet_pnl.count", label: "wallet_pnl.count" }),
 			ports.int64({ name: "wallet_pnl.idle", label: "wallet_pnl.idle" }),
 			ports.bool({ name: "wallet_pnl.ready", label: "wallet_pnl.ready" }),
+			ports.Capability({ name: "wallet_pnl.self", label: "wallet_pnl.self" }),
+			ports.bool({ name: "with_target_enter.inserted", label: "with_target_enter.inserted" }),
+			ports.Capability({ name: "with_target_enter.self", label: "with_target_enter.self" }),
+			ports.Capability({ name: "xs.self", label: "xs.self" }),
+			ports.Capability({ name: "ys.self", label: "ys.self" }),
+		],
+	});
+	config.addNodeType({
+		type: "definition:view",
+		label: "view",
+		category: "Definitions",
+		description: "Sub-graph: view",
+		initialWidth: 320,
+		inputs: (_ports) => (_inputData, _connections) => [
+		],
+		outputs: (_ports) => (_inputData, _connections) => [
 		],
 	});
 
@@ -13346,6 +14454,21 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 	});
 
 	config.addNodeType({
+		type: "ui.Decisions",
+		label: "Decisions",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (_ports) => (_inputData, _connections) => {
+			const dynamicPorts: never[] = [
+			];
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
 		type: "ui.DistributionCurve",
 		label: "DistributionCurve",
 		category: "UI Components",
@@ -13721,6 +14844,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 				ports.float64({ name: "entered", label: "entered" }),
 				ports.float64({ name: "exited", label: "exited" }),
 				ports.float64({ name: "outcome", label: "outcome" }),
+				ports.bool({ name: "fallback", label: "fallback" }),
 			];
 			return dynamicPorts;
 		},
@@ -19818,6 +20942,8 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 				ports.data({ name: "regions", label: "regions" }),
 				ports.data({ name: "contours", label: "contours" }),
 				ports.data({ name: "connections", label: "connections" }),
+				ports.string({ name: "phase", label: "phase" }),
+				ports.bool({ name: "fallback", label: "fallback" }),
 			];
 			return dynamicPorts;
 		},
@@ -20199,6 +21325,36 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 				ports.string({ name: "description", label: "description" }),
 				ports.float64({ name: "value", label: "value" }),
 				ports.data({ name: "points", label: "points" }),
+			];
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.KernelInspector",
+		label: "KernelInspector",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (_ports) => (_inputData, _connections) => {
+			const dynamicPorts: never[] = [
+			];
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.KernelList",
+		label: "KernelList",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (_ports) => (_inputData, _connections) => {
+			const dynamicPorts: never[] = [
 			];
 			return dynamicPorts;
 		},
@@ -21284,6 +22440,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 				ports.float64({ name: "deviation", label: "deviation" }),
 				ports.string({ name: "unit", label: "unit" }),
 				ports.string({ name: "note", label: "note" }),
+				ports.bool({ name: "showFit", label: "showFit" }),
 			];
 			return dynamicPorts;
 		},
@@ -21828,6 +22985,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 					],
 				}),
 				ports.data({ name: "branches", label: "branches" }),
+				ports.bool({ name: "fallback", label: "fallback" }),
 			];
 			return dynamicPorts;
 		},
@@ -21847,6 +23005,58 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 				ports.data({ name: "positions", label: "positions" }),
 				ports.data({ name: "exiting", label: "exiting" }),
 				ports.string({ name: "emptyLabel", label: "emptyLabel" }),
+			];
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Positions",
+		label: "Positions",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (_ports) => (_inputData, _connections) => {
+			const dynamicPorts: never[] = [
+			];
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.PredictiveCodingCanvas",
+		label: "PredictiveCodingCanvas",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (ports) => (_inputData, _connections) => {
+			const dynamicPorts = [
+				ports.Capability({ name: "footer", label: "footer" }),
+				ports.Capability({ name: "legend", label: "legend" }),
+				ports.Capability({ name: "meta", label: "meta" }),
+				ports.string({ name: "className", label: "className" }),
+				ports.Capability({ name: "topRight", label: "topRight" }),
+				ports.bool({ name: "scanlines", label: "scanlines" }),
+				ports.string({ name: "title", label: "title" }),
+			];
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
+		type: "ui.Pulse",
+		label: "Pulse",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (_ports) => (_inputData, _connections) => {
+			const dynamicPorts: never[] = [
 			];
 			return dynamicPorts;
 		},
@@ -23048,6 +24258,21 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 	});
 
 	config.addNodeType({
+		type: "ui.ThesisModal",
+		label: "ThesisModal",
+		category: "UI Components",
+		initialWidth: 280,
+		inputs: (_ports) => (_inputData, _connections) => {
+			const dynamicPorts: never[] = [
+			];
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports.Capability({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addNodeType({
 		type: "ui.Toolbar",
 		label: "Toolbar",
 		category: "UI Components",
@@ -23157,6 +24382,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 				ports.data({ name: "root", label: "root" }),
 				ports.data({ name: "candidates", label: "candidates" }),
 				ports.string({ name: "className", label: "className" }),
+				ports.bool({ name: "fallback", label: "fallback" }),
 			];
 			return dynamicPorts;
 		},

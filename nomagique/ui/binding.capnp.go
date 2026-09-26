@@ -5,7 +5,10 @@ package ui
 import (
 	capnp "capnproto.org/go/capnp/v3"
 	text "capnproto.org/go/capnp/v3/encoding/text"
+	fc "capnproto.org/go/capnp/v3/flowcontrol"
 	schemas "capnproto.org/go/capnp/v3/schemas"
+	server "capnproto.org/go/capnp/v3/server"
+	context "context"
 )
 
 type Bound capnp.Struct
@@ -232,62 +235,374 @@ func (f Bindings_Future) Struct() (Bindings, error) {
 	return Bindings(p.Struct()), err
 }
 
-const schema_e3b1c2d4a5f60718 = "x\xda\xccT]\x88\x1bU\x14>\xe7\xde\xf9Y\xca\xc6" +
-	"\xe42\x11]J\x08-\xebC#\xb8n\x97\xf6! " +
-	"\x89V\xb1[\xb7\x92\x1b\xa8T\xeb\x0f\xd3dLF\x93" +
-	"\x99if\xc6\xeaC\x1f|\x90R\xd8\x87\x0a\x16\xd9>" +
-	"\xf8\xf3P\xb1\x15\x91\xe4M\xa5X*\xb4\xa2\x88\x82E" +
-	"X\xb1>\xa8%\x08\xee\x83\x0aB\x05\x19\xb9\x93\xccL" +
-	"\x9a\xc65\xbe\x88o\xf7\x9e\xf9\xe6\x9c\xef~\xe7;\xe7" +
-	"\xee/HYZL\xbd\xaa\x02\xe1\x07e%\xb8\xfes" +
-	")c\xde\xea\xad\x02\xdb\x86\x002U\x01\x96\xba\xb4\x83" +
-	"\x80\xday\xfa\x1e`\xb0\xf7\xbayi\xe5\xc3C\xaf\x0f" +
-	"\x01(\x00\xa6\x14\x02|\xa9\x04\x18\\\xde]\xbb\xb8\xab" +
-	"\xdc\x7f\x0b\xd8V\x0cnW\x7f?s\xe5b\xf7\x07\x90" +
-	"%\x01<%mA\xed\x8c8joJ}\xc0\xe0;" +
-	"~o\xe1\xc7W\xee9\x0blG\x9c\xed\x05\xb9'\xb2" +
-	"\x9d\x90E\xb6wV\x0fo\xbc=\xab\x9c\x1b\x00\xc2$" +
-	"g\xe5s\x08RP\xfb\xd8xz\xbd\xd0\xed\x0d\x88\x84" +
-	"_\xd6\xe4g\xc4\x97;\xbf<\xfd\xc8\xbb\x0f\xed\xfe\x06" +
-	"X\x8e\x063\x1f\xf9\x876z\xd7\xae\x00\xe0\xd2K\xf2" +
-	">\xd4\xd6dQ\xfe\x94|\\\xbb&N\x81\xf2\xe9\xea" +
-	"\xc1\xf5\xde\x1b\xdf\x03\x9b\xa3\xc1\xde\xf3\xbb\xfa\xfc\xc4\x83" +
-	"_\x09\xf4\xe7\xf2\x16\xd4\xae\x86\xe8u\xf9\xb8\xb6C\x11" +
-	"\xe8O\x8a'/}\xfd\xcb\x85\x9f\xc6^\x17\x12g\xca" +
-	"v\xd4\xb6\x09\x98\x96S\x04\xf9\xdc\xd5\xcf\x9e\\xq" +
-	"\xeb\x06\xb0\x1c&D\x06R\xecW\x8a\xa8=\x11\x82\x1f" +
-	"U\x84\x14\x97\xb3\xc6\xb1\x97\x8f\xdd\xf6+\xb09Lx" +
-	"\x84\x1d\xd0\x96\xd5?\xb4\x03\xaa8qU4\xe1\xb5o" +
-	"\xdf\xef~\xf0\xec\xe2oC\xd9\xc2\x84\x7f\xaa\xa1l\xa9" +
-	"\x99>\xd8\x81e\xb7\xf5\x86y\xc4\x97\x8c\x05\xdf\\\xe8" +
-	"\xd8\xbeg\xdcU\xd3\x1d\xcb)\x1eX\xae\x86\xb7\xa3\x1d" +
-	"\xd33\xe6+y\xbd\xa3\xb7]>K%\x00\x09\x01\xd8" +
-	"\x03\x05\x00^\xa6\xc8W\x082\xc4,\x8a\xe0\xf2N\x00" +
-	"~?E^!\xc8\x08\xc9\"\x01`\xfb\x1f\x03\xe0+" +
-	"\x14y\x93`\xda\xd1\xbd&\xce\x02\xc1Y\xc0\xbcgz" +
-	"-#\xba\x055\xbb\xed\xd8\x96a\x01\xf5\\\xbc\x05\xb0" +
-	"B\x11Y\xd2$@\x11\x9c\x82q\xdd\xb6\x8c\xf9\xaa\x91" +
-	"w\xfd\x96\xe7r)f\x9c\xda\x0e\xc0g(\xf2,A" +
-	"\xd5\xf6=\xcc$Z\x02bf$9\x0d\x93\x1f6\xad" +
-	"\xbai5\x86\xe9\xef\xb3}\xab\x0ePA\xe4\x998\xa7" +
-	".\x1e\xfc\xf8\xe0m\xb1\x0aF\x15\x80\xd7)rgD" +
-	"\x85\xb6\xd0\xabI\x91{\x04\x19\xa5Y\xa4\x00\xec\x88\xf8" +
-	"\xbdE\x91?O0\xdf\xe8\xe8N\xf3f5\xd0\x8bb" +
-	"i\xa7c;\xb1x\xcf\xe9-?\x11/b.\x87\xcc" +
-	"\xa3\x9f\xbdX\x9a=q\xe4_\xc8\x13\xfbrL\x9e)" +
-	"\x8bT\xf4\xb40\xcd\xb4-\x9b\x0c\xdf\xa4\xca\xa0\x193" +
-	"T\x06\x88\x9d\x8eV\xf7\xc2\xd1\xa5\xd3O\xad\xb1\xc5\x9d" +
-	"@\xd8\x1d*&\xbb\x01\xa3-\xc2\xe6\x0a@XJ\xcd" +
-	"\x87\xe6.cZ\xd4/c\x05\xc7\x1d0\x81\xebh\xd1" +
-	"h\x09N*\x1a\xad\x1d\x8c\x16\xe1\xd4E\xc7l'n" +
-	"\xaa\xd5pE\xd9\x91n\x15\x87\xdd\x9a'X\x0a\xad\x10" +
-	"\xcfL&Y\xadc3C'*\xba\xc7n\x97\x06\x81" +
-	"1o\x17\xa6\xf6v5\xb1q\xecm_\x8c\xbdG\x91" +
-	"\x9f$\x98\xb6\xf4\xf6\xc8\xa0\xb7t\xd7}Xo\x03&" +
-	"1amw\x9fk\x03Z\x9b.\x84\x1bM9\xfa8" +
-	"2\xde\xb1R1l\x98x\xd4\x7f\xbd\xb6\xfe\x9e\xe5?" +
-	"\x8f\xce\x8d\x0b\xf7\x7f\xde\x8e\x9b\xf6\xf3_\x01\x00\x00\xff" +
-	"\xff\xdc\x94\"\x96"
+type Receiver capnp.Client
+
+// Receiver_TypeID is the unique identifier for the type Receiver.
+const Receiver_TypeID = 0xa4d75133316a2c68
+
+func (c Receiver) Publish(ctx context.Context, params func(Receiver_publish_Params) error) (Receiver_publish_Results_Future, capnp.ReleaseFunc) {
+
+	s := capnp.Send{
+		Method: capnp.Method{
+			InterfaceID:   0xa4d75133316a2c68,
+			MethodID:      0,
+			InterfaceName: "nomagique/ui/binding.capnp:Receiver",
+			MethodName:    "publish",
+		},
+	}
+	if params != nil {
+		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 1}
+		s.PlaceArgs = func(s capnp.Struct) error { return params(Receiver_publish_Params(s)) }
+	}
+
+	ans, release := capnp.Client(c).SendCall(ctx, s)
+	return Receiver_publish_Results_Future{Future: ans.Future()}, release
+
+}
+
+func (c Receiver) WaitStreaming() error {
+	return capnp.Client(c).WaitStreaming()
+}
+
+// String returns a string that identifies this capability for debugging
+// purposes.  Its format should not be depended on: in particular, it
+// should not be used to compare clients.  Use IsSame to compare clients
+// for equality.
+func (c Receiver) String() string {
+	return "Receiver(" + capnp.Client(c).String() + ")"
+}
+
+// AddRef creates a new Client that refers to the same capability as c.
+// If c is nil or has resolved to null, then AddRef returns nil.
+func (c Receiver) AddRef() Receiver {
+	return Receiver(capnp.Client(c).AddRef())
+}
+
+// Release releases a capability reference.  If this is the last
+// reference to the capability, then the underlying resources associated
+// with the capability will be released.
+//
+// Release will panic if c has already been released, but not if c is
+// nil or resolved to null.
+func (c Receiver) Release() {
+	capnp.Client(c).Release()
+}
+
+// Resolve blocks until the capability is fully resolved or the Context
+// expires.
+func (c Receiver) Resolve(ctx context.Context) error {
+	return capnp.Client(c).Resolve(ctx)
+}
+
+func (c Receiver) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+	return capnp.Client(c).EncodeAsPtr(seg)
+}
+
+func (Receiver) DecodeFromPtr(p capnp.Ptr) Receiver {
+	return Receiver(capnp.Client{}.DecodeFromPtr(p))
+}
+
+// IsValid reports whether c is a valid reference to a capability.
+// A reference is invalid if it is nil, has resolved to null, or has
+// been released.
+func (c Receiver) IsValid() bool {
+	return capnp.Client(c).IsValid()
+}
+
+// IsSame reports whether c and other refer to a capability created by the
+// same call to NewClient.  This can return false negatives if c or other
+// are not fully resolved: use Resolve if this is an issue.  If either
+// c or other are released, then IsSame panics.
+func (c Receiver) IsSame(other Receiver) bool {
+	return capnp.Client(c).IsSame(capnp.Client(other))
+}
+
+// Update the flowcontrol.FlowLimiter used to manage flow control for
+// this client. This affects all future calls, but not calls already
+// waiting to send. Passing nil sets the value to flowcontrol.NopLimiter,
+// which is also the default.
+func (c Receiver) SetFlowLimiter(lim fc.FlowLimiter) {
+	capnp.Client(c).SetFlowLimiter(lim)
+}
+
+// Get the current flowcontrol.FlowLimiter used to manage flow control
+// for this client.
+func (c Receiver) GetFlowLimiter() fc.FlowLimiter {
+	return capnp.Client(c).GetFlowLimiter()
+}
+
+// A Receiver_Server is a Receiver with a local implementation.
+type Receiver_Server interface {
+	Publish(context.Context, Receiver_publish) error
+}
+
+// Receiver_NewServer creates a new Server from an implementation of Receiver_Server.
+func Receiver_NewServer(s Receiver_Server) *server.Server {
+	c, _ := s.(server.Shutdowner)
+	return server.New(Receiver_Methods(nil, s), s, c)
+}
+
+// Receiver_ServerToClient creates a new Client from an implementation of Receiver_Server.
+// The caller is responsible for calling Release on the returned Client.
+func Receiver_ServerToClient(s Receiver_Server) Receiver {
+	return Receiver(capnp.NewClient(Receiver_NewServer(s)))
+}
+
+// Receiver_Methods appends Methods to a slice that invoke the methods on s.
+// This can be used to create a more complicated Server.
+func Receiver_Methods(methods []server.Method, s Receiver_Server) []server.Method {
+	if cap(methods) == 0 {
+		methods = make([]server.Method, 0, 1)
+	}
+
+	methods = append(methods, server.Method{
+		Method: capnp.Method{
+			InterfaceID:   0xa4d75133316a2c68,
+			MethodID:      0,
+			InterfaceName: "nomagique/ui/binding.capnp:Receiver",
+			MethodName:    "publish",
+		},
+		Impl: func(ctx context.Context, call *server.Call) error {
+			return s.Publish(ctx, Receiver_publish{call})
+		},
+	})
+
+	return methods
+}
+
+// Receiver_publish holds the state for a server call to Receiver.publish.
+// See server.Call for documentation.
+type Receiver_publish struct {
+	*server.Call
+}
+
+// Args returns the call's arguments.
+func (c Receiver_publish) Args() Receiver_publish_Params {
+	return Receiver_publish_Params(c.Call.Args())
+}
+
+// AllocResults allocates the results struct.
+func (c Receiver_publish) AllocResults() (Receiver_publish_Results, error) {
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	return Receiver_publish_Results(r), err
+}
+
+// Receiver_List is a list of Receiver.
+type Receiver_List = capnp.CapList[Receiver]
+
+// NewReceiver_List creates a new list of Receiver.
+func NewReceiver_List(s *capnp.Segment, sz int32) (Receiver_List, error) {
+	l, err := capnp.NewPointerList(s, sz)
+	return capnp.CapList[Receiver](l), err
+}
+
+type Receiver_publish_Params capnp.Struct
+
+// Receiver_publish_Params_TypeID is the unique identifier for the type Receiver_publish_Params.
+const Receiver_publish_Params_TypeID = 0xc2be74d5d02d6d24
+
+func NewReceiver_publish_Params(s *capnp.Segment) (Receiver_publish_Params, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	return Receiver_publish_Params(st), err
+}
+
+func NewRootReceiver_publish_Params(s *capnp.Segment) (Receiver_publish_Params, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	return Receiver_publish_Params(st), err
+}
+
+func ReadRootReceiver_publish_Params(msg *capnp.Message) (Receiver_publish_Params, error) {
+	root, err := msg.Root()
+	return Receiver_publish_Params(root.Struct()), err
+}
+
+func (s Receiver_publish_Params) String() string {
+	str, _ := text.Marshal(0xc2be74d5d02d6d24, capnp.Struct(s))
+	return str
+}
+
+func (s Receiver_publish_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+	return capnp.Struct(s).EncodeAsPtr(seg)
+}
+
+func (Receiver_publish_Params) DecodeFromPtr(p capnp.Ptr) Receiver_publish_Params {
+	return Receiver_publish_Params(capnp.Struct{}.DecodeFromPtr(p))
+}
+
+func (s Receiver_publish_Params) ToPtr() capnp.Ptr {
+	return capnp.Struct(s).ToPtr()
+}
+func (s Receiver_publish_Params) IsValid() bool {
+	return capnp.Struct(s).IsValid()
+}
+
+func (s Receiver_publish_Params) Message() *capnp.Message {
+	return capnp.Struct(s).Message()
+}
+
+func (s Receiver_publish_Params) Segment() *capnp.Segment {
+	return capnp.Struct(s).Segment()
+}
+func (s Receiver_publish_Params) Data() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return []byte(p.Data()), err
+}
+
+func (s Receiver_publish_Params) HasData() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s Receiver_publish_Params) SetData(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
+}
+
+// Receiver_publish_Params_List is a list of Receiver_publish_Params.
+type Receiver_publish_Params_List = capnp.StructList[Receiver_publish_Params]
+
+// NewReceiver_publish_Params creates a new list of Receiver_publish_Params.
+func NewReceiver_publish_Params_List(s *capnp.Segment, sz int32) (Receiver_publish_Params_List, error) {
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
+	return capnp.StructList[Receiver_publish_Params](l), err
+}
+
+// Receiver_publish_Params_Future is a wrapper for a Receiver_publish_Params promised by a client call.
+type Receiver_publish_Params_Future struct{ *capnp.Future }
+
+func (f Receiver_publish_Params_Future) Struct() (Receiver_publish_Params, error) {
+	p, err := f.Future.Ptr()
+	return Receiver_publish_Params(p.Struct()), err
+}
+
+type Receiver_publish_Results capnp.Struct
+
+// Receiver_publish_Results_TypeID is the unique identifier for the type Receiver_publish_Results.
+const Receiver_publish_Results_TypeID = 0xf5151bba0f74f3be
+
+func NewReceiver_publish_Results(s *capnp.Segment) (Receiver_publish_Results, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	return Receiver_publish_Results(st), err
+}
+
+func NewRootReceiver_publish_Results(s *capnp.Segment) (Receiver_publish_Results, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	return Receiver_publish_Results(st), err
+}
+
+func ReadRootReceiver_publish_Results(msg *capnp.Message) (Receiver_publish_Results, error) {
+	root, err := msg.Root()
+	return Receiver_publish_Results(root.Struct()), err
+}
+
+func (s Receiver_publish_Results) String() string {
+	str, _ := text.Marshal(0xf5151bba0f74f3be, capnp.Struct(s))
+	return str
+}
+
+func (s Receiver_publish_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+	return capnp.Struct(s).EncodeAsPtr(seg)
+}
+
+func (Receiver_publish_Results) DecodeFromPtr(p capnp.Ptr) Receiver_publish_Results {
+	return Receiver_publish_Results(capnp.Struct{}.DecodeFromPtr(p))
+}
+
+func (s Receiver_publish_Results) ToPtr() capnp.Ptr {
+	return capnp.Struct(s).ToPtr()
+}
+func (s Receiver_publish_Results) IsValid() bool {
+	return capnp.Struct(s).IsValid()
+}
+
+func (s Receiver_publish_Results) Message() *capnp.Message {
+	return capnp.Struct(s).Message()
+}
+
+func (s Receiver_publish_Results) Segment() *capnp.Segment {
+	return capnp.Struct(s).Segment()
+}
+
+// Receiver_publish_Results_List is a list of Receiver_publish_Results.
+type Receiver_publish_Results_List = capnp.StructList[Receiver_publish_Results]
+
+// NewReceiver_publish_Results creates a new list of Receiver_publish_Results.
+func NewReceiver_publish_Results_List(s *capnp.Segment, sz int32) (Receiver_publish_Results_List, error) {
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	return capnp.StructList[Receiver_publish_Results](l), err
+}
+
+// Receiver_publish_Results_Future is a wrapper for a Receiver_publish_Results promised by a client call.
+type Receiver_publish_Results_Future struct{ *capnp.Future }
+
+func (f Receiver_publish_Results_Future) Struct() (Receiver_publish_Results, error) {
+	p, err := f.Future.Ptr()
+	return Receiver_publish_Results(p.Struct()), err
+}
+
+const schema_e3b1c2d4a5f60718 = "x\xda\xccU_h\x1c\xd5\x17>g\xeen&\xbf\xb2" +
+	"\xb3\xb3\xf77\x09\x1aB\x08\x0d+\xe8\xaa\x8dih\xc1" +
+	"\x15\xd9\xb5U\xda\xd4TvV\x14k\xfd\xc3dw\xcc" +
+	"N\xdd\x9d\xd9\xee\xcc$\xbe\x14\xf1!\x94B\x0a\x0d\x98" +
+	"\x87\xe6A\xadX\xd1J\x90\x0d\xf8\xd0\x8a\xb5FhE" +
+	"_*\xb6JE}\xf0\x0fA0\x0fZ\x14\xea\xcb\xc8" +
+	"\xbd\xbb3\xb3\xd9&q}\x11\xdff\xce=\xf7\x9c\xef" +
+	"|\xe7|\xe7\xdes_4\x1b\x19\x91\xa6\xfb@x\xf4" +
+	"v\x8cvy7~\xc9$\x8c^g\x16\xe8V\x04\x88" +
+	"\x12\x11`\xf4T\xac\x86\x80\xcab\xec]@o\xef\x0d" +
+	"\xe3\xe2\xf8\xfb\x07_m: s8 q\x07]\xca" +
+	"\x00z\xa5\xbb\x0e\x8d\x8c\xaa_\xbd\x01\xb4\x9fx\xb7\x8a" +
+	"\x7f\x9c\xbe\xb2\\\xff\x01\x00Gg\xa4!T\xe6%\x11" +
+	"@\x99\x93\xf6(g\xd9\x97wigayGv\xe5" +
+	"M\xa0\xfd\x18zG#<\xaf\xb4\x05\x95:\xbf\xb0(" +
+	"\xad\x00z\xdf\xa9\x0f\xa4~|\xf9\xfe\xb7\x81\xde\x11\xe4" +
+	"\x9e\x89/\xb1\xdc\xf3q\x96\xfb\x9d\xd9\x89\xd5\xb7b]" +
+	"g\x1a\x0e<\xc8{\xf13\x08\x11\xaf\xf0\xb1\xfe\xdc\xb5" +
+	"T}\xa9\x01\x9b\x9f\x9c\x8e\x1fb'\xc9\xca\xdd\x97\xaf" +
+	":\xe7\x97\x81&\x83\xa0s\xf1\x05\x16\xf4\x14\x0fz\xe7" +
+	"\xe5\x85\xc7\x17\x1f\xde\xf95\xd0\x01\xe2u\x7f\xe8\x1e\\" +
+	"]\xfa\xe9\x0a+\xe8\xa3\xf8>T\xae\xc6\x19\xbe\xcf\xe3" +
+	"G\x95\xad2+\xa8\xeb\xd3\xd9'\xae-\xbd\xf6=\xd0" +
+	">\xe2\xed\xfd`\xc7\x8azl\xcf\x17\xcc\xfb\x7f\xf2\x16" +
+	"T\xfa\x98\x8f\xd2+\x1fUt\xee\xfdI\xfa\xc4\xc5/" +
+	"\x7f\xbd\xf0s[\xf9\x1c\xc4~y\x08\x95\xa7\xf9\x85\x03" +
+	"2\x032\xf0\xedg\xcf\x0c\xbf\xd4\xbf\x0at\x00C " +
+	"\x0d\xae\x8e\xc9iTNr\xe7y\x99qu\xa9G?" +
+	"2w\xe4\x96\xdf\x80\xf6a\x88\x837T\x99I\xfc\xa9" +
+	"\xcc%\xd8\xd7\xf1\x04\xeb\xe9+\xdf\x9c\xad\x9f{~\xe4" +
+	"z\x93W\x1e\xf0^\xcay\x1d\xa3,\xd8\xf9\xeb\x8e|" +
+	"\xae\xbf\xf7\xf7\x06G\x8d\xf3\xff\xbf\x8e\xe0\x81\x07\xc7=" +
+	"\xd3\xaah\x93\xc6a7\xa2\x0f\xbb\xc6p\xcdr\x1d}" +
+	"[A\xab\x9a\xd5\xf4ccy\xfe7]3\x1c=\x99" +
+	"\x1b\xd4jZ\xc5Vc$\x02\x10A\x00\xfaP\x0a@" +
+	"\xcd\x12T\xc7\x05\xa4\x88=\xc8\x8cc\xdb\x01\xd4\x07\x09" +
+	"\xaa9\x01\xa9 \xf4\xa0\x00@\xf7?\x09\xa0\x8e\x13T" +
+	"K\x02\xcaU\xcd)a\x0c\x04\x8c\x01\x0e:\x86S\xd6" +
+	"\xfd?\xaf`U\xaa\x96\xa9\x9b@\x1c\x1b\xe3\x809\x82" +
+	"H\xc3\x16\x022c\x07\x88\x8b\x96\xa9'\xf3\xfa\xa0\xed" +
+	"\x96\x1d[\x8d\x04\x88\xa5!\x00\xb5\x9b\xa0\xda#\xa0h" +
+	"\xb9\x0e&B\xa6\x011\xd1\x12\x9c\xf0\xe0\x13\x86Y4" +
+	"\xcc\xc9f\xf8\xbc^\xd0\x0dqJ\xaf\xe5\x10\xd5\x08\x89" +
+	"\x02\x04\xf3\x87>\xc9\x94\xee\x02\x81F\xc5\x17\xab\xeeD" +
+	"\xd9\xb0KY\xcc\xe1\xe6QwY\xaeY\x04`1\x13" +
+	"\x01R\x8d\xd1\xf8T\x83\xb1\x80[=\x0f\xa0\x16\x09\xaa" +
+	"\xd5\x16n+\xac\x0b%\x82\xaa# %\xa4\x07\x09\x00" +
+	"=\xcc\xae\x97\x09\xaa/\x0888Y\xd3\xaa\xa5\x9b9" +
+	"F\xc7\xb7\xc9\xd5\x9aU\x0dZ2\xa5\x95\xdd\xb0%>" +
+	"\xf2(G\xee_v\x02\xc2w\x07\x96\x7f@z\xa0\x85" +
+	"6\xd2;L\x92\xd3d6\x8a\x9d\x0eB\xbb{t\xa3" +
+	"\xd6N\xe9\xb5m\xcd\xb6%sZM#\x955u\xa4" +
+	"\xc2:\xe4\xa2\xe6h(\x81\x80\xd2M\x03\xb9\x09\xfcF" +
+	"\x97\xbb\xf9\xe4\xf8\xb2E\xb3~azt\xe1\xd9\x93t" +
+	"d;\x08\xf46\x11\xc3M\x88\xfe\xce\xa4})\x10\xa8" +
+	"$\x0er-fQf\x85\xad7Z\xeb\x90\xd0\x9a\xd4" +
+	"\x7f \xd6K\xea/Y\xf4\x1f\x89\x8e\x93\xb6\xcd3\xfb" +
+	"\x13\xcdI\xbb\xa1\x92\x80\xbet\x93\xbe\xa4\x80\x19>c" +
+	"\x81\xc4\x13\xe1C\xd2&q\xb2.\xa3\xbb\xadJ\xa6a" +
+	"h\x13M\xaac\xd1\xe4C}\x04\xa2q\xd9\x96r\x08" +
+	"\xaa'\x04\x94M\xad\xd2\xb2\x97\xca\x9am?\xa2U\x00" +
+	"C\x1b\xd3\x8c\xbd\xcf\xb6\x00\xcdM\xf7\xd7\xdaio-" +
+	"Nh\xefX&\xcd\x1b\xc6\x8a\xfa\xb7\xb7\xec\xc6(\xff" +
+	"^\x93k\xdf\x87\xffx;6~N:Z\x0by\xdd" +
+	"v\xc5\xb2c\xff\x15\x00\x00\xff\xff\x9e;\x8a="
 
 func RegisterSchema(reg *schemas.Registry) {
 	reg.Register(&schemas.Schema{
@@ -295,16 +610,19 @@ func RegisterSchema(reg *schemas.Registry) {
 		Nodes: []uint64{
 			0x8c741569103fecf9,
 			0x9f5bbb4cc669f948,
+			0xa4d75133316a2c68,
 			0xa6e74035c26336c7,
 			0xa93d94e42a4151de,
 			0xaa060ca8ed628cab,
 			0xb2b12ad96665c363,
+			0xc2be74d5d02d6d24,
 			0xda364bad569ad02b,
 			0xe2a0b2d9588cca06,
 			0xe9c0f1d6c6903ac8,
 			0xed1b812f5ecbdd1d,
 			0xf2177d917d6514c7,
 			0xf3316bbab1b9dc9e,
+			0xf5151bba0f74f3be,
 		},
 		Compressed: true,
 	})

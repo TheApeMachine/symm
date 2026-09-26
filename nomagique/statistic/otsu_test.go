@@ -8,14 +8,14 @@ import (
 	"github.com/theapemachine/symm/nomagique/statistic"
 )
 
-func TestOtsu(t *testing.T) {
+func TestOtsuWrite(t *testing.T) {
 	ctx := context.Background()
 
 	Convey("Given labelled activations", t, func() {
 		client := statistic.Otsu_ServerToClient(statistic.NewOtsu())
 		defer client.Release()
 
-		split := func(values []float64, labels []string) ([]string, string) {
+		split := func(values []float64, labels []string) []string {
 			So(client.Write(ctx, func(params statistic.Otsu_write_Params) error {
 				numbers, err := params.NewValues(int32(len(values)))
 
@@ -49,8 +49,6 @@ func TestOtsu(t *testing.T) {
 
 			hot, err := results.Hot()
 			So(err, ShouldBeNil)
-			out, err := results.Out()
-			So(err, ShouldBeNil)
 
 			labelled := []string{}
 
@@ -60,28 +58,26 @@ func TestOtsu(t *testing.T) {
 				labelled = append(labelled, label)
 			}
 
-			return labelled, string(out)
+			return labelled
 		}
 
 		Convey("The strong class is split from the rest where the variance between them peaks", func() {
-			hot, out := split([]float64{0.1, 9, 0.2, 8.5, 0.15}, []string{"a", "b", "c", "d", "e"})
+			hot := split([]float64{0.1, 9, 0.2, 8.5, 0.15}, []string{"a", "b", "c", "d", "e"})
 			So(hot, ShouldResemble, []string{"b", "d"})
-			So(out, ShouldEqual, `["b","d"]`)
 
 			Convey("And the next evaluation starts clean", func() {
-				hot, out := split(nil, nil)
+				hot := split(nil, nil)
 				So(hot, ShouldBeEmpty)
-				So(out, ShouldEqual, `[]`)
 			})
 		})
 
 		Convey("Nothing lit is no strong class", func() {
-			hot, _ := split([]float64{0, 0}, []string{"a", "b"})
+			hot := split([]float64{0, 0}, []string{"a", "b"})
 			So(hot, ShouldBeEmpty)
 		})
 
 		Convey("A single candidate is the strong class on its own", func() {
-			hot, _ := split([]float64{0, 3}, []string{"a", "b"})
+			hot := split([]float64{0, 3}, []string{"a", "b"})
 			So(hot, ShouldResemble, []string{"b"})
 		})
 	})

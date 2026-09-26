@@ -231,7 +231,7 @@ func TestGridWrite(t *testing.T) {
 			})
 		})
 
-		Convey("When several feeds land on the one data port", func() {
+		Convey("When distinct Workspace observations carry different feed records", func() {
 			declare("trade.price")
 
 			first, err := sonic.Marshal(map[string]any{"unrelated": 1.0})
@@ -240,21 +240,17 @@ func TestGridWrite(t *testing.T) {
 			second, err := sonic.Marshal(map[string]any{"trade": map[string]any{"price": 42.0}})
 			So(err, ShouldBeNil)
 
-			err = client.Write(ctx, func(params store.Grid_write_Params) error {
-				feeds, err := params.NewData(2)
-
-				if err != nil {
-					return err
-				}
-
-				if err := feeds.Set(0, first); err != nil {
-					return err
-				}
-
-				return feeds.Set(1, second)
-			})
-			So(err, ShouldBeNil)
-			So(client.WaitStreaming(), ShouldBeNil)
+			for _, payload := range [][]byte{first, second} {
+				err = client.Write(ctx, func(params store.Grid_write_Params) error {
+					feeds, err := params.NewData(1)
+					if err != nil {
+						return err
+					}
+					return feeds.Set(0, payload)
+				})
+				So(err, ShouldBeNil)
+				So(client.WaitStreaming(), ShouldBeNil)
+			}
 
 			future, release := client.Done(ctx, nil)
 			defer release()
@@ -479,5 +475,26 @@ func TestGridDeclaresOnce(t *testing.T) {
 				So(announcements(), ShouldEqual, 2)
 			})
 		})
+	})
+}
+
+/* TestGridWriteConcurrent rejects unsequenced batches instead of losing later feeds. */
+func TestGridWriteConcurrent(t *testing.T) {
+	Convey("Multiple arrivals must be admitted as distinct Workspace observations", t, func() {
+		client := store.Grid_ServerToClient(store.NewGrid(context.Background()))
+		defer client.Release()
+		So(client.Write(context.Background(), func(params store.Grid_write_Params) error {
+			arrivals, err := params.NewData(2)
+			if err != nil {
+				return err
+			}
+			if err := arrivals.Set(0, []byte(`{"channel":"ticker","data":{"last":100}}`)); err != nil {
+				return err
+			}
+			return arrivals.Set(1, []byte(`{"channel":"trade","data":{"price":101}}`))
+		}), ShouldBeNil)
+		err := client.WaitStreaming()
+		So(err, ShouldNotBeNil)
+		So(err.Error(), ShouldContainSubstring, "separate Workspace observations")
 	})
 }

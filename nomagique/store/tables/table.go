@@ -17,7 +17,6 @@ import (
 	"github.com/apache/iceberg-go/catalog"
 	_ "github.com/apache/iceberg-go/catalog/rest"
 	icetable "github.com/apache/iceberg-go/table"
-	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/runtime"
 
@@ -29,9 +28,10 @@ import (
 IcebergTableServer appends what it is written to an Iceberg table.
 
 Every append is a snapshot plus a metadata write, so rows are held until the
-node is read rather than written one at a time. What is held is what has not
-been acknowledged: a commit that fails leaves its rows here, and the next read
-sends them again. Rows are never dropped to keep the node moving — a tape with
+node is read rather than written one at a time. Reads dispatch one append
+worker without waiting for catalog I/O. What is held is what has not been
+acknowledged: a failed commit retains its rows and blocks admission until an
+explicit Flush retries it. Rows are never dropped to keep the node moving — a tape with
 a hole in it cannot be replayed against.
 
 The table is declared by config using Iceberg field types as JSON. What the columns are
@@ -39,15 +39,21 @@ and what they are called is the caller's declaration, not this node's
 knowledge.
 */
 type IcebergTableServer struct {
-	mutex   sync.Mutex
-	Catalog catalog.Catalog
-	opened  struct {
-		Namespace   string                `json:"namespace"`
-		Table       string                `json:"table"`
-		Catalog     string                `json:"catalog"`
-		Properties  iceberg.Properties    `json:"properties"`
-		Fields      []iceberg.NestedField `json:"fields"`
-		AppendBytes int                   `json:"appendBytes"`
+	mutex           sync.Mutex
+	io              sync.Mutex
+	working         chan struct{}
+	failure         error
+	inflight        int
+	maxPendingBytes int
+	Catalog         catalog.Catalog
+	opened          struct {
+		Namespace       string                `json:"namespace"`
+		Table           string                `json:"table"`
+		Catalog         string                `json:"catalog"`
+		Properties      iceberg.Properties    `json:"properties"`
+		Fields          []iceberg.NestedField `json:"fields"`
+		AppendBytes     int                   `json:"appendBytes"`
+		MaxPendingBytes int                   `json:"maxPendingBytes"`
 	}
 	declaration string
 	table       *icetable.Table
@@ -98,7 +104,7 @@ func (server *IcebergTableServer) Write(ctx context.Context, call IcebergTable_w
 		))
 	}
 
-	if err := server.open(ctx, config); err != nil {
+	if err := server.configure(config); err != nil {
 		return err
 	}
 
@@ -115,15 +121,29 @@ func (server *IcebergTableServer) Write(ctx context.Context, call IcebergTable_w
 		return errnie.Error(errnie.Err(errnie.BadRequest, "[iceberg] failed to read the rows", err))
 	}
 
-	server.hold(payload)
-
+	if server.failure != nil {
+		return server.failure
+	}
+	arrivals := make([][]byte, 0, rows.Len()+1)
+	if len(payload) > 0 {
+		arrivals = append(arrivals, payload)
+	}
+	size := len(payload)
 	for index := range rows.Len() {
 		row, err := rows.At(index)
-
 		if err != nil {
-			return errnie.Error(errnie.Err(errnie.BadRequest, "[iceberg] failed to read a row", err))
+			return errnie.Error(err)
 		}
-
+		if len(row) == 0 {
+			continue
+		}
+		size += len(row)
+		arrivals = append(arrivals, row)
+	}
+	if size > server.maxPendingBytes-server.held {
+		return errnie.Error(errnie.Err(errnie.IO, "iceberg: pending byte budget exhausted; batch was not admitted", nil))
+	}
+	for _, row := range arrivals {
 		server.hold(row)
 	}
 
@@ -142,7 +162,21 @@ func (server *IcebergTableServer) hold(row []byte) {
 
 /* Flush persists the tail even when it has not reached the append byte budget. */
 func (server *IcebergTableServer) Flush(ctx context.Context, call runtime.Durable_flush) error {
-	return server.commit(ctx)
+	server.mutex.Lock()
+	working := server.working
+	server.mutex.Unlock()
+	if working != nil {
+		select {
+		case <-working:
+		case <-ctx.Done():
+			return errnie.Error(ctx.Err())
+		}
+	}
+	err := server.commit(ctx)
+	server.mutex.Lock()
+	server.failure = err
+	server.mutex.Unlock()
+	return err
 }
 
 /*
@@ -165,18 +199,17 @@ func (server *IcebergTableServer) worthSending() bool {
 }
 
 /*
-open resolves the declared table once, creating it when the catalog does not
-hold it yet.
+configure validates the immutable declaration without accessing external storage.
 */
-func (server *IcebergTableServer) open(ctx context.Context, config string) error {
+func (server *IcebergTableServer) configure(config string) error {
 	server.mutex.Lock()
 	defer server.mutex.Unlock()
 
-	if server.table != nil && server.declaration == config {
+	if server.declaration == config {
 		return nil
 	}
 
-	if server.table != nil {
+	if server.declaration != "" {
 		return errnie.Error(errnie.Err(errnie.Validation, "iceberg: cannot change the declaration of an open table", nil))
 	}
 	if err := json.Unmarshal([]byte(config), &server.opened); err != nil {
@@ -190,6 +223,26 @@ func (server *IcebergTableServer) open(ctx context.Context, config string) error
 	}
 	if server.opened.AppendBytes > 0 {
 		server.appendBytes = server.opened.AppendBytes
+	}
+	server.maxPendingBytes = server.opened.MaxPendingBytes
+	// Two append buffers permit one batch in flight while the next fills.
+	if server.maxPendingBytes == 0 {
+		server.maxPendingBytes = 2 * server.appendBytes
+	}
+	if server.maxPendingBytes < server.appendBytes {
+		return errnie.Error(errnie.Err(errnie.Validation, "iceberg: pending byte budget is smaller than an append", nil))
+	}
+	server.declaration = config
+	return nil
+}
+
+/* open resolves the catalog only on this node's serialized persistence worker. */
+func (server *IcebergTableServer) open(ctx context.Context) error {
+	if server.table != nil {
+		return nil
+	}
+	if server.declaration == "" {
+		return errnie.Error(errnie.Err(errnie.Validation, "iceberg: table has not been declared", nil))
 	}
 	var err error
 	if server.Catalog == nil {
@@ -214,13 +267,12 @@ func (server *IcebergTableServer) open(ctx context.Context, config string) error
 		return errnie.Error(errnie.Err(errnie.Validation, "iceberg: declaration differs from stored schema", nil))
 	}
 	server.table = loaded
-	server.declaration = config
 
 	return nil
 }
 
 /*
-Done commits what is held and reports what reached the catalog.
+Done dispatches eligible writes without waiting and reports acknowledged progress.
 */
 func (server *IcebergTableServer) Done(ctx context.Context, call IcebergTable_done) error {
 	results, err := call.AllocResults()
@@ -234,45 +286,52 @@ func (server *IcebergTableServer) Done(ctx context.Context, call IcebergTable_do
 	}
 
 	if server.worthSending() {
-		if err := server.commit(ctx); err != nil {
-			return err
-		}
+		server.dispatch()
 	}
-
 	server.mutex.Lock()
-	pending, committed, held := len(server.pending), server.committed, server.held
+	defer server.mutex.Unlock()
+	if server.failure != nil {
+		return server.failure
+	}
+	results.SetPending(int64(len(server.pending) + server.inflight))
+	results.SetCommitted(server.committed)
+	results.SetBytes(int64(server.held))
+	return errnie.Error(results.SetTable(server.opened.Namespace + "." + server.opened.Table))
+}
+
+/* dispatch starts at most one append worker and never waits for external I/O. */
+func (server *IcebergTableServer) dispatch() {
+	server.mutex.Lock()
+	defer server.mutex.Unlock()
+	if server.working != nil || server.failure != nil {
+		return
+	}
+	finished := make(chan struct{})
+	server.working = finished
 	server.asked = false
+	go func() {
+		err := server.commit(context.Background())
+		server.mutex.Lock()
+		server.failure = err
+		server.working = nil
+		close(finished)
+		server.mutex.Unlock()
+	}()
+}
+
+/* Shutdown waits for admitted I/O and makes an unflushed tail explicit. */
+func (server *IcebergTableServer) Shutdown() {
+	server.mutex.Lock()
+	working := server.working
 	server.mutex.Unlock()
-
-	results.SetPending(int64(pending))
-	results.SetCommitted(committed)
-	results.SetBytes(int64(held))
-
-	// What the caller gets back is the state of the record, not the rows: the
-	// table is where the rows went.
-	report, err := sonic.Marshal(map[string]any{
-		"table":     server.opened.Namespace + "." + server.opened.Table,
-		"committed": committed,
-		"pending":   pending,
-	})
-
-	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.Internal,
-			"[iceberg] failed to encode what was committed",
-			err,
-		))
+	if working != nil {
+		<-working
 	}
-
-	if err := results.SetOut(report); err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.Internal,
-			"[iceberg] failed to set out",
-			err,
-		))
+	server.mutex.Lock()
+	defer server.mutex.Unlock()
+	if server.held > 0 {
+		errnie.Error(errnie.Err(errnie.IO, "iceberg: capability released with unflushed rows", server.failure))
 	}
-
-	return nil
 }
 
 /*
@@ -289,9 +348,21 @@ not. A tape with a hole in it cannot be replayed against, and nothing
 downstream can tell a hole from a quiet market.
 */
 func (server *IcebergTableServer) commit(ctx context.Context) error {
+	server.io.Lock()
+	defer server.io.Unlock()
+	server.mutex.Lock()
+	empty := len(server.pending) == 0
+	server.mutex.Unlock()
+	if empty {
+		return nil
+	}
+	if err := server.open(ctx); err != nil {
+		return err
+	}
 	server.mutex.Lock()
 	rows := server.pending
 	server.pending = nil
+	server.inflight = len(rows)
 	table := server.table
 	server.mutex.Unlock()
 
@@ -330,6 +401,7 @@ func (server *IcebergTableServer) commit(ctx context.Context) error {
 		server.mutex.Lock()
 		table = server.table
 		server.committed += int64(end - sent)
+		server.inflight -= end - sent
 		for _, row := range rows[sent:end] {
 			server.held -= len(row)
 		}
@@ -349,6 +421,7 @@ func (server *IcebergTableServer) restore(rows [][]byte) {
 
 	server.mutex.Lock()
 	server.pending = append(append([][]byte{}, rows...), server.pending...)
+	server.inflight = 0
 	server.mutex.Unlock()
 }
 

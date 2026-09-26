@@ -56,6 +56,27 @@ func (server *QueueServer) Write(ctx context.Context, call Queue_write) error {
 		return server.Error(err)
 	}
 
+	texts, err := args.Texts()
+
+	if err != nil {
+		return server.Error(err)
+	}
+
+	for index := range texts.Len() {
+		text, err := texts.At(index)
+
+		if err != nil {
+			return server.Error(err)
+		}
+		// The retained atom is the string used in the external subscription JSON.
+		encoded, err := json.Marshal(text)
+
+		if err != nil {
+			return server.Error(err)
+		}
+		server.join(encoded)
+	}
+
 	retry, err := args.Retry()
 
 	if err != nil {

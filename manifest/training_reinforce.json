@@ -15,7 +15,23 @@
               "portName": "input.data"
             },
             {
-              "nodeId": "token_available",
+              "nodeId": "session",
+              "portName": "data"
+            },
+            {
+              "nodeId": "endpoint",
+              "portName": "data"
+            },
+            {
+              "nodeId": "sequence",
+              "portName": "data"
+            },
+            {
+              "nodeId": "record",
+              "portName": "data"
+            },
+            {
+              "nodeId": "seed",
               "portName": "data"
             }
           ]
@@ -26,29 +42,40 @@
     },
     "context": {
       "id": "context",
-      "type": "data.Extract",
-      "inputData": {
-        "path": {
-          "value": "key"
-        },
-        "encoding": {
-          "value": "json-text"
-        }
-      },
+      "type": "cognition.Precursor",
+      "inputData": {},
       "connections": {
         "inputs": {
-          "data": [
+          "model": [
             {
-              "nodeId": "key_holding",
-              "portName": "out"
+              "nodeId": "memory",
+              "portName": "self"
             }
           ]
         },
         "outputs": {
-          "text": [
+          "ready.key": [
             {
               "nodeId": "memory",
               "portName": "key_0"
+            },
+            {
+              "nodeId": "fact",
+              "portName": "text"
+            },
+            {
+              "nodeId": "novel_fact",
+              "portName": "text"
+            },
+            {
+              "nodeId": "id_context",
+              "portName": "text"
+            }
+          ],
+          "ready.prefix": [
+            {
+              "nodeId": "memory",
+              "portName": "prefix"
             }
           ]
         }
@@ -59,15 +86,13 @@
     "memory": {
       "id": "memory",
       "type": "store.Radix",
-      "inputData": {},
+      "inputData": {
+        "contract": {
+          "value": "symm.precursor/native-context-length-key/2"
+        }
+      },
       "connections": {
         "inputs": {
-          "key_0": [
-            {
-              "nodeId": "context",
-              "portName": "text"
-            }
-          ],
           "key_1": [
             {
               "nodeId": "identity",
@@ -84,6 +109,18 @@
             {
               "nodeId": "commit_example",
               "portName": "out"
+            }
+          ],
+          "key_0": [
+            {
+              "nodeId": "context",
+              "portName": "ready.key"
+            }
+          ],
+          "prefix": [
+            {
+              "nodeId": "context",
+              "portName": "ready.prefix"
             }
           ]
         },
@@ -110,6 +147,12 @@
             {
               "nodeId": "prior_example",
               "portName": "test"
+            }
+          ],
+          "self": [
+            {
+              "nodeId": "context",
+              "portName": "model"
             }
           ]
         }
@@ -255,7 +298,7 @@
         "inputs": {
           "data": [
             {
-              "nodeId": "id_vocabulary",
+              "nodeId": "id_context",
               "portName": "out"
             }
           ]
@@ -296,7 +339,7 @@
           "json": [
             {
               "nodeId": "fact",
-              "portName": "json"
+              "portName": "data"
             }
           ]
         }
@@ -448,215 +491,6 @@
       "x": 620,
       "y": 460
     },
-    "tokens": {
-      "id": "tokens",
-      "type": "data.Extract",
-      "inputData": {
-        "path": {
-          "value": "settled.tokens"
-        },
-        "encoding": {
-          "value": "json"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "token_available",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "json": [
-            {
-              "nodeId": "key_tokens",
-              "portName": "json"
-            }
-          ]
-        }
-      },
-      "x": 310,
-      "y": 690
-    },
-    "key_tokens": {
-      "id": "key_tokens",
-      "type": "data.Insert",
-      "inputData": {
-        "path": {
-          "value": "key.tokens"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "json": [
-            {
-              "nodeId": "tokens",
-              "portName": "json"
-            }
-          ],
-          "data": [
-            {
-              "nodeId": "key_vocabulary",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "key_sequence_history",
-              "portName": "data"
-            }
-          ]
-        }
-      },
-      "x": 620,
-      "y": 690
-    },
-    "sequence_history": {
-      "id": "sequence_history",
-      "type": "data.Extract",
-      "inputData": {
-        "path": {
-          "value": "settled.sequence"
-        },
-        "encoding": {
-          "value": "json"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "token_available",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "json": [
-            {
-              "nodeId": "key_sequence_history",
-              "portName": "json"
-            }
-          ]
-        }
-      },
-      "x": 620,
-      "y": 800
-    },
-    "key_sequence_history": {
-      "id": "key_sequence_history",
-      "type": "data.Insert",
-      "inputData": {
-        "path": {
-          "value": "key.sequence"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "key_tokens",
-              "portName": "out"
-            }
-          ],
-          "json": [
-            {
-              "nodeId": "sequence_history",
-              "portName": "json"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "key_holding",
-              "portName": "data"
-            }
-          ]
-        }
-      },
-      "x": 780,
-      "y": 800
-    },
-    "holding": {
-      "id": "holding",
-      "type": "data.Extract",
-      "inputData": {
-        "path": {
-          "value": "holding"
-        },
-        "encoding": {
-          "value": "json"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "token_available",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "json": [
-            {
-              "nodeId": "key_holding",
-              "portName": "json"
-            }
-          ]
-        }
-      },
-      "x": 930,
-      "y": 690
-    },
-    "key_holding": {
-      "id": "key_holding",
-      "type": "data.Insert",
-      "inputData": {
-        "path": {
-          "value": "key.holding"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "json": [
-            {
-              "nodeId": "holding",
-              "portName": "json"
-            }
-          ],
-          "data": [
-            {
-              "nodeId": "key_sequence_history",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "context",
-              "portName": "data"
-            },
-            {
-              "nodeId": "fact",
-              "portName": "data"
-            },
-            {
-              "nodeId": "novel_fact",
-              "portName": "data"
-            }
-          ]
-        }
-      },
-      "x": 1240,
-      "y": 690
-    },
     "session": {
       "id": "session",
       "type": "data.Extract",
@@ -672,7 +506,7 @@
         "inputs": {
           "data": [
             {
-              "nodeId": "token_available",
+              "nodeId": "input",
               "portName": "out"
             }
           ]
@@ -704,7 +538,7 @@
         "inputs": {
           "data": [
             {
-              "nodeId": "token_available",
+              "nodeId": "input",
               "portName": "out"
             }
           ]
@@ -800,7 +634,7 @@
         "inputs": {
           "data": [
             {
-              "nodeId": "token_available",
+              "nodeId": "input",
               "portName": "out"
             }
           ]
@@ -867,7 +701,7 @@
         "inputs": {
           "data": [
             {
-              "nodeId": "token_available",
+              "nodeId": "input",
               "portName": "out"
             }
           ]
@@ -934,7 +768,7 @@
         "inputs": {
           "data": [
             {
-              "nodeId": "token_available",
+              "nodeId": "input",
               "portName": "out"
             }
           ]
@@ -977,7 +811,7 @@
         "outputs": {
           "out": [
             {
-              "nodeId": "id_vocabulary",
+              "nodeId": "id_context",
               "portName": "data"
             }
           ]
@@ -1025,70 +859,6 @@
       "x": 310,
       "y": 1150
     },
-    "token_available": {
-      "id": "token_available",
-      "type": "data.Filter",
-      "inputData": {
-        "path": {
-          "value": "settled.tokens.0"
-        },
-        "operator": {
-          "value": "exists"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "input",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "tokens",
-              "portName": "data"
-            },
-            {
-              "nodeId": "holding",
-              "portName": "data"
-            },
-            {
-              "nodeId": "session",
-              "portName": "data"
-            },
-            {
-              "nodeId": "endpoint",
-              "portName": "data"
-            },
-            {
-              "nodeId": "sequence",
-              "portName": "data"
-            },
-            {
-              "nodeId": "record",
-              "portName": "data"
-            },
-            {
-              "nodeId": "sequence_history",
-              "portName": "data"
-            },
-            {
-              "nodeId": "seed",
-              "portName": "data"
-            },
-            {
-              "nodeId": "vocabulary",
-              "portName": "data"
-            }
-          ]
-        }
-      },
-      "x": 310,
-      "y": 0
-    },
     "prior_example": {
       "id": "prior_example",
       "type": "controlflow.Select",
@@ -1129,21 +899,24 @@
       "type": "data.Insert",
       "inputData": {
         "path": {
-          "value": "truth"
+          "value": "key"
+        },
+        "encoding": {
+          "value": "text"
         }
       },
       "connections": {
         "inputs": {
           "data": [
             {
-              "nodeId": "key_holding",
-              "portName": "out"
-            }
-          ],
-          "json": [
-            {
               "nodeId": "truth",
               "portName": "json"
+            }
+          ],
+          "text": [
+            {
+              "nodeId": "context",
+              "portName": "ready.key"
             }
           ]
         },
@@ -1183,7 +956,7 @@
           "json": [
             {
               "nodeId": "novel_fact",
-              "portName": "json"
+              "portName": "data"
             }
           ]
         }
@@ -1196,21 +969,24 @@
       "type": "data.Insert",
       "inputData": {
         "path": {
-          "value": "truth"
+          "value": "key"
+        },
+        "encoding": {
+          "value": "text"
         }
       },
       "connections": {
         "inputs": {
           "data": [
             {
-              "nodeId": "key_holding",
-              "portName": "out"
-            }
-          ],
-          "json": [
-            {
               "nodeId": "novel_truth",
               "portName": "json"
+            }
+          ],
+          "text": [
+            {
+              "nodeId": "context",
+              "portName": "ready.key"
             }
           ]
         },
@@ -1255,82 +1031,17 @@
       "x": 1240,
       "y": 1150
     },
-    "vocabulary": {
-      "id": "vocabulary",
-      "type": "data.Extract",
-      "width": 280,
-      "height": 172,
-      "x": 310,
-      "y": 490,
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "token_available",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "json": [
-            {
-              "nodeId": "key_vocabulary",
-              "portName": "json"
-            },
-            {
-              "nodeId": "id_vocabulary",
-              "portName": "json"
-            }
-          ]
-        }
-      },
+    "id_context": {
+      "id": "id_context",
+      "type": "data.Insert",
       "inputData": {
         "path": {
-          "value": "settled.vocabulary"
+          "value": "key.context"
         },
         "encoding": {
-          "value": "json"
-        }
-      }
-    },
-    "key_vocabulary": {
-      "id": "key_vocabulary",
-      "type": "data.Insert",
-      "width": 280,
-      "height": 172,
-      "x": 620,
-      "y": 490,
-      "connections": {
-        "inputs": {
-          "json": [
-            {
-              "nodeId": "vocabulary",
-              "portName": "json"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "key_tokens",
-              "portName": "data"
-            }
-          ]
+          "value": "text"
         }
       },
-      "inputData": {
-        "path": {
-          "value": "key.vocabulary"
-        }
-      }
-    },
-    "id_vocabulary": {
-      "id": "id_vocabulary",
-      "type": "data.Insert",
-      "width": 280,
-      "height": 172,
-      "x": 340,
-      "y": 1150,
       "connections": {
         "inputs": {
           "data": [
@@ -1339,10 +1050,10 @@
               "portName": "out"
             }
           ],
-          "json": [
+          "text": [
             {
-              "nodeId": "vocabulary",
-              "portName": "json"
+              "nodeId": "context",
+              "portName": "ready.key"
             }
           ]
         },
@@ -1353,11 +1064,6 @@
               "portName": "data"
             }
           ]
-        }
-      },
-      "inputData": {
-        "path": {
-          "value": "key.vocabulary"
         }
       }
     }

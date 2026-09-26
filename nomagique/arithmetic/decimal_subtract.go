@@ -2,7 +2,6 @@ package arithmetic
 
 import (
 	"context"
-	"math/big"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/core"
@@ -36,7 +35,7 @@ func (server *DecimalSubtractServer) Write(ctx context.Context, call DecimalSubt
 	if err != nil {
 		return server.Error(err)
 	}
-	server.out, err = core.WriteDecimal(new(big.Rat).Sub(a, b))
+	server.out, err = core.WriteDecimal(a.SetScale(max(a.GetScale(), b.GetScale())).Sub(b))
 
 	if err != nil {
 		return server.Error(err)

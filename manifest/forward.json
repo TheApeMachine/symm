@@ -1,0 +1,168 @@
+{
+  "id": "forward",
+  "name": "forward",
+  "nodes": {
+    "excursion": {
+      "id": "excursion",
+      "type": "temporal.Excursion",
+      "width": 280,
+      "height": 172,
+      "x": 800.0,
+      "y": 700.0,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "last",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "move.row": [
+            {
+              "nodeId": "table_excursions",
+              "portName": "payload"
+            }
+          ]
+        }
+      }
+    },
+    "table_measurements": {
+      "id": "table_measurements",
+      "type": "tables.IcebergTable",
+      "width": 320,
+      "height": 280,
+      "x": 1580.0,
+      "y": 1100.0,
+      "inputData": {
+        "config": {
+          "value": "{\"namespace\": \"symm\", \"table\": \"metric_cuts_v2\", \"fields\": [{\"id\": 1, \"name\": \"epoch\", \"type\": \"long\", \"required\": true}, {\"id\": 2, \"name\": \"sequence\", \"type\": \"long\", \"required\": true}, {\"id\": 3, \"name\": \"symbol\", \"type\": \"string\", \"required\": true}, {\"id\": 4, \"name\": \"complete\", \"type\": \"boolean\", \"required\": true}, {\"id\": 5, \"name\": \"metrics\", \"type\": {\"type\": \"list\", \"element-id\": 6, \"element-required\": true, \"element\": {\"type\": \"struct\", \"fields\": [{\"id\": 7, \"name\": \"identity\", \"type\": \"string\", \"required\": true}, {\"id\": 8, \"name\": \"value\", \"type\": \"double\", \"required\": true}, {\"id\": 9, \"name\": \"present\", \"type\": \"boolean\", \"required\": true}, {\"id\": 10, \"name\": \"epoch\", \"type\": \"long\", \"required\": true}, {\"id\": 11, \"name\": \"sequence\", \"type\": \"long\", \"required\": true}]}}, \"required\": true}, {\"id\": 12, \"name\": \"provenance\", \"type\": \"string\", \"required\": true}], \"catalog\": \"symmtables\", \"properties\": {\"type\": \"rest\", \"uri\": \"http://iceberg.seaweed.home.arpa\", \"warehouse\": \"s3://symmtables/\", \"s3.endpoint\": \"http://s3.seaweed.home.arpa\", \"s3.region\": \"us-east-1\", \"s3.access-key-id\": \"anonymous\", \"s3.secret-access-key\": \"anonymous\"}, \"appendBytes\": 16777216}"
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {}
+      }
+    },
+    "last": {
+      "id": "last",
+      "type": "data.Extract",
+      "width": 320,
+      "height": 200,
+      "x": 500,
+      "y": 700,
+      "inputData": {
+        "path": {
+          "value": "data.last"
+        },
+        "encoding": {
+          "value": "number"
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "excursion",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "table_excursions": {
+      "id": "table_excursions",
+      "type": "tables.IcebergTable",
+      "width": 320,
+      "height": 280,
+      "x": 3140.0,
+      "y": 900.0,
+      "inputData": {
+        "config": {
+          "value": "{\"namespace\": \"symm\", \"table\": \"excursion_fragments_v1\", \"fields\": [{\"id\": 1, \"name\": \"epoch\", \"type\": \"long\", \"required\": true}, {\"id\": 2, \"name\": \"symbol\", \"type\": \"string\", \"required\": true}, {\"id\": 3, \"name\": \"anchor_sequence\", \"type\": \"long\", \"required\": true}, {\"id\": 4, \"name\": \"ignition_sequence\", \"type\": \"long\", \"required\": true}, {\"id\": 5, \"name\": \"extremum_sequence\", \"type\": \"long\", \"required\": true}, {\"id\": 6, \"name\": \"confirmation_sequence\", \"type\": \"long\", \"required\": true}, {\"id\": 7, \"name\": \"anchor\", \"type\": \"double\", \"required\": true}, {\"id\": 8, \"name\": \"ignition\", \"type\": \"double\", \"required\": true}, {\"id\": 9, \"name\": \"extremum\", \"type\": \"double\", \"required\": true}, {\"id\": 10, \"name\": \"excursion\", \"type\": \"double\", \"required\": true}, {\"id\": 11, \"name\": \"has_precursor\", \"type\": \"boolean\", \"required\": true}], \"catalog\": \"symmtables\", \"properties\": {\"type\": \"rest\", \"uri\": \"http://iceberg.seaweed.home.arpa\", \"warehouse\": \"s3://symmtables/\", \"s3.endpoint\": \"http://s3.seaweed.home.arpa\", \"s3.region\": \"us-east-1\", \"s3.access-key-id\": \"anonymous\", \"s3.secret-access-key\": \"anonymous\"}, \"appendBytes\": 16777216}"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "payload": [
+            {
+              "nodeId": "excursion",
+              "portName": "move.row"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "symbol": {
+      "id": "symbol",
+      "type": "data.Extract",
+      "width": 320,
+      "height": 200,
+      "x": 500,
+      "y": 500,
+      "inputData": {
+        "path": {
+          "value": "data.symbol"
+        },
+        "encoding": {
+          "value": "text"
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {}
+      }
+    },
+    "live_map": {
+      "id": "live_map",
+      "type": "definition:impulse_map",
+      "width": 320,
+      "height": 280,
+      "x": 400.0,
+      "y": 400.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "peak.settled.vocabulary": [
+            {
+              "nodeId": "contexts",
+              "portName": "vocabulary"
+            }
+          ],
+          "hot.hot": [
+            {
+              "nodeId": "contexts",
+              "portName": "tokens"
+            }
+          ]
+        }
+      }
+    },
+    "contexts": {
+      "id": "contexts",
+      "type": "cognition.ContextBuilder",
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "vocabulary": [
+            {
+              "nodeId": "live_map",
+              "portName": "peak.settled.vocabulary"
+            }
+          ],
+          "tokens": [
+            {
+              "nodeId": "live_map",
+              "portName": "hot.hot"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    }
+  }
+}

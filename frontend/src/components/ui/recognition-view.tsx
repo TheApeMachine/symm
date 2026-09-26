@@ -145,7 +145,7 @@ export const RecognitionView = ({
 												: predictedLabel === "EXIT"
 													? "error"
 													: predictedLabel === "WAIT"
-														? "neutral"
+														? "disabled"
 														: "warning"
 										}
 										label={`PREDICTED: ${predictedLabel}`}
@@ -172,7 +172,7 @@ export const RecognitionView = ({
 												? "success"
 												: truthLabel === "EXIT"
 													? "error"
-													: "neutral"
+													: "disabled"
 										}
 										label={`TRUTH: ${truthLabel}`}
 									/>

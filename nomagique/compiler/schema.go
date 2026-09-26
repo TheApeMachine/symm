@@ -388,6 +388,15 @@ func SetStaticField(target capnp.Struct, field FieldInfo, rawVal string) error {
 		target.SetUint32(capnp.DataOffset(field.Offset*4), uint32(i))
 		return nil
 
+	case schema.Type_Which_uint8:
+		value, err := strconv.ParseUint(rawVal, 10, 8)
+
+		if err != nil {
+			return errnie.Error(errnie.Err(errnie.Validation, "compiler: static uint8", err))
+		}
+		target.SetUint8(capnp.DataOffset(field.Offset), uint8(value))
+		return nil
+
 	case schema.Type_Which_uint32:
 		u, err := strconv.ParseUint(rawVal, 10, 32)
 		if err != nil {
@@ -546,6 +555,8 @@ func Implements(interfaceID, required uint64) bool {
 		return false
 	}
 
+	defer message.Release()
+
 	root, err := schema.ReadRootCodeGeneratorRequest(message)
 
 	if err != nil {
@@ -572,7 +583,7 @@ func Implements(interfaceID, required uint64) bool {
 		}
 
 		for position := 0; position < superclasses.Len(); position++ {
-			if superclasses.At(position).Id() == required {
+			if Implements(superclasses.At(position).Id(), required) {
 				return true
 			}
 		}
@@ -749,7 +760,7 @@ func fanInList(dst capnp.Struct, offset uint16, length int) (capnp.PointerList, 
 		))
 	}
 
-	if existing.IsValid() && existing.List().Len() == length {
+	if existing.IsValid() && existing.List().Len() >= length {
 		return capnp.PointerList(existing.List()), nil
 	}
 
@@ -761,6 +772,19 @@ func fanInList(dst capnp.Struct, offset uint16, length int) (capnp.PointerList, 
 			"compiler: failed to allocate a gathering port",
 			err,
 		))
+	}
+
+	if existing.IsValid() {
+		previous := capnp.PointerList(existing.List())
+		for index := range previous.Len() {
+			value, err := previous.At(index)
+			if err != nil {
+				return capnp.PointerList{}, errnie.Error(err)
+			}
+			if err := gathered.Set(index, value); err != nil {
+				return capnp.PointerList{}, errnie.Error(err)
+			}
+		}
 	}
 
 	if err := dst.SetPtr(offset, gathered.ToPtr()); err != nil {

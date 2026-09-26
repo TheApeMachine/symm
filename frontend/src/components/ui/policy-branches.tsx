@@ -19,6 +19,7 @@ export type PolicyBranchesProps = Omit<
 > & {
 	title?: string;
 	branches?: PolicyBranch[] | null;
+	fallback?: boolean;
 };
 
 const policyTone = (policy?: string) => {
@@ -33,12 +34,14 @@ PolicyBranches lists the trie's recorded paths: each path signature, how deep
 it runs, how often it was taken, and the action most of those visits carried.
 */
 export const PolicyBranches = ({
-	title = "Supervised Precursor Examples (Active Branches)",
+	title = "Radix Trie Memory (Active Branches)",
 	branches,
+	fallback = false,
 	className,
 	...props
 }: PolicyBranchesProps) => {
-	const routed = (branches ?? []).reduce(
+	const activeBranches = branches ?? [];
+	const routed = activeBranches.reduce(
 		(sum, branch) => sum + (Number(branch.visits) || 0),
 		0,
 	);
@@ -58,10 +61,9 @@ export const PolicyBranches = ({
 				</span>
 			</Flex.Row>
 			<div className="min-h-0 flex-1 overflow-auto p-2">
-				{!branches?.length && (
-					<div className="p-2 text-(--f4)">No recorded branches</div>
-				)}
-				{!!branches?.length && (
+				{!activeBranches.length ? (
+					<div className="p-6 text-center text-(--f4)">No recorded branches</div>
+				) : (
 					<table className="w-full border-collapse text-left">
 						<thead>
 							<tr className="border-(--line) border-b text-(--f4)">
@@ -76,7 +78,7 @@ export const PolicyBranches = ({
 							</tr>
 						</thead>
 						<tbody>
-							{branches.map((branch, index) => (
+							{activeBranches.map((branch, index) => (
 								<tr
 									key={branch.id}
 									className="border-(--line)/50 border-b last:border-0 hover:bg-(--raised)"

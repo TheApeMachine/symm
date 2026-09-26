@@ -2,7 +2,7 @@ package arithmetic
 
 import (
 	"context"
-	"math/big"
+	"math"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/core"
@@ -39,10 +39,13 @@ func (server *DecimalQuotientServer) Write(ctx context.Context, call DecimalQuot
 	if b.Sign() == 0 {
 		return server.Error(errnie.Err(errnie.Validation, "arithmetic.DecimalQuotient: division by zero", nil))
 	}
-	unit := new(big.Int).Exp(big.NewInt(10), new(big.Int).SetUint64(call.Args().Places()), nil)
-	scaled := new(big.Rat).Mul(new(big.Rat).Quo(a, b), new(big.Rat).SetInt(unit))
-	floor := new(big.Int).Div(scaled.Num(), scaled.Denom())
-	server.out, err = core.WriteDecimal(new(big.Rat).SetFrac(floor, unit))
+
+	if call.Args().Places() > math.MaxInt64 {
+		return server.Error(errnie.Err(errnie.Validation, "decimal quotient: precision exceeds representation", nil))
+	}
+	places := int64(call.Args().Places())
+	scale := max(places, a.GetScale(), b.GetScale())
+	server.out, err = core.WriteDecimal(a.SetScale(scale).Div(b).SetScale(places))
 
 	if err != nil {
 		return server.Error(err)

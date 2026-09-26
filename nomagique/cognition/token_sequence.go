@@ -4,7 +4,6 @@ import (
 	"context"
 	"strings"
 
-	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
@@ -20,7 +19,6 @@ type TokenSequenceServer struct {
 	sequence []string
 	path     string
 	depth    int64
-	out      []byte
 }
 
 func NewTokenSequence() *TokenSequenceServer {
@@ -38,7 +36,6 @@ func (server *TokenSequenceServer) Write(ctx context.Context, call TokenSequence
 	server.sequence = nil
 	server.path = ""
 	server.depth = 0
-	server.out = nil
 
 	scope, err := args.Scope()
 
@@ -115,17 +112,6 @@ func (server *TokenSequenceServer) Write(ctx context.Context, call TokenSequence
 	server.path = strings.Join(updated, "/")
 	server.depth = int64(len(updated))
 
-	encoded, err := sonic.Marshal(server.path)
-
-	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.Internal,
-			"cognition.token_sequence: failed to encode output",
-			err,
-		))
-	}
-
-	server.out = encoded
 	return nil
 }
 
@@ -159,7 +145,7 @@ func (server *TokenSequenceServer) Done(ctx context.Context, call TokenSequence_
 	}
 
 	seqList, err := step.NewSequence(int32(len(server.sequence)))
-	
+
 	if err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.Internal,
@@ -178,17 +164,8 @@ func (server *TokenSequenceServer) Done(ctx context.Context, call TokenSequence_
 		}
 	}
 
-	if err := step.SetOut(server.out); err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.Internal,
-			"cognition.token_sequence: failed to set out payload",
-			err,
-		))
-	}
-
 	server.sequence = nil
 	server.path = ""
 	server.depth = 0
-	server.out = nil
 	return nil
 }

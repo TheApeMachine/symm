@@ -3,10 +3,12 @@ package compiler_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/compiler"
+	"github.com/theapemachine/symm/nomagique/data"
 )
 
 func TestCatalogAndRegistryConsistency(t *testing.T) {
@@ -238,5 +240,44 @@ func TestWorkbenchNestedDefinitionExpansion(t *testing.T) {
 			So(ok, ShouldBeTrue)
 			So(sqRes["out"], ShouldEqual, 25.0)
 		})
+	})
+}
+
+func TestDefaultRegistry(t *testing.T) {
+	Convey("Generated nodes accept concurrent first calls without lazy initialization races", t, func() {
+		ctx := context.Background()
+		factory, err := compiler.DefaultRegistry().Resolve("data.Scale")
+		So(err, ShouldBeNil)
+		client, err := factory.New(ctx, nil)
+		So(err, ShouldBeNil)
+		defer client.Release()
+		target := data.Transform(client)
+		start := make(chan struct{})
+		outcomes := make(chan error, 8)
+
+		for index := range cap(outcomes) {
+			go func(value float64) {
+				<-start
+				future, release := target.Apply(ctx, func(params data.Transform_apply_Params) error { params.SetValue(value); return nil })
+				defer release()
+				result, err := future.Struct()
+
+				if err != nil {
+					outcomes <- err
+					return
+				}
+
+				if result.Out() != value {
+					outcomes <- fmt.Errorf("expected %g, received %g", value, result.Out())
+					return
+				}
+				outcomes <- nil
+			}(float64(index + 1))
+		}
+		close(start)
+
+		for range cap(outcomes) {
+			So(<-outcomes, ShouldBeNil)
+		}
 	})
 }

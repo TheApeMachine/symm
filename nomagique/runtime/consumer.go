@@ -2,211 +2,367 @@ package runtime
 
 import (
 	"context"
-	"iter"
-	"sync/atomic"
-	"unsafe"
+	"slices"
 
 	capnp "capnproto.org/go/capnp/v3"
+	"github.com/bytedance/sonic"
+
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/nomagique/ui"
 )
 
-/*
-Slot is the pre-allocated event living in one ring position. The ring owns the
-slot; a handler reads the payload out of it and must not retain the pointer
-past its own call, because the producer reclaims the position once every
-handler group has passed it.
-*/
-type Slot struct {
-	Payload []byte
-}
-
-/*
-Step is what a ring handler does with one observation: hand it to something
-that processes it, and report what came back. A capnp capability satisfies it
-through Write followed by Done, which is why a compiled node can be mounted on
-a ring without any adapter beyond Consumer.
-*/
-type Step interface {
-	Step(ctx context.Context, payload []byte) ([]byte, error)
-}
-
-/*
-Consumer mounts a Step on a disruptor handler group. It reads the slots the
-ring hands it, steps its target once per slot, and yields the batch onward so
-the next handler group observes the same sequences.
-
-A handler runs on the ring's own goroutine, so everything a Consumer touches
-belongs to that Consumer alone. Nodes in one group run concurrently against
-the same sequence; ordering between groups is the ring's barrier, never a lock
-here.
-*/
-type Consumer struct {
+/* ConsumerServer owns a stage capability and records successful completion. */
+type ConsumerServer struct {
 	*System
-	target  Step
-	ring    []Slot
-	mask    int64
-	stepped atomic.Int64
-	failed  atomic.Int64
+	target        StageNode
+	receiver      ui.Receiver
+	snapshot      Snapshot
+	checkpoint    Checkpoint
+	entry         string
+	name          string
+	configuration string
+	bindings      []struct {
+		Producer string `json:"producer"`
+		Node     string `json:"node"`
+		Field    string `json:"field"`
+		Target   string `json:"target"`
+		Stamp    string `json:"stamp"`
+		Gate     bool   `json:"gate"`
+	}
+	outputs   []string
+	result    Completion
+	epoch     int64
+	sequence  int64
+	completed uint64
+	failure   error
 }
 
-func NewConsumer(ctx context.Context, name string, target Step, ring []Slot) *Consumer {
-	consumer := &Consumer{
-		System: NewSystem(ctx, name),
-		target: target,
-		ring:   ring,
-		mask:   int64(len(ring) - 1),
+/* NewConsumer constructs an idle Cap'n Proto consumer. */
+func NewConsumer(ctx context.Context) *ConsumerServer {
+	server := &ConsumerServer{System: NewSystem(ctx, "runtime.consumer")}
+	server.Transition(WAITING)
+	return server
+}
+
+/* Write binds the work capability before the consumer processes observations. */
+func (server *ConsumerServer) Write(ctx context.Context, call Consumer_write) error {
+	target := call.Args().Target()
+	entry, err := call.Args().Entry()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.Validation, "consumer: entry port", err))
 	}
 
-	consumer.Transition(READY)
-	return consumer
+	if !target.IsValid() {
+		return errnie.Error(errnie.Err(errnie.Validation, "consumer: missing stage capability", nil))
+	}
+
+	name, err := call.Args().Name()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.Validation, "consumer: name", err))
+	}
+	configuration, err := call.Args().Bindings()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.Validation, "consumer: bindings", err))
+	}
+
+	outputs, err := call.Args().Outputs()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.Validation, "consumer: output selection", err))
+	}
+
+	selected := make([]string, outputs.Len())
+
+	for index := range outputs.Len() {
+		output, err := outputs.At(index)
+
+		if err != nil {
+			return errnie.Error(errnie.Err(errnie.Validation, "consumer: output name", err))
+		}
+		selected[index] = output
+	}
+	if server.target.IsValid() {
+		if !server.target.IsSame(target) || entry != server.entry || name != server.name ||
+			configuration != server.configuration || !slices.Equal(selected, server.outputs) || !server.receiver.IsSame(call.Args().Receiver()) || !server.snapshot.IsSame(call.Args().Snapshot()) || !server.checkpoint.IsSame(call.Args().Checkpoint()) {
+			return errnie.Error(errnie.Err(errnie.Validation, "consumer: configuration cannot change", nil))
+		}
+		return nil
+	}
+
+	if configuration != "" {
+		if err := sonic.Unmarshal([]byte(configuration), &server.bindings); err != nil {
+			return errnie.Error(errnie.Err(errnie.Validation, "consumer: bindings", err))
+		}
+	}
+	server.outputs = selected
+	server.name, server.configuration = name, configuration
+	server.target = target.AddRef()
+	server.receiver = call.Args().Receiver().AddRef()
+	server.entry = entry
+	server.snapshot = call.Args().Snapshot().AddRef()
+	server.checkpoint = call.Args().Checkpoint().AddRef()
+	if server.snapshot.IsValid() != server.checkpoint.IsValid() {
+		return errnie.Error(errnie.Err(errnie.Validation, "consumer: snapshot and checkpoint must be wired together", nil))
+	}
+	if server.checkpoint.IsValid() {
+		if !call.Args().CheckpointReady() {
+			return errnie.Error(errnie.Err(errnie.Validation, "consumer: checkpoint is not configured", nil))
+		}
+		future, release := server.checkpoint.Load(ctx, func(params Checkpoint_load_Params) error { return params.SetKey(server.name) })
+		defer release()
+		result, err := future.Struct()
+		if err != nil {
+			return errnie.Error(err)
+		}
+		encoded, err := result.Data()
+		if err != nil {
+			return errnie.Error(err)
+		}
+		if len(encoded) > 0 {
+			restored, release := server.snapshot.Restore(ctx, func(params Snapshot_restore_Params) error { return params.SetData(encoded) })
+			_, err = restored.Struct()
+			release()
+			if err != nil {
+				return errnie.Error(err)
+			}
+		}
+	}
+	server.Transition(READY)
+	return nil
 }
 
-/*
-Next steps every sequence in the batch and yields the batch onward.
-*/
-func (consumer *Consumer) Next(batch iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
-	for reserved := range batch {
-		if reserved == nil {
-			continue
+/* Step acknowledges the observation only after the bound node completes it. */
+func (server *ConsumerServer) Step(ctx context.Context, call StageNode_step) error {
+	if server.failure != nil {
+		return server.failure
+	}
+
+	if !server.target.IsValid() {
+		return errnie.Error(errnie.Err(errnie.Validation, "consumer: not configured", nil))
+	}
+
+	args := call.Args()
+
+	if args.Epoch() <= 0 || args.Sequence() < 0 {
+		return errnie.Error(errnie.Err(errnie.Validation, "consumer: invalid observation stamp", nil))
+	}
+	payload, err := args.Data()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.Validation, "consumer: observation", err))
+	}
+
+	future, release := server.target.Step(ctx, func(params StageNode_step_Params) error {
+		params.SetEpoch(args.Epoch())
+		params.SetSequence(args.Sequence())
+		upstream, err := args.Upstream()
+
+		if err != nil {
+			return err
 		}
 
-		consumer.handle(*(*int64)(reserved))
-	}
+		if err := params.SetUpstream(upstream); err != nil {
+			return err
+		}
+		bindings, err := params.NewBindings(int32(len(server.bindings)))
 
-	return batch
-}
+		if err != nil {
+			return err
+		}
 
-/*
-handle steps the target on the payload occupying one ring position.
-*/
-func (consumer *Consumer) handle(sequence int64) {
-	payload := consumer.ring[sequence&consumer.mask].Payload
+		for index, binding := range server.bindings {
+			target := bindings.At(index)
+			target.SetGate(binding.Gate)
+			switch binding.Stamp {
+			case "", "value":
+				target.SetStamp(Stamp_value)
+			case "epoch":
+				target.SetStamp(Stamp_epoch)
+			case "sequence":
+				target.SetStamp(Stamp_sequence)
+			default:
+				return errnie.Error(errnie.Err(errnie.Validation, "consumer: unknown binding stamp "+binding.Stamp, nil))
+			}
 
-	if len(payload) == 0 {
-		return
-	}
+			for _, err := range []error{target.SetProducer(binding.Producer), target.SetNode(binding.Node), target.SetField(binding.Field), target.SetTarget(binding.Target)} {
+				if err != nil {
+					return err
+				}
+			}
+		}
+		outputs, err := params.NewOutputs(int32(len(server.outputs)))
 
-	if _, err := consumer.target.Step(consumer.Context(), payload); err != nil {
-		consumer.failed.Add(1)
+		if err != nil {
+			return err
+		}
 
-		consumer.Error(errnie.Err(
-			errnie.IO,
-			"[runtime.consumer] step failed",
-			err,
-		))
-
-		return
-	}
-
-	consumer.stepped.Add(1)
-}
-
-/*
-Stepped reports how many observations this consumer has processed, and Failed
-how many it could not, so a stalled stage is a number rather than a silence.
-*/
-func (consumer *Consumer) Stepped() int64 { return consumer.stepped.Load() }
-func (consumer *Consumer) Failed() int64  { return consumer.failed.Load() }
-
-/*
-Capability steps a compiled capnp node, so anything the compiler builds can be
-mounted on a ring. Write admits the observation, Done collects what the node
-made of it: together they are one Step.
-*/
-type Capability struct {
-	client      capnp.Client
-	writeMethod capnp.Method
-	writeSize   capnp.ObjectSize
-	writeField  uint16
-	doneMethod  capnp.Method
-	doneSize    capnp.ObjectSize
-	doneField   uint16
-}
-
-func NewCapability(
-	client capnp.Client,
-	writeMethod capnp.Method,
-	writeSize capnp.ObjectSize,
-	writeField uint16,
-	doneMethod capnp.Method,
-	doneSize capnp.ObjectSize,
-	doneField uint16,
-) *Capability {
-	return &Capability{
-		client:      client,
-		writeMethod: writeMethod,
-		writeSize:   writeSize,
-		writeField:  writeField,
-		doneMethod:  doneMethod,
-		doneSize:    doneSize,
-		doneField:   doneField,
-	}
-}
-
-/*
-Step admits one observation into the capability and returns what it produced.
-*/
-func (capability *Capability) Step(
-	ctx context.Context, payload []byte,
-) ([]byte, error) {
-	if !capability.client.IsValid() {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"[runtime.capability] client is not valid",
-			nil,
-		))
-	}
-
-	send := capnp.Send{
-		Method:   capability.writeMethod,
-		ArgsSize: capability.writeSize,
-		PlaceArgs: func(args capnp.Struct) error {
-			return args.SetData(capability.writeField, payload)
-		},
-	}
-
-	if err := capability.client.SendStreamCall(ctx, send); err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.IO,
-			"[runtime.capability] write call failed",
-			err,
-		))
-	}
-
-	if err := capability.client.WaitStreaming(); err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.IO,
-			"[runtime.capability] streaming fence failed",
-			err,
-		))
-	}
-
-	answer, release := capability.client.SendCall(ctx, capnp.Send{
-		Method:   capability.doneMethod,
-		ArgsSize: capability.doneSize,
+		for index, name := range server.outputs {
+			if err := outputs.Set(index, name); err != nil {
+				return err
+			}
+		}
+		if err := params.SetEntry(server.entry); err != nil {
+			return err
+		}
+		return params.SetData(payload)
 	})
-
 	defer release()
 
-	results, err := answer.Struct()
+	result, err := future.Struct()
 
 	if err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.IO,
-			"[runtime.capability] done call failed",
-			err,
-		))
+		server.failure = errnie.Error(errnie.Err(errnie.IO, "consumer: stage failed", err))
+		server.Transition(ERROR)
+		return server.failure
 	}
 
-	pointer, err := results.Ptr(capability.doneField)
+	allocated, err := call.AllocResults()
 
 	if err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.IO,
-			"[runtime.capability] failed to read done result",
-			err,
-		))
+		return errnie.Error(errnie.Err(errnie.Internal, "consumer: results", err))
 	}
 
-	return append([]byte(nil), pointer.Data()...), nil
+	if err := capnp.Struct(allocated).CopyFrom(capnp.Struct(result)); err != nil {
+		return errnie.Error(errnie.Err(errnie.Internal, "consumer: copy results", err))
+	}
+	outputs, err := allocated.Outputs()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.Internal, "consumer: read outputs", err))
+	}
+
+	for index := range outputs.Len() {
+		output := outputs.At(index)
+		output.SetEpoch(args.Epoch())
+		output.SetSequence(args.Sequence())
+
+		if err := output.SetProducer(server.name); err != nil {
+			return errnie.Error(errnie.Err(errnie.Internal, "consumer: output producer", err))
+		}
+	}
+	retained, err := allocated.Clone()
+
+	if err != nil {
+		return err
+	}
+
+	if server.result.IsValid() {
+		server.result.Message().Release()
+	}
+	server.result = retained
+
+	frame, err := allocated.Bindings()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.Internal, "consumer: UI bindings", err))
+	}
+	if len(frame) > 0 && !server.receiver.IsValid() {
+		server.failure = errnie.Error(errnie.Err(errnie.Validation, "consumer: UI bindings require a receiver capability", nil))
+		server.Transition(ERROR)
+		return server.failure
+	}
+	if len(frame) > 0 {
+		future, release := server.receiver.Publish(ctx, func(params ui.Receiver_publish_Params) error {
+			return params.SetData(frame)
+		})
+		_, err := future.Struct()
+		release()
+
+		if err != nil {
+			server.failure = errnie.Error(errnie.Err(errnie.IO, "consumer: publish bindings", err))
+			server.Transition(ERROR)
+			return server.failure
+		}
+	}
+	server.epoch, server.sequence = args.Epoch(), args.Sequence()
+	server.completed++
+	return nil
+}
+
+/* Done reports only work that completed successfully. Failures remain visible. */
+func (server *ConsumerServer) Done(ctx context.Context, call Consumer_done) error {
+	if server.failure != nil {
+		return server.failure
+	}
+
+	results, err := call.AllocResults()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.Internal, "consumer: allocate progress", err))
+	}
+
+	results.SetEpoch(server.epoch)
+	results.SetSequence(server.sequence)
+	results.SetCompleted(server.completed)
+	results.SetStatus(Status(server.Status()))
+
+	if server.result.IsValid() {
+		outputs, err := server.result.Outputs()
+
+		if err != nil {
+			return errnie.Error(errnie.Err(errnie.Internal, "consumer: output results", err))
+		}
+
+		if err := results.SetOutputs(outputs); err != nil {
+			return errnie.Error(errnie.Err(errnie.Internal, "consumer: publish outputs", err))
+		}
+	}
+	return nil
+}
+
+/* Shutdown releases the capability owned by this node. */
+func (server *ConsumerServer) Shutdown() {
+	server.snapshot.Release()
+	server.checkpoint.Release()
+	server.receiver.Release()
+	server.target.Release()
+
+	if server.result.IsValid() {
+		server.result.Message().Release()
+	}
+
+	if err := server.Close(); err != nil {
+		errnie.Error(err)
+	}
+}
+
+/* Fence reaches the durable owners behind the configured stage capability. */
+func (server *ConsumerServer) Fence(ctx context.Context, call StageNode_fence) error {
+	if !server.target.IsValid() {
+		return nil
+	}
+	future, release := server.target.Fence(ctx, nil)
+	defer release()
+	_, err := future.Struct()
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.IO, "consumer: fence stage", err))
+	}
+	if server.checkpoint.IsValid() {
+		future, release := server.snapshot.Snapshot(ctx, nil)
+		defer release()
+		result, err := future.Struct()
+		if err != nil {
+			return errnie.Error(err)
+		}
+		encoded, err := result.Data()
+		if err != nil {
+			return errnie.Error(err)
+		}
+		saved, release := server.checkpoint.Save(ctx, func(params Checkpoint_save_Params) error {
+			if err := params.SetKey(server.name); err != nil {
+				return err
+			}
+			return params.SetData(encoded)
+		})
+		_, err = saved.Struct()
+		release()
+		if err != nil {
+			return errnie.Error(err)
+		}
+	}
+
+	return nil
 }

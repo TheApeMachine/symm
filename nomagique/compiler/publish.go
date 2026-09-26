@@ -3,14 +3,18 @@ package compiler
 import (
 	"encoding/json"
 	"fmt"
-	"math"
-	"slices"
 
 	capnp "capnproto.org/go/capnp/v3"
 	"capnproto.org/go/capnp/v3/std/capnp/schema"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/ui"
 )
+
+/* bindingArrival is one actual value delivered to an authored component port. */
+type bindingArrival struct {
+	entry BindingEntry
+	value string
+}
 
 /*
 bindings encodes the values that reached component ports in the evaluation
@@ -20,40 +24,23 @@ last shown rather than being handed an empty value. It returns nil when no
 bound producer spoke.
 */
 func (p *Program) bindings() ([]byte, error) {
-	if p.Bindings == nil || len(p.Bindings.Bindings) == 0 {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.bindingsLocked()
+}
+
+/* bindingsLocked encodes the completed observation under the evaluation lock. */
+func (p *Program) bindingsLocked() ([]byte, error) {
+	if p.Bindings == nil || len(p.Bindings.Bindings) == 0 && len(p.stageArrivals) == 0 {
 		return nil, nil
 	}
 
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	type arrival struct {
-		entry BindingEntry
-		value string
-	}
-
 	projection := &resultProjection{nodes: make(map[uint64]schema.Node)}
-	arrivals := make([]arrival, 0, len(p.Bindings.Bindings))
+	arrivals := p.stageArrivals
+	p.stageArrivals = nil
 
 	if p.published == nil {
 		p.published = make([]string, len(p.Bindings.Bindings))
-	}
-
-	// A surface that just joined is owed what every port is showing, not only
-	// what changed on this evaluation.
-	told := make([]bool, len(p.Bindings.Bindings))
-
-	if p.replay {
-		p.replay = false
-
-		for slot, encoded := range p.published {
-			if encoded == "" {
-				continue
-			}
-
-			told[slot] = true
-			arrivals = append(arrivals, arrival{p.Bindings.Bindings[slot], encoded})
-		}
 	}
 
 	for slot, entry := range p.Bindings.Bindings {
@@ -102,13 +89,7 @@ func (p *Program) bindings() ([]byte, error) {
 
 		p.published[slot] = encoded
 
-		if told[slot] {
-			arrivals = slices.DeleteFunc(arrivals, func(candidate arrival) bool {
-				return candidate.entry == entry
-			})
-		}
-
-		arrivals = append(arrivals, arrival{entry, encoded})
+		arrivals = append(arrivals, bindingArrival{entry, encoded})
 	}
 
 	if len(arrivals) == 0 {
@@ -179,11 +160,7 @@ func boundJSON(value any) (string, bool, error) {
 		if typed == "" {
 			return "", false, nil
 		}
-	case float64:
-		// A reading that is not a finite number has no value to show.
-		if math.IsNaN(typed) || math.IsInf(typed, 0) {
-			return "null", true, nil
-		}
+
 	}
 
 	encoded, err := json.Marshal(value)
@@ -193,16 +170,4 @@ func boundJSON(value any) (string, bool, error) {
 	}
 
 	return string(encoded), true, nil
-}
-
-/*
-Refresh has the next evaluation deliver every bound value last published, as
-well as what changed — what a surface that just connected needs, even when
-the producers behind it have gone quiet.
-*/
-func (p *Program) Refresh() {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	p.replay = true
 }

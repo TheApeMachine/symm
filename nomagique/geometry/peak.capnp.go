@@ -674,17 +674,22 @@ func (s Watershed_settled) NewRegions(n int32) (capnp.TextList, error) {
 	err = capnp.Struct(s).SetPtr(2, l.ToPtr())
 	return l, err
 }
-func (s Watershed_settled) Vocabulary() ([]byte, error) {
+func (s Watershed_settled) Vocabulary() (string, error) {
 	p, err := capnp.Struct(s).Ptr(3)
-	return []byte(p.Data()), err
+	return p.Text(), err
 }
 
 func (s Watershed_settled) HasVocabulary() bool {
 	return capnp.Struct(s).HasPtr(3)
 }
 
-func (s Watershed_settled) SetVocabulary(v []byte) error {
-	return capnp.Struct(s).SetData(3, v)
+func (s Watershed_settled) VocabularyBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(3)
+	return p.TextBytes(), err
+}
+
+func (s Watershed_settled) SetVocabulary(v string) error {
+	return capnp.Struct(s).SetText(3, v)
 }
 
 // Watershed_List is a list of Watershed.

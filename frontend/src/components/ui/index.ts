@@ -49,6 +49,7 @@ export {
 	type DecisionListProps,
 	type DecisionRow,
 } from "./decision-list";
+export { Decisions, type DecisionsProps } from "./decisions";
 export {
 	computeDistributionPath,
 	DistributionCurve,
@@ -121,6 +122,11 @@ export {
 	type SearchProps,
 } from "./input";
 export { KernelCard, type KernelCardProps } from "./kernel-card";
+export {
+	KernelInspector,
+	type KernelInspectorProps,
+} from "./kernel-inspector";
+export { KernelList, type KernelListProps } from "./kernel-list";
 export { Key, type KeyProps, keyVariants, type Modifier } from "./key";
 export { KnowledgePanel } from "./knowledge-panel";
 export {
@@ -191,6 +197,12 @@ export {
 	PositionList,
 	type PositionListProps,
 } from "./position-list";
+export { Positions, type PositionsProps } from "./positions";
+export {
+	PredictiveCodingCanvas,
+	type PredictiveCodingCanvasProps,
+} from "./predictive-coding-canvas";
+export { Pulse, type PulseProps } from "./pulse";
 export { Radar, type RadarAxis, type RadarProps, radarVariants } from "./radar";
 export {
 	Rail,
@@ -257,6 +269,7 @@ export {
 	tabVariants,
 } from "./tabs";
 export { Text, type TextProps } from "./text";
+export { ThesisModal, type ThesisModalProps } from "./thesis-modal";
 export { Toolbar, type ToolbarProps, toolbarVariants } from "./toolbar";
 export {
 	type TrieCandidate,

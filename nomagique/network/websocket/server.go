@@ -23,7 +23,6 @@ type WebSocketServerServer struct {
 	*runtime.System
 	upgrader  gorillaws.Upgrader
 	clients   sync.Map
-	writing   sync.Mutex
 	joined    atomic.Value
 	incoming  *lf.Queue[[]byte]
 	focusChan chan string
@@ -62,7 +61,13 @@ func (server *WebSocketServerServer) UpgradeHandler() http.HandlerFunc {
 			return
 		}
 
-		server.clients.Store(conn, struct{}{})
+		// One frame may wait behind the active socket write. A peer that
+		// exceeds this transport allowance is disconnected and refreshes on
+		// reconnect; it cannot retain unbounded telemetry or block the graph.
+		outgoing := make(chan []byte, 1)
+		disconnected := make(chan struct{})
+		server.clients.Store(conn, outgoing)
+		go server.transmit(conn, outgoing, disconnected)
 
 		if joined, set := server.joined.Load().(func()); set {
 			joined()
@@ -70,8 +75,8 @@ func (server *WebSocketServerServer) UpgradeHandler() http.HandlerFunc {
 
 		go func() {
 			defer func() {
-				server.clients.Delete(conn)
-				_ = conn.Close()
+				close(disconnected)
+				server.disconnect(conn)
 			}()
 
 			for {
@@ -136,22 +141,57 @@ func (server *WebSocketServerServer) OnJoin(join func()) {
 }
 
 /*
-Broadcast writes a binary frame to all currently connected WebSocket peers.
+Broadcast admits immutable frames without waiting for any peer's socket.
+An overloaded peer is disconnected visibly; reconnect triggers OnJoin refresh.
 */
 func (server *WebSocketServerServer) Broadcast(data []byte) {
-	// A connection takes one writer at a time.
-	server.writing.Lock()
-	defer server.writing.Unlock()
-
-	server.clients.Range(func(key, _ any) bool {
-		conn, ok := key.(*gorillaws.Conn)
-
-		if ok {
-			_ = conn.WriteMessage(gorillaws.BinaryMessage, data)
+	var payload []byte
+	server.clients.Range(func(key, value any) bool {
+		if payload == nil {
+			payload = bytes.Clone(data)
 		}
 
+		connection := key.(*gorillaws.Conn)
+		outgoing := value.(chan []byte)
+
+		select {
+		case outgoing <- payload:
+		default:
+			errnie.Error(errnie.Err(errnie.IO, "websocket: disconnecting peer whose output cannot keep up", nil))
+			server.disconnect(connection)
+		}
 		return true
 	})
+}
+
+/* transmit owns the sole socket writer for a connected peer. */
+func (server *WebSocketServerServer) transmit(connection *gorillaws.Conn, outgoing <-chan []byte, disconnected <-chan struct{}) {
+	for {
+		select {
+		case <-server.Context().Done():
+			server.disconnect(connection)
+			return
+		case <-disconnected:
+			return
+		case payload := <-outgoing:
+			if err := connection.WriteMessage(gorillaws.BinaryMessage, payload); err != nil {
+				errnie.Error(errnie.Err(errnie.IO, "websocket: peer write failed", err))
+				server.disconnect(connection)
+				return
+			}
+		}
+	}
+}
+
+/* disconnect removes and closes a connection exactly once across both pumps. */
+func (server *WebSocketServerServer) disconnect(connection *gorillaws.Conn) {
+	if _, found := server.clients.LoadAndDelete(connection); !found {
+		return
+	}
+
+	if err := connection.Close(); err != nil {
+		errnie.Error(errnie.Err(errnie.IO, "websocket: close peer", err))
+	}
 }
 
 /*
@@ -201,15 +241,17 @@ func (server *WebSocketServerServer) Focus() <-chan string {
 Close terminates all client connections and shuts down the runtime system.
 */
 func (server *WebSocketServerServer) Close() error {
-	server.clients.Range(func(key, _ any) bool {
-		conn, ok := key.(*gorillaws.Conn)
-
-		if ok {
-			_ = conn.Close()
-		}
-
+	server.clients.Range(func(key, value any) bool {
+		server.disconnect(key.(*gorillaws.Conn))
 		return true
 	})
 
 	return server.System.Close()
+}
+
+/* Shutdown closes peer pumps when the last Cap'n Proto reference is released. */
+func (server *WebSocketServerServer) Shutdown() {
+	if err := server.Close(); err != nil {
+		errnie.Error(err)
+	}
 }

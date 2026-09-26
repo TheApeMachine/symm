@@ -12,18 +12,14 @@
           "value": "wss://futures.kraken.com/ws/v1"
         },
         "onConnect": {
-          "value": "{\"event\":\"subscribe\",\"feed\":\"ticker\",\"product_ids\":[\"PI_XBTUSD\"]}"
+          "value": [
+            "{\"event\":\"subscribe\",\"feed\":\"ticker\",\"product_ids\":[\"PI_XBTUSD\"]}",
+            "{\"event\":\"subscribe\",\"feed\":\"trade\",\"product_ids\":[\"PI_XBTUSD\"]}"
+          ]
         }
       },
       "connections": {
-        "inputs": {
-          "write_0": [
-            {
-              "nodeId": "trade_subscription",
-              "portName": "out"
-            }
-          ]
-        },
+        "inputs": {},
         "outputs": {
           "frame.read": [
             {
@@ -31,43 +27,16 @@
               "portName": "data"
             }
           ],
-          "frame.receivedAt": [
+          "frame.provenance": [
             {
               "nodeId": "socket_received",
-              "portName": "text"
+              "portName": "json"
             }
           ]
         }
       },
       "x": 0,
       "y": 0
-    },
-    "trade_subscription": {
-      "id": "trade_subscription",
-      "type": "controlflow.Once",
-      "width": 280,
-      "height": 172,
-      "inputData": {
-        "trigger": {
-          "value": true
-        },
-        "through": {
-          "value": "{\"event\":\"subscribe\",\"feed\":\"trade\",\"product_ids\":[\"PI_XBTUSD\"]}"
-        }
-      },
-      "connections": {
-        "inputs": {},
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "socket",
-              "portName": "write_0"
-            }
-          ]
-        }
-      },
-      "x": 0,
-      "y": 200
     },
     "records": {
       "id": "records",
@@ -105,10 +74,7 @@
       "y": 200,
       "inputData": {
         "path": {
-          "value": "capture.receivedAt"
-        },
-        "encoding": {
-          "value": "text"
+          "value": "capture"
         }
       },
       "connections": {
@@ -119,10 +85,10 @@
               "portName": "frame.read"
             }
           ],
-          "text": [
+          "json": [
             {
               "nodeId": "socket",
-              "portName": "frame.receivedAt"
+              "portName": "frame.provenance"
             }
           ]
         },

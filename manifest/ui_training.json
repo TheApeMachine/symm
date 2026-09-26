@@ -4412,6 +4412,9 @@
         "className": {
           "value": "min-w-0 flex-1"
         },
+        "fallback": {
+          "value": true
+        },
         "phase": {
           "value": "LEARNING PHASE"
         },
@@ -4546,6 +4549,9 @@
       "inputData": {
         "className": {
           "value": "min-w-0 flex-1"
+        },
+        "fallback": {
+          "value": true
         }
       }
     },
@@ -4592,6 +4598,9 @@
         },
         "className": {
           "value": "w-[400px] shrink-0"
+        },
+        "showFit": {
+          "value": true
         }
       }
     },
@@ -4712,6 +4721,9 @@
       "inputData": {
         "className": {
           "value": "h-full"
+        },
+        "fallback": {
+          "value": true
         }
       }
     },
@@ -4795,6 +4807,9 @@
       "inputData": {
         "className": {
           "value": "h-full min-h-0 flex-1"
+        },
+        "fallback": {
+          "value": true
         },
         "title": {
           "value": "Impulse map \u00b7 training"

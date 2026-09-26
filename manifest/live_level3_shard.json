@@ -2,32 +2,16 @@
   "id": "live_level3_shard",
   "name": "Kraken level 3 shard: token per connection, one subscription per heartbeat",
   "nodes": {
-    "symbols": {
-      "id": "symbols",
-      "type": "transport.Fan",
-      "width": 280,
-      "height": 172,
-      "inputData": {},
-      "connections": {
-        "inputs": {},
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "admission",
-              "portName": "offer_0"
-            }
-          ]
-        }
-      },
-      "x": 0.0,
-      "y": 0.0
-    },
     "socket": {
       "id": "socket",
       "type": "websocket.WebSocketClient",
       "width": 280,
       "height": 172,
-      "inputData": {},
+      "inputData": {
+        "endpoint": {
+          "value": "wss://ws-l3.kraken.com/v2"
+        }
+      },
       "connections": {
         "inputs": {
           "write_0": [
@@ -56,10 +40,10 @@
               "portName": "data"
             }
           ],
-          "frame.receivedAt": [
+          "frame.provenance": [
             {
               "nodeId": "socket_received",
-              "portName": "text"
+              "portName": "json"
             }
           ]
         }
@@ -141,10 +125,6 @@
             },
             {
               "nodeId": "answered",
-              "portName": "data"
-            },
-            {
-              "nodeId": "books",
               "portName": "data"
             },
             {
@@ -383,70 +363,6 @@
       "x": 3060.0,
       "y": 0.0
     },
-    "books": {
-      "id": "books",
-      "type": "data.Filter",
-      "width": 280,
-      "height": 172,
-      "inputData": {
-        "path": {
-          "value": "channel"
-        },
-        "operator": {
-          "value": "=="
-        },
-        "referencePath": {
-          "value": "_const.level3"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "classified",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "records",
-              "portName": "data_0"
-            }
-          ]
-        }
-      },
-      "x": 3400.0,
-      "y": 0.0
-    },
-    "records": {
-      "id": "records",
-      "type": "data.Iterate",
-      "width": 280,
-      "height": 172,
-      "inputData": {
-        "path": {
-          "value": "data"
-        },
-        "envelope": {
-          "value": true
-        }
-      },
-      "connections": {
-        "inputs": {
-          "data_0": [
-            {
-              "nodeId": "books",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      },
-      "x": 3740.0,
-      "y": 0.0
-    },
     "refused_symbol": {
       "id": "refused_symbol",
       "type": "data.Extract",
@@ -557,16 +473,10 @@
       "inputData": {},
       "connections": {
         "inputs": {
-          "offer_0": [
+          "release_0": [
             {
-              "nodeId": "symbols",
+              "nodeId": "heartbeat",
               "portName": "out"
-            }
-          ],
-          "retry_0": [
-            {
-              "nodeId": "retry",
-              "portName": "json"
             }
           ],
           "rewind_0": [
@@ -575,16 +485,16 @@
               "portName": "out"
             }
           ],
-          "release_0": [
-            {
-              "nodeId": "heartbeat",
-              "portName": "out"
-            }
-          ],
           "release_1": [
             {
               "nodeId": "accepted",
               "portName": "out"
+            }
+          ],
+          "retry_0": [
+            {
+              "nodeId": "retry",
+              "portName": "json"
             }
           ],
           "release_2": [
@@ -837,16 +747,16 @@
       "inputData": {},
       "connections": {
         "inputs": {
-          "test": [
-            {
-              "nodeId": "tokens",
-              "portName": "found_0"
-            }
-          ],
           "no_0": [
             {
               "nodeId": "classified",
               "portName": "out"
+            }
+          ],
+          "test": [
+            {
+              "nodeId": "tokens",
+              "portName": "found_0"
             }
           ]
         },
@@ -1292,6 +1202,12 @@
       },
       "connections": {
         "inputs": {
+          "body": [
+            {
+              "nodeId": "post",
+              "portName": "out"
+            }
+          ],
           "headers_0": [
             {
               "nodeId": "key_header",
@@ -1307,12 +1223,6 @@
           "headers_2": [
             {
               "nodeId": "form_header",
-              "portName": "out"
-            }
-          ],
-          "body": [
-            {
-              "nodeId": "post",
               "portName": "out"
             }
           ]
@@ -1481,16 +1391,16 @@
       },
       "connections": {
         "inputs": {
-          "yes_0": [
-            {
-              "nodeId": "current_token",
-              "portName": "out"
-            }
-          ],
           "yes_1": [
             {
               "nodeId": "token",
               "portName": "json"
+            }
+          ],
+          "yes_0": [
+            {
+              "nodeId": "current_token",
+              "portName": "out"
             }
           ]
         },
@@ -1552,10 +1462,7 @@
       "y": 200.0,
       "inputData": {
         "path": {
-          "value": "capture.receivedAt"
-        },
-        "encoding": {
-          "value": "text"
+          "value": "capture"
         }
       },
       "connections": {
@@ -1566,10 +1473,10 @@
               "portName": "frame.read"
             }
           ],
-          "text": [
+          "json": [
             {
               "nodeId": "socket",
-              "portName": "frame.receivedAt"
+              "portName": "frame.provenance"
             }
           ]
         },

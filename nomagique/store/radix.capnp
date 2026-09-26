@@ -15,7 +15,19 @@ interface Retained {
 # one native radix transaction; its length must match and every slot must be
 # nonempty. Empty slots mean no arrival and cannot be committed as values.
 # The result always describes the revision before that write.
-interface Radix extends(Retained) {
-  write @0 (key :List(Text), value :List(Data)) -> stream;
-  done @1 () -> (out :List(Data), found :List(Bool));
+
+struct RadixSnapshot {
+ format @0 :Text;
+ keys @1 :List(Text);
+ values @2 :List(Data);
+ revision @3 :UInt64;
+ contract @4 :Text; # Authored key/value semantics; restore requires an exact match.
+}
+
+using import "../runtime/snapshot.capnp".Checkpoint;
+
+interface Radix extends(Retained, Checkpoint) {
+  write @0 (key :List(Text), value :List(Data), path :Text, prefix :Bool, contract :Text) -> stream;
+  done @1 () -> (out :List(Data), found :List(Bool), durable :Bool);
+  measure @2 () -> (extent :UInt64);
 }

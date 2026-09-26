@@ -37,12 +37,12 @@ func (w Gathered_Which) String() string {
 const Gathered_TypeID = 0xe611e8aaeb8460b8
 
 func NewGathered(s *capnp.Segment) (Gathered, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 4})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 8})
 	return Gathered(st), err
 }
 
 func NewRootGathered(s *capnp.Segment) (Gathered, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 4})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 8})
 	return Gathered(st), err
 }
 
@@ -111,6 +111,99 @@ func (s Gathered) PhaseBytes() ([]byte, error) {
 
 func (s Gathered) SetPhase(v string) error {
 	return capnp.Struct(s).SetText(3, v)
+}
+
+func (s Gathered) Epoch() int64 {
+	return int64(capnp.Struct(s).Uint64(8))
+}
+
+func (s Gathered) SetEpoch(v int64) {
+	capnp.Struct(s).SetUint64(8, uint64(v))
+}
+
+func (s Gathered) Sequence() int64 {
+	return int64(capnp.Struct(s).Uint64(16))
+}
+
+func (s Gathered) SetSequence(v int64) {
+	capnp.Struct(s).SetUint64(16, uint64(v))
+}
+
+func (s Gathered) Epochs() (capnp.Int64List, error) {
+	p, err := capnp.Struct(s).Ptr(4)
+	return capnp.Int64List(p.List()), err
+}
+
+func (s Gathered) HasEpochs() bool {
+	return capnp.Struct(s).HasPtr(4)
+}
+
+func (s Gathered) SetEpochs(v capnp.Int64List) error {
+	return capnp.Struct(s).SetPtr(4, v.ToPtr())
+}
+
+// NewEpochs sets the epochs field to a newly
+// allocated capnp.Int64List, preferring placement in s's segment.
+func (s Gathered) NewEpochs(n int32) (capnp.Int64List, error) {
+	l, err := capnp.NewInt64List(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return capnp.Int64List{}, err
+	}
+	err = capnp.Struct(s).SetPtr(4, l.ToPtr())
+	return l, err
+}
+func (s Gathered) Sequences() (capnp.Int64List, error) {
+	p, err := capnp.Struct(s).Ptr(5)
+	return capnp.Int64List(p.List()), err
+}
+
+func (s Gathered) HasSequences() bool {
+	return capnp.Struct(s).HasPtr(5)
+}
+
+func (s Gathered) SetSequences(v capnp.Int64List) error {
+	return capnp.Struct(s).SetPtr(5, v.ToPtr())
+}
+
+// NewSequences sets the sequences field to a newly
+// allocated capnp.Int64List, preferring placement in s's segment.
+func (s Gathered) NewSequences(n int32) (capnp.Int64List, error) {
+	l, err := capnp.NewInt64List(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return capnp.Int64List{}, err
+	}
+	err = capnp.Struct(s).SetPtr(5, l.ToPtr())
+	return l, err
+}
+func (s Gathered) Scope() (string, error) {
+	p, err := capnp.Struct(s).Ptr(6)
+	return p.Text(), err
+}
+
+func (s Gathered) HasScope() bool {
+	return capnp.Struct(s).HasPtr(6)
+}
+
+func (s Gathered) ScopeBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(6)
+	return p.TextBytes(), err
+}
+
+func (s Gathered) SetScope(v string) error {
+	return capnp.Struct(s).SetText(6, v)
+}
+
+func (s Gathered) Row() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(7)
+	return []byte(p.Data()), err
+}
+
+func (s Gathered) HasRow() bool {
+	return capnp.Struct(s).HasPtr(7)
+}
+
+func (s Gathered) SetRow(v []byte) error {
+	return capnp.Struct(s).SetData(7, v)
 }
 
 func (s Gathered) SetIdle() {
@@ -187,7 +280,7 @@ type Gathered_List = capnp.StructList[Gathered]
 
 // NewGathered creates a new list of Gathered.
 func NewGathered_List(s *capnp.Segment, sz int32) (Gathered_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 4}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 24, PointerCount: 8}, sz)
 	return capnp.StructList[Gathered](l), err
 }
 
@@ -225,7 +318,7 @@ func (c Gather) Write(ctx context.Context, params func(Gather_write_Params) erro
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 3}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 24, PointerCount: 7}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(Gather_write_Params(s)) }
 	}
 
@@ -407,7 +500,7 @@ func (c Gather_done) Args() Gather_done_Params {
 
 // AllocResults allocates the results struct.
 func (c Gather_done) AllocResults() (Gathered, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 4})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 24, PointerCount: 8})
 	return Gathered(r), err
 }
 
@@ -426,12 +519,12 @@ type Gather_write_Params capnp.Struct
 const Gather_write_Params_TypeID = 0xa68fad2ad7113eb0
 
 func NewGather_write_Params(s *capnp.Segment) (Gather_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 3})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 7})
 	return Gather_write_Params(st), err
 }
 
 func NewRootGather_write_Params(s *capnp.Segment) (Gather_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 3})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 7})
 	return Gather_write_Params(st), err
 }
 
@@ -531,12 +624,103 @@ func (s Gather_write_Params) SetFamilies(v string) error {
 	return capnp.Struct(s).SetText(2, v)
 }
 
+func (s Gather_write_Params) Epoch() int64 {
+	return int64(capnp.Struct(s).Uint64(0))
+}
+
+func (s Gather_write_Params) SetEpoch(v int64) {
+	capnp.Struct(s).SetUint64(0, uint64(v))
+}
+
+func (s Gather_write_Params) Sequence() int64 {
+	return int64(capnp.Struct(s).Uint64(8))
+}
+
+func (s Gather_write_Params) SetSequence(v int64) {
+	capnp.Struct(s).SetUint64(8, uint64(v))
+}
+
+func (s Gather_write_Params) Scope() (string, error) {
+	p, err := capnp.Struct(s).Ptr(3)
+	return p.Text(), err
+}
+
+func (s Gather_write_Params) HasScope() bool {
+	return capnp.Struct(s).HasPtr(3)
+}
+
+func (s Gather_write_Params) ScopeBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(3)
+	return p.TextBytes(), err
+}
+
+func (s Gather_write_Params) SetScope(v string) error {
+	return capnp.Struct(s).SetText(3, v)
+}
+
+func (s Gather_write_Params) Identities() (capnp.TextList, error) {
+	p, err := capnp.Struct(s).Ptr(4)
+	return capnp.TextList(p.List()), err
+}
+
+func (s Gather_write_Params) HasIdentities() bool {
+	return capnp.Struct(s).HasPtr(4)
+}
+
+func (s Gather_write_Params) SetIdentities(v capnp.TextList) error {
+	return capnp.Struct(s).SetPtr(4, v.ToPtr())
+}
+
+// NewIdentities sets the identities field to a newly
+// allocated capnp.TextList, preferring placement in s's segment.
+func (s Gather_write_Params) NewIdentities(n int32) (capnp.TextList, error) {
+	l, err := capnp.NewTextList(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return capnp.TextList{}, err
+	}
+	err = capnp.Struct(s).SetPtr(4, l.ToPtr())
+	return l, err
+}
+func (s Gather_write_Params) Row() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(5)
+	return []byte(p.Data()), err
+}
+
+func (s Gather_write_Params) HasRow() bool {
+	return capnp.Struct(s).HasPtr(5)
+}
+
+func (s Gather_write_Params) SetRow(v []byte) error {
+	return capnp.Struct(s).SetData(5, v)
+}
+
+func (s Gather_write_Params) Observation() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(6)
+	return []byte(p.Data()), err
+}
+
+func (s Gather_write_Params) HasObservation() bool {
+	return capnp.Struct(s).HasPtr(6)
+}
+
+func (s Gather_write_Params) SetObservation(v []byte) error {
+	return capnp.Struct(s).SetData(6, v)
+}
+
+func (s Gather_write_Params) RequireProvenance() bool {
+	return capnp.Struct(s).Bit(128)
+}
+
+func (s Gather_write_Params) SetRequireProvenance(v bool) {
+	capnp.Struct(s).SetBit(128, v)
+}
+
 // Gather_write_Params_List is a list of Gather_write_Params.
 type Gather_write_Params_List = capnp.StructList[Gather_write_Params]
 
 // NewGather_write_Params creates a new list of Gather_write_Params.
 func NewGather_write_Params_List(s *capnp.Segment, sz int32) (Gather_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 3}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 24, PointerCount: 7}, sz)
 	return capnp.StructList[Gather_write_Params](l), err
 }
 

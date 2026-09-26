@@ -2,6 +2,7 @@ package cmd_test
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -11,7 +12,37 @@ import (
 
 func TestExecute(t *testing.T) {
 	Convey("Given the system pipeline definition", t, func() {
-		pipeline, err := compiler.CompileFile("../manifest/system.json", nil, compiler.DefaultRepository())
+		graph, err := compiler.DefaultRepository().Load("system")
+		So(err, ShouldBeNil)
+		// Exercise the shipping HTTP/query node lifecycle without admitting
+		// external market feeds or opening the user's durable model files.
+		for id := range graph.Nodes {
+			if id != "server" && id != "inspection" {
+				delete(graph.Nodes, id)
+			}
+		}
+		for id, node := range graph.Nodes {
+			for _, ports := range []map[string][]compiler.ConnectionTarget{node.Connections.Inputs, node.Connections.Outputs} {
+				for port, targets := range ports {
+					kept := []compiler.ConnectionTarget{}
+					for _, target := range targets {
+						if _, found := graph.Nodes[target.NodeID]; found {
+							kept = append(kept, target)
+						}
+					}
+					if len(kept) == 0 {
+						delete(ports, port)
+						continue
+					}
+					ports[port] = kept
+				}
+			}
+			graph.Nodes[id] = node
+		}
+		server := graph.Nodes["server"]
+		server.InputData["address"] = json.RawMessage(`"127.0.0.1:0"`)
+		graph.Nodes["server"] = server
+		pipeline, err := compiler.Compile(graph, nil, compiler.DefaultRepository())
 		So(err, ShouldBeNil)
 		So(pipeline, ShouldNotBeNil)
 		defer pipeline.Release()

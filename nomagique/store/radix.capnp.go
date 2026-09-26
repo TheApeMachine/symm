@@ -9,6 +9,7 @@ import (
 	server "capnproto.org/go/capnp/v3/server"
 	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
 	context "context"
+	runtime "github.com/theapemachine/symm/nomagique/runtime"
 )
 
 type Retained capnp.Client
@@ -122,6 +123,160 @@ func NewRetained_List(s *capnp.Segment, sz int32) (Retained_List, error) {
 	return capnp.CapList[Retained](l), err
 }
 
+type RadixSnapshot capnp.Struct
+
+// RadixSnapshot_TypeID is the unique identifier for the type RadixSnapshot.
+const RadixSnapshot_TypeID = 0x9204a0fb08e3cf5d
+
+func NewRadixSnapshot(s *capnp.Segment) (RadixSnapshot, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 4})
+	return RadixSnapshot(st), err
+}
+
+func NewRootRadixSnapshot(s *capnp.Segment) (RadixSnapshot, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 4})
+	return RadixSnapshot(st), err
+}
+
+func ReadRootRadixSnapshot(msg *capnp.Message) (RadixSnapshot, error) {
+	root, err := msg.Root()
+	return RadixSnapshot(root.Struct()), err
+}
+
+func (s RadixSnapshot) String() string {
+	str, _ := text.Marshal(0x9204a0fb08e3cf5d, capnp.Struct(s))
+	return str
+}
+
+func (s RadixSnapshot) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+	return capnp.Struct(s).EncodeAsPtr(seg)
+}
+
+func (RadixSnapshot) DecodeFromPtr(p capnp.Ptr) RadixSnapshot {
+	return RadixSnapshot(capnp.Struct{}.DecodeFromPtr(p))
+}
+
+func (s RadixSnapshot) ToPtr() capnp.Ptr {
+	return capnp.Struct(s).ToPtr()
+}
+func (s RadixSnapshot) IsValid() bool {
+	return capnp.Struct(s).IsValid()
+}
+
+func (s RadixSnapshot) Message() *capnp.Message {
+	return capnp.Struct(s).Message()
+}
+
+func (s RadixSnapshot) Segment() *capnp.Segment {
+	return capnp.Struct(s).Segment()
+}
+func (s RadixSnapshot) Format() (string, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return p.Text(), err
+}
+
+func (s RadixSnapshot) HasFormat() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s RadixSnapshot) FormatBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return p.TextBytes(), err
+}
+
+func (s RadixSnapshot) SetFormat(v string) error {
+	return capnp.Struct(s).SetText(0, v)
+}
+
+func (s RadixSnapshot) Keys() (capnp.TextList, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return capnp.TextList(p.List()), err
+}
+
+func (s RadixSnapshot) HasKeys() bool {
+	return capnp.Struct(s).HasPtr(1)
+}
+
+func (s RadixSnapshot) SetKeys(v capnp.TextList) error {
+	return capnp.Struct(s).SetPtr(1, v.ToPtr())
+}
+
+// NewKeys sets the keys field to a newly
+// allocated capnp.TextList, preferring placement in s's segment.
+func (s RadixSnapshot) NewKeys(n int32) (capnp.TextList, error) {
+	l, err := capnp.NewTextList(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return capnp.TextList{}, err
+	}
+	err = capnp.Struct(s).SetPtr(1, l.ToPtr())
+	return l, err
+}
+func (s RadixSnapshot) Values() (capnp.DataList, error) {
+	p, err := capnp.Struct(s).Ptr(2)
+	return capnp.DataList(p.List()), err
+}
+
+func (s RadixSnapshot) HasValues() bool {
+	return capnp.Struct(s).HasPtr(2)
+}
+
+func (s RadixSnapshot) SetValues(v capnp.DataList) error {
+	return capnp.Struct(s).SetPtr(2, v.ToPtr())
+}
+
+// NewValues sets the values field to a newly
+// allocated capnp.DataList, preferring placement in s's segment.
+func (s RadixSnapshot) NewValues(n int32) (capnp.DataList, error) {
+	l, err := capnp.NewDataList(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return capnp.DataList{}, err
+	}
+	err = capnp.Struct(s).SetPtr(2, l.ToPtr())
+	return l, err
+}
+func (s RadixSnapshot) Revision() uint64 {
+	return capnp.Struct(s).Uint64(0)
+}
+
+func (s RadixSnapshot) SetRevision(v uint64) {
+	capnp.Struct(s).SetUint64(0, v)
+}
+
+func (s RadixSnapshot) Contract() (string, error) {
+	p, err := capnp.Struct(s).Ptr(3)
+	return p.Text(), err
+}
+
+func (s RadixSnapshot) HasContract() bool {
+	return capnp.Struct(s).HasPtr(3)
+}
+
+func (s RadixSnapshot) ContractBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(3)
+	return p.TextBytes(), err
+}
+
+func (s RadixSnapshot) SetContract(v string) error {
+	return capnp.Struct(s).SetText(3, v)
+}
+
+// RadixSnapshot_List is a list of RadixSnapshot.
+type RadixSnapshot_List = capnp.StructList[RadixSnapshot]
+
+// NewRadixSnapshot creates a new list of RadixSnapshot.
+func NewRadixSnapshot_List(s *capnp.Segment, sz int32) (RadixSnapshot_List, error) {
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 4}, sz)
+	return capnp.StructList[RadixSnapshot](l), err
+}
+
+// RadixSnapshot_Future is a wrapper for a RadixSnapshot promised by a client call.
+type RadixSnapshot_Future struct{ *capnp.Future }
+
+func (f RadixSnapshot_Future) Struct() (RadixSnapshot, error) {
+	p, err := f.Future.Ptr()
+	return RadixSnapshot(p.Struct()), err
+}
+
 type Radix capnp.Client
 
 // Radix_TypeID is the unique identifier for the type Radix.
@@ -137,7 +292,7 @@ func (c Radix) Write(ctx context.Context, params func(Radix_write_Params) error)
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 2}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 8, PointerCount: 4}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(Radix_write_Params(s)) }
 	}
 
@@ -162,6 +317,86 @@ func (c Radix) Done(ctx context.Context, params func(Radix_done_Params) error) (
 
 	ans, release := capnp.Client(c).SendCall(ctx, s)
 	return Radix_done_Results_Future{Future: ans.Future()}, release
+
+}
+
+func (c Radix) Measure(ctx context.Context, params func(Radix_measure_Params) error) (Radix_measure_Results_Future, capnp.ReleaseFunc) {
+
+	s := capnp.Send{
+		Method: capnp.Method{
+			InterfaceID:   0xd5ab1698d577655d,
+			MethodID:      2,
+			InterfaceName: "nomagique/store/radix.capnp:Radix",
+			MethodName:    "measure",
+		},
+	}
+	if params != nil {
+		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 0}
+		s.PlaceArgs = func(s capnp.Struct) error { return params(Radix_measure_Params(s)) }
+	}
+
+	ans, release := capnp.Client(c).SendCall(ctx, s)
+	return Radix_measure_Results_Future{Future: ans.Future()}, release
+
+}
+
+func (c Radix) Load(ctx context.Context, params func(runtime.Checkpoint_load_Params) error) (runtime.Checkpoint_load_Results_Future, capnp.ReleaseFunc) {
+
+	s := capnp.Send{
+		Method: capnp.Method{
+			InterfaceID:   0xec8b0f5479ae96f6,
+			MethodID:      0,
+			InterfaceName: "nomagique/runtime/snapshot.capnp:Checkpoint",
+			MethodName:    "load",
+		},
+	}
+	if params != nil {
+		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 1}
+		s.PlaceArgs = func(s capnp.Struct) error { return params(runtime.Checkpoint_load_Params(s)) }
+	}
+
+	ans, release := capnp.Client(c).SendCall(ctx, s)
+	return runtime.Checkpoint_load_Results_Future{Future: ans.Future()}, release
+
+}
+
+func (c Radix) Save(ctx context.Context, params func(runtime.Checkpoint_save_Params) error) (runtime.Checkpoint_save_Results_Future, capnp.ReleaseFunc) {
+
+	s := capnp.Send{
+		Method: capnp.Method{
+			InterfaceID:   0xec8b0f5479ae96f6,
+			MethodID:      1,
+			InterfaceName: "nomagique/runtime/snapshot.capnp:Checkpoint",
+			MethodName:    "save",
+		},
+	}
+	if params != nil {
+		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 2}
+		s.PlaceArgs = func(s capnp.Struct) error { return params(runtime.Checkpoint_save_Params(s)) }
+	}
+
+	ans, release := capnp.Client(c).SendCall(ctx, s)
+	return runtime.Checkpoint_save_Results_Future{Future: ans.Future()}, release
+
+}
+
+func (c Radix) Flush(ctx context.Context, params func(runtime.Durable_flush_Params) error) (runtime.Durable_flush_Results_Future, capnp.ReleaseFunc) {
+
+	s := capnp.Send{
+		Method: capnp.Method{
+			InterfaceID:   0xd317eb5f30a42558,
+			MethodID:      0,
+			InterfaceName: "nomagique/runtime/status.capnp:Durable",
+			MethodName:    "flush",
+		},
+	}
+	if params != nil {
+		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 0}
+		s.PlaceArgs = func(s capnp.Struct) error { return params(runtime.Durable_flush_Params(s)) }
+	}
+
+	ans, release := capnp.Client(c).SendCall(ctx, s)
+	return runtime.Durable_flush_Results_Future{Future: ans.Future()}, release
 
 }
 
@@ -241,6 +476,14 @@ type Radix_Server interface {
 	Write(context.Context, Radix_write) error
 
 	Done(context.Context, Radix_done) error
+
+	Measure(context.Context, Radix_measure) error
+
+	Load(context.Context, runtime.Checkpoint_load) error
+
+	Save(context.Context, runtime.Checkpoint_save) error
+
+	Flush(context.Context, runtime.Durable_flush) error
 }
 
 // Radix_NewServer creates a new Server from an implementation of Radix_Server.
@@ -259,7 +502,7 @@ func Radix_ServerToClient(s Radix_Server) Radix {
 // This can be used to create a more complicated Server.
 func Radix_Methods(methods []server.Method, s Radix_Server) []server.Method {
 	if cap(methods) == 0 {
-		methods = make([]server.Method, 0, 2)
+		methods = make([]server.Method, 0, 6)
 	}
 
 	methods = append(methods, server.Method{
@@ -283,6 +526,54 @@ func Radix_Methods(methods []server.Method, s Radix_Server) []server.Method {
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
 			return s.Done(ctx, Radix_done{call})
+		},
+	})
+
+	methods = append(methods, server.Method{
+		Method: capnp.Method{
+			InterfaceID:   0xd5ab1698d577655d,
+			MethodID:      2,
+			InterfaceName: "nomagique/store/radix.capnp:Radix",
+			MethodName:    "measure",
+		},
+		Impl: func(ctx context.Context, call *server.Call) error {
+			return s.Measure(ctx, Radix_measure{call})
+		},
+	})
+
+	methods = append(methods, server.Method{
+		Method: capnp.Method{
+			InterfaceID:   0xec8b0f5479ae96f6,
+			MethodID:      0,
+			InterfaceName: "nomagique/runtime/snapshot.capnp:Checkpoint",
+			MethodName:    "load",
+		},
+		Impl: func(ctx context.Context, call *server.Call) error {
+			return s.Load(ctx, runtime.Checkpoint_load{call})
+		},
+	})
+
+	methods = append(methods, server.Method{
+		Method: capnp.Method{
+			InterfaceID:   0xec8b0f5479ae96f6,
+			MethodID:      1,
+			InterfaceName: "nomagique/runtime/snapshot.capnp:Checkpoint",
+			MethodName:    "save",
+		},
+		Impl: func(ctx context.Context, call *server.Call) error {
+			return s.Save(ctx, runtime.Checkpoint_save{call})
+		},
+	})
+
+	methods = append(methods, server.Method{
+		Method: capnp.Method{
+			InterfaceID:   0xd317eb5f30a42558,
+			MethodID:      0,
+			InterfaceName: "nomagique/runtime/status.capnp:Durable",
+			MethodName:    "flush",
+		},
+		Impl: func(ctx context.Context, call *server.Call) error {
+			return s.Flush(ctx, runtime.Durable_flush{call})
 		},
 	})
 
@@ -319,8 +610,25 @@ func (c Radix_done) Args() Radix_done_Params {
 
 // AllocResults allocates the results struct.
 func (c Radix_done) AllocResults() (Radix_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 2})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 2})
 	return Radix_done_Results(r), err
+}
+
+// Radix_measure holds the state for a server call to Radix.measure.
+// See server.Call for documentation.
+type Radix_measure struct {
+	*server.Call
+}
+
+// Args returns the call's arguments.
+func (c Radix_measure) Args() Radix_measure_Params {
+	return Radix_measure_Params(c.Call.Args())
+}
+
+// AllocResults allocates the results struct.
+func (c Radix_measure) AllocResults() (Radix_measure_Results, error) {
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 0})
+	return Radix_measure_Results(r), err
 }
 
 // Radix_List is a list of Radix.
@@ -338,12 +646,12 @@ type Radix_write_Params capnp.Struct
 const Radix_write_Params_TypeID = 0xa32c90c355cc8c09
 
 func NewRadix_write_Params(s *capnp.Segment) (Radix_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 4})
 	return Radix_write_Params(st), err
 }
 
 func NewRootRadix_write_Params(s *capnp.Segment) (Radix_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 4})
 	return Radix_write_Params(st), err
 }
 
@@ -425,13 +733,56 @@ func (s Radix_write_Params) NewValue(n int32) (capnp.DataList, error) {
 	err = capnp.Struct(s).SetPtr(1, l.ToPtr())
 	return l, err
 }
+func (s Radix_write_Params) Path() (string, error) {
+	p, err := capnp.Struct(s).Ptr(2)
+	return p.Text(), err
+}
+
+func (s Radix_write_Params) HasPath() bool {
+	return capnp.Struct(s).HasPtr(2)
+}
+
+func (s Radix_write_Params) PathBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(2)
+	return p.TextBytes(), err
+}
+
+func (s Radix_write_Params) SetPath(v string) error {
+	return capnp.Struct(s).SetText(2, v)
+}
+
+func (s Radix_write_Params) Prefix() bool {
+	return capnp.Struct(s).Bit(0)
+}
+
+func (s Radix_write_Params) SetPrefix(v bool) {
+	capnp.Struct(s).SetBit(0, v)
+}
+
+func (s Radix_write_Params) Contract() (string, error) {
+	p, err := capnp.Struct(s).Ptr(3)
+	return p.Text(), err
+}
+
+func (s Radix_write_Params) HasContract() bool {
+	return capnp.Struct(s).HasPtr(3)
+}
+
+func (s Radix_write_Params) ContractBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(3)
+	return p.TextBytes(), err
+}
+
+func (s Radix_write_Params) SetContract(v string) error {
+	return capnp.Struct(s).SetText(3, v)
+}
 
 // Radix_write_Params_List is a list of Radix_write_Params.
 type Radix_write_Params_List = capnp.StructList[Radix_write_Params]
 
 // NewRadix_write_Params creates a new list of Radix_write_Params.
 func NewRadix_write_Params_List(s *capnp.Segment, sz int32) (Radix_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 4}, sz)
 	return capnp.StructList[Radix_write_Params](l), err
 }
 
@@ -514,12 +865,12 @@ type Radix_done_Results capnp.Struct
 const Radix_done_Results_TypeID = 0xe40fb69e8e61ebd5
 
 func NewRadix_done_Results(s *capnp.Segment) (Radix_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 2})
 	return Radix_done_Results(st), err
 }
 
 func NewRootRadix_done_Results(s *capnp.Segment) (Radix_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 2})
 	return Radix_done_Results(st), err
 }
 
@@ -601,13 +952,20 @@ func (s Radix_done_Results) NewFound(n int32) (capnp.BitList, error) {
 	err = capnp.Struct(s).SetPtr(1, l.ToPtr())
 	return l, err
 }
+func (s Radix_done_Results) Durable() bool {
+	return capnp.Struct(s).Bit(0)
+}
+
+func (s Radix_done_Results) SetDurable(v bool) {
+	capnp.Struct(s).SetBit(0, v)
+}
 
 // Radix_done_Results_List is a list of Radix_done_Results.
 type Radix_done_Results_List = capnp.StructList[Radix_done_Results]
 
 // NewRadix_done_Results creates a new list of Radix_done_Results.
 func NewRadix_done_Results_List(s *capnp.Segment, sz int32) (Radix_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 2}, sz)
 	return capnp.StructList[Radix_done_Results](l), err
 }
 
@@ -617,4 +975,141 @@ type Radix_done_Results_Future struct{ *capnp.Future }
 func (f Radix_done_Results_Future) Struct() (Radix_done_Results, error) {
 	p, err := f.Future.Ptr()
 	return Radix_done_Results(p.Struct()), err
+}
+
+type Radix_measure_Params capnp.Struct
+
+// Radix_measure_Params_TypeID is the unique identifier for the type Radix_measure_Params.
+const Radix_measure_Params_TypeID = 0xa255c7daf18803f0
+
+func NewRadix_measure_Params(s *capnp.Segment) (Radix_measure_Params, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	return Radix_measure_Params(st), err
+}
+
+func NewRootRadix_measure_Params(s *capnp.Segment) (Radix_measure_Params, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	return Radix_measure_Params(st), err
+}
+
+func ReadRootRadix_measure_Params(msg *capnp.Message) (Radix_measure_Params, error) {
+	root, err := msg.Root()
+	return Radix_measure_Params(root.Struct()), err
+}
+
+func (s Radix_measure_Params) String() string {
+	str, _ := text.Marshal(0xa255c7daf18803f0, capnp.Struct(s))
+	return str
+}
+
+func (s Radix_measure_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+	return capnp.Struct(s).EncodeAsPtr(seg)
+}
+
+func (Radix_measure_Params) DecodeFromPtr(p capnp.Ptr) Radix_measure_Params {
+	return Radix_measure_Params(capnp.Struct{}.DecodeFromPtr(p))
+}
+
+func (s Radix_measure_Params) ToPtr() capnp.Ptr {
+	return capnp.Struct(s).ToPtr()
+}
+func (s Radix_measure_Params) IsValid() bool {
+	return capnp.Struct(s).IsValid()
+}
+
+func (s Radix_measure_Params) Message() *capnp.Message {
+	return capnp.Struct(s).Message()
+}
+
+func (s Radix_measure_Params) Segment() *capnp.Segment {
+	return capnp.Struct(s).Segment()
+}
+
+// Radix_measure_Params_List is a list of Radix_measure_Params.
+type Radix_measure_Params_List = capnp.StructList[Radix_measure_Params]
+
+// NewRadix_measure_Params creates a new list of Radix_measure_Params.
+func NewRadix_measure_Params_List(s *capnp.Segment, sz int32) (Radix_measure_Params_List, error) {
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	return capnp.StructList[Radix_measure_Params](l), err
+}
+
+// Radix_measure_Params_Future is a wrapper for a Radix_measure_Params promised by a client call.
+type Radix_measure_Params_Future struct{ *capnp.Future }
+
+func (f Radix_measure_Params_Future) Struct() (Radix_measure_Params, error) {
+	p, err := f.Future.Ptr()
+	return Radix_measure_Params(p.Struct()), err
+}
+
+type Radix_measure_Results capnp.Struct
+
+// Radix_measure_Results_TypeID is the unique identifier for the type Radix_measure_Results.
+const Radix_measure_Results_TypeID = 0xaaba8258942d9f12
+
+func NewRadix_measure_Results(s *capnp.Segment) (Radix_measure_Results, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
+	return Radix_measure_Results(st), err
+}
+
+func NewRootRadix_measure_Results(s *capnp.Segment) (Radix_measure_Results, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
+	return Radix_measure_Results(st), err
+}
+
+func ReadRootRadix_measure_Results(msg *capnp.Message) (Radix_measure_Results, error) {
+	root, err := msg.Root()
+	return Radix_measure_Results(root.Struct()), err
+}
+
+func (s Radix_measure_Results) String() string {
+	str, _ := text.Marshal(0xaaba8258942d9f12, capnp.Struct(s))
+	return str
+}
+
+func (s Radix_measure_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+	return capnp.Struct(s).EncodeAsPtr(seg)
+}
+
+func (Radix_measure_Results) DecodeFromPtr(p capnp.Ptr) Radix_measure_Results {
+	return Radix_measure_Results(capnp.Struct{}.DecodeFromPtr(p))
+}
+
+func (s Radix_measure_Results) ToPtr() capnp.Ptr {
+	return capnp.Struct(s).ToPtr()
+}
+func (s Radix_measure_Results) IsValid() bool {
+	return capnp.Struct(s).IsValid()
+}
+
+func (s Radix_measure_Results) Message() *capnp.Message {
+	return capnp.Struct(s).Message()
+}
+
+func (s Radix_measure_Results) Segment() *capnp.Segment {
+	return capnp.Struct(s).Segment()
+}
+func (s Radix_measure_Results) Extent() uint64 {
+	return capnp.Struct(s).Uint64(0)
+}
+
+func (s Radix_measure_Results) SetExtent(v uint64) {
+	capnp.Struct(s).SetUint64(0, v)
+}
+
+// Radix_measure_Results_List is a list of Radix_measure_Results.
+type Radix_measure_Results_List = capnp.StructList[Radix_measure_Results]
+
+// NewRadix_measure_Results creates a new list of Radix_measure_Results.
+func NewRadix_measure_Results_List(s *capnp.Segment, sz int32) (Radix_measure_Results_List, error) {
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0}, sz)
+	return capnp.StructList[Radix_measure_Results](l), err
+}
+
+// Radix_measure_Results_Future is a wrapper for a Radix_measure_Results promised by a client call.
+type Radix_measure_Results_Future struct{ *capnp.Future }
+
+func (f Radix_measure_Results_Future) Struct() (Radix_measure_Results, error) {
+	p, err := f.Future.Ptr()
+	return Radix_measure_Results(p.Struct()), err
 }

@@ -1,6 +1,7 @@
 package kraken
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"time"
@@ -42,7 +43,9 @@ func (server *FuturesServer) Write(ctx context.Context, call Futures_write) erro
 
 	var frame map[string]any
 
-	if err := json.Unmarshal(payload, &frame); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.UseNumber()
+	if err := decoder.Decode(&frame); err != nil {
 		return errnie.Error(errnie.Err(errnie.Validation, "kraken.futures: frame is not JSON", err))
 	}
 
@@ -57,9 +60,9 @@ func (server *FuturesServer) Write(ctx context.Context, call Futures_write) erro
 
 	switch feed {
 	case "ticker", "ticker_lite":
-		return server.record(frame, "futures_ticker", product, frame, tickerFields)
+		return server.record(frame, "futures_ticker", product, frame, tickerFields, 0)
 	case "trade":
-		return server.record(frame, "futures_trade", product, frame, tradeFields)
+		return server.record(frame, "futures_trade", product, frame, tradeFields, 0)
 	case "trade_snapshot":
 		trades, _ := frame["trades"].([]any)
 
@@ -70,7 +73,7 @@ func (server *FuturesServer) Write(ctx context.Context, call Futures_write) erro
 				return errnie.Error(errnie.Err(errnie.Validation, "kraken.futures: a snapshot trade is not an object", nil))
 			}
 
-			if err := server.record(frame, "futures_trade", product, trade, tradeFields); err != nil {
+			if err := server.record(frame, "futures_trade", product, trade, tradeFields, index); err != nil {
 				return err
 			}
 		}
@@ -83,7 +86,7 @@ func (server *FuturesServer) Write(ctx context.Context, call Futures_write) erro
 record adds one record on channel from source, carrying the frame's capture.
 */
 func (server *FuturesServer) record(
-	frame map[string]any, channel, product string, source map[string]any, fields [][2]string,
+	frame map[string]any, channel, product string, source map[string]any, fields [][2]string, index int,
 ) error {
 	data := map[string]any{"symbol": product}
 
@@ -93,13 +96,18 @@ func (server *FuturesServer) record(
 		}
 	}
 
-	if at, found := source["time"].(float64); found {
-		data["timestamp"] = time.UnixMilli(int64(at)).UTC().Format(time.RFC3339Nano)
+	if at, found := source["time"].(json.Number); found {
+		millis, err := at.Int64()
+		if err != nil {
+			return errnie.Error(err)
+		}
+		data["timestamp"] = time.UnixMilli(millis).UTC().Format(time.RFC3339Nano)
 	}
 
 	record := map[string]any{"channel": channel, "data": data}
 
-	if capture, found := frame["capture"]; found {
+	if capture, found := frame["capture"].(map[string]any); found {
+		capture["record"] = index
 		record["capture"] = capture
 	}
 

@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"math"
 	"strconv"
@@ -277,11 +276,7 @@ func (server *PeakServer) Done(ctx context.Context, call Peak_done) error {
 			hasher.Write([]byte(name + ","))
 		}
 
-		vocabulary, err := json.Marshal(hex.EncodeToString(hasher.Sum(nil)))
-
-		if err != nil {
-			return errnie.Error(errnie.Err(errnie.Internal, "geometry.peak: failed to encode vocabulary", err))
-		}
+		vocabulary := hex.EncodeToString(hasher.Sum(nil))
 
 		if err := settled.SetVocabulary(vocabulary); err != nil {
 			return errnie.Error(errnie.Err(errnie.Internal, "geometry.peak: failed to set vocabulary", err))

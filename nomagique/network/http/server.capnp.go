@@ -10,6 +10,8 @@ import (
 	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
 	context "context"
 	runtime "github.com/theapemachine/symm/nomagique/runtime"
+	tables "github.com/theapemachine/symm/nomagique/store/tables"
+	ui "github.com/theapemachine/symm/nomagique/ui"
 )
 
 type HTTPServer capnp.Client
@@ -27,7 +29,7 @@ func (c HTTPServer) Write(ctx context.Context, params func(HTTPServer_write_Para
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 8, PointerCount: 2}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 8, PointerCount: 5}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(HTTPServer_write_Params(s)) }
 	}
 
@@ -52,6 +54,26 @@ func (c HTTPServer) Done(ctx context.Context, params func(HTTPServer_done_Params
 
 	ans, release := capnp.Client(c).SendCall(ctx, s)
 	return HTTPServer_done_Results_Future{Future: ans.Future()}, release
+
+}
+
+func (c HTTPServer) Publish(ctx context.Context, params func(ui.Receiver_publish_Params) error) (ui.Receiver_publish_Results_Future, capnp.ReleaseFunc) {
+
+	s := capnp.Send{
+		Method: capnp.Method{
+			InterfaceID:   0xa4d75133316a2c68,
+			MethodID:      0,
+			InterfaceName: "nomagique/ui/binding.capnp:Receiver",
+			MethodName:    "publish",
+		},
+	}
+	if params != nil {
+		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 1}
+		s.PlaceArgs = func(s capnp.Struct) error { return params(ui.Receiver_publish_Params(s)) }
+	}
+
+	ans, release := capnp.Client(c).SendCall(ctx, s)
+	return ui.Receiver_publish_Results_Future{Future: ans.Future()}, release
 
 }
 
@@ -131,6 +153,8 @@ type HTTPServer_Server interface {
 	Write(context.Context, HTTPServer_write) error
 
 	Done(context.Context, HTTPServer_done) error
+
+	Publish(context.Context, ui.Receiver_publish) error
 }
 
 // HTTPServer_NewServer creates a new Server from an implementation of HTTPServer_Server.
@@ -149,7 +173,7 @@ func HTTPServer_ServerToClient(s HTTPServer_Server) HTTPServer {
 // This can be used to create a more complicated Server.
 func HTTPServer_Methods(methods []server.Method, s HTTPServer_Server) []server.Method {
 	if cap(methods) == 0 {
-		methods = make([]server.Method, 0, 2)
+		methods = make([]server.Method, 0, 3)
 	}
 
 	methods = append(methods, server.Method{
@@ -173,6 +197,18 @@ func HTTPServer_Methods(methods []server.Method, s HTTPServer_Server) []server.M
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
 			return s.Done(ctx, HTTPServer_done{call})
+		},
+	})
+
+	methods = append(methods, server.Method{
+		Method: capnp.Method{
+			InterfaceID:   0xa4d75133316a2c68,
+			MethodID:      0,
+			InterfaceName: "nomagique/ui/binding.capnp:Receiver",
+			MethodName:    "publish",
+		},
+		Impl: func(ctx context.Context, call *server.Call) error {
+			return s.Publish(ctx, ui.Receiver_publish{call})
 		},
 	})
 
@@ -228,12 +264,12 @@ type HTTPServer_write_Params capnp.Struct
 const HTTPServer_write_Params_TypeID = 0xc3f871968b5639a3
 
 func NewHTTPServer_write_Params(s *capnp.Segment) (HTTPServer_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 2})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 5})
 	return HTTPServer_write_Params(st), err
 }
 
 func NewRootHTTPServer_write_Params(s *capnp.Segment) (HTTPServer_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 2})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 5})
 	return HTTPServer_write_Params(st), err
 }
 
@@ -308,12 +344,66 @@ func (s HTTPServer_write_Params) SetStatus(v int32) {
 	capnp.Struct(s).SetUint32(0, uint32(v))
 }
 
+func (s HTTPServer_write_Params) Query() tables.Query {
+	p, _ := capnp.Struct(s).Ptr(2)
+	return tables.Query(p.Interface().Client())
+}
+
+func (s HTTPServer_write_Params) HasQuery() bool {
+	return capnp.Struct(s).HasPtr(2)
+}
+
+func (s HTTPServer_write_Params) SetQuery(v tables.Query) error {
+	if !v.IsValid() {
+		return capnp.Struct(s).SetPtr(2, capnp.Ptr{})
+	}
+	seg := s.Segment()
+	in := capnp.NewInterface(seg, seg.Message().CapTable().Add(capnp.Client(v)))
+	return capnp.Struct(s).SetPtr(2, in.ToPtr())
+}
+
+func (s HTTPServer_write_Params) Routes() (string, error) {
+	p, err := capnp.Struct(s).Ptr(3)
+	return p.Text(), err
+}
+
+func (s HTTPServer_write_Params) HasRoutes() bool {
+	return capnp.Struct(s).HasPtr(3)
+}
+
+func (s HTTPServer_write_Params) RoutesBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(3)
+	return p.TextBytes(), err
+}
+
+func (s HTTPServer_write_Params) SetRoutes(v string) error {
+	return capnp.Struct(s).SetText(3, v)
+}
+
+func (s HTTPServer_write_Params) Address() (string, error) {
+	p, err := capnp.Struct(s).Ptr(4)
+	return p.Text(), err
+}
+
+func (s HTTPServer_write_Params) HasAddress() bool {
+	return capnp.Struct(s).HasPtr(4)
+}
+
+func (s HTTPServer_write_Params) AddressBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(4)
+	return p.TextBytes(), err
+}
+
+func (s HTTPServer_write_Params) SetAddress(v string) error {
+	return capnp.Struct(s).SetText(4, v)
+}
+
 // HTTPServer_write_Params_List is a list of HTTPServer_write_Params.
 type HTTPServer_write_Params_List = capnp.StructList[HTTPServer_write_Params]
 
 // NewHTTPServer_write_Params creates a new list of HTTPServer_write_Params.
 func NewHTTPServer_write_Params_List(s *capnp.Segment, sz int32) (HTTPServer_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 2}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 5}, sz)
 	return capnp.StructList[HTTPServer_write_Params](l), err
 }
 
@@ -323,6 +413,9 @@ type HTTPServer_write_Params_Future struct{ *capnp.Future }
 func (f HTTPServer_write_Params_Future) Struct() (HTTPServer_write_Params, error) {
 	p, err := f.Future.Ptr()
 	return HTTPServer_write_Params(p.Struct()), err
+}
+func (p HTTPServer_write_Params_Future) Query() tables.Query {
+	return tables.Query(p.Future.Field(2, nil).Client())
 }
 
 type HTTPServer_done_Params capnp.Struct

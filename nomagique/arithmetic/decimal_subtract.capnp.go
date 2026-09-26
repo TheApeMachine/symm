@@ -3,12 +3,13 @@
 package arithmetic
 
 import (
+	context "context"
+
 	capnp "capnproto.org/go/capnp/v3"
 	text "capnproto.org/go/capnp/v3/encoding/text"
 	fc "capnproto.org/go/capnp/v3/flowcontrol"
 	server "capnproto.org/go/capnp/v3/server"
 	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
-	context "context"
 )
 
 type DecimalSubtract capnp.Client

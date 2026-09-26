@@ -28,7 +28,7 @@ func (c Excursion) Write(ctx context.Context, params func(Excursion_write_Params
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 8, PointerCount: 0}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 24, PointerCount: 1}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(Excursion_write_Params(s)) }
 	}
 
@@ -210,7 +210,7 @@ func (c Excursion_done) Args() Excursion_done_Params {
 
 // AllocResults allocates the results struct.
 func (c Excursion_done) AllocResults() (ExcursionResult, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 88, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 128, PointerCount: 2})
 	return ExcursionResult(r), err
 }
 
@@ -229,12 +229,12 @@ type Excursion_write_Params capnp.Struct
 const Excursion_write_Params_TypeID = 0xe973342ae95eaf1a
 
 func NewExcursion_write_Params(s *capnp.Segment) (Excursion_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 1})
 	return Excursion_write_Params(st), err
 }
 
 func NewRootExcursion_write_Params(s *capnp.Segment) (Excursion_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 1})
 	return Excursion_write_Params(st), err
 }
 
@@ -278,12 +278,46 @@ func (s Excursion_write_Params) SetValue(v float64) {
 	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
 }
 
+func (s Excursion_write_Params) Epoch() int64 {
+	return int64(capnp.Struct(s).Uint64(8))
+}
+
+func (s Excursion_write_Params) SetEpoch(v int64) {
+	capnp.Struct(s).SetUint64(8, uint64(v))
+}
+
+func (s Excursion_write_Params) Sequence() int64 {
+	return int64(capnp.Struct(s).Uint64(16))
+}
+
+func (s Excursion_write_Params) SetSequence(v int64) {
+	capnp.Struct(s).SetUint64(16, uint64(v))
+}
+
+func (s Excursion_write_Params) Scope() (string, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return p.Text(), err
+}
+
+func (s Excursion_write_Params) HasScope() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s Excursion_write_Params) ScopeBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return p.TextBytes(), err
+}
+
+func (s Excursion_write_Params) SetScope(v string) error {
+	return capnp.Struct(s).SetText(0, v)
+}
+
 // Excursion_write_Params_List is a list of Excursion_write_Params.
 type Excursion_write_Params_List = capnp.StructList[Excursion_write_Params]
 
 // NewExcursion_write_Params creates a new list of Excursion_write_Params.
 func NewExcursion_write_Params_List(s *capnp.Segment, sz int32) (Excursion_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 24, PointerCount: 1}, sz)
 	return capnp.StructList[Excursion_write_Params](l), err
 }
 
@@ -385,12 +419,12 @@ func (w ExcursionResult_Which) String() string {
 const ExcursionResult_TypeID = 0xc13a67a40582d9d3
 
 func NewExcursionResult(s *capnp.Segment) (ExcursionResult, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 88, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 128, PointerCount: 2})
 	return ExcursionResult(st), err
 }
 
 func NewRootExcursionResult(s *capnp.Segment) (ExcursionResult, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 88, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 128, PointerCount: 2})
 	return ExcursionResult(st), err
 }
 
@@ -492,6 +526,59 @@ func (s ExcursionResult_move) SetConfirmed(v bool) {
 	capnp.Struct(s).SetBit(16, v)
 }
 
+func (s ExcursionResult_move) AnchorSequence() int64 {
+	return int64(capnp.Struct(s).Uint64(88))
+}
+
+func (s ExcursionResult_move) SetAnchorSequence(v int64) {
+	capnp.Struct(s).SetUint64(88, uint64(v))
+}
+
+func (s ExcursionResult_move) IgnitionSequence() int64 {
+	return int64(capnp.Struct(s).Uint64(96))
+}
+
+func (s ExcursionResult_move) SetIgnitionSequence(v int64) {
+	capnp.Struct(s).SetUint64(96, uint64(v))
+}
+
+func (s ExcursionResult_move) ExtremumSequence() int64 {
+	return int64(capnp.Struct(s).Uint64(104))
+}
+
+func (s ExcursionResult_move) SetExtremumSequence(v int64) {
+	capnp.Struct(s).SetUint64(104, uint64(v))
+}
+
+func (s ExcursionResult_move) ConfirmationSequence() int64 {
+	return int64(capnp.Struct(s).Uint64(112))
+}
+
+func (s ExcursionResult_move) SetConfirmationSequence(v int64) {
+	capnp.Struct(s).SetUint64(112, uint64(v))
+}
+
+func (s ExcursionResult_move) Row() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return []byte(p.Data()), err
+}
+
+func (s ExcursionResult_move) HasRow() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s ExcursionResult_move) SetRow(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
+}
+
+func (s ExcursionResult_move) HasPrecursor() bool {
+	return capnp.Struct(s).Bit(17)
+}
+
+func (s ExcursionResult_move) SetHasPrecursor(v bool) {
+	capnp.Struct(s).SetBit(17, v)
+}
+
 func (s ExcursionResult) Qualifying() float64 {
 	return math.Float64frombits(capnp.Struct(s).Uint64(40))
 }
@@ -540,12 +627,38 @@ func (s ExcursionResult) SetLegs(v int64) {
 	capnp.Struct(s).SetUint64(80, uint64(v))
 }
 
+func (s ExcursionResult) Epoch() int64 {
+	return int64(capnp.Struct(s).Uint64(120))
+}
+
+func (s ExcursionResult) SetEpoch(v int64) {
+	capnp.Struct(s).SetUint64(120, uint64(v))
+}
+
+func (s ExcursionResult) Scope() (string, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return p.Text(), err
+}
+
+func (s ExcursionResult) HasScope() bool {
+	return capnp.Struct(s).HasPtr(1)
+}
+
+func (s ExcursionResult) ScopeBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return p.TextBytes(), err
+}
+
+func (s ExcursionResult) SetScope(v string) error {
+	return capnp.Struct(s).SetText(1, v)
+}
+
 // ExcursionResult_List is a list of ExcursionResult.
 type ExcursionResult_List = capnp.StructList[ExcursionResult]
 
 // NewExcursionResult creates a new list of ExcursionResult.
 func NewExcursionResult_List(s *capnp.Segment, sz int32) (ExcursionResult_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 88, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 128, PointerCount: 2}, sz)
 	return capnp.StructList[ExcursionResult](l), err
 }
 

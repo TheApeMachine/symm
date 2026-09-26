@@ -9,7 +9,145 @@ import (
 	server "capnproto.org/go/capnp/v3/server"
 	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
 	context "context"
+	runtime "github.com/theapemachine/symm/nomagique/runtime"
 )
+
+type VectorSnapshot capnp.Struct
+
+// VectorSnapshot_TypeID is the unique identifier for the type VectorSnapshot.
+const VectorSnapshot_TypeID = 0xc5768892585d5e49
+
+func NewVectorSnapshot(s *capnp.Segment) (VectorSnapshot, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 3})
+	return VectorSnapshot(st), err
+}
+
+func NewRootVectorSnapshot(s *capnp.Segment) (VectorSnapshot, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 3})
+	return VectorSnapshot(st), err
+}
+
+func ReadRootVectorSnapshot(msg *capnp.Message) (VectorSnapshot, error) {
+	root, err := msg.Root()
+	return VectorSnapshot(root.Struct()), err
+}
+
+func (s VectorSnapshot) String() string {
+	str, _ := text.Marshal(0xc5768892585d5e49, capnp.Struct(s))
+	return str
+}
+
+func (s VectorSnapshot) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+	return capnp.Struct(s).EncodeAsPtr(seg)
+}
+
+func (VectorSnapshot) DecodeFromPtr(p capnp.Ptr) VectorSnapshot {
+	return VectorSnapshot(capnp.Struct{}.DecodeFromPtr(p))
+}
+
+func (s VectorSnapshot) ToPtr() capnp.Ptr {
+	return capnp.Struct(s).ToPtr()
+}
+func (s VectorSnapshot) IsValid() bool {
+	return capnp.Struct(s).IsValid()
+}
+
+func (s VectorSnapshot) Message() *capnp.Message {
+	return capnp.Struct(s).Message()
+}
+
+func (s VectorSnapshot) Segment() *capnp.Segment {
+	return capnp.Struct(s).Segment()
+}
+func (s VectorSnapshot) Width() uint32 {
+	return capnp.Struct(s).Uint32(0)
+}
+
+func (s VectorSnapshot) SetWidth(v uint32) {
+	capnp.Struct(s).SetUint32(0, v)
+}
+
+func (s VectorSnapshot) Scope() (string, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return p.Text(), err
+}
+
+func (s VectorSnapshot) HasScope() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s VectorSnapshot) ScopeBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return p.TextBytes(), err
+}
+
+func (s VectorSnapshot) SetScope(v string) error {
+	return capnp.Struct(s).SetText(0, v)
+}
+
+func (s VectorSnapshot) Values() (capnp.Float64List, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return capnp.Float64List(p.List()), err
+}
+
+func (s VectorSnapshot) HasValues() bool {
+	return capnp.Struct(s).HasPtr(1)
+}
+
+func (s VectorSnapshot) SetValues(v capnp.Float64List) error {
+	return capnp.Struct(s).SetPtr(1, v.ToPtr())
+}
+
+// NewValues sets the values field to a newly
+// allocated capnp.Float64List, preferring placement in s's segment.
+func (s VectorSnapshot) NewValues(n int32) (capnp.Float64List, error) {
+	l, err := capnp.NewFloat64List(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return capnp.Float64List{}, err
+	}
+	err = capnp.Struct(s).SetPtr(1, l.ToPtr())
+	return l, err
+}
+func (s VectorSnapshot) Written() (capnp.BitList, error) {
+	p, err := capnp.Struct(s).Ptr(2)
+	return capnp.BitList(p.List()), err
+}
+
+func (s VectorSnapshot) HasWritten() bool {
+	return capnp.Struct(s).HasPtr(2)
+}
+
+func (s VectorSnapshot) SetWritten(v capnp.BitList) error {
+	return capnp.Struct(s).SetPtr(2, v.ToPtr())
+}
+
+// NewWritten sets the written field to a newly
+// allocated capnp.BitList, preferring placement in s's segment.
+func (s VectorSnapshot) NewWritten(n int32) (capnp.BitList, error) {
+	l, err := capnp.NewBitList(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return capnp.BitList{}, err
+	}
+	err = capnp.Struct(s).SetPtr(2, l.ToPtr())
+	return l, err
+}
+
+// VectorSnapshot_List is a list of VectorSnapshot.
+type VectorSnapshot_List = capnp.StructList[VectorSnapshot]
+
+// NewVectorSnapshot creates a new list of VectorSnapshot.
+func NewVectorSnapshot_List(s *capnp.Segment, sz int32) (VectorSnapshot_List, error) {
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 3}, sz)
+	return capnp.StructList[VectorSnapshot](l), err
+}
+
+// VectorSnapshot_Future is a wrapper for a VectorSnapshot promised by a client call.
+type VectorSnapshot_Future struct{ *capnp.Future }
+
+func (f VectorSnapshot_Future) Struct() (VectorSnapshot, error) {
+	p, err := f.Future.Ptr()
+	return VectorSnapshot(p.Struct()), err
+}
 
 type Vector capnp.Client
 
@@ -51,6 +189,46 @@ func (c Vector) Done(ctx context.Context, params func(Vector_done_Params) error)
 
 	ans, release := capnp.Client(c).SendCall(ctx, s)
 	return Vector_done_Results_Future{Future: ans.Future()}, release
+
+}
+
+func (c Vector) Snapshot(ctx context.Context, params func(runtime.Snapshot_snapshot_Params) error) (runtime.Snapshot_snapshot_Results_Future, capnp.ReleaseFunc) {
+
+	s := capnp.Send{
+		Method: capnp.Method{
+			InterfaceID:   0xe44d6da025855109,
+			MethodID:      0,
+			InterfaceName: "nomagique/runtime/snapshot.capnp:Snapshot",
+			MethodName:    "snapshot",
+		},
+	}
+	if params != nil {
+		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 0}
+		s.PlaceArgs = func(s capnp.Struct) error { return params(runtime.Snapshot_snapshot_Params(s)) }
+	}
+
+	ans, release := capnp.Client(c).SendCall(ctx, s)
+	return runtime.Snapshot_snapshot_Results_Future{Future: ans.Future()}, release
+
+}
+
+func (c Vector) Restore(ctx context.Context, params func(runtime.Snapshot_restore_Params) error) (runtime.Snapshot_restore_Results_Future, capnp.ReleaseFunc) {
+
+	s := capnp.Send{
+		Method: capnp.Method{
+			InterfaceID:   0xe44d6da025855109,
+			MethodID:      1,
+			InterfaceName: "nomagique/runtime/snapshot.capnp:Snapshot",
+			MethodName:    "restore",
+		},
+	}
+	if params != nil {
+		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 1}
+		s.PlaceArgs = func(s capnp.Struct) error { return params(runtime.Snapshot_restore_Params(s)) }
+	}
+
+	ans, release := capnp.Client(c).SendCall(ctx, s)
+	return runtime.Snapshot_restore_Results_Future{Future: ans.Future()}, release
 
 }
 
@@ -130,6 +308,10 @@ type Vector_Server interface {
 	Write(context.Context, Vector_write) error
 
 	Done(context.Context, Vector_done) error
+
+	Snapshot(context.Context, runtime.Snapshot_snapshot) error
+
+	Restore(context.Context, runtime.Snapshot_restore) error
 }
 
 // Vector_NewServer creates a new Server from an implementation of Vector_Server.
@@ -148,7 +330,7 @@ func Vector_ServerToClient(s Vector_Server) Vector {
 // This can be used to create a more complicated Server.
 func Vector_Methods(methods []server.Method, s Vector_Server) []server.Method {
 	if cap(methods) == 0 {
-		methods = make([]server.Method, 0, 2)
+		methods = make([]server.Method, 0, 4)
 	}
 
 	methods = append(methods, server.Method{
@@ -172,6 +354,30 @@ func Vector_Methods(methods []server.Method, s Vector_Server) []server.Method {
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
 			return s.Done(ctx, Vector_done{call})
+		},
+	})
+
+	methods = append(methods, server.Method{
+		Method: capnp.Method{
+			InterfaceID:   0xe44d6da025855109,
+			MethodID:      0,
+			InterfaceName: "nomagique/runtime/snapshot.capnp:Snapshot",
+			MethodName:    "snapshot",
+		},
+		Impl: func(ctx context.Context, call *server.Call) error {
+			return s.Snapshot(ctx, runtime.Snapshot_snapshot{call})
+		},
+	})
+
+	methods = append(methods, server.Method{
+		Method: capnp.Method{
+			InterfaceID:   0xe44d6da025855109,
+			MethodID:      1,
+			InterfaceName: "nomagique/runtime/snapshot.capnp:Snapshot",
+			MethodName:    "restore",
+		},
+		Impl: func(ctx context.Context, call *server.Call) error {
+			return s.Restore(ctx, runtime.Snapshot_restore{call})
 		},
 	})
 

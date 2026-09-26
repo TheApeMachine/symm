@@ -2,6 +2,7 @@ package websocket
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -101,8 +102,8 @@ func TestWebSocketClientDone(t *testing.T) {
 		client := WebSocketClient_ServerToClient(server)
 		defer client.Release()
 		instant := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
-		server.incoming.Enqueue(receivedFrame{payload: []byte("first"), at: instant, endpoint: "ws://capture"})
-		server.incoming.Enqueue(receivedFrame{payload: []byte("second"), at: instant.Add(time.Second), endpoint: "ws://capture"})
+		server.incoming.Enqueue(receivedFrame{payload: []byte("first"), at: instant, endpoint: "ws://capture", sequence: 91})
+		server.incoming.Enqueue(receivedFrame{payload: []byte("second"), at: instant.Add(time.Second), endpoint: "ws://capture", sequence: 92})
 
 		Convey("Then Done drains in order regardless of connection status and becomes idle", func() {
 			for index, expected := range []string{"first", "second"} {
@@ -113,6 +114,17 @@ func TestWebSocketClientDone(t *testing.T) {
 				payload, err := result.Frame().Read()
 				So(err, ShouldBeNil)
 				So(string(payload), ShouldEqual, expected)
+				provenance, err := result.Frame().Provenance()
+				So(err, ShouldBeNil)
+				var origin struct {
+					Session  string
+					Sequence int64
+					Endpoint string
+				}
+				So(json.Unmarshal(provenance, &origin), ShouldBeNil)
+				So(origin.Session, ShouldEqual, server.session)
+				So(origin.Sequence, ShouldEqual, 91+index)
+				So(origin.Endpoint, ShouldEqual, "ws://capture")
 				receivedAt, err := result.Frame().ReceivedAt()
 				So(err, ShouldBeNil)
 				So(receivedAt, ShouldEqual, instant.Add(time.Duration(index)*time.Second).Format(time.RFC3339Nano))
@@ -168,7 +180,17 @@ func TestWebSocketClientWrite(t *testing.T) {
 				if err := params.SetEndpoint("ws" + strings.TrimPrefix(venue.URL, "http")); err != nil {
 					return err
 				}
-				if err := params.SetOnConnect([]byte("discover")); err != nil {
+				handshake, err := params.NewOnConnect(2)
+
+				if err != nil {
+					return err
+				}
+
+				if err := handshake.Set(0, []byte("ticker")); err != nil {
+					return err
+				}
+
+				if err := handshake.Set(1, []byte("trade")); err != nil {
 					return err
 				}
 				frames, err := params.NewWrite(int32(len(payloads)))
@@ -194,8 +216,7 @@ func TestWebSocketClientWrite(t *testing.T) {
 				t.Fatal("timed out waiting for " + expected)
 			}
 		}
-		write("ticker", "trade")
-		next("discover")
+		write()
 		next("ticker")
 		next("trade")
 		write("ping")
@@ -203,8 +224,7 @@ func TestWebSocketClientWrite(t *testing.T) {
 		write("disconnect")
 		next("disconnect")
 		<-disconnected
-		next("discover")
-		write("ticker", "trade")
+
 		next("ticker")
 		next("trade")
 		So(server.Close(), ShouldBeNil)

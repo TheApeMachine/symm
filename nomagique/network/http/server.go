@@ -3,11 +3,11 @@ package http
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net"
 	stdhttp "net/http"
 	"sync"
-	"sync/atomic"
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
@@ -51,12 +51,17 @@ and delegates streaming upgrades to the WebSocket and WebRTC protocol servers.
 */
 type HTTPServerServer struct {
 	*runtime.System
-	httpServer   *stdhttp.Server
-	wsServer     *websocket.WebSocketServerServer
-	webrtcServer *webrtc.WebRTCServerServer
-	incoming     *lf.Queue[[]byte]
-	out          []byte
-	bind         error
+	httpServer    *stdhttp.Server
+	wsServer      *websocket.WebSocketServerServer
+	webrtcServer  *webrtc.WebRTCServerServer
+	incoming      *lf.Queue[[]byte]
+	out           []byte
+	bind          error
+	address       string
+	listening     bool
+	inspection    inspection
+	publicationMu sync.Mutex
+	publications  map[[3]string]string
 }
 
 func NewHTTPServer(ctx context.Context) *HTTPServerServer {
@@ -71,79 +76,48 @@ func NewHTTPServer(ctx context.Context) *HTTPServerServer {
 		incoming:     lf.NewQueue[[]byte](),
 	}
 
-	handler := server.Handler()
-	server.httpServer = &stdhttp.Server{
-		Addr:    ":8765",
-		Handler: handler,
-	}
-
-	// Binding happens here, not in the serving goroutine, so a port another
-	// process holds is this node's failure rather than a surface that
-	// silently talks to someone else.
-	listener, err := net.Listen("tcp", server.httpServer.Addr)
-
-	if err != nil {
-		server.bind = errnie.Err(errnie.IO, "http.server: failed to listen on "+server.httpServer.Addr, err)
-		server.Transition(runtime.READY)
-		return server
-	}
-
-	go func() {
-		err := server.httpServer.Serve(listener)
-
-		if err != nil && err != stdhttp.ErrServerClosed {
-			errnie.Error(errnie.Err(errnie.IO, "[http.server] serve failed", err))
-		}
-	}()
-
-	go func() {
-		<-server.Context().Done()
-		_ = server.httpServer.Close()
-	}()
-
-	live.Store(server, struct{}{})
-
-	if join, set := joined.Load().(func()); set {
-		server.wsServer.OnJoin(join)
-	}
-
-	go func() {
-		<-server.Context().Done()
-		live.Delete(server)
-	}()
-
-	server.Transition(runtime.READY)
+	server.httpServer = &stdhttp.Server{Handler: server.Handler()}
+	server.Transition(runtime.WAITING)
 	return server
 }
 
-/*
-live holds every running HTTP server, so what the program publishes reaches
-whichever server the graph holds without the program knowing its node.
-*/
-var live sync.Map
-
-/*
-OnJoin runs join whenever a client connects to any running server.
-*/
-func OnJoin(join func()) {
-	joined.Store(join)
-	live.Range(func(key, _ any) bool {
-		key.(*HTTPServerServer).wsServer.OnJoin(join)
-		return true
-	})
-}
-
-var joined atomic.Value
-
-/*
-Broadcast sends a binary frame to every client of every running server.
-*/
-func Broadcast(data []byte) {
-	live.Range(func(key, _ any) bool {
-		server := key.(*HTTPServerServer)
-		server.wsServer.Broadcast(data)
-		return true
-	})
+/* listen activates the graph-declared endpoint exactly once, after configuration. */
+func (server *HTTPServerServer) listen(address string) error {
+	if address == "" {
+		return nil
+	}
+	if server.listening {
+		if address != server.httpServer.Addr {
+			return errnie.Error(errnie.Err(errnie.Validation, "http.server: listening address cannot change", nil))
+		}
+		return nil
+	}
+	if server.bind != nil {
+		return server.bind
+	}
+	listener, err := net.Listen("tcp", address)
+	if err != nil {
+		server.bind = errnie.Error(errnie.Err(errnie.IO, "http.server: failed to listen on "+address, err))
+		return server.bind
+	}
+	server.httpServer.Addr = address
+	server.address = listener.Addr().String()
+	server.listening = true
+	go func() {
+		err := server.httpServer.Serve(listener)
+		if err != nil && err != stdhttp.ErrServerClosed {
+			errnie.Error(errnie.Err(errnie.IO, "http.server: serve", err))
+		}
+	}()
+	server.wsServer.OnJoin(server.replayBindings)
+	go func() {
+		<-server.Context().Done()
+		if err := server.httpServer.Close(); err != nil {
+			errnie.Error(errnie.Err(errnie.IO, "http.server: stop listener", err))
+		}
+	}()
+	server.Transition(runtime.READY)
+	return nil
 }
 
 /*
@@ -288,35 +262,12 @@ func (server *HTTPServerServer) Handler() stdhttp.Handler {
 		writer.WriteHeader(stdhttp.StatusOK)
 	})
 
-	mux.HandleFunc("POST /workbench/query", func(writer stdhttp.ResponseWriter, request *stdhttp.Request) {
-		writer.Header().Set("Content-Type", "application/json")
-		_, _ = writer.Write([]byte(`{"results":[]}`))
-	})
-
-	mux.HandleFunc("GET /hindsight/metric-map", func(writer stdhttp.ResponseWriter, request *stdhttp.Request) {
-		writer.Header().Set("Content-Type", "application/json")
-		_, _ = writer.Write([]byte(`{"baselineCommit":"","metrics":{},"signals":{}}`))
-	})
-
-	mux.HandleFunc("GET /hindsight/runs", func(writer stdhttp.ResponseWriter, request *stdhttp.Request) {
-		writer.Header().Set("Content-Type", "application/json")
-		_, _ = writer.Write([]byte(`[]`))
-	})
-
-	mux.HandleFunc("GET /hindsight/symbols", func(writer stdhttp.ResponseWriter, request *stdhttp.Request) {
-		writer.Header().Set("Content-Type", "application/json")
-		_, _ = writer.Write([]byte(`[]`))
-	})
-
-	mux.HandleFunc("GET /hindsight/excursions", func(writer stdhttp.ResponseWriter, request *stdhttp.Request) {
-		writer.Header().Set("Content-Type", "application/json")
-		_, _ = writer.Write([]byte(`[]`))
-	})
-
-	mux.HandleFunc("GET /trades", func(writer stdhttp.ResponseWriter, request *stdhttp.Request) {
-		writer.Header().Set("Content-Type", "application/json")
-		_, _ = writer.Write([]byte(`[]`))
-	})
+	for _, route := range []string{
+		"POST /workbench/query", "GET /hindsight/metric-map", "GET /hindsight/runs",
+		"GET /hindsight/symbols", "GET /hindsight/excursions", "GET /trades",
+	} {
+		mux.Handle(route, &server.inspection)
+	}
 
 	// Mount WebRTC and WebSocket handlers
 	mux.HandleFunc("POST /fluid/webrtc/offer", server.webrtcServer.OfferHandler())
@@ -341,6 +292,20 @@ func (server *HTTPServerServer) Handler() stdhttp.Handler {
 Write broadcasts payload across all active WebSocket and WebRTC connections.
 */
 func (server *HTTPServerServer) Write(ctx context.Context, call HTTPServer_write) error {
+	routes, err := call.Args().Routes()
+	if err != nil {
+		return errnie.Error(err)
+	}
+	if err := server.inspection.configure(call.Args().Query(), routes); err != nil {
+		return err
+	}
+	address, err := call.Args().Address()
+	if err != nil {
+		return errnie.Error(err)
+	}
+	if err := server.listen(address); err != nil {
+		return err
+	}
 	data, err := call.Args().Data()
 
 	if err != nil {
@@ -418,11 +383,17 @@ func (server *HTTPServerServer) WebRTCServer() *webrtc.WebRTCServerServer {
 Close stops the HTTP server and associated protocol sub-servers.
 */
 func (server *HTTPServerServer) Close() error {
+	server.inspection.Close()
+	var err error
 	if server.httpServer != nil {
-		_ = server.httpServer.Close()
+		err = server.httpServer.Close()
 	}
+	return errnie.Error(errors.Join(err, server.wsServer.Close(), server.webrtcServer.Close(), server.System.Close()))
+}
 
-	_ = server.wsServer.Close()
-	_ = server.webrtcServer.Close()
-	return server.System.Close()
+/* Shutdown releases the server with the lifetime of its Cap'n Proto capability. */
+func (server *HTTPServerServer) Shutdown() {
+	if err := server.Close(); err != nil {
+		errnie.Error(err)
+	}
 }

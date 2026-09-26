@@ -209,7 +209,7 @@ func (c Otsu_done) Args() Otsu_done_Params {
 
 // AllocResults allocates the results struct.
 func (c Otsu_done) AllocResults() (Otsu_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 2})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 1})
 	return Otsu_done_Results(r), err
 }
 
@@ -404,12 +404,12 @@ type Otsu_done_Results capnp.Struct
 const Otsu_done_Results_TypeID = 0x829a61728b2d4d9c
 
 func NewOtsu_done_Results(s *capnp.Segment) (Otsu_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 2})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
 	return Otsu_done_Results(st), err
 }
 
 func NewRootOtsu_done_Results(s *capnp.Segment) (Otsu_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 2})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
 	return Otsu_done_Results(st), err
 }
 
@@ -468,19 +468,6 @@ func (s Otsu_done_Results) NewHot(n int32) (capnp.TextList, error) {
 	err = capnp.Struct(s).SetPtr(0, l.ToPtr())
 	return l, err
 }
-func (s Otsu_done_Results) Out() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(1)
-	return []byte(p.Data()), err
-}
-
-func (s Otsu_done_Results) HasOut() bool {
-	return capnp.Struct(s).HasPtr(1)
-}
-
-func (s Otsu_done_Results) SetOut(v []byte) error {
-	return capnp.Struct(s).SetData(1, v)
-}
-
 func (s Otsu_done_Results) Threshold() float64 {
 	return math.Float64frombits(capnp.Struct(s).Uint64(0))
 }
@@ -494,7 +481,7 @@ type Otsu_done_Results_List = capnp.StructList[Otsu_done_Results]
 
 // NewOtsu_done_Results creates a new list of Otsu_done_Results.
 func NewOtsu_done_Results_List(s *capnp.Segment, sz int32) (Otsu_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 2}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1}, sz)
 	return capnp.StructList[Otsu_done_Results](l), err
 }
 

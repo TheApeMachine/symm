@@ -76,3 +76,112 @@ func TestWebSocketServer(t *testing.T) {
 		})
 	})
 }
+
+func TestWebSocketServerBroadcast(t *testing.T) {
+	Convey("A browser that stops reading cannot block the broadcasting node", t, func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		server := NewWebSocketServer(ctx)
+		joined := make(chan struct{}, 1)
+		server.OnJoin(func() { joined <- struct{}{} })
+		defer func() { So(server.Close(), ShouldBeNil) }()
+		venue := httptest.NewServer(server.UpgradeHandler())
+		defer venue.Close()
+		slow, _, err := gorillaws.DefaultDialer.Dial("ws"+strings.TrimPrefix(venue.URL, "http"), nil)
+		So(err, ShouldBeNil)
+		<-joined
+		defer func() { So(slow.Close(), ShouldBeNil) }()
+		// A frame exceeds typical socket buffering so a non-reading peer
+		// leaves its writer occupied; the transport permits one pending frame.
+		payload := make([]byte, 4<<20)
+		finished := make(chan struct{})
+
+		go func() {
+			defer close(finished)
+
+			for range 4 {
+				server.Broadcast(payload)
+			}
+		}()
+
+		select {
+		case <-finished:
+		case <-ctx.Done():
+			t.Fatal("a slow browser blocked broadcast")
+		}
+		remaining := 0
+		server.clients.Range(func(key, value any) bool { remaining++; return true })
+		So(remaining, ShouldEqual, 0)
+
+		Convey("A reading peer still receives an immutable frame afterwards", func() {
+			healthy, _, err := gorillaws.DefaultDialer.Dial("ws"+strings.TrimPrefix(venue.URL, "http"), nil)
+			So(err, ShouldBeNil)
+			<-joined
+			defer func() { So(healthy.Close(), ShouldBeNil) }()
+			So(healthy.SetReadDeadline(time.Now().Add(time.Second)), ShouldBeNil)
+			frame := []byte("completed metric cut")
+			server.Broadcast(frame)
+			copy(frame, "mutated after send!!")
+			_, received, err := healthy.ReadMessage()
+			So(err, ShouldBeNil)
+			So(string(received), ShouldEqual, "completed metric cut")
+		})
+	})
+}
+
+func BenchmarkWebSocketServerBroadcast(b *testing.B) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	server := NewWebSocketServer(ctx)
+	joined := make(chan struct{}, 1)
+	server.OnJoin(func() { joined <- struct{}{} })
+	defer func() {
+		if err := server.Close(); err != nil {
+			b.Error(err)
+		}
+	}()
+	venue := httptest.NewServer(server.UpgradeHandler())
+	defer venue.Close()
+	connection, _, err := gorillaws.DefaultDialer.Dial("ws"+strings.TrimPrefix(venue.URL, "http"), nil)
+
+	if err != nil {
+		b.Fatal(err)
+	}
+	<-joined
+	defer func() {
+		if err := connection.Close(); err != nil {
+			b.Error(err)
+		}
+	}()
+	// Representative serialized metric payload; count matches the signal graph.
+	payload := []byte(strings.Repeat(`{"value":0.125,"present":true},`, 411))
+	b.SetBytes(int64(len(payload)))
+	b.ReportAllocs()
+
+	for b.Loop() {
+		server.Broadcast(payload)
+		_, received, err := connection.ReadMessage()
+
+		if err != nil {
+			b.Fatal(err)
+		}
+
+		if len(received) != len(payload) {
+			b.Fatal("broadcast payload was truncated")
+		}
+	}
+}
+
+func TestWebSocketServerShutdown(t *testing.T) {
+	Convey("The capability lifetime owns the socket pumps", t, func() {
+		server := NewWebSocketServer(context.Background())
+		client := WebSocketServer_ServerToClient(server)
+		client.Release()
+
+		select {
+		case <-server.Context().Done():
+		case <-time.After(time.Second):
+			t.Fatal("releasing the server capability did not close its transport")
+		}
+	})
+}

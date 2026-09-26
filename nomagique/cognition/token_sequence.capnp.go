@@ -209,7 +209,7 @@ func (c TokenSequence_done) Args() TokenSequence_done_Params {
 
 // AllocResults allocates the results struct.
 func (c TokenSequence_done) AllocResults() (Sequenced, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 16, PointerCount: 3})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 16, PointerCount: 2})
 	return Sequenced(r), err
 }
 
@@ -443,12 +443,12 @@ func (w Sequenced_Which) String() string {
 const Sequenced_TypeID = 0x891a54706e6d1b03
 
 func NewSequenced(s *capnp.Segment) (Sequenced, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 3})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 2})
 	return Sequenced(st), err
 }
 
 func NewRootSequenced(s *capnp.Segment) (Sequenced, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 3})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 2})
 	return Sequenced(st), err
 }
 
@@ -559,25 +559,12 @@ func (s Sequenced_step) SetDepth(v int64) {
 	capnp.Struct(s).SetUint64(8, uint64(v))
 }
 
-func (s Sequenced_step) Out() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(2)
-	return []byte(p.Data()), err
-}
-
-func (s Sequenced_step) HasOut() bool {
-	return capnp.Struct(s).HasPtr(2)
-}
-
-func (s Sequenced_step) SetOut(v []byte) error {
-	return capnp.Struct(s).SetData(2, v)
-}
-
 // Sequenced_List is a list of Sequenced.
 type Sequenced_List = capnp.StructList[Sequenced]
 
 // NewSequenced creates a new list of Sequenced.
 func NewSequenced_List(s *capnp.Segment, sz int32) (Sequenced_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 16, PointerCount: 3}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 16, PointerCount: 2}, sz)
 	return capnp.StructList[Sequenced](l), err
 }
 

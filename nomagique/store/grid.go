@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"strings"
 	"time"
@@ -32,6 +33,7 @@ type GridServer struct {
 	values    []float64
 	present   []bool
 	out       []byte
+	raw       []byte
 	delivered int64
 	held      map[string]float64
 }
@@ -75,7 +77,10 @@ func (server *GridServer) Write(ctx context.Context, call Grid_write) error {
 		))
 	}
 
-	present, _ := call.Args().Present()
+	present, err := call.Args().Present()
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.Validation, "grid: metric presence", err))
+	}
 
 	if metrics.IsValid() {
 		if len(server.metrics) != metrics.Len() {
@@ -108,6 +113,7 @@ func (server *GridServer) Write(ctx context.Context, call Grid_write) error {
 	}
 
 	server.out = nil
+	server.raw = nil
 	server.values = nil
 	server.present = nil
 	server.delivered = 0
@@ -116,8 +122,21 @@ func (server *GridServer) Write(ctx context.Context, call Grid_write) error {
 		return nil
 	}
 
-	// Every feed that landed is resolved in turn, because a grid observes all
-	// of them rather than whichever one happened to arrive last.
+	// Each Workspace observation carries one record. The native sequencer
+	// owns concurrent feed admission, so a Grid never hides a second queue.
+	arrivals := 0
+	for index := range feeds.Len() {
+		payload, err := feeds.At(index)
+		if err != nil {
+			return errnie.Error(err)
+		}
+		if len(payload) > 0 {
+			arrivals++
+		}
+	}
+	if arrivals > 1 {
+		return errnie.Error(errnie.Err(errnie.Validation, "grid: multiple records need separate Workspace observations", nil))
+	}
 	for index := range feeds.Len() {
 		payload, err := feeds.At(index)
 
@@ -213,6 +232,9 @@ func (server *GridServer) Done(ctx context.Context, call Grid_done) error {
 
 	results.SetStatus(runtime.Status(server.Status()))
 	results.SetDelivered(server.delivered)
+	if err := results.SetData(server.raw); err != nil {
+		return errnie.Error(err)
+	}
 
 	if err := results.SetScope(server.scope); err != nil {
 		return errnie.Error(errnie.Err(
@@ -335,6 +357,7 @@ func (server *GridServer) resolve(payload []byte) error {
 	}
 
 	server.out = encoded
+	server.raw = bytes.Clone(payload)
 	server.delivered = int64(len(resolved))
 	server.values = make([]float64, len(server.interests))
 	server.present = make([]bool, len(server.interests))

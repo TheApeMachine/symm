@@ -6,7 +6,6 @@ import (
 	capnp "capnproto.org/go/capnp/v3"
 	text "capnproto.org/go/capnp/v3/encoding/text"
 	fc "capnproto.org/go/capnp/v3/flowcontrol"
-	schemas "capnproto.org/go/capnp/v3/schemas"
 	server "capnproto.org/go/capnp/v3/server"
 	context "context"
 )
@@ -781,53 +780,113 @@ func NewStanding_List(s *capnp.Segment, sz int32) (Standing_List, error) {
 	return capnp.CapList[Standing](l), err
 }
 
-const schema_91d758a99e934525 = "x\xda\x94\x92Ok\xd4P\x14\xc5\xcf}I\x1a\x15J" +
-	"xD\x10DI\x05K\xb1B\xffL7\xda\xcd\xd4\xa1" +
-	"\xb5t7\xd1M]\x88\xbcv\xde\x8c\xa93I\x9b\xe4" +
-	")\xb3\x10\x19u\xe1f(\xc3,\xa4\x88\"R\x0b\x15" +
-	"\\\xe8F\xfc\x02\x0a\x82 \x14\x11w\"\xb8r\xa1[" +
-	"u\x11IFme\x18\xac\x8b\xcb%\xf0;\xe7\x9e<" +
-	"\xce\x00M\xe9\xe3\xfdC:\x98;f\xf4%\xe7\x97\xee" +
-	"?9|\xfa\xce-p\x87%\x833\xed{\x9b\xf3\xef" +
-	"Z\x00M|\xa3\x1c\xd9{\x99\x09\xd8\x06{\x09J\x1e" +
-	"7\xe4\xeb\xeb\xaf\xdaM\xb8\x0e\xd16\xaa\x9b\xc0\x84\xc7" +
-	"\x96\xc8\xbe\x9a\xc1u\x96\x07%\x13\xe5p\xf5\x10\xff\xd4" +
-	"\x04w\xb4\xbfl\xd7X\x8e\xec\xcd\x8c|\xc8\xcct\x80" +
-	"\xe4\xf8\x8f\x99\xc2\xed\xf6\xb3\xd5.\xba\xc9\x0ad\xdf\xcd" +
-	"\xe85f\xa6\x03$[\xfb\xde\xccm\xbc\xfd\xd0\xea\xa2" +
-	"\x1b\xa9w+\xa3\x9b\xccL\x07H\xbc\x13\x1f7\xbe<" +
-	"\xbd\xbc\x0e>D\xe8\xa4U\xec\x01AO\xe6\x07\xd7\xc7" +
-	".|>\xb0\xd5\xe5#\xd9$\xd9*\xf3Ya\xb3\xbf" +
-	"\xae~\x7f~c\xf6\xc5\xcd\xaf\xefw\xf84\xd8#\xc2" +
-	"X\xe2\x075Q\xf1V\x94&GC\xe5\xc7^M\x8e" +
-	"F\xb1\x88U4\xb2(\x96\xfd\xe5\xc9\xb3N\xf6U$" +
-	"r\x07\x88\x01\xfc\xdc0@\xc4\xdd\x83\x001>\x97\x03" +
-	"H\xe3\xa7\xd2\xa5\xf3\x93\xe92\xf8x\x8a\xf4\xf1c\x05" +
-	"\x80L~d\x18\xb0<\xdf\x8b\xb5\xe0\x92#\xc30\x08" +
-	"\x9d\xb2\x88E\xd5\x09\xa5(\xd5\xad\x05\x15\xd5\xaf]\x11" +
-	"^\xec\xf9\x15\xab\x14\xf8\xf2O$\xbdW\xa4N\"Q" +
-	"\xb7\xaa\x81(\xa5\xc9tM\x07t\x02x\xff$\xe0\xee" +
-	"\xd1\xc8\xdd\xcf(\xdfQ\x91\xb5\xdd\x13\x10Y\xa0]\xfc" +
-	"t\xa0\xc2EY$*jF\x91h7\x91\xfc\x92\xe7" +
-	"W\xd0-\xe9u\xc3u\x94T\xb2\xd4-0z\x08\xa6" +
-	"U(\x16\xaar\xa4\\U\xd1\xc5\xa3E\x11\x9a\xa2\x16" +
-	"\xfd\xf3\xcct\xbe#\xeb<\x93\xb1\xa3S\xf4\xbb\x14\x9c" +
-	"\xe7\xc0\xb8a:\x99\xf3\x14\xfd\x7f\x9832\xb2T5" +
-	"\x8e~\x06\x00\x00\xff\xff\x1f-\x1eN"
+type Configured capnp.Client
 
-func RegisterSchema(reg *schemas.Registry) {
-	reg.Register(&schemas.Schema{
-		String: schema_91d758a99e934525,
-		Nodes: []uint64{
-			0x889b461db1a06a5d,
-			0x8d93ca82cd6581ad,
-			0x8de5111c8f726633,
-			0x8fb793974245fb2b,
-			0x91e0d5a649d00ad3,
-			0xa476b2efa6e23869,
-			0xd317eb5f30a42558,
-			0xd9f084c64783b9fa,
-		},
-		Compressed: true,
-	})
+// Configured_TypeID is the unique identifier for the type Configured.
+const Configured_TypeID = 0xcd9bf859b5d6f4c3
+
+func (c Configured) WaitStreaming() error {
+	return capnp.Client(c).WaitStreaming()
+}
+
+// String returns a string that identifies this capability for debugging
+// purposes.  Its format should not be depended on: in particular, it
+// should not be used to compare clients.  Use IsSame to compare clients
+// for equality.
+func (c Configured) String() string {
+	return "Configured(" + capnp.Client(c).String() + ")"
+}
+
+// AddRef creates a new Client that refers to the same capability as c.
+// If c is nil or has resolved to null, then AddRef returns nil.
+func (c Configured) AddRef() Configured {
+	return Configured(capnp.Client(c).AddRef())
+}
+
+// Release releases a capability reference.  If this is the last
+// reference to the capability, then the underlying resources associated
+// with the capability will be released.
+//
+// Release will panic if c has already been released, but not if c is
+// nil or resolved to null.
+func (c Configured) Release() {
+	capnp.Client(c).Release()
+}
+
+// Resolve blocks until the capability is fully resolved or the Context
+// expires.
+func (c Configured) Resolve(ctx context.Context) error {
+	return capnp.Client(c).Resolve(ctx)
+}
+
+func (c Configured) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+	return capnp.Client(c).EncodeAsPtr(seg)
+}
+
+func (Configured) DecodeFromPtr(p capnp.Ptr) Configured {
+	return Configured(capnp.Client{}.DecodeFromPtr(p))
+}
+
+// IsValid reports whether c is a valid reference to a capability.
+// A reference is invalid if it is nil, has resolved to null, or has
+// been released.
+func (c Configured) IsValid() bool {
+	return capnp.Client(c).IsValid()
+}
+
+// IsSame reports whether c and other refer to a capability created by the
+// same call to NewClient.  This can return false negatives if c or other
+// are not fully resolved: use Resolve if this is an issue.  If either
+// c or other are released, then IsSame panics.
+func (c Configured) IsSame(other Configured) bool {
+	return capnp.Client(c).IsSame(capnp.Client(other))
+}
+
+// Update the flowcontrol.FlowLimiter used to manage flow control for
+// this client. This affects all future calls, but not calls already
+// waiting to send. Passing nil sets the value to flowcontrol.NopLimiter,
+// which is also the default.
+func (c Configured) SetFlowLimiter(lim fc.FlowLimiter) {
+	capnp.Client(c).SetFlowLimiter(lim)
+}
+
+// Get the current flowcontrol.FlowLimiter used to manage flow control
+// for this client.
+func (c Configured) GetFlowLimiter() fc.FlowLimiter {
+	return capnp.Client(c).GetFlowLimiter()
+}
+
+// A Configured_Server is a Configured with a local implementation.
+type Configured_Server interface {
+}
+
+// Configured_NewServer creates a new Server from an implementation of Configured_Server.
+func Configured_NewServer(s Configured_Server) *server.Server {
+	c, _ := s.(server.Shutdowner)
+	return server.New(Configured_Methods(nil, s), s, c)
+}
+
+// Configured_ServerToClient creates a new Client from an implementation of Configured_Server.
+// The caller is responsible for calling Release on the returned Client.
+func Configured_ServerToClient(s Configured_Server) Configured {
+	return Configured(capnp.NewClient(Configured_NewServer(s)))
+}
+
+// Configured_Methods appends Methods to a slice that invoke the methods on s.
+// This can be used to create a more complicated Server.
+func Configured_Methods(methods []server.Method, s Configured_Server) []server.Method {
+	if cap(methods) == 0 {
+		methods = make([]server.Method, 0, 0)
+	}
+
+	return methods
+}
+
+// Configured_List is a list of Configured.
+type Configured_List = capnp.CapList[Configured]
+
+// NewConfigured_List creates a new list of Configured.
+func NewConfigured_List(s *capnp.Segment, sz int32) (Configured_List, error) {
+	l, err := capnp.NewPointerList(s, sz)
+	return capnp.CapList[Configured](l), err
 }

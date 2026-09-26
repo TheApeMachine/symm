@@ -25,7 +25,7 @@ $Go.import("github.com/theapemachine/symm/nomagique/temporal");
 # is the minimum observed nonzero absolute log return. A move must exceed
 # its bound strictly. The excursion output remains the relative price change.
 interface Excursion {
-  write @0 (value :Float64) -> stream;
+  write @0 (value :Float64, epoch :Int64, sequence :Int64, scope :Text) -> stream;
   done @1 () -> ExcursionResult;
 }
 
@@ -38,6 +38,12 @@ struct ExcursionResult {
    extremum @3 :Float64;
    excursion @4 :Float64;
    confirmed @5 :Bool;
+   anchorSequence @12 :Int64;
+   ignitionSequence @13 :Int64;
+   extremumSequence @14 :Int64;
+   confirmationSequence @15 :Int64;
+   row @16 :Data;
+   hasPrecursor @19 :Bool;
   }
  }
  qualifying @6 :Float64;
@@ -46,4 +52,6 @@ struct ExcursionResult {
  horizon @9 :Float64;
  steps @10 :Int64;
  legs @11 :Int64;
+ epoch @17 :Int64;
+ scope @18 :Text;
 }

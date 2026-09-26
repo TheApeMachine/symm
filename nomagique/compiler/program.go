@@ -57,6 +57,7 @@ CompiledNode is an immutable execution plan node containing capability and compi
 It retains NO concrete Go server, NO server any, NO map[string]any.
 */
 type CompiledNode struct {
+	Configured   bool
 	Resource     bool // Constructed capability without the write/done evaluation protocol.
 	Source       bool
 	Queued       bool
@@ -127,7 +128,8 @@ BindingPlan holds cross-domain observable data bindings connecting backend outpu
 to frontend UI component inputs.
 */
 type BindingPlan struct {
-	Bindings []BindingEntry `json:"bindings"`
+	Bindings []BindingEntry    `json:"bindings"`
+	Inputs   map[string]Origin `json:"-"`
 }
 
 /*
@@ -155,15 +157,13 @@ type Program struct {
 	NodeMap  map[string]NodeID
 	UI       *UIPlan
 	Bindings *BindingPlan
-	// Publish receives the values that reached component ports after every
-	// evaluation Start runs, encoded as ui.Bindings.
-	Publish func([]byte)
 	// published is what each binding last delivered.
-	published []string
-	// replay has the next publish deliver every published value again.
-	replay  bool
-	results map[string]capnp.Struct
-	mu      sync.Mutex // ensures one graph evaluation at a time per program
+	published     []string
+	results       map[string]capnp.Struct
+	stageWidths   map[NodeID]map[string]int
+	stageArrivals []bindingArrival
+	configured    map[NodeID]bool
+	mu            sync.Mutex // ensures one graph evaluation at a time per program
 }
 
 /*
@@ -229,18 +229,6 @@ func (p *Program) Start(ctx context.Context) error {
 				"compiler: graph evaluation failed",
 				err,
 			))
-		}
-
-		if p.Publish != nil {
-			frame, err := p.bindings()
-
-			if err != nil {
-				return err
-			}
-
-			if frame != nil {
-				p.Publish(frame)
-			}
 		}
 
 		// A node that owns external I/O reports what it has without blocking,
@@ -464,8 +452,19 @@ func (p *Program) Execute(
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
+	frames := make([]nodeFrame, len(p.Nodes))
+	for nodeIndex, arguments := range initialInputs {
+		if int(nodeIndex) < len(frames) && arguments.IsValid() {
+			frames[nodeIndex].args = arguments
+			frames[nodeIndex].ready = p.Nodes[nodeIndex].RequiredMask
+		}
+	}
+	return p.evaluate(ctx, frames)
+}
+
+/* evaluate executes ready inputs on the existing DAG while its caller holds mu. */
+func (p *Program) evaluate(ctx context.Context, frames []nodeFrame) error {
 	nodeCount := len(p.Nodes)
-	frames := make([]nodeFrame, nodeCount)
 	p.results = make(map[string]capnp.Struct, nodeCount)
 
 	// Build outgoing routes index
@@ -482,14 +481,6 @@ func (p *Program) Execute(
 	// allocating the whole graph's arguments per pass costs in proportion to
 	// the graph instead of to the traffic.
 
-	// 2. Populate initial inputs if supplied
-	for nodeIdx, initStruct := range initialInputs {
-		if int(nodeIdx) < nodeCount && initStruct.IsValid() {
-			frames[nodeIdx].args = initStruct
-			frames[nodeIdx].ready = p.Nodes[nodeIdx].RequiredMask
-		}
-	}
-
 	// 3. Find initial runnable nodes.
 	//
 	// A node whose inputs are all wired waits for them: it runs when an
@@ -503,11 +494,11 @@ func (p *Program) Execute(
 	for i := 0; i < nodeCount; i++ {
 		node := &p.Nodes[i]
 
-		if node.Resource {
+		if node.Resource || node.Configured && p.configured[node.Index] {
 			continue
 		}
 
-		if _, seeded := initialInputs[NodeID(i)]; seeded {
+		if frames[i].args.IsValid() && frames[i].ready&node.RequiredMask == node.RequiredMask {
 			queue = append(queue, NodeID(i))
 			continue
 		}
@@ -572,6 +563,12 @@ func (p *Program) Execute(
 				))
 			}
 
+			if node.Configured {
+				if p.configured == nil {
+					p.configured = make(map[NodeID]bool)
+				}
+				p.configured[node.Index] = true
+			}
 			// Step C: SendCall(done)
 			doneSend := capnp.Send{
 				Method: capnp.Method{

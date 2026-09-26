@@ -9,9 +9,9 @@ using import "radix.capnp".Retained;
 # Grid is the virtual grid. Raw market data is written to it and the metrics
 # wired into it receive the fields they declared an interest in.
 #
-# Every feed lands on the one data port. It gathers rather than replaces, so
-# adding a venue is wiring one more producer into it rather than widening the
-# schema.
+# The data port carries one parsed record per Workspace observation. Workspace
+# admits concurrent feed arrivals as distinct native LMAX slots; Grid refuses
+# multiple nonempty records in one invocation rather than discarding a feed.
 #
 # What a metric asked for comes back out already typed, one slot per declared
 # interest and in the order they were declared, so a metric is handed the
@@ -59,6 +59,7 @@ interface Grid extends(Retained) {
     status       :Status,
     observations :List(Float64),
     observed     :List(Bool),
-    scope        :Text
+    scope        :Text,
+    data         :Data
   );
 }

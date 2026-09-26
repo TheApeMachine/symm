@@ -29,7 +29,6 @@ struct Sequenced {
       sequence @1 :List(Text);
       path     @2 :Text;
       depth    @3 :Int64;
-      out      @4 :Data;
     }
   }
 }

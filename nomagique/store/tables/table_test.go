@@ -5,8 +5,13 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
+	"github.com/apache/iceberg-go/catalog"
+	icetable "github.com/apache/iceberg-go/table"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/apache/iceberg-go"
 	sqlcat "github.com/apache/iceberg-go/catalog/sql"
@@ -26,13 +31,7 @@ func captureRow(t testing.TB, payload []byte) []byte {
 	defer client.Release()
 	ctx := context.Background()
 	err := client.Write(ctx, func(params store.Capture_write_Params) error {
-		endpoints, err := params.NewEndpoint(1)
-
-		if err != nil {
-			return err
-		}
-		times, err := params.NewReceivedAt(1)
-
+		provenance, err := params.NewProvenance(1)
 		if err != nil {
 			return err
 		}
@@ -42,7 +41,7 @@ func captureRow(t testing.TB, payload []byte) []byte {
 			return err
 		}
 
-		for _, err := range []error{endpoints.Set(0, "wss://fixture.test/feed"), times.Set(0, "2026-09-22T12:00:00.123456789Z"), payloads.Set(0, payload)} {
+		for _, err := range []error{provenance.Set(0, []byte(`{"session":"fixture","sequence":0,"endpoint":"wss://fixture.test/feed","receivedAt":"2026-09-22T12:00:00.123456789Z"}`)), payloads.Set(0, payload)} {
 			if err != nil {
 				return err
 			}
@@ -283,4 +282,147 @@ func TestWorthSending(t *testing.T) {
 			So(server.worthSending(), ShouldBeFalse)
 		})
 	})
+}
+
+/* delayedCatalog stalls real table creation without substituting storage results. */
+type delayedCatalog struct {
+	catalog.Catalog
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+	err     error
+}
+
+func (fixture *delayedCatalog) CreateNamespace(ctx context.Context, namespace icetable.Identifier, properties iceberg.Properties) error {
+	fixture.once.Do(func() { close(fixture.entered) })
+	select {
+	case <-fixture.release:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	if fixture.err != nil {
+		return fixture.err
+	}
+	return fixture.Catalog.CreateNamespace(ctx, namespace, properties)
+}
+
+func TestIcebergTableDone(t *testing.T) {
+	Convey("Slow catalog I/O is isolated behind the table node's bounded admission", t, func() {
+		directory := t.TempDir()
+		database, err := sql.Open("sqlite3", filepath.Join(directory, "catalog.db"))
+		So(err, ShouldBeNil)
+		defer func() { So(database.Close(), ShouldBeNil) }()
+		backing, err := sqlcat.NewCatalog("test", database, sqlcat.SQLite, iceberg.Properties{"warehouse": "file://" + directory})
+		So(err, ShouldBeNil)
+		fixture := &delayedCatalog{Catalog: backing, entered: make(chan struct{}), release: make(chan struct{})}
+		writer := NewIcebergTable()
+		writer.Catalog = fixture
+		client := IcebergTable_ServerToClient(writer)
+		defer client.Release()
+		var unblock sync.Once
+		defer unblock.Do(func() { close(fixture.release) })
+		row := []byte(`{"value":1}`)
+		declaration := `{"namespace":"test","table":"isolated","fields":[{"id":1,"name":"value","type":"long","required":true}],"appendBytes":11,"maxPendingBytes":22}`
+		admit := func() error {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			err := client.Write(ctx, func(args IcebergTable_write_Params) error {
+				if err := args.SetConfig(declaration); err != nil {
+					return err
+				}
+				return args.SetPayload(row)
+			})
+			if err != nil {
+				return err
+			}
+			return client.WaitStreaming()
+		}
+		So(admit(), ShouldBeNil)
+		future, release := client.Done(context.Background(), nil)
+		_, err = future.Struct()
+		release()
+		So(err, ShouldBeNil)
+		select {
+		case <-fixture.entered:
+		case <-time.After(time.Second):
+			t.Fatal("catalog worker did not start")
+		}
+		So(admit(), ShouldBeNil)
+		Convey("The next batch is rejected intact before exceeding the memory budget", func() {
+			So(admit(), ShouldNotBeNil)
+			writer.mutex.Lock()
+			held, pending := writer.held, len(writer.pending)
+			writer.mutex.Unlock()
+			So(held, ShouldEqual, 22)
+			So(pending, ShouldEqual, 2)
+		})
+		Convey("Flush joins the worker and persists both admitted rows", func() {
+			unblock.Do(func() { close(fixture.release) })
+			future, release := client.Flush(context.Background(), nil)
+			_, err := future.Struct()
+			release()
+			So(err, ShouldBeNil)
+			So(writer.committed, ShouldEqual, 2)
+			So(writer.held, ShouldEqual, 0)
+		})
+		Convey("A failed catalog call retains all rows and flush can retry", func() {
+			fixture.err = errors.New("catalog unavailable")
+			unblock.Do(func() { close(fixture.release) })
+			future, release := client.Flush(context.Background(), nil)
+			_, err := future.Struct()
+			release()
+			So(err, ShouldNotBeNil)
+			So(writer.held, ShouldEqual, 22)
+			So(writer.pending, ShouldHaveLength, 2)
+			fixture.err = nil
+			future, release = client.Flush(context.Background(), nil)
+			_, err = future.Struct()
+			release()
+			So(err, ShouldBeNil)
+			So(writer.committed, ShouldEqual, 2)
+		})
+	})
+}
+
+func BenchmarkIcebergTableFlush(b *testing.B) {
+	directory := b.TempDir()
+	database, err := sql.Open("sqlite3", filepath.Join(directory, "catalog.db"))
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer func() {
+		if err := database.Close(); err != nil {
+			b.Error(err)
+		}
+	}()
+	backing, err := sqlcat.NewCatalog("test", database, sqlcat.SQLite, iceberg.Properties{"warehouse": "file://" + directory})
+	if err != nil {
+		b.Fatal(err)
+	}
+	writer := NewIcebergTable()
+	writer.Catalog = backing
+	client := IcebergTable_ServerToClient(writer)
+	defer client.Release()
+	row := captureRow(b, []byte(`{"channel":"ticker","data":[{"symbol":"BTC/USD","last":101.5}]}`))
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		if err := client.Write(context.Background(), func(args IcebergTable_write_Params) error {
+			if err := args.SetConfig(captureDeclaration); err != nil {
+				return err
+			}
+			return args.SetPayload(row)
+		}); err != nil {
+			b.Fatal(err)
+		}
+		if err := client.WaitStreaming(); err != nil {
+			b.Fatal(err)
+		}
+		future, release := client.Flush(context.Background(), nil)
+		_, err := future.Struct()
+		release()
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
 }

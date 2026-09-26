@@ -17,7 +17,7 @@ $Go.import("github.com/theapemachine/symm/nomagique/store");
 # value, never a burst. Within one evaluation rewind applies first, then offers
 # and retries, then releases.
 interface Queue {
-  write @0 (offer :List(Data), retry :List(Data), rewind :List(Data), release :List(Data)) -> stream;
+  write @0 (offer :List(Data), retry :List(Data), rewind :List(Data), release :List(Data), texts :List(Text)) -> stream;
   done @1 () -> Released;
 }
 

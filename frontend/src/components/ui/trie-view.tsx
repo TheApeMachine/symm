@@ -60,7 +60,11 @@ export interface TrieViewProps {
 	root?: TrieNode | null;
 	candidates?: TrieCandidate[] | null;
 	className?: string;
+	fallback?: boolean;
 }
+
+
+
 
 /* Chooses the path to the highest supplied terminal probability, for display only. */
 export const selectTriePath = (root: TrieNode): Set<string> => {
@@ -84,10 +88,12 @@ export const selectTriePath = (root: TrieNode): Set<string> => {
 };
 
 export const TrieView = ({
-	root,
+	root: suppliedRoot,
 	candidates: suppliedCandidates,
+	fallback = false,
 	className,
 }: TrieViewProps) => {
+	const root = suppliedRoot != null ? suppliedRoot : null;
 	const candidates = suppliedCandidates ?? [];
 	const svgRef = useRef<SVGSVGElement>(null);
 	const wrapperRef = useRef<HTMLDivElement>(null);
@@ -319,6 +325,8 @@ export const TrieView = ({
 		return `M ${startX} ${startY} C ${midX} ${startY}, ${midX} ${endY}, ${endX} ${endY}`;
 	};
 
+	const [colorMode, setColorMode] = useState<"threshold" | "gradient">("threshold");
+
 	return (
 		<div
 			className={cn(
@@ -343,6 +351,33 @@ export const TrieView = ({
 					</ToggleGroup>
 
 					<div className="h-4 w-px bg-(--line)" />
+
+					<div className="flex items-center gap-1 bg-[#111113] border border-[#27272a] p-0.5 rounded">
+						<button
+							type="button"
+							onClick={() => setColorMode("threshold")}
+							className={cn(
+								"px-2.5 py-0.5 rounded transition-colors text-[11px]",
+								colorMode === "threshold"
+									? "bg-[#27272a] text-[#fbbf24]"
+									: "text-[#71717a] hover:text-[#a1a1aa]",
+							)}
+						>
+							Threshold
+						</button>
+						<button
+							type="button"
+							onClick={() => setColorMode("gradient")}
+							className={cn(
+								"px-2.5 py-0.5 rounded transition-colors text-[11px]",
+								colorMode === "gradient"
+									? "bg-[#27272a] text-[#fbbf24]"
+									: "text-[#71717a] hover:text-[#a1a1aa]",
+							)}
+						>
+							Gradient
+						</button>
+					</div>
 				</div>
 
 				<div className="flex items-center gap-3">
@@ -376,6 +411,18 @@ export const TrieView = ({
 					>
 						{bestOnly ? "ALL PATHS" : "HIGHEST PROBABILITY PATH"}
 					</Button>
+				</div>
+			</div>
+
+			{/* Subtabs strip */}
+			<div className="h-8 border-b border-[#27272a] flex items-center justify-between px-4 text-xs bg-[#09090b] shrink-0">
+				<div className="flex gap-4">
+					<span className="text-[#fbbf24] border-b border-[#fbbf24] py-1.5 font-bold">Radix Trie</span>
+					<span className="text-[#52525b] hover:text-[#a1a1aa] py-1.5 cursor-pointer transition-colors">Action spectrum</span>
+					<span className="text-[#52525b] hover:text-[#a1a1aa] py-1.5 cursor-pointer transition-colors">Trajectory</span>
+				</div>
+				<div className="text-[#52525b]">
+					interactive topology · probability pruning · scroll to zoom
 				</div>
 			</div>
 
@@ -781,40 +828,53 @@ export const TrieView = ({
 			</div>
 
 			{/* Bottom Tray: Feasible Actions Table - Flush with border-t */}
-			<div className="flex h-36 shrink-0 flex-col border-t border-(--line) bg-(--surface) overflow-hidden">
-				<div className="flex h-7 shrink-0 items-center justify-between border-b border-(--line) bg-(--surface) px-4 text-[10px] text-(--f4)">
-					<span className="font-bold text-(--f2)">
-						FEASIBLE ACTIONS AT THIS PRECURSOR IMPULSE
+			<div className="flex h-44 shrink-0 flex-col border-t border-[#27272a] bg-[#09090b] overflow-hidden font-mono">
+				<div className="flex h-8 shrink-0 items-center justify-between border-b border-[#27272a] bg-[#09090b] px-4 text-xs uppercase tracking-widest text-[#52525b]">
+					<span className="font-bold text-[#d4d4d4]">
+						FEASIBLE ACTIONS AT THIS IMPULSE
 					</span>
 					<span>Producer-ranked outcomes</span>
 				</div>
 
-				<div className="flex-1 overflow-hidden p-2">
-					<table className="w-full text-left text-[11px]">
+				<div className="flex-1 overflow-auto p-2">
+					<table className="w-full text-left text-xs">
 						<thead>
-							<tr className="border-b border-(--line) text-(--f4)">
-								<th className="w-12 pb-1 px-3 font-normal">Rank</th>
-								<th className="w-32 pb-1 px-3 font-normal">Action</th>
-								<th className="pb-1 px-3 font-normal">Prefix Sequence</th>
-								<th className="pb-1 px-3 text-right font-normal">
+							<tr className="border-b border-[#27272a] text-[#52525b]">
+								<th className="w-12 px-4 py-2 font-normal">Rank</th>
+								<th className="w-32 px-4 py-2 font-normal">Action</th>
+								<th className="px-4 py-2 font-normal">Prefix Sequence</th>
+								<th className="px-4 py-2 text-right font-normal">
 									Probability
 								</th>
-								<th className="pb-1 px-3 text-right font-normal">State</th>
+								<th className="px-4 py-2 text-right font-normal">State</th>
 							</tr>
 						</thead>
-						<tbody>
+						<tbody className="divide-y divide-[#27272a]">
 							{candidates.length === 0 && (
 								<tr>
-									<td colSpan={5}>No supplied action rankings</td>
+									<td colSpan={5} className="p-4 text-[#52525b]">No supplied action rankings</td>
 								</tr>
 							)}
 							{candidates.map((candidate) => (
-								<tr key={candidate.id}>
-									<td className="p-2">{candidate.rank}</td>
-									<td>{candidate.action}</td>
-									<td>{candidate.prefix}</td>
-									<td>{(candidate.probability * 100).toFixed(1)}%</td>
-									<td>{candidate.state}</td>
+								<tr key={candidate.id} className="hover:bg-[#18181b] transition-colors group cursor-default">
+									<td className="px-4 py-2 text-[#fbbf24]">{candidate.rank}</td>
+									<td className="px-4 py-2 text-[#fbbf24] font-medium">{candidate.action}</td>
+									<td className="px-4 py-2 text-[#a1a1aa]">{candidate.prefix}</td>
+									<td className="px-4 py-2 text-right text-white font-mono">
+										{(candidate.probability * 100).toFixed(1)}%
+									</td>
+									<td className="px-4 py-2 text-right">
+										<span
+											className={cn(
+												"rounded px-1.5 py-0.5 text-[10px]",
+												candidate.state === "POLICY CHOICE"
+													? "border border-[#22c55e]/30 bg-[#22c55e]/10 text-[#22c55e] font-bold"
+													: "border border-[#27272a] text-[#52525b] group-hover:border-[#fbbf24]/50 group-hover:text-[#fbbf24]",
+											)}
+										>
+											{candidate.state}
+										</span>
+									</td>
 								</tr>
 							))}
 						</tbody>

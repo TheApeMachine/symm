@@ -34,3 +34,7 @@ interface Queued {}
 # Standing owners report on every evaluation, whether or not anything reached
 # them, so a consumer may join on what they say when they were told nothing.
 interface Standing {}
+
+# Configured nodes bind immutable capability topology once per program activation.
+# Their work is invoked through those capabilities, not by polling write/done.
+interface Configured {}

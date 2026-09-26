@@ -25,16 +25,10 @@
               "portName": "payload_0"
             }
           ],
-          "socket.frame.endpoint": [
+          "socket.frame.provenance": [
             {
               "nodeId": "envelope",
-              "portName": "endpoint_0"
-            }
-          ],
-          "socket.frame.receivedAt": [
-            {
-              "nodeId": "envelope",
-              "portName": "receivedAt_0"
+              "portName": "provenance_0"
             }
           ]
         }
@@ -64,16 +58,34 @@
               "portName": "payload_1"
             }
           ],
-          "shard_0.socket.frame.endpoint": [
+          "shard_1.socket.frame.read": [
             {
               "nodeId": "envelope",
-              "portName": "endpoint_1"
+              "portName": "payload_3"
             }
           ],
-          "shard_0.socket.frame.receivedAt": [
+          "shard_2.socket.frame.read": [
             {
               "nodeId": "envelope",
-              "portName": "receivedAt_1"
+              "portName": "payload_4"
+            }
+          ],
+          "shard_0.socket.frame.provenance": [
+            {
+              "nodeId": "envelope",
+              "portName": "provenance_1"
+            }
+          ],
+          "shard_1.socket.frame.provenance": [
+            {
+              "nodeId": "envelope",
+              "portName": "provenance_3"
+            }
+          ],
+          "shard_2.socket.frame.provenance": [
+            {
+              "nodeId": "envelope",
+              "portName": "provenance_4"
             }
           ]
         }
@@ -96,16 +108,10 @@
               "portName": "payload_2"
             }
           ],
-          "socket.frame.endpoint": [
+          "socket.frame.provenance": [
             {
               "nodeId": "envelope",
-              "portName": "endpoint_2"
-            }
-          ],
-          "socket.frame.receivedAt": [
-            {
-              "nodeId": "envelope",
-              "portName": "receivedAt_2"
+              "portName": "provenance_2"
             }
           ]
         }
@@ -127,34 +133,10 @@
               "portName": "socket.frame.read"
             }
           ],
-          "endpoint_0": [
-            {
-              "nodeId": "spot",
-              "portName": "socket.frame.endpoint"
-            }
-          ],
-          "receivedAt_0": [
-            {
-              "nodeId": "spot",
-              "portName": "socket.frame.receivedAt"
-            }
-          ],
           "payload_1": [
             {
               "nodeId": "level3",
               "portName": "shard_0.socket.frame.read"
-            }
-          ],
-          "endpoint_1": [
-            {
-              "nodeId": "level3",
-              "portName": "shard_0.socket.frame.endpoint"
-            }
-          ],
-          "receivedAt_1": [
-            {
-              "nodeId": "level3",
-              "portName": "shard_0.socket.frame.receivedAt"
             }
           ],
           "payload_2": [
@@ -163,16 +145,46 @@
               "portName": "socket.frame.read"
             }
           ],
-          "endpoint_2": [
+          "payload_3": [
             {
-              "nodeId": "futures",
-              "portName": "socket.frame.endpoint"
+              "nodeId": "level3",
+              "portName": "shard_1.socket.frame.read"
             }
           ],
-          "receivedAt_2": [
+          "payload_4": [
+            {
+              "nodeId": "level3",
+              "portName": "shard_2.socket.frame.read"
+            }
+          ],
+          "provenance_0": [
+            {
+              "nodeId": "spot",
+              "portName": "socket.frame.provenance"
+            }
+          ],
+          "provenance_1": [
+            {
+              "nodeId": "level3",
+              "portName": "shard_0.socket.frame.provenance"
+            }
+          ],
+          "provenance_2": [
             {
               "nodeId": "futures",
-              "portName": "socket.frame.receivedAt"
+              "portName": "socket.frame.provenance"
+            }
+          ],
+          "provenance_3": [
+            {
+              "nodeId": "level3",
+              "portName": "shard_1.socket.frame.provenance"
+            }
+          ],
+          "provenance_4": [
+            {
+              "nodeId": "level3",
+              "portName": "shard_2.socket.frame.provenance"
             }
           ]
         },

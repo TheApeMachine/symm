@@ -3,6 +3,8 @@ package websocket
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -27,11 +29,13 @@ type WebSocketClientServer struct {
 	mu         sync.Mutex
 	conn       *gorillaws.Conn
 	endpoint   string
-	onConnect  []byte
+	onConnect  [][]byte
 	pending    [][]byte
 	incoming   *lf.Queue[receivedFrame]
 	dialing    atomic.Bool
 	generation uint64
+	session    string
+	sequence   atomic.Int64
 }
 
 /* receivedFrame retains metadata at socket receipt, before graph scheduling. */
@@ -40,10 +44,11 @@ type receivedFrame struct {
 	at         time.Time
 	endpoint   string
 	generation uint64
+	sequence   int64
 }
 
 func NewWebSocketClient(ctx context.Context) *WebSocketClientServer {
-	return &WebSocketClientServer{System: runtime.NewSystem(ctx, "websocket.client"), incoming: lf.NewQueue[receivedFrame]()}
+	return &WebSocketClientServer{session: rand.Text(), System: runtime.NewSystem(ctx, "websocket.client"), incoming: lf.NewQueue[receivedFrame]()}
 }
 
 /* Write configures the connection and admits every supplied outbound frame. */
@@ -79,7 +84,17 @@ func (server *WebSocketClientServer) Write(ctx context.Context, call WebSocketCl
 	}
 
 	if call.Args().HasOnConnect() {
-		server.onConnect = bytes.Clone(initial)
+		handshake := make([][]byte, initial.Len())
+
+		for index := range initial.Len() {
+			payload, err := initial.At(index)
+
+			if err != nil {
+				return errnie.Error(errnie.Err(errnie.Validation, "websocket: connection frame", err))
+			}
+			handshake[index] = bytes.Clone(payload)
+		}
+		server.onConnect = handshake
 	}
 	for index := range frames.Len() {
 		payload, err := frames.At(index)
@@ -126,6 +141,18 @@ func (server *WebSocketClientServer) Done(ctx context.Context, call WebSocketCli
 	results.SetFrame()
 	frame := results.Frame()
 	frame.SetGeneration(message.generation)
+	provenance, err := json.Marshal(struct {
+		Session    string `json:"session"`
+		Sequence   int64  `json:"sequence"`
+		Endpoint   string `json:"endpoint"`
+		ReceivedAt string `json:"receivedAt"`
+	}{server.session, message.sequence, message.endpoint, message.at.UTC().Format(time.RFC3339Nano)})
+	if err != nil {
+		return errnie.Error(err)
+	}
+	if err := frame.SetProvenance(provenance); err != nil {
+		return errnie.Error(err)
+	}
 
 	if err := frame.SetReceivedAt(message.at.UTC().Format(time.RFC3339Nano)); err != nil {
 		return errnie.Error(errnie.Err(errnie.Internal, "websocket: receive timestamp", err))
@@ -178,8 +205,8 @@ func (server *WebSocketClientServer) connect() bool {
 	}
 	server.conn = connection
 
-	if len(server.onConnect) > 0 {
-		if err := connection.WriteMessage(gorillaws.TextMessage, server.onConnect); err != nil {
+	for _, payload := range server.onConnect {
+		if err := connection.WriteMessage(gorillaws.TextMessage, payload); err != nil {
 			errnie.Error(errnie.Err(errnie.IO, "websocket: connection message", err))
 
 			if err := connection.Close(); err != nil {
@@ -290,7 +317,7 @@ func (server *WebSocketClientServer) read(connection *gorillaws.Conn, endpoint s
 				server.reconnect()
 				return
 			}
-			server.incoming.Enqueue(receivedFrame{payload: payload, at: time.Now(), endpoint: endpoint, generation: generation})
+			server.incoming.Enqueue(receivedFrame{payload: payload, at: time.Now(), endpoint: endpoint, generation: generation, sequence: server.sequence.Add(1) - 1})
 		}
 	}()
 }

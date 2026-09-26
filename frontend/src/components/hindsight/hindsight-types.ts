@@ -404,11 +404,12 @@ measure?" for a reader who does not already know the family.
 */
 export type SignalSemantics = {
 	source: string;
-	purpose: string;
+	purpose?: string;
 };
 
 export type HindsightMetricMap = {
-	baselineCommit: string;
+	baselineCommit?: string;
+	graphDigest?: string;
 	metrics: Record<string, MetricSemantics>;
 	signals: Record<string, SignalSemantics>;
 };

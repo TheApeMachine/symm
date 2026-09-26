@@ -40,9 +40,9 @@ func (server *GroupSumServer) Write(ctx context.Context, call GroupSum_write) er
 
 	server.labels, server.sums = server.labels[:0], server.sums[:0]
 
-	// Labels that did not arrive leave nothing to group by. That is not a
-	// group with a sum of zero, and it is not every value in one group.
-	if labels.Len() == 0 {
+	// Missing readings or labels produce no activation; configured regions
+	// alone never constitute an observation.
+	if labels.Len() == 0 || values.Len() == 0 && present.Len() == 0 {
 		return nil
 	}
 

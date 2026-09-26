@@ -71,21 +71,27 @@ export const OutcomeDistribution = ({
 
 	const mu = finite(mean);
 	const sigma = finite(deviation);
-	const fitted = showFit && mu !== undefined && sigma !== undefined && sigma > 0;
+	const effectiveMean = mu;
+	const effectiveDeviation = sigma;
+	const fitted = showFit && effectiveMean !== undefined && effectiveDeviation !== undefined && effectiveDeviation > 0;
 	const empty = !bins?.length && !fitted;
 
-	let lower = 0;
-	let upper = 0;
-	for (const bin of bins ?? []) {
-		lower = Math.min(lower, bin.lower);
-		upper = Math.max(upper, bin.upper);
+	let lower = -15;
+	let upper = 15;
+	if (bins?.length) {
+		lower = 0;
+		upper = 0;
+		for (const bin of bins) {
+			lower = Math.min(lower, bin.lower);
+			upper = Math.max(upper, bin.upper);
+		}
 	}
 	if (fitted) {
-		lower = Math.min(lower, mu - 3 * sigma);
-		upper = Math.max(upper, mu + 3 * sigma);
-	} else if (mu !== undefined) {
-		lower = Math.min(lower, mu);
-		upper = Math.max(upper, mu);
+		lower = Math.min(lower, effectiveMean - 3 * effectiveDeviation);
+		upper = Math.max(upper, effectiveMean + 3 * effectiveDeviation);
+	} else if (effectiveMean !== undefined) {
+		lower = Math.min(lower, effectiveMean);
+		upper = Math.max(upper, effectiveMean);
 	}
 	const span = upper - lower || 1;
 
@@ -97,7 +103,7 @@ export const OutcomeDistribution = ({
 	if (fitted) {
 		for (let step = 0; step <= 120; step++) {
 			const at = lower + (span * step) / 120;
-			curve.push({ x: at, y: density(at, mu, sigma) });
+			curve.push({ x: at, y: density(at, effectiveMean, effectiveDeviation) });
 		}
 	}
 	const top = Math.max(...curve.map((point) => point.y), 0);
