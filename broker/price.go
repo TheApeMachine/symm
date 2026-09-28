@@ -223,18 +223,25 @@ func (price *Price) Quantity(symbol string, cash *decimal.Decimal) (*decimal.Dec
 	var quantity *decimal.Decimal
 	var err error
 
-	if price.Books == nil {
-		return nil, errnie.Error(errnie.Err(errnie.NotFound, "price: books unavailable", nil))
+	if price.Books != nil {
+		price.Books.Book(symbol, func(managedBook *spotbook.Book) {
+			if managedBook != nil && managedBook.BestAsk() != nil {
+				quantity, err = price.Affordable(symbol, cash, managedBook.BestAsk().Price)
+			}
+		})
 	}
 
-	price.Books.Book(symbol, func(book *spotbook.Book) {
-		if book == nil || book.BestAsk() == nil {
-			err = errnie.Err(errnie.NotFound, "price: ask book unavailable for "+symbol, nil)
-			return
+	if quantity == nil {
+		if tick := price.Tick(symbol); tick != nil && tick.Ask != nil {
+			quantity, err = price.Affordable(symbol, cash, tick.Ask)
 		}
+	}
 
-		quantity, err = price.Affordable(symbol, cash, book.BestAsk().Price)
-	})
+	if quantity == nil && price.api != nil {
+		if info, tickerErr := price.api.TickerSingle(symbol); tickerErr == nil && info != nil && len(info.Ask) > 0 {
+			quantity, err = price.Affordable(symbol, cash, info.Ask[0])
+		}
+	}
 
 	if quantity == nil && err == nil {
 		err = errnie.Err(errnie.NotFound, "price: book unavailable for "+symbol, nil)

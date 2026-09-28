@@ -67,10 +67,12 @@ func (op *Fold) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				continue
 			}
 
-			m.Metrics["cohort_signed_correlation"] = m.Metrics["cohort_signed_correlation"].Write(summary.SignedCorrelation)
-			m.Metrics["cohort_absolute_correlation"] = m.Metrics["cohort_absolute_correlation"].Write(summary.AbsoluteCorrelation)
+			if summary.Defined {
+				m.Metrics["cohort_signed_correlation"] = m.Metrics["cohort_signed_correlation"].Write(summary.SignedCorrelation)
+				m.Metrics["cohort_absolute_correlation"] = m.Metrics["cohort_absolute_correlation"].Write(summary.AbsoluteCorrelation)
+				m.Metrics["cohort_effective_peer_count"] = m.Metrics["cohort_effective_peer_count"].Write(summary.EffectivePeers)
+			}
 			m.Metrics["cohort_peer_count"] = m.Metrics["cohort_peer_count"].Write(summary.Peers)
-			m.Metrics["cohort_effective_peer_count"] = m.Metrics["cohort_effective_peer_count"].Write(summary.EffectivePeers)
 
 			if summary.FisherDefined {
 				m.Metrics["cohort_correlation_dispersion"] = m.Metrics["cohort_correlation_dispersion"].Write(summary.Dispersion)
@@ -118,7 +120,7 @@ func (op *History) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 		for arriving := range in {
 			m := *(**data.Measurement[float64])(arriving)
 
-			if m.Err != nil || len(m.Peers) == 0 {
+			if m.Err != nil || len(m.Peers) == 0 || m.Metrics["cohort_peer_count"].Raw == 0 {
 				if !yield(arriving) {
 					return
 				}
@@ -181,7 +183,7 @@ func (op *Relative) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 		for arriving := range in {
 			m := *(**data.Measurement[float64])(arriving)
 
-			if m.Err != nil || len(m.Peers) == 0 {
+			if m.Err != nil || len(m.Peers) == 0 || m.Metrics["cohort_peer_count"].Raw == 0 {
 				if !yield(arriving) {
 					return
 				}
@@ -230,7 +232,7 @@ func (op *CorrelationVelocity) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe
 		for arriving := range in {
 			m := *(**data.Measurement[float64])(arriving)
 
-			if m.Err != nil || len(m.Peers) == 0 {
+			if m.Err != nil || len(m.Peers) == 0 || m.Metrics["cohort_peer_count"].Raw == 0 {
 				if !yield(arriving) {
 					return
 				}
@@ -283,7 +285,7 @@ func (op *EnergyVelocity) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Poin
 		for arriving := range in {
 			m := *(**data.Measurement[float64])(arriving)
 
-			if m.Err != nil || len(m.Peers) == 0 {
+			if m.Err != nil || len(m.Peers) == 0 || m.Metrics["cohort_peer_count"].Raw == 0 {
 				if !yield(arriving) {
 					return
 				}

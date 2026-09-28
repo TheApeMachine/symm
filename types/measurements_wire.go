@@ -75,7 +75,15 @@ func MeasurementToWire(measurement *data.Measurement[float64]) *wire.Measurement
 		Provenance:   provenance,
 	}
 
-	if snapshot, ok := measurement.Result.(*grid.Snapshot); ok {
+	snapshot, ok := measurement.Result.(*grid.Snapshot)
+
+	if !ok && measurement.Result != nil {
+		if snapshotter, hasSnapshot := measurement.Result.(interface{ Snapshot() any }); hasSnapshot {
+			snapshot, _ = snapshotter.Snapshot().(*grid.Snapshot)
+		}
+	}
+
+	if snapshot != nil {
 		row.Grid = &wire.LearningDevelopmentT{Symbol: snapshot.Label, Volume: snapshot.Volume}
 
 		for _, cell := range snapshot.Cells {

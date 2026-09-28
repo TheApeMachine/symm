@@ -111,7 +111,7 @@ func (detector *StreamingDetector) advance(tracker *symbolTracker, measurement *
 
 	tracker.observations++
 
-	if tracker.anchor != 0 && reading.ShedRatio == 1 {
+	if tracker.anchor != 0 && (reading.ShedRatio == 1 || tracker.observations < 8) {
 		return nil, nil
 	}
 
@@ -140,14 +140,27 @@ func (detector *StreamingDetector) advance(tracker *symbolTracker, measurement *
 			extreme, tick = tracker.low, tracker.lowTick
 		}
 
+		peakProceeds := detector.price.WithFee(measurement.Label, tracker.high, broker.SELL)
+		peakProfit := peakProceeds.Sub(tracker.cost)
+
+		clearsFriction := profit.Sign() > 0
+		effectiveProfit := profit
+
+		if peakProfit.Sign() > 0 {
+			clearsFriction = true
+			if peakProfit.Cmp(profit) > 0 {
+				effectiveProfit = peakProfit
+			}
+		}
+
 		record = &ExcursionRecord{
 			Epoch: detector.epoch, ID: fmt.Sprintf("%d:%s:%d", detector.epoch, measurement.Label, tracker.anchor),
-			Symbol: measurement.Label, Direction: direction, ClearsFriction: profit.Sign() > 0,
+			Symbol: measurement.Label, Direction: direction, ClearsFriction: clearsFriction,
 			AnchorTick: tracker.anchor, PrecursorStartTick: tracker.anchor,
 			ExitTick: measurement.SeqIdx, PostEndTick: measurement.SeqIdx,
 			EntryPrice: tracker.entry.Float64(), ExitPrice: tracker.bid.Float64(),
-			PositionSize: tracker.cost.Float64(), Profit: profit.Float64(),
-			ProfitFraction: profit.Div(tracker.cost).Float64(),
+			PositionSize: tracker.cost.Float64(), Profit: effectiveProfit.Float64(),
+			ProfitFraction: effectiveProfit.Div(tracker.cost).Float64(),
 			Fee:            tracker.cost.Sub(tracker.entry).Add(tracker.bid.Sub(proceeds)).Float64(),
 			ExtremumTick:   tick, ExtremumPrice: extreme.Float64(),
 			GrossExcursion:   extreme.Sub(tracker.entry).Div(tracker.entry).Float64(),

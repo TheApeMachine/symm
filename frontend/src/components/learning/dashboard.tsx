@@ -141,7 +141,7 @@ export const LearningDashboard = () => {
 				const contrast = metricMap.contrast ?? 0;
 				const edge = metricMap.edge ?? 0;
 				const evaluated = metricMap.evaluated ?? 0;
-				const isTrading = false;
+				const isTrading = (metricMap.trading ?? 0) > 0;
 
 				if (metaEl) {
 					metaEl.innerText = `${Math.floor(steps).toLocaleString()} frames · ${Math.floor(decisions).toLocaleString()} learned situations · ${Math.floor(resolved).toLocaleString()} resolved`;
@@ -152,7 +152,7 @@ export const LearningDashboard = () => {
 				}
 
 				if (gateCountEl) {
-					gateCountEl.innerText = "Training only";
+					gateCountEl.innerText = isTrading ? "Paper trading ($200)" : "Training only";
 				}
 
 				if (forwardMetaEl) {
@@ -165,7 +165,7 @@ export const LearningDashboard = () => {
 
 				if (recogStatusEl) {
 					recogStatusEl.innerText = isTrading
-						? "Execution active · Model meets confidence and contrast criteria"
+						? "Execution active · Paper trading enabled with $200 wallet"
 						: "Training precursor associations · Quoted returns, no orders";
 				}
 

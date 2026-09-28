@@ -1,9 +1,14 @@
 package strategy
 
 import (
+	"bytes"
 	"cmp"
 	"context"
+	"encoding/gob"
+	"fmt"
 	"iter"
+	"os"
+	"path/filepath"
 	"slices"
 	"sync/atomic"
 	"unsafe"
@@ -18,7 +23,7 @@ import (
 	"github.com/theapemachine/symm/strategy/impulse"
 )
 
-const TrainingFormat = "symm-volume-training/1"
+const TrainingFormat = "symm-volume-training/2"
 
 type trainingReading struct {
 	Learned, Resolved, Correct, Predicted, Entered, Profitable, Unsupported uint64
@@ -103,7 +108,7 @@ func (rehearsal *Rehearsal) Step(frame *data.Measurement[float64]) ([]tables.Exc
 func (rehearsal *Rehearsal) capture(reading *grid.Impulse) error {
 	key := rehearsal.precursor.Encode(reading, false)
 	anchor := trainingAnchor{sequence: reading.SeqIdx, key: slices.Clone(key)}
-	command := cognition.Command{Evaluate: &cognition.Question{Context: key, Exact: true}}
+	command := cognition.Command{Evaluate: &cognition.Question{Context: key, Exact: false}}
 	pipeline := nomagique.NewNumber(rehearsal.engine)
 	input := func(yield func(unsafe.Pointer) bool) { yield(unsafe.Pointer(&command)) }
 
@@ -117,6 +122,44 @@ func (rehearsal *Rehearsal) capture(reading *grid.Impulse) error {
 
 	rehearsal.anchors[reading.Label] = anchor
 	return nil
+}
+
+func (rehearsal *Rehearsal) train(sequence []byte, class []byte, feedback float64) (cognition.Result, error) {
+	if len(sequence) == 0 || len(class) == 0 {
+		return cognition.Result{}, nil
+	}
+
+	res, err := rehearsal.engine.Observe(cognition.Association{
+		Context:  sequence,
+		Class:    class,
+		Feedback: feedback,
+		Graded:   true,
+	})
+
+	if err != nil {
+		return res, err
+	}
+
+	if len(sequence)%8 == 0 && len(sequence) > 16 {
+		tokens := len(sequence) / 8
+		maxOrder := 8
+		limit := min(tokens-1, maxOrder)
+
+		for endIdx := 2; endIdx <= limit; endIdx++ {
+			subContext := sequence[:endIdx*8]
+
+			if _, err := rehearsal.engine.Observe(cognition.Association{
+				Context:  subContext,
+				Class:    class,
+				Feedback: feedback,
+				Graded:   true,
+			}); err != nil {
+				return res, err
+			}
+		}
+	}
+
+	return res, nil
 }
 
 func (rehearsal *Rehearsal) resolve(record tables.ExcursionRecord, exit *grid.Impulse) error {
@@ -146,6 +189,7 @@ func (rehearsal *Rehearsal) resolve(record tables.ExcursionRecord, exit *grid.Im
 
 	if anchor.prediction != "" {
 		rehearsal.reading.Predicted++
+
 		if anchor.prediction == string(action) {
 			rehearsal.reading.Correct++
 		}
@@ -154,13 +198,19 @@ func (rehearsal *Rehearsal) resolve(record tables.ExcursionRecord, exit *grid.Im
 	if anchor.prediction == string(ActionEnter) {
 		rehearsal.reading.Entered++
 		rehearsal.reading.Return += record.ProfitFraction
+
 		if record.ProfitFraction > 0 {
 			rehearsal.reading.Profitable++
 		}
 	}
 
-	association := cognition.Association{Context: anchor.key, Class: []byte(action)}
-	if _, err := rehearsal.engine.Observe(association); err != nil {
+	if _, err := rehearsal.train(anchor.key, []byte(ActionEnter), record.ProfitFraction); err != nil {
+		return errnie.Error(err)
+	}
+
+	rehearsal.reading.Learned++
+
+	if _, err := rehearsal.train(anchor.key, []byte(ActionWait), -record.ProfitFraction); err != nil {
 		return errnie.Error(err)
 	}
 
@@ -168,12 +218,15 @@ func (rehearsal *Rehearsal) resolve(record tables.ExcursionRecord, exit *grid.Im
 	// At a detected regime boundary the completed virtual position is closed.
 	// The holding bit keeps this lifecycle label separate from entry selection.
 	key := rehearsal.precursor.Encode(exit, true)
+
 	if len(key) > 0 {
-		if _, err := rehearsal.engine.Observe(cognition.Association{Context: key, Class: []byte(ActionExit)}); err != nil {
+		if _, err := rehearsal.train(key, []byte(ActionExit), 1.0); err != nil {
 			return errnie.Error(err)
 		}
+
 		rehearsal.reading.Learned++
 	}
+
 	return nil
 }
 
@@ -242,37 +295,181 @@ func (rehearsal *Rehearsal) Replay(records []tables.ExcursionRecord, frames iter
 	return nil
 }
 
+type RehearsalCheckpoint struct {
+	Format  string
+	Epoch   int64
+	Reading trainingReading
+	Model   []byte
+}
+
+func (rehearsal *Rehearsal) SaveCheckpoint(epoch int64) error {
+	if rehearsal == nil || rehearsal.engine == nil {
+		return nil
+	}
+
+	result, err := rehearsal.engine.Snapshot()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.Internal, "rehearsal: snapshot failed", err))
+	}
+
+	checkpoint := RehearsalCheckpoint{
+		Format:  TrainingFormat,
+		Epoch:   epoch,
+		Reading: rehearsal.reading,
+		Model:   result.Model,
+	}
+
+	var buffer bytes.Buffer
+	encoder := gob.NewEncoder(&buffer)
+
+	if err := encoder.Encode(checkpoint); err != nil {
+		return errnie.Error(errnie.Err(errnie.UnprocessableContent, "rehearsal: checkpoint encode failed", err))
+	}
+
+	if err := os.MkdirAll("runs", 0o755); err != nil {
+		return errnie.Error(errnie.Err(errnie.IO, "rehearsal: mkdir runs failed", err))
+	}
+
+	targetPath := filepath.Join("runs", "rehearsal_checkpoint.bin")
+	temporaryPath := targetPath + ".tmp"
+
+	if err := os.WriteFile(temporaryPath, buffer.Bytes(), 0o600); err != nil {
+		return errnie.Error(errnie.Err(errnie.IO, "rehearsal: write checkpoint failed", err))
+	}
+
+	if err := os.Rename(temporaryPath, targetPath); err != nil {
+		return errnie.Error(errnie.Err(errnie.IO, "rehearsal: rename checkpoint failed", err))
+	}
+
+	errnie.Info(fmt.Sprintf(
+		"rehearsal: saved checkpoint for epoch %d (%d bytes, %d situations learned)",
+		epoch, buffer.Len(), checkpoint.Reading.Learned,
+	))
+
+	return nil
+}
+
+func (rehearsal *Rehearsal) LoadCheckpoint() (int64, error) {
+	if rehearsal == nil || rehearsal.engine == nil {
+		return 0, nil
+	}
+
+	targetPath := filepath.Join("runs", "rehearsal_checkpoint.bin")
+	payload, err := os.ReadFile(targetPath)
+
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+
+		return 0, errnie.Error(errnie.Err(errnie.IO, "rehearsal: read checkpoint failed", err))
+	}
+
+	var checkpoint RehearsalCheckpoint
+	decoder := gob.NewDecoder(bytes.NewReader(payload))
+
+	if err := decoder.Decode(&checkpoint); err != nil {
+		return 0, errnie.Error(errnie.Err(errnie.UnprocessableContent, "rehearsal: decode checkpoint failed", err))
+	}
+
+	if checkpoint.Format != TrainingFormat || len(checkpoint.Model) == 0 {
+		return 0, nil
+	}
+
+	if _, err := rehearsal.engine.Restore(checkpoint.Model); err != nil {
+		return 0, errnie.Error(errnie.Err(errnie.Internal, "rehearsal: restore model failed", err))
+	}
+
+	rehearsal.reading = checkpoint.Reading
+	rehearsal.published.Store(&rehearsal.reading)
+
+	errnie.Info(fmt.Sprintf(
+		"rehearsal: restored checkpoint for epoch %d (learned=%d, return=%.4f)",
+		checkpoint.Epoch, checkpoint.Reading.Learned, checkpoint.Reading.Return,
+	))
+
+	return checkpoint.Epoch, nil
+}
+
 // Restore replays completed volume-training runs before root opens market ingress.
 func (rehearsal *Rehearsal) Restore(catalog *tables.Catalog) error {
+	lastEpoch, err := rehearsal.LoadCheckpoint()
+
+	if err != nil {
+		errnie.Error(err)
+	}
+
+	errnie.Info("rehearsal: loading runs from catalog...")
 	runs, err := catalog.Runs(rehearsal.ctx)
+
 	if err != nil {
 		return errnie.Error(err)
 	}
-	slices.SortFunc(runs, func(left, right tables.Run) int { return cmp.Compare(left.Epoch, right.Epoch) })
+
+	errnie.Info(fmt.Sprintf("rehearsal: loaded %d runs from catalog", len(runs)))
+	slices.SortFunc(runs, func(left, right tables.Run) int {
+		return cmp.Compare(left.Epoch, right.Epoch)
+	})
+
+	var pending []tables.Run
+
 	for _, run := range runs {
-		if run.BuildID != TrainingFormat {
-			continue
+		if run.BuildID == TrainingFormat && run.Epoch > lastEpoch {
+			pending = append(pending, run)
 		}
+	}
+
+	if len(pending) == 0 {
+		errnie.Info("rehearsal: model is up-to-date with checkpoint; 0 runs to replay")
+		return nil
+	}
+
+	var latestEpoch int64
+
+	for _, run := range pending {
 		records, err := catalog.Excursions(rehearsal.ctx, run.Epoch, nil)
+
 		if err != nil {
 			return errnie.Error(err)
 		}
+
+		errnie.Info(fmt.Sprintf("rehearsal: run epoch=%d has %d excursion records", run.Epoch, len(records)))
+
 		if len(records) == 0 {
 			continue
 		}
+
 		var through int64
+
 		for _, record := range records {
 			through = max(through, record.ExitTick)
 		}
+
+		errnie.Info(fmt.Sprintf("rehearsal: replaying run epoch=%d through tick=%d...", run.Epoch, through))
 		records, frames, err := catalog.Replay(rehearsal.ctx, run.Epoch, through)
+
 		if err != nil {
 			return errnie.Error(err)
 		}
+
 		if err := rehearsal.Replay(records, frames); err != nil {
 			return err
 		}
+
+		latestEpoch = run.Epoch
+		errnie.Info(fmt.Sprintf("rehearsal: finished replaying run epoch=%d", run.Epoch))
 	}
+
 	reading := rehearsal.reading
 	rehearsal.published.Store(&reading)
+
+	if latestEpoch > 0 {
+		if err := rehearsal.SaveCheckpoint(latestEpoch); err != nil {
+			errnie.Error(err)
+		}
+	}
+
+	errnie.Info("rehearsal: restore complete")
 	return nil
 }

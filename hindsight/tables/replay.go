@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/apache/iceberg-go"
 	"iter"
 	"os"
@@ -215,9 +216,15 @@ func (catalog *Catalog) indexTape(ctx context.Context, database *sql.DB, epoch i
 		filter = iceberg.LessThanEqual(iceberg.Reference("tick"), through[0])
 	}
 	for _, family := range []string{SpotTicker, SpotTrade, SpotLevel3, Measurements} {
+		errnie.Info(fmt.Sprintf("replay: scanning %s for epoch %d...", family, epoch))
+		var count int
 		for measurement, err := range catalog.scan(ctx, family, epoch, filter, 0) {
 			if err != nil {
 				return errnie.Error(err)
+			}
+			count++
+			if count%25000 == 0 {
+				errnie.Info(fmt.Sprintf("replay: indexed %d rows for %s", count, family))
 			}
 
 			owner := measurement.Provenance["owner"]
@@ -233,7 +240,11 @@ func (catalog *Catalog) indexTape(ctx context.Context, database *sql.DB, epoch i
 			payload, err := json.Marshal(row)
 
 			if err != nil {
-				return errnie.Error(err)
+				return errnie.Error(errnie.Err(
+					errnie.Validation,
+					"replay: marshal failed",
+					err,
+				))
 			}
 
 			if _, err := statement.ExecContext(ctx, measurement.SeqIdx, owner, payload); err != nil {

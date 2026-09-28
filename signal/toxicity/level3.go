@@ -209,7 +209,7 @@ func (level3 *Level3) Step(m *data.Measurement[float64]) *data.Measurement[float
 
 	if len(m.Peers) > 0 {
 		peer := m.FindPeer(func(p *data.Measurement[float64]) bool {
-			if p.Label == "" {
+			if p.Label == "" || p.Provenance["channel"] == "ticker" || p.Provenance["channel"] == "trade" {
 				return false
 			}
 			b := p.Metrics["best_price:bid"].Raw

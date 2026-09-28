@@ -57,22 +57,15 @@ func (op *Cohort) Next(
 			seen++
 			peer := *(*Peer)(arriving)
 
-			if !math.IsNaN(peer.Correlation) && !math.IsInf(peer.Correlation, 0) &&
-				!math.IsNaN(peer.Support) && !math.IsInf(peer.Support, 0) &&
-				peer.Support >= 2 {
+			if peer.Support >= 2 {
 				admitted = append(admitted, peer)
 			}
 		}
 
 		summary := CohortSummary{
-			PeersSeen:           seen,
-			Peers:               float64(len(admitted)),
-			RejectedPeers:       seen - float64(len(admitted)),
-			SignedCorrelation:   math.NaN(),
-			AbsoluteCorrelation: math.NaN(),
-			PeerEnergyRate:      math.NaN(),
-			Dispersion:          math.NaN(),
-			EffectivePeers:      math.NaN(),
+			PeersSeen:     seen,
+			Peers:         float64(len(admitted)),
+			RejectedPeers: seen - float64(len(admitted)),
 		}
 
 		if len(admitted) == 0 {
@@ -112,8 +105,12 @@ func (op *Cohort) Next(
 
 		zMean := sumZ / totalWeight
 		weightedVariance := (sumZ2 / totalWeight) - (zMean * zMean)
-		dispersion := math.Sqrt(weightedVariance)
-		fisherDefined := !math.IsNaN(dispersion) && !math.IsInf(dispersion, 0)
+		dispersion := 0.0
+		fisherDefined := false
+		if weightedVariance >= 0 {
+			dispersion = math.Sqrt(weightedVariance)
+			fisherDefined = true
+		}
 
 		summary.TotalSupport = totalWeight
 		summary.EffectivePeers = kish

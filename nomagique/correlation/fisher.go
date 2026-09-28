@@ -49,11 +49,7 @@ func (op *Fisher) Next(
 		for arriving := range in {
 			sample := (*FisherSample)(arriving)
 			reading := FisherReading{
-				PValue:               math.NaN(),
-				Z:                    math.NaN(),
-				StandardError:        math.NaN(),
-				SearchAdjustedPValue: math.NaN(),
-				HasSearch:            sample.SearchCount >= 1,
+				HasSearch: sample.SearchCount >= 1,
 			}
 
 			if sample.Support > 3 && math.Abs(sample.Correlation) <= 1 {

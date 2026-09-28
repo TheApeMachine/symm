@@ -45,6 +45,7 @@ type Training struct {
 	engine      *cognition.Engine
 	Rehearsal   *Rehearsal
 	space       *impulse.Map
+	trader      *Trader
 	sequence    int64
 }
 
@@ -58,6 +59,14 @@ func NewTraining(ctx context.Context, epoch int64, price *broker.Price) *Trainin
 	training.Register()
 	training.System = runtime.NewSystem(ctx, "training")
 	return training
+}
+
+func (training *Training) SetTrader(trader *Trader) {
+	training.trader = trader
+
+	if trader != nil && training.precursor != nil {
+		training.precursor.SetHolding(trader.Holding)
+	}
 }
 
 /*
@@ -90,6 +99,11 @@ func (training *Training) Register() *data.Measurement[float64] {
 		"accuracy":        data.NewMetric[float64]("accuracy", data.UnitPercent, data.TimescaleInstantaneous, 0, 1),
 		"support":         data.NewMetric[float64]("support", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
 		"quality":         data.NewMetric[float64]("quality", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
+		"trading":         data.NewMetric[float64]("trading", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
+		"cash":            data.NewMetric[float64]("cash", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
+		"equity":          data.NewMetric[float64]("equity", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
+		"unrealized":      data.NewMetric[float64]("unrealized", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
+		"positions":       data.NewMetric[float64]("positions", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
 	})
 
 	training.measurement.Label = "learner"
@@ -131,6 +145,8 @@ func (training *Training) Step(measurement *data.Measurement[float64]) *data.Mea
 
 	current.Metrics["previous_input"] = current.Metrics["previous_input"].Write(float64(training.sequence))
 	current.Metrics["input_count"] = current.Metrics["input_count"].Write(float64(len(measurement.Peers)))
+	training.updatePortfolioMetrics(current)
+
 	input := func(yield func(unsafe.Pointer) bool) { yield(unsafe.Pointer(measurement)) }
 
 	for output := range training.pipeline.Next(input) {
@@ -158,6 +174,10 @@ func (training *Training) Step(measurement *data.Measurement[float64]) *data.Mea
 
 		current.Metrics["action"] = current.Metrics["action"].Write(actionValue)
 
+		if training.trader != nil && (action == ActionEnter || action == ActionExit) {
+			training.trader.OnAction(current.Label, action)
+			training.updatePortfolioMetrics(current)
+		}
 	}
 
 	if err := training.pipeline.Error(); err != nil {
@@ -170,4 +190,31 @@ func (training *Training) Step(measurement *data.Measurement[float64]) *data.Mea
 	training.sequence = measurement.SeqIdx
 	training.measurement = current
 	return current
+}
+
+func (training *Training) updatePortfolioMetrics(current *data.Measurement[float64]) {
+	if training == nil || training.trader == nil || current == nil {
+		return
+	}
+
+	current.Metrics["trading"] = current.Metrics["trading"].Write(1.0)
+	current.Metrics["positions"] = current.Metrics["positions"].Write(float64(training.trader.PositionCount()))
+
+	balance := training.trader.Balance()
+
+	if balance == nil {
+		return
+	}
+
+	if cash := balance.Cash(); cash != nil {
+		current.Metrics["cash"] = current.Metrics["cash"].Write(cash.Float64())
+	}
+
+	if equity := balance.Equity(); equity != nil {
+		current.Metrics["equity"] = current.Metrics["equity"].Write(equity.Float64())
+	}
+
+	if unrealized := balance.Unrealized(); unrealized != nil {
+		current.Metrics["unrealized"] = current.Metrics["unrealized"].Write(unrealized.Float64())
+	}
 }

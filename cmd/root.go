@@ -170,10 +170,49 @@ var (
 				))
 			}
 
+			errnie.Info("symm: initializing training and restoring from catalog...")
 			training := strategy.NewTraining(ctx, epoch, price)
-			if err := training.Rehearsal.Restore(catalog); err != nil {
-				return err
+			trader := strategy.NewTrader(ctx, api, price, balance)
+			training.SetTrader(trader)
+
+			if _, err := training.Rehearsal.LoadCheckpoint(); err != nil {
+				errnie.Error(err)
 			}
+
+			go func() {
+				if err := training.Rehearsal.Restore(catalog); err != nil {
+					errnie.Error(err)
+				}
+			}()
+
+			defer func() {
+				if err := training.Rehearsal.SaveCheckpoint(epoch); err != nil {
+					errnie.Error(err)
+				}
+			}()
+
+			go func() {
+				interval := system.Cfg.Learning.CheckpointInterval
+
+				if interval <= 0 {
+					interval = time.Minute
+				}
+
+				ticker := time.NewTicker(interval)
+				defer ticker.Stop()
+
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case <-ticker.C:
+						if err := training.Rehearsal.SaveCheckpoint(epoch); err != nil {
+							errnie.Error(err)
+						}
+					}
+				}
+			}()
+			errnie.Info("symm: recording active run in catalog...")
 			if err := catalog.RecordRun(ctx, tables.Run{
 				Epoch:        epoch,
 				StartedAt:    processStartedAt,
@@ -184,7 +223,11 @@ var (
 				return errnie.Error(errnie.Err(errnie.IO, "cmd: record training run", err))
 			}
 
+			errnie.Info("symm: starting UI hub...")
 			hub := ui.NewHub(ctx, nil, catalog, uiTee)
+			hub.SetExitHandler(func(symbol string) {
+				trader.OnAction(symbol, strategy.ActionExit)
+			})
 			hub.Run()
 
 			manifoldSolver := manifold.NewSolver(ctx, api)
@@ -281,6 +324,7 @@ var (
 				webrtcTee,
 				hub,
 				training,
+				trader,
 				manifoldSolver,
 				categorySolver,
 				resonanceSolver,

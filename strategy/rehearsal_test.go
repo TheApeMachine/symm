@@ -2,12 +2,15 @@ package strategy
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/hindsight/tables"
+	"github.com/theapemachine/symm/nomagique/learning/associative/grid"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/tests/market"
 	"github.com/theapemachine/symm/tests/tablestest"
@@ -59,6 +62,103 @@ func TestRehearsalStep(t *testing.T) {
 		workers.Wait()
 		So(training.Rehearsal.reading.Learned, ShouldBeGreaterThan, 0)
 	})
+
+	Convey("Precursors with positive return learn ActionEnter and improve edge", t, func() {
+		training := NewTraining(t.Context(), 1, market.TrainingPrice(t.Context()))
+		training.Transition(runtime.READY)
+
+		impulse := &grid.Impulse{
+			Ready:   true,
+			Label:   "BTC/USD",
+			SeqIdx:  10,
+			Regions: []grid.Region{{Condition: 12345}},
+		}
+
+		So(training.Rehearsal.capture(impulse), ShouldBeNil)
+		initialPred := training.Rehearsal.anchors["BTC/USD"].prediction
+		So(initialPred, ShouldNotEqual, string(ActionEnter))
+
+		record := tables.ExcursionRecord{
+			Symbol:         "BTC/USD",
+			AnchorTick:     10,
+			ExitTick:       20,
+			ProfitFraction: 0.02,
+			ClearsFriction: true,
+		}
+		exitImpulse := &grid.Impulse{
+			Ready:   true,
+			Label:   "BTC/USD",
+			SeqIdx:  20,
+			Regions: []grid.Region{{Condition: 99999}},
+		}
+		So(training.Rehearsal.resolve(record, exitImpulse), ShouldBeNil)
+
+		impulse.SeqIdx = 30
+		So(training.Rehearsal.capture(impulse), ShouldBeNil)
+		newPred := training.Rehearsal.anchors["BTC/USD"].prediction
+		So(newPred, ShouldEqual, string(ActionEnter))
+
+		record2 := tables.ExcursionRecord{
+			Symbol:         "BTC/USD",
+			AnchorTick:     30,
+			ExitTick:       40,
+			ProfitFraction: 0.03,
+			ClearsFriction: true,
+		}
+		exitImpulse.SeqIdx = 40
+		So(training.Rehearsal.resolve(record2, exitImpulse), ShouldBeNil)
+
+		So(training.Rehearsal.reading.Entered, ShouldEqual, 1)
+		So(training.Rehearsal.reading.Profitable, ShouldEqual, 1)
+		So(training.Rehearsal.reading.Return, ShouldEqual, 0.03)
+
+		reading := training.Rehearsal.reading
+		training.Rehearsal.published.Store(&reading)
+
+		frame := market.ImpulseTape("BTC/USD", 1)[0]
+		measurement := training.Step(frame)
+		So(measurement.Metrics["edge"].Raw, ShouldEqual, 0.03)
+		So(measurement.Metrics["win_rate"].Raw, ShouldEqual, 1.0)
+
+		// A different precursor with negative returns learns ActionWait
+		badImpulse := &grid.Impulse{
+			Ready:   true,
+			Label:   "BTC/USD",
+			SeqIdx:  50,
+			Regions: []grid.Region{{Condition: 54321}},
+		}
+		So(training.Rehearsal.capture(badImpulse), ShouldBeNil)
+		badRecord := tables.ExcursionRecord{
+			Symbol:         "BTC/USD",
+			AnchorTick:     50,
+			ExitTick:       60,
+			ProfitFraction: -0.04,
+			ClearsFriction: false,
+		}
+		exitImpulse.SeqIdx = 60
+		So(training.Rehearsal.resolve(badRecord, exitImpulse), ShouldBeNil)
+
+		// Capture the bad precursor again at tick 70
+		badImpulse.SeqIdx = 70
+		So(training.Rehearsal.capture(badImpulse), ShouldBeNil)
+		badPred := training.Rehearsal.anchors["BTC/USD"].prediction
+		So(badPred, ShouldEqual, string(ActionWait))
+
+		// Resolve: because prediction was wait, Entered is NOT incremented
+		badRecord2 := tables.ExcursionRecord{
+			Symbol:         "BTC/USD",
+			AnchorTick:     70,
+			ExitTick:       80,
+			ProfitFraction: -0.02,
+			ClearsFriction: false,
+		}
+		exitImpulse.SeqIdx = 80
+		So(training.Rehearsal.resolve(badRecord2, exitImpulse), ShouldBeNil)
+
+		// Entered count and edge remain preserved from the good trade
+		So(training.Rehearsal.reading.Entered, ShouldEqual, 1)
+		So(training.Rehearsal.reading.Return, ShouldEqual, 0.03)
+	})
 }
 
 func TestRehearsalReplay(t *testing.T) {
@@ -100,12 +200,60 @@ func TestRehearsalReplay(t *testing.T) {
 	})
 }
 
+func TestRehearsalCheckpoint(t *testing.T) {
+	Convey("Checkpoint captures trie model and metrics, and restores instantly without tape replay", t, func() {
+		training := NewTraining(t.Context(), 1, market.TrainingPrice(t.Context()))
+		training.Transition(runtime.READY)
+
+		impulse := &grid.Impulse{
+			Ready:   true,
+			Label:   "BTC/USD",
+			SeqIdx:  10,
+			Regions: []grid.Region{{Condition: 54321}},
+		}
+
+		So(training.Rehearsal.capture(impulse), ShouldBeNil)
+
+		record := tables.ExcursionRecord{
+			Symbol:         "BTC/USD",
+			AnchorTick:     10,
+			ExitTick:       20,
+			ProfitFraction: 0.05,
+			ClearsFriction: true,
+		}
+		exitImpulse := &grid.Impulse{
+			Ready:   true,
+			Label:   "BTC/USD",
+			SeqIdx:  20,
+			Regions: []grid.Region{{Condition: 88888}},
+		}
+		So(training.Rehearsal.resolve(record, exitImpulse), ShouldBeNil)
+		So(training.Rehearsal.reading.Learned, ShouldBeGreaterThan, 0)
+
+		testEpoch := int64(123456789)
+		So(training.Rehearsal.SaveCheckpoint(testEpoch), ShouldBeNil)
+
+		fresh := NewTraining(t.Context(), 2, market.TrainingPrice(t.Context()))
+		So(fresh.engine.Len(), ShouldEqual, 0)
+		So(fresh.Rehearsal.reading.Learned, ShouldEqual, 0)
+
+		loadedEpoch, err := fresh.Rehearsal.LoadCheckpoint()
+		So(err, ShouldBeNil)
+		So(loadedEpoch, ShouldEqual, testEpoch)
+		So(fresh.engine.Census(), ShouldResemble, training.engine.Census())
+		So(fresh.Rehearsal.reading, ShouldResemble, training.Rehearsal.reading)
+
+		// Clean up test checkpoint
+		_ = os.Remove(filepath.Join("runs", "rehearsal_checkpoint.bin"))
+	})
+}
+
 func BenchmarkRehearsalStep(b *testing.B) {
 	training := NewTraining(b.Context(), 1, market.TrainingPrice(b.Context()))
 	frames := market.TrainingTape(6)
 	b.ReportAllocs()
-	b.ResetTimer()
-	for index := 0; index < b.N; index++ {
+	
+	for index := 0; b.Loop(); index++ {
 		frame := frames[index%len(frames)]
 		frame.SeqIdx = int64(index + 1)
 		metric := frame.Metrics["previous_input"]

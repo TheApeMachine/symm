@@ -3,7 +3,9 @@ package broker
 import (
 	"context"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/nomagique/runtime"
@@ -11,12 +13,21 @@ import (
 
 type Desk struct {
 	*runtime.System
-	api *websocket.API
+	api     *websocket.API
+	price   *Price
+	balance *Balance
 }
 
-func NewDesk(ctx context.Context, api *websocket.API) *Desk {
+func NewDesk(
+	ctx context.Context,
+	api *websocket.API,
+	price *Price,
+	balance *Balance,
+) *Desk {
 	desk := &Desk{
-		api: api,
+		api:     api,
+		price:   price,
+		balance: balance,
 	}
 
 	desk.System = runtime.NewSystem(ctx, "desk", desk)
@@ -24,35 +35,78 @@ func NewDesk(ctx context.Context, api *websocket.API) *Desk {
 }
 
 func (desk *Desk) Enter(symbol string) *Position {
-	entryRequest := &spot.AddOrderRequest{
-		Pair: symbol,
-		Type: "buy",
-	}
-	exitRequest := &spot.AddOrderRequest{
-		Pair: symbol,
-		Type: "sell",
+	if desk == nil || desk.api == nil || desk.price == nil || desk.balance == nil {
+		return nil
 	}
 
-	position := NewPosition(entryRequest, exitRequest)
+	maxFraction := viper.GetFloat64("trading.allocation.max_fraction")
 
-	res, err := desk.api.AddOrder(position.EntryOrder)
+	if maxFraction <= 0 || maxFraction > 1 {
+		maxFraction = 0.5
+	}
 
-	if err != nil {
+	cash := desk.balance.Cash()
+
+	if cash == nil || cash.Sign() <= 0 {
+		desk.balance.Update()
+		cash = desk.balance.Cash()
+	}
+
+	if cash == nil || cash.Sign() <= 0 {
 		errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"[desk] failed to enter",
+			errnie.Validation,
+			"[desk] insufficient cash to enter "+symbol,
+			nil,
+		))
+
+		return nil
+	}
+
+	spend := cash.SetScale(decimal.DefaultScale).Mul(decimal.NewFromFloat64(maxFraction))
+	volume, err := desk.price.Quantity(symbol, spend)
+
+	if err != nil || volume == nil || volume.Sign() <= 0 {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[desk] cannot determine valid entry volume for "+symbol,
 			err,
 		))
 
 		return nil
 	}
 
-	position.AddEntryResponse(&res)
+	entryRequest := &spot.AddOrderRequest{
+		Pair:   symbol,
+		Type:   "buy",
+		Volume: volume.String(),
+	}
+	exitRequest := &spot.AddOrderRequest{
+		Pair:   symbol,
+		Type:   "sell",
+		Volume: volume.String(),
+	}
+
+	position := NewPosition(entryRequest, exitRequest)
+
+	response, err := desk.api.AddOrder(position.EntryOrder)
+
+	if err != nil {
+		errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"[desk] failed to enter "+symbol,
+			err,
+		))
+
+		return nil
+	}
+
+	position.AddEntryResponse(&response)
+	desk.balance.Update()
 	return position
 }
 
 func (desk *Desk) Exit(position *Position) {
-	if position == nil || position.ExitOrder == nil {
+	if desk == nil || desk.api == nil || position == nil || position.ExitOrder == nil {
 		return
 	}
 
@@ -60,7 +114,7 @@ func (desk *Desk) Exit(position *Position) {
 		position.ExitOrder.Volume = position.EntryOrder.Volume
 	}
 
-	res, err := desk.api.AddOrder(position.ExitOrder)
+	response, err := desk.api.AddOrder(position.ExitOrder)
 
 	if err != nil {
 		errnie.Error(errnie.Err(
@@ -72,5 +126,9 @@ func (desk *Desk) Exit(position *Position) {
 		return
 	}
 
-	position.AddExitResponse(&res)
+	position.AddExitResponse(&response)
+
+	if desk.balance != nil {
+		desk.balance.Update()
+	}
 }

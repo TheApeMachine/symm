@@ -490,6 +490,9 @@ float64 the mathematics runs on.
 */
 func (live *Live) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
 	if live.Status() != runtime.READY {
+		if live.queue != nil {
+			live.queue.Dequeue()
+		}
 		errnie.Warn(live.Name() + ": Step called before READY; dropping event")
 		return measurement
 	}
@@ -1253,6 +1256,30 @@ func (live *Live) AddOrder(order *spot.AddOrderRequest) (spot.AddOrderResult, er
 	}
 
 	return live.paper.AddOrder(order)
+}
+
+func (live *Live) TickerSingle(symbol string) (*spot.AssetTickerInfo, error) {
+	client := live.client.Load()
+
+	if client == nil || client.REST == nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.NotFound,
+			"live: REST client not available",
+			nil,
+		))
+	}
+
+	info, err := client.REST.TickerSingle(symbol)
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.IO,
+			"live: ticker single request failed for "+symbol,
+			err,
+		))
+	}
+
+	return info, nil
 }
 
 func (live *Live) Write(params json.Marshaler, callbacks ...Callback[any]) error {

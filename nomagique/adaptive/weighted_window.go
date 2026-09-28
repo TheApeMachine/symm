@@ -75,8 +75,8 @@ func (window *WeightedWindow) cut() bool {
 		prefix.Merge(window.buckets[index].WeightedMoments)
 		suffix := window.total(index + 1)
 
-		// Each side needs two independent observations to define variance.
-		if prefix.Support() <= 1 || suffix.Support() <= 1 {
+		// Subwindows require adequate effective support for asymptotic normal variance.
+		if prefix.Support() < 8 || suffix.Support() < 8 {
 			continue
 		}
 

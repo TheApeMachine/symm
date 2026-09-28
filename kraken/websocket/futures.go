@@ -245,10 +245,17 @@ func NewFuturesWithClient(
 			return
 		}
 
-		if futures.Status() == runtime.READY {
-			if err := futures.restoreSubscriptions(); err != nil {
-				futures.Error(err)
-			}
+		if err := futures.restoreSubscriptions(); err != nil {
+			futures.Error(err)
+			return
+		}
+
+		futures.subscriptionMu.RLock()
+		hasSubs := len(futures.subscriptions) > 0
+		futures.subscriptionMu.RUnlock()
+
+		if hasSubs {
+			futures.Transition(runtime.READY)
 		}
 	})
 
@@ -562,6 +569,9 @@ one measurement.
 */
 func (futures *FuturesLive) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
 	if futures.Status() != runtime.READY {
+		if futures.queue != nil {
+			futures.queue.Dequeue()
+		}
 		errnie.Warn(futures.Name() + ": Step called before READY; dropping event")
 		return measurement
 	}

@@ -275,6 +275,16 @@ func (op *Engine) Observe(assoc Association) (Result, error) {
 	return op.observe(assoc)
 }
 
+// Snapshot serializes the complete trie and step clock into a byte buffer.
+func (op *Engine) Snapshot() (Result, error) {
+	return op.snapshot()
+}
+
+// Restore deserializes a previously serialized snapshot into a fresh engine.
+func (op *Engine) Restore(encoded []byte) (Result, error) {
+	return op.restore(encoded)
+}
+
 // Train ingests a sequence of sensory tokens associated with a target class,
 // decomposing it into suffix n-grams up to MaxBackoffOrder with surprisal-modulated plasticity.
 func (op *Engine) Train(sequence []byte, class []byte, feedback float64) (Result, error) {
@@ -962,40 +972,41 @@ func (op *Engine) evaluate(context []byte, exact ...bool) (Result, error) {
 
 	// Fallback: if no exact match, use prefix and suffix backoff via direct SeekPrefix
 	if acc.count == 0 && (len(exact) == 0 || !exact[0]) {
-		maxSteps := op.cfg.MaxBackoffOrder
+		maxSteps := max(op.cfg.MaxBackoffOrder, len(context)/8)
 
 		prefixes, suffixes := backoffCandidates(context, maxSteps)
 		var keyBuf [512]byte
 
-		// Check suffixes (temporal Markov order reduction: keeping most recent tokens)
-		for _, sub := range suffixes {
-			var sensoryKey []byte
+		// Check prefixes first (salience hierarchy: keeping scope and dominant regions)
+		for _, sub := range prefixes {
+			order := max(1, len(sub)/8)
+			maxOrder := max(op.cfg.MaxBackoffOrder, len(context)/8)
 
-			if 2+len(sub) <= len(keyBuf) {
-				keyBuf[0] = 's'
-				keyBuf[1] = '/'
-				copy(keyBuf[2:], sub)
-				sensoryKey = keyBuf[:2+len(sub)]
-			}
-
-			if sensoryKey == nil {
-				sensoryKey = makeSensoryKey(sub)
-			}
-
-			if _, exists := root.Get(sensoryKey); exists {
-				if searchSubPrefix(root, sub, step, op.decayFactor, 1, op.cfg.MaxBackoffOrder, &acc) {
-					break
-				}
+			if searchSubPrefix(root, sub, step, op.decayFactor, order, maxOrder, &acc) {
+				break
 			}
 		}
 
-		// Check prefixes if no suffix matched
+		// Fallback to suffixes if no prefix matched
 		if acc.count == 0 {
-			order := max(1, op.cfg.MaxBackoffOrder/2)
+			for _, sub := range suffixes {
+				var sensoryKey []byte
 
-			for _, sub := range prefixes {
-				if searchSubPrefix(root, sub, step, op.decayFactor, order, op.cfg.MaxBackoffOrder, &acc) {
-					break
+				if 2+len(sub) <= len(keyBuf) {
+					keyBuf[0] = 's'
+					keyBuf[1] = '/'
+					copy(keyBuf[2:], sub)
+					sensoryKey = keyBuf[:2+len(sub)]
+				}
+
+				if sensoryKey == nil {
+					sensoryKey = makeSensoryKey(sub)
+				}
+
+				if _, exists := root.Get(sensoryKey); exists {
+					if searchSubPrefix(root, sub, step, op.decayFactor, 1, op.cfg.MaxBackoffOrder, &acc) {
+						break
+					}
 				}
 			}
 		}
@@ -1236,7 +1247,7 @@ func (op *Engine) snapshot() (Result, error) {
 	var buffer bytes.Buffer
 	encoder := gob.NewEncoder(&buffer)
 
-	for _, value := range []any{"cognition/packed-weight/1", op.cfg, op.stepCounter.Load(), root.Len()} {
+	for _, value := range []any{"cognition/packed-weight/1", op.cfg, op.stepCounter.Load(), root.Len(), op.census()} {
 		if err := encoder.Encode(value); err != nil {
 			return Result{}, errnie.Error(err)
 		}
@@ -1272,8 +1283,9 @@ func (op *Engine) restore(encoded []byte) (Result, error) {
 	var config Config
 	var step uint64
 	var count int
+	var census map[string]int32
 
-	for _, destination := range []any{&format, &config, &step, &count} {
+	for _, destination := range []any{&format, &config, &step, &count, &census} {
 		if err := decoder.Decode(destination); err != nil {
 			return Result{}, errnie.Error(errnie.Err(errnie.Validation, "cognition: invalid packed model header", err))
 		}
@@ -1311,6 +1323,12 @@ func (op *Engine) restore(encoded []byte) (Result, error) {
 
 	if err := decoder.Decode(&trailing); err != io.EOF {
 		return Result{}, errnie.Error(errnie.Err(errnie.Validation, "cognition: trailing packed model data", err))
+	}
+
+	for class, count := range census {
+		atomicCount := &atomic.Int32{}
+		atomicCount.Store(count)
+		op.classCounts.Store(class, atomicCount)
 	}
 
 	op.cfg = config
@@ -1533,7 +1551,7 @@ func backoffCandidates(context []byte, maxSteps int) (prefixes [][]byte, suffixe
 
 	if len(context)%8 == 0 && len(context) > 8 {
 		tokens := len(context) / 8
-		steps := min(tokens-1, maxSteps)
+		steps := tokens - 1
 
 		for s := 1; s <= steps; s++ {
 			suffixes = append(suffixes, context[s*8:])

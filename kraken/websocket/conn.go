@@ -131,9 +131,44 @@ func (api *API) Normalizer() *spot.Normalizer {
 	return api.normalizer
 }
 
-func (api *API) Private() Conn                             { return api.private }
-func (api *API) Books() *sync.Map                          { return api.private.Books() }
-func (api *API) Book(symbol string, read func(*book.Book)) { api.private.Book(symbol, read) }
+func (api *API) Private() Conn { return api.private }
+
+func (api *API) Books() *sync.Map {
+	if api.public != nil {
+		return api.public.Books()
+	}
+
+	return api.private.Books()
+}
+
+func (api *API) Book(symbol string, read func(*book.Book)) {
+	called := false
+
+	if api.public != nil {
+		api.public.Book(symbol, func(managedBook *book.Book) {
+			if managedBook != nil {
+				called = true
+				read(managedBook)
+			}
+		})
+	}
+
+	if !called && api.private != nil {
+		api.private.Book(symbol, read)
+	}
+}
+
+func (api *API) TickerSingle(symbol string) (*spot.AssetTickerInfo, error) {
+	if live, ok := api.public.(*Live); ok {
+		return live.TickerSingle(symbol)
+	}
+
+	return nil, errnie.Error(errnie.Err(
+		errnie.NotFound,
+		"api: public live transport unavailable for ticker",
+		nil,
+	))
+}
 func (api *API) SubInstrument(callback chan any)           { api.public.SubInstrument(callback) }
 func (api *API) SubTicker(symbols []string)                { api.public.SubTicker(symbols) }
 func (api *API) SubL3(symbols []string)                    { api.private.SubL3(symbols) }

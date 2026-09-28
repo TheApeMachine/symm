@@ -55,7 +55,14 @@ func (conn *Conn) Client() *spot.WebSocket { return nil }
 
 func (conn *Conn) Status() runtime.Stage { return conn.status }
 
-func (conn *Conn) SubInstrument(callback chan any) {}
+func (conn *Conn) SubInstrument(callback chan any) {
+	if callback != nil {
+		select {
+		case callback <- true:
+		default:
+		}
+	}
+}
 
 func (conn *Conn) SubTicker(symbols []string) {}
 

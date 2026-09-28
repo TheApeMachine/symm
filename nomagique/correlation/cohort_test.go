@@ -35,6 +35,6 @@ func TestCohortNext(t *testing.T) {
 		empty := tests.CollectSeq[correlation.CohortSummary](node.Next(transport.NewValues[correlation.Peer]().Next(nil)))
 		So(node.Error(), ShouldBeNil)
 		So(empty[0].Defined, ShouldBeFalse)
-		So(math.IsNaN(empty[0].SignedCorrelation), ShouldBeTrue)
+		So(empty[0].SignedCorrelation, ShouldEqual, 0)
 	})
 }

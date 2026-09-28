@@ -2,6 +2,7 @@ package strategy
 
 import (
 	"encoding/binary"
+	"hash/fnv"
 	"iter"
 	"unsafe"
 
@@ -13,7 +14,9 @@ import (
 /* Precursor encodes a market's ordered regions and position state into a borrowed trie key. */
 type Precursor struct {
 	*core.PrimitiveError
+	holding  func(symbol string) bool
 	key      []byte
+	sorted   []grid.Region
 	question cognition.Question
 	command  cognition.Command
 }
@@ -22,32 +25,38 @@ func NewPrecursor() *Precursor {
 	return &Precursor{PrimitiveError: core.NewPrimitiveError()}
 }
 
+func (precursor *Precursor) SetHolding(holding func(symbol string) bool) {
+	precursor.holding = holding
+}
+
+func scopeToken(symbol string, holding bool) uint64 {
+	hasher := fnv.New64a()
+	hasher.Write([]byte(symbol))
+	val := hasher.Sum64()
+	if holding {
+		val ^= 0x5555555555555555
+	}
+	return val
+}
+
 func (precursor *Precursor) Encode(impulse *grid.Impulse, holding bool) []byte {
 	if !impulse.Ready || len(impulse.Regions) == 0 {
 		return nil
 	}
 
-	size := 4 + len(impulse.Label) + 1 + 4 + 8*len(impulse.Regions)
+	precursor.sorted = append(precursor.sorted[:0], impulse.Regions...)
+
+	size := (1 + len(precursor.sorted)) * 8
 
 	if cap(precursor.key) < size {
 		precursor.key = make([]byte, size)
 	}
 
 	precursor.key = precursor.key[:size]
-	binary.BigEndian.PutUint32(precursor.key, uint32(len(impulse.Label)))
-	copy(precursor.key[4:], impulse.Label)
-	offset := 4 + len(impulse.Label)
-	precursor.key[offset] = 0
+	binary.BigEndian.PutUint64(precursor.key, scopeToken(impulse.Label, holding))
 
-	if holding {
-		precursor.key[offset] = 1
-	}
-
-	offset++
-	binary.BigEndian.PutUint32(precursor.key[offset:], uint32(len(impulse.Regions)))
-
-	for index, region := range impulse.Regions {
-		binary.BigEndian.PutUint64(precursor.key[offset+4+index*8:], region.Condition)
+	for index, region := range precursor.sorted {
+		binary.BigEndian.PutUint64(precursor.key[8+index*8:], region.Condition)
 	}
 
 	return precursor.key
@@ -56,7 +65,17 @@ func (precursor *Precursor) Encode(impulse *grid.Impulse, holding bool) []byte {
 func (precursor *Precursor) Next(input iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range input {
-			precursor.question = cognition.Question{Context: precursor.Encode((*grid.Impulse)(arriving), false), Exact: true}
+			impulse := (*grid.Impulse)(arriving)
+			held := false
+
+			if precursor.holding != nil && impulse != nil {
+				held = precursor.holding(impulse.Label)
+			}
+
+			precursor.question = cognition.Question{
+				Context: precursor.Encode(impulse, held),
+				Exact:   false,
+			}
 			precursor.command = cognition.Command{Evaluate: &precursor.question}
 
 			if !yield(unsafe.Pointer(&precursor.command)) {

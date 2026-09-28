@@ -8,12 +8,14 @@ import {
 	manifoldStore,
 	observeSymbols,
 	onlineAtom,
+	positionCountAtom,
 	RingBuffer,
 	routeAtom,
 	signals,
 	symbolsAtom,
 	tickCountAtom,
 	updateClock,
+	updateEquity,
 } from "#/collections/app";
 
 import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
@@ -102,6 +104,31 @@ function dispatchMeasurements(frame: MeasurementsFrame) {
 		if (source === "training") {
 			signalStore.state[""] = ring;
 			signalStore.state["learner"] = ring;
+
+			const unpacked = row.unpack();
+			let cashVal: number | null = null;
+			let unrealizedVal: number | null = null;
+			let equityVal: number | null = null;
+			let posCount: number | null = null;
+
+			for (const metric of unpacked.metrics ?? []) {
+				if (metric.name === "cash") cashVal = metric.raw;
+				if (metric.name === "unrealized") unrealizedVal = metric.raw;
+				if (metric.name === "equity") equityVal = metric.raw;
+				if (metric.name === "positions") posCount = metric.raw;
+			}
+
+			if (cashVal !== null && equityVal !== null) {
+				updateEquity(
+					cashVal.toFixed(2),
+					unrealizedVal !== null ? unrealizedVal.toFixed(2) : "0.00",
+					equityVal.toFixed(2),
+				);
+			}
+
+			if (posCount !== null) {
+				positionCountAtom.set(posCount);
+			}
 		}
 	}
 

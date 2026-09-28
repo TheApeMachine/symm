@@ -56,7 +56,7 @@ func (impulseMap *Map) Step(input *data.Measurement[float64]) error {
 		}
 
 		if observation.Err != nil {
-			errnie.Error(errnie.Err(errnie.Validation, "impulse: rejected observation from "+observation.Provenance["owner"], observation.Err))
+			errnie.Debug(fmt.Sprintf("impulse: rejected observation from %s: %v", observation.Provenance["owner"], observation.Err))
 			impulseMap.Invalid++
 		}
 
