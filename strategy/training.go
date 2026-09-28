@@ -145,6 +145,9 @@ func (training *Training) Register() *data.Measurement[float64] {
 		"mark_a":          data.NewMetric[float64]("mark_a", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
 		"mark_b":          data.NewMetric[float64]("mark_b", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
 		"mark_c":          data.NewMetric[float64]("mark_c", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
+		"wins":            data.NewMetric[float64]("wins", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
+		"losses":          data.NewMetric[float64]("losses", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
+		"pnl":             data.NewMetric[float64]("pnl", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
 	})
 
 	training.measurement.Label = "learner"
@@ -178,7 +181,11 @@ func (training *Training) Step(measurement *data.Measurement[float64]) *data.Mea
 		if reading.Entered > 0 {
 			current.Metrics["edge"] = current.Metrics["edge"].Write(reading.Return / float64(reading.Entered))
 			current.Metrics["win_rate"] = current.Metrics["win_rate"].Write(float64(reading.Profitable) / float64(reading.Entered))
+			current.Metrics["wins"] = current.Metrics["wins"].Write(float64(reading.Profitable))
+			current.Metrics["losses"] = current.Metrics["losses"].Write(float64(reading.Entered - reading.Profitable))
+			current.Metrics["pnl"] = current.Metrics["pnl"].Write(reading.Return)
 		}
+
 		if reading.Predicted > 0 {
 			current.Metrics["accuracy"] = current.Metrics["accuracy"].Write(float64(reading.Correct) / float64(reading.Predicted))
 		}
@@ -366,12 +373,13 @@ func (training *Training) publishProgress(frame *data.Measurement[float64], reco
 		return
 	}
 
-	current := training.Register()
+	prototype := training.Register()
 
-	if current == nil {
+	if prototype == nil {
 		return
 	}
 
+	current := prototype.Clone()
 	reading := training.Rehearsal.published.Load()
 
 	if reading != nil {
@@ -383,6 +391,9 @@ func (training *Training) publishProgress(frame *data.Measurement[float64], reco
 		if reading.Entered > 0 {
 			current.Metrics["edge"] = current.Metrics["edge"].Write(reading.Return / float64(reading.Entered))
 			current.Metrics["win_rate"] = current.Metrics["win_rate"].Write(float64(reading.Profitable) / float64(reading.Entered))
+			current.Metrics["wins"] = current.Metrics["wins"].Write(float64(reading.Profitable))
+			current.Metrics["losses"] = current.Metrics["losses"].Write(float64(reading.Entered - reading.Profitable))
+			current.Metrics["pnl"] = current.Metrics["pnl"].Write(reading.Return)
 		}
 
 		if reading.Predicted > 0 {
@@ -453,10 +464,7 @@ func (training *Training) publishProgress(frame *data.Measurement[float64], reco
 		current.Result = impulse
 	}
 
-	training.sequence = frame.SeqIdx
-	training.measurement = current
-
 	if training.uiTee != nil {
-		training.uiTee.Push(current.Clone())
+		training.uiTee.Push(current)
 	}
 }

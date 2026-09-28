@@ -1,6 +1,7 @@
 package manifold
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -55,7 +56,6 @@ func TestSolverPublishReading(t *testing.T) {
 				physics: physics,
 				dataset: ds,
 				loaded:  make(map[int64]struct{}),
-				dirty:   make(map[string]struct{}),
 				wake:    make(chan struct{}, 1),
 			}
 			solver.Transition(runtime.READY)
@@ -65,12 +65,10 @@ func TestSolverPublishReading(t *testing.T) {
 			So(batch, ShouldNotBeNil)
 			So(batch.N, ShouldEqual, 3)
 
-			solver.advanceMu.Lock()
 			stepped, err := solver.physics.Step(batch)
 			So(err, ShouldBeNil)
 			So(stepped, ShouldNotBeNil)
 			reading := solver.publishReading(stepped)
-			solver.advanceMu.Unlock()
 
 			So(reading, ShouldNotBeNil)
 			So(reading.Reading.CoherenceMag2, ShouldBeGreaterThanOrEqualTo, 0)
@@ -145,6 +143,34 @@ func TestSolverStepArtifact(t *testing.T) {
 	})
 }
 
+func TestComputePhaseResultants(t *testing.T) {
+	Convey("Given oscillator particles with distinct sides and phases", t, func() {
+		state := &sensorium.State{
+			N:        3,
+			Phase:    []float32{0, math.Pi, math.Pi / 2},
+			Amp:      []float32{2, 1, 3},
+			TokenIDs: []int64{0, 2, 1},
+		}
+
+		resultants := computePhaseResultants(state)
+		So(len(resultants), ShouldEqual, 2)
+
+		bid := resultants[0]
+		So(bid.Side, ShouldEqual, "bid")
+		So(bid.Count, ShouldEqual, 2)
+		So(bid.TotalAmplitude, ShouldEqual, 3)
+		So(bid.Coherence, ShouldAlmostEqual, 1.0/3.0, 1e-6)
+		So(bid.Phase, ShouldAlmostEqual, 0, 1e-6)
+
+		ask := resultants[1]
+		So(ask.Side, ShouldEqual, "ask")
+		So(ask.Count, ShouldEqual, 1)
+		So(ask.TotalAmplitude, ShouldEqual, 3)
+		So(ask.Coherence, ShouldAlmostEqual, 1.0, 1e-6)
+		So(ask.Phase, ShouldAlmostEqual, math.Pi/2, 1e-6)
+	})
+}
+
 // BenchmarkSolverPublishReading measures full production-sized grid publication.
 func BenchmarkSolverPublishReading(b *testing.B) {
 	physics := sensorium.NewManifold(64, 64, 64)
@@ -156,8 +182,8 @@ func BenchmarkSolverPublishReading(b *testing.B) {
 	solver := &Solver{physics: physics}
 	state := physics.State()
 	b.ReportAllocs()
-	b.ResetTimer()
-	for index := 0; index < b.N; index++ {
+
+	for b.Loop() {
 		solver.publishReading(state)
 	}
 }

@@ -6,6 +6,7 @@
 import * as flatbuffers from 'flatbuffers';
 
 import { ManifoldReading, ManifoldReadingT } from '../telemetry/manifold-reading.js';
+import { PhaseResultant, PhaseResultantT } from '../telemetry/phase-resultant.js';
 import { WaveMode, WaveModeT } from '../telemetry/wave-mode.js';
 
 
@@ -352,8 +353,18 @@ modesLength():number {
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
+resultants(index: number, obj?:PhaseResultant):PhaseResultant|null {
+  const offset = this.bb!.__offset(this.bb_pos, 68);
+  return offset ? (obj || new PhaseResultant()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
+}
+
+resultantsLength():number {
+  const offset = this.bb!.__offset(this.bb_pos, 68);
+  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+}
+
 static startManifoldFrame(builder:flatbuffers.Builder) {
-  builder.startObject(32);
+  builder.startObject(33);
 }
 
 static addSequence(builder:flatbuffers.Builder, sequence:bigint) {
@@ -772,6 +783,22 @@ static startModesVector(builder:flatbuffers.Builder, numElems:number) {
   builder.startVector(4, numElems, 4);
 }
 
+static addResultants(builder:flatbuffers.Builder, resultantsOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(32, resultantsOffset, 0);
+}
+
+static createResultantsVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
+  builder.startVector(4, data.length, 4);
+  for (let i = data.length - 1; i >= 0; i--) {
+    builder.addOffset(data[i]!);
+  }
+  return builder.endVector();
+}
+
+static startResultantsVector(builder:flatbuffers.Builder, numElems:number) {
+  builder.startVector(4, numElems, 4);
+}
+
 static endManifoldFrame(builder:flatbuffers.Builder):flatbuffers.Offset {
   const offset = builder.endObject();
   builder.requiredField(offset, 12) // bytes
@@ -831,7 +858,8 @@ unpack(): ManifoldFrameT {
     this.momentumScale(),
     this.energyScale(),
     this.waveScale(),
-    this.bb!.createObjList<WaveMode, WaveModeT>(this.modes.bind(this), this.modesLength())
+    this.bb!.createObjList<WaveMode, WaveModeT>(this.modes.bind(this), this.modesLength()),
+    this.bb!.createObjList<PhaseResultant, PhaseResultantT>(this.resultants.bind(this), this.resultantsLength())
   );
 }
 
@@ -869,6 +897,7 @@ unpackTo(_o: ManifoldFrameT): void {
   _o.energyScale = this.energyScale();
   _o.waveScale = this.waveScale();
   _o.modes = this.bb!.createObjList<WaveMode, WaveModeT>(this.modes.bind(this), this.modesLength());
+  _o.resultants = this.bb!.createObjList<PhaseResultant, PhaseResultantT>(this.resultants.bind(this), this.resultantsLength());
 }
 }
 
@@ -905,7 +934,8 @@ constructor(
   public momentumScale: number = 0.0,
   public energyScale: number = 0.0,
   public waveScale: number = 0.0,
-  public modes: (WaveModeT)[] = []
+  public modes: (WaveModeT)[] = [],
+  public resultants: (PhaseResultantT)[] = []
 ){}
 
 
@@ -930,6 +960,7 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   const waveReal = ManifoldFrame.createWaveRealVector(builder, this.waveReal);
   const waveImag = ManifoldFrame.createWaveImagVector(builder, this.waveImag);
   const modes = ManifoldFrame.createModesVector(builder, builder.createObjectOffsetList(this.modes));
+  const resultants = ManifoldFrame.createResultantsVector(builder, builder.createObjectOffsetList(this.resultants));
 
   ManifoldFrame.startManifoldFrame(builder);
   ManifoldFrame.addSequence(builder, this.sequence);
@@ -964,6 +995,7 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   ManifoldFrame.addEnergyScale(builder, this.energyScale);
   ManifoldFrame.addWaveScale(builder, this.waveScale);
   ManifoldFrame.addModes(builder, modes);
+  ManifoldFrame.addResultants(builder, resultants);
 
   return ManifoldFrame.endManifoldFrame(builder);
 }

@@ -127,11 +127,15 @@ Engine is the cognitive memory Primitive. It owns the immutable radix trie,
 the observation clock it decays against, and the class census. Concurrent
 observes publish through compare-and-swap; evaluations read immutable roots.
 */
+type engineState struct {
+	root *iradix.Tree[[]byte]
+	step uint64
+}
+
 type Engine struct {
 	err         atomic.Pointer[engineError]
 	cfg         Config
-	root        atomic.Pointer[iradix.Tree[[]byte]]
-	stepCounter atomic.Uint64
+	state       atomic.Pointer[engineState]
 	decayFactor float64
 	classCounts sync.Map
 	remReplays  atomic.Uint64
@@ -150,7 +154,7 @@ func NewEngine(cfg Config) *Engine {
 		decayFactor: cfg.normalised().decayFactor(),
 	}
 
-	engine.root.Store(iradix.New[[]byte]())
+	engine.state.Store(&engineState{root: iradix.New[[]byte](), step: 0})
 	return engine
 }
 
@@ -255,8 +259,7 @@ func (op *Engine) execute(command *Command) (Result, error) {
 	}
 
 	if command.Restore != nil {
-		op.root.Store(iradix.New[[]byte]())
-		op.stepCounter.Store(0)
+		op.state.Store(&engineState{root: iradix.New[[]byte](), step: 0})
 		op.classCounts.Clear()
 		return op.restore(command.Restore)
 	}
@@ -265,7 +268,35 @@ func (op *Engine) execute(command *Command) (Result, error) {
 		return Result{Classes: op.census()}, nil
 	}
 
-	return Result{Tree: op.root.Load()}, nil
+	return Result{Tree: op.Root()}, nil
+}
+
+// Root returns the current immutable radix tree.
+func (op *Engine) Root() *iradix.Tree[[]byte] {
+	if op == nil {
+		return nil
+	}
+
+	state := op.state.Load()
+	if state == nil {
+		return nil
+	}
+
+	return state.root
+}
+
+// Step returns the current observation clock step.
+func (op *Engine) Step() uint64 {
+	if op == nil {
+		return 0
+	}
+
+	state := op.state.Load()
+	if state == nil {
+		return 0
+	}
+
+	return state.step
 }
 
 // Evaluate classifies a context sequence against the radix trie.
@@ -285,8 +316,7 @@ func (op *Engine) Snapshot() (Result, error) {
 
 // Restore deserializes a previously serialized snapshot into the engine.
 func (op *Engine) Restore(encoded []byte) (Result, error) {
-	op.root.Store(iradix.New[[]byte]())
-	op.stepCounter.Store(0)
+	op.state.Store(&engineState{root: iradix.New[[]byte](), step: 0})
 	op.classCounts.Clear()
 	return op.restore(encoded)
 }
@@ -500,8 +530,9 @@ func (op *Engine) Prune(minEffectiveCount float64) int {
 	prunedTotal := 0
 
 	for {
-		oldRoot := op.root.Load()
-		currentStep := op.stepCounter.Load()
+		oldState := op.state.Load()
+		oldRoot := oldState.root
+		currentStep := oldState.step
 		txn := oldRoot.Txn()
 
 		var keysToDelete [][]byte
@@ -529,8 +560,9 @@ func (op *Engine) Prune(minEffectiveCount float64) int {
 		}
 
 		newRoot := txn.Commit()
+		newState := &engineState{root: newRoot, step: currentStep}
 
-		if op.root.CompareAndSwap(oldRoot, newRoot) {
+		if op.state.CompareAndSwap(oldState, newState) {
 			prunedTotal = len(keysToDelete)
 			break
 		}
@@ -545,7 +577,7 @@ func (op *Engine) Dream(temperature float64, maxLength int) string {
 		maxLength = 64
 	}
 
-	root := op.root.Load()
+	root := op.Root()
 	currentSequence := ""
 
 	for hop := 0; hop < maxLength; hop++ {
@@ -661,7 +693,7 @@ func (op *Engine) Consolidate(temperature float64) (string, string, float64, boo
 
 	if evalResult.Evaluation.WinnerClass == targetClass && confidence >= 0.80 {
 		basinKey := makeBasinKey([]byte(targetClass), []byte(dream))
-		root := op.root.Load()
+		root := op.Root()
 		_, exists := root.Get(basinKey)
 		novel = !exists
 
@@ -681,8 +713,9 @@ func (op *Engine) Consolidate(temperature float64) (string, string, float64, boo
 
 // ExtractSymbols identifies distinctive sequence motifs across attractor basins.
 func (op *Engine) ExtractSymbols() []Symbol {
-	root := op.root.Load()
-	currentStep := op.stepCounter.Load()
+	state := op.state.Load()
+	root := state.root
+	currentStep := state.step
 
 	contexts := make(map[string]map[string]float64)
 	contextTotals := make(map[string]float64)
@@ -760,8 +793,9 @@ func (op *Engine) ExportTree(activeContext []byte, maxBranches int) TreeExport {
 		maxBranches = 128
 	}
 
-	root := op.root.Load()
-	currentStep := op.stepCounter.Load()
+	state := op.state.Load()
+	root := state.root
+	currentStep := state.step
 	var branches []Branch
 	nodeMap := make(map[string]int)
 
@@ -875,9 +909,9 @@ func (op *Engine) observe(assoc Association) (Result, error) {
 	var valBuf [WeightSize]byte
 
 	for {
-		oldRoot := op.root.Load()
-		currentStep := op.stepCounter.Load()
-		step := currentStep + 1
+		oldState := op.state.Load()
+		oldRoot := oldState.root
+		step := oldState.step + 1
 		txn := oldRoot.Txn()
 
 		isNew := false
@@ -917,10 +951,9 @@ func (op *Engine) observe(assoc Association) (Result, error) {
 		txn.Insert(sensoryKey, bytes.Clone(valBuf[:]))
 
 		newRoot := txn.Commit()
+		newState := &engineState{root: newRoot, step: step}
 
-		if op.root.CompareAndSwap(oldRoot, newRoot) {
-			op.stepCounter.Add(1)
-
+		if op.state.CompareAndSwap(oldState, newState) {
 			if isNew {
 				op.incrementClass(string(assoc.Class))
 			}
@@ -942,8 +975,9 @@ func (op *Engine) evaluate(context []byte, exact ...bool) (Result, error) {
 		}}, nil
 	}
 
-	root := op.root.Load()
-	step := op.stepCounter.Load()
+	state := op.state.Load()
+	root := state.root
+	step := state.step
 
 	// -------------------------------------------------------------
 	// 1. Attractor Basin Softmax & Contrast (Nomagique Probability)
@@ -1221,7 +1255,7 @@ func (op *Engine) Census() map[string]int32 {
 
 // Len returns the number of entries stored in the immutable radix trie.
 func (op *Engine) Len() int {
-	root := op.root.Load()
+	root := op.Root()
 	if root == nil {
 		return 0
 	}
@@ -1252,11 +1286,13 @@ There is no checkpoint model: the values are the same packed weights read by
 evaluate. Storage I/O belongs to the caller.
 */
 func (op *Engine) snapshot() (Result, error) {
-	root := op.root.Load()
+	state := op.state.Load()
+	root := state.root
+	step := state.step
 	var buffer bytes.Buffer
 	encoder := gob.NewEncoder(&buffer)
 
-	for _, value := range []any{"cognition/packed-weight/1", op.cfg, op.stepCounter.Load(), root.Len(), op.census()} {
+	for _, value := range []any{"cognition/packed-weight/1", op.cfg, step, root.Len(), op.census()} {
 		if err := encoder.Encode(value); err != nil {
 			return Result{}, errnie.Error(err)
 		}
@@ -1283,7 +1319,8 @@ Invalid or retired formats fail explicitly; neither partial state nor a
 replacement empty model is published after a failed read.
 */
 func (op *Engine) restore(encoded []byte) (Result, error) {
-	if op.root.Load().Len() != 0 || op.stepCounter.Load() != 0 {
+	currentState := op.state.Load()
+	if currentState.root.Len() != 0 || currentState.step != 0 {
 		return Result{}, errnie.Error(errnie.Err(errnie.Conflict, "cognition: restore requires a fresh engine", nil))
 	}
 
@@ -1342,9 +1379,8 @@ func (op *Engine) restore(encoded []byte) (Result, error) {
 
 	op.cfg = config
 	op.decayFactor = config.decayFactor()
-	op.stepCounter.Store(step)
 	root := transaction.Commit()
-	op.root.Store(root)
+	op.state.Store(&engineState{root: root, step: step})
 
 	return Result{Tree: root}, nil
 }

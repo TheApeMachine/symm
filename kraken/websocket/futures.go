@@ -54,12 +54,11 @@ failures remain terminal and are reported to the process supervisor.
 */
 type FuturesLive struct {
 	*runtime.System
-	client         atomic.Pointer[derivatives.WebSocket]
-	queue          *lf.Queue[map[string]any]
-	simulator      *Simulator
-	callbacks      *sync.Map
-	subscriptionMu sync.RWMutex
-	subscriptions  map[string][]string
+	client        atomic.Pointer[derivatives.WebSocket]
+	queue         *lf.Queue[map[string]any]
+	simulator     *Simulator
+	callbacks     *sync.Map
+	subscriptions atomic.Pointer[map[string][]string]
 
 	// pinger owns this session's keepalive loop.
 	pinger *Pinger
@@ -178,10 +177,11 @@ func NewFuturesWithClient(
 	client.OnDisconnected.Reset()
 
 	futures := &FuturesLive{
-		callbacks:     &sync.Map{},
-		queue:         lf.NewQueue[map[string]any](),
-		subscriptions: make(map[string][]string),
+		callbacks: &sync.Map{},
+		queue:     lf.NewQueue[map[string]any](),
 	}
+	initialSubscriptions := make(map[string][]string)
+	futures.subscriptions.Store(&initialSubscriptions)
 	futures.client.Store(client)
 
 	futures.pinger = NewPinger("futures", func() error {
@@ -250,9 +250,11 @@ func NewFuturesWithClient(
 			return
 		}
 
-		futures.subscriptionMu.RLock()
-		hasSubs := len(futures.subscriptions) > 0
-		futures.subscriptionMu.RUnlock()
+		hasSubs := false
+
+		if subsPtr := futures.subscriptions.Load(); subsPtr != nil {
+			hasSubs = len(*subsPtr) > 0
+		}
 
 		if hasSubs {
 			futures.Transition(runtime.READY)
@@ -348,11 +350,15 @@ It runs only after a replacement connection is established and consumers have
 already crossed their readiness boundary.
 */
 func (futures *FuturesLive) restoreSubscriptions() error {
-	futures.subscriptionMu.RLock()
-	defer futures.subscriptionMu.RUnlock()
+	subsPtr := futures.subscriptions.Load()
+
+	if subsPtr == nil {
+		return nil
+	}
+
 	client := futures.Client()
 
-	for feed, productIDs := range futures.subscriptions {
+	for feed, productIDs := range *subsPtr {
 		var err error
 
 		switch feed {
@@ -693,9 +699,7 @@ func (futures *FuturesLive) SubFuturesTicker(productIDs []string) error {
 		))
 	}
 
-	futures.subscriptionMu.Lock()
-	futures.subscriptions["ticker"] = append(futures.subscriptions["ticker"], productIDs...)
-	futures.subscriptionMu.Unlock()
+	futures.addSubscription("ticker", productIDs)
 
 	return nil
 }
@@ -721,9 +725,7 @@ func (futures *FuturesLive) SubFuturesTrades(productIDs []string) error {
 		))
 	}
 
-	futures.subscriptionMu.Lock()
-	futures.subscriptions["trade"] = append(futures.subscriptions["trade"], productIDs...)
-	futures.subscriptionMu.Unlock()
+	futures.addSubscription("trade", productIDs)
 
 	return nil
 }
@@ -749,9 +751,7 @@ func (futures *FuturesLive) SubFuturesBook(productIDs []string) error {
 		))
 	}
 
-	futures.subscriptionMu.Lock()
-	futures.subscriptions["book"] = append(futures.subscriptions["book"], productIDs...)
-	futures.subscriptionMu.Unlock()
+	futures.addSubscription("book", productIDs)
 
 	return nil
 }
@@ -798,16 +798,59 @@ func (futures *FuturesLive) unsubscribe(feed string, productIDs []string) error 
 		}
 	}
 
-	futures.subscriptionMu.Lock()
-	futures.subscriptions[feed] = slices.DeleteFunc(
-		futures.subscriptions[feed],
-		func(productID string) bool {
-			return slices.Contains(productIDs, productID)
-		},
-	)
-	futures.subscriptionMu.Unlock()
+	futures.removeSubscription(feed, productIDs)
 
 	return nil
+}
+
+func (futures *FuturesLive) addSubscription(feed string, productIDs []string) {
+	for {
+		currentPtr := futures.subscriptions.Load()
+		next := make(map[string][]string)
+
+		if currentPtr != nil {
+			for key, val := range *currentPtr {
+				copied := make([]string, len(val))
+				copy(copied, val)
+				next[key] = copied
+			}
+		}
+
+		next[feed] = append(next[feed], productIDs...)
+
+		if futures.subscriptions.CompareAndSwap(currentPtr, &next) {
+			break
+		}
+	}
+}
+
+func (futures *FuturesLive) removeSubscription(feed string, productIDs []string) {
+	for {
+		currentPtr := futures.subscriptions.Load()
+
+		if currentPtr == nil {
+			break
+		}
+
+		next := make(map[string][]string)
+
+		for key, val := range *currentPtr {
+			copied := make([]string, len(val))
+			copy(copied, val)
+			next[key] = copied
+		}
+
+		next[feed] = slices.DeleteFunc(
+			next[feed],
+			func(productID string) bool {
+				return slices.Contains(productIDs, productID)
+			},
+		)
+
+		if futures.subscriptions.CompareAndSwap(currentPtr, &next) {
+			break
+		}
+	}
 }
 
 func (futures *FuturesLive) Write(params json.Marshaler, callbacks ...Callback[any]) error {

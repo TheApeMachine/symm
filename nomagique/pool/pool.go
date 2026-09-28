@@ -25,6 +25,7 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -84,23 +85,40 @@ type Pool[T any] struct {
 	handlerFunc TaskHandlerFunc[T]
 	lifetime    time.Duration
 
-	workMu sync.Mutex
+	gate atomic.Int64
 	// pending is the unbounded backlog awaiting a worker.
 	pending []*poolTask[T]
 	// parked holds LIFO workers that are idle and waiting for a task.
 	parked []*poolWorker
 	// live is the number of worker goroutines currently spawned.
-	live int
+	live atomic.Int64
 	// inflight is the number of workers currently executing a task.
-	inflight int
+	inflight atomic.Int64
 
 	stopChan chan struct{}
 	doneChan chan struct{}
 	doneOnce sync.Once
 
-	mutex   sync.Mutex
 	started atomic.Bool
 	stopped atomic.Bool
+}
+
+const poolWriterMask = 1 << 30
+
+func (op *Pool[T]) lock() {
+	for {
+		value := op.gate.Load()
+
+		if value == 0 && op.gate.CompareAndSwap(0, -poolWriterMask) {
+			return
+		}
+
+		runtime.Gosched()
+	}
+}
+
+func (op *Pool[T]) unlock() {
+	op.gate.Add(poolWriterMask)
 }
 
 /*
@@ -121,6 +139,8 @@ func NewPool[T any](
 	return &Pool[T]{
 		handlerFunc: handlerFunc,
 		lifetime:    idleWorkerLifetime,
+		stopChan:    make(chan struct{}),
+		doneChan:    make(chan struct{}),
 	}
 }
 
@@ -224,18 +244,9 @@ func (op *Pool[T]) Error(errs ...error) error {
 start makes the pool ready to accept tasks. It is idempotent.
 */
 func (op *Pool[T]) start() {
-	op.mutex.Lock()
-	defer op.mutex.Unlock()
-
-	if op.started.Load() {
+	if !op.started.CompareAndSwap(false, true) {
 		return
 	}
-
-	op.stopChan = make(chan struct{})
-	op.doneChan = make(chan struct{})
-	op.doneOnce = sync.Once{}
-	op.stopped.Store(false)
-	op.started.Store(true)
 }
 
 /*
@@ -254,13 +265,9 @@ func (op *Pool[T]) stop() {
 
 	close(op.stopChan)
 
-	op.workMu.Lock()
-
-	if op.live == 0 {
+	if op.live.Load() == 0 {
 		op.doneOnce.Do(func() { close(op.doneChan) })
 	}
-
-	op.workMu.Unlock()
 }
 
 /*
@@ -269,28 +276,36 @@ up. The unbounded backlog means a running pool always accepts a task; it can
 only fail once the pool has stopped, which is recorded and ends the stream.
 */
 func (op *Pool[T]) submit(value *T, run *sink) bool {
-	op.workMu.Lock()
-
 	if !op.started.Load() || op.stopped.Load() {
-		op.workMu.Unlock()
 		op.Error(fmt.Errorf("%w: pool: stopped", core.ErrDomain))
 
 		return false
 	}
 
 	run.wg.Add(1)
+
+	op.lock()
+
+	if op.stopped.Load() {
+		op.unlock()
+		run.wg.Done()
+		op.Error(fmt.Errorf("%w: pool: stopped", core.ErrDomain))
+
+		return false
+	}
+
 	op.pending = append(op.pending, &poolTask[T]{value: value, sink: run})
 
 	// Hand work to a parked worker first: cheaper than spawning a goroutine
 	// and the natural scale-down path.
-	if parked := len(op.parked); parked > 0 {
-		worker := op.parked[parked-1]
-		op.parked = op.parked[:parked-1]
+	if parkedCount := len(op.parked); parkedCount > 0 {
+		worker := op.parked[parkedCount-1]
+		op.parked = op.parked[:parkedCount-1]
 		select {
 		case worker.wake <- struct{}{}:
 		default:
 		}
-		op.workMu.Unlock()
+		op.unlock()
 
 		return true
 	}
@@ -298,14 +313,14 @@ func (op *Pool[T]) submit(value *T, run *sink) bool {
 	// No parked worker is available. Spawn only when outstanding work is
 	// beyond what live workers can already absorb, so transient single-task
 	// submits do not balloon concurrency.
-	outstanding := len(op.pending) + op.inflight
+	outstanding := len(op.pending) + int(op.inflight.Load())
 
-	if outstanding > op.live {
-		op.live++
+	if outstanding > int(op.live.Load()) {
+		op.live.Add(1)
 		go op.runWorker(&poolWorker{wake: make(chan struct{}, 1)})
 	}
 
-	op.workMu.Unlock()
+	op.unlock()
 
 	return true
 }
@@ -316,21 +331,21 @@ should exit (pool stopping, or scaled back down after an idle lifetime). It
 parks itself in op.parked whenever the queue is empty.
 */
 func (op *Pool[T]) fetchTask(worker *poolWorker) (task *poolTask[T], ok bool) {
-	op.workMu.Lock()
+	op.lock()
 
 	for {
 		if len(op.pending) > 0 {
 			task = op.pending[0]
 			op.pending = op.pending[1:]
-			op.inflight++
-			op.workMu.Unlock()
+			op.inflight.Add(1)
+			op.unlock()
 
 			return task, true
 		}
 
 		if op.stopped.Load() {
 			op.removeParked(worker)
-			op.workMu.Unlock()
+			op.unlock()
 
 			return task, false
 		}
@@ -343,7 +358,7 @@ func (op *Pool[T]) fetchTask(worker *poolWorker) (task *poolTask[T], ok bool) {
 		}
 
 		op.parked = append(op.parked, worker)
-		op.workMu.Unlock()
+		op.unlock()
 
 		if worker.idleTimer == nil {
 			worker.idleTimer = time.NewTimer(op.lifetime)
@@ -355,15 +370,15 @@ func (op *Pool[T]) fetchTask(worker *poolWorker) (task *poolTask[T], ok bool) {
 		case <-worker.wake:
 			// A submitter claimed this worker; loop and drain the queue.
 		case <-op.stopChan:
-			op.workMu.Lock()
+			op.lock()
 			op.removeParked(worker)
-			op.workMu.Unlock()
+			op.unlock()
 
 			return task, false
 		case <-worker.idleTimer.C:
-			op.workMu.Lock()
+			op.lock()
 			retire := op.removeParked(worker)
-			op.workMu.Unlock()
+			op.unlock()
 
 			if retire {
 				return task, false
@@ -371,7 +386,7 @@ func (op *Pool[T]) fetchTask(worker *poolWorker) (task *poolTask[T], ok bool) {
 			// Claimed between the wake and the timeout: loop and take the work.
 		}
 
-		op.workMu.Lock()
+		op.lock()
 	}
 }
 
@@ -402,23 +417,15 @@ func (op *Pool[T]) runWorker(worker *poolWorker) {
 		task, ok := op.fetchTask(worker)
 
 		if !ok {
-			op.workMu.Lock()
-			op.live--
-
-			if op.stopped.Load() && op.live == 0 {
+			if op.live.Add(-1) == 0 && op.stopped.Load() {
 				op.doneOnce.Do(func() { close(op.doneChan) })
 			}
-
-			op.workMu.Unlock()
 
 			return
 		}
 
 		op.handlerFunc(task.value)
-
-		op.workMu.Lock()
-		op.inflight--
-		op.workMu.Unlock()
+		op.inflight.Add(-1)
 
 		select {
 		case task.sink.completions <- unsafe.Pointer(task.value):

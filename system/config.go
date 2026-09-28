@@ -1,8 +1,7 @@
 package system
 
 import (
-	"errors"
-	"sync"
+	"github.com/theapemachine/errnie"
 )
 
 var Cfg *Config
@@ -12,7 +11,6 @@ func init() {
 }
 
 type Config struct {
-	mu        sync.RWMutex
 	Runtime   *Runtime
 	Resonance *Resonance
 	Risk      *Risk
@@ -45,14 +43,19 @@ func NewConfig() *Config {
 /* PlannerPolicy returns the small live policy value without allocating. */
 func (config *Config) PlannerPolicy() (PlannerConfig, error) {
 	if config == nil {
-		return PlannerConfig{}, errors.New("system: configuration required")
+		return PlannerConfig{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"system: configuration required",
+			nil,
+		))
 	}
 
-	config.mu.RLock()
-	defer config.mu.RUnlock()
-
 	if config.Planner == nil {
-		return PlannerConfig{}, errors.New("system: planner configuration required")
+		return PlannerConfig{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"system: planner configuration required",
+			nil,
+		))
 	}
 
 	return *config.Planner, nil

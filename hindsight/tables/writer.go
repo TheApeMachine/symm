@@ -2,7 +2,8 @@ package tables
 
 import (
 	"context"
-	"sync"
+	"runtime"
+	"sync/atomic"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/data"
@@ -13,6 +14,7 @@ const (
 	tradeBatchThreshold       = 2000
 	level3BatchThreshold      = 20000
 	measurementBatchThreshold = 2000
+	writerMask                = 1 << 30
 )
 
 /*
@@ -24,12 +26,28 @@ type Writer struct {
 	catalog *Catalog
 	epoch   int64
 
-	mutex        sync.Mutex
+	gate         atomic.Int64
 	spotTicker   []*data.Measurement[float64]
 	spotTrade    []*data.Measurement[float64]
 	spotLevel3   []*data.Measurement[float64]
 	measurements []*data.Measurement[float64]
 	excursions   []ExcursionRecord
+}
+
+func (writer *Writer) lock() {
+	for {
+		value := writer.gate.Load()
+
+		if value == 0 && writer.gate.CompareAndSwap(0, -writerMask) {
+			return
+		}
+
+		runtime.Gosched()
+	}
+}
+
+func (writer *Writer) unlock() {
+	writer.gate.Add(writerMask)
 }
 
 /*
@@ -50,8 +68,8 @@ func (writer *Writer) Add(channel string, measurement *data.Measurement[float64]
 		return
 	}
 
-	writer.mutex.Lock()
-	defer writer.mutex.Unlock()
+	writer.lock()
+	defer writer.unlock()
 
 	if channel == "ticker" {
 		writer.spotTicker = append(writer.spotTicker, measurement)
@@ -78,8 +96,8 @@ func (writer *Writer) Add(channel string, measurement *data.Measurement[float64]
 AddExcursion routes a completed excursion record to the excursions buffer.
 */
 func (writer *Writer) AddExcursion(excursion ExcursionRecord) {
-	writer.mutex.Lock()
-	defer writer.mutex.Unlock()
+	writer.lock()
+	defer writer.unlock()
 
 	writer.excursions = append(writer.excursions, excursion)
 }
@@ -88,8 +106,8 @@ func (writer *Writer) AddExcursion(excursion ExcursionRecord) {
 Pending returns total buffered measurements and excursions across all families.
 */
 func (writer *Writer) Pending() int {
-	writer.mutex.Lock()
-	defer writer.mutex.Unlock()
+	writer.lock()
+	defer writer.unlock()
 
 	return len(writer.spotTicker) + len(writer.spotTrade) + len(writer.spotLevel3) + len(writer.measurements) + len(writer.excursions)
 }
@@ -155,25 +173,25 @@ func (writer *Writer) CommitReady(ctx context.Context, forceAll bool) error {
 }
 
 func (writer *Writer) commitExcursions(ctx context.Context) error {
-	writer.mutex.Lock()
+	writer.lock()
 
 	rowsToCommit := writer.excursions
 	writer.excursions = nil
 
 	if len(rowsToCommit) == 0 {
-		writer.mutex.Unlock()
+		writer.unlock()
 
 		return nil
 	}
 
-	writer.mutex.Unlock()
+	writer.unlock()
 
 	tbl, err := writer.catalog.Load(ctx, Excursions)
 
 	if err != nil {
-		writer.mutex.Lock()
+		writer.lock()
 		writer.excursions = append(rowsToCommit, writer.excursions...)
-		writer.mutex.Unlock()
+		writer.unlock()
 
 		return err
 	}
@@ -181,9 +199,9 @@ func (writer *Writer) commitExcursions(ctx context.Context) error {
 	reader, err := excursionRecords(tbl.Schema(), rowsToCommit, writer.epoch)
 
 	if err != nil {
-		writer.mutex.Lock()
+		writer.lock()
 		writer.excursions = append(rowsToCommit, writer.excursions...)
-		writer.mutex.Unlock()
+		writer.unlock()
 
 		return err
 	}
@@ -193,9 +211,9 @@ func (writer *Writer) commitExcursions(ctx context.Context) error {
 	_, appendErr := tbl.Append(writer.catalog.context(ctx), reader, nil)
 
 	if appendErr != nil {
-		writer.mutex.Lock()
+		writer.lock()
 		writer.excursions = append(rowsToCommit, writer.excursions...)
-		writer.mutex.Unlock()
+		writer.unlock()
 
 		return errnie.Error(errnie.Err(
 			errnie.BadGateway,
@@ -215,31 +233,31 @@ func (writer *Writer) commitFamily(
 	takeRows func() []*data.Measurement[float64],
 	putRows func([]*data.Measurement[float64]),
 ) error {
-	writer.mutex.Lock()
+	writer.lock()
 
 	rowsToCommit := takeRows()
 
 	if len(rowsToCommit) == 0 {
-		writer.mutex.Unlock()
+		writer.unlock()
 
 		return nil
 	}
 
 	if !forceAll && len(rowsToCommit) < threshold {
 		putRows(rowsToCommit)
-		writer.mutex.Unlock()
+		writer.unlock()
 
 		return nil
 	}
 
-	writer.mutex.Unlock()
+	writer.unlock()
 
 	tbl, err := writer.catalog.Load(ctx, tableName)
 
 	if err != nil {
-		writer.mutex.Lock()
+		writer.lock()
 		putRows(rowsToCommit)
-		writer.mutex.Unlock()
+		writer.unlock()
 
 		return err
 	}
@@ -247,9 +265,9 @@ func (writer *Writer) commitFamily(
 	reader, err := measurementRecords(tbl.Schema(), rowsToCommit, writer.epoch)
 
 	if err != nil {
-		writer.mutex.Lock()
+		writer.lock()
 		putRows(rowsToCommit)
-		writer.mutex.Unlock()
+		writer.unlock()
 
 		return err
 	}
@@ -259,9 +277,9 @@ func (writer *Writer) commitFamily(
 	_, appendErr := tbl.Append(writer.catalog.context(ctx), reader, nil)
 
 	if appendErr != nil {
-		writer.mutex.Lock()
+		writer.lock()
 		putRows(rowsToCommit)
-		writer.mutex.Unlock()
+		writer.unlock()
 
 		return errnie.Error(errnie.Err(
 			errnie.BadGateway,

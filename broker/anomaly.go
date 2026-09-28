@@ -58,9 +58,8 @@ type AnomalyMonitor struct {
 	ring      *wf.RingBuffer[MarketAnomaly]
 	stats     sync.Map
 	faults    sync.Map
-	faultMu   sync.RWMutex
-	onFault   func(symbol string)
-	onRecover func(symbol string)
+	onFault   atomic.Pointer[[]func(symbol string)]
+	onRecover atomic.Pointer[[]func(symbol string)]
 	total     atomic.Uint64
 	running   atomic.Bool
 }
@@ -97,24 +96,58 @@ func (monitor *AnomalyMonitor) faultState(symbol string) *symbolFaultState {
 
 /* SetOnFault registers a callback invoked when a symbol experiences a severe structural fault. */
 func (monitor *AnomalyMonitor) SetOnFault(hook func(symbol string)) {
-	if monitor == nil {
+	if monitor == nil || hook == nil {
 		return
 	}
 
-	monitor.faultMu.Lock()
-	monitor.onFault = hook
-	monitor.faultMu.Unlock()
+	for {
+		current := monitor.onFault.Load()
+		capacity := 1
+
+		if current != nil {
+			capacity = len(*current) + 1
+		}
+
+		next := make([]func(symbol string), capacity)
+
+		if current != nil {
+			copy(next, *current)
+		}
+
+		next[capacity-1] = hook
+
+		if monitor.onFault.CompareAndSwap(current, &next) {
+			return
+		}
+	}
 }
 
 /* SetOnRecover registers a callback invoked when a symbol uncrosses and stabilizes. */
 func (monitor *AnomalyMonitor) SetOnRecover(hook func(symbol string)) {
-	if monitor == nil {
+	if monitor == nil || hook == nil {
 		return
 	}
 
-	monitor.faultMu.Lock()
-	monitor.onRecover = hook
-	monitor.faultMu.Unlock()
+	for {
+		current := monitor.onRecover.Load()
+		capacity := 1
+
+		if current != nil {
+			capacity = len(*current) + 1
+		}
+
+		next := make([]func(symbol string), capacity)
+
+		if current != nil {
+			copy(next, *current)
+		}
+
+		next[capacity-1] = hook
+
+		if monitor.onRecover.CompareAndSwap(current, &next) {
+			return
+		}
+	}
 }
 
 /* Record pushes a market shape anomaly onto the wait-free ring buffer without blocking. */
@@ -134,13 +167,11 @@ func (monitor *AnomalyMonitor) Record(symbol string, kind AnomalyKind) {
 		state.consecutiveClean.Store(0)
 		crossed := state.consecutiveCrossed.Add(1)
 
-		if crossed > 3 {
-			if !state.hasSevereFault.Swap(true) {
-				monitor.faultMu.RLock()
-				hook := monitor.onFault
-				monitor.faultMu.RUnlock()
+		if crossed > 3 && !state.hasSevereFault.Swap(true) {
+			hooks := monitor.onFault.Load()
 
-				if hook != nil {
+			if hooks != nil {
+				for _, hook := range *hooks {
 					hook(symbol)
 				}
 			}
@@ -158,13 +189,11 @@ func (monitor *AnomalyMonitor) RecordClean(symbol string) {
 	state.consecutiveCrossed.Store(0)
 	clean := state.consecutiveClean.Add(1)
 
-	if clean >= 3 && state.hasSevereFault.Load() {
-		if state.hasSevereFault.Swap(false) {
-			monitor.faultMu.RLock()
-			hook := monitor.onRecover
-			monitor.faultMu.RUnlock()
+	if clean >= 3 && state.hasSevereFault.Load() && state.hasSevereFault.Swap(false) {
+		hooks := monitor.onRecover.Load()
 
-			if hook != nil {
+		if hooks != nil {
+			for _, hook := range *hooks {
 				hook(symbol)
 			}
 		}
@@ -184,6 +213,28 @@ func (monitor *AnomalyMonitor) HasSevereFault(symbol string) bool {
 	}
 
 	return actual.(*symbolFaultState).hasSevereFault.Load()
+}
+
+/* HasAnySevereFault reports whether any monitored symbol currently has an active severe structural fault. */
+func (monitor *AnomalyMonitor) HasAnySevereFault() bool {
+	if monitor == nil {
+		return false
+	}
+
+	hasFault := false
+
+	monitor.faults.Range(func(key, value any) bool {
+		state, ok := value.(*symbolFaultState)
+
+		if ok && state.hasSevereFault.Load() {
+			hasFault = true
+			return false
+		}
+
+		return true
+	})
+
+	return hasFault
 }
 
 /* Count returns the total number of anomalies recorded for a symbol. */

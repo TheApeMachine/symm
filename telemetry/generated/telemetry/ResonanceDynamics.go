@@ -7,24 +7,24 @@ import (
 )
 
 type ResonanceDynamicsT struct {
-	Ready              float64 `json:"ready"`
-	DeltaTime          float64 `json:"deltaTime"`
-	Position           float64 `json:"position"`
-	Velocity           float64 `json:"velocity"`
-	Acceleration       float64 `json:"acceleration"`
-	Memory             float64 `json:"memory"`
-	MemoryScale        float64 `json:"memoryScale"`
-	StoredEnergy       float64 `json:"storedEnergy"`
-	SuppliedPower      float64 `json:"suppliedPower"`
-	Dissipation        float64 `json:"dissipation"`
-	PassivityResidue   float64 `json:"passivityResidue"`
+	Ready float64 `json:"ready"`
+	DeltaTime float64 `json:"deltaTime"`
+	Position float64 `json:"position"`
+	Velocity float64 `json:"velocity"`
+	Acceleration float64 `json:"acceleration"`
+	Memory float64 `json:"memory"`
+	MemoryScale float64 `json:"memoryScale"`
+	StoredEnergy float64 `json:"storedEnergy"`
+	SuppliedPower float64 `json:"suppliedPower"`
+	Dissipation float64 `json:"dissipation"`
+	PassivityResidue float64 `json:"passivityResidue"`
 	ContinuousVariance float64 `json:"continuousVariance"`
-	JumpAmplitude      float64 `json:"jumpAmplitude"`
-	JumpVariance       float64 `json:"jumpVariance"`
-	SampleCount        float64 `json:"sampleCount"`
-	RotorScalar        float64 `json:"rotorScalar"`
-	RotorBivector      float64 `json:"rotorBivector"`
-	EquivarianceNorm   float64 `json:"equivarianceNorm"`
+	JumpAmplitude float64 `json:"jumpAmplitude"`
+	JumpVariance float64 `json:"jumpVariance"`
+	SampleCount float64 `json:"sampleCount"`
+	RotorScalar float64 `json:"rotorScalar"`
+	RotorBivector float64 `json:"rotorBivector"`
+	EquivarianceNorm float64 `json:"equivarianceNorm"`
 }
 
 func (t *ResonanceDynamicsT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

@@ -12,8 +12,8 @@ func (m *Manifold) SetSpectralGeometry(potential, metricVolume []float32) error 
 	if m == nil {
 		return fmt.Errorf("nil manifold")
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.lock()
+	defer m.unlock()
 	f := m.work
 	if f == nil {
 		return fmt.Errorf("closed manifold")

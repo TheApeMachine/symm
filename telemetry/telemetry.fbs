@@ -727,7 +727,16 @@ table ManifoldReading {
   pressureGradNorm:double;
   viscosityProxy:double;
   kuramotoR:double;
+  kuramotoPsi:double;
   health:PhysicsHealth;
+}
+
+table PhaseResultant {
+  side:string;
+  count:int;
+  totalAmplitude:double;
+  coherence:double;
+  phase:double;
 }
 
 /*
@@ -769,6 +778,7 @@ table ManifoldFrame {
   energyScale:float;
   waveScale:float;
   modes:[WaveMode] (required);
+  resultants:[PhaseResultant];
 }
 
 table WaveMode { omega:float; real:float; imaginary:float; linewidth:float; }

@@ -85,7 +85,9 @@ func NewPrice(
 	})
 
 	price.anomalies.SetOnRecover(func(symbol string) {
-		price.Transition(runtime.READY)
+		if !price.anomalies.HasAnySevereFault() {
+			price.Transition(runtime.READY)
+		}
 	})
 
 	if err := errnie.Require(map[string]any{
@@ -300,12 +302,6 @@ func (price *Price) Quantity(symbol string, cash *decimal.Decimal) (*decimal.Dec
 	if quantity == nil {
 		if tick := price.Tick(symbol); tick != nil && tick.Ask != nil {
 			quantity, err = price.Affordable(symbol, cash, tick.Ask)
-		}
-	}
-
-	if quantity == nil && price.api != nil {
-		if info, tickerErr := price.api.TickerSingle(symbol); tickerErr == nil && info != nil && len(info.Ask) > 0 {
-			quantity, err = price.Affordable(symbol, cash, info.Ask[0])
 		}
 	}
 

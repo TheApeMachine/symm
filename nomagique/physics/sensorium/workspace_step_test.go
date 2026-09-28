@@ -182,7 +182,8 @@ func TestKuramotoFromPhase(t *testing.T) {
 		phase[1] = math.Pi
 
 		Convey("Only active oscillators contribute to the order parameter", func() {
-			So(kuramotoFromPhase(fluid.phase, 2), ShouldAlmostEqual, 0, 1e-6)
+			r, _ := kuramotoFromPhase(fluid.phase, 2)
+			So(r, ShouldAlmostEqual, 0, 1e-6)
 		})
 	})
 }

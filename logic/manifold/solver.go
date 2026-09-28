@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	goruntime "runtime"
 	"slices"
 	"sort"
 	"sync"
@@ -46,39 +47,16 @@ number of live orders rather than by the message rate.
 */
 type Solver struct {
 	*runtime.System
-	advanceMu sync.Mutex
-	api       *websocket.API
-	dataset   *Dataset
-	physics   *sensorium.Manifold
-
-	// forcing retains the latest causally-available Hawkes excitation fraction
-	// per symbol. A Trade event records it; the next Level3 event lifts the
-	// matching side's resting-order energy above the unit baseline. It is
-	// guarded by forcingMu alone — a Trade's two-float update never waits on a
-	// full physics advance, and advance reads only a coherent per-symbol
-	// snapshot under the read lock.
-	forcingMu sync.RWMutex
-	forcing   map[string]forcingState
-
-	wake chan struct{}
-
-	// dirty names the symbols whose books moved since the last advance. The
-	// Level3 stream is a semaphore per symbol, so a full-market recopy is only
-	// required when that set is empty (a direct Advance, or a wake with no
-	// identity). Production ingress always marks the symbol before waking.
-	dirtyMu sync.Mutex
-	dirty   map[string]struct{}
-
-	// loaded is the set of ContentIDs the physics domain holds, and dataset is
-	// the projector. Both are touched only by the advance goroutine, which is
-	// the whole point of reading the book instead of a message stream: there is
-	// one reader, it owns its state outright, and none of it needs a lock.
-	loaded map[int64]struct{}
-
-	// reading publishes an owned particle, spectral and grid frame per advance.
-	// Step and output tees share this pointer without touching mutable physics buffers.
-	reading atomic.Pointer[State]
-	version uint64 // Owned by advanceMu, together with the published reading.
+	isAdvancing atomic.Bool
+	api         *websocket.API
+	dataset     *Dataset
+	physics     *sensorium.Manifold
+	forcing     sync.Map
+	wake        chan struct{}
+	dirty       sync.Map
+	loaded      map[int64]struct{}
+	reading     atomic.Pointer[State]
+	version     atomic.Uint64
 }
 
 /*
@@ -121,9 +99,7 @@ func NewSolver(ctx context.Context, api *websocket.API) *Solver {
 	solver := &Solver{
 		api:     api,
 		dataset: NewDataset(),
-		forcing: make(map[string]forcingState),
 		loaded:  make(map[int64]struct{}),
-		dirty:   make(map[string]struct{}),
 		wake:    make(chan struct{}, 1),
 		physics: sensorium.NewManifold(
 			system.Cfg.Manifold.Grid.X,
@@ -310,6 +286,10 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 		measurement.Metrics["kuramoto_r"] = m.Write(reading.Reading.KuramotoR)
 	}
 
+	if m, ok := measurement.Metrics["kuramoto_psi"]; ok {
+		measurement.Metrics["kuramoto_psi"] = m.Write(reading.Reading.KuramotoPsi)
+	}
+
 	if m, ok := measurement.Metrics["gas_kinetic"]; ok {
 		measurement.Metrics["gas_kinetic"] = m.Write(reading.Reading.Health.Gas.Kinetic)
 	}
@@ -368,6 +348,9 @@ func (solver *Solver) Register() *data.Measurement[float64] {
 		),
 		"kuramoto_r": data.NewMetric[float64](
 			"kuramoto_r", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"kuramoto_psi": data.NewMetric[float64](
+			"kuramoto_psi", data.UnitDimensionless, data.TimescaleInstantaneous, -math.Pi, math.Pi,
 		),
 		"gas_kinetic": data.NewMetric[float64](
 			"gas_kinetic", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
@@ -437,9 +420,7 @@ func (solver *Solver) recordForcing(symbol string, hawkes *data.Measurement[floa
 		sell = float32(sellMetric.Raw)
 	}
 
-	solver.forcingMu.Lock()
-	solver.forcing[symbol] = forcingState{buyExcitation: buy, sellExcitation: sell}
-	solver.forcingMu.Unlock()
+	solver.forcing.Store(symbol, forcingState{buyExcitation: buy, sellExcitation: sell})
 }
 
 /*
@@ -448,11 +429,11 @@ unit baseline when none has been observed yet). It must be called while the
 forcing read lock is held by advance.
 */
 func (solver *Solver) latestForcing(symbol string) forcingState {
-	if solver.forcing == nil {
-		return forcingState{}
+	if val, ok := solver.forcing.Load(symbol); ok {
+		return val.(forcingState)
 	}
 
-	return solver.forcing[symbol]
+	return forcingState{}
 }
 
 /*
@@ -473,13 +454,7 @@ func (solver *Solver) markDirty(symbol string) {
 		return
 	}
 
-	solver.dirtyMu.Lock()
-
-	if solver.dirty == nil {
-		solver.dirty = make(map[string]struct{})
-	}
-	solver.dirty[symbol] = struct{}{}
-	solver.dirtyMu.Unlock()
+	solver.dirty.Store(symbol, struct{}{})
 }
 
 func (solver *Solver) project() (departures []int64, batch *sensorium.State) {
@@ -503,9 +478,7 @@ func (solver *Solver) project() (departures []int64, batch *sensorium.State) {
 			return true
 		}
 
-		solver.forcingMu.RLock()
 		forcing := solver.latestForcing(symbol)
-		solver.forcingMu.RUnlock()
 
 		for state := range solver.dataset.Step(
 			symbol, spotbook.Bids, spotbook.Asks, forcing,
@@ -615,26 +588,26 @@ func (solver *Solver) Advance() {
 		return
 	}
 
-	solver.advanceMu.Lock()
+	if !solver.isAdvancing.CompareAndSwap(false, true) {
+		return
+	}
+	defer solver.isAdvancing.Store(false)
 
 	_, err := solver.physics.Remove(departures)
 
 	if err != nil {
-		solver.advanceMu.Unlock()
 		solver.Error(err)
 
 		return
 	}
 
 	if len(solver.loaded) == 0 && batch == nil {
-		solver.advanceMu.Unlock()
 		return
 	}
 
 	state, err := solver.physics.Step(batch)
 
 	if err != nil {
-		solver.advanceMu.Unlock()
 		solver.Error(err)
 
 		return
@@ -643,8 +616,81 @@ func (solver *Solver) Advance() {
 	if state != nil {
 		solver.publishReading(state)
 	}
+}
 
-	solver.advanceMu.Unlock()
+/*
+computePhaseResultants computes each book side's amplitude-weighted Kuramoto vector
+directly from the resident oscillator particles.
+Side is determined by the token ID (even is bid, odd is ask).
+*/
+func computePhaseResultants(state *sensorium.State) []types.PhaseChannelResultant {
+	if state == nil || state.N == 0 {
+		return nil
+	}
+
+	var bidReal, bidImag, bidTotalAmp float64
+	var bidCount int
+	var askReal, askImag, askTotalAmp float64
+	var askCount int
+
+	for index := 0; index < state.N; index++ {
+		phase := float64(state.Phase[index])
+		amp := float64(state.Amp[index])
+		cosP := math.Cos(phase)
+		sinP := math.Sin(phase)
+
+		if (state.TokenIDs[index] & 1) == 0 {
+			bidReal += amp * cosP
+			bidImag += amp * sinP
+			bidTotalAmp += amp
+			bidCount++
+			continue
+		}
+
+		askReal += amp * cosP
+		askImag += amp * sinP
+		askTotalAmp += amp
+		askCount++
+	}
+
+	bidCoherence := 0.0
+	bidPhase := 0.0
+
+	if bidTotalAmp > 0 {
+		bidCoherence = math.Hypot(bidReal, bidImag) / bidTotalAmp
+	}
+
+	if bidCount > 0 {
+		bidPhase = math.Atan2(bidImag, bidReal)
+	}
+
+	askCoherence := 0.0
+	askPhase := 0.0
+
+	if askTotalAmp > 0 {
+		askCoherence = math.Hypot(askReal, askImag) / askTotalAmp
+	}
+
+	if askCount > 0 {
+		askPhase = math.Atan2(askImag, askReal)
+	}
+
+	return []types.PhaseChannelResultant{
+		{
+			Side:           "bid",
+			Count:          bidCount,
+			TotalAmplitude: bidTotalAmp,
+			Coherence:      bidCoherence,
+			Phase:          bidPhase,
+		},
+		{
+			Side:           "ask",
+			Count:          askCount,
+			TotalAmplitude: askTotalAmp,
+			Coherence:      askCoherence,
+			Phase:          askPhase,
+		},
+	}
 }
 
 func (solver *Solver) publishReading(state *sensorium.State) *State {
@@ -670,10 +716,10 @@ func (solver *Solver) publishReading(state *sensorium.State) *State {
 		momRho, fieldEnergy, waveReal, waveImag,
 	)
 
-	solver.version++
+	version := solver.version.Add(1)
 	reading := State{
 		At:      time.Now(),
-		Version: solver.version,
+		Version: version,
 		State: &sensorium.State{
 			N:                 state.N,
 			CoherencePosition: slices.Clone(state.CoherencePosition),
@@ -699,8 +745,9 @@ func (solver *Solver) publishReading(state *sensorium.State) *State {
 		MomRho: momRho, FieldEnergy: fieldEnergy, WaveReal: waveReal, WaveImag: waveImag,
 		DensityScale: densityScale, MomentumScale: momentumScale,
 		EnergyScale: energyScale, WaveScale: waveScale,
-		Reading: solver.physics.Reading(),
-		Modes:   modes,
+		Reading:    solver.physics.Reading(),
+		Modes:      modes,
+		Resultants: computePhaseResultants(state),
 	}
 	solver.reading.Store(&reading)
 
@@ -760,11 +807,13 @@ func (solver *Solver) Crystallize(
 		return nil
 	}
 
-	solver.advanceMu.Lock()
-	defer solver.advanceMu.Unlock()
+	for !solver.isAdvancing.CompareAndSwap(false, true) {
+		goruntime.Gosched()
+	}
+	defer solver.isAdvancing.Store(false)
 
 	for _, price := range candidateLevels {
-		if price <= 0 || math.IsNaN(price) || math.IsInf(price, 0) {
+		if price <= 0 {
 			continue
 		}
 

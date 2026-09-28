@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/bytedance/sonic"
@@ -38,52 +38,66 @@ func (s PhysicsSnapshot) Marshal() ([]byte, error) {
 // Watching requests at most five snapshots/second from the existing producer.
 // When unwatched it does not force particle/grid readback on the live engine.
 type PhysicsMonitor struct {
-	mu          sync.Mutex
-	until, last time.Time
-	data        []byte
-	failure     string
+	untilNs atomic.Int64
+	lastNs  atomic.Int64
+	data    atomic.Pointer[[]byte]
+	failure atomic.Pointer[string]
 }
 
 func (m *PhysicsMonitor) WantsSnapshot() bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	now := time.Now()
-	return now.Before(m.until) && now.Sub(m.last) >= 200*time.Millisecond
+	now := time.Now().UnixNano()
+	until := m.untilNs.Load()
+	last := m.lastNs.Load()
+
+	return now < until && (now-last) >= int64(200*time.Millisecond)
 }
+
 func (m *PhysicsMonitor) Observe(s PhysicsSnapshot) error {
-	bytes, err := s.Marshal()
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	raw, err := s.Marshal()
+
 	if err != nil {
-		m.failure = err.Error()
+		errStr := err.Error()
+		m.failure.Store(&errStr)
+
 		return err
 	}
-	m.data = bytes
-	m.failure = ""
-	m.last = time.Now()
+
+	m.data.Store(&raw)
+	m.failure.Store(nil)
+	m.lastNs.Store(time.Now().UnixNano())
+
 	return nil
 }
+
 func (m *PhysicsMonitor) Reject(err error) {
 	if err == nil {
 		return
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.failure = err.Error()
+
+	errStr := err.Error()
+	m.failure.Store(&errStr)
 }
 
 func (m *PhysicsMonitor) Poll() ([]byte, int) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.until = time.Now().Add(5 * time.Second)
-	if m.failure != "" {
-		b, _ := json.Marshal(map[string]string{"error": m.failure})
+	m.untilNs.Store(time.Now().Add(5 * time.Second).UnixNano())
+
+	if failPtr := m.failure.Load(); failPtr != nil && *failPtr != "" {
+		b, err := json.Marshal(map[string]string{"error": *failPtr})
+
+		if err != nil {
+			return []byte(`{"error":"marshal failure"}`), http.StatusUnprocessableEntity
+		}
+
 		return b, http.StatusUnprocessableEntity
 	}
-	if len(m.data) == 0 {
+
+	dataPtr := m.data.Load()
+
+	if dataPtr == nil || len(*dataPtr) == 0 {
 		return []byte(`{"error":"No published physics reading yet"}`), http.StatusServiceUnavailable
 	}
-	return append([]byte(nil), m.data...), http.StatusOK
+
+	return append([]byte(nil), (*dataPtr)...), http.StatusOK
 }
 
 // ServeHTTP also makes the same component directly testable without Fiber.
@@ -96,12 +110,16 @@ func (m *PhysicsMonitor) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
 	case "/physics", "/physics/":
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte(PhysicsMonitorHTML))
+		if _, err := w.Write([]byte(PhysicsMonitorHTML)); err != nil {
+			return
+		}
 	case "/physics/health":
 		b, status := m.Poll()
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
-		_, _ = w.Write(b)
+		if _, err := w.Write(b); err != nil {
+			return
+		}
 	default:
 		http.NotFound(w, r)
 	}

@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/bytedance/sonic"
@@ -21,7 +21,7 @@ funding unavailable. A new connection session starts a new funding reference.
 Protocol: https://docs.kraken.com/api-reference/account-data/get-ledgers-info
 */
 type FundingLedger struct {
-	mu     sync.Mutex
+	isBusy atomic.Bool
 	cursor int64
 	seen   map[string]struct{}
 	total  *decimal.Decimal
@@ -59,8 +59,9 @@ func (funding *FundingLedger) Observe(
 	quote string,
 	at time.Time,
 ) (*decimal.Decimal, string, error) {
-	funding.mu.Lock()
-	defer funding.mu.Unlock()
+	for !funding.isBusy.CompareAndSwap(false, true) {
+	}
+	defer funding.isBusy.Store(false)
 
 	if funding.total == nil {
 		funding.total = decimal.NewFromInt64(0)

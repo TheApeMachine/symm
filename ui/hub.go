@@ -5,7 +5,7 @@ import (
 	"io"
 	neturl "net/url"
 	"strconv"
-	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/bytedance/sonic"
@@ -59,8 +59,7 @@ type Hub struct {
 	physics          sensorium.PhysicsMonitor
 	app              *fiber.App
 	listenAddr       string
-	frontend         *websocket.Conn
-	frontendMu       sync.Mutex
+	frontend         atomic.Pointer[websocket.Conn]
 	store            *tables.Catalog
 	tradeStore       TradeJournalSource
 	positionSource   PositionSource
@@ -342,17 +341,11 @@ func NewHub(
 	hub.registerWorkbench()
 
 	hub.app.Get("/ws", websocket.New(func(conn *websocket.Conn) {
-		hub.frontendMu.Lock()
-		hub.frontend = conn
-		hub.frontendMu.Unlock()
+		hub.frontend.Store(conn)
 		errnie.Info("hub: frontend websocket connected")
 
 		defer func() {
-			hub.frontendMu.Lock()
-			if hub.frontend == conn {
-				hub.frontend = nil
-			}
-			hub.frontendMu.Unlock()
+			hub.frontend.CompareAndSwap(conn, nil)
 			errnie.Info("hub: frontend websocket disconnected")
 			conn.Conn.Close()
 		}()

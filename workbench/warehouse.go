@@ -31,7 +31,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
-	"sync"
+	"sync/atomic"
 
 	"github.com/marcboeker/go-duckdb/v2"
 	"github.com/spf13/viper"
@@ -47,13 +47,9 @@ or an extension repository that cannot be reached, must cost an analyst an
 error message rather than cost the run its start.
 */
 type Warehouse struct {
-	// mu guards the lazy construction of db and conn, and is held only for
-	// that. running serializes the statements themselves, which share one
-	// connection and therefore one session.
-	mu      sync.Mutex
-	running sync.Mutex
-	db      *sql.DB
-	conn    *sql.Conn
+	db          atomic.Pointer[sql.DB]
+	conn        atomic.Pointer[sql.Conn]
+	sessionGate chan struct{}
 }
 
 /*
@@ -72,24 +68,20 @@ func New() *Warehouse {
 	viper.SetDefault("workbench.max_temp_directory_size", "10GB")
 	viper.SetDefault("workbench.threads", 4)
 
-	return &Warehouse{}
+	warehouse := &Warehouse{
+		sessionGate: make(chan struct{}, 1),
+	}
+	warehouse.sessionGate <- struct{}{}
+
+	return warehouse
 }
 
 /*
 Close releases the engine. A Warehouse that never connected owns nothing.
 */
 func (warehouse *Warehouse) Close() error {
-	warehouse.mu.Lock()
-	defer warehouse.mu.Unlock()
-
-	if warehouse.db == nil {
-		return nil
-	}
-
-	db := warehouse.db
-	conn := warehouse.conn
-	warehouse.db = nil
-	warehouse.conn = nil
+	conn := warehouse.conn.Swap(nil)
+	db := warehouse.db.Swap(nil)
 
 	if conn != nil {
 		if err := conn.Close(); err != nil {
@@ -101,12 +93,14 @@ func (warehouse *Warehouse) Close() error {
 		}
 	}
 
-	if err := db.Close(); err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.IO,
-			"workbench: close duckdb",
-			err,
-		))
+	if db != nil {
+		if err := db.Close(); err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.IO,
+				"workbench: close duckdb",
+				err,
+			))
+		}
 	}
 
 	return nil
@@ -124,11 +118,8 @@ error: the catalog it could not reach is a separate process, and the next
 request is a legitimate retry.
 */
 func (warehouse *Warehouse) connect(ctx context.Context) (*sql.DB, error) {
-	warehouse.mu.Lock()
-	defer warehouse.mu.Unlock()
-
-	if warehouse.db != nil {
-		return warehouse.db, nil
+	if existing := warehouse.db.Load(); existing != nil {
+		return existing, nil
 	}
 
 	uri := viper.GetString("storage.iceberg.uri")
@@ -172,7 +163,17 @@ func (warehouse *Warehouse) connect(ctx context.Context) (*sql.DB, error) {
 		}
 	}
 
-	warehouse.db = db
+	if !warehouse.db.CompareAndSwap(nil, db) {
+		if closeErr := db.Close(); closeErr != nil {
+			errnie.Error(errnie.Err(
+				errnie.IO,
+				"workbench: close redundant duckdb instance",
+				closeErr,
+			))
+		}
+
+		return warehouse.db.Load(), nil
+	}
 
 	return db, nil
 }
@@ -286,17 +287,14 @@ in the same session, and serializing on it keeps two viewers from racing to
 create the same name.
 */
 func (warehouse *Warehouse) session(ctx context.Context) (*sql.Conn, error) {
+	if existing := warehouse.conn.Load(); existing != nil {
+		return existing, nil
+	}
+
 	db, err := warehouse.connect(ctx)
 
 	if err != nil {
 		return nil, err
-	}
-
-	warehouse.mu.Lock()
-	defer warehouse.mu.Unlock()
-
-	if warehouse.conn != nil {
-		return warehouse.conn, nil
 	}
 
 	conn, err := db.Conn(ctx)
@@ -309,7 +307,17 @@ func (warehouse *Warehouse) session(ctx context.Context) (*sql.Conn, error) {
 		))
 	}
 
-	warehouse.conn = conn
+	if !warehouse.conn.CompareAndSwap(nil, conn) {
+		if closeErr := conn.Close(); closeErr != nil {
+			errnie.Error(errnie.Err(
+				errnie.IO,
+				"workbench: close redundant duckdb session",
+				closeErr,
+			))
+		}
+
+		return warehouse.conn.Load(), nil
+	}
 
 	return conn, nil
 }
@@ -341,8 +349,12 @@ func (warehouse *Warehouse) Execute(ctx context.Context, statement string) ([]by
 		return nil, err
 	}
 
-	warehouse.running.Lock()
-	defer warehouse.running.Unlock()
+	select {
+	case <-warehouse.sessionGate:
+		defer func() { warehouse.sessionGate <- struct{}{} }()
+	case <-ctx.Done():
+		return nil, errnie.Error(ctx.Err())
+	}
 
 	rows, err := warehouse.selects(ctx, conn, statement)
 

@@ -54,6 +54,7 @@ type ReplayProgressFunc func(frame *data.Measurement[float64], record *tables.Ex
 type Rehearsal struct {
 	ctx             context.Context
 	engine          *cognition.Engine
+	price           *broker.Price
 	detector        *tables.StreamingDetector
 	space           *impulse.Map
 	precursor       *Precursor
@@ -65,6 +66,7 @@ type Rehearsal struct {
 	checkpointEpoch int64
 	trainedRuns     map[int64]int64
 	onProgress      ReplayProgressFunc
+	isSaving        atomic.Bool
 }
 
 func (rehearsal *Rehearsal) SetOnProgress(callback ReplayProgressFunc) {
@@ -75,6 +77,7 @@ func NewRehearsal(ctx context.Context, epoch int64, price *broker.Price, engine 
 	return &Rehearsal{
 		ctx:         ctx,
 		engine:      engine,
+		price:       price,
 		detector:    tables.NewStreamingDetector(epoch, price),
 		space:       impulse.NewMap(),
 		precursor:   NewPrecursor(),
@@ -370,17 +373,28 @@ func (rehearsal *Rehearsal) SaveCheckpoint(epoch int64) error {
 		return nil
 	}
 
+	if !rehearsal.isSaving.CompareAndSwap(false, true) {
+		return nil
+	}
+	defer rehearsal.isSaving.Store(false)
+
 	result, err := rehearsal.engine.Snapshot()
 
 	if err != nil {
 		return errnie.Error(errnie.Err(errnie.Internal, "rehearsal: snapshot failed", err))
 	}
 
+	reading := rehearsal.reading
+
+	if published := rehearsal.published.Load(); published != nil {
+		reading = *published
+	}
+
 	checkpoint := RehearsalCheckpoint{
 		Format:      TrainingFormat,
 		Epoch:       epoch,
 		TrainedRuns: rehearsal.trainedRuns,
-		Reading:     rehearsal.reading,
+		Reading:     reading,
 		Model:       result.Model,
 	}
 
@@ -588,7 +602,33 @@ func (rehearsal *Rehearsal) Restore(catalog *tables.Catalog) error {
 	return nil
 }
 
-// PollUntrained checks the catalog for new excursions and pre-trains on them.
+// PollUntrained checks the catalog for new excursions and pre-trains on them using an independent replay worker.
 func (rehearsal *Rehearsal) PollUntrained(catalog *tables.Catalog) error {
-	return rehearsal.Restore(catalog)
+	if rehearsal == nil || rehearsal.engine == nil || catalog == nil {
+		return nil
+	}
+
+	historical := NewRehearsal(rehearsal.ctx, rehearsal.checkpointEpoch, rehearsal.price, rehearsal.engine)
+	historical.trainedRuns = make(map[int64]int64, len(rehearsal.trainedRuns))
+
+	for epoch, tick := range rehearsal.trainedRuns {
+		historical.trainedRuns[epoch] = tick
+	}
+
+	if rehearsal.onProgress != nil {
+		historical.SetOnProgress(rehearsal.onProgress)
+	}
+
+	if err := historical.Restore(catalog); err != nil {
+		return err
+	}
+
+	reading := historical.reading
+	rehearsal.published.Store(&reading)
+
+	for epoch, tick := range historical.trainedRuns {
+		rehearsal.trainedRuns[epoch] = tick
+	}
+
+	return nil
 }

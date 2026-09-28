@@ -15,11 +15,12 @@ import (
 
 func newTestFutures(ctx context.Context) *FuturesLive {
 	futures := &FuturesLive{
-		System:        runtime.NewSystem(ctx, "websocket:futures"),
-		callbacks:     &sync.Map{},
-		queue:         lf.NewQueue[map[string]any](),
-		subscriptions: make(map[string][]string),
+		System:    runtime.NewSystem(ctx, "websocket:futures"),
+		callbacks: &sync.Map{},
+		queue:     lf.NewQueue[map[string]any](),
 	}
+	initialSubscriptions := make(map[string][]string)
+	futures.subscriptions.Store(&initialSubscriptions)
 
 	futures.Transition(runtime.READY)
 	return futures

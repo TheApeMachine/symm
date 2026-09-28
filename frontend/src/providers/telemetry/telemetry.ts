@@ -78,6 +78,7 @@ export { PerspectiveFrame, PerspectiveFrameT } from './telemetry/perspective-fra
 export { PerspectiveReading, PerspectiveReadingT } from './telemetry/perspective-reading.js';
 export { PhaseOutcome, PhaseOutcomeT } from './telemetry/phase-outcome.js';
 export { PhaseResponse, PhaseResponseT } from './telemetry/phase-response.js';
+export { PhaseResultant, PhaseResultantT } from './telemetry/phase-resultant.js';
 export { PhysicsHealth, PhysicsHealthT } from './telemetry/physics-health.js';
 export { PilotHealth, PilotHealthT } from './telemetry/pilot-health.js';
 export { Position, PositionT } from './telemetry/position.js';

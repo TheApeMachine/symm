@@ -601,7 +601,7 @@ export const LearningDashboard = () => {
 
 				<div className="flex items-center gap-4 text-[11px] text-(--f3)">
 					<div className="flex items-center gap-1.5">
-						<span>SKILL</span>
+						<span>WIN RATE</span>
 						<span className="text-(--f1) font-bold">
 							{skillPct.toFixed(1)}%
 						</span>

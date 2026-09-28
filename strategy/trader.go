@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/system"
@@ -22,9 +24,8 @@ type Trader struct {
 	desk      *broker.Desk
 	balance   *broker.Balance
 	price     *broker.Price
-	positions map[string]*broker.Position
-	decisions []*wire.DecisionT
-	mu        sync.RWMutex
+	positions sync.Map
+	decisions atomic.Pointer[[]*wire.DecisionT]
 }
 
 func NewTrader(
@@ -33,14 +34,21 @@ func NewTrader(
 	price *broker.Price,
 	balance *broker.Balance,
 ) *Trader {
-	return &Trader{
-		System:    runtime.NewSystem(ctx, "trader"),
-		desk:      broker.NewDesk(ctx, api, price, balance),
-		balance:   balance,
-		price:     price,
-		positions: make(map[string]*broker.Position),
-		decisions: make([]*wire.DecisionT, 0, 50),
+	trader := &Trader{
+		System:  runtime.NewSystem(ctx, "trader"),
+		desk:    broker.NewDesk(ctx, api, price, balance),
+		balance: balance,
+		price:   price,
 	}
+
+	initialDecisions := make([]*wire.DecisionT, 0, 50)
+	trader.decisions.Store(&initialDecisions)
+
+	if api != nil {
+		api.OnExecution(trader.ApplyExecution)
+	}
+
+	return trader
 }
 
 func (trader *Trader) OnAction(symbol string, action Action) {
@@ -48,27 +56,27 @@ func (trader *Trader) OnAction(symbol string, action Action) {
 		return
 	}
 
-	trader.mu.Lock()
-	defer trader.mu.Unlock()
-
 	switch action {
 	case ActionEnter:
-		if trader.positions[symbol] != nil {
+		if _, exists := trader.positions.Load(symbol); exists {
 			return
 		}
 
 		plannerConfig := system.NewPlannerConfig()
 
-		if trader.price != nil && len(trader.positions) > 0 {
+		if trader.price != nil {
 			var totalCost *decimal.Decimal
 			var totalPnL *decimal.Decimal
 
-			for sym, pos := range trader.positions {
-				if pos == nil {
-					continue
+			trader.positions.Range(func(key, value any) bool {
+				symbolKey, okKey := key.(string)
+				positionVal, okVal := value.(*broker.Position)
+
+				if !okKey || !okVal || positionVal == nil {
+					return true
 				}
 
-				pnl := trader.price.PnL(sym, pos)
+				pnl := trader.price.PnL(symbolKey, positionVal)
 
 				if pnl != nil {
 					if totalPnL == nil {
@@ -78,8 +86,8 @@ func (trader *Trader) OnAction(symbol string, action Action) {
 					}
 				}
 
-				entryPrice := pos.Price()
-				entryVolume := pos.Volume()
+				entryPrice := positionVal.Price()
+				entryVolume := positionVal.Volume()
 
 				if entryPrice != nil && entryVolume != nil {
 					cost := entryPrice.Mul(entryVolume)
@@ -90,13 +98,15 @@ func (trader *Trader) OnAction(symbol string, action Action) {
 						totalCost = totalCost.Add(cost)
 					}
 				}
-			}
+
+				return true
+			})
 
 			if totalCost != nil && totalCost.Sign() > 0 && totalPnL != nil && totalPnL.Sign() < 0 {
 				lossRatio := totalPnL.Abs().Div(totalCost).Float64()
 
 				if lossRatio >= plannerConfig.AggregateMaxLossFraction {
-					trader.recordDecisionLocked(symbol, "blocked", 0.0, "aggregate max loss fraction exceeded")
+					trader.RecordDecision(symbol, "blocked", 0.0, "aggregate max loss fraction exceeded")
 					return
 				}
 			}
@@ -105,20 +115,27 @@ func (trader *Trader) OnAction(symbol string, action Action) {
 		position := trader.desk.Enter(symbol)
 
 		if position != nil {
-			trader.positions[symbol] = position
-			trader.recordDecisionLocked(symbol, "enter", 1.0, "precursor trigger")
+			trader.positions.Store(symbol, position)
+			trader.RecordDecision(symbol, "enter", 1.0, "precursor trigger")
 		}
 	case ActionExit:
-		position, found := trader.positions[symbol]
+		val, found := trader.positions.Load(symbol)
 
-		if found && position != nil {
-			if err := trader.desk.Exit(position); err != nil {
-				trader.recordDecisionLocked(symbol, "exit_failed", 1.0, fmt.Sprintf("exit failed: %v", err))
+		if found && val != nil {
+			position, ok := val.(*broker.Position)
+
+			if !ok || position == nil {
+				trader.positions.Delete(symbol)
 				return
 			}
 
-			delete(trader.positions, symbol)
-			trader.recordDecisionLocked(symbol, "exit", 1.0, "exit trigger")
+			if err := trader.desk.Exit(position); err != nil {
+				trader.RecordDecision(symbol, "exit_failed", 1.0, fmt.Sprintf("exit failed: %v", err))
+				return
+			}
+
+			trader.positions.Delete(symbol)
+			trader.RecordDecision(symbol, "exit", 1.0, "exit trigger")
 		}
 	}
 }
@@ -128,13 +145,6 @@ func (trader *Trader) RecordDecision(symbol string, action string, confidence fl
 		return
 	}
 
-	trader.mu.Lock()
-	defer trader.mu.Unlock()
-
-	trader.recordDecisionLocked(symbol, action, confidence, reason)
-}
-
-func (trader *Trader) recordDecisionLocked(symbol string, action string, confidence float64, reason string) {
 	decision := &wire.DecisionT{
 		Id:         fmt.Sprintf("dec-%s-%d", symbol, time.Now().UnixNano()),
 		Symbol:     symbol,
@@ -144,11 +154,28 @@ func (trader *Trader) recordDecisionLocked(symbol string, action string, confide
 		At:         time.Now().UnixNano(),
 	}
 
-	if len(trader.decisions) >= 50 {
-		trader.decisions = trader.decisions[1:]
-	}
+	for {
+		oldPtr := trader.decisions.Load()
+		var oldSlice []*wire.DecisionT
 
-	trader.decisions = append(trader.decisions, decision)
+		if oldPtr != nil {
+			oldSlice = *oldPtr
+		}
+
+		newSlice := make([]*wire.DecisionT, 0, len(oldSlice)+1)
+		startIndex := 0
+
+		if len(oldSlice) >= 50 {
+			startIndex = len(oldSlice) - 49
+		}
+
+		newSlice = append(newSlice, oldSlice[startIndex:]...)
+		newSlice = append(newSlice, decision)
+
+		if trader.decisions.CompareAndSwap(oldPtr, &newSlice) {
+			break
+		}
+	}
 }
 
 func (trader *Trader) Position(symbol string) *broker.Position {
@@ -156,10 +183,14 @@ func (trader *Trader) Position(symbol string) *broker.Position {
 		return nil
 	}
 
-	trader.mu.RLock()
-	defer trader.mu.RUnlock()
+	val, ok := trader.positions.Load(symbol)
 
-	return trader.positions[symbol]
+	if !ok || val == nil {
+		return nil
+	}
+
+	position, _ := val.(*broker.Position)
+	return position
 }
 
 func (trader *Trader) Holding(symbol string) bool {
@@ -167,10 +198,8 @@ func (trader *Trader) Holding(symbol string) bool {
 		return false
 	}
 
-	trader.mu.RLock()
-	defer trader.mu.RUnlock()
-
-	return trader.positions[symbol] != nil
+	val, ok := trader.positions.Load(symbol)
+	return ok && val != nil
 }
 
 func (trader *Trader) PositionCount() int {
@@ -178,10 +207,16 @@ func (trader *Trader) PositionCount() int {
 		return 0
 	}
 
-	trader.mu.RLock()
-	defer trader.mu.RUnlock()
+	count := 0
+	trader.positions.Range(func(_, val any) bool {
+		if val != nil {
+			count++
+		}
 
-	return len(trader.positions)
+		return true
+	})
+
+	return count
 }
 
 func (trader *Trader) Positions() map[string]*broker.Position {
@@ -189,14 +224,17 @@ func (trader *Trader) Positions() map[string]*broker.Position {
 		return nil
 	}
 
-	trader.mu.RLock()
-	defer trader.mu.RUnlock()
+	snapshot := make(map[string]*broker.Position)
+	trader.positions.Range(func(key, val any) bool {
+		symbolKey, okKey := key.(string)
+		posVal, okVal := val.(*broker.Position)
 
-	snapshot := make(map[string]*broker.Position, len(trader.positions))
+		if okKey && okVal && posVal != nil {
+			snapshot[symbolKey] = posVal
+		}
 
-	for key, value := range trader.positions {
-		snapshot[key] = value
-	}
+		return true
+	})
 
 	return snapshot
 }
@@ -214,14 +252,14 @@ func (trader *Trader) PositionsWire() *wire.PositionsFrameT {
 		return &wire.PositionsFrameT{Rows: []*wire.PositionT{}}
 	}
 
-	trader.mu.RLock()
-	defer trader.mu.RUnlock()
+	rows := make([]*wire.PositionT, 0)
 
-	rows := make([]*wire.PositionT, 0, len(trader.positions))
+	trader.positions.Range(func(key, val any) bool {
+		symbolKey, okKey := key.(string)
+		position, okPos := val.(*broker.Position)
 
-	for symbol, position := range trader.positions {
-		if position == nil {
-			continue
+		if !okKey || !okPos || position == nil {
+			return true
 		}
 
 		entryPrice := position.Price()
@@ -231,9 +269,9 @@ func (trader *Trader) PositionsWire() *wire.PositionsFrameT {
 		returnPct := 0.0
 
 		if trader.price != nil {
-			mark = trader.price.CurrentMark(symbol)
-			pnl = trader.price.PnL(symbol, position)
-			returnPct = trader.price.ReturnPct(symbol, position)
+			mark = trader.price.CurrentMark(symbolKey)
+			pnl = trader.price.PnL(symbolKey, position)
+			returnPct = trader.price.ReturnPct(symbolKey, position)
 		}
 
 		entryPriceStr := ""
@@ -268,8 +306,8 @@ func (trader *Trader) PositionsWire() *wire.PositionsFrameT {
 
 		holding := &wire.HoldingT{
 			Status:      "active",
-			Symbol:      symbol,
-			Asset:       symbol,
+			Symbol:      symbolKey,
+			Asset:       symbolKey,
 			Qty:         volumeStr,
 			SellableQty: volumeStr,
 			EntryAt:     entryAtNs,
@@ -281,7 +319,7 @@ func (trader *Trader) PositionsWire() *wire.PositionsFrameT {
 
 		decision := &wire.DecisionT{
 			Id:         position.OrderID(),
-			Symbol:     symbol,
+			Symbol:     symbolKey,
 			Action:     "enter",
 			Confidence: 1.0,
 			At:         entryAtNs,
@@ -292,7 +330,9 @@ func (trader *Trader) PositionsWire() *wire.PositionsFrameT {
 			Decision: decision,
 			Holding:  holding,
 		})
-	}
+
+		return true
+	})
 
 	return &wire.PositionsFrameT{Rows: rows}
 }
@@ -316,15 +356,70 @@ func (trader *Trader) DecisionsWire() *wire.StrategyFrameT {
 		return &wire.StrategyFrameT{Evaluated: true, Decisions: []*wire.DecisionT{}}
 	}
 
-	trader.mu.RLock()
-	defer trader.mu.RUnlock()
+	decPtr := trader.decisions.Load()
+	var decisions []*wire.DecisionT
 
-	decisions := make([]*wire.DecisionT, len(trader.decisions))
-	copy(decisions, trader.decisions)
+	if decPtr != nil {
+		decisions = make([]*wire.DecisionT, len(*decPtr))
+		copy(decisions, *decPtr)
+	}
 
 	return &wire.StrategyFrameT{
 		Evaluated: true,
 		Outcome:   "active",
 		Decisions: decisions,
+	}
+}
+
+func (trader *Trader) ApplyExecution(exec *kraken.Execution) {
+	if trader == nil || exec == nil {
+		return
+	}
+
+	for _, item := range exec.Data {
+		var pos *broker.Position
+
+		if val, ok := trader.positions.Load(item.Symbol); ok && val != nil {
+			pos, _ = val.(*broker.Position)
+		}
+
+		if pos == nil {
+			trader.positions.Range(func(_, val any) bool {
+				candidate, okCandidate := val.(*broker.Position)
+
+				if okCandidate && candidate != nil && (candidate.OrderID() == item.OrderID || candidate.OrderID() == item.ClientOrderID) {
+					pos = candidate
+					return false
+				}
+
+				return true
+			})
+		}
+
+		if pos == nil {
+			continue
+		}
+
+		fillPrice := item.AvgPrice
+
+		if fillPrice == nil || fillPrice.Sign() <= 0 {
+			fillPrice = item.LastPrice
+		}
+
+		fillVolume := item.CumQty
+
+		if fillVolume == nil || fillVolume.Sign() <= 0 {
+			fillVolume = item.LastQty
+		}
+
+		fee := item.FeeUsdEquiv
+
+		if fee == nil && len(item.Fees) > 0 {
+			fee = decimal.NewFromFloat64(item.Fees[0].Qty)
+		}
+
+		if fillPrice != nil && fillVolume != nil {
+			pos.SetFill(fillPrice, fillVolume, fee)
+		}
 	}
 }

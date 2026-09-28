@@ -7,13 +7,14 @@ import (
 )
 
 type ManifoldReadingT struct {
-	Divergence       float64         `json:"divergence"`
-	GuidanceSpeed    float64         `json:"guidanceSpeed"`
-	CoherenceMag2    float64         `json:"coherenceMag2"`
-	PressureGradNorm float64         `json:"pressureGradNorm"`
-	ViscosityProxy   float64         `json:"viscosityProxy"`
-	KuramotoR        float64         `json:"kuramotoR"`
-	Health           *PhysicsHealthT `json:"health"`
+	Divergence float64 `json:"divergence"`
+	GuidanceSpeed float64 `json:"guidanceSpeed"`
+	CoherenceMag2 float64 `json:"coherenceMag2"`
+	PressureGradNorm float64 `json:"pressureGradNorm"`
+	ViscosityProxy float64 `json:"viscosityProxy"`
+	KuramotoR float64 `json:"kuramotoR"`
+	KuramotoPsi float64 `json:"kuramotoPsi"`
+	Health *PhysicsHealthT `json:"health"`
 }
 
 func (t *ManifoldReadingT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
@@ -28,6 +29,7 @@ func (t *ManifoldReadingT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffse
 	ManifoldReadingAddPressureGradNorm(builder, t.PressureGradNorm)
 	ManifoldReadingAddViscosityProxy(builder, t.ViscosityProxy)
 	ManifoldReadingAddKuramotoR(builder, t.KuramotoR)
+	ManifoldReadingAddKuramotoPsi(builder, t.KuramotoPsi)
 	ManifoldReadingAddHealth(builder, healthOffset)
 	return ManifoldReadingEnd(builder)
 }
@@ -39,6 +41,7 @@ func (rcv *ManifoldReading) UnPackTo(t *ManifoldReadingT) {
 	t.PressureGradNorm = rcv.PressureGradNorm()
 	t.ViscosityProxy = rcv.ViscosityProxy()
 	t.KuramotoR = rcv.KuramotoR()
+	t.KuramotoPsi = rcv.KuramotoPsi()
 	t.Health = rcv.Health(nil).UnPack()
 }
 
@@ -158,8 +161,20 @@ func (rcv *ManifoldReading) MutateKuramotoR(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(14, n)
 }
 
-func (rcv *ManifoldReading) Health(obj *PhysicsHealth) *PhysicsHealth {
+func (rcv *ManifoldReading) KuramotoPsi() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *ManifoldReading) MutateKuramotoPsi(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(16, n)
+}
+
+func (rcv *ManifoldReading) Health(obj *PhysicsHealth) *PhysicsHealth {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
 		x := rcv._tab.Indirect(o + rcv._tab.Pos)
 		if obj == nil {
@@ -172,7 +187,7 @@ func (rcv *ManifoldReading) Health(obj *PhysicsHealth) *PhysicsHealth {
 }
 
 func ManifoldReadingStart(builder *flatbuffers.Builder) {
-	builder.StartObject(7)
+	builder.StartObject(8)
 }
 func ManifoldReadingAddDivergence(builder *flatbuffers.Builder, divergence float64) {
 	builder.PrependFloat64Slot(0, divergence, 0.0)
@@ -192,8 +207,11 @@ func ManifoldReadingAddViscosityProxy(builder *flatbuffers.Builder, viscosityPro
 func ManifoldReadingAddKuramotoR(builder *flatbuffers.Builder, kuramotoR float64) {
 	builder.PrependFloat64Slot(5, kuramotoR, 0.0)
 }
+func ManifoldReadingAddKuramotoPsi(builder *flatbuffers.Builder, kuramotoPsi float64) {
+	builder.PrependFloat64Slot(6, kuramotoPsi, 0.0)
+}
 func ManifoldReadingAddHealth(builder *flatbuffers.Builder, health flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(6, flatbuffers.UOffsetT(health), 0)
+	builder.PrependUOffsetTSlot(7, flatbuffers.UOffsetT(health), 0)
 }
 func ManifoldReadingEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

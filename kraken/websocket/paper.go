@@ -7,7 +7,7 @@ import (
 	"errors"
 	"os/exec"
 	"strings"
-	"sync"
+	"sync/atomic"
 
 	"github.com/theapemachine/symm/nomagique/runtime"
 
@@ -28,11 +28,11 @@ Private frames publish onto explicit typed subscriptions so Desk and tests use
 the same direct wiring as the live transport.
 */
 type Paper struct {
-	ctx        context.Context
-	cancel     context.CancelFunc
-	simulator  *Simulator
-	commandMu  sync.Mutex
-	executions func(*kraken.Execution)
+	ctx         context.Context
+	cancel      context.CancelFunc
+	simulator   *Simulator
+	commandGate atomic.Pointer[chan struct{}]
+	executions  func(*kraken.Execution)
 }
 
 /*
@@ -50,6 +50,10 @@ func NewPaper(
 		simulator: simulator,
 	}
 
+	gate := make(chan struct{}, 1)
+	gate <- struct{}{}
+	paper.commandGate.Store(&gate)
+
 	return paper
 }
 
@@ -58,6 +62,10 @@ Initialize is a no-op; readiness follows the injected simulator.
 */
 func (paper *Paper) Initialize() error {
 	return nil
+}
+
+func (paper *Paper) OnExecution(handler func(*kraken.Execution)) {
+	paper.executions = handler
 }
 
 /*
@@ -588,9 +596,32 @@ func (paper *Paper) AddOrder(order *spot.AddOrderRequest) (spot.AddOrderResult, 
 	}, nil
 }
 
+func (paper *Paper) gate() chan struct{} {
+	for {
+		ptr := paper.commandGate.Load()
+
+		if ptr != nil {
+			return *ptr
+		}
+
+		ch := make(chan struct{}, 1)
+		ch <- struct{}{}
+
+		if paper.commandGate.CompareAndSwap(nil, &ch) {
+			return ch
+		}
+	}
+}
+
 func (paper *Paper) execute(entity string, command ...string) (datura.Map[any], error) {
-	paper.commandMu.Lock()
-	defer paper.commandMu.Unlock()
+	gate := paper.gate()
+
+	select {
+	case <-gate:
+		defer func() { gate <- struct{}{} }()
+	case <-paper.ctx.Done():
+		return nil, paper.ctx.Err()
+	}
 
 	input := []string{"paper"}
 	input = append(input, command...)

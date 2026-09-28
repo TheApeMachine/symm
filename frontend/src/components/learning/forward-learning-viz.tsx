@@ -27,9 +27,7 @@ interface ForwardTapePoint {
 
 export const ForwardLearningViz = () => {
 	const tapeRef = useRef<HTMLDivElement>(null);
-	const distRef = useRef<HTMLDivElement>(null);
 	const [tapeDim, setTapeDim] = useState({ width: 800, height: 300 });
-	const [distDim, setDistDim] = useState({ width: 300, height: 150 });
 	const [isPlaying, setIsPlaying] = useState(true);
 
 	// Real tape points accumulated from the live training measurements
@@ -83,22 +81,6 @@ export const ForwardLearningViz = () => {
 			}
 		});
 		ro.observe(tapeTarget);
-		return () => ro.disconnect();
-	}, []);
-
-	useEffect(() => {
-		const distTarget = distRef.current;
-		if (!distTarget || typeof ResizeObserver === "undefined") return;
-
-		const ro = new ResizeObserver((entries) => {
-			if (entries[0]) {
-				const { width, height } = entries[0].contentRect;
-				if (width > 0 && height > 0) {
-					setDistDim({ width, height });
-				}
-			}
-		});
-		ro.observe(distTarget);
 		return () => ro.disconnect();
 	}, []);
 
@@ -350,55 +332,6 @@ export const ForwardLearningViz = () => {
 			lineGenerator: lg,
 		};
 	}, [points, tapeDim.width, tapeDim.height]);
-
-	// Distribution Curve calculation from real outcomes
-	const { curveData, distLineGen, distAreaGen, distXScale } = useMemo(() => {
-		const total = wins + losses;
-		const effectiveMean = meanEdge;
-		const effectiveVariance = total > 1 ? Math.max(1, 15 / total) : 8;
-		const sd = Math.max(0.2, Math.sqrt(effectiveVariance));
-
-		const distPdf = (x: number, m: number, s: number) =>
-			(1 / (s * Math.sqrt(2 * Math.PI))) * Math.exp(-0.5 * ((x - m) / s) ** 2);
-
-		const cd: { x: number; y: number }[] = [];
-		const minX = -15;
-		const maxX = 15;
-		for (let x = minX; x <= maxX; x += 0.5) {
-			cd.push({ x, y: distPdf(x, effectiveMean, sd) });
-		}
-
-		const maxCurveY = Math.max(...cd.map((d) => d.y), 0.1);
-		const dxScale = d3
-			.scaleLinear()
-			.domain([minX, maxX])
-			.range([20, distDim.width - 20]);
-		const dyScale = d3
-			.scaleLinear()
-			.domain([0, maxCurveY * 1.25])
-			.range([distDim.height - 25, 20]);
-
-		const daGen = d3
-			.area<{ x: number; y: number }>()
-			.x((d) => dxScale(d.x))
-			.y0(distDim.height - 25)
-			.y1((d) => dyScale(d.y))
-			.curve(d3.curveBasis);
-
-		const dlGen = d3
-			.line<{ x: number; y: number }>()
-			.x((d) => dxScale(d.x))
-			.y((d) => dyScale(d.y))
-			.curve(d3.curveBasis);
-
-		return {
-			curveData: cd,
-			distAreaGen: daGen,
-			distLineGen: dlGen,
-			distXScale: dxScale,
-			distYScale: dyScale,
-		};
-	}, [meanEdge, wins, losses, distDim.width, distDim.height]);
 
 	const totalOutcomes = Math.max(wins + losses, 1);
 
@@ -840,7 +773,7 @@ export const ForwardLearningViz = () => {
 									<th className="font-normal pb-1.5 px-2 text-right">Depth</th>
 									<th className="font-normal pb-1.5 px-2 text-right">Visits</th>
 									<th className="font-normal pb-1.5 px-2 text-right">
-										Mean Edge
+										Policy Bias
 									</th>
 									<th className="font-normal pb-1.5 px-2">Confidence</th>
 									<th className="font-normal pb-1.5 px-2 text-right">
@@ -873,7 +806,7 @@ export const ForwardLearningViz = () => {
 											)}
 										>
 											{p.meanEdge >= 0 ? "+" : ""}
-											{p.meanEdge.toFixed(2)} bp
+											{(p.meanEdge * 100).toFixed(1)}%
 										</td>
 										<td className="py-1.5 px-2">
 											<div className="flex items-center gap-2">
@@ -909,129 +842,6 @@ export const ForwardLearningViz = () => {
 								)}
 							</tbody>
 						</table>
-					</div>
-				</div>
-
-				{/* Edge Distribution Bell Curve */}
-				<div className="w-80 bg-(--surface) border-(--line) border rounded flex flex-col shrink-0 min-h-0">
-					<div className="h-8 border-(--line) border-b bg-(--sunken) flex items-center px-3 shrink-0 justify-between">
-						<span className="text-(--acc) uppercase tracking-widest text-[10px] font-bold">
-							Edge Distribution
-						</span>
-						<span className="text-(--f4) text-[10px]">
-							μ = {meanEdge.toFixed(1)} bp
-						</span>
-					</div>
-
-					<div ref={distRef} className="flex-1 relative">
-						{distDim.width > 0 && (
-							<svg
-								width={distDim.width}
-								height={distDim.height}
-								className="absolute inset-0"
-							>
-								<title>Edge Distribution</title>
-								<defs>
-									<linearGradient id="distFill" x1="0" y1="0" x2="0" y2="1">
-										<stop
-											offset="0%"
-											stopColor="var(--info)"
-											stopOpacity="0.3"
-										/>
-										<stop
-											offset="100%"
-											stopColor="var(--info)"
-											stopOpacity="0.0"
-										/>
-									</linearGradient>
-								</defs>
-
-								{/* Base X Axis */}
-								<line
-									x1={20}
-									y1={distDim.height - 25}
-									x2={distDim.width - 20}
-									y2={distDim.height - 25}
-									stroke="var(--line)"
-									strokeWidth="1"
-								/>
-
-								{/* Breakeven Line (0.0 bp) */}
-								<line
-									x1={distXScale(0)}
-									y1={20}
-									x2={distXScale(0)}
-									y2={distDim.height - 25}
-									stroke="var(--f4)"
-									strokeWidth="1"
-									strokeDasharray="2 2"
-								/>
-								<text
-									x={distXScale(0)}
-									y={15}
-									fill="var(--f4)"
-									fontSize="8px"
-									textAnchor="middle"
-								>
-									0.0 bp
-								</text>
-
-								{/* Mean Line */}
-								<line
-									x1={distXScale(meanEdge)}
-									y1={20}
-									x2={distXScale(meanEdge)}
-									y2={distDim.height - 25}
-									stroke="var(--up)"
-									strokeWidth="1"
-								/>
-								<text
-									x={distXScale(meanEdge)}
-									y={15}
-									fill="var(--up)"
-									fontSize="8px"
-									textAnchor="middle"
-									fontWeight="bold"
-								>
-									μ {meanEdge.toFixed(1)}
-								</text>
-
-								{/* Curve Area & Line */}
-								<path
-									d={distAreaGen(curveData) || undefined}
-									fill="url(#distFill)"
-								/>
-								<path
-									d={distLineGen(curveData) || undefined}
-									fill="none"
-									stroke="var(--info)"
-									strokeWidth="1.5"
-								/>
-
-								<text
-									x={20}
-									y={distDim.height - 10}
-									fill="var(--f4)"
-									fontSize="8px"
-								>
-									-15 bp
-								</text>
-								<text
-									x={distDim.width - 20}
-									y={distDim.height - 10}
-									fill="var(--f4)"
-									fontSize="8px"
-									textAnchor="end"
-								>
-									+15 bp
-								</text>
-							</svg>
-						)}
-					</div>
-
-					<div className="p-2 border-(--line) border-t text-[9px] text-(--f4)">
-						Normal fit to the authority-weighted mean and variance of completed
-						outcomes.
 					</div>
 				</div>
 			</div>

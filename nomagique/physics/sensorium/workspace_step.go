@@ -636,6 +636,8 @@ func (fluid *workspace) observe() Reading {
 	}
 
 	modes := float64(fluid.domain.MaxModes * spectralHeads)
+	kuramotoR, kuramotoPsi := kuramotoFromPhase(fluid.phase, fluid.particles)
+
 	return Reading{
 		Health:           fluid.health,
 		GuidanceSpeed:    math.Sqrt(speed2 / count),
@@ -643,7 +645,8 @@ func (fluid *workspace) observe() Reading {
 		PressureGradNorm: math.Sqrt(press2 / count),
 		ViscosityProxy:   fluid.domain.Mu * math.Sqrt(strain2/count),
 		CoherenceMag2:    coherence / modes,
-		KuramotoR:        kuramotoFromPhase(fluid.phase, fluid.particles),
+		KuramotoR:        kuramotoR,
+		KuramotoPsi:      kuramotoPsi,
 	}
 }
 
@@ -663,9 +666,9 @@ func cellPressure(energy []float32, x, y, z, gx, gy int, gamma float64) float64 
 	return (gamma - 1) * float64(energy[cell])
 }
 
-func kuramotoFromPhase(phase *Buffer, particles int) float64 {
+func kuramotoFromPhase(phase *Buffer, particles int) (float64, float64) {
 	if phase == nil || particles == 0 {
-		return 0
+		return 0, 0
 	}
 
 	values := phase.Float32Slice()[:particles]
@@ -680,7 +683,10 @@ func kuramotoFromPhase(phase *Buffer, particles int) float64 {
 	count := float64(len(values))
 	meanCos := sumCos / count
 	meanSin := sumSin / count
-	return math.Sqrt(meanCos*meanCos + meanSin*meanSin)
+	kuramotoR := math.Sqrt(meanCos*meanCos + meanSin*meanSin)
+	kuramotoPsi := math.Atan2(meanSin, meanCos)
+
+	return kuramotoR, kuramotoPsi
 }
 
 func wrapPhase(phase float64) float64 {

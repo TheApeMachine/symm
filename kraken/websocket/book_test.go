@@ -425,11 +425,11 @@ func TestBookApply(t *testing.T) {
 		frame := func(orders ...kraken.Level3Order) *kraken.Level3 {
 			return &kraken.Level3{Type: "update", Data: []kraken.Level3Data{{Symbol: "BTC/USD", Bids: orders}}}
 		}
-		_, _, err := managed.apply(frame(order("add", "best", 100, 1), order("add", "worst", 99, 2)))
+		_, _, err, _ := managed.apply(frame(order("add", "best", 100, 1), order("add", "worst", 99, 2)))
 		So(err, ShouldBeNil)
 
 		Convey("Truncation occurs after the whole frame, so later deletion can still address the old worst level", func() {
-			accepted, resynced, err := managed.apply(frame(order("add", "new", 101, 3), order("delete", "worst", 99, 0)))
+			accepted, resynced, err, _ := managed.apply(frame(order("add", "new", 101, 3), order("delete", "worst", 99, 0)))
 			So(err, ShouldBeNil)
 			So(resynced, ShouldBeEmpty)
 			So(accepted, ShouldHaveLength, 1)
@@ -444,7 +444,7 @@ func TestBookApply(t *testing.T) {
 				{Symbol: "BTC/USD", Bids: []kraken.Level3Order{order("add", "first", 101, 3)}},
 				{Symbol: "BTC/USD", Bids: []kraken.Level3Order{order("add", "second", 102, 4)}},
 			}}
-			accepted, resynced, err := managed.apply(payload)
+			accepted, resynced, err, _ := managed.apply(payload)
 			So(err, ShouldBeNil)
 			So(accepted, ShouldHaveLength, 2)
 			So(resynced, ShouldBeEmpty)
@@ -455,19 +455,19 @@ func TestBookApply(t *testing.T) {
 
 		Convey("An unknown deleted level fails explicitly and requests exactly one fresh snapshot", func() {
 			bad := frame(order("delete", "missing", 98, 0))
-			accepted, resynced, err := managed.apply(bad)
+			accepted, resynced, err, _ := managed.apply(bad)
 			So(err, ShouldNotBeNil)
 			So(accepted, ShouldBeEmpty)
 			So(resynced, ShouldResemble, []string{"BTC/USD"})
-			accepted, resynced, err = managed.apply(bad)
+			accepted, resynced, err, _ = managed.apply(bad)
 			So(err, ShouldBeNil)
 			So(accepted, ShouldBeEmpty)
 			So(resynced, ShouldBeEmpty)
 			snapshot := frame(order("add", "restored", 100, 1))
 			snapshot.Type = "snapshot"
-			_, _, err = managed.apply(snapshot)
+			_, _, err, _ = managed.apply(snapshot)
 			So(err, ShouldBeNil)
-			_, _, err = managed.apply(frame(order("delete", "restored", 100, 0)))
+			_, _, err, _ = managed.apply(frame(order("delete", "restored", 100, 0)))
 			So(err, ShouldBeNil)
 		})
 	})

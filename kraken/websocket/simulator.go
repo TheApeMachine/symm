@@ -1,12 +1,12 @@
 package websocket
 
 import (
-	"container/ring"
 	"context"
 	"math/rand"
-	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
@@ -65,13 +65,14 @@ a process-wide singleton.
 type Simulator struct {
 	ctx           context.Context
 	clock         Clock
-	status        runtime.Stage
-	mu            sync.Mutex
-	wsLatencies   *ring.Ring
-	restLatencies *ring.Ring
-	fillLatencies *ring.Ring
+	status        atomic.Int32
+	wsLatencies   [64]atomic.Int64
+	restLatencies [64]atomic.Int64
+	fillLatencies [64]atomic.Int64
+	wsCursor      atomic.Uint64
+	restCursor    atomic.Uint64
+	fillCursor    atomic.Uint64
 	seed          int64
-	rng           *rand.Rand
 }
 
 /*
@@ -92,17 +93,14 @@ func NewLatencySimulator(ctx context.Context, clock Clock, seed int64) *Simulato
 	}
 
 	simulator := &Simulator{
-		ctx:           ctx,
-		clock:         clock,
-		status:        runtime.INIT,
-		wsLatencies:   ring.New(64),
-		restLatencies: ring.New(64),
-		fillLatencies: ring.New(64),
-		seed:          seed,
-		rng:           rand.New(rand.NewSource(seed)),
+		ctx:   ctx,
+		clock: clock,
+		seed:  seed,
 	}
 
-	_ = simulator.Initialize()
+	if err := simulator.Initialize(); err != nil {
+		errnie.Error(err)
+	}
 
 	return simulator
 }
@@ -125,7 +123,7 @@ func (simulator *Simulator) Seed() int64 {
 Status reports simulator readiness.
 */
 func (simulator *Simulator) Status() runtime.Stage {
-	return simulator.status
+	return runtime.Stage(simulator.status.Load())
 }
 
 /*
@@ -133,28 +131,21 @@ Initialize seeds websocket and REST rings with bootstrap values until real
 public/private measurements arrive. Fill stays random only.
 */
 func (simulator *Simulator) Initialize() error {
-	simulator.mu.Lock()
-	defer simulator.mu.Unlock()
+	randomSource := rand.New(rand.NewSource(simulator.seed))
 
-	wsLatencies := simulator.wsLatencies
-	for idx := 0; idx < wsLatencies.Len(); idx++ {
-		wsLatencies.Value = time.Duration(30+simulator.rng.Intn(90)) * time.Millisecond
-		wsLatencies = wsLatencies.Next()
+	for index := 0; index < 64; index++ {
+		wsDur := time.Duration(30+randomSource.Intn(90)) * time.Millisecond
+		simulator.wsLatencies[index].Store(int64(wsDur))
+
+		restDur := time.Duration(30+randomSource.Intn(90)) * time.Millisecond
+		simulator.restLatencies[index].Store(int64(restDur))
+
+		fillDur := time.Duration(40+randomSource.Intn(360)) * time.Millisecond
+		simulator.fillLatencies[index].Store(int64(fillDur))
 	}
 
-	restLatencies := simulator.restLatencies
-	for idx := 0; idx < restLatencies.Len(); idx++ {
-		restLatencies.Value = time.Duration(30+simulator.rng.Intn(90)) * time.Millisecond
-		restLatencies = restLatencies.Next()
-	}
+	simulator.status.Store(int32(runtime.READY))
 
-	fillLatencies := simulator.fillLatencies
-	for idx := 0; idx < fillLatencies.Len(); idx++ {
-		fillLatencies.Value = time.Duration(40+simulator.rng.Intn(360)) * time.Millisecond
-		fillLatencies = fillLatencies.Next()
-	}
-
-	simulator.status = runtime.READY
 	return nil
 }
 
@@ -164,38 +155,22 @@ Do waits through the injected clock under the stack context, then runs fn.
 func (simulator *Simulator) Do(latencyType LatencyType, fn func()) {
 	var wait time.Duration
 
-	simulator.mu.Lock()
-
 	switch latencyType {
 	case WEBSOCKET:
-		if simulator.wsLatencies != nil && simulator.wsLatencies.Value != nil {
-			wait = simulator.wsLatencies.Value.(time.Duration)
-		}
-
-		if simulator.wsLatencies != nil {
-			simulator.wsLatencies = simulator.wsLatencies.Next()
-		}
+		index := simulator.wsCursor.Add(1) % 64
+		wait = time.Duration(simulator.wsLatencies[index].Load())
 	case REST:
-		if simulator.restLatencies != nil && simulator.restLatencies.Value != nil {
-			wait = simulator.restLatencies.Value.(time.Duration)
-		}
-
-		if simulator.restLatencies != nil {
-			simulator.restLatencies = simulator.restLatencies.Next()
-		}
+		index := simulator.restCursor.Add(1) % 64
+		wait = time.Duration(simulator.restLatencies[index].Load())
 	case FILL:
-		if simulator.fillLatencies != nil && simulator.fillLatencies.Value != nil {
-			wait = simulator.fillLatencies.Value.(time.Duration)
-		}
-
-		if simulator.fillLatencies != nil {
-			simulator.fillLatencies = simulator.fillLatencies.Next()
-		}
+		index := simulator.fillCursor.Add(1) % 64
+		wait = time.Duration(simulator.fillLatencies[index].Load())
 	}
 
-	simulator.mu.Unlock()
+	if err := simulator.clock.Sleep(simulator.ctx, wait); err != nil {
+		return
+	}
 
-	_ = simulator.clock.Sleep(simulator.ctx, wait)
 	fn()
 }
 
@@ -203,13 +178,12 @@ func (simulator *Simulator) Do(latencyType LatencyType, fn func()) {
 Record stores an observed latency sample for later replay.
 */
 func (simulator *Simulator) Record(latencyType LatencyType, latency time.Duration) {
-	simulator.mu.Lock()
-	defer simulator.mu.Unlock()
-
 	switch latencyType {
 	case WEBSOCKET:
-		simulator.wsLatencies.Value = latency
+		index := simulator.wsCursor.Add(1) % 64
+		simulator.wsLatencies[index].Store(int64(latency))
 	case REST:
-		simulator.restLatencies.Value = latency
+		index := simulator.restCursor.Add(1) % 64
+		simulator.restLatencies[index].Store(int64(latency))
 	}
 }

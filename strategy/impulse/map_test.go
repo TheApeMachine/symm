@@ -131,7 +131,6 @@ func BenchmarkMapStep(b *testing.B) {
 	}
 
 	b.ReportAllocs()
-	
 
 	for index := 0; b.Loop(); index++ {
 		if err := impulseMap.Step(sample.step(int64(index + 2))); err != nil {
@@ -150,7 +149,6 @@ func BenchmarkMapStepQuote(b *testing.B) {
 
 	sample.trade.Provenance["channel"] = "ticker"
 	b.ReportAllocs()
-	
 
 	for index := 0; b.Loop(); index++ {
 		if err := impulseMap.Step(sample.step(int64(index + 2))); err != nil {

@@ -7,7 +7,7 @@ import (
 )
 
 type NamedStringsT struct {
-	Name   string   `json:"name"`
+	Name string `json:"name"`
 	Values []string `json:"values"`
 }
 

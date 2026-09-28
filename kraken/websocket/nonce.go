@@ -25,10 +25,10 @@ path. Private and Level3 transports share one process instance so concurrent
 token fetches cannot collide; tests construct isolated generators per TempDir.
 */
 type AuthNonce struct {
-	path      string
-	highWater atomic.Int64
-	persistMu sync.Mutex
-	lastWrite time.Time
+	path          string
+	highWater     atomic.Int64
+	isPersisting  atomic.Bool
+	lastPersistNs atomic.Int64
 }
 
 /*
@@ -60,11 +60,7 @@ func NewAuthNonce(pathDir string) (*AuthNonce, error) {
 Next returns the next monotonic nonce string and persists the high-water mark.
 */
 func (nonce *AuthNonce) Next() string {
-	nonce.persistMu.Lock()
-	defer nonce.persistMu.Unlock()
-
-	next := nonce.highWater.Load() + 1
-	nonce.highWater.Store(next)
+	next := nonce.highWater.Add(1)
 	nonce.persistValue(next, false)
 
 	return strconv.FormatInt(next, 10)
@@ -75,11 +71,7 @@ Bump jumps the high-water by one second of nanoseconds after an Invalid nonce
 rejection so the retry clears anything Kraken still holds, then persists.
 */
 func (nonce *AuthNonce) Bump() {
-	nonce.persistMu.Lock()
-	defer nonce.persistMu.Unlock()
-
-	next := nonce.highWater.Load() + int64(time.Second)
-	nonce.highWater.Store(next)
+	next := nonce.highWater.Add(int64(time.Second))
 	nonce.persistValue(next, true)
 }
 
@@ -160,11 +152,23 @@ func loadNonce(path string) (int64, error) {
 }
 
 func (nonce *AuthNonce) persistValue(value int64, force bool) {
-	if !force && time.Since(nonce.lastWrite) < 50*time.Millisecond && value%128 != 0 {
+	now := time.Now().UnixNano()
+
+	if !force && now-nonce.lastPersistNs.Load() < int64(50*time.Millisecond) && value%128 != 0 {
 		return
 	}
 
-	nonce.lastWrite = time.Now()
+	if !nonce.isPersisting.CompareAndSwap(false, true) {
+		if !force {
+			return
+		}
+
+		for !nonce.isPersisting.CompareAndSwap(false, true) {
+		}
+	}
+	defer nonce.isPersisting.Store(false)
+
+	nonce.lastPersistNs.Store(now)
 	nonce.writeAtomic(value)
 }
 

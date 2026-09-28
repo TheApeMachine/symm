@@ -7,15 +7,15 @@ import (
 )
 
 type PilotHealthT struct {
-	DensityP01          float64 `json:"densityP01"`
-	DensityP10          float64 `json:"densityP10"`
-	DensityMedian       float64 `json:"densityMedian"`
+	DensityP01 float64 `json:"densityP01"`
+	DensityP10 float64 `json:"densityP10"`
+	DensityMedian float64 `json:"densityMedian"`
 	IntegrationErrorMax float64 `json:"integrationErrorMax"`
-	SpeedRms            float64 `json:"speedRms"`
-	SpeedMax            float64 `json:"speedMax"`
-	DisplacementRms     float64 `json:"displacementRms"`
-	DisplacementMax     float64 `json:"displacementMax"`
-	MinDensity          float64 `json:"minDensity"`
+	SpeedRms float64 `json:"speedRms"`
+	SpeedMax float64 `json:"speedMax"`
+	DisplacementRms float64 `json:"displacementRms"`
+	DisplacementMax float64 `json:"displacementMax"`
+	MinDensity float64 `json:"minDensity"`
 }
 
 func (t *PilotHealthT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

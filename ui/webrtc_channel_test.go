@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
-	"sync"
+	"runtime"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -18,7 +18,7 @@ supersede the in-flight frame after a fixed number of sends, so mid-frame
 preemption is deterministic without a live pion transport.
 */
 type fakeFluidTransport struct {
-	mu             sync.Mutex
+	gate           atomic.Int64
 	segments       [][]byte
 	sent           chan struct{}
 	sendCalls      atomic.Int64
@@ -28,15 +28,33 @@ type fakeFluidTransport struct {
 	supersede      func(*fluidChannel)
 }
 
+const fakeTransportMask = 1 << 30
+
+func (fake *fakeFluidTransport) lock() {
+	for {
+		value := fake.gate.Load()
+
+		if value == 0 && fake.gate.CompareAndSwap(0, -fakeTransportMask) {
+			return
+		}
+
+		runtime.Gosched()
+	}
+}
+
+func (fake *fakeFluidTransport) unlock() {
+	fake.gate.Add(fakeTransportMask)
+}
+
 func (fake *fakeFluidTransport) BufferedAmount() uint64 {
 	fake.bufferedChecks.Add(1)
 	return fake.buffered.Load()
 }
 
 func (fake *fakeFluidTransport) Send(segment []byte) error {
-	fake.mu.Lock()
+	fake.lock()
 	fake.segments = append(fake.segments, segment)
-	fake.mu.Unlock()
+	fake.unlock()
 
 	if fake.sent != nil {
 		select {
@@ -55,8 +73,8 @@ func (fake *fakeFluidTransport) Send(segment []byte) error {
 func (fake *fakeFluidTransport) Close() error { return nil }
 
 func (fake *fakeFluidTransport) segmentCount() int {
-	fake.mu.Lock()
-	defer fake.mu.Unlock()
+	fake.lock()
+	defer fake.unlock()
 
 	return len(fake.segments)
 }
@@ -98,8 +116,9 @@ func TestFluidChannelPreemption(t *testing.T) {
 		})
 
 		Convey("the pending superseding payload is offered to the sender next", func() {
-			So(channel.latest, ShouldNotBeNil)
-			So(string(channel.latest), ShouldEqual, "fresher")
+			latest := channel.latest.Load()
+			So(latest, ShouldNotBeNil)
+			So(string(*latest), ShouldEqual, "fresher")
 		})
 	})
 

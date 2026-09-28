@@ -42,6 +42,8 @@ type Conn struct {
 
 func (conn *Conn) Transition(stage runtime.Stage) { conn.status = stage }
 
+func (conn *Conn) OnExecution(func(*kraken.Execution)) {}
+
 func NewConn() *Conn {
 	return &Conn{
 		status: runtime.READY,

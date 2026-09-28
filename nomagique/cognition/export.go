@@ -59,9 +59,9 @@ TreeExport traverses the immutable radix trie and produces a hierarchical tree
 and active branch roster for UI visualization without synthesizing fake data.
 */
 func (op *Engine) TreeExport() CognitionTreeExport {
-	rootTree := op.root.Load()
+	state := op.state.Load()
 
-	if rootTree == nil || rootTree.Len() == 0 {
+	if state == nil || state.root == nil || state.root.Len() == 0 {
 		return CognitionTreeExport{
 			Root: &TrieNodeJSON{
 				ID:          "root",
@@ -74,7 +74,8 @@ func (op *Engine) TreeExport() CognitionTreeExport {
 		}
 	}
 
-	currentStep := op.stepCounter.Load()
+	rootTree := state.root
+	currentStep := state.step
 	iterator := rootTree.Root().Iterator()
 
 	rootNode := &TrieNodeJSON{
@@ -172,11 +173,7 @@ func (op *Engine) TreeExport() CognitionTreeExport {
 		}
 		currentNode.Children = append(currentNode.Children, leafNode)
 
-		hash := "0x0000"
-
-		if len(tokens) > 0 {
-			hash = fmt.Sprintf("0x%06x", tokens[len(tokens)-1]&0xffffff)
-		}
+		hash := fmt.Sprintf("0x%x:%s", keyBytes, className)
 
 		policyStr := "WAIT"
 
@@ -188,14 +185,14 @@ func (op *Engine) TreeExport() CognitionTreeExport {
 			policyStr = "EXIT"
 		}
 
-		meanEdge := (weight.Probability - 0.5) * 20.0
+		associationBias := weight.Probability - 0.5
 
 		collectedBranches = append(collectedBranches, scoredBranch{
 			branch: TrieBranchJSON{
 				Hash:       hash,
 				Depth:      len(tokens) + 1,
 				Visits:     weight.Count,
-				MeanEdge:   meanEdge,
+				MeanEdge:   associationBias,
 				Confidence: weight.Probability * 100.0,
 				Policy:     policyStr,
 			},

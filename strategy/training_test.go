@@ -61,7 +61,6 @@ func BenchmarkTrainingStep(b *testing.B) {
 	training.Transition(runtime.READY)
 	frames := market.ImpulseTape("BTC/USD", 6)
 	b.ReportAllocs()
-	
 
 	for index := 0; b.Loop(); index++ {
 		frame := frames[index%len(frames)]

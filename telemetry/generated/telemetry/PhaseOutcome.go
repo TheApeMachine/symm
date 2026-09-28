@@ -7,9 +7,9 @@ import (
 )
 
 type PhaseOutcomeT struct {
-	Direction   string  `json:"direction"`
+	Direction string `json:"direction"`
 	ReturnValue float64 `json:"returnValue"`
-	Horizon     int64   `json:"horizon"`
+	Horizon int64 `json:"horizon"`
 }
 
 func (t *PhaseOutcomeT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

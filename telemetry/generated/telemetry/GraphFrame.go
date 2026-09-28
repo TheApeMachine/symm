@@ -7,14 +7,14 @@ import (
 )
 
 type GraphFrameT struct {
-	At              int64         `json:"at"`
-	ForecastHorizon int64         `json:"forecastHorizon"`
-	TaskSkill       float64       `json:"taskSkill"`
-	TaskSkillReady  bool          `json:"taskSkillReady"`
-	DecisionTarget  string        `json:"decisionTarget"`
-	Nodes           []*GraphNodeT `json:"nodes"`
-	Edges           []*GraphEdgeT `json:"edges"`
-	Reasoning       *ReasoningT   `json:"reasoning"`
+	At int64 `json:"at"`
+	ForecastHorizon int64 `json:"forecastHorizon"`
+	TaskSkill float64 `json:"taskSkill"`
+	TaskSkillReady bool `json:"taskSkillReady"`
+	DecisionTarget string `json:"decisionTarget"`
+	Nodes []*GraphNodeT `json:"nodes"`
+	Edges []*GraphEdgeT `json:"edges"`
+	Reasoning *ReasoningT `json:"reasoning"`
 }
 
 func (t *GraphFrameT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

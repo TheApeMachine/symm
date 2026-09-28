@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	goruntime "runtime"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -200,12 +201,7 @@ type ObservationStore struct {
 	capacity int
 
 	rings sync.Map
-
-	// indexMu guards the resident ordered coordinate index. Structural
-	// registration is the only writer; readers iterate under RLock.
-	// Measurement traffic never touches it.
-	indexMu sync.RWMutex
-	order   []Coordinate
+	order atomic.Pointer[[]Coordinate]
 
 	appended atomic.Uint64
 
@@ -213,11 +209,41 @@ type ObservationStore struct {
 }
 
 type observationRing struct {
-	mu         sync.RWMutex
+	gate       atomic.Int64
 	coordinate Coordinate
 	entries    []Observation
 	head       int
 	size       int
+}
+
+const ringWriterMask = 1 << 30
+
+func (ring *observationRing) rLock() {
+	for {
+		v := ring.gate.Load()
+		if v >= 0 && ring.gate.CompareAndSwap(v, v+1) {
+			return
+		}
+		goruntime.Gosched()
+	}
+}
+
+func (ring *observationRing) rUnlock() {
+	ring.gate.Add(-1)
+}
+
+func (ring *observationRing) lock() {
+	for {
+		v := ring.gate.Load()
+		if v == 0 && ring.gate.CompareAndSwap(0, -ringWriterMask) {
+			return
+		}
+		goruntime.Gosched()
+	}
+}
+
+func (ring *observationRing) unlock() {
+	ring.gate.Add(ringWriterMask)
 }
 
 /*
@@ -406,14 +432,21 @@ measurements for an unregistered coordinate take this same structural path
 exactly once. Registration is a slow structural mutation, never a hot-path
 operation, and no speculative ring is ever allocated by a concurrent loser.
 */
-func (op *ObservationStore) insertOrdered(coordinate Coordinate) {
-	position := sort.Search(len(op.order), func(index int) bool {
-		return compareCoordinate(op.order[index], coordinate) >= 0
+func (op *ObservationStore) insertOrderedSlice(current []Coordinate, coordinate Coordinate) []Coordinate {
+	position := sort.Search(len(current), func(index int) bool {
+		return compareCoordinate(current[index], coordinate) >= 0
 	})
 
-	op.order = append(op.order, Coordinate{})
-	copy(op.order[position+1:], op.order[position:])
-	op.order[position] = coordinate
+	if position < len(current) && compareCoordinate(current[position], coordinate) == 0 {
+		return current
+	}
+
+	next := make([]Coordinate, len(current)+1)
+	copy(next[:position], current[:position])
+	next[position] = coordinate
+	copy(next[position+1:], current[position:])
+
+	return next
 }
 
 /*
@@ -431,9 +464,9 @@ func (op *ObservationStore) append(observation Observation) StoreResult {
 	}
 
 	ring := stored.(*observationRing)
-	ring.mu.Lock()
+	ring.lock()
 	ring.push(observation)
-	ring.mu.Unlock()
+	ring.unlock()
 
 	op.appended.Add(1)
 
@@ -472,9 +505,6 @@ the coordinate's resident ring whether it already existed or was just
 created.
 */
 func (op *ObservationStore) registerRing(coordinate Coordinate) *observationRing {
-	op.indexMu.Lock()
-	defer op.indexMu.Unlock()
-
 	if stored, found := op.rings.Load(coordinate); found {
 		return stored.(*observationRing)
 	}
@@ -484,8 +514,26 @@ func (op *ObservationStore) registerRing(coordinate Coordinate) *observationRing
 		entries:    make([]Observation, op.capacity),
 	}
 
-	op.rings.Store(coordinate, ring)
-	op.insertOrdered(coordinate)
+	stored, loaded := op.rings.LoadOrStore(coordinate, ring)
+
+	if loaded {
+		return stored.(*observationRing)
+	}
+
+	for {
+		oldPtr := op.order.Load()
+		var current []Coordinate
+
+		if oldPtr != nil {
+			current = *oldPtr
+		}
+
+		next := op.insertOrderedSlice(current, coordinate)
+
+		if op.order.CompareAndSwap(oldPtr, &next) {
+			break
+		}
+	}
 
 	return ring
 }
@@ -496,29 +544,33 @@ compareCoordinate order, in place, with one allocation for the result copy.
 An empty Symbol returns the whole resident index.
 */
 func (op *ObservationStore) coordinates(symbol string) StoreResult {
-	op.indexMu.RLock()
-	defer op.indexMu.RUnlock()
+	orderPtr := op.order.Load()
+	var order []Coordinate
+
+	if orderPtr != nil {
+		order = *orderPtr
+	}
 
 	start := 0
 
 	if symbol != "" {
-		start = sort.Search(len(op.order), func(index int) bool {
-			return op.order[index].Symbol >= symbol
+		start = sort.Search(len(order), func(index int) bool {
+			return order[index].Symbol >= symbol
 		})
 	}
 
-	end := len(op.order)
+	end := len(order)
 
 	if symbol != "" {
 		end = start
 
-		for index := start; index < len(op.order) && op.order[index].Symbol == symbol; index++ {
+		for index := start; index < len(order) && order[index].Symbol == symbol; index++ {
 			end++
 		}
 	}
 
 	coordinates := make([]Coordinate, end-start)
-	copy(coordinates, op.order[start:end])
+	copy(coordinates, order[start:end])
 
 	return StoreResult{
 		Version:     op.appended.Load(),
@@ -539,11 +591,11 @@ func (op *ObservationStore) viewRing(coordinate Coordinate) StoreResult {
 	}
 
 	ring := stored.(*observationRing)
-	ring.mu.RLock()
+	ring.rLock()
 
 	return StoreResult{
 		Version: op.appended.Load(),
-		Ring:    RingView{ring: ring, unlock: ring.mu.RUnlock},
+		Ring:    RingView{ring: ring, unlock: ring.rUnlock},
 		Found:   true,
 	}
 }
@@ -562,8 +614,8 @@ func (op *ObservationStore) history(coordinate Coordinate) StoreResult {
 	}
 
 	ring := stored.(*observationRing)
-	ring.mu.RLock()
-	defer ring.mu.RUnlock()
+	ring.rLock()
+	defer ring.rUnlock()
 
 	if ring.size == 0 {
 		return StoreResult{Version: op.appended.Load(), Found: true}
@@ -594,8 +646,8 @@ func (op *ObservationStore) latest(coordinate Coordinate) StoreResult {
 	}
 
 	ring := stored.(*observationRing)
-	ring.mu.RLock()
-	defer ring.mu.RUnlock()
+	ring.rLock()
+	defer ring.rUnlock()
 
 	if ring.size == 0 {
 		return StoreResult{Version: op.appended.Load(), Found: true}
@@ -619,8 +671,8 @@ func (op *ObservationStore) count(coordinate Coordinate) StoreResult {
 	}
 
 	ring := stored.(*observationRing)
-	ring.mu.RLock()
-	defer ring.mu.RUnlock()
+	ring.rLock()
+	defer ring.rUnlock()
 
 	return StoreResult{
 		Version: op.appended.Load(),
@@ -643,14 +695,14 @@ func (op *ObservationStore) snapshot() StoreResult {
 		ring, valid := value.(*observationRing)
 
 		if valid && ring != nil {
-			ring.mu.RLock()
+			ring.rLock()
 
 			if ring.size > 0 {
 				snapshot.Coordinates++
 				snapshot.Observations += ring.size
 			}
 
-			ring.mu.RUnlock()
+			ring.rUnlock()
 		}
 
 		return true
@@ -677,7 +729,7 @@ func (op *ObservationStore) timeRange() StoreResult {
 			return true
 		}
 
-		ring.mu.RLock()
+		ring.rLock()
 
 		for index := 0; index < ring.size; index++ {
 			observation := ring.at(index)
@@ -693,7 +745,7 @@ func (op *ObservationStore) timeRange() StoreResult {
 			found = true
 		}
 
-		ring.mu.RUnlock()
+		ring.rUnlock()
 		return true
 	})
 

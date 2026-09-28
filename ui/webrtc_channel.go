@@ -32,8 +32,7 @@ type fluidPeer struct {
 	ctx           context.Context
 	fail          func(error)
 	bufferedLimit uint64
-	mutex         sync.RWMutex
-	channels      map[string]*fluidChannel
+	channels      sync.Map
 }
 
 func newFluidPeer(
@@ -43,22 +42,27 @@ func newFluidPeer(
 ) *fluidPeer {
 	return &fluidPeer{
 		ctx: ctx, fail: fail, bufferedLimit: bufferedLimit,
-		channels: make(map[string]*fluidChannel, 4),
 	}
 }
 
+func (peer *fluidPeer) getChannel(label string) *fluidChannel {
+	value, ok := peer.channels.Load(label)
+
+	if !ok || value == nil {
+		return nil
+	}
+
+	return value.(*fluidChannel)
+}
+
 func (peer *fluidPeer) idle(label string) bool {
-	peer.mutex.RLock()
-	channel := peer.channels[label]
-	peer.mutex.RUnlock()
+	channel := peer.getChannel(label)
 
 	return channel != nil && channel.idle()
 }
 
 func (peer *fluidPeer) ready(label string) bool {
-	peer.mutex.RLock()
-	channel := peer.channels[label]
-	peer.mutex.RUnlock()
+	channel := peer.getChannel(label)
 
 	return channel != nil && channel.started.Load() && channel.ctx.Err() == nil
 }
@@ -94,13 +98,10 @@ func (peer *fluidPeer) attach(dataChannel *webrtc.DataChannel) {
 		peer.bufferedLimit,
 		peer.fail,
 	)
-	peer.mutex.Lock()
-	previous := peer.channels[label]
-	peer.channels[label] = channel
-	peer.mutex.Unlock()
+	previous, loaded := peer.channels.Swap(label, channel)
 
-	if previous != nil {
-		previous.close()
+	if loaded && previous != nil {
+		previous.(*fluidChannel).close()
 	}
 
 	errnie.Info(fmt.Sprintf(
@@ -119,14 +120,15 @@ func (peer *fluidPeer) attach(dataChannel *webrtc.DataChannel) {
 }
 
 func (peer *fluidPeer) close() {
-	peer.mutex.Lock()
-	channels := peer.channels
-	peer.channels = make(map[string]*fluidChannel, 4)
-	peer.mutex.Unlock()
+	peer.channels.Range(func(key, value any) bool {
+		peer.channels.Delete(key)
 
-	for _, channel := range channels {
-		channel.close()
-	}
+		if channel, ok := value.(*fluidChannel); ok && channel != nil {
+			channel.close()
+		}
+
+		return true
+	})
 }
 
 /*
@@ -153,12 +155,11 @@ type fluidChannel struct {
 	fail          func(error)
 	startOnce     sync.Once
 
-	// latest holds the freshest unsent record; latestMu guards it and
-	// latestReady wakes the sender. frameID names the next logical frame and
-	// sendGen increments whenever a newer record supersedes the one currently
-	// being transmitted, so a stale in-flight frame is abandoned mid-chunk.
-	latestMu    sync.Mutex
-	latest      []byte
+	// latest holds the freshest unsent record; latestReady wakes the sender.
+	// frameID names the next logical frame and sendGen increments whenever a
+	// newer record supersedes the one currently being transmitted, so a stale
+	// in-flight frame is abandoned mid-chunk.
+	latest      atomic.Pointer[[]byte]
 	latestReady chan struct{}
 	frameID     uint32
 	sendGen     atomic.Uint64
@@ -192,10 +193,7 @@ func (channel *fluidChannel) idle() bool {
 		return false
 	}
 
-	channel.latestMu.Lock()
-	defer channel.latestMu.Unlock()
-
-	return channel.latest == nil
+	return channel.latest.Load() == nil
 }
 
 /*
@@ -279,9 +277,7 @@ func (channel *fluidChannel) enqueue(payload []byte) {
 		return
 	}
 
-	channel.latestMu.Lock()
-	channel.latest = payload
-	channel.latestMu.Unlock()
+	channel.latest.Store(&payload)
 
 	// A fresher record supersedes any logical frame currently mid-flight: the
 	// sender abandons the old frame's remaining chunks and starts the newest
@@ -330,17 +326,15 @@ func (channel *fluidChannel) run() {
 }
 
 func (channel *fluidChannel) takeLatest() []byte {
-	channel.latestMu.Lock()
-	payload := channel.latest
-	channel.latest = nil
+	pointer := channel.latest.Swap(nil)
 
-	if payload != nil {
-		channel.sending.Store(true)
+	if pointer == nil {
+		return nil
 	}
 
-	channel.latestMu.Unlock()
+	channel.sending.Store(true)
 
-	return payload
+	return *pointer
 }
 
 func (channel *fluidChannel) failSend(err error) {

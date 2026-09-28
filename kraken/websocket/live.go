@@ -26,6 +26,7 @@ import (
 	sdk "github.com/krakenfx/api-go/v2/pkg/kraken"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/utils"
@@ -76,6 +77,7 @@ type Live struct {
 	pinger       *Pinger
 	level3Client func() *spot.WebSocket
 	pingReqID    atomic.Int64
+	executions   func(*kraken.Execution)
 }
 
 /*
@@ -304,6 +306,10 @@ func NewWithClient(
 
 				if _, hasTimestamp := row["timestamp"]; !hasTimestamp && frameTimestamp != "" {
 					row["timestamp"] = frameTimestamp
+				}
+
+				if channel == "executions" && live.executions != nil {
+					live.executions(kraken.NewExecutionFromMap(datura.Map[any](row)))
 				}
 
 				live.queue.Enqueue(row)
@@ -1258,28 +1264,12 @@ func (live *Live) AddOrder(order *spot.AddOrderRequest) (spot.AddOrderResult, er
 	return live.paper.AddOrder(order)
 }
 
-func (live *Live) TickerSingle(symbol string) (*spot.AssetTickerInfo, error) {
-	client := live.client.Load()
+func (live *Live) OnExecution(handler func(*kraken.Execution)) {
+	live.executions = handler
 
-	if client == nil || client.REST == nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.NotFound,
-			"live: REST client not available",
-			nil,
-		))
+	if live.paper != nil {
+		live.paper.OnExecution(handler)
 	}
-
-	info, err := client.REST.TickerSingle(symbol)
-
-	if err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.IO,
-			"live: ticker single request failed for "+symbol,
-			err,
-		))
-	}
-
-	return info, nil
 }
 
 func (live *Live) Write(params json.Marshaler, callbacks ...Callback[any]) error {

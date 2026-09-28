@@ -76,7 +76,10 @@ func TestSolverStep(t *testing.T) {
 						}}}
 						m.Peers = []*data.Measurement[float64]{cat}
 
-						_ = solver.Step(m)
+						result := solver.Step(m)
+						if result == nil {
+							t.Errorf("step returned nil")
+						}
 					}
 				}(symbol)
 			}
@@ -86,7 +89,7 @@ func TestSolverStep(t *testing.T) {
 			Convey("All symbol states should be isolated without data races", func() {
 				state := solver.getSymbolState("SYM0/USD")
 				So(state, ShouldNotBeNil)
-				So(state.hasReading, ShouldBeTrue)
+				So(state.reading.Load(), ShouldNotBeNil)
 			})
 		})
 	})

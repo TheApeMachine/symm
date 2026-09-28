@@ -7,14 +7,14 @@ import (
 )
 
 type PerspectiveReadingT struct {
-	Metric     string  `json:"metric"`
-	Value      float64 `json:"value"`
-	Defined    bool    `json:"defined"`
-	ObservedAt int64   `json:"observedAt"`
-	From       int64   `json:"from"`
-	Maturity   float64 `json:"maturity"`
-	Snr        float64 `json:"snr"`
-	SnrDefined bool    `json:"snrDefined"`
+	Metric string `json:"metric"`
+	Value float64 `json:"value"`
+	Defined bool `json:"defined"`
+	ObservedAt int64 `json:"observedAt"`
+	From int64 `json:"from"`
+	Maturity float64 `json:"maturity"`
+	Snr float64 `json:"snr"`
+	SnrDefined bool `json:"snrDefined"`
 }
 
 func (t *PerspectiveReadingT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	goruntime "runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -21,11 +22,10 @@ import (
 )
 
 type symbolCognitionState struct {
-	mu            sync.RWMutex
+	isStepping    atomic.Bool
 	activeTokens  []string
 	activeRegime  types.Category
-	reading       types.Cognition
-	hasReading    bool
+	reading       atomic.Pointer[types.Cognition]
 	branches      []types.CognitionBranch
 	branchesStamp uint64
 	classScratch  dmt.ClassificationScratch
@@ -38,7 +38,7 @@ classify macro regimes via attractor basins, and predict future category paths u
 */
 type Solver struct {
 	*runtime.System
-	treeMu         sync.RWMutex
+	treeGate       atomic.Int64
 	tree           *dmt.Tree
 	states         sync.Map // string (symbol) -> *symbolCognitionState
 	maxSeqLen      int
@@ -72,6 +72,36 @@ type Solver struct {
 	remOutcome dmt.REMConsolidationOutcome
 	remFrom    time.Time
 	remThrough time.Time
+}
+
+const cognitionWriterMask = 1 << 30
+
+func (solver *Solver) rLockTree() {
+	for {
+		v := solver.treeGate.Load()
+		if v >= 0 && solver.treeGate.CompareAndSwap(v, v+1) {
+			return
+		}
+		goruntime.Gosched()
+	}
+}
+
+func (solver *Solver) rUnlockTree() {
+	solver.treeGate.Add(-1)
+}
+
+func (solver *Solver) lockTree() {
+	for {
+		v := solver.treeGate.Load()
+		if v == 0 && solver.treeGate.CompareAndSwap(0, -cognitionWriterMask) {
+			return
+		}
+		goruntime.Gosched()
+	}
+}
+
+func (solver *Solver) unlockTree() {
+	solver.treeGate.Add(cognitionWriterMask)
 }
 
 const categoryTokenSeparator = "\x1f"
@@ -278,8 +308,10 @@ func (solver *Solver) processBatch(
 
 	at := categories[0].At
 	state := solver.getSymbolState(symbol)
-	state.mu.Lock()
-	defer state.mu.Unlock()
+	for !state.isStepping.CompareAndSwap(false, true) {
+		goruntime.Gosched()
+	}
+	defer state.isStepping.Store(false)
 
 	// Select the dominant category for this symbol on this observation.
 	dominantCategory := solver.selectDominantCategory(categories)
@@ -304,7 +336,7 @@ func (solver *Solver) processBatch(
 
 	if transitionOrdinal%128 == 0 {
 		consolidating = true
-		solver.treeMu.Lock()
+		solver.lockTree()
 		outcome := solver.tree.ExecuteREMSleepConsolidation(0, transitionOrdinal)
 		discrim := solver.tree.ExtractDiscriminativeSymbols(16)
 
@@ -327,7 +359,7 @@ func (solver *Solver) processBatch(
 		}
 
 		solver.symbols = symbols
-		solver.treeMu.Unlock()
+		solver.unlockTree()
 	}
 
 	// 2. Evaluate if appending this category causes a Sequence Break
@@ -338,13 +370,13 @@ func (solver *Solver) processBatch(
 		oldSequenceBytes := solver.sequenceBytes(activeTokens)
 
 		// Commit completed sequence to episodic buffer for REM replay
-		solver.treeMu.Lock()
+		solver.lockTree()
 		_, inserted := solver.tree.CommitToEpisodicBuffer(
 			transitionOrdinal, oldSequenceBytes,
 		)
 
 		if !inserted {
-			solver.treeMu.Unlock()
+			solver.unlockTree()
 
 			return errnie.Error(errnie.Err(
 				errnie.Internal,
@@ -363,7 +395,7 @@ func (solver *Solver) processBatch(
 			)
 
 			if err != nil {
-				solver.treeMu.Unlock()
+				solver.unlockTree()
 				return errnie.Error(errnie.Err(
 					errnie.Internal,
 					fmt.Sprintf(
@@ -374,7 +406,7 @@ func (solver *Solver) processBatch(
 				))
 			}
 		}
-		solver.treeMu.Unlock()
+		solver.unlockTree()
 
 		// Start fresh sequence buffer with new category
 		activeTokens = []string{categoryToken}
@@ -396,7 +428,7 @@ func (solver *Solver) processBatch(
 
 	activeSequenceBytes := solver.sequenceBytes(activeTokens)
 
-	solver.treeMu.RLock()
+	solver.rLockTree()
 	// 4. Classify macro market regime / concept attractor basin
 	classResult := solver.tree.Classify(activeSequenceBytes, &state.classScratch)
 
@@ -420,7 +452,7 @@ func (solver *Solver) processBatch(
 	ambiguity := solver.tree.MeasureBranchAmbiguity(
 		dmt.SensoryPrefixKey(activeSequenceBytes),
 	)
-	solver.treeMu.RUnlock()
+	solver.rUnlockTree()
 
 	var entropyBits *float64
 	var entropyThreshold *float64
@@ -465,13 +497,13 @@ func (solver *Solver) processBatch(
 
 	if len(classResult.Scores) > 1 {
 		contrast = classResult.Scores[0].Value - classResult.Scores[1].Value
-		solver.treeMu.RLock()
+		solver.rLockTree()
 		evidence := solver.tree.ComputeBasinContrastiveEvidence(
 			classResult.Scores[0].ClassName,
 			classResult.Scores[1].ClassName,
 			activeSequenceBytes,
 		)
-		solver.treeMu.RUnlock()
+		solver.rUnlockTree()
 		contrastEvidence = evidence.Divergence
 	}
 
@@ -506,10 +538,10 @@ func (solver *Solver) processBatch(
 	confidence = stabilized.confidence
 	predictions = stabilized.predictions
 
-	solver.treeMu.RLock()
+	solver.rLockTree()
 	analysis := solver.tree.AnalyzeInterpolated(activeSequenceBytes)
 	sensoryWeight := solver.tree.GetSensoryWeight(activeSequenceBytes)
-	solver.treeMu.RUnlock()
+	solver.rUnlockTree()
 
 	contributions := make([]types.CognitionContribution, 0, len(analysis.Contributions))
 
@@ -524,10 +556,10 @@ func (solver *Solver) processBatch(
 		contributions = nil
 	}
 
-	solver.treeMu.RLock()
+	solver.rLockTree()
 	symbols, dreams := solver.symbols, solver.dreams
 	remFrom, remThrough, remOutcome := solver.remFrom, solver.remThrough, solver.remOutcome
-	solver.treeMu.RUnlock()
+	solver.rUnlockTree()
 
 	cognition := types.Cognition{
 		Source:           "cognition",
@@ -577,8 +609,7 @@ func (solver *Solver) processBatch(
 		REMConsolidating: consolidating,
 	}
 
-	state.reading = cognition
-	state.hasReading = true
+	state.reading.Store(&cognition)
 	rows[symbol] = cognition.Clone()
 	return nil
 }
@@ -605,16 +636,16 @@ func (solver *Solver) stabilizeReading(
 	predictions map[string]float64,
 	switchThreshold float64,
 ) stabilizedReading {
-	previous := state.reading
-	hasPrevious := state.hasReading
+	previousPtr := state.reading.Load()
 
-	if !hasPrevious || previous.Winner == "" {
+	if previousPtr == nil || previousPtr.Winner == "" {
 		return stabilizedReading{
 			winner:      candidate,
 			confidence:  candidateConfidence,
 			predictions: predictions,
 		}
 	}
+	previous := *previousPtr
 
 	if candidate == previous.Winner && !ambiguous {
 		return stabilizedReading{
@@ -857,9 +888,9 @@ func (solver *Solver) cachedPrefixTree(
 		return cached
 	}
 
-	solver.treeMu.RLock()
+	solver.rLockTree()
 	observed := solver.prefixTreeBranches(activeTokens)
-	solver.treeMu.RUnlock()
+	solver.rUnlockTree()
 
 	if len(cached) == 0 {
 		state.branches = observed
@@ -1120,8 +1151,11 @@ func (solver *Solver) Reading(symbol string) (types.Cognition, bool) {
 	}
 
 	state := loaded.(*symbolCognitionState)
-	state.mu.RLock()
-	defer state.mu.RUnlock()
+	readingPtr := state.reading.Load()
 
-	return state.reading, state.hasReading
+	if readingPtr == nil {
+		return types.Cognition{}, false
+	}
+
+	return *readingPtr, true
 }

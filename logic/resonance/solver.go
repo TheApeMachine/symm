@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"iter"
 	"math"
+	goruntime "runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -612,7 +613,7 @@ Observations advance only on envelopes where the corresponding signal measuremen
 preventing variance collapse from repeated identical pseudo-observations.
 */
 type featureScorer struct {
-	mu           sync.Mutex
+	isStepping   atomic.Bool
 	pipelines    [11]core.Primitive
 	standardized [11]float64
 	lastReading  [11]adaptive.BaselineReading
@@ -634,8 +635,10 @@ on this envelope. Absent signals retain their last standardized z-score without 
 preventing variance collapse from repeated identical pseudo-observations.
 */
 func (scorer *featureScorer) Step(measurements [11]*data.Measurement[float64]) []float64 {
-	scorer.mu.Lock()
-	defer scorer.mu.Unlock()
+	for !scorer.isStepping.CompareAndSwap(false, true) {
+		goruntime.Gosched()
+	}
+	defer scorer.isStepping.Store(false)
 
 	for index, measurement := range measurements {
 		if measurement == nil || measurement.Err != nil {

@@ -20,7 +20,7 @@ import (
 	"math"
 	"math/cmplx"
 	"sort"
-	"sync"
+	"sync/atomic"
 	"time"
 	"unsafe"
 
@@ -367,11 +367,10 @@ owns the mutex around its retained entries.
 */
 type Corpus[Outcome any] struct {
 	err        error
-	mu         sync.RWMutex
-	entries    []CorpusEntry[Outcome]
+	entries    atomic.Pointer[[]CorpusEntry[Outcome]]
 	maxSize    int
-	dimensions int
-	next       int
+	dimensions atomic.Int64
+	next       atomic.Int64
 	out        CorpusResult[Outcome]
 }
 
@@ -387,10 +386,13 @@ func NewCorpus[Outcome any](maxSize int) core.Primitive {
 		}
 	}
 
-	return &Corpus[Outcome]{
-		entries: make([]CorpusEntry[Outcome], 0, maxSize),
+	corpus := &Corpus[Outcome]{
 		maxSize: maxSize,
 	}
+	initial := make([]CorpusEntry[Outcome], 0, maxSize)
+	corpus.entries.Store(&initial)
+
+	return corpus
 }
 
 /*
@@ -486,28 +488,44 @@ func (op *Corpus[Outcome]) insert(
 
 	entry.Dial = copyAndNormalize(entry.Dial)
 
-	op.mu.Lock()
-	defer op.mu.Unlock()
+	expectedDim := op.dimensions.Load()
 
-	if op.dimensions == 0 {
-		op.dimensions = len(entry.Dial)
+	if expectedDim == 0 {
+		if op.dimensions.CompareAndSwap(0, int64(len(entry.Dial))) {
+			expectedDim = int64(len(entry.Dial))
+		} else {
+			expectedDim = op.dimensions.Load()
+		}
 	}
 
-	if len(entry.Dial) != op.dimensions {
+	if int64(len(entry.Dial)) != expectedDim {
 		return CorpusResult[Outcome]{}, fmt.Errorf(
 			"%w: geometry: corpus dial has %d dimensions, expected %d",
-			core.ErrShape, len(entry.Dial), op.dimensions,
+			core.ErrShape, len(entry.Dial), expectedDim,
 		)
 	}
 
-	if len(op.entries) < op.maxSize {
-		op.entries = append(op.entries, entry)
+	for {
+		oldPtr := op.entries.Load()
+		var newEntries []CorpusEntry[Outcome]
 
-		return CorpusResult[Outcome]{Inserted: true}, nil
+		if oldPtr == nil {
+			newEntries = []CorpusEntry[Outcome]{entry}
+		} else if len(*oldPtr) < op.maxSize {
+			newEntries = make([]CorpusEntry[Outcome], len(*oldPtr)+1)
+			copy(newEntries, *oldPtr)
+			newEntries[len(*oldPtr)] = entry
+		} else {
+			newEntries = make([]CorpusEntry[Outcome], op.maxSize)
+			copy(newEntries, *oldPtr)
+			nextIdx := int(op.next.Add(1)-1) % op.maxSize
+			newEntries[nextIdx] = entry
+		}
+
+		if op.entries.CompareAndSwap(oldPtr, &newEntries) {
+			break
+		}
 	}
-
-	op.entries[op.next] = entry
-	op.next = (op.next + 1) % op.maxSize
 
 	return CorpusResult[Outcome]{Inserted: true}, nil
 }
@@ -516,10 +534,13 @@ func (op *Corpus[Outcome]) insert(
 size returns the current number of retained entries under the read lock.
 */
 func (op *Corpus[Outcome]) size() int {
-	op.mu.RLock()
-	defer op.mu.RUnlock()
+	entriesPtr := op.entries.Load()
 
-	return len(op.entries)
+	if entriesPtr == nil {
+		return 0
+	}
+
+	return len(*entriesPtr)
 }
 
 /*
@@ -547,35 +568,32 @@ func (op *Corpus[Outcome]) scan(
 		)
 	}
 
-	for _, angle := range query.Angles {
-		if math.IsNaN(angle) || math.IsInf(angle, 0) {
-			return CorpusResult[Outcome]{}, fmt.Errorf(
-				"%w: geometry: phase scan angle must be finite", core.ErrDomain,
-			)
-		}
-	}
-
 	excluded := make(map[int64]bool, len(query.ExcludeTimes))
 
 	for _, excludeTime := range query.ExcludeTimes {
 		excluded[excludeTime.UnixNano()] = true
 	}
 
-	op.mu.RLock()
+	dim := op.dimensions.Load()
 
-	if op.dimensions != 0 && len(query.Dial) != op.dimensions {
-		op.mu.RUnlock()
-
+	if dim != 0 && int64(len(query.Dial)) != dim {
 		return CorpusResult[Outcome]{}, fmt.Errorf(
 			"%w: geometry: query dial has %d dimensions, expected %d",
-			core.ErrShape, len(query.Dial), op.dimensions,
+			core.ErrShape, len(query.Dial), dim,
 		)
 	}
 
-	entries := make([]CorpusEntry[Outcome], 0, len(op.entries))
-	overlaps := make([]complex128, 0, len(op.entries))
+	entriesPtr := op.entries.Load()
+	var currentEntries []CorpusEntry[Outcome]
 
-	for _, entry := range op.entries {
+	if entriesPtr != nil {
+		currentEntries = *entriesPtr
+	}
+
+	entries := make([]CorpusEntry[Outcome], 0, len(currentEntries))
+	overlaps := make([]complex128, 0, len(currentEntries))
+
+	for _, entry := range currentEntries {
 		if excluded[entry.At.UnixNano()] {
 			continue
 		}
@@ -583,8 +601,6 @@ func (op *Corpus[Outcome]) scan(
 		entries = append(entries, entry)
 		overlaps = append(overlaps, dialOverlap(query.Dial, entry.Dial))
 	}
-
-	op.mu.RUnlock()
 
 	responses := make([][]CorpusMatch[Outcome], len(query.Angles))
 	matches := make([]CorpusMatch[Outcome], len(entries))

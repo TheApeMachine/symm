@@ -35,10 +35,8 @@ func TestFluidRTCPublish(t *testing.T) {
 		peer := &fluidPeer{
 			ctx:           ctx,
 			bufferedLimit: 64 * fluidSegmentSize,
-			channels: map[string]*fluidChannel{
-				types.ManifoldChannel: channel,
-			},
 		}
+		peer.channels.Store(types.ManifoldChannel, channel)
 		pc, err := webrtc.NewPeerConnection(webrtc.Configuration{})
 		So(err, ShouldBeNil)
 		server.add(pc, peer)
@@ -61,6 +59,17 @@ func TestFluidRTCPublish(t *testing.T) {
 				WaveImag:    make([]float32, dim*dim*dim),
 				Reading: sensorium.Reading{
 					CoherenceMag2: 0.5,
+					KuramotoR:     0.8,
+					KuramotoPsi:   0.45,
+				},
+				Resultants: []types.PhaseChannelResultant{
+					{
+						Side:           "bid",
+						Count:          10,
+						TotalAmplitude: 25.5,
+						Coherence:      0.72,
+						Phase:          0.33,
+					},
 				},
 			}
 
@@ -115,6 +124,12 @@ func TestFluidRTCPublish(t *testing.T) {
 			So(frame.FieldEnergy, ShouldResemble, state.FieldEnergy)
 			So(frame.WaveReal, ShouldResemble, state.WaveReal)
 			So(frame.WaveImag, ShouldResemble, state.WaveImag)
+			So(frame.Reading.KuramotoR, ShouldEqual, 0.8)
+			So(frame.Reading.KuramotoPsi, ShouldEqual, 0.45)
+			So(len(frame.Resultants), ShouldEqual, 1)
+			So(frame.Resultants[0].Side, ShouldEqual, "bid")
+			So(frame.Resultants[0].Count, ShouldEqual, 10)
+			So(frame.Resultants[0].TotalAmplitude, ShouldEqual, 25.5)
 
 		})
 	})

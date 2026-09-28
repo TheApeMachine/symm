@@ -78,8 +78,27 @@ measurements can arrive on distinct producer rings, each with its own handler
 group, so two goroutines may mutate and read the same state concurrently.
 */
 type categoryState struct {
-	mu          sync.Mutex
-	coordinates map[coordinate]evidenceItem
+	coordinates atomic.Pointer[map[coordinate]evidenceItem]
+}
+
+func (state *categoryState) Coordinates() map[coordinate]evidenceItem {
+	if state == nil {
+		return nil
+	}
+
+	coordsPtr := state.coordinates.Load()
+
+	if coordsPtr == nil {
+		return nil
+	}
+
+	out := make(map[coordinate]evidenceItem, len(*coordsPtr))
+
+	for key, val := range *coordsPtr {
+		out[key] = val
+	}
+
+	return out
 }
 
 /*
@@ -278,23 +297,42 @@ func (solver *Solver) stepMeasurements(
 		return nil
 	}
 
-	state.mu.Lock()
+	var byCategory map[types.CategoryType][]evidenceItem
+	var measured bool
 
-	for _, measurement := range measurements {
-		if measurement == nil || measurement.Err != nil {
-			continue
+	for {
+		oldPtr := state.coordinates.Load()
+		newCoords := make(map[coordinate]evidenceItem)
+
+		if oldPtr != nil {
+			for key, val := range *oldPtr {
+				newCoords[key] = val
+			}
 		}
 
-		if err := solver.accumulateLocked(state, measurement); err != nil {
-			state.mu.Unlock()
-			solver.fail("category: invalid measurement", err)
+		failed := false
 
+		for _, measurement := range measurements {
+			if measurement == nil || measurement.Err != nil {
+				continue
+			}
+
+			if err := solver.accumulateCoords(newCoords, measurement); err != nil {
+				solver.fail("category: invalid measurement", err)
+				failed = true
+				break
+			}
+		}
+
+		if failed {
 			return nil
 		}
-	}
 
-	byCategory, measured := solver.aggregateLocked(state)
-	state.mu.Unlock()
+		if state.coordinates.CompareAndSwap(oldPtr, &newCoords) {
+			byCategory, measured = solver.aggregateCoords(newCoords)
+			break
+		}
+	}
 
 	if !measured {
 		return nil
@@ -326,15 +364,41 @@ func (solver *Solver) Version() uint64 {
 }
 
 func (solver *Solver) symbolState(symbol string) *categoryState {
-	loaded, _ := solver.states.LoadOrStore(symbol, &categoryState{
-		coordinates: make(map[coordinate]evidenceItem),
-	})
+	s := &categoryState{}
+	initial := make(map[coordinate]evidenceItem)
+	s.coordinates.Store(&initial)
+
+	loaded, _ := solver.states.LoadOrStore(symbol, s)
 
 	return loaded.(*categoryState)
 }
 
-func (solver *Solver) accumulateLocked(
+func (solver *Solver) accumulate(
 	state *categoryState,
+	measurement *data.Measurement[float64],
+) error {
+	for {
+		oldPtr := state.coordinates.Load()
+		newCoords := make(map[coordinate]evidenceItem)
+
+		if oldPtr != nil {
+			for key, val := range *oldPtr {
+				newCoords[key] = val
+			}
+		}
+
+		if err := solver.accumulateCoords(newCoords, measurement); err != nil {
+			return err
+		}
+
+		if state.coordinates.CompareAndSwap(oldPtr, &newCoords) {
+			return nil
+		}
+	}
+}
+
+func (solver *Solver) accumulateCoords(
+	coords map[coordinate]evidenceItem,
 	measurement *data.Measurement[float64],
 ) error {
 	if measurement == nil {
@@ -377,12 +441,12 @@ func (solver *Solver) accumulateLocked(
 		if affinity == 0 {
 			// Zero affinity provides no positive support. It is still a current reading
 			// of the coordinate, so drop any prior vote.
-			delete(state.coordinates, key)
+			delete(coords, key)
 
 			continue
 		}
 
-		state.coordinates[key] = evidenceItem{
+		coords[key] = evidenceItem{
 			Affinity:   affinity,
 			Maturity:   measurement.Maturity,
 			At:         measurement.At,
@@ -467,8 +531,20 @@ func lift(strengths []float64) []float64 {
 	return append([]float64(nil), strengths...)
 }
 
-func (solver *Solver) aggregateLocked(
+func (solver *Solver) aggregate(
 	state *categoryState,
+) (map[types.CategoryType][]evidenceItem, bool) {
+	coordsPtr := state.coordinates.Load()
+
+	if coordsPtr == nil {
+		return nil, false
+	}
+
+	return solver.aggregateCoords(*coordsPtr)
+}
+
+func (solver *Solver) aggregateCoords(
+	coords map[coordinate]evidenceItem,
 ) (map[types.CategoryType][]evidenceItem, bool) {
 
 	byCategory := make(map[types.CategoryType][]evidenceItem)
@@ -476,7 +552,7 @@ func (solver *Solver) aggregateLocked(
 	measured := false
 
 	for _, schema := range types.CategorySchemas {
-		item, found := state.coordinates[coordinate{
+		item, found := coords[coordinate{
 			Source: string(schema.Source),
 			Metric: schema.Metric,
 		}]

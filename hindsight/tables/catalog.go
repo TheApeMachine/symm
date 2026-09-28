@@ -11,7 +11,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/apache/iceberg-go"
@@ -35,11 +34,8 @@ const anonymousCredential = "anonymous"
 Catalog manages connections and schemas for canonical Iceberg tables.
 */
 type Catalog struct {
-	underlying   icecat.Catalog
-	awsConfig    *aws.Config
-	cacheMutex   sync.RWMutex
-	cachedEpochs []int64
-	epochsLoaded time.Time
+	underlying icecat.Catalog
+	awsConfig  *aws.Config
 }
 
 /*

@@ -37,7 +37,7 @@ check_gofmt() {
 		require_path "$module/go.mod" "Go module"
 		while IFS= read -r -d '' file; do
 			files+=("$file")
-		done < <(find "$module" -name '*.go' -not -path '*/.git/*' -not -path '*/vendor/*' -not -path '*/generated/*' -print0)
+		done < <(find "$module" -name '*.go' -not -path '*/.*/*' -not -path '*/vendor/*' -not -path '*/generated/*' -print0)
 	done
 
 	if ((${#files[@]} == 0)); then

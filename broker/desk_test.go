@@ -99,6 +99,16 @@ func TestDesk(t *testing.T) {
 			Convey("Then Enter short circuits, returns nil, and transitions desk to error", func() {
 				So(pos, ShouldBeNil)
 				So(desk.Status(), ShouldEqual, runtime.ERROR)
+
+				Convey("When market stabilizes with clean ticks", func() {
+					price.Anomalies().RecordClean("BTC/USD")
+					price.Anomalies().RecordClean("BTC/USD")
+					price.Anomalies().RecordClean("BTC/USD")
+
+					So(price.Anomalies().HasSevereFault("BTC/USD"), ShouldBeFalse)
+					So(desk.Status(), ShouldEqual, runtime.READY)
+					So(price.Status(), ShouldEqual, runtime.READY)
+				})
 			})
 		})
 	})

@@ -7,14 +7,14 @@ import (
 )
 
 type CognitionBranchT struct {
-	Id          int64   `json:"id"`
-	ParentId    int64   `json:"parentId"`
-	Token       string  `json:"token"`
-	Prefix      string  `json:"prefix"`
-	Key         string  `json:"key"`
-	Depth       int64   `json:"depth"`
+	Id int64 `json:"id"`
+	ParentId int64 `json:"parentId"`
+	Token string `json:"token"`
+	Prefix string `json:"prefix"`
+	Key string `json:"key"`
+	Depth int64 `json:"depth"`
 	Probability float64 `json:"probability"`
-	Count       uint64  `json:"count"`
+	Count uint64 `json:"count"`
 }
 
 func (t *CognitionBranchT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

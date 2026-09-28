@@ -1,6 +1,7 @@
 import * as flatbuffers from "flatbuffers";
 import { ManifoldFrame } from "#/providers/telemetry/telemetry/manifold-frame";
 import { Message } from "#/providers/telemetry/telemetry/message";
+import { PhaseResultant as PhaseResultantTable } from "#/providers/telemetry/telemetry/phase-resultant";
 import { PhysicsHealth, type PhysicsHealthT } from "#/providers/telemetry/telemetry/physics-health";
 import { WaveMode as WaveModeTable } from "#/providers/telemetry/telemetry/wave-mode";
 
@@ -95,6 +96,7 @@ export type FluidPhaseReading = {
 	pressureGradNorm: number;
 	viscosityProxy: number;
 	kuramotoR: number;
+	kuramotoPsi: number;
 	health?: PhysicsHealthT | null;
 	version?: bigint;
 	at?: bigint;
@@ -111,7 +113,16 @@ export type FluidOscillator = {
 	phase: number;
 	omega: number;
 	amplitude: number;
+	heat: number;
 	side: "bid" | "ask";
+};
+
+export type FluidResultant = {
+	side: "bid" | "ask";
+	count: number;
+	totalAmplitude: number;
+	coherence: number;
+	phase: number;
 };
 
 export type FluidPhase = {
@@ -119,6 +130,7 @@ export type FluidPhase = {
 	reading: FluidPhaseReading;
 	oscillators: FluidOscillator[];
 	modes: FluidWaveMode[];
+	resultants: FluidResultant[];
 };
 
 /*
@@ -134,6 +146,7 @@ export type FluidManifoldFrame = {
 
 const modeObj = new WaveModeTable();
 const healthTable = new PhysicsHealth();
+const resultantObj = new PhaseResultantTable();
 
 /*
 decodeManifold reads one ManifoldFrame flatbuffer, exactly as
@@ -199,6 +212,7 @@ export const decodeManifold = (bytes: Uint8Array): FluidManifoldFrame => {
 	const phaseArray = frame.phaseArray();
 	const omegaArray = frame.omegaArray();
 	const amplitudeArray = frame.ampArray();
+	const heatArray = frame.heatArray();
 
 	for (let index = 0; index < count; index += 1) {
 		const tokenID = frame.tokenIds(index) ?? 0n;
@@ -207,6 +221,7 @@ export const decodeManifold = (bytes: Uint8Array): FluidManifoldFrame => {
 			phase: phaseArray?.[index] ?? 0,
 			omega: omegaArray?.[index] ?? 0,
 			amplitude: amplitudeArray?.[index] ?? 0,
+			heat: heatArray?.[index] ?? 0,
 			side: (tokenID & 1n) === 0n ? "bid" : "ask",
 		});
 	}
@@ -228,6 +243,24 @@ export const decodeManifold = (bytes: Uint8Array): FluidManifoldFrame => {
 		});
 	}
 
+	const resultants: FluidResultant[] = [];
+
+	for (let index = 0; index < frame.resultantsLength(); index += 1) {
+		const res = frame.resultants(index, resultantObj);
+
+		if (res === null) {
+			continue;
+		}
+
+		resultants.push({
+			side: res.side() === "ask" ? "ask" : "bid",
+			count: res.count(),
+			totalAmplitude: res.totalAmplitude(),
+			coherence: res.coherence(),
+			phase: res.phase(),
+		});
+	}
+
 	const readingHealth = reading.health(healthTable);
 	const health = readingHealth !== null ? readingHealth.unpack() : null;
 
@@ -240,12 +273,14 @@ export const decodeManifold = (bytes: Uint8Array): FluidManifoldFrame => {
 			pressureGradNorm: reading.pressureGradNorm(),
 			viscosityProxy: reading.viscosityProxy(),
 			kuramotoR: reading.kuramotoR(),
+			kuramotoPsi: reading.kuramotoPsi(),
 			health,
 			version: frame.version(),
 			at: frame.at(),
 		},
 		oscillators,
 		modes,
+		resultants,
 	};
 
 	return { fields, particles, phase };

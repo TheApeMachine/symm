@@ -7,12 +7,12 @@ import (
 )
 
 type AdvisorSilenceT struct {
-	Advisor    string   `json:"advisor"`
-	Reason     string   `json:"reason"`
-	Missing    []string `json:"missing"`
-	Declared   int32    `json:"declared"`
-	LeaseUntil uint64   `json:"leaseUntil"`
-	ClockNow   uint64   `json:"clockNow"`
+	Advisor string `json:"advisor"`
+	Reason string `json:"reason"`
+	Missing []string `json:"missing"`
+	Declared int32 `json:"declared"`
+	LeaseUntil uint64 `json:"leaseUntil"`
+	ClockNow uint64 `json:"clockNow"`
 }
 
 func (t *AdvisorSilenceT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

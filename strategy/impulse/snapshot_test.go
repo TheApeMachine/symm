@@ -38,7 +38,6 @@ func BenchmarkMarketSnapshot(b *testing.B) {
 
 	held := impulseMap.Markets["BTC/USD"]
 	b.ReportAllocs()
-	
 
 	for b.Loop() {
 		held.Snapshot()

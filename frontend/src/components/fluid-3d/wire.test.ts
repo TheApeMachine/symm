@@ -5,6 +5,7 @@ import { Frame } from "#/providers/telemetry/telemetry/frame";
 import { IntegratorHealthT } from "#/providers/telemetry/telemetry/integrator-health";
 import { ManifoldFrameT } from "#/providers/telemetry/telemetry/manifold-frame";
 import { ManifoldReadingT } from "#/providers/telemetry/telemetry/manifold-reading";
+import { PhaseResultantT } from "#/providers/telemetry/telemetry/phase-resultant";
 import { PhysicsHealthT } from "#/providers/telemetry/telemetry/physics-health";
 import { WaveModeT } from "#/providers/telemetry/telemetry/wave-mode";
 import { decodeManifold } from "./wire";
@@ -63,7 +64,7 @@ describe("decodeManifold", () => {
 			[1, 2, 3],
 			[false],
 			[false],
-			new ManifoldReadingT(1.5, 2.5, 3.5, 4.5, 5.5, 0.75, health),
+			new ManifoldReadingT(1.5, 2.5, 3.5, 4.5, 5.5, 0.75, 0.35, health),
 			2,
 			2,
 			2,
@@ -77,6 +78,7 @@ describe("decodeManifold", () => {
 			0.5,
 			0.25,
 			[new WaveModeT(-2, 0.5, 0.25, 0.3), new WaveModeT(2, -0.5, -0.25, 0.3)],
+			[new PhaseResultantT("bid", 1, 9, 0.8, 0.1)],
 		);
 
 		const decoded = decodeManifold(encode(frame));
@@ -114,15 +116,25 @@ describe("decodeManifold", () => {
 		expect(decoded.phase.reading.pressureGradNorm).toBe(4.5);
 		expect(decoded.phase.reading.viscosityProxy).toBe(5.5);
 		expect(decoded.phase.reading.kuramotoR).toBe(0.75);
+		expect(decoded.phase.reading.kuramotoPsi).toBe(0.35);
 		expect(decoded.phase.reading.version).toBe(1n);
 		expect(decoded.phase.reading.at).toBe(1000n);
 		expect(decoded.phase.reading.health?.integrator?.substeps).toBe(4);
 		expect(decoded.phase.reading.health?.integrator?.time).toBeCloseTo(1.234, 3);
+		expect(decoded.phase.resultants).toHaveLength(1);
+		expect(decoded.phase.resultants[0]).toEqual({
+			side: "bid",
+			count: 1,
+			totalAmplitude: 9,
+			coherence: 0.8,
+			phase: 0.1,
+		});
 		expect(decoded.phase.oscillators).toHaveLength(1);
 		expect(decoded.phase.oscillators[0]).toEqual({
 			phase: expect.closeTo(0.1, 5),
 			omega: 1,
 			amplitude: 9,
+			heat: 5,
 			side: "bid",
 		});
 		expect(decoded.phase.modes).toHaveLength(2);

@@ -7,6 +7,7 @@ import (
 	"math/big"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unsafe"
 
@@ -26,27 +27,15 @@ type Book struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
 	status     *runtime.Status
-	pending    map[string]struct{}
+	pending    atomic.Pointer[map[string]struct{}]
 	seeded     chan struct{}
-	mu         sync.RWMutex
 	manager    *spot.BookManager
 	normalizer *spot.Normalizer
-	notify     func(string, time.Time)
-	resync     func(string)
-	touch      func([]kraken.Level3Touch)
-	diverging  map[string]struct{}
-
-	/*
-		touches collects the verified top of book for the frame being applied,
-		and lastTouch remembers what was last reported per symbol.
-
-		Only a changed touch is reported. Most Level 3 deltas move depth behind
-		the touch and leave the executable price exactly where it was, so
-		reporting every accepted frame would record the same price over and over
-		while adding nothing a price series could read.
-	*/
-	touches   []kraken.Level3Touch
-	lastTouch map[string][2]float64
+	notify     atomic.Pointer[func(string, time.Time)]
+	resync     atomic.Pointer[func(string)]
+	touch      atomic.Pointer[func([]kraken.Level3Touch)]
+	diverging  sync.Map
+	lastTouch  sync.Map
 }
 
 func NewBook(ctx context.Context, normalizer *spot.Normalizer) *Book {
@@ -64,8 +53,6 @@ func NewBook(ctx context.Context, normalizer *spot.Normalizer) *Book {
 		seeded:     make(chan struct{}, 1),
 		manager:    spot.NewBookManager(),
 		normalizer: normalizer,
-		diverging:  map[string]struct{}{},
-		lastTouch:  map[string][2]float64{},
 	}
 
 	book.manager.OnCreateBook.Recurring(func(
@@ -113,17 +100,17 @@ func (book *Book) Status() runtime.Stage {
 }
 
 /*
-	Expect keeps the book owner BUSY until every requested snapshot has
-
+Expect keeps the book owner BUSY until every requested snapshot has
 been applied and its observation consumers have been seeded.
 */
 func (book *Book) Expect(symbols []string) {
-	book.mu.Lock()
-	defer book.mu.Unlock()
-	book.pending = make(map[string]struct{}, len(symbols))
+	newPending := make(map[string]struct{}, len(symbols))
+
 	for _, symbol := range symbols {
-		book.pending[symbol] = struct{}{}
+		newPending[symbol] = struct{}{}
 	}
+
+	book.pending.Store(&newPending)
 	book.status.Transition(runtime.BUSY)
 }
 
@@ -145,14 +132,13 @@ func (book *Book) Wait() error {
 }
 
 func (book *Book) Book(symbol string, read func(*spotbook.Book)) {
-	book.mu.RLock()
-	defer book.mu.RUnlock()
-
-	if _, pending := book.pending[symbol]; pending {
-		return
+	if pendingPtr := book.pending.Load(); pendingPtr != nil {
+		if _, pending := (*pendingPtr)[symbol]; pending {
+			return
+		}
 	}
 
-	if _, diverging := book.diverging[symbol]; diverging {
+	if _, diverging := book.diverging.Load(symbol); diverging {
 		return
 	}
 
@@ -164,9 +150,6 @@ func (book *Book) Book(symbol string, read func(*spotbook.Book)) {
 }
 
 func (book *Book) Create(symbol string, depth int) {
-	book.mu.Lock()
-	defer book.mu.Unlock()
-
 	if depth <= 0 {
 		depth = viper.GetInt("market.l3_depth")
 
@@ -184,15 +167,11 @@ callback owns the venue conversation: unsubscribe the diverged symbol and
 resubscribe so the venue delivers a fresh snapshot.
 */
 func (book *Book) SetResync(resync func(string)) {
-	book.mu.Lock()
-	book.resync = resync
-	book.mu.Unlock()
+	book.resync.Store(&resync)
 }
 
 func (book *Book) SetNotify(notify func(string, time.Time)) {
-	book.mu.Lock()
-	book.notify = notify
-	book.mu.Unlock()
+	book.notify.Store(&notify)
 }
 
 func (book *Book) Update(
@@ -207,17 +186,26 @@ func (book *Book) Update(
 		payload.Data = []kraken.Level3Data{}
 	}
 
-	book.mu.Lock()
-	accepted, resynced, applyErr := book.apply(payload)
-	notify := book.notify
-	resync := book.resync
-	touch := book.touch
-	touches := book.touches
-	book.mu.Unlock()
+	accepted, resynced, applyErr, touches := book.apply(payload)
 
-	// Reported after the lock is released, for the same reason transport
-	// publication is: recording a frame must never hold the book against the
-	// ingestion that is still filling it.
+	var notify func(string, time.Time)
+
+	if notifyPtr := book.notify.Load(); notifyPtr != nil {
+		notify = *notifyPtr
+	}
+
+	var resync func(string)
+
+	if resyncPtr := book.resync.Load(); resyncPtr != nil {
+		resync = *resyncPtr
+	}
+
+	var touch func([]kraken.Level3Touch)
+
+	if touchPtr := book.touch.Load(); touchPtr != nil {
+		touch = *touchPtr
+	}
+
 	if touch != nil && len(touches) > 0 {
 		touch(touches)
 	}
@@ -245,9 +233,25 @@ func (book *Book) Update(
 
 	for _, data := range accepted {
 		if payload.Type == "snapshot" {
-			book.mu.Lock()
-			delete(book.pending, data.Symbol)
-			book.mu.Unlock()
+			for {
+				oldPendingPtr := book.pending.Load()
+
+				if oldPendingPtr == nil {
+					break
+				}
+
+				newPending := make(map[string]struct{}, len(*oldPendingPtr))
+
+				for key, val := range *oldPendingPtr {
+					if key != data.Symbol {
+						newPending[key] = val
+					}
+				}
+
+				if book.pending.CompareAndSwap(oldPendingPtr, &newPending) {
+					break
+				}
+			}
 		}
 
 		if notify != nil {
@@ -255,9 +259,20 @@ func (book *Book) Update(
 		}
 
 		if payload.Type == "snapshot" {
-			book.mu.Lock()
+			pendingCount := 0
 
-			if len(book.pending) == 0 && len(book.diverging) == 0 {
+			if pendingPtr := book.pending.Load(); pendingPtr != nil {
+				pendingCount = len(*pendingPtr)
+			}
+
+			divergingEmpty := true
+
+			book.diverging.Range(func(_, _ any) bool {
+				divergingEmpty = false
+				return false
+			})
+
+			if pendingCount == 0 && divergingEmpty {
 				book.status.Transition(runtime.READY)
 
 				select {
@@ -265,8 +280,6 @@ func (book *Book) Update(
 				default:
 				}
 			}
-
-			book.mu.Unlock()
 		}
 	}
 
@@ -286,14 +299,14 @@ once, for the owning transport to resubscribe.
 */
 func (book *Book) apply(
 	payload *kraken.Level3,
-) (accepted []kraken.Level3Data, resynced []string, err error) {
-	book.touches = book.touches[:0]
+) (accepted []kraken.Level3Data, resynced []string, err error, touches []kraken.Level3Touch) {
+	touches = make([]kraken.Level3Touch, 0)
 	accepted = make([]kraken.Level3Data, 0, len(payload.Data))
 
 	var symbolBook *spotbook.Book
 
 	for index, data := range payload.Data {
-		if _, diverged := book.diverging[data.Symbol]; diverged && payload.Type != "snapshot" {
+		if _, diverged := book.diverging.Load(data.Symbol); diverged && payload.Type != "snapshot" {
 			continue
 		}
 
@@ -318,7 +331,7 @@ func (book *Book) apply(
 			}
 
 			if payload.Type == "snapshot" {
-				delete(book.diverging, data.Symbol)
+				book.diverging.Delete(data.Symbol)
 				symbolBook = book.manager.CreateBook(
 					data.Symbol,
 					depth,
@@ -393,7 +406,7 @@ func (book *Book) apply(
 					// Absence is a lost-book precondition, not an empty order to insert.
 					if quantity.Sign() <= 0 && symbolSide.Levels[order.LimitPrice.String()] == nil {
 						book.manager.CreateBook(data.Symbol, depth)
-						book.diverging[data.Symbol] = struct{}{}
+						book.diverging.Store(data.Symbol, struct{}{})
 						book.status.Transition(runtime.ERROR)
 						resynced = append(resynced, data.Symbol)
 
@@ -445,8 +458,7 @@ func (book *Book) apply(
 					// snapshot restores trust.
 					book.manager.CreateBook(data.Symbol, depth)
 
-					if _, marked := book.diverging[data.Symbol]; !marked {
-						book.diverging[data.Symbol] = struct{}{}
+					if _, marked := book.diverging.LoadOrStore(data.Symbol, struct{}{}); !marked {
 						resynced = append(resynced, data.Symbol)
 					}
 
@@ -467,23 +479,21 @@ func (book *Book) apply(
 		}()
 
 		if err != nil {
-			return accepted, resynced, err
+			return accepted, resynced, err, touches
 		}
 
 		accepted = append(accepted, data)
-		book.recordTouch(symbolBook, data)
+		book.recordTouch(symbolBook, data, &touches)
 	}
 
-	return accepted, resynced, nil
+	return accepted, resynced, nil, touches
 }
 
 /*
 SetTouch connects verified top-of-book reporting to the owning transport.
 */
 func (book *Book) SetTouch(touch func([]kraken.Level3Touch)) {
-	book.mu.Lock()
-	defer book.mu.Unlock()
-	book.touch = touch
+	book.touch.Store(&touch)
 }
 
 /*
@@ -494,8 +504,8 @@ are the venue's own. A crossed or one-sided book is not a touch: there is no
 price at which both sides could trade, and reporting one would put a number
 into the price series that the market never offered.
 */
-func (book *Book) recordTouch(symbolBook *spotbook.Book, data kraken.Level3Data) {
-	if book.touch == nil || symbolBook == nil {
+func (book *Book) recordTouch(symbolBook *spotbook.Book, data kraken.Level3Data, touches *[]kraken.Level3Touch) {
+	if symbolBook == nil {
 		return
 	}
 	bid, ask := symbolBook.BestBid(), symbolBook.BestAsk()
@@ -509,13 +519,15 @@ func (book *Book) recordTouch(symbolBook *spotbook.Book, data kraken.Level3Data)
 		return
 	}
 
-	if previous, seen := book.lastTouch[data.Symbol]; seen &&
-		previous[0] == bidPrice && previous[1] == askPrice {
-		return
+	if val, seen := book.lastTouch.Load(data.Symbol); seen {
+		previous := val.([2]float64)
+		if previous[0] == bidPrice && previous[1] == askPrice {
+			return
+		}
 	}
-	book.lastTouch[data.Symbol] = [2]float64{bidPrice, askPrice}
+	book.lastTouch.Store(data.Symbol, [2]float64{bidPrice, askPrice})
 
-	book.touches = append(book.touches, kraken.Level3Touch{
+	*touches = append(*touches, kraken.Level3Touch{
 		Symbol: data.Symbol, Timestamp: data.Timestamp,
 		Bid: bid.Price, BidQty: bid.Quantity,
 		Ask: ask.Price, AskQty: ask.Quantity,
@@ -533,9 +545,6 @@ func (book *Book) SnapshotInto(out *sync.Map) {
 	if book == nil || out == nil {
 		return
 	}
-
-	book.mu.RLock()
-	defer book.mu.RUnlock()
 
 	for _, symbol := range book.manager.GetBooks() {
 		out.Store(symbol, book.manager.GetBook(symbol))

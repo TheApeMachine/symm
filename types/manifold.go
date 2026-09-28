@@ -13,6 +13,14 @@ type WaveMode struct {
 	Linewidth float32
 }
 
+type PhaseChannelResultant struct {
+	Side           string  `json:"side"`
+	Count          int     `json:"count"`
+	TotalAmplitude float64 `json:"totalAmplitude"`
+	Coherence      float64 `json:"coherence"`
+	Phase          float64 `json:"phase"`
+}
+
 type ManifoldState struct {
 	At            time.Time
 	Version       uint64
@@ -31,4 +39,5 @@ type ManifoldState struct {
 	EnergyScale   float32
 	WaveScale     float32
 	Modes         []WaveMode
+	Resultants    []PhaseChannelResultant
 }

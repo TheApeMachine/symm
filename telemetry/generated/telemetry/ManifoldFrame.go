@@ -7,38 +7,39 @@ import (
 )
 
 type ManifoldFrameT struct {
-	Sequence      uint64            `json:"sequence"`
-	At            int64             `json:"at"`
-	Version       uint64            `json:"version"`
-	N             int64             `json:"n"`
-	Bytes         []int64           `json:"bytes"`
-	Seqs          []int64           `json:"seqs"`
-	TokenIds      []int64           `json:"tokenIds"`
-	ContentIds    []int64           `json:"contentIds"`
-	Phase         []float32         `json:"phase"`
-	Omega         []float32         `json:"omega"`
-	Energy        []float32         `json:"energy"`
-	Mass          []float32         `json:"mass"`
-	Heat          []float32         `json:"heat"`
-	Amp           []float32         `json:"amp"`
-	Pos           []float32         `json:"pos"`
-	Vel           []float32         `json:"vel"`
-	Clamped       []bool            `json:"clamped"`
-	Dark          []bool            `json:"dark"`
-	Reading       *ManifoldReadingT `json:"reading"`
-	GridX         int32             `json:"gridX"`
-	GridY         int32             `json:"gridY"`
-	GridZ         int32             `json:"gridZ"`
-	GridSpacing   float64           `json:"gridSpacing"`
-	MomRho        []float32         `json:"momRho"`
-	FieldEnergy   []float32         `json:"fieldEnergy"`
-	WaveReal      []float32         `json:"waveReal"`
-	WaveImag      []float32         `json:"waveImag"`
-	DensityScale  float32           `json:"densityScale"`
-	MomentumScale float32           `json:"momentumScale"`
-	EnergyScale   float32           `json:"energyScale"`
-	WaveScale     float32           `json:"waveScale"`
-	Modes         []*WaveModeT      `json:"modes"`
+	Sequence uint64 `json:"sequence"`
+	At int64 `json:"at"`
+	Version uint64 `json:"version"`
+	N int64 `json:"n"`
+	Bytes []int64 `json:"bytes"`
+	Seqs []int64 `json:"seqs"`
+	TokenIds []int64 `json:"tokenIds"`
+	ContentIds []int64 `json:"contentIds"`
+	Phase []float32 `json:"phase"`
+	Omega []float32 `json:"omega"`
+	Energy []float32 `json:"energy"`
+	Mass []float32 `json:"mass"`
+	Heat []float32 `json:"heat"`
+	Amp []float32 `json:"amp"`
+	Pos []float32 `json:"pos"`
+	Vel []float32 `json:"vel"`
+	Clamped []bool `json:"clamped"`
+	Dark []bool `json:"dark"`
+	Reading *ManifoldReadingT `json:"reading"`
+	GridX int32 `json:"gridX"`
+	GridY int32 `json:"gridY"`
+	GridZ int32 `json:"gridZ"`
+	GridSpacing float64 `json:"gridSpacing"`
+	MomRho []float32 `json:"momRho"`
+	FieldEnergy []float32 `json:"fieldEnergy"`
+	WaveReal []float32 `json:"waveReal"`
+	WaveImag []float32 `json:"waveImag"`
+	DensityScale float32 `json:"densityScale"`
+	MomentumScale float32 `json:"momentumScale"`
+	EnergyScale float32 `json:"energyScale"`
+	WaveScale float32 `json:"waveScale"`
+	Modes []*WaveModeT `json:"modes"`
+	Resultants []*PhaseResultantT `json:"resultants"`
 }
 
 func (t *ManifoldFrameT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
@@ -221,6 +222,19 @@ func (t *ManifoldFrameT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT
 		}
 		modesOffset = builder.EndVector(modesLength)
 	}
+	resultantsOffset := flatbuffers.UOffsetT(0)
+	if t.Resultants != nil {
+		resultantsLength := len(t.Resultants)
+		resultantsOffsets := make([]flatbuffers.UOffsetT, resultantsLength)
+		for j := 0; j < resultantsLength; j++ {
+			resultantsOffsets[j] = t.Resultants[j].Pack(builder)
+		}
+		ManifoldFrameStartResultantsVector(builder, resultantsLength)
+		for j := resultantsLength - 1; j >= 0; j-- {
+			builder.PrependUOffsetT(resultantsOffsets[j])
+		}
+		resultantsOffset = builder.EndVector(resultantsLength)
+	}
 	ManifoldFrameStart(builder)
 	ManifoldFrameAddSequence(builder, t.Sequence)
 	ManifoldFrameAddAt(builder, t.At)
@@ -254,6 +268,7 @@ func (t *ManifoldFrameT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT
 	ManifoldFrameAddEnergyScale(builder, t.EnergyScale)
 	ManifoldFrameAddWaveScale(builder, t.WaveScale)
 	ManifoldFrameAddModes(builder, modesOffset)
+	ManifoldFrameAddResultants(builder, resultantsOffset)
 	return ManifoldFrameEnd(builder)
 }
 
@@ -367,6 +382,13 @@ func (rcv *ManifoldFrame) UnPackTo(t *ManifoldFrameT) {
 		x := WaveMode{}
 		rcv.Modes(&x, j)
 		t.Modes[j] = x.UnPack()
+	}
+	resultantsLength := rcv.ResultantsLength()
+	t.Resultants = make([]*PhaseResultantT, resultantsLength)
+	for j := 0; j < resultantsLength; j++ {
+		x := PhaseResultant{}
+		rcv.Resultants(&x, j)
+		t.Resultants[j] = x.UnPack()
 	}
 }
 
@@ -1059,8 +1081,28 @@ func (rcv *ManifoldFrame) ModesLength() int {
 	return 0
 }
 
+func (rcv *ManifoldFrame) Resultants(obj *PhaseResultant, j int) bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(68))
+	if o != 0 {
+		x := rcv._tab.Vector(o)
+		x += flatbuffers.UOffsetT(j) * 4
+		x = rcv._tab.Indirect(x)
+		obj.Init(rcv._tab.Bytes, x)
+		return true
+	}
+	return false
+}
+
+func (rcv *ManifoldFrame) ResultantsLength() int {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(68))
+	if o != 0 {
+		return rcv._tab.VectorLen(o)
+	}
+	return 0
+}
+
 func ManifoldFrameStart(builder *flatbuffers.Builder) {
-	builder.StartObject(32)
+	builder.StartObject(33)
 }
 func ManifoldFrameAddSequence(builder *flatbuffers.Builder, sequence uint64) {
 	builder.PrependUint64Slot(0, sequence, 0)
@@ -1213,6 +1255,12 @@ func ManifoldFrameAddModes(builder *flatbuffers.Builder, modes flatbuffers.UOffs
 	builder.PrependUOffsetTSlot(31, flatbuffers.UOffsetT(modes), 0)
 }
 func ManifoldFrameStartModesVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(4, numElems, 4)
+}
+func ManifoldFrameAddResultants(builder *flatbuffers.Builder, resultants flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(32, flatbuffers.UOffsetT(resultants), 0)
+}
+func ManifoldFrameStartResultantsVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
 }
 func ManifoldFrameEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

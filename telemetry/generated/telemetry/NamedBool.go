@@ -7,8 +7,8 @@ import (
 )
 
 type NamedBoolT struct {
-	Name  string `json:"name"`
-	Value bool   `json:"value"`
+	Name string `json:"name"`
+	Value bool `json:"value"`
 }
 
 func (t *NamedBoolT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

@@ -1975,7 +1975,7 @@
       "metric": "coherence_mag2",
       "package": "github.com/theapemachine/symm/logic/manifold",
       "file": "logic/manifold/solver.go",
-      "line": 360,
+      "line": 364,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -2117,7 +2117,7 @@
       "metric": "divergence",
       "package": "github.com/theapemachine/symm/logic/manifold",
       "file": "logic/manifold/solver.go",
-      "line": 354,
+      "line": 358,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -2658,7 +2658,7 @@
       "metric": "gas_internal",
       "package": "github.com/theapemachine/symm/logic/manifold",
       "file": "logic/manifold/solver.go",
-      "line": 375,
+      "line": 382,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -2669,7 +2669,7 @@
       "metric": "gas_kinetic",
       "package": "github.com/theapemachine/symm/logic/manifold",
       "file": "logic/manifold/solver.go",
-      "line": 372,
+      "line": 379,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -2680,7 +2680,19 @@
       "metric": "guidance_speed",
       "package": "github.com/theapemachine/symm/logic/manifold",
       "file": "logic/manifold/solver.go",
-      "line": 357,
+      "line": 361,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "hawkes/kuramoto_psi",
+      "source": "hawkes",
+      "metric": "kuramoto_psi",
+      "package": "github.com/theapemachine/symm/logic/manifold",
+      "file": "logic/manifold/solver.go",
+      "line": 376,
+      "unit": "math.Pi",
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -2691,7 +2703,7 @@
       "metric": "kuramoto_r",
       "package": "github.com/theapemachine/symm/logic/manifold",
       "file": "logic/manifold/solver.go",
-      "line": 369,
+      "line": 373,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -2858,7 +2870,7 @@
       "metric": "max_mach",
       "package": "github.com/theapemachine/symm/logic/manifold",
       "file": "logic/manifold/solver.go",
-      "line": 387,
+      "line": 394,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -2949,7 +2961,7 @@
       "metric": "particle_count",
       "package": "github.com/theapemachine/symm/logic/manifold",
       "file": "logic/manifold/solver.go",
-      "line": 390,
+      "line": 397,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -2960,7 +2972,7 @@
       "metric": "particle_kinetic",
       "package": "github.com/theapemachine/symm/logic/manifold",
       "file": "logic/manifold/solver.go",
-      "line": 396,
+      "line": 403,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -2971,7 +2983,7 @@
       "metric": "particle_thermal",
       "package": "github.com/theapemachine/symm/logic/manifold",
       "file": "logic/manifold/solver.go",
-      "line": 393,
+      "line": 400,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -2982,7 +2994,7 @@
       "metric": "pressure_grad_norm",
       "package": "github.com/theapemachine/symm/logic/manifold",
       "file": "logic/manifold/solver.go",
-      "line": 363,
+      "line": 367,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -3028,7 +3040,7 @@
       "metric": "strain_rms",
       "package": "github.com/theapemachine/symm/logic/manifold",
       "file": "logic/manifold/solver.go",
-      "line": 384,
+      "line": 391,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -3039,7 +3051,7 @@
       "metric": "viscosity_proxy",
       "package": "github.com/theapemachine/symm/logic/manifold",
       "file": "logic/manifold/solver.go",
-      "line": 366,
+      "line": 370,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -3050,7 +3062,7 @@
       "metric": "vorticity_rms",
       "package": "github.com/theapemachine/symm/logic/manifold",
       "file": "logic/manifold/solver.go",
-      "line": 381,
+      "line": 388,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -3061,7 +3073,7 @@
       "metric": "wave_norm",
       "package": "github.com/theapemachine/symm/logic/manifold",
       "file": "logic/manifold/solver.go",
-      "line": 378,
+      "line": 385,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -4223,7 +4235,7 @@
       "metric": "coherence_mag2",
       "package": "github.com/theapemachine/symm/logic/manifold",
       "file": "logic/manifold/solver.go",
-      "line": 360,
+      "line": 364,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -4234,7 +4246,7 @@
       "metric": "divergence",
       "package": "github.com/theapemachine/symm/logic/manifold",
       "file": "logic/manifold/solver.go",
-      "line": 354,
+      "line": 358,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -4245,7 +4257,7 @@
       "metric": "gas_internal",
       "package": "github.com/theapemachine/symm/logic/manifold",
       "file": "logic/manifold/solver.go",
-      "line": 375,
+      "line": 382,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -4256,7 +4268,7 @@
       "metric": "gas_kinetic",
       "package": "github.com/theapemachine/symm/logic/manifold",
       "file": "logic/manifold/solver.go",
-      "line": 372,
+      "line": 379,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -4267,7 +4279,19 @@
       "metric": "guidance_speed",
       "package": "github.com/theapemachine/symm/logic/manifold",
       "file": "logic/manifold/solver.go",
-      "line": 357,
+      "line": 361,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "manifold/kuramoto_psi",
+      "source": "manifold",
+      "metric": "kuramoto_psi",
+      "package": "github.com/theapemachine/symm/logic/manifold",
+      "file": "logic/manifold/solver.go",
+      "line": 376,
+      "unit": "math.Pi",
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -4278,7 +4302,7 @@
       "metric": "kuramoto_r",
       "package": "github.com/theapemachine/symm/logic/manifold",
       "file": "logic/manifold/solver.go",
-      "line": 369,
+      "line": 373,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -4289,7 +4313,7 @@
       "metric": "max_mach",
       "package": "github.com/theapemachine/symm/logic/manifold",
       "file": "logic/manifold/solver.go",
-      "line": 387,
+      "line": 394,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -4300,7 +4324,7 @@
       "metric": "particle_count",
       "package": "github.com/theapemachine/symm/logic/manifold",
       "file": "logic/manifold/solver.go",
-      "line": 390,
+      "line": 397,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -4311,7 +4335,7 @@
       "metric": "particle_kinetic",
       "package": "github.com/theapemachine/symm/logic/manifold",
       "file": "logic/manifold/solver.go",
-      "line": 396,
+      "line": 403,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -4322,7 +4346,7 @@
       "metric": "particle_thermal",
       "package": "github.com/theapemachine/symm/logic/manifold",
       "file": "logic/manifold/solver.go",
-      "line": 393,
+      "line": 400,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -4333,7 +4357,7 @@
       "metric": "pressure_grad_norm",
       "package": "github.com/theapemachine/symm/logic/manifold",
       "file": "logic/manifold/solver.go",
-      "line": 363,
+      "line": 367,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -4344,7 +4368,7 @@
       "metric": "strain_rms",
       "package": "github.com/theapemachine/symm/logic/manifold",
       "file": "logic/manifold/solver.go",
-      "line": 384,
+      "line": 391,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -4355,7 +4379,7 @@
       "metric": "viscosity_proxy",
       "package": "github.com/theapemachine/symm/logic/manifold",
       "file": "logic/manifold/solver.go",
-      "line": 366,
+      "line": 370,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -4366,7 +4390,7 @@
       "metric": "vorticity_rms",
       "package": "github.com/theapemachine/symm/logic/manifold",
       "file": "logic/manifold/solver.go",
-      "line": 381,
+      "line": 388,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -4377,7 +4401,7 @@
       "metric": "wave_norm",
       "package": "github.com/theapemachine/symm/logic/manifold",
       "file": "logic/manifold/solver.go",
-      "line": 378,
+      "line": 385,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -6946,8 +6970,8 @@
     }
   ],
   "summary": {
-    "totalProducers": 433,
-    "deadProducers": 271,
+    "totalProducers": 435,
+    "deadProducers": 273,
     "referencedProducers": 162,
     "kernelOnlyProducers": 0,
     "boundConsumerEdges": 313,

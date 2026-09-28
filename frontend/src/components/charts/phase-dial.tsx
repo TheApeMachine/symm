@@ -25,7 +25,7 @@ export type PhaseDialState = {
 	oscillators: FluidOscillator[];
 	wave: TerminalWaveMode[];
 	status: TerminalPhaseStatus;
-	resultants?: PhaseChannelResultant[];
+	resultants: PhaseChannelResultant[];
 };
 
 export type PhaseChannelResultant = {
@@ -40,66 +40,8 @@ const phaseDialStore = createStore<PhaseDialState>({
 	oscillators: [],
 	wave: [],
 	status: { ready: false, reason: "" },
+	resultants: [],
 });
-
-/*
-phaseChannelResultants computes each book side's weighted Kuramoto vector.
-Vector length is normalized by that side's observed amplitude mass, while its
-angle is the phase of the complex sum. Computes both sides in a single pass.
-*/
-export const phaseChannelResultants = (
-	oscillators: FluidOscillator[],
-): PhaseChannelResultant[] => {
-	let bidReal = 0;
-	let bidImaginary = 0;
-	let bidTotalAmplitude = 0;
-	let bidCount = 0;
-
-	let askReal = 0;
-	let askImaginary = 0;
-	let askTotalAmplitude = 0;
-	let askCount = 0;
-
-	for (const oscillator of oscillators) {
-		const cosValue = Math.cos(oscillator.phase);
-		const sinValue = Math.sin(oscillator.phase);
-
-		if (oscillator.side === "bid") {
-			bidReal += oscillator.amplitude * cosValue;
-			bidImaginary += oscillator.amplitude * sinValue;
-			bidTotalAmplitude += oscillator.amplitude;
-			bidCount += 1;
-		} else if (oscillator.side === "ask") {
-			askReal += oscillator.amplitude * cosValue;
-			askImaginary += oscillator.amplitude * sinValue;
-			askTotalAmplitude += oscillator.amplitude;
-			askCount += 1;
-		}
-	}
-
-	return [
-		{
-			side: "bid",
-			count: bidCount,
-			totalAmplitude: bidTotalAmplitude,
-			coherence:
-				bidTotalAmplitude > 0
-					? Math.hypot(bidReal, bidImaginary) / bidTotalAmplitude
-					: 0,
-			phase: bidCount > 0 ? Math.atan2(bidImaginary, bidReal) : 0,
-		},
-		{
-			side: "ask",
-			count: askCount,
-			totalAmplitude: askTotalAmplitude,
-			coherence:
-				askTotalAmplitude > 0
-					? Math.hypot(askReal, askImaginary) / askTotalAmplitude
-					: 0,
-			phase: askCount > 0 ? Math.atan2(askImaginary, askReal) : 0,
-		},
-	];
-};
 
 const sideColor = (side: "bid" | "ask"): string =>
 	side === "bid" ? TERMINAL_COLORS.green : TERMINAL_COLORS.red;
@@ -296,8 +238,7 @@ const drawPhaseDial = (
 		18,
 		Math.min((bottom - top) / 2 - 14, width / 2 - 34),
 	);
-	const resultants =
-		state.resultants ?? phaseChannelResultants(state.oscillators);
+	const resultants = state.resultants;
 
 	context.save();
 	drawPhaseAxes(context, centerX, centerY, radius);
@@ -332,16 +273,10 @@ const repaint = () => {
 /*
 paintPhaseDial retains the latest resident cut so resize and remount events
 repaint the same oscillator geometry instead of blanking the chart.
-Resultants are pre-resolved so canvas drawing does not run trigonometric loops.
+Resultants are computed directly in the Go/Metal physics kernel upstream and passed predigested.
 */
 export const paintPhaseDial = (state: PhaseDialState) => {
-	const resolvedState: PhaseDialState = state.resultants
-		? state
-		: {
-				...state,
-				resultants: phaseChannelResultants(state.oscillators),
-			};
-	phaseDialStore.setState(() => resolvedState);
+	phaseDialStore.setState(() => state);
 	repaint();
 };
 

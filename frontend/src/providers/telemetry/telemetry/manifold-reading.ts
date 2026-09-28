@@ -56,13 +56,18 @@ kuramotoR():number {
   return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
 }
 
-health(obj?:PhysicsHealth):PhysicsHealth|null {
+kuramotoPsi():number {
   const offset = this.bb!.__offset(this.bb_pos, 16);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+health(obj?:PhysicsHealth):PhysicsHealth|null {
+  const offset = this.bb!.__offset(this.bb_pos, 18);
   return offset ? (obj || new PhysicsHealth()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
 }
 
 static startManifoldReading(builder:flatbuffers.Builder) {
-  builder.startObject(7);
+  builder.startObject(8);
 }
 
 static addDivergence(builder:flatbuffers.Builder, divergence:number) {
@@ -89,8 +94,12 @@ static addKuramotoR(builder:flatbuffers.Builder, kuramotoR:number) {
   builder.addFieldFloat64(5, kuramotoR, 0.0);
 }
 
+static addKuramotoPsi(builder:flatbuffers.Builder, kuramotoPsi:number) {
+  builder.addFieldFloat64(6, kuramotoPsi, 0.0);
+}
+
 static addHealth(builder:flatbuffers.Builder, healthOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(6, healthOffset, 0);
+  builder.addFieldOffset(7, healthOffset, 0);
 }
 
 static endManifoldReading(builder:flatbuffers.Builder):flatbuffers.Offset {
@@ -107,6 +116,7 @@ unpack(): ManifoldReadingT {
     this.pressureGradNorm(),
     this.viscosityProxy(),
     this.kuramotoR(),
+    this.kuramotoPsi(),
     (this.health() !== null ? this.health()!.unpack() : null)
   );
 }
@@ -119,6 +129,7 @@ unpackTo(_o: ManifoldReadingT): void {
   _o.pressureGradNorm = this.pressureGradNorm();
   _o.viscosityProxy = this.viscosityProxy();
   _o.kuramotoR = this.kuramotoR();
+  _o.kuramotoPsi = this.kuramotoPsi();
   _o.health = (this.health() !== null ? this.health()!.unpack() : null);
 }
 }
@@ -131,6 +142,7 @@ constructor(
   public pressureGradNorm: number = 0.0,
   public viscosityProxy: number = 0.0,
   public kuramotoR: number = 0.0,
+  public kuramotoPsi: number = 0.0,
   public health: PhysicsHealthT|null = null
 ){}
 
@@ -145,6 +157,7 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   ManifoldReading.addPressureGradNorm(builder, this.pressureGradNorm);
   ManifoldReading.addViscosityProxy(builder, this.viscosityProxy);
   ManifoldReading.addKuramotoR(builder, this.kuramotoR);
+  ManifoldReading.addKuramotoPsi(builder, this.kuramotoPsi);
   ManifoldReading.addHealth(builder, health);
 
   return ManifoldReading.endManifoldReading(builder);

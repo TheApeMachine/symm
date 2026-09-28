@@ -36,8 +36,7 @@ never blocks the market pipeline.
 */
 type FluidRTC struct {
 	*runtime.System
-	peersMutex    sync.RWMutex
-	peers         map[*webrtc.PeerConnection]*fluidPeer
+	peers         sync.Map
 	consumerID    string
 	bufferedLimit uint64
 	sequence      atomic.Uint64
@@ -54,7 +53,6 @@ func NewFluidRTC(
 	bufferedSegments := viper.GetUint64("ui.webrtc.buffered_segments")
 
 	fluidTransport := &FluidRTC{
-		peers:         make(map[*webrtc.PeerConnection]*fluidPeer),
 		consumerID:    consumerID,
 		bufferedLimit: bufferedSegments * fluidSegmentSize,
 	}
@@ -178,20 +176,18 @@ channel. Every channel is latest-wins, so a busy viewer receives the freshest
 record and the market pipeline is never blocked or error-flooded.
 */
 func (fluidTransport *FluidRTC) publishBytes(channelName string, payload []byte) error {
-	fluidTransport.peersMutex.RLock()
-	defer fluidTransport.peersMutex.RUnlock()
-
-	for _, peer := range fluidTransport.peers {
-		peer.mutex.RLock()
-		channel := peer.channels[channelName]
-		peer.mutex.RUnlock()
+	fluidTransport.peers.Range(func(_, value any) bool {
+		peer := value.(*fluidPeer)
+		channel := peer.getChannel(channelName)
 
 		if channel == nil || !channel.idle() {
-			continue
+			return true
 		}
 
 		channel.enqueue(payload)
-	}
+
+		return true
+	})
 
 	return nil
 }
@@ -313,6 +309,7 @@ func encodeManifold(state *types.ManifoldState, sequence uint64) []byte {
 		PressureGradNorm: state.Reading.PressureGradNorm,
 		ViscosityProxy:   state.Reading.ViscosityProxy,
 		KuramotoR:        state.Reading.KuramotoR,
+		KuramotoPsi:      state.Reading.KuramotoPsi,
 		Health:           health,
 	}
 
@@ -327,13 +324,25 @@ func encodeManifold(state *types.ManifoldState, sequence uint64) []byte {
 		}
 	}
 
-	var n int64
+	resultants := make([]*telemetry.PhaseResultantT, len(state.Resultants))
+
+	for index, resultant := range state.Resultants {
+		resultants[index] = &telemetry.PhaseResultantT{
+			Side:           resultant.Side,
+			Count:          int32(resultant.Count),
+			TotalAmplitude: resultant.TotalAmplitude,
+			Coherence:      resultant.Coherence,
+			Phase:          resultant.Phase,
+		}
+	}
+
+	var particleCount int64
 	var bytes, seqs, tokenIds, contentIds []int64
 	var phase, omega, energy, mass, heat, amp, pos, vel []float32
 	var clamped, dark []bool
 
 	if state.State != nil {
-		n = int64(state.State.N)
+		particleCount = int64(state.State.N)
 		bytes = state.State.Bytes
 		seqs = state.State.Seqs
 		tokenIds = state.State.TokenIDs
@@ -354,7 +363,7 @@ func encodeManifold(state *types.ManifoldState, sequence uint64) []byte {
 		Sequence:      sequence,
 		At:            state.At.UnixNano(),
 		Version:       state.Version,
-		N:             n,
+		N:             particleCount,
 		Bytes:         bytes,
 		Seqs:          seqs,
 		TokenIds:      tokenIds,
@@ -383,6 +392,7 @@ func encodeManifold(state *types.ManifoldState, sequence uint64) []byte {
 		EnergyScale:   state.EnergyScale,
 		WaveScale:     state.WaveScale,
 		Modes:         modes,
+		Resultants:    resultants,
 	}
 
 	msg := &telemetry.MessageT{
@@ -411,16 +421,21 @@ draining the previous one is both wasted work and â€” for a multi-chunk record â
 a frame the viewer can never reassemble.
 */
 func (fluidTransport *FluidRTC) Wants(channel string) bool {
-	fluidTransport.peersMutex.RLock()
-	defer fluidTransport.peersMutex.RUnlock()
+	wants := false
 
-	for _, peer := range fluidTransport.peers {
+	fluidTransport.peers.Range(func(_, value any) bool {
+		peer := value.(*fluidPeer)
+
 		if peer.ready(channel) {
-			return true
-		}
-	}
+			wants = true
 
-	return false
+			return false
+		}
+
+		return true
+	})
+
+	return wants
 }
 
 /*
@@ -505,23 +520,20 @@ func (fluidTransport *FluidRTC) add(
 	peerConnection *webrtc.PeerConnection,
 	peer *fluidPeer,
 ) {
-	fluidTransport.peersMutex.Lock()
-	fluidTransport.peers[peerConnection] = peer
-	fluidTransport.peersMutex.Unlock()
+	fluidTransport.peers.Store(peerConnection, peer)
 }
 
 func (fluidTransport *FluidRTC) remove(peerConnection *webrtc.PeerConnection) {
-	fluidTransport.peersMutex.Lock()
-	peer := fluidTransport.peers[peerConnection]
-	delete(fluidTransport.peers, peerConnection)
-	fluidTransport.peersMutex.Unlock()
+	value, loaded := fluidTransport.peers.LoadAndDelete(peerConnection)
 
-	if peer != nil {
-		peer.close()
+	if loaded && value != nil {
+		value.(*fluidPeer).close()
 	}
 
 	if peerConnection != nil {
-		_ = peerConnection.Close()
+		if err := peerConnection.Close(); err != nil {
+			errnie.Error(err)
+		}
 	}
 }
 

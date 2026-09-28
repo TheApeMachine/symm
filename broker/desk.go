@@ -31,6 +31,19 @@ func NewDesk(
 	}
 
 	desk.System = runtime.NewSystem(ctx, "desk", desk)
+
+	if price != nil && price.Anomalies() != nil {
+		price.Anomalies().SetOnFault(func(symbol string) {
+			desk.Transition(runtime.ERROR)
+		})
+
+		price.Anomalies().SetOnRecover(func(symbol string) {
+			if !price.Anomalies().HasAnySevereFault() {
+				desk.Transition(runtime.READY)
+			}
+		})
+	}
+
 	return desk
 }
 
@@ -39,8 +52,17 @@ func (desk *Desk) Enter(symbol string) *Position {
 		return nil
 	}
 
+	if desk.Status() == runtime.ERROR || desk.price.Status() == runtime.ERROR {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[desk] execution halted: broker in error status",
+			nil,
+		))
+
+		return nil
+	}
+
 	if desk.price.Anomalies() != nil && desk.price.Anomalies().HasSevereFault(symbol) {
-		desk.Transition(runtime.ERROR)
 		errnie.Error(errnie.Err(
 			errnie.Validation,
 			"[desk] execution halted: severe structural venue fault for "+symbol,
@@ -51,20 +73,9 @@ func (desk *Desk) Enter(symbol string) *Position {
 	}
 
 	if desk.price.MarketHealth(symbol) <= 0.0 {
-		desk.Transition(runtime.ERROR)
 		errnie.Error(errnie.Err(
 			errnie.Validation,
 			"[desk] execution halted: market health critical failure for "+symbol,
-			nil,
-		))
-
-		return nil
-	}
-
-	if desk.Status() == runtime.ERROR || desk.price.Status() == runtime.ERROR {
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"[desk] execution halted: broker in error status",
 			nil,
 		))
 
@@ -144,6 +155,21 @@ func (desk *Desk) Enter(symbol string) *Position {
 	}
 
 	position.AddEntryResponse(&response)
+
+	if len(response.ID) > 0 {
+		orderID := response.ID[0]
+		history, historyErr := desk.api.TradesHistory()
+
+		if historyErr == nil && history.Trades != nil {
+			for _, trade := range history.Trades {
+				if trade.OrderID == orderID {
+					position.SetFill(trade.Price, trade.Volume, trade.Fee)
+					break
+				}
+			}
+		}
+	}
+
 	desk.balance.Update()
 	return position
 }

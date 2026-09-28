@@ -22,46 +22,31 @@ it computes them, and the workload's register owns the measurement's lifetime.
 */
 type Trade struct {
 	*runtime.System
-	pipelines map[string]core.Primitive
-	mu        sync.RWMutex
+	pipelines sync.Map
 	ID        int
 }
 
 func NewTrade(ctx context.Context) *Trade {
-	trade := &Trade{
-		pipelines: make(map[string]core.Primitive),
-	}
-
+	trade := &Trade{}
 	trade.System = runtime.NewSystem(ctx, "cvd:trade", trade)
 	return trade
 }
 
 func (trade *Trade) pipelineFor(symbol string) core.Primitive {
-	trade.mu.RLock()
-	pipeline, ok := trade.pipelines[symbol]
-	trade.mu.RUnlock()
-
-	if ok {
-		return pipeline
+	if existing, ok := trade.pipelines.Load(symbol); ok {
+		return existing.(core.Primitive)
 	}
 
-	trade.mu.Lock()
-	defer trade.mu.Unlock()
-
-	pipeline, ok = trade.pipelines[symbol]
-	if ok {
-		return pipeline
-	}
-
-	pipeline = nomagique.NewNumber(
+	pipeline := nomagique.NewNumber(
 		nmcvd.NewGate(),
 		nmcvd.NewQuantity(),
 		nmcvd.NewNotional(),
 		nmcvd.NewRates(),
 		data.NewFinalizer[float64](),
 	)
-	trade.pipelines[symbol] = pipeline
-	return pipeline
+
+	actual, _ := trade.pipelines.LoadOrStore(symbol, pipeline)
+	return actual.(core.Primitive)
 }
 
 /*
@@ -120,7 +105,7 @@ Register returns the pre-allocated measurement every trade flows through:
 every metric the instrument can produce is declared, none valued.
 */
 func (trade *Trade) Register() *data.Measurement[float64] {
-	m := data.NewMeasurement("cvd", map[string]data.Metric[float64]{
+	measurement := data.NewMeasurement("cvd", map[string]data.Metric[float64]{
 		"trade_count": data.NewMetric[float64](
 			"trade_count", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
 		),
@@ -200,6 +185,6 @@ func (trade *Trade) Register() *data.Measurement[float64] {
 			"signed_net_fraction_zscore", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
 		),
 	})
-	m.Metadata["peer-interest"] = "*"
-	return m
+	measurement.Metadata["peer-interest"] = "*"
+	return measurement
 }

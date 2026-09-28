@@ -35,6 +35,7 @@ type Conn interface {
 	AddOrder(*spot.AddOrderRequest) (spot.AddOrderResult, error)
 	OpenOrders() (spot.OpenOrdersResult, error)
 	CancelOrder(*spot.CancelOrderRequest) (spot.CancelResult, error)
+	OnExecution(func(*kraken.Execution))
 	Write(json.Marshaler, ...Callback[any]) error
 	Post(string, json.Marshaler) ([]byte, error)
 	Client() *spot.WebSocket
@@ -158,17 +159,6 @@ func (api *API) Book(symbol string, read func(*book.Book)) {
 	}
 }
 
-func (api *API) TickerSingle(symbol string) (*spot.AssetTickerInfo, error) {
-	if live, ok := api.public.(*Live); ok {
-		return live.TickerSingle(symbol)
-	}
-
-	return nil, errnie.Error(errnie.Err(
-		errnie.NotFound,
-		"api: public live transport unavailable for ticker",
-		nil,
-	))
-}
 func (api *API) SubInstrument(callback chan any) { api.public.SubInstrument(callback) }
 func (api *API) SubTicker(symbols []string)      { api.public.SubTicker(symbols) }
 func (api *API) SubL3(symbols []string)          { api.private.SubL3(symbols) }
@@ -216,6 +206,14 @@ func (api *API) OpenOrders() (spot.OpenOrdersResult, error) {
 
 func (api *API) CancelOrder(request *spot.CancelOrderRequest) (spot.CancelResult, error) {
 	return api.private.CancelOrder(request)
+}
+
+func (api *API) OnExecution(handler func(*kraken.Execution)) {
+	if api == nil || api.private == nil {
+		return
+	}
+
+	api.private.OnExecution(handler)
 }
 
 func (api *API) ResetPaper() error {

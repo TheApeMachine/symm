@@ -3,7 +3,7 @@ package websocket
 import (
 	"context"
 	"fmt"
-	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/theapemachine/errnie"
@@ -28,9 +28,7 @@ type Pinger struct {
 	// name prefixes this pinger's log lines with the session it serves.
 	name string
 
-	// mu guards the loop's stop channel.
-	mu   sync.Mutex
-	stop chan struct{}
+	stop atomic.Pointer[chan struct{}]
 }
 
 func NewPinger(name string, send func() error) *Pinger {
@@ -61,16 +59,14 @@ func (pinger *Pinger) Start(ctx context.Context) {
 		return
 	}
 
-	pinger.mu.Lock()
+	stop := make(chan struct{})
+	oldStop := pinger.stop.Swap(&stop)
 
-	if pinger.stop != nil {
-		close(pinger.stop)
+	if oldStop != nil && *oldStop != nil {
+		close(*oldStop)
 	}
 
-	stop := make(chan struct{})
-	pinger.stop = stop
 	interval := system.Cfg.WebSocket.PingInterval
-	pinger.mu.Unlock()
 
 	go func() {
 		ticker := time.NewTicker(interval)
@@ -115,12 +111,10 @@ func (pinger *Pinger) Close() error {
 		return nil
 	}
 
-	pinger.mu.Lock()
-	defer pinger.mu.Unlock()
+	oldStop := pinger.stop.Swap(nil)
 
-	if pinger.stop != nil {
-		close(pinger.stop)
-		pinger.stop = nil
+	if oldStop != nil && *oldStop != nil {
+		close(*oldStop)
 	}
 
 	return nil
@@ -131,5 +125,7 @@ Stop halts the keepalive loop. A session that is closing stops pinging a socket
 it is about to disconnect.
 */
 func (pinger *Pinger) Stop() {
-	_ = pinger.Close()
+	if err := pinger.Close(); err != nil {
+		errnie.Error(err)
+	}
 }

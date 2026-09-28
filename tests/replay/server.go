@@ -6,8 +6,9 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strings"
-	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/bytedance/sonic"
@@ -16,12 +17,14 @@ import (
 	"github.com/theapemachine/symm/types"
 )
 
+const serverMask = 1 << 30
+
 // Server replaces the remote websocket peer with recorded bytes. It does not
 // implement prices, fills, signals, learning, or manufacture protocol responses.
 type Server struct {
 	server      *httptest.Server
 	ctx         context.Context
-	mutex       sync.Mutex
+	gate        atomic.Int64
 	peers       []*peer
 	changed     chan struct{}
 	endpoints   map[string]string
@@ -31,6 +34,22 @@ type Server struct {
 	Started     time.Time
 	MaxLateness time.Duration
 	Source      types.RunID
+}
+
+func (server *Server) lock() {
+	for {
+		value := server.gate.Load()
+
+		if value == 0 && server.gate.CompareAndSwap(0, -serverMask) {
+			return
+		}
+
+		runtime.Gosched()
+	}
+}
+
+func (server *Server) unlock() {
+	server.gate.Add(serverMask)
 }
 
 type peer struct {
@@ -58,10 +77,10 @@ func (server *Server) accept(writer http.ResponseWriter, request *http.Request) 
 		return
 	}
 	current := &peer{connection: connection, endpoint: strings.TrimPrefix(request.URL.Path, "/"), channels: make(map[string]map[string]bool)}
-	server.mutex.Lock()
+	server.lock()
 	server.peers = append(server.peers, current)
 	server.notify()
-	server.mutex.Unlock()
+	server.unlock()
 
 	for {
 		var message struct {
@@ -90,7 +109,7 @@ func (server *Server) accept(writer http.ResponseWriter, request *http.Request) 
 		if message.Feed != "" {
 			channel, symbols = message.Feed, message.Products
 		}
-		server.mutex.Lock()
+		server.lock()
 
 		if current.channels[channel] == nil {
 			current.channels[channel] = make(map[string]bool)
@@ -99,8 +118,9 @@ func (server *Server) accept(writer http.ResponseWriter, request *http.Request) 
 		for _, symbol := range symbols {
 			current.channels[channel][symbol] = true
 		}
+
 		server.notify()
-		server.mutex.Unlock()
+		server.unlock()
 	}
 }
 
@@ -169,18 +189,20 @@ func (server *Server) target(frame RawFrame) (*websocket.Conn, error) {
 	}
 
 	for {
-		server.mutex.Lock()
+		server.lock()
 		changed := server.changed
 
 		for _, current := range server.peers {
 			if current.endpoint == role &&
 				(symbol == "" || current.channels[frame.Kind][symbol]) &&
 				(frame.Kind != "instrument" || current.channels[frame.Kind] != nil) {
-				server.mutex.Unlock()
+				server.unlock()
+
 				return current.connection, nil
 			}
 		}
-		server.mutex.Unlock()
+
+		server.unlock()
 
 		select {
 		case <-server.ctx.Done():
@@ -192,14 +214,16 @@ func (server *Server) target(frame RawFrame) (*websocket.Conn, error) {
 
 func (server *Server) Close() error {
 	server.server.Close()
-	server.mutex.Lock()
-	defer server.mutex.Unlock()
+	server.lock()
+	defer server.unlock()
 
 	var err error
+
 	for _, current := range server.peers {
 		if closeErr := current.connection.Close(); closeErr != nil && !errors.Is(closeErr, net.ErrClosed) {
 			err = errors.Join(err, errnie.Error(closeErr))
 		}
 	}
+
 	return err
 }

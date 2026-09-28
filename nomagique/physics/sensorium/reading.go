@@ -13,6 +13,7 @@ type Reading struct {
 	PressureGradNorm float64
 	ViscosityProxy   float64
 	KuramotoR        float64
+	KuramotoPsi      float64
 }
 
 func (reading Reading) IsFinite() bool {
@@ -21,7 +22,8 @@ func (reading Reading) IsFinite() bool {
 		finite(reading.CoherenceMag2) &&
 		finite(reading.PressureGradNorm) &&
 		finite(reading.ViscosityProxy) &&
-		finite(reading.KuramotoR)
+		finite(reading.KuramotoR) &&
+		finite(reading.KuramotoPsi)
 }
 
 func finite(value float64) bool {

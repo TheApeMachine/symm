@@ -2,17 +2,20 @@ package sensorium
 
 import (
 	"fmt"
-	"sync"
+	"runtime"
+	"sync/atomic"
 
 	"github.com/theapemachine/errnie"
 )
+
+const manifoldWriterMask = 1 << 30
 
 /*
 Manifold is the original host: tokenize, merge a particle State, then
 thermo.step + wave.step.
 */
 type Manifold struct {
-	mu        sync.Mutex
+	gate      atomic.Int64
 	work      *workspace
 	Tokenizer *Tokenizer
 	state     *State
@@ -22,6 +25,38 @@ type Manifold struct {
 	resident  map[int64]int
 	reading   Reading
 	stepCount int
+}
+
+func (manifold *Manifold) rLock() {
+	for {
+		value := manifold.gate.Load()
+
+		if value >= 0 && manifold.gate.CompareAndSwap(value, value+1) {
+			return
+		}
+
+		runtime.Gosched()
+	}
+}
+
+func (manifold *Manifold) rUnlock() {
+	manifold.gate.Add(-1)
+}
+
+func (manifold *Manifold) lock() {
+	for {
+		value := manifold.gate.Load()
+
+		if value == 0 && manifold.gate.CompareAndSwap(0, -manifoldWriterMask) {
+			return
+		}
+
+		runtime.Gosched()
+	}
+}
+
+func (manifold *Manifold) unlock() {
+	manifold.gate.Add(manifoldWriterMask)
 }
 
 func NewManifold(gridX, gridY, gridZ int, datasets ...Dataset) *Manifold {
@@ -61,8 +96,8 @@ func (manifold *Manifold) Close() error {
 		return nil
 	}
 
-	manifold.mu.Lock()
-	defer manifold.mu.Unlock()
+	manifold.lock()
+	defer manifold.unlock()
 
 	if manifold.work != nil {
 		manifold.work.Close()
@@ -77,8 +112,8 @@ func (manifold *Manifold) State() *State {
 		return nil
 	}
 
-	manifold.mu.Lock()
-	defer manifold.mu.Unlock()
+	manifold.rLock()
+	defer manifold.rUnlock()
 
 	return manifold.state
 }
@@ -88,8 +123,8 @@ func (manifold *Manifold) Reading() Reading {
 		return Reading{}
 	}
 
-	manifold.mu.Lock()
-	defer manifold.mu.Unlock()
+	manifold.rLock()
+	defer manifold.rUnlock()
 
 	return manifold.reading
 }
@@ -114,8 +149,8 @@ func (manifold *Manifold) SpectralModes() (omega, real, imag, linewidth []float3
 		return nil, nil, nil, nil
 	}
 
-	manifold.mu.Lock()
-	defer manifold.mu.Unlock()
+	manifold.lock()
+	defer manifold.unlock()
 
 	manifold.work.engine.Synchronize()
 	modes := int(manifold.work.domain.MaxModes)
@@ -151,8 +186,8 @@ func (manifold *Manifold) AddBatch(incoming *State) {
 		return
 	}
 
-	manifold.mu.Lock()
-	defer manifold.mu.Unlock()
+	manifold.lock()
+	defer manifold.unlock()
 
 	manifold.merge(incoming)
 }
@@ -171,8 +206,8 @@ func (manifold *Manifold) Remove(contentIDs []int64) (int, error) {
 		))
 	}
 
-	manifold.mu.Lock()
-	defer manifold.mu.Unlock()
+	manifold.lock()
+	defer manifold.unlock()
 	remaining := 0
 
 	if manifold.state != nil {
@@ -248,8 +283,8 @@ func (manifold *Manifold) Step(incoming *State) (*State, error) {
 		))
 	}
 
-	manifold.mu.Lock()
-	defer manifold.mu.Unlock()
+	manifold.lock()
+	defer manifold.unlock()
 
 	return manifold.stepLocked(incoming)
 }
@@ -295,8 +330,8 @@ func (manifold *Manifold) PackFields(
 		return 0, 0, 0, 0
 	}
 
-	manifold.mu.Lock()
-	defer manifold.mu.Unlock()
+	manifold.lock()
+	defer manifold.unlock()
 
 	scale := manifold.work.packFields(momRho, energy, waveReal, waveImag)
 	return scale.density, scale.momentum, scale.energy, scale.wave
@@ -378,8 +413,8 @@ func (manifold *Manifold) Load() error {
 
 	loader := NewLoader(manifold.Tokenizer)
 
-	manifold.mu.Lock()
-	defer manifold.mu.Unlock()
+	manifold.lock()
+	defer manifold.unlock()
 
 	for _, batch := range loader.Stream() {
 		if _, err := manifold.stepLocked(batch); err != nil {
@@ -411,8 +446,8 @@ func (manifold *Manifold) SpectralPeaks() []SpectralPeak {
 		return nil
 	}
 
-	manifold.mu.Lock()
-	defer manifold.mu.Unlock()
+	manifold.lock()
+	defer manifold.unlock()
 
 	if manifold.work == nil {
 		return nil
