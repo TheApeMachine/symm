@@ -252,7 +252,7 @@ func BenchmarkRehearsalStep(b *testing.B) {
 	training := NewTraining(b.Context(), 1, market.TrainingPrice(b.Context()))
 	frames := market.TrainingTape(6)
 	b.ReportAllocs()
-	
+
 	for index := 0; b.Loop(); index++ {
 		frame := frames[index%len(frames)]
 		frame.SeqIdx = int64(index + 1)

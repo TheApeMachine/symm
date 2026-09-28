@@ -1,6 +1,7 @@
 import { useSelector } from "@tanstack/react-store";
 import { useEffect, useRef, useState } from "react";
 import {
+	DEFAULT_FOCUS_SYMBOL,
 	focusStore,
 	positionStore,
 	type RingBuffer,
@@ -14,11 +15,7 @@ import { Typography } from "#/components/ui/typography";
 import { hubBaseUrl } from "#/lib/hub";
 import { cn, memoizedQuery, renderValue } from "#/lib/utils";
 import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
-import {
-	CandidatePanel,
-	ImpulsePanel,
-	InfluencePanel,
-} from "./decision-panel";
+import { CandidatePanel, ImpulsePanel, InfluencePanel } from "./decision-panel";
 import { Explain } from "./explain";
 import { action, basis, clock, percent } from "./format";
 import { ForwardLearningViz } from "./forward-learning-viz";
@@ -41,7 +38,7 @@ export type Tab =
 	| "influence";
 
 const TABS: Array<{ key: Tab; label: string }> = [
-	{ key: "forward", label: "Forward learning" },
+	{ key: "forward", label: "Model training" },
 	{ key: "cognitive", label: "Cognitive tree" },
 	{ key: "impulse", label: "Impulse map" },
 	{ key: "recognition", label: "Precursor recognition" },
@@ -80,19 +77,34 @@ export const LearningDashboard = () => {
 
 	// Listen to open positions count
 	useEffect(() => {
-		const unsubPositions = positionStore.subscribe((state: any) => {
+		const unsubPositions = positionStore.subscribe((state) => {
+			const frame = state as
+				| {
+						findLast?: (fn: () => boolean) => unknown;
+						rowsLength?: () => number;
+				  }
+				| unknown[]
+				| null
+				| undefined;
 			const latestFrame =
-				typeof state?.findLast === "function"
-					? state.findLast(() => true)
-					: Array.isArray(state)
-						? state[state.length - 1]
-						: state;
+				typeof (frame as { findLast?: (fn: () => boolean) => unknown })
+					?.findLast === "function"
+					? (frame as { findLast: (fn: () => boolean) => unknown }).findLast(
+							() => true,
+						)
+					: Array.isArray(frame)
+						? frame[frame.length - 1]
+						: frame;
 
-			if (!latestFrame || typeof latestFrame.rowsLength !== "function") {
+			const typed = latestFrame as
+				| { rowsLength?: () => number }
+				| null
+				| undefined;
+			if (!typed || typeof typed.rowsLength !== "function") {
 				setOpenPositionsCount(0);
 				return;
 			}
-			setOpenPositionsCount(latestFrame.rowsLength());
+			setOpenPositionsCount(typed.rowsLength());
 		});
 		return () => {
 			unsubPositions?.unsubscribe?.();
@@ -240,8 +252,8 @@ export const LearningDashboard = () => {
 
 				if (gateCountEl) {
 					gateCountEl.innerText = tradingActive
-						? "Paper trading ($200)"
-						: "Training only";
+						? "Paper trading"
+						: "Training only · Gated";
 				}
 
 				if (forwardMetaEl) {
@@ -254,8 +266,8 @@ export const LearningDashboard = () => {
 
 				if (recogStatusEl) {
 					recogStatusEl.innerText = tradingActive
-						? "Execution active · Paper trading enabled with $200 wallet"
-						: "Training precursor associations · Quoted returns, no orders";
+						? "Execution active · Paper trading enabled"
+						: "Training precursor associations · Quoted returns, orders gated";
 				}
 
 				if (skillMetaEl) {
@@ -265,8 +277,8 @@ export const LearningDashboard = () => {
 				if (activityListEl && !seen.has(measurement)) {
 					seen.add(measurement);
 
-					const actionVal = metricMap["action"] ?? 0;
-					const edgeVal = metricMap["edge"] ?? 0;
+					const actionVal = metricMap.action ?? 0;
+					const edgeVal = metricMap.edge ?? 0;
 					const atNs = measurement.at ?? 0n;
 					const timeStr =
 						atNs > 0n
@@ -312,10 +324,19 @@ export const LearningDashboard = () => {
 					grid?.symbol === focusSymbol ? grid.regions : [];
 
 				if (quantities.length > 0) {
+					const cellToRegion = new Map<number, number>();
+					for (const r of measuredRegions) {
+						if (Array.isArray(r.members)) {
+							for (const m of r.members) {
+								cellToRegion.set(Number(m), Number(r.id));
+							}
+						}
+					}
+
 					const mappedNodes: ImpulseNode[] = quantities.map((cell) => ({
 						id: String(cell.id),
 						label: String(cell.label ?? cell.source ?? `#${cell.id}`),
-						cluster: Number(cell.id) % 4,
+						cluster: cellToRegion.get(Number(cell.id)) ?? Number(cell.id) % 4,
 						snr: cell.quality || 1,
 						activation: cell.activity || 0,
 						value: cell.value,
@@ -376,8 +397,7 @@ export const LearningDashboard = () => {
 					const maxSnr = Math.max(...sortedRegions.map((r) => r.snr), 1);
 
 					if (hotEmptyEl) {
-						hotEmptyEl.style.display =
-							sortedRegions.length === 0 ? "" : "none";
+						hotEmptyEl.style.display = sortedRegions.length === 0 ? "" : "none";
 					}
 
 					while (hotRegionsEl.children.length - 1 < sortedRegions.length) {
@@ -403,7 +423,9 @@ export const LearningDashboard = () => {
 						const reg = sortedRegions[i];
 						const row = hotRegionsEl.children[i + 1] as HTMLElement;
 						if (!row) continue;
-						const src = row.querySelector('[data-part="source"]') as HTMLElement;
+						const src = row.querySelector(
+							'[data-part="source"]',
+						) as HTMLElement;
 						const snr = row.querySelector('[data-part="snr"]') as HTMLElement;
 						const bar = row.querySelector('[data-part="bar"]') as HTMLElement;
 
@@ -466,10 +488,7 @@ export const LearningDashboard = () => {
 						0,
 					);
 					const scale = extent > 0 ? 240 / extent : 0;
-					const maxEnergy = Math.max(
-						...points.map((point) => point.energy),
-						0,
-					);
+					const maxEnergy = Math.max(...points.map((point) => point.energy), 0);
 					const peakSet = new Set(regions.map((reg) => reg.id));
 
 					while (mapPointsEl.children.length < points.length) {
@@ -498,16 +517,13 @@ export const LearningDashboard = () => {
 						const isPeak = peakSet.has(pt.id);
 						const r = isPeak ? "6" : "3";
 						const fill = isPeak ? "var(--acc)" : "var(--info)";
-						const light =
-							maxEnergy > 0 ? Math.sqrt(pt.energy / maxEnergy) : 0;
+						const light = maxEnergy > 0 ? Math.sqrt(pt.energy / maxEnergy) : 0;
 						const opacity = String(
 							(pt.present ? 0.15 + 0.85 * light : 0.08).toFixed(2),
 						);
 
-						if (circle.getAttribute("cx") !== cx)
-							circle.setAttribute("cx", cx);
-						if (circle.getAttribute("cy") !== cy)
-							circle.setAttribute("cy", cy);
+						if (circle.getAttribute("cx") !== cx) circle.setAttribute("cx", cx);
+						if (circle.getAttribute("cy") !== cy) circle.setAttribute("cy", cy);
 						if (circle.getAttribute("r") !== r) circle.setAttribute("r", r);
 						if (circle.getAttribute("fill") !== fill)
 							circle.setAttribute("fill", fill);
@@ -524,27 +540,13 @@ export const LearningDashboard = () => {
 			root.dataset.dropped = String(cursor.dropped);
 		};
 
-		const getTrainingRing = (
-			records?: Record<string, RingBuffer<MeasurementT>>,
-		): RingBuffer<MeasurementT> | null => {
-			if (!records) return null;
-
-			return (
-				records[focusSymbol] ??
-				records["learner"] ??
-				records[""] ??
-				Object.values(records)[0] ??
-				null
-			);
-		};
-
-		const initial = getTrainingRing(trainingStore?.state);
+		const initial = trainingStore?.state?.[focusSymbol];
 		if (initial) {
 			update(initial);
 		}
 
 		const unsubTraining = trainingStore.subscribe((state) => {
-			const activeRing = getTrainingRing(state);
+			const activeRing = state?.[focusSymbol];
 			if (activeRing) {
 				update(activeRing);
 			}
@@ -592,7 +594,7 @@ export const LearningDashboard = () => {
 							)}
 						/>
 						<span data-l="gate-count">
-							{isTrading ? "PAPER TRADING ($200)" : "AGENT · LEARNING"}
+							{isTrading ? "PAPER TRADING" : "AGENT · MODEL TRAINING"}
 						</span>
 					</div>
 				</div>
@@ -617,16 +619,14 @@ export const LearningDashboard = () => {
 						</span>
 					</div>
 					<div className="flex items-center gap-1.5">
-						<span className="text-(--f1) font-bold">
-							{openPositionsCount}
-						</span>
+						<span className="text-(--f1) font-bold">{openPositionsCount}</span>
 						<span>open positions</span>
 					</div>
 
 					<div className="h-3 w-px bg-(--line)" />
 
 					<div className="px-2 py-0.5 border border-(--acc)/30 text-(--acc) bg-(--acc)/5 rounded font-bold text-[11px]">
-						{focusSymbol || "BTC/USD"}
+						{focusSymbol || DEFAULT_FOCUS_SYMBOL}
 					</div>
 				</div>
 			</header>
@@ -690,7 +690,7 @@ export const LearningDashboard = () => {
 				<Flex className="min-h-0 flex-1 max-lg:flex-col">
 					<Flex.Column className="min-h-0 min-w-0 flex-1 overflow-auto">
 						<Section.Header
-							title={focusSymbol || "BTC/USD"}
+							title={focusSymbol || DEFAULT_FOCUS_SYMBOL}
 							meta={<span data-l="status-meta">learning</span>}
 						/>
 
@@ -724,29 +724,17 @@ export const LearningDashboard = () => {
 								</Explain>
 							</Section.Header>
 							<Flex.Column data-l="hot-regions" className="gap-1.5 p-3">
-								<Typography.Mono
-									data-l="hot-regions-empty"
-									size="s"
-									tone="f3"
-								>
+								<Typography.Mono data-l="hot-regions-empty" size="s" tone="f3">
 									No evidenced activity yet.
 								</Typography.Mono>
 							</Flex.Column>
 						</Section>
 						<Section>
-							<Section.Header
-								title="Recent activity"
-								meta="live history"
-							>
-								<Explain>
-									One row per recorded moment, newest last.
-								</Explain>
+							<Section.Header title="Recent activity" meta="live history">
+								<Explain>One row per recorded moment, newest last.</Explain>
 							</Section.Header>
 							<Section.Body scroll={false}>
-								<div
-									data-l="activity-list"
-									className="flex flex-col"
-								/>
+								<div data-l="activity-list" className="flex flex-col" />
 							</Section.Body>
 						</Section>
 					</Flex.Column>

@@ -66,19 +66,17 @@ func AllowsRoute(measurement *data.Measurement[float64]) bool {
 	}
 
 	switch Route() {
-	case "dashboard":
-		return isSignal(measurement, SignalSourceStrings...) &&
+	case "dashboard", "learning":
+		return (isSignal(measurement, SignalSourceStrings...) || isStrategy(measurement, "training")) &&
 			Allows(measurement.Label)
 	case "xray":
 		return isSignal(measurement, "hawkes") && Allows(measurement.Label)
-	case "learning":
-		return isStrategy(measurement, "training") && Allows(measurement.Label)
 	case "fluid":
 		return isLogic(measurement, "manifold")
 	case "journal", "hindsight", "workbench", "pipeline":
 		return false
 	default:
-		return (isSignal(measurement, SignalSourceStrings...) || isLogic(measurement, LogicSourceStrings...)) &&
+		return (isSignal(measurement, SignalSourceStrings...) || isLogic(measurement, LogicSourceStrings...) || isStrategy(measurement, "training")) &&
 			Allows(measurement.Label)
 	}
 }

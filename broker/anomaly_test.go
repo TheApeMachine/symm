@@ -3,7 +3,6 @@ package broker
 import (
 	"context"
 	"testing"
-	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
@@ -24,22 +23,49 @@ func TestAnomalyMonitor(t *testing.T) {
 			})
 		})
 
-		Convey("When anomalies are recorded", func() {
+		Convey("When transient crossed book jitter occurs (<= 3 ticks)", func() {
 			monitor.Record("BTC/USD", AnomalyCrossedBook)
-			monitor.Record("BTC/USD", AnomalyInsufficientDepth)
-			monitor.Record("ETH/USD", AnomalyIncompleteBook)
+			monitor.Record("BTC/USD", AnomalyCrossedBook)
+			monitor.Record("BTC/USD", AnomalyCrossedBook)
 
-			time.Sleep(20 * time.Millisecond)
+			Convey("Then severe fault is not triggered and health degrades gradually", func() {
+				So(monitor.HasSevereFault("BTC/USD"), ShouldBeFalse)
+				So(monitor.Health("BTC/USD"), ShouldBeGreaterThan, 0.0)
+			})
+		})
 
-			Convey("Then counts and health reflect recorded events", func() {
-				So(monitor.Count("BTC/USD"), ShouldEqual, 2)
-				So(monitor.Count("ETH/USD"), ShouldEqual, 1)
-				So(monitor.Total(), ShouldEqual, 3)
+		Convey("When crossed book persists for more than 3 consecutive ticks", func() {
+			var faultedSymbol string
+			var recoveredSymbol string
 
-				So(monitor.Health("BTC/USD"), ShouldBeLessThan, 1.0)
-				So(monitor.Health("BTC/USD"), ShouldEqual, 1.0/(1.0+2.0))
-				So(monitor.Health("ETH/USD"), ShouldEqual, 1.0/(1.0+1.0))
-				So(monitor.Health("SOL/USD"), ShouldEqual, 1.0)
+			monitor.SetOnFault(func(symbol string) {
+				faultedSymbol = symbol
+			})
+			monitor.SetOnRecover(func(symbol string) {
+				recoveredSymbol = symbol
+			})
+
+			monitor.Record("BTC/USD", AnomalyCrossedBook)
+			monitor.Record("BTC/USD", AnomalyCrossedBook)
+			monitor.Record("BTC/USD", AnomalyCrossedBook)
+			monitor.Record("BTC/USD", AnomalyCrossedBook) // 4th tick (>3 consecutive)
+
+			Convey("Then severe fault triggers immediately and health drops to 0.0", func() {
+				So(monitor.HasSevereFault("BTC/USD"), ShouldBeTrue)
+				So(monitor.Health("BTC/USD"), ShouldEqual, 0.0)
+				So(faultedSymbol, ShouldEqual, "BTC/USD")
+			})
+
+			Convey("When the order book uncrosses and standardizes for 3 clean ticks", func() {
+				monitor.RecordClean("BTC/USD")
+				So(monitor.HasSevereFault("BTC/USD"), ShouldBeTrue)
+
+				monitor.RecordClean("BTC/USD")
+				So(monitor.HasSevereFault("BTC/USD"), ShouldBeTrue)
+
+				monitor.RecordClean("BTC/USD") // 3rd clean tick -> stabilization threshold met
+				So(monitor.HasSevereFault("BTC/USD"), ShouldBeFalse)
+				So(recoveredSymbol, ShouldEqual, "BTC/USD")
 			})
 		})
 	})

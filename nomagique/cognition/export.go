@@ -13,7 +13,7 @@ TrieNodeJSON represents one node in the interactive cognitive radix tree.
 */
 type TrieNodeJSON struct {
 	ID              string          `json:"id"`
-	Prefix          string          `json:"prefix"`
+	TokenPrefix     string          `json:"prefix"`
 	Probability     float64         `json:"probability"`
 	StepProbability float64         `json:"stepProbability,omitempty"`
 	Count           uint64          `json:"count"`
@@ -40,7 +40,7 @@ FeasibleActionJSON represents one candidate action at the evaluated impulse.
 type FeasibleActionJSON struct {
 	Rank        int     `json:"rank"`
 	Action      string  `json:"action"`
-	Prefix      string  `json:"prefix"`
+	TokenPrefix string  `json:"prefix"`
 	Probability float64 `json:"probability"`
 	State       string  `json:"state"`
 }
@@ -65,7 +65,7 @@ func (op *Engine) TreeExport() CognitionTreeExport {
 		return CognitionTreeExport{
 			Root: &TrieNodeJSON{
 				ID:          "root",
-				Prefix:      "ROOT",
+				TokenPrefix: "ROOT",
 				Probability: 1.0,
 				State:       "ESTIMATED",
 			},
@@ -79,7 +79,7 @@ func (op *Engine) TreeExport() CognitionTreeExport {
 
 	rootNode := &TrieNodeJSON{
 		ID:          "root",
-		Prefix:      "ROOT",
+		TokenPrefix: "ROOT",
 		Probability: 1.0,
 		State:       "EVALUATED",
 	}
@@ -131,7 +131,7 @@ func (op *Engine) TreeExport() CognitionTreeExport {
 
 				childNode = &TrieNodeJSON{
 					ID:              stepID,
-					Prefix:          stepPrefix,
+					TokenPrefix:     stepPrefix,
 					Probability:     weight.Probability,
 					StepProbability: weight.Probability,
 					Count:           weight.Count,
@@ -163,7 +163,7 @@ func (op *Engine) TreeExport() CognitionTreeExport {
 
 		leafNode := &TrieNodeJSON{
 			ID:              leafID,
-			Prefix:          className,
+			TokenPrefix:     className,
 			Probability:     weight.Probability,
 			StepProbability: weight.Probability,
 			Count:           weight.Count,
@@ -201,7 +201,7 @@ func (op *Engine) TreeExport() CognitionTreeExport {
 			},
 			feasible: FeasibleActionJSON{
 				Action:      className,
-				Prefix:      fmt.Sprintf("ROOT / %s / %s", strings.Join(tokenNames, " / "), className),
+				TokenPrefix: fmt.Sprintf("ROOT / %s / %s", strings.Join(tokenNames, " / "), className),
 				Probability: weight.Probability,
 				State:       policyState,
 			},

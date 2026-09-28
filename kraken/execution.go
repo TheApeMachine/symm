@@ -17,7 +17,6 @@ type Execution struct {
 	Sequence int             `json:"sequence"`
 }
 
-
 type ExecutionData struct {
 	OrderID       string           `json:"order_id"`
 	ClientOrderID string           `json:"cl_ord_id"`

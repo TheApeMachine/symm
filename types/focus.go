@@ -60,4 +60,3 @@ func Allows(symbol string) bool {
 
 	return strings.EqualFold(symbol, focus)
 }
-

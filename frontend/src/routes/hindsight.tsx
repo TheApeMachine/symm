@@ -182,7 +182,7 @@ const HindsightRoute = () => {
 		return () => {
 			cancelled = true;
 		};
-	}, [failed]);
+	}, []);
 
 	useEffect(() => {
 		let cancelled = false;
@@ -255,7 +255,7 @@ const HindsightRoute = () => {
 		return () => {
 			cancelled = true;
 		};
-	}, [run, failed]);
+	}, [run]);
 
 	// The overview is the whole run for the selected instrument. It is also what
 	// answers "which instrument?" on first load: with no symbol declared, the hub
@@ -387,7 +387,7 @@ const HindsightRoute = () => {
 		return () => {
 			cancelled = true;
 		};
-	}, [run, symbol, playhead, failed]);
+	}, [run, playhead]);
 
 	const positions = useMemo<Position[]>(
 		() => buildPositions(lifecycle),

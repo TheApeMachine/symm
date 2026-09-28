@@ -46,6 +46,7 @@ func syntheticTradeRow(symbol string, price, qty float64, side, tradeType string
 func TestTradeStep(t *testing.T) {
 	Convey("Given a multi-leg liquidation sequence", t, func() {
 		entity := NewTrade(t.Context())
+		entity.Transition(runtime.READY)
 		at := time.Unix(1_700_000_000, 0)
 
 		Convey("a single buy liquidation accounts its interval", func() {
@@ -90,6 +91,7 @@ func TestTradeStep(t *testing.T) {
 
 	Convey("Given a non-liquidation trade", t, func() {
 		entity := NewTrade(t.Context())
+		entity.Transition(runtime.READY)
 
 		Convey("gross liquidation is a valid zero and the signed fraction is omitted", func() {
 			measurement := entity.Step(tradeRow("PF_XBTUSD", 100, 2, "buy", "trade", time.Unix(1_700_000_000, 0)))
@@ -110,6 +112,7 @@ func TestTradeStep(t *testing.T) {
 func TestTradeStep_LateTrade(t *testing.T) {
 	Convey("Given a real trade timestamp older than the last seen", t, func() {
 		entity := NewTrade(t.Context())
+		entity.Transition(runtime.READY)
 		at := time.Unix(1_700_000_000, 0)
 
 		So(entity.Step(tradeRow("PF_XBTUSD", 100, 2, "buy", "liquidation", at)).Err, ShouldBeNil)
@@ -181,6 +184,7 @@ func TestTradeStep_LateTrade(t *testing.T) {
 func TestTradeStep_SyntheticTimestamp(t *testing.T) {
 	Convey("Given a payload that carried no server timestamp", t, func() {
 		entity := NewTrade(t.Context())
+		entity.Transition(runtime.READY)
 		at := time.Unix(1_700_000_000, 0)
 
 		So(entity.Step(tradeRow(
@@ -202,6 +206,7 @@ func TestTradeStep_SyntheticTimestamp(t *testing.T) {
 func TestTradeStep_PerSymbolTimeline(t *testing.T) {
 	Convey("Given trades on two symbols", t, func() {
 		entity := NewTrade(t.Context())
+		entity.Transition(runtime.READY)
 		at := time.Unix(1_700_000_000, 0)
 
 		So(entity.Step(tradeRow(
@@ -252,6 +257,7 @@ trades.
 */
 func BenchmarkTradeStep(b *testing.B) {
 	entity := NewTrade(b.Context())
+	entity.Transition(runtime.READY)
 	at := time.Unix(1_700_000_000, 0)
 	// Live buy/sell legs interleaved with historical reconnect trades.
 	sequence := []*data.Measurement[float64]{

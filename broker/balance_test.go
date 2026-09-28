@@ -50,6 +50,60 @@ func TestBalanceUpdate(t *testing.T) {
 	})
 }
 
+func TestBalanceAtomicSnapshot(t *testing.T) {
+	Convey("Given a balance manager with simultaneous wallet and trade balance updates", t, func() {
+		viper.Set("market.quote_currency", "USD")
+		defer viper.Reset()
+
+		conn := venue.NewConn()
+		conn.BalanceResult = kraken.NewBalanceFromMap(map[string]*decimal.Decimal{
+			"USD": venue.Decimal("1000.00"),
+			"BTC": venue.Decimal("0.5"),
+		})
+		conn.TradeBalanceResult = &kraken.TradeBalanceResult{
+			Equity:        venue.Decimal("1500.00"),
+			UnrealizedPnL: venue.Decimal("500.00"),
+		}
+
+		api := websocket.NewAPI(t.Context(), conn, conn, &websocket.FuturesLive{})
+		balance := NewBalance(t.Context(), api)
+
+		Convey("Then Snapshot returns fully synchronized atomic state", func() {
+			snap := balance.Snapshot()
+			So(snap, ShouldNotBeNil)
+			So(snap.Cash.Cmp(venue.Decimal("1000.00")), ShouldEqual, 0)
+			So(snap.Equity.Cmp(venue.Decimal("1500.00")), ShouldEqual, 0)
+			So(snap.Unrealized.Cmp(venue.Decimal("500.00")), ShouldEqual, 0)
+			So(snap.Assets["BTC"].Cmp(venue.Decimal("0.5")), ShouldEqual, 0)
+
+			So(balance.Cash().Cmp(venue.Decimal("1000.00")), ShouldEqual, 0)
+			So(balance.Equity().Cmp(venue.Decimal("1500.00")), ShouldEqual, 0)
+			So(balance.Unrealized().Cmp(venue.Decimal("500.00")), ShouldEqual, 0)
+		})
+
+		Convey("When new data arrives and Refresh is called", func() {
+			conn.BalanceResult = kraken.NewBalanceFromMap(map[string]*decimal.Decimal{
+				"USD": venue.Decimal("2000.00"),
+				"BTC": venue.Decimal("1.0"),
+			})
+			conn.TradeBalanceResult = &kraken.TradeBalanceResult{
+				Equity:        venue.Decimal("3000.00"),
+				UnrealizedPnL: venue.Decimal("1000.00"),
+			}
+
+			err := balance.Refresh(nil)
+			So(err, ShouldBeNil)
+
+			snap := balance.Snapshot()
+			So(snap, ShouldNotBeNil)
+			So(snap.Cash.Cmp(venue.Decimal("2000.00")), ShouldEqual, 0)
+			So(snap.Equity.Cmp(venue.Decimal("3000.00")), ShouldEqual, 0)
+			So(snap.Unrealized.Cmp(venue.Decimal("1000.00")), ShouldEqual, 0)
+			So(snap.Assets["BTC"].Cmp(venue.Decimal("1.0")), ShouldEqual, 0)
+		})
+	})
+}
+
 func BenchmarkBalanceUpdate(b *testing.B) {
 	viper.Set("market.quote_currency", "USD")
 	defer viper.Reset()

@@ -63,16 +63,30 @@ func NewPrice(
 		normalizer = spot.NewNormalizer()
 	}
 
+	var books BookSource
+
+	if api != nil {
+		books = api
+	}
+
 	price := &Price{
 		System:     runtime.NewSystem(ctx, "price"),
 		Instrument: instrument,
 		api:        api,
-		Books:      api,
+		Books:      books,
 		normalizer: normalizer,
 		fees:       &sync.Map{},
 		tickers:    &sync.Map{},
 		anomalies:  NewAnomalyMonitor(ctx, 0),
 	}
+
+	price.anomalies.SetOnFault(func(symbol string) {
+		price.Transition(runtime.ERROR)
+	})
+
+	price.anomalies.SetOnRecover(func(symbol string) {
+		price.Transition(runtime.READY)
+	})
 
 	if err := errnie.Require(map[string]any{
 		"api":        api,
@@ -109,7 +123,21 @@ func (price *Price) Normalizer() *spot.Normalizer {
 }
 
 func (price *Price) Update(ticker *kraken.TickerData) {
-	price.tickers.Store(price.normalize(ticker.Symbol), ticker)
+	if ticker == nil {
+		return
+	}
+
+	normalized := price.normalize(ticker.Symbol)
+	price.tickers.Store(normalized, ticker)
+
+	if ticker.Bid != nil && ticker.Ask != nil {
+		if ticker.Bid.Cmp(ticker.Ask) >= 0 {
+			price.recordAnomaly(normalized, AnomalyCrossedBook)
+			return
+		}
+
+		price.recordClean(normalized)
+	}
 }
 
 func (price *Price) Tick(symbol string) *kraken.TickerData {
@@ -412,6 +440,8 @@ func (price *Price) EntryCost(symbol string, quantity *decimal.Decimal) (*types.
 			return
 		}
 
+		price.recordClean(symbol)
+
 		filled, gross, walkErr := price.Walk(book, quantity, BUY)
 
 		if walkErr != nil {
@@ -504,6 +534,8 @@ func (price *Price) Surface(
 			err = errnie.Err(errnie.UnprocessableContent, "price: crossed book for "+symbol, nil)
 			return
 		}
+
+		price.recordClean(symbol)
 
 		surface.BookComplete = true
 		surface.BestBid = book.BestBid().Price
@@ -647,13 +679,20 @@ func (price *Price) WithFee(
 	return amount.SetScale(scale).OffsetPercent(rate)
 }
 
-
 func (price *Price) recordAnomaly(symbol string, kind AnomalyKind) {
 	if price == nil || price.anomalies == nil {
 		return
 	}
 
 	price.anomalies.Record(price.normalize(symbol), kind)
+}
+
+func (price *Price) recordClean(symbol string) {
+	if price == nil || price.anomalies == nil {
+		return
+	}
+
+	price.anomalies.RecordClean(price.normalize(symbol))
 }
 
 /* Anomalies returns the anomaly monitor recording degraded market shapes. */

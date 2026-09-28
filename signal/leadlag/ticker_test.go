@@ -66,6 +66,7 @@ func tapeTicks() []*data.Measurement[float64] {
 func TestTickerStep(t *testing.T) {
 	Convey("Given the captured CRV/DOT tape that stalled the spot workload", t, func() {
 		entity := NewTicker(context.Background())
+		entity.Transition(runtime.READY)
 		var measurement *data.Measurement[float64]
 
 		Convey("Every asynchronous observation completes, including the boundary lag", func() {
@@ -82,6 +83,7 @@ func TestTickerStep(t *testing.T) {
 
 	Convey("Given a lead-lag ticker-path instrument", t, func() {
 		entity := NewTicker(context.Background())
+		entity.Transition(runtime.READY)
 
 		Convey("the first tick yields one measurement with no warmup", func() {
 			measurement := entity.Step(tick("BTC/USD", 100.0, timestamp(1)))
@@ -219,6 +221,7 @@ func BenchmarkTickerStep(b *testing.B) {
 
 	for b.Loop() {
 		entity := NewTicker(context.Background())
+		entity.Transition(runtime.READY)
 
 		for _, arrival := range arrivals {
 			measurement := entity.Step(arrival)

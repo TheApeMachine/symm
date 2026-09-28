@@ -242,7 +242,6 @@ func TestPriceTradable(t *testing.T) {
 	})
 }
 
-
 func TestPriceGetFees(t *testing.T) {
 	Convey("Given a mock API responding with trade volume fee data", t, func() {
 		price, _ := newPriceSurface(t, "BTC/USD")
@@ -344,5 +343,3 @@ func (source *touchBook) Book(symbol string, read func(*spotbook.Book)) {
 		read(source.current)
 	}
 }
-
-

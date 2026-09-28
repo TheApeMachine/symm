@@ -46,6 +46,7 @@ func drive(entity *Ticker, symbol string, prices []float64) []*data.Measurement[
 func TestTickerStep(t *testing.T) {
 	Convey("Given a correlation ticker-path instrument", t, func() {
 		entity := NewTicker(t.Context())
+		entity.Transition(runtime.READY)
 
 		Convey("the first tick yields one measurement with no warmup", func() {
 			measurement := entity.Step(tick("BTC/USD", 100.0, timestamp(1)))
@@ -179,6 +180,7 @@ compute.
 */
 func BenchmarkTickerCrossSectionStep(b *testing.B) {
 	entity := NewTicker(context.Background())
+	entity.Transition(runtime.READY)
 
 	// Prime every symbol's path to steady-state capacity (64 samples) so the
 	// cross-section cost reflects a fully-warmed universe, not cold-start.

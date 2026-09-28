@@ -228,7 +228,7 @@ export const ComparePanel = ({
 		});
 
 		return rows;
-	}, [states, measurements, mode]);
+	}, [states, measurements]);
 
 	const rows = useMemo(() => {
 		const needle = filter.trim().toLowerCase();

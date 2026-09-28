@@ -48,6 +48,7 @@ func syntheticRow(symbol string, last, index, mark, openInterest float64, at tim
 func TestTickerStep(t *testing.T) {
 	Convey("Given a valid derivative ticker snapshot", t, func() {
 		entity := NewTicker(t.Context())
+		entity.Transition(runtime.READY)
 		at := time.Unix(1_700_000_000, 0)
 
 		Convey("the first data point yields point and geometry metrics with no warmup", func() {
@@ -121,6 +122,7 @@ func TestTickerStep(t *testing.T) {
 
 	Convey("Given a derivative ticker with a non-positive reference price", t, func() {
 		entity := NewTicker(t.Context())
+		entity.Transition(runtime.READY)
 
 		Convey("the measurement carries the pipeline rejection in its Err field", func() {
 			measurement := entity.Step(row("PF_XBTUSD", 101, 0, 100.5, 1000, time.Unix(1_700_000_000, 0)))
@@ -141,6 +143,7 @@ alongside it.
 func TestTickerStep_ZeroOpenInterest(t *testing.T) {
 	Convey("Given a contract whose open interest is zero", t, func() {
 		entity := NewTicker(t.Context())
+		entity.Transition(runtime.READY)
 		at := time.Unix(1_700_000_000, 0)
 
 		So(entity.Step(row("PF_THIN", 101, 100, 100.5, 0, at)).Err, ShouldBeNil)
@@ -162,6 +165,7 @@ func TestTickerStep_ZeroOpenInterest(t *testing.T) {
 
 	Convey("Given open interest that rises from zero", t, func() {
 		entity := NewTicker(t.Context())
+		entity.Transition(runtime.READY)
 		at := time.Unix(1_700_000_000, 0)
 
 		So(entity.Step(row("PF_OPEN", 101, 100, 100.5, 0, at)).Err, ShouldBeNil)
@@ -188,6 +192,7 @@ it, for every observation of that symbol.
 func TestTickerStep_ZeroPrice(t *testing.T) {
 	Convey("Given a contract whose last price is zero", t, func() {
 		entity := NewTicker(t.Context())
+		entity.Transition(runtime.READY)
 		at := time.Unix(1_700_000_000, 0)
 
 		Convey("The first observation still publishes its arithmetic metrics", func() {
@@ -243,6 +248,7 @@ func TestTickerStep_ZeroPrice(t *testing.T) {
 
 	Convey("Given positive prices throughout", t, func() {
 		entity := NewTicker(t.Context())
+		entity.Transition(runtime.READY)
 		at := time.Unix(1_700_000_000, 0)
 
 		So(entity.Step(row("PF_XBTUSD", 100, 99, 99.5, 1000, at)).Err, ShouldBeNil)
@@ -264,6 +270,7 @@ func TestTickerStep_ZeroPrice(t *testing.T) {
 func TestTickerStep_RegressingTimestamp(t *testing.T) {
 	Convey("Given a snapshot whose timestamp regresses relative to the prior one", t, func() {
 		entity := NewTicker(t.Context())
+		entity.Transition(runtime.READY)
 		at := time.Unix(1_700_000_000, 0)
 
 		Convey("the observer's causal clock must not regress across the out-of-order event", func() {

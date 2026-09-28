@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { paintPhaseDial } from "#/components/charts/phase-dial";
 import { TerminalPhaseDialChart } from "#/components/terminal/charts";
+import { computePhaseSynchronous } from "#/workers/phase.worker";
 import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
 import { Canvas } from "#/components/ui/canvas";
@@ -184,30 +185,16 @@ export const FluidInspector = () => {
 					coherenceMag2: reading.coherenceMag2,
 				});
 
-				// Kuramoto ring: the resident oscillator phases, synchronized
-				// with the kernel's own coherence reading and mean phase.
-				let meanSin = 0;
-				let meanCos = 0;
-				let maxOmega = 0;
-
-				for (const oscillator of oscillators) {
-					meanSin += Math.sin(oscillator.phase);
-					meanCos += Math.cos(oscillator.phase);
-					maxOmega = Math.max(maxOmega, Math.abs(oscillator.omega));
-				}
-
-				const count = oscillators.length;
-				const kuramotoPsi =
-					count > 0 ? Math.atan2(meanSin / count, meanCos / count) : 0;
+				// Kuramoto ring & Phase dial: single-pass computation of resident
+				// oscillator phases and resultant vectors offloaded from the render loop.
+				const {
+					resultants,
+					kuramotoPsi,
+					kuramotoOscillators,
+				} = computePhaseSynchronous(oscillators);
 
 				setKuramotoProps({
-					oscillators: oscillators.map((oscillator) => ({
-						phase: oscillator.phase,
-						heat:
-							maxOmega > 0
-								? Math.min(1, Math.abs(oscillator.omega) / maxOmega)
-								: 0,
-					})),
+					oscillators: kuramotoOscillators,
 					kuramotoR: reading.kuramotoR,
 					kuramotoPsi,
 				});
@@ -216,6 +203,7 @@ export const FluidInspector = () => {
 				// with the resident spectral lattice as context.
 				paintPhaseDial({
 					oscillators,
+					resultants,
 					wave: modes.map((mode) => ({
 						omega: mode.omega,
 						real: mode.real,

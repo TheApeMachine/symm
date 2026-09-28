@@ -169,13 +169,13 @@ func (api *API) TickerSingle(symbol string) (*spot.AssetTickerInfo, error) {
 		nil,
 	))
 }
-func (api *API) SubInstrument(callback chan any)           { api.public.SubInstrument(callback) }
-func (api *API) SubTicker(symbols []string)                { api.public.SubTicker(symbols) }
-func (api *API) SubL3(symbols []string)                    { api.private.SubL3(symbols) }
-func (api *API) SubTrades(symbols []string)                { api.public.SubTrades(symbols) }
-func (api *API) UnsubTicker(symbols []string)              { api.public.UnsubTicker(symbols) }
-func (api *API) UnsubTrades(symbols []string)              { api.public.UnsubTrades(symbols) }
-func (api *API) UnsubL3(symbols []string)                  { api.private.UnsubL3(symbols) }
+func (api *API) SubInstrument(callback chan any) { api.public.SubInstrument(callback) }
+func (api *API) SubTicker(symbols []string)      { api.public.SubTicker(symbols) }
+func (api *API) SubL3(symbols []string)          { api.private.SubL3(symbols) }
+func (api *API) SubTrades(symbols []string)      { api.public.SubTrades(symbols) }
+func (api *API) UnsubTicker(symbols []string)    { api.public.UnsubTicker(symbols) }
+func (api *API) UnsubTrades(symbols []string)    { api.public.UnsubTrades(symbols) }
+func (api *API) UnsubL3(symbols []string)        { api.private.UnsubL3(symbols) }
 
 func (api *API) Balance() (*kraken.Balance, error) {
 	balance, err := api.private.Balance()

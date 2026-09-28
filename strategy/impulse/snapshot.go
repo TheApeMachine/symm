@@ -8,7 +8,7 @@ The workspace calls it synchronously before releasing the producer boundary;
 the asynchronous encoder never dereferences live owners. It is not history or
 training input. Historical states are reconstructed from the ordered tape.
 */
-func (market *Market) Snapshot() any {
+func (market *Market) Snapshot() *grid.Snapshot {
 	snapshot := &grid.Snapshot{
 		Label: market.Symbol, Sequence: market.Sequence, Volume: market.Volume.String(),
 		Cells:   make([]grid.Quantity, len(market.Cells)),

@@ -190,7 +190,7 @@ func (writer *Writer) commitExcursions(ctx context.Context) error {
 
 	defer reader.Release()
 
-	_, appendErr := tbl.Append(ctx, reader, nil)
+	_, appendErr := tbl.Append(writer.catalog.context(ctx), reader, nil)
 
 	if appendErr != nil {
 		writer.mutex.Lock()
@@ -256,7 +256,7 @@ func (writer *Writer) commitFamily(
 
 	defer reader.Release()
 
-	_, appendErr := tbl.Append(ctx, reader, nil)
+	_, appendErr := tbl.Append(writer.catalog.context(ctx), reader, nil)
 
 	if appendErr != nil {
 		writer.mutex.Lock()

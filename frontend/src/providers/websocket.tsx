@@ -108,9 +108,6 @@ function dispatchMeasurements(frame: MeasurementsFrame) {
 		touched.add(source);
 
 		if (source === "training") {
-			signalStore.state[""] = ring;
-			signalStore.state["learner"] = ring;
-
 			const unpacked = row.unpack();
 			let cashVal: number | null = null;
 			let unrealizedVal: number | null = null;
@@ -194,7 +191,7 @@ export const WsFeed = () => {
 						if (frameType === Frame.StrategyFrame) {
 							const strategyFrame = message.frame(new StrategyFrame());
 							if (strategyFrame) {
-								strategyStore.setState((prev: any) => {
+								strategyStore.setState((prev: unknown) => {
 									const existing = Array.isArray(prev) ? prev : [];
 									return [...existing.slice(-49), strategyFrame];
 								});

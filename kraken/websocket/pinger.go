@@ -133,4 +133,3 @@ it is about to disconnect.
 func (pinger *Pinger) Stop() {
 	_ = pinger.Close()
 }
-

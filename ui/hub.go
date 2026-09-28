@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/hindsight/tables"
+	"github.com/theapemachine/symm/nomagique/cognition"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/physics/sensorium"
 	"github.com/theapemachine/symm/nomagique/runtime"
@@ -42,7 +43,7 @@ type PositionSource interface {
 }
 
 type CognitionSource interface {
-	CognitionTree() any
+	CognitionTree() cognition.CognitionTreeExport
 }
 
 /*
@@ -161,15 +162,15 @@ func NewHub(
 
 	hub.app.Get("/cognition/tree", func(c fiber.Ctx) error {
 		if hub.cognitionSource == nil {
-			return c.JSON(fiber.Map{
-				"root": fiber.Map{
-					"id":          "root",
-					"prefix":      "ROOT",
-					"probability": 1.0,
-					"state":       "ESTIMATED",
+			return c.JSON(cognition.CognitionTreeExport{
+				Root: &cognition.TrieNodeJSON{
+					ID:          "root",
+					TokenPrefix: "ROOT",
+					Probability: 1.0,
+					State:       "ESTIMATED",
 				},
-				"branches": []any{},
-				"feasible": []any{},
+				Branches: []cognition.TrieBranchJSON{},
+				Feasible: []cognition.FeasibleActionJSON{},
 			})
 		}
 

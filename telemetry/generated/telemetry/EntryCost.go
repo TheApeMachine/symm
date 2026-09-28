@@ -7,17 +7,17 @@ import (
 )
 
 type EntryCostT struct {
-	EntryPrice string `json:"entryPrice"`
-	BestAsk string `json:"bestAsk"`
-	BestBid string `json:"bestBid"`
-	Midpoint string `json:"midpoint"`
-	GrossNotional string `json:"grossNotional"`
-	EntryFee string `json:"entryFee"`
+	EntryPrice         string `json:"entryPrice"`
+	BestAsk            string `json:"bestAsk"`
+	BestBid            string `json:"bestBid"`
+	Midpoint           string `json:"midpoint"`
+	GrossNotional      string `json:"grossNotional"`
+	EntryFee           string `json:"entryFee"`
 	ExitFeeAtBreakEven string `json:"exitFeeAtBreakEven"`
-	RoundTripFees string `json:"roundTripFees"`
-	Spread string `json:"spread"`
-	Impact string `json:"impact"`
-	BreakEven string `json:"breakEven"`
+	RoundTripFees      string `json:"roundTripFees"`
+	Spread             string `json:"spread"`
+	Impact             string `json:"impact"`
+	BreakEven          string `json:"breakEven"`
 }
 
 func (t *EntryCostT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

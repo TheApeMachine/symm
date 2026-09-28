@@ -7,6 +7,7 @@ import (
 	"encoding/gob"
 	"fmt"
 	"iter"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -48,6 +49,8 @@ type anchorKey struct {
 	sequence int64
 }
 
+type ReplayProgressFunc func(frame *data.Measurement[float64], record *tables.ExcursionRecord, impulse *grid.Snapshot)
+
 type Rehearsal struct {
 	ctx             context.Context
 	engine          *cognition.Engine
@@ -60,16 +63,23 @@ type Rehearsal struct {
 	sequence        int64
 	records         []tables.ExcursionRecord
 	checkpointEpoch int64
+	trainedRuns     map[int64]int64
+	onProgress      ReplayProgressFunc
+}
+
+func (rehearsal *Rehearsal) SetOnProgress(callback ReplayProgressFunc) {
+	rehearsal.onProgress = callback
 }
 
 func NewRehearsal(ctx context.Context, epoch int64, price *broker.Price, engine *cognition.Engine) *Rehearsal {
 	return &Rehearsal{
-		ctx:       ctx,
-		engine:    engine,
-		detector:  tables.NewStreamingDetector(epoch, price),
-		space:     impulse.NewMap(),
-		precursor: NewPrecursor(),
-		anchors:   make(map[anchorKey]trainingAnchor),
+		ctx:         ctx,
+		engine:      engine,
+		detector:    tables.NewStreamingDetector(epoch, price),
+		space:       impulse.NewMap(),
+		precursor:   NewPrecursor(),
+		anchors:     make(map[anchorKey]trainingAnchor),
+		trainedRuns: make(map[int64]int64),
 	}
 }
 
@@ -114,10 +124,20 @@ func (rehearsal *Rehearsal) Step(frame *data.Measurement[float64]) ([]tables.Exc
 	}
 
 	rehearsal.sequence = frame.SeqIdx
+
+	if rehearsal.checkpointEpoch > 0 {
+		if rehearsal.trainedRuns == nil {
+			rehearsal.trainedRuns = make(map[int64]int64)
+		}
+
+		rehearsal.trainedRuns[rehearsal.checkpointEpoch] = frame.SeqIdx
+	}
+
 	if len(rehearsal.records) > 0 {
 		reading := rehearsal.reading
 		rehearsal.published.Store(&reading)
 	}
+
 	return rehearsal.records, nil
 }
 
@@ -273,6 +293,8 @@ func (rehearsal *Rehearsal) Replay(records []tables.ExcursionRecord, frames iter
 		exits[record.ExitTick] = append(exits[record.ExitTick], record)
 	}
 
+	var stepCount int64
+
 	for frame, err := range frames {
 		if err != nil {
 			return errnie.Error(err)
@@ -283,6 +305,9 @@ func (rehearsal *Rehearsal) Replay(records []tables.ExcursionRecord, frames iter
 		if err := space.Step(frame); err != nil {
 			return err
 		}
+		stepCount++
+
+		resolvedRecord := false
 
 		for _, record := range exits[frame.SeqIdx] {
 			market := space.Markets[record.Symbol]
@@ -291,6 +316,12 @@ func (rehearsal *Rehearsal) Replay(records []tables.ExcursionRecord, frames iter
 			}
 			if err := rehearsal.resolve(record, &market.Impulse); err != nil {
 				return err
+			}
+
+			resolvedRecord = true
+
+			if rehearsal.onProgress != nil {
+				rehearsal.onProgress(frame, &record, market.Snapshot())
 			}
 		}
 		delete(exits, frame.SeqIdx)
@@ -305,6 +336,17 @@ func (rehearsal *Rehearsal) Replay(records []tables.ExcursionRecord, frames iter
 			}
 		}
 		delete(anchors, frame.SeqIdx)
+
+		if !resolvedRecord && rehearsal.onProgress != nil && stepCount%50 == 0 {
+			market := space.Markets[frame.Label]
+			var snapshot *grid.Snapshot
+
+			if market != nil {
+				snapshot = market.Snapshot()
+			}
+
+			rehearsal.onProgress(frame, nil, snapshot)
+		}
 	}
 
 	if len(anchors) != 0 || len(exits) != 0 {
@@ -316,10 +358,11 @@ func (rehearsal *Rehearsal) Replay(records []tables.ExcursionRecord, frames iter
 }
 
 type RehearsalCheckpoint struct {
-	Format  string
-	Epoch   int64
-	Reading trainingReading
-	Model   []byte
+	Format      string
+	Epoch       int64
+	TrainedRuns map[int64]int64
+	Reading     trainingReading
+	Model       []byte
 }
 
 func (rehearsal *Rehearsal) SaveCheckpoint(epoch int64) error {
@@ -334,10 +377,11 @@ func (rehearsal *Rehearsal) SaveCheckpoint(epoch int64) error {
 	}
 
 	checkpoint := RehearsalCheckpoint{
-		Format:  TrainingFormat,
-		Epoch:   epoch,
-		Reading: rehearsal.reading,
-		Model:   result.Model,
+		Format:      TrainingFormat,
+		Epoch:       epoch,
+		TrainedRuns: rehearsal.trainedRuns,
+		Reading:     rehearsal.reading,
+		Model:       result.Model,
 	}
 
 	var buffer bytes.Buffer
@@ -406,6 +450,18 @@ func (rehearsal *Rehearsal) LoadCheckpoint() (int64, error) {
 		return 0, errnie.Error(errnie.Err(errnie.Internal, "rehearsal: restore model failed", err))
 	}
 
+	if checkpoint.TrainedRuns != nil {
+		rehearsal.trainedRuns = checkpoint.TrainedRuns
+	}
+
+	if rehearsal.trainedRuns == nil {
+		rehearsal.trainedRuns = make(map[int64]int64)
+	}
+
+	if checkpoint.Epoch > 0 && len(rehearsal.trainedRuns) == 0 {
+		rehearsal.trainedRuns[checkpoint.Epoch] = math.MaxInt64
+	}
+
 	rehearsal.checkpointEpoch = checkpoint.Epoch
 	rehearsal.reading = checkpoint.Reading
 	rehearsal.published.Store(&rehearsal.reading)
@@ -426,6 +482,14 @@ func (rehearsal *Rehearsal) Restore(catalog *tables.Catalog) error {
 		errnie.Error(err)
 	}
 
+	if rehearsal.trainedRuns == nil {
+		rehearsal.trainedRuns = make(map[int64]int64)
+	}
+
+	if lastEpoch > 0 && len(rehearsal.trainedRuns) == 0 {
+		rehearsal.trainedRuns[lastEpoch] = math.MaxInt64
+	}
+
 	errnie.Info("rehearsal: loading runs from catalog...")
 	runs, err := catalog.Runs(rehearsal.ctx)
 
@@ -441,9 +505,29 @@ func (rehearsal *Rehearsal) Restore(catalog *tables.Catalog) error {
 	var pending []tables.Run
 
 	for _, run := range runs {
-		if run.BuildID == TrainingFormat && run.Epoch > lastEpoch {
-			pending = append(pending, run)
+		if run.BuildID != TrainingFormat && run.BuildID != "" {
+			continue
 		}
+
+		records, err := catalog.Excursions(rehearsal.ctx, run.Epoch, nil)
+
+		if err != nil || len(records) == 0 {
+			continue
+		}
+
+		var through int64
+
+		for _, record := range records {
+			through = max(through, record.ExitTick)
+		}
+
+		trainedThrough, wasTrained := rehearsal.trainedRuns[run.Epoch]
+
+		if wasTrained && through <= trainedThrough {
+			continue
+		}
+
+		pending = append(pending, run)
 	}
 
 	if len(pending) == 0 {
@@ -457,7 +541,8 @@ func (rehearsal *Rehearsal) Restore(catalog *tables.Catalog) error {
 		records, err := catalog.Excursions(rehearsal.ctx, run.Epoch, nil)
 
 		if err != nil {
-			return errnie.Error(err)
+			errnie.Warn(fmt.Sprintf("rehearsal: skipping run epoch=%d excursions: %v", run.Epoch, err))
+			continue
 		}
 
 		errnie.Info(fmt.Sprintf("rehearsal: run epoch=%d has %d excursion records", run.Epoch, len(records)))
@@ -476,13 +561,16 @@ func (rehearsal *Rehearsal) Restore(catalog *tables.Catalog) error {
 		records, frames, err := catalog.Replay(rehearsal.ctx, run.Epoch, through)
 
 		if err != nil {
-			return errnie.Error(err)
+			errnie.Warn(fmt.Sprintf("rehearsal: skipping run epoch=%d replay: %v", run.Epoch, err))
+			continue
 		}
 
 		if err := rehearsal.Replay(records, frames); err != nil {
-			return err
+			errnie.Warn(fmt.Sprintf("rehearsal: run epoch=%d replay failed: %v", run.Epoch, err))
+			continue
 		}
 
+		rehearsal.trainedRuns[run.Epoch] = through
 		latestEpoch = run.Epoch
 		errnie.Info(fmt.Sprintf("rehearsal: finished replaying run epoch=%d", run.Epoch))
 	}
@@ -498,4 +586,9 @@ func (rehearsal *Rehearsal) Restore(catalog *tables.Catalog) error {
 
 	errnie.Info("rehearsal: restore complete")
 	return nil
+}
+
+// PollUntrained checks the catalog for new excursions and pre-trains on them.
+func (rehearsal *Rehearsal) PollUntrained(catalog *tables.Catalog) error {
+	return rehearsal.Restore(catalog)
 }

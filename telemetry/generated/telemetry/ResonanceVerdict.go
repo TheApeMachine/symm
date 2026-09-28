@@ -7,12 +7,12 @@ import (
 )
 
 type ResonanceVerdictT struct {
-	Learning string `json:"learning"`
-	Tuning string `json:"tuning"`
+	Learning       string  `json:"learning"`
+	Tuning         string  `json:"tuning"`
 	LearningHealth float64 `json:"learningHealth"`
-	TuningHealth float64 `json:"tuningHealth"`
-	Direction float64 `json:"direction"`
-	Conviction float64 `json:"conviction"`
+	TuningHealth   float64 `json:"tuningHealth"`
+	Direction      float64 `json:"direction"`
+	Conviction     float64 `json:"conviction"`
 }
 
 func (t *ResonanceVerdictT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

@@ -876,7 +876,8 @@ func (op *Engine) observe(assoc Association) (Result, error) {
 
 	for {
 		oldRoot := op.root.Load()
-		step := op.stepCounter.Add(1)
+		currentStep := op.stepCounter.Load()
+		step := currentStep + 1
 		txn := oldRoot.Txn()
 
 		isNew := false
@@ -918,6 +919,8 @@ func (op *Engine) observe(assoc Association) (Result, error) {
 		newRoot := txn.Commit()
 
 		if op.root.CompareAndSwap(oldRoot, newRoot) {
+			op.stepCounter.Add(1)
+
 			if isNew {
 				op.incrementClass(string(assoc.Class))
 			}

@@ -10,6 +10,7 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/system"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 )
 
@@ -56,6 +57,51 @@ func (trader *Trader) OnAction(symbol string, action Action) {
 			return
 		}
 
+		plannerConfig := system.NewPlannerConfig()
+
+		if trader.price != nil && len(trader.positions) > 0 {
+			var totalCost *decimal.Decimal
+			var totalPnL *decimal.Decimal
+
+			for sym, pos := range trader.positions {
+				if pos == nil {
+					continue
+				}
+
+				pnl := trader.price.PnL(sym, pos)
+
+				if pnl != nil {
+					if totalPnL == nil {
+						totalPnL = pnl
+					} else {
+						totalPnL = totalPnL.Add(pnl)
+					}
+				}
+
+				entryPrice := pos.Price()
+				entryVolume := pos.Volume()
+
+				if entryPrice != nil && entryVolume != nil {
+					cost := entryPrice.Mul(entryVolume)
+
+					if totalCost == nil {
+						totalCost = cost
+					} else {
+						totalCost = totalCost.Add(cost)
+					}
+				}
+			}
+
+			if totalCost != nil && totalCost.Sign() > 0 && totalPnL != nil && totalPnL.Sign() < 0 {
+				lossRatio := totalPnL.Abs().Div(totalCost).Float64()
+
+				if lossRatio >= plannerConfig.AggregateMaxLossFraction {
+					trader.recordDecisionLocked(symbol, "blocked", 0.0, "aggregate max loss fraction exceeded")
+					return
+				}
+			}
+		}
+
 		position := trader.desk.Enter(symbol)
 
 		if position != nil {
@@ -66,7 +112,11 @@ func (trader *Trader) OnAction(symbol string, action Action) {
 		position, found := trader.positions[symbol]
 
 		if found && position != nil {
-			trader.desk.Exit(position)
+			if err := trader.desk.Exit(position); err != nil {
+				trader.recordDecisionLocked(symbol, "exit_failed", 1.0, fmt.Sprintf("exit failed: %v", err))
+				return
+			}
+
 			delete(trader.positions, symbol)
 			trader.recordDecisionLocked(symbol, "exit", 1.0, "exit trigger")
 		}

@@ -1,5 +1,5 @@
 {
-  "name": "my-tanstack-app",
+  "name": "symm-frontend",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.28.1",

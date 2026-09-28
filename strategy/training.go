@@ -2,17 +2,19 @@ package strategy
 
 import (
 	"context"
-	"github.com/theapemachine/errnie"
-
+	"fmt"
 	"unsafe"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/cognition"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/learning/associative/grid"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/strategy/impulse"
+	"github.com/theapemachine/symm/system"
 )
 
 type Action string
@@ -37,6 +39,10 @@ and one shared radix trie. Complete historical tapes train the trie through
 an independent map; the live path only evaluates current regions.
 Training does not submit orders: quoted outcome evidence is not execution proof.
 */
+type TeePusher interface {
+	Push(*data.Measurement[float64])
+}
+
 type Training struct {
 	*runtime.System
 	measurement *data.Measurement[float64]
@@ -46,6 +52,8 @@ type Training struct {
 	Rehearsal   *Rehearsal
 	space       *impulse.Map
 	trader      *Trader
+	price       *broker.Price
+	uiTee       TeePusher
 	sequence    int64
 }
 
@@ -53,12 +61,18 @@ func NewTraining(ctx context.Context, epoch int64, price *broker.Price) *Trainin
 	training := &Training{
 		precursor: NewPrecursor(), space: impulse.NewMap(),
 		engine: cognition.NewEngine(cognition.Config{MemoryScale: 1}),
+		price:  price,
 	}
 	training.Rehearsal = NewRehearsal(ctx, epoch, price, training.engine)
+	training.Rehearsal.SetOnProgress(training.publishProgress)
 	training.pipeline = nomagique.NewNumber(training.space, training.precursor, training.engine)
 	training.Register()
 	training.System = runtime.NewSystem(ctx, "training")
 	return training
+}
+
+func (training *Training) SetTee(tee TeePusher) {
+	training.uiTee = tee
 }
 
 func (training *Training) SetTrader(trader *Trader) {
@@ -73,12 +87,12 @@ func (training *Training) SetTrader(trader *Trader) {
 CognitionTree returns the live, real Radix Trie tree, active branches, and feasible actions
 directly from the cognitive engine for visualization on the learning dashboard.
 */
-func (training *Training) CognitionTree() any {
+func (training *Training) CognitionTree() cognition.CognitionTreeExport {
 	if training == nil || training.engine == nil {
 		return cognition.CognitionTreeExport{
 			Root: &cognition.TrieNodeJSON{
 				ID:          "root",
-				Prefix:      "ROOT",
+				TokenPrefix: "ROOT",
 				Probability: 1.0,
 				State:       "ESTIMATED",
 			},
@@ -125,6 +139,12 @@ func (training *Training) Register() *data.Measurement[float64] {
 		"equity":          data.NewMetric[float64]("equity", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
 		"unrealized":      data.NewMetric[float64]("unrealized", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
 		"positions":       data.NewMetric[float64]("positions", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
+		"price":           data.NewMetric[float64]("price", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
+		"excursion_type":  data.NewMetric[float64]("excursion_type", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
+		"excursion_mag":   data.NewMetric[float64]("excursion_mag", data.UnitPercent, data.TimescaleInstantaneous, 0, 1),
+		"mark_a":          data.NewMetric[float64]("mark_a", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
+		"mark_b":          data.NewMetric[float64]("mark_b", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
+		"mark_c":          data.NewMetric[float64]("mark_c", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
 	})
 
 	training.measurement.Label = "learner"
@@ -195,7 +215,46 @@ func (training *Training) Step(measurement *data.Measurement[float64]) *data.Mea
 
 		current.Metrics["action"] = current.Metrics["action"].Write(actionValue)
 
-		if training.trader != nil && (action == ActionEnter || action == ActionExit) {
+		authorized := true
+
+		if action == ActionEnter {
+			minConf := system.UninformativeDirectionConfidence
+			plannerConfig := system.NewPlannerConfig()
+
+			if plannerConfig.CognitionSwitchConfidence > minConf {
+				minConf = plannerConfig.CognitionSwitchConfidence
+			}
+
+			hasModelEdge := false
+
+			if reading := training.Rehearsal.published.Load(); reading != nil {
+				hasModelEdge = reading.Learned > 0
+			}
+
+			authorized = hasModelEdge &&
+				evaluation.Support > 0 &&
+				evaluation.Confidence > minConf &&
+				!evaluation.IsBreak &&
+				evaluation.Ambiguity < 0.85
+		}
+
+		if action == ActionEnter && !authorized && training.trader != nil {
+			reason := fmt.Sprintf("authority gate rejected enter: support=%d, conf=%.3f, break=%v, amb=%.3f",
+				evaluation.Support, evaluation.Confidence, evaluation.IsBreak, evaluation.Ambiguity)
+
+			if reading := training.Rehearsal.published.Load(); reading == nil || reading.Learned == 0 {
+				reason = "authority gate rejected enter: model is candidate/untrained (0 learned situations)"
+			}
+
+			training.trader.RecordDecision(
+				current.Label,
+				"unauthorized",
+				evaluation.Confidence,
+				reason,
+			)
+		}
+
+		if training.trader != nil && ((action == ActionEnter && authorized) || action == ActionExit) {
 			training.trader.OnAction(current.Label, action)
 		}
 
@@ -224,6 +283,43 @@ func (training *Training) Step(measurement *data.Measurement[float64]) *data.Mea
 		training.updatePortfolioMetrics(current)
 	}
 
+	priceSource := training.price
+
+	if priceSource == nil && training.trader != nil {
+		priceSource = training.trader.price
+	}
+
+	targetSymbol := current.Label
+
+	if targetSymbol == "" {
+		targetSymbol = measurement.Label
+	}
+
+	if priceSource != nil && targetSymbol != "" {
+		if mark := priceSource.CurrentMark(targetSymbol); mark != nil {
+			current.Metrics["price"] = current.Metrics["price"].Write(mark.Float64())
+		}
+	}
+
+	if training.Rehearsal != nil && len(training.Rehearsal.records) > 0 {
+		lastRecord := training.Rehearsal.records[len(training.Rehearsal.records)-1]
+		extType := 0.0
+
+		if lastRecord.Direction == "upward" {
+			extType = 1.0
+		}
+
+		if lastRecord.Direction == "downward" {
+			extType = 2.0
+		}
+
+		current.Metrics["excursion_type"] = current.Metrics["excursion_type"].Write(extType)
+		current.Metrics["excursion_mag"] = current.Metrics["excursion_mag"].Write(lastRecord.GrossExcursion * 100)
+		current.Metrics["mark_a"] = current.Metrics["mark_a"].Write(float64(lastRecord.PrecursorStartTick))
+		current.Metrics["mark_b"] = current.Metrics["mark_b"].Write(float64(lastRecord.AnchorTick))
+		current.Metrics["mark_c"] = current.Metrics["mark_c"].Write(float64(lastRecord.ExitTick))
+	}
+
 	current.Metrics["invalid_inputs"] = current.Metrics["invalid_inputs"].Write(float64(training.space.Invalid))
 	training.sequence = measurement.SeqIdx
 	training.measurement = current
@@ -235,8 +331,16 @@ func (training *Training) updatePortfolioMetrics(current *data.Measurement[float
 		return
 	}
 
-	current.Metrics["trading"] = current.Metrics["trading"].Write(1.0)
-	current.Metrics["positions"] = current.Metrics["positions"].Write(float64(training.trader.PositionCount()))
+	positions := training.trader.PositionCount()
+	current.Metrics["positions"] = current.Metrics["positions"].Write(float64(positions))
+
+	tradingVal := 0.0
+
+	if positions > 0 {
+		tradingVal = 1.0
+	}
+
+	current.Metrics["trading"] = current.Metrics["trading"].Write(tradingVal)
 
 	balance := training.trader.Balance()
 
@@ -254,5 +358,105 @@ func (training *Training) updatePortfolioMetrics(current *data.Measurement[float
 
 	if unrealized := balance.Unrealized(); unrealized != nil {
 		current.Metrics["unrealized"] = current.Metrics["unrealized"].Write(unrealized.Float64())
+	}
+}
+
+func (training *Training) publishProgress(frame *data.Measurement[float64], record *tables.ExcursionRecord, impulse *grid.Snapshot) {
+	if training == nil || frame == nil {
+		return
+	}
+
+	current := training.Register()
+
+	if current == nil {
+		return
+	}
+
+	reading := training.Rehearsal.published.Load()
+
+	if reading != nil {
+		current.Metrics["decisions"] = current.Metrics["decisions"].Write(float64(reading.Learned))
+		current.Metrics["resolved"] = current.Metrics["resolved"].Write(float64(reading.Resolved))
+		current.Metrics["unsupported"] = current.Metrics["unsupported"].Write(float64(reading.Unsupported))
+		current.Metrics["evaluated"] = current.Metrics["evaluated"].Write(float64(reading.Predicted))
+
+		if reading.Entered > 0 {
+			current.Metrics["edge"] = current.Metrics["edge"].Write(reading.Return / float64(reading.Entered))
+			current.Metrics["win_rate"] = current.Metrics["win_rate"].Write(float64(reading.Profitable) / float64(reading.Entered))
+		}
+
+		if reading.Predicted > 0 {
+			current.Metrics["accuracy"] = current.Metrics["accuracy"].Write(float64(reading.Correct) / float64(reading.Predicted))
+		}
+	}
+
+	current.SeqIdx = frame.SeqIdx
+	current.At = frame.At
+	current.Label = frame.Label
+
+	if record != nil && record.Symbol != "" {
+		current.Label = record.Symbol
+	}
+
+	if impulse != nil && impulse.Label != "" {
+		current.Label = impulse.Label
+	}
+
+	if current.Label == "" || current.Label == "replay" {
+		errnie.Error(errnie.Err(errnie.Validation, "training: progress frame has no valid symbol label", nil))
+		return
+	}
+
+	if frame.Metrics != nil {
+		if priceMetric, ok := frame.Metrics["price"]; ok && priceMetric.Raw > 0 {
+			current.Metrics["price"] = current.Metrics["price"].Write(priceMetric.Raw)
+		}
+
+		if askMetric, ok := frame.Metrics["ask"]; ok && askMetric.Raw > 0 {
+			if bidMetric, ok := frame.Metrics["bid"]; ok && bidMetric.Raw > 0 {
+				current.Metrics["price"] = current.Metrics["price"].Write((askMetric.Raw + bidMetric.Raw) / 2)
+			}
+		}
+	}
+
+	if record != nil && record.EntryPrice > 0 {
+		current.Metrics["price"] = current.Metrics["price"].Write(record.EntryPrice)
+	}
+
+	if record != nil {
+		extType := 0.0
+
+		if record.Direction == "upward" {
+			extType = 1.0
+		}
+
+		if record.Direction == "downward" {
+			extType = 2.0
+		}
+
+		current.Metrics["excursion_type"] = current.Metrics["excursion_type"].Write(extType)
+		current.Metrics["excursion_mag"] = current.Metrics["excursion_mag"].Write(record.GrossExcursion * 100)
+		current.Metrics["mark_a"] = current.Metrics["mark_a"].Write(float64(record.PrecursorStartTick))
+		current.Metrics["mark_b"] = current.Metrics["mark_b"].Write(float64(record.AnchorTick))
+		current.Metrics["mark_c"] = current.Metrics["mark_c"].Write(float64(record.ExitTick))
+
+		actionVal := 0.0
+
+		if record.ClearsFriction {
+			actionVal = 1.0
+		}
+
+		current.Metrics["action"] = current.Metrics["action"].Write(actionVal)
+	}
+
+	if impulse != nil {
+		current.Result = impulse
+	}
+
+	training.sequence = frame.SeqIdx
+	training.measurement = current
+
+	if training.uiTee != nil {
+		training.uiTee.Push(current.Clone())
 	}
 }

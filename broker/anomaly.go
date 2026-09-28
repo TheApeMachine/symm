@@ -41,18 +41,28 @@ type symbolStats struct {
 	count atomic.Uint64
 }
 
+type symbolFaultState struct {
+	consecutiveCrossed atomic.Uint64
+	consecutiveClean   atomic.Uint64
+	hasSevereFault     atomic.Bool
+}
+
 /*
 AnomalyMonitor is a lock-free off-ramp for unprocessable book shapes. It decouples
 recording on the critical pricing path from metric aggregation, preserving
 single-digit nanosecond execution while exposing quantitative venue health.
 */
 type AnomalyMonitor struct {
-	ctx     context.Context
-	cancel  context.CancelFunc
-	ring    *wf.RingBuffer[MarketAnomaly]
-	stats   sync.Map
-	total   atomic.Uint64
-	running atomic.Bool
+	ctx       context.Context
+	cancel    context.CancelFunc
+	ring      *wf.RingBuffer[MarketAnomaly]
+	stats     sync.Map
+	faults    sync.Map
+	faultMu   sync.RWMutex
+	onFault   func(symbol string)
+	onRecover func(symbol string)
+	total     atomic.Uint64
+	running   atomic.Bool
 }
 
 func NewAnomalyMonitor(ctx context.Context, capacity int) *AnomalyMonitor {
@@ -80,6 +90,33 @@ func NewAnomalyMonitor(ctx context.Context, capacity int) *AnomalyMonitor {
 	return monitor
 }
 
+func (monitor *AnomalyMonitor) faultState(symbol string) *symbolFaultState {
+	actual, _ := monitor.faults.LoadOrStore(symbol, &symbolFaultState{})
+	return actual.(*symbolFaultState)
+}
+
+/* SetOnFault registers a callback invoked when a symbol experiences a severe structural fault. */
+func (monitor *AnomalyMonitor) SetOnFault(hook func(symbol string)) {
+	if monitor == nil {
+		return
+	}
+
+	monitor.faultMu.Lock()
+	monitor.onFault = hook
+	monitor.faultMu.Unlock()
+}
+
+/* SetOnRecover registers a callback invoked when a symbol uncrosses and stabilizes. */
+func (monitor *AnomalyMonitor) SetOnRecover(hook func(symbol string)) {
+	if monitor == nil {
+		return
+	}
+
+	monitor.faultMu.Lock()
+	monitor.onRecover = hook
+	monitor.faultMu.Unlock()
+}
+
 /* Record pushes a market shape anomaly onto the wait-free ring buffer without blocking. */
 func (monitor *AnomalyMonitor) Record(symbol string, kind AnomalyKind) {
 	if monitor == nil || !monitor.running.Load() {
@@ -91,6 +128,62 @@ func (monitor *AnomalyMonitor) Record(symbol string, kind AnomalyKind) {
 		Kind:   kind,
 		At:     time.Now().UTC(),
 	})
+
+	if kind == AnomalyCrossedBook {
+		state := monitor.faultState(symbol)
+		state.consecutiveClean.Store(0)
+		crossed := state.consecutiveCrossed.Add(1)
+
+		if crossed > 3 {
+			if !state.hasSevereFault.Swap(true) {
+				monitor.faultMu.RLock()
+				hook := monitor.onFault
+				monitor.faultMu.RUnlock()
+
+				if hook != nil {
+					hook(symbol)
+				}
+			}
+		}
+	}
+}
+
+/* RecordClean registers a clean, uncrossed book tick to advance the stabilization counter. */
+func (monitor *AnomalyMonitor) RecordClean(symbol string) {
+	if monitor == nil || !monitor.running.Load() {
+		return
+	}
+
+	state := monitor.faultState(symbol)
+	state.consecutiveCrossed.Store(0)
+	clean := state.consecutiveClean.Add(1)
+
+	if clean >= 3 && state.hasSevereFault.Load() {
+		if state.hasSevereFault.Swap(false) {
+			monitor.faultMu.RLock()
+			hook := monitor.onRecover
+			monitor.faultMu.RUnlock()
+
+			if hook != nil {
+				hook(symbol)
+			}
+		}
+	}
+}
+
+/* HasSevereFault reports whether an impossible market state has persisted beyond transient noise. */
+func (monitor *AnomalyMonitor) HasSevereFault(symbol string) bool {
+	if monitor == nil {
+		return false
+	}
+
+	actual, found := monitor.faults.Load(symbol)
+
+	if !found {
+		return false
+	}
+
+	return actual.(*symbolFaultState).hasSevereFault.Load()
 }
 
 /* Count returns the total number of anomalies recorded for a symbol. */
@@ -117,12 +210,16 @@ func (monitor *AnomalyMonitor) Total() uint64 {
 }
 
 /*
-Health derives a continuous operational quality score in [0.0, 1.0].
-Prisinte books produce 1.0; recurring anomalies degrade the score continuously.
+Health derives an operational quality score in [0.0, 1.0].
+Severe structural faults immediately bypass gradual decay to 0.0.
 */
 func (monitor *AnomalyMonitor) Health(symbol string) float64 {
 	if monitor == nil {
 		return 1.0
+	}
+
+	if monitor.HasSevereFault(symbol) {
+		return 0.0
 	}
 
 	count := monitor.Count(symbol)

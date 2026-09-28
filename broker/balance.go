@@ -13,15 +13,28 @@ import (
 )
 
 /*
+AccountSnapshot encapsulates the holistic account state (spot assets, quote cash,
+portfolio equity, and unrealized PnL) into an immutable, unified record.
+All risk and sizing modules evaluate this snapshot to prevent fractured reads.
+*/
+type AccountSnapshot struct {
+	Wallet       *kraken.Balance
+	TradeBalance *kraken.TradeBalanceResult
+	Assets       map[string]*decimal.Decimal
+	Cash         *decimal.Decimal
+	Equity       *decimal.Decimal
+	Unrealized   *decimal.Decimal
+}
+
+/*
 Balance is a centralized manager of the exchange wallet, and should be called by
 any other object that wants to interact with the balance in any way.
 */
 type Balance struct {
 	*runtime.System
-	api          *websocket.API
-	Quote        string
-	wallet       atomic.Pointer[kraken.Balance]
-	tradeBalance atomic.Pointer[kraken.TradeBalanceResult]
+	api      *websocket.API
+	Quote    string
+	snapshot atomic.Pointer[AccountSnapshot]
 }
 
 func NewBalance(ctx context.Context, api *websocket.API) *Balance {
@@ -35,83 +48,133 @@ func NewBalance(ctx context.Context, api *websocket.API) *Balance {
 	return balance
 }
 
+func newAccountSnapshot(
+	quote string,
+	wallet *kraken.Balance,
+	tradeBalance *kraken.TradeBalanceResult,
+) *AccountSnapshot {
+	assets := make(map[string]*decimal.Decimal)
+
+	if wallet != nil {
+		for _, data := range wallet.Data {
+			assets[data.Asset] = data.Balance
+		}
+	}
+
+	var cash *decimal.Decimal
+
+	if quoteAmount, found := assets[quote]; found {
+		cash = quoteAmount
+	}
+
+	var equity *decimal.Decimal
+
+	if tradeBalance != nil && tradeBalance.Equity != nil {
+		equity = tradeBalance.Equity
+	}
+
+	if equity == nil && tradeBalance != nil && tradeBalance.EquivalentBalance != nil {
+		equity = tradeBalance.EquivalentBalance
+	}
+
+	if equity == nil {
+		equity = cash
+	}
+
+	var unrealized *decimal.Decimal
+
+	if tradeBalance != nil && tradeBalance.UnrealizedPnL != nil {
+		unrealized = tradeBalance.UnrealizedPnL
+	}
+
+	if unrealized == nil {
+		unrealized = decimal.NewFromInt64(0)
+	}
+
+	return &AccountSnapshot{
+		Wallet:       wallet,
+		TradeBalance: tradeBalance,
+		Assets:       assets,
+		Cash:         cash,
+		Equity:       equity,
+		Unrealized:   unrealized,
+	}
+}
+
 /*
-Update replaces the entire map; readers cannot observe a partially refreshed account.
+Snapshot loads the latest immutable account state in a single wait-free atomic read.
+*/
+func (balance *Balance) Snapshot() *AccountSnapshot {
+	if balance == nil {
+		return nil
+	}
+
+	return balance.snapshot.Load()
+}
+
+/*
+Update refreshes the holistic account state atomically.
 */
 func (balance *Balance) Update() {
-	if balance == nil || balance.api == nil {
+	if balance == nil {
 		return
 	}
 
-	if balance.Status() == runtime.BUSY {
-		return
+	if err := balance.Refresh(nil); err != nil {
+		balance.Error(err)
 	}
-
-	balance.Transition(runtime.BUSY)
-	result, err := balance.api.Balance()
-
-	if err != nil {
-		balance.Error(errnie.Err(
-			errnie.IO,
-			"[balance] failed to retrieve account balance",
-			err,
-		))
-
-		return
-	}
-
-	if result != nil {
-		balance.wallet.Store(result)
-	}
-
-	balance.Transition(runtime.READY)
 }
 
 /*
 Assets copies the current account map for callers that retain or transform it.
 */
 func (balance *Balance) Assets() map[string]*decimal.Decimal {
-	balanceData := balance.wallet.Load()
-	out := make(map[string]*decimal.Decimal)
+	snapshot := balance.Snapshot()
 
-	if balanceData == nil {
-		return out
+	if snapshot == nil || snapshot.Assets == nil {
+		return make(map[string]*decimal.Decimal)
 	}
 
-	for _, data := range balanceData.Data {
-		out[data.Asset] = data.Balance
+	out := make(map[string]*decimal.Decimal, len(snapshot.Assets))
+
+	for key, value := range snapshot.Assets {
+		out[key] = value
 	}
 
 	return out
 }
 
 /* Cash reports the quote balance exactly as the exchange last stated it. */
-func (balance *Balance) Cash() *decimal.Decimal { return balance.Assets()[balance.Quote] }
+func (balance *Balance) Cash() *decimal.Decimal {
+	snapshot := balance.Snapshot()
+
+	if snapshot == nil {
+		return nil
+	}
+
+	return snapshot.Cash
+}
 
 /* Equity returns total portfolio equity from authoritative trade balance or cash. */
 func (balance *Balance) Equity() *decimal.Decimal {
-	tradeBalance := balance.tradeBalance.Load()
+	snapshot := balance.Snapshot()
 
-	if tradeBalance != nil && tradeBalance.Equity != nil {
-		return tradeBalance.Equity
+	if snapshot == nil {
+		return nil
 	}
 
-	if tradeBalance != nil && tradeBalance.EquivalentBalance != nil {
-		return tradeBalance.EquivalentBalance
-	}
-
-	return balance.Cash()
+	return snapshot.Equity
 }
 
 /* Unrealized returns unrealized profit/loss across all open positions. */
 func (balance *Balance) Unrealized() *decimal.Decimal {
-	tradeBalance := balance.tradeBalance.Load()
+	snapshot := balance.Snapshot()
 
-	if tradeBalance != nil && tradeBalance.UnrealizedPnL != nil {
-		return tradeBalance.UnrealizedPnL
+	if snapshot == nil {
+		return decimal.NewFromInt64(0)
 	}
 
-	return decimal.NewFromInt64(0)
+	return snapshot.Unrealized
 }
 
 /*
@@ -133,18 +196,28 @@ func (balance *Balance) Refresh(instrument *Instrument) (err error) {
 	balance.Transition(runtime.BUSY)
 	defer balance.Transition(runtime.READY)
 
-	balance.Update()
-	tradeBalance, err := balance.api.TradeBalance()
+	wallet, err := balance.api.Balance()
 
 	if err != nil {
 		return errnie.Error(errnie.Err(
-			errnie.Internal,
-			"desk: could not fetch trade balance",
+			errnie.IO,
+			"[balance] failed to retrieve account balance",
 			err,
 		))
 	}
 
-	balance.tradeBalance.Store(tradeBalance)
+	tradeBalance, err := balance.api.TradeBalance()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.IO,
+			"[balance] failed to retrieve trade balance",
+			err,
+		))
+	}
+
+	snapshot := newAccountSnapshot(balance.Quote, wallet, tradeBalance)
+	balance.snapshot.Store(snapshot)
 
 	return nil
 }

@@ -17,6 +17,28 @@ interface RadixTreeVizProps {
 	className?: string;
 }
 
+const filterTree = (
+	node: TrieNodeData,
+	minProb: number,
+): TrieNodeData | null => {
+	if (node.probability < minProb) return null;
+	const filteredNode = { ...node };
+
+	if (filteredNode.children) {
+		filteredNode.children = filteredNode.children
+			.map((child) => filterTree(child, minProb))
+			.filter((child): child is TrieNodeData => child !== null);
+	}
+
+	if (filteredNode._children) {
+		filteredNode._children = filteredNode._children
+			.map((child) => filterTree(child, minProb))
+			.filter((child): child is TrieNodeData => child !== null);
+	}
+
+	return filteredNode;
+};
+
 export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 	data,
 	feasible = [],
@@ -80,29 +102,6 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 		resizeObserver.observe(observeTarget);
 		return () => resizeObserver.unobserve(observeTarget);
 	}, []);
-
-	// Filter tree by probability threshold
-	const filterTree = (
-		node: TrieNodeData,
-		minProb: number,
-	): TrieNodeData | null => {
-		if (node.probability < minProb) return null;
-		const filteredNode = { ...node };
-
-		if (filteredNode.children) {
-			filteredNode.children = filteredNode.children
-				.map((child) => filterTree(child, minProb))
-				.filter((child): child is TrieNodeData => child !== null);
-		}
-
-		if (filteredNode._children) {
-			filteredNode._children = filteredNode._children
-				.map((child) => filterTree(child, minProb))
-				.filter((child): child is TrieNodeData => child !== null);
-		}
-
-		return filteredNode;
-	};
 
 	const filteredTreeData = useMemo(() => {
 		if (!treeData) return null;
@@ -386,7 +385,10 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 				<svg
 					ref={svgRef}
 					className="w-full h-full absolute inset-0 cursor-grab active:cursor-grabbing"
+					role="img"
+					aria-label="Radix trie graph visualization"
 				>
+					<title>Radix Trie Graph Visualization</title>
 					<g transform={transform.toString()}>
 						{/* Links Layer */}
 						<g className="links">
@@ -787,7 +789,10 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 							fill="none"
 							stroke="currentColor"
 							strokeWidth="2"
+							role="img"
+							aria-label="Zoom in"
 						>
+							<title>Zoom in</title>
 							<path d="M12 5v14M5 12h14" />
 						</svg>
 					</button>
@@ -811,7 +816,10 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 							fill="none"
 							stroke="currentColor"
 							strokeWidth="2"
+							role="img"
+							aria-label="Zoom out"
 						>
+							<title>Zoom out</title>
 							<path d="M5 12h14" />
 						</svg>
 					</button>

@@ -32,6 +32,7 @@ type Conn struct {
 	// to simulate an exchange reporting multiple held assets with fill
 	// history, e.g. for account-recovery-on-boot scenarios.
 	BalanceResult       *kraken.Balance
+	TradeBalanceResult  *kraken.TradeBalanceResult
 	TradesHistoryResult spot.TradesHistoryResult
 	TradeVolumeResult   *kraken.TradeVolumeResult
 	book                *spotbook.Book
@@ -49,7 +50,6 @@ func NewConn() *Conn {
 }
 
 func (conn *Conn) Close() error { return nil }
-
 
 func (conn *Conn) Client() *spot.WebSocket { return nil }
 
@@ -93,6 +93,10 @@ func (conn *Conn) TradesHistory() (spot.TradesHistoryResult, error) {
 }
 
 func (conn *Conn) TradeBalance() (*kraken.TradeBalanceResult, error) {
+	if conn.TradeBalanceResult != nil {
+		return conn.TradeBalanceResult, nil
+	}
+
 	return &kraken.TradeBalanceResult{}, nil
 }
 

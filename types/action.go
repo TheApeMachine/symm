@@ -9,4 +9,3 @@ const (
 	ActionHold    Action = "hold"
 	ActionNothing Action = "nothing"
 )
-

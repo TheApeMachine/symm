@@ -39,10 +39,48 @@ func (desk *Desk) Enter(symbol string) *Position {
 		return nil
 	}
 
+	if desk.price.Anomalies() != nil && desk.price.Anomalies().HasSevereFault(symbol) {
+		desk.Transition(runtime.ERROR)
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[desk] execution halted: severe structural venue fault for "+symbol,
+			nil,
+		))
+
+		return nil
+	}
+
+	if desk.price.MarketHealth(symbol) <= 0.0 {
+		desk.Transition(runtime.ERROR)
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[desk] execution halted: market health critical failure for "+symbol,
+			nil,
+		))
+
+		return nil
+	}
+
+	if desk.Status() == runtime.ERROR || desk.price.Status() == runtime.ERROR {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[desk] execution halted: broker in error status",
+			nil,
+		))
+
+		return nil
+	}
+
 	maxFraction := viper.GetFloat64("trading.allocation.max_fraction")
 
 	if maxFraction <= 0 || maxFraction > 1 {
-		maxFraction = 0.5
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[desk] invalid trading.allocation.max_fraction configuration",
+			nil,
+		))
+
+		return nil
 	}
 
 	cash := desk.balance.Cash()
@@ -110,9 +148,13 @@ func (desk *Desk) Enter(symbol string) *Position {
 	return position
 }
 
-func (desk *Desk) Exit(position *Position) {
+func (desk *Desk) Exit(position *Position) error {
 	if desk == nil || desk.api == nil || position == nil || position.ExitOrder == nil {
-		return
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[desk] invalid exit request",
+			nil,
+		))
 	}
 
 	if position.EntryOrder != nil && position.ExitOrder.Volume == "" {
@@ -126,13 +168,11 @@ func (desk *Desk) Exit(position *Position) {
 	response, err := desk.api.AddOrder(position.ExitOrder)
 
 	if err != nil {
-		errnie.Error(errnie.Err(
+		return errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			"[desk] failed to exit",
 			err,
 		))
-
-		return
 	}
 
 	position.AddExitResponse(&response)
@@ -140,4 +180,6 @@ func (desk *Desk) Exit(position *Position) {
 	if desk.balance != nil {
 		desk.balance.Update()
 	}
+
+	return nil
 }

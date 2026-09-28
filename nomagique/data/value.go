@@ -58,4 +58,3 @@ func ReadSeq[T any](value iter.Seq[unsafe.Pointer]) iter.Seq[T] {
 		}
 	}
 }
-

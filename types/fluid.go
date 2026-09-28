@@ -22,4 +22,3 @@ const (
 	// branches, lookahead beams, regime classes, entropy, and REM sleep replays).
 	CognitionChannel = "cognition"
 )
-

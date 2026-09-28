@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/learning/associative/grid"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/types"
 	"golang.design/x/lockfree/lf"
@@ -82,7 +83,7 @@ func (tee *UITee) Push(measurement *data.Measurement[float64]) {
 
 	publication := measurement.Clone()
 
-	if projection, ok := measurement.Result.(interface{ Snapshot() any }); ok {
+	if projection, ok := measurement.Result.(interface{ Snapshot() *grid.Snapshot }); ok {
 		publication.Result = projection.Snapshot()
 	}
 

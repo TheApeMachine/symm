@@ -148,6 +148,14 @@ func (catalog *Catalog) Replay(ctx context.Context, epoch int64, through ...int6
 				continue
 			}
 
+			if measurement.Label != "" && (frame.Label == "" || frame.Label == "replay") {
+				frame.Label = measurement.Label
+			}
+
+			if frame.At.IsZero() && !measurement.At.IsZero() {
+				frame.At = measurement.At
+			}
+
 			frame.Peers = append(frame.Peers, measurement)
 		}
 
@@ -222,6 +230,11 @@ func (catalog *Catalog) indexTape(ctx context.Context, database *sql.DB, epoch i
 			if err != nil {
 				return errnie.Error(err)
 			}
+
+			if len(through) > 0 && measurement.SeqIdx > through[0] {
+				continue
+			}
+
 			count++
 			if count%25000 == 0 {
 				errnie.Info(fmt.Sprintf("replay: indexed %d rows for %s", count, family))

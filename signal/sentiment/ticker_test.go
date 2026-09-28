@@ -30,6 +30,7 @@ func timestamp(second int64) time.Time {
 func TestTickerStep(t *testing.T) {
 	Convey("Given a cross-sectional change-breadth instrument", t, func() {
 		entity := NewTicker(t.Context())
+		entity.Transition(runtime.READY)
 
 		Convey("the first tick declares the gate fact with no cohort yet", func() {
 			measurement := entity.Step(tick("BTC/USD", 100.0, timestamp(1)))

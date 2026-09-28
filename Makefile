@@ -19,7 +19,6 @@ SYMM_BIN := bin/symm
 CONFIG ?=
 CONFIG_FLAG = $(if $(CONFIG),--config $(CONFIG),)
 LOG_DIR ?= runs
-ADVISOR_CONFIG ?= cmd/cfg/config.yml
 ADVISOR_CONFIG ?= $(if $(wildcard $(HOME)/.symm/data/advisors.json),$(HOME)/.symm/data/advisors.json,config/advisors.json)
 ADVISOR_OUT ?= runs/advisors.candidate.json
 ADVISOR_RUN ?=
@@ -126,7 +125,6 @@ optimize: goodindahood
 
 goodindahood:
 	.venv/bin/python3 scripts/optimize_advisor_features.py \
-		--config $(ADVISOR_CONFIG) \
 		--config $(ADVISOR_CONFIG) \
 		--out $(ADVISOR_OUT) \
 		$(if $(ADVISOR_RUN),--run $(ADVISOR_RUN),) \

@@ -40,6 +40,7 @@ func timestamp(second int64) time.Time {
 func TestTradeStep(t *testing.T) {
 	Convey("Given an executed-flow entity", t, func() {
 		entity := NewTrade(t.Context())
+		entity.Transition(runtime.READY)
 
 		Convey("the first buy trade yields a measurement with no warmup gating", func() {
 			measurement := entity.Step(row("BTC/USD", "buy", 100, 2, timestamp(0)))
@@ -188,6 +189,7 @@ func TestTradeStep(t *testing.T) {
 
 	Convey("Given a non-positive execution price", t, func() {
 		entity := NewTrade(t.Context())
+		entity.Transition(runtime.READY)
 
 		Convey("the measurement carries the pipeline rejection in its Err field", func() {
 			measurement := entity.Step(row("BTC/USD", "buy", 0, 1, timestamp(0)))
@@ -199,6 +201,7 @@ func TestTradeStep(t *testing.T) {
 
 	Convey("Given a trade whose side is not a known aggressor", t, func() {
 		entity := NewTrade(t.Context())
+		entity.Transition(runtime.READY)
 
 		Convey("the measurement carries the pipeline rejection in its Err field", func() {
 			measurement := entity.Step(row("BTC/USD", "both", 100, 1, timestamp(0)))
@@ -234,6 +237,7 @@ func TestTradeRegister(t *testing.T) {
 
 		Convey("Step absorbs trade facts from peers when measurement is unpopulated", func() {
 			entity := NewTrade(t.Context())
+			entity.Transition(runtime.READY)
 			meas := entity.Register()
 			meas.Peers = []*data.Measurement[float64]{
 				row("BTC/USD", "buy", 100, 2, timestamp(0)),

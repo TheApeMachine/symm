@@ -7,9 +7,9 @@ import (
 )
 
 type LearningStepT struct {
-	AtNs int64 `json:"atNs"`
-	Value float64 `json:"value"`
-	Defined bool `json:"defined"`
+	AtNs    int64   `json:"atNs"`
+	Value   float64 `json:"value"`
+	Defined bool    `json:"defined"`
 }
 
 func (t *LearningStepT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

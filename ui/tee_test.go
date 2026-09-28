@@ -5,7 +5,6 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/learning/associative/grid"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/strategy/impulse"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
@@ -96,7 +95,7 @@ func TestUITeePush(t *testing.T) {
 		})
 
 		Convey("queued bytes retain the accepted boundary after owners advance", func() {
-			expected := held.Snapshot().(*grid.Snapshot)
+			expected := held.Snapshot()
 			tee.Push(measurement)
 
 			for _, frame := range frames[1:] {

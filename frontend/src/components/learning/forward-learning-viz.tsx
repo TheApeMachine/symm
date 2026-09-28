@@ -2,7 +2,12 @@ import * as d3 from "d3";
 import { ChevronRight, Pause, Play } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { focusStore, type RingBuffer, trainingStore } from "#/collections/app";
+import {
+	focusStore,
+	type RingBuffer,
+	signals,
+	trainingStore,
+} from "#/collections/app";
 import { RingCursor } from "#/collections/ring";
 import { hubBaseUrl } from "#/lib/hub";
 import { cn } from "#/lib/utils";
@@ -17,6 +22,7 @@ import type {
 interface ForwardTapePoint {
 	x: number;
 	y: number;
+	seq?: number;
 }
 
 export const ForwardLearningViz = () => {
@@ -52,7 +58,7 @@ export const ForwardLearningViz = () => {
 	} | null>(null);
 
 	// Focus symbol
-	const [currentSymbol, setCurrentSymbol] = useState("BTC/USD");
+	const [currentSymbol, setCurrentSymbol] = useState(focusStore.state || "");
 
 	useEffect(() => {
 		const unsub = focusStore.subscribe((state) => {
@@ -151,21 +157,48 @@ export const ForwardLearningViz = () => {
 				setGlobalPnl(pnlVal);
 
 				// Accumulate real point
-				const rawPrice =
-					metricMap.price ?? metricMap.contrast ?? metricMap.confidence;
+				let rawPrice =
+					metricMap.price && metricMap.price > 0 ? metricMap.price : undefined;
 
-				setPoints((prev) => {
-					const fallback = prev.length > 0 ? prev[prev.length - 1].y : 50;
-					const priceVal = rawPrice ?? fallback;
-					const next = [...prev, { x: prev.length, y: priceVal }];
-					if (next.length > 200) {
-						return next.slice(next.length - 200).map((pt, i) => ({
-							x: i,
-							y: pt.y,
-						}));
+				if (rawPrice === undefined) {
+					const liqRing = signals.liquidity?.state?.[currentSymbol];
+					if (liqRing && !liqRing.isEmpty()) {
+						const lastLiq = liqRing.getLast();
+						if (lastLiq?.metrics) {
+							let bid = 0;
+							let ask = 0;
+							for (const lm of lastLiq.metrics) {
+								if (lm.name === "best_bid_price") bid = lm.raw ?? 0;
+								if (lm.name === "best_ask_price") ask = lm.raw ?? 0;
+							}
+							if (bid > 0 && ask > 0) {
+								rawPrice = (bid + ask) / 2;
+							} else if (bid > 0) {
+								rawPrice = bid;
+							} else if (ask > 0) {
+								rawPrice = ask;
+							}
+						}
 					}
-					return next;
-				});
+				}
+
+				if (rawPrice !== undefined && rawPrice > 0) {
+					const seqVal = Number(measurement.tick ?? 0n);
+					setPoints((prev) => {
+						const next = [
+							...prev,
+							{ x: prev.length, y: rawPrice as number, seq: seqVal },
+						];
+						if (next.length > 200) {
+							return next.slice(next.length - 200).map((pt, i) => ({
+								x: i,
+								y: pt.y,
+								seq: pt.seq,
+							}));
+						}
+						return next;
+					});
+				}
 
 				// Record real activity log entry
 				const actRaw = metricMap.action ?? 0;
@@ -192,7 +225,10 @@ export const ForwardLearningViz = () => {
 				});
 
 				// Check excursion state if present in measurement
-				if (metricMap.excursion_type !== undefined) {
+				if (
+					metricMap.excursion_type !== undefined &&
+					metricMap.excursion_type > 0
+				) {
 					const extType =
 						metricMap.excursion_type === 1
 							? "UPWARD EXCURSION"
@@ -204,9 +240,9 @@ export const ForwardLearningViz = () => {
 						type: extType,
 						magnitude: metricMap.excursion_mag ?? 0,
 						marks: {
-							A: Math.max(0, Math.floor(metricMap.mark_a ?? 20)),
-							B: Math.max(0, Math.floor(metricMap.mark_b ?? 50)),
-							C: Math.max(0, Math.floor(metricMap.mark_c ?? 100)),
+							A: Math.max(0, Math.floor(metricMap.mark_a ?? 0)),
+							B: Math.max(0, Math.floor(metricMap.mark_b ?? 0)),
+							C: Math.max(0, Math.floor(metricMap.mark_c ?? 0)),
 						},
 						entryIdx:
 							metricMap.agent_entry !== undefined
@@ -227,14 +263,47 @@ export const ForwardLearningViz = () => {
 		}
 
 		const unsub = trainingStore.subscribe((state) => {
-			const symRing = state?.[currentSymbol];
-			if (symRing) {
-				handleRing(symRing);
+			const activeRing = state?.[currentSymbol];
+			if (activeRing) {
+				handleRing(activeRing);
+			}
+		});
+
+		const liqUnsub = signals.liquidity.subscribe((state) => {
+			const liqRing = state?.[currentSymbol];
+			if (liqRing && !liqRing.isEmpty()) {
+				const last = liqRing.getLast();
+				if (!last?.metrics) return;
+				let bid = 0;
+				let ask = 0;
+				for (const lm of last.metrics) {
+					if (lm.name === "best_bid_price") bid = lm.raw ?? 0;
+					if (lm.name === "best_ask_price") ask = lm.raw ?? 0;
+				}
+				if (bid > 0 && ask > 0) {
+					const mid = (bid + ask) / 2;
+					const seqVal = Number(last.tick ?? 0n);
+					setPoints((prev) => {
+						if (prev.length > 0 && prev[prev.length - 1].seq === seqVal) {
+							return prev;
+						}
+						const next = [...prev, { x: prev.length, y: mid, seq: seqVal }];
+						if (next.length > 200) {
+							return next.slice(next.length - 200).map((pt, i) => ({
+								x: i,
+								y: pt.y,
+								seq: pt.seq,
+							}));
+						}
+						return next;
+					});
+				}
 			}
 		});
 
 		return () => {
 			unsub?.unsubscribe?.();
+			liqUnsub?.unsubscribe?.();
 		};
 	}, [currentSymbol]);
 
@@ -250,9 +319,13 @@ export const ForwardLearningViz = () => {
 			if (pt.y > maxY) maxY = pt.y;
 		}
 
-		if (!Number.isFinite(minY) || !Number.isFinite(maxY) || minY === maxY) {
+		if (!Number.isFinite(minY) || !Number.isFinite(maxY)) {
 			minY = 0;
 			maxY = 100;
+		} else if (minY === maxY) {
+			const delta = minY !== 0 ? Math.abs(minY) * 0.005 : 1;
+			minY -= delta;
+			maxY += delta;
 		} else {
 			const pad = (maxY - minY) * 0.15;
 			minY -= pad;
@@ -338,7 +411,9 @@ export const ForwardLearningViz = () => {
 					{/* Tape Header */}
 					<div className="h-8 border-(--line) border-b bg-(--sunken) flex items-center px-3 justify-between text-(--f3) shrink-0">
 						<div className="flex items-center gap-2">
-							<span className="text-(--acc) font-bold">FORWARD TAPE</span>
+							<span className="text-(--acc) font-bold">
+								MODEL TRAINING TAPE
+							</span>
 							<span className="bg-(--surface) border-(--line) border px-1.5 py-0.5 rounded text-[10px] text-(--f1)">
 								{currentSymbol}
 							</span>
@@ -348,6 +423,18 @@ export const ForwardLearningViz = () => {
 							</span>
 						</div>
 						<div className="flex items-center gap-3">
+							{currentPoints.length > 0 && (
+								<span className="text-[11px] font-bold text-(--acc) bg-(--acc)/10 px-2 py-0.5 rounded border border-(--acc)/20">
+									$
+									{currentPoints[currentPoints.length - 1].y.toLocaleString(
+										undefined,
+										{
+											minimumFractionDigits: 2,
+											maximumFractionDigits: 2,
+										},
+									)}
+								</span>
+							)}
 							<span className="text-[10px] uppercase tracking-widest text-(--f4)">
 								Coordinate{" "}
 								<span className="border-(--line) border text-(--f2) px-1 rounded ml-1">
@@ -401,7 +488,7 @@ export const ForwardLearningViz = () => {
 					<div ref={tapeRef} className="flex-1 relative overflow-hidden">
 						{points.length === 0 && (
 							<div className="absolute inset-0 flex items-center justify-center text-(--f4) text-xs tracking-wider">
-								Awaiting tape stream for {currentSymbol}...
+								Awaiting model training tape stream for {currentSymbol}...
 							</div>
 						)}
 
@@ -434,23 +521,59 @@ export const ForwardLearningViz = () => {
 									strokeWidth="1.5"
 								/>
 
-								{/* Leading Point */}
+								{/* Leading Point & Real Price Badge */}
 								{currentPoints.length > 0 && (
-									<circle
-										cx={xScale(currentPoints[currentPoints.length - 1].x)}
-										cy={yScale(currentPoints[currentPoints.length - 1].y)}
-										r={3}
-										fill="var(--acc)"
-									/>
+									<g
+										transform={`translate(${xScale(currentPoints[currentPoints.length - 1].x)}, ${yScale(currentPoints[currentPoints.length - 1].y)})`}
+									>
+										<circle r={3.5} fill="var(--acc)" />
+										<text
+											x={-6}
+											y={-8}
+											fill="var(--acc)"
+											fontSize="9px"
+											fontWeight="bold"
+											textAnchor="end"
+										>
+											$
+											{currentPoints[currentPoints.length - 1].y.toLocaleString(
+												undefined,
+												{
+													minimumFractionDigits: 2,
+													maximumFractionDigits: 2,
+												},
+											)}
+										</text>
+									</g>
 								)}
 
 								{/* Real Hindsight Markers A, B, C if excursion event is active */}
 								{excursionEvent && (
 									<g>
 										{(["A", "B", "C"] as const).map((m) => {
-											const markIdx = excursionEvent.marks[m];
-											if (markIdx >= points.length) return null;
-											const xPos = xScale(markIdx);
+											const markVal = excursionEvent.marks[m];
+											if (markVal <= 0) return null;
+
+											let targetIdx = -1;
+											if (markVal < points.length) {
+												targetIdx = markVal;
+											} else if (points.length > 0) {
+												let minDiff = Number.POSITIVE_INFINITY;
+												for (let i = 0; i < points.length; i++) {
+													const seq = points[i].seq ?? i;
+													const diff = Math.abs(seq - markVal);
+													if (diff < minDiff) {
+														minDiff = diff;
+														targetIdx = i;
+													}
+												}
+											}
+
+											if (targetIdx < 0 || targetIdx >= points.length) {
+												return null;
+											}
+
+											const xPos = xScale(targetIdx);
 
 											return (
 												<g key={m} transform={`translate(${xPos}, 0)`}>
@@ -488,51 +611,89 @@ export const ForwardLearningViz = () => {
 
 										{/* Agent Entry Marker */}
 										{excursionEvent.entryIdx !== null &&
-											excursionEvent.entryIdx < points.length && (
-												<g
-													transform={`translate(${xScale(excursionEvent.entryIdx)}, ${yScale(points[excursionEvent.entryIdx].y)})`}
-												>
-													<circle r={3.5} fill="var(--up)" />
-													<text
-														x={5}
-														y={-5}
-														fill="var(--up)"
-														fontSize="8px"
-														fontWeight="bold"
+											(() => {
+												let entryPtIdx = -1;
+												const val = excursionEvent.entryIdx;
+												if (val < points.length) {
+													entryPtIdx = val;
+												} else if (points.length > 0) {
+													let minDiff = Number.POSITIVE_INFINITY;
+													for (let i = 0; i < points.length; i++) {
+														const seq = points[i].seq ?? i;
+														const diff = Math.abs(seq - val);
+														if (diff < minDiff) {
+															minDiff = diff;
+															entryPtIdx = i;
+														}
+													}
+												}
+												if (entryPtIdx < 0 || entryPtIdx >= points.length)
+													return null;
+												return (
+													<g
+														transform={`translate(${xScale(entryPtIdx)}, ${yScale(points[entryPtIdx].y)})`}
 													>
-														ENTER
-													</text>
-													<line
-														y2={tapeDim.height}
-														stroke="var(--up)"
-														opacity="0.25"
-													/>
-												</g>
-											)}
+														<circle r={3.5} fill="var(--up)" />
+														<text
+															x={5}
+															y={-5}
+															fill="var(--up)"
+															fontSize="8px"
+															fontWeight="bold"
+														>
+															ENTER
+														</text>
+														<line
+															y2={tapeDim.height}
+															stroke="var(--up)"
+															opacity="0.25"
+														/>
+													</g>
+												);
+											})()}
 
 										{/* Agent Exit Marker */}
 										{excursionEvent.exitIdx !== null &&
-											excursionEvent.exitIdx < points.length && (
-												<g
-													transform={`translate(${xScale(excursionEvent.exitIdx)}, ${yScale(points[excursionEvent.exitIdx].y)})`}
-												>
-													<circle r={3.5} fill="var(--down)" />
-													<text
-														x={5}
-														y={-5}
-														fill="var(--down)"
-														fontSize="8px"
-														fontWeight="bold"
+											(() => {
+												let exitPtIdx = -1;
+												const val = excursionEvent.exitIdx;
+												if (val < points.length) {
+													exitPtIdx = val;
+												} else if (points.length > 0) {
+													let minDiff = Number.POSITIVE_INFINITY;
+													for (let i = 0; i < points.length; i++) {
+														const seq = points[i].seq ?? i;
+														const diff = Math.abs(seq - val);
+														if (diff < minDiff) {
+															minDiff = diff;
+															exitPtIdx = i;
+														}
+													}
+												}
+												if (exitPtIdx < 0 || exitPtIdx >= points.length)
+													return null;
+												return (
+													<g
+														transform={`translate(${xScale(exitPtIdx)}, ${yScale(points[exitPtIdx].y)})`}
 													>
-														EXIT
-													</text>
-													<line
-														y2={tapeDim.height}
-														stroke="var(--down)"
-														opacity="0.25"
-													/>
-												</g>
-											)}
+														<circle r={3.5} fill="var(--down)" />
+														<text
+															x={5}
+															y={-5}
+															fill="var(--down)"
+															fontSize="8px"
+															fontWeight="bold"
+														>
+															EXIT
+														</text>
+														<line
+															y2={tapeDim.height}
+															stroke="var(--down)"
+															opacity="0.25"
+														/>
+													</g>
+												);
+											})()}
 									</g>
 								)}
 							</svg>
@@ -540,11 +701,11 @@ export const ForwardLearningViz = () => {
 					</div>
 				</div>
 
-				{/* Right Sidebar: Agent Skill & Activity */}
+				{/* Right Sidebar: Model Skill & Activity */}
 				<div className="w-72 bg-(--surface) border-(--line) border rounded flex flex-col shrink-0 min-h-0">
 					<div className="h-8 border-(--line) border-b bg-(--sunken) flex items-center px-3 text-(--f3) shrink-0 justify-between">
 						<span className="tracking-widest uppercase font-bold text-[10px]">
-							Agent Skill
+							Model Skill
 						</span>
 						<span className="text-[10px]">
 							{evaluatedCount.toLocaleString()} evaluated
@@ -594,10 +755,10 @@ export const ForwardLearningViz = () => {
 							</div>
 						</div>
 
-						{/* System P&L */}
+						{/* Model P&L */}
 						<div>
 							<div className="uppercase tracking-widest text-(--f4) text-[9px] mb-1 font-bold">
-								System P&L
+								Model P&L
 							</div>
 							<div
 								className={cn(
@@ -609,7 +770,7 @@ export const ForwardLearningViz = () => {
 								{globalPnl.toFixed(4)}
 							</div>
 							<div className="text-(--f4) text-[9px] mt-0.5 leading-tight">
-								Theoretical wallet return from authoritative execution facts.
+								Theoretical return from evaluated model decisions.
 							</div>
 						</div>
 
@@ -646,7 +807,7 @@ export const ForwardLearningViz = () => {
 								</AnimatePresence>
 								{activityLogs.length === 0 && (
 									<div className="text-(--f4) text-[10px]">
-										Listening for live market decisions...
+										Listening for model training decisions...
 									</div>
 								)}
 							</div>

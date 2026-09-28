@@ -514,7 +514,7 @@ func (catalog *Catalog) RecordRun(ctx context.Context, run Run) error {
 
 	defer reader.Release()
 
-	_, appendErr := tbl.Append(ctx, reader, nil)
+	_, appendErr := tbl.Append(catalog.context(ctx), reader, nil)
 
 	if appendErr != nil {
 		return errnie.Error(errnie.Err(

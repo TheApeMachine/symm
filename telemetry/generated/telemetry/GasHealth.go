@@ -7,22 +7,22 @@ import (
 )
 
 type GasHealthT struct {
-	Mass float64 `json:"mass"`
-	Internal float64 `json:"internal"`
-	Kinetic float64 `json:"kinetic"`
-	Total float64 `json:"total"`
-	Momentum []float64 `json:"momentum"`
-	MinDensity float64 `json:"minDensity"`
-	MinPressure float64 `json:"minPressure"`
-	MinTemperature float64 `json:"minTemperature"`
-	MaxSpeed float64 `json:"maxSpeed"`
-	MaxSound float64 `json:"maxSound"`
-	MaxMach float64 `json:"maxMach"`
-	VorticityRms float64 `json:"vorticityRms"`
-	VorticityMax float64 `json:"vorticityMax"`
-	StrainRms float64 `json:"strainRms"`
-	StrainMax float64 `json:"strainMax"`
-	ViscousPower float64 `json:"viscousPower"`
+	Mass           float64   `json:"mass"`
+	Internal       float64   `json:"internal"`
+	Kinetic        float64   `json:"kinetic"`
+	Total          float64   `json:"total"`
+	Momentum       []float64 `json:"momentum"`
+	MinDensity     float64   `json:"minDensity"`
+	MinPressure    float64   `json:"minPressure"`
+	MinTemperature float64   `json:"minTemperature"`
+	MaxSpeed       float64   `json:"maxSpeed"`
+	MaxSound       float64   `json:"maxSound"`
+	MaxMach        float64   `json:"maxMach"`
+	VorticityRms   float64   `json:"vorticityRms"`
+	VorticityMax   float64   `json:"vorticityMax"`
+	StrainRms      float64   `json:"strainRms"`
+	StrainMax      float64   `json:"strainMax"`
+	ViscousPower   float64   `json:"viscousPower"`
 }
 
 func (t *GasHealthT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

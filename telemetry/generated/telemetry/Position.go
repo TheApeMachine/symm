@@ -7,9 +7,9 @@ import (
 )
 
 type PositionT struct {
-	Status string `json:"status"`
+	Status   string     `json:"status"`
 	Decision *DecisionT `json:"decision"`
-	Holding *HoldingT `json:"holding"`
+	Holding  *HoldingT  `json:"holding"`
 }
 
 func (t *PositionT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

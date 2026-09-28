@@ -78,8 +78,8 @@ func MeasurementToWire(measurement *data.Measurement[float64]) *wire.Measurement
 	snapshot, ok := measurement.Result.(*grid.Snapshot)
 
 	if !ok && measurement.Result != nil {
-		if snapshotter, hasSnapshot := measurement.Result.(interface{ Snapshot() any }); hasSnapshot {
-			snapshot, _ = snapshotter.Snapshot().(*grid.Snapshot)
+		if snapshotter, hasSnapshot := measurement.Result.(interface{ Snapshot() *grid.Snapshot }); hasSnapshot {
+			snapshot = snapshotter.Snapshot()
 		}
 	}
 

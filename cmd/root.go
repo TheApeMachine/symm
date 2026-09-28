@@ -2,7 +2,10 @@ package cmd
 
 import (
 	"context"
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -10,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -170,11 +174,25 @@ var (
 				))
 			}
 
-			errnie.Info("symm: initializing training and restoring from catalog...")
+			errnie.Info("symm: initializing training and UI hub...")
 			training := strategy.NewTraining(ctx, epoch, price)
 			trader := strategy.NewTrader(ctx, api, price, balance)
 			training.SetTrader(trader)
+			training.SetTee(uiTee)
 
+			uiTee.Transition(nmruntime.READY)
+			training.Transition(nmruntime.READY)
+
+			hub := ui.NewHub(ctx, trader, catalog, uiTee)
+			hub.SetPositionSource(trader)
+			hub.SetCognitionSource(training)
+			hub.SetExitHandler(func(symbol string) {
+				trader.OnAction(symbol, strategy.ActionExit)
+			})
+			hub.Run()
+			hub.Transition(nmruntime.READY)
+
+			errnie.Info("symm: pre-training model on stored catalog excursions...")
 			if err := training.Rehearsal.Restore(catalog); err != nil {
 				errnie.Error(err)
 			}
@@ -203,28 +221,25 @@ var (
 						if err := training.Rehearsal.SaveCheckpoint(epoch); err != nil {
 							errnie.Error(err)
 						}
+
+						if err := training.Rehearsal.PollUntrained(catalog); err != nil {
+							errnie.Error(err)
+						}
 					}
 				}
 			}()
+			codeCommit, buildID, configDigest := resolveRunIdentity()
 			errnie.Info("symm: recording active run in catalog...")
 			if err := catalog.RecordRun(ctx, tables.Run{
 				Epoch:        epoch,
 				StartedAt:    processStartedAt,
-				BuildID:      strategy.TrainingFormat,
-				ConfigDigest: viper.GetString("system.log.level"),
+				CodeCommit:   codeCommit,
+				BuildID:      buildID,
+				ConfigDigest: configDigest,
 				Status:       "ACTIVE",
 			}); err != nil {
 				return errnie.Error(errnie.Err(errnie.IO, "cmd: record training run", err))
 			}
-
-			errnie.Info("symm: starting UI hub...")
-			hub := ui.NewHub(ctx, trader, catalog, uiTee)
-			hub.SetPositionSource(trader)
-			hub.SetCognitionSource(training)
-			hub.SetExitHandler(func(symbol string) {
-				trader.OnAction(symbol, strategy.ActionExit)
-			})
-			hub.Run()
 
 			manifoldSolver := manifold.NewSolver(ctx, api)
 
@@ -425,6 +440,38 @@ func startPprof() {
 	go func() {
 		errnie.Error(http.ListenAndServe(addr, mux))
 	}()
+}
+
+func resolveRunIdentity() (codeCommit string, buildID string, configDigest string) {
+	buildID = strategy.TrainingFormat
+	if info, ok := debug.ReadBuildInfo(); ok {
+		var vcsRev, vcsMod string
+		for _, setting := range info.Settings {
+			if setting.Key == "vcs.revision" {
+				vcsRev = setting.Value
+			}
+			if setting.Key == "vcs.modified" {
+				vcsMod = setting.Value
+			}
+		}
+		if vcsRev != "" {
+			codeCommit = vcsRev
+			if vcsMod == "true" {
+				codeCommit += "-dirty"
+			}
+		} else if info.Main.Version != "" && info.Main.Version != "(devel)" {
+			codeCommit = info.Main.Version
+		}
+	}
+
+	settings := viper.AllSettings()
+	raw, err := json.Marshal(settings)
+	if err == nil {
+		hash := sha256.Sum256(raw)
+		configDigest = hex.EncodeToString(hash[:])
+	}
+
+	return codeCommit, buildID, configDigest
 }
 
 func init() {

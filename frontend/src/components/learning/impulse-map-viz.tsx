@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from "react";
 import * as d3 from "d3";
 import { Grid2X2, Pause, Play, RefreshCw, Waves } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { cn } from "#/lib/utils";
 import type { ImpulseNode } from "./types";
 
@@ -126,10 +126,26 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 		const startY = height * 0.1;
 
 		nodes.forEach((n, i) => {
-			n.gridX = startX + (i % cols) * stepX;
-			n.gridY = startY + Math.floor(i / cols) * stepY;
+			const hasPos =
+				typeof n.x === "number" &&
+				typeof n.y === "number" &&
+				!Number.isNaN(n.x) &&
+				!Number.isNaN(n.y) &&
+				(n.x > 0 || n.y > 0) &&
+				n.x <= 1 &&
+				n.y <= 1;
 
-			if (n.x === undefined || Number.isNaN(n.x)) {
+			const posX = typeof n.x === "number" ? n.x : 0;
+			const posY = typeof n.y === "number" ? n.y : 0;
+
+			n.gridX = hasPos
+				? startX + posX * (width * 0.8)
+				: startX + (i % cols) * stepX;
+			n.gridY = hasPos
+				? startY + posY * (height * 0.8)
+				: startY + Math.floor(i / cols) * stepY;
+
+			if (n.x === undefined || Number.isNaN(n.x) || n.x <= 1) {
 				n.x = n.gridX;
 				n.y = n.gridY;
 			}
@@ -137,12 +153,7 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 
 		const colorScale = d3
 			.scaleSequential((t) =>
-				d3.interpolateRgbBasis([
-					"#1f1a14",
-					"#7fbacb",
-					"#9cc06e",
-					"#e8a33d",
-				])(t),
+				d3.interpolateRgbBasis(["#1f1a14", "#7fbacb", "#9cc06e", "#e8a33d"])(t),
 			)
 			.domain([0, 1]);
 
@@ -181,18 +192,14 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 			.attr("stroke-width", 1)
 			.style("cursor", "pointer")
 			.on("mouseover", function (e: MouseEvent, d: ImpulseNode) {
-				d3.select(this)
-					.attr("stroke", "var(--acc)")
-					.attr("stroke-width", 2);
+				d3.select(this).attr("stroke", "var(--acc)").attr("stroke-width", 2);
 				const rect = containerRef.current?.getBoundingClientRect();
 				const x = rect ? e.clientX - rect.left : e.clientX;
 				const y = rect ? e.clientY - rect.top : e.clientY;
 				setHoveredNode({ node: d, x, y });
 			})
 			.on("mouseout", function () {
-				d3.select(this)
-					.attr("stroke", "var(--line)")
-					.attr("stroke-width", 1);
+				d3.select(this).attr("stroke", "var(--line)").attr("stroke-width", 1);
 				setHoveredNode(null);
 			});
 
@@ -200,10 +207,10 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 			.contourDensity<ImpulseNode>()
 			.x((d) => d.x || 0)
 			.y((d) => d.y || 0)
-			.weight((d) => (d.activation || 0.1) * (d.snr || 1))
+			.weight((d) => (d.activation > 0.05 ? d.activation * (d.snr || 1) : 0))
 			.size([width, height])
-			.bandwidth(30)
-			.thresholds(15);
+			.bandwidth(25)
+			.thresholds(12);
 
 		simulation.on("tick", () => {
 			if (isPlaying) {
@@ -219,19 +226,22 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 				.attr("cy", (d) => d.y ?? 0)
 				.attr("fill", (d) => colorScale(d.activation || 0));
 
-			if (nodes.length >= 3) {
-				const contourData = computeDensity(nodes);
-				const paths = contourLayer.selectAll("path").data(contourData);
+			const hasActivePrecursors = nodes.some((d) => d.activation > 0.05);
 
-				paths
-					.enter()
-					.append("path")
-					.merge(paths as any)
+			if (nodes.length >= 3 && hasActivePrecursors) {
+				const contourData = computeDensity(nodes);
+
+				contourLayer
+					.selectAll<SVGPathElement, d3.ContourMultiPolygon>("path")
+					.data(contourData)
+					.join("path")
 					.attr("d", d3.geoPath())
 					.attr("fill", (_, i) => {
 						return (
-							d3.color("#e8a33d")?.copy({ opacity: i * 0.015 }).toString() ||
-							"none"
+							d3
+								.color("#e8a33d")
+								?.copy({ opacity: i * 0.015 })
+								.toString() || "none"
 						);
 					})
 					.attr("stroke", (_, i) => {
@@ -240,8 +250,8 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 						return "none";
 					})
 					.attr("stroke-width", (_, i) => (i === 10 ? 1.5 : i === 6 ? 1 : 0));
-
-				paths.exit().remove();
+			} else {
+				contourLayer.selectAll("path").remove();
 			}
 
 			const activeLinks: { source: ImpulseNode; target: ImpulseNode }[] = [];
@@ -263,12 +273,13 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 				}
 			}
 
-			const links = linkLayer.selectAll("line").data(activeLinks);
-
-			links
-				.enter()
-				.append("line")
-				.merge(links as any)
+			linkLayer
+				.selectAll<
+					SVGLineElement,
+					{ source: ImpulseNode; target: ImpulseNode }
+				>("line")
+				.data(activeLinks)
+				.join("line")
 				.attr("x1", (d) => d.source.x ?? 0)
 				.attr("y1", (d) => d.source.y ?? 0)
 				.attr("x2", (d) => d.target.x ?? 0)
@@ -278,8 +289,6 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 					Math.min((d.source.activation + d.target.activation) / 2, 0.8),
 				)
 				.attr("stroke-width", 1.2);
-
-			links.exit().remove();
 		});
 
 		return () => {
@@ -295,26 +304,26 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 		const width = dimensions.width;
 		const height = dimensions.height;
 
-		const foci = [
-			{ x: width * 0.3, y: height * 0.3 },
-			{ x: width * 0.7, y: height * 0.3 },
-			{ x: width * 0.3, y: height * 0.7 },
-			{ x: width * 0.7, y: height * 0.7 },
-		];
+		const numClusters = Math.max(regions.length, 4);
+		const angleStep = (2 * Math.PI) / numClusters;
+		const radius = Math.min(width, height) * 0.28;
+		const centerX = width / 2;
+		const centerY = height / 2;
+
+		const regionFoci = Array.from({ length: numClusters }, (_, idx) => ({
+			x: centerX + radius * Math.cos(idx * angleStep - Math.PI / 2),
+			y: centerY + radius * Math.sin(idx * angleStep - Math.PI / 2),
+		}));
 
 		if (layoutMode === "grid") {
 			simulation
 				.force(
 					"x",
-					d3
-						.forceX<ImpulseNode>((d) => d.gridX ?? width / 2)
-						.strength(0.2),
+					d3.forceX<ImpulseNode>((d) => d.gridX ?? width / 2).strength(0.2),
 				)
 				.force(
 					"y",
-					d3
-						.forceY<ImpulseNode>((d) => d.gridY ?? height / 2)
-						.strength(0.2),
+					d3.forceY<ImpulseNode>((d) => d.gridY ?? height / 2).strength(0.2),
 				)
 				.force("collide", null)
 				.force("charge", null)
@@ -331,7 +340,7 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 					"x",
 					d3
 						.forceX<ImpulseNode>(
-							(d) => foci[(d.cluster ?? 0) % foci.length].x,
+							(d) => regionFoci[(d.cluster ?? 0) % regionFoci.length].x,
 						)
 						.strength(0.08),
 				)
@@ -339,7 +348,7 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 					"y",
 					d3
 						.forceY<ImpulseNode>(
-							(d) => foci[(d.cluster ?? 0) % foci.length].y,
+							(d) => regionFoci[(d.cluster ?? 0) % regionFoci.length].y,
 						)
 						.strength(0.08),
 				)
@@ -361,7 +370,7 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 		}
 
 		simulation.alpha(0.8).restart();
-	}, [layoutMode, dimensions]);
+	}, [layoutMode, dimensions, regions]);
 
 	const handleReset = () => {
 		for (const n of nodesRef.current) {
@@ -517,9 +526,9 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 							)}
 						</div>
 						<div className="space-y-1 font-mono">
-							{activeEvents.slice(0, 4).map((evt, idx) => (
+							{activeEvents.slice(0, 4).map((evt) => (
 								<div
-									key={`${evt.label}-${idx}`}
+									key={`${evt.label}-${evt.latencyMs}`}
 									className="flex justify-between items-center text-(--f2)"
 								>
 									<span className="truncate">{evt.label}</span>

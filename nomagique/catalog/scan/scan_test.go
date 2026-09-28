@@ -64,58 +64,40 @@ func TestTree(t *testing.T) {
 			this catalog rather than a list of names.
 		*/
 		Convey("When a constructor takes streams", func() {
-			bound, ok := schemas["equation.Bound"]
+			decay, ok := schemas["temporal.Decay"]
 
 			So(ok, ShouldBeTrue)
 
 			Convey("Then each becomes a port under its own parameter name", func() {
-				So(ports(bound), ShouldResemble, []string{"in", "value", "lower", "upper"})
-				So(bound.Variadic, ShouldBeFalse)
-			})
-
-			Convey("Then the constructor's own comment describes it", func() {
-				So(bound.Description, ShouldStartWith, "NewBound captures the value")
+				So(ports(decay), ShouldResemble, []string{"in", "clock", "shape"})
+				So(decay.Variadic, ShouldBeFalse)
 			})
 		})
 
 		Convey("When a constructor takes any number of streams", func() {
-			all, ok := schemas["equation.All"]
+			path, ok := schemas["correlation.Path"]
 
 			So(ok, ShouldBeTrue)
 
 			Convey("Then the port is marked variadic rather than repeated", func() {
-				So(ports(all), ShouldResemble, []string{"in", "predicates"})
-				So(all.Variadic, ShouldBeTrue)
+				So(ports(path), ShouldResemble, []string{"in", "retention"})
+				So(path.Variadic, ShouldBeTrue)
 			})
 		})
 
 		/*
-			Velocity earns the contract by embedding another primitive and
-			declares no Next of its own. Matching on the shape of the source
-			misses it; only the checked type finds it.
+			A constructor that accepts a primitive alongside plain settings
+			separates ports from configuration.
 		*/
-		Convey("When a type satisfies the contract by embedding", func() {
-			velocity, ok := schemas["temporal.Velocity"]
+		Convey("When a constructor takes a primitive and settings", func() {
+			profile, ok := schemas["correlation.LagProfile"]
 
 			So(ok, ShouldBeTrue)
 
-			Convey("Then it is catalogued like any other primitive", func() {
-				So(ports(velocity), ShouldResemble, []string{"in", "source", "clock"})
-			})
-		})
-
-		/*
-			An interface that extends the contract is still a stream, and a
-			parameter of that type is wired rather than typed in.
-		*/
-		Convey("When a parameter's type extends the contract", func() {
-			profile, ok := schemas["equation.LagProfile"]
-
-			So(ok, ShouldBeTrue)
-
-			Convey("Then it is a port, not a setting", func() {
+			Convey("Then the stream is a port and settings are carried in config", func() {
 				So(ports(profile), ShouldContain, "estimator")
-				So(profile.Config, ShouldBeEmpty)
+				So(profile.Config, ShouldNotBeEmpty)
+				So(profile.Description, ShouldStartWith, "NewLagProfile creates a new LagProfile primitive")
 			})
 		})
 

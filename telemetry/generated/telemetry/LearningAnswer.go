@@ -7,13 +7,13 @@ import (
 )
 
 type LearningAnswerT struct {
-	Asked string `json:"asked"`
-	Answered string `json:"answered"`
-	RunnerUp string `json:"runnerUp"`
+	Asked      string  `json:"asked"`
+	Answered   string  `json:"answered"`
+	RunnerUp   string  `json:"runnerUp"`
 	Confidence float64 `json:"confidence"`
-	Contrast float64 `json:"contrast"`
-	Ambiguity float64 `json:"ambiguity"`
-	Support uint64 `json:"support"`
+	Contrast   float64 `json:"contrast"`
+	Ambiguity  float64 `json:"ambiguity"`
+	Support    uint64  `json:"support"`
 }
 
 func (t *LearningAnswerT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

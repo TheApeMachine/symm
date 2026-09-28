@@ -7,6 +7,7 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/nomagique/runtime"
@@ -15,6 +16,9 @@ import (
 
 func TestDesk(t *testing.T) {
 	Convey("Given an initialized trading desk", t, func() {
+		viper.Set("trading.allocation.max_fraction", 0.5)
+		viper.Set("market.quote_currency", "USD")
+
 		ctx := t.Context()
 		conn := venue.NewConn()
 		conn.BalanceResult = kraken.NewBalance([]byte(`{
@@ -74,10 +78,27 @@ func TestDesk(t *testing.T) {
 			pos := desk.Enter("BTC/USD")
 			So(pos, ShouldNotBeNil)
 
-			desk.Exit(pos)
+			err := desk.Exit(pos)
+			So(err, ShouldBeNil)
 
 			Convey("Then the exit response is recorded", func() {
 				So(pos.ExitResponse, ShouldNotBeNil)
+			})
+		})
+
+		Convey("When market experiences a severe structural fault (>3 crossed book ticks)", func() {
+			price.Anomalies().Record("BTC/USD", AnomalyCrossedBook)
+			price.Anomalies().Record("BTC/USD", AnomalyCrossedBook)
+			price.Anomalies().Record("BTC/USD", AnomalyCrossedBook)
+			price.Anomalies().Record("BTC/USD", AnomalyCrossedBook)
+
+			So(price.Anomalies().HasSevereFault("BTC/USD"), ShouldBeTrue)
+
+			pos := desk.Enter("BTC/USD")
+
+			Convey("Then Enter short circuits, returns nil, and transitions desk to error", func() {
+				So(pos, ShouldBeNil)
+				So(desk.Status(), ShouldEqual, runtime.ERROR)
 			})
 		})
 	})

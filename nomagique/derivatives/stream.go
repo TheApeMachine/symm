@@ -184,4 +184,3 @@ func (op *TradeGate) Error(errs ...error) error {
 
 	return op.err
 }
-
