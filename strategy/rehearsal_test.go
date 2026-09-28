@@ -75,7 +75,7 @@ func TestRehearsalStep(t *testing.T) {
 		}
 
 		So(training.Rehearsal.capture(impulse), ShouldBeNil)
-		initialPred := training.Rehearsal.anchors["BTC/USD"].prediction
+		initialPred := training.Rehearsal.anchors[anchorKey{symbol: "BTC/USD", sequence: 10}].prediction
 		So(initialPred, ShouldNotEqual, string(ActionEnter))
 
 		record := tables.ExcursionRecord{
@@ -95,7 +95,7 @@ func TestRehearsalStep(t *testing.T) {
 
 		impulse.SeqIdx = 30
 		So(training.Rehearsal.capture(impulse), ShouldBeNil)
-		newPred := training.Rehearsal.anchors["BTC/USD"].prediction
+		newPred := training.Rehearsal.anchors[anchorKey{symbol: "BTC/USD", sequence: 30}].prediction
 		So(newPred, ShouldEqual, string(ActionEnter))
 
 		record2 := tables.ExcursionRecord{
@@ -141,7 +141,7 @@ func TestRehearsalStep(t *testing.T) {
 		// Capture the bad precursor again at tick 70
 		badImpulse.SeqIdx = 70
 		So(training.Rehearsal.capture(badImpulse), ShouldBeNil)
-		badPred := training.Rehearsal.anchors["BTC/USD"].prediction
+		badPred := training.Rehearsal.anchors[anchorKey{symbol: "BTC/USD", sequence: 70}].prediction
 		So(badPred, ShouldEqual, string(ActionWait))
 
 		// Resolve: because prediction was wait, Entered is NOT incremented

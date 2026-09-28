@@ -12,6 +12,7 @@ import (
 	"github.com/gofiber/contrib/v3/websocket"
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/cors"
+	flatbuffers "github.com/google/flatbuffers/go"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/hindsight/tables"
@@ -33,6 +34,14 @@ type TradeJournalSource interface {
 }
 
 /*
+PositionSource supplies active open positions and recent decisions for streaming to the UI.
+*/
+type PositionSource interface {
+	PositionsWire() *wire.PositionsFrameT
+	DecisionsWire() *wire.StrategyFrameT
+}
+
+/*
 Hub owns the dashboard websocket and broadcasts schema-tagged binary frames.
 It is an ordinary Workspace stage: it registers to ChannelUI through NewHub,
 and the Workspace drives every outbound write through Step. Inbound commands
@@ -49,6 +58,7 @@ type Hub struct {
 	frontendMu       sync.Mutex
 	store            *tables.Catalog
 	tradeStore       TradeJournalSource
+	positionSource   PositionSource
 	exitHandler      func(symbol string)
 	Fluid            *FluidRTC
 	learningInterval time.Duration
@@ -341,11 +351,100 @@ func NewHub(
 			}
 		}()
 
+		var lastPositionsPush time.Time
+		hadPositions := false
+
+		sendPositions := func() error {
+			if hub.positionSource == nil {
+				return nil
+			}
+
+			wireFrame := hub.positionSource.PositionsWire()
+
+			if wireFrame == nil {
+				return nil
+			}
+
+			hasNow := len(wireFrame.Rows) > 0
+
+			if !hasNow && !hadPositions {
+				return nil
+			}
+
+			hadPositions = hasNow
+
+			message := &wire.MessageT{
+				Sequence: uint64(time.Now().UnixNano()),
+				Frame: &wire.FrameT{
+					Type:  wire.FramePositionsFrame,
+					Value: wireFrame,
+				},
+			}
+
+			builder := flatbuffers.NewBuilder(4096)
+			offset := message.Pack(builder)
+			builder.FinishWithFileIdentifier(offset, []byte("SYMM"))
+			payload := builder.FinishedBytes()
+
+			lastPositionsPush = time.Now()
+			return conn.Conn.WriteMessage(websocket.BinaryMessage, payload)
+		}
+
+		var lastDecisionsPush time.Time
+
+		sendDecisions := func() error {
+			if hub.positionSource == nil {
+				return nil
+			}
+
+			wireFrame := hub.positionSource.DecisionsWire()
+
+			if wireFrame == nil || len(wireFrame.Decisions) == 0 {
+				return nil
+			}
+
+			message := &wire.MessageT{
+				Sequence: uint64(time.Now().UnixNano()),
+				Frame: &wire.FrameT{
+					Type:  wire.FrameStrategyFrame,
+					Value: wireFrame,
+				},
+			}
+
+			builder := flatbuffers.NewBuilder(4096)
+			offset := message.Pack(builder)
+			builder.FinishWithFileIdentifier(offset, []byte("SYMM"))
+			payload := builder.FinishedBytes()
+
+			lastDecisionsPush = time.Now()
+			return conn.Conn.WriteMessage(websocket.BinaryMessage, payload)
+		}
+
+		if err := sendPositions(); err != nil {
+			return
+		}
+
+		if err := sendDecisions(); err != nil {
+			return
+		}
+
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			default:
+			}
+
+			if time.Since(lastPositionsPush) >= 200*time.Millisecond {
+				if err := sendPositions(); err != nil {
+					return
+				}
+			}
+
+			if time.Since(lastDecisionsPush) >= 1000*time.Millisecond {
+				if err := sendDecisions(); err != nil {
+					return
+				}
 			}
 
 			if hub.Status() != runtime.READY || hub.uiTee == nil {
@@ -380,6 +479,17 @@ func NewHub(
 	hub.registerFluidWebRTC()
 
 	return hub
+}
+
+/*
+SetPositionSource attaches the source for active open positions and decisions.
+*/
+func (hub *Hub) SetPositionSource(source PositionSource) {
+	if hub == nil {
+		return
+	}
+
+	hub.positionSource = source
 }
 
 /*

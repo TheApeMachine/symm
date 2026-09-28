@@ -9,17 +9,23 @@ import {
 	observeSymbols,
 	onlineAtom,
 	positionCountAtom,
+	positionStore,
 	RingBuffer,
 	routeAtom,
 	signals,
+	strategyStore,
 	symbolsAtom,
 	tickCountAtom,
 	updateClock,
 	updateEquity,
 } from "#/collections/app";
 
+import { Frame } from "#/providers/telemetry/telemetry/frame";
 import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
 import { MeasurementsFrame } from "#/providers/telemetry/telemetry/measurements-frame";
+import { Message } from "#/providers/telemetry/telemetry/message";
+import { PositionsFrame } from "#/providers/telemetry/telemetry/positions-frame";
+import { StrategyFrame } from "#/providers/telemetry/telemetry/strategy-frame";
 
 let globalWsWorker: Worker | null = null;
 
@@ -172,6 +178,40 @@ export const WsFeed = () => {
 				try {
 					const bytes = new Uint8Array(data.buffer);
 					const buffer = new flatbuffers.ByteBuffer(bytes);
+
+					if (Message.bufferHasIdentifier(buffer)) {
+						const message = Message.getRootAsMessage(buffer);
+						const frameType = message.frameType();
+
+						if (frameType === Frame.PositionsFrame) {
+							const positionsFrame = message.frame(new PositionsFrame());
+							if (positionsFrame) {
+								positionStore.setState(positionsFrame);
+							}
+							return;
+						}
+
+						if (frameType === Frame.StrategyFrame) {
+							const strategyFrame = message.frame(new StrategyFrame());
+							if (strategyFrame) {
+								strategyStore.setState((prev: any) => {
+									const existing = Array.isArray(prev) ? prev : [];
+									return [...existing.slice(-49), strategyFrame];
+								});
+							}
+							return;
+						}
+
+						if (frameType === Frame.MeasurementsFrame) {
+							const measurementsFrame = message.frame(new MeasurementsFrame());
+							if (measurementsFrame) {
+								storeBatch(() => {
+									dispatchMeasurements(measurementsFrame);
+								});
+							}
+							return;
+						}
+					}
 
 					const frame = MeasurementsFrame.getRootAsMeasurementsFrame(buffer);
 

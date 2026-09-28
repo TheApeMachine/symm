@@ -164,6 +164,44 @@ func (price *Price) PnL(symbol string, position *Position) *decimal.Decimal {
 	return exit.Sub(basis)
 }
 
+/* CurrentMark returns the best observable reference price for a symbol. */
+func (price *Price) CurrentMark(symbol string) *decimal.Decimal {
+	if price == nil {
+		return nil
+	}
+
+	tick := price.Tick(symbol)
+
+	if tick != nil && tick.Bid != nil {
+		return tick.Bid
+	}
+
+	if tick != nil && tick.Ask != nil {
+		return tick.Ask
+	}
+
+	var bookMark *decimal.Decimal
+
+	if price.Books != nil {
+		price.Books.Book(symbol, func(managedBook *spotbook.Book) {
+			if managedBook == nil {
+				return
+			}
+
+			if bestBid := managedBook.BestBid(); bestBid != nil {
+				bookMark = bestBid.Price
+				return
+			}
+
+			if bestAsk := managedBook.BestAsk(); bestAsk != nil {
+				bookMark = bestAsk.Price
+			}
+		})
+	}
+
+	return bookMark
+}
+
 /* Value reports the net liquidation value of a position. */
 func (price *Price) Value(symbol string, position *Position) *decimal.Decimal {
 	return price.ExitValue(symbol, position)
@@ -180,14 +218,14 @@ func (price *Price) ExitValue(symbol string, position *Position) *decimal.Decima
 		return nil
 	}
 
-	tick := price.Tick(symbol)
+	mark := price.CurrentMark(symbol)
 
-	if tick == nil || tick.Bid == nil {
+	if mark == nil {
 		return nil
 	}
 
 	return price.WithFee(
-		symbol, notional(tick.Bid, volume), SELL,
+		symbol, notional(mark, volume), SELL,
 	)
 }
 

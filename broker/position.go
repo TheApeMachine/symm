@@ -1,6 +1,8 @@
 package broker
 
 import (
+	"time"
+
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 )
@@ -14,6 +16,7 @@ type Position struct {
 	ExitOrder     *spot.AddOrderRequest `json:"exitOrder"`
 	EntryResponse *spot.AddOrderResult  `json:"entryResponse"`
 	ExitResponse  *spot.AddOrderResult  `json:"exitResponse"`
+	EntryAt       time.Time             `json:"entryAt"`
 }
 
 func NewPosition(
@@ -23,6 +26,7 @@ func NewPosition(
 	return &Position{
 		EntryOrder: entryOrder,
 		ExitOrder:  exitOrder,
+		EntryAt:    time.Now(),
 	}
 }
 

@@ -59,6 +59,23 @@ func TestTrader(t *testing.T) {
 				So(trader.Holding("BTC/USD"), ShouldBeTrue)
 				So(trader.PositionCount(), ShouldEqual, 1)
 				So(trader.Position("BTC/USD"), ShouldNotBeNil)
+
+				wireFrame := trader.PositionsWire()
+				So(wireFrame, ShouldNotBeNil)
+				So(len(wireFrame.Rows), ShouldEqual, 1)
+				So(wireFrame.Rows[0].Holding.Symbol, ShouldEqual, "BTC/USD")
+				So(wireFrame.Rows[0].Holding.Status, ShouldEqual, "active")
+				So(wireFrame.Rows[0].Holding.EntryPrice, ShouldNotBeEmpty)
+				So(wireFrame.Rows[0].Holding.Mark, ShouldNotBeEmpty)
+
+				recentTrades, err := trader.RecentTrades(10)
+				So(err, ShouldBeNil)
+				So(len(recentTrades), ShouldEqual, 1)
+
+				decFrame := trader.DecisionsWire()
+				So(decFrame, ShouldNotBeNil)
+				So(len(decFrame.Decisions), ShouldBeGreaterThanOrEqualTo, 1)
+				So(decFrame.Decisions[0].Symbol, ShouldEqual, "BTC/USD")
 			})
 
 			Convey("When ActionExit is received", func() {
@@ -67,6 +84,10 @@ func TestTrader(t *testing.T) {
 				Convey("Then the position is closed", func() {
 					So(trader.Holding("BTC/USD"), ShouldBeFalse)
 					So(trader.PositionCount(), ShouldEqual, 0)
+
+					wireFrame := trader.PositionsWire()
+					So(wireFrame, ShouldNotBeNil)
+					So(len(wireFrame.Rows), ShouldEqual, 0)
 				})
 			})
 		})

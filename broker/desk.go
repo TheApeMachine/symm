@@ -80,6 +80,11 @@ func (desk *Desk) Enter(symbol string) *Position {
 		Type:   "buy",
 		Volume: volume.String(),
 	}
+
+	if mark := desk.price.CurrentMark(symbol); mark != nil {
+		entryRequest.Price = mark.String()
+	}
+
 	exitRequest := &spot.AddOrderRequest{
 		Pair:   symbol,
 		Type:   "sell",
@@ -112,6 +117,10 @@ func (desk *Desk) Exit(position *Position) {
 
 	if position.EntryOrder != nil && position.ExitOrder.Volume == "" {
 		position.ExitOrder.Volume = position.EntryOrder.Volume
+	}
+
+	if mark := desk.price.CurrentMark(position.ExitOrder.Pair); mark != nil {
+		position.ExitOrder.Price = mark.String()
 	}
 
 	response, err := desk.api.AddOrder(position.ExitOrder)

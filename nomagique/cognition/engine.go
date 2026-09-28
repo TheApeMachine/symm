@@ -255,6 +255,9 @@ func (op *Engine) execute(command *Command) (Result, error) {
 	}
 
 	if command.Restore != nil {
+		op.root.Store(iradix.New[[]byte]())
+		op.stepCounter.Store(0)
+		op.classCounts.Clear()
 		return op.restore(command.Restore)
 	}
 
@@ -280,8 +283,11 @@ func (op *Engine) Snapshot() (Result, error) {
 	return op.snapshot()
 }
 
-// Restore deserializes a previously serialized snapshot into a fresh engine.
+// Restore deserializes a previously serialized snapshot into the engine.
 func (op *Engine) Restore(encoded []byte) (Result, error) {
+	op.root.Store(iradix.New[[]byte]())
+	op.stepCounter.Store(0)
+	op.classCounts.Clear()
 	return op.restore(encoded)
 }
 

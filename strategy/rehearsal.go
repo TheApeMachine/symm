@@ -43,22 +43,34 @@ regions without retaining market history. Only one open anchor per symbol is
 retained. Predictions are frozen before future outcomes arrive. The live path
 reads the shared trie and an atomic progress publication; it never waits here.
 */
+type anchorKey struct {
+	symbol   string
+	sequence int64
+}
+
 type Rehearsal struct {
-	ctx       context.Context
-	engine    *cognition.Engine
-	detector  *tables.StreamingDetector
-	space     *impulse.Map
-	precursor *Precursor
-	anchors   map[string]trainingAnchor
-	reading   trainingReading
-	published atomic.Pointer[trainingReading]
-	sequence  int64
-	records   []tables.ExcursionRecord
+	ctx             context.Context
+	engine          *cognition.Engine
+	detector        *tables.StreamingDetector
+	space           *impulse.Map
+	precursor       *Precursor
+	anchors         map[anchorKey]trainingAnchor
+	reading         trainingReading
+	published       atomic.Pointer[trainingReading]
+	sequence        int64
+	records         []tables.ExcursionRecord
+	checkpointEpoch int64
 }
 
 func NewRehearsal(ctx context.Context, epoch int64, price *broker.Price, engine *cognition.Engine) *Rehearsal {
-	return &Rehearsal{ctx: ctx, engine: engine, detector: tables.NewStreamingDetector(epoch, price),
-		space: impulse.NewMap(), precursor: NewPrecursor(), anchors: make(map[string]trainingAnchor)}
+	return &Rehearsal{
+		ctx:       ctx,
+		engine:    engine,
+		detector:  tables.NewStreamingDetector(epoch, price),
+		space:     impulse.NewMap(),
+		precursor: NewPrecursor(),
+		anchors:   make(map[anchorKey]trainingAnchor),
+	}
 }
 
 // Step consumes the existing training publication, whose peers are its sealed inputs.
@@ -89,10 +101,14 @@ func (rehearsal *Rehearsal) Step(frame *data.Measurement[float64]) ([]tables.Exc
 			rehearsal.records = append(rehearsal.records, *record)
 		}
 
-		if rehearsal.detector.Anchor(measurement.Label) == frame.SeqIdx && rehearsal.anchors[measurement.Label].sequence != frame.SeqIdx {
+		if rehearsal.detector.Anchor(measurement.Label) == frame.SeqIdx {
+			key := anchorKey{symbol: measurement.Label, sequence: frame.SeqIdx}
 			market := rehearsal.space.Markets[measurement.Label]
-			if err := rehearsal.capture(&market.Impulse); err != nil {
-				return nil, err
+
+			if _, exists := rehearsal.anchors[key]; !exists && market != nil {
+				if err := rehearsal.capture(&market.Impulse); err != nil {
+					return nil, err
+				}
 			}
 		}
 	}
@@ -120,7 +136,7 @@ func (rehearsal *Rehearsal) capture(reading *grid.Impulse) error {
 		return errnie.Error(err)
 	}
 
-	rehearsal.anchors[reading.Label] = anchor
+	rehearsal.anchors[anchorKey{symbol: reading.Label, sequence: reading.SeqIdx}] = anchor
 	return nil
 }
 
@@ -167,11 +183,15 @@ func (rehearsal *Rehearsal) resolve(record tables.ExcursionRecord, exit *grid.Im
 		return errnie.Error(errnie.Err(errnie.Validation, "rehearsal: outcome exit market absent", nil))
 	}
 
-	anchor, found := rehearsal.anchors[record.Symbol]
+	key := anchorKey{symbol: record.Symbol, sequence: record.AnchorTick}
+	anchor, found := rehearsal.anchors[key]
 
-	if !found || anchor.sequence != record.AnchorTick {
-		return errnie.Error(errnie.Err(errnie.Validation, "rehearsal: outcome has no matching anchor", nil))
+	if !found {
+		rehearsal.reading.Unsupported++
+		return nil
 	}
+
+	delete(rehearsal.anchors, key)
 
 	if len(anchor.key) == 0 {
 		rehearsal.reading.Unsupported++
@@ -217,10 +237,10 @@ func (rehearsal *Rehearsal) resolve(record tables.ExcursionRecord, exit *grid.Im
 	rehearsal.reading.Learned++
 	// At a detected regime boundary the completed virtual position is closed.
 	// The holding bit keeps this lifecycle label separate from entry selection.
-	key := rehearsal.precursor.Encode(exit, true)
+	exitKey := rehearsal.precursor.Encode(exit, true)
 
-	if len(key) > 0 {
-		if _, err := rehearsal.train(key, []byte(ActionExit), 1.0); err != nil {
+	if len(exitKey) > 0 {
+		if _, err := rehearsal.train(exitKey, []byte(ActionExit), 1.0); err != nil {
 			return errnie.Error(err)
 		}
 
@@ -347,12 +367,17 @@ func (rehearsal *Rehearsal) SaveCheckpoint(epoch int64) error {
 		epoch, buffer.Len(), checkpoint.Reading.Learned,
 	))
 
+	rehearsal.checkpointEpoch = epoch
 	return nil
 }
 
 func (rehearsal *Rehearsal) LoadCheckpoint() (int64, error) {
 	if rehearsal == nil || rehearsal.engine == nil {
 		return 0, nil
+	}
+
+	if rehearsal.checkpointEpoch > 0 {
+		return rehearsal.checkpointEpoch, nil
 	}
 
 	targetPath := filepath.Join("runs", "rehearsal_checkpoint.bin")
@@ -381,6 +406,7 @@ func (rehearsal *Rehearsal) LoadCheckpoint() (int64, error) {
 		return 0, errnie.Error(errnie.Err(errnie.Internal, "rehearsal: restore model failed", err))
 	}
 
+	rehearsal.checkpointEpoch = checkpoint.Epoch
 	rehearsal.reading = checkpoint.Reading
 	rehearsal.published.Store(&rehearsal.reading)
 

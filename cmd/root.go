@@ -175,15 +175,9 @@ var (
 			trader := strategy.NewTrader(ctx, api, price, balance)
 			training.SetTrader(trader)
 
-			if _, err := training.Rehearsal.LoadCheckpoint(); err != nil {
+			if err := training.Rehearsal.Restore(catalog); err != nil {
 				errnie.Error(err)
 			}
-
-			go func() {
-				if err := training.Rehearsal.Restore(catalog); err != nil {
-					errnie.Error(err)
-				}
-			}()
 
 			defer func() {
 				if err := training.Rehearsal.SaveCheckpoint(epoch); err != nil {
@@ -224,7 +218,8 @@ var (
 			}
 
 			errnie.Info("symm: starting UI hub...")
-			hub := ui.NewHub(ctx, nil, catalog, uiTee)
+			hub := ui.NewHub(ctx, trader, catalog, uiTee)
+			hub.SetPositionSource(trader)
 			hub.SetExitHandler(func(symbol string) {
 				trader.OnAction(symbol, strategy.ActionExit)
 			})

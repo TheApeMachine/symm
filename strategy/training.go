@@ -176,7 +176,20 @@ func (training *Training) Step(measurement *data.Measurement[float64]) *data.Mea
 
 		if training.trader != nil && (action == ActionEnter || action == ActionExit) {
 			training.trader.OnAction(current.Label, action)
-			training.updatePortfolioMetrics(current)
+		}
+
+		if training.trader != nil {
+			actionName := "wait"
+
+			if action == ActionEnter {
+				actionName = "enter"
+			}
+
+			if action == ActionExit {
+				actionName = "exit"
+			}
+
+			training.trader.RecordDecision(current.Label, actionName, evaluation.Confidence, "precursor evaluation")
 		}
 	}
 
@@ -184,6 +197,10 @@ func (training *Training) Step(measurement *data.Measurement[float64]) *data.Mea
 		current.Err = err
 		training.Error(err)
 		training.Transition(runtime.ERROR)
+	}
+
+	if training.trader != nil {
+		training.updatePortfolioMetrics(current)
 	}
 
 	current.Metrics["invalid_inputs"] = current.Metrics["invalid_inputs"].Write(float64(training.space.Invalid))
