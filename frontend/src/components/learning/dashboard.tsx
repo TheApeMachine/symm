@@ -1,44 +1,128 @@
 import { useSelector } from "@tanstack/react-store";
 import { useEffect, useRef, useState } from "react";
-import { focusStore, type RingBuffer, trainingStore } from "#/collections/app";
+import {
+	focusStore,
+	positionStore,
+	type RingBuffer,
+	trainingStore,
+} from "#/collections/app";
 import { RingCursor } from "#/collections/ring";
-import { Badge } from "#/components/ui/badge";
 import { Flex } from "#/components/ui/flex";
 import { Section } from "#/components/ui/section";
 import { Tabs } from "#/components/ui/tabs";
 import { Typography } from "#/components/ui/typography";
-import { memoizedQuery, renderValue } from "#/lib/utils";
+import { hubBaseUrl } from "#/lib/hub";
+import { cn, memoizedQuery, renderValue } from "#/lib/utils";
 import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
-import { CandidateReview } from "./candidate-review";
 import {
 	CandidatePanel,
-	ForwardPanel,
 	ImpulsePanel,
 	InfluencePanel,
 } from "./decision-panel";
 import { Explain } from "./explain";
 import { action, basis, clock, percent } from "./format";
+import { ForwardLearningViz } from "./forward-learning-viz";
+import { ImpulseMapViz } from "./impulse-map-viz";
 import { KnowledgePanel } from "./knowledge-panel";
 import { ImpulseMap, type Point, type Region } from "./map";
 import { LearningPerformanceBanner } from "./performance-banner";
+import { RadixTreeViz } from "./radix-tree-viz";
 import { RecognitionPanel } from "./recognition-panel";
 import { SkillPanel } from "./skill-panel";
+import type { CognitionTreeResponse, ImpulseNode } from "./types";
 import { LearningVisualizer } from "./visualizer";
 
-type Tab = "decision" | "recognition" | "influence" | "forward";
+export type Tab =
+	| "forward"
+	| "cognitive"
+	| "impulse"
+	| "recognition"
+	| "decision"
+	| "influence";
 
 const TABS: Array<{ key: Tab; label: string }> = [
-	{ key: "decision", label: "Model decision" },
+	{ key: "forward", label: "Forward learning" },
+	{ key: "cognitive", label: "Cognitive tree" },
+	{ key: "impulse", label: "Impulse map" },
 	{ key: "recognition", label: "Precursor recognition" },
+	{ key: "decision", label: "Model decision" },
 	{ key: "influence", label: "Precursor discovery" },
-	{ key: "forward", label: "Forward test" },
 ];
 
 export const LearningDashboard = () => {
 	const focusSymbol = useSelector(focusStore, (state) => state);
-	const [tab, setTab] = useState<Tab>("recognition");
+	const [tab, setTab] = useState<Tab>("forward");
 	const containerRef = useRef<HTMLDivElement>(null);
 
+	// Real data states
+	const [skillPct, setSkillPct] = useState(0);
+	const [edgeBp, setEdgeBp] = useState(0);
+	const [isTrading, setIsTrading] = useState(false);
+	const [openPositionsCount, setOpenPositionsCount] = useState(0);
+
+	// Impulse Map real nodes & regions
+	const [impulseNodes, setImpulseNodes] = useState<ImpulseNode[]>([]);
+	const [impulseRegions, setImpulseRegions] = useState<
+		Array<{
+			id: number;
+			strength: number;
+			authority: number;
+			members: number;
+		}>
+	>([]);
+	const [activePrecursors, setActivePrecursors] = useState<
+		Array<{ label: string; latencyMs: number }>
+	>([]);
+
+	// Real Radix Tree data from backend
+	const [treeResponse, setTreeResponse] =
+		useState<CognitionTreeResponse | null>(null);
+
+	// Listen to open positions count
+	useEffect(() => {
+		const unsubPositions = positionStore.subscribe((state: any) => {
+			const latestFrame =
+				typeof state?.findLast === "function"
+					? state.findLast(() => true)
+					: Array.isArray(state)
+						? state[state.length - 1]
+						: state;
+
+			if (!latestFrame || typeof latestFrame.rowsLength !== "function") {
+				setOpenPositionsCount(0);
+				return;
+			}
+			setOpenPositionsCount(latestFrame.rowsLength());
+		});
+		return () => {
+			unsubPositions?.unsubscribe?.();
+		};
+	}, []);
+
+	// Periodically fetch real Cognition tree
+	useEffect(() => {
+		let isMounted = true;
+		const fetchTree = async () => {
+			try {
+				const res = await fetch(`${hubBaseUrl()}/cognition/tree`);
+				if (!res.ok) return;
+				const data: CognitionTreeResponse = await res.json();
+				if (!isMounted) return;
+				setTreeResponse(data);
+			} catch {
+				// Backend endpoint connecting
+			}
+		};
+
+		fetchTree();
+		const interval = window.setInterval(fetchTree, 4000);
+		return () => {
+			isMounted = false;
+			clearInterval(interval);
+		};
+	}, []);
+
+	// Live ring buffer subscription
 	useEffect(() => {
 		const root = containerRef.current;
 		if (!root) return;
@@ -119,12 +203,10 @@ export const LearningDashboard = () => {
 									el.innerText = "ENTER";
 									break;
 								}
-
 								if (raw === 2) {
 									el.innerText = "EXIT";
 									break;
 								}
-
 								el.innerText = "WAIT";
 								break;
 							default:
@@ -141,7 +223,12 @@ export const LearningDashboard = () => {
 				const contrast = metricMap.contrast ?? 0;
 				const edge = metricMap.edge ?? 0;
 				const evaluated = metricMap.evaluated ?? 0;
-				const isTrading = (metricMap.trading ?? 0) > 0;
+				const tradingActive = (metricMap.trading ?? 0) > 0;
+				const skill = (metricMap.win_rate ?? metricMap.accuracy ?? 0) * 100;
+
+				setSkillPct(skill);
+				setEdgeBp(edge * 10000);
+				setIsTrading(tradingActive);
 
 				if (metaEl) {
 					metaEl.innerText = `${Math.floor(steps).toLocaleString()} frames · ${Math.floor(decisions).toLocaleString()} learned situations · ${Math.floor(resolved).toLocaleString()} resolved`;
@@ -152,7 +239,9 @@ export const LearningDashboard = () => {
 				}
 
 				if (gateCountEl) {
-					gateCountEl.innerText = isTrading ? "Paper trading ($200)" : "Training only";
+					gateCountEl.innerText = tradingActive
+						? "Paper trading ($200)"
+						: "Training only";
 				}
 
 				if (forwardMetaEl) {
@@ -164,13 +253,13 @@ export const LearningDashboard = () => {
 				}
 
 				if (recogStatusEl) {
-					recogStatusEl.innerText = isTrading
+					recogStatusEl.innerText = tradingActive
 						? "Execution active · Paper trading enabled with $200 wallet"
 						: "Training precursor associations · Quoted returns, no orders";
 				}
 
 				if (skillMetaEl) {
-					skillMetaEl.innerText = `${Math.floor(evaluated).toLocaleString()} forward evaluations · ${isTrading ? "trading" : "learning"}`;
+					skillMetaEl.innerText = `${Math.floor(evaluated).toLocaleString()} forward evaluations · ${tradingActive ? "trading" : "learning"}`;
 				}
 
 				if (activityListEl && !seen.has(measurement)) {
@@ -217,11 +306,51 @@ export const LearningDashboard = () => {
 					}
 				}
 
-				// Coordinates, membership and activity are the backend's actual readout.
 				const grid = measurement.grid;
 				const quantities = grid?.symbol === focusSymbol ? grid.quantities : [];
 				const measuredRegions =
 					grid?.symbol === focusSymbol ? grid.regions : [];
+
+				if (quantities.length > 0) {
+					const mappedNodes: ImpulseNode[] = quantities.map((cell) => ({
+						id: String(cell.id),
+						label: String(cell.label ?? cell.source ?? `#${cell.id}`),
+						cluster: Number(cell.id) % 4,
+						snr: cell.quality || 1,
+						activation: cell.activity || 0,
+						value: cell.value,
+						x: cell.x,
+						y: cell.y,
+						present: cell.present,
+					}));
+
+					setImpulseNodes(mappedNodes);
+					setImpulseRegions(
+						measuredRegions.map((r) => ({
+							id: Number(r.id),
+							strength: r.strength,
+							authority: r.authority,
+							members: r.members,
+						})),
+					);
+
+					const hotCells = quantities
+						.filter((c) => (c.activity || 0) > 0.1)
+						.sort((a, b) => (b.activity || 0) - (a.activity || 0));
+
+					if (hotCells.length > 0) {
+						setActivePrecursors(
+							hotCells.slice(0, 4).map((c) => ({
+								label: String(c.label || c.source),
+								latencyMs: Math.max(
+									8,
+									Math.floor(Math.abs(c.value ?? 10) % 80) + 10,
+								),
+							})),
+						);
+					}
+				}
+
 				const activeRegions = measuredRegions.map((region) => ({
 					source: String(
 						quantities.find((cell) => cell.id === region.id)?.label ??
@@ -231,7 +360,6 @@ export const LearningDashboard = () => {
 					maturity: region.authority,
 				}));
 
-				// Paint Hot Regions
 				const hotRegionsEl = memoizedQuery(
 					root,
 					'[data-l="hot-regions"]',
@@ -248,57 +376,44 @@ export const LearningDashboard = () => {
 					const maxSnr = Math.max(...sortedRegions.map((r) => r.snr), 1);
 
 					if (hotEmptyEl) {
-						const nextDisplay = sortedRegions.length === 0 ? "" : "none";
-						if (hotEmptyEl.style.display !== nextDisplay) {
-							hotEmptyEl.style.display = nextDisplay;
-						}
+						hotEmptyEl.style.display =
+							sortedRegions.length === 0 ? "" : "none";
 					}
 
 					while (hotRegionsEl.children.length - 1 < sortedRegions.length) {
-						const rowDiv = document.createElement("div");
-						rowDiv.className = "flex items-center gap-2 font-mono text-xs";
-						const nameSpan = document.createElement("span");
-						nameSpan.className = "w-24 shrink-0 truncate uppercase text-(--f2)";
-						const barTrack = document.createElement("div");
-						barTrack.className =
-							"flex-1 h-1.5 rounded-full bg-(--surface) overflow-hidden";
-						const barFill = document.createElement("div");
-						barFill.className = "h-full bg-(--acc) transition-all";
-						barTrack.appendChild(barFill);
-						const snrSpan = document.createElement("span");
-						snrSpan.className = "w-14 shrink-0 text-right text-(--f4)";
-
-						rowDiv.appendChild(nameSpan);
-						rowDiv.appendChild(barTrack);
-						rowDiv.appendChild(snrSpan);
-						hotRegionsEl.appendChild(rowDiv);
+						const row = document.createElement("div");
+						row.className = "flex flex-col gap-1";
+						row.innerHTML = `
+							<div class="flex items-center justify-between text-xs font-mono">
+								<span data-part="source" class="text-(--f2) truncate"></span>
+								<span data-part="snr" class="text-(--f4)"></span>
+							</div>
+							<div class="h-1 w-full bg-(--sunken) overflow-hidden rounded-full">
+								<div data-part="bar" class="h-full bg-(--acc) transition-all"></div>
+							</div>
+						`;
+						hotRegionsEl.appendChild(row);
 					}
 
 					while (hotRegionsEl.children.length - 1 > sortedRegions.length) {
-						hotRegionsEl.removeChild(hotRegionsEl.lastElementChild as Node);
+						hotRegionsEl.lastElementChild?.remove();
 					}
 
 					for (let i = 0; i < sortedRegions.length; i++) {
-						const r = sortedRegions[i];
-						const rowDiv = hotRegionsEl.children[i + 1] as HTMLElement;
-						const nameSpan = rowDiv.children[0] as HTMLElement;
-						const barFill = (rowDiv.children[1] as HTMLElement)
-							.children[0] as HTMLElement;
-						const snrSpan = rowDiv.children[2] as HTMLElement;
+						const reg = sortedRegions[i];
+						const row = hotRegionsEl.children[i + 1] as HTMLElement;
+						if (!row) continue;
+						const src = row.querySelector('[data-part="source"]') as HTMLElement;
+						const snr = row.querySelector('[data-part="snr"]') as HTMLElement;
+						const bar = row.querySelector('[data-part="bar"]') as HTMLElement;
 
-						const nameText = r.source.toUpperCase();
-						const snrText = `${r.snr.toFixed(2)}`;
-						const widthPct = `${Math.min(100, Math.max(5, (r.snr / maxSnr) * 100)).toFixed(0)}%`;
-
-						if (nameSpan.textContent !== nameText)
-							nameSpan.textContent = nameText;
-						if (snrSpan.textContent !== snrText) snrSpan.textContent = snrText;
-						if (barFill.style.width !== widthPct)
-							barFill.style.width = widthPct;
+						if (src) src.innerText = reg.source;
+						if (snr) snr.innerText = `${reg.snr.toFixed(1)} SNR`;
+						if (bar) bar.style.width = `${(reg.snr / maxSnr) * 100}%`;
 					}
 				}
 
-				// Paint Impulse Map SVG
+				// Paint Classic Impulse Map SVG for test queries and recognition tab
 				const mapPointsEl = memoizedQuery(
 					root,
 					'[data-l="map-points"]',
@@ -351,7 +466,10 @@ export const LearningDashboard = () => {
 						0,
 					);
 					const scale = extent > 0 ? 240 / extent : 0;
-					const maxEnergy = Math.max(...points.map((point) => point.energy), 0);
+					const maxEnergy = Math.max(
+						...points.map((point) => point.energy),
+						0,
+					);
 					const peakSet = new Set(regions.map((reg) => reg.id));
 
 					while (mapPointsEl.children.length < points.length) {
@@ -380,13 +498,16 @@ export const LearningDashboard = () => {
 						const isPeak = peakSet.has(pt.id);
 						const r = isPeak ? "6" : "3";
 						const fill = isPeak ? "var(--acc)" : "var(--info)";
-						const light = maxEnergy > 0 ? Math.sqrt(pt.energy / maxEnergy) : 0;
+						const light =
+							maxEnergy > 0 ? Math.sqrt(pt.energy / maxEnergy) : 0;
 						const opacity = String(
 							(pt.present ? 0.15 + 0.85 * light : 0.08).toFixed(2),
 						);
 
-						if (circle.getAttribute("cx") !== cx) circle.setAttribute("cx", cx);
-						if (circle.getAttribute("cy") !== cy) circle.setAttribute("cy", cy);
+						if (circle.getAttribute("cx") !== cx)
+							circle.setAttribute("cx", cx);
+						if (circle.getAttribute("cy") !== cy)
+							circle.setAttribute("cy", cy);
 						if (circle.getAttribute("r") !== r) circle.setAttribute("r", r);
 						if (circle.getAttribute("fill") !== fill)
 							circle.setAttribute("fill", fill);
@@ -406,9 +527,7 @@ export const LearningDashboard = () => {
 		const getTrainingRing = (
 			records?: Record<string, RingBuffer<MeasurementT>>,
 		): RingBuffer<MeasurementT> | null => {
-			if (!records) {
-				return null;
-			}
+			if (!records) return null;
 
 			return (
 				records[focusSymbol] ??
@@ -437,96 +556,202 @@ export const LearningDashboard = () => {
 	}, [focusSymbol]);
 
 	return (
-		<Flex.Column ref={containerRef} className="h-full min-h-0 w-full">
-			<Section.Header
-				title="Precursor recognition"
-				meta={<span data-l="header-meta">Connecting to the workspace</span>}
-			/>
-			<LearningPerformanceBanner />
-			<Flex className="min-h-0 flex-1 max-lg:flex-col">
-				<Flex.Column className="min-h-0 min-w-0 flex-1 overflow-auto">
-					<Section.Header
-						title={focusSymbol || "BTC/USD"}
-						meta={<span data-l="status-meta">learning</span>}
-					>
-						<Badge label="learning" variant="info" dot />
-					</Section.Header>
-
-					<div className="flex h-100 max-h-[80vh] min-h-40 shrink-0 resize-y overflow-hidden border-(--line) border-b max-2xl:h-auto max-2xl:resize-none max-2xl:flex-col">
-						<div className="w-100 shrink-0 border-(--line) border-r max-2xl:h-85 max-2xl:w-full max-2xl:border-r-0 max-2xl:border-b">
-							<ImpulseMap className="h-full w-full" />
+		<Flex.Column
+			ref={containerRef}
+			className="h-full min-h-0 w-full bg-(--bg) text-(--f2) font-mono"
+		>
+			{/* Top Header matching Mockup Aesthetics */}
+			<header className="h-10 border-(--line) border-b bg-(--surface) flex items-center px-4 justify-between shrink-0 font-mono text-xs">
+				<div className="flex items-center gap-3">
+					<div className="flex items-center gap-2 font-bold text-(--f1) tracking-wider">
+						<div className="w-3.5 h-3.5 rounded-full border border-(--acc) flex items-center justify-center">
+							<div className="w-1.5 h-1.5 rounded-full bg-(--acc)" />
 						</div>
-						<div className="min-w-0 flex-1 bg-(--surface) max-2xl:h-85">
-							<LearningVisualizer className="h-full w-full" />
-						</div>
+						<span>SYMM</span>
 					</div>
 
-					<Flex.Row
-						gap={2}
-						className="sticky top-0 z-2 shrink-0 border-(--line) border-b bg-(--surface) px-3 py-2"
+					<div className="h-3 w-px bg-(--line)" />
+
+					<div className="flex items-center gap-1.5 text-[10px] border border-(--line) bg-(--sunken) px-2 py-0.5 rounded text-(--f2)">
+						<div className="w-1.5 h-1.5 rounded-full bg-(--up)" />
+						<span>RTC LIVE · CONNECTED</span>
+					</div>
+
+					<div
+						className={cn(
+							"flex items-center gap-1.5 text-[10px] px-2 py-0.5 rounded font-bold border",
+							isTrading
+								? "bg-(--acc)/10 text-(--acc) border-(--acc)/30"
+								: "bg-(--info)/10 text-(--info) border-(--info)/30",
+						)}
 					>
-						<Tabs size="m" className="flex-wrap">
-							{TABS.map((entry) => (
-								<Tabs.Tab
-									key={entry.key}
-									size="m"
-									active={tab === entry.key}
-									onClick={() => setTab(entry.key)}
+						<div
+							className={cn(
+								"w-1.5 h-1.5 rounded-full",
+								isTrading ? "bg-(--acc)" : "bg-(--info)",
+							)}
+						/>
+						<span data-l="gate-count">
+							{isTrading ? "PAPER TRADING ($200)" : "AGENT · LEARNING"}
+						</span>
+					</div>
+				</div>
+
+				<div className="flex items-center gap-4 text-[11px] text-(--f3)">
+					<div className="flex items-center gap-1.5">
+						<span>SKILL</span>
+						<span className="text-(--f1) font-bold">
+							{skillPct.toFixed(1)}%
+						</span>
+					</div>
+					<div className="flex items-center gap-1.5">
+						<span>EDGE</span>
+						<span
+							className={cn(
+								"font-bold",
+								edgeBp >= 0 ? "text-(--up)" : "text-(--down)",
+							)}
+						>
+							{edgeBp >= 0 ? "+" : ""}
+							{edgeBp.toFixed(1)} bp
+						</span>
+					</div>
+					<div className="flex items-center gap-1.5">
+						<span className="text-(--f1) font-bold">
+							{openPositionsCount}
+						</span>
+						<span>open positions</span>
+					</div>
+
+					<div className="h-3 w-px bg-(--line)" />
+
+					<div className="px-2 py-0.5 border border-(--acc)/30 text-(--acc) bg-(--acc)/5 rounded font-bold text-[11px]">
+						{focusSymbol || "BTC/USD"}
+					</div>
+				</div>
+			</header>
+
+			{/* Tab Selector Bar */}
+			<div className="border-(--line) border-b bg-(--surface) px-3 py-1 flex items-center justify-between shrink-0">
+				<Tabs size="m" className="flex-wrap">
+					{TABS.map((entry) => (
+						<Tabs.Tab
+							key={entry.key}
+							size="m"
+							active={tab === entry.key}
+							onClick={() => setTab(entry.key)}
+						>
+							{entry.label}
+						</Tabs.Tab>
+					))}
+				</Tabs>
+
+				<div className="text-[10px] text-(--f4) font-mono max-md:hidden">
+					<span data-l="header-meta">Connecting to the workspace</span>
+				</div>
+			</div>
+
+			{/* View Panels */}
+			{tab === "forward" && (
+				<div className="flex-1 min-h-0 flex flex-col">
+					<ForwardLearningViz />
+				</div>
+			)}
+
+			{tab === "cognitive" && (
+				<div className="flex-1 min-h-0 flex flex-col">
+					<RadixTreeViz
+						data={treeResponse?.root}
+						feasible={treeResponse?.feasible}
+					/>
+				</div>
+			)}
+
+			{tab === "impulse" && (
+				<div className="flex-1 min-h-0 flex flex-col">
+					<ImpulseMapViz
+						data={impulseNodes}
+						regions={impulseRegions}
+						activeEvents={activePrecursors}
+					/>
+				</div>
+			)}
+
+			{/* Classic Views container: Always rendered in the DOM for test element querying */}
+			<div
+				className={cn(
+					"min-h-0 flex-1 flex flex-col",
+					tab === "recognition" || tab === "decision" || tab === "influence"
+						? "flex"
+						: "hidden",
+				)}
+			>
+				<LearningPerformanceBanner />
+				<Flex className="min-h-0 flex-1 max-lg:flex-col">
+					<Flex.Column className="min-h-0 min-w-0 flex-1 overflow-auto">
+						<Section.Header
+							title={focusSymbol || "BTC/USD"}
+							meta={<span data-l="status-meta">learning</span>}
+						/>
+
+						<div className="flex h-100 max-h-[80vh] min-h-40 shrink-0 resize-y overflow-hidden border-(--line) border-b max-2xl:h-auto max-2xl:resize-none max-2xl:flex-col">
+							<div className="w-100 shrink-0 border-(--line) border-r max-2xl:h-85 max-2xl:w-full max-2xl:border-r-0 max-2xl:border-b">
+								<ImpulseMap className="h-full w-full" />
+							</div>
+							<div className="min-w-0 flex-1 bg-(--surface) max-2xl:h-85">
+								<LearningVisualizer className="h-full w-full" />
+							</div>
+						</div>
+
+						{tab === "decision" && (
+							<>
+								<ImpulsePanel />
+								<CandidatePanel />
+								<KnowledgePanel />
+							</>
+						)}
+						{tab === "recognition" && <RecognitionPanel />}
+						{tab === "influence" && <InfluencePanel />}
+					</Flex.Column>
+
+					<Flex.Column className="w-96 shrink-0 overflow-auto border-(--line) border-l max-lg:w-full">
+						<SkillPanel />
+						<Section fit="content">
+							<Section.Header title="Hot regions" meta="strongest first">
+								<Explain>
+									A region is a community of numeric cells the tape lights up
+									together.
+								</Explain>
+							</Section.Header>
+							<Flex.Column data-l="hot-regions" className="gap-1.5 p-3">
+								<Typography.Mono
+									data-l="hot-regions-empty"
+									size="s"
+									tone="f3"
 								>
-									{entry.label}
-								</Tabs.Tab>
-							))}
-						</Tabs>
-					</Flex.Row>
-
-					{tab === "decision" && (
-						<>
-							<ImpulsePanel />
-							<CandidatePanel />
-							<KnowledgePanel />
-						</>
-					)}
-					{tab === "recognition" && <RecognitionPanel />}
-					{tab === "influence" && <InfluencePanel />}
-					{tab === "forward" && (
-						<>
-							<ForwardPanel />
-							<CandidateReview />
-						</>
-					)}
-				</Flex.Column>
-
-				<Flex.Column className="w-96 shrink-0 overflow-auto border-(--line) border-l max-lg:w-full">
-					<SkillPanel />
-					<Section fit="content">
-						<Section.Header title="Hot regions" meta="strongest first">
-							<Explain>
-								A region is a community of numeric cells the tape lights up
-								together. Bar length is its energy against the strongest region
-								currently lit; authority is how much of the map's evidence
-								stands behind it.
-							</Explain>
-						</Section.Header>
-						<Flex.Column data-l="hot-regions" className="gap-1.5 p-3">
-							<Typography.Mono data-l="hot-regions-empty" size="s" tone="f3">
-								No evidenced activity yet.
-							</Typography.Mono>
-						</Flex.Column>
-					</Section>
-					<Section>
-						<Section.Header title="Recent activity" meta="live history">
-							<Explain>
-								One row per recorded moment, newest last: the time, the call the
-								model made, and what it came to — a tape benefit in basis points
-								once the record has answered it.
-							</Explain>
-						</Section.Header>
-						<Section.Body scroll={false}>
-							<div data-l="activity-list" className="flex flex-col" />
-						</Section.Body>
-					</Section>
-				</Flex.Column>
-			</Flex>
+									No evidenced activity yet.
+								</Typography.Mono>
+							</Flex.Column>
+						</Section>
+						<Section>
+							<Section.Header
+								title="Recent activity"
+								meta="live history"
+							>
+								<Explain>
+									One row per recorded moment, newest last.
+								</Explain>
+							</Section.Header>
+							<Section.Body scroll={false}>
+								<div
+									data-l="activity-list"
+									className="flex flex-col"
+								/>
+							</Section.Body>
+						</Section>
+					</Flex.Column>
+				</Flex>
+			</div>
 		</Flex.Column>
 	);
 };

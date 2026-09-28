@@ -70,6 +70,27 @@ func (training *Training) SetTrader(trader *Trader) {
 }
 
 /*
+CognitionTree returns the live, real Radix Trie tree, active branches, and feasible actions
+directly from the cognitive engine for visualization on the learning dashboard.
+*/
+func (training *Training) CognitionTree() any {
+	if training == nil || training.engine == nil {
+		return cognition.CognitionTreeExport{
+			Root: &cognition.TrieNodeJSON{
+				ID:          "root",
+				Prefix:      "ROOT",
+				Probability: 1.0,
+				State:       "ESTIMATED",
+			},
+			Branches: []cognition.TrieBranchJSON{},
+			Feasible: []cognition.FeasibleActionJSON{},
+		}
+	}
+
+	return training.engine.TreeExport()
+}
+
+/*
 Register initializes and returns the canonical training telemetry measurement
 populated with all metrics required by the frontend dashboard.
 */

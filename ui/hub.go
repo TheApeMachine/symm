@@ -41,6 +41,10 @@ type PositionSource interface {
 	DecisionsWire() *wire.StrategyFrameT
 }
 
+type CognitionSource interface {
+	CognitionTree() any
+}
+
 /*
 Hub owns the dashboard websocket and broadcasts schema-tagged binary frames.
 It is an ordinary Workspace stage: it registers to ChannelUI through NewHub,
@@ -59,6 +63,7 @@ type Hub struct {
 	store            *tables.Catalog
 	tradeStore       TradeJournalSource
 	positionSource   PositionSource
+	cognitionSource  CognitionSource
 	exitHandler      func(symbol string)
 	Fluid            *FluidRTC
 	learningInterval time.Duration
@@ -152,6 +157,24 @@ func NewHub(
 		}
 
 		return c.JSON(trades)
+	})
+
+	hub.app.Get("/cognition/tree", func(c fiber.Ctx) error {
+		if hub.cognitionSource == nil {
+			return c.JSON(fiber.Map{
+				"root": fiber.Map{
+					"id":          "root",
+					"prefix":      "ROOT",
+					"probability": 1.0,
+					"state":       "ESTIMATED",
+				},
+				"branches": []any{},
+				"feasible": []any{},
+			})
+		}
+
+		export := hub.cognitionSource.CognitionTree()
+		return c.JSON(export)
 	})
 
 	// Hindsight inspection projection reads
@@ -490,6 +513,17 @@ func (hub *Hub) SetPositionSource(source PositionSource) {
 	}
 
 	hub.positionSource = source
+}
+
+/*
+SetCognitionSource attaches the source for active cognitive memory and trie topology.
+*/
+func (hub *Hub) SetCognitionSource(source CognitionSource) {
+	if hub == nil {
+		return
+	}
+
+	hub.cognitionSource = source
 }
 
 /*

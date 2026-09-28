@@ -220,6 +220,7 @@ var (
 			errnie.Info("symm: starting UI hub...")
 			hub := ui.NewHub(ctx, trader, catalog, uiTee)
 			hub.SetPositionSource(trader)
+			hub.SetCognitionSource(training)
 			hub.SetExitHandler(func(symbol string) {
 				trader.OnAction(symbol, strategy.ActionExit)
 			})
