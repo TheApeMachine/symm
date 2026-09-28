@@ -1,3 +1,5 @@
+//go:build (darwin && cgo) || (linux && cuda && cgo)
+
 package sensorium
 
 import (

@@ -21,11 +21,17 @@ Trader is responsible for talking to the broker and managing positions.
 */
 type Trader struct {
 	*runtime.System
-	desk      *broker.Desk
-	balance   *broker.Balance
-	price     *broker.Price
-	positions sync.Map
-	decisions atomic.Pointer[[]*wire.DecisionT]
+	desk        *broker.Desk
+	balance     *broker.Balance
+	price       *broker.Price
+	positions   sync.Map
+	symbolLocks sync.Map
+	decisions   atomic.Pointer[[]*wire.DecisionT]
+}
+
+func (trader *Trader) symbolLock(symbol string) *sync.Mutex {
+	val, _ := trader.symbolLocks.LoadOrStore(symbol, &sync.Mutex{})
+	return val.(*sync.Mutex)
 }
 
 func NewTrader(
@@ -56,6 +62,10 @@ func (trader *Trader) OnAction(symbol string, action Action) {
 		return
 	}
 
+	mu := trader.symbolLock(symbol)
+	mu.Lock()
+	defer mu.Unlock()
+
 	switch action {
 	case ActionEnter:
 		if _, exists := trader.positions.Load(symbol); exists {
@@ -81,7 +91,9 @@ func (trader *Trader) OnAction(symbol string, action Action) {
 				if pnl != nil {
 					if totalPnL == nil {
 						totalPnL = pnl
-					} else {
+					}
+
+					if totalPnL != pnl {
 						totalPnL = totalPnL.Add(pnl)
 					}
 				}
@@ -94,7 +106,9 @@ func (trader *Trader) OnAction(symbol string, action Action) {
 
 					if totalCost == nil {
 						totalCost = cost
-					} else {
+					}
+
+					if totalCost != cost {
 						totalCost = totalCost.Add(cost)
 					}
 				}
@@ -112,31 +126,37 @@ func (trader *Trader) OnAction(symbol string, action Action) {
 			}
 		}
 
-		position := trader.desk.Enter(symbol)
+		position := trader.desk.Enter(symbol, func(pending *broker.Position) {
+			trader.positions.Store(symbol, pending)
+		})
 
-		if position != nil {
-			trader.positions.Store(symbol, position)
-			trader.RecordDecision(symbol, "enter", 1.0, "precursor trigger")
+		if position == nil {
+			trader.positions.Delete(symbol)
+			return
 		}
+
+		trader.RecordDecision(symbol, "enter", 1.0, "precursor trigger")
 	case ActionExit:
 		val, found := trader.positions.Load(symbol)
 
-		if found && val != nil {
-			position, ok := val.(*broker.Position)
-
-			if !ok || position == nil {
-				trader.positions.Delete(symbol)
-				return
-			}
-
-			if err := trader.desk.Exit(position); err != nil {
-				trader.RecordDecision(symbol, "exit_failed", 1.0, fmt.Sprintf("exit failed: %v", err))
-				return
-			}
-
-			trader.positions.Delete(symbol)
-			trader.RecordDecision(symbol, "exit", 1.0, "exit trigger")
+		if !found || val == nil {
+			return
 		}
+
+		position, ok := val.(*broker.Position)
+
+		if !ok || position == nil {
+			trader.positions.Delete(symbol)
+			return
+		}
+
+		if err := trader.desk.Exit(position); err != nil {
+			trader.RecordDecision(symbol, "exit_failed", 1.0, fmt.Sprintf("exit failed: %v", err))
+			return
+		}
+
+		trader.positions.Delete(symbol)
+		trader.RecordDecision(symbol, "exit", 1.0, "exit trigger")
 	}
 }
 
@@ -387,9 +407,14 @@ func (trader *Trader) ApplyExecution(exec *kraken.Execution) {
 			trader.positions.Range(func(_, val any) bool {
 				candidate, okCandidate := val.(*broker.Position)
 
-				if okCandidate && candidate != nil && (candidate.OrderID() == item.OrderID || candidate.OrderID() == item.ClientOrderID) {
-					pos = candidate
-					return false
+				if okCandidate && candidate != nil {
+					if candidate.OrderID() == item.OrderID ||
+						candidate.OrderID() == item.ClientOrderID ||
+						candidate.PositionID == item.ClientOrderID ||
+						(candidate.EntryOrder != nil && candidate.EntryOrder.ClOrdId == item.ClientOrderID) {
+						pos = candidate
+						return false
+					}
 				}
 
 				return true

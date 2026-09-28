@@ -154,3 +154,53 @@ jobs:
       - name: Run Frontend Checks
         working-directory: symm
         run: ./scripts/verify.sh frontend
+
+  test-datura:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout symm
+        uses: actions/checkout@v4
+        with:
+          path: symm
+
+      - name: Checkout datura
+        uses: actions/checkout@v4
+        with:
+          repository: theapemachine/datura
+          path: datura
+          ref: v1.2.11
+
+      - name: Checkout errnie
+        uses: actions/checkout@v4
+        with:
+          repository: theapemachine/errnie
+          path: errnie
+          ref: v1.2.9
+
+      - name: Checkout qpool
+        uses: actions/checkout@v4
+        with:
+          repository: theapemachine/qpool
+          path: qpool
+          ref: master
+
+      - name: Checkout sonic
+        uses: actions/checkout@v4
+        with:
+          repository: bytedance/sonic
+          path: sonic
+          ref: v1.15.2
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: symm/go.mod
+          cache-dependency-path: |
+            symm/go.sum
+            datura/go.sum
+
+      - name: Run Datura Tests
+        working-directory: symm
+        run: ./scripts/verify.sh datura
+

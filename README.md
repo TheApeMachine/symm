@@ -8,10 +8,11 @@ straight when it did.**
 
 S.Y.M.M. conditions live Kraken ticker, trade, futures and Level 3 order-book data
 into typed numerical measurements; rasterizes those measurements into a self-
-organizing *impulse map*; and hands the map's hot regions to a reinforcement agent
-that explores actions on independent virtual accounts, scores every decision over a
-market-derived forward window, and earns the right to touch a real account only when
-its own measured skill exceeds its own measurement error.
+organizing *impulse map*; extracts watershed regions and cognitive precursors into an
+immutable prefix-tree cognition engine; evaluates actions through a statistical
+training coordinator gated by cognitive confidence and measured skill exceeding
+measurement error; and dispatches authorized decisions through an atomic exchange
+execution desk.
 
 Everything that crosses the wire is captured byte-for-byte, so **Hindsight** can later
 reconstruct exactly what the system knew at any historical moment and check whether the
@@ -30,9 +31,9 @@ machinery was sane.
 >   system is or will be profitable. The evidence so far is that markets are hard and
 >   fees are relentless. Most of this code exists to *measure* whether an edge is real,
 >   precisely because assuming one is the most expensive mistake available.
-> - **The virtual accounts are not proof.** Simulated fills are forward observations
+> - **Simulation is not proof.** Simulated fills are forward observations
 >   under a stated, deliberately conservative execution model. They are not exchange
->   profitability, and their totals are records of what a lane realized — never a balance
+>   profitability, and their totals are records of what the learner realized — never a balance
 >   anyone holds.
 > - **Trading real funds risks losing them.** Setting `trading.model: real` points
 >   experimental software at real money. Doing so is entirely at your own risk.
@@ -47,8 +48,8 @@ machinery was sane.
 - [Runtime data flow](#runtime-data-flow)
 - [Signals](#signals)
 - [Logic solvers](#logic-solvers)
-- [The learning agent](#the-learning-agent)
-- [Execution](#execution)
+- [The learning pipeline](#the-learning-pipeline)
+- [Execution and order lifecycle](#execution-and-order-lifecycle)
 - [Hindsight](#hindsight)
 - [Nomagique](#nomagique)
 - [Telemetry](#telemetry)
@@ -65,14 +66,14 @@ Earlier versions of this system decided by committee: advisors deliberated, a pl
 scored candidates, an opportunity layer gated entries, allocation sized them, and a
 stoploss regulator closed them. That whole stack is **gone** — deleted, not unmounted.
 
-| Removed                                               | Replaced by                                          |
-|-------------------------------------------------------|------------------------------------------------------|
-| `strategy` advisors, planner, opportunity, allocation | one reinforcement `strategy.Agent`                   |
-| stoploss engine and momentum exits                    | the agent commands its own exits                     |
-| `regulator/` online control optimizer                 | measured skill gates authority instead               |
-| `logic.Analyzer`, evidence graph, causal solver       | the impulse map and its regions                      |
-| `types.Thesis` shared coordination object             | `types.Envelope` on a streaming workspace            |
-| `backtest/` replay driver                             | forward review — the reviewer runs *behind* the tape |
+| Removed                                               | Replaced by                                                             |
+|-------------------------------------------------------|-------------------------------------------------------------------------|
+| `strategy` advisors, planner, opportunity, allocation | streaming `strategy.Training` coordinator and `strategy.Trader`         |
+| stoploss engine and momentum exits                    | `Training` evaluates actions and commands exits from live market state  |
+| `regulator/` online control optimizer                 | cognitive confidence and empirical skill vs. uncertainty gate authority |
+| `logic.Analyzer`, evidence graph, causal solver       | the impulse map, watershed regions, and prefix-tree cognition           |
+| `types.Thesis` shared coordination object             | `types.Envelope` on a streaming workspace                               |
+| `backtest/` replay driver                             | delayed supervision with `Rehearsal` against catalog excursions         |
 
 The reason is singular: a second mechanism that could open or close a position is a
 second policy, learning nothing and contradicting the one whose outcomes are being
@@ -86,41 +87,64 @@ measured. There is now exactly one decision path.
               ┌───────────────┴───────────────┐
               │                               │
        raw frame capture              parsed envelopes
-    (byte-for-byte, sequenced)                │
+     (catalog & storeTee)                     │
               │                               ▼
               │                    ┌──────────────────────┐
               │                    │  streaming workspace │
               │                    ├──────────────────────┤
-              │                    │ ticker · trade       │
-              │                    │ level3 · executions  │
-              │                    │ futures              │
+              │                    │ ingress (pub/priv/fut)│
+              │                    │ eleven signals       │
+              │                    │ logic solvers        │
+              │                    │ cognition solver     │
               │                    └──────────┬───────────┘
-              │                               │  eleven signals
-              │                               │  + category / cognition
-              │                               │  + resonance / manifold
+              │                               │
               │                               ▼
               │                    ┌──────────────────────┐
-              │                    │   impulse map (grid) │
-              │                    │  regions, ranked     │
+              │                    │   strategy.impulse   │
+              │                    │  quality grid & maps │
               │                    └──────────┬───────────┘
+              │                               │
               │                               ▼
               │                    ┌──────────────────────┐
-              │                    │   strategy.Agent     │
-              │                    │ 4 virtual lanes      │
-              │                    │ + 1 policy lane      │
-              │                    │ skill meter → mode   │
+              │                    │  strategy.Precursor  │
+              │                    │  token sequence path │
               │                    └──────────┬───────────┘
-              │                               │ intents (queued, async)
+              │                               │
+              │                               ▼
+              │                    ┌──────────────────────┐
+              │                    │   cognition.Engine   │
+              │                    │ iradix CAS state     │
+              │                    └──────────┬───────────┘
+              │                               │
+              │                               ▼
+              │                    ┌──────────────────────┐
+              │                    │  strategy.Training   │
+              │                    │ confidence & skill vs│
+              │                    │ uncertainty gating   │
+              │                    └──────────┬───────────┘
+              │                               │
+              │                               ▼
+              │                    ┌──────────────────────┐
+              │                    │   strategy.Trader    │
+              │                    │ atomic per-symbol    │
+              │                    │ order lifecycle      │
+              │                    └──────────┬───────────┘
+              │                               │
+              │                               ▼
+              │                    ┌──────────────────────┐
+              │                    │     broker.Desk      │
+              │                    │   Kraken or Paper    │
+              │                    └──────────┬───────────┘
+              │                               ▲
+              │                               │ fills (ApplyExecution)
+              │                               │
               ▼                               ▼
-       events.sqlite  ◄── witnesses ──   broker.Desk ──► paper or Kraken orders
-              │
-              ▼
-      Hindsight: episodes · replay · validation · forward review
+       catalog (Iceberg)  ◄── drain ───  Rehearsal (delayed supervision)
 ```
 
-There is **one numerical grid** and no observation transport. Signal and logic
-producers finish first; the shared grid update, the policy step and on-demand
-inspection then run on the same consumer, in the same event turn. Keeping those
+There is **one numerical pipeline** and no observation transport overhead. Signal and logic
+producers finish first; the shared grid update, precursor generation, cognitive query, policy
+evaluation and on-demand inspection run within the same consumer turn. Keeping those
 dependent steps together avoids separate polling barriers and stops a pending
 cognition batch from withholding all learner progress.
 
@@ -128,19 +152,20 @@ cognition batch from withholding all learner progress.
 
 ### Boot
 
-[`cmd.Boot`](cmd/root.go) assembles the system in dependency order:
+[`cmd.rootCmd`](cmd/root.go) assembles the system in dependency order:
 
-1. Open `events.sqlite`, mint a Hindsight **run identity** (start instant + nonce,
-   code commit, build ID, config digest, schema versions) and persist it.
-2. Start the ordered capture writer and the async witness writer.
-3. Open public, private and futures transports, each writing raw frames to capture.
-4. Build the price cache, instrument universe, balance, position store and desk.
-5. Recover exchange inventory and working orders.
-6. Construct the shared grid and the agent, then **warm up** its priors from the
-   recent learning journal.
-7. Start the forward reviewer, mount the workloads, cross the readiness barrier,
-   *then* subscribe.
-8. Serve the dashboard WebSocket, HTTP inspection routes, and manifold WebRTC.
+1. Open the Hindsight Iceberg catalog (`tables.Open(ctx)`) and ensure schemas.
+2. Initialize WebSocket transports (`public`, `private`, `futures`).
+3. Build the price cache, instrument registry, and balance manager.
+4. Verify initial fee tables and cash balances are ready.
+5. Construct `strategy.Training` and `strategy.Trader`, wiring execution callbacks.
+6. Mount `ui.Hub` on `127.0.0.1:8765` and attach state providers.
+7. Restore stored catalog excursions into `Rehearsal` to warm up prior weights.
+8. Start periodic checkpointing and background `PollUntrained` replay.
+9. Record the active run identity (commit, build ID, config digest) in the catalog.
+10. Construct numerical signals, solvers (manifold, category, resonance), and cognition.
+11. Assemble the multi-tier `nmruntime.Workspace` with strict execution boundaries.
+12. Subscribe to market instruments, transition all subsystems to `READY`, start catalog drain, and open market ingress.
 
 Nothing subscribes to market data until every consumer can accept an envelope.
 Connected transports stay `BUSY` and deliberately discard frames until both runtime
@@ -206,181 +231,82 @@ Four stateful solvers are mounted directly in the workloads that produce their i
 The manifold steps on its own goroutine and publishes itself to the dashboard through a
 viewer; it is never published from the workspace's own step.
 
-## The learning agent
-
-Full specification: [`strategy/REINFORCEMENT.md`](strategy/REINFORCEMENT.md).
-Original design intent: [`strategy/LEARNING.md`](strategy/LEARNING.md).
+## The learning pipeline
 
 ### The impulse map
 
-Signals and solvers write their observations into a shared 2D grid. Each cell records
-the supplied raw value *and* a separate presence mask — a missing observation supplies no
-activity and is never inferred. Signed changes are scaled by adaptive level dispersion,
-baseline maturity, measurement maturity and a signal-power fraction; when a producer
-supplies SNR it is used, otherwise the grid estimates movement-to-dispersion power from
-its own numeric history (without marking the producer's missing SNR as defined).
+Signals and solvers write their observations into a per-symbol 2D grid (`strategy/impulse`). Each cell records the supplied raw value and presence mask — missing observations provide no activity and are never inferred. Signed changes are scaled by adaptive level dispersion, baseline maturity, measurement maturity, and signal power.
 
-A rank-two incremental signed profile sketch estimates relative affinities, so quantities
-that move together attract and inconsistent ones repel. One present coordinate advances
-per update by weighted distance-error descent. This is a streaming approximation, in the
-spirit of [Brand's incremental SVD](https://www.merl.com/publications/docs/TR2006-059.pdf)
-— not a claim of globally optimal clustering.
+Current quality-conditioned activity is rasterized into a square grid. Connected plateaus merge, uphill paths form watershed basins, and Otsu between-class variance retains the stronger basin class. There is **no** arbitrary cluster count or neighborhood radius. Regions are ordered by peak intensity.
 
-### Regions
+### Precursor and token paths
 
-Current quality-conditioned activity is rasterized into a square with
-`ceil(sqrt(n))` cells per side. Equal-height connected plateaus merge, uphill paths form
-watershed basins, and Otsu between-class variance retains the stronger basin class. There
-is **no** configured cluster count, activation threshold, or neighborhood radius.
+[`strategy.Precursor`](strategy/precursor.go) translates impulse snapshot states into ordered token sequences. It extracts the top watershed basin identifiers, encodes net inventory exposure into dyadic tokens, and formats them into sequential paths for prefix-tree retrieval. Because token sequences maintain strict causal ordering, contextual prefixes represent increasingly specific market regimes.
 
-Regions are ordered by strength, and a region's identity names the strongest quantity at
-its peak cell. Those ordered identities — plus a delimiter and dyadic inventory exposure —
-form the numeric context the agent decides under. A context carries its own grid version,
-so one symbol's activity can never reissue another's impulse.
+### The cognition engine
 
-### Actions and priors
+[`cognition.Engine`](logic/cognition/engine.go) maintains episodic situational memory backed by an immutable prefix tree (`iradix.Tree`).
+The engine state couples the prefix tree and logical step clock into a single immutable `engineState` that is published via Compare-And-Swap (CAS):
+```go
+type engineState struct {
+    root *iradix.Tree[[]byte]
+    step uint64
+}
+```
+Committed tree roots never disagree with their logical clock. Retrieval traverses prefix paths to match active market precursors against historical outcomes, producing:
+- Empirical support (count of verified observations)
+- Class posterior probabilities (policy bias $P(\text{action}) - 0.5$)
+- Contextual ambiguity (entropy over candidate actions)
+- Surprisal metrics against current regime transitions
 
-The vocabulary is `WAIT`, `ENTER`, `EXIT`, `SCALE`. Quantity candidates successively
-bisect the currently executable range down to venue lot and cost minimums; bisection is a
-search basis, not a chosen allocation percentage.
+### Training coordinator and authority gating
 
-The model matches context identities **exactly** — it neither parses their names nor
-merges nearby contexts with an invented tolerance. An outcome trains its action at every
-*ordered prefix* of its context. Recall then follows learned paths **greedily**: at each
-depth it first tries the token at that depth, then scans the unused supplied tokens in
-input order for an existing child. That recovers permutations and subsets when region
-ranks jitter — it is neither strict prefix matching nor an exhaustive permutation search,
-and `PriorReading.Depth` counts matched tokens rather than a prefix length.
+[`strategy.Training`](strategy/training.go) consumes streaming workspace measurements, advances the precursor, queries cognition, and evaluates action candidates (`WAIT`, `ENTER`, `EXIT`, `SCALE`).
 
-Depth is not automatically preferred. A deeper reading must retain at least the broader
-reading's **retained input authority** — `sum(w²)/sum(w)`, independent of reward sign and
-magnitude — and must define dispersion whenever the broader one can; ties favour
-specificity. Old deep evidence therefore yields to refreshed broader evidence without an
-arbitrary age cutoff, and a measured zero reward is never mistaken for missing evidence.
+`ActionEnter` execution authority is rigorously gated. It is granted only when:
+1. **Learned situations exist**: Historical precedents have been recorded for the context.
+2. **Support is positive**: Empirical support $> 0$.
+3. **Cognitive confidence exceeds prior**: Posterior action probability exceeds the uninformative baseline (0.5 for binary outcomes).
+4. **Surprisal is bounded**: The observation does not trigger a surprisal break.
+5. **Low ambiguity**: Normalized entropy is below 0.85.
+6. **Measured skill exceeds uncertainty**: For evaluated sample count $N \ge 10$, the empirical win rate $p = \frac{\text{wins}}{N}$ must exceed random chance (0.5) by more than its own binomial standard error:
+   $$p - 0.5 > \sqrt{\frac{p(1-p)}{N}}$$
+   and cumulative realized return must be positive. An edge must be statistically larger than its own measurement error before touching real risk.
 
-Exploration balances issued counts while dispersion is unestimable, then samples around
-the authority-weighted mean using measured standard error. This is empirical Gaussian
-sampling, not a calibrated Bayesian posterior — see the
-[Thompson sampling tutorial](https://arxiv.org/abs/1707.02038) for the distinction. No
-exploration bonus, temperature, or warmup count is configured.
+Training continuously tracks live metrics (`wins`, `losses`, `pnl`, and empirical win rate) without artificial smoothing or synthetic distributions.
 
-### Lanes, fills and reward
+### Rehearsal and delayed supervision
 
-Each symbol runs **four exploratory lanes and one policy lane**. The four are independent
-samplers of the same vocabulary, not one lane per action; they raise the evidence rate in
-parallel. Each starts with its own full copy of the known cash balance. **Lanes do not
-share capital and their profits must never be summed into a purported fundable account.**
+[`strategy.Rehearsal`](strategy/rehearsal.go) provides delayed supervision without leaking future tape.
+- As the catalog drains confirmed market records, `Rehearsal.Step` discovers objective price excursions over verified horizons.
+- Excursions evaluate pending decisions against real forward price moves, generating supervision records and updating the shared `cognition.Engine`.
+- The most recent excursion is published atomically as an immutable `*tables.ExcursionRecord` (`rehearsal.LastExcursion()`), eliminating data races with the live `Training.Step()` loop.
+- Periodic background checkpointing persists catalog training state. The background worker (`PollUntrained`) replays newly cataloged records into the shared cognition engine *without* invoking `Engine.Restore()`, protecting live inference from transient empty model states.
 
-Fills model taker IOC execution on subsequently available displayed depth, capped at each
-price by what actually stood there when the decision was made — liquidity that arrived
-later was never available, and liquidity since cancelled is a race the order loses.
-Partial fills, unfilled-remainder cancellation and the account's real fee schedule apply.
-Exact rational arithmetic preserves mixed price/quantity/cash precision. The model
-excludes maker queue position, hidden liquidity, market impact and exchange latency, and
-it never fabricates missing depth. An unmarkable account is displayed as *unvalued* and
-retried; new risk is not issued while valuation is incomplete.
+## Execution and order lifecycle
 
-A lane that spends its capital on execution costs **restarts**: it resolves its
-outstanding decisions against the equity it actually ended with and begins a new episode
-on a fresh clone of the known balance. Episodes are separate accounts in sequence.
+### Atomic per-symbol lifecycle
 
-Every decision is scored over the same forward window — change from issue equity, minus
-the reward rate known at issue times actual elapsed seconds, divided by starting capital.
-The window is `horizonEpochs` (8) multiples of the market's own measured cadence of
-impulse change, so a fast instrument gets a fast window and an unmeasured cadence
-resolves nothing rather than assuming one. Settlement runs on every book update and open
-positions are valued at executable liquidation prices including exit fees, so **waiting
-and holding are measured, not merely permitted**.
+Order placement and cancellation are inherently stateful exchange transactions. To eliminate race conditions where simultaneous signals could dispatch duplicate orders or overwrite positions:
+- [`strategy.Trader`](strategy/trader.go) serializes order lifecycle operations on a per-symbol mutex.
+- For `ActionEnter`, `Trader` generates a stable UUID client order ID (`ClOrdId`), instantiates a `broker.Position`, and registers it into the local position registry via an `onPending` hook *before* the order request is dispatched to the exchange.
+- Incoming exchange execution events arriving over WebSocket cannot outrun local position awareness.
 
-### Measured skill and going live
+### Immutable execution snapshots and fills
 
-[`strategy.SkillMeter`](strategy/skill.go) estimates the policy lane's forward competence
-from its own resolved outcomes under exponential forgetting, so an edge earned in one
-regime decays out instead of being averaged away.
+[`broker.Position`](broker/position.go) stores execution facts (`ExecutedPrice`, `ExecutedVolume`, `Fee`) inside an atomically published, immutable `ExecutionSnapshot`.
+- When Kraken WebSocket execution events arrive, `Trader.ApplyExecution()` consumes authoritative average price, cumulative volume, and fees, updating the snapshot via `Position.SetFill()` with pointer CAS.
+- Readers in risk, UI telemetry, and accounting observe consistent snapshots without mutex contention or torn reads.
 
-Only decisions covering **disjoint** forward windows enter that estimate. Decisions issue
-far faster than a window closes, and admitting overlapping ones reports one observation
-as many, collapsing measured dispersion and saturating confidence. Excluded decisions
-still train their own action priors — this gate governs execution authority, not learning.
+### Authoritative exit sizing
 
-- **Promotion** requires the mean minus `skillSigma` (2.0) standard errors to exceed zero,
-  on effective evidence of at least `skillSigma²`. An edge must be larger than its own
-  measurement error, and a short run of similar outcomes cannot read as certainty.
-- **Demotion** requires only a non-positive mean. That asymmetry is deliberate hysteresis.
-- A reading below the floor is reported *unqualified*, with no bound displayed at all,
-  rather than shown as a number an operator could mistake for a measurement.
+[`broker.Desk.Exit`](broker/desk.go) derives exit order quantity directly from authoritative executed inventory (`position.Volume()`) rather than the originally requested entry volume. When an entry order only partially fills, subsequent exit orders sell only the volume that was actually filled on exchange.
 
-There are exactly **two modes**: *calibrating*, and *trading the account*.
-`trading.model` names which account that is — `paper` or `real` — and the agent does not
-earn its way from one to the other. Paper and real are the same behaviour against
-different accounts; only *whether it is trading at all* is earned. Learning never stops,
-which is what lets a degrading edge pull a trading agent back to calibrating without any
-separate supervision.
-
-A separate [`RealizationMeter`](strategy/realization.go) can veto execution independently
-of skill — repeated submission failures or fills that diverge from their reference price
-revoke authority regardless of how good the estimate looks.
-
-The account is live from the first tick either way, so an operator watching a calibrating
-agent is watching a real balance rather than an empty one.
-
-### Forward testing
-
-**There is no backtest.** Replaying history against the current model lets it see what
-came next. [`cmd.forwardReviewer`](cmd/hindsight_forward.go) instead runs ~30s *behind*
-the live tape, discovers confirmed price excursions on the captured run, and reports them
-to `Agent.Review`, which compares each against the exposure the policy lane actually had
-at the time.
-
-Reviewing is measurement, never training: an outcome discovered after the fact is never
-fed back into a decision, because a policy trained on episodes it could not have seen is a
-policy leaking the future. "Sat it out" is not a mistake — the excursion was not visible
-when the decision was made — but a policy exposed to *none* of them has no path to an
-edge, and that is what the reading is for.
-
-### Attribution
-
-[`strategy.attribution`](strategy/attribution.go) accumulates, per hot quantity and action
-kind, the outcomes of decisions issued while that quantity was hot. That answers the
-discovery question — which measurements should determine which actions — from resolved
-evidence rather than by hand. It is association under the agent's own exploration, not a
-controlled comparison.
-
-## Execution
-
-The agent decides from its own simulated wallet, which is *not* the account. The two can
-disagree — an entry on a symbol the account already holds, or an exit on one it never
-opened. [`cmd.learningDesk`](cmd/learning_desk.go) reconciles against the desk's actual
-position and **counts** the disagreement rather than acting on it. A submission the venue
-refuses is counted and reported, never fatal: halting the workload on one refused order
-would stop every symbol from learning.
-
-`ExecutionDesk.Submit` must never talk to the venue. The agent runs inside the workspace
-consumer that also feeds the terminal, so a synchronous REST round-trip there froze the
-dashboard the instant a position opened. Reconciliation is now an inline `sync.Map` read
-plus a queue; one worker goroutine places orders, preserving per-symbol intent order. A
-full queue **drops** rather than blocks, because an intent that waited behind a backlog
-was priced against a book that no longer exists. `strategy.ExecutionStatus` reports
-*submitted*, *diverged*, *dropped* and *refused* separately — they are different facts and
-only one of them is an error.
-
-Entries reach [`broker.Desk`](broker/desk.go) self-managed: the agent re-evaluates every
-open position on each book update and issues its own `EXIT`. The desk still sizes the
-entry under its own risk plan and retains that plan as a catastrophic floor.
-`broker.Position` marks and reports but never closes itself. Partial reductions execute
-through `Position.Reduce` — "hold less of this" is not "stop holding this", and a
-reduction that closed the whole lot would record an account state the agent never decided
-on.
-
-On boot, [`broker.Recovery`](broker/recovery.go) reconciles exchange balances, trade
-history and working orders. The exchange wallet is authoritative: snapshots replace the
-local wallet rather than merging into it.
+On boot, [`broker.Recovery`](broker/recovery.go) reconciles exchange balances, trade history and working orders. The exchange wallet is authoritative: snapshots replace local wallet state.
 
 ### Paper and real
 
-`trading.model: paper` routes balances, fills, history and orders through the native
-`kraken paper` CLI while public market data continues to come from Kraken. The paper
-ledger is external to this process; it is not an in-memory fake exchange.
+`trading.model: paper` routes balances, fills, history and orders through the native `kraken paper` CLI while public market data continues to come from Kraken. The paper ledger is external to this process; it is not an in-memory fake exchange.
 
 `trading.model: real` routes account operations and orders to Kraken.
 
@@ -440,8 +366,8 @@ Witness overflow marks the run `GAPPED` rather than silently losing records.
 ### Tools
 
 ```bash
-go run ./cmd/hindsight_export -summary        # where the funnel dies, per stage
-go run ./cmd/hindsight_probe                  # capture integrity probe
+make metric-map            # regenerate signal/metric_map.json from signal/metric_map.csv
+make metric-lineage        # regenerate frontend/public/metric-lineage.json
 ```
 
 The dashboard's `/hindsight` surface reads the same store: runs, captures, persisted
@@ -500,27 +426,24 @@ lower-frequency state.
 
 The frontend is a React 19 / TanStack Start terminal on port 3000.
 
-| Surface                            | What it shows                                                                                                                                |
-|------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------|
-| `/` Dashboard                      | Equity, balances, positions, queue depths, system telemetry.                                                                                 |
-| `/learning`                        | The agent: impulse map, regions, candidates, per-lane wallets, skill panel, forward review, metric influence, and the live decision journal. |
-| `/hindsight`                       | Run and capture browser, episode timeline, state inspector, position index, comparison view.                                                 |
-| `/fluid`                           | Live L3 manifold: particle fields and pressure maps over WebRTC.                                                                             |
-| `/signals`                         | Per-signal metric timeseries and estimator state.                                                                                            |
-| `/xray`                            | Resonance hidden state and prequential skill history.                                                                                        |
-| `/cortex`                          | DMT prefix-tree activations and episodic paths.                                                                                              |
-| `/graph`, `/influence`, `/lineage` | Relationship, influence and metric-lineage views.                                                                                            |
-| `/journal`                         | Completed round trips and realized PnL.                                                                                                      |
-| `/allocation`                      | Sizing and exposure.                                                                                                                         |
-| `/diagnostics`                     | Live pipeline topology, per-stage and per-queue health and latency.                                                                          |
+| Surface                 | What it shows                                                                                                |
+|-------------------------|--------------------------------------------------------------------------------------------------------------|
+| `/` Dashboard           | Equity, balances, positions, queue depths, system telemetry.                                                 |
+| `/learning`             | The learning coordinator: impulse map, regions, cognition predictions, training metrics, and live decisions. |
+| `/hindsight`            | Run and capture browser, episode timeline, state inspector, position index, comparison view.                 |
+| `/fluid`                | Live L3 manifold: particle fields and pressure maps over WebRTC.                                             |
+| `/signals`              | Per-signal metric timeseries and estimator state.                                                            |
+| `/xray`                 | Resonance hidden state and prequential skill history.                                                        |
+| `/cortex`               | DMT prefix-tree activations and episodic paths.                                                              |
+| `/influence`, `/lineage`| Relationship, influence and metric-lineage views.                                                            |
+| `/journal`              | Completed round trips and realized PnL.                                                                      |
+| `/diagnostics`          | Live pipeline topology, per-stage and per-queue health and latency.                                          |
+| `/workbench`            | Interactive development and inspection workbench.                                                            |
 
 The browser sends the selected focus symbol back to the backend, so detailed telemetry is
 gated to the active market rather than broadcast for every pair.
 
 Build-time overrides: `VITE_SYMM_WS_URL`, `VITE_SYMM_WEBRTC_URL`.
-
-> **Leftovers:** `/regulator` is a surface from the removed control-optimizer subsystem
-> and has no backend producer. Its `regulator:` config block is likewise inert.
 
 ## Configuration
 
@@ -542,17 +465,16 @@ Runtime files under `system.data_path`:
 
 | File               | Purpose                                                              |
 |--------------------|----------------------------------------------------------------------|
-| `events.sqlite`    | Raw captures, manifests, witnesses, lifecycle and `learning_events`. |
+| `catalog/`         | Iceberg metadata and Parquet tables for runs, captures, and excursions. |
 | `positions.sqlite` | Persisted position and completed-trade state.                        |
-| nonce state        | Monotonic Kraken nonce continuity across restarts.                   |
+| `checkpoint.bin`   | Periodic binary model state checkpoint.                              |
 
 ### What survives a restart
 
-The durable learning journal does. On startup the agent replays recent resolved decisions
-from `learning_events` into its action priors and feature attribution, so a new process
-starts warm rather than cold. It is a head start, not a checkpoint: the grid geometry is
-rebuilt from the live tape, and **execution authority is never inherited** — skill is
-re-earned by forward calibration on the current session.
+The catalog and model checkpoints do. On startup `Rehearsal` restores recent catalog
+excursions and checkpoints to warm up prior weights, so a new process starts with learned
+situations rather than cold. Execution authority is never inherited — empirical win rate and
+skill must be confirmed in the active session.
 
 ## Build and run
 
@@ -634,13 +556,13 @@ pnpm bench            # Vitest benchmarks
 
 | Path                | Responsibility                                                                                                                                 |
 |---------------------|------------------------------------------------------------------------------------------------------------------------------------------------|
-| `main.go`, `cmd/`   | Cobra entrypoint, config loading, system assembly, grid/workload nodes, learning desk, forward reviewer, Hindsight CLI tools.                  |
+| `main.go`, `cmd/`   | Cobra entrypoint, config loading, system assembly, runtime workspace, and telemetry streaming.                                                 |
 | `kraken/`           | Kraken wire models and normalized exchange payloads.                                                                                           |
 | `kraken/websocket/` | Public/private/futures/L3 transport, subscriptions, nonce management, paper routing, raw capture hooks.                                        |
 | `types/`            | Envelope, measurement, action, decision, cognition, holding, phase and UI types.                                                               |
 | `signal/`           | The eleven numerical conditioners, their specs and the metric map.                                                                             |
 | `logic/`            | Category, cognition, resonance and manifold solvers.                                                                                           |
-| `strategy/`         | The learning agent: impulse consumption, virtual lanes, reward, skill meter, realization veto, execution intents, forward review, attribution. |
+| `strategy/`         | The learning coordinator: impulse map and watershed regions, precursor token paths, cognition tree integration, training evaluation and skill-vs-uncertainty gating, atomic trader order management, rehearsal delayed supervision. |
 | `broker/`           | Instruments, price and fee economics, wallet, desk, positions, persistence, recovery.                                                          |
 | `hindsight/`        | Capture identity, sequencing, manifests, witnesses, episodes, replay, integrity, validation.                                                   |
 | `store/`            | SQLite engine, ordered capture writer, async witness writer, learning journal, repositories.                                                   |
@@ -667,11 +589,8 @@ pnpm bench            # Vitest benchmarks
 ## Design references
 
 - [`AGENTS.md`](AGENTS.md) — implementation, safety, testing and architecture rules.
-- [`strategy/REINFORCEMENT.md`](strategy/REINFORCEMENT.md) — the agent contract in full.
-- [`strategy/LEARNING.md`](strategy/LEARNING.md) — the original impulse-map design intent.
 - [`hindsight/README.md`](hindsight/README.md) — the sixty-section inspection contract.
 - [`signal/README.md`](signal/README.md) — the measurement envelope contract.
-- [`signal/METRIC_MAP.md`](signal/METRIC_MAP.md) — metric→category mapping rules.
 - [`nomagique/README.md`](nomagique/README.md), [`nomagique/DESIGN.md`](nomagique/DESIGN.md) — the numeric library.
 - [`specs/manifold.md`](specs/manifold.md), [`specs/pnl.md`](specs/pnl.md), [`specs/market-simulator.md`](specs/market-simulator.md) — subsystem contracts.
 - Remaining `specs/` documents predate the agent rewrite and are historical.

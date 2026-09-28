@@ -25,7 +25,7 @@ func captureFixture(t testing.TB, count int) (Tape, []RawFrame) {
 		digest := sha256.Sum256(payload)
 		frames[index] = RawFrame{
 			Identity:   types.CaptureIdentity{Run: "recorded", Sequence: types.CaptureSequence(index + 1)},
-			ReceivedAt: time.Unix(100+int64(index), 0), Kind: "heartbeat", Endpoint: "wss://venue",
+			ReceivedAt: time.Unix(100+int64(index), 0).UTC(), Kind: "heartbeat", Endpoint: "wss://venue",
 			Payload: payload, PayloadHash: hex.EncodeToString(digest[:]),
 		}
 	}
@@ -57,14 +57,22 @@ func TestTapeRead(t *testing.T) {
 	Convey("Original capture identities and bytes are verified before delivery", t, func() {
 		tape, frames := captureFixture(t, 3)
 		Convey("Capture order survives timestamp reversal", func() {
-			frames[1].ReceivedAt = frames[0].ReceivedAt.Add(-time.Second)
+			frames[1].ReceivedAt = frames[0].ReceivedAt.Add(-time.Second).UTC()
 			writeCaptureFixture(t, tape, frames)
 			var received []RawFrame
 			So(tape.Read(t.Context(), func(frame RawFrame) error {
 				received = append(received, frame)
 				return nil
 			}), ShouldBeNil)
-			So(received, ShouldResemble, frames)
+			So(len(received), ShouldEqual, len(frames))
+			for i := range frames {
+				So(received[i].Identity, ShouldResemble, frames[i].Identity)
+				So(received[i].ReceivedAt.Equal(frames[i].ReceivedAt), ShouldBeTrue)
+				So(received[i].Endpoint, ShouldEqual, frames[i].Endpoint)
+				So(received[i].Kind, ShouldEqual, frames[i].Kind)
+				So(received[i].PayloadHash, ShouldEqual, frames[i].PayloadHash)
+				So(string(received[i].Payload), ShouldEqual, string(frames[i].Payload))
+			}
 		})
 		Convey("An explicit endpoint ends a contiguous capture prefix", func() {
 			writeCaptureFixture(t, tape, frames)

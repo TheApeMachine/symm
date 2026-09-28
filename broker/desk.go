@@ -3,6 +3,7 @@ package broker
 import (
 	"context"
 
+	"github.com/google/uuid"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/spf13/viper"
@@ -47,7 +48,7 @@ func NewDesk(
 	return desk
 }
 
-func (desk *Desk) Enter(symbol string) *Position {
+func (desk *Desk) Enter(symbol string, onPending ...func(*Position)) *Position {
 	if desk == nil || desk.api == nil || desk.price == nil || desk.balance == nil {
 		return nil
 	}
@@ -142,6 +143,10 @@ func (desk *Desk) Enter(symbol string) *Position {
 
 	position := NewPosition(entryRequest, exitRequest)
 
+	if len(onPending) > 0 && onPending[0] != nil {
+		onPending[0](position)
+	}
+
 	response, err := desk.api.AddOrder(position.EntryOrder)
 
 	if err != nil {
@@ -183,8 +188,16 @@ func (desk *Desk) Exit(position *Position) error {
 		))
 	}
 
-	if position.EntryOrder != nil && position.ExitOrder.Volume == "" {
+	if vol := position.Volume(); vol != nil && vol.Sign() > 0 {
+		position.ExitOrder.Volume = vol.String()
+	}
+
+	if position.ExitOrder.Volume == "" && position.EntryOrder != nil {
 		position.ExitOrder.Volume = position.EntryOrder.Volume
+	}
+
+	if position.ExitOrder.ClOrdId == "" {
+		position.ExitOrder.ClOrdId = uuid.New().String()
 	}
 
 	if mark := desk.price.CurrentMark(position.ExitOrder.Pair); mark != nil {

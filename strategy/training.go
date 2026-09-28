@@ -3,6 +3,7 @@ package strategy
 import (
 	"context"
 	"fmt"
+	"math"
 	"unsafe"
 
 	"github.com/theapemachine/errnie"
@@ -223,6 +224,7 @@ func (training *Training) Step(measurement *data.Measurement[float64]) *data.Mea
 		current.Metrics["action"] = current.Metrics["action"].Write(actionValue)
 
 		authorized := true
+		hasModelEdge := false
 
 		if action == ActionEnter {
 			minConf := system.UninformativeDirectionConfidence
@@ -232,10 +234,18 @@ func (training *Training) Step(measurement *data.Measurement[float64]) *data.Mea
 				minConf = plannerConfig.CognitionSwitchConfidence
 			}
 
-			hasModelEdge := false
-
 			if reading := training.Rehearsal.published.Load(); reading != nil {
-				hasModelEdge = reading.Learned > 0
+				if reading.Learned > 0 && reading.Return > 0 {
+					if reading.Entered >= 10 {
+						p := float64(reading.Profitable) / float64(reading.Entered)
+						se := math.Sqrt(p * (1.0 - p) / float64(reading.Entered))
+						hasModelEdge = (p - 0.5) > se
+					}
+
+					if reading.Entered < 10 {
+						hasModelEdge = true
+					}
+				}
 			}
 
 			authorized = hasModelEdge &&
@@ -251,6 +261,10 @@ func (training *Training) Step(measurement *data.Measurement[float64]) *data.Mea
 
 			if reading := training.Rehearsal.published.Load(); reading == nil || reading.Learned == 0 {
 				reason = "authority gate rejected enter: model is candidate/untrained (0 learned situations)"
+			}
+
+			if reading := training.Rehearsal.published.Load(); reading != nil && reading.Learned > 0 && !hasModelEdge {
+				reason = "authority gate rejected enter: measured skill does not exceed uncertainty or return is non-positive"
 			}
 
 			training.trader.RecordDecision(
@@ -308,23 +322,24 @@ func (training *Training) Step(measurement *data.Measurement[float64]) *data.Mea
 		}
 	}
 
-	if training.Rehearsal != nil && len(training.Rehearsal.records) > 0 {
-		lastRecord := training.Rehearsal.records[len(training.Rehearsal.records)-1]
-		extType := 0.0
+	if training.Rehearsal != nil {
+		if lastRecord := training.Rehearsal.LastExcursion(); lastRecord != nil {
+			extType := 0.0
 
-		if lastRecord.Direction == "upward" {
-			extType = 1.0
+			if lastRecord.Direction == "upward" {
+				extType = 1.0
+			}
+
+			if lastRecord.Direction == "downward" {
+				extType = 2.0
+			}
+
+			current.Metrics["excursion_type"] = current.Metrics["excursion_type"].Write(extType)
+			current.Metrics["excursion_mag"] = current.Metrics["excursion_mag"].Write(lastRecord.GrossExcursion * 100)
+			current.Metrics["mark_a"] = current.Metrics["mark_a"].Write(float64(lastRecord.PrecursorStartTick))
+			current.Metrics["mark_b"] = current.Metrics["mark_b"].Write(float64(lastRecord.AnchorTick))
+			current.Metrics["mark_c"] = current.Metrics["mark_c"].Write(float64(lastRecord.ExitTick))
 		}
-
-		if lastRecord.Direction == "downward" {
-			extType = 2.0
-		}
-
-		current.Metrics["excursion_type"] = current.Metrics["excursion_type"].Write(extType)
-		current.Metrics["excursion_mag"] = current.Metrics["excursion_mag"].Write(lastRecord.GrossExcursion * 100)
-		current.Metrics["mark_a"] = current.Metrics["mark_a"].Write(float64(lastRecord.PrecursorStartTick))
-		current.Metrics["mark_b"] = current.Metrics["mark_b"].Write(float64(lastRecord.AnchorTick))
-		current.Metrics["mark_c"] = current.Metrics["mark_c"].Write(float64(lastRecord.ExitTick))
 	}
 
 	current.Metrics["invalid_inputs"] = current.Metrics["invalid_inputs"].Write(float64(training.space.Invalid))

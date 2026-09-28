@@ -10,12 +10,10 @@ else
 	export GOWORK=off
 fi
 
-AVAILABLE_MODULES=()
-for mod in "$ROOT/../datura" "$ROOT"; do
-	if [[ -f "$mod/go.mod" ]]; then
-		AVAILABLE_MODULES+=("$mod")
-	fi
-done
+AVAILABLE_MODULES=("$ROOT")
+if [[ "${VERIFY_ALL_MODULES:-0}" == "1" && -f "$ROOT/../datura/go.mod" ]]; then
+	AVAILABLE_MODULES=("$ROOT/../datura" "$ROOT")
+fi
 
 GO_MODULES=("${AVAILABLE_MODULES[@]}")
 
@@ -93,6 +91,14 @@ case "$CMD" in
 		;;
 	frontend)
 		frontend_verify
+		;;
+	datura)
+		if [[ -f "$ROOT/../datura/go.mod" ]]; then
+			(
+				cd "$ROOT/../datura"
+				go test ./...
+			)
+		fi
 		;;
 	all)
 		FAILED=()

@@ -135,11 +135,31 @@ func (api *API) Normalizer() *spot.Normalizer {
 func (api *API) Private() Conn { return api.private }
 
 func (api *API) Books() *sync.Map {
+	out := &sync.Map{}
+
 	if api.public != nil {
-		return api.public.Books()
+		books := api.public.Books()
+
+		if books != nil {
+			books.Range(func(key, value any) bool {
+				out.Store(key, value)
+				return true
+			})
+		}
 	}
 
-	return api.private.Books()
+	if api.private != nil {
+		books := api.private.Books()
+
+		if books != nil {
+			books.Range(func(key, value any) bool {
+				out.Store(key, value)
+				return true
+			})
+		}
+	}
+
+	return out
 }
 
 func (api *API) Book(symbol string, read func(*book.Book)) {

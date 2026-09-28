@@ -51,6 +51,9 @@ func TestSolverPublishReading(t *testing.T) {
 
 		Convey("And a solver stepping this state", func() {
 			physics := sensorium.NewManifold(8, 8, 8)
+			if physics == nil {
+				t.Skip("skipping test requiring sensorium physics engine")
+			}
 			solver := &Solver{
 				System:  runtime.NewSystem(t.Context(), "manifold"),
 				physics: physics,
@@ -118,8 +121,12 @@ func TestSolverStepReadiness(t *testing.T) {
 }
 
 func TestSolverStepArtifact(t *testing.T) {
+	physics := sensorium.NewManifold(8, 8, 8)
+	if physics == nil {
+		t.Skip("skipping test requiring sensorium physics engine")
+	}
+
 	Convey("Step publishes a complete physics frame through its measurement", t, func() {
-		physics := sensorium.NewManifold(8, 8, 8)
 		defer func() { So(physics.Close(), ShouldBeNil) }()
 		solver := &Solver{
 			System:  runtime.NewSystem(t.Context(), "manifold-artifact"),
@@ -174,6 +181,9 @@ func TestComputePhaseResultants(t *testing.T) {
 // BenchmarkSolverPublishReading measures full production-sized grid publication.
 func BenchmarkSolverPublishReading(b *testing.B) {
 	physics := sensorium.NewManifold(64, 64, 64)
+	if physics == nil {
+		b.Skip("skipping benchmark requiring sensorium physics engine")
+	}
 	defer func() {
 		if err := physics.Close(); err != nil {
 			b.Fatal(err)

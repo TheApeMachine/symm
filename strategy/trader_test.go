@@ -1,6 +1,7 @@
 package strategy
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
@@ -89,6 +90,57 @@ func TestTrader(t *testing.T) {
 					So(wireFrame, ShouldNotBeNil)
 					So(len(wireFrame.Rows), ShouldEqual, 0)
 				})
+			})
+
+			Convey("When execution arrives via ApplyExecution", func() {
+				pos := trader.Position("BTC/USD")
+				So(pos, ShouldNotBeNil)
+
+				exec := &kraken.Execution{
+					Channel: "executions",
+					Type:    "update",
+					Data: []kraken.ExecutionData{
+						{
+							Symbol:        "BTC/USD",
+							OrderID:       pos.OrderID(),
+							ClientOrderID: pos.PositionID,
+							AvgPrice:      decimal.NewFromFloat64(49980.0),
+							CumQty:        decimal.NewFromFloat64(0.0015),
+							FeeUsdEquiv:   decimal.NewFromFloat64(0.18),
+						},
+					},
+				}
+
+				trader.ApplyExecution(exec)
+
+				So(pos.ExecutedPrice().Float64(), ShouldEqual, 49980.0)
+				So(pos.ExecutedVolume().Float64(), ShouldEqual, 0.0015)
+				So(pos.Fee().Float64(), ShouldEqual, 0.18)
+
+				wireFrame := trader.PositionsWire()
+				So(wireFrame, ShouldNotBeNil)
+				So(len(wireFrame.Rows), ShouldEqual, 1)
+				So(wireFrame.Rows[0].Holding.EntryPrice, ShouldEqual, "49980")
+				So(wireFrame.Rows[0].Holding.Qty, ShouldEqual, "0.0015")
+			})
+		})
+
+		Convey("When multiple concurrent ActionEnter decisions arrive for the same symbol", func() {
+			var wg sync.WaitGroup
+
+			for i := 0; i < 10; i++ {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					trader.OnAction("BTC/USD", ActionEnter)
+				}()
+			}
+
+			wg.Wait()
+
+			Convey("Then exactly one position exists and duplicate orders are prevented", func() {
+				So(trader.Holding("BTC/USD"), ShouldBeTrue)
+				So(trader.PositionCount(), ShouldEqual, 1)
 			})
 		})
 	})

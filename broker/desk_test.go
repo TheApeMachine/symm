@@ -86,6 +86,34 @@ func TestDesk(t *testing.T) {
 			})
 		})
 
+		Convey("When entering with an onPending callback", func() {
+			var pendingPos *Position
+			pos := desk.Enter("BTC/USD", func(pending *Position) {
+				pendingPos = pending
+			})
+
+			So(pos, ShouldNotBeNil)
+			So(pendingPos, ShouldNotBeNil)
+			So(pendingPos.PositionID, ShouldEqual, pos.PositionID)
+			So(pos.EntryOrder.ClOrdId, ShouldEqual, pos.PositionID)
+		})
+
+		Convey("When an entry position is partially filled", func() {
+			pos := desk.Enter("BTC/USD")
+			So(pos, ShouldNotBeNil)
+
+			// Record partial fill of 0.001 volume
+			pos.SetFill(decimal.NewFromFloat64(50000.0), decimal.NewFromFloat64(0.001), decimal.NewFromFloat64(0.05))
+			So(pos.ExecutedVolume().Float64(), ShouldEqual, 0.001)
+
+			err := desk.Exit(pos)
+			So(err, ShouldBeNil)
+
+			Convey("Then the exit order volume matches the executed volume, not requested volume", func() {
+				So(pos.ExitOrder.Volume, ShouldEqual, "0.001")
+			})
+		})
+
 		Convey("When market experiences a severe structural fault (>3 crossed book ticks)", func() {
 			price.Anomalies().Record("BTC/USD", AnomalyCrossedBook)
 			price.Anomalies().Record("BTC/USD", AnomalyCrossedBook)

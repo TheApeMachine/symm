@@ -106,9 +106,13 @@ func TestRemove(t *testing.T) {
 }
 
 func TestManifoldSpectralPeaks(t *testing.T) {
+	fluid, err := newWorkspace(8, 8, 8)
+
+	if err != nil {
+		t.Skip("skipping test requiring GPU engine:", err)
+	}
+
 	Convey("Given synchronized resident complex modes", t, func() {
-		fluid, err := newWorkspace(8, 8, 8)
-		So(err, ShouldBeNil)
 		Reset(func() { fluid.Close() })
 		manifold := &Manifold{work: fluid}
 		real := fluid.psiModeReal.Float32Slice()
@@ -162,7 +166,7 @@ func BenchmarkManifoldSpectralPeaks(b *testing.B) {
 	fluid, err := newWorkspace(8, 8, 8)
 
 	if err != nil {
-		b.Fatal(err)
+		b.Skip("skipping benchmark requiring GPU engine:", err)
 	}
 
 	defer fluid.Close()

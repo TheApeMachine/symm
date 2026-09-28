@@ -18,7 +18,7 @@ import { Dialog } from "#/components/ui/dialog";
 import { Flex } from "#/components/ui/flex";
 import { Scanlines } from "#/components/ui/scanlines";
 import { RtcFeed } from "#/providers/rtc";
-import { WsFeed } from "#/providers/websocket";
+import { sendRoute, WsFeed } from "#/providers/websocket";
 import appCss from "../app.css?url";
 
 const SURFACE_VALUES = new Set<TerminalSurface>([
@@ -79,6 +79,7 @@ const RootDocument = ({ children }: { children: React.ReactNode }) => {
 
 	useEffect(() => {
 		routeAtom.set(surface);
+		sendRoute(surface);
 	}, [surface]);
 	const {
 		openPalette,

@@ -380,8 +380,7 @@ func (solver *Solver) Register() *data.Measurement[float64] {
 			"particle_kinetic", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
 		),
 	})
-
-	measurement.Metadata["peer-interest"] = "hawkes"
+	measurement.Metadata["peer-interest"] = "*"
 	return measurement
 }
 
