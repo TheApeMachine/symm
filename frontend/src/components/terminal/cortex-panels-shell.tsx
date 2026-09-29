@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { cognitionStore } from "#/collections/app";
+import { signals } from "#/collections/app";
 import { Badge } from "#/components/ui/badge";
 import { Chip } from "#/components/ui/chip";
 import { meterTrackVariants } from "#/components/ui/meter";
@@ -11,53 +11,73 @@ export const CortexPanelsShell = ({ symbol }: { symbol: string }) => {
 	const root = useRef<HTMLDivElement>(null);
 
 	useEffect(() => {
-		const apply = (state: typeof cognitionStore.state) => {
+		const apply = () => {
 			if (!root.current) return;
-			const targetRow = state.getLast(symbol) ?? null;
+			const targetRow = signals.cognition.state[symbol]?.getLast() ?? null;
 
 			const set = (q: string, value: string) => {
 				const el = root.current?.querySelector<HTMLElement>(`[data-f="${q}"]`);
 				if (el) el.textContent = value;
 			};
 
-			set("winner", targetRow?.winner() ?? "—");
+			const metricMap = new Map<string, number>();
+			if (targetRow) {
+				for (const m of targetRow.metrics) {
+					const name = typeof m.name === "string" ? m.name : "";
+					if (name) {
+						metricMap.set(name, m.hasNormalized ? m.normalized : m.raw);
+					}
+				}
+			}
+
+			const contrastVal = metricMap.get("contrast");
+			const surprisalVal = metricMap.get("surprisal");
+			const stabilityVal = metricMap.get("stability");
+			const ambiguityVal = metricMap.get("ambiguity");
+
+			set("winner", targetRow ? symbol : "—");
 			set(
 				"confidence",
-				targetRow ? `${(targetRow.confidence() * 100).toFixed(1)}%` : "—",
+				stabilityVal !== undefined ? `${(stabilityVal * 100).toFixed(1)}%` : "—",
 			);
-			set("contrast", targetRow ? targetRow.contrast().toFixed(3) : "—");
-			set("entropy", targetRow ? targetRow.entropyBits().toFixed(3) : "—");
-			set("ambiguous", targetRow ? String(targetRow.ambiguous()) : "—");
-			set("remFrom", targetRow ? String(targetRow.remFrom()) : "—");
-			set("remThrough", targetRow ? String(targetRow.remThrough()) : "—");
-			set("remReplays", targetRow ? String(targetRow.remReplays()) : "—");
+			set("contrast", contrastVal !== undefined ? contrastVal.toFixed(3) : "—");
+			set("entropy", surprisalVal !== undefined ? surprisalVal.toFixed(3) : "—");
+			set(
+				"ambiguous",
+				ambiguityVal !== undefined
+					? ambiguityVal > 0.5
+						? "true"
+						: "false"
+					: "—",
+			);
+			set("remFrom", "—");
+			set("remThrough", "—");
+			set("remReplays", "—");
 
 			const replays = root.current.querySelector<HTMLElement>("[data-replays]");
 			if (replays) {
-				replays.textContent = targetRow ? String(targetRow.remReplays()) : "—";
+				replays.textContent = "—";
 			}
 
 			const basin = root.current.querySelector<HTMLElement>("[data-basin]");
 			if (basin instanceof HTMLElement) {
-				const value = targetRow?.confidence();
 				basin.style.width =
-					typeof value === "number"
-						? `${Math.min(100, Math.max(0, value * 100)).toFixed(1)}%`
+					typeof stabilityVal === "number"
+						? `${Math.min(100, Math.max(0, stabilityVal * 100)).toFixed(1)}%`
 						: "0%";
 			}
 
 			const entropy = root.current.querySelector<HTMLElement>("[data-entropy]");
 			if (entropy instanceof HTMLElement) {
-				const value = targetRow?.entropyBits();
 				entropy.style.width =
-					typeof value === "number"
-						? `${Math.min(100, Math.max(0, value * 100)).toFixed(1)}%`
+					typeof surprisalVal === "number"
+						? `${Math.min(100, Math.max(0, surprisalVal * 100)).toFixed(1)}%`
 						: "0%";
 			}
 		};
 
-		apply(cognitionStore.state);
-		const subscription = cognitionStore.subscribe(apply);
+		apply();
+		const subscription = signals.cognition.subscribe(apply);
 		return () => subscription.unsubscribe();
 	}, [symbol]);
 

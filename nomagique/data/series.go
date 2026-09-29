@@ -99,11 +99,17 @@ func (op *Series[Value]) Next(
 				op.reading.Value, op.reading.Found = op.asOf(
 					input.Key, input.Sec, input.Nsec,
 				)
-			} else {
-				op.reading.Found = op.observe(
-					input.Key, input.Sec, input.Nsec, input.Value,
-				)
+
+				if !yield(unsafe.Pointer(&op.reading)) {
+					return
+				}
+
+				continue
 			}
+
+			op.reading.Found = op.observe(
+				input.Key, input.Sec, input.Nsec, input.Value,
+			)
 
 			if !yield(unsafe.Pointer(&op.reading)) {
 				return

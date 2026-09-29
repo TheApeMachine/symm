@@ -1,12 +1,11 @@
 import { useSelector } from "@tanstack/react-store";
 import { useEffect, useRef } from "react";
-import { cognitionStore, focusStore } from "#/collections/app";
+import { focusAtom, signals } from "#/collections/app";
 import type { CognitiveReading } from "#/collections/types";
 import { useDecisionsScopeSymbol } from "#/components/terminal/decision-side";
 import { meterTrackVariants } from "#/components/ui/meter";
 import { Panel } from "#/components/ui/panel";
 import { Typography } from "#/components/ui/typography";
-import type { Cognition } from "#/providers/telemetry/telemetry/cognition";
 
 export const cognitiveScopes = (readings: CognitiveReading[]): string[] =>
 	[
@@ -39,36 +38,33 @@ const isConcreteSymbol = (symbol: string | undefined): symbol is string =>
 
 const METERS = [
 	{
-		key: "confidence",
-		label: "Class confidence",
-		getter: (c: Cognition) => c.confidence(),
+		key: "stability",
+		label: "Stability",
 		variant: "info",
-	},
-	{
-		key: "lookahead",
-		label: "Lookahead score",
-		getter: (c: Cognition) => c.lookaheadScore(),
-		variant: "brand",
 	},
 	{
 		key: "contrast",
 		label: "Contrast margin",
-		getter: (c: Cognition) => c.contrast(),
 		variant: "success",
+	},
+	{
+		key: "surprisal",
+		label: "Surprisal",
+		variant: "brand",
 	},
 ] as const;
 
 export const CognitiveBeam = () => {
 	const scope = useDecisionsScopeSymbol();
-	const focusSymbol = useSelector(focusStore, (state) => state);
+	const focusSymbol = useSelector(focusAtom);
 	const symbol = isConcreteSymbol(scope) ? scope : focusSymbol;
 	const root = useRef<HTMLDivElement>(null);
 
 	useEffect(() => {
-		const apply = (state: typeof cognitionStore.state) => {
+		const apply = () => {
 			if (!root.current) return;
 
-			const targetRow: Cognition | undefined = state.getLast(symbol);
+			const targetRow = signals.cognition.state[symbol]?.getLast();
 
 			const set = (q: string, value: string) => {
 				const els = root.current?.querySelectorAll<HTMLElement>(
@@ -81,19 +77,47 @@ export const CognitiveBeam = () => {
 
 			if (!targetRow) return;
 
-			set("cohort", String(targetRow.cohort()));
-			set("sequence", targetRow.sequence() || "no sequence yet");
-			set("entropy", targetRow.entropyBits().toFixed(3));
-			set("paths", String(targetRow.lookaheadPaths()));
-			set("winner", targetRow.winner() || "pending");
-			set("candidate", targetRow.candidateWinner() || "pending");
-			set("held", String(targetRow.stateHeld()));
-			set("switchConf", `${(targetRow.switchConfidence() * 100).toFixed(1)}%`);
-			set("switchThresh", `${(targetRow.switchThreshold() * 100).toFixed(1)}%`);
+			const metricMap = new Map<string, number>();
+			for (const m of targetRow.metrics) {
+				const name = typeof m.name === "string" ? m.name : "";
+				if (name) {
+					metricMap.set(name, m.hasNormalized ? m.normalized : m.raw);
+				}
+			}
+
+			const contrast = metricMap.get("contrast");
+			const surprisal = metricMap.get("surprisal");
+			const stability = metricMap.get("stability");
+
+			const sym =
+				typeof targetRow.symbol === "string" ? targetRow.symbol : "";
+			set("cohort", "—");
+			set("sequence", sym || "no sequence yet");
+			set("entropy", surprisal !== undefined ? surprisal.toFixed(3) : "—");
+			set("paths", "—");
+			set("winner", sym || "pending");
+			set("candidate", "—");
+			set("held", "false");
+			set(
+				"switchConf",
+				stability !== undefined ? `${(stability * 100).toFixed(1)}%` : "—",
+			);
+			set("switchThresh", "—");
+
+			const meterValues: Record<string, number | undefined> = {
+				stability,
+				contrast,
+				surprisal,
+			};
 
 			for (const meter of METERS) {
-				const value = meter.getter(targetRow);
-				set(meter.key, Number.isFinite(value) ? value.toFixed(3) : "—");
+				const value = meterValues[meter.key];
+				set(
+					meter.key,
+					typeof value === "number" && Number.isFinite(value)
+						? value.toFixed(3)
+						: "—",
+				);
 
 				const bar = root.current.querySelector<HTMLElement>(
 					`[data-meter="${meter.key}"]`,
@@ -104,8 +128,8 @@ export const CognitiveBeam = () => {
 			}
 		};
 
-		apply(cognitionStore.state);
-		const subscription = cognitionStore.subscribe(apply);
+		apply();
+		const subscription = signals.cognition.subscribe(apply);
 		return () => subscription.unsubscribe();
 	}, [symbol]);
 

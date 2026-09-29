@@ -1,17 +1,14 @@
 import { useSelector } from "@tanstack/react-store";
 import { shallow } from "@tanstack/store";
-import { type RingBuffer, signals } from "#/collections/app";
+import { positionsAtom } from "#/collections/app";
 import { Flex } from "#/components/ui/flex";
 import { Panel } from "#/components/ui/panel";
 import { Typography } from "#/components/ui/typography";
 import { cn } from "#/lib/utils";
-import { Holding } from "#/providers/telemetry/telemetry/holding";
-import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
-import { Position } from "#/providers/telemetry/telemetry/position";
+import type { PositionT } from "#/providers/telemetry/telemetry/position";
 
-type PositionState = typeof signals.positions.state;
-
-const value = (raw: string | null): string => raw || "—";
+const value = (raw: string | Uint8Array | null): string =>
+	typeof raw === "string" ? raw : "—";
 
 const Row = ({
 	label,
@@ -55,73 +52,23 @@ const Card = ({
 	</Panel>
 );
 
-const currentPosition = (state: PositionState | unknown, symbol: string) => {
-	if (!state || typeof state !== "object") return null;
-
-	const ring = (state as Record<string, RingBuffer<MeasurementT>>)?.[symbol];
-	if (ring && typeof ring.getLast === "function") {
-		const last = ring.getLast();
-		if (last) {
-			let pnl = "—";
-			let entry = "—";
-			let mark = "—";
-			let returnPct = "—";
-			let qty = "—";
-
-			for (const metric of last.metrics ?? []) {
-				if (metric.name === "pnl") pnl = metric.raw.toFixed(4);
-				else if (metric.name === "entry_price") entry = metric.raw.toFixed(6);
-				else if (metric.name === "mark") mark = metric.raw.toFixed(6);
-				else if (metric.name === "return_pct") returnPct = `${metric.raw.toFixed(2)}%`;
-				else if (metric.name === "quantity" || metric.name === "qty") qty = metric.raw.toFixed(4);
-			}
-
+const currentPosition = (rows: PositionT[], symbol: string) => {
+	for (const pos of rows) {
+		const holding = pos.holding;
+		if (holding?.symbol === symbol) {
+			const returnPct = holding.returnPct;
 			return {
-				status: "active",
-				quantity: qty,
-				entry,
-				mark,
-				pnl,
-				returnPct,
-			};
-		}
-	}
-
-	const frames =
-		typeof (state as { toArray?: () => unknown[] })?.toArray === "function"
-			? (state as { toArray: () => unknown[] }).toArray()
-			: Array.isArray(state)
-				? state
-				: [];
-	const position = new Position();
-	const holding = new Holding();
-
-	for (let frameIndex = frames.length - 1; frameIndex >= 0; frameIndex--) {
-		const frame = frames[frameIndex] as {
-			rowsLength?: () => number;
-			rows?: (idx: number, p?: Position) => Position | null;
-		};
-		if (!frame || typeof frame.rowsLength !== "function" || !frame.rows) continue;
-
-		for (let rowIndex = 0; rowIndex < frame.rowsLength(); rowIndex++) {
-			const row = frame.rows(rowIndex, position);
-			const rowHolding = row?.holding(holding);
-
-			if (rowHolding?.symbol() !== symbol) {
-				continue;
-			}
-
-			const returnPct = rowHolding.returnPct();
-
-			return {
-				status: value(rowHolding.status() ?? row?.status() ?? null),
-				quantity: value(rowHolding.qty()),
-				entry: value(rowHolding.entryPrice()),
-				mark: value(rowHolding.mark()),
-				pnl: value(rowHolding.pnl()),
-				returnPct: Number.isFinite(returnPct)
-					? `${returnPct.toFixed(2)}%`
-					: "—",
+				status: value(holding.status ?? pos.status ?? null),
+				quantity: value(holding.qty ?? null),
+				entry: value(holding.entryPrice ?? null),
+				mark: value(holding.mark ?? null),
+				pnl: value(holding.pnl ?? null),
+				returnPct:
+					returnPct !== null &&
+					returnPct !== undefined &&
+					Number.isFinite(returnPct)
+						? `${returnPct.toFixed(2)}%`
+						: "—",
 			};
 		}
 	}
@@ -131,8 +78,8 @@ const currentPosition = (state: PositionState | unknown, symbol: string) => {
 
 export const ThesisDetailRail = ({ symbol }: { symbol: string }) => {
 	const position = useSelector(
-		signals.positions,
-		(state) => currentPosition(state, symbol),
+		positionsAtom,
+		(rows) => currentPosition(rows, symbol),
 		{ compare: shallow },
 	);
 

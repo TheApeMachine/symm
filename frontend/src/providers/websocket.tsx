@@ -2,10 +2,12 @@ import { batch as storeBatch } from "@tanstack/react-store";
 import * as flatbuffers from "flatbuffers";
 import { useEffect } from "react";
 import {
+	decisionsAtom,
 	focusAtom,
 	observeSymbols,
 	onlineAtom,
 	positionCountAtom,
+	positionsAtom,
 	RingBuffer,
 	routeAtom,
 	signals,
@@ -20,6 +22,8 @@ import { Frame } from "#/providers/telemetry/telemetry/frame";
 import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
 import { MeasurementsFrame } from "#/providers/telemetry/telemetry/measurements-frame";
 import { Message } from "#/providers/telemetry/telemetry/message";
+import { PositionsFrame } from "#/providers/telemetry/telemetry/positions-frame";
+import { StrategyFrame } from "#/providers/telemetry/telemetry/strategy-frame";
 
 let globalWsWorker: Worker | null = null;
 
@@ -92,37 +96,6 @@ function dispatchMeasurements(frame: MeasurementsFrame) {
 
 		ring.add(row.unpack());
 		touched.add(source);
-
-		if (source === "training") {
-			const unpacked = row.unpack();
-			let cashVal: number | null = null;
-			let unrealizedVal: number | null = null;
-			let equityVal: number | null = null;
-			let posCount: number | null = null;
-
-			for (const metric of unpacked.metrics ?? []) {
-				if (metric.name === "cash") cashVal = metric.raw;
-				if (metric.name === "unrealized") unrealizedVal = metric.raw;
-				if (metric.name === "equity") equityVal = metric.raw;
-				if (metric.name === "positions") posCount = metric.raw;
-			}
-
-			if (
-				cashVal !== null &&
-				equityVal !== null &&
-				(cashVal > 0 || equityVal > 0)
-			) {
-				updateEquity(
-					cashVal.toFixed(2),
-					unrealizedVal !== null ? unrealizedVal.toFixed(2) : "0.00",
-					equityVal.toFixed(2),
-				);
-			}
-
-			if (posCount !== null) {
-				positionCountAtom.set(posCount);
-			}
-		}
 	}
 
 	for (const source of touched) {
@@ -190,6 +163,25 @@ export const WsFeed = () => {
 									equityFrame.unrealized(),
 									equityFrame.equity(),
 								);
+							}
+							return;
+						}
+
+						if (frameType === Frame.PositionsFrame) {
+							const positionsFrame = message.frame(new PositionsFrame());
+							if (positionsFrame) {
+								const rows = positionsFrame.unpack().rows;
+								positionsAtom.set(rows);
+								positionCountAtom.set(rows.length);
+							}
+							return;
+						}
+
+						if (frameType === Frame.StrategyFrame) {
+							const strategyFrame = message.frame(new StrategyFrame());
+							if (strategyFrame) {
+								const decisions = strategyFrame.unpack().decisions;
+								decisionsAtom.set(decisions);
 							}
 							return;
 						}

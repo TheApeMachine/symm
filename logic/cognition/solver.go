@@ -376,6 +376,10 @@ func (solver *Solver) processBatch(
 	// 2. Evaluate if appending this category causes a Sequence Break
 	broken, _ := solver.evalSequenceBreak(activeTokens, categoryToken)
 
+	if !broken || len(activeTokens) == 0 {
+		activeTokens = append(activeTokens, categoryToken)
+	}
+
 	if broken && len(activeTokens) > 0 {
 		// --- SEQUENCE BREAK DETECTED ---
 		oldSequenceBytes := solver.sequenceBytes(activeTokens)
@@ -421,17 +425,10 @@ func (solver *Solver) processBatch(
 
 		// Start fresh sequence buffer with new category
 		activeTokens = []string{categoryToken}
+	}
 
-		if observedRegime.Type != types.CategoryTypeNone {
-			activeRegime = observedRegime
-		}
-	} else {
-		// --- SEQUENCE CONTINUES ---
-		activeTokens = append(activeTokens, categoryToken)
-
-		if observedRegime.Type != types.CategoryTypeNone {
-			activeRegime = observedRegime
-		}
+	if observedRegime.Type != types.CategoryTypeNone {
+		activeRegime = observedRegime
 	}
 
 	state.activeTokens = activeTokens

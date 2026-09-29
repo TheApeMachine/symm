@@ -37,10 +37,10 @@ func (op *WeightedMean) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointe
 			op.mass += item.Weight
 			op.total += item.Weight * item.Value
 
+			op.out = 0
+
 			if op.mass != 0 {
 				op.out = op.total / op.mass
-			} else {
-				op.out = 0
 			}
 
 			if !yield(unsafe.Pointer(&op.out)) {
@@ -83,6 +83,8 @@ func (op *WeightedVariance) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Po
 			op.first += item.Weight * item.Value
 			op.second += item.Weight * item.Value * item.Value
 
+			op.out = 0
+
 			if op.mass != 0 {
 				mean := op.first / op.mass
 				val := op.second/op.mass - mean*mean
@@ -92,8 +94,6 @@ func (op *WeightedVariance) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Po
 				}
 
 				op.out = val
-			} else {
-				op.out = 0
 			}
 
 			if !yield(unsafe.Pointer(&op.out)) {

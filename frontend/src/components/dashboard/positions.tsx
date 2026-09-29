@@ -1,13 +1,11 @@
 import { useSelector } from "@tanstack/react-store";
 import { useEffect, useState } from "react";
-import { type RingBuffer, signals } from "#/collections/app";
+import { positionsAtom } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
 import { Flex } from "#/components/ui/flex";
 import { List } from "#/components/ui/list";
 import { Typography } from "#/components/ui/typography";
-import { Holding } from "#/providers/telemetry/telemetry/holding";
-import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
-import { Position } from "#/providers/telemetry/telemetry/position";
+import type { PositionT } from "#/providers/telemetry/telemetry/position";
 import { sendPositionExit } from "#/providers/websocket";
 import { cn } from "@/lib/utils";
 
@@ -39,9 +37,6 @@ const pnlTone = (value: number): "up" | "down" | "f3" => {
 	return "f3";
 };
 
-const positionObject = new Position();
-const holdingObject = new Holding();
-
 type PositionCardData = {
 	symbol: string;
 	status: string;
@@ -52,114 +47,44 @@ type PositionCardData = {
 	returnPct: string;
 };
 
-const selectPositions = (state: unknown): PositionCardData[] => {
-	if (!state || typeof state !== "object") {
-		return [];
-	}
-
-	const maybeFrame =
-		typeof (state as { findLast?: (p: () => boolean) => unknown }).findLast === "function"
-			? (state as { findLast: (p: () => boolean) => unknown }).findLast(() => true)
-			: Array.isArray(state)
-				? state[state.length - 1]
-				: state;
-
-	if (
-		maybeFrame &&
-		typeof (maybeFrame as { rowsLength?: () => number }).rowsLength === "function"
-	) {
-		const frame = maybeFrame as {
-			rowsLength: () => number;
-			rows: (idx: number, obj?: Position) => Position | null;
-		};
-		const fallbackPositions: PositionCardData[] = [];
-
-		for (let rowIndex = 0; rowIndex < frame.rowsLength(); rowIndex++) {
-			const currentPosition = frame.rows(rowIndex, positionObject);
-			if (!currentPosition) {
-				continue;
-			}
-
-			const currentHolding = currentPosition.holding(holdingObject);
-			if (!currentHolding) {
-				continue;
-			}
-
-			const currentSymbol = currentHolding.symbol() ?? "";
-			if (!currentSymbol) {
-				continue;
-			}
-
-			const positionStatus =
-				currentHolding.status() ?? currentPosition.status() ?? "—";
-			if (positionStatus === "closed") {
-				continue;
-			}
-
-			const rawPnl = currentHolding.pnl();
-			const pnlNum =
-				typeof rawPnl === "number"
-					? rawPnl
-					: typeof rawPnl === "string" && Number.isFinite(Number(rawPnl))
-						? Number(rawPnl)
-						: 0;
-
-			fallbackPositions.push({
-				symbol: currentSymbol,
-				status: positionStatus,
-				pnl: `${formatValue(currentHolding.pnl(), 4)} USD`,
-				pnlValue: pnlNum,
-				entryPrice: formatValue(currentHolding.entryPrice(), 6),
-				mark: formatValue(currentHolding.mark(), 6),
-				returnPct: `${formatValue(currentHolding.returnPct(), 2)}%`,
-			});
-		}
-
-		return fallbackPositions.sort((leftPosition, rightPosition) =>
-			leftPosition.symbol.localeCompare(rightPosition.symbol),
-		);
-	}
-
+const selectPositions = (rows: PositionT[]): PositionCardData[] => {
 	const result: PositionCardData[] = [];
-	for (const [symbol, ring] of Object.entries(
-		state as Record<string, RingBuffer<MeasurementT>>,
-	)) {
-		if (!ring || typeof ring.getLast !== "function") continue;
-		const last = ring.getLast();
-		if (!last) continue;
 
-		let pnl = "0.0000 USD";
-		let pnlVal = 0;
-		let entryPrice = "—";
-		let mark = "—";
-		let returnPct = "—";
+	for (const currentPosition of rows) {
+		const currentHolding = currentPosition.holding;
+		if (!currentHolding) continue;
 
-		for (const metric of last.metrics ?? []) {
-			if (metric.name === "pnl") {
-				pnlVal = metric.raw;
-				pnl = `${metric.raw.toFixed(4)} USD`;
-			} else if (metric.name === "entry_price") {
-				entryPrice = metric.raw.toFixed(6);
-			} else if (metric.name === "mark") {
-				mark = metric.raw.toFixed(6);
-			} else if (metric.name === "return_pct") {
-				returnPct = `${metric.raw.toFixed(2)}%`;
-			}
-		}
+		const currentSymbol =
+			typeof currentHolding.symbol === "string" ? currentHolding.symbol : "";
+		if (!currentSymbol) continue;
+
+		const rawStatus = currentHolding.status ?? currentPosition.status;
+		const positionStatus =
+			typeof rawStatus === "string" ? rawStatus : "—";
+		if (positionStatus === "closed") continue;
+
+		const rawPnl = currentHolding.pnl;
+		const pnlNum =
+			typeof rawPnl === "number"
+				? rawPnl
+				: typeof rawPnl === "string" && Number.isFinite(Number(rawPnl))
+					? Number(rawPnl)
+					: 0;
 
 		result.push({
-			symbol:
-				typeof last.symbol === "string" && last.symbol ? last.symbol : symbol,
-			status: "active",
-			pnl,
-			pnlValue: pnlVal,
-			entryPrice,
-			mark,
-			returnPct,
+			symbol: currentSymbol,
+			status: positionStatus,
+			pnl: `${formatValue(currentHolding.pnl, 4)} USD`,
+			pnlValue: pnlNum,
+			entryPrice: formatValue(currentHolding.entryPrice, 6),
+			mark: formatValue(currentHolding.mark, 6),
+			returnPct: `${formatValue(currentHolding.returnPct, 2)}%`,
 		});
 	}
 
-	return result.sort((left, right) => left.symbol.localeCompare(right.symbol));
+	return result.sort((leftPosition, rightPosition) =>
+		leftPosition.symbol.localeCompare(rightPosition.symbol),
+	);
 };
 
 const positionsEqual = (
@@ -187,7 +112,7 @@ const positionsEqual = (
 };
 
 export const Positions = () => {
-	const positions = useSelector(signals.positions, selectPositions, {
+	const positions = useSelector(positionsAtom, selectPositions, {
 		compare: positionsEqual,
 	});
 	const [pendingExits, setPendingExits] = useState<ReadonlySet<string>>(

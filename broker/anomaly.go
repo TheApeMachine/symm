@@ -1,8 +1,8 @@
 package broker
 
 import (
-	"maps"
 	"context"
+	"maps"
 	"sync"
 	"sync/atomic"
 )
@@ -67,7 +67,7 @@ func NewAnomalyMonitor(ctx context.Context, _ int) *AnomalyMonitor {
 
 func (monitor *AnomalyMonitor) lookup(symbol string) *symbolState {
 	current := monitor.symbols.Load()
-	
+
 	if current != nil {
 		if state, ok := (*current)[symbol]; ok {
 			return state
@@ -212,7 +212,7 @@ func (monitor *AnomalyMonitor) HasSevereFault(symbol string) bool {
 	}
 
 	state, ok := (*current)[symbol]
-	
+
 	if !ok {
 		return false
 	}
@@ -248,13 +248,13 @@ func (monitor *AnomalyMonitor) Count(symbol string) uint64 {
 	}
 
 	current := monitor.symbols.Load()
-	
+
 	if current == nil {
 		return 0
 	}
 
 	state, ok := (*current)[symbol]
-	
+
 	if !ok {
 		return 0
 	}

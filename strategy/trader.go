@@ -19,19 +19,24 @@ import (
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 )
 
+type PositionCloseCallback func(symbol string, returnFraction float64, fee float64)
+
 /*
 Trader is responsible for talking to the broker and managing positions.
 */
 type Trader struct {
 	*runtime.System
-	desk         *broker.Desk
-	balance      *broker.Balance
-	price        *broker.Price
-	positions    sync.Map
-	symbolLocks  sync.Map
-	decisions    atomic.Pointer[[]*wire.DecisionT]
-	admissionMu  sync.Mutex
-	reservedCash *decimal.Decimal
+	desk             *broker.Desk
+	balance          *broker.Balance
+	price            *broker.Price
+	positions        sync.Map
+	symbolLocks      sync.Map
+	positionsVersion atomic.Uint64
+	decisionsVersion atomic.Uint64
+	decisions        atomic.Pointer[[]*wire.DecisionT]
+	admissionMu      sync.Mutex
+	reservedCash     *decimal.Decimal
+	onPositionClosed PositionCloseCallback
 }
 
 func (trader *Trader) symbolLock(symbol string) *sync.Mutex {
@@ -52,6 +57,9 @@ func NewTrader(
 		price:        price,
 		reservedCash: decimal.NewFromInt64(0).SetScale(decimal.DefaultScale),
 	}
+
+	trader.positionsVersion.Store(1)
+	trader.decisionsVersion.Store(1)
 
 	initialDecisions := make([]*wire.DecisionT, 0, 50)
 	trader.decisions.Store(&initialDecisions)
@@ -168,6 +176,7 @@ func (trader *Trader) OnAction(symbol string, action Action) {
 
 		reg := position.NewRegulator(symbol)
 		trader.positions.Store(symbol, reg)
+		trader.positionsVersion.Add(1)
 		trader.admissionMu.Unlock()
 
 		defer func() {
@@ -183,6 +192,7 @@ func (trader *Trader) OnAction(symbol string, action Action) {
 
 		if err := trader.desk.EnterWithRegulator(reg, spend); err != nil {
 			trader.positions.Delete(symbol)
+			trader.positionsVersion.Add(1)
 			trader.RecordDecision(symbol, "blocked", 0.0, fmt.Sprintf("enter failed: %v", err))
 			return
 		}
@@ -199,6 +209,7 @@ func (trader *Trader) OnAction(symbol string, action Action) {
 
 		if !ok || reg == nil {
 			trader.positions.Delete(symbol)
+			trader.positionsVersion.Add(1)
 			return
 		}
 
@@ -252,6 +263,7 @@ func (trader *Trader) RecordDecision(symbol string, action string, confidence fl
 		newSlice = append(newSlice, decision)
 
 		if trader.decisions.CompareAndSwap(oldPtr, &newSlice) {
+			trader.decisionsVersion.Add(1)
 			break
 		}
 	}
@@ -546,14 +558,50 @@ func (trader *Trader) ApplyExecution(exec *kraken.Execution) {
 
 		if err := matched.Reconcile(item); err != nil {
 			errnie.Error(err)
+		} else {
+			trader.positionsVersion.Add(1)
 		}
 
 		if matched.IsClosed() {
+			if trader.onPositionClosed != nil && matched.Basis != nil && matched.Basis.Sign() > 0 && matched.Realized != nil {
+				returnFrac := matched.Realized.Div(matched.Basis).Float64()
+				fee := 0.0
+
+				if feeDec := matched.Fee(); feeDec != nil {
+					fee = feeDec.Float64()
+				}
+
+				trader.onPositionClosed(matched.Symbol, returnFrac, fee)
+			}
+
 			trader.positions.Delete(matched.Symbol)
+			trader.positionsVersion.Add(1)
 		}
 
 		mu.Unlock()
 	}
+}
+
+func (trader *Trader) SetOnPositionClosed(fn PositionCloseCallback) {
+	if trader != nil {
+		trader.onPositionClosed = fn
+	}
+}
+
+func (trader *Trader) PositionsVersion() uint64 {
+	if trader == nil {
+		return 0
+	}
+
+	return trader.positionsVersion.Load()
+}
+
+func (trader *Trader) DecisionsVersion() uint64 {
+	if trader == nil {
+		return 0
+	}
+
+	return trader.decisionsVersion.Load()
 }
 
 func safeSub(a, b *decimal.Decimal) *decimal.Decimal {

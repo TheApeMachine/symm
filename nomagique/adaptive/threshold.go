@@ -49,10 +49,10 @@ func (op *Threshold) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 				return
 			}
 
+			op.out = 1
+
 			if current.Dispersion > 0 {
 				op.out = current.Dispersion * coeffVal
-			} else {
-				op.out = 1
 			}
 
 			if !yield(unsafe.Pointer(&op.out)) {

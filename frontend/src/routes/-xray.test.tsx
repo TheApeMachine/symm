@@ -3,13 +3,13 @@ import { act, cleanup, render, waitFor } from "@testing-library/react";
 import type { ComponentType } from "react";
 import { RingBuffer } from "#/collections/ring";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { focusAtom, signals } from "#/collections/app";
+import { focusAtom, resonanceStore } from "#/collections/app";
 import { paintXrayLatent } from "#/components/terminal/xray-latent";
 import {
 	clearRetainedTelemetry,
 	latentPointsFromFrames,
 } from "#/components/terminal/xray-view";
-import { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
+import { ResonanceT } from "#/providers/telemetry/telemetry/resonance";
 import { Route } from "./xray";
 
 vi.mock("#/components/terminal/xray-hierarchy", () => ({
@@ -26,17 +26,13 @@ vi.mock("#/components/terminal/xray-panels", () => ({
 	XrayManifoldPanel: () => null,
 }));
 
-class TestResonanceMeasurement extends MeasurementT {
-	embedding: number[] = [];
-}
-
 const publish = (symbol: string, embedding: number[]) => {
-	const row = new TestResonanceMeasurement();
+	const row = new ResonanceT();
 	row.symbol = symbol;
 	row.embedding = embedding;
-	const ring = new RingBuffer<MeasurementT>(1);
+	const ring = new RingBuffer<ResonanceT>(1);
 	ring.add(row);
-	signals.resonance.setState((state: Record<string, RingBuffer<MeasurementT>>) => ({
+	resonanceStore.setState((state) => ({
 		...state,
 		[symbol]: ring,
 	}));
@@ -50,7 +46,7 @@ const points = () => {
 describe("XrayPaintBridge", () => {
 	beforeEach(() => {
 		clearRetainedTelemetry();
-		signals.resonance.setState(() => ({}));
+		resonanceStore.setState(() => ({}));
 		focusAtom.set("BTC/USD");
 		vi.clearAllMocks();
 	});

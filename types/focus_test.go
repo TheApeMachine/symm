@@ -31,11 +31,14 @@ func TestFocus(t *testing.T) {
 			So(Allows(""), ShouldBeTrue)
 		})
 
-		Convey("Allows admits all symbols when focus is empty, wildcard, or all", func() {
+		Convey("Empty focus fails closed and drops symbol measurements", func() {
 			SetFocus("")
-			So(Allows("BTC/USD"), ShouldBeTrue)
-			So(Allows("ETH/USD"), ShouldBeTrue)
+			So(Allows("BTC/USD"), ShouldBeFalse)
+			So(Allows("ETH/USD"), ShouldBeFalse)
+			So(Allows(""), ShouldBeTrue)
+		})
 
+		Convey("Explicit wildcard or all admits all symbols", func() {
 			SetFocus("*")
 			So(Allows("BTC/USD"), ShouldBeTrue)
 			So(Allows("ETH/USD"), ShouldBeTrue)

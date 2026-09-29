@@ -29,9 +29,9 @@ func (op *Kish) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			op.sum += val
 			op.energy += val * val
 
-			if op.energy == 0 {
-				op.out = 0
-			} else {
+			op.out = 0
+
+			if op.energy != 0 {
 				op.out = (op.sum * op.sum) / op.energy
 			}
 
@@ -72,9 +72,9 @@ func (op *KishMaturity) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointe
 		for arriving := range in {
 			effective := *(*float64)(arriving)
 
-			if effective <= 1 {
-				op.out = 0
-			} else {
+			op.out = 0
+
+			if effective > 1 {
 				op.out = 1 - 1/effective
 			}
 

@@ -50,7 +50,9 @@ func (op *Decay) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 
 			if op.linear {
 				factor = math.Max(0, 1-elapsed)
-			} else if op.shape != nil {
+			}
+
+			if !op.linear && op.shape != nil {
 				shapeIn := func(yieldShape func(unsafe.Pointer) bool) {
 					yieldShape(unsafe.Pointer(&elapsed))
 				}

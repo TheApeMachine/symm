@@ -360,9 +360,14 @@ func (op *Pool[T]) fetchTask(worker *poolWorker) (task *poolTask[T], ok bool) {
 		op.parked = append(op.parked, worker)
 		op.unlock()
 
+		resetTimer := true
+
 		if worker.idleTimer == nil {
 			worker.idleTimer = time.NewTimer(op.lifetime)
-		} else {
+			resetTimer = false
+		}
+
+		if resetTimer {
 			worker.idleTimer.Reset(op.lifetime)
 		}
 

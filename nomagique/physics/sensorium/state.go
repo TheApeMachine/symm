@@ -115,7 +115,9 @@ func (state *State) append(incoming *State, index int) {
 
 	if len(incoming.PilotVel) >= index*3+3 {
 		state.PilotVel = append(state.PilotVel, incoming.PilotVel[index*3:index*3+3]...)
-	} else {
+	}
+
+	if len(incoming.PilotVel) < index*3+3 {
 		state.PilotVel = append(state.PilotVel, 0, 0, 0)
 	}
 

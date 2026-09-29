@@ -35,14 +35,16 @@ Otherwise, arriving values are *StandardizeInput.
 */
 func NewStandardize(params ...float64) core.Primitive {
 	op := &Standardize{scale: 1}
-	if len(params) >= 2 {
-		op.center = params[0]
-		op.scale = params[1]
-		op.fixed = true
-	} else if len(params) == 1 {
+
+	if len(params) >= 1 {
 		op.center = params[0]
 		op.fixed = true
 	}
+
+	if len(params) >= 2 {
+		op.scale = params[1]
+	}
+
 	return op
 }
 
@@ -51,18 +53,24 @@ func (op *Standardize) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 		for arriving := range in {
 			if op.fixed {
 				val := *(*float64)(arriving)
-				if op.scale == 0 {
-					op.out = 0
-				} else {
+				op.out = 0
+
+				if op.scale != 0 {
 					op.out = (val - op.center) / op.scale
 				}
-			} else {
-				input := *(*StandardizeInput)(arriving)
-				if input.Scale == 0 {
-					op.out = 0
-				} else {
-					op.out = (input.Value - input.Center) / input.Scale
+
+				if !yield(unsafe.Pointer(&op.out)) {
+					return
 				}
+
+				continue
+			}
+
+			input := *(*StandardizeInput)(arriving)
+			op.out = 0
+
+			if input.Scale != 0 {
+				op.out = (input.Value - input.Center) / input.Scale
 			}
 
 			if !yield(unsafe.Pointer(&op.out)) {

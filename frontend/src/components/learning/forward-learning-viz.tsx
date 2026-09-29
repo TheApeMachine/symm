@@ -4,6 +4,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
 	focusAtom,
+	positionCountAtom,
 	type RingBuffer,
 	signals,
 } from "#/collections/app";
@@ -32,12 +33,33 @@ export const ForwardLearningViz = () => {
 	// Real tape points accumulated from the live training measurements
 	const [points, setPoints] = useState<ForwardTapePoint[]>([]);
 
-	// Real metrics and stats
-	const [meanEdge, setMeanEdge] = useState(0);
-	const [wins, setWins] = useState(0);
-	const [losses, setLosses] = useState(0);
+	// Real stage & execution mode
+	const [stageCode, setStageCode] = useState(0);
+	const [stageName, setStageName] = useState("MODEL DEVELOPMENT");
+	const [stageBlocker, setStageBlocker] = useState("");
+	const [openPositionsCount, setOpenPositionsCount] = useState(0);
+
+	// Precursor & prediction
+	const [precursorLength, setPrecursorLength] = useState(0);
+	const [frozenAction, setFrozenAction] = useState("WAIT");
+	const [delayedLabel, setDelayedLabel] = useState("RESOLVING");
+
+	// Historical held-out metrics
+	const [histOpportunities, setHistOpportunities] = useState(0);
+	const [histCorrectEnter, setHistCorrectEnter] = useState(0);
+	const [histMissedEnter, setHistMissedEnter] = useState(0);
+	const [histFalseEnter, setHistFalseEnter] = useState(0);
+	const [histMeanReturn, setHistMeanReturn] = useState(0);
+	const [histLowerBound, setHistLowerBound] = useState(0);
+
+	// Forward paper metrics
+	const [fwdPredictions, setFwdPredictions] = useState(0);
+	const [fwdPaperTrades, setFwdPaperTrades] = useState(0);
+	const [fwdPaperMeanReturn, setFwdPaperMeanReturn] = useState(0);
+	const [fwdPaperLowerBound, setFwdPaperLowerBound] = useState(0);
+
+	// Overall counters
 	const [evaluatedCount, setEvaluatedCount] = useState(0);
-	const [globalPnl, setGlobalPnl] = useState(0);
 
 	// Real Radix Trie branches fetched from backend engine
 	const [trieBranches, setTrieBranches] = useState<TrieBranch[]>([]);
@@ -47,7 +69,7 @@ export const ForwardLearningViz = () => {
 
 	// Real excursion markers if active
 	const [excursionEvent, setExcursionEvent] = useState<{
-		type: "UPWARD EXCURSION" | "DOWNWARD EXCURSION" | "STAGNATION";
+		type: "UPWARD EXCURSION" | "DOWNWARD EXCURSION" | "CHOPPY MARKET" | "FLAT TAPE";
 		magnitude: number;
 		marks: { A: number; B: number; C: number };
 		entryIdx: number | null;
@@ -58,15 +80,21 @@ export const ForwardLearningViz = () => {
 	const [currentSymbol, setCurrentSymbol] = useState(focusAtom.get() || "");
 
 	useEffect(() => {
-		const unsub = focusAtom.subscribe((state) => {
+		const unsubFocus = focusAtom.subscribe((state) => {
 			if (state) {
 				setCurrentSymbol(state);
 				setPoints([]);
 				setExcursionEvent(null);
 			}
 		});
+		const unsubPos = positionCountAtom.subscribe((count) => {
+			setOpenPositionsCount(count);
+		});
+		setOpenPositionsCount(positionCountAtom.get());
+
 		return () => {
-			unsub?.unsubscribe?.();
+			unsubFocus?.unsubscribe?.();
+			unsubPos?.unsubscribe?.();
 		};
 	}, []);
 
@@ -129,17 +157,56 @@ export const ForwardLearningViz = () => {
 					metricMap[String(m.name)] = m.raw ?? 0;
 				}
 
-				const edgeVal = metricMap.edge ?? 0;
 				const evalCount = metricMap.evaluated ?? 0;
-				const winVal = metricMap.wins ?? 0;
-				const lossVal = metricMap.losses ?? 0;
-				const pnlVal = metricMap.pnl ?? 0;
-
-				setMeanEdge(edgeVal);
 				setEvaluatedCount(Math.floor(evalCount));
-				setWins(Math.floor(winVal));
-				setLosses(Math.floor(lossVal));
-				setGlobalPnl(pnlVal);
+
+				// Update stage
+				const sCode = metricMap.stage_code ?? 0;
+				setStageCode(sCode);
+				let sName = "MODEL DEVELOPMENT";
+				if (sCode === 1) sName = "HISTORICAL VALIDATION";
+				if (sCode === 2) sName = "FORWARD PAPER LEARNING";
+				if (sCode === 3) sName = "FORWARD SKILL DEMONSTRATED";
+
+				if (measurement.provenance) {
+					for (const p of measurement.provenance) {
+						if (p?.name === "stage" && p.value) {
+							sName = String(p.value);
+						}
+						if (p?.name === "stage_blocker" && p.value !== undefined) {
+							setStageBlocker(String(p.value));
+						}
+					}
+				}
+				setStageName(sName);
+
+				// Precursor & prediction
+				const pLen = Math.floor(metricMap.precursor_length ?? 0);
+				setPrecursorLength(pLen);
+
+				const actRaw = metricMap.action ?? 0;
+				setFrozenAction(actRaw === 1 ? "ENTER" : actRaw === 2 ? "EXIT" : "WAIT");
+
+				const extRaw = metricMap.excursion_type ?? 0;
+				if (extRaw === 1) setDelayedLabel("UP");
+				else if (extRaw === 2) setDelayedLabel("DOWN");
+				else if (extRaw === 3) setDelayedLabel("CHOP");
+				else if (extRaw === 4) setDelayedLabel("FLAT");
+				else setDelayedLabel("RESOLVING");
+
+				// Historical held-out
+				setHistOpportunities(Math.floor(metricMap.hist_opportunities ?? 0));
+				setHistCorrectEnter(Math.floor(metricMap.hist_correct_enter ?? 0));
+				setHistMissedEnter(Math.floor(metricMap.hist_missed_enter ?? 0));
+				setHistFalseEnter(Math.floor(metricMap.hist_false_enter ?? 0));
+				setHistMeanReturn(metricMap.hist_mean_return ?? 0);
+				setHistLowerBound(metricMap.hist_lower_bound ?? 0);
+
+				// Forward paper
+				setFwdPredictions(Math.floor(metricMap.fwd_enter_predictions ?? 0));
+				setFwdPaperTrades(Math.floor(metricMap.fwd_paper_trades ?? 0));
+				setFwdPaperMeanReturn(metricMap.fwd_paper_mean_return ?? 0);
+				setFwdPaperLowerBound(metricMap.fwd_paper_lower_bound ?? 0);
 
 				// Accumulate real point directly from backend measurement
 				const rawPrice =
@@ -164,7 +231,6 @@ export const ForwardLearningViz = () => {
 				}
 
 				// Record real activity log entry
-				const actRaw = metricMap.action ?? 0;
 				const atNs = measurement.at ?? 0n;
 				const timeStr =
 					atNs > 0n
@@ -181,7 +247,7 @@ export const ForwardLearningViz = () => {
 						id: nextLogId++,
 						time: timeStr,
 						message: `${actStr} · edge ${basis(metricMap.edge ?? 0)}`,
-						pnl: edgeVal,
+						pnl: metricMap.edge ?? 0,
 						action: actStr,
 					};
 					return [entry, ...prev].slice(0, 10);
@@ -192,12 +258,10 @@ export const ForwardLearningViz = () => {
 					metricMap.excursion_type !== undefined &&
 					metricMap.excursion_type > 0
 				) {
-					const extType =
-						metricMap.excursion_type === 1
-							? "UPWARD EXCURSION"
-							: metricMap.excursion_type === 2
-								? "DOWNWARD EXCURSION"
-								: "STAGNATION";
+					let extType: "UPWARD EXCURSION" | "DOWNWARD EXCURSION" | "CHOPPY MARKET" | "FLAT TAPE" = "UPWARD EXCURSION";
+					if (metricMap.excursion_type === 2) extType = "DOWNWARD EXCURSION";
+					if (metricMap.excursion_type === 3) extType = "CHOPPY MARKET";
+					if (metricMap.excursion_type === 4) extType = "FLAT TAPE";
 
 					setExcursionEvent({
 						type: extType,
@@ -283,7 +347,14 @@ export const ForwardLearningViz = () => {
 		};
 	}, [points, tapeDim.width, tapeDim.height]);
 
-	const totalOutcomes = Math.max(wins + losses, 1);
+	const isForward = stageCode >= 2;
+	const precursorTokens =
+		precursorLength === 0
+			? ["I₀"]
+			: Array.from(
+					{ length: Math.min(precursorLength, 8) },
+					(_, i) => `I${i}`,
+				);
 
 	return (
 		<div className="flex flex-col w-full h-full gap-2 font-mono text-[11px] bg-(--bg) p-2 overflow-hidden text-(--f2)">
@@ -294,8 +365,16 @@ export const ForwardLearningViz = () => {
 					{/* Tape Header */}
 					<div className="h-8 border-(--line) border-b bg-(--sunken) flex items-center px-3 justify-between text-(--f3) shrink-0">
 						<div className="flex items-center gap-2">
-							<span className="text-(--acc) font-bold">
-								MODEL TRAINING TAPE
+							<span
+								data-l="tape-title"
+								className={cn(
+									"font-bold px-1.5 py-0.5 rounded text-[10px]",
+									isForward
+										? "bg-(--acc)/10 text-(--acc) border border-(--acc)/30"
+										: "bg-(--info)/10 text-(--info) border border-(--info)/30",
+								)}
+							>
+								{isForward ? "LIVE FORWARD PAPER TAPE" : "HISTORICAL REPLAY TAPE"}
 							</span>
 							<span className="bg-(--surface) border-(--line) border px-1.5 py-0.5 rounded text-[10px] text-(--f1)">
 								{currentSymbol}
@@ -319,9 +398,9 @@ export const ForwardLearningViz = () => {
 								</span>
 							)}
 							<span className="text-[10px] uppercase tracking-widest text-(--f4)">
-								Coordinate{" "}
-								<span className="border-(--line) border text-(--f2) px-1 rounded ml-1">
-									midpoint
+								STAGE:{" "}
+								<span data-l="training-stage" className="border-(--line) border text-(--f2) px-1 rounded ml-1 font-bold">
+									{stageName}
 								</span>
 							</span>
 							<button
@@ -341,7 +420,7 @@ export const ForwardLearningViz = () => {
 
 					{/* Confirmed Excursion Banner */}
 					<AnimatePresence>
-						{excursionEvent && excursionEvent.type !== "STAGNATION" && (
+						{excursionEvent && (
 							<motion.div
 								initial={{ height: 0, opacity: 0 }}
 								animate={{ height: 22, opacity: 1 }}
@@ -350,7 +429,9 @@ export const ForwardLearningViz = () => {
 									"border-b flex items-center px-3 text-[10px] font-bold z-10 shrink-0",
 									excursionEvent.type === "UPWARD EXCURSION"
 										? "bg-(--up)/10 border-(--up)/20 text-(--up)"
-										: "bg-(--down)/10 border-(--down)/20 text-(--down)",
+										: excursionEvent.type === "DOWNWARD EXCURSION"
+											? "bg-(--down)/10 border-(--down)/20 text-(--down)"
+											: "bg-(--sunken) border-(--line) text-(--f3)",
 								)}
 							>
 								<span>
@@ -371,7 +452,7 @@ export const ForwardLearningViz = () => {
 					<div ref={tapeRef} className="flex-1 relative overflow-hidden">
 						{points.length === 0 && (
 							<div className="absolute inset-0 flex items-center justify-center text-(--f4) text-xs tracking-wider">
-								Awaiting model training tape stream for {currentSymbol}...
+								Awaiting {isForward ? "live market forward" : "historical replay"} tape stream for {currentSymbol}...
 							</div>
 						)}
 
@@ -430,7 +511,7 @@ export const ForwardLearningViz = () => {
 									</g>
 								)}
 
-								{/* Hindsight Markers A, B, C and Agent Decisions */}
+								{/* Hindsight Markers A, B, C and Decisions */}
 								{excursionEvent && points.length > 0 && (() => {
 									const resolveIdx = (tickSeq: number | null): number | null => {
 										if (tickSeq === null || tickSeq <= 0 || points.length === 0) return null;
@@ -514,7 +595,7 @@ export const ForwardLearningViz = () => {
 												);
 											})}
 
-											{/* Agent Entry Marker */}
+											{/* Entry Boundary Marker (Rule 42: OPPORTUNITY B vs PAPER ENTER) */}
 											{entryPtIdx !== null && entryPtIdx >= 0 && entryPtIdx < points.length && (
 												<g
 													transform={`translate(${xScale(entryPtIdx)}, ${yScale(points[entryPtIdx].y)})`}
@@ -527,7 +608,7 @@ export const ForwardLearningViz = () => {
 														fontSize="9px"
 														fontWeight="bold"
 													>
-														ENTER
+														{isForward ? "PAPER ENTER" : "OPPORTUNITY B"}
 													</text>
 													<line
 														y2={tapeDim.height}
@@ -537,7 +618,25 @@ export const ForwardLearningViz = () => {
 												</g>
 											)}
 
-											{/* Agent Exit Marker */}
+											{/* Paper Entry Fill Marker (Rule 52: Only when paper fill exists in forward stage) */}
+											{isForward && openPositionsCount > 0 && entryPtIdx !== null && entryPtIdx >= 0 && entryPtIdx < points.length && (
+												<g
+													transform={`translate(${xScale(entryPtIdx)}, ${yScale(points[entryPtIdx].y) + 14})`}
+												>
+													<rect x={4} y={-10} width={90} height={12} fill="#050505" stroke="#22c55e" strokeWidth={0.5} />
+													<text
+														x={6}
+														y={-1}
+														fill="#22c55e"
+														fontSize="8px"
+														fontWeight="bold"
+													>
+														PAPER ENTRY FILL
+													</text>
+												</g>
+											)}
+
+											{/* Exit Boundary Marker (Rule 42: CAUSAL EXIT C vs PAPER EXIT) */}
 											{exitPtIdx !== null && exitPtIdx >= 0 && exitPtIdx < points.length && (
 												<g
 													transform={`translate(${xScale(exitPtIdx)}, ${yScale(points[exitPtIdx].y)})`}
@@ -550,7 +649,7 @@ export const ForwardLearningViz = () => {
 														fontSize="9px"
 														fontWeight="bold"
 													>
-														EXIT
+														{isForward ? "PAPER EXIT" : "CAUSAL EXIT C"}
 													</text>
 													<line
 														y2={tapeDim.height}
@@ -565,86 +664,121 @@ export const ForwardLearningViz = () => {
 							</svg>
 						)}
 					</div>
+
+					{/* Temporal Precursor Fragment Bar (Section 36) */}
+					<div className="h-7 border-t border-(--line) bg-(--sunken) flex items-center px-3 justify-between text-[10px] text-(--f3) shrink-0">
+						<div className="flex items-center gap-1.5" data-l="temporal-precursor">
+							<span className="text-(--f4) uppercase tracking-wider font-bold">Temporal Precursor:</span>
+							<span className="text-(--acc) font-mono">
+								{precursorTokens.join(" → ")}
+							</span>
+						</div>
+						<div className="flex items-center gap-2" data-l="abc-markers">
+							<span className="text-(--f4)">Boundaries:</span>
+							<span>A: {excursionEvent?.marks.A ?? 0}</span>
+							<span>→</span>
+							<span className="text-(--up)">B (Entry): {excursionEvent?.marks.B ?? 0}</span>
+							<span>→</span>
+							<span className="text-(--down)">C (Exit): {excursionEvent?.marks.C ?? 0}</span>
+						</div>
+						<div className="flex items-center gap-2">
+							<span className="text-(--f4)">Pre-Outcome Prediction:</span>
+							<span data-l="frozen-prediction" className="font-bold text-(--acc)">
+								{frozenAction}
+							</span>
+							<span className="text-(--f4)">Actual Delayed Label:</span>
+							<span data-l="delayed-label" className="font-bold text-(--f1)">
+								{delayedLabel}
+							</span>
+						</div>
+					</div>
 				</div>
 
-				{/* Right Sidebar: Model Skill & Activity */}
+				{/* Right Sidebar: Separated Historical Held-Out & Forward Paper Evidence */}
 				<div className="w-72 bg-(--surface) border-(--line) border rounded flex flex-col shrink-0 min-h-0">
 					<div className="h-8 border-(--line) border-b bg-(--sunken) flex items-center px-3 text-(--f3) shrink-0 justify-between">
 						<span className="tracking-widest uppercase font-bold text-[10px]">
-							Model Skill
+							{isForward ? "Forward Paper Authority" : "Historical Validation"}
 						</span>
 						<span className="text-[10px]">
-							{evaluatedCount.toLocaleString()} evaluated
+							{evaluatedCount.toLocaleString()} frames
 						</span>
 					</div>
 
-					<div className="p-3 flex-1 overflow-y-auto flex flex-col gap-4">
-						{/* Mean Completed Benefit */}
-						<div>
-							<div className="uppercase tracking-widest text-(--f4) text-[9px] mb-1 font-bold">
-								Mean Decision Benefit
+					<div className="p-3 flex-1 overflow-y-auto flex flex-col gap-3">
+						{/* Historical Held-Out Evidence Card */}
+						<div className="border border-(--line) p-2.5 rounded bg-(--bg) flex flex-col gap-1.5">
+							<div className="uppercase tracking-widest text-(--f4) text-[9px] font-bold flex justify-between">
+								<span>Historical Held-Out Evidence</span>
+								<span className="text-(--f2)">{histOpportunities} opps</span>
 							</div>
-							<div className="text-(--f1) text-sm font-bold">
-								{basis(meanEdge)}
-							</div>
-							<div className="text-(--f4) text-[9px] mt-0.5 leading-tight">
-								Measured edge over starting basis. Honest uncertainty preserved.
-							</div>
-						</div>
-
-						{/* Outcome Signs */}
-						<div>
-							<div className="uppercase tracking-widest text-(--f4) text-[9px] mb-1 font-bold">
-								Outcome Signs
-							</div>
-							<div className="flex items-baseline gap-2 mb-1.5 text-[10px]">
-								<span className="text-(--up) font-bold">{wins} positive</span>
-								<span className="text-(--f4)">·</span>
-								<span className="text-(--down) font-bold">
-									{losses} negative
+							<div className="flex justify-between items-baseline text-[11px]">
+								<span className="text-(--f4)">Mean Return:</span>
+								<span className="text-(--f1) font-bold" data-metric="hist_mean_return" data-format="insufficient_if_zero">
+									{histOpportunities > 0 ? basis(histMeanReturn) : "—"}
 								</span>
 							</div>
-							<div className="h-1.5 w-full bg-(--sunken) flex rounded overflow-hidden border-(--line) border">
-								<div
-									className="bg-(--up)"
-									style={{
-										width: `${(wins / totalOutcomes) * 100}%`,
-									}}
-								/>
-								<div
-									className="bg-(--down)"
-									style={{
-										width: `${(losses / totalOutcomes) * 100}%`,
-									}}
-								/>
+							<div className="flex justify-between items-baseline text-[10px]">
+								<span className="text-(--f4)">Lower Bound (L95):</span>
+								<span className="text-(--acc) font-bold" data-metric="hist_lower_bound" data-format="insufficient_if_zero">
+									{histOpportunities > 0 ? basis(histLowerBound) : "—"}
+								</span>
+							</div>
+							<div className="flex justify-between items-baseline text-[10px] text-(--f3)">
+								<span>Correct: <strong className="text-(--up)" data-metric="hist_correct_enter">{histCorrectEnter}</strong></span>
+								<span>False: <strong className="text-(--down)" data-metric="hist_false_enter">{histFalseEnter}</strong></span>
+								<span>Missed: <strong className="text-(--down)" data-metric="hist_missed_enter">{histMissedEnter}</strong></span>
 							</div>
 						</div>
 
-						{/* Model P&L */}
-						<div>
-							<div className="uppercase tracking-widest text-(--f4) text-[9px] mb-1 font-bold">
-								Model P&L
+						{/* Forward Paper Evidence Card (Rule 41 & Rule 52: Independent from Historical) */}
+						<div className="border border-(--line) p-2.5 rounded bg-(--bg) flex flex-col gap-1.5">
+							<div className="uppercase tracking-widest text-(--f4) text-[9px] font-bold flex justify-between">
+								<span>Forward Paper Evidence</span>
+								<span className={isForward ? "text-(--up) font-bold" : "text-(--f4)"}>
+									{isForward ? "ACTIVE" : "GATED"}
+								</span>
 							</div>
-							<div
-								className={cn(
-									"text-sm font-mono font-bold",
-									globalPnl >= 0 ? "text-(--up)" : "text-(--down)",
-								)}
-							>
-								{globalPnl >= 0 ? "+" : ""}
-								{globalPnl.toFixed(4)}
+							<div className="flex justify-between items-baseline text-[11px]">
+								<span className="text-(--f4)">Paper Mean Return:</span>
+								<span className="text-(--f1) font-bold" data-metric="fwd_paper_mean_return" data-format="insufficient_if_zero">
+									{fwdPaperTrades > 0 ? basis(fwdPaperMeanReturn) : "—"}
+								</span>
 							</div>
-							<div className="text-(--f4) text-[9px] mt-0.5 leading-tight">
-								Theoretical return from evaluated model decisions.
+							<div className="flex justify-between items-baseline text-[10px]">
+								<span className="text-(--f4)">Paper Lower Bound:</span>
+								<span className="text-(--acc) font-bold" data-metric="fwd_paper_lower_bound" data-format="insufficient_if_zero">
+									{fwdPaperTrades > 0 ? basis(fwdPaperLowerBound) : "—"}
+								</span>
+							</div>
+							<div className="flex justify-between items-baseline text-[10px] text-(--f3)">
+								<span>Trades: <strong className="text-(--f1)" data-metric="fwd_paper_trades">{fwdPaperTrades}</strong></span>
+								<span>Predictions: <strong className="text-(--f2)" data-metric="fwd_enter_predictions">{fwdPredictions}</strong></span>
+							</div>
+							<div className="flex justify-between items-baseline text-[10px] text-(--f4)">
+								<span>Active Position:</span>
+								<span data-l="paper-position" className="text-(--f2) font-bold">
+									{openPositionsCount > 0 ? `${openPositionsCount} active` : "None"}
+								</span>
+							</div>
+						</div>
+
+						{/* Stage Gate Status */}
+						<div className="text-[10px] border border-(--line) p-2 rounded bg-(--sunken) flex flex-col gap-1">
+							<div className="flex justify-between font-bold">
+								<span className="text-(--f4) uppercase">Gate Blocker:</span>
+								<span data-l="stage-blocker" className="text-(--down) truncate max-w-[130px]">
+									{stageBlocker || "None (Ready)"}
+								</span>
 							</div>
 						</div>
 
 						{/* Recent Activity Log */}
-						<div className="mt-1 pt-3 border-(--line) border-t">
-							<div className="uppercase tracking-widest text-(--f4) text-[9px] mb-2 font-bold">
+						<div className="mt-1 pt-2 border-(--line) border-t flex-1 overflow-hidden flex flex-col">
+							<div className="uppercase tracking-widest text-(--f4) text-[9px] mb-1 font-bold">
 								Recent Learning Activity
 							</div>
-							<div className="flex flex-col gap-2">
+							<div className="flex flex-col gap-1.5 overflow-y-auto flex-1">
 								<AnimatePresence initial={false}>
 									{activityLogs.map((log) => (
 										<motion.div
@@ -653,7 +787,7 @@ export const ForwardLearningViz = () => {
 											animate={{ opacity: 1, height: "auto" }}
 											className="text-[10px]"
 										>
-											<div className="text-(--f3) mb-0.5">
+											<div className="text-(--f3)">
 												{log.time} · {log.message}
 											</div>
 											<div className="text-(--f4) text-[9px]">
@@ -672,7 +806,7 @@ export const ForwardLearningViz = () => {
 								</AnimatePresence>
 								{activityLogs.length === 0 && (
 									<div className="text-(--f4) text-[10px]">
-										Listening for model training decisions...
+										Listening for model decisions...
 									</div>
 								)}
 							</div>
@@ -681,7 +815,7 @@ export const ForwardLearningViz = () => {
 				</div>
 			</div>
 
-			{/* BOTTOM ROW: Real Radix Trie Memory Table + Edge Distribution */}
+			{/* BOTTOM ROW: Real Radix Trie Memory Table */}
 			<div className="flex h-2/5 gap-2 min-h-0">
 				{/* Radix Trie Memory Table */}
 				<div className="flex-1 bg-(--surface) border-(--line) border rounded flex flex-col min-w-0">

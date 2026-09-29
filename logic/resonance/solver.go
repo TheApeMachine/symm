@@ -17,8 +17,6 @@ import (
 
 	"github.com/theapemachine/errnie"
 
-	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
-
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/learning"
@@ -267,8 +265,8 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 		}
 	}
 
-	if resonance != nil && resonance.Dynamics != nil && resonance.Dynamics.StoredEnergy > 0 && resonance.Dynamics.Dissipation > 0 {
-		measurement.SNR = resonance.Dynamics.StoredEnergy / resonance.Dynamics.Dissipation
+	if resonance != nil && resonance.Dynamics != nil && resonance.Dynamics.Energy > 0 && resonance.Dynamics.ReconstructionError > 0 {
+		measurement.SNR = resonance.Dynamics.Energy / resonance.Dynamics.ReconstructionError
 		measurement.SNRDefined = true
 		measurement.Estimated = true
 	}
@@ -714,37 +712,6 @@ func authorityOf(measurement *data.Measurement[float64]) float64 {
 	return authority
 }
 
-/*
-resonanceDynamics maps the coder's manifold reading onto the telemetry wire
-type. nomagique carries no telemetry types, so the projection happens here at
-the domain boundary.
-*/
-func resonanceDynamics(
-	dynamics *learning.ResonanceDynamics,
-) *wire.ResonanceDynamicsT {
-	if dynamics == nil {
-		return nil
-	}
-
-	return &wire.ResonanceDynamicsT{
-		Ready:            1,
-		StoredEnergy:     dynamics.Energy,
-		SuppliedPower:    dynamics.PredictionEnergy,
-		Dissipation:      dynamics.ReconstructionError,
-		PassivityResidue: dynamics.TemporalError,
-		MemoryScale:      dynamics.Alpha,
-	}
-}
-
-/*
-publishReturns stores the coder's calibrated outputs on the symbol so the
-graph and causal stages can build real predictive evidence. The return
-forecast carries the coder's reward prediction; it is a direction readout, not
-a priced return. The coder's own manifold snapshot is stored under the symbol
-key because that is the slot both downstream solvers load. The forecast and
-dynamics are published only once the head is calibrated, so the graph never
-sees a fabricated posterior before outcomes exist.
-*/
 func (solver *Solver) publishReturns(
 	symbol string,
 	at time.Time,
@@ -759,7 +726,7 @@ func (solver *Solver) publishReturns(
 		Symbol:           symbol,
 		At:               at,
 		Snapshot:         out.Reading,
-		Dynamics:         resonanceDynamics(out.Dynamics),
+		Dynamics:         out.Dynamics,
 		ForwardCurve:     out.ForwardCurve,
 		ForwardRetention: out.ForwardRetention,
 		SupportedHorizon: out.SupportedHorizon,

@@ -39,7 +39,17 @@ func (artifact *ResonanceArtifact) EncodeWire(focused bool) *telemetry.Resonance
 		LastResolutionPrediction: artifact.LastResolutionPrediction,
 		LastResolutionTarget:     artifact.LastResolutionTarget,
 		LastResolutionError:      artifact.LastResolutionError,
-		Dynamics:                 artifact.Dynamics,
+	}
+
+	if artifact.Dynamics != nil {
+		wire.Dynamics = &telemetry.ResonanceDynamicsT{
+			Ready:            1,
+			StoredEnergy:     artifact.Dynamics.Energy,
+			SuppliedPower:    artifact.Dynamics.PredictionEnergy,
+			Dissipation:      artifact.Dynamics.ReconstructionError,
+			PassivityResidue: artifact.Dynamics.TemporalError,
+			MemoryScale:      artifact.Dynamics.Alpha,
+		}
 	}
 
 	if artifact.Forecast != nil {

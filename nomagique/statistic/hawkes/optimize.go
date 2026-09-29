@@ -155,10 +155,6 @@ func logLikelihoodTolerance(values ...float64) float64 {
 	scale := 1.0
 
 	for _, value := range values {
-		if math.IsNaN(value) || math.IsInf(value, 0) {
-			continue
-		}
-
 		absValue := math.Abs(value)
 
 		if absValue > scale {

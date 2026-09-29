@@ -680,7 +680,11 @@ func (catalog *Catalog) Excursions(
 		}
 
 		if batch != nil {
-			allExcursions = append(allExcursions, readExcursions(batch)...)
+			for _, rec := range readExcursions(batch) {
+				if epoch <= 0 || rec.Epoch == epoch {
+					allExcursions = append(allExcursions, rec)
+				}
+			}
 			batch.Release()
 		}
 	}

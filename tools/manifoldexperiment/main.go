@@ -112,17 +112,22 @@ func (command *ExperimentCommand) Run() (err error) {
 		return err
 	}
 	defer func() { err = errors.Join(err, input.Close()) }()
-	// Never overwrite the capture being checked, even through a hard link.
-	if outputInfo, statErr := os.Stat(command.Output); statErr == nil {
-		inputInfo, statErr := input.Stat()
-		if statErr != nil {
-			return statErr
+	outputInfo, statErr := os.Stat(command.Output)
+
+	if statErr != nil && !os.IsNotExist(statErr) {
+		return statErr
+	}
+
+	if statErr == nil {
+		inputInfo, err := input.Stat()
+
+		if err != nil {
+			return err
 		}
+
 		if os.SameFile(inputInfo, outputInfo) {
 			return errors.New("replay output must differ from input")
 		}
-	} else if !os.IsNotExist(statErr) {
-		return statErr
 	}
 	digest := sha256.New()
 	if _, err = io.Copy(digest, input); err != nil {
@@ -199,7 +204,9 @@ func (command *ExperimentCommand) replay(input io.Reader) (run ReplayRun, err er
 		if err = decoder.Decode(&frame); err == io.EOF {
 			err = nil
 			break
-		} else if err != nil {
+		}
+
+		if err != nil {
 			return run, err
 		}
 		if err = frame.validate(); err != nil {

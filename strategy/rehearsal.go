@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"unsafe"
@@ -28,14 +29,87 @@ import (
 const TrainingFormat = "symm-volume-training/2"
 
 type trainingReading struct {
-	Learned, Resolved, Correct, Predicted, Entered, Profitable, Unsupported uint64
-	Return                                                                  float64
-	ReturnSq                                                                float64
+	Learned                 uint64
+	Resolved                uint64
+	Correct                 uint64
+	Predicted               uint64
+	Entered                 uint64
+	Profitable              uint64
+	Losing                  uint64
+	Unsupported             uint64
+	FragmentsUp             uint64
+	FragmentsDown           uint64
+	FragmentsChop           uint64
+	FragmentsFlat           uint64
+	FragmentsUnsupported    uint64
+	ValidUpOpportunities    uint64
+	CorrectEnter            uint64
+	MissedEnter             uint64
+	FalseEnterFriction      uint64
+	FalseEnterDown          uint64
+	FalseEnterChop          uint64
+	FalseEnterFlat          uint64
+	CorrectWaitDown         uint64
+	CorrectWaitChop         uint64
+	CorrectWaitFlat         uint64
+	CorrectWaitFriction     uint64
+	ContinuationWaitCorrect uint64
+	PrematureExit           uint64
+	CorrectExit             uint64
+	MissedExit              uint64
+	Return                  float64
+	ReturnSq                float64
+	MeanReturn              float64
+	ReturnSE                float64
+	LowerBound              float64
+}
+
+func (reading *trainingReading) countFragment(direction string) {
+	switch strings.ToUpper(direction) {
+	case "UP":
+		reading.FragmentsUp++
+	case "DOWN":
+		reading.FragmentsDown++
+	case "CHOP":
+		reading.FragmentsChop++
+	case "FLAT":
+		reading.FragmentsFlat++
+	}
+}
+
+func (reading *trainingReading) updateEconomics(profitFraction float64) {
+	reading.Entered++
+	reading.Return += profitFraction
+	reading.ReturnSq += profitFraction * profitFraction
+
+	if profitFraction > 0 {
+		reading.Profitable++
+	}
+
+	if profitFraction < 0 {
+		reading.Losing++
+	}
+
+	if reading.Entered >= 2 {
+		n := float64(reading.Entered)
+		mean := reading.Return / n
+		variance := (reading.ReturnSq - (reading.Return*reading.Return)/n) / (n - 1.0)
+
+		if variance < 0 {
+			variance = 0
+		}
+
+		se := math.Sqrt(variance / n)
+		reading.MeanReturn = mean
+		reading.ReturnSE = se
+		reading.LowerBound = mean - se
+	}
 }
 
 type trainingAnchor struct {
 	sequence   int64
 	key        []byte
+	tokens     []uint64
 	prediction string
 }
 
@@ -54,26 +128,27 @@ type anchorKey struct {
 type ReplayProgressFunc func(frame *data.Measurement[float64], record *tables.ExcursionRecord, impulse *grid.Snapshot)
 
 type Rehearsal struct {
-	ctx             context.Context
-	engine          *cognition.Engine
-	price           *broker.Price
-	detector        *tables.StreamingDetector
-	space           *impulse.Map
-	precursor       *Precursor
-	anchors         map[anchorKey]trainingAnchor
-	reading         trainingReading
-	readingMu       sync.RWMutex
-	published       atomic.Pointer[trainingReading]
+	ctx              context.Context
+	engine           *cognition.Engine
+	price            *broker.Price
+	detector         *tables.StreamingDetector
+	space            *impulse.Map
+	precursor        *Precursor
+	anchors          map[anchorKey]trainingAnchor
+	reading          trainingReading
+	readingMu        sync.RWMutex
+	published        atomic.Pointer[trainingReading]
 	lastExcursion    atomic.Pointer[tables.ExcursionRecord]
 	lastExcursions   map[string]*tables.ExcursionRecord
 	lastExcursionsMu sync.RWMutex
-	sequence        int64
-	records         []tables.ExcursionRecord
-	checkpointEpoch atomic.Int64
-	trainedRuns     map[int64]int64
-	trainedRunsMu   sync.RWMutex
-	onProgress      ReplayProgressFunc
-	isSaving        atomic.Bool
+	sequence         int64
+	records          []tables.ExcursionRecord
+	checkpointEpoch  atomic.Int64
+	trainedRuns      map[int64]int64
+	trainedRunsMu    sync.RWMutex
+	onProgress       ReplayProgressFunc
+	isSaving         atomic.Bool
+	isReplaying      atomic.Bool
 }
 
 func (rehearsal *Rehearsal) LastExcursion(symbol ...string) *tables.ExcursionRecord {
@@ -152,12 +227,12 @@ func (rehearsal *Rehearsal) SetOnProgress(callback ReplayProgressFunc) {
 
 func NewRehearsal(ctx context.Context, epoch int64, price *broker.Price, engine *cognition.Engine) *Rehearsal {
 	return &Rehearsal{
-		ctx:         ctx,
-		engine:      engine,
-		price:       price,
-		detector:    tables.NewStreamingDetector(epoch, price),
-		space:       impulse.NewMap(),
-		precursor:   NewPrecursor(),
+		ctx:            ctx,
+		engine:         engine,
+		price:          price,
+		detector:       tables.NewStreamingDetector(epoch, price),
+		space:          impulse.NewMap(),
+		precursor:      NewPrecursor(),
 		anchors:        make(map[anchorKey]trainingAnchor),
 		trainedRuns:    make(map[int64]int64),
 		lastExcursions: make(map[string]*tables.ExcursionRecord),
@@ -179,6 +254,10 @@ func (rehearsal *Rehearsal) Step(frame *data.Measurement[float64]) ([]tables.Exc
 	rehearsal.records = rehearsal.records[:0]
 
 	for _, measurement := range frame.Peers {
+		if market := rehearsal.space.Markets[measurement.Label]; market != nil {
+			rehearsal.precursor.Step(&market.Impulse)
+		}
+
 		record, err := rehearsal.detector.Process(measurement)
 
 		if err != nil {
@@ -230,61 +309,58 @@ func (rehearsal *Rehearsal) Step(frame *data.Measurement[float64]) ([]tables.Exc
 	return rehearsal.records, nil
 }
 
-func (rehearsal *Rehearsal) capture(reading *grid.Impulse) error {
-	key := rehearsal.precursor.Encode(reading, false)
-	anchor := trainingAnchor{sequence: reading.SeqIdx, key: slices.Clone(key)}
-	command := cognition.Command{Evaluate: &cognition.Question{Context: key, Exact: false}}
+func (rehearsal *Rehearsal) evaluateContext(contextKey []byte) string {
+	if len(contextKey) == 0 {
+		return ""
+	}
+
+	command := cognition.Command{Evaluate: &cognition.Question{Context: contextKey, Exact: false}}
 	pipeline := nomagique.NewNumber(rehearsal.engine)
 	input := func(yield func(unsafe.Pointer) bool) { yield(unsafe.Pointer(&command)) }
 
+	winner := ""
+
 	for output := range pipeline.Next(input) {
-		anchor.prediction = (*cognition.Evaluation)(output).WinnerClass
+		winner = (*cognition.Evaluation)(output).WinnerClass
 	}
 
-	if err := pipeline.Error(); err != nil {
-		return errnie.Error(err)
+	return winner
+}
+
+func (rehearsal *Rehearsal) capture(reading *grid.Impulse) error {
+	rehearsal.precursor.Step(reading)
+	tokens := rehearsal.precursor.Tokens(reading.Label)
+
+	if len(tokens) == 0 {
+		tok := ImpulseToken(reading.Regions)
+		if tok > 0 {
+			tokens = []uint64{tok}
+		}
+	}
+
+	key := EncodeTokens(reading.Label, false, tokens)
+
+	anchor := trainingAnchor{
+		sequence:   reading.SeqIdx,
+		key:        slices.Clone(key),
+		tokens:     slices.Clone(tokens),
+		prediction: rehearsal.evaluateContext(key),
 	}
 
 	rehearsal.anchors[anchorKey{symbol: reading.Label, sequence: reading.SeqIdx}] = anchor
 	return nil
 }
 
-func (rehearsal *Rehearsal) train(sequence []byte, class []byte, feedback float64) (cognition.Result, error) {
+func (rehearsal *Rehearsal) train(sequence []byte, class []byte) (cognition.Result, error) {
 	if len(sequence) == 0 || len(class) == 0 {
 		return cognition.Result{}, nil
 	}
 
-	res, err := rehearsal.engine.Observe(cognition.Association{
-		Context:  sequence,
-		Class:    class,
-		Feedback: feedback,
-		Graded:   true,
+	return rehearsal.engine.Observe(cognition.Association{
+		Context: sequence,
+		Class:   class,
+		Graded:  false,
 	})
-
-	if err != nil {
-		return res, err
-	}
-
-	if len(sequence)%8 == 0 && len(sequence) > 16 {
-		tokens := len(sequence) / 8
-		maxOrder := 8
-		limit := min(tokens-1, maxOrder)
-
-		for endIdx := 2; endIdx <= limit; endIdx++ {
-			subContext := sequence[:endIdx*8]
-
-			if _, err := rehearsal.engine.Observe(cognition.Association{
-				Context:  subContext,
-				Class:    class,
-				Feedback: feedback,
-				Graded:   true,
-			}); err != nil {
-				return res, err
-			}
-		}
-	}
-
-	return res, nil
 }
 
 func (rehearsal *Rehearsal) resolve(record tables.ExcursionRecord, exit *grid.Impulse) error {
@@ -292,83 +368,157 @@ func (rehearsal *Rehearsal) resolve(record tables.ExcursionRecord, exit *grid.Im
 		return errnie.Error(errnie.Err(errnie.Validation, "rehearsal: outcome exit market absent", nil))
 	}
 
+	if record.Direction == "" {
+		record.Direction = "DOWN"
+		if record.ProfitFraction > 0 {
+			record.Direction = "UP"
+		}
+	}
+	record.Direction = strings.ToUpper(record.Direction)
+
 	key := anchorKey{symbol: record.Symbol, sequence: record.AnchorTick}
 	anchor, found := rehearsal.anchors[key]
-
-	if !found {
-		rehearsal.readingMu.Lock()
-		rehearsal.reading.Unsupported++
-		rehearsal.readingMu.Unlock()
-		return nil
-	}
-
 	delete(rehearsal.anchors, key)
 
-	if len(anchor.key) == 0 {
-		rehearsal.readingMu.Lock()
+	rehearsal.readingMu.Lock()
+	defer rehearsal.readingMu.Unlock()
+
+	rehearsal.reading.countFragment(record.Direction)
+
+	if !found || len(anchor.key) == 0 || record.Status == "unsupported" {
 		rehearsal.reading.Unsupported++
-		rehearsal.readingMu.Unlock()
+		rehearsal.reading.FragmentsUnsupported++
 		return nil
 	}
 
-	action := ActionWait
-
-	if record.ClearsFriction {
-		action = ActionEnter
-	}
-
-	// Score the held-out prediction before this outcome updates the trie.
-	rehearsal.readingMu.Lock()
 	rehearsal.reading.Resolved++
+
+	isUsefulUp := record.Direction == "UP" && record.ClearsFriction && record.ProfitFraction > 0
+	expectedAction := ActionWait
+
+	if isUsefulUp {
+		expectedAction = ActionEnter
+		rehearsal.reading.ValidUpOpportunities++
+	}
 
 	if anchor.prediction != "" {
 		rehearsal.reading.Predicted++
 
-		if anchor.prediction == string(action) {
+		if anchor.prediction == string(expectedAction) {
 			rehearsal.reading.Correct++
 		}
-	}
 
-	if anchor.prediction == string(ActionEnter) {
-		rehearsal.reading.Entered++
-		rehearsal.reading.Return += record.ProfitFraction
-		rehearsal.reading.ReturnSq += record.ProfitFraction * record.ProfitFraction
+		if isUsefulUp {
+			if anchor.prediction == string(ActionEnter) {
+				rehearsal.reading.CorrectEnter++
+			}
 
-		if record.ProfitFraction > 0 {
-			rehearsal.reading.Profitable++
+			if anchor.prediction != string(ActionEnter) {
+				rehearsal.reading.MissedEnter++
+			}
+		}
+
+		if !isUsefulUp {
+			if anchor.prediction == string(ActionEnter) {
+				switch record.Direction {
+				case "UP":
+					rehearsal.reading.FalseEnterFriction++
+				case "DOWN":
+					rehearsal.reading.FalseEnterDown++
+				case "CHOP":
+					rehearsal.reading.FalseEnterChop++
+				case "FLAT":
+					rehearsal.reading.FalseEnterFlat++
+				}
+			}
+
+			if anchor.prediction == string(ActionWait) {
+				switch record.Direction {
+				case "UP":
+					rehearsal.reading.CorrectWaitFriction++
+				case "DOWN":
+					rehearsal.reading.CorrectWaitDown++
+				case "CHOP":
+					rehearsal.reading.CorrectWaitChop++
+				case "FLAT":
+					rehearsal.reading.CorrectWaitFlat++
+				}
+			}
+		}
+
+		if anchor.prediction == string(ActionEnter) {
+			rehearsal.reading.updateEconomics(record.ProfitFraction)
 		}
 	}
-	rehearsal.readingMu.Unlock()
 
-	if _, err := rehearsal.train(anchor.key, []byte(ActionEnter), record.ProfitFraction); err != nil {
-		return errnie.Error(err)
+	tokensAtC := rehearsal.precursor.Tokens(record.Symbol)
+
+	if isUsefulUp && len(tokensAtC) >= len(anchor.tokens) {
+		for j := len(anchor.tokens); j < len(tokensAtC); j++ {
+			holdingPrefixKey := EncodeTokens(record.Symbol, true, tokensAtC[:j])
+			pred := rehearsal.evaluateContext(holdingPrefixKey)
+
+			if pred == string(ActionExit) {
+				rehearsal.reading.PrematureExit++
+			}
+
+			if pred == string(ActionWait) {
+				rehearsal.reading.ContinuationWaitCorrect++
+			}
+		}
+
+		holdingExitKey := EncodeTokens(record.Symbol, true, tokensAtC)
+		exitPred := rehearsal.evaluateContext(holdingExitKey)
+
+		if exitPred == string(ActionExit) {
+			rehearsal.reading.CorrectExit++
+		}
+
+		if exitPred != string(ActionExit) {
+			rehearsal.reading.MissedExit++
+		}
 	}
 
-	rehearsal.readingMu.Lock()
-	rehearsal.reading.Learned++
-	rehearsal.readingMu.Unlock()
+	// 1. Prefixes before B teach ActionWait
+	for j := 1; j < len(anchor.tokens); j++ {
+		prefixKey := EncodeTokens(record.Symbol, false, anchor.tokens[:j])
 
-	if _, err := rehearsal.train(anchor.key, []byte(ActionWait), -record.ProfitFraction); err != nil {
-		return errnie.Error(err)
-	}
-
-	rehearsal.readingMu.Lock()
-	rehearsal.reading.Learned++
-	rehearsal.readingMu.Unlock()
-
-	// At a detected regime boundary the completed virtual position is closed.
-	// The holding bit keeps this lifecycle label separate from entry selection.
-	exitKey := rehearsal.precursor.Encode(exit, true)
-
-	if len(exitKey) > 0 {
-		if _, err := rehearsal.train(exitKey, []byte(ActionExit), 1.0); err != nil {
+		if _, err := rehearsal.train(prefixKey, []byte(ActionWait)); err != nil {
 			return errnie.Error(err)
 		}
 
-		rehearsal.readingMu.Lock()
 		rehearsal.reading.Learned++
-		rehearsal.readingMu.Unlock()
 	}
+
+	// 2. Complete context at B teaches expectedAction (ENTER if useful UP, else WAIT)
+	if _, err := rehearsal.train(anchor.key, []byte(expectedAction)); err != nil {
+		return errnie.Error(err)
+	}
+
+	rehearsal.reading.Learned++
+
+	// 3. Holding-scope exit supervision
+	if isUsefulUp && len(tokensAtC) >= len(anchor.tokens) {
+		for j := len(anchor.tokens); j < len(tokensAtC); j++ {
+			holdingPrefixKey := EncodeTokens(record.Symbol, true, tokensAtC[:j])
+
+			if _, err := rehearsal.train(holdingPrefixKey, []byte(ActionWait)); err != nil {
+				return errnie.Error(err)
+			}
+
+			rehearsal.reading.Learned++
+		}
+
+		holdingExitKey := EncodeTokens(record.Symbol, true, tokensAtC)
+
+		if _, err := rehearsal.train(holdingExitKey, []byte(ActionExit)); err != nil {
+			return errnie.Error(err)
+		}
+
+		rehearsal.reading.Learned++
+	}
+
+	rehearsal.precursor.Reset(record.Symbol)
 
 	return nil
 }
@@ -409,6 +559,10 @@ func (rehearsal *Rehearsal) Replay(records []tables.ExcursionRecord, frames iter
 			return err
 		}
 		stepCount++
+
+		if market := space.Markets[frame.Label]; market != nil {
+			rehearsal.precursor.Step(&market.Impulse)
+		}
 
 		resolvedRecord := false
 
@@ -609,6 +763,12 @@ func (rehearsal *Rehearsal) Restore(catalog *tables.Catalog) error {
 
 // ReplayPending replays new excursions from the catalog without reloading or wiping the model.
 func (rehearsal *Rehearsal) ReplayPending(catalog *tables.Catalog) error {
+	if !rehearsal.isReplaying.CompareAndSwap(false, true) {
+		errnie.Info("rehearsal: replay already in progress; skipping")
+		return nil
+	}
+	defer rehearsal.isReplaying.Store(false)
+
 	errnie.Info("rehearsal: loading runs from catalog...")
 	runs, err := catalog.Runs(rehearsal.ctx)
 
@@ -623,9 +783,15 @@ func (rehearsal *Rehearsal) ReplayPending(catalog *tables.Catalog) error {
 
 	var pending []tables.Run
 	trainedSnapshot := rehearsal.TrainedRunsSnapshot()
+	checkpointEpoch := rehearsal.checkpointEpoch.Load()
 
 	for _, run := range runs {
 		if run.BuildID != TrainingFormat && run.BuildID != "" {
+			continue
+		}
+
+		if checkpointEpoch > 0 && run.Epoch <= checkpointEpoch {
+			rehearsal.RecordTrainedRun(run.Epoch, math.MaxInt64)
 			continue
 		}
 
@@ -739,6 +905,7 @@ func (rehearsal *Rehearsal) PollUntrained(catalog *tables.Catalog) error {
 	}
 
 	historical := NewRehearsal(rehearsal.ctx, rehearsal.checkpointEpoch.Load(), rehearsal.price, rehearsal.engine)
+	historical.checkpointEpoch.Store(rehearsal.checkpointEpoch.Load())
 	historical.MergeTrainedRuns(rehearsal.TrainedRunsSnapshot())
 
 	if rehearsal.onProgress != nil {

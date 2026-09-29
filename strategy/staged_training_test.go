@@ -1,0 +1,159 @@
+package strategy
+
+import (
+	"testing"
+
+	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/hindsight/tables"
+	"github.com/theapemachine/symm/nomagique/cognition"
+	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/tests/market"
+)
+
+func TestStagedTrainingProgression(t *testing.T) {
+	Convey("Staged training enforces explicit backend stages and skill gates", t, func() {
+		ctx := t.Context()
+		price := market.TrainingPrice(ctx)
+		training := NewTraining(ctx, 1, price)
+		training.Transition(runtime.READY)
+
+		Convey("A fresh model begins in historical model development without trading authority", func() {
+			stage, blocker := training.Stage()
+			So(stage, ShouldEqual, StageModelDevelopment)
+			So(blocker, ShouldNotBeBlank)
+
+			// Replay alone cannot create paper trades
+			trader := NewTrader(ctx, nil, price, nil)
+			training.SetTrader(trader)
+
+			frames := market.TrainingTape(4)
+			for _, frame := range frames {
+				training.Step(frame)
+			}
+
+			So(trader.PositionCount(), ShouldEqual, 0)
+			So(len(trader.Positions()), ShouldEqual, 0)
+		})
+
+		Convey("Insufficient historical skill cannot enter paper-learning stage", func() {
+			// Simulate historical reading with negative return
+			training.Rehearsal.readingMu.Lock()
+			training.Rehearsal.reading.Resolved = 10
+			training.Rehearsal.reading.ValidUpOpportunities = 2
+			training.Rehearsal.reading.Entered = 5
+			training.Rehearsal.reading.Return = -0.05
+			training.Rehearsal.reading.ReturnSq = 0.01
+			training.Rehearsal.reading.MeanReturn = -0.01
+			training.Rehearsal.reading.ReturnSE = 0.02
+			training.Rehearsal.reading.LowerBound = -0.03
+			training.Rehearsal.reading.ContinuationWaitCorrect = 3
+			training.Rehearsal.readingMu.Unlock()
+
+			training.CheckStageGates()
+			stage, blocker := training.Stage()
+			So(stage, ShouldEqual, StageHistoricalValidation)
+			So(blocker, ShouldContainSubstring, "historical return uncertainty spans zero")
+		})
+
+		Convey("Demonstrated historical skill transitions to forward paper learning", func() {
+			training.Rehearsal.readingMu.Lock()
+			training.Rehearsal.reading.Resolved = 20
+			training.Rehearsal.reading.ValidUpOpportunities = 5
+			training.Rehearsal.reading.Entered = 5
+			training.Rehearsal.reading.Return = 0.20
+			training.Rehearsal.reading.ReturnSq = 0.01
+			training.Rehearsal.reading.MeanReturn = 0.04
+			training.Rehearsal.reading.ReturnSE = 0.01
+			training.Rehearsal.reading.LowerBound = 0.03 // strictly positive!
+			training.Rehearsal.reading.ContinuationWaitCorrect = 5
+			training.Rehearsal.reading.CorrectExit = 4
+			training.Rehearsal.readingMu.Unlock()
+
+			training.CheckStageGates()
+			stage, blocker := training.Stage()
+			So(stage, ShouldEqual, StageForwardPaperLearning)
+			So(blocker, ShouldEqual, "no forward paper round trips completed (need >= 2)")
+		})
+
+		Convey("Historical and forward counters remain strictly separate", func() {
+			training.RecordForwardPaperTrade("BTC/USD", 0.05, 0.001)
+
+			fwd := training.ForwardReading()
+			So(fwd.PaperTrades, ShouldEqual, 1)
+			So(fwd.PaperReturn, ShouldEqual, 0.05)
+
+			// Rehearsal reading remains unchanged by forward trades
+			hist := training.Rehearsal.reading
+			So(hist.Entered, ShouldNotEqual, fwd.PaperTrades)
+		})
+	})
+}
+
+func TestForwardPaperLearning(t *testing.T) {
+	Convey("Forward paper learning scores frozen predictions before refinement and tracks execution", t, func() {
+		ctx := t.Context()
+		price := market.TrainingPrice(ctx)
+		training := NewTraining(ctx, 1, price)
+		training.Transition(runtime.READY)
+
+		// Authorize forward paper learning stage
+		training.SetStage(StageForwardPaperLearning, "")
+
+		// Setup trader
+		trader := NewTrader(ctx, nil, price, nil)
+		training.SetTrader(trader)
+
+		// 1. Live model emits a prediction and freezes it before outcome arrives
+		testTokens := []uint64{101, 102}
+		training.precursor.SetTokens("BTC/USD", testTokens)
+		contextKey := EncodeTokens("BTC/USD", false, testTokens)
+
+		training.freezeForwardPrediction("BTC/USD", contextKey, testTokens, 100, ActionEnter, cognition.Evaluation{
+			Support:    10,
+			Confidence: 0.85,
+			Ambiguity:  0.10,
+		})
+
+		// 2. Unresolved prediction does not train the outcome yet
+		initialCensus := training.engine.Census()
+
+		// 3. Live market fragment completes with negative outcome (DOWN tape)
+		resolvedRecord := &tables.ExcursionRecord{
+			Symbol:         "BTC/USD",
+			Direction:      "DOWN",
+			AnchorTick:     100,
+			ExitTick:       110,
+			ProfitFraction: -0.03,
+			ClearsFriction: false,
+		}
+
+		training.resolveForwardOutcome(resolvedRecord)
+
+		// 4. Frozen prediction was scored: false enter on DOWN was counted
+		fwd := training.ForwardReading()
+		So(fwd.EnterPredictions, ShouldEqual, 1)
+		So(fwd.FalseEnterDown, ShouldEqual, 1)
+		So(fwd.CorrectEnter, ShouldEqual, 0)
+
+		// 5. Only after scoring, newly resolved example trained the trie (ActionWait on DOWN)
+		postCensus := training.engine.Census()
+		So(postCensus["wait"], ShouldBeGreaterThan, initialCensus["wait"])
+
+		// 6. Paper trade execution records real returns separately
+		training.RecordForwardPaperTrade("BTC/USD", -0.03, 0.002)
+		fwd = training.ForwardReading()
+		So(fwd.PaperTrades, ShouldEqual, 1)
+		So(fwd.PaperLosing, ShouldEqual, 1)
+		So(fwd.PaperReturn, ShouldEqual, -0.03)
+
+		// Forward stats contain no historical samples
+		So(training.Rehearsal.reading.Entered, ShouldEqual, 0)
+
+		// 7. Complete second winning paper trade to test Stage D gate
+		training.RecordForwardPaperTrade("BTC/USD", 0.08, 0.002)
+		fwd = training.ForwardReading()
+		So(fwd.PaperTrades, ShouldEqual, 2)
+		So(fwd.PaperProfitable, ShouldEqual, 1)
+		So(fwd.PaperMeanReturn, ShouldAlmostEqual, 0.025, 1e-4)
+	})
+}

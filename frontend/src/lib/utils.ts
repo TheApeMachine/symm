@@ -24,7 +24,7 @@ export const pnlTone = (value: number | undefined): string => {
 
 export const isValid = (input: number | undefined | null) => {
 	if (typeof input !== "number") return false;
-	if (isNaN(input)) return false;
+	if (Number.isNaN(input)) return false;
 	if (input === null) return false;
 	return input !== undefined;
 };
@@ -38,6 +38,7 @@ export const renderValue = (
 	let out: string;
 
 	if (!seen.has(element) && value === undefined) {
+		element.textContent = "--";
 		element.innerText = "--";
 		return;
 	}
@@ -66,6 +67,7 @@ export const renderValue = (
 		seen.add(element);
 	}
 
+	element.textContent = out;
 	element.innerText = out;
 };
 

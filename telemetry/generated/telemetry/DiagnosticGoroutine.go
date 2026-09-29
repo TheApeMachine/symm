@@ -8,7 +8,7 @@ import (
 
 type DiagnosticGoroutineT struct {
 	Owner string `json:"owner"`
-	Count int64 `json:"count"`
+	Count int64  `json:"count"`
 	State string `json:"state"`
 }
 

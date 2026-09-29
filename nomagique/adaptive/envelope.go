@@ -58,7 +58,9 @@ func (op *Envelope) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 
 				if value < lower {
 					value = lower
-				} else if value > upper {
+				}
+
+				if value > upper {
 					value = upper
 				}
 			}

@@ -1,44 +1,34 @@
 import { useEffect, useState } from "react";
-import { cognitionStore } from "#/collections/app";
+import { signals } from "#/collections/app";
 import { meterTrackVariants } from "#/components/ui/meter";
 import { Panel } from "#/components/ui/panel";
 import { Typography } from "#/components/ui/typography";
-import { NamedNumber } from "#/providers/telemetry/telemetry/named-number";
 
 type PredictionEntry = {
 	name: string;
 	value: number;
 };
 
-const predObj = new NamedNumber();
-
 export const CortexBeamShell = ({ symbol }: { symbol: string }) => {
 	const [predictions, setPredictions] = useState<PredictionEntry[]>([]);
 
 	useEffect(() => {
-		const apply = (state: typeof cognitionStore.state) => {
-			const targetRow = state.getLast(symbol);
+		const apply = () => {
+			const targetRow = signals.cognition.state[symbol]?.getLast();
 
 			if (!targetRow) return;
 
 			const currentPreds: PredictionEntry[] = [];
 
-			for (let index = 0; index < targetRow.predictionsLength(); index++) {
-				const prediction = targetRow.predictions(index, predObj);
-				if (!prediction) continue;
-
-				const name = prediction.name() ?? "";
+			for (const metric of targetRow.metrics) {
+				const name =
+					typeof metric.name === "string" ? metric.name : "";
 				if (!name) continue;
 
-				currentPreds.push({ name, value: prediction.value() });
+				const val = metric.hasNormalized ? metric.normalized : metric.raw;
+				currentPreds.push({ name, value: val });
 			}
 
-			/*
-			The rows render straight from this state, so a reading that changes
-			only the scores still repaints. Bypassing React to poke the cells by
-			hand was what left a row sitting empty whenever the roster itself
-			held steady.
-			*/
 			setPredictions((prev) =>
 				prev.length === currentPreds.length &&
 				prev.every(
@@ -51,8 +41,8 @@ export const CortexBeamShell = ({ symbol }: { symbol: string }) => {
 			);
 		};
 
-		apply(cognitionStore.state);
-		const subscription = cognitionStore.subscribe(apply);
+		apply();
+		const subscription = signals.cognition.subscribe(apply);
 		return () => subscription.unsubscribe();
 	}, [symbol]);
 

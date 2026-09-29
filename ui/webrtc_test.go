@@ -80,12 +80,9 @@ func TestWebRTC(t *testing.T) {
 
 			done := make(chan error, 1)
 			runCtx, runCancel := context.WithCancel(ctx)
+			runHub := NewHub(runCtx, nil, nil, nil)
 			go func() {
-				// Use runCtx to shut down Run
-				hubWithCancel := *hub
-				hubWithCancel.System = runtime.NewSystem(runCtx, "hub-test")
-				wrtcWithCancel := &WebRTC{hub: &hubWithCancel}
-				done <- wrtcWithCancel.Run(tee)
+				done <- runHub.WebRTC.Run(tee)
 			}()
 
 			state := &types.ManifoldState{

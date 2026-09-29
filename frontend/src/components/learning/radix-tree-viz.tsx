@@ -80,7 +80,9 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 		y: number;
 	} | null>(null);
 
-	const [treeData, setTreeData] = useState<TrieNodeData | null>(null);
+	const [treeData, setTreeData] = useState<TrieNodeData | null>(() =>
+		data ? JSON.parse(JSON.stringify(data)) : null,
+	);
 
 	useEffect(() => {
 		if (data) {

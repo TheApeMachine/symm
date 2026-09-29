@@ -1,9 +1,5 @@
-import type { positionStore } from "#/collections/app";
-import { Decision } from "#/providers/telemetry/telemetry/decision";
-import { EntryCost } from "#/providers/telemetry/telemetry/entry-cost";
-import { Holding } from "#/providers/telemetry/telemetry/holding";
-import { NamedNumber } from "#/providers/telemetry/telemetry/named-number";
-import { Position } from "#/providers/telemetry/telemetry/position";
+import type { DecisionT } from "#/providers/telemetry/telemetry/decision";
+import type { PositionT } from "#/providers/telemetry/telemetry/position";
 
 export type DecisionEvidence = {
 	key: string;
@@ -49,37 +45,15 @@ export type FrozenEntryDecision = {
 	evidence: DecisionEvidence[];
 };
 
-type PositionState = ReturnType<typeof positionStore.get>;
-
 const text = (value: string | null): string => value ?? "";
 
 export const findDecision = (
-	state: PositionState,
+	rows: PositionT[],
 	symbol: string,
-): Decision | null => {
-	const position = new Position();
-	const holding = new Holding();
-	const decision = new Decision();
-	const frames =
-		typeof (state as any)?.toArray === "function"
-			? (state as any).toArray()
-			: Array.isArray(state)
-				? state
-				: [];
-
-	for (let frameIndex = frames.length - 1; frameIndex >= 0; frameIndex--) {
-		const frame = frames[frameIndex];
-		if (!frame || typeof frame.rowsLength !== "function") continue;
-
-		for (let rowIndex = 0; rowIndex < frame.rowsLength(); rowIndex++) {
-			const row = frame.rows(rowIndex, position);
-			const rowHolding = row?.holding(holding);
-
-			if (rowHolding?.symbol() !== symbol) {
-				continue;
-			}
-
-			return row?.decision(decision) ?? null;
+): DecisionT | null => {
+	for (const row of rows) {
+		if (row?.holding?.symbol === symbol) {
+			return row.decision ?? null;
 		}
 	}
 
@@ -92,10 +66,10 @@ values. No FlatBuffer view escapes this call, so later position ticks cannot
 mutate the frozen snapshot displayed by the modal.
 */
 export const readEntryDecision = (
-	state: PositionState,
+	rows: PositionT[],
 	symbol: string,
 ): FrozenEntryDecision | null => {
-	const decision = findDecision(state, symbol);
+	const decision = findDecision(rows, symbol);
 
 	if (decision === null) {
 		return null;
@@ -104,59 +78,56 @@ export const readEntryDecision = (
 	// Recovery can reconstruct an exposed lot from venue balances without the
 	// historical arbitration. An object-shaped placeholder is not an entry
 	// snapshot: only a retained enter decision is truthful enough to display.
-	if (decision.action() !== "enter") {
+	if (decision.action !== "enter") {
 		return null;
 	}
 
-	const cost = decision.entryCost(new EntryCost());
+	const cost = decision.entryCost;
 	const evidence: DecisionEvidence[] = [];
-	const alternative = new NamedNumber();
 
-	for (let index = 0; index < decision.alternativesLength(); index++) {
-		const entry = decision.alternatives(index, alternative);
-
-		if (entry?.name()) {
-			evidence.push({ key: entry.name() as string, value: entry.value() });
+	for (const entry of decision.alternatives ?? []) {
+		if (entry?.name) {
+			evidence.push({ key: String(entry.name), value: entry.value });
 		}
 	}
 
 	evidence.sort((left, right) => left.key.localeCompare(right.key));
 
 	return {
-		id: text(decision.id()),
-		action: text(decision.action()),
-		symbol: text(decision.symbol()),
-		atNs: decision.at(),
-		cause: text(decision.cause()),
-		reason: text(decision.reason()).replace(/^planner:\s*/, ""),
-		opportunity: decision.opportunity(),
-		opportunityType: text(decision.opportunityType()),
-		opportunityPhase: text(decision.opportunityPhase()),
-		predictiveReady: decision.predictiveReady(),
-		predictiveStatus: text(decision.predictiveStatus()),
-		confidence: decision.confidence(),
-		direction: decision.direction(),
-		forecastSource: text(decision.forecastSource()),
-		forecastModel: text(decision.forecastModel()),
-		forecastHorizon: decision.forecastHorizon(),
-		calibrationCount: decision.calibrationCount(),
-		allocationClass: text(decision.allocationClass()),
-		proposedNotional: text(decision.proposedNotional()),
-		proposedQuantity: text(decision.proposedQuantity()),
-		referencePrice: text(decision.referencePrice()),
-		availableCapital: text(decision.availableCapital()),
-		openPositions: decision.openPositions(),
+		id: text(decision.id as string | null),
+		action: text(decision.action as string | null),
+		symbol: text(decision.symbol as string | null),
+		atNs: decision.at,
+		cause: text(decision.cause as string | null),
+		reason: text(decision.reason as string | null).replace(/^planner:\s*/, ""),
+		opportunity: decision.opportunity,
+		opportunityType: text(decision.opportunityType as string | null),
+		opportunityPhase: text(decision.opportunityPhase as string | null),
+		predictiveReady: decision.predictiveReady,
+		predictiveStatus: text(decision.predictiveStatus as string | null),
+		confidence: decision.confidence,
+		direction: decision.direction,
+		forecastSource: text(decision.forecastSource as string | null),
+		forecastModel: text(decision.forecastModel as string | null),
+		forecastHorizon: decision.forecastHorizon,
+		calibrationCount: decision.calibrationCount,
+		allocationClass: text(decision.allocationClass as string | null),
+		proposedNotional: text(decision.proposedNotional as string | null),
+		proposedQuantity: text(decision.proposedQuantity as string | null),
+		referencePrice: text(decision.referencePrice as string | null),
+		availableCapital: text(decision.availableCapital as string | null),
+		openPositions: decision.openPositions,
 		entryCost: {
-			entryPrice: text(cost?.entryPrice() ?? null),
-			bestAsk: text(cost?.bestAsk() ?? null),
-			bestBid: text(cost?.bestBid() ?? null),
-			midpoint: text(cost?.midpoint() ?? null),
-			grossNotional: text(cost?.grossNotional() ?? null),
-			entryFee: text(cost?.entryFee() ?? null),
-			roundTripFees: text(cost?.roundTripFees() ?? null),
-			spread: text(cost?.spread() ?? null),
-			impact: text(cost?.impact() ?? null),
-			breakEven: text(cost?.breakEven() ?? null),
+			entryPrice: text(cost?.entryPrice as string | null),
+			bestAsk: text(cost?.bestAsk as string | null),
+			bestBid: text(cost?.bestBid as string | null),
+			midpoint: text(cost?.midpoint as string | null),
+			grossNotional: text(cost?.grossNotional as string | null),
+			entryFee: text(cost?.entryFee as string | null),
+			roundTripFees: text(cost?.roundTripFees as string | null),
+			spread: text(cost?.spread as string | null),
+			impact: text(cost?.impact as string | null),
+			breakEven: text(cost?.breakEven as string | null),
 		},
 		evidence,
 	};

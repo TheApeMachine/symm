@@ -1,42 +1,32 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { RingBuffer, signals } from "#/collections/app";
-import { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
-import { MetricT } from "#/providers/telemetry/telemetry/metric";
+import { positionsAtom } from "#/collections/app";
+import { HoldingT } from "#/providers/telemetry/telemetry/holding";
+import { PositionT } from "#/providers/telemetry/telemetry/position";
 import { Positions } from "./positions";
 
 describe("Positions", () => {
-	it("renders without error when signals.positions is in default fallback state", () => {
+	it("renders without error when positionsAtom is empty", () => {
+		positionsAtom.set([]);
 		const markup = renderToStaticMarkup(<Positions />);
 		expect(markup).toContain("no open positions");
 	});
 
-	it("renders without error when signals.positions state does not have findLast function", () => {
-		const originalState = signals.positions.state;
+	it("renders active open positions when positionsAtom contains positions", () => {
+		const original = positionsAtom.get();
 		try {
-			signals.positions.setState(() => ({}));
-			const markup = renderToStaticMarkup(<Positions />);
-			expect(markup).toContain("no open positions");
-		} finally {
-			signals.positions.setState(() => originalState);
-		}
-	});
+			const pos = new PositionT();
+			pos.status = "active";
+			const holding = new HoldingT();
+			holding.symbol = "NMR/USD";
+			holding.status = "active";
+			holding.pnl = "0.4200";
+			holding.entryPrice = "12.345600";
+			holding.mark = "12.567800";
+			holding.returnPct = 3.41;
+			pos.holding = holding;
 
-	it("renders active open positions when signals.positions contains positions", () => {
-		const originalState = signals.positions.state;
-		try {
-			const m = new MeasurementT();
-			m.symbol = "NMR/USD";
-			m.metrics = [
-				new MetricT("pnl", 0.42),
-				new MetricT("entry_price", 12.3456),
-				new MetricT("mark", 12.5678),
-				new MetricT("return_pct", 3.41),
-			];
-			const ring = new RingBuffer<MeasurementT>(1);
-			ring.add(m);
-
-			signals.positions.setState(() => ({ "NMR/USD": ring }));
+			positionsAtom.set([pos]);
 			const markup = renderToStaticMarkup(<Positions />);
 			expect(markup).toContain("NMR/USD");
 			expect(markup).toContain("active");
@@ -46,7 +36,7 @@ describe("Positions", () => {
 			expect(markup).toContain("12.567800");
 			expect(markup).not.toContain("no open positions");
 		} finally {
-			signals.positions.setState(() => originalState);
+			positionsAtom.set(original);
 		}
 	});
 });

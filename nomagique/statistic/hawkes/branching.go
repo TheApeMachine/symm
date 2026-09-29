@@ -67,7 +67,7 @@ func meanIntensity(
 	lambdaX = ((1-branching[1][1])*muX + branching[0][1]*muY) / determinant
 	lambdaY = (branching[1][0]*muX + (1-branching[0][0])*muY) / determinant
 
-	if lambdaX < 0 || lambdaY < 0 || math.IsNaN(lambdaX) || math.IsNaN(lambdaY) {
+	if !(lambdaX >= 0) || !(lambdaY >= 0) {
 		return 0, 0, false
 	}
 
@@ -75,11 +75,11 @@ func meanIntensity(
 }
 
 /*
-finiteNonNegative reports whether a value is finite and non-negative, the
-validity requirement for an expected-offspring count.
+nonNegative reports whether a value is non-negative, the validity requirement
+for an expected-offspring count.
 */
-func finiteNonNegative(value float64) bool {
-	return value >= 0 && !math.IsNaN(value) && !math.IsInf(value, 0)
+func nonNegative(value float64) bool {
+	return value >= 0
 }
 
 /*
@@ -93,7 +93,7 @@ func immediateOffspring(
 	buyParent = (alphaXX + alphaYX) / beta
 	sellParent = (alphaXY + alphaYY) / beta
 
-	if !finiteNonNegative(buyParent) || !finiteNonNegative(sellParent) {
+	if !nonNegative(buyParent) || !nonNegative(sellParent) {
 		return 0, 0, false
 	}
 
@@ -118,7 +118,7 @@ func totalDescendants(
 	buyParent = (1-branch[1][1]+branch[1][0])/determinant - 1
 	sellParent = (branch[0][1]+1-branch[0][0])/determinant - 1
 
-	if !finiteNonNegative(buyParent) || !finiteNonNegative(sellParent) {
+	if !nonNegative(buyParent) || !nonNegative(sellParent) {
 		return 0, 0, false
 	}
 

@@ -2,7 +2,6 @@ package hawkes
 
 import (
 	"fmt"
-	"math"
 	"sort"
 
 	"gonum.org/v1/gonum/stat"
@@ -42,21 +41,11 @@ func (summary *gapSummary) reset(marked []markedEvent) {
 	sort.Float64s(summary.sorted)
 }
 
-func (summary gapSummary) finite() bool {
-	for _, value := range summary.sorted {
-		if math.IsNaN(value) || math.IsInf(value, 0) {
-			return false
-		}
-	}
-
-	return true
-}
-
 /*
 median returns the middle inter-arrival gap.
 */
 func (summary gapSummary) median() (float64, bool) {
-	if len(summary.sorted) == 0 || !summary.finite() {
+	if len(summary.sorted) == 0 {
 		return 0, false
 	}
 
@@ -75,10 +64,6 @@ quartiles returns the lower and upper quartile inter-arrival gaps.
 func (summary gapSummary) quartiles() (float64, float64, error) {
 	if len(summary.sorted) == 0 {
 		return 0, 0, fmt.Errorf("hawkes grid: quartiles require values")
-	}
-
-	if !summary.finite() {
-		return 0, 0, fmt.Errorf("hawkes grid: quartiles sample is non-finite")
 	}
 
 	lower := stat.Quantile(0.25, stat.LinInterp, summary.sorted, nil)

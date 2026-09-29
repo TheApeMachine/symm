@@ -7,8 +7,8 @@ import (
 )
 
 type LearningMomentT struct {
-	Name string `json:"name"`
-	Links int32 `json:"links"`
+	Name  string `json:"name"`
+	Links int32  `json:"links"`
 }
 
 func (t *LearningMomentT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

@@ -7,14 +7,14 @@ import (
 )
 
 type DiagnosticQueueT struct {
-	Name string `json:"name"`
-	Kind string `json:"kind"`
-	Writers []string `json:"writers"`
-	Readers []string `json:"readers"`
-	Depth uint64 `json:"depth"`
-	Capacity uint64 `json:"capacity"`
-	HighWater uint64 `json:"highWater"`
-	Symbols uint64 `json:"symbols"`
+	Name      string   `json:"name"`
+	Kind      string   `json:"kind"`
+	Writers   []string `json:"writers"`
+	Readers   []string `json:"readers"`
+	Depth     uint64   `json:"depth"`
+	Capacity  uint64   `json:"capacity"`
+	HighWater uint64   `json:"highWater"`
+	Symbols   uint64   `json:"symbols"`
 }
 
 func (t *DiagnosticQueueT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

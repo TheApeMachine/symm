@@ -135,6 +135,11 @@ func (fluid *workspace) gatherPilotWave() error {
 		h.DisplacementMax = math.Max(h.DisplacementMax, cells)
 	}
 	copy(x, fluid.posOut.Float32Slice())
+
+	if n == 0 {
+		h.MinDensity = 0
+	}
+
 	if n > 0 {
 		h.SpeedRMS = math.Sqrt(h.SpeedRMS / float64(n))
 		h.DisplacementRMS = math.Sqrt(h.DisplacementRMS / float64(n))
@@ -142,8 +147,6 @@ func (fluid *workspace) gatherPilotWave() error {
 		h.DensityP01 = sampleQuantile(density, .01)
 		h.DensityP10 = sampleQuantile(density, .1)
 		h.DensityMedian = sampleQuantile(density, .5)
-	} else {
-		h.MinDensity = 0
 	}
 	fluid.health.Pilot = h
 	return nil

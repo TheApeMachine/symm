@@ -7,10 +7,10 @@ import (
 )
 
 type DiagnosticErrorT struct {
-	Source string `json:"source"`
+	Source  string `json:"source"`
 	Message string `json:"message"`
-	Caller string `json:"caller"`
-	AtNs int64 `json:"atNs"`
+	Caller  string `json:"caller"`
+	AtNs    int64  `json:"atNs"`
 }
 
 func (t *DiagnosticErrorT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

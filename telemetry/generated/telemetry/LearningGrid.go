@@ -7,11 +7,11 @@ import (
 )
 
 type LearningGridT struct {
-	Symbol string `json:"symbol"`
-	Formed bool `json:"formed"`
-	Columns int32 `json:"columns"`
-	Version uint64 `json:"version"`
-	Moment string `json:"moment"`
+	Symbol  string             `json:"symbol"`
+	Formed  bool               `json:"formed"`
+	Columns int32              `json:"columns"`
+	Version uint64             `json:"version"`
+	Moment  string             `json:"moment"`
 	Regions []*LearningActiveT `json:"regions"`
 }
 

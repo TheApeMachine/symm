@@ -71,28 +71,33 @@ func (market *Market) light() error {
 
 	topN := len(litRegions)
 
-	if len(litRegions) > 3 {
-		total, partial, bestVariance := 0.0, 0.0, 0.0
-		cutoff := 3
-
+	if len(litRegions) > 1 {
+		total := 0.0
 		for _, region := range litRegions {
 			total += region.Strength
 		}
 
+		partial := 0.0
+		bestVariance := 0.0
+		cutoff := len(litRegions)
+
 		for split := 1; split < len(litRegions); split++ {
 			partial += litRegions[split-1].Strength
-			difference := partial/float64(split) - (total-partial)/float64(len(litRegions)-split)
-			variance := float64(split*(len(litRegions)-split)) * difference * difference
+			weightLeft := float64(split)
+			weightRight := float64(len(litRegions) - split)
+			meanLeft := partial / weightLeft
+			meanRight := (total - partial) / weightRight
+			difference := meanLeft - meanRight
+			variance := weightLeft * weightRight * difference * difference
 
 			if variance > bestVariance {
-				cutoff, bestVariance = split, variance
+				bestVariance = variance
+				cutoff = split
 			}
 		}
 
-		topN = min(max(cutoff, 3), 4)
-
-		if topN > len(litRegions) {
-			topN = len(litRegions)
+		if bestVariance > 0 {
+			topN = cutoff
 		}
 	}
 

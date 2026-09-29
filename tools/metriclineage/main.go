@@ -1416,7 +1416,9 @@ func buildReport(producers []producer, consumers []consumerEdge, unresolved []un
 			co.Targets = append(co.Targets, c.ID.String())
 			if c.Kind == "bound" {
 				boundEdgeCount++
-			} else {
+			}
+
+			if c.Kind != "bound" {
 				catalogEdgeCount++
 			}
 		case "kernel":

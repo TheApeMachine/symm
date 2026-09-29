@@ -1,73 +1,10 @@
 import { useEffect, useRef } from "react";
-import { cognitionStore } from "#/collections/app";
 import {
 	CortexLeafRoster,
 	drawCortexTree,
 } from "#/components/terminal/cortex-draw";
 import { cortexTreeFromReading } from "#/components/terminal/cortex-tree";
-import type { Cognition } from "#/providers/telemetry/telemetry/cognition";
-import { CognitionBeam } from "#/providers/telemetry/telemetry/cognition-beam";
-import { CognitionBranch } from "#/providers/telemetry/telemetry/cognition-branch";
-import { CognitionClass } from "#/providers/telemetry/telemetry/cognition-class";
-
-const branchObj = new CognitionBranch();
-const beamObj = new CognitionBeam();
-const classObj = new CognitionClass();
-
-const cognitionToRecord = (
-	cog: Cognition | null,
-): Record<string, unknown> | null => {
-	if (!cog) return null;
-
-	const branches: any[] = [];
-	for (let i = 0; i < cog.branchesLength(); i++) {
-		const b = cog.branches(i, branchObj);
-		if (b) {
-			branches.push({
-				id: Number(b.id()),
-				parentId: Number(b.parentId()),
-				token: b.token() ?? "node",
-				prefix: b.prefix() ?? "",
-				key: b.key() ?? "",
-				depth: Number(b.depth()),
-				probability: b.probability(),
-				count: Number(b.count()),
-			});
-		}
-	}
-
-	const beams: any[] = [];
-	for (let i = 0; i < cog.beamsLength(); i++) {
-		const b = cog.beams(i, beamObj);
-		if (b) {
-			beams.push({
-				sequence: b.sequence() ?? "",
-				key: b.key() ?? "",
-				score: b.score(),
-			});
-		}
-	}
-
-	const classes: any[] = [];
-	for (let i = 0; i < cog.classesLength(); i++) {
-		const c = cog.classes(i, classObj);
-		if (c) {
-			classes.push({
-				name: c.name() ?? "",
-				probability: c.probability(),
-			});
-		}
-	}
-
-	return {
-		beamWidth: Number(cog.beamWidth()),
-		maxHops: Number(cog.maxHops()),
-		nodeCount: Number(cog.nodeCount()),
-		branches,
-		beams,
-		classes,
-	};
-};
+import { hubBaseUrl } from "#/lib/hub";
 
 /*
 CortexCanvas draws the sensory prefix tree.
@@ -120,15 +57,26 @@ export const CortexCanvas = ({
 			draw();
 		};
 
-		const apply = (state: typeof cognitionStore.state) => {
-			const targetRow: Cognition | undefined = state.getLast(symbol);
+		let cancelled = false;
+		const loadTree = async () => {
+			try {
+				const response = await fetch(
+					`${hubBaseUrl()}/cognition/tree?symbol=${encodeURIComponent(symbol)}`,
+				);
+				if (!response.ok) return;
 
-			if (!targetRow) return;
-			paint(cognitionToRecord(targetRow));
+				const treeData =
+					(await response.json()) as Record<string, unknown> | null;
+				if (!cancelled && treeData) {
+					paint(treeData);
+				}
+			} catch {
+				// hub may be connecting
+			}
 		};
 
-		apply(cognitionStore.state);
-		const subscription = cognitionStore.subscribe(apply);
+		loadTree();
+		const interval = setInterval(loadTree, 5000);
 
 		const observer = new ResizeObserver(draw);
 		const canvas = canvasRef.current;
@@ -140,7 +88,8 @@ export const CortexCanvas = ({
 		draw();
 
 		return () => {
-			subscription.unsubscribe();
+			cancelled = true;
+			clearInterval(interval);
 			observer.disconnect();
 		};
 	}, [symbol]);

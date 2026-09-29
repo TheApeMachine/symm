@@ -44,18 +44,23 @@ func Focus() string {
 
 /*
 Allows reports whether the given symbol is permitted under the current focus gate.
-When focus is empty, "*", or "all", all symbols are permitted.
 An empty symbol (global or system metrics) is always permitted.
+When focus is explicit wildcard "*" or "all", all symbols are permitted.
+Empty/missing focus fails closed: non-empty symbols are rejected.
 */
 func Allows(symbol string) bool {
-	focus := Focus()
-
-	if focus == "" || focus == "*" || focus == "all" {
+	if symbol == "" {
 		return true
 	}
 
-	if symbol == "" {
+	focus := Focus()
+
+	if focus == "*" || focus == "all" {
 		return true
+	}
+
+	if focus == "" {
+		return false
 	}
 
 	return strings.EqualFold(symbol, focus)

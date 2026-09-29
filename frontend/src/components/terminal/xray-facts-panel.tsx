@@ -1,17 +1,17 @@
 import { useSelector } from "@tanstack/react-store";
 import { useEffect, useRef } from "react";
-import { cognitionStore, focusStore } from "#/collections/app";
+import { focusAtom, signals } from "#/collections/app";
 import { Typography } from "#/components/ui/typography";
 
 export const XrayFactsPanel = () => {
-	const focusSymbol = useSelector(focusStore, (state) => state);
+	const focusSymbol = useSelector(focusAtom);
 	const root = useRef<HTMLDivElement>(null);
 
 	useEffect(() => {
-		const updateFromState = (state: typeof cognitionStore.state) => {
+		const updateFromState = () => {
 			if (!root.current) return;
 
-			const targetRow = state.getLast(focusSymbol);
+			const targetRow = signals.cognition.state[focusSymbol]?.getLast();
 
 			const set = (q: string, value: string) => {
 				const el = root.current?.querySelector<HTMLElement>(`[data-f=${q}]`);
@@ -32,19 +32,52 @@ export const XrayFactsPanel = () => {
 			}
 
 			if (targetRow) {
-				set("winner", targetRow.winner() || "none named");
-				set("confidence", `${(targetRow.confidence() * 100).toFixed(1)}%`);
-				set("contrast", targetRow.contrast().toFixed(3));
-				set("entropy", targetRow.entropyBits().toFixed(3));
-				set("ambiguous", String(targetRow.ambiguous()));
-				set("sequence", targetRow.sequence() || "none");
+				const metricMap = new Map<string, number>();
+				for (const m of targetRow.metrics) {
+					const name = typeof m.name === "string" ? m.name : "";
+					if (name) {
+						metricMap.set(name, m.hasNormalized ? m.normalized : m.raw);
+					}
+				}
+
+				const contrastVal = metricMap.get("contrast");
+				const surprisalVal = metricMap.get("surprisal");
+				const stabilityVal = metricMap.get("stability");
+				const ambiguityVal = metricMap.get("ambiguity");
+
+				set("winner", focusSymbol);
+				set(
+					"confidence",
+					stabilityVal !== undefined
+						? `${(stabilityVal * 100).toFixed(1)}%`
+						: "—",
+				);
+				set(
+					"contrast",
+					contrastVal !== undefined ? contrastVal.toFixed(3) : "—",
+				);
+				set(
+					"entropy",
+					surprisalVal !== undefined ? surprisalVal.toFixed(3) : "—",
+				);
+				set(
+					"ambiguous",
+					ambiguityVal !== undefined
+						? ambiguityVal > 0.5
+							? "true"
+							: "false"
+						: "—",
+				);
+				const sym =
+					typeof targetRow.symbol === "string"
+						? targetRow.symbol
+						: "";
+				set("sequence", sym || "none");
 			}
 		};
 
-		updateFromState(cognitionStore.state);
-		const subscription = cognitionStore.subscribe((state) => {
-			updateFromState(state);
-		});
+		updateFromState();
+		const subscription = signals.cognition.subscribe(updateFromState);
 
 		return () => {
 			subscription.unsubscribe();

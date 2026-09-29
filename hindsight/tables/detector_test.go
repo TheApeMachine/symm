@@ -33,6 +33,28 @@ func TestStreamingDetectorProcess(t *testing.T) {
 		}
 		So(profitable, ShouldBeTrue)
 		So(losing, ShouldBeTrue)
+
+		// First record has no prior structural boundary, so precursorStart is 0 and status is unsupported
+		So(records[0].PrecursorStartTick, ShouldEqual, 0)
+		So(records[0].Status, ShouldEqual, "unsupported")
+
+		// Subsequent records have valid precursor start ticks
+		if len(records) > 1 {
+			So(records[1].PrecursorStartTick, ShouldEqual, records[0].AnchorTick)
+			So(records[1].Status, ShouldEqual, "baseline_shift")
+		}
+
+		// Ensure fragment direction is one of the 4 canonical classes
+		validDirections := map[string]bool{"UP": true, "DOWN": true, "CHOP": true, "FLAT": true}
+		for _, record := range records {
+			So(validDirections[record.Direction], ShouldBeTrue)
+			// Verify Profit is based on ExitPrice, not ExtremumPrice (no peak profit leakage)
+			if record.ExtremumPrice > record.ExitPrice && record.Direction == "UP" {
+				// Causal profit must be strictly less than the hypothetical peak profit
+				// (ExitPrice is less than ExtremumPrice)
+				So(record.Profit, ShouldBeLessThan, record.PositionSize*(record.ExtremumPrice-record.EntryPrice)/record.EntryPrice)
+			}
+		}
 	})
 
 	Convey("Futures and quotes do not advance the volume baseline", t, func() {
@@ -54,8 +76,8 @@ func BenchmarkStreamingDetectorProcess(b *testing.B) {
 	detector := tables.NewStreamingDetector(1, market.TrainingPrice(b.Context()))
 	frames := market.TrainingTape(6)
 	b.ReportAllocs()
-	b.ResetTimer()
-	for index := 0; index < b.N; index++ {
+	
+	for index := 0; b.Loop(); index++ {
 		for _, measurement := range frames[index%len(frames)].Peers {
 			if _, err := detector.Process(measurement); err != nil {
 				b.Fatal(err)

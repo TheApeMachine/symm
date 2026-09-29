@@ -299,52 +299,47 @@ func usableOrder(order *book.Order) bool {
 		order.ID != "" &&
 		order.LimitPrice != nil &&
 		order.Quantity != nil &&
-		validPositive(order.LimitPrice.Float64()) &&
-		validPositive(order.Quantity.Float64())
+		order.LimitPrice.Sign() > 0 &&
+		order.Quantity.Sign() > 0
 }
 
 /*
-validPositive reports whether a value is strictly positive and finite.
-*/
-func validPositive(value float64) bool {
-	return value > 0 && !math.IsNaN(value) && !math.IsInf(value, 0)
-}
-
-/*
-validParticle reports whether a projected particle carries only determined
-values: energy, mass and amplitude are strictly positive and finite (the
-kernels divide by them and refuse a non-positive energy), and every coordinate
-and oscillator field is finite. It is the data-arrival gate — an order whose
-projection is missing any of these values never becomes a particle.
+validParticle reports whether a projected particle carries determined positive
+values: energy, mass, and amplitude are strictly positive and finite, and all
+coordinate and oscillator fields are within finite real bounds.
 */
 func validParticle(state *sensorium.State) bool {
 	if state == nil || state.N != 1 {
 		return false
 	}
 
-	if !validPositive(float64(state.Energy[0])) ||
-		!validPositive(float64(state.Mass[0])) ||
-		!validPositive(float64(state.Amp[0])) {
+	if !isPositiveFinite(state.Energy[0]) ||
+		!isPositiveFinite(state.Mass[0]) ||
+		!isPositiveFinite(state.Amp[0]) {
 		return false
 	}
 
-	if !isFiniteFloat32(state.Phase[0]) ||
-		!isFiniteFloat32(state.Omega[0]) ||
-		!isFiniteFloat32(state.Pos[0]) ||
-		!isFiniteFloat32(state.Pos[1]) ||
-		!isFiniteFloat32(state.Pos[2]) ||
-		!isFiniteFloat32(state.Vel[0]) ||
-		!isFiniteFloat32(state.Vel[1]) ||
-		!isFiniteFloat32(state.Vel[2]) ||
-		!isFiniteFloat32(state.Heat[0]) {
+	if !isFinite(state.Phase[0]) ||
+		!isFinite(state.Omega[0]) ||
+		!isFinite(state.Pos[0]) ||
+		!isFinite(state.Pos[1]) ||
+		!isFinite(state.Pos[2]) ||
+		!isFinite(state.Vel[0]) ||
+		!isFinite(state.Vel[1]) ||
+		!isFinite(state.Vel[2]) ||
+		!isFinite(state.Heat[0]) {
 		return false
 	}
 
 	return true
 }
 
-func isFiniteFloat32(value float32) bool {
-	return !math.IsNaN(float64(value)) && !math.IsInf(float64(value), 0)
+func isFinite(value float32) bool {
+	return value >= -math.MaxFloat32 && value <= math.MaxFloat32
+}
+
+func isPositiveFinite(value float32) bool {
+	return value > 0 && value <= math.MaxFloat32
 }
 
 /*

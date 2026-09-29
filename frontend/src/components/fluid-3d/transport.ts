@@ -1,4 +1,3 @@
-import { FluidRecordReader } from "./record";
 import {
 	decodeManifold,
 	type FluidFields,
@@ -116,7 +115,6 @@ export class FluidWebRTCFeed {
 			ordered: false,
 			maxRetransmits: 0,
 		});
-		const reader = new FluidRecordReader();
 		channel.binaryType = "arraybuffer";
 		channel.addEventListener("open", () => {
 			console.log("[FluidRTC] data channel opened:", channel.label);
@@ -130,34 +128,18 @@ export class FluidWebRTCFeed {
 			console.error("[FluidRTC] data channel error:", event);
 		});
 
-		let chunksReceived = 0;
 		channel.addEventListener("message", (event) => {
 			try {
-				console.log(event);
 				if (!(event.data instanceof ArrayBuffer)) {
 					throw new Error(`${channel.label} received a non-binary message`);
 				}
 
-				chunksReceived += 1;
-				if (chunksReceived === 1 || chunksReceived % 50 === 0) {
-					console.log(
-						`[FluidRTC] chunk ${chunksReceived} received (${event.data.byteLength} bytes)`,
-					);
-				}
-
-				const record = reader.push(event.data);
-
-				if (record !== null) {
-					console.log(
-						`[FluidRTC] full frame reassembled (${record.byteLength} bytes)`,
-					);
-					const { fields, particles, phase } = decodeManifold(
-						new Uint8Array(record),
-					);
-					this.handlers.onFields(fields);
-					this.handlers.onParticles(particles);
-					this.handlers.onPhase(phase);
-				}
+				const { fields, particles, phase } = decodeManifold(
+					new Uint8Array(event.data),
+				);
+				this.handlers.onFields(fields);
+				this.handlers.onParticles(particles);
+				this.handlers.onPhase(phase);
 			} catch (error) {
 				console.error("[FluidRTC] message error:", error);
 				this.handlers.onError(errorValue(error));

@@ -863,8 +863,8 @@ func (solver *Solver) injectProbeParticle(
 	price float64,
 	symbol string,
 ) error {
-	if batch == nil || symbol == "" || !validPositive(price) {
-		return fmt.Errorf("manifold: batch, symbol and finite positive probe price required")
+	if batch == nil || symbol == "" || !(price > 0) {
+		return fmt.Errorf("manifold: batch, symbol and positive probe price required")
 	}
 
 	// A probe must be placed by the same resident frame the observed orders

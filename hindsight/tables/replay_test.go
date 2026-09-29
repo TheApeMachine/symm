@@ -140,9 +140,9 @@ func BenchmarkCatalogReplay(b *testing.B) {
 	catalog := tablestest.New(b)
 	writeReplay(b, catalog, market.ImpulseTape("BTC/USD", 6), false)
 	b.ReportAllocs()
-	b.ResetTimer()
+	
 
-	for index := 0; index < b.N; index++ {
+	for b.Loop() {
 		_, frames, err := catalog.Replay(b.Context(), 1)
 
 		if err != nil {

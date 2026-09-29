@@ -54,8 +54,17 @@ export const LearningDashboard = () => {
 	// Real data states
 	const [skillPct, setSkillPct] = useState(0);
 	const [edgeBp, setEdgeBp] = useState(0);
-	const [isTrading, setIsTrading] = useState(false);
 	const [openPositionsCount, setOpenPositionsCount] = useState(0);
+
+	// Staged training state
+	const [stage, setStage] = useState("MODEL DEVELOPMENT");
+	const [stageBlocker, setStageBlocker] = useState(
+		"collecting initial historical development samples",
+	);
+	const [frozenPrediction, setFrozenPrediction] = useState("WAIT");
+	const [delayedOutcome, setDelayedOutcome] = useState("RESOLVING");
+	const [precursorTokens, setPrecursorTokens] = useState<string[]>(["I₀"]);
+	const [abcMarkers, setAbcMarkers] = useState({ a: 0, b: 0, c: 0 });
 
 	// Impulse Map real nodes & regions
 	const [impulseNodes, setImpulseNodes] = useState<ImpulseNode[]>([]);
@@ -79,10 +88,8 @@ export const LearningDashboard = () => {
 	useEffect(() => {
 		const unsubPositions = positionCountAtom.subscribe((count) => {
 			setOpenPositionsCount(count);
-			setIsTrading(count > 0);
 		});
 		setOpenPositionsCount(positionCountAtom.get());
-		setIsTrading(positionCountAtom.get() > 0);
 
 		return () => {
 			unsubPositions?.unsubscribe?.();
@@ -119,6 +126,11 @@ export const LearningDashboard = () => {
 
 		const seen = new WeakSet<MeasurementT>();
 		const cursor = new RingCursor<MeasurementT>();
+
+		const setText = (el: HTMLElement, val: string) => {
+			el.textContent = val;
+			el.innerText = val;
+		};
 
 		const update = (ring: RingBuffer<MeasurementT>) => {
 			if (!ring || ring.isEmpty()) return;
@@ -171,33 +183,40 @@ export const LearningDashboard = () => {
 
 						switch (fmt) {
 							case "percent":
-								el.innerText = percent(raw);
+								setText(el, percent(raw));
 								break;
 							case "basis":
-								el.innerText = basis(raw);
+								setText(el, basis(raw));
 								break;
 							case "integer":
-								el.innerText = Math.floor(raw).toLocaleString();
+								setText(el, Math.floor(raw).toLocaleString());
 								break;
 							case "bits":
-								el.innerText = `${raw.toFixed(2)} bits`;
+								setText(el, `${raw.toFixed(2)} bits`);
 								break;
 							case "spread":
-								el.innerText = `Spread ${raw.toFixed(3)}`;
+								setText(el, `Spread ${raw.toFixed(3)}`);
 								break;
 							case "surprisal":
-								el.innerText = `Surprisal ${raw.toFixed(2)} nat`;
+								setText(el, `Surprisal ${raw.toFixed(2)} nat`);
+								break;
+							case "insufficient_if_zero":
+								if (raw === 0) {
+									setText(el, "—");
+								} else {
+									setText(el, basis(raw));
+								}
 								break;
 							case "action":
 								if (raw === 1) {
-									el.innerText = "ENTER";
+									setText(el, "ENTER");
 									break;
 								}
 								if (raw === 2) {
-									el.innerText = "EXIT";
+									setText(el, "EXIT");
 									break;
 								}
-								el.innerText = "WAIT";
+								setText(el, "WAIT");
 								break;
 							default:
 								renderValue(el, raw);
@@ -218,7 +237,6 @@ export const LearningDashboard = () => {
 
 				setSkillPct(skill);
 				setEdgeBp(edge * 10000);
-				setIsTrading(tradingActive);
 
 				if (metaEl) {
 					metaEl.innerText = `${Math.floor(steps).toLocaleString()} frames · ${Math.floor(decisions).toLocaleString()} learned situations · ${Math.floor(resolved).toLocaleString()} resolved`;
@@ -228,28 +246,149 @@ export const LearningDashboard = () => {
 					statusMetaEl.innerText = `conf: ${(confidence * 100).toFixed(1)}% · contrast: ${contrast.toFixed(2)} bits · edge: ${(edge * 10000).toFixed(1)} bp`;
 				}
 
+				// Update backend-owned canonical stage and blocker (Section 33)
+				const sCode = metricMap.stage_code ?? 0;
+				let stageStr = "MODEL DEVELOPMENT";
+				if (sCode === 1) stageStr = "HISTORICAL VALIDATION";
+				if (sCode === 2) stageStr = "FORWARD PAPER LEARNING";
+				if (sCode === 3) stageStr = "FORWARD SKILL DEMONSTRATED";
+
+				let blockerStr = "";
+				if (measurement.provenance) {
+					for (const p of measurement.provenance) {
+						if (p?.name === "stage" && p.value) {
+							stageStr = String(p.value);
+						}
+						if (p?.name === "stage_blocker" && p.value !== undefined) {
+							blockerStr = String(p.value);
+						}
+					}
+				}
+
+				// Frozen pre-outcome prediction & delayed label (Section 38)
+				const actVal = metricMap.action ?? 0;
+				const actStr = actVal === 1 ? "ENTER" : actVal === 2 ? "EXIT" : "WAIT";
+
+				const extVal = metricMap.excursion_type ?? 0;
+				let extStr = "RESOLVING";
+				if (extVal === 1) extStr = "UP";
+				if (extVal === 2) extStr = "DOWN";
+				if (extVal === 3) extStr = "CHOP";
+				if (extVal === 4) extStr = "FLAT";
+
+				const precLen = Math.floor(metricMap.precursor_length ?? 0);
+				const markA = Math.floor(metricMap.mark_a ?? 0);
+				const markB = Math.floor(metricMap.mark_b ?? 0);
+				const markC = Math.floor(metricMap.mark_c ?? 0);
+
+				setStage(stageStr);
+				setStageBlocker(blockerStr || "Gate criteria met");
+				setFrozenPrediction(actStr);
+				setDelayedOutcome(extStr);
+				if (precLen === 0) {
+					setPrecursorTokens(["I₀"]);
+				} else {
+					setPrecursorTokens(
+						Array.from({ length: Math.min(precLen, 8) }, (_, i) => `I${i}`),
+					);
+				}
+				setAbcMarkers({ a: markA, b: markB, c: markC });
+
+				const stageEls = root.querySelectorAll('[data-l="training-stage"]');
+				stageEls.forEach((el) => {
+					setText(el as HTMLElement, stageStr);
+				});
+
+				const blockerEls = root.querySelectorAll('[data-l="stage-blocker"]');
+				blockerEls.forEach((el) => {
+					setText(el as HTMLElement, blockerStr || "Gate criteria met");
+				});
+
 				if (gateCountEl) {
-					gateCountEl.innerText = tradingActive
-						? "Paper trading"
-						: "Training only · Gated";
+					setText(gateCountEl, stageStr);
+				}
+
+				const frozenEls = root.querySelectorAll('[data-l="frozen-prediction"]');
+				frozenEls.forEach((el) => {
+					setText(el as HTMLElement, actStr);
+				});
+
+				const delayedEls = root.querySelectorAll('[data-l="delayed-label"]');
+				delayedEls.forEach((el) => {
+					setText(el as HTMLElement, extStr);
+				});
+
+				// Temporal precursor sequence & ABC boundaries (Section 36)
+				const precEls = root.querySelectorAll('[data-l="temporal-precursor"]');
+				precEls.forEach((el) => {
+					if (precLen === 0) {
+						setText(el as HTMLElement, "I₀");
+					} else {
+						const tokens = Array.from(
+							{ length: Math.min(precLen, 8) },
+							(_, i) => `I${i}`,
+						);
+						setText(el as HTMLElement, tokens.join(" → "));
+					}
+				});
+
+				const abcEls = root.querySelectorAll('[data-l="abc-markers"]');
+				abcEls.forEach((el) => {
+					setText(el as HTMLElement, `A: ${markA} · B: ${markB} · C: ${markC}`);
+				});
+
+				const posEls = root.querySelectorAll('[data-l="paper-position"]');
+				posEls.forEach((el) => {
+					setText(
+						el as HTMLElement,
+						openPositionsCount > 0
+							? `${openPositionsCount} positions active`
+							: "None",
+					);
+				});
+
+				if (metaEl) {
+					setText(
+						metaEl,
+						`${Math.floor(steps).toLocaleString()} frames · ${Math.floor(decisions).toLocaleString()} learned situations · ${Math.floor(resolved).toLocaleString()} resolved`,
+					);
+				}
+
+				if (statusMetaEl) {
+					setText(
+						statusMetaEl,
+						`conf: ${(confidence * 100).toFixed(1)}% · contrast: ${contrast.toFixed(2)} bits · edge: ${(edge * 10000).toFixed(1)} bp`,
+					);
 				}
 
 				if (forwardMetaEl) {
-					forwardMetaEl.innerText = `${Math.floor(evaluated).toLocaleString()} completed evaluations`;
+					setText(
+						forwardMetaEl,
+						`${Math.floor(evaluated).toLocaleString()} completed evaluations`,
+					);
 				}
 
 				if (recogMetaEl) {
-					recogMetaEl.innerText = `${Math.floor(steps).toLocaleString()} frames · ${Math.floor(decisions).toLocaleString()} learned situations`;
+					setText(
+						recogMetaEl,
+						`${Math.floor(steps).toLocaleString()} frames · ${Math.floor(decisions).toLocaleString()} learned situations`,
+					);
 				}
 
 				if (recogStatusEl) {
-					recogStatusEl.innerText = tradingActive
-						? "Execution active · Paper trading enabled"
-						: "Training precursor associations · Quoted returns, orders gated";
+					setText(
+						recogStatusEl,
+						tradingActive
+							? "Execution active · Paper trading enabled"
+							: "Training precursor associations · Quoted returns, orders gated",
+					);
 				}
 
 				if (skillMetaEl) {
-					skillMetaEl.innerText = `${Math.floor(evaluated).toLocaleString()} forward evaluations · ${tradingActive ? "trading" : "learning"}`;
+					setText(
+						skillMetaEl,
+						`${Math.floor(evaluated).toLocaleString()} forward evaluations · ${tradingActive ? "trading" : "learning"}`,
+					);
 				}
 
 				if (activityListEl && !seen.has(measurement)) {
@@ -529,7 +668,7 @@ export const LearningDashboard = () => {
 		return () => {
 			unsubTraining?.unsubscribe?.();
 		};
-	}, [focusSymbol]);
+	}, [focusSymbol, openPositionsCount]);
 
 	return (
 		<Flex.Column
@@ -553,24 +692,20 @@ export const LearningDashboard = () => {
 						<span>RTC LIVE · CONNECTED</span>
 					</div>
 
-					<div
-						className={cn(
-							"flex items-center gap-1.5 text-[10px] px-2 py-0.5 rounded font-bold border",
-							isTrading
-								? "bg-(--acc)/10 text-(--acc) border-(--acc)/30"
-								: "bg-(--info)/10 text-(--info) border-(--info)/30",
-						)}
-					>
-						<div
-							className={cn(
-								"w-1.5 h-1.5 rounded-full",
-								isTrading ? "bg-(--acc)" : "bg-(--info)",
-							)}
-						/>
-						<span data-l="gate-count">
-							{isTrading ? "PAPER TRADING" : "AGENT · MODEL TRAINING"}
+					<div className="flex items-center gap-1.5 text-[10px] px-2 py-0.5 rounded font-bold border border-(--acc)/30 bg-(--acc)/10 text-(--acc)">
+						<div className="w-1.5 h-1.5 rounded-full bg-(--acc)" />
+						<span data-l="training-stage">{stage}</span>
+					</div>
+
+					<div className="flex items-center gap-1 text-[10px] text-(--f4) max-w-xs truncate max-md:hidden">
+						<span>BLOCKER:</span>
+						<span data-l="stage-blocker" className="text-(--f2) truncate">
+							{stageBlocker}
 						</span>
 					</div>
+					<span data-l="gate-count" className="hidden">
+						{stage}
+					</span>
 				</div>
 
 				<div className="flex items-center gap-4 text-[11px] text-(--f3)">
@@ -593,7 +728,9 @@ export const LearningDashboard = () => {
 						</span>
 					</div>
 					<div className="flex items-center gap-1.5">
-						<span className="text-(--f1) font-bold">{openPositionsCount}</span>
+						<span className="text-(--f1) font-bold" data-l="paper-position">
+							{openPositionsCount}
+						</span>
 						<span>open positions</span>
 					</div>
 
@@ -622,6 +759,40 @@ export const LearningDashboard = () => {
 
 				<div className="text-[10px] text-(--f4) font-mono max-md:hidden">
 					<span data-l="header-meta">Connecting to the workspace</span>
+				</div>
+			</div>
+
+			{/* Temporal Precursor & Boundary Bar (Section 36) */}
+			<div className="border-(--line) border-b bg-(--sunken) px-3 py-1 flex items-center justify-between text-[10px] text-(--f3) shrink-0 font-mono">
+				<div className="flex items-center gap-2">
+					<span className="text-(--f4) uppercase font-bold tracking-wider">
+						Temporal Precursor:
+					</span>
+					<span data-l="temporal-precursor" className="text-(--acc) font-bold">
+						{precursorTokens.join(" → ")}
+					</span>
+				</div>
+				<div className="flex items-center gap-3">
+					<div className="flex items-center gap-1.5">
+						<span className="text-(--f4)">Boundaries:</span>
+						<span data-l="abc-markers" className="text-(--f2)">
+							A: {abcMarkers.a} · B: {abcMarkers.b} · C: {abcMarkers.c}
+						</span>
+					</div>
+					<div className="h-2.5 w-px bg-(--line)" />
+					<div className="flex items-center gap-1.5">
+						<span className="text-(--f4)">Pre-Outcome Prediction:</span>
+						<span data-l="frozen-prediction" className="text-(--acc) font-bold">
+							{frozenPrediction}
+						</span>
+					</div>
+					<div className="h-2.5 w-px bg-(--line)" />
+					<div className="flex items-center gap-1.5">
+						<span className="text-(--f4)">Delayed Label:</span>
+						<span data-l="delayed-label" className="text-(--f1) font-bold">
+							{delayedOutcome}
+						</span>
+					</div>
 				</div>
 			</div>
 
@@ -677,15 +848,17 @@ export const LearningDashboard = () => {
 							</div>
 						</div>
 
-						{tab === "decision" && (
-							<>
-								<ImpulsePanel />
-								<CandidatePanel />
-								<KnowledgePanel />
-							</>
-						)}
-						{tab === "recognition" && <RecognitionPanel />}
-						{tab === "influence" && <InfluencePanel />}
+						<div className={tab === "decision" ? "" : "hidden"}>
+							<ImpulsePanel />
+							<CandidatePanel />
+							<KnowledgePanel />
+						</div>
+						<div className={tab === "recognition" ? "" : "hidden"}>
+							<RecognitionPanel />
+						</div>
+						<div className={tab === "influence" ? "" : "hidden"}>
+							<InfluencePanel />
+						</div>
 					</Flex.Column>
 
 					<Flex.Column className="w-96 shrink-0 overflow-auto border-(--line) border-l max-lg:w-full">

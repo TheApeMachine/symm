@@ -5,6 +5,7 @@ import (
 	"io"
 	neturl "net/url"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -39,6 +40,8 @@ type PositionSource interface {
 	PositionsWire() *wire.PositionsFrameT
 	DecisionsWire() *wire.StrategyFrameT
 	EquityWire() *wire.EquityFrameT
+	PositionsVersion() uint64
+	DecisionsVersion() uint64
 }
 
 type CognitionSource interface {
@@ -162,6 +165,8 @@ func NewHub(
 		}()
 
 		var lastPositionsPush time.Time
+		var lastPositionsVersion uint64
+		var lastPositionsSummary string
 		hadPositions := false
 
 		sendPositions := func() error {
@@ -169,6 +174,7 @@ func NewHub(
 				return nil
 			}
 
+			ver := hub.positionSource.PositionsVersion()
 			wireFrame := hub.positionSource.PositionsWire()
 
 			if wireFrame == nil {
@@ -181,7 +187,14 @@ func NewHub(
 				return nil
 			}
 
+			summary := positionsSummary(wireFrame.Rows)
+			if ver != 0 && ver == lastPositionsVersion && summary == lastPositionsSummary {
+				return nil
+			}
+
 			hadPositions = hasNow
+			lastPositionsVersion = ver
+			lastPositionsSummary = summary
 
 			message := &wire.MessageT{
 				Sequence: uint64(time.Now().UnixNano()),
@@ -201,9 +214,15 @@ func NewHub(
 		}
 
 		var lastDecisionsPush time.Time
+		var lastDecisionsVersion uint64
 
 		sendDecisions := func() error {
 			if hub.positionSource == nil {
+				return nil
+			}
+
+			ver := hub.positionSource.DecisionsVersion()
+			if ver != 0 && ver == lastDecisionsVersion {
 				return nil
 			}
 
@@ -212,6 +231,8 @@ func NewHub(
 			if wireFrame == nil || len(wireFrame.Decisions) == 0 {
 				return nil
 			}
+
+			lastDecisionsVersion = ver
 
 			message := &wire.MessageT{
 				Sequence: uint64(time.Now().UnixNano()),
@@ -231,6 +252,7 @@ func NewHub(
 		}
 
 		var lastEquityPush time.Time
+		var lastCash, lastUnrealized, lastEquity string
 
 		sendEquity := func() error {
 			if hub.positionSource == nil {
@@ -242,6 +264,14 @@ func NewHub(
 			if wireFrame == nil {
 				return nil
 			}
+
+			if wireFrame.Cash == lastCash && wireFrame.Unrealized == lastUnrealized && wireFrame.Equity == lastEquity {
+				return nil
+			}
+
+			lastCash = wireFrame.Cash
+			lastUnrealized = wireFrame.Unrealized
+			lastEquity = wireFrame.Equity
 
 			message := &wire.MessageT{
 				Sequence: uint64(time.Now().UnixNano()),
@@ -428,4 +458,26 @@ func (hub *Hub) Run() {
 
 		hub.app.Listen(address)
 	}()
+}
+
+func positionsSummary(rows []*wire.PositionT) string {
+	if len(rows) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+
+	for _, row := range rows {
+		if row == nil || row.Holding == nil {
+			continue
+		}
+
+		b.WriteString(row.Holding.Symbol)
+		b.WriteString(row.Holding.Status)
+		b.WriteString(row.Holding.Qty)
+		b.WriteString(row.Holding.Mark)
+		b.WriteString(row.Holding.Pnl)
+	}
+
+	return b.String()
 }

@@ -109,11 +109,11 @@ func adaptiveResonanceConfig(alpha float64, arch []int) resonanceConfig {
 
 		latentDecay[latentIndex] = alpha * 1e-1
 
+		sparsity[latentIndex] = alpha * 1e-2
+
 		if layerDim > inputDim {
 			expansionRatio := float64(layerDim) / float64(inputDim)
 			sparsity[latentIndex] = alpha * 5e-2 * math.Sqrt(expansionRatio)
-		} else {
-			sparsity[latentIndex] = alpha * 1e-2
 		}
 	}
 
@@ -1116,13 +1116,14 @@ func (rm *ResonanceManifold) predictionEnergy() float64 {
 	energy := 0.0
 
 	for layerIndex, layerError := range layerErrors {
-		if rm.cfg.UsePrecision {
-			weightedError := rm.workspace.weightedErr[layerIndex]
-			weightedError.MulElemVec(rm.precisionFor(layerIndex), layerError)
-			energy += 0.5 * denseColDot(weightedError, layerError)
-		} else {
+		if !rm.cfg.UsePrecision {
 			energy += 0.5 * denseColDot(layerError, layerError)
+			continue
 		}
+
+		weightedError := rm.workspace.weightedErr[layerIndex]
+		weightedError.MulElemVec(rm.precisionFor(layerIndex), layerError)
+		energy += 0.5 * denseColDot(weightedError, layerError)
 	}
 
 	if rm.temporalPriorsReady {
@@ -1132,13 +1133,15 @@ func (rm *ResonanceManifold) predictionEnergy() float64 {
 			temporalError.SubVec(rm.latentStates[layerIndex], rm.workspace.temporalPriors[latentIndex])
 
 			weight := rm.cfg.TemporalWeights[latentIndex]
-			if rm.cfg.UsePrecision {
-				weightedError := rm.workspace.temporalWeightedErrs[latentIndex]
-				weightedError.MulElemVec(rm.temporalPrecision[latentIndex], temporalError)
-				energy += 0.5 * weight * denseColDot(weightedError, temporalError)
-			} else {
+
+			if !rm.cfg.UsePrecision {
 				energy += 0.5 * weight * denseColDot(temporalError, temporalError)
+				continue
 			}
+
+			weightedError := rm.workspace.temporalWeightedErrs[latentIndex]
+			weightedError.MulElemVec(rm.temporalPrecision[latentIndex], temporalError)
+			energy += 0.5 * weight * denseColDot(weightedError, temporalError)
 		}
 	}
 
@@ -1425,14 +1428,14 @@ func (rm *ResonanceManifold) stateGradients(
 		gradient.Zero()
 		latentIndex := layerIndex - 1
 
-		if layerIndex < topIndex {
-			if rm.cfg.UsePrecision {
-				weightedError := rm.workspace.weightedErr[layerIndex]
-				weightedError.MulElemVec(rm.precisionFor(layerIndex), layerErrors[layerIndex])
-				gradient.AddVec(gradient, weightedError)
-			} else {
-				gradient.AddVec(gradient, layerErrors[layerIndex])
-			}
+		if layerIndex < topIndex && !rm.cfg.UsePrecision {
+			gradient.AddVec(gradient, layerErrors[layerIndex])
+		}
+
+		if layerIndex < topIndex && rm.cfg.UsePrecision {
+			weightedError := rm.workspace.weightedErr[layerIndex]
+			weightedError.MulElemVec(rm.precisionFor(layerIndex), layerErrors[layerIndex])
+			gradient.AddVec(gradient, weightedError)
 		}
 
 		belowSignal := rm.workspace.belowSignal[layerIndex-1]
@@ -1484,7 +1487,9 @@ func (rm *ResonanceManifold) stateGradients(
 			for index, val := range latentData {
 				if val > 0 {
 					gradientData[index] += s
-				} else if val < 0 {
+				}
+
+				if val < 0 {
 					gradientData[index] -= s
 				}
 			}
@@ -1655,12 +1660,12 @@ func (rm *ResonanceManifold) updateTaskReliability(
 	taskScaleData := rm.taskScale.RawVector().Data
 	taskPrecisionData := rm.taskPrecision.RawVector().Data
 
-	if !rm.taskScaleReady[rowIndex] {
-		if squaredError > 0 {
-			taskVarianceData[rowIndex] = squaredError
-			taskScaleData[rowIndex] = math.Log(squaredError)
-		}
-	} else {
+	if !rm.taskScaleReady[rowIndex] && squaredError > 0 {
+		taskVarianceData[rowIndex] = squaredError
+		taskScaleData[rowIndex] = math.Log(squaredError)
+	}
+
+	if rm.taskScaleReady[rowIndex] {
 		candidateVariance := (1.0-beta)*taskVarianceData[rowIndex] + beta*squaredError
 		varianceFloor := rm.cfg.PrecisionEps * math.Exp(taskScaleData[rowIndex])
 		taskVarianceData[rowIndex] = math.Max(candidateVariance, varianceFloor)
@@ -1676,10 +1681,9 @@ func (rm *ResonanceManifold) updateTaskReliability(
 	}
 
 	varianceFloor := math.Exp(taskScaleData[rowIndex])
+	taskPrecisionData[rowIndex] = 1.0
 
-	if !rm.taskScaleReady[rowIndex] {
-		taskPrecisionData[rowIndex] = 1.0
-	} else {
+	if rm.taskScaleReady[rowIndex] {
 		value := varianceFloor / taskVarianceData[rowIndex]
 		taskPrecisionData[rowIndex] = math.Min(
 			rm.cfg.PrecisionMax,
@@ -1832,14 +1836,15 @@ func (rm *ResonanceManifold) rolloutRetention(steps int) []float64 {
 	for step := range steps {
 		if step == 0 || initialNorm == 0 {
 			retention[step] = 1.0
-		} else {
-			normSq := 0.0
-			for i := range numLatents {
-				norm := denseColNorm(currentLatents[i])
-				normSq += norm * norm
-			}
-			retention[step] = math.Sqrt(normSq) / initialNorm
+			continue
 		}
+
+		normSq := 0.0
+		for i := range numLatents {
+			norm := denseColNorm(currentLatents[i])
+			normSq += norm * norm
+		}
+		retention[step] = math.Sqrt(normSq) / initialNorm
 
 		if step+1 < steps {
 			for i := range numLatents {

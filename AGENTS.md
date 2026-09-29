@@ -323,7 +323,7 @@ Errors are part of the system state.
 if err != nil {
     return errnie.Error(errnie.Err(
         errnie.IO,
-        "component: descriptive failure",
+        "[component] descriptive failure",
         err,
     ))
 }

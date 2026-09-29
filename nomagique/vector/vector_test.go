@@ -70,18 +70,6 @@ func TestVectorOperations(t *testing.T) {
 		So(scale.Error(), ShouldBeNil)
 	})
 
-	Convey("Vector Finite", t, func() {
-		finite := vector.NewFinite()
-		v := []float64{1.0, 2.0, 3.0}
-		in := func(yield func(unsafe.Pointer) bool) {
-			yield(unsafe.Pointer(&v))
-		}
-		out := tests.CollectSeq[bool](finite.Next(in))
-		So(len(out), ShouldEqual, 1)
-		So(out[0], ShouldBeTrue)
-		So(finite.Error(), ShouldBeNil)
-	})
-
 	Convey("Vector Design", t, func() {
 		design := vector.NewDesign(1, 0)
 		v := []float64{10.0, 20.0, 30.0}

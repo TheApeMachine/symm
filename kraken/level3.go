@@ -3,7 +3,6 @@ package kraken
 import (
 	"encoding/json"
 	"fmt"
-	"math"
 	"math/big"
 	"strconv"
 	"strings"
@@ -144,10 +143,7 @@ func (order Level3Order) Resting() bool {
 		return false
 	}
 
-	price := order.LimitPrice.Float64()
-	qty := order.OrderQty.Float64()
-
-	return price > 0 && qty > 0 && !math.IsNaN(price) && !math.IsNaN(qty) && !math.IsInf(price, 0) && !math.IsInf(qty, 0)
+	return order.LimitPrice.Sign() > 0 && order.OrderQty.Sign() > 0
 }
 
 /*

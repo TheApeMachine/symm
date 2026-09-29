@@ -3,9 +3,14 @@ import { createStore, type Store } from "@tanstack/store";
 import { RingBuffer } from "./ring";
 export { RingBuffer };
 
+import type { DecisionT } from "#/providers/telemetry/telemetry/decision";
 import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
+import type { PositionT } from "#/providers/telemetry/telemetry/position";
+import type { ResonanceT } from "#/providers/telemetry/telemetry/resonance";
 
 export const DEFAULT_KERNELS = [
+	"category",
+	"cognition",
 	"correlation",
 	"cvd",
 	"depthflow",
@@ -17,6 +22,7 @@ export const DEFAULT_KERNELS = [
 	"pumpdump",
 	"sentiment",
 	"toxicity",
+	"training",
 ];
 
 export const DEFAULT_FOCUS_SYMBOL = "BTC/USD";
@@ -90,11 +96,16 @@ export const positionCountAtom = createAtom<number>(0);
 export const measurementSourcesAtom = createAtom<string[]>(DEFAULT_KERNELS);
 export const kernelDetailAtom = createAtom<string>("cvd");
 
+export const positionsAtom = createAtom<PositionT[]>([]);
+export const decisionsAtom = createAtom<DecisionT[]>([]);
+export const resonanceStore = createStore<Record<string, RingBuffer<ResonanceT>>>({});
+
 export const signals: Record<
 	string,
 	Store<Record<string, RingBuffer<MeasurementT>>>
 > = {
 	category: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
+	cognition: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
 	correlation: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
 	cvd: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
 	depthflow: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
@@ -104,11 +115,8 @@ export const signals: Record<
 	liquidity: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
 	morphology: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
 	pumpdump: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
-	resonance: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
 	sentiment: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
 	toxicity: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
 	training: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
-	positions: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
-	strategies: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
-	manifold: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
 };
+

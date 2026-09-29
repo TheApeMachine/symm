@@ -4,15 +4,11 @@ import { useEffect } from "react";
 import {
 	observeSymbols,
 	onlineAtom,
+	resonanceStore,
 	RingBuffer,
-	signals,
 	symbolsAtom,
 	updateClock,
 } from "#/collections/app";
-import { FluidRecordReader } from "#/components/fluid-3d/record";
-import { Frame } from "#/providers/telemetry/telemetry/frame";
-import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
-import { MeasurementsFrame } from "#/providers/telemetry/telemetry/measurements-frame";
 import { Message } from "#/providers/telemetry/telemetry/message";
 import type { ResonanceT } from "#/providers/telemetry/telemetry/resonance";
 import { ResonanceFrame } from "#/providers/telemetry/telemetry/resonance-frame";
@@ -51,7 +47,7 @@ const setTransport = (
 
 export const dispatchResonanceRow = (row: {
 	symbol: () => string | null;
-	unpack: () => MeasurementT | ResonanceT;
+	unpack: () => ResonanceT;
 }) => {
 	const symbol = row.symbol() ?? "";
 
@@ -59,17 +55,17 @@ export const dispatchResonanceRow = (row: {
 		observeSymbols([symbol]);
 	}
 
-	let ring = signals.resonance.state[symbol];
+	let ring = resonanceStore.state[symbol];
 
 	if (!ring) {
-		ring = new RingBuffer<MeasurementT>(50);
-		signals.resonance.state[symbol] = ring;
+		ring = new RingBuffer<ResonanceT>(50);
+		resonanceStore.state[symbol] = ring;
 	}
 
 	const unpacked = row.unpack();
-	ring.add(unpacked as MeasurementT);
+	ring.add(unpacked);
 
-	if ("at" in unpacked && unpacked.at) {
+	if (unpacked.at) {
 		updateClock(unpacked.at);
 	}
 };
@@ -80,59 +76,31 @@ export const dispatchResonanceBuffer = (buffer: flatbuffers.ByteBuffer) => {
 	storeBatch(() => {
 		if (Message.bufferHasIdentifier(buffer)) {
 			const message = Message.getRootAsMessage(buffer);
-			const frameType = message.frameType();
-
-			if (frameType === Frame.MeasurementsFrame) {
-				const frame = message.frame(new MeasurementsFrame());
-				if (frame) {
-					const count = frame.rowsLength();
-					for (let index = 0; index < count; index += 1) {
-						const row = frame.rows(index);
-						if (row) {
-							dispatchResonanceRow(row);
-							touched = true;
-						}
-					}
-				}
-			} else {
-				const frame = message.frame(new ResonanceFrame());
-				if (frame) {
-					const count = frame.rowsLength();
-					for (let index = 0; index < count; index += 1) {
-						const row = frame.rows(index);
-						if (row) {
-							dispatchResonanceRow(row);
-							touched = true;
-						}
+			const frame = message.frame(new ResonanceFrame());
+			if (frame) {
+				const count = frame.rowsLength();
+				for (let index = 0; index < count; index += 1) {
+					const row = frame.rows(index);
+					if (row) {
+						dispatchResonanceRow(row);
+						touched = true;
 					}
 				}
 			}
 		} else {
-			try {
-				const frame = MeasurementsFrame.getRootAsMeasurementsFrame(buffer);
-				const count = frame.rowsLength();
-				for (let index = 0; index < count; index += 1) {
-					const row = frame.rows(index);
-					if (row) {
-						dispatchResonanceRow(row);
-						touched = true;
-					}
-				}
-			} catch {
-				const frame = ResonanceFrame.getRootAsResonanceFrame(buffer);
-				const count = frame.rowsLength();
-				for (let index = 0; index < count; index += 1) {
-					const row = frame.rows(index);
-					if (row) {
-						dispatchResonanceRow(row);
-						touched = true;
-					}
+			const frame = ResonanceFrame.getRootAsResonanceFrame(buffer);
+			const count = frame.rowsLength();
+			for (let index = 0; index < count; index += 1) {
+				const row = frame.rows(index);
+				if (row) {
+					dispatchResonanceRow(row);
+					touched = true;
 				}
 			}
 		}
 
 		if (touched) {
-			signals.resonance.setState((prev) => ({ ...prev }));
+			resonanceStore.setState((prev) => ({ ...prev }));
 		}
 	});
 };
@@ -246,13 +214,12 @@ export const RtcFeed = () => {
 
 			const openChannel = (
 				label: string,
-				onRecord: (state: unknown) => void,
+				onRecord: (record: ArrayBuffer) => void,
 			) => {
 				const channel = connection.createDataChannel(label, {
 					ordered: false,
 					maxRetransmits: 0,
 				});
-				const reader = new FluidRecordReader();
 				channel.binaryType = "arraybuffer";
 
 				channel.addEventListener("open", onChannelOpen);
@@ -263,11 +230,7 @@ export const RtcFeed = () => {
 							throw new Error(`${label} received a non-binary message`);
 						}
 
-						const record = reader.push(event.data);
-
-						if (record !== null) {
-							onRecord(record);
-						}
+						onRecord(event.data);
 					} catch (error) {
 						console.error("rtc:", error);
 					}

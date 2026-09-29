@@ -1,11 +1,11 @@
 import * as d3 from "d3";
 import { Grid2X2, Pause, Play, RefreshCw, Waves } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { cn } from "#/lib/utils";
+import type React from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ImpulseNode } from "./types";
 
 interface ImpulseMapVizProps {
-	data: ImpulseNode[];
+	data?: ImpulseNode[];
 	regions?: Array<{
 		id: number;
 		strength: number;
@@ -19,72 +19,72 @@ interface ImpulseMapVizProps {
 	className?: string;
 }
 
-const REGION_PALETTE = [
-	{ name: "Region A", fill: "rgba(74, 169, 197, 0.14)", stroke: "#4aa9c5", text: "#7fbacb", glow: "rgba(74, 169, 197, 0.4)" },
-	{ name: "Region B", fill: "rgba(232, 163, 61, 0.14)", stroke: "#e8a33d", text: "#f0b865", glow: "rgba(232, 163, 61, 0.4)" },
-	{ name: "Region C", fill: "rgba(140, 198, 101, 0.14)", stroke: "#8cc665", text: "#a5d684", glow: "rgba(140, 198, 101, 0.4)" },
-	{ name: "Region D", fill: "rgba(180, 130, 220, 0.14)", stroke: "#b482dc", text: "#c99eeb", glow: "rgba(180, 130, 220, 0.4)" },
-	{ name: "Region E", fill: "rgba(240, 84, 79, 0.14)", stroke: "#f0544f", text: "#f67e7a", glow: "rgba(240, 84, 79, 0.4)" },
-	{ name: "Region F", fill: "rgba(90, 210, 180, 0.14)", stroke: "#5ad2b4", text: "#7ee0c8", glow: "rgba(90, 210, 180, 0.4)" },
-	{ name: "Region G", fill: "rgba(247, 183, 49, 0.14)", stroke: "#f7b731", text: "#fad375", glow: "rgba(247, 183, 49, 0.4)" },
-	{ name: "Region H", fill: "rgba(95, 39, 205, 0.14)", stroke: "#5f27cd", text: "#8854d0", glow: "rgba(95, 39, 205, 0.4)" },
-];
-
 export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
-	data,
-	regions = [],
+	data = [],
 	activeEvents = [],
-	className,
 }) => {
 	const containerRef = useRef<HTMLDivElement>(null);
 	const svgRef = useRef<SVGSVGElement>(null);
 	const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
 	const [isPlaying, setIsPlaying] = useState(true);
 	const [layoutMode, setLayoutMode] = useState<"grid" | "regions">("grid");
-	const [hoveredNode, setHoveredNode] = useState<{
-		node: ImpulseNode;
-		x: number;
-		y: number;
-	} | null>(null);
+
+	const simulationRef = useRef<d3.Simulation<ImpulseNode, undefined> | null>(
+		null,
+	);
+	const nodesRef = useRef<ImpulseNode[]>(
+		data.length > 0 ? JSON.parse(JSON.stringify(data)) : [],
+	);
+
+	// Sync incoming data
+	useEffect(() => {
+		if (data && data.length > 0) {
+			const existingMap = new Map<string, ImpulseNode>();
+			for (const node of nodesRef.current) {
+				existingMap.set(node.id, node);
+			}
+
+			const merged: ImpulseNode[] = data.map((n, i) => {
+				const prev = existingMap.get(n.id);
+				return {
+					...n,
+					cluster: typeof n.cluster === "number" ? n.cluster : i % 4,
+					snr: Math.max(1, n.snr || 1),
+					activation: n.activation || 0,
+					x: prev?.x ?? n.x,
+					y: prev?.y ?? n.y,
+					vx: prev?.vx,
+					vy: prev?.vy,
+					gridX: prev?.gridX,
+					gridY: prev?.gridY,
+				};
+			});
+
+			nodesRef.current = merged;
+			if (simulationRef.current) {
+				simulationRef.current.nodes(merged);
+				simulationRef.current.alpha(0.3).restart();
+			}
+		}
+	}, [data]);
 
 	// Resize Observer
 	useEffect(() => {
 		const observeTarget = containerRef.current;
 		if (!observeTarget || typeof ResizeObserver === "undefined") return;
-
 		const resizeObserver = new ResizeObserver((entries) => {
-			if (!entries[0]) return;
-			const { width, height } = entries[0].contentRect;
-			if (width > 0 && height > 0) {
-				setDimensions({ width, height });
+			if (entries[0]) {
+				const { width, height } = entries[0].contentRect;
+				if (width > 0 && height > 0) {
+					setDimensions({ width, height });
+				}
 			}
 		});
-
 		resizeObserver.observe(observeTarget);
 		return () => resizeObserver.unobserve(observeTarget);
 	}, []);
 
-	// Group nodes into distinct regions by cluster
-	const regionClusters = useMemo(() => {
-		const map = new Map<number, ImpulseNode[]>();
-		for (const d of data) {
-			const c = d.cluster ?? 0;
-			let list = map.get(c);
-			if (!list) {
-				list = [];
-				map.set(c, list);
-			}
-			list.push(d);
-		}
-		return Array.from(map.entries()).map(([clusterId, nodes], idx) => ({
-			clusterId,
-			nodes,
-			palette: REGION_PALETTE[idx % REGION_PALETTE.length],
-			label: `Region ${String.fromCharCode(65 + idx)}`,
-		}));
-	}, [data]);
-
-	// Render D3 visualization
+	// Initialize D3 Visualization
 	useEffect(() => {
 		if (!svgRef.current || dimensions.width === 0 || dimensions.height === 0)
 			return;
@@ -94,11 +94,6 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 
 		const width = dimensions.width;
 		const height = dimensions.height;
-		const padding = 50;
-		const innerW = width - padding * 2;
-		const innerH = height - padding * 2;
-
-		const g = svg.append("g").attr("class", "viewport");
 
 		const zoom = d3
 			.zoom<SVGSVGElement, unknown>()
@@ -108,315 +103,363 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 			});
 		svg.call(zoom);
 
-		// Compute screen coordinates for each node
-		const positionedNodes = data.map((d) => {
-			const px = typeof d.x === "number" ? Math.max(0, Math.min(1, d.x)) : 0.5;
-			const py = typeof d.y === "number" ? Math.max(0, Math.min(1, d.y)) : 0.5;
-			return {
-				...d,
-				screenX: padding + px * innerW,
-				screenY: padding + py * innerH,
-			};
-		});
+		const g = svg.append("g");
 
-		// Region Hulls and Boundaries Layer (Watershed)
-		const regionLayer = g.append("g").attr("class", "regions");
+		const contourLayer = g.append("g").attr("class", "contours");
+		const linkLayer = g.append("g").attr("class", "links");
+		const nodeLayer = g.append("g").attr("class", "nodes");
 
-		if (layoutMode === "regions" && regionClusters.length > 0) {
-			for (const cluster of regionClusters) {
-				const clusterNodes = positionedNodes.filter(
-					(n) => (n.cluster ?? 0) === cluster.clusterId,
-				);
-				if (clusterNodes.length < 3) continue;
+		const nodes = nodesRef.current;
+		const cols = Math.max(
+			1,
+			Math.ceil(Math.sqrt(nodes.length * (width / height))),
+		);
+		const rows = Math.max(1, Math.ceil(nodes.length / cols));
+		const stepX = (width * 0.8) / Math.max(1, cols - 1);
+		const stepY = (height * 0.8) / Math.max(1, rows - 1);
+		const startX = width * 0.1;
+		const startY = height * 0.1;
 
-				const points: [number, number][] = clusterNodes.map((n) => [
-					n.screenX,
-					n.screenY,
-				]);
-				const hull = d3.polygonHull(points);
+		for (let i = 0; i < nodes.length; i++) {
+			const n = nodes[i];
+			n.gridX = startX + (i % cols) * stepX;
+			n.gridY = startY + Math.floor(i / cols) * stepY;
 
-				if (hull && hull.length >= 3) {
-					// Draw smooth expanded region hull
-					const centroid = d3.polygonCentroid(hull);
-					const expandedHull = hull.map(([hx, hy]) => {
-						const dx = hx - centroid[0];
-						const dy = hy - centroid[1];
-						const dist = Math.hypot(dx, dy);
-						const scale = dist > 0 ? (dist + 16) / dist : 1;
-						return [centroid[0] + dx * scale, centroid[1] + dy * scale] as [
-							number,
-							number,
-						];
-					});
-
-					const hullPath = d3.line().curve(d3.curveCardinalClosed.tension(0.4))(
-						expandedHull,
-					);
-
-					if (hullPath) {
-						regionLayer
-							.append("path")
-							.attr("d", hullPath)
-							.attr("fill", cluster.palette.fill)
-							.attr("stroke", cluster.palette.stroke)
-							.attr("stroke-width", 1.5)
-							.attr("stroke-dasharray", "4,3")
-							.attr("stroke-opacity", 0.6)
-							.style("pointer-events", "none");
-					}
-
-					// Region Badge at Centroid
-					const badgeGroup = regionLayer
-						.append("g")
-						.attr(
-							"transform",
-							`translate(${centroid[0]}, ${centroid[1]})`,
-						)
-						.style("pointer-events", "none");
-
-					badgeGroup
-						.append("rect")
-						.attr("x", -44)
-						.attr("y", -11)
-						.attr("width", 88)
-						.attr("height", 22)
-						.attr("rx", 3)
-						.attr("fill", "rgba(18, 22, 28, 0.88)")
-						.attr("stroke", cluster.palette.stroke)
-						.attr("stroke-width", 1)
-						.attr("opacity", 0.9);
-
-					badgeGroup
-						.append("text")
-						.attr("x", 0)
-						.attr("y", -1)
-						.attr("text-anchor", "middle")
-						.attr("fill", cluster.palette.text)
-						.attr("font-size", "9px")
-						.attr("font-weight", "bold")
-						.attr("font-family", "monospace")
-						.text(cluster.label);
-
-					badgeGroup
-						.append("text")
-						.attr("x", 0)
-						.attr("y", 8)
-						.attr("text-anchor", "middle")
-						.attr("fill", "var(--f4)")
-						.attr("font-size", "7.5px")
-						.attr("font-family", "monospace")
-						.text(`${cluster.nodes.length} cells`);
-				}
+			if (n.x === undefined || Number.isNaN(n.x)) {
+				n.x = n.gridX;
+				n.y = n.gridY;
 			}
 		}
 
-		// Node Points Layer
-		const nodeLayer = g.append("g").attr("class", "nodes");
+		const colorScale = d3
+			.scaleSequential((t) =>
+				d3.interpolateRgbBasis(["#111113", "#0ea5e9", "#22c55e", "#fbbf24"])(t),
+			)
+			.domain([0, 1]);
 
-		const getColor = (activation: number, clusterIdx: number) => {
-			if (activation <= 0.02) {
-				return layoutMode === "regions"
-					? REGION_PALETTE[clusterIdx % REGION_PALETTE.length].stroke
-					: "rgba(105, 177, 203, 0.45)";
-			}
-			if (activation < 0.25) return "#4aa9c5";
-			if (activation < 0.5) return "#73be68";
-			if (activation < 0.75) return "#e8a33d";
-			return "#f0544f";
-		};
+		const simulation = d3
+			.forceSimulation(nodes)
+			.force(
+				"x",
+				d3.forceX<ImpulseNode>((d) => d.gridX ?? width / 2).strength(0.3),
+			)
+			.force(
+				"y",
+				d3.forceY<ImpulseNode>((d) => d.gridY ?? height / 2).strength(0.3),
+			)
+			.force(
+				"collide",
+				d3
+					.forceCollide<ImpulseNode>()
+					.radius((d) => d.snr * 1.5 + 2)
+					.iterations(1)
+					.strength(0.1),
+			)
+			.force("charge", d3.forceManyBody().strength(-2))
+			.force("center", d3.forceCenter(width / 2, height / 2).strength(0.01))
+			.alphaDecay(0.02);
 
-		nodeLayer
-			.selectAll<SVGCircleElement, (typeof positionedNodes)[0]>("circle")
-			.data(positionedNodes, (d) => d.id)
+		simulationRef.current = simulation;
+
+		const nodeElements = nodeLayer
+			.selectAll("circle")
+			.data(nodes)
 			.enter()
 			.append("circle")
-			.attr("cx", (d) => d.screenX)
-			.attr("cy", (d) => d.screenY)
-			.attr("r", (d) => (d.activation > 0.02 ? 3.5 + Math.min(d.activation * 6, 6) : 3))
-			.attr("fill", (d) => (d.activation > 0.02 ? getColor(d.activation, d.cluster ?? 0) : "rgba(22, 28, 36, 0.9)"))
-			.attr("stroke", (d) => getColor(d.activation, d.cluster ?? 0))
-			.attr("stroke-width", (d) => (d.activation > 0.02 ? 1.5 : 1))
-			.style("cursor", "pointer")
-			.on("mouseover", function (e: MouseEvent, d) {
-				d3.select(this)
-					.attr("stroke", "var(--acc)")
-					.attr("stroke-width", 2.5)
-					.attr("r", 7);
-				const rect = containerRef.current?.getBoundingClientRect();
-				const x = rect ? e.clientX - rect.left : e.clientX;
-				const y = rect ? e.clientY - rect.top : e.clientY;
-				setHoveredNode({ node: d, x, y });
+			.attr("r", (d) => d.snr * 1.5 + 2)
+			.attr("fill", (d) => colorScale(d.activation))
+			.attr("stroke", "#050505")
+			.attr("stroke-width", 1.5)
+			.on("mouseover", function () {
+				d3.select(this).attr("stroke", "#fbbf24").attr("stroke-width", 2);
 			})
-			.on("mouseout", function (_, d) {
-				d3.select(this)
-					.attr("stroke", getColor(d.activation, d.cluster ?? 0))
-					.attr("stroke-width", d.activation > 0.02 ? 1.5 : 1)
-					.attr("r", d.activation > 0.02 ? 3.5 + Math.min(d.activation * 6, 6) : 3);
-				setHoveredNode(null);
+			.on("mouseout", function () {
+				d3.select(this).attr("stroke", "#050505").attr("stroke-width", 1.5);
 			});
-	}, [dimensions, data, layoutMode, regionClusters]);
+
+		const computeDensity = d3
+			.contourDensity<ImpulseNode>()
+			.x((d) => d.x || 0)
+			.y((d) => d.y || 0)
+			.weight((d) => d.activation * d.snr)
+			.size([width, height])
+			.bandwidth(30)
+			.thresholds(15);
+
+		simulation.on("tick", () => {
+			if (isPlaying) {
+				for (const n of nodes) {
+					if (n.activation > 0) {
+						n.activation = Math.max(0, n.activation - 0.005);
+					}
+				}
+			}
+
+			nodeElements
+				.attr("cx", (d) => d.x || 0)
+				.attr("cy", (d) => d.y || 0)
+				.attr("fill", (d) => colorScale(d.activation));
+
+			const contourData = computeDensity(nodes);
+
+			const paths = contourLayer.selectAll("path").data(contourData);
+
+			paths
+				.enter()
+				.append("path")
+				.merge(
+					paths as unknown as d3.Selection<
+						SVGPathElement,
+						d3.ContourMultiPolygon,
+						SVGGElement,
+						unknown
+					>,
+				)
+				.attr("d", d3.geoPath())
+				.attr(
+					"fill",
+					(_, i) =>
+						d3
+							.color("#fbbf24")
+							?.copy({ opacity: i * 0.015 })
+							.toString() || "none",
+				)
+				.attr("stroke", (_, i) => {
+					if (i === 6) return "rgba(34, 197, 94, 0.4)";
+					if (i === 10) return "rgba(251, 191, 36, 0.8)";
+					return "none";
+				})
+				.attr("stroke-width", (_, i) => (i === 10 ? 1.5 : i === 6 ? 1 : 0));
+
+			paths.exit().remove();
+
+			const activeLinks: { source: ImpulseNode; target: ImpulseNode }[] = [];
+			const threshold = 0.6;
+
+			for (let i = 0; i < nodes.length; i++) {
+				if (nodes[i].activation < threshold) continue;
+				for (let j = i + 1; j < nodes.length; j++) {
+					if (nodes[j].activation < threshold) continue;
+					if (nodes[i].cluster !== nodes[j].cluster) continue;
+
+					const dx = (nodes[i].x || 0) - (nodes[j].x || 0);
+					const dy = (nodes[i].y || 0) - (nodes[j].y || 0);
+					const dist = Math.hypot(dx, dy);
+
+					if (dist < 80) {
+						activeLinks.push({ source: nodes[i], target: nodes[j] });
+					}
+				}
+			}
+
+			const links = linkLayer.selectAll("line").data(activeLinks);
+
+			links
+				.enter()
+				.append("line")
+				.merge(
+					links as unknown as d3.Selection<
+						SVGLineElement,
+						{ source: ImpulseNode; target: ImpulseNode },
+						SVGGElement,
+						unknown
+					>,
+				)
+				.attr("x1", (d) => d.source.x || 0)
+				.attr("y1", (d) => d.source.y || 0)
+				.attr("x2", (d) => d.target.x || 0)
+				.attr("y2", (d) => d.target.y || 0)
+				.attr("stroke", "#fbbf24")
+				.attr("stroke-opacity", (d) =>
+					Math.min((d.source.activation + d.target.activation) / 2, 0.8),
+				)
+				.attr("stroke-width", 1.5);
+
+			links.exit().remove();
+		});
+
+		return () => {
+			simulation.stop();
+		};
+	}, [dimensions, isPlaying]);
+
+	// Handle Mode Transitions
+	useEffect(() => {
+		const simulation = simulationRef.current;
+		if (!simulation || dimensions.width === 0) return;
+
+		const width = dimensions.width;
+		const height = dimensions.height;
+
+		const foci = [
+			{ x: width * 0.3, y: height * 0.3 },
+			{ x: width * 0.7, y: height * 0.3 },
+			{ x: width * 0.3, y: height * 0.7 },
+			{ x: width * 0.7, y: height * 0.7 },
+		];
+
+		if (layoutMode === "grid") {
+			simulation
+				.force(
+					"x",
+					d3.forceX<ImpulseNode>((d) => d.gridX ?? width / 2).strength(0.15),
+				)
+				.force(
+					"y",
+					d3.forceY<ImpulseNode>((d) => d.gridY ?? height / 2).strength(0.15),
+				)
+				.force("collide", null)
+				.force("charge", null)
+				.alphaDecay(0.015);
+
+			d3.select(svgRef.current)
+				.select(".contours")
+				.transition()
+				.duration(1000)
+				.style("opacity", 0);
+		} else {
+			simulation
+				.force(
+					"x",
+					d3
+						.forceX<ImpulseNode>((d) => foci[(d.cluster ?? 0) % 4].x)
+						.strength(0.08),
+				)
+				.force(
+					"y",
+					d3
+						.forceY<ImpulseNode>((d) => foci[(d.cluster ?? 0) % 4].y)
+						.strength(0.08),
+				)
+				.force(
+					"collide",
+					d3
+						.forceCollide<ImpulseNode>()
+						.radius((d) => d.snr * 1.5 + 2)
+						.iterations(2),
+				)
+				.force("charge", d3.forceManyBody().strength(-15))
+				.alphaDecay(0.015);
+
+			d3.select(svgRef.current)
+				.select(".contours")
+				.transition()
+				.duration(1000)
+				.style("opacity", 1);
+		}
+
+		simulation.alpha(1).restart();
+	}, [layoutMode, dimensions]);
 
 	return (
-		<div
-			className={cn(
-				"flex flex-col w-full h-full bg-(--bg) text-(--f2) font-mono",
-				className,
-			)}
-		>
-			{/* Top Bar Controls */}
-			<div className="h-8 border-(--line) border-b flex items-center justify-between px-3 text-xs bg-(--surface) shrink-0">
-				<div className="flex gap-4 items-center">
-					<span className="text-(--acc) border-(--acc) border-b py-1 text-[11px] font-bold tracking-wider">
-						IMPULSE MAP
+		<div className="flex flex-col w-full h-full">
+			<div className="h-8 border-b border-[#27272a] flex items-center justify-between px-4 text-xs bg-[#09090b]">
+				<div className="flex gap-4">
+					<span className="text-[#fbbf24] border-b border-[#fbbf24] py-1.5">
+						Map
 					</span>
-					<span className="text-(--f3) text-[11px]">
-						{data.length} numeric cells · {regions.length > 0 ? regions.length : regionClusters.length} regions
-					</span>
+					<span className="text-[#52525b] py-1.5">Topography</span>
+					<span className="text-[#52525b] py-1.5">Sympathy Grid</span>
 				</div>
-
 				<div className="flex items-center gap-3">
-					<div className="flex items-center gap-1 bg-(--sunken) border-(--line) border p-0.5 rounded text-[11px]">
+					<div className="flex items-center gap-1 bg-[#111113] border border-[#27272a] p-1 rounded mr-2">
 						<button
 							type="button"
 							onClick={() => setLayoutMode("grid")}
-							className={cn(
-								"px-2.5 py-0.5 rounded transition-colors flex items-center gap-1",
+							className={`px-3 py-1 rounded transition-colors flex items-center gap-1.5 ${
 								layoutMode === "grid"
-									? "bg-(--raised) text-(--acc) font-bold"
-									: "text-(--f3) hover:text-(--f1)",
-							)}
+									? "bg-[#27272a] text-[#fbbf24]"
+									: "text-[#71717a] hover:text-[#a1a1aa]"
+							}`}
 						>
-							<Grid2X2 className="w-3 h-3" />
-							Grid
+							<Grid2X2 className="w-3.5 h-3.5" />
+							Initial Grid
 						</button>
 						<button
 							type="button"
 							onClick={() => setLayoutMode("regions")}
-							className={cn(
-								"px-2.5 py-0.5 rounded transition-colors flex items-center gap-1",
+							className={`px-3 py-1 rounded transition-colors flex items-center gap-1.5 ${
 								layoutMode === "regions"
-									? "bg-(--raised) text-(--acc) font-bold"
-									: "text-(--f3) hover:text-(--f1)",
-							)}
+									? "bg-[#27272a] text-[#fbbf24]"
+									: "text-[#71717a] hover:text-[#a1a1aa]"
+							}`}
 						>
-							<Waves className="w-3 h-3" />
-							Watershed
+							<Waves className="w-3.5 h-3.5" />
+							Sympathy Clustering
 						</button>
 					</div>
 
-					<div className="flex items-center gap-1.5 text-(--f3) text-[10px]">
-						<div className="w-2 h-2 rounded-full bg-(--acc) opacity-80" />
-						<span>Top N region split</span>
+					<div className="flex items-center gap-1 text-[#52525b]">
+						<div className="w-2 h-2 rounded bg-[#fbbf24] opacity-80" />
+						<span>Agent Action Threshold (Otsu Split)</span>
 					</div>
-
-					<div className="h-3 w-px bg-(--line)" />
-
+					<div className="h-3 w-px bg-[#27272a]" />
 					<button
 						type="button"
-						onClick={() => setHoveredNode(null)}
-						className="text-(--f3) hover:text-(--f1) transition-colors p-1"
-						title="Reset map view"
+						onClick={() => {
+							for (const n of nodesRef.current) n.activation = 0;
+							simulationRef.current?.alpha(0.3).restart();
+						}}
+						className="text-[#71717a] hover:text-white transition-colors"
+						title="Reset Map"
 					>
-						<RefreshCw className="w-3 h-3" />
+						<RefreshCw className="w-3.5 h-3.5" />
 					</button>
 					<button
 						type="button"
 						onClick={() => setIsPlaying(!isPlaying)}
-						className="text-(--acc) hover:text-(--f1) transition-colors p-1"
-						title={isPlaying ? "Pause stream" : "Resume stream"}
+						className="text-[#fbbf24] hover:text-white transition-colors ml-2"
 					>
 						{isPlaying ? (
-							<Pause className="w-3 h-3" />
+							<Pause className="w-3.5 h-3.5" />
 						) : (
-							<Play className="w-3 h-3" />
+							<Play className="w-3.5 h-3.5" />
 						)}
 					</button>
 				</div>
 			</div>
 
-			{/* Main Canvas Area */}
 			<div
 				ref={containerRef}
-				className="flex-1 relative bg-(--sunken) overflow-hidden"
+				className="flex-1 relative bg-[#050505] overflow-hidden"
 			>
-				{/* Background Coordinate Grid */}
 				<div
 					className="absolute inset-0 pointer-events-none opacity-[0.15]"
 					style={{
 						backgroundImage:
-							"linear-gradient(var(--line) 1px, transparent 1px), linear-gradient(90deg, var(--line) 1px, transparent 1px)",
-						backgroundSize: "32px 32px",
+							"linear-gradient(#27272a 1px, transparent 1px), linear-gradient(90deg, #27272a 1px, transparent 1px)",
+						backgroundSize: "40px 40px",
 					}}
 				/>
 
-				{data.length === 0 && (
-					<div className="absolute inset-0 flex items-center justify-center text-(--f4) text-xs tracking-wider">
-						Waiting for numeric cells from streaming tape...
+				{nodesRef.current.length === 0 ? (
+					<div className="flex h-full w-full items-center justify-center font-mono text-xs text-[#52525b]">
+						Waiting for impulse observations...
 					</div>
+				) : (
+					<svg ref={svgRef} className="w-full h-full absolute inset-0" />
 				)}
 
-				<svg ref={svgRef} className="w-full h-full absolute inset-0" />
-
-				{/* Hover Tooltip */}
-				{hoveredNode && (
-					<div
-						className="absolute z-30 pointer-events-none bg-(--surface) border-(--line2) border rounded p-2 text-[10px] text-(--f1) shadow-xl flex flex-col gap-1 min-w-36"
-						style={{
-							left: Math.min(hoveredNode.x + 12, dimensions.width - 160),
-							top: Math.min(hoveredNode.y + 12, dimensions.height - 110),
-						}}
-					>
-						<div className="flex items-center justify-between border-(--line) border-b pb-1 font-bold">
-							<span className="text-(--acc)">{hoveredNode.node.label}</span>
-							<span className="text-(--f4)">#{hoveredNode.node.id}</span>
-						</div>
-						<div className="flex justify-between text-(--f3)">
-							<span>Value:</span>
-							<span className="text-(--f1)">
-								{hoveredNode.node.value !== undefined
-									? hoveredNode.node.value.toFixed(4)
-									: "—"}
-							</span>
-						</div>
-						<div className="flex justify-between text-(--f3)">
-							<span>Activity:</span>
-							<span className="text-(--up)">
-								{((hoveredNode.node.activation || 0) * 100).toFixed(1)}%
-							</span>
-						</div>
-						<div className="flex justify-between text-(--f3)">
-							<span>SNR:</span>
-							<span className="text-(--info)">
-								{(hoveredNode.node.snr || 0).toFixed(2)}
-							</span>
-						</div>
-					</div>
-				)}
-
-				{/* Active Precursor Region Sequence Overlay */}
 				{activeEvents.length > 0 && (
-					<div className="absolute top-3 left-3 w-64 bg-(--surface)/95 backdrop-blur border-(--line) border rounded p-2.5 pointer-events-none shadow-xl text-[10px]">
-						<div className="uppercase tracking-widest text-(--f4) mb-1.5 flex items-center justify-between font-bold">
-							<span>Precursor Region Sequence</span>
+					<div className="absolute top-4 left-4 w-64 bg-[#09090b]/80 backdrop-blur border border-[#27272a] rounded p-3 pointer-events-none shadow-xl">
+						<div className="text-[10px] uppercase tracking-widest text-[#52525b] mb-2 flex items-center justify-between">
+							<span>Market Tape Feed</span>
 							{isPlaying && (
-								<span className="w-1.5 h-1.5 rounded-full bg-(--up) animate-pulse" />
+								<span className="w-1.5 h-1.5 rounded-full bg-[#22c55e] animate-pulse" />
 							)}
 						</div>
-						<div className="space-y-1 font-mono">
+						<div className="space-y-1.5 font-mono text-xs">
 							{activeEvents.slice(0, 4).map((evt) => (
 								<div
 									key={evt.label}
-									className="flex justify-between items-center text-(--f2)"
+									className="flex justify-between items-center text-[#d4d4d4]"
 								>
 									<span className="truncate">{evt.label}</span>
-									<span className="text-(--acc) shrink-0 ml-2 font-bold">
+									<span className="text-[#fbbf24]">
 										{(evt.activity * 100).toFixed(0)}%
 									</span>
 								</div>
 							))}
-						</div>
-						<div className="mt-2 pt-1.5 border-t border-(--line) text-[9px] text-(--f4) truncate">
-							Sequence: [{activeEvents.slice(0, 4).map((e) => e.label.split(" ")[0]).join(" → ")}]
 						</div>
 					</div>
 				)}

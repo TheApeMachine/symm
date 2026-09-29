@@ -89,12 +89,17 @@ func appendState(accumulated, state *State) {
 	}
 	if len(state.PilotVel) == 0 {
 		accumulated.PilotVel = append(accumulated.PilotVel, make([]float32, 3*state.N)...)
-	} else {
+	}
+
+	if len(state.PilotVel) > 0 {
 		accumulated.PilotVel = append(accumulated.PilotVel, state.PilotVel...)
 	}
+
 	if len(state.PhasePotential) == 0 {
 		accumulated.PhasePotential = append(accumulated.PhasePotential, make([]float32, state.N)...)
-	} else {
+	}
+
+	if len(state.PhasePotential) > 0 {
 		accumulated.PhasePotential = append(accumulated.PhasePotential, state.PhasePotential...)
 	}
 

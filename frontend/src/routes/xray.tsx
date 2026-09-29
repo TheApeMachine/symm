@@ -6,7 +6,7 @@ import {
 	type RingBuffer,
 	focusAtom,
 	observeSymbols,
-	signals,
+	resonanceStore,
 	symbolsAtom,
 } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
@@ -24,13 +24,13 @@ import {
 	retainResonanceRow,
 } from "#/components/terminal/xray-view";
 import { Flex } from "#/components/ui";
-import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
+import type { ResonanceT } from "#/providers/telemetry/telemetry/resonance";
 
 const XrayPaintBridge = () => {
-	const focusSymbol = useSelector(focusAtom, (state) => state);
+	const focusSymbol = useSelector(focusAtom);
 
 	useEffect(() => {
-		const updatePaint = (state: Record<string, RingBuffer<MeasurementT>>) => {
+		const updatePaint = (state: Record<string, RingBuffer<ResonanceT>>) => {
 			for (const ring of Object.values(state)) {
 				const last = ring && !ring.isEmpty() ? ring.getLast() : null;
 
@@ -49,8 +49,8 @@ const XrayPaintBridge = () => {
 			paintXrayLatent(universe, focusSymbol);
 		};
 
-		updatePaint(signals.resonance.state);
-		const subscription = signals.resonance.subscribe((state) => {
+		updatePaint(resonanceStore.state);
+		const subscription = resonanceStore.subscribe((state) => {
 			updatePaint(state);
 		});
 
@@ -86,7 +86,7 @@ const XrayCarrierBar = () => {
 
 		syncSymbols();
 		const sub1 = symbolsAtom.subscribe(syncSymbols);
-		const sub2 = signals.resonance.subscribe(syncSymbols);
+		const sub2 = resonanceStore.subscribe(syncSymbols);
 
 		return () => {
 			sub1.unsubscribe();

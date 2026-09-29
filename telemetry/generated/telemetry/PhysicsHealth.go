@@ -7,15 +7,15 @@ import (
 )
 
 type PhysicsHealthT struct {
-	Integrator *IntegratorHealthT `json:"integrator"`
-	Gas *GasHealthT `json:"gas"`
-	Wave *WaveHealthT `json:"wave"`
-	Pilot *PilotHealthT `json:"pilot"`
-	Sources *SourceLedgerT `json:"sources"`
-	ParticleThermal float64 `json:"particleThermal"`
-	ParticleOscillator float64 `json:"particleOscillator"`
-	ParticleKinetic float64 `json:"particleKinetic"`
-	ParticleMaterialTotal float64 `json:"particleMaterialTotal"`
+	Integrator            *IntegratorHealthT `json:"integrator"`
+	Gas                   *GasHealthT        `json:"gas"`
+	Wave                  *WaveHealthT       `json:"wave"`
+	Pilot                 *PilotHealthT      `json:"pilot"`
+	Sources               *SourceLedgerT     `json:"sources"`
+	ParticleThermal       float64            `json:"particleThermal"`
+	ParticleOscillator    float64            `json:"particleOscillator"`
+	ParticleKinetic       float64            `json:"particleKinetic"`
+	ParticleMaterialTotal float64            `json:"particleMaterialTotal"`
 }
 
 func (t *PhysicsHealthT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

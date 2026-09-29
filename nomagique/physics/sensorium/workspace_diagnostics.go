@@ -139,7 +139,9 @@ func (fluid *workspace) measureHealth() error {
 				h.MaxSound = math.Max(h.MaxSound, sound)
 				if sound > 0 {
 					h.MaxMach = math.Max(h.MaxMach, speed/sound)
-				} else if speed > 0 {
+				}
+
+				if sound <= 0 && speed > 0 {
 					h.ColdMovingCells++
 				}
 				difference := math.Abs(float64(diag[8*i+2])) / math.Max(math.Abs(et), math.SmallestNonzeroFloat32)

@@ -1,11 +1,8 @@
 import { useSelector } from "@tanstack/react-store";
 import { type CSSProperties, useRef } from "react";
-import { focusAtom, signals } from "#/collections/app";
+import { focusAtom, resonanceStore } from "#/collections/app";
 import { semanticLayerName } from "#/components/terminal/xray-layers";
-import {
-	Resonance,
-	ResonanceT,
-} from "#/providers/telemetry/telemetry/resonance";
+import type { ResonanceT } from "#/providers/telemetry/telemetry/resonance";
 import { Flex } from "../ui";
 
 export const vectorSlotTransform = (slot: number, slotCount: number): string =>
@@ -27,12 +24,6 @@ const fmt = (value: number | undefined | null, digits: number): string =>
 		? "—"
 		: value.toFixed(digits);
 
-const toResonanceT = (row: unknown): ResonanceT | undefined => {
-	if (row instanceof ResonanceT) return row;
-	if (row instanceof Resonance) return row.unpack();
-	return undefined;
-};
-
 /*
 The resonance artifact rides every envelope (types.Envelope.Resonance), and the
 artifact store is not pre-scoped to one symbol — the solver keys its coder per
@@ -40,11 +31,11 @@ symbol across the cross-section — so the focused symbol is selected here, the
 same way the other resonance surfaces do it.
 */
 const useArtifact = (): ResonanceT | undefined => {
-	const symbol = useSelector(focusAtom, (state) => state);
+	const symbol = useSelector(focusAtom);
 
-	const row = useSelector(signals.resonance, (state) => {
+	const row = useSelector(resonanceStore, (state) => {
 		const ring = state[symbol];
-		return ring && !ring.isEmpty() ? toResonanceT(ring.getLast()) : undefined;
+		return ring && !ring.isEmpty() ? (ring.getLast() ?? undefined) : undefined;
 	});
 
 	/*

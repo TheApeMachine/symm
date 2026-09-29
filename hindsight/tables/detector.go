@@ -182,43 +182,36 @@ func (detector *StreamingDetector) advance(tracker *symbolTracker, measurement *
 
 	extreme := tracker.high
 	tick := tracker.highTick
-	direction := "flat"
 
-	if isUpward && upwardMove > 0 {
-		direction = "upward"
-		extreme = tracker.high
-		tick = tracker.highTick
-	}
-
-	if !isUpward && downwardMove > 0 {
-		direction = "downward"
+	if !isUpward {
 		extreme = tracker.low
 		tick = tracker.lowTick
 	}
 
-	proceeds := detector.price.WithFee(measurement.Label, tracker.bid, broker.SELL)
-	profit := proceeds.Sub(tracker.cost)
+	direction := "FLAT"
 
-	peakProceeds := detector.price.WithFee(measurement.Label, extreme, broker.SELL)
-	peakProfit := peakProceeds.Sub(tracker.cost)
-
-	clearsFriction := profit.Sign() > 0
-	effectiveProfit := profit
-
-	if peakProfit.Sign() > 0 {
-		clearsFriction = true
-
-		if peakProfit.Cmp(profit) > 0 {
-			effectiveProfit = peakProfit
-		}
+	if upwardMove >= reversalThreshold && (upwardMove-downwardMove) >= shiftBound {
+		direction = "UP"
 	}
 
+	if downwardMove >= reversalThreshold && (downwardMove-upwardMove) >= shiftBound {
+		direction = "DOWN"
+	}
+
+	if direction == "FLAT" && (upwardMove >= reversalThreshold || downwardMove >= reversalThreshold) {
+		direction = "CHOP"
+	}
+
+	proceeds := detector.price.WithFee(measurement.Label, tracker.bid, broker.SELL)
+	profit := proceeds.Sub(tracker.cost)
+	clearsFriction := profit.Sign() > 0
+
 	precursorStart := tracker.precursorStart
+	status := "baseline_shift"
 
 	if precursorStart <= 0 || precursorStart >= tracker.anchor {
-		if tracker.firstObservationTick > 0 && tracker.firstObservationTick < tracker.anchor {
-			precursorStart = tracker.firstObservationTick
-		}
+		precursorStart = 0
+		status = "unsupported"
 	}
 
 	record := &ExcursionRecord{
@@ -227,12 +220,12 @@ func (detector *StreamingDetector) advance(tracker *symbolTracker, measurement *
 		AnchorTick: tracker.anchor, PrecursorStartTick: precursorStart,
 		ExitTick: measurement.SeqIdx, PostEndTick: measurement.SeqIdx,
 		EntryPrice: tracker.entry.Float64(), ExitPrice: tracker.bid.Float64(),
-		PositionSize: tracker.cost.Float64(), Profit: effectiveProfit.Float64(),
-		ProfitFraction: effectiveProfit.Div(tracker.cost).Float64(),
+		PositionSize: tracker.cost.Float64(), Profit: profit.Float64(),
+		ProfitFraction: profit.Div(tracker.cost).Float64(),
 		Fee:            tracker.cost.Sub(tracker.entry).Add(tracker.bid.Sub(proceeds)).Float64(),
 		ExtremumTick:   tick, ExtremumPrice: extreme.Float64(),
 		GrossExcursion:   extreme.Sub(tracker.entry).Div(tracker.entry).Float64(),
-		ObservationCount: tracker.observations, Status: "baseline_shift",
+		ObservationCount: tracker.observations, Status: status,
 	}
 
 	tracker.precursorStart = tracker.anchor

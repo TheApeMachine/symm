@@ -49,9 +49,9 @@ func (op *Quantile) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 		lower := math.Floor(position)
 		upper := math.Ceil(position)
 
-		if lower == upper {
-			op.out = values[int(lower)]
-		} else {
+		op.out = values[int(lower)]
+
+		if lower != upper {
 			op.out = values[int(lower)]*(upper-position) + values[int(upper)]*(position-lower)
 		}
 

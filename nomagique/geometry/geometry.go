@@ -491,10 +491,10 @@ func (op *Corpus[Outcome]) insert(
 	expectedDim := op.dimensions.Load()
 
 	if expectedDim == 0 {
+		expectedDim = op.dimensions.Load()
+
 		if op.dimensions.CompareAndSwap(0, int64(len(entry.Dial))) {
 			expectedDim = int64(len(entry.Dial))
-		} else {
-			expectedDim = op.dimensions.Load()
 		}
 	}
 
@@ -509,13 +509,14 @@ func (op *Corpus[Outcome]) insert(
 		oldPtr := op.entries.Load()
 		var newEntries []CorpusEntry[Outcome]
 
-		if oldPtr == nil {
+		switch {
+		case oldPtr == nil:
 			newEntries = []CorpusEntry[Outcome]{entry}
-		} else if len(*oldPtr) < op.maxSize {
+		case len(*oldPtr) < op.maxSize:
 			newEntries = make([]CorpusEntry[Outcome], len(*oldPtr)+1)
 			copy(newEntries, *oldPtr)
 			newEntries[len(*oldPtr)] = entry
-		} else {
+		default:
 			newEntries = make([]CorpusEntry[Outcome], op.maxSize)
 			copy(newEntries, *oldPtr)
 			nextIdx := int(op.next.Add(1)-1) % op.maxSize

@@ -1,40 +1,19 @@
 import { useSelector } from "@tanstack/react-store";
-import { focusAtom, signals } from "#/collections/app";
+import { focusAtom, resonanceStore } from "#/collections/app";
+import type { ResonanceT } from "#/providers/telemetry/telemetry/resonance";
 
 export const LiveResonanceTitle = () => {
-	const symbol = useSelector(focusAtom, (state) => state);
-	const artifact = useSelector(signals.resonance, (state) => {
+	const symbol = useSelector(focusAtom);
+	const artifact: ResonanceT | null = useSelector(resonanceStore, (state) => {
 		const ring = state[symbol];
-		return ring && !ring.isEmpty()
-			? (ring.getLast() as unknown as Record<string, unknown>)
-			: null;
+		return ring && !ring.isEmpty() ? (ring.getLast() ?? null) : null;
 	});
 
-	const horizonVal = artifact
-		? typeof artifact.supportedHorizon === "function"
-			? artifact.supportedHorizon()
-			: (artifact.supportedHorizon ?? "—")
-		: "—";
-
-	const reachVal = artifact
-		? typeof artifact.forwardCurveLength === "function"
-			? artifact.forwardCurveLength()
-			: Array.isArray(artifact.forwardCurve)
-				? artifact.forwardCurve.length
-				: "—"
-		: "—";
-
-	const precisionNum = artifact
-		? typeof artifact.taskRelativePrecision === "function"
-			? artifact.taskRelativePrecision()
-			: typeof artifact.taskRelativePrecision === "number"
-				? artifact.taskRelativePrecision
-				: null
-		: null;
-
+	const horizonVal = artifact ? Number(artifact.supportedHorizon) : "—";
+	const reachVal = artifact ? artifact.forwardCurve.length : "—";
 	const precision =
-		precisionNum !== null && Number.isFinite(precisionNum)
-			? precisionNum.toFixed(3)
+		artifact && Number.isFinite(artifact.taskRelativePrecision)
+			? artifact.taskRelativePrecision.toFixed(3)
 			: "—";
 
 	return (

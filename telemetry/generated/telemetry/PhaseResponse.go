@@ -7,10 +7,10 @@ import (
 )
 
 type PhaseResponseT struct {
-	Angle float64 `json:"angle"`
-	Similarity float64 `json:"similarity"`
-	ObservedAt string `json:"observedAt"`
-	Outcome *PhaseOutcomeT `json:"outcome"`
+	Angle      float64        `json:"angle"`
+	Similarity float64        `json:"similarity"`
+	ObservedAt string         `json:"observedAt"`
+	Outcome    *PhaseOutcomeT `json:"outcome"`
 }
 
 func (t *PhaseResponseT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

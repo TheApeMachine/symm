@@ -80,7 +80,9 @@ func (op *Table) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 
 			if command.Actual != nil {
 				err = op.abduct(rows, command)
-			} else {
+			}
+
+			if command.Actual == nil {
 				err = op.standardize(rows, command)
 			}
 

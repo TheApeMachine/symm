@@ -1,8 +1,8 @@
 package broker
 
 import (
-	"maps"
 	"context"
+	"maps"
 	"sync/atomic"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"

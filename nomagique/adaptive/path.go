@@ -44,9 +44,9 @@ func (op *PathRetention) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Point
 
 			start := max(0, len(observations)-int(capacity))
 
-			if start == 0 {
-				op.out = observations
-			} else {
+			op.out = observations
+
+			if start > 0 {
 				op.out = slices.Clone(observations[start:])
 			}
 

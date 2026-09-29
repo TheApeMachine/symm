@@ -43,6 +43,14 @@ func MeasurementToWire(measurement *data.Measurement[float64]) *wire.Measurement
 		metrics = append(metrics, wireMetric)
 	}
 
+	provenance := make([]*wire.NamedStringT, 0, len(measurement.Provenance)+len(measurement.Metadata))
+	for key, val := range measurement.Provenance {
+		provenance = append(provenance, &wire.NamedStringT{
+			Name:  key,
+			Value: val,
+		})
+	}
+
 	metadata := make([]*wire.NamedNumberT, 0, len(measurement.Metadata))
 	for key, val := range measurement.Metadata {
 		if floatVal, err := strconv.ParseFloat(val, 64); err == nil {
@@ -50,15 +58,12 @@ func MeasurementToWire(measurement *data.Measurement[float64]) *wire.Measurement
 				Name:  key,
 				Value: floatVal,
 			})
+		} else if _, exists := measurement.Provenance[key]; !exists {
+			provenance = append(provenance, &wire.NamedStringT{
+				Name:  key,
+				Value: val,
+			})
 		}
-	}
-
-	provenance := make([]*wire.NamedStringT, 0, len(measurement.Provenance))
-	for key, val := range measurement.Provenance {
-		provenance = append(provenance, &wire.NamedStringT{
-			Name:  key,
-			Value: val,
-		})
 	}
 
 	row := &wire.MeasurementT{

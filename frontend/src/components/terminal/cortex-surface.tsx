@@ -1,30 +1,36 @@
 import { useSelector } from "@tanstack/react-store";
 import { useEffect, useRef } from "react";
-import { cognitionStore, focusStore } from "#/collections/app";
+import { focusAtom, signals } from "#/collections/app";
 import { CortexBeamShell } from "./cortex-beam-shell";
 import { CortexCanvas } from "./cortex-canvas";
 import { CortexPanelsShell } from "./cortex-panels-shell";
 
 export const CortexSurface = () => {
-	const focusSymbol = useSelector(focusStore, (state) => state);
+	const focusSymbol = useSelector(focusAtom);
 	const root = useRef<HTMLDivElement>(null);
 
 	useEffect(() => {
-		const apply = (state: typeof cognitionStore.state) => {
+		const apply = () => {
 			if (!root.current) return;
-			// The freshest frame for this symbol, from that symbol's own ring.
-			const targetRow = state.getLast(focusSymbol) ?? null;
+			const targetRow = signals.cognition.state[focusSymbol]?.getLast() ?? null;
+
+			let contrast = "—";
+			let surprisal = "—";
+			for (const m of targetRow?.metrics ?? []) {
+				if (m.name === "contrast") contrast = m.raw.toFixed(3);
+				if (m.name === "surprisal") surprisal = m.raw.toFixed(3);
+			}
 
 			const winner = root.current.querySelector<HTMLElement>("[data-winner]");
 			const sequence =
 				root.current.querySelector<HTMLElement>("[data-sequence]");
 
-			if (winner) winner.textContent = targetRow?.winner() ?? "—";
-			if (sequence) sequence.textContent = targetRow?.sequence() ?? "—";
+			if (winner) winner.textContent = contrast !== "—" ? `contrast ${contrast}` : "—";
+			if (sequence) sequence.textContent = surprisal !== "—" ? `surprisal ${surprisal}` : "—";
 		};
 
-		apply(cognitionStore.state);
-		const subscription = cognitionStore.subscribe(apply);
+		apply();
+		const subscription = signals.cognition.subscribe(apply);
 		return () => subscription.unsubscribe();
 	}, [focusSymbol]);
 

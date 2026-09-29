@@ -19,7 +19,7 @@ func MakeSlice[T any](allocator Allocator, l, c int) []T {
 		return make([]T, l, c)
 	}
 
-	return arena.MakeSlice[T](a, l, c)
+	return arena.MakeSlice[T](allocator, l, c)
 }
 
 func AppendA[T any](data []T, v T, allocator Allocator) []T {
@@ -27,19 +27,19 @@ func AppendA[T any](data []T, v T, allocator Allocator) []T {
 		return append(data, v)
 	}
 
-	if len(data) >= cap(data) {
-		c := 2 * len(data)
-
-		if c == 0 {
-			c = 1
-		}
-
-		newData := arena.MakeSlice[T](allocator, len(data)+1, c)
-		copy(newData, data)
-		data = newData
-		data[len(data)-1] = v
-	} else {
-		data = append(data, v)
+	if len(data) < cap(data) {
+		return append(data, v)
 	}
-	return data
+
+	c := 2 * len(data)
+
+	if c == 0 {
+		c = 1
+	}
+
+	newData := arena.MakeSlice[T](allocator, len(data)+1, c)
+	copy(newData, data)
+	newData[len(data)] = v
+
+	return newData
 }

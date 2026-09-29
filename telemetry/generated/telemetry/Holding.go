@@ -7,23 +7,23 @@ import (
 )
 
 type HoldingT struct {
-	Status string `json:"status"`
-	Symbol string `json:"symbol"`
-	Asset string `json:"asset"`
-	Qty string `json:"qty"`
-	SellableQty string `json:"sellableQty"`
-	EntryAt int64 `json:"entryAt"`
-	ExitAt int64 `json:"exitAt"`
-	EntryPrice string `json:"entryPrice"`
-	EntryFee string `json:"entryFee"`
-	ExitPrice string `json:"exitPrice"`
-	ExitFee string `json:"exitFee"`
-	Pnl string `json:"pnl"`
-	ProfitThreshold string `json:"profitThreshold"`
-	ReturnPct float64 `json:"returnPct"`
-	Mark string `json:"mark"`
-	IsOpportunity bool `json:"isOpportunity"`
-	ReservationId string `json:"reservationId"`
+	Status          string  `json:"status"`
+	Symbol          string  `json:"symbol"`
+	Asset           string  `json:"asset"`
+	Qty             string  `json:"qty"`
+	SellableQty     string  `json:"sellableQty"`
+	EntryAt         int64   `json:"entryAt"`
+	ExitAt          int64   `json:"exitAt"`
+	EntryPrice      string  `json:"entryPrice"`
+	EntryFee        string  `json:"entryFee"`
+	ExitPrice       string  `json:"exitPrice"`
+	ExitFee         string  `json:"exitFee"`
+	Pnl             string  `json:"pnl"`
+	ProfitThreshold string  `json:"profitThreshold"`
+	ReturnPct       float64 `json:"returnPct"`
+	Mark            string  `json:"mark"`
+	IsOpportunity   bool    `json:"isOpportunity"`
+	ReservationId   string  `json:"reservationId"`
 }
 
 func (t *HoldingT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

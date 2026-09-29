@@ -32,18 +32,24 @@ func (op *Design) Next(
 				op.out = make([]float64, 0, len(features)+1)
 				op.out = append(op.out, 1.0)
 				op.out = append(op.out, features...)
-			} else {
-				op.out = make([]float64, 0, len(op.indices)+1)
-				op.out = append(op.out, 1.0)
 
-				for _, idx := range op.indices {
-					if idx < 0 || idx >= len(features) {
-						op.err = core.ErrShape
-						return
-					}
-
-					op.out = append(op.out, features[idx])
+				if !yield(unsafe.Pointer(&op.out)) {
+					return
 				}
+
+				continue
+			}
+
+			op.out = make([]float64, 0, len(op.indices)+1)
+			op.out = append(op.out, 1.0)
+
+			for _, idx := range op.indices {
+				if idx < 0 || idx >= len(features) {
+					op.err = core.ErrShape
+					return
+				}
+
+				op.out = append(op.out, features[idx])
 			}
 
 			if !yield(unsafe.Pointer(&op.out)) {

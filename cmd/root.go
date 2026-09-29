@@ -471,10 +471,13 @@ func resolveRunIdentity() (codeCommit string, buildID string, configDigest strin
 		}
 		if vcsRev != "" {
 			codeCommit = vcsRev
+
 			if vcsMod == "true" {
 				codeCommit += "-dirty"
 			}
-		} else if info.Main.Version != "" && info.Main.Version != "(devel)" {
+		}
+
+		if codeCommit == "" && info.Main.Version != "" && info.Main.Version != "(devel)" {
 			codeCommit = info.Main.Version
 		}
 	}
@@ -541,12 +544,12 @@ func initConfig() {
 	loaded := false
 
 	if rootCmd.PersistentFlags().Changed("config") && strings.TrimSpace(cfgFile) != "" {
-		if err := tryRead(cfgFile); err == nil {
-			loaded = true
-		} else {
+		if err := tryRead(cfgFile); err != nil {
 			fmt.Fprintf(os.Stderr, "symm: config file %q: %v\n", cfgFile, err)
 			os.Exit(1)
 		}
+
+		loaded = true
 	}
 
 	if !loaded {

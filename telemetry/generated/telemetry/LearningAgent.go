@@ -7,29 +7,29 @@ import (
 )
 
 type LearningAgentT struct {
-	Id int32 `json:"id"`
-	Initial string `json:"initial"`
-	Cash string `json:"cash"`
-	Equity string `json:"equity"`
-	Fees string `json:"fees"`
-	Profit string `json:"profit"`
-	Wealth float64 `json:"wealth"`
-	Realized string `json:"realized"`
-	Unrealized string `json:"unrealized"`
-	Decisions uint64 `json:"decisions"`
-	Fills uint64 `json:"fills"`
-	Pending uint64 `json:"pending"`
-	Wins uint64 `json:"wins"`
-	Losses uint64 `json:"losses"`
-	Status string `json:"status"`
-	Positions []*PositionT `json:"positions"`
-	Last *LearningDecisionT `json:"last"`
+	Id           int32              `json:"id"`
+	Initial      string             `json:"initial"`
+	Cash         string             `json:"cash"`
+	Equity       string             `json:"equity"`
+	Fees         string             `json:"fees"`
+	Profit       string             `json:"profit"`
+	Wealth       float64            `json:"wealth"`
+	Realized     string             `json:"realized"`
+	Unrealized   string             `json:"unrealized"`
+	Decisions    uint64             `json:"decisions"`
+	Fills        uint64             `json:"fills"`
+	Pending      uint64             `json:"pending"`
+	Wins         uint64             `json:"wins"`
+	Losses       uint64             `json:"losses"`
+	Status       string             `json:"status"`
+	Positions    []*PositionT       `json:"positions"`
+	Last         *LearningDecisionT `json:"last"`
 	Alternatives []*LearningActionT `json:"alternatives"`
-	Reading *LearningPriorT `json:"reading"`
-	Reward float64 `json:"reward"`
-	ElapsedNs int64 `json:"elapsedNs"`
-	Outcome *LearningDecisionT `json:"outcome"`
-	Open int32 `json:"open"`
+	Reading      *LearningPriorT    `json:"reading"`
+	Reward       float64            `json:"reward"`
+	ElapsedNs    int64              `json:"elapsedNs"`
+	Outcome      *LearningDecisionT `json:"outcome"`
+	Open         int32              `json:"open"`
 }
 
 func (t *LearningAgentT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

@@ -4,7 +4,6 @@ import (
 	"time"
 
 	"github.com/theapemachine/symm/nomagique/learning"
-	"github.com/theapemachine/symm/telemetry/generated/telemetry"
 )
 
 /*
@@ -40,7 +39,7 @@ type ResonanceArtifact struct {
 	At       time.Time
 	Snapshot *learning.ManifoldReading
 	Forecast *ResonanceReturnForecast
-	Dynamics *telemetry.ResonanceDynamicsT
+	Dynamics *learning.ResonanceDynamics
 
 	// Predictive-head projection data. The workspace observer projects these
 	// into the dashboard ResonanceFrame, so the domain payload carries the wire
