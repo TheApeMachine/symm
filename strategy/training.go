@@ -3,6 +3,7 @@ package strategy
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -25,15 +26,16 @@ const (
 	ActionWait  Action = "wait"
 )
 
-const TrainingFormat = "symm-training-v1"
+const TrainingFormat = "symm-training-v2"
 
 type Training struct {
 	*runtime.System
-	grid   *store.Grid
-	trie   *store.Radix
-	trader *Trader
-	tee    runtime.Tee
-	mutex  sync.RWMutex
+	grid        *store.Grid
+	trie        *store.Radix
+	trader      *Trader
+	tee         runtime.Tee
+	publication *data.Measurement[float64]
+	mutex       sync.RWMutex
 }
 
 func NewTraining(
@@ -42,12 +44,16 @@ func NewTraining(
 	trader *Trader,
 	tee runtime.Tee,
 ) *Training {
+	publication := data.NewMeasurement[float64]("training", nil)
+	publication.Label = types.Focus()
+	publication.Metadata["peer-interest"] = "*"
 	training := &Training{
-		System: runtime.NewSystem(ctx, "training", price),
-		grid:   store.NewGrid(),
-		trie:   store.NewRadix(),
-		trader: trader,
-		tee:    tee,
+		System:      runtime.NewSystem(ctx, "training", price),
+		grid:        store.NewGrid(),
+		trie:        store.NewRadix(),
+		trader:      trader,
+		tee:         tee,
+		publication: publication,
 	}
 
 	training.Transition(runtime.INIT)
@@ -55,15 +61,12 @@ func NewTraining(
 }
 
 func (training *Training) Register() *data.Measurement[float64] {
-	measurement := data.NewMeasurement[float64]("training", nil)
-	measurement.Label = types.Focus()
-	measurement.Metadata["peer-interest"] = "*"
-	return measurement
+	return training.publication
 }
 
 /*
-Step is the primary learning pipeline step that develops the manifold grid
-from peer signal measurements and queries the radix trie for cognitive decisions.
+Step develops the grid from peer observations and queries the existing exact
+store. An unseen key means abstention, not a new supervised WAIT observation.
 */
 func (training *Training) Step(
 	measurement *data.Measurement[float64],
@@ -71,6 +74,9 @@ func (training *Training) Step(
 	if measurement == nil {
 		return nil
 	}
+
+	training.mutex.Lock()
+	defer training.mutex.Unlock()
 
 	peers := measurement.Peers
 
@@ -135,16 +141,18 @@ func (training *Training) Step(
 			action = Action(actionBytes)
 		}
 
-		if !found || len(actionBytes) == 0 {
-			training.trie.Insert(token, []byte(ActionWait))
-		}
-
 		if action != ActionWait && training.trader != nil {
 			training.trader.OnAction(measurement.Label, action)
 		}
 
 		if measurement.Provenance == nil {
 			measurement.Provenance = make(map[string]string)
+		}
+
+		measurement.Provenance["prediction_status"] = "unseen"
+
+		if found && len(actionBytes) > 0 {
+			measurement.Provenance["prediction_status"] = "stored association"
 		}
 
 		measurement.Provenance["stage"] = "MODEL DEVELOPMENT"
@@ -168,7 +176,6 @@ func (training *Training) Step(
 		actionMetric := data.NewMetric[float64](
 			"action", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
 		)
-		
 		actionMetric.Raw = actionVal
 		measurement.Metrics["action"] = actionMetric
 	}
@@ -177,58 +184,64 @@ func (training *Training) Step(
 	return measurement
 }
 
-/*
-Run is the primary layer of the training process, which uses the model developed by
-the initial, tape fragment based training process to make decisions into the real-time market
-using the paper trading mechanism.
-*/
-func (training *Training) Run() {
-	go func() {
-		select {
-		case <-training.Context().Done():
-			return
-		default:
-		}
-
-		if training.Status() != runtime.BUSY {
-			return
-		}
-
-		// Replay tape fragments to develop skill...
-		for _, metric := range training.grid.Metrics {
-			if metric.Region > 0 {
-				token := []byte{byte(metric.Region)}
-				training.trie.Insert(token, []byte(ActionWait))
-			}
-		}
-
-		training.Transition(runtime.READY)
-
-		if err := training.SaveCheckpoint(); err != nil {
-			errnie.Error(err)
-		}
-	}()
-}
-
 var checkpointMu sync.Mutex
 
 func (training *Training) SaveCheckpoint() error {
 	checkpointMu.Lock()
 	defer checkpointMu.Unlock()
 
+	training.mutex.RLock()
 	payload, err := json.MarshalIndent(struct {
-		Grid *store.Grid  `json:"grid"`
-		Trie *store.Radix `json:"trie"`
+		Format string       `json:"format"`
+		Grid   *store.Grid  `json:"grid"`
+		Trie   *store.Radix `json:"trie"`
 	}{
-		Grid: training.grid,
-		Trie: training.trie,
+		Format: TrainingFormat,
+		Grid:   training.grid,
+		Trie:   training.trie,
 	}, "", "  ")
+	training.mutex.RUnlock()
 
 	if err != nil {
 		return errnie.Error(err)
 	}
 
-	return os.WriteFile("grid_checkpoint.json", payload, 0644)
+	// Serialization is complete: filesystem I/O does not hold the model lock.
+	return writeCheckpoint(payload)
+}
+
+func writeCheckpoint(payload []byte) (err error) {
+	file, err := os.CreateTemp(".", ".symm-checkpoint-*")
+
+	if err != nil {
+		return errnie.Error(err)
+	}
+
+	defer func() {
+		cleanupErr := os.Remove(file.Name())
+
+		if cleanupErr != nil && !errors.Is(cleanupErr, os.ErrNotExist) {
+			err = errors.Join(err, errnie.Error(cleanupErr))
+		}
+	}()
+
+	_, err = file.Write(payload)
+
+	if err == nil {
+		err = file.Sync()
+	}
+
+	err = errors.Join(err, file.Close())
+
+	if err != nil {
+		return errnie.Error(err)
+	}
+
+	if err = os.Rename(file.Name(), "grid_checkpoint.json"); err != nil {
+		return errnie.Error(err)
+	}
+
+	return nil
 }
 
 func (training *Training) LoadCheckpoint() error {
@@ -238,25 +251,38 @@ func (training *Training) LoadCheckpoint() error {
 	payload, err := os.ReadFile("grid_checkpoint.json")
 
 	if err != nil {
-		return err
+		return errnie.Error(err)
 	}
 
-	state := struct {
-		Grid *store.Grid  `json:"grid"`
-		Trie *store.Radix `json:"trie"`
-	}{
-		Grid: training.grid,
-		Trie: training.trie,
+	var state struct {
+		Format string          `json:"format"`
+		Grid   json.RawMessage `json:"grid"`
+		Trie   json.RawMessage `json:"trie"`
 	}
 
 	if err := json.Unmarshal(payload, &state); err != nil {
 		return errnie.Error(err)
 	}
 
-	if training.grid.Settled {
-		training.Transition(runtime.READY)
+	if state.Format != TrainingFormat || len(state.Grid) == 0 || len(state.Trie) == 0 || string(state.Grid) == "null" || string(state.Trie) == "null" {
+		return errnie.Error(errnie.Err(errnie.Validation, "training: complete, versioned grid and trie checkpoint required", nil))
 	}
 
+	grid, trie := store.NewGrid(), store.NewRadix()
+
+	if err := json.Unmarshal(state.Grid, grid); err != nil {
+		return errnie.Error(err)
+	}
+
+	if err := json.Unmarshal(state.Trie, trie); err != nil {
+		return errnie.Error(err)
+	}
+
+	training.mutex.Lock()
+	training.grid, training.trie = grid, trie
+	training.mutex.Unlock()
+
+	// Restoring learned state is not evidence of skill and grants no authority.
 	return nil
 }
 
@@ -290,14 +316,12 @@ func (training *Training) CognitionTree() cognition.CognitionTreeExport {
 	branches := make([]cognition.TrieBranchJSON, 0)
 	feasible := make([]cognition.FeasibleActionJSON, 0)
 	treeLen := float64(tree.Len())
-
 	iterator := tree.Root().Iterator()
 	rank := 1
 
 	for key, val, ok := iterator.Next(); ok; key, val, ok = iterator.Next() {
 		actionStr := string(val)
 		hashStr := fmt.Sprintf("0x%x", key)
-
 		childNode := &cognition.TrieNodeJSON{
 			ID:          hashStr,
 			TokenPrefix: fmt.Sprintf("%s (%s)", hashStr, actionStr),
@@ -305,7 +329,6 @@ func (training *Training) CognitionTree() cognition.CognitionTreeExport {
 			State:       "EVALUATED",
 		}
 		rootNode.Children = append(rootNode.Children, childNode)
-
 		branches = append(branches, cognition.TrieBranchJSON{
 			Hash:       hashStr,
 			Depth:      len(key),
@@ -314,7 +337,6 @@ func (training *Training) CognitionTree() cognition.CognitionTreeExport {
 			Confidence: 100.0,
 			Policy:     actionStr,
 		})
-
 		feasible = append(feasible, cognition.FeasibleActionJSON{
 			Rank:        rank,
 			Action:      actionStr,
@@ -330,8 +352,6 @@ func (training *Training) CognitionTree() cognition.CognitionTreeExport {
 	}
 
 	return cognition.CognitionTreeExport{
-		Root:     rootNode,
-		Branches: branches,
-		Feasible: feasible,
+		Root: rootNode, Branches: branches, Feasible: feasible,
 	}
 }
