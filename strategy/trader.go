@@ -80,6 +80,12 @@ func (trader *Trader) OnAction(symbol string, action Action) {
 	mu.Lock()
 	defer mu.Unlock()
 
+	// Hard safety check: staged training only ever authorizes paper execution
+	if system.Cfg.Market.Model != "paper" {
+		trader.RecordDecision(symbol, "blocked", 0.0, "real money execution disabled in staged training")
+		return
+	}
+
 	switch action {
 	case ActionEnter:
 		if _, exists := trader.positions.Load(symbol); exists {
@@ -291,6 +297,20 @@ func (trader *Trader) Holding(symbol string) bool {
 
 	val, ok := trader.positions.Load(symbol)
 
+	if !ok || val == nil {
+		return false
+	}
+
+	reg, ok := val.(*position.Regulator)
+	return ok && reg != nil && reg.IsHolding()
+}
+
+func (trader *Trader) HasFilledPosition(symbol string) bool {
+	if trader == nil {
+		return false
+	}
+
+	val, ok := trader.positions.Load(symbol)
 	if !ok || val == nil {
 		return false
 	}
@@ -563,8 +583,9 @@ func (trader *Trader) ApplyExecution(exec *kraken.Execution) {
 		}
 
 		if matched.IsClosed() {
-			if trader.onPositionClosed != nil && matched.Basis != nil && matched.Basis.Sign() > 0 && matched.Realized != nil {
-				returnFrac := matched.Realized.Div(matched.Basis).Float64()
+			closedBasis := matched.ClosedCost()
+			if trader.onPositionClosed != nil && closedBasis != nil && closedBasis.Sign() > 0 && matched.Realized != nil {
+				returnFrac := matched.Realized.Div(closedBasis).Float64()
 				fee := 0.0
 
 				if feeDec := matched.Fee(); feeDec != nil {

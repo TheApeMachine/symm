@@ -281,17 +281,48 @@ export const LearningDashboard = () => {
 				const markB = Math.floor(metricMap.mark_b ?? 0);
 				const markC = Math.floor(metricMap.mark_c ?? 0);
 
+				let frozenPredStr = actStr;
+				const fwdRaw = metricMap.frozen_prediction;
+				if (fwdRaw !== undefined) {
+					frozenPredStr = fwdRaw === 1 ? "ENTER" : fwdRaw === 2 ? "EXIT" : "WAIT";
+				}
+
+				let delayedTargetStr = extStr;
+				const targetRaw = metricMap.delayed_target;
+				if (targetRaw !== undefined) {
+					delayedTargetStr = targetRaw === 1 ? "ENTER" : targetRaw === 2 ? "EXIT" : "WAIT";
+				}
+
+				let parsedTokens: string[] = [];
+				if (measurement.provenance) {
+					for (const p of measurement.provenance) {
+						if (p?.name === "precursor_tokens" && p.value) {
+							parsedTokens = String(p.value).split(",").filter(Boolean);
+						}
+					}
+				}
+				if (parsedTokens.length === 0 && measurement.metadata) {
+					for (const m of measurement.metadata) {
+						if (m?.name === "precursor_tokens" && m.value) {
+							parsedTokens = String(m.value).split(",").filter(Boolean);
+						}
+					}
+				}
+
+				let displayTokens: string[];
+				if (parsedTokens.length > 0) {
+					displayTokens = parsedTokens.map((t) => `[${t}]`);
+				} else if (precLen === 0) {
+					displayTokens = ["―"];
+				} else {
+					displayTokens = Array.from({ length: precLen }, (_, i) => `I${i}`);
+				}
+
 				setStage(stageStr);
 				setStageBlocker(blockerStr || "Gate criteria met");
-				setFrozenPrediction(actStr);
-				setDelayedOutcome(extStr);
-				if (precLen === 0) {
-					setPrecursorTokens(["I₀"]);
-				} else {
-					setPrecursorTokens(
-						Array.from({ length: Math.min(precLen, 8) }, (_, i) => `I${i}`),
-					);
-				}
+				setFrozenPrediction(frozenPredStr);
+				setDelayedOutcome(delayedTargetStr);
+				setPrecursorTokens(displayTokens);
 				setAbcMarkers({ a: markA, b: markB, c: markC });
 
 				const stageEls = root.querySelectorAll('[data-l="training-stage"]');
@@ -310,26 +341,18 @@ export const LearningDashboard = () => {
 
 				const frozenEls = root.querySelectorAll('[data-l="frozen-prediction"]');
 				frozenEls.forEach((el) => {
-					setText(el as HTMLElement, actStr);
+					setText(el as HTMLElement, frozenPredStr);
 				});
 
 				const delayedEls = root.querySelectorAll('[data-l="delayed-label"]');
 				delayedEls.forEach((el) => {
-					setText(el as HTMLElement, extStr);
+					setText(el as HTMLElement, delayedTargetStr);
 				});
 
 				// Temporal precursor sequence & ABC boundaries (Section 36)
 				const precEls = root.querySelectorAll('[data-l="temporal-precursor"]');
 				precEls.forEach((el) => {
-					if (precLen === 0) {
-						setText(el as HTMLElement, "I₀");
-					} else {
-						const tokens = Array.from(
-							{ length: Math.min(precLen, 8) },
-							(_, i) => `I${i}`,
-						);
-						setText(el as HTMLElement, tokens.join(" → "));
-					}
+					setText(el as HTMLElement, displayTokens.join(" → "));
 				});
 
 				const abcEls = root.querySelectorAll('[data-l="abc-markers"]');

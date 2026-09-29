@@ -73,7 +73,7 @@ func BenchmarkCatalog_Drain(b *testing.B) {
 	})
 	ctx, cancel := context.WithCancel(b.Context())
 	cancel()
-	
+
 	for batch := 0; b.Loop(); batch++ {
 		for sequence := int64(1); sequence <= 2048; sequence++ {
 			measurement := data.NewMeasurement[float64]("signal", map[string]data.Metric[float64]{"value": {Raw: float64(sequence)}})

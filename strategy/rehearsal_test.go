@@ -64,6 +64,7 @@ func TestRehearsalStep(t *testing.T) {
 	})
 
 	Convey("Precursors with positive return learn ActionEnter and improve edge", t, func() {
+		var err error
 		training := NewTraining(t.Context(), 1, market.TrainingPrice(t.Context()))
 		training.Transition(runtime.READY)
 
@@ -91,7 +92,8 @@ func TestRehearsalStep(t *testing.T) {
 			SeqIdx:  20,
 			Regions: []grid.Region{{Condition: 99999}},
 		}
-		So(training.Rehearsal.resolve(record, exitImpulse), ShouldBeNil)
+		_, err = training.Rehearsal.resolve(record, exitImpulse)
+		So(err, ShouldBeNil)
 
 		impulse.SeqIdx = 30
 		So(training.Rehearsal.capture(impulse), ShouldBeNil)
@@ -106,7 +108,8 @@ func TestRehearsalStep(t *testing.T) {
 			ClearsFriction: true,
 		}
 		exitImpulse.SeqIdx = 40
-		So(training.Rehearsal.resolve(record2, exitImpulse), ShouldBeNil)
+		_, err = training.Rehearsal.resolve(record2, exitImpulse)
+		So(err, ShouldBeNil)
 
 		So(training.Rehearsal.reading.Entered, ShouldEqual, 1)
 		So(training.Rehearsal.reading.Profitable, ShouldEqual, 1)
@@ -136,7 +139,8 @@ func TestRehearsalStep(t *testing.T) {
 			ClearsFriction: false,
 		}
 		exitImpulse.SeqIdx = 60
-		So(training.Rehearsal.resolve(badRecord, exitImpulse), ShouldBeNil)
+		_, err = training.Rehearsal.resolve(badRecord, exitImpulse)
+		So(err, ShouldBeNil)
 
 		// Capture the bad precursor again at tick 70
 		badImpulse.SeqIdx = 70
@@ -153,7 +157,8 @@ func TestRehearsalStep(t *testing.T) {
 			ClearsFriction: false,
 		}
 		exitImpulse.SeqIdx = 80
-		So(training.Rehearsal.resolve(badRecord2, exitImpulse), ShouldBeNil)
+		_, err = training.Rehearsal.resolve(badRecord2, exitImpulse)
+		So(err, ShouldBeNil)
 
 		// Entered count and edge remain preserved from the good trade
 		So(training.Rehearsal.reading.Entered, ShouldEqual, 1)
@@ -202,6 +207,7 @@ func TestRehearsalReplay(t *testing.T) {
 
 func TestRehearsalCheckpoint(t *testing.T) {
 	Convey("Checkpoint captures trie model and metrics, and restores instantly without tape replay", t, func() {
+		var err error
 		training := NewTraining(t.Context(), 1, market.TrainingPrice(t.Context()))
 		training.Transition(runtime.READY)
 
@@ -227,7 +233,8 @@ func TestRehearsalCheckpoint(t *testing.T) {
 			SeqIdx:  20,
 			Regions: []grid.Region{{Condition: 88888}},
 		}
-		So(training.Rehearsal.resolve(record, exitImpulse), ShouldBeNil)
+		_, err = training.Rehearsal.resolve(record, exitImpulse)
+		So(err, ShouldBeNil)
 		So(training.Rehearsal.reading.Learned, ShouldBeGreaterThan, 0)
 
 		testEpoch := int64(123456789)

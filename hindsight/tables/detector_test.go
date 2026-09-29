@@ -3,6 +3,7 @@ package tables_test
 import (
 	"testing"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/nomagique/data"
@@ -70,13 +71,54 @@ func TestStreamingDetectorProcess(t *testing.T) {
 		}
 		So(detector.Anchor("BTC/USD"), ShouldEqual, 0)
 	})
+
+	Convey("Quiet flat tape without material excursion completes as FLAT fragment", t, func() {
+		price := market.TrainingPrice(t.Context())
+		detector := tables.NewStreamingDetector(1, price)
+
+		var flatRecord *tables.ExcursionRecord
+		basePrice := 100.0
+
+		for tick := int64(1); tick <= 80; tick++ {
+			quote := data.NewMeasurement[float64]("quote", nil)
+			quote.SeqIdx, quote.Label = tick, "BTC/USD"
+			quote.Metadata["venue"], quote.Metadata["volume-unit"] = "true", "base"
+			quote.Provenance["owner"], quote.Provenance["channel"] = "quote", "ticker"
+			quote.Metrics["bid"] = data.Metric[float64]{Label: "bid", Raw: basePrice, Exact: decimal.NewFromFloat64(basePrice)}
+			quote.Metrics["ask"] = data.Metric[float64]{Label: "ask", Raw: basePrice + 0.01, Exact: decimal.NewFromFloat64(basePrice + 0.01)}
+
+			trade := data.NewMeasurement[float64]("trade", nil)
+			trade.SeqIdx, trade.Label = tick, "BTC/USD"
+			trade.Metadata["venue"], trade.Metadata["volume-unit"] = "true", "base"
+			trade.Provenance["owner"], trade.Provenance["channel"] = "trade", "trade"
+			trade.Metrics["price"] = data.Metric[float64]{Label: "price", Raw: basePrice + 0.005, Exact: decimal.NewFromFloat64(basePrice + 0.005)}
+			trade.Metrics["qty"] = data.Metric[float64]{Label: "qty", Raw: 1.0, Exact: decimal.NewFromFloat64(1.0)}
+
+			for _, m := range []*data.Measurement[float64]{quote, trade} {
+				rec, err := detector.Process(m)
+				So(err, ShouldBeNil)
+				if rec != nil {
+					flatRecord = rec
+					break
+				}
+			}
+			if flatRecord != nil {
+				break
+			}
+		}
+
+		So(flatRecord, ShouldNotBeNil)
+		So(flatRecord.Direction, ShouldEqual, "FLAT")
+		So(flatRecord.AnchorTick, ShouldBeGreaterThan, 0)
+		So(flatRecord.ExitTick, ShouldBeGreaterThan, flatRecord.AnchorTick)
+	})
 }
 
 func BenchmarkStreamingDetectorProcess(b *testing.B) {
 	detector := tables.NewStreamingDetector(1, market.TrainingPrice(b.Context()))
 	frames := market.TrainingTape(6)
 	b.ReportAllocs()
-	
+
 	for index := 0; b.Loop(); index++ {
 		for _, measurement := range frames[index%len(frames)].Peers {
 			if _, err := detector.Process(measurement); err != nil {

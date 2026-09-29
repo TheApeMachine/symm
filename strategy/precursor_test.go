@@ -2,6 +2,7 @@ package strategy
 
 import (
 	"bytes"
+	"slices"
 	"testing"
 	"unsafe"
 
@@ -110,5 +111,43 @@ func TestPrecursorEncode(t *testing.T) {
 			So(precursor.Tokens("BTC/USD"), ShouldBeNil)
 			So(precursor.Key("BTC/USD", false), ShouldBeNil)
 		})
+	})
+}
+
+func TestLiveReplayKeyIdentity(t *testing.T) {
+	Convey("Identical observations produce byte-identical live and replay context keys across fragment boundaries", t, func() {
+		livePrecursor := NewPrecursor()
+		replayPrecursor := NewPrecursor()
+
+		symbol := "BTC/USD"
+		var observations []*grid.Impulse
+
+		// Sequence of 20 distinct market impulses across multiple fragments
+		for i := uint64(1); i <= 20; i++ {
+			observations = append(observations, &grid.Impulse{
+				Label:   symbol,
+				Ready:   true,
+				SeqIdx:  int64(i),
+				Regions: []grid.Region{{Condition: i * 17}},
+			})
+		}
+
+		// Replay simulates historical fragment completion at ticks 6, 12, 18
+		// CRITICAL REQUIREMENT: Neither live nor replay resets the precursor at fragment boundaries.
+		// Therefore, for every tick T, live key at T must equal replay key at T byte-for-byte.
+		for tickIdx, obs := range observations {
+			liveKey := livePrecursor.Encode(obs, false)
+			replayKey := replayPrecursor.Encode(obs, false)
+
+			So(bytes.Equal(liveKey, replayKey), ShouldBeTrue)
+			So(liveKey, ShouldNotBeNil)
+
+			// Verify tokens match byte-for-byte
+			liveTokens := livePrecursor.Tokens(symbol)
+			replayTokens := replayPrecursor.Tokens(symbol)
+			So(len(liveTokens), ShouldEqual, tickIdx+1)
+			So(len(replayTokens), ShouldEqual, tickIdx+1)
+			So(slices.Equal(liveTokens, replayTokens), ShouldBeTrue)
+		}
 	})
 }

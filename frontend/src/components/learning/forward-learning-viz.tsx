@@ -38,9 +38,11 @@ export const ForwardLearningViz = () => {
 	const [stageName, setStageName] = useState("MODEL DEVELOPMENT");
 	const [stageBlocker, setStageBlocker] = useState("");
 	const [openPositionsCount, setOpenPositionsCount] = useState(0);
+	const [isPaperFilled, setIsPaperFilled] = useState(false);
 
 	// Precursor & prediction
 	const [precursorLength, setPrecursorLength] = useState(0);
+	const [rawPrecursorTokens, setRawPrecursorTokens] = useState<string[]>([]);
 	const [frozenAction, setFrozenAction] = useState("WAIT");
 	const [delayedLabel, setDelayedLabel] = useState("RESOLVING");
 
@@ -184,14 +186,36 @@ export const ForwardLearningViz = () => {
 				const pLen = Math.floor(metricMap.precursor_length ?? 0);
 				setPrecursorLength(pLen);
 
+				let tokensList: string[] = [];
+				if (measurement.provenance) {
+					for (const p of measurement.provenance) {
+						if (p?.name === "precursor_tokens" && p.value) {
+							tokensList = String(p.value).split(",").filter(Boolean);
+						}
+					}
+				}
+				if (tokensList.length === 0 && measurement.metadata) {
+					for (const m of measurement.metadata) {
+						if (m?.name === "precursor_tokens" && m.value) {
+							tokensList = String(m.value).split(",").filter(Boolean);
+						}
+					}
+				}
+				setRawPrecursorTokens(tokensList);
+
+				const filledRaw = metricMap.paper_filled ?? 0;
+				setIsPaperFilled(filledRaw === 1);
+
 				const actRaw = metricMap.action ?? 0;
-				setFrozenAction(actRaw === 1 ? "ENTER" : actRaw === 2 ? "EXIT" : "WAIT");
+				const frozenRaw = metricMap.frozen_prediction !== undefined ? metricMap.frozen_prediction : actRaw;
+				setFrozenAction(frozenRaw === 1 ? "ENTER" : frozenRaw === 2 ? "EXIT" : "WAIT");
 
 				const extRaw = metricMap.excursion_type ?? 0;
 				if (extRaw === 1) setDelayedLabel("UP");
 				else if (extRaw === 2) setDelayedLabel("DOWN");
 				else if (extRaw === 3) setDelayedLabel("CHOP");
 				else if (extRaw === 4) setDelayedLabel("FLAT");
+				else if (metricMap.delayed_target !== undefined) setDelayedLabel(metricMap.delayed_target === 1 ? "ENTER (CLEARS)" : "WAIT");
 				else setDelayedLabel("RESOLVING");
 
 				// Historical held-out
@@ -348,13 +372,15 @@ export const ForwardLearningViz = () => {
 	}, [points, tapeDim.width, tapeDim.height]);
 
 	const isForward = stageCode >= 2;
-	const precursorTokens =
-		precursorLength === 0
-			? ["I₀"]
-			: Array.from(
-					{ length: Math.min(precursorLength, 8) },
-					(_, i) => `I${i}`,
-				);
+	const precursorTokens = useMemo(() => {
+		if (rawPrecursorTokens.length > 0) {
+			return rawPrecursorTokens.map((t) => `[${t}]`);
+		}
+		if (precursorLength === 0) {
+			return ["―"];
+		}
+		return Array.from({ length: precursorLength }, (_, i) => `I${i}`);
+	}, [rawPrecursorTokens, precursorLength]);
 
 	return (
 		<div className="flex flex-col w-full h-full gap-2 font-mono text-[11px] bg-(--bg) p-2 overflow-hidden text-(--f2)">
@@ -619,7 +645,7 @@ export const ForwardLearningViz = () => {
 											)}
 
 											{/* Paper Entry Fill Marker (Rule 52: Only when paper fill exists in forward stage) */}
-											{isForward && openPositionsCount > 0 && entryPtIdx !== null && entryPtIdx >= 0 && entryPtIdx < points.length && (
+											{isForward && isPaperFilled && entryPtIdx !== null && entryPtIdx >= 0 && entryPtIdx < points.length && (
 												<g
 													transform={`translate(${xScale(entryPtIdx)}, ${yScale(points[entryPtIdx].y) + 14})`}
 												>
@@ -752,8 +778,8 @@ export const ForwardLearningViz = () => {
 								</span>
 							</div>
 							<div className="flex justify-between items-baseline text-[10px] text-(--f3)">
-								<span>Trades: <strong className="text-(--f1)" data-metric="fwd_paper_trades">{fwdPaperTrades}</strong></span>
-								<span>Predictions: <strong className="text-(--f2)" data-metric="fwd_enter_predictions">{fwdPredictions}</strong></span>
+								<span>Trades: <strong className="text-(--f1)" data-metric="fwd_paper_trades" data-format="integer">{fwdPaperTrades}</strong></span>
+								<span>Predictions: <strong className="text-(--f2)" data-metric="fwd_enter_predictions" data-format="integer">{fwdPredictions}</strong></span>
 							</div>
 							<div className="flex justify-between items-baseline text-[10px] text-(--f4)">
 								<span>Active Position:</span>

@@ -58,6 +58,11 @@ type ForwardPrediction struct {
 	Ambiguity  float64
 }
 
+type forwardKey struct {
+	symbol string
+	tick   int64
+}
+
 type ForwardPaperReading struct {
 	EnterPredictions   uint64
 	CorrectEnter       uint64
@@ -73,6 +78,14 @@ type ForwardPaperReading struct {
 	CorrectExit        uint64
 	PrematureExit      uint64
 	MissedExit         uint64
+
+	EntryTimingSum   float64
+	EntryTimingCount uint64
+	MeanEntryTiming  float64
+
+	ExitTimingSum   float64
+	ExitTimingCount uint64
+	MeanExitTiming  float64
 
 	PaperTrades     uint64
 	PaperProfitable uint64
@@ -113,7 +126,7 @@ type Training struct {
 	stage              Stage
 	stageBlocker       string
 	stageMu            sync.RWMutex
-	forwardPredictions map[string]ForwardPrediction
+	forwardPredictions map[forwardKey]ForwardPrediction
 	forwardMu          sync.Mutex
 	forwardReading     ForwardPaperReading
 	focusSymbol        string
@@ -128,7 +141,7 @@ func NewTraining(ctx context.Context, epoch int64, price *broker.Price) *Trainin
 		detector:           tables.NewStreamingDetector(epoch, price),
 		stage:              StageModelDevelopment,
 		stageBlocker:       "waiting for historical tape replay",
-		forwardPredictions: make(map[string]ForwardPrediction),
+		forwardPredictions: make(map[forwardKey]ForwardPrediction),
 	}
 	training.Rehearsal = NewRehearsal(ctx, epoch, price, training.engine)
 	training.Rehearsal.SetOnProgress(training.publishProgress)
@@ -255,7 +268,7 @@ func (training *Training) CheckStageGates() {
 
 	if training.stage == StageHistoricalValidation {
 		hasEntryEvidence := reading.ValidUpOpportunities > 0 && reading.Entered >= 2
-		hasExitEvidence := reading.ContinuationWaitCorrect > 0 || reading.CorrectExit > 0
+		hasExitEvidence := reading.ContinuationWaitCorrect > 0 && reading.CorrectExit > 0
 		hasEconomicUncertainty := reading.ReturnSE > 0
 		hasPositiveLowerBound := reading.LowerBound > 0
 
@@ -265,7 +278,7 @@ func (training *Training) CheckStageGates() {
 		}
 
 		if !hasExitEvidence {
-			training.stageBlocker = "waiting for valid historical exit evidence"
+			training.stageBlocker = "waiting for valid historical exit evidence (need both continuation wait and correct exit)"
 			return
 		}
 
@@ -285,15 +298,21 @@ func (training *Training) CheckStageGates() {
 	}
 
 	if training.stage == StageForwardPaperLearning {
-		hasPaperTrades := training.forwardReading.PaperTrades >= 2
+		hasPaperTrades := training.forwardReading.PaperTrades >= 5
 		hasPaperUncertainty := training.forwardReading.PaperReturnSE > 0
 		hasPaperPositiveLowerBound := training.forwardReading.PaperLowerBound > 0
+		hasNegativeExposure := (training.forwardReading.CorrectWaitDown +
+			training.forwardReading.CorrectWaitChop +
+			training.forwardReading.CorrectWaitFlat) > 0
 		hasNoNegativeClassFalseEnters := training.forwardReading.FalseEnterDown == 0 &&
 			training.forwardReading.FalseEnterChop == 0 &&
 			training.forwardReading.FalseEnterFlat == 0
+		hasExitCompetence := training.forwardReading.ExitPredictions > 0 &&
+			training.forwardReading.CorrectExit > 0 &&
+			training.forwardReading.CorrectExit >= training.forwardReading.MissedExit
 
 		if !hasPaperTrades {
-			training.stageBlocker = "no forward paper round trips completed (need >= 2)"
+			training.stageBlocker = fmt.Sprintf("insufficient forward paper round trips (have %d, need >= 5)", training.forwardReading.PaperTrades)
 			return
 		}
 
@@ -308,8 +327,18 @@ func (training *Training) CheckStageGates() {
 			return
 		}
 
+		if !hasNegativeExposure {
+			training.stageBlocker = "no forward exposure to negative tape (DOWN/CHOP/FLAT) yet"
+			return
+		}
+
 		if !hasNoNegativeClassFalseEnters {
 			training.stageBlocker = "forward model admitted false entries on negative tape"
+			return
+		}
+
+		if !hasExitCompetence {
+			training.stageBlocker = "insufficient forward exit recognition competence (need correct exits >= missed exits)"
 			return
 		}
 
@@ -323,10 +352,10 @@ func (training *Training) freezeForwardPrediction(symbol string, contextKey []by
 	defer training.forwardMu.Unlock()
 
 	if training.forwardPredictions == nil {
-		training.forwardPredictions = make(map[string]ForwardPrediction)
+		training.forwardPredictions = make(map[forwardKey]ForwardPrediction)
 	}
 
-	training.forwardPredictions[symbol] = ForwardPrediction{
+	training.forwardPredictions[forwardKey{symbol: symbol, tick: tick}] = ForwardPrediction{
 		Symbol:     symbol,
 		ContextKey: slices.Clone(contextKey),
 		Tokens:     slices.Clone(tokens),
@@ -343,24 +372,38 @@ func (training *Training) resolveForwardOutcome(record *tables.ExcursionRecord) 
 		return
 	}
 
-	training.forwardMu.Lock()
-	frozen, found := training.forwardPredictions[record.Symbol]
-
-	if found {
-		delete(training.forwardPredictions, record.Symbol)
-	}
-
-	training.forwardMu.Unlock()
-
 	record.Direction = strings.ToUpper(record.Direction)
 	isUsefulUp := record.Direction == "UP" && record.ClearsFriction && record.ProfitFraction > 0
 
-	if found {
-		if frozen.Action == ActionEnter {
+	training.forwardMu.Lock()
+
+	// 1. Locate frozen prediction at anchor B (record.AnchorTick)
+	var frozenB ForwardPrediction
+	foundB := false
+	if pred, ok := training.forwardPredictions[forwardKey{symbol: record.Symbol, tick: record.AnchorTick}]; ok {
+		frozenB = pred
+		foundB = true
+	} else {
+		var bestTick int64 = -1
+		for k, p := range training.forwardPredictions {
+			if k.symbol == record.Symbol && k.tick <= record.AnchorTick && k.tick > bestTick {
+				bestTick = k.tick
+				frozenB = p
+				foundB = true
+			}
+		}
+	}
+
+	// 2. Score entry prediction at B
+	if foundB {
+		if frozenB.Action == ActionEnter {
 			training.forwardReading.EnterPredictions++
 
 			if isUsefulUp {
 				training.forwardReading.CorrectEnter++
+				timingErr := math.Abs(float64(frozenB.Tick - record.AnchorTick))
+				training.forwardReading.EntryTimingSum += timingErr
+				training.forwardReading.EntryTimingCount++
 			}
 
 			if !isUsefulUp {
@@ -377,7 +420,7 @@ func (training *Training) resolveForwardOutcome(record *tables.ExcursionRecord) 
 			}
 		}
 
-		if frozen.Action == ActionWait {
+		if frozenB.Action == ActionWait {
 			if isUsefulUp {
 				training.forwardReading.MissedEnter++
 			}
@@ -393,19 +436,115 @@ func (training *Training) resolveForwardOutcome(record *tables.ExcursionRecord) 
 				}
 			}
 		}
+	}
 
+	// 3. Locate frozen prediction at exit C (record.ExitTick)
+	var frozenC ForwardPrediction
+	foundC := false
+	if pred, ok := training.forwardPredictions[forwardKey{symbol: record.Symbol, tick: record.ExitTick}]; ok {
+		frozenC = pred
+		foundC = true
+	} else {
+		var bestTick int64 = -1
+		for k, p := range training.forwardPredictions {
+			if k.symbol == record.Symbol && k.tick <= record.ExitTick && k.tick > bestTick {
+				bestTick = k.tick
+				frozenC = p
+				foundC = true
+			}
+		}
+	}
+
+	// Holding interval (record.AnchorTick < tick < record.ExitTick): premature exit checks
+	for k, p := range training.forwardPredictions {
+		if k.symbol == record.Symbol && k.tick > record.AnchorTick && k.tick < record.ExitTick {
+			if p.Action == ActionExit {
+				training.forwardReading.PrematureExit++
+				exitTiming := math.Abs(float64(k.tick - record.ExitTick))
+				training.forwardReading.ExitTimingSum += exitTiming
+				training.forwardReading.ExitTimingCount++
+			}
+		}
+	}
+
+	// At exit C:
+	if foundC {
+		training.forwardReading.ExitPredictions++
+		if frozenC.Action == ActionExit {
+			training.forwardReading.CorrectExit++
+			exitTiming := math.Abs(float64(frozenC.Tick - record.ExitTick))
+			training.forwardReading.ExitTimingSum += exitTiming
+			training.forwardReading.ExitTimingCount++
+		}
+
+		if frozenC.Action != ActionExit {
+			training.forwardReading.MissedExit++
+		}
+	}
+
+	if training.forwardReading.EntryTimingCount > 0 {
+		training.forwardReading.MeanEntryTiming = training.forwardReading.EntryTimingSum / float64(training.forwardReading.EntryTimingCount)
+	}
+	if training.forwardReading.ExitTimingCount > 0 {
+		training.forwardReading.MeanExitTiming = training.forwardReading.ExitTimingSum / float64(training.forwardReading.ExitTimingCount)
+	}
+
+	// 4. Canonical Radix Trie Supervision matching Rehearsal exactly
+	if foundB && len(frozenB.ContextKey) > 0 {
+		// 1. Proper prefixes before B teach ActionWait
+		for j := 1; j < len(frozenB.Tokens); j++ {
+			prefixKey := EncodeTokens(record.Symbol, false, frozenB.Tokens[:j])
+			training.engine.Observe(cognition.Association{
+				Context: prefixKey,
+				Class:   []byte(ActionWait),
+				Graded:  false,
+			})
+		}
+
+		// 2. Complete B context teaches expectedAction (ENTER if useful UP, else WAIT)
 		expectedAction := ActionWait
-
 		if isUsefulUp {
 			expectedAction = ActionEnter
 		}
-
 		training.engine.Observe(cognition.Association{
-			Context: frozen.ContextKey,
+			Context: frozenB.ContextKey,
 			Class:   []byte(expectedAction),
 			Graded:  false,
 		})
+
+		// 3. Holding-scope exit supervision
+		tokensAtC := frozenC.Tokens
+		if len(tokensAtC) == 0 && training.precursor != nil {
+			tokensAtC = training.precursor.Tokens(record.Symbol)
+		}
+
+		if isUsefulUp && len(tokensAtC) >= len(frozenB.Tokens) {
+			for j := len(frozenB.Tokens); j < len(tokensAtC); j++ {
+				holdingPrefixKey := EncodeTokens(record.Symbol, true, tokensAtC[:j])
+				training.engine.Observe(cognition.Association{
+					Context: holdingPrefixKey,
+					Class:   []byte(ActionWait),
+					Graded:  false,
+				})
+			}
+
+			holdingExitKey := EncodeTokens(record.Symbol, true, tokensAtC)
+			training.engine.Observe(cognition.Association{
+				Context: holdingExitKey,
+				Class:   []byte(ActionExit),
+				Graded:  false,
+			})
+		}
 	}
+
+	// Clean up resolved predictions up to ExitTick
+	for k := range training.forwardPredictions {
+		if k.symbol == record.Symbol && k.tick <= record.ExitTick {
+			delete(training.forwardPredictions, k)
+		}
+	}
+
+	training.forwardMu.Unlock()
 
 	training.CheckStageGates()
 }
@@ -494,6 +633,15 @@ func (training *Training) Register() *data.Measurement[float64] {
 		"fwd_correct_enter":     data.NewMetric[float64]("fwd_correct_enter", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
 		"fwd_false_enter":       data.NewMetric[float64]("fwd_false_enter", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
 		"fwd_missed_enter":      data.NewMetric[float64]("fwd_missed_enter", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
+		"fwd_exit_predictions":  data.NewMetric[float64]("fwd_exit_predictions", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
+		"fwd_correct_exit":      data.NewMetric[float64]("fwd_correct_exit", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
+		"fwd_premature_exit":    data.NewMetric[float64]("fwd_premature_exit", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
+		"fwd_missed_exit":       data.NewMetric[float64]("fwd_missed_exit", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
+		"fwd_entry_timing_err":  data.NewMetric[float64]("fwd_entry_timing_err", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
+		"fwd_exit_timing_err":   data.NewMetric[float64]("fwd_exit_timing_err", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
+		"paper_filled":          data.NewMetric[float64]("paper_filled", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
+		"frozen_prediction":     data.NewMetric[float64]("frozen_prediction", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
+		"delayed_target":        data.NewMetric[float64]("delayed_target", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
 		"fwd_paper_trades":      data.NewMetric[float64]("fwd_paper_trades", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
 		"fwd_paper_mean_return": data.NewMetric[float64]("fwd_paper_mean_return", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
 		"fwd_paper_return_se":   data.NewMetric[float64]("fwd_paper_return_se", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
@@ -551,10 +699,22 @@ func (training *Training) Step(measurement *data.Measurement[float64]) *data.Mea
 	}
 
 	if training.detector != nil {
-		record, err := training.detector.Process(measurement)
+		var venueMeasurements []*data.Measurement[float64]
+		if measurement.Metadata != nil && measurement.Metadata["venue"] == "true" {
+			venueMeasurements = append(venueMeasurements, measurement)
+		}
+		for _, peer := range measurement.Peers {
+			if peer != nil && peer.Metadata != nil && peer.Metadata["venue"] == "true" {
+				venueMeasurements = append(venueMeasurements, peer)
+			}
+		}
 
-		if err == nil && record != nil {
-			training.resolveForwardOutcome(record)
+		for _, vm := range venueMeasurements {
+			record, err := training.detector.Process(vm)
+
+			if err == nil && record != nil {
+				training.resolveForwardOutcome(record)
+			}
 		}
 	}
 
@@ -605,6 +765,19 @@ func (training *Training) Step(measurement *data.Measurement[float64]) *data.Mea
 	fwdFalseEnter := training.forwardReading.FalseEnterDown + training.forwardReading.FalseEnterChop + training.forwardReading.FalseEnterFlat + training.forwardReading.FalseEnterFriction
 	current.Metrics["fwd_false_enter"] = current.Metrics["fwd_false_enter"].Write(float64(fwdFalseEnter))
 	current.Metrics["fwd_missed_enter"] = current.Metrics["fwd_missed_enter"].Write(float64(training.forwardReading.MissedEnter))
+	current.Metrics["fwd_exit_predictions"] = current.Metrics["fwd_exit_predictions"].Write(float64(training.forwardReading.ExitPredictions))
+	current.Metrics["fwd_correct_exit"] = current.Metrics["fwd_correct_exit"].Write(float64(training.forwardReading.CorrectExit))
+	current.Metrics["fwd_premature_exit"] = current.Metrics["fwd_premature_exit"].Write(float64(training.forwardReading.PrematureExit))
+	current.Metrics["fwd_missed_exit"] = current.Metrics["fwd_missed_exit"].Write(float64(training.forwardReading.MissedExit))
+	current.Metrics["fwd_entry_timing_err"] = current.Metrics["fwd_entry_timing_err"].Write(training.forwardReading.MeanEntryTiming)
+	current.Metrics["fwd_exit_timing_err"] = current.Metrics["fwd_exit_timing_err"].Write(training.forwardReading.MeanExitTiming)
+
+	paperFilled := 0.0
+	if training.trader != nil && training.trader.HasFilledPosition(symbol) {
+		paperFilled = 1.0
+	}
+	current.Metrics["paper_filled"] = current.Metrics["paper_filled"].Write(paperFilled)
+
 	current.Metrics["fwd_paper_trades"] = current.Metrics["fwd_paper_trades"].Write(float64(training.forwardReading.PaperTrades))
 	current.Metrics["fwd_paper_mean_return"] = current.Metrics["fwd_paper_mean_return"].Write(training.forwardReading.PaperMeanReturn)
 	current.Metrics["fwd_paper_return_se"] = current.Metrics["fwd_paper_return_se"].Write(training.forwardReading.PaperReturnSE)
@@ -612,6 +785,17 @@ func (training *Training) Step(measurement *data.Measurement[float64]) *data.Mea
 
 	tokens := training.precursor.Tokens(symbol)
 	current.Metrics["precursor_length"] = current.Metrics["precursor_length"].Write(float64(len(tokens)))
+
+	var tokenHexes []string
+	for _, tok := range tokens {
+		tokenHexes = append(tokenHexes, fmt.Sprintf("0x%x", tok))
+	}
+	toksJoined := strings.Join(tokenHexes, ",")
+	current.Metadata["precursor_tokens"] = toksJoined
+	if current.Provenance == nil {
+		current.Provenance = make(map[string]string)
+	}
+	current.Provenance["precursor_tokens"] = toksJoined
 
 	stageCode := 0.0
 
@@ -667,6 +851,10 @@ func (training *Training) Step(measurement *data.Measurement[float64]) *data.Mea
 		}
 
 		current.Metrics["action"] = current.Metrics["action"].Write(actionValue)
+		current.Metrics["frozen_prediction"] = current.Metrics["frozen_prediction"].Write(actionValue)
+
+		tokensNow := training.precursor.Tokens(symbol)
+		training.freezeForwardPrediction(symbol, evaluation.Context, tokensNow, measurement.SeqIdx, action, evaluation)
 
 		authorized := false
 
@@ -679,8 +867,10 @@ func (training *Training) Step(measurement *data.Measurement[float64]) *data.Mea
 			}
 
 			isForwardStage := training.stage == StageForwardPaperLearning || training.stage == StageForwardSkillDemonstrated
+			isPaperModel := system.Cfg.Market.Model == "paper"
 
-			authorized = isForwardStage &&
+			authorized = isPaperModel &&
+				isForwardStage &&
 				evaluation.Support > 0 &&
 				evaluation.Confidence > minConf &&
 				!evaluation.IsBreak &&
@@ -690,7 +880,9 @@ func (training *Training) Step(measurement *data.Measurement[float64]) *data.Mea
 		if action == ActionEnter && !authorized && training.trader != nil {
 			reason := fmt.Sprintf("unauthorized in stage %s: %s", training.stage, training.stageBlocker)
 
-			if training.stage == StageForwardPaperLearning || training.stage == StageForwardSkillDemonstrated {
+			if (training.stage == StageForwardPaperLearning || training.stage == StageForwardSkillDemonstrated) && system.Cfg.Market.Model != "paper" {
+				reason = "real money execution disabled in staged training (model is not paper)"
+			} else if training.stage == StageForwardPaperLearning || training.stage == StageForwardSkillDemonstrated {
 				reason = fmt.Sprintf("authority gate rejected enter: support=%d, conf=%.3f, break=%v, amb=%.3f",
 					evaluation.Support, evaluation.Confidence, evaluation.IsBreak, evaluation.Ambiguity)
 			}
@@ -706,8 +898,6 @@ func (training *Training) Step(measurement *data.Measurement[float64]) *data.Mea
 		if training.trader != nil && ((action == ActionEnter && authorized) || action == ActionExit) {
 			if action == ActionEnter {
 				current.Metrics["agent_entry"] = current.Metrics["agent_entry"].Write(float64(measurement.SeqIdx))
-				tokensNow := training.precursor.Tokens(symbol)
-				training.freezeForwardPrediction(symbol, evaluation.Context, tokensNow, measurement.SeqIdx, action, evaluation)
 			}
 
 			if action == ActionExit {
@@ -781,7 +971,7 @@ func (training *Training) Step(measurement *data.Measurement[float64]) *data.Mea
 	return current
 }
 
-func (training *Training) publishProgress(frame *data.Measurement[float64], record *tables.ExcursionRecord, impulse *grid.Snapshot) {
+func (training *Training) publishProgress(frame *data.Measurement[float64], record *tables.ExcursionRecord, impulse *grid.Snapshot, prediction string) {
 	if training == nil || frame == nil {
 		return
 	}
@@ -836,6 +1026,16 @@ func (training *Training) publishProgress(frame *data.Measurement[float64], reco
 			current.Metrics["accuracy"] = current.Metrics["accuracy"].Write(float64(reading.Correct) / float64(reading.Predicted))
 		}
 	}
+
+	predVal := 0.0
+	switch prediction {
+	case string(ActionEnter):
+		predVal = 1.0
+	case string(ActionExit):
+		predVal = 2.0
+	}
+	current.Metrics["frozen_prediction"] = current.Metrics["frozen_prediction"].Write(predVal)
+	current.Metrics["action"] = current.Metrics["action"].Write(predVal)
 
 	stageCode := 0.0
 
@@ -916,13 +1116,26 @@ func (training *Training) publishProgress(frame *data.Measurement[float64], reco
 		current.Metrics["mark_b"] = current.Metrics["mark_b"].Write(float64(record.AnchorTick))
 		current.Metrics["mark_c"] = current.Metrics["mark_c"].Write(float64(record.ExitTick))
 
-		actionVal := 0.0
-
-		if record.ClearsFriction {
-			actionVal = 1.0
+		delayedVal := 0.0
+		if record.ClearsFriction && record.ProfitFraction > 0 && strings.ToUpper(record.Direction) == "UP" {
+			delayedVal = 1.0
 		}
+		current.Metrics["delayed_target"] = current.Metrics["delayed_target"].Write(delayedVal)
+	}
 
-		current.Metrics["action"] = current.Metrics["action"].Write(actionVal)
+	if record != nil && training.Rehearsal != nil && training.Rehearsal.precursor != nil {
+		tokens := training.Rehearsal.precursor.Tokens(record.Symbol)
+		current.Metrics["precursor_length"] = current.Metrics["precursor_length"].Write(float64(len(tokens)))
+		var tokenHexes []string
+		for _, tok := range tokens {
+			tokenHexes = append(tokenHexes, fmt.Sprintf("0x%x", tok))
+		}
+		toksJoined := strings.Join(tokenHexes, ",")
+		current.Metadata["precursor_tokens"] = toksJoined
+		if current.Provenance == nil {
+			current.Provenance = make(map[string]string)
+		}
+		current.Provenance["precursor_tokens"] = toksJoined
 	}
 
 	if impulse != nil {

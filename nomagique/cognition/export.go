@@ -162,7 +162,8 @@ func (op *Engine) TreeExport() CognitionTreeExport {
 
 		// Edges encode region tokens; nodes encode actions (WAIT, ENTER, EXIT).
 		currNode := rootNode
-		pathSoFar := "root"
+		var pathSoFar strings.Builder
+		pathSoFar.WriteString("root")
 
 		for idx, regToken := range regionTokens {
 			isLast := idx == len(regionTokens)-1
@@ -176,12 +177,13 @@ func (op *Engine) TreeExport() CognitionTreeExport {
 				nodeState = policyState
 			}
 
-			pathSoFar += "/" + regToken + ":" + nodeAction
+			pathSoFar.WriteString("/")
+			pathSoFar.WriteString(regToken)
 
 			var foundChild *TrieNodeJSON
 
 			for _, child := range currNode.Children {
-				if child.TokenPrefix == nodeAction && len(child.Tokens) > 0 && child.Tokens[0] == regToken {
+				if len(child.Tokens) > 0 && child.Tokens[0] == regToken {
 					foundChild = child
 					break
 				}
@@ -189,7 +191,7 @@ func (op *Engine) TreeExport() CognitionTreeExport {
 
 			if foundChild == nil {
 				foundChild = &TrieNodeJSON{
-					ID:              pathSoFar,
+					ID:              pathSoFar.String(),
 					TokenPrefix:     nodeAction,
 					Probability:     nodeProb,
 					StepProbability: nodeProb,
@@ -201,11 +203,10 @@ func (op *Engine) TreeExport() CognitionTreeExport {
 			}
 
 			if isLast {
-				if cand.count > foundChild.Count {
-					foundChild.Count = cand.count
-				}
+				foundChild.Count += cand.count
 
-				if cand.probability > foundChild.Probability {
+				if cand.probability >= foundChild.Probability {
+					foundChild.TokenPrefix = actionName
 					foundChild.Probability = cand.probability
 					foundChild.StepProbability = cand.probability
 					foundChild.State = policyState

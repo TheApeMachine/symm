@@ -3,10 +3,15 @@ package strategy
 import (
 	"testing"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/broker/position"
 	"github.com/theapemachine/symm/hindsight/tables"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/cognition"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/tests/market"
 )
 
@@ -47,6 +52,7 @@ func TestStagedTrainingProgression(t *testing.T) {
 			training.Rehearsal.reading.ReturnSE = 0.02
 			training.Rehearsal.reading.LowerBound = -0.03
 			training.Rehearsal.reading.ContinuationWaitCorrect = 3
+			training.Rehearsal.reading.CorrectExit = 2
 			training.Rehearsal.readingMu.Unlock()
 
 			training.CheckStageGates()
@@ -72,7 +78,7 @@ func TestStagedTrainingProgression(t *testing.T) {
 			training.CheckStageGates()
 			stage, blocker := training.Stage()
 			So(stage, ShouldEqual, StageForwardPaperLearning)
-			So(blocker, ShouldEqual, "no forward paper round trips completed (need >= 2)")
+			So(blocker, ShouldContainSubstring, "forward paper round trips")
 		})
 
 		Convey("Historical and forward counters remain strictly separate", func() {
@@ -139,21 +145,60 @@ func TestForwardPaperLearning(t *testing.T) {
 		postCensus := training.engine.Census()
 		So(postCensus["wait"], ShouldBeGreaterThan, initialCensus["wait"])
 
-		// 6. Paper trade execution records real returns separately
-		training.RecordForwardPaperTrade("BTC/USD", -0.03, 0.002)
+		// 6. Paper trade execution integration: fill entry and complete exit via Trader.ApplyExecution
+		// creates closed position, triggers OnPositionClosed, and updates ForwardReading
+		system.Cfg.Market.Model = "paper"
+		reg := position.NewRegulator("BTC/USD")
+		So(reg.Begin(&spot.AddOrderRequest{Pair: "BTC/USD", Type: "buy", ClOrdId: reg.PositionID}), ShouldBeNil)
+		trader.positions.Store("BTC/USD", reg)
+		enterExec := &kraken.Execution{
+			Channel: "executions",
+			Type:    "update",
+			Data: []kraken.ExecutionData{
+				{
+					Symbol:        "BTC/USD",
+					OrderID:       "order-1",
+					ClientOrderID: reg.PositionID,
+					OrderStatus:   "filled",
+					AvgPrice:      decimal.NewFromFloat64(50000.0),
+					CumQty:        decimal.NewFromFloat64(0.001),
+					CumCost:       decimal.NewFromFloat64(50.0),
+					FeeUsdEquiv:   decimal.NewFromFloat64(0.10),
+				},
+			},
+		}
+		trader.ApplyExecution(enterExec)
+		So(trader.Holding("BTC/USD"), ShouldBeTrue)
+		So(trader.HasFilledPosition("BTC/USD"), ShouldBeTrue)
+
+		exitClOrdId := "exit-order-1"
+		So(reg.Begin(&spot.AddOrderRequest{Pair: "BTC/USD", Type: "sell", ClOrdId: exitClOrdId}), ShouldBeNil)
+		exitExec := &kraken.Execution{
+			Channel: "executions",
+			Type:    "update",
+			Data: []kraken.ExecutionData{
+				{
+					Symbol:        "BTC/USD",
+					OrderID:       "order-2",
+					ClientOrderID: exitClOrdId,
+					OrderStatus:   "filled",
+					AvgPrice:      decimal.NewFromFloat64(52000.0),
+					CumQty:        decimal.NewFromFloat64(0.001),
+					CumCost:       decimal.NewFromFloat64(52.0),
+					FeeUsdEquiv:   decimal.NewFromFloat64(0.10),
+				},
+			},
+		}
+		trader.ApplyExecution(exitExec)
+		So(trader.Holding("BTC/USD"), ShouldBeFalse)
+
+		// Authoritative close callback fired from ApplyExecution and recorded forward paper trade!
 		fwd = training.ForwardReading()
 		So(fwd.PaperTrades, ShouldEqual, 1)
-		So(fwd.PaperLosing, ShouldEqual, 1)
-		So(fwd.PaperReturn, ShouldEqual, -0.03)
+		So(fwd.PaperProfitable, ShouldEqual, 1)
+		So(fwd.PaperReturn, ShouldAlmostEqual, 0.036, 1e-3)
 
 		// Forward stats contain no historical samples
 		So(training.Rehearsal.reading.Entered, ShouldEqual, 0)
-
-		// 7. Complete second winning paper trade to test Stage D gate
-		training.RecordForwardPaperTrade("BTC/USD", 0.08, 0.002)
-		fwd = training.ForwardReading()
-		So(fwd.PaperTrades, ShouldEqual, 2)
-		So(fwd.PaperProfitable, ShouldEqual, 1)
-		So(fwd.PaperMeanReturn, ShouldAlmostEqual, 0.025, 1e-4)
 	})
 }

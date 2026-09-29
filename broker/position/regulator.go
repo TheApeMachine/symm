@@ -19,6 +19,7 @@ type Regulator struct {
 	Symbol      string
 	Quantity    *decimal.Decimal
 	Basis       *decimal.Decimal
+	ClosedBasis *decimal.Decimal
 	EntryFee    *decimal.Decimal
 	Realized    *decimal.Decimal
 	Pending     *spot.AddOrderRequest
@@ -32,16 +33,17 @@ type Regulator struct {
 
 func NewRegulator(symbol string) *Regulator {
 	return &Regulator{
-		PositionID: uuid.New().String(),
-		Symbol:     symbol,
-		Quantity:   decimal.NewFromInt64(0).SetScale(decimal.DefaultScale),
-		Basis:      decimal.NewFromInt64(0).SetScale(decimal.DefaultScale),
-		EntryFee:   decimal.NewFromInt64(0).SetScale(decimal.DefaultScale),
-		Realized:   decimal.NewFromInt64(0).SetScale(decimal.DefaultScale),
-		EntryAt:    time.Now(),
-		filled:     decimal.NewFromInt64(0).SetScale(decimal.DefaultScale),
-		cost:       decimal.NewFromInt64(0).SetScale(decimal.DefaultScale),
-		fee:        decimal.NewFromInt64(0).SetScale(decimal.DefaultScale),
+		PositionID:  uuid.New().String(),
+		Symbol:      symbol,
+		Quantity:    decimal.NewFromInt64(0).SetScale(decimal.DefaultScale),
+		Basis:       decimal.NewFromInt64(0).SetScale(decimal.DefaultScale),
+		ClosedBasis: decimal.NewFromInt64(0).SetScale(decimal.DefaultScale),
+		EntryFee:    decimal.NewFromInt64(0).SetScale(decimal.DefaultScale),
+		Realized:    decimal.NewFromInt64(0).SetScale(decimal.DefaultScale),
+		EntryAt:     time.Now(),
+		filled:      decimal.NewFromInt64(0).SetScale(decimal.DefaultScale),
+		cost:        decimal.NewFromInt64(0).SetScale(decimal.DefaultScale),
+		fee:         decimal.NewFromInt64(0).SetScale(decimal.DefaultScale),
 	}
 }
 
@@ -111,6 +113,16 @@ func (regulator *Regulator) Price() *decimal.Decimal {
 	}
 
 	return nil
+}
+
+func (regulator *Regulator) ClosedCost() *decimal.Decimal {
+	if regulator == nil {
+		return nil
+	}
+
+	regulator.mu.RLock()
+	defer regulator.mu.RUnlock()
+	return regulator.ClosedBasis
 }
 
 func (regulator *Regulator) Volume() *decimal.Decimal {
@@ -316,6 +328,7 @@ func (regulator *Regulator) apply(report kraken.ExecutionData) error {
 
 		regulator.Quantity = safeSub(regulator.Quantity, quantity)
 		regulator.Basis = safeSub(regulator.Basis, basis)
+		regulator.ClosedBasis = safeAdd(regulator.ClosedBasis, basis)
 		regulator.EntryFee = safeSub(regulator.EntryFee, entryFee)
 
 		pnl := safeSub(safeSub(safeSub(cost, feeDelta), basis), entryFee)

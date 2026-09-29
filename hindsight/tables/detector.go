@@ -172,7 +172,11 @@ func (detector *StreamingDetector) advance(tracker *symbolTracker, measurement *
 		}
 	}
 
-	if !excursionEnded && reading.ShedRatio < 1 && (upwardMove >= reversalThreshold || downwardMove >= reversalThreshold) {
+	if !excursionEnded && reading.ShedRatio < 1 {
+		excursionEnded = true
+	}
+
+	if !excursionEnded && reading.Capacity > 10 && tracker.observations >= int64(reading.Capacity) {
 		excursionEnded = true
 	}
 
@@ -228,13 +232,12 @@ func (detector *StreamingDetector) advance(tracker *symbolTracker, measurement *
 		ObservationCount: tracker.observations, Status: status,
 	}
 
-	tracker.precursorStart = tracker.anchor
-	tracker.anchor = measurement.SeqIdx
+	tracker.precursorStart = measurement.SeqIdx
+	tracker.anchor = 0
 	tracker.observations = 0
-	tracker.entry = tracker.ask
-	tracker.cost = detector.price.WithFee(measurement.Label, tracker.ask, broker.BUY)
-	tracker.high, tracker.low = price, price
-	tracker.highTick, tracker.lowTick = measurement.SeqIdx, measurement.SeqIdx
+	tracker.entry = nil
+	tracker.cost = nil
+	tracker.high, tracker.low = nil, nil
 
 	return record, nil
 }

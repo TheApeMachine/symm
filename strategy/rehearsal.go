@@ -125,7 +125,7 @@ type anchorKey struct {
 	sequence int64
 }
 
-type ReplayProgressFunc func(frame *data.Measurement[float64], record *tables.ExcursionRecord, impulse *grid.Snapshot)
+type ReplayProgressFunc func(frame *data.Measurement[float64], record *tables.ExcursionRecord, impulse *grid.Snapshot, prediction string)
 
 type Rehearsal struct {
 	ctx              context.Context
@@ -265,7 +265,7 @@ func (rehearsal *Rehearsal) Step(frame *data.Measurement[float64]) ([]tables.Exc
 		}
 
 		if record != nil {
-			if err := rehearsal.resolve(*record, &rehearsal.space.Markets[record.Symbol].Impulse); err != nil {
+			if _, err := rehearsal.resolve(*record, &rehearsal.space.Markets[record.Symbol].Impulse); err != nil {
 				return nil, err
 			}
 
@@ -363,9 +363,9 @@ func (rehearsal *Rehearsal) train(sequence []byte, class []byte) (cognition.Resu
 	})
 }
 
-func (rehearsal *Rehearsal) resolve(record tables.ExcursionRecord, exit *grid.Impulse) error {
+func (rehearsal *Rehearsal) resolve(record tables.ExcursionRecord, exit *grid.Impulse) (string, error) {
 	if exit == nil || exit.Label != record.Symbol || exit.SeqIdx != record.ExitTick {
-		return errnie.Error(errnie.Err(errnie.Validation, "rehearsal: outcome exit market absent", nil))
+		return "", errnie.Error(errnie.Err(errnie.Validation, "rehearsal: outcome exit market absent", nil))
 	}
 
 	if record.Direction == "" {
@@ -388,7 +388,7 @@ func (rehearsal *Rehearsal) resolve(record tables.ExcursionRecord, exit *grid.Im
 	if !found || len(anchor.key) == 0 || record.Status == "unsupported" {
 		rehearsal.reading.Unsupported++
 		rehearsal.reading.FragmentsUnsupported++
-		return nil
+		return "", nil
 	}
 
 	rehearsal.reading.Resolved++
@@ -484,7 +484,7 @@ func (rehearsal *Rehearsal) resolve(record tables.ExcursionRecord, exit *grid.Im
 		prefixKey := EncodeTokens(record.Symbol, false, anchor.tokens[:j])
 
 		if _, err := rehearsal.train(prefixKey, []byte(ActionWait)); err != nil {
-			return errnie.Error(err)
+			return "", errnie.Error(err)
 		}
 
 		rehearsal.reading.Learned++
@@ -492,7 +492,7 @@ func (rehearsal *Rehearsal) resolve(record tables.ExcursionRecord, exit *grid.Im
 
 	// 2. Complete context at B teaches expectedAction (ENTER if useful UP, else WAIT)
 	if _, err := rehearsal.train(anchor.key, []byte(expectedAction)); err != nil {
-		return errnie.Error(err)
+		return "", errnie.Error(err)
 	}
 
 	rehearsal.reading.Learned++
@@ -503,7 +503,7 @@ func (rehearsal *Rehearsal) resolve(record tables.ExcursionRecord, exit *grid.Im
 			holdingPrefixKey := EncodeTokens(record.Symbol, true, tokensAtC[:j])
 
 			if _, err := rehearsal.train(holdingPrefixKey, []byte(ActionWait)); err != nil {
-				return errnie.Error(err)
+				return "", errnie.Error(err)
 			}
 
 			rehearsal.reading.Learned++
@@ -512,15 +512,13 @@ func (rehearsal *Rehearsal) resolve(record tables.ExcursionRecord, exit *grid.Im
 		holdingExitKey := EncodeTokens(record.Symbol, true, tokensAtC)
 
 		if _, err := rehearsal.train(holdingExitKey, []byte(ActionExit)); err != nil {
-			return errnie.Error(err)
+			return "", errnie.Error(err)
 		}
 
 		rehearsal.reading.Learned++
 	}
 
-	rehearsal.precursor.Reset(record.Symbol)
-
-	return nil
+	return anchor.prediction, nil
 }
 
 /*
@@ -571,14 +569,15 @@ func (rehearsal *Rehearsal) Replay(records []tables.ExcursionRecord, frames iter
 			if market == nil {
 				return errnie.Error(errnie.Err(errnie.Validation, "rehearsal: exit market absent", nil))
 			}
-			if err := rehearsal.resolve(record, &market.Impulse); err != nil {
+			pred, err := rehearsal.resolve(record, &market.Impulse)
+			if err != nil {
 				return err
 			}
 
 			resolvedRecord = true
 
 			if rehearsal.onProgress != nil {
-				rehearsal.onProgress(frame, &record, market.Snapshot())
+				rehearsal.onProgress(frame, &record, market.Snapshot(), pred)
 			}
 		}
 		delete(exits, frame.SeqIdx)
@@ -602,7 +601,7 @@ func (rehearsal *Rehearsal) Replay(records []tables.ExcursionRecord, frames iter
 				snapshot = market.Snapshot()
 			}
 
-			rehearsal.onProgress(frame, nil, snapshot)
+			rehearsal.onProgress(frame, nil, snapshot, "")
 		}
 	}
 
