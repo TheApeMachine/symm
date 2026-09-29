@@ -2,6 +2,7 @@ package store
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"iter"
 	"unsafe"
@@ -20,7 +21,7 @@ type Radix struct {
 	out  *iradix.Tree[[]byte]
 }
 
-func NewRadix(current ...*iradix.Tree[[]byte]) core.Primitive {
+func NewRadix(current ...*iradix.Tree[[]byte]) *Radix {
 	held := iradix.New[[]byte]()
 
 	if len(current) > 0 && current[0] != nil {
@@ -29,6 +30,59 @@ func NewRadix(current ...*iradix.Tree[[]byte]) core.Primitive {
 
 	return &Radix{held: held}
 }
+
+func (op *Radix) Insert(key, val []byte) {
+	if op.held == nil {
+		op.held = iradix.New[[]byte]()
+	}
+
+	written, _, _ := op.held.Insert(key, bytes.Clone(val))
+	op.held = written
+	op.out = written
+}
+
+func (op *Radix) Get(key []byte) ([]byte, bool) {
+	if op.held == nil {
+		return nil, false
+	}
+
+	return op.held.Get(key)
+}
+
+func (op *Radix) Tree() *iradix.Tree[[]byte] {
+	return op.held
+}
+
+func (op *Radix) MarshalJSON() ([]byte, error) {
+	entries := make(map[string][]byte)
+
+	if op.held != nil {
+		iterator := op.held.Root().Iterator()
+
+		for key, val, ok := iterator.Next(); ok; key, val, ok = iterator.Next() {
+			entries[string(key)] = val
+		}
+	}
+
+	return json.Marshal(entries)
+}
+
+func (op *Radix) UnmarshalJSON(payload []byte) error {
+	var entries map[string][]byte
+
+	if err := json.Unmarshal(payload, &entries); err != nil {
+		return err
+	}
+
+	op.held = iradix.New[[]byte]()
+
+	for key, val := range entries {
+		op.held, _, _ = op.held.Insert([]byte(key), val)
+	}
+
+	return nil
+}
+
 
 func (op *Radix) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {

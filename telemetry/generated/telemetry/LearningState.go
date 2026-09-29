@@ -7,16 +7,16 @@ import (
 )
 
 type LearningStateT struct {
-	AtNs        int64                   `json:"atNs"`
-	Steps       uint64                  `json:"steps"`
-	Decisions   uint64                  `json:"decisions"`
-	Resolved    uint64                  `json:"resolved"`
-	Status      string                  `json:"status"`
-	Agents      []*LearningAgentT       `json:"agents"`
-	Markets     []*LearningDevelopmentT `json:"markets"`
-	Restored    bool                    `json:"restored"`
-	Rehearsal   *LearningRehearsalT     `json:"rehearsal"`
-	Recognition *LearningRecognitionT   `json:"recognition"`
+	AtNs int64 `json:"atNs"`
+	Steps uint64 `json:"steps"`
+	Decisions uint64 `json:"decisions"`
+	Resolved uint64 `json:"resolved"`
+	Status string `json:"status"`
+	Agents []*LearningAgentT `json:"agents"`
+	Markets []*LearningDevelopmentT `json:"markets"`
+	Restored bool `json:"restored"`
+	Rehearsal *LearningRehearsalT `json:"rehearsal"`
+	Recognition *LearningRecognitionT `json:"recognition"`
 }
 
 func (t *LearningStateT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

@@ -30,14 +30,66 @@ PathReturns owns decoding one arriving price path into its returns and energy
 by composing LogReturns over the path's arrivals.
 */
 type PathReturns struct {
-	err error
+	err     error
+	returns []LogReturn
+	out     ReturnPath
 }
 
 /*
 NewPathReturns creates a new PathReturns primitive.
 */
 func NewPathReturns() core.Primitive {
-	return &PathReturns{}
+	return &PathReturns{
+		returns: make([]LogReturn, 0, 64),
+	}
+}
+
+/*
+Decode decodes prices into log returns and energy directly without iterator overhead.
+*/
+func (op *PathReturns) Decode(prices []Price) (ReturnPath, error) {
+	if len(prices) < 2 {
+		return ReturnPath{}, nil
+	}
+
+	needCap := len(prices) - 1
+	if cap(op.returns) < needCap {
+		op.returns = make([]LogReturn, 0, needCap)
+	} else {
+		op.returns = op.returns[:0]
+	}
+
+	energy := 0.0
+	prevPrice := prices[0]
+	prevLog := math.Log(prevPrice.Value)
+
+	for index := 1; index < len(prices); index++ {
+		currPrice := prices[index]
+
+		if currPrice.At <= prevPrice.At {
+			err := fmt.Errorf("%w: log return time %d must follow %d", core.ErrShape, currPrice.At, prevPrice.At)
+			op.err = errors.Join(op.err, err)
+			return ReturnPath{}, err
+		}
+
+		currLog := math.Log(currPrice.Value)
+		retVal := currLog - prevLog
+		op.returns = append(op.returns, LogReturn{
+			From:  prevPrice.At,
+			To:    currPrice.At,
+			Value: retVal,
+		})
+		energy += retVal * retVal
+		prevPrice = currPrice
+		prevLog = currLog
+	}
+
+	op.out = ReturnPath{
+		Returns: op.returns,
+		Energy:  energy,
+	}
+
+	return op.out, nil
 }
 
 /*
@@ -52,40 +104,9 @@ func (op *PathReturns) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 				continue
 			}
 
-			returns := make([]LogReturn, 0, len(path.Prices)-1)
-			energy := 0.0
-			prevPrice := path.Prices[0]
-			prevLog := math.Log(prevPrice.Value)
-			var err error
-
-			for index := 1; index < len(path.Prices); index++ {
-				currPrice := path.Prices[index]
-
-				if currPrice.At <= prevPrice.At {
-					err = fmt.Errorf("%w: log return time %d must follow %d", core.ErrShape, currPrice.At, prevPrice.At)
-					break
-				}
-
-				currLog := math.Log(currPrice.Value)
-				retVal := currLog - prevLog
-				returns = append(returns, LogReturn{
-					From:  prevPrice.At,
-					To:    currPrice.At,
-					Value: retVal,
-				})
-				energy += retVal * retVal
-				prevPrice = currPrice
-				prevLog = currLog
-			}
-
+			out, err := op.Decode(path.Prices)
 			if err != nil {
-				op.err = errors.Join(op.err, err)
 				return
-			}
-
-			out := ReturnPath{
-				Returns: returns,
-				Energy:  energy,
 			}
 
 			if !yield(unsafe.Pointer(&out)) {

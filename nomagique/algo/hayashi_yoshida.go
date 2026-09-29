@@ -69,8 +69,14 @@ func (op *HayashiYoshida) Error(errs ...error) error {
 }
 
 /*
-estimate owns covariance evaluation for one timestamp offset.
+Estimate owns covariance evaluation for one timestamp offset directly without iterator overhead.
 */
+func (op *HayashiYoshida) Estimate(
+	query *correlation.EstimateInput,
+) (correlation.LagEstimate, error) {
+	return op.estimate(query)
+}
+
 func (op *HayashiYoshida) estimate(
 	query *correlation.EstimateInput,
 ) (correlation.LagEstimate, error) {

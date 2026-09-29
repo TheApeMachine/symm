@@ -29,21 +29,12 @@ import { SkillPanel } from "./skill-panel";
 import type { CognitionTreeResponse, ImpulseNode } from "./types";
 import { LearningVisualizer } from "./visualizer";
 
-export type Tab =
-	| "forward"
-	| "cognitive"
-	| "impulse"
-	| "recognition"
-	| "decision"
-	| "influence";
+export type Tab = "forward" | "cognitive" | "impulse";
 
 const TABS: Array<{ key: Tab; label: string }> = [
 	{ key: "forward", label: "Model training" },
 	{ key: "cognitive", label: "Cognitive tree" },
 	{ key: "impulse", label: "Impulse map" },
-	{ key: "recognition", label: "Precursor recognition" },
-	{ key: "decision", label: "Model decision" },
-	{ key: "influence", label: "Precursor discovery" },
 ];
 
 const getTrainingRing = (

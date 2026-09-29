@@ -192,7 +192,9 @@ export const RtcFeed = () => {
 
 			destroy();
 
-			const connection = new RTCPeerConnection();
+			const connection = new RTCPeerConnection({
+				iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+			});
 			peer = connection;
 
 			// The transport is healthy only once both data channels reach OPEN.

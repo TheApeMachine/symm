@@ -7,8 +7,8 @@ import (
 )
 
 type BatchT struct {
-	Sequence uint64         `json:"sequence"`
-	Frames   []*FrameEntryT `json:"frames"`
+	Sequence uint64 `json:"sequence"`
+	Frames []*FrameEntryT `json:"frames"`
 }
 
 func (t *BatchT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

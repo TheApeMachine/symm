@@ -7,8 +7,8 @@ import (
 )
 
 type MessageT struct {
-	Sequence uint64  `json:"sequence"`
-	Frame    *FrameT `json:"frame"`
+	Sequence uint64 `json:"sequence"`
+	Frame *FrameT `json:"frame"`
 }
 
 func (t *MessageT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

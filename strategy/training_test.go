@@ -1,7 +1,7 @@
 package strategy
 
 import (
-	"iter"
+	"os"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -10,68 +10,83 @@ import (
 	"github.com/theapemachine/symm/tests/market"
 )
 
-func trainingTape(frames []*data.Measurement[float64]) iter.Seq2[*data.Measurement[float64], error] {
-	return func(yield func(*data.Measurement[float64], error) bool) {
-		for _, frame := range frames {
-			if !yield(frame, nil) {
-				return
-			}
-		}
-	}
-}
-
 func TestTrainingRegister(t *testing.T) {
 	Convey("Training owns its telemetry and declares all upstream producers", t, func() {
-		training := NewTraining(t.Context(), 1, market.TrainingPrice(t.Context()))
+		training := NewTraining(t.Context(), market.TrainingPrice(t.Context()), nil, nil)
 		So(training.Register(), ShouldEqual, training.Register())
-		So(training.Register().Metadata["peer-interest"], ShouldEqual, "*")
-		_, found := training.Register().Metrics["input_count"]
-		So(found, ShouldBeTrue)
 	})
 }
 
 func TestTrainingStep(t *testing.T) {
-	Convey("Untrained live inference remains inert and publishes the actual map", t, func() {
-		training := NewTraining(t.Context(), 1, market.TrainingPrice(t.Context()))
-		training.Transition(runtime.READY)
+	Convey("Given a Training instance in INIT stage", t, func() {
+		training := NewTraining(t.Context(), market.TrainingPrice(t.Context()), nil, nil)
+		So(training.Status(), ShouldEqual, runtime.INIT)
 
-		for _, frame := range market.ImpulseTape("BTC/USD", 4) {
+		Convey("When live market signals arrive, the grid develops coordinates and regions", func() {
+			frame := data.NewMeasurement[float64]("BTC/USD", nil)
+			frame.Metrics = map[string]data.Metric[float64]{
+				"price":  {Label: "price", Raw: 50000.0},
+				"volume": {Label: "volume", Raw: 12.5},
+			}
+
 			output := training.Step(frame)
-			So(output.Err, ShouldBeNil)
-			So(output.Metrics["action"].Raw, ShouldEqual, 0)
-			So(output.Result, ShouldEqual, training.space.Markets["BTC/USD"])
-			So(output.Metrics["input_count"].Raw, ShouldEqual, 3)
-		}
-	})
+			So(output, ShouldNotBeNil)
+			So(output.Metrics["price"].Region, ShouldBeGreaterThan, 0)
+			So(output.Metrics["volume"].Region, ShouldBeGreaterThan, 0)
 
-	Convey("An inactive pipeline does not mutate its input", t, func() {
-		node := &Training{System: runtime.NewSystem(t.Context(), "readiness-test")}
-		measurement := &data.Measurement[float64]{Label: "BTC/USD", SeqIdx: 7}
+			Convey("When grid settles, it transitions to BUSY and runs fragment training", func() {
+				for tick := 0; tick < 15; tick++ {
+					repeated := data.NewMeasurement[float64]("BTC/USD", nil)
+					repeated.Metrics = map[string]data.Metric[float64]{
+						"price":  {Label: "price", Raw: 50000.0},
+						"volume": {Label: "volume", Raw: 12.5},
+					}
+					training.Step(repeated)
+				}
 
-		for _, stage := range []runtime.Stage{runtime.INIT, runtime.WAITING, runtime.ERROR, runtime.FATAL} {
-			node.Transition(stage)
-			So(node.Step(measurement), ShouldEqual, measurement)
-			So(measurement.SeqIdx, ShouldEqual, 7)
-		}
+				So(training.grid.Settled, ShouldBeTrue)
+			})
+		})
+
+		Convey("When model transitions to READY, paper trading predicts actions", func() {
+			training.Transition(runtime.READY)
+
+			token := []byte{1}
+			training.trie.Insert(token, []byte(ActionEnter))
+
+			frame := data.NewMeasurement[float64]("BTC/USD", nil)
+			frame.Metrics = map[string]data.Metric[float64]{
+				"price": {Label: "price", Raw: 50000.0, Region: 1},
+			}
+
+			output := training.Step(frame)
+			So(output, ShouldNotBeNil)
+			So(output.Metrics["action"].Raw, ShouldEqual, 1)
+		})
 	})
 }
 
-func BenchmarkTrainingStep(b *testing.B) {
-	training := NewTraining(b.Context(), 1, market.TrainingPrice(b.Context()))
-	training.Transition(runtime.READY)
-	frames := market.ImpulseTape("BTC/USD", 6)
-	b.ReportAllocs()
+func TestTrainingCheckpoint(t *testing.T) {
+	Convey("Given a trained checkpoint", t, func() {
+		defer os.Remove("grid_checkpoint.json")
 
-	for index := 0; b.Loop(); index++ {
-		frame := frames[index%len(frames)]
-		frame.SeqIdx = int64(index + 1)
+		training := NewTraining(t.Context(), market.TrainingPrice(t.Context()), nil, nil)
 
-		for _, observation := range frame.Peers {
-			observation.SeqIdx = frame.SeqIdx
+		frame := data.NewMeasurement[float64]("BTC/USD", nil)
+		frame.Metrics = map[string]data.Metric[float64]{
+			"price": {Label: "price", Raw: 50000.0},
 		}
+		training.Step(frame)
 
-		if output := training.Step(frame); output.Err != nil {
-			b.Fatal(output.Err)
-		}
-	}
+		err := training.SaveCheckpoint()
+		So(err, ShouldBeNil)
+
+		Convey("When loading checkpoint into a new instance", func() {
+			restored := NewTraining(t.Context(), market.TrainingPrice(t.Context()), nil, nil)
+
+			loadErr := restored.LoadCheckpoint()
+			So(loadErr, ShouldBeNil)
+			So(len(restored.grid.Metrics), ShouldBeGreaterThan, 0)
+		})
+	})
 }

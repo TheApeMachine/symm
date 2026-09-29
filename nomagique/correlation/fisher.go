@@ -42,38 +42,45 @@ func NewFisher() core.Primitive {
 	return &Fisher{}
 }
 
+/*
+Compute evaluates the Fisher-z normal approximation directly without iterator overhead.
+*/
+func (op *Fisher) Compute(sample *FisherSample) FisherReading {
+	reading := FisherReading{
+		HasSearch: sample.SearchCount >= 1,
+	}
+
+	if sample.Support > 3 && math.Abs(sample.Correlation) <= 1 {
+		degrees := math.Sqrt(sample.Support - 3)
+		z := math.Atanh(sample.Correlation) * degrees
+		p := math.Erfc(math.Abs(z) / math.Sqrt2)
+
+		reading.Defined = true
+		reading.PValue = p
+		reading.Z = z
+		reading.StandardError = 1.0 / degrees
+
+		if reading.HasSearch {
+			adj := p * sample.SearchCount
+
+			if adj > 1.0 {
+				adj = 1.0
+			}
+
+			reading.SearchAdjustedPValue = adj
+		}
+	}
+
+	return reading
+}
+
 func (op *Fisher) Next(
 	in iter.Seq[unsafe.Pointer],
 ) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			sample := (*FisherSample)(arriving)
-			reading := FisherReading{
-				HasSearch: sample.SearchCount >= 1,
-			}
-
-			if sample.Support > 3 && math.Abs(sample.Correlation) <= 1 {
-				degrees := math.Sqrt(sample.Support - 3)
-				z := math.Atanh(sample.Correlation) * degrees
-				p := math.Erfc(math.Abs(z) / math.Sqrt2)
-
-				reading.Defined = true
-				reading.PValue = p
-				reading.Z = z
-				reading.StandardError = 1.0 / degrees
-
-				if reading.HasSearch {
-					adj := p * sample.SearchCount
-
-					if adj > 1.0 {
-						adj = 1.0
-					}
-
-					reading.SearchAdjustedPValue = adj
-				}
-			}
-
-			op.out = reading
+			op.out = op.Compute(sample)
 
 			if !yield(unsafe.Pointer(&op.out)) {
 				return

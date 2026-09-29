@@ -7,8 +7,8 @@ import (
 )
 
 type CognitionContributionT struct {
-	Token string  `json:"token"`
-	Bits  float64 `json:"bits"`
+	Token string `json:"token"`
+	Bits float64 `json:"bits"`
 }
 
 func (t *CognitionContributionT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

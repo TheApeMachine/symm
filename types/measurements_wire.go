@@ -18,9 +18,7 @@ var measurementsBuilderPool = sync.Pool{
 
 /*
 MeasurementToWire converts a data.Measurement to wire.MeasurementT including
-metrics, metadata, and provenance. Peers stay off the dashboard frame: they are
-live register snapshots, and encoding the tree made half-megabyte websocket
-messages that stalled the UI.
+metrics, metadata, and provenance.
 */
 func MeasurementToWire(measurement *data.Measurement[float64]) *wire.MeasurementT {
 	if measurement == nil {
@@ -30,9 +28,12 @@ func MeasurementToWire(measurement *data.Measurement[float64]) *wire.Measurement
 	metrics := make([]*wire.MetricT, 0, len(measurement.Metrics))
 	for _, metric := range measurement.Metrics {
 		wireMetric := &wire.MetricT{
-			Name: metric.Label,
-			Raw:  metric.Raw,
-			Unit: string(metric.Unit),
+			Name:   metric.Label,
+			Raw:    metric.Raw,
+			Unit:   string(metric.Unit),
+			X:      metric.X,
+			Y:      metric.Y,
+			Region: metric.Region,
 		}
 
 		if metric.Normalized != nil {

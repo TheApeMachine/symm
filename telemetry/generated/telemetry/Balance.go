@@ -7,7 +7,7 @@ import (
 )
 
 type BalanceT struct {
-	Asset  string `json:"asset"`
+	Asset string `json:"asset"`
 	Amount string `json:"amount"`
 }
 

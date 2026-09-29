@@ -7,29 +7,29 @@ import (
 )
 
 type DecisionTraceT struct {
-	IdentificationStatus     string             `json:"identificationStatus"`
-	DecisionUnavailable      bool               `json:"decisionUnavailable"`
-	ExpectedOutcome          float64            `json:"expectedOutcome"`
-	OutcomeUncertainty       float64            `json:"outcomeUncertainty"`
-	Horizon                  int64              `json:"horizon"`
-	ExplorationConstant      float64            `json:"explorationConstant"`
-	UncertaintyWeight        float64            `json:"uncertaintyWeight"`
-	TransitionSource         string             `json:"transitionSource"`
-	ConsensusDominantMove    string             `json:"consensusDominantMove"`
-	ConsensusConfidence      float64            `json:"consensusConfidence"`
-	ConsensusParticipants    int64              `json:"consensusParticipants"`
-	ConsensusProbabilities   []*NamedNumberT    `json:"consensusProbabilities"`
-	Vetoes                   []string           `json:"vetoes"`
-	Synergies                []string           `json:"synergies"`
-	Iterations               int64              `json:"iterations"`
-	Branches                 []*MCTSBranchT     `json:"branches"`
-	RecommendedAction        string             `json:"recommendedAction"`
-	Tree                     *MCTSNodeT         `json:"tree"`
-	MaxDepth                 int64              `json:"maxDepth"`
-	TotalNodes               int64              `json:"totalNodes"`
-	Advisors                 []*AdvisorOpinionT `json:"advisors"`
-	AdvisorSilences          []*AdvisorSilenceT `json:"advisorSilences"`
-	ConsensusUnmappedClasses []string           `json:"consensusUnmappedClasses"`
+	IdentificationStatus string `json:"identificationStatus"`
+	DecisionUnavailable bool `json:"decisionUnavailable"`
+	ExpectedOutcome float64 `json:"expectedOutcome"`
+	OutcomeUncertainty float64 `json:"outcomeUncertainty"`
+	Horizon int64 `json:"horizon"`
+	ExplorationConstant float64 `json:"explorationConstant"`
+	UncertaintyWeight float64 `json:"uncertaintyWeight"`
+	TransitionSource string `json:"transitionSource"`
+	ConsensusDominantMove string `json:"consensusDominantMove"`
+	ConsensusConfidence float64 `json:"consensusConfidence"`
+	ConsensusParticipants int64 `json:"consensusParticipants"`
+	ConsensusProbabilities []*NamedNumberT `json:"consensusProbabilities"`
+	Vetoes []string `json:"vetoes"`
+	Synergies []string `json:"synergies"`
+	Iterations int64 `json:"iterations"`
+	Branches []*MCTSBranchT `json:"branches"`
+	RecommendedAction string `json:"recommendedAction"`
+	Tree *MCTSNodeT `json:"tree"`
+	MaxDepth int64 `json:"maxDepth"`
+	TotalNodes int64 `json:"totalNodes"`
+	Advisors []*AdvisorOpinionT `json:"advisors"`
+	AdvisorSilences []*AdvisorSilenceT `json:"advisorSilences"`
+	ConsensusUnmappedClasses []string `json:"consensusUnmappedClasses"`
 }
 
 func (t *DecisionTraceT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

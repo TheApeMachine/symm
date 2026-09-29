@@ -8,7 +8,6 @@ import (
 
 	"github.com/theapemachine/symm/nomagique/algo"
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
@@ -33,6 +32,8 @@ type RLS struct {
 	lambda    float64
 	learner   core.Primitive
 	out       algo.Reading
+	design    []float64
+	query     algo.Query
 }
 
 /*
@@ -40,10 +41,17 @@ NewRLS creates an RLS primitive over the given feature dimension, coefficient
 prior variance, and forgetting factor.
 */
 func NewRLS(dimension int, variance, lambda float64) core.Primitive {
+	var design []float64
+	if dimension > 0 {
+		design = make([]float64, dimension+1)
+		design[0] = 1
+	}
+
 	return &RLS{
 		dimension: dimension,
 		lambda:    lambda,
 		learner:   algo.NewSquareRootRLS(variance),
+		design:    design,
 	}
 }
 
@@ -64,18 +72,23 @@ func (op *RLS) Next(
 				return
 			}
 
-			design := make([]float64, len(sample.Features)+1)
-			design[0] = 1
-			copy(design[1:], sample.Features)
+			if len(op.design) != op.dimension+1 {
+				op.design = make([]float64, op.dimension+1)
+				op.design[0] = 1
+			}
 
-			query := algo.Query{
-				Design:   design,
+			copy(op.design[1:], sample.Features)
+
+			op.query = algo.Query{
+				Design:   op.design,
 				Target:   sample.Target,
 				Observed: sample.Observed,
 				Lambda:   op.lambda,
 			}
 
-			for out := range op.learner.Next(transport.NewValues(query).Next(nil)) {
+			for out := range op.learner.Next(func(y func(unsafe.Pointer) bool) {
+				y(unsafe.Pointer(&op.query))
+			}) {
 				op.out = *(*algo.Reading)(out)
 			}
 

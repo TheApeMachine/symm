@@ -81,9 +81,10 @@ func (tee *UITee) Push(measurement *data.Measurement[float64]) {
 		}
 	}
 
-	publication := measurement.Clone()
+	publication := measurement
 
 	if projection, ok := measurement.Result.(interface{ Snapshot() *grid.Snapshot }); ok {
+		publication = measurement.Clone()
 		publication.Result = projection.Snapshot()
 	}
 

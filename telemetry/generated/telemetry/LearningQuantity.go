@@ -7,16 +7,16 @@ import (
 )
 
 type LearningQuantityT struct {
-	Source   string  `json:"source"`
-	Label    string  `json:"label"`
-	X        float64 `json:"x"`
-	Y        float64 `json:"y"`
-	Value    float64 `json:"value"`
+	Source string `json:"source"`
+	Label string `json:"label"`
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
+	Value float64 `json:"value"`
 	Activity float64 `json:"activity"`
-	Quality  float64 `json:"quality"`
-	Present  bool    `json:"present"`
-	Id       uint64  `json:"id"`
-	Basin    uint64  `json:"basin"`
+	Quality float64 `json:"quality"`
+	Present bool `json:"present"`
+	Id uint64 `json:"id"`
+	Basin uint64 `json:"basin"`
 }
 
 func (t *LearningQuantityT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

@@ -53,8 +53,23 @@ unit(optionalEncoding?:any):string|Uint8Array|null {
   return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
 }
 
+x():bigint {
+  const offset = this.bb!.__offset(this.bb_pos, 14);
+  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
+}
+
+y():bigint {
+  const offset = this.bb!.__offset(this.bb_pos, 16);
+  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
+}
+
+region():number {
+  const offset = this.bb!.__offset(this.bb_pos, 18);
+  return offset ? this.bb!.readUint8(this.bb_pos + offset) : 0;
+}
+
 static startMetric(builder:flatbuffers.Builder) {
-  builder.startObject(5);
+  builder.startObject(8);
 }
 
 static addName(builder:flatbuffers.Builder, nameOffset:flatbuffers.Offset) {
@@ -77,19 +92,34 @@ static addUnit(builder:flatbuffers.Builder, unitOffset:flatbuffers.Offset) {
   builder.addFieldOffset(4, unitOffset, 0);
 }
 
+static addX(builder:flatbuffers.Builder, x:bigint) {
+  builder.addFieldInt64(5, x, BigInt('0'));
+}
+
+static addY(builder:flatbuffers.Builder, y:bigint) {
+  builder.addFieldInt64(6, y, BigInt('0'));
+}
+
+static addRegion(builder:flatbuffers.Builder, region:number) {
+  builder.addFieldInt8(7, region, 0);
+}
+
 static endMetric(builder:flatbuffers.Builder):flatbuffers.Offset {
   const offset = builder.endObject();
   builder.requiredField(offset, 4) // name
   return offset;
 }
 
-static createMetric(builder:flatbuffers.Builder, nameOffset:flatbuffers.Offset, raw:number, normalized:number, hasNormalized:boolean, unitOffset:flatbuffers.Offset):flatbuffers.Offset {
+static createMetric(builder:flatbuffers.Builder, nameOffset:flatbuffers.Offset, raw:number, normalized:number, hasNormalized:boolean, unitOffset:flatbuffers.Offset, x:bigint, y:bigint, region:number):flatbuffers.Offset {
   Metric.startMetric(builder);
   Metric.addName(builder, nameOffset);
   Metric.addRaw(builder, raw);
   Metric.addNormalized(builder, normalized);
   Metric.addHasNormalized(builder, hasNormalized);
   Metric.addUnit(builder, unitOffset);
+  Metric.addX(builder, x);
+  Metric.addY(builder, y);
+  Metric.addRegion(builder, region);
   return Metric.endMetric(builder);
 }
 
@@ -99,7 +129,10 @@ unpack(): MetricT {
     this.raw(),
     this.normalized(),
     this.hasNormalized(),
-    this.unit()
+    this.unit(),
+    this.x(),
+    this.y(),
+    this.region()
   );
 }
 
@@ -110,6 +143,9 @@ unpackTo(_o: MetricT): void {
   _o.normalized = this.normalized();
   _o.hasNormalized = this.hasNormalized();
   _o.unit = this.unit();
+  _o.x = this.x();
+  _o.y = this.y();
+  _o.region = this.region();
 }
 }
 
@@ -119,7 +155,10 @@ constructor(
   public raw: number = 0.0,
   public normalized: number = 0.0,
   public hasNormalized: boolean = false,
-  public unit: string|Uint8Array|null = null
+  public unit: string|Uint8Array|null = null,
+  public x: bigint = BigInt('0'),
+  public y: bigint = BigInt('0'),
+  public region: number = 0
 ){}
 
 
@@ -132,7 +171,10 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
     this.raw,
     this.normalized,
     this.hasNormalized,
-    unit
+    unit,
+    this.x,
+    this.y,
+    this.region
   );
 }
 }

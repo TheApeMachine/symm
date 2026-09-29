@@ -7,8 +7,8 @@ import (
 )
 
 type CognitionLexicalT struct {
-	Original   string  `json:"original"`
-	Mapped     string  `json:"mapped"`
+	Original string `json:"original"`
+	Mapped string `json:"mapped"`
 	Similarity float64 `json:"similarity"`
 }
 

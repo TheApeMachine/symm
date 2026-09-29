@@ -9,8 +9,6 @@ import type { PositionT } from "#/providers/telemetry/telemetry/position";
 import type { ResonanceT } from "#/providers/telemetry/telemetry/resonance";
 
 export const DEFAULT_KERNELS = [
-	"category",
-	"cognition",
 	"correlation",
 	"cvd",
 	"depthflow",
@@ -22,7 +20,6 @@ export const DEFAULT_KERNELS = [
 	"pumpdump",
 	"sentiment",
 	"toxicity",
-	"training",
 ];
 
 export const DEFAULT_FOCUS_SYMBOL = "BTC/USD";

@@ -7,15 +7,15 @@ import (
 )
 
 type DiagnosticsFrameT struct {
-	Status     string                  `json:"status"`
-	Enabled    bool                    `json:"enabled"`
-	AtNs       int64                   `json:"atNs"`
-	StartedNs  int64                   `json:"startedNs"`
-	Stages     []*DiagnosticClockT     `json:"stages"`
-	Hops       []*DiagnosticHopT       `json:"hops"`
-	Queues     []*DiagnosticQueueT     `json:"queues"`
-	Errors     []*DiagnosticErrorT     `json:"errors"`
-	Pass       *DiagnosticPassT        `json:"pass"`
+	Status string `json:"status"`
+	Enabled bool `json:"enabled"`
+	AtNs int64 `json:"atNs"`
+	StartedNs int64 `json:"startedNs"`
+	Stages []*DiagnosticClockT `json:"stages"`
+	Hops []*DiagnosticHopT `json:"hops"`
+	Queues []*DiagnosticQueueT `json:"queues"`
+	Errors []*DiagnosticErrorT `json:"errors"`
+	Pass *DiagnosticPassT `json:"pass"`
 	Goroutines []*DiagnosticGoroutineT `json:"goroutines"`
 }
 

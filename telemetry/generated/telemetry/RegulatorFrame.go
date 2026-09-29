@@ -7,26 +7,26 @@ import (
 )
 
 type RegulatorFrameT struct {
-	Status                string        `json:"status"`
-	Surprise              float64       `json:"surprise"`
-	Energy                float64       `json:"energy"`
-	Pnl                   float64       `json:"pnl"`
-	PredictedReturn       float64       `json:"predictedReturn"`
-	PredictionScale       float64       `json:"predictionScale"`
-	PredictedActive       float64       `json:"predictedActive"`
-	ActivityScale         float64       `json:"activityScale"`
-	Samples               int64         `json:"samples"`
-	MarkSamples           uint64        `json:"markSamples"`
-	IntervalMarks         int64         `json:"intervalMarks"`
-	LastMarkSymbol        string        `json:"lastMarkSymbol"`
-	LastMarkAt            string        `json:"lastMarkAt"`
-	LastMarkReturn        float64       `json:"lastMarkReturn"`
-	LastMarkDrawdown      float64       `json:"lastMarkDrawdown"`
-	LastMarkFloorDistance float64       `json:"lastMarkFloorDistance"`
-	LastMarkSurgeArmed    bool          `json:"lastMarkSurgeArmed"`
-	Summary               string        `json:"summary"`
-	Subsystems            []*SubsystemT `json:"subsystems"`
-	Sparkline             []float64     `json:"sparkline"`
+	Status string `json:"status"`
+	Surprise float64 `json:"surprise"`
+	Energy float64 `json:"energy"`
+	Pnl float64 `json:"pnl"`
+	PredictedReturn float64 `json:"predictedReturn"`
+	PredictionScale float64 `json:"predictionScale"`
+	PredictedActive float64 `json:"predictedActive"`
+	ActivityScale float64 `json:"activityScale"`
+	Samples int64 `json:"samples"`
+	MarkSamples uint64 `json:"markSamples"`
+	IntervalMarks int64 `json:"intervalMarks"`
+	LastMarkSymbol string `json:"lastMarkSymbol"`
+	LastMarkAt string `json:"lastMarkAt"`
+	LastMarkReturn float64 `json:"lastMarkReturn"`
+	LastMarkDrawdown float64 `json:"lastMarkDrawdown"`
+	LastMarkFloorDistance float64 `json:"lastMarkFloorDistance"`
+	LastMarkSurgeArmed bool `json:"lastMarkSurgeArmed"`
+	Summary string `json:"summary"`
+	Subsystems []*SubsystemT `json:"subsystems"`
+	Sparkline []float64 `json:"sparkline"`
 }
 
 func (t *RegulatorFrameT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

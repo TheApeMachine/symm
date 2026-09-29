@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"math"
 	"net/http"
 	"net/http/pprof"
 	"os"
@@ -176,10 +175,8 @@ var (
 			}
 
 			errnie.Info("symm: initializing training and UI hub...")
-			training := strategy.NewTraining(ctx, epoch, price)
 			trader := strategy.NewTrader(ctx, api, price, balance)
-			training.SetTrader(trader)
-			training.SetTee(uiTee)
+			training := strategy.NewTraining(ctx, price, trader, uiTee)
 
 			uiTee.Transition(nmruntime.READY)
 			training.Transition(nmruntime.READY)
@@ -194,26 +191,13 @@ var (
 			hub.Transition(nmruntime.READY)
 
 			errnie.Info("symm: restoring model checkpoint...")
-			lastEpoch, err := training.Rehearsal.LoadCheckpoint()
 
-			if err != nil {
+			if err := training.LoadCheckpoint(); err != nil {
 				errnie.Error(err)
 			}
 
-			if lastEpoch > 0 {
-				training.Rehearsal.RecordTrainedRun(lastEpoch, math.MaxInt64)
-			}
-
-			go func() {
-				errnie.Info("symm: background pre-training model on stored catalog excursions...")
-
-				if err := training.Rehearsal.ReplayPending(catalog); err != nil {
-					errnie.Error(err)
-				}
-			}()
-
 			defer func() {
-				if err := training.Rehearsal.SaveCheckpoint(epoch); err != nil {
+				if err := training.SaveCheckpoint(); err != nil {
 					errnie.Error(err)
 				}
 			}()
@@ -233,11 +217,7 @@ var (
 					case <-ctx.Done():
 						return
 					case <-ticker.C:
-						if err := training.Rehearsal.SaveCheckpoint(epoch); err != nil {
-							errnie.Error(err)
-						}
-
-						if err := training.Rehearsal.PollUntrained(catalog); err != nil {
+						if err := training.SaveCheckpoint(); err != nil {
 							errnie.Error(err)
 						}
 					}
@@ -379,7 +359,7 @@ var (
 			drainErrors := make(chan error, 1)
 
 			go func() {
-				drainErrors <- catalog.Drain(ctx, epoch, storeTee, training.Rehearsal.Step)
+				drainErrors <- catalog.Drain(ctx, epoch, storeTee)
 			}()
 
 			manifoldSolver.Start()

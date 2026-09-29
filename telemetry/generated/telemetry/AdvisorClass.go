@@ -7,7 +7,7 @@ import (
 )
 
 type AdvisorClassT struct {
-	State       string  `json:"state"`
+	State string `json:"state"`
 	Probability float64 `json:"probability"`
 }
 

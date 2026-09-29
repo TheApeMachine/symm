@@ -7,12 +7,12 @@ import (
 )
 
 type PosteriorT struct {
-	Value            float64 `json:"value"`
-	Scale            float64 `json:"scale"`
+	Value float64 `json:"value"`
+	Scale float64 `json:"scale"`
 	DegreesOfFreedom float64 `json:"degreesOfFreedom"`
-	Ready            bool    `json:"ready"`
-	Innovation       float64 `json:"innovation"`
-	Reset            bool    `json:"reset"`
+	Ready bool `json:"ready"`
+	Innovation float64 `json:"innovation"`
+	Reset bool `json:"reset"`
 }
 
 func (t *PosteriorT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

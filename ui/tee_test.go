@@ -5,10 +5,9 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/data"
+	grid "github.com/theapemachine/symm/nomagique/learning/associative/grid"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	"github.com/theapemachine/symm/strategy/impulse"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
-	"github.com/theapemachine/symm/tests/market"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -80,12 +79,18 @@ func TestUITeePush(t *testing.T) {
 		tee := NewUITee(t.Context(), "grid-test", 32)
 		tee.Transition(runtime.READY)
 		defer func() { So(tee.Close(), ShouldBeNil) }()
-		impulseMap := impulse.NewMap()
-		frames := market.ImpulseTape("BTC/USD", 4)
-		So(impulseMap.Step(frames[0]), ShouldBeNil)
-		held := impulseMap.Markets["BTC/USD"]
+		snapshot := &grid.Snapshot{
+			Label:  "BTC/USD",
+			Volume: "42",
+			Cells: []grid.Quantity{
+				{ID: 101, Source: "sensorium", Label: "vol", X: 1.5, Y: 2.5, Value: 3.5, Activity: 1.0, Quality: 0.95, Present: true, Basin: 1},
+			},
+			Regions: []grid.Region{
+				{ID: 1, Condition: 1, Level: 1.0, Change: 0.1, Strength: 0.8, Authority: 0.9, Members: 4},
+			},
+		}
 		measurement := data.NewMeasurement[float64]("training", nil)
-		measurement.Label, measurement.SeqIdx, measurement.Result = "BTC/USD", 1, held
+		measurement.Label, measurement.SeqIdx, measurement.Result = "BTC/USD", 1, snapshot
 
 		Convey("a rejected route leaves the projection cadence available", func() {
 			types.SetRoute("journal")
@@ -95,12 +100,8 @@ func TestUITeePush(t *testing.T) {
 		})
 
 		Convey("queued bytes retain the accepted boundary after owners advance", func() {
-			expected := held.Snapshot()
+			expected := snapshot
 			tee.Push(measurement)
-
-			for _, frame := range frames[1:] {
-				So(impulseMap.Step(frame), ShouldBeNil)
-			}
 
 			payload := tee.Next()
 			So(payload, ShouldNotBeNil)

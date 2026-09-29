@@ -7,13 +7,13 @@ import (
 )
 
 type LearningRegionT struct {
-	Id        uint64  `json:"id"`
-	Condition uint64  `json:"condition"`
-	Level     float64 `json:"level"`
-	Change    float64 `json:"change"`
-	Strength  float64 `json:"strength"`
+	Id uint64 `json:"id"`
+	Condition uint64 `json:"condition"`
+	Level float64 `json:"level"`
+	Change float64 `json:"change"`
+	Strength float64 `json:"strength"`
 	Authority float64 `json:"authority"`
-	Members   int32   `json:"members"`
+	Members int32 `json:"members"`
 }
 
 func (t *LearningRegionT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

@@ -7,7 +7,7 @@ import (
 )
 
 type AdvisorMoveMassT struct {
-	Move string  `json:"move"`
+	Move string `json:"move"`
 	Mass float64 `json:"mass"`
 }
 

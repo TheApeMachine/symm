@@ -57,6 +57,7 @@ func (wrtc *WebRTC) setupOfferHandler() {
 		})
 
 		if err != nil {
+			errnie.Error(errnie.Err(errnie.Internal, "webrtc: failed to create peer connection", err))
 			return fiber.ErrInternalServerError
 		}
 
@@ -64,9 +65,14 @@ func (wrtc *WebRTC) setupOfferHandler() {
 		wrtc.setupICECandidateHandler(pc)
 		wrtc.setupDataChannelHandler(pc)
 
+		pc.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
+			errnie.Info(fmt.Sprintf("webrtc: connection state changed to: %s", state.String()))
+		})
+
 		answer, err := wrtc.processOffer(pc, offer)
 
 		if err != nil {
+			errnie.Error(errnie.Err(errnie.Internal, "webrtc: failed to process offer", err))
 			return fiber.ErrInternalServerError
 		}
 
@@ -124,7 +130,11 @@ func (wrtc *WebRTC) processOffer(
 	}
 
 	gatherComplete := webrtc.GatheringCompletePromise(pc)
-	<-gatherComplete
+	select {
+	case <-gatherComplete:
+	case <-time.After(3 * time.Second):
+		errnie.Warn("webrtc: ICE gathering timed out, returning gathered candidates")
+	}
 
 	finalAnswer := pc.LocalDescription()
 

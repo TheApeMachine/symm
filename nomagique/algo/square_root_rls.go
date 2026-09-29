@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"iter"
 	"math"
-	"slices"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
@@ -36,11 +35,16 @@ type Reading struct {
 SquareRootRLS owns the four posterior fields and predicts before it trains.
 */
 type SquareRootRLS struct {
-	err      error
-	state    RLSState
-	ready    bool
-	variance float64
-	out      Reading
+	err          error
+	state        RLSState
+	ready        bool
+	variance     float64
+	out          Reading
+	factor       []float64
+	gain         []float64
+	coefficients []float64
+	posterior    [][]float64
+	storage      []float64
 }
 
 func NewSquareRootRLS(variance float64) core.Primitive {
@@ -106,10 +110,19 @@ func (op *SquareRootRLS) step(query Query) (Reading, error) {
 		return Reading{}, fmt.Errorf("%w: RLS design dimension differs from the posterior", core.ErrShape)
 	}
 
-	op.state.Design = slices.Clone(query.Design)
+	if len(op.state.Design) != len(query.Design) {
+		op.state.Design = make([]float64, len(query.Design))
+	}
+	copy(op.state.Design, query.Design)
 	op.state.Observations = 1
 
-	factor := make([]float64, len(op.state.Design))
+	if len(op.factor) != len(op.state.Design) {
+		op.factor = make([]float64, len(op.state.Design))
+	} else {
+		clear(op.factor)
+	}
+
+	factor := op.factor
 	value := 0.0
 
 	for row, feature := range op.state.Design {
@@ -174,10 +187,24 @@ func (op *SquareRootRLS) step(query Query) (Reading, error) {
 
 	rootLambda := math.Sqrt(lambda)
 	denominator := alpha + rootLambda*math.Sqrt(alpha)
-	gain := make([]float64, len(beta))
-	coefficients := make([]float64, len(beta))
-	posterior := make([][]float64, len(root))
-	storage := make([]float64, len(root)*len(root))
+
+	if len(op.gain) != len(beta) {
+		op.gain = make([]float64, len(beta))
+		op.coefficients = make([]float64, len(beta))
+		op.posterior = make([][]float64, len(root))
+		op.storage = make([]float64, len(root)*len(root))
+		for row := range root {
+			op.posterior[row] = op.storage[row*len(root) : (row+1)*len(root)]
+		}
+	} else {
+		clear(op.gain)
+		clear(op.coefficients)
+		clear(op.storage)
+	}
+
+	gain := op.gain
+	coefficients := op.coefficients
+	posterior := op.posterior
 
 	for row := range root {
 		for column, coefficient := range root[row] {
@@ -186,7 +213,7 @@ func (op *SquareRootRLS) step(query Query) (Reading, error) {
 
 		gain[row] /= alpha
 		coefficients[row] = beta[row] + gain[row]*innovation
-		posterior[row] = storage[row*len(root) : (row+1)*len(root)]
+		posterior[row] = op.storage[row*len(root) : (row+1)*len(root)]
 
 		for column, coefficient := range root[row] {
 			posterior[row][column] = (coefficient - gain[row]*(alpha/denominator)*factor[column]) / rootLambda
@@ -224,10 +251,13 @@ func (op *SquareRootRLS) prior(design []float64) (RLSState, error) {
 		root[index][index] = math.Sqrt(op.variance)
 	}
 
+	designCopy := make([]float64, size)
+	copy(designCopy, design)
+
 	return RLSState{
 		Beta:         make([]float64, size),
 		Root:         root,
-		Design:       slices.Clone(design),
+		Design:       designCopy,
 		Observations: 1,
 	}, nil
 }

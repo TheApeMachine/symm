@@ -7,11 +7,11 @@ import (
 )
 
 type PerspectiveFrameT struct {
-	Symbol   string                 `json:"symbol"`
-	Peer     string                 `json:"peer"`
-	Kind     byte                   `json:"kind"`
-	At       int64                  `json:"at"`
-	Sequence int64                  `json:"sequence"`
+	Symbol string `json:"symbol"`
+	Peer string `json:"peer"`
+	Kind byte `json:"kind"`
+	At int64 `json:"at"`
+	Sequence int64 `json:"sequence"`
 	Readings []*PerspectiveReadingT `json:"readings"`
 }
 

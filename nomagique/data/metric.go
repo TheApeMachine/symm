@@ -23,6 +23,9 @@ type Metric[Value any] struct {
 	Scale        float64          `json:"scale,omitempty"`
 	Unit         Unit             `json:"unit,omitempty"`
 	Timescale    Timescale        `json:"timescale,omitempty"`
+	X            int64            `json:"x"`
+	Y            int64            `json:"y"`
+	Region       uint8            `json:"region"`
 }
 
 /*

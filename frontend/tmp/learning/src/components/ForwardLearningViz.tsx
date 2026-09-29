@@ -140,6 +140,32 @@ export const ForwardLearningViz: React.FC = () => {
     }
   }, []);
 
+  // Fetch real Radix Trie branches from backend
+  useEffect(() => {
+    let isMounted = true;
+    const fetchBranches = async () => {
+      try {
+        const host = typeof window !== 'undefined' ? (window.location.hostname || '127.0.0.1') : '127.0.0.1';
+        const url = typeof window !== 'undefined' && window.location.port === '8765' ? '/cognition/tree' : `http://${host}:8765/cognition/tree`;
+        const res = await fetch(url);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!isMounted) return;
+        if (data.branches && data.branches.length > 0) {
+          setTriePaths(data.branches);
+        }
+      } catch (e) {
+        // Backend connecting
+      }
+    };
+    fetchBranches();
+    const interval = setInterval(fetchBranches, 2000);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, []);
+
   useEffect(() => {
     if (distRef.current) {
       const ro = new ResizeObserver(entries => {

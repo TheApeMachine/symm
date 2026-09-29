@@ -183,9 +183,21 @@ func (op *Pairs) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				peer := op.retained[symbol]
 
 				input := LagProfileInput{Left: focal.Observations, Right: peer.Observations}
-				dependence := drive[LagProfileInput, DependenceReading](op.pairwise, &input)
+				var (
+					dependence DependenceReading
+					err        error
+				)
 
-				if err := op.pairwise.Error(); err != nil {
+				if fast, ok := op.pairwise.(interface {
+					Compute(*LagProfileInput) (DependenceReading, error)
+				}); ok {
+					dependence, err = fast.Compute(&input)
+				} else {
+					dependence = drive[LagProfileInput, DependenceReading](op.pairwise, &input)
+					err = op.pairwise.Error()
+				}
+
+				if err != nil {
 					m.Err = errors.Join(m.Err, err)
 					op.Error(err)
 
@@ -193,7 +205,15 @@ func (op *Pairs) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				}
 
 				sample := FisherSample{Correlation: dependence.Correlation, Support: dependence.Support}
-				significanceOfPair := drive[FisherSample, FisherReading](op.fisher, &sample)
+				var significanceOfPair FisherReading
+
+				if fast, ok := op.fisher.(interface {
+					Compute(*FisherSample) FisherReading
+				}); ok {
+					significanceOfPair = fast.Compute(&sample)
+				} else {
+					significanceOfPair = drive[FisherSample, FisherReading](op.fisher, &sample)
+				}
 
 				retain(op, m.Label, symbol, &peer, dependence, significanceOfPair,
 					time.Unix(0, min(price.At, peer.To)))

@@ -1,9 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { RadixTreeViz } from './components/RadixTreeViz';
 import { ImpulseMapViz } from './components/ImpulseMapViz';
 import { ForwardLearningViz } from './components/ForwardLearningViz';
-import { generateMockTrie } from './data/mockTrie';
-import { generateMockImpulseNodes } from './data/mockImpulseMap';
+import { TrieNodeData, ImpulseNode } from './types';
 import { Activity, Brain, Compass, LineChart, Network, SlidersHorizontal, Terminal, Zap } from 'lucide-react';
 
 export default function App() {
@@ -12,8 +11,42 @@ export default function App() {
   const [projection, setProjection] = useState<'horizontal' | 'vertical' | 'radial'>('horizontal');
   const [activeTab, setActiveTab] = useState<'cognitive' | 'impulse' | 'dashboard' | 'forward' | 'diagnostics' | 'hindsight'>('forward');
   
-  const trieData = generateMockTrie();
-  const [impulseData] = useState(() => generateMockImpulseNodes(120));
+  const [trieData, setTrieData] = useState<TrieNodeData | null>(null);
+  const [feasibleActions, setFeasibleActions] = useState<Array<{
+    rank: number;
+    action: string;
+    prefix: string;
+    probability: number;
+    state: string;
+  }>>([]);
+  const [engineStats, setEngineStats] = useState({ seq: 7749, meas: 10, open: 0, skill: 18.7, edge: -0.1, symbol: 'BTC/USD', horizon: 132, epochs: 8 });
+  const [isConnected, setIsConnected] = useState(false);
+  const [impulseData, setImpulseData] = useState<ImpulseNode[]>([]);
+
+  useEffect(() => {
+    let isMounted = true;
+    const fetchTree = async () => {
+      try {
+        const host = typeof window !== 'undefined' ? (window.location.hostname || '127.0.0.1') : '127.0.0.1';
+        const url = typeof window !== 'undefined' && window.location.port === '8765' ? '/cognition/tree' : `http://${host}:8765/cognition/tree`;
+        const res = await fetch(url);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!isMounted) return;
+        if (data.root) setTrieData(data.root);
+        if (data.feasible) setFeasibleActions(data.feasible);
+        setIsConnected(true);
+      } catch (e) {
+        // Backend connecting
+      }
+    };
+    fetchTree();
+    const interval = setInterval(fetchTree, 2000);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, []);
 
   return (
     <div className="flex h-screen bg-[#050505] text-[#a1a1aa] font-mono text-sm overflow-hidden selection:bg-[#fbbf24] selection:text-black">
@@ -199,7 +232,7 @@ export default function App() {
                 </div>
                 
                 <div className="flex-1 relative">
-                  <RadixTreeViz data={trieData} minProbability={minProbability} colorMode={colorMode} projection={projection} />
+                  <RadixTreeViz data={trieData || { id: "root", prefix: "ROOT", probability: 1.0, stepProbability: 1.0, state: "EVALUATED" }} minProbability={minProbability} colorMode={colorMode} projection={projection} />
                 </div>
               </>
             ) : (activeTab === 'impulse') ? (
@@ -230,27 +263,31 @@ export default function App() {
                    </tr>
                  </thead>
                  <tbody className="divide-y divide-[#27272a]">
-                   <tr className="hover:bg-[#18181b] transition-colors group cursor-default">
-                     <td className="px-4 py-2 text-[#fbbf24]">1</td>
-                     <td className="px-4 py-2 text-[#fbbf24]">wait</td>
-                     <td className="px-4 py-2 text-[#a1a1aa]">ROOT / wait / 100ms</td>
-                     <td className="px-4 py-2 text-right text-white">30.0%</td>
-                     <td className="px-4 py-2 text-right"><span className="border border-[#27272a] px-1.5 py-0.5 rounded text-[#52525b] group-hover:border-[#fbbf24]/50 group-hover:text-[#fbbf24]">EVALUATED</span></td>
-                   </tr>
-                   <tr className="hover:bg-[#18181b] transition-colors group cursor-default">
-                     <td className="px-4 py-2 text-[#fbbf24]">2</td>
-                     <td className="px-4 py-2 text-[#fbbf24]">enter · 1/8</td>
-                     <td className="px-4 py-2 text-[#a1a1aa]">ROOT / enter / 1/8 / @ask</td>
-                     <td className="px-4 py-2 text-right text-white">12.0%</td>
-                     <td className="px-4 py-2 text-right"><span className="border border-[#22c55e]/30 px-1.5 py-0.5 rounded text-[#22c55e]">POLICY CHOICE</span></td>
-                   </tr>
-                   <tr className="hover:bg-[#18181b] transition-colors group cursor-default">
-                     <td className="px-4 py-2 text-[#d4d4d4]">3</td>
-                     <td className="px-4 py-2 text-[#d4d4d4]">enter · 1/8</td>
-                     <td className="px-4 py-2 text-[#a1a1aa]">ROOT / enter / 1/8 / @bid</td>
-                     <td className="px-4 py-2 text-right text-white">8.0%</td>
-                     <td className="px-4 py-2 text-right"><span className="border border-[#27272a] px-1.5 py-0.5 rounded text-[#52525b]">EVALUATED</span></td>
-                   </tr>
+                   {feasibleActions.length > 0 ? (
+                     feasibleActions.map((actionItem) => (
+                       <tr key={`${actionItem.rank}-${actionItem.action}`} className="hover:bg-[#18181b] transition-colors group cursor-default">
+                         <td className="px-4 py-2 text-[#fbbf24]">{actionItem.rank}</td>
+                         <td className="px-4 py-2 text-[#fbbf24]">{actionItem.action}</td>
+                         <td className="px-4 py-2 text-[#a1a1aa]">{actionItem.prefix}</td>
+                         <td className="px-4 py-2 text-right text-white">{(actionItem.probability * 100).toFixed(1)}%</td>
+                         <td className="px-4 py-2 text-right">
+                           <span className={`px-1.5 py-0.5 rounded text-[10px] border ${
+                             actionItem.state === 'POLICY CHOICE'
+                               ? 'border-[#22c55e]/30 text-[#22c55e] bg-[#22c55e]/10'
+                               : 'border-[#27272a] text-[#52525b] group-hover:border-[#fbbf24]/50 group-hover:text-[#fbbf24]'
+                           }`}>
+                             {actionItem.state}
+                           </span>
+                         </td>
+                       </tr>
+                     ))
+                   ) : (
+                     <tr>
+                       <td colSpan={5} className="px-4 py-4 text-center text-[#52525b]">
+                         Evaluating feasible actions from live impulse...
+                       </td>
+                     </tr>
+                   )}
                  </tbody>
                </table>
              </div>

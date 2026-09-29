@@ -7,18 +7,18 @@ import (
 )
 
 type ReasoningT struct {
-	Symbol         string            `json:"symbol"`
-	Ready          bool              `json:"ready"`
-	Reason         string            `json:"reason"`
-	ObservedRows   int64             `json:"observedRows"`
-	MaximumHorizon int64             `json:"maximumHorizon"`
-	Treatment      string            `json:"treatment"`
-	Mediator       string            `json:"mediator"`
-	Target         string            `json:"target"`
-	Controls       []string          `json:"controls"`
-	CurrentState   []*NamedNumberT   `json:"currentState"`
-	Nodes          []*ReasoningNodeT `json:"nodes"`
-	Links          []*ReasoningLinkT `json:"links"`
+	Symbol string `json:"symbol"`
+	Ready bool `json:"ready"`
+	Reason string `json:"reason"`
+	ObservedRows int64 `json:"observedRows"`
+	MaximumHorizon int64 `json:"maximumHorizon"`
+	Treatment string `json:"treatment"`
+	Mediator string `json:"mediator"`
+	Target string `json:"target"`
+	Controls []string `json:"controls"`
+	CurrentState []*NamedNumberT `json:"currentState"`
+	Nodes []*ReasoningNodeT `json:"nodes"`
+	Links []*ReasoningLinkT `json:"links"`
 }
 
 func (t *ReasoningT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

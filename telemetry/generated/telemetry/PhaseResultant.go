@@ -7,11 +7,11 @@ import (
 )
 
 type PhaseResultantT struct {
-	Side           string  `json:"side"`
-	Count          int32   `json:"count"`
+	Side string `json:"side"`
+	Count int32 `json:"count"`
 	TotalAmplitude float64 `json:"totalAmplitude"`
-	Coherence      float64 `json:"coherence"`
-	Phase          float64 `json:"phase"`
+	Coherence float64 `json:"coherence"`
+	Phase float64 `json:"phase"`
 }
 
 func (t *PhaseResultantT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

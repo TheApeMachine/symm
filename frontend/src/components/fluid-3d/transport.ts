@@ -92,7 +92,9 @@ export class FluidWebRTCFeed {
 
 		this.destroyConnection();
 		this.handlers.onState("connecting");
-		const connection = new RTCPeerConnection();
+		const connection = new RTCPeerConnection({
+			iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+		});
 		this.connection = connection;
 
 		connection.addEventListener("connectionstatechange", () => {

@@ -270,9 +270,21 @@ func (op *Cross) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				peer := op.retained[symbol]
 
 				input := nmcorrelation.LagProfileInput{Left: focal.Observations, Right: peer.Observations}
-				pair := drive[nmcorrelation.LagProfileInput, nmcorrelation.LeadLagReading](op.search, &input)
+				var (
+					pair nmcorrelation.LeadLagReading
+					err  error
+				)
 
-				if err := op.search.Error(); err != nil {
+				if fast, ok := op.search.(interface {
+					Search(*nmcorrelation.LagProfileInput) (nmcorrelation.LeadLagReading, error)
+				}); ok {
+					pair, err = fast.Search(&input)
+				} else {
+					pair = drive[nmcorrelation.LagProfileInput, nmcorrelation.LeadLagReading](op.search, &input)
+					err = op.search.Error()
+				}
+
+				if err != nil {
 					m.Err = errors.Join(m.Err, err)
 					op.Error(err)
 					failed = true
@@ -317,23 +329,32 @@ func (op *Cross) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				Support:     selectedPair.Support,
 				SearchCount: selectedPair.SearchCount,
 			}
-			significance := drive[nmcorrelation.FisherSample, nmcorrelation.FisherReading](op.fisher, &sample)
+			var significance nmcorrelation.FisherReading
 
-			if err := op.fisher.Error(); err != nil {
-				m.Err = errors.Join(m.Err, err)
-				op.Error(err)
+			if fast, ok := op.fisher.(interface {
+				Compute(*nmcorrelation.FisherSample) nmcorrelation.FisherReading
+			}); ok {
+				significance = fast.Compute(&sample)
+			} else {
+				significance = drive[nmcorrelation.FisherSample, nmcorrelation.FisherReading](op.fisher, &sample)
 
-				if !yield(arriving) {
-					return
+				if err := op.fisher.Error(); err != nil {
+					m.Err = errors.Join(m.Err, err)
+					op.Error(err)
+
+					if !yield(arriving) {
+						return
+					}
+
+					continue
 				}
-
-				continue
 			}
 
-			m.Provenance = map[string]string{
-				"peer":                       selection,
-				"pair_diagnostics_selection": "last_defined_peer_lexicographic",
+			if m.Provenance == nil {
+				m.Provenance = make(map[string]string, 2)
 			}
+			m.Provenance["peer"] = selection
+			m.Provenance["pair_diagnostics_selection"] = "last_defined_peer_lexicographic"
 
 			resolution := selectedPair.Spacing * 1e-9
 

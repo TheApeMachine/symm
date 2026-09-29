@@ -123,33 +123,51 @@ func (op *Register[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 
 				if interest != "" {
 					working.Peers = working.Peers[:0]
-					interests := strings.Split(interest, ",")
-
-					for idx := range interests {
-						interests[idx] = strings.TrimSpace(interests[idx])
-					}
-
 					limit := len(op.slots)
 
 					if query.PeerLimit() >= 0 && query.PeerLimit() < limit {
 						limit = query.PeerLimit()
 					}
 
-					for idx := 0; idx < limit; idx++ {
-						if idx == query.Identity() {
-							continue
-						}
+					if interest == "*" {
+						for idx := 0; idx < limit; idx++ {
+							if idx == query.Identity() {
+								continue
+							}
 
-						value := op.published(idx, query.sequence)
+							value := op.published(idx, query.sequence)
 
-						peer, peerOk := any(value).(*data.Measurement[float64])
+							peer, peerOk := any(value).(*data.Measurement[float64])
 
-						if !peerOk || peer == nil {
-							continue
-						}
+							if !peerOk || peer == nil {
+								continue
+							}
 
-						if matchPeer(peer, interests) {
 							working.Peers = append(working.Peers, peer)
+						}
+					} else {
+						interests := strings.Split(interest, ",")
+
+						for idx := range interests {
+							interests[idx] = strings.TrimSpace(interests[idx])
+						}
+
+						for idx := 0; idx < limit; idx++ {
+							if idx == query.Identity() {
+								continue
+							}
+
+							value := op.published(idx, query.sequence)
+
+							peer, peerOk := any(value).(*data.Measurement[float64])
+
+							if !peerOk || peer == nil {
+								continue
+							}
+
+							if matchPeer(peer, interests) {
+								working.Peers = append(working.Peers, peer)
+							}
 						}
 					}
 				}

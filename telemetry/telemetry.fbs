@@ -11,6 +11,9 @@ table Metric {
   normalized:double;
   hasNormalized:bool;
   unit:string;
+  x:long;
+  y:long;
+  region:ubyte;
 }
 
 table Measurement {

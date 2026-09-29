@@ -7,7 +7,6 @@ import (
 
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/temporal"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
@@ -57,12 +56,13 @@ type LagCandidate struct {
 LagProfile owns the configured estimator and exact discrete search coordinates.
 */
 type LagProfile struct {
-	err         error
-	estimator   core.Primitive
-	pathReturns core.Primitive
-	spacing     int64
-	span        float64
-	out         LagCandidate
+	err          error
+	estimator    core.Primitive
+	leftReturns  core.Primitive
+	rightReturns core.Primitive
+	spacing      int64
+	span         float64
+	out          LagCandidate
 }
 
 /*
@@ -70,10 +70,11 @@ NewLagProfile creates a new LagProfile primitive over the supplied estimator.
 */
 func NewLagProfile(estimator core.Primitive, spacing int64, span float64) core.Primitive {
 	return &LagProfile{
-		estimator:   estimator,
-		pathReturns: temporal.NewPathReturns(),
-		spacing:     spacing,
-		span:        span,
+		estimator:    estimator,
+		leftReturns:  temporal.NewPathReturns(),
+		rightReturns: temporal.NewPathReturns(),
+		spacing:      spacing,
+		span:         span,
 	}
 }
 
@@ -83,14 +84,14 @@ func (op *LagProfile) Next(
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			input := (*LagProfileInput)(arriving)
-			left, err := decodePath(op.pathReturns, input.Left)
+			left, err := decodePath(op.leftReturns, input.Left)
 
 			if err != nil {
 				op.err = errors.Join(op.err, err)
 				return
 			}
 
-			right, err := decodePath(op.pathReturns, input.Right)
+			right, err := decodePath(op.rightReturns, input.Right)
 
 			if err != nil {
 				op.err = errors.Join(op.err, err)
@@ -98,6 +99,42 @@ func (op *LagProfile) Next(
 			}
 
 			limit := int(op.span*2 + 1)
+
+			if fast, ok := op.estimator.(interface {
+				Estimate(query *EstimateInput) (LagEstimate, error)
+			}); ok {
+				var query EstimateInput
+				query.Left = left.Returns
+				query.Right = right.Returns
+				query.LeftEnergy = left.Energy
+				query.RightEnergy = right.Energy
+
+				for index := 0; index < limit; index++ {
+					lagIndex := float64(index) - op.span
+					lag := int64(lagIndex * float64(op.spacing))
+					query.Lag = lag
+					reading, err := fast.Estimate(&query)
+
+					if err != nil {
+						op.err = errors.Join(op.err, err)
+						return
+					}
+
+					op.out = LagCandidate{
+						LagEstimate: reading,
+						Index:       float64(index),
+						LagIndex:    lagIndex,
+						X:           float64(lag) * 1e-9,
+						Y:           reading.Correlation,
+					}
+
+					if !yield(unsafe.Pointer(&op.out)) {
+						return
+					}
+				}
+
+				continue
+			}
 
 			for index := 0; index < limit; index++ {
 				lagIndex := float64(index) - op.span
@@ -132,8 +169,13 @@ func (op *LagProfile) Error(errs ...error) error {
 		}
 	}
 
-	if op.pathReturns != nil {
-		if err := op.pathReturns.Error(); err != nil {
+	if op.leftReturns != nil {
+		if err := op.leftReturns.Error(); err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+	if op.rightReturns != nil {
+		if err := op.rightReturns.Error(); err != nil {
 			op.err = errors.Join(op.err, err)
 		}
 	}
@@ -145,9 +187,18 @@ func (op *LagProfile) Error(errs ...error) error {
 decodePath decodes one price path into its returns and their energy.
 */
 func decodePath(decoder core.Primitive, prices []temporal.Price) (temporal.ReturnPath, error) {
-	var path temporal.ReturnPath
+	if fast, ok := decoder.(interface {
+		Decode([]temporal.Price) (temporal.ReturnPath, error)
+	}); ok {
+		return fast.Decode(prices)
+	}
 
-	for out := range decoder.Next(transport.NewValues(temporal.PricePath{Prices: prices}).Next(nil)) {
+	var path temporal.ReturnPath
+	pp := temporal.PricePath{Prices: prices}
+
+	for out := range decoder.Next(func(yield func(unsafe.Pointer) bool) {
+		yield(unsafe.Pointer(&pp))
+	}) {
 		path = *(*temporal.ReturnPath)(out)
 	}
 
@@ -165,14 +216,17 @@ func estimateAt(
 	executor core.Primitive, left, right temporal.ReturnPath, lag int64,
 ) (LagEstimate, error) {
 	var reading LagEstimate
-
-	for out := range executor.Next(transport.NewValues(EstimateInput{
+	input := EstimateInput{
 		Left:        left.Returns,
 		Right:       right.Returns,
 		LeftEnergy:  left.Energy,
 		RightEnergy: right.Energy,
 		Lag:         lag,
-	}).Next(nil)) {
+	}
+
+	for out := range executor.Next(func(yield func(unsafe.Pointer) bool) {
+		yield(unsafe.Pointer(&input))
+	}) {
 		reading = *(*LagEstimate)(out)
 	}
 

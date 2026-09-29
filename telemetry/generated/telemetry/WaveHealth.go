@@ -7,12 +7,12 @@ import (
 )
 
 type WaveHealthT struct {
-	Norm           float64 `json:"norm"`
-	Kinetic        float64 `json:"kinetic"`
-	Potential      float64 `json:"potential"`
-	Nonlinear      float64 `json:"nonlinear"`
-	Chemical       float64 `json:"chemical"`
-	ProjectedNorm  float64 `json:"projectedNorm"`
+	Norm float64 `json:"norm"`
+	Kinetic float64 `json:"kinetic"`
+	Potential float64 `json:"potential"`
+	Nonlinear float64 `json:"nonlinear"`
+	Chemical float64 `json:"chemical"`
+	ProjectedNorm float64 `json:"projectedNorm"`
 	PhasePotential float64 `json:"phasePotential"`
 }
 

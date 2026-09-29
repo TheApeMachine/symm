@@ -109,6 +109,97 @@ func TestStoreTee_Next(t *testing.T) {
 				So(tee.Error(), ShouldBeNil)
 			}
 		})
+
+		Convey("Observations are tagged in-band with CUSUM excursion departures", func() {
+			tee := NewStoreTee(t.Context(), "cusum-tag-test", 8)
+			defer func() { So(tee.Close(), ShouldBeNil) }()
+			tee.Transition(runtime.READY)
+
+			// Step 1: baseline price
+			m1 := &data.Measurement[float64]{
+				Label:  "BTC/USD",
+				SeqIdx: 1,
+				Metrics: map[string]data.Metric[float64]{
+					"price":  {Raw: 50000.0},
+					"spread": {Raw: 2.0},
+				},
+			}
+			tee.Push(m1)
+			out1 := (*data.Measurement[float64])(tee.Next())
+			So(out1, ShouldNotBeNil)
+			So(out1.Metadata["cusum_upper"], ShouldNotBeBlank)
+
+			// Step 2: large upward price excursion exceeding hurdle and threshold
+			m2 := &data.Measurement[float64]{
+				Label:  "BTC/USD",
+				SeqIdx: 2,
+				Metrics: map[string]data.Metric[float64]{
+					"price":  {Raw: 50100.0},
+					"spread": {Raw: 2.0},
+				},
+			}
+			tee.Push(m2)
+			out2 := (*data.Measurement[float64])(tee.Next())
+			So(out2, ShouldNotBeNil)
+			So(out2.Metadata["excursion"], ShouldEqual, "upper")
+			So(out2.Metadata["excursion_start"], ShouldEqual, "1")
+
+			// Step 3: peer/logic measurement without price metric at same sequence inherits excursion tag
+			m3 := &data.Measurement[float64]{
+				Label:  "BTC/USD",
+				Source: "cvd",
+				SeqIdx: 2,
+			}
+			tee.Push(m3)
+			out3 := (*data.Measurement[float64])(tee.Next())
+			So(out3, ShouldNotBeNil)
+			So(out3.Metadata["excursion"], ShouldEqual, "upper")
+			So(out3.Metadata["excursion_start"], ShouldEqual, "1")
+		})
+
+		Convey("Buffered pre-run lead tape and multi-stage observations are tagged when Point B ignites", func() {
+			tee := NewStoreTee(t.Context(), "tape-fragment-test")
+			defer func() { So(tee.Close(), ShouldBeNil) }()
+			tee.Transition(runtime.READY)
+
+			// Sequence 1: Baseline / Lead Tape (both market trade and cvd signal)
+			tee.Push(&data.Measurement[float64]{
+				Label: "BTC/USD", Source: "public", SeqIdx: 1,
+				Metrics: map[string]data.Metric[float64]{"price": {Raw: 50000.0}, "spread": {Raw: 1.0}},
+			})
+			tee.Push(&data.Measurement[float64]{
+				Label: "BTC/USD", Source: "cvd", SeqIdx: 1,
+			})
+			tee.Push(&data.Measurement[float64]{
+				Label: "BTC/USD", Source: "resonance", SeqIdx: 1,
+			})
+
+			// Sequence 2: Point A Onset (delta +2.0 exceeds hurdle 0.5)
+			tee.Push(&data.Measurement[float64]{
+				Label: "BTC/USD", Source: "public", SeqIdx: 2,
+				Metrics: map[string]data.Metric[float64]{"price": {Raw: 50002.0}, "spread": {Raw: 1.0}},
+			})
+			tee.Push(&data.Measurement[float64]{
+				Label: "BTC/USD", Source: "cvd", SeqIdx: 2,
+			})
+
+			// Sequence 3: Point B Ignition (delta +3.0 exceeds threshold 2.0)
+			tee.Push(&data.Measurement[float64]{
+				Label: "BTC/USD", Source: "public", SeqIdx: 3,
+				Metrics: map[string]data.Metric[float64]{"price": {Raw: 50005.0}, "spread": {Raw: 1.0}},
+			})
+			tee.Push(&data.Measurement[float64]{
+				Label: "BTC/USD", Source: "resonance", SeqIdx: 3,
+			})
+
+			// Read all out and verify every measurement across all stages has been tagged
+			for received := 0; received < 7; received++ {
+				out := (*data.Measurement[float64])(tee.Next())
+				So(out, ShouldNotBeNil)
+				So(out.Metadata["excursion"], ShouldEqual, "upper")
+				So(out.Metadata["excursion_start"], ShouldEqual, "1")
+			}
+		})
 	})
 }
 

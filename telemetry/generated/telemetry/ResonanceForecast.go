@@ -7,20 +7,20 @@ import (
 )
 
 type ResonanceForecastT struct {
-	ForwardCurve     []float64     `json:"forwardCurve"`
-	ForwardRetention []float64     `json:"forwardRetention"`
-	SupportedHorizon int64         `json:"supportedHorizon"`
-	ProbeHorizon     int64         `json:"probeHorizon"`
-	Aggregate        *PosteriorT   `json:"aggregate"`
-	Posterior        []*PosteriorT `json:"posterior"`
-	Distribution     *PosteriorT   `json:"distribution"`
-	Horizon          int64         `json:"horizon"`
-	CandidateCall    float64       `json:"candidateCall"`
-	Call             float64       `json:"call"`
-	StableCall       float64       `json:"stableCall"`
-	Held             bool          `json:"held"`
-	SwitchConfidence float64       `json:"switchConfidence"`
-	SwitchThreshold  float64       `json:"switchThreshold"`
+	ForwardCurve []float64 `json:"forwardCurve"`
+	ForwardRetention []float64 `json:"forwardRetention"`
+	SupportedHorizon int64 `json:"supportedHorizon"`
+	ProbeHorizon int64 `json:"probeHorizon"`
+	Aggregate *PosteriorT `json:"aggregate"`
+	Posterior []*PosteriorT `json:"posterior"`
+	Distribution *PosteriorT `json:"distribution"`
+	Horizon int64 `json:"horizon"`
+	CandidateCall float64 `json:"candidateCall"`
+	Call float64 `json:"call"`
+	StableCall float64 `json:"stableCall"`
+	Held bool `json:"held"`
+	SwitchConfidence float64 `json:"switchConfidence"`
+	SwitchThreshold float64 `json:"switchThreshold"`
 }
 
 func (t *ResonanceForecastT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

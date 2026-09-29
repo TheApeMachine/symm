@@ -63,13 +63,25 @@ func (op *PairSearch) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
 				peer := op.retained[symbol]
 				input := nmcorrelation.LagProfileInput{Left: focal.Observations, Right: peer.Observations}
 
-				for out := range op.search.Next(transport.NewOne(unsafe.Pointer(&input)).Next(nil)) {
-					op.reading = *(*nmcorrelation.LeadLagReading)(out)
-				}
+				if fast, ok := op.search.(interface {
+					Search(*nmcorrelation.LagProfileInput) (nmcorrelation.LeadLagReading, error)
+				}); ok {
+					var err error
+					op.reading, err = fast.Search(&input)
 
-				if err := op.search.Error(); err != nil {
-					op.Error(err)
-					continue
+					if err != nil {
+						op.Error(err)
+						continue
+					}
+				} else {
+					for out := range op.search.Next(transport.NewOne(unsafe.Pointer(&input)).Next(nil)) {
+						op.reading = *(*nmcorrelation.LeadLagReading)(out)
+					}
+
+					if err := op.search.Error(); err != nil {
+						op.Error(err)
+						continue
+					}
 				}
 
 				if !op.reading.Defined {

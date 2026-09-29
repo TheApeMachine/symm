@@ -7,12 +7,12 @@ import (
 )
 
 type DiagnosticHopT struct {
-	From    string `json:"from"`
-	To      string `json:"to"`
-	Count   uint64 `json:"count"`
+	From string `json:"from"`
+	To string `json:"to"`
+	Count uint64 `json:"count"`
 	TotalNs uint64 `json:"totalNs"`
-	LastNs  uint64 `json:"lastNs"`
-	MaxNs   uint64 `json:"maxNs"`
+	LastNs uint64 `json:"lastNs"`
+	MaxNs uint64 `json:"maxNs"`
 }
 
 func (t *DiagnosticHopT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

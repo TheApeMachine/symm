@@ -7,16 +7,16 @@ import (
 )
 
 type LearningDevelopmentT struct {
-	Symbol     string               `json:"symbol"`
-	AtNs       int64                `json:"atNs"`
-	Status     string               `json:"status"`
-	Decisions  uint64               `json:"decisions"`
-	Context    []string             `json:"context"`
-	Regions    []*LearningRegionT   `json:"regions"`
+	Symbol string `json:"symbol"`
+	AtNs int64 `json:"atNs"`
+	Status string `json:"status"`
+	Decisions uint64 `json:"decisions"`
+	Context []string `json:"context"`
+	Regions []*LearningRegionT `json:"regions"`
 	Quantities []*LearningQuantityT `json:"quantities"`
-	FromNs     int64                `json:"fromNs"`
-	Depth      int32                `json:"depth"`
-	Volume     string               `json:"volume"`
+	FromNs int64 `json:"fromNs"`
+	Depth int32 `json:"depth"`
+	Volume string `json:"volume"`
 }
 
 func (t *LearningDevelopmentT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

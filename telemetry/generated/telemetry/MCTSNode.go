@@ -7,31 +7,31 @@ import (
 )
 
 type MCTSNodeT struct {
-	Action                   int64           `json:"action"`
-	ActionName               string          `json:"actionName"`
-	Depth                    int64           `json:"depth"`
-	Visits                   int64           `json:"visits"`
-	EffectiveVisits          float64         `json:"effectiveVisits"`
-	ObservedReward           float64         `json:"observedReward"`
-	CounterfactualReward     float64         `json:"counterfactualReward"`
-	CounterfactualMass       float64         `json:"counterfactualMass"`
-	CounterfactualPrecision  float64         `json:"counterfactualPrecision"`
-	TotalReward              float64         `json:"totalReward"`
-	MeanReward               float64         `json:"meanReward"`
-	Exploitation             float64         `json:"exploitation"`
-	Exploration              float64         `json:"exploration"`
-	CausalExpectation        float64         `json:"causalExpectation"`
-	SelectionScore           float64         `json:"selectionScore"`
-	ScmReady                 bool            `json:"scmReady"`
-	ScmReason                string          `json:"scmReason"`
-	Selected                 bool            `json:"selected"`
-	Principal                bool            `json:"principal"`
-	BlendedValue             float64         `json:"blendedValue"`
-	RewardStd                float64         `json:"rewardStd"`
-	CausalExpectationDefined bool            `json:"causalExpectationDefined"`
-	Pruned                   bool            `json:"pruned"`
-	State                    []*NamedNumberT `json:"state"`
-	Children                 []*MCTSNodeT    `json:"children"`
+	Action int64 `json:"action"`
+	ActionName string `json:"actionName"`
+	Depth int64 `json:"depth"`
+	Visits int64 `json:"visits"`
+	EffectiveVisits float64 `json:"effectiveVisits"`
+	ObservedReward float64 `json:"observedReward"`
+	CounterfactualReward float64 `json:"counterfactualReward"`
+	CounterfactualMass float64 `json:"counterfactualMass"`
+	CounterfactualPrecision float64 `json:"counterfactualPrecision"`
+	TotalReward float64 `json:"totalReward"`
+	MeanReward float64 `json:"meanReward"`
+	Exploitation float64 `json:"exploitation"`
+	Exploration float64 `json:"exploration"`
+	CausalExpectation float64 `json:"causalExpectation"`
+	SelectionScore float64 `json:"selectionScore"`
+	ScmReady bool `json:"scmReady"`
+	ScmReason string `json:"scmReason"`
+	Selected bool `json:"selected"`
+	Principal bool `json:"principal"`
+	BlendedValue float64 `json:"blendedValue"`
+	RewardStd float64 `json:"rewardStd"`
+	CausalExpectationDefined bool `json:"causalExpectationDefined"`
+	Pruned bool `json:"pruned"`
+	State []*NamedNumberT `json:"state"`
+	Children []*MCTSNodeT `json:"children"`
 }
 
 func (t *MCTSNodeT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

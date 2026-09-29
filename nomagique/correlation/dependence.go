@@ -31,17 +31,101 @@ type DependenceReading struct {
 Dependence owns the typed path diagnostics surrounding an opaque estimator.
 */
 type Dependence struct {
-	err         error
-	estimator   core.Primitive
-	pathReturns core.Primitive
-	out         DependenceReading
+	err          error
+	estimator    core.Primitive
+	leftReturns  core.Primitive
+	rightReturns core.Primitive
+	out          DependenceReading
 }
 
 /*
 NewDependence creates a new Dependence primitive over the supplied estimator.
 */
 func NewDependence(estimator core.Primitive) core.Primitive {
-	return &Dependence{estimator: estimator, pathReturns: temporal.NewPathReturns()}
+	return &Dependence{
+		estimator:    estimator,
+		leftReturns:  temporal.NewPathReturns(),
+		rightReturns: temporal.NewPathReturns(),
+	}
+}
+
+/*
+Compute measures static contemporaneous dependence directly without iterator overhead.
+*/
+func (op *Dependence) Compute(input *LagProfileInput) (DependenceReading, error) {
+	left, err := decodePath(op.leftReturns, input.Left)
+
+	if err != nil {
+		op.err = errors.Join(op.err, err)
+		return DependenceReading{}, err
+	}
+
+	right, err := decodePath(op.rightReturns, input.Right)
+
+	if err != nil {
+		op.err = errors.Join(op.err, err)
+		return DependenceReading{}, err
+	}
+
+	var estimate LagEstimate
+	if fast, ok := op.estimator.(interface {
+		Estimate(query *EstimateInput) (LagEstimate, error)
+	}); ok {
+		query := EstimateInput{
+			Left:        left.Returns,
+			Right:       right.Returns,
+			LeftEnergy:  left.Energy,
+			RightEnergy: right.Energy,
+			Lag:         0,
+		}
+		est, estErr := fast.Estimate(&query)
+		if estErr != nil {
+			op.err = errors.Join(op.err, estErr)
+			return DependenceReading{}, estErr
+		}
+		estimate = est
+	} else {
+		est, estErr := estimateAt(op.estimator, left, right, 0)
+		if estErr != nil {
+			op.err = errors.Join(op.err, estErr)
+			return DependenceReading{}, estErr
+		}
+		estimate = est
+	}
+
+	shared, density := 0.0, 0.0
+
+	if len(left.Returns) > 0 && len(right.Returns) > 0 {
+		leftFrom := left.Returns[0].From
+		leftThrough := left.Returns[len(left.Returns)-1].To
+		rightFrom := right.Returns[0].From
+		rightThrough := right.Returns[len(right.Returns)-1].To
+
+		start := max(leftFrom, rightFrom)
+		end := min(leftThrough, rightThrough)
+
+		if end > start {
+			shared = float64(end-start) / float64(time.Second)
+		}
+	}
+
+	if shared > 0 {
+		density = estimate.Support / shared
+	}
+
+	leftRate := medianRate(left.Returns)
+	rightRate := medianRate(right.Returns)
+
+	return DependenceReading{
+		LagEstimate:     estimate,
+		LeftReturns:     float64(len(left.Returns)),
+		RightReturns:    float64(len(right.Returns)),
+		LeftEnergyRate:  leftRate,
+		RightEnergyRate: rightRate,
+		Defined:         estimate.Defined,
+		SharedTime:      shared,
+		OverlapDensity:  density,
+	}, nil
 }
 
 func (op *Dependence) Next(
@@ -50,60 +134,13 @@ func (op *Dependence) Next(
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			input := (*LagProfileInput)(arriving)
-			left, err := decodePath(op.pathReturns, input.Left)
+			reading, err := op.Compute(input)
 
 			if err != nil {
-				op.err = errors.Join(op.err, err)
 				return
 			}
 
-			right, err := decodePath(op.pathReturns, input.Right)
-
-			if err != nil {
-				op.err = errors.Join(op.err, err)
-				return
-			}
-
-			estimate, err := estimateAt(op.estimator, left, right, 0)
-
-			if err != nil {
-				op.err = errors.Join(op.err, err)
-				return
-			}
-
-			shared, density := 0.0, 0.0
-
-			if len(left.Returns) > 0 && len(right.Returns) > 0 {
-				leftFrom := left.Returns[0].From
-				leftThrough := left.Returns[len(left.Returns)-1].To
-				rightFrom := right.Returns[0].From
-				rightThrough := right.Returns[len(right.Returns)-1].To
-
-				start := max(leftFrom, rightFrom)
-				end := min(leftThrough, rightThrough)
-
-				if end > start {
-					shared = float64(end-start) / float64(time.Second)
-				}
-			}
-
-			if shared > 0 {
-				density = estimate.Support / shared
-			}
-
-			leftRate := medianRate(left.Returns)
-			rightRate := medianRate(right.Returns)
-
-			op.out = DependenceReading{
-				LagEstimate:     estimate,
-				LeftReturns:     float64(len(left.Returns)),
-				RightReturns:    float64(len(right.Returns)),
-				LeftEnergyRate:  leftRate,
-				RightEnergyRate: rightRate,
-				Defined:         estimate.Defined,
-				SharedTime:      shared,
-				OverlapDensity:  density,
-			}
+			op.out = reading
 
 			if !yield(unsafe.Pointer(&op.out)) {
 				return
@@ -119,8 +156,14 @@ func (op *Dependence) Error(errs ...error) error {
 		}
 	}
 
-	if op.pathReturns != nil {
-		if err := op.pathReturns.Error(); err != nil {
+	if op.leftReturns != nil {
+		if err := op.leftReturns.Error(); err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	if op.rightReturns != nil {
+		if err := op.rightReturns.Error(); err != nil {
 			op.err = errors.Join(op.err, err)
 		}
 	}
@@ -129,11 +172,18 @@ func (op *Dependence) Error(errs ...error) error {
 }
 
 func medianRate(intervals []temporal.LogReturn) float64 {
-	if len(intervals) == 0 {
+	count := len(intervals)
+	if count == 0 {
 		return math.NaN()
 	}
 
-	rates := make([]float64, len(intervals))
+	var scratch [128]float64
+	var rates []float64
+	if count <= len(scratch) {
+		rates = scratch[:count]
+	} else {
+		rates = make([]float64, count)
+	}
 
 	for i, r := range intervals {
 		elapsed := float64(r.To-r.From) / float64(time.Second)
@@ -141,6 +191,5 @@ func medianRate(intervals []temporal.LogReturn) float64 {
 	}
 
 	slices.Sort(rates)
-	count := len(rates)
 	return (rates[(count-1)/2] + rates[count/2]) * 0.5
 }
