@@ -31,11 +31,26 @@ type Market struct {
 	keys            []string
 	volumeIncrement float64
 	valid           bool
+	Locked          bool
+	stability       statistic.Moments
 }
 
 func newMarket(symbol string) *Market {
 	return &Market{Symbol: symbol, Volume: decimal.NewFromInt64(0),
 		owners: make(map[string]*owner), addresses: make(map[[2]string]*Cell)}
+}
+
+func (market *Market) Lock() {
+	market.Locked = true
+}
+
+func (market *Market) Unlock() {
+	market.Locked = false
+	market.stability = statistic.Moments{}
+}
+
+func (market *Market) IsLocked() bool {
+	return market.Locked
 }
 
 /* Bind replaces an address's publication, without writing or copying its values. */
@@ -144,6 +159,9 @@ func (market *Market) prepare() {
 			market.pairs[index] = previous[[2]uint64{market.Cells[left].ID, cell.ID}]
 		}
 	}
+
+	market.Locked = false
+	market.stability = statistic.Moments{}
 }
 
 func (market *Market) advance(measurement *data.Measurement[float64]) error {

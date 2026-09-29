@@ -134,31 +134,55 @@ cognitive:
 market:
   model: paper
   quote_currency: USD
-  balance: 200 # No, this is not a typo, or test amount, this is the exact amount I found in my 
-               # Kraken account, and it is the only money I am willing to trade with.
-               # Now, you might think this system is therefor "overkill" and it is a valid point.
-               # But what if it works? Daily 24h risers over 100+%, or more... Do you think the
-               # balance will stay at $200 forever? Let's say we catch only 50% of those daily
-               # risers (50% because with micro-caps you have to get out while there is still
-               # lots of buying power going on, getting out at the peak will just see the entire
-               # order book dissolve underneath you)?
+  balance: 200 # No, this is neither a typo nor a test amount. It is the exact amount I 
+               # found in my Kraken account, and the only money I am willing to risk.
+               # Now, you might think this system is therefore overkill. That is a valid point.
+               # But what if it works? The system tracks Level 3 order book, ticker, and trade 
+               # data across more than 640 assets. On any given day, some of those assets can 
+               # rise 100% or more. Let's say we capture only 50% of those moves. Why 50%?
+               # Because with micro-caps, you have to get out while there is still serious buying 
+               # power underneath you. Trying to exit at the peak is exactly how you discover that 
+               # the entire order book can dissolve beneath your position.
                #
-               # Day 0  $200.00
-               # Day 5  $1,518.75
-               # Day 10 $11,533.01
-               # Day 15 $87,578.78
-               # Day 20 $665,051.35
-               # Day 25 $5,050,233.66
-               # Day 30 $38,350,211.85
+               # Start with $200 and compound at 50%:
                #
-               # Now, let's be realistic, you won't get there this fast, because at some point you
-               # will not be able to sell off your position into the liquidity of a micro-cap.
-               # So you have to start using smaller slices of your capital, based on the order book's
-               # liquidity to even be able to survive your own positions.
-               # It is just to highlight that thinking about this as a $200 crypto-trading "bot" is 
-               # the wrong frame of reference. It is not a "bot" and it is not a High-Frequency
-               # trading algorithm. Think of this as an activated research environment that
-               # finds opportunity in the pre-cursors to market events.
+               # Day 0   $200.00
+               # Day 5   $1,518.75
+               # Day 10  $11,533.01
+               # Day 15  $87,578.78
+               # Day 20  $665,051.35
+               # Day 25  $5,050,233.66
+               # Day 30  $38,350,211.85
+               #
+               # Obviously, let's be realistic: you are not getting there that fast.
+               # Long before then, the constraint stops being capital and becomes liquidity.
+               # At some point, you simply cannot sell a large position into a micro-cap 
+               # order book without becoming the market event yourself. You have to start 
+               # deploying smaller slices of your capital, sized according to the liquidity 
+               # actually available in the book.
+               #
+               # Because if you're paying to be your own liquidity, you're gonna have a bad time.
+               #
+               # The point of the numbers is not to pretend that $200 magically turns into $38 
+               # million in thirty days.
+               #
+               # The point is that thinking about this as a "$200 crypto-trading bot" is the 
+               # wrong frame of reference.
+               #
+               # It is not a bot.
+               #
+               # It is not a High-Frequency Trading algorithm.
+               #
+               # It is an activated research environment designed to identify opportunity 
+               # in the precursors to market events, observe those events as they develop, 
+               # and participate only while the market structure can actually support the 
+               # position.
+               #
+               # Or, if you prefer the less respectable description:
+               #
+               # It is a wild ride on the coattails of the manipulators of a highly 
+               # manipulated market.
+
   instrument:
     excluded:
       - USD 

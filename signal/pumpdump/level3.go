@@ -15,8 +15,9 @@ import (
 )
 
 type level3EntityInput struct {
-	Bid float64
-	Ask float64
+	Symbol string
+	Bid    float64
+	Ask    float64
 }
 
 type level3EntityResult struct {
@@ -28,18 +29,23 @@ type level3EntityResult struct {
 	Valid          bool
 }
 
-type level3EntityPipeline struct {
-	*core.PrimitiveError
+type level3EntityState struct {
 	hasBid  bool
 	hasAsk  bool
 	prevBid float64
 	prevAsk float64
-	out     level3EntityResult
+}
+
+type level3EntityPipeline struct {
+	*core.PrimitiveError
+	paths map[string]*level3EntityState
+	out   level3EntityResult
 }
 
 func newLevel3EntityPipeline() core.Primitive {
 	return &level3EntityPipeline{
 		PrimitiveError: core.NewPrimitiveError(),
+		paths:          make(map[string]*level3EntityState),
 	}
 }
 
@@ -48,17 +54,23 @@ func (op *level3EntityPipeline) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsaf
 		for arriving := range in {
 			input := (*level3EntityInput)(arriving)
 
+			state := op.paths[input.Symbol]
+			if state == nil {
+				state = &level3EntityState{}
+				op.paths[input.Symbol] = state
+			}
+
 			if input.Bid > 0 {
-				op.prevBid = input.Bid
-				op.hasBid = true
+				state.prevBid = input.Bid
+				state.hasBid = true
 			}
 
 			if input.Ask > 0 {
-				op.prevAsk = input.Ask
-				op.hasAsk = true
+				state.prevAsk = input.Ask
+				state.hasAsk = true
 			}
 
-			if !op.hasBid || !op.hasAsk {
+			if !state.hasBid || !state.hasAsk {
 				op.out = level3EntityResult{Valid: false}
 				if !yield(unsafe.Pointer(&op.out)) {
 					return
@@ -66,8 +78,8 @@ func (op *level3EntityPipeline) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsaf
 				continue
 			}
 
-			midpoint := (op.prevBid + op.prevAsk) / 2.0
-			spread := op.prevAsk - op.prevBid
+			midpoint := (state.prevBid + state.prevAsk) / 2.0
+			spread := state.prevAsk - state.prevBid
 			relativeSpread := 0.0
 
 			if midpoint > 0 {
@@ -75,8 +87,8 @@ func (op *level3EntityPipeline) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsaf
 			}
 
 			op.out = level3EntityResult{
-				Bid:            op.prevBid,
-				Ask:            op.prevAsk,
+				Bid:            state.prevBid,
+				Ask:            state.prevAsk,
 				Midpoint:       midpoint,
 				Spread:         spread,
 				RelativeSpread: relativeSpread,
@@ -174,7 +186,11 @@ func (level3 *Level3) Step(m *data.Measurement[float64]) *data.Measurement[float
 		m.Metadata = make(map[string]string)
 	}
 
-	pipeInput := level3EntityInput{Bid: bid, Ask: ask}
+	pipeInput := level3EntityInput{
+		Symbol: input.Label,
+		Bid:    bid,
+		Ask:    ask,
+	}
 
 	var valid bool
 	for out := range level3.pipeline.Next(transport.NewOne(unsafe.Pointer(&pipeInput)).Next(nil)) {

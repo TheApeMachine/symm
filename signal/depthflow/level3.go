@@ -2,11 +2,13 @@ package depthflow
 
 import (
 	"context"
-	"github.com/theapemachine/errnie"
 	"iter"
+	"math"
 	"strconv"
 	"time"
 	"unsafe"
+
+	"github.com/theapemachine/errnie"
 
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/adaptive"
@@ -17,6 +19,7 @@ import (
 )
 
 type depthInput struct {
+	Label       string
 	ObservedBid float64
 	ObservedAsk float64
 	MutationBid float64
@@ -37,20 +40,23 @@ type depthResult struct {
 	RateReading               adaptive.BaselineReading
 }
 
-type depthPipeline struct {
-	*core.PrimitiveError
+type depthState struct {
 	hasPrev   bool
 	prevTime  time.Time
 	imbalance core.Primitive
 	rate      core.Primitive
-	out       depthResult
+}
+
+type depthPipeline struct {
+	*core.PrimitiveError
+	paths map[string]*depthState
+	out   depthResult
 }
 
 func newDepthPipeline() core.Primitive {
 	return &depthPipeline{
 		PrimitiveError: core.NewPrimitiveError(),
-		imbalance:      adaptive.NewBaseline(adaptive.NewWindow()),
-		rate:           adaptive.NewBaseline(adaptive.NewWindow()),
+		paths:          make(map[string]*depthState),
 	}
 }
 
@@ -58,6 +64,16 @@ func (op *depthPipeline) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Point
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			input := (*depthInput)(arriving)
+
+			state := op.paths[input.Label]
+
+			if state == nil {
+				state = &depthState{
+					imbalance: adaptive.NewBaseline(adaptive.NewWindow()),
+					rate:      adaptive.NewBaseline(adaptive.NewWindow()),
+				}
+				op.paths[input.Label] = state
+			}
 
 			observed := input.ObservedBid + input.ObservedAsk
 			observedDiff := input.ObservedBid - input.ObservedAsk
@@ -75,7 +91,7 @@ func (op *depthPipeline) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Point
 				imbalance := observedDiff / observed
 				op.out.ObservedImbalance = imbalance
 
-				for rPtr := range op.imbalance.Next(transport.NewOne(unsafe.Pointer(&imbalance)).Next(nil)) {
+				for rPtr := range state.imbalance.Next(transport.NewOne(unsafe.Pointer(&imbalance)).Next(nil)) {
 					op.out.ImbalanceReading = *(*adaptive.BaselineReading)(rPtr)
 				}
 			}
@@ -84,22 +100,23 @@ func (op *depthPipeline) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Point
 				op.out.MutationActivityImbalance = mutationDiff / mutations
 			}
 
-			if op.hasPrev {
-				dt := input.At.Sub(op.prevTime).Seconds()
+			if state.hasPrev {
+				dt := input.At.Sub(state.prevTime).Seconds()
 
 				if dt > 0 {
-					rate := observed / dt
+					effectiveDt := math.Max(dt, 1.0)
+					rate := observed / effectiveDt
 					op.out.Rate = rate
 					op.out.HasRate = true
 
-					for rPtr := range op.rate.Next(transport.NewOne(unsafe.Pointer(&rate)).Next(nil)) {
+					for rPtr := range state.rate.Next(transport.NewOne(unsafe.Pointer(&rate)).Next(nil)) {
 						op.out.RateReading = *(*adaptive.BaselineReading)(rPtr)
 					}
 				}
 			}
 
-			op.prevTime = input.At
-			op.hasPrev = true
+			state.prevTime = input.At
+			state.hasPrev = true
 
 			if !yield(unsafe.Pointer(&op.out)) {
 				return
@@ -151,7 +168,7 @@ func (level3 *Level3) Step(m *data.Measurement[float64]) *data.Measurement[float
 
 	if len(m.Peers) > 0 {
 		peer := m.FindPeer(func(p *data.Measurement[float64]) bool {
-			if p.Label == "" || p.Provenance["channel"] == "ticker" || p.Provenance["channel"] == "trade" {
+			if p.Label == "" {
 				return false
 			}
 			_, hasObsBid := p.Metrics["observed_notional:bid"]
@@ -175,6 +192,13 @@ func (level3 *Level3) Step(m *data.Measurement[float64]) *data.Measurement[float
 		}
 
 		input = peer
+	}
+
+	if input.Label != "" {
+		m.Label = input.Label
+	}
+	if !input.At.IsZero() {
+		m.At = input.At
 	}
 
 	obsBid := input.Metrics["observed_notional:bid"].Raw
@@ -210,6 +234,7 @@ func (level3 *Level3) Step(m *data.Measurement[float64]) *data.Measurement[float
 	}
 
 	if obsBid <= 0 && obsAsk <= 0 {
+		m.Finalize()
 		return m
 	}
 
@@ -218,6 +243,7 @@ func (level3 *Level3) Step(m *data.Measurement[float64]) *data.Measurement[float
 	}
 
 	pipeInput := depthInput{
+		Label:       input.Label,
 		ObservedBid: obsBid,
 		ObservedAsk: obsAsk,
 		MutationBid: mutBid,

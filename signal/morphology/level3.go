@@ -17,6 +17,7 @@ import (
 )
 
 type morphologyInput struct {
+	Symbol   string
 	Distance float64
 	KS       float64
 	ConcBid  float64
@@ -37,18 +38,22 @@ type morphologyResult struct {
 	Reading  adaptive.BaselineReading
 }
 
-type morphologyPipeline struct {
-	*core.PrimitiveError
+type morphologyState struct {
 	hasPrev      bool
 	prevDistance float64
 	baseline     core.Primitive
-	out          morphologyResult
+}
+
+type morphologyPipeline struct {
+	*core.PrimitiveError
+	paths map[string]*morphologyState
+	out   morphologyResult
 }
 
 func newMorphologyPipeline() core.Primitive {
 	return &morphologyPipeline{
 		PrimitiveError: core.NewPrimitiveError(),
-		baseline:       adaptive.NewBaseline(adaptive.NewWindow()),
+		paths:          make(map[string]*morphologyState),
 	}
 }
 
@@ -56,6 +61,14 @@ func (op *morphologyPipeline) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			input := (*morphologyInput)(arriving)
+
+			state := op.paths[input.Symbol]
+			if state == nil {
+				state = &morphologyState{
+					baseline: adaptive.NewBaseline(adaptive.NewWindow()),
+				}
+				op.paths[input.Symbol] = state
+			}
 
 			op.out = morphologyResult{
 				Distance: input.Distance,
@@ -66,18 +79,18 @@ func (op *morphologyPipeline) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.
 				EntAsk:   input.EntAsk,
 			}
 
-			if op.hasPrev {
-				change := math.Abs(input.Distance - op.prevDistance)
+			if state.hasPrev {
+				change := math.Abs(input.Distance - state.prevDistance)
 				op.out.HasPrev = true
 				op.out.Change = change
 
-				for rPtr := range op.baseline.Next(transport.NewOne(unsafe.Pointer(&change)).Next(nil)) {
+				for rPtr := range state.baseline.Next(transport.NewOne(unsafe.Pointer(&change)).Next(nil)) {
 					op.out.Reading = *(*adaptive.BaselineReading)(rPtr)
 				}
 			}
 
-			op.prevDistance = input.Distance
-			op.hasPrev = true
+			state.prevDistance = input.Distance
+			state.hasPrev = true
 
 			if !yield(unsafe.Pointer(&op.out)) {
 				return
@@ -129,7 +142,7 @@ func (level3 *Level3) Step(m *data.Measurement[float64]) *data.Measurement[float
 
 	if len(m.Peers) > 0 {
 		peer := m.FindPeer(func(p *data.Measurement[float64]) bool {
-			if p.Label == "" || p.Provenance["channel"] == "ticker" || p.Provenance["channel"] == "trade" {
+			if p.Label == "" {
 				return false
 			}
 			_, hasDist := p.Metrics["book_shape_distance"]
@@ -152,6 +165,13 @@ func (level3 *Level3) Step(m *data.Measurement[float64]) *data.Measurement[float
 		}
 
 		input = peer
+	}
+
+	if input.Label != "" {
+		m.Label = input.Label
+	}
+	if !input.At.IsZero() {
+		m.At = input.At
 	}
 
 	distance := input.Metrics["book_shape_distance"].Raw
@@ -177,6 +197,7 @@ func (level3 *Level3) Step(m *data.Measurement[float64]) *data.Measurement[float
 	}
 
 	if distance <= 0 {
+		m.Finalize()
 		return m
 	}
 
@@ -185,6 +206,7 @@ func (level3 *Level3) Step(m *data.Measurement[float64]) *data.Measurement[float
 	}
 
 	pipeInput := morphologyInput{
+		Symbol:   input.Label,
 		Distance: distance,
 		KS:       ks,
 		ConcBid:  concBid,

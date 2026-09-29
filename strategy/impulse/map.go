@@ -102,8 +102,16 @@ func (impulseMap *Map) Step(input *data.Measurement[float64]) error {
 				reading := market.pairs[index].Update(left.Movement, right.Movement, market.volumeIncrement)
 				market.edges[index].Strength = reading.Strength
 			}
-			geometry.Relaxation{}.Step(market.points, market.edges)
-			geometry.Watershed{}.Step(market.points, market.edges)
+
+			if !market.Locked {
+				displacement := geometry.Relaxation{}.Step(market.points, market.edges)
+				geometry.Watershed{}.Step(market.points, market.edges)
+				market.stability.Update(displacement)
+
+				if market.stability.Count >= float64(len(market.Cells)) && displacement <= 1e-4 {
+					market.Locked = true
+				}
+			}
 		}
 
 		if err := market.light(); err != nil {
@@ -113,6 +121,18 @@ func (impulseMap *Map) Step(input *data.Measurement[float64]) error {
 
 	impulseMap.sequence = input.SeqIdx
 	return nil
+}
+
+func (impulseMap *Map) Lock(symbol string) {
+	if market := impulseMap.Markets[symbol]; market != nil {
+		market.Lock()
+	}
+}
+
+func (impulseMap *Map) LockAll() {
+	for _, market := range impulseMap.Markets {
+		market.Lock()
+	}
 }
 
 func (impulseMap *Map) Next(input iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {

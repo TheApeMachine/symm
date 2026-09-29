@@ -107,12 +107,12 @@ History feeds the cohort's signed correlation to the Fisher-space causal
 estimator, giving the measurement its baseline, divergence, and z-score.
 */
 type History struct {
-	err       error
-	estimator core.Primitive
+	err        error
+	estimators map[string]core.Primitive
 }
 
 func NewHistory() core.Primitive {
-	return &History{estimator: NewFisherEstimator()}
+	return &History{estimators: make(map[string]core.Primitive)}
 }
 
 func (op *History) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
@@ -128,8 +128,14 @@ func (op *History) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				continue
 			}
 
+			estimator := op.estimators[m.Label]
+			if estimator == nil {
+				estimator = NewFisherEstimator()
+				op.estimators[m.Label] = estimator
+			}
+
 			signed := m.Metrics["cohort_signed_correlation"].Raw
-			view := drive[float64, FisherView](op.estimator, &signed)
+			view := drive[float64, FisherView](estimator, &signed)
 
 			m.Metrics["correlation_baseline"] = m.Metrics["correlation_baseline"].Write(view.Baseline)
 			m.Metrics["correlation_divergence"] = m.Metrics["correlation_divergence"].Write(view.Divergence)
@@ -170,12 +176,12 @@ Relative tracks the focal-to-cohort relative return energy rate against its
 own adaptive baseline.
 */
 type Relative struct {
-	err      error
-	baseline core.Primitive
+	err       error
+	baselines map[string]core.Primitive
 }
 
 func NewRelative() core.Primitive {
-	return &Relative{baseline: adaptive.NewBaseline(adaptive.NewWindow())}
+	return &Relative{baselines: make(map[string]core.Primitive)}
 }
 
 func (op *Relative) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
@@ -191,8 +197,14 @@ func (op *Relative) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				continue
 			}
 
+			baseline := op.baselines[m.Label]
+			if baseline == nil {
+				baseline = adaptive.NewBaseline(adaptive.NewWindow())
+				op.baselines[m.Label] = baseline
+			}
+
 			relative := m.Metrics["relative_return_energy"].Raw
-			reading := drive[float64, adaptive.BaselineReading](op.baseline, &relative)
+			reading := drive[float64, adaptive.BaselineReading](baseline, &relative)
 
 			m.Metrics["relative_return_energy_baseline"] = m.Metrics["relative_return_energy_baseline"].Write(reading.Baseline)
 			m.Metrics["relative_return_energy_divergence"] = m.Metrics["relative_return_energy_divergence"].Write(reading.Residual)
@@ -219,12 +231,12 @@ func (op *Relative) Error(errs ...error) error {
 CorrelationVelocity measures how fast the cohort's signed correlation moves.
 */
 type CorrelationVelocity struct {
-	err      error
-	velocity core.Primitive
+	err        error
+	velocities map[string]core.Primitive
 }
 
 func NewCorrelationVelocity() core.Primitive {
-	return &CorrelationVelocity{velocity: temporal.NewVelocity()}
+	return &CorrelationVelocity{velocities: make(map[string]core.Primitive)}
 }
 
 func (op *CorrelationVelocity) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
@@ -240,12 +252,18 @@ func (op *CorrelationVelocity) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe
 				continue
 			}
 
+			velocity := op.velocities[m.Label]
+			if velocity == nil {
+				velocity = temporal.NewVelocity()
+				op.velocities[m.Label] = velocity
+			}
+
 			observation := temporal.Observation{
 				Value: m.Metrics["cohort_signed_correlation"].Raw,
 				At:    m.At.UnixNano(),
 			}
 
-			reading := drive[temporal.Observation, temporal.VelocityReading](op.velocity, &observation)
+			reading := drive[temporal.Observation, temporal.VelocityReading](velocity, &observation)
 
 			if reading.Defined {
 				m.Metrics["correlation_velocity"] = m.Metrics["correlation_velocity"].Write(reading.Rate)
@@ -272,12 +290,12 @@ func (op *CorrelationVelocity) Error(errs ...error) error {
 EnergyVelocity measures how fast the relative return energy rate moves.
 */
 type EnergyVelocity struct {
-	err      error
-	velocity core.Primitive
+	err        error
+	velocities map[string]core.Primitive
 }
 
 func NewEnergyVelocity() core.Primitive {
-	return &EnergyVelocity{velocity: temporal.NewVelocity()}
+	return &EnergyVelocity{velocities: make(map[string]core.Primitive)}
 }
 
 func (op *EnergyVelocity) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
@@ -293,12 +311,18 @@ func (op *EnergyVelocity) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Poin
 				continue
 			}
 
+			velocity := op.velocities[m.Label]
+			if velocity == nil {
+				velocity = temporal.NewVelocity()
+				op.velocities[m.Label] = velocity
+			}
+
 			observation := temporal.Observation{
 				Value: m.Metrics["relative_return_energy"].Raw,
 				At:    m.At.UnixNano(),
 			}
 
-			reading := drive[temporal.Observation, temporal.VelocityReading](op.velocity, &observation)
+			reading := drive[temporal.Observation, temporal.VelocityReading](velocity, &observation)
 
 			if reading.Defined {
 				m.Metrics["relative_return_energy_velocity"] = m.Metrics["relative_return_energy_velocity"].Write(reading.Rate)

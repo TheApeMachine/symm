@@ -18,9 +18,10 @@ import (
 )
 
 type tradeEntityInput struct {
-	Price float64
-	Qty   float64
-	At    time.Time
+	Symbol string
+	Price  float64
+	Qty    float64
+	At     time.Time
 }
 
 type tradeEntityResult struct {
@@ -43,8 +44,7 @@ type tradeEntityResult struct {
 	NotionalRateRatio float64
 }
 
-type tradeEntityPipeline struct {
-	*core.PrimitiveError
+type tradeEntityState struct {
 	hasTrade         bool
 	prevTradeTime    time.Time
 	barStartTime     time.Time
@@ -55,13 +55,18 @@ type tradeEntityPipeline struct {
 	barTradeCount    float64
 	completedBars    float64
 	notionalBaseline core.Primitive
-	out              tradeEntityResult
+}
+
+type tradeEntityPipeline struct {
+	*core.PrimitiveError
+	paths map[string]*tradeEntityState
+	out   tradeEntityResult
 }
 
 func newTradeEntityPipeline() core.Primitive {
 	return &tradeEntityPipeline{
-		PrimitiveError:   core.NewPrimitiveError(),
-		notionalBaseline: adaptive.NewBaseline(adaptive.NewWindow()),
+		PrimitiveError: core.NewPrimitiveError(),
+		paths:          make(map[string]*tradeEntityState),
 	}
 }
 
@@ -70,47 +75,55 @@ func (op *tradeEntityPipeline) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe
 		for arriving := range in {
 			input := (*tradeEntityInput)(arriving)
 
+			state := op.paths[input.Symbol]
+			if state == nil {
+				state = &tradeEntityState{
+					notionalBaseline: adaptive.NewBaseline(adaptive.NewWindow()),
+				}
+				op.paths[input.Symbol] = state
+			}
+
 			notional := input.Price * input.Qty
 
-			if !op.hasTrade {
-				op.targetQty = input.Qty
-				op.barStartTime = input.At
+			if !state.hasTrade {
+				state.targetQty = input.Qty
+				state.barStartTime = input.At
 			}
-			if op.hasTrade {
-				op.targetQty = (op.targetQty*op.tradeCount + input.Qty) / (op.tradeCount + 1)
+			if state.hasTrade {
+				state.targetQty = (state.targetQty*state.tradeCount + input.Qty) / (state.tradeCount + 1)
 			}
-			op.tradeCount++
+			state.tradeCount++
 
 			var interval float64
 			var hasInterval bool
 
-			if op.hasTrade {
-				interval = input.At.Sub(op.prevTradeTime).Seconds()
+			if state.hasTrade {
+				interval = input.At.Sub(state.prevTradeTime).Seconds()
 				hasInterval = true
 			}
 
-			op.prevTradeTime = input.At
-			op.hasTrade = true
+			state.prevTradeTime = input.At
+			state.hasTrade = true
 
-			op.barQty += input.Qty
-			op.barNotional += notional
-			op.barTradeCount++
+			state.barQty += input.Qty
+			state.barNotional += notional
+			state.barTradeCount++
 
-			duration := input.At.Sub(op.barStartTime).Seconds()
+			duration := input.At.Sub(state.barStartTime).Seconds()
 
 			var volumeRate, notionalRate, tradeRate float64
 			var hasRates bool
 			var reading adaptive.BaselineReading
 			var notionalRatio float64
 
-			if hasInterval && duration > 0 && op.barQty >= op.targetQty {
-				volumeRate = op.barQty / duration
-				notionalRate = op.barNotional / duration
-				tradeRate = op.barTradeCount / duration
+			if hasInterval && duration > 0 && state.barQty >= state.targetQty {
+				volumeRate = state.barQty / duration
+				notionalRate = state.barNotional / duration
+				tradeRate = state.barTradeCount / duration
 				hasRates = true
-				op.completedBars++
+				state.completedBars++
 
-				for rPtr := range op.notionalBaseline.Next(transport.NewOne(unsafe.Pointer(&notionalRate)).Next(nil)) {
+				for rPtr := range state.notionalBaseline.Next(transport.NewOne(unsafe.Pointer(&notionalRate)).Next(nil)) {
 					reading = *(*adaptive.BaselineReading)(rPtr)
 				}
 
@@ -124,10 +137,10 @@ func (op *tradeEntityPipeline) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe
 				TradePrice:        input.Price,
 				TradeQty:          input.Qty,
 				TradeNotional:     notional,
-				TargetQty:         op.targetQty,
-				BarQty:            op.barQty,
-				BarNotional:       op.barNotional,
-				BarTradeCount:     op.barTradeCount,
+				TargetQty:         state.targetQty,
+				BarQty:            state.barQty,
+				BarNotional:       state.barNotional,
+				BarTradeCount:     state.barTradeCount,
 				BarDuration:       duration,
 				Interval:          interval,
 				HasInterval:       hasInterval,
@@ -135,16 +148,16 @@ func (op *tradeEntityPipeline) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe
 				NotionalRate:      notionalRate,
 				TradeRate:         tradeRate,
 				HasRates:          hasRates,
-				CompletedBars:     op.completedBars,
+				CompletedBars:     state.completedBars,
 				NotionalReading:   reading,
 				NotionalRateRatio: notionalRatio,
 			}
 
 			if hasRates {
-				op.barQty = 0
-				op.barNotional = 0
-				op.barTradeCount = 0
-				op.barStartTime = input.At
+				state.barQty = 0
+				state.barNotional = 0
+				state.barTradeCount = 0
+				state.barStartTime = input.At
 			}
 
 			if !yield(unsafe.Pointer(&op.out)) {
@@ -231,9 +244,10 @@ func (trade *Trade) Step(m *data.Measurement[float64]) *data.Measurement[float64
 	}
 
 	pipeInput := tradeEntityInput{
-		Price: price,
-		Qty:   qty,
-		At:    input.At,
+		Symbol: input.Label,
+		Price:  price,
+		Qty:    qty,
+		At:     input.At,
 	}
 
 	for out := range trade.pipeline.Next(transport.NewOne(unsafe.Pointer(&pipeInput)).Next(nil)) {

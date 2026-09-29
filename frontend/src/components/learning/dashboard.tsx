@@ -68,7 +68,7 @@ export const LearningDashboard = () => {
 		}>
 	>([]);
 	const [activePrecursors, setActivePrecursors] = useState<
-		Array<{ label: string; latencyMs: number }>
+		Array<{ label: string; activity: number }>
 	>([]);
 
 	// Real Radix Tree data from backend
@@ -337,7 +337,7 @@ export const LearningDashboard = () => {
 						id: String(cell.id),
 						label: String(cell.label ?? cell.source ?? `#${cell.id}`),
 						cluster: cellToRegion.get(Number(cell.id)) ?? Number(cell.id) % 4,
-						snr: cell.quality || 1,
+						snr: cell.quality ?? 0,
 						activation: cell.activity || 0,
 						value: cell.value,
 						x: cell.x,
@@ -363,10 +363,7 @@ export const LearningDashboard = () => {
 						setActivePrecursors(
 							hotCells.slice(0, 4).map((c) => ({
 								label: String(c.label || c.source),
-								latencyMs: Math.max(
-									8,
-									Math.floor(Math.abs(c.value ?? 10) % 80) + 10,
-								),
+								activity: c.activity ?? 0,
 							})),
 						);
 					}

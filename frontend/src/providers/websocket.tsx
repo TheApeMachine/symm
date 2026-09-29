@@ -121,7 +121,11 @@ function dispatchMeasurements(frame: MeasurementsFrame) {
 				if (metric.name === "positions") posCount = metric.raw;
 			}
 
-			if (cashVal !== null && equityVal !== null) {
+			if (
+				cashVal !== null &&
+				equityVal !== null &&
+				(cashVal > 0 || equityVal > 0)
+			) {
 				updateEquity(
 					cashVal.toFixed(2),
 					unrealizedVal !== null ? unrealizedVal.toFixed(2) : "0.00",

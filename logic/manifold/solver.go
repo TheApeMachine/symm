@@ -109,6 +109,7 @@ func NewSolver(ctx context.Context, api *websocket.API) *Solver {
 	}
 
 	solver.System = runtime.NewSystem(ctx, "manifold", solver.physics)
+	solver.Transition(runtime.READY)
 	return solver
 }
 
@@ -205,7 +206,6 @@ Step dispatches on the envelope kind:
 */
 func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
 	if solver.Status() != runtime.READY {
-		errnie.Warn(solver.Name() + ": Step called before READY; dropping event")
 		return measurement
 	}
 
@@ -324,6 +324,17 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 
 	if m, ok := measurement.Metrics["particle_kinetic"]; ok {
 		measurement.Metrics["particle_kinetic"] = m.Write(reading.Reading.Health.ParticleKinetic)
+	}
+
+	if reading.State != nil && reading.State.N > 1 {
+		measurement.Maturity = 1.0 - 1.0/float64(reading.State.N)
+	}
+
+	if reading.Reading.KuramotoR > 0 {
+		r2 := reading.Reading.KuramotoR * reading.Reading.KuramotoR
+		measurement.SNR = r2 / (1.0 - r2 + 1e-6)
+		measurement.SNRDefined = true
+		measurement.Estimated = true
 	}
 
 	return measurement

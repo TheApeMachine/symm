@@ -17,9 +17,18 @@ func (market *Market) Snapshot() *grid.Snapshot {
 
 	for index, cell := range market.Cells {
 		value, exists := cell.Value()
+		snr := 0.0
+
+		if cell.owner != nil && cell.owner.measurement != nil && cell.owner.measurement.SNRDefined {
+			snr = cell.owner.measurement.SNR
+		}
+
+		if snr == 0.0 && cell.Baseline.Count > 1 && cell.Baseline.M2 > 0 {
+			snr = cell.Level * cell.Level
+		}
 		snapshot.Cells[index] = grid.Quantity{ID: cell.ID, Source: cell.Owner, Label: cell.Metric,
 			X: cell.Position.X, Y: cell.Position.Y, Value: value, Activity: cell.Activity,
-			Quality: cell.Position.Authority, Present: cell.Present && exists}
+			Quality: snr, Present: cell.Present && exists}
 	}
 
 	return snapshot

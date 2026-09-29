@@ -26,7 +26,7 @@ the opposite endpoint's share of displacement. Scratch fields live with points.
 */
 type Relaxation struct{}
 
-func (relaxation Relaxation) Step(points []*Point, edges []Edge) {
+func (relaxation Relaxation) Step(points []*Point, edges []Edge) float64 {
 	for _, point := range points {
 		point.MoveX, point.MoveY, point.Mass = 0, 0, 0
 	}
@@ -62,10 +62,17 @@ func (relaxation Relaxation) Step(points []*Point, edges []Edge) {
 		right.Mass += weight
 	}
 
+	displacement := 0.0
+
 	for _, point := range points {
 		if point.Mass > 0 {
-			point.X += point.MoveX / point.Mass
-			point.Y += point.MoveY / point.Mass
+			dx := point.MoveX / point.Mass
+			dy := point.MoveY / point.Mass
+			point.X += dx
+			point.Y += dy
+			displacement += dx*dx + dy*dy
 		}
 	}
+
+	return displacement
 }

@@ -37,14 +37,11 @@ type MarketAnomaly struct {
 	At     time.Time
 }
 
-type symbolStats struct {
-	count atomic.Uint64
-}
-
-type symbolFaultState struct {
+type symbolState struct {
 	consecutiveCrossed atomic.Uint64
 	consecutiveClean   atomic.Uint64
 	hasSevereFault     atomic.Bool
+	count              atomic.Uint64
 }
 
 /*
@@ -56,8 +53,8 @@ type AnomalyMonitor struct {
 	ctx       context.Context
 	cancel    context.CancelFunc
 	ring      *wf.RingBuffer[MarketAnomaly]
-	stats     sync.Map
-	faults    sync.Map
+	symbols   atomic.Pointer[map[string]*symbolState]
+	mu        sync.Mutex
 	onFault   atomic.Pointer[[]func(symbol string)]
 	onRecover atomic.Pointer[[]func(symbol string)]
 	total     atomic.Uint64
@@ -83,15 +80,44 @@ func NewAnomalyMonitor(ctx context.Context, capacity int) *AnomalyMonitor {
 		ring:   wf.NewRingBuffer[MarketAnomaly](capacity),
 	}
 
+	initialMap := make(map[string]*symbolState)
+	monitor.symbols.Store(&initialMap)
+
 	monitor.running.Store(true)
 	go monitor.drain()
 
 	return monitor
 }
 
-func (monitor *AnomalyMonitor) faultState(symbol string) *symbolFaultState {
-	actual, _ := monitor.faults.LoadOrStore(symbol, &symbolFaultState{})
-	return actual.(*symbolFaultState)
+func (monitor *AnomalyMonitor) lookup(symbol string) *symbolState {
+	current := monitor.symbols.Load()
+	if current != nil {
+		if state, ok := (*current)[symbol]; ok {
+			return state
+		}
+	}
+
+	monitor.mu.Lock()
+	defer monitor.mu.Unlock()
+
+	current = monitor.symbols.Load()
+	if current != nil {
+		if state, ok := (*current)[symbol]; ok {
+			return state
+		}
+	}
+
+	newMap := make(map[string]*symbolState)
+	if current != nil {
+		for k, v := range *current {
+			newMap[k] = v
+		}
+	}
+
+	state := &symbolState{}
+	newMap[symbol] = state
+	monitor.symbols.Store(&newMap)
+	return state
 }
 
 /* SetOnFault registers a callback invoked when a symbol experiences a severe structural fault. */
@@ -156,6 +182,10 @@ func (monitor *AnomalyMonitor) Record(symbol string, kind AnomalyKind) {
 		return
 	}
 
+	monitor.total.Add(1)
+	state := monitor.lookup(symbol)
+	state.count.Add(1)
+
 	monitor.ring.Put(MarketAnomaly{
 		Symbol: symbol,
 		Kind:   kind,
@@ -163,7 +193,6 @@ func (monitor *AnomalyMonitor) Record(symbol string, kind AnomalyKind) {
 	})
 
 	if kind == AnomalyCrossedBook {
-		state := monitor.faultState(symbol)
 		state.consecutiveClean.Store(0)
 		crossed := state.consecutiveCrossed.Add(1)
 
@@ -185,7 +214,7 @@ func (monitor *AnomalyMonitor) RecordClean(symbol string) {
 		return
 	}
 
-	state := monitor.faultState(symbol)
+	state := monitor.lookup(symbol)
 	state.consecutiveCrossed.Store(0)
 	clean := state.consecutiveClean.Add(1)
 
@@ -206,13 +235,17 @@ func (monitor *AnomalyMonitor) HasSevereFault(symbol string) bool {
 		return false
 	}
 
-	actual, found := monitor.faults.Load(symbol)
-
-	if !found {
+	current := monitor.symbols.Load()
+	if current == nil {
 		return false
 	}
 
-	return actual.(*symbolFaultState).hasSevereFault.Load()
+	state, ok := (*current)[symbol]
+	if !ok {
+		return false
+	}
+
+	return state.hasSevereFault.Load()
 }
 
 /* HasAnySevereFault reports whether any monitored symbol currently has an active severe structural fault. */
@@ -221,20 +254,18 @@ func (monitor *AnomalyMonitor) HasAnySevereFault() bool {
 		return false
 	}
 
-	hasFault := false
+	current := monitor.symbols.Load()
+	if current == nil {
+		return false
+	}
 
-	monitor.faults.Range(func(key, value any) bool {
-		state, ok := value.(*symbolFaultState)
-
-		if ok && state.hasSevereFault.Load() {
-			hasFault = true
-			return false
+	for _, state := range *current {
+		if state.hasSevereFault.Load() {
+			return true
 		}
+	}
 
-		return true
-	})
-
-	return hasFault
+	return false
 }
 
 /* Count returns the total number of anomalies recorded for a symbol. */
@@ -243,12 +274,17 @@ func (monitor *AnomalyMonitor) Count(symbol string) uint64 {
 		return 0
 	}
 
-	value, found := monitor.stats.Load(symbol)
-	if !found {
+	current := monitor.symbols.Load()
+	if current == nil {
 		return 0
 	}
 
-	return value.(*symbolStats).count.Load()
+	state, ok := (*current)[symbol]
+	if !ok {
+		return 0
+	}
+
+	return state.count.Load()
 }
 
 /* Total returns the aggregate number of anomalies recorded across all symbols. */
@@ -297,7 +333,7 @@ func (monitor *AnomalyMonitor) Close() error {
 
 func (monitor *AnomalyMonitor) drain() {
 	for monitor.running.Load() {
-		anomaly, ok := monitor.ring.Get()
+		_, ok := monitor.ring.Get()
 		if !ok {
 			select {
 			case <-monitor.ctx.Done():
@@ -306,11 +342,5 @@ func (monitor *AnomalyMonitor) drain() {
 				continue
 			}
 		}
-
-		monitor.total.Add(1)
-
-		actual, _ := monitor.stats.LoadOrStore(anomaly.Symbol, &symbolStats{})
-		stats := actual.(*symbolStats)
-		stats.count.Add(1)
 	}
 }

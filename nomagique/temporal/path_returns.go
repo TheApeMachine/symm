@@ -2,11 +2,12 @@ package temporal
 
 import (
 	"errors"
+	"fmt"
 	"iter"
+	"math"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
@@ -47,18 +48,44 @@ func (op *PathReturns) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			path := (*PricePath)(arriving)
-			decoder := NewLogReturns()
-			out := ReturnPath{}
-
-			for returnPtr := range decoder.Next(transport.NewValues(path.Prices...).Next(nil)) {
-				value := *(*LogReturn)(returnPtr)
-				out.Returns = append(out.Returns, value)
-				out.Energy += value.Value * value.Value
+			if path == nil || len(path.Prices) < 2 {
+				continue
 			}
 
-			if err := decoder.Error(); err != nil {
+			returns := make([]LogReturn, 0, len(path.Prices)-1)
+			energy := 0.0
+			prevPrice := path.Prices[0]
+			prevLog := math.Log(prevPrice.Value)
+			var err error
+
+			for index := 1; index < len(path.Prices); index++ {
+				currPrice := path.Prices[index]
+
+				if currPrice.At <= prevPrice.At {
+					err = fmt.Errorf("%w: log return time %d must follow %d", core.ErrShape, currPrice.At, prevPrice.At)
+					break
+				}
+
+				currLog := math.Log(currPrice.Value)
+				retVal := currLog - prevLog
+				returns = append(returns, LogReturn{
+					From:  prevPrice.At,
+					To:    currPrice.At,
+					Value: retVal,
+				})
+				energy += retVal * retVal
+				prevPrice = currPrice
+				prevLog = currLog
+			}
+
+			if err != nil {
 				op.err = errors.Join(op.err, err)
 				return
+			}
+
+			out := ReturnPath{
+				Returns: returns,
+				Energy:  energy,
 			}
 
 			if !yield(unsafe.Pointer(&out)) {

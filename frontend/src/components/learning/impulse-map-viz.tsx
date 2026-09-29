@@ -12,7 +12,10 @@ interface ImpulseMapVizProps {
 		authority: number;
 		members: number;
 	}>;
-	activeEvents?: Array<{ label: string; latencyMs: number }>;
+	activeEvents?: Array<{
+		label: string;
+		activity: number;
+	}>;
 	className?: string;
 }
 
@@ -171,7 +174,7 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 				"collide",
 				d3
 					.forceCollide<ImpulseNode>()
-					.radius((d) => (d.snr || 1) * 1.5 + 2)
+					.radius((d) => (d.snr ?? 0) * 1.5 + 2)
 					.iterations(1)
 					.strength(0.1),
 			)
@@ -186,7 +189,7 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 			.data(nodes, (d) => d.id)
 			.enter()
 			.append("circle")
-			.attr("r", (d) => Math.max(2, (d.snr || 1) * 1.5 + 2))
+			.attr("r", (d) => Math.max(2, (d.snr ?? 0) * 1.5 + 2))
 			.attr("fill", (d) => colorScale(d.activation || 0))
 			.attr("stroke", "var(--line)")
 			.attr("stroke-width", 1)
@@ -207,7 +210,7 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 			.contourDensity<ImpulseNode>()
 			.x((d) => d.x || 0)
 			.y((d) => d.y || 0)
-			.weight((d) => (d.activation > 0.05 ? d.activation * (d.snr || 1) : 0))
+			.weight((d) => (d.activation > 0.05 ? d.activation * (d.snr ?? 0) : 0))
 			.size([width, height])
 			.bandwidth(25)
 			.thresholds(12);
@@ -356,7 +359,7 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 					"collide",
 					d3
 						.forceCollide<ImpulseNode>()
-						.radius((d) => (d.snr || 1) * 1.5 + 2)
+						.radius((d) => (d.snr ?? 0) * 1.5 + 2)
 						.iterations(2),
 				)
 				.force("charge", d3.forceManyBody().strength(-15))
@@ -528,12 +531,12 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 						<div className="space-y-1 font-mono">
 							{activeEvents.slice(0, 4).map((evt) => (
 								<div
-									key={`${evt.label}-${evt.latencyMs}`}
+									key={evt.label}
 									className="flex justify-between items-center text-(--f2)"
 								>
 									<span className="truncate">{evt.label}</span>
 									<span className="text-(--acc) shrink-0 ml-2">
-										{evt.latencyMs}ms
+										{(evt.activity * 100).toFixed(0)}%
 									</span>
 								</div>
 							))}

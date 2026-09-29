@@ -139,5 +139,17 @@ func TestDesk(t *testing.T) {
 				})
 			})
 		})
+
+		Convey("When market health experiences critical failure", func() {
+			for range 10 {
+				price.Anomalies().Record("BTC/USD", AnomalyCrossedBook)
+			}
+
+			pos := desk.Enter("BTC/USD")
+
+			Convey("Then Enter short circuits and halts execution", func() {
+				So(pos, ShouldBeNil)
+			})
+		})
 	})
 }

@@ -78,22 +78,15 @@ func (op *Engine) TreeExport() CognitionTreeExport {
 	currentStep := state.step
 	iterator := rootTree.Root().Iterator()
 
-	rootNode := &TrieNodeJSON{
-		ID:          "root",
-		TokenPrefix: "ROOT",
-		Probability: 1.0,
-		State:       "EVALUATED",
+	type rawCandidate struct {
+		keyBytes    []byte
+		className   string
+		tokens      []uint64
+		probability float64
+		count       uint64
 	}
 
-	nodeIndex := make(map[string]*TrieNodeJSON)
-	nodeIndex["root"] = rootNode
-
-	type scoredBranch struct {
-		branch   TrieBranchJSON
-		feasible FeasibleActionJSON
-	}
-
-	var collectedBranches []scoredBranch
+	var candidates []rawCandidate
 
 	for keyBytes, valBytes, found := iterator.Next(); found; keyBytes, valBytes, found = iterator.Next() {
 		if len(valBytes) != WeightSize {
@@ -106,10 +99,48 @@ func (op *Engine) TreeExport() CognitionTreeExport {
 			continue
 		}
 
-		className := string(classBytes)
 		weight := decodeWeight(valBytes).effective(currentStep, op.decayFactor)
 
+		if weight.Count == 0 {
+			continue
+		}
+
 		tokens := extractTokens(contextBytes)
+		candidates = append(candidates, rawCandidate{
+			keyBytes:    keyBytes,
+			className:   string(classBytes),
+			tokens:      tokens,
+			probability: weight.Probability,
+			count:       weight.Count,
+		})
+	}
+
+	slices.SortFunc(candidates, func(left, right rawCandidate) int {
+		return cmp.Compare(right.count, left.count)
+	})
+
+	topLimit := min(len(candidates), 64)
+	topCandidates := candidates[:topLimit]
+
+	rootNode := &TrieNodeJSON{
+		ID:          "root",
+		TokenPrefix: "ROOT",
+		Probability: 1.0,
+		State:       "EVALUATED",
+	}
+
+	nodeIndex := make(map[string]*TrieNodeJSON, topLimit*4)
+	nodeIndex["root"] = rootNode
+
+	type scoredBranch struct {
+		branch   TrieBranchJSON
+		feasible FeasibleActionJSON
+	}
+
+	var collectedBranches []scoredBranch
+
+	for _, cand := range topCandidates {
+		tokens := cand.tokens
 		tokenNames := make([]string, len(tokens))
 
 		for idx, tokenVal := range tokens {
@@ -133,9 +164,9 @@ func (op *Engine) TreeExport() CognitionTreeExport {
 				childNode = &TrieNodeJSON{
 					ID:              stepID,
 					TokenPrefix:     stepPrefix,
-					Probability:     weight.Probability,
-					StepProbability: weight.Probability,
-					Count:           weight.Count,
+					Probability:     cand.probability,
+					StepProbability: cand.probability,
+					Count:           cand.count,
 					Tokens:          tokenNames[:level+1],
 					State:           "EVALUATED",
 				}
@@ -144,10 +175,10 @@ func (op *Engine) TreeExport() CognitionTreeExport {
 			}
 
 			if exists {
-				childNode.Count += weight.Count
+				childNode.Count += cand.count
 
-				if weight.Probability > childNode.Probability {
-					childNode.Probability = weight.Probability
+				if cand.probability > childNode.Probability {
+					childNode.Probability = cand.probability
 				}
 			}
 
@@ -155,59 +186,55 @@ func (op *Engine) TreeExport() CognitionTreeExport {
 			currentNode = childNode
 		}
 
-		leafID := fmt.Sprintf("%s:%s", currentPath, className)
+		leafID := fmt.Sprintf("%s:%s", currentPath, cand.className)
 		policyState := "EVALUATED"
 
-		if weight.Probability > 0.5 {
+		if cand.probability > 0.5 {
 			policyState = "POLICY CHOICE"
 		}
 
 		leafNode := &TrieNodeJSON{
 			ID:              leafID,
-			TokenPrefix:     className,
-			Probability:     weight.Probability,
-			StepProbability: weight.Probability,
-			Count:           weight.Count,
-			Tokens:          append(tokenNames, className),
+			TokenPrefix:     cand.className,
+			Probability:     cand.probability,
+			StepProbability: cand.probability,
+			Count:           cand.count,
+			Tokens:          append(tokenNames, cand.className),
 			State:           policyState,
 		}
 		currentNode.Children = append(currentNode.Children, leafNode)
 
-		hash := fmt.Sprintf("0x%x:%s", keyBytes, className)
+		hash := fmt.Sprintf("0x%x:%s", cand.keyBytes, cand.className)
 
 		policyStr := "WAIT"
 
-		if className == "enter" {
+		if cand.className == "enter" {
 			policyStr = "ENTER"
 		}
 
-		if className == "exit" {
+		if cand.className == "exit" {
 			policyStr = "EXIT"
 		}
 
-		associationBias := weight.Probability - 0.5
+		associationBias := cand.probability - 0.5
 
 		collectedBranches = append(collectedBranches, scoredBranch{
 			branch: TrieBranchJSON{
 				Hash:       hash,
 				Depth:      len(tokens) + 1,
-				Visits:     weight.Count,
+				Visits:     cand.count,
 				MeanEdge:   associationBias,
-				Confidence: weight.Probability * 100.0,
+				Confidence: cand.probability * 100.0,
 				Policy:     policyStr,
 			},
 			feasible: FeasibleActionJSON{
-				Action:      className,
-				TokenPrefix: fmt.Sprintf("ROOT / %s / %s", strings.Join(tokenNames, " / "), className),
-				Probability: weight.Probability,
+				Action:      cand.className,
+				TokenPrefix: fmt.Sprintf("ROOT / %s / %s", strings.Join(tokenNames, " / "), cand.className),
+				Probability: cand.probability,
 				State:       policyState,
 			},
 		})
 	}
-
-	slices.SortFunc(collectedBranches, func(left, right scoredBranch) int {
-		return cmp.Compare(right.branch.Visits, left.branch.Visits)
-	})
 
 	maxBranches := min(len(collectedBranches), 16)
 	branches := make([]TrieBranchJSON, maxBranches)

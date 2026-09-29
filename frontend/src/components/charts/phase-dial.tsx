@@ -10,6 +10,7 @@ import type {
 	TerminalPhaseStatus,
 	TerminalWaveMode,
 } from "#/components/terminal/charts-frame";
+import { telemetryBus } from "#/transport/telemetry-bus";
 
 /*
 The order-book phase dial is the live oscillator state, not an HCAM corpus
@@ -249,10 +250,112 @@ const drawPhaseDial = (
 	context.restore();
 };
 
+let activeBuffer: Float32Array | null = null;
+
+const drawPhaseDialFromBuffer = (
+	context: CanvasRenderingContext2D,
+	width: number,
+	height: number,
+	buffer: Float32Array,
+) => {
+	clearCanvas(context, width, height);
+
+	const centerX = width / 2;
+	const centerY = height / 2 - 12;
+	const radius = Math.max(
+		18,
+		Math.min(width / 2 - 24, height / 2 - 36),
+	);
+
+	context.save();
+	drawPhaseAxes(context, centerX, centerY, radius);
+
+	const bidRes: PhaseChannelResultant = {
+		side: "bid",
+		count: buffer[0] || 0,
+		totalAmplitude: buffer[1] || 0,
+		coherence: buffer[2] || 0,
+		phase: buffer[3] || 0,
+	};
+	const askRes: PhaseChannelResultant = {
+		side: "ask",
+		count: buffer[4] || 0,
+		totalAmplitude: buffer[5] || 0,
+		coherence: buffer[6] || 0,
+		phase: buffer[7] || 0,
+	};
+
+	const oscCount = Math.floor(buffer[8] || 0);
+
+	if (oscCount > 0) {
+		let maxAmp = 0;
+
+		for (let idx = 0; idx < oscCount; idx++) {
+			const amp = buffer[9 + idx * 4 + 2];
+			if (amp > maxAmp) maxAmp = amp;
+		}
+
+		if (maxAmp > 0) {
+			for (let idx = 0; idx < oscCount; idx++) {
+				const offset = 9 + idx * 4;
+				const phase = buffer[offset];
+				const amp = buffer[offset + 2];
+				const side = buffer[offset + 3] === 1 ? "ask" : "bid";
+				const pointRadius = radius * (amp / maxAmp);
+				const pointX = centerX + Math.cos(phase) * pointRadius;
+				const pointY = centerY - Math.sin(phase) * pointRadius;
+				context.fillStyle = sideColor(side);
+				context.beginPath();
+				context.arc(pointX, pointY, 2.5, 0, Math.PI * 2);
+				context.fill();
+			}
+		}
+	}
+
+	const resultants = [bidRes, askRes];
+	drawResultants(context, centerX, centerY, radius, resultants);
+	drawReadout(context, centerX, height - 31, resultants, {
+		ready: oscCount > 0,
+		reason: "zero-allocation telemetry stream",
+	});
+	context.restore();
+};
+
+const repaintBuffer = () => {
+	const canvas = phaseDialCanvasRef.current;
+
+	if (canvas === null || activeBuffer === null) {
+		return;
+	}
+
+	const context = resizeCanvas(canvas);
+
+	if (context === null) {
+		return;
+	}
+
+	drawPhaseDialFromBuffer(
+		context,
+		canvas.clientWidth,
+		canvas.clientHeight,
+		activeBuffer,
+	);
+};
+
+export const paintPhaseDialBuffer = (buffer: Float32Array) => {
+	activeBuffer = buffer;
+	repaintBuffer();
+};
+
 const repaint = () => {
 	const canvas = phaseDialCanvasRef.current;
 
 	if (canvas === null) {
+		return;
+	}
+
+	if (activeBuffer !== null) {
+		repaintBuffer();
 		return;
 	}
 
@@ -276,6 +379,7 @@ repaint the same oscillator geometry instead of blanking the chart.
 Resultants are computed directly in the Go/Metal physics kernel upstream and passed predigested.
 */
 export const paintPhaseDial = (state: PhaseDialState) => {
+	activeBuffer = null;
 	phaseDialStore.setState(() => state);
 	repaint();
 };
@@ -293,9 +397,14 @@ export const TerminalPhaseDialChart = () => {
 		observer.observe(canvas);
 		const subscription = phaseDialStore.subscribe(repaint);
 
+		const busUnsubscribe = telemetryBus.subscribe("phase_dial", (event) => {
+			paintPhaseDialBuffer(event.data);
+		});
+
 		return () => {
 			observer.disconnect();
 			subscription.unsubscribe();
+			busUnsubscribe();
 		};
 	}, []);
 

@@ -34,7 +34,16 @@ type owner struct {
 
 func (cell *Cell) Value() (float64, bool) {
 	metric, exists := cell.owner.measurement.Metrics[cell.Metric]
-	return metric.Raw, exists
+
+	if !exists {
+		return 0, false
+	}
+
+	if metric.Standardized != nil {
+		return *metric.Standardized, true
+	}
+
+	return metric.Raw, true
 }
 
 /*
@@ -58,16 +67,29 @@ func (cell *Cell) Observe(sequence int64) {
 		return
 	}
 
-	denominator := math.Abs(value) + math.Abs(cell.Previous)
-
-	if cell.observed && denominator > 0 {
-		cell.Movement = (value - cell.Previous) / denominator
-	}
-
 	cell.Level = 0
 
 	if cell.Baseline.Count > 1 && cell.Baseline.M2 > 0 {
 		cell.Level = (value - cell.Baseline.Mean) / math.Sqrt(cell.Baseline.M2/(cell.Baseline.Count-1))
+	}
+
+	if cell.observed {
+		if cell.Baseline.Count > 1 && cell.Baseline.M2 > 0 {
+			stdDev := math.Sqrt(cell.Baseline.M2 / (cell.Baseline.Count - 1))
+
+			if stdDev > 0 {
+				innovation := (value - cell.Previous) / stdDev
+				cell.Movement = innovation / (1 + math.Abs(innovation))
+			}
+		}
+
+		if cell.Movement == 0 {
+			denominator := math.Abs(value) + math.Abs(cell.Previous)
+
+			if denominator > 0 {
+				cell.Movement = (value - cell.Previous) / denominator
+			}
+		}
 	}
 
 	cell.Baseline.Update(value)

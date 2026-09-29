@@ -189,23 +189,29 @@ Error records the first error it sees and joins any subsequent errors to it.
 */
 func (op *Engine) Error(errs ...error) error {
 	for _, err := range errs {
+
 		if err == nil {
 			continue
 		}
+
 		for {
 			previous := op.err.Load()
 			joined := err
+
 			if previous != nil {
 				joined = errors.Join(previous.err, err)
 			}
+
 			if op.err.CompareAndSwap(previous, &engineError{joined}) {
 				break
 			}
 		}
 	}
+
 	if recorded := op.err.Load(); recorded != nil {
 		return recorded.err
 	}
+
 	return nil
 }
 
@@ -292,6 +298,7 @@ func (op *Engine) Step() uint64 {
 	}
 
 	state := op.state.Load()
+
 	if state == nil {
 		return 0
 	}
@@ -325,17 +332,29 @@ func (op *Engine) Restore(encoded []byte) (Result, error) {
 // decomposing it into suffix n-grams up to MaxBackoffOrder with surprisal-modulated plasticity.
 func (op *Engine) Train(sequence []byte, class []byte, feedback float64) (Result, error) {
 	if len(sequence) == 0 {
-		return Result{}, errnie.Error(errnie.Err(errnie.Validation, "cognition: sequence is required for training", nil))
+		return Result{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[nomagique.cognition.engine] sequence is required for training",
+			nil,
+		))
 	}
 
 	if len(class) == 0 {
-		return Result{}, errnie.Error(errnie.Err(errnie.Validation, "cognition: class is required for training", nil))
+		return Result{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[nomagique.cognition.engine] class is required for training",
+			nil,
+		))
 	}
 
 	evalResult, evalErr := op.evaluate(sequence)
 
 	if evalErr != nil {
-		return Result{}, evalErr
+		return Result{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[nomagique.cognition.engine] failed to evaluate training sequence",
+			evalErr,
+		))
 	}
 
 	plasticity := math.Min(1.0, 0.1+(evalResult.Evaluation.Surprisal/4.0))
@@ -396,7 +415,11 @@ func (op *Engine) Train(sequence []byte, class []byte, feedback float64) (Result
 					})
 
 					if err != nil {
-						return Result{}, err
+						return Result{}, errnie.Error(errnie.Err(
+							errnie.Validation,
+							"[nomagique.cognition.engine] failed to observe training sequence",
+							err,
+						))
 					}
 				}
 			}
@@ -482,7 +505,11 @@ func (op *Engine) Train(sequence []byte, class []byte, feedback float64) (Result
 					})
 
 					if err != nil {
-						return Result{}, err
+						return Result{}, errnie.Error(errnie.Err(
+							errnie.Validation,
+							"[nomagique.cognition.engine] failed to observe training sequence",
+							err,
+						))
 					}
 				}
 			}
@@ -499,7 +526,11 @@ func (op *Engine) Train(sequence []byte, class []byte, feedback float64) (Result
 	})
 
 	if err != nil {
-		return Result{}, err
+		return Result{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[nomagique.cognition.engine] failed to observe training sequence",
+			err,
+		))
 	}
 
 	_, suffixes := backoffCandidates(sequence, op.cfg.MaxBackoffOrder)
@@ -513,7 +544,11 @@ func (op *Engine) Train(sequence []byte, class []byte, feedback float64) (Result
 		})
 
 		if err != nil {
-			return Result{}, err
+			return Result{}, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[nomagique.cognition.engine] failed to observe training sequence",
+				err,
+			))
 		}
 	}
 
@@ -701,7 +736,11 @@ func (op *Engine) Consolidate(temperature float64) (string, string, float64, boo
 			_, trainErr := op.Train([]byte(dream), []byte(targetClass), 1.0)
 
 			if trainErr != nil {
-				return dream, targetClass, confidence, novel, trainErr
+				return dream, targetClass, confidence, novel, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"[nomagique.cognition.engine] failed to train sequence",
+					trainErr,
+				))
 			}
 
 			op.remReplays.Add(1)
@@ -1013,48 +1052,6 @@ func (op *Engine) evaluate(context []byte, exact ...bool) (Result, error) {
 		acc.add(class, mass, state.Count, op.cfg.MaxBackoffOrder)
 	}
 
-	// Fallback: if no exact match, use prefix and suffix backoff via direct SeekPrefix
-	if acc.count == 0 && (len(exact) == 0 || !exact[0]) {
-		maxSteps := max(op.cfg.MaxBackoffOrder, len(context)/8)
-
-		prefixes, suffixes := backoffCandidates(context, maxSteps)
-		var keyBuf [512]byte
-
-		// Check prefixes first (salience hierarchy: keeping scope and dominant regions)
-		for _, sub := range prefixes {
-			order := max(1, len(sub)/8)
-			maxOrder := max(op.cfg.MaxBackoffOrder, len(context)/8)
-
-			if searchSubPrefix(root, sub, step, op.decayFactor, order, maxOrder, &acc) {
-				break
-			}
-		}
-
-		// Fallback to suffixes if no prefix matched
-		if acc.count == 0 {
-			for _, sub := range suffixes {
-				var sensoryKey []byte
-
-				if 2+len(sub) <= len(keyBuf) {
-					keyBuf[0] = 's'
-					keyBuf[1] = '/'
-					copy(keyBuf[2:], sub)
-					sensoryKey = keyBuf[:2+len(sub)]
-				}
-
-				if sensoryKey == nil {
-					sensoryKey = makeSensoryKey(sub)
-				}
-
-				if _, exists := root.Get(sensoryKey); exists {
-					if searchSubPrefix(root, sub, step, op.decayFactor, 1, op.cfg.MaxBackoffOrder, &acc) {
-						break
-					}
-				}
-			}
-		}
-	}
-
 	eval := Evaluation{Context: context, Step: step}
 
 	if acc.count > 0 {
@@ -1082,16 +1079,17 @@ func (op *Engine) evaluate(context []byte, exact ...bool) (Result, error) {
 		totalSteps = 1.0
 	}
 
-	if raw, found := root.Get(sensoryKey); found {
+	raw, found := root.Get(sensoryKey)
+	if found {
 		state := decodeWeight(raw).effective(step, op.decayFactor)
-
 		prob := (float64(state.Count) + op.cfg.DirichletAlpha) / (totalSteps + op.cfg.DirichletAlpha*float64(maxSensoryCandidates))
+
 		if prob > 0 {
 			eval.Surprisal = -math.Log2(prob)
-		} else {
-			eval.Surprisal = op.cfg.SurprisalBreakBits
 		}
-	} else {
+	}
+
+	if !found {
 		// Unseen transition: surprisal derives from Dirichlet baseline over sensory space
 		eval.Surprisal = -math.Log2(op.cfg.DirichletAlpha / (totalSteps + op.cfg.DirichletAlpha*float64(maxSensoryCandidates)))
 	}
@@ -1133,6 +1131,7 @@ func (op *Engine) classify(acc *classAccumulator) (classification, error) {
 	}
 
 	totalMass := 0.0
+
 	for i := 0; i < acc.count; i++ {
 		totalMass += acc.masses[i]
 	}
@@ -1145,6 +1144,7 @@ func (op *Engine) classify(acc *classAccumulator) (classification, error) {
 	denom := totalMass + float64(k)*alpha
 
 	densities := make([]float64, acc.count)
+
 	for i := 0; i < acc.count; i++ {
 		densities[i] = (acc.masses[i] + alpha) / denom
 	}
@@ -1161,8 +1161,13 @@ func (op *Engine) classify(acc *classAccumulator) (classification, error) {
 		}
 
 		confidence, err := evidenceShare(densities, winner.Index)
+
 		if err != nil {
-			return reading, err
+			return reading, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[nomagique.cognition.engine] failed to calculate winner evidence share",
+				err,
+			))
 		}
 
 		reading.confidence = confidence
@@ -1192,8 +1197,13 @@ func (op *Engine) classify(acc *classAccumulator) (classification, error) {
 			}
 
 			runnerUpShare, err := evidenceShare(densities, runnerUpIdx)
+
 			if err != nil {
-				return reading, err
+				return reading, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"[nomagique.cognition.engine] failed to calculate runner up evidence share",
+					err,
+				))
 			}
 
 			if runnerUpShare > 0 && reading.confidence > 0 {
@@ -1206,8 +1216,13 @@ func (op *Engine) classify(acc *classAccumulator) (classification, error) {
 
 	for i := 0; i < acc.count; i++ {
 		share, err := evidenceShare(densities, i)
+
 		if err != nil {
-			return reading, err
+			return reading, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[nomagique.cognition.engine] failed to calculate evidence share",
+				err,
+			))
 		}
 
 		reading.candidates[i] = ClassCandidate{
@@ -1221,8 +1236,13 @@ func (op *Engine) classify(acc *classAccumulator) (classification, error) {
 	// ShannonAmbiguity rewrites its wire in place, so it reads the densities
 	// only after every share has been taken from them.
 	ambiguity, err := shannonAmbiguity(densities)
+
 	if err != nil {
-		return reading, err
+		return reading, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[nomagique.cognition.engine] failed to calculate shannon ambiguity",
+			err,
+		))
 	}
 
 	reading.ambiguity = ambiguity
@@ -1321,7 +1341,11 @@ replacement empty model is published after a failed read.
 func (op *Engine) restore(encoded []byte) (Result, error) {
 	currentState := op.state.Load()
 	if currentState.root.Len() != 0 || currentState.step != 0 {
-		return Result{}, errnie.Error(errnie.Err(errnie.Conflict, "cognition: restore requires a fresh engine", nil))
+		return Result{}, errnie.Error(errnie.Err(
+			errnie.Conflict,
+			"[nomagique.cognition.engine] restore requires a fresh engine",
+			nil,
+		))
 	}
 
 	decoder := gob.NewDecoder(bytes.NewReader(encoded))
@@ -1333,16 +1357,28 @@ func (op *Engine) restore(encoded []byte) (Result, error) {
 
 	for _, destination := range []any{&format, &config, &step, &count, &census} {
 		if err := decoder.Decode(destination); err != nil {
-			return Result{}, errnie.Error(errnie.Err(errnie.Validation, "cognition: invalid packed model header", err))
+			return Result{}, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[nomagique.cognition.engine] failed to decode packed model header",
+				err,
+			))
 		}
 	}
 
 	if format != "cognition/packed-weight/1" || count < 0 {
-		return Result{}, errnie.Error(errnie.Err(errnie.Validation, "cognition: unsupported packed model format", nil))
+		return Result{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[nomagique.cognition.engine] unsupported packed model format",
+			nil,
+		))
 	}
 
 	if config.DirichletAlpha <= 0 || config.MaxBackoffOrder <= 0 || config.SurprisalBreakBits <= 0 {
-		return Result{}, errnie.Error(errnie.Err(errnie.Validation, "cognition: invalid model configuration", nil))
+		return Result{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[nomagique.cognition.engine] invalid model configuration",
+			nil,
+		))
 	}
 
 	transaction := iradix.New[[]byte]().Txn()
@@ -1352,7 +1388,11 @@ func (op *Engine) restore(encoded []byte) (Result, error) {
 
 		for _, destination := range []any{&key, &value} {
 			if err := decoder.Decode(destination); err != nil {
-				return Result{}, errnie.Error(errnie.Err(errnie.Validation, "cognition: incomplete packed model", err))
+				return Result{}, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"[nomagique.cognition.engine] failed to decode packed model keys and values",
+					err,
+				))
 			}
 		}
 
@@ -1361,14 +1401,22 @@ func (op *Engine) restore(encoded []byte) (Result, error) {
 		}
 
 		if _, replaced := transaction.Insert(key, value); replaced {
-			return Result{}, errnie.Error(errnie.Err(errnie.Validation, "cognition: duplicate packed model key", nil))
+			return Result{}, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[nomagique.cognition.engine] duplicate packed model key",
+				nil,
+			))
 		}
 	}
 
 	var trailing any
 
 	if err := decoder.Decode(&trailing); err != io.EOF {
-		return Result{}, errnie.Error(errnie.Err(errnie.Validation, "cognition: trailing packed model data", err))
+		return Result{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[nomagique.cognition.engine] trailing packed model data",
+			err,
+		))
 	}
 
 	for class, count := range census {
@@ -1394,13 +1442,21 @@ func (op *Engine) validate(key, value []byte, step uint64) error {
 	sensory := bytes.HasPrefix(key, []byte("s/")) && len(key) > len("s/")
 
 	if (!basin && !sensory) || len(value) != WeightSize {
-		return errnie.Error(errnie.Err(errnie.Validation, "cognition: invalid packed model record", nil))
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[nomagique.cognition.engine] invalid packed model record",
+			nil,
+		))
 	}
 
 	weight := decodeWeight(value)
 
 	if weight.Count == 0 || weight.WriteStep > step || weight.Probability < 0 || weight.Probability > 1 {
-		return errnie.Error(errnie.Err(errnie.Validation, "cognition: invalid packed model weight", nil))
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[nomagique.cognition.engine] invalid packed model weight",
+			nil,
+		))
 	}
 
 	return nil
@@ -1493,49 +1549,6 @@ func (acc *classAccumulator) add(name []byte, mass float64, count uint64, order 
 	acc.counts = append(acc.counts, count)
 	acc.orders = append(acc.orders, order)
 	acc.count++
-}
-
-/*
-searchSubPrefix gathers basin candidates under one backoff prefix.
-*/
-func searchSubPrefix(
-	root *iradix.Tree[[]byte], sub []byte, step uint64, decayFactor float64, order int, maxOrder int, acc *classAccumulator,
-) bool {
-	if len(sub) == 0 {
-		return false
-	}
-
-	prefixBuf := make([]byte, 2+len(sub)+1)
-	prefixBuf[0] = 'b'
-	prefixBuf[1] = '/'
-	copy(prefixBuf[2:], sub)
-	prefixBuf[2+len(sub)] = '/'
-
-	it := root.Root().Iterator()
-	it.SeekPrefix(prefixBuf)
-	found := false
-
-	for k, v, ok := it.Next(); ok; k, v, ok = it.Next() {
-		if !bytes.HasPrefix(k, prefixBuf) {
-			break
-		}
-
-		class, _, valid := parseBasinKey(k)
-
-		if !valid {
-			continue
-		}
-
-		state := decodeWeight(v).effective(step, decayFactor)
-		mass := float64(state.Count) * state.Probability
-		if maxOrder > 0 {
-			mass *= float64(order) / float64(maxOrder)
-		}
-		acc.add(class, mass, state.Count, order)
-		found = true
-	}
-
-	return found
 }
 
 /*

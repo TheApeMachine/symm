@@ -191,9 +191,8 @@ func BenchmarkLevel3StepUnrelatedPeer(b *testing.B) {
 	peer.Label = "BTC/USD"
 	measurement.Peers = []*data.Measurement[float64]{peer}
 	b.ReportAllocs()
-	b.ResetTimer()
 
-	for index := 0; index < b.N; index++ {
+	for b.Loop() {
 		if entity.Step(measurement) != nil {
 			b.Fatal("unrelated peer published a signal")
 		}

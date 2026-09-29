@@ -17,6 +17,7 @@ import (
 )
 
 type tradeInput struct {
+	Symbol   string
 	Price    float64
 	Qty      float64
 	Side     string
@@ -44,8 +45,7 @@ type tradeResult struct {
 	AskSupported     bool
 }
 
-type tradePipeline struct {
-	*core.PrimitiveError
+type tradeState struct {
 	bracketQty         float64
 	matchedBidQty      float64
 	matchedAskQty      float64
@@ -57,14 +57,18 @@ type tradePipeline struct {
 	askBaseline        core.Primitive
 	bidFractionSamples int
 	askFractionSamples int
-	out                tradeResult
+}
+
+type tradePipeline struct {
+	*core.PrimitiveError
+	paths map[string]*tradeState
+	out   tradeResult
 }
 
 func newTradePipeline() core.Primitive {
 	return &tradePipeline{
 		PrimitiveError: core.NewPrimitiveError(),
-		bidBaseline:    adaptive.NewBaseline(adaptive.NewWindow()),
-		askBaseline:    adaptive.NewBaseline(adaptive.NewWindow()),
+		paths:          make(map[string]*tradeState),
 	}
 }
 
@@ -77,66 +81,75 @@ func (op *tradePipeline) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Point
 				continue
 			}
 
+			state := op.paths[input.Symbol]
+			if state == nil {
+				state = &tradeState{
+					bidBaseline: adaptive.NewBaseline(adaptive.NewWindow()),
+					askBaseline: adaptive.NewBaseline(adaptive.NewWindow()),
+				}
+				op.paths[input.Symbol] = state
+			}
+
 			inBracket := (input.Price >= input.BidPrice && input.Price <= input.AskPrice)
 			if inBracket {
-				op.bracketQty += input.Qty
+				state.bracketQty += input.Qty
 			}
 
 			var bidFillFrac, askFillFrac float64
 
 			if input.Side == "sell" && input.Price == input.BidPrice {
-				op.matchedBidQty += input.Qty
-				op.touchFillBidQty += input.Qty
+				state.matchedBidQty += input.Qty
+				state.touchFillBidQty += input.Qty
 				if input.BidQty > 0 {
-					bidFillFrac = op.touchFillBidQty / input.BidQty
+					bidFillFrac = state.touchFillBidQty / input.BidQty
 				}
 			}
 
 			if input.Side == "buy" && input.Price == input.AskPrice {
-				op.matchedAskQty += input.Qty
-				op.touchFillAskQty += input.Qty
+				state.matchedAskQty += input.Qty
+				state.touchFillAskQty += input.Qty
 				if input.AskQty > 0 {
-					askFillFrac = op.touchFillAskQty / input.AskQty
+					askFillFrac = state.touchFillAskQty / input.AskQty
 				}
 			}
 
 			var bidRate, askRate float64
 			var hasRate bool
 
-			if op.hasPrevTime {
-				dt := input.At.Sub(op.prevTime).Seconds()
+			if state.hasPrevTime {
+				dt := input.At.Sub(state.prevTime).Seconds()
 				if dt > 0 {
-					bidRate = op.touchFillBidQty / dt
-					askRate = op.touchFillAskQty / dt
+					bidRate = state.touchFillBidQty / dt
+					askRate = state.touchFillAskQty / dt
 					hasRate = true
 				}
 			}
 
-			op.prevTime = input.At
-			op.hasPrevTime = true
+			state.prevTime = input.At
+			state.hasPrevTime = true
 
 			var bidReading, askReading adaptive.BaselineReading
 
 			if bidFillFrac > 0 {
-				for rPtr := range op.bidBaseline.Next(transport.NewOne(unsafe.Pointer(&bidFillFrac)).Next(nil)) {
+				for rPtr := range state.bidBaseline.Next(transport.NewOne(unsafe.Pointer(&bidFillFrac)).Next(nil)) {
 					bidReading = *(*adaptive.BaselineReading)(rPtr)
 				}
-				op.bidFractionSamples++
+				state.bidFractionSamples++
 			}
 
 			if askFillFrac > 0 {
-				for rPtr := range op.askBaseline.Next(transport.NewOne(unsafe.Pointer(&askFillFrac)).Next(nil)) {
+				for rPtr := range state.askBaseline.Next(transport.NewOne(unsafe.Pointer(&askFillFrac)).Next(nil)) {
 					askReading = *(*adaptive.BaselineReading)(rPtr)
 				}
-				op.askFractionSamples++
+				state.askFractionSamples++
 			}
 
 			op.out = tradeResult{
-				BracketQty:       op.bracketQty,
-				MatchedBidQty:    op.matchedBidQty,
-				MatchedAskQty:    op.matchedAskQty,
-				TouchFillBidQty:  op.touchFillBidQty,
-				TouchFillAskQty:  op.touchFillAskQty,
+				BracketQty:       state.bracketQty,
+				MatchedBidQty:    state.matchedBidQty,
+				MatchedAskQty:    state.matchedAskQty,
+				TouchFillBidQty:  state.touchFillBidQty,
+				TouchFillAskQty:  state.touchFillAskQty,
 				TouchFillBidFrac: bidFillFrac,
 				TouchFillAskFrac: askFillFrac,
 				TouchFillBidRate: bidRate,
@@ -144,8 +157,8 @@ func (op *tradePipeline) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Point
 				HasRate:          hasRate,
 				BidReading:       bidReading,
 				AskReading:       askReading,
-				BidSupported:     op.bidFractionSamples >= 3,
-				AskSupported:     op.askFractionSamples >= 3,
+				BidSupported:     state.bidFractionSamples >= 3,
+				AskSupported:     state.askFractionSamples >= 3,
 			}
 
 			if !yield(unsafe.Pointer(&op.out)) {
@@ -300,6 +313,7 @@ func (trade *Trade) Step(m *data.Measurement[float64]) *data.Measurement[float64
 	}
 
 	pipeInput := tradeInput{
+		Symbol:   input.Label,
 		Price:    price,
 		Qty:      qty,
 		Side:     input.Provenance["side"],

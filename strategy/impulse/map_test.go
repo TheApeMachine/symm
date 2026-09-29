@@ -9,6 +9,7 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/geometry"
 )
 
 // tape supplies repeated rises, reversals, silence and renewed movement across owners.
@@ -118,6 +119,29 @@ func TestMapStep(t *testing.T) {
 			So(live.Step(frame), ShouldBeNil)
 			So(market.Volume, ShouldEqual, before)
 			So(market.Sequence, ShouldEqual, 25)
+		})
+
+		Convey("A stabilized grid locks its regions and preserves coordinate topology", func() {
+			market.Lock()
+			So(market.IsLocked(), ShouldBeTrue)
+			posBefore := make([]geometry.Point, len(market.Cells))
+			basinBefore := make([]int, len(market.Cells))
+
+			for idx, c := range market.Cells {
+				posBefore[idx] = c.Position
+				basinBefore[idx] = c.Position.Basin
+			}
+
+			So(live.Step(sample.step(27)), ShouldBeNil)
+			So(market.IsLocked(), ShouldBeTrue)
+
+			for idx, c := range market.Cells {
+				So(c.Position.X, ShouldEqual, posBefore[idx].X)
+				So(c.Position.Y, ShouldEqual, posBefore[idx].Y)
+				So(c.Position.Basin, ShouldEqual, basinBefore[idx])
+			}
+
+			So(len(market.Impulse.Regions), ShouldBeGreaterThan, 0)
 		})
 	})
 }

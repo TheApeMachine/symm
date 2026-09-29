@@ -17,6 +17,7 @@ import (
 )
 
 type level3Input struct {
+	Symbol   string
 	BidPrice float64
 	AskPrice float64
 	BidQty   float64
@@ -53,20 +54,25 @@ type level3Result struct {
 	HasRates             bool
 }
 
-type level3Pipeline struct {
-	*core.PrimitiveError
+type level3State struct {
 	hasPrev    bool
 	prevBid    float64
 	prevAsk    float64
 	prevBidQty float64
 	prevAskQty float64
 	prevTime   time.Time
-	out        level3Result
+}
+
+type level3Pipeline struct {
+	*core.PrimitiveError
+	paths map[string]*level3State
+	out   level3Result
 }
 
 func newLevel3Pipeline() core.Primitive {
 	return &level3Pipeline{
 		PrimitiveError: core.NewPrimitiveError(),
+		paths:          make(map[string]*level3State),
 	}
 }
 
@@ -75,6 +81,12 @@ func (op *level3Pipeline) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Poin
 		for arriving := range in {
 			input := (*level3Input)(arriving)
 
+			state := op.paths[input.Symbol]
+			if state == nil {
+				state = &level3State{}
+				op.paths[input.Symbol] = state
+			}
+
 			op.out = level3Result{
 				BidPrice: input.BidPrice,
 				AskPrice: input.AskPrice,
@@ -82,82 +94,82 @@ func (op *level3Pipeline) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Poin
 				AskQty:   input.AskQty,
 			}
 
-			if op.hasPrev {
+			if state.hasPrev {
 				op.out.HasPrev = true
-				op.out.PrevBid = op.prevBid
-				op.out.PrevAsk = op.prevAsk
+				op.out.PrevBid = state.prevBid
+				op.out.PrevAsk = state.prevAsk
 
-				dt := input.At.Sub(op.prevTime).Seconds()
+				dt := input.At.Sub(state.prevTime).Seconds()
 
-				if op.prevBid > 0 && input.BidPrice > 0 {
-					op.out.BidLogChange = math.Log(input.BidPrice / op.prevBid)
+				if state.prevBid > 0 && input.BidPrice > 0 {
+					op.out.BidLogChange = math.Log(input.BidPrice / state.prevBid)
 					op.out.HasBidLogChange = true
 				}
 
-				if op.prevAsk > 0 && input.AskPrice > 0 {
-					op.out.AskLogChange = math.Log(input.AskPrice / op.prevAsk)
+				if state.prevAsk > 0 && input.AskPrice > 0 {
+					op.out.AskLogChange = math.Log(input.AskPrice / state.prevAsk)
 					op.out.HasAskLogChange = true
 				}
 
-				if input.BidPrice < op.prevBid {
-					op.out.RetreatedBidQty = op.prevBidQty
+				if input.BidPrice < state.prevBid {
+					op.out.RetreatedBidQty = state.prevBidQty
 					op.out.RetreatBidFraction = 1.0
 					if dt > 0 {
-						op.out.RetreatBidRate = op.prevBidQty / dt
+						op.out.RetreatBidRate = state.prevBidQty / dt
 						op.out.HasRates = true
 					}
 				}
 
-				if input.BidPrice == op.prevBid {
-					if input.BidQty < op.prevBidQty {
-						withdrawn := op.prevBidQty - input.BidQty
+				if input.BidPrice == state.prevBid {
+					if input.BidQty < state.prevBidQty {
+						withdrawn := state.prevBidQty - input.BidQty
 						op.out.NetWithdrawnBidQty = withdrawn
-						if op.prevBidQty > 0 {
-							op.out.NetWithdrawBidFrac = withdrawn / op.prevBidQty
+						if state.prevBidQty > 0 {
+							op.out.NetWithdrawBidFrac = withdrawn / state.prevBidQty
 						}
 						if dt > 0 {
 							op.out.NetWithdrawBidRate = withdrawn / dt
 							op.out.HasRates = true
 						}
 					}
-					if input.BidQty > op.prevBidQty {
-						op.out.NetReplenishedBidQty = input.BidQty - op.prevBidQty
+					if input.BidQty > state.prevBidQty {
+						op.out.NetReplenishedBidQty = input.BidQty - state.prevBidQty
 					}
 				}
 
-				if input.AskPrice > op.prevAsk {
-					op.out.RetreatedAskQty = op.prevAskQty
+				if input.AskPrice > state.prevAsk {
+					op.out.RetreatedAskQty = state.prevAskQty
 					op.out.RetreatAskFraction = 1.0
 					if dt > 0 {
-						op.out.RetreatAskRate = op.prevAskQty / dt
+						op.out.RetreatAskRate = state.prevAskQty / dt
 						op.out.HasRates = true
 					}
 				}
 
-				if input.AskPrice == op.prevAsk {
-					if input.AskQty < op.prevAskQty {
-						withdrawn := op.prevAskQty - input.AskQty
+				if input.AskPrice == state.prevAsk {
+					if input.AskQty < state.prevAskQty {
+						withdrawn := state.prevAskQty - input.AskQty
 						op.out.NetWithdrawnAskQty = withdrawn
-						if op.prevAskQty > 0 {
-							op.out.NetWithdrawAskFrac = withdrawn / op.prevAskQty
+						if state.prevAskQty > 0 {
+							op.out.NetWithdrawAskFrac = withdrawn / state.prevAskQty
 						}
 						if dt > 0 {
 							op.out.NetWithdrawAskRate = withdrawn / dt
 							op.out.HasRates = true
 						}
 					}
-					if input.AskQty > op.prevAskQty {
-						op.out.NetReplenishedAskQty = input.AskQty - op.prevAskQty
+					if input.AskQty > state.prevAskQty {
+						op.out.NetReplenishedAskQty = input.AskQty - state.prevAskQty
 					}
 				}
 			}
 
-			op.prevBid = input.BidPrice
-			op.prevAsk = input.AskPrice
-			op.prevBidQty = input.BidQty
-			op.prevAskQty = input.AskQty
-			op.prevTime = input.At
-			op.hasPrev = true
+			state.prevBid = input.BidPrice
+			state.prevAsk = input.AskPrice
+			state.prevBidQty = input.BidQty
+			state.prevAskQty = input.AskQty
+			state.prevTime = input.At
+			state.hasPrev = true
 
 			if !yield(unsafe.Pointer(&op.out)) {
 				return
@@ -276,6 +288,7 @@ func (level3 *Level3) Step(m *data.Measurement[float64]) *data.Measurement[float
 	}
 
 	pipeInput := level3Input{
+		Symbol:   input.Label,
 		BidPrice: bidPrice,
 		AskPrice: askPrice,
 		BidQty:   bidQty,

@@ -163,6 +163,13 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 		results = append(results, categories)
 		measurement.Label = symbol
 		measurement.At = categories[0].At
+		measurement.Maturity = categories[0].Maturity
+
+		if categories[0].Uncertainty > 0 {
+			measurement.SNR = categories[0].Confidence / categories[0].Uncertainty
+			measurement.SNRDefined = true
+			measurement.Estimated = true
+		}
 
 		for _, cat := range categories {
 			if cat.Type != "" {

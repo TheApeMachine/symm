@@ -21,6 +21,7 @@ type symbolTracker struct {
 	high, low             *decimal.Decimal
 	highTick, lowTick     int64
 	anchor, observations  int64
+	precursorStart        int64
 }
 
 /*
@@ -153,10 +154,18 @@ func (detector *StreamingDetector) advance(tracker *symbolTracker, measurement *
 			}
 		}
 
+		precursorStart := tracker.precursorStart
+		if precursorStart <= 0 || precursorStart >= tracker.anchor {
+			precursorStart = tracker.anchor - tracker.observations
+			if precursorStart < 0 {
+				precursorStart = 0
+			}
+		}
+
 		record = &ExcursionRecord{
 			Epoch: detector.epoch, ID: fmt.Sprintf("%d:%s:%d", detector.epoch, measurement.Label, tracker.anchor),
 			Symbol: measurement.Label, Direction: direction, ClearsFriction: clearsFriction,
-			AnchorTick: tracker.anchor, PrecursorStartTick: tracker.anchor,
+			AnchorTick: tracker.anchor, PrecursorStartTick: precursorStart,
 			ExitTick: measurement.SeqIdx, PostEndTick: measurement.SeqIdx,
 			EntryPrice: tracker.entry.Float64(), ExitPrice: tracker.bid.Float64(),
 			PositionSize: tracker.cost.Float64(), Profit: effectiveProfit.Float64(),
@@ -168,6 +177,7 @@ func (detector *StreamingDetector) advance(tracker *symbolTracker, measurement *
 		}
 	}
 
+	tracker.precursorStart = tracker.anchor
 	tracker.anchor, tracker.observations = measurement.SeqIdx, 0
 	tracker.entry, tracker.cost = tracker.ask, cost
 	tracker.high, tracker.low = price, price

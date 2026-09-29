@@ -261,6 +261,24 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 	measurement.Label = symbol
 	measurement.At = at
 
+	if loadedStep, found := solver.steps.Load(symbol); found {
+		if stepCount := loadedStep.(*atomic.Int64).Load(); stepCount > 1 {
+			measurement.Maturity = 1.0 - 1.0/float64(stepCount)
+		}
+	}
+
+	if resonance != nil && resonance.Dynamics != nil && resonance.Dynamics.StoredEnergy > 0 {
+		noise := resonance.Dynamics.Dissipation
+
+		if noise <= 0 {
+			noise = 1e-6
+		}
+
+		measurement.SNR = resonance.Dynamics.StoredEnergy / noise
+		measurement.SNRDefined = true
+		measurement.Estimated = true
+	}
+
 	return measurement
 }
 
@@ -499,14 +517,16 @@ deadband is zero and the head learns raw direction, which recursive least
 squares averages out.
 */
 func (solver *Solver) directionalTarget(symbolName string) core.Primitive {
-	return &logDirectionalTarget{
-		deadband: func() float64 {
+	return &excursionTarget{
+		scale: func() float64 {
 			loader, found := solver.returnNoise.Load(symbolName)
+
 			if !found {
 				return 0
 			}
 
 			tracker, valid := loader.(*returnNoiseTracker)
+
 			if !valid {
 				return 0
 			}
@@ -521,19 +541,15 @@ func (solver *Solver) directionalTarget(symbolName string) core.Primitive {
 }
 
 /*
-logDirectionalTarget classifies the log return between one issued reference
-and its resolved reference, deadbanded live by the symbol's own measured
-per-step log-return noise. A call therefore requires the cumulative move to
-exceed the symbol's own recent noise, which keeps the same target honest for
-symbols priced orders of magnitude apart.
+excursionTarget measures continuous excursion magnitude scaled by empirical step noise.
 */
-type logDirectionalTarget struct {
-	err      error
-	deadband func() float64
-	out      float64
+type excursionTarget struct {
+	err   error
+	scale func() float64
+	out   float64
 }
 
-func (op *logDirectionalTarget) Next(
+func (op *excursionTarget) Next(
 	in iter.Seq[unsafe.Pointer],
 ) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
@@ -542,20 +558,18 @@ func (op *logDirectionalTarget) Next(
 
 			if sample.Current <= 0 || sample.Past <= 0 {
 				op.Error(fmt.Errorf(
-					"%w: resonance: directional target references must be positive",
+					"%w: resonance: excursion target references must be positive",
 					core.ErrDomain,
 				))
 				return
 			}
 
-			logReturn := math.Log(sample.Current / sample.Past)
+			logReturn := math.Abs(math.Log(sample.Current / sample.Past))
+			noiseScale := op.scale()
+			op.out = logReturn
 
-			if math.Abs(logReturn) <= op.deadband() {
-				op.out = 0
-			} else if logReturn > 0 {
-				op.out = 1
-			} else {
-				op.out = -1
+			if noiseScale > 0 {
+				op.out = logReturn / noiseScale
 			}
 
 			if !yield(unsafe.Pointer(&op.out)) {
@@ -565,7 +579,7 @@ func (op *logDirectionalTarget) Next(
 	}
 }
 
-func (op *logDirectionalTarget) Error(errs ...error) error {
+func (op *excursionTarget) Error(errs ...error) error {
 	for _, err := range errs {
 		if err != nil {
 			op.err = errors.Join(op.err, err)
@@ -775,13 +789,7 @@ func (solver *Solver) publishReturns(
 		call := 0.0
 
 		if forecast.Ready {
-			if forecast.Value > 0 {
-				call = 1
-			}
-
-			if forecast.Value < 0 {
-				call = -1
-			}
+			call = forecast.Value
 		}
 
 		artifact.Forecast = &types.ResonanceReturnForecast{

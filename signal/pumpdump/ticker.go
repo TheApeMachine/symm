@@ -18,8 +18,9 @@ import (
 )
 
 type tickerInput struct {
-	Bid float64
-	Ask float64
+	Symbol string
+	Bid    float64
+	Ask    float64
 }
 
 type tickerResult struct {
@@ -33,16 +34,20 @@ type tickerResult struct {
 	Reading        adaptive.BaselineReading
 }
 
+type tickerState struct {
+	baseline core.Primitive
+}
+
 type tickerPipeline struct {
 	*core.PrimitiveError
-	baseline core.Primitive
-	out      tickerResult
+	paths map[string]*tickerState
+	out   tickerResult
 }
 
 func newTickerPipeline() core.Primitive {
 	return &tickerPipeline{
 		PrimitiveError: core.NewPrimitiveError(),
-		baseline:       adaptive.NewBaseline(adaptive.NewWindow()),
+		paths:          make(map[string]*tickerState),
 	}
 }
 
@@ -50,6 +55,14 @@ func (op *tickerPipeline) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Poin
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			input := (*tickerInput)(arriving)
+
+			state := op.paths[input.Symbol]
+			if state == nil {
+				state = &tickerState{
+					baseline: adaptive.NewBaseline(adaptive.NewWindow()),
+				}
+				op.paths[input.Symbol] = state
+			}
 
 			midpoint := (input.Bid + input.Ask) / 2.0
 			spread := input.Ask - input.Bid
@@ -60,11 +73,11 @@ func (op *tickerPipeline) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Poin
 			}
 
 			var reading adaptive.BaselineReading
-			for rPtr := range op.baseline.Next(transport.NewOne(unsafe.Pointer(&relativeSpread)).Next(nil)) {
+			for rPtr := range state.baseline.Next(transport.NewOne(unsafe.Pointer(&relativeSpread)).Next(nil)) {
 				reading = *(*adaptive.BaselineReading)(rPtr)
 			}
 
-			spreadRatio := 1.0
+			spreadRatio := 0.0
 			divergence := 0.0
 
 			if reading.Baseline > 0 {
@@ -188,7 +201,11 @@ func (ticker *Ticker) Step(m *data.Measurement[float64]) *data.Measurement[float
 		m.Metadata = make(map[string]string)
 	}
 
-	pipeInput := tickerInput{Bid: bid, Ask: ask}
+	pipeInput := tickerInput{
+		Symbol: source.Label,
+		Bid:    bid,
+		Ask:    ask,
+	}
 
 	for out := range ticker.pipeline.Next(transport.NewOne(unsafe.Pointer(&pipeInput)).Next(nil)) {
 		res := (*tickerResult)(out)

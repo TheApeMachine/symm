@@ -18,8 +18,6 @@ Everything that crosses the wire is captured byte-for-byte, so **Hindsight** can
 reconstruct exactly what the system knew at any historical moment and check whether the
 machinery was sane.
 
----
-
 > ### ⚠️ Read this first
 >
 > - **This is a personal project.** It is my own experiment, built for my own curiosity.
@@ -38,8 +36,6 @@ machinery was sane.
 > - **Trading real funds risks losing them.** Setting `trading.model: real` points
 >   experimental software at real money. Doing so is entirely at your own risk.
 > - Software provided **as is**, without warranty of any kind.
-
----
 
 ## Contents
 
@@ -92,7 +88,7 @@ measured. There is now exactly one decision path.
               │                    ┌──────────────────────┐
               │                    │  streaming workspace │
               │                    ├──────────────────────┤
-              │                    │ ingress (pub/priv/fut)│
+              │                    │ ingress (pub/prv/fut)│
               │                    │ eleven signals       │
               │                    │ logic solvers        │
               │                    │ cognition solver     │
@@ -426,19 +422,19 @@ lower-frequency state.
 
 The frontend is a React 19 / TanStack Start terminal on port 3000.
 
-| Surface                 | What it shows                                                                                                |
-|-------------------------|--------------------------------------------------------------------------------------------------------------|
-| `/` Dashboard           | Equity, balances, positions, queue depths, system telemetry.                                                 |
-| `/learning`             | The learning coordinator: impulse map, regions, cognition predictions, training metrics, and live decisions. |
-| `/hindsight`            | Run and capture browser, episode timeline, state inspector, position index, comparison view.                 |
-| `/fluid`                | Live L3 manifold: particle fields and pressure maps over WebRTC.                                             |
-| `/signals`              | Per-signal metric timeseries and estimator state.                                                            |
-| `/xray`                 | Resonance hidden state and prequential skill history.                                                        |
-| `/cortex`               | DMT prefix-tree activations and episodic paths.                                                              |
-| `/influence`, `/lineage`| Relationship, influence and metric-lineage views.                                                            |
-| `/journal`              | Completed round trips and realized PnL.                                                                      |
-| `/diagnostics`          | Live pipeline topology, per-stage and per-queue health and latency.                                          |
-| `/workbench`            | Interactive development and inspection workbench.                                                            |
+| Surface                  | What it shows                                                                                                |
+|--------------------------|--------------------------------------------------------------------------------------------------------------|
+| `/` Dashboard            | Equity, balances, positions, queue depths, system telemetry.                                                 |
+| `/learning`              | The learning coordinator: impulse map, regions, cognition predictions, training metrics, and live decisions. |
+| `/hindsight`             | Run and capture browser, episode timeline, state inspector, position index, comparison view.                 |
+| `/fluid`                 | Live L3 manifold: particle fields and pressure maps over WebRTC.                                             |
+| `/signals`               | Per-signal metric timeseries and estimator state.                                                            |
+| `/xray`                  | Resonance hidden state and prequential skill history.                                                        |
+| `/cortex`                | DMT prefix-tree activations and episodic paths.                                                              |
+| `/influence`, `/lineage` | Relationship, influence and metric-lineage views.                                                            |
+| `/journal`               | Completed round trips and realized PnL.                                                                      |
+| `/diagnostics`           | Live pipeline topology, per-stage and per-queue health and latency.                                          |
+| `/workbench`             | Interactive development and inspection workbench.                                                            |
 
 The browser sends the selected focus symbol back to the backend, so detailed telemetry is
 gated to the active market rather than broadcast for every pair.
@@ -463,11 +459,11 @@ per-entry quote-notional ceiling; and pprof disabled. See
 
 Runtime files under `system.data_path`:
 
-| File               | Purpose                                                              |
-|--------------------|----------------------------------------------------------------------|
+| File               | Purpose                                                                 |
+|--------------------|-------------------------------------------------------------------------|
 | `catalog/`         | Iceberg metadata and Parquet tables for runs, captures, and excursions. |
-| `positions.sqlite` | Persisted position and completed-trade state.                        |
-| `checkpoint.bin`   | Periodic binary model state checkpoint.                              |
+| `positions.sqlite` | Persisted position and completed-trade state.                           |
+| `checkpoint.bin`   | Periodic binary model state checkpoint.                                 |
 
 ### What survives a restart
 
@@ -554,26 +550,26 @@ pnpm bench            # Vitest benchmarks
 
 ## Repository map
 
-| Path                | Responsibility                                                                                                                                 |
-|---------------------|------------------------------------------------------------------------------------------------------------------------------------------------|
-| `main.go`, `cmd/`   | Cobra entrypoint, config loading, system assembly, runtime workspace, and telemetry streaming.                                                 |
-| `kraken/`           | Kraken wire models and normalized exchange payloads.                                                                                           |
-| `kraken/websocket/` | Public/private/futures/L3 transport, subscriptions, nonce management, paper routing, raw capture hooks.                                        |
-| `types/`            | Envelope, measurement, action, decision, cognition, holding, phase and UI types.                                                               |
-| `signal/`           | The eleven numerical conditioners, their specs and the metric map.                                                                             |
-| `logic/`            | Category, cognition, resonance and manifold solvers.                                                                                           |
+| Path                | Responsibility                                                                                                                                                                                                                      |
+|---------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `main.go`, `cmd/`   | Cobra entrypoint, config loading, system assembly, runtime workspace, and telemetry streaming.                                                                                                                                      |
+| `kraken/`           | Kraken wire models and normalized exchange payloads.                                                                                                                                                                                |
+| `kraken/websocket/` | Public/private/futures/L3 transport, subscriptions, nonce management, paper routing, raw capture hooks.                                                                                                                             |
+| `types/`            | Envelope, measurement, action, decision, cognition, holding, phase and UI types.                                                                                                                                                    |
+| `signal/`           | The eleven numerical conditioners, their specs and the metric map.                                                                                                                                                                  |
+| `logic/`            | Category, cognition, resonance and manifold solvers.                                                                                                                                                                                |
 | `strategy/`         | The learning coordinator: impulse map and watershed regions, precursor token paths, cognition tree integration, training evaluation and skill-vs-uncertainty gating, atomic trader order management, rehearsal delayed supervision. |
-| `broker/`           | Instruments, price and fee economics, wallet, desk, positions, persistence, recovery.                                                          |
-| `hindsight/`        | Capture identity, sequencing, manifests, witnesses, episodes, replay, integrity, validation.                                                   |
-| `store/`            | SQLite engine, ordered capture writer, async witness writer, learning journal, repositories.                                                   |
-| `nomagique/`        | Embedded numeric library (composed primitives, learning grid, physics, estimators).                                                            |
-| `telemetry/`        | FlatBuffers schema and generated Go bindings.                                                                                                  |
-| `ui/`               | Dashboard WebSocket, HTTP inspection routes, WebRTC manifold transport.                                                                        |
-| `frontend/`         | React/TanStack terminal and its stores.                                                                                                        |
-| `tests/`            | Deterministic Level 3 market model and fixtures.                                                                                               |
-| `system/`           | Runtime configuration and pipeline diagnostics.                                                                                                |
-| `tools/`            | Metric lineage and metric map generators.                                                                                                      |
-| `specs/`            | Design contracts, research notes and reviews (some historical).                                                                                |
+| `broker/`           | Instruments, price and fee economics, wallet, desk, positions, persistence, recovery.                                                                                                                                               |
+| `hindsight/`        | Capture identity, sequencing, manifests, witnesses, episodes, replay, integrity, validation.                                                                                                                                        |
+| `store/`            | SQLite engine, ordered capture writer, async witness writer, learning journal, repositories.                                                                                                                                        |
+| `nomagique/`        | Embedded numeric library (composed primitives, learning grid, physics, estimators).                                                                                                                                                 |
+| `telemetry/`        | FlatBuffers schema and generated Go bindings.                                                                                                                                                                                       |
+| `ui/`               | Dashboard WebSocket, HTTP inspection routes, WebRTC manifold transport.                                                                                                                                                             |
+| `frontend/`         | React/TanStack terminal and its stores.                                                                                                                                                                                             |
+| `tests/`            | Deterministic Level 3 market model and fixtures.                                                                                                                                                                                    |
+| `system/`           | Runtime configuration and pipeline diagnostics.                                                                                                                                                                                     |
+| `tools/`            | Metric lineage and metric map generators.                                                                                                                                                                                           |
+| `specs/`            | Design contracts, research notes and reviews (some historical).                                                                                                                                                                     |
 
 ### Adding or changing a signal
 

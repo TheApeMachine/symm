@@ -201,6 +201,16 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 		measurement.Label = reading.Symbol
 		measurement.At = reading.At
 
+		if reading.NodeCount > 1 {
+			measurement.Maturity = 1.0 - 1.0/float64(reading.NodeCount)
+		}
+
+		if reading.Contrast > 0 {
+			measurement.SNR = reading.Contrast
+			measurement.SNRDefined = true
+			measurement.Estimated = true
+		}
+
 		if m, ok := measurement.Metrics["surprisal"]; ok {
 			measurement.Metrics["surprisal"] = m.Write(reading.InterpolatedSurprisal)
 		}

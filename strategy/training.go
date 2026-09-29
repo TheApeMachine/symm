@@ -149,6 +149,8 @@ func (training *Training) Register() *data.Measurement[float64] {
 		"wins":            data.NewMetric[float64]("wins", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
 		"losses":          data.NewMetric[float64]("losses", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
 		"pnl":             data.NewMetric[float64]("pnl", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
+		"agent_entry":     data.NewMetric[float64]("agent_entry", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
+		"agent_exit":      data.NewMetric[float64]("agent_exit", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
 	})
 
 	training.measurement.Label = "learner"
@@ -215,10 +217,12 @@ func (training *Training) Step(measurement *data.Measurement[float64]) *data.Mea
 
 		if action == ActionEnter {
 			actionValue = 1
+			current.Metrics["agent_entry"] = current.Metrics["agent_entry"].Write(float64(measurement.SeqIdx))
 		}
 
 		if action == ActionExit {
 			actionValue = 2
+			current.Metrics["agent_exit"] = current.Metrics["agent_exit"].Write(float64(measurement.SeqIdx))
 		}
 
 		current.Metrics["action"] = current.Metrics["action"].Write(actionValue)
@@ -395,6 +399,7 @@ func (training *Training) publishProgress(frame *data.Measurement[float64], reco
 	}
 
 	current := prototype.Clone()
+	training.updatePortfolioMetrics(current)
 	reading := training.Rehearsal.published.Load()
 
 	if reading != nil {
@@ -470,6 +475,8 @@ func (training *Training) publishProgress(frame *data.Measurement[float64], reco
 
 		if record.ClearsFriction {
 			actionVal = 1.0
+			current.Metrics["agent_entry"] = current.Metrics["agent_entry"].Write(float64(record.AnchorTick))
+			current.Metrics["agent_exit"] = current.Metrics["agent_exit"].Write(float64(record.ExitTick))
 		}
 
 		current.Metrics["action"] = current.Metrics["action"].Write(actionVal)
