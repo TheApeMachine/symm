@@ -78,6 +78,24 @@ func (grid *Grid) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 }
 
 func (grid *Grid) Update(measurement *data.Measurement[float64]) {
+	grid.update(measurement, true)
+}
+
+func (grid *Grid) Observe(measurement *data.Measurement[float64]) {
+	grid.update(measurement, false)
+}
+
+func (grid *Grid) Region(label string) uint8 {
+	stored := grid.find(label)
+
+	if stored != nil {
+		return stored.Region
+	}
+
+	return 0
+}
+
+func (grid *Grid) update(measurement *data.Measurement[float64], decorate bool) {
 	for label, incoming := range measurement.Metrics {
 		existing := grid.find(label)
 
@@ -99,12 +117,16 @@ func (grid *Grid) Update(measurement *data.Measurement[float64]) {
 	metricCount := len(grid.Metrics)
 
 	if metricCount <= 1 {
-		for label, incoming := range measurement.Metrics {
-			if stored := grid.find(label); stored != nil {
-				incoming.X = stored.X
-				incoming.Y = stored.Y
-				incoming.Region = 1
-				measurement.Metrics[label] = incoming
+		if decorate {
+			for label, incoming := range measurement.Metrics {
+				stored := grid.find(label)
+
+				if stored != nil {
+					incoming.X = stored.X
+					incoming.Y = stored.Y
+					incoming.Region = 1
+					measurement.Metrics[label] = incoming
+				}
 			}
 		}
 
@@ -113,10 +135,13 @@ func (grid *Grid) Update(measurement *data.Measurement[float64]) {
 
 	if cap(grid.deltas) < metricCount {
 		grid.deltas = make([]float64, metricCount)
-	} else {
+	}
+
+	if cap(grid.deltas) >= metricCount {
 		grid.deltas = grid.deltas[:metricCount]
 		clear(grid.deltas)
 	}
+
 	deltas := grid.deltas
 
 	for index, metric := range grid.Metrics {
@@ -223,12 +248,16 @@ func (grid *Grid) Update(measurement *data.Measurement[float64]) {
 	}
 
 	// Decorate incoming measurement
-	for label, incoming := range measurement.Metrics {
-		if stored := grid.find(label); stored != nil {
-			incoming.X = stored.X
-			incoming.Y = stored.Y
-			incoming.Region = stored.Region
-			measurement.Metrics[label] = incoming
+	if decorate {
+		for label, incoming := range measurement.Metrics {
+			stored := grid.find(label)
+
+			if stored != nil {
+				incoming.X = stored.X
+				incoming.Y = stored.Y
+				incoming.Region = stored.Region
+				measurement.Metrics[label] = incoming
+			}
 		}
 	}
 

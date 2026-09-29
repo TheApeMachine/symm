@@ -54,7 +54,6 @@ func NewTraining(
 	return training
 }
 
-
 func (training *Training) Register() *data.Measurement[float64] {
 	measurement := data.NewMeasurement[float64]("training", nil)
 	measurement.Label = types.Focus()
@@ -87,12 +86,20 @@ func (training *Training) Step(
 		if measurement.Label == "" {
 			if peer.Label != "" {
 				measurement.Label = peer.Label
-			} else {
+			}
+
+			if peer.Label == "" {
 				measurement.Label = types.Focus()
 			}
 		}
 
-		training.grid.Update(peer)
+		if peer == measurement {
+			training.grid.Update(peer)
+		}
+
+		if peer != measurement {
+			training.grid.Observe(peer)
+		}
 	}
 
 	var topRegion uint8
@@ -104,14 +111,16 @@ func (training *Training) Step(
 			continue
 		}
 
-		for _, metric := range peer.Metrics {
-			if metric.Region > 0 {
-				activity := math.Abs(metric.Raw)
-				regionActivity[metric.Region] += activity
+		for label, metric := range peer.Metrics {
+			region := training.grid.Region(label)
 
-				if regionActivity[metric.Region] > maxActivity {
-					maxActivity = regionActivity[metric.Region]
-					topRegion = metric.Region
+			if region > 0 {
+				activity := math.Abs(metric.Raw)
+				regionActivity[region] += activity
+
+				if regionActivity[region] > maxActivity {
+					maxActivity = regionActivity[region]
+					topRegion = region
 				}
 			}
 		}
@@ -156,7 +165,10 @@ func (training *Training) Step(
 			actionVal = 2
 		}
 
-		actionMetric := data.NewMetric[float64]("action", data.UnitCount, data.TimescaleInstantaneous, 0, 1)
+		actionMetric := data.NewMetric[float64](
+			"action", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
+		)
+		
 		actionMetric.Raw = actionVal
 		measurement.Metrics["action"] = actionMetric
 	}
@@ -197,7 +209,6 @@ func (training *Training) Run() {
 		}
 	}()
 }
-
 
 var checkpointMu sync.Mutex
 
@@ -324,5 +335,3 @@ func (training *Training) CognitionTree() cognition.CognitionTreeExport {
 		Feasible: feasible,
 	}
 }
-
-

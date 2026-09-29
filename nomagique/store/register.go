@@ -3,6 +3,7 @@ package store
 import (
 	"iter"
 	"strings"
+	"sync"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
@@ -20,6 +21,7 @@ Disruptor's dependency and wrap barriers own their publication and reuse.
 */
 type Register[T any] struct {
 	*core.PrimitiveError
+	mu       sync.RWMutex
 	slots    []T
 	frames   [][]T
 	capacity int
@@ -53,6 +55,8 @@ func (op *Register[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 
 		switch query.Action() {
 		case data.ActionIdentify:
+			op.mu.Lock()
+
 			for ptr := range query.payload {
 				op.slots = append(op.slots, *(*T)(ptr))
 				op.frames = append(op.frames, make([]T, op.capacity))
@@ -62,18 +66,24 @@ func (op *Register[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 			query.Identify(slotID)
 
 			if slotID >= 0 {
-				if meas, ok := any(op.slots[slotID]).(*data.Measurement[float64]); ok && meas != nil {
+				meas, ok := any(op.slots[slotID]).(*data.Measurement[float64])
+
+				if ok && meas != nil {
 					meas.ID = slotID
 				}
 			}
 
 			slotVal := op.slots[query.Identity()]
+			op.mu.Unlock()
 
 			if !yield(unsafe.Pointer(&slotVal)) {
 				return
 			}
 		case data.ActionWrite:
+			op.mu.Lock()
+
 			if query.Identity() < 0 || query.Identity() >= len(op.slots) {
+				op.mu.Unlock()
 				op.Error(core.ErrShape)
 				return
 			}
@@ -89,16 +99,26 @@ func (op *Register[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 				op.frames[query.Identity()][query.sequence%int64(op.capacity)] = value
 			}
 
+			op.mu.Unlock()
+
 			if !yield(unsafe.Pointer(&value)) {
 				return
 			}
 
 		case data.ActionRead:
-			if query.Identity() < 0 {
-				for index := range op.slots {
-					value := op.published(index, query.sequence)
+			op.mu.RLock()
 
-					if !yield(unsafe.Pointer(&value)) {
+			if query.Identity() < 0 {
+				results := make([]T, len(op.slots))
+
+				for index := range op.slots {
+					results[index] = op.published(index, query.sequence)
+				}
+
+				op.mu.RUnlock()
+
+				for index := range results {
+					if !yield(unsafe.Pointer(&results[index])) {
 						return
 					}
 				}
@@ -107,13 +127,15 @@ func (op *Register[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 			}
 
 			if query.Identity() >= len(op.slots) {
+				op.mu.RUnlock()
 				op.Error(core.ErrShape)
 				return
 			}
 
 			slotVal := op.slots[query.Identity()]
+			meas, ok := any(slotVal).(*data.Measurement[float64])
 
-			if meas, ok := any(slotVal).(*data.Measurement[float64]); ok && meas != nil {
+			if ok && meas != nil {
 				working := meas.Clone()
 				interest := ""
 
@@ -136,7 +158,6 @@ func (op *Register[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 							}
 
 							value := op.published(idx, query.sequence)
-
 							peer, peerOk := any(value).(*data.Measurement[float64])
 
 							if !peerOk || peer == nil {
@@ -145,7 +166,9 @@ func (op *Register[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 
 							working.Peers = append(working.Peers, peer)
 						}
-					} else {
+					}
+
+					if interest != "*" {
 						interests := strings.Split(interest, ",")
 
 						for idx := range interests {
@@ -158,7 +181,6 @@ func (op *Register[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 							}
 
 							value := op.published(idx, query.sequence)
-
 							peer, peerOk := any(value).(*data.Measurement[float64])
 
 							if !peerOk || peer == nil {
@@ -172,6 +194,7 @@ func (op *Register[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 					}
 				}
 
+				op.mu.RUnlock()
 				out := any(working).(T)
 
 				if !yield(unsafe.Pointer(&out)) {
@@ -180,6 +203,8 @@ func (op *Register[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 
 				return
 			}
+
+			op.mu.RUnlock()
 
 			if !yield(unsafe.Pointer(&slotVal)) {
 				return
