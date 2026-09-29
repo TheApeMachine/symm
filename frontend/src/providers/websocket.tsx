@@ -2,30 +2,24 @@ import { batch as storeBatch } from "@tanstack/react-store";
 import * as flatbuffers from "flatbuffers";
 import { useEffect } from "react";
 import {
-	evictStaleSymbols,
-	evictSymbol,
 	focusAtom,
-	manifoldStore,
 	observeSymbols,
 	onlineAtom,
 	positionCountAtom,
-	positionStore,
 	RingBuffer,
 	routeAtom,
 	signals,
-	strategyStore,
 	symbolsAtom,
 	tickCountAtom,
 	updateClock,
 	updateEquity,
 } from "#/collections/app";
 
+import { EquityFrame } from "#/providers/telemetry/telemetry/equity-frame";
 import { Frame } from "#/providers/telemetry/telemetry/frame";
 import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
 import { MeasurementsFrame } from "#/providers/telemetry/telemetry/measurements-frame";
 import { Message } from "#/providers/telemetry/telemetry/message";
-import { PositionsFrame } from "#/providers/telemetry/telemetry/positions-frame";
-import { StrategyFrame } from "#/providers/telemetry/telemetry/strategy-frame";
 
 let globalWsWorker: Worker | null = null;
 
@@ -83,16 +77,8 @@ function dispatchMeasurements(frame: MeasurementsFrame) {
 			tickCountAtom.set(Number(tick));
 		}
 
-		if (source === "manifold") {
-			manifoldStore.setState((prev: Record<string, unknown>) => ({
-				...prev,
-				[symbol]: row.unpack(),
-			}));
-			touched.add(source);
-			continue;
-		}
-
 		const signalStore = signals[source];
+
 		if (!signalStore) {
 			continue;
 		}
@@ -166,7 +152,9 @@ export const WsFeed = () => {
 			}
 
 			if (data.type === "UNSUBSCRIBE" && typeof data.symbol === "string") {
-				evictSymbol(data.symbol);
+				for (const source of Object.keys(signals)) {
+					delete signals[source]?.state[data.symbol];
+				}
 				return;
 			}
 
@@ -184,31 +172,24 @@ export const WsFeed = () => {
 						const message = Message.getRootAsMessage(buffer);
 						const frameType = message.frameType();
 
-						if (frameType === Frame.PositionsFrame) {
-							const positionsFrame = message.frame(new PositionsFrame());
-							if (positionsFrame) {
-								positionStore.setState(positionsFrame);
-							}
-							return;
-						}
-
-						if (frameType === Frame.StrategyFrame) {
-							const strategyFrame = message.frame(new StrategyFrame());
-							if (strategyFrame) {
-								strategyStore.setState((prev: unknown) => {
-									const existing = Array.isArray(prev) ? prev : [];
-									return [...existing.slice(-49), strategyFrame];
-								});
-							}
-							return;
-						}
-
 						if (frameType === Frame.MeasurementsFrame) {
 							const measurementsFrame = message.frame(new MeasurementsFrame());
 							if (measurementsFrame) {
 								storeBatch(() => {
 									dispatchMeasurements(measurementsFrame);
 								});
+							}
+							return;
+						}
+
+						if (frameType === Frame.EquityFrame) {
+							const equityFrame = message.frame(new EquityFrame());
+							if (equityFrame) {
+								updateEquity(
+									equityFrame.cash(),
+									equityFrame.unrealized(),
+									equityFrame.equity(),
+								);
 							}
 							return;
 						}
@@ -236,12 +217,7 @@ export const WsFeed = () => {
 			wsWorker.postMessage({ type: "ROUTE", route });
 		});
 
-		const evictionInterval = setInterval(() => {
-			evictStaleSymbols();
-		}, 60_000);
-
 		return () => {
-			clearInterval(evictionInterval);
 			unsubscribeFocus.unsubscribe();
 			unsubscribeRoute.unsubscribe();
 			wsWorker.postMessage({ type: "DISCONNECT" });

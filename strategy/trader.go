@@ -8,7 +8,10 @@ import (
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/spf13/viper"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/broker/position"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/nomagique/runtime"
@@ -21,12 +24,14 @@ Trader is responsible for talking to the broker and managing positions.
 */
 type Trader struct {
 	*runtime.System
-	desk        *broker.Desk
-	balance     *broker.Balance
-	price       *broker.Price
-	positions   sync.Map
-	symbolLocks sync.Map
-	decisions   atomic.Pointer[[]*wire.DecisionT]
+	desk         *broker.Desk
+	balance      *broker.Balance
+	price        *broker.Price
+	positions    sync.Map
+	symbolLocks  sync.Map
+	decisions    atomic.Pointer[[]*wire.DecisionT]
+	admissionMu  sync.Mutex
+	reservedCash *decimal.Decimal
 }
 
 func (trader *Trader) symbolLock(symbol string) *sync.Mutex {
@@ -41,10 +46,11 @@ func NewTrader(
 	balance *broker.Balance,
 ) *Trader {
 	trader := &Trader{
-		System:  runtime.NewSystem(ctx, "trader"),
-		desk:    broker.NewDesk(ctx, api, price, balance),
-		balance: balance,
-		price:   price,
+		System:       runtime.NewSystem(ctx, "trader"),
+		desk:         broker.NewDesk(ctx, api, price, balance),
+		balance:      balance,
+		price:        price,
+		reservedCash: decimal.NewFromInt64(0).SetScale(decimal.DefaultScale),
 	}
 
 	initialDecisions := make([]*wire.DecisionT, 0, 50)
@@ -74,19 +80,26 @@ func (trader *Trader) OnAction(symbol string, action Action) {
 
 		plannerConfig := system.NewPlannerConfig()
 
+		trader.admissionMu.Lock()
+
+		if _, exists := trader.positions.Load(symbol); exists {
+			trader.admissionMu.Unlock()
+			return
+		}
+
 		if trader.price != nil {
 			var totalCost *decimal.Decimal
 			var totalPnL *decimal.Decimal
 
 			trader.positions.Range(func(key, value any) bool {
 				symbolKey, okKey := key.(string)
-				positionVal, okVal := value.(*broker.Position)
+				reg, okVal := value.(*position.Regulator)
 
-				if !okKey || !okVal || positionVal == nil {
+				if !okKey || !okVal || reg == nil {
 					return true
 				}
 
-				pnl := trader.price.PnL(symbolKey, positionVal)
+				pnl := trader.price.PnL(symbolKey, reg)
 
 				if pnl != nil {
 					if totalPnL == nil {
@@ -94,22 +107,17 @@ func (trader *Trader) OnAction(symbol string, action Action) {
 					}
 
 					if totalPnL != pnl {
-						totalPnL = totalPnL.Add(pnl)
+						totalPnL = safeAdd(totalPnL, pnl)
 					}
 				}
 
-				entryPrice := positionVal.Price()
-				entryVolume := positionVal.Volume()
-
-				if entryPrice != nil && entryVolume != nil {
-					cost := entryPrice.Mul(entryVolume)
-
+				if reg.Basis != nil && reg.Basis.Sign() > 0 {
 					if totalCost == nil {
-						totalCost = cost
+						totalCost = reg.Basis
 					}
 
-					if totalCost != cost {
-						totalCost = totalCost.Add(cost)
+					if totalCost != reg.Basis {
+						totalCost = safeAdd(totalCost, reg.Basis)
 					}
 				}
 
@@ -120,18 +128,62 @@ func (trader *Trader) OnAction(symbol string, action Action) {
 				lossRatio := totalPnL.Abs().Div(totalCost).Float64()
 
 				if lossRatio >= plannerConfig.AggregateMaxLossFraction {
+					trader.admissionMu.Unlock()
 					trader.RecordDecision(symbol, "blocked", 0.0, "aggregate max loss fraction exceeded")
 					return
 				}
 			}
 		}
 
-		position := trader.desk.Enter(symbol, func(pending *broker.Position) {
-			trader.positions.Store(symbol, pending)
-		})
+		maxFraction := viper.GetFloat64("trading.allocation.max_fraction")
 
-		if position == nil {
+		if maxFraction <= 0 || maxFraction > 1 {
+			trader.admissionMu.Unlock()
+			return
+		}
+
+		cash := trader.balance.Cash()
+
+		if cash == nil || cash.Sign() <= 0 {
+			trader.balance.Update()
+			cash = trader.balance.Cash()
+		}
+
+		if cash == nil || cash.Sign() <= 0 {
+			trader.admissionMu.Unlock()
+			trader.RecordDecision(symbol, "blocked", 0.0, "insufficient cash")
+			return
+		}
+
+		availableCash := safeSub(cash, trader.reservedCash)
+
+		if availableCash == nil || availableCash.Sign() <= 0 {
+			trader.admissionMu.Unlock()
+			trader.RecordDecision(symbol, "blocked", 0.0, "insufficient unreserved cash")
+			return
+		}
+
+		spend := availableCash.SetScale(decimal.DefaultScale).Mul(decimal.NewFromFloat64(maxFraction))
+		trader.reservedCash = safeAdd(trader.reservedCash, spend)
+
+		reg := position.NewRegulator(symbol)
+		trader.positions.Store(symbol, reg)
+		trader.admissionMu.Unlock()
+
+		defer func() {
+			trader.admissionMu.Lock()
+			trader.reservedCash = safeSub(trader.reservedCash, spend)
+
+			if trader.reservedCash == nil || trader.reservedCash.Sign() < 0 {
+				trader.reservedCash = decimal.NewFromInt64(0).SetScale(decimal.DefaultScale)
+			}
+
+			trader.admissionMu.Unlock()
+		}()
+
+		if err := trader.desk.EnterWithRegulator(reg, spend); err != nil {
 			trader.positions.Delete(symbol)
+			trader.RecordDecision(symbol, "blocked", 0.0, fmt.Sprintf("enter failed: %v", err))
 			return
 		}
 
@@ -143,19 +195,26 @@ func (trader *Trader) OnAction(symbol string, action Action) {
 			return
 		}
 
-		position, ok := val.(*broker.Position)
+		reg, ok := val.(*position.Regulator)
 
-		if !ok || position == nil {
+		if !ok || reg == nil {
 			trader.positions.Delete(symbol)
 			return
 		}
 
-		if err := trader.desk.Exit(position); err != nil {
+		if !reg.IsHolding() {
+			return
+		}
+
+		if reg.Status() == "exit_pending" {
+			return
+		}
+
+		if err := trader.desk.Exit(reg); err != nil {
 			trader.RecordDecision(symbol, "exit_failed", 1.0, fmt.Sprintf("exit failed: %v", err))
 			return
 		}
 
-		trader.positions.Delete(symbol)
 		trader.RecordDecision(symbol, "exit", 1.0, "exit trigger")
 	}
 }
@@ -198,7 +257,7 @@ func (trader *Trader) RecordDecision(symbol string, action string, confidence fl
 	}
 }
 
-func (trader *Trader) Position(symbol string) *broker.Position {
+func (trader *Trader) Position(symbol string) *position.Regulator {
 	if trader == nil {
 		return nil
 	}
@@ -209,8 +268,8 @@ func (trader *Trader) Position(symbol string) *broker.Position {
 		return nil
 	}
 
-	position, _ := val.(*broker.Position)
-	return position
+	reg, _ := val.(*position.Regulator)
+	return reg
 }
 
 func (trader *Trader) Holding(symbol string) bool {
@@ -219,7 +278,13 @@ func (trader *Trader) Holding(symbol string) bool {
 	}
 
 	val, ok := trader.positions.Load(symbol)
-	return ok && val != nil
+
+	if !ok || val == nil {
+		return false
+	}
+
+	reg, ok := val.(*position.Regulator)
+	return ok && reg != nil && reg.IsHolding()
 }
 
 func (trader *Trader) PositionCount() int {
@@ -239,18 +304,18 @@ func (trader *Trader) PositionCount() int {
 	return count
 }
 
-func (trader *Trader) Positions() map[string]*broker.Position {
+func (trader *Trader) Positions() map[string]*position.Regulator {
 	if trader == nil {
 		return nil
 	}
 
-	snapshot := make(map[string]*broker.Position)
+	snapshot := make(map[string]*position.Regulator)
 	trader.positions.Range(func(key, val any) bool {
 		symbolKey, okKey := key.(string)
-		posVal, okVal := val.(*broker.Position)
+		regVal, okVal := val.(*position.Regulator)
 
-		if okKey && okVal && posVal != nil {
-			snapshot[symbolKey] = posVal
+		if okKey && okVal && regVal != nil {
+			snapshot[symbolKey] = regVal
 		}
 
 		return true
@@ -267,6 +332,50 @@ func (trader *Trader) Balance() *broker.Balance {
 	return trader.balance
 }
 
+func (trader *Trader) EquityWire() *wire.EquityFrameT {
+	if trader == nil || trader.balance == nil {
+		return &wire.EquityFrameT{
+			Cash:       "0.00",
+			Unrealized: "0.00",
+			Equity:     "0.00",
+		}
+	}
+
+	snap := trader.balance.Snapshot()
+
+	if snap == nil {
+		return &wire.EquityFrameT{
+			Cash:       "0.00",
+			Unrealized: "0.00",
+			Equity:     "0.00",
+		}
+	}
+
+	cashStr := "0.00"
+
+	if snap.Cash != nil {
+		cashStr = snap.Cash.String()
+	}
+
+	unrealizedStr := "0.00"
+
+	if snap.Unrealized != nil {
+		unrealizedStr = snap.Unrealized.String()
+	}
+
+	equityStr := cashStr
+
+	if snap.Equity != nil {
+		equityStr = snap.Equity.String()
+	}
+
+	return &wire.EquityFrameT{
+		Cash:       cashStr,
+		Unrealized: unrealizedStr,
+		Equity:     equityStr,
+	}
+}
+
 func (trader *Trader) PositionsWire() *wire.PositionsFrameT {
 	if trader == nil {
 		return &wire.PositionsFrameT{Rows: []*wire.PositionT{}}
@@ -276,22 +385,22 @@ func (trader *Trader) PositionsWire() *wire.PositionsFrameT {
 
 	trader.positions.Range(func(key, val any) bool {
 		symbolKey, okKey := key.(string)
-		position, okPos := val.(*broker.Position)
+		reg, okPos := val.(*position.Regulator)
 
-		if !okKey || !okPos || position == nil {
+		if !okKey || !okPos || reg == nil {
 			return true
 		}
 
-		entryPrice := position.Price()
-		volume := position.Volume()
+		entryPrice := reg.Price()
+		volume := reg.Volume()
 		var mark *decimal.Decimal
 		var pnl *decimal.Decimal
 		returnPct := 0.0
 
 		if trader.price != nil {
 			mark = trader.price.CurrentMark(symbolKey)
-			pnl = trader.price.PnL(symbolKey, position)
-			returnPct = trader.price.ReturnPct(symbolKey, position)
+			pnl = trader.price.PnL(symbolKey, reg)
+			returnPct = trader.price.ReturnPct(symbolKey, reg)
 		}
 
 		entryPriceStr := ""
@@ -318,14 +427,20 @@ func (trader *Trader) PositionsWire() *wire.PositionsFrameT {
 			pnlStr = pnl.String()
 		}
 
-		entryAtNs := position.EntryAt.UnixNano()
+		entryAtNs := reg.EntryAt.UnixNano()
 
 		if entryAtNs <= 0 {
 			entryAtNs = time.Now().UnixNano()
 		}
 
+		orderID := reg.OrderID
+
+		if orderID == "" {
+			orderID = reg.PositionID
+		}
+
 		holding := &wire.HoldingT{
-			Status:      "active",
+			Status:      reg.Status(),
 			Symbol:      symbolKey,
 			Asset:       symbolKey,
 			Qty:         volumeStr,
@@ -338,7 +453,7 @@ func (trader *Trader) PositionsWire() *wire.PositionsFrameT {
 		}
 
 		decision := &wire.DecisionT{
-			Id:         position.OrderID(),
+			Id:         orderID,
 			Symbol:     symbolKey,
 			Action:     "enter",
 			Confidence: 1.0,
@@ -346,7 +461,7 @@ func (trader *Trader) PositionsWire() *wire.PositionsFrameT {
 		}
 
 		rows = append(rows, &wire.PositionT{
-			Status:   "active",
+			Status:   reg.Status(),
 			Decision: decision,
 			Holding:  holding,
 		})
@@ -397,54 +512,82 @@ func (trader *Trader) ApplyExecution(exec *kraken.Execution) {
 	}
 
 	for _, item := range exec.Data {
-		var pos *broker.Position
+		var matched *position.Regulator
 
-		if val, ok := trader.positions.Load(item.Symbol); ok && val != nil {
-			pos, _ = val.(*broker.Position)
-		}
+		// Authoritative match: Check order ID or client order ID
+		trader.positions.Range(func(_, val any) bool {
+			reg, ok := val.(*position.Regulator)
 
-		if pos == nil {
-			trader.positions.Range(func(_, val any) bool {
-				candidate, okCandidate := val.(*broker.Position)
+			if ok && reg != nil && reg.Identifies(item.OrderID, item.ClientOrderID) {
+				matched = reg
+				return false
+			}
 
-				if okCandidate && candidate != nil {
-					if candidate.OrderID() == item.OrderID ||
-						candidate.OrderID() == item.ClientOrderID ||
-						candidate.PositionID == item.ClientOrderID ||
-						(candidate.EntryOrder != nil && candidate.EntryOrder.ClOrdId == item.ClientOrderID) {
-						pos = candidate
-						return false
-					}
+			return true
+		})
+
+		// Fallback only if single position for symbol and order IDs match symbol
+		if matched == nil && item.Symbol != "" {
+			if val, ok := trader.positions.Load(item.Symbol); ok && val != nil {
+				reg, _ := val.(*position.Regulator)
+
+				if reg != nil && (reg.OrderID == "" || reg.OrderID == item.OrderID) {
+					matched = reg
 				}
-
-				return true
-			})
+			}
 		}
 
-		if pos == nil {
+		if matched == nil {
 			continue
 		}
 
-		fillPrice := item.AvgPrice
+		mu := trader.symbolLock(matched.Symbol)
+		mu.Lock()
 
-		if fillPrice == nil || fillPrice.Sign() <= 0 {
-			fillPrice = item.LastPrice
+		if err := matched.Reconcile(item); err != nil {
+			errnie.Error(err)
 		}
 
-		fillVolume := item.CumQty
-
-		if fillVolume == nil || fillVolume.Sign() <= 0 {
-			fillVolume = item.LastQty
+		if matched.IsClosed() {
+			trader.positions.Delete(matched.Symbol)
 		}
 
-		fee := item.FeeUsdEquiv
-
-		if fee == nil && len(item.Fees) > 0 {
-			fee = decimal.NewFromFloat64(item.Fees[0].Qty)
-		}
-
-		if fillPrice != nil && fillVolume != nil {
-			pos.SetFill(fillPrice, fillVolume, fee)
-		}
+		mu.Unlock()
 	}
+}
+
+func safeSub(a, b *decimal.Decimal) *decimal.Decimal {
+	if a == nil {
+		return nil
+	}
+
+	if b == nil {
+		return a
+	}
+
+	scale := max(a.GetScale(), b.GetScale())
+
+	if scale < decimal.DefaultScale {
+		scale = decimal.DefaultScale
+	}
+
+	return a.SetScale(scale).Sub(b)
+}
+
+func safeAdd(a, b *decimal.Decimal) *decimal.Decimal {
+	if a == nil {
+		return b
+	}
+
+	if b == nil {
+		return a
+	}
+
+	scale := max(a.GetScale(), b.GetScale())
+
+	if scale < decimal.DefaultScale {
+		scale = decimal.DefaultScale
+	}
+
+	return a.SetScale(scale).Add(b)
 }

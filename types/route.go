@@ -66,7 +66,9 @@ func AllowsRoute(measurement *data.Measurement[float64]) bool {
 	}
 
 	switch Route() {
-	case "dashboard", "learning":
+	case "learning":
+		return isStrategy(measurement, "training") || (isSignal(measurement, SignalSourceStrings...) && Allows(measurement.Label))
+	case "dashboard":
 		return (isSignal(measurement, SignalSourceStrings...) || isStrategy(measurement, "training")) &&
 			Allows(measurement.Label)
 	case "xray":

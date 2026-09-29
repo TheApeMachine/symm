@@ -24,6 +24,22 @@ func TestMarketSnapshot(t *testing.T) {
 		So(snapshot.Sequence, ShouldEqual, 1)
 		So(snapshot.Volume, ShouldEqual, "1.000000000000")
 		So(held.Sequence, ShouldEqual, len(frames))
+
+		Convey("A defined zero SNR remains zero and does not fall back to Level²", func() {
+			cell := held.Cells[0]
+			cell.Baseline.Count = 10
+			cell.Baseline.M2 = 1.0
+			cell.Level = 2.0
+			cell.owner.measurement.SNR = 0.0
+			cell.owner.measurement.SNRDefined = true
+
+			snap := held.Snapshot()
+			So(snap.Cells[0].Quality, ShouldEqual, 0.0)
+
+			cell.owner.measurement.SNRDefined = false
+			snap = held.Snapshot()
+			So(snap.Cells[0].Quality, ShouldEqual, 4.0)
+		})
 	})
 }
 

@@ -1,10 +1,7 @@
 import { useSelector } from "@tanstack/react-store";
 import { useEffect, useRef } from "react";
-import { focusStore, getMeasurementStore } from "#/collections/app";
+import { focusAtom, signals } from "#/collections/app";
 import { Panel } from "#/components/ui/panel";
-import { Metric } from "#/providers/telemetry/telemetry/metric";
-
-const metricObj = new Metric();
 
 const fmt = (value: unknown, digits: number): string =>
 	typeof value === "number" ? value.toFixed(digits) : "—";
@@ -24,14 +21,16 @@ const STATS = [
 ] as const;
 
 export const CrossSectionPanel = () => {
-	const focusSymbol = useSelector(focusStore, (state) => state);
+	const focusSymbol = useSelector(focusAtom, (state) => state);
 	const root = useRef<HTMLDivElement>(null);
 
 	useEffect(() => {
-		const store = getMeasurementStore("liquidity", focusSymbol);
-		const apply = (state: any) => {
-			if (!root.current || !state || typeof state.getLast !== "function") return;
-			const row = state.getLast();
+		const store = signals.liquidity;
+		const apply = () => {
+			if (!root.current || !store) return;
+			const ring = store.state[focusSymbol];
+			if (!ring || typeof ring.getLast !== "function") return;
+			const row = ring.getLast();
 
 			const set = (q: string, value: string) => {
 				const el = root.current?.querySelector<HTMLElement>(`[data-f=${q}]`);
@@ -41,24 +40,13 @@ export const CrossSectionPanel = () => {
 			const metricsMap: Record<string, { raw: number; normalized: number }> =
 				{};
 			if (row) {
-				if (Array.isArray(row.metrics)) {
-					for (const m of row.metrics) {
-						if (m && m.name) {
-							metricsMap[m.name] = {
-								raw: m.raw,
-								normalized: m.normalized,
-							};
-						}
-					}
-				} else if (typeof row.metricsLength === "function") {
-					for (let j = 0; j < row.metricsLength(); j++) {
-						const m = row.metrics(j, metricObj);
-						if (m) {
-							metricsMap[m.name() ?? ""] = {
-								raw: m.raw(),
-								normalized: m.normalized(),
-							};
-						}
+				for (const m of row.metrics ?? []) {
+					const name = typeof m?.name === "string" ? m.name : "";
+					if (name) {
+						metricsMap[name] = {
+							raw: m.raw,
+							normalized: m.normalized,
+						};
 					}
 				}
 			}
@@ -69,7 +57,7 @@ export const CrossSectionPanel = () => {
 			set(
 				"at",
 				(() => {
-					const rowAt = typeof row?.at === "function" ? row.at() : row?.at;
+					const rowAt = row?.at;
 					if (rowAt === undefined || rowAt === 0n) return "—";
 					const parsed = new Date(Number(rowAt / 1000000n));
 					return Number.isNaN(parsed.getTime())
@@ -103,7 +91,7 @@ export const CrossSectionPanel = () => {
 			}
 		};
 
-		apply(store.state);
+		apply();
 		const subscription = store.subscribe(apply);
 		return () => subscription.unsubscribe();
 	}, [focusSymbol]);

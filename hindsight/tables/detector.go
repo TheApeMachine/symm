@@ -22,6 +22,7 @@ type symbolTracker struct {
 	highTick, lowTick     int64
 	anchor, observations  int64
 	precursorStart        int64
+	firstObservationTick  int64
 }
 
 /*
@@ -92,6 +93,10 @@ func (detector *StreamingDetector) advance(tracker *symbolTracker, measurement *
 		return nil, nil
 	}
 
+	if tracker.firstObservationTick == 0 {
+		tracker.firstObservationTick = measurement.SeqIdx
+	}
+
 	item := statistic.Weighted{Value: math.Log(price.Float64()), Weight: quantity.Float64()}
 	var reading adaptive.WindowReading
 
@@ -103,84 +108,140 @@ func (detector *StreamingDetector) advance(tracker *symbolTracker, measurement *
 		return nil, errnie.Error(err)
 	}
 
+	if detector.price == nil || detector.price.FeeIfAvailable(measurement.Label) == nil {
+		return nil, errnie.Error(errnie.Err(errnie.Validation, "detector: authoritative fee required for "+measurement.Label, nil))
+	}
+
+	feeRecord := detector.price.FeeIfAvailable(measurement.Label)
+	feeRate := feeRecord.Fee.Float64() / 100.0
+
+	shiftBound := (adaptive.MeanShift{
+		Variance:     reading.Variance,
+		Observations: reading.Observations,
+		RecentCount:  reading.RecentCount,
+		PriorCount:   reading.PriorCount,
+	}).Bound()
+
+	reversalThreshold := feeRate * 2
+
+	if shiftBound > reversalThreshold {
+		reversalThreshold = shiftBound
+	}
+
+	if tracker.anchor == 0 {
+		tracker.precursorStart = tracker.firstObservationTick
+		tracker.anchor = measurement.SeqIdx
+		tracker.entry = tracker.ask
+		tracker.cost = detector.price.WithFee(measurement.Label, tracker.ask, broker.BUY)
+		tracker.high, tracker.low = price, price
+		tracker.highTick, tracker.lowTick = measurement.SeqIdx, measurement.SeqIdx
+		tracker.observations = 1
+		return nil, nil
+	}
+
 	if tracker.high == nil || price.Cmp(tracker.high) > 0 {
 		tracker.high, tracker.highTick = price, measurement.SeqIdx
 	}
+
 	if tracker.low == nil || price.Cmp(tracker.low) < 0 {
 		tracker.low, tracker.lowTick = price, measurement.SeqIdx
 	}
 
 	tracker.observations++
 
-	if tracker.anchor != 0 && (reading.ShedRatio == 1 || tracker.observations < 8) {
+	entryFloat := tracker.entry.Float64()
+	upwardMove := (tracker.high.Float64() - entryFloat) / entryFloat
+	downwardMove := (entryFloat - tracker.low.Float64()) / entryFloat
+
+	isUpward := upwardMove >= downwardMove
+	excursionEnded := false
+
+	if isUpward {
+		pullback := (tracker.high.Float64() - price.Float64()) / tracker.high.Float64()
+
+		if pullback >= reversalThreshold && tracker.highTick > tracker.anchor {
+			excursionEnded = true
+		}
+	}
+
+	if !isUpward {
+		rebound := (price.Float64() - tracker.low.Float64()) / tracker.low.Float64()
+
+		if rebound >= reversalThreshold && tracker.lowTick > tracker.anchor {
+			excursionEnded = true
+		}
+	}
+
+	if !excursionEnded && reading.ShedRatio < 1 && (upwardMove >= reversalThreshold || downwardMove >= reversalThreshold) {
+		excursionEnded = true
+	}
+
+	if !excursionEnded {
 		return nil, nil
 	}
 
-	if detector.price == nil || detector.price.FeeIfAvailable(measurement.Label) == nil {
-		return nil, errnie.Error(errnie.Err(errnie.Validation, "detector: authoritative fee required for "+measurement.Label, nil))
+	extreme := tracker.high
+	tick := tracker.highTick
+	direction := "flat"
+
+	if isUpward && upwardMove > 0 {
+		direction = "upward"
+		extreme = tracker.high
+		tick = tracker.highTick
 	}
 
-	cost := detector.price.WithFee(measurement.Label, tracker.ask, broker.BUY)
-	var record *ExcursionRecord
+	if !isUpward && downwardMove > 0 {
+		direction = "downward"
+		extreme = tracker.low
+		tick = tracker.lowTick
+	}
 
-	if tracker.anchor != 0 {
-		proceeds := detector.price.WithFee(measurement.Label, tracker.bid, broker.SELL)
-		profit := proceeds.Sub(tracker.cost)
-		direction := "flat"
+	proceeds := detector.price.WithFee(measurement.Label, tracker.bid, broker.SELL)
+	profit := proceeds.Sub(tracker.cost)
 
-		if tracker.bid.Cmp(tracker.entry) > 0 {
-			direction = "upward"
+	peakProceeds := detector.price.WithFee(measurement.Label, extreme, broker.SELL)
+	peakProfit := peakProceeds.Sub(tracker.cost)
+
+	clearsFriction := profit.Sign() > 0
+	effectiveProfit := profit
+
+	if peakProfit.Sign() > 0 {
+		clearsFriction = true
+
+		if peakProfit.Cmp(profit) > 0 {
+			effectiveProfit = peakProfit
 		}
+	}
 
-		if tracker.bid.Cmp(tracker.entry) < 0 {
-			direction = "downward"
+	precursorStart := tracker.precursorStart
+
+	if precursorStart <= 0 || precursorStart >= tracker.anchor {
+		if tracker.firstObservationTick > 0 && tracker.firstObservationTick < tracker.anchor {
+			precursorStart = tracker.firstObservationTick
 		}
+	}
 
-		extreme, tick := tracker.high, tracker.highTick
-		if direction == "downward" {
-			extreme, tick = tracker.low, tracker.lowTick
-		}
-
-		peakProceeds := detector.price.WithFee(measurement.Label, tracker.high, broker.SELL)
-		peakProfit := peakProceeds.Sub(tracker.cost)
-
-		clearsFriction := profit.Sign() > 0
-		effectiveProfit := profit
-
-		if peakProfit.Sign() > 0 {
-			clearsFriction = true
-			if peakProfit.Cmp(profit) > 0 {
-				effectiveProfit = peakProfit
-			}
-		}
-
-		precursorStart := tracker.precursorStart
-		if precursorStart <= 0 || precursorStart >= tracker.anchor {
-			precursorStart = tracker.anchor - tracker.observations
-			if precursorStart < 0 {
-				precursorStart = 0
-			}
-		}
-
-		record = &ExcursionRecord{
-			Epoch: detector.epoch, ID: fmt.Sprintf("%d:%s:%d", detector.epoch, measurement.Label, tracker.anchor),
-			Symbol: measurement.Label, Direction: direction, ClearsFriction: clearsFriction,
-			AnchorTick: tracker.anchor, PrecursorStartTick: precursorStart,
-			ExitTick: measurement.SeqIdx, PostEndTick: measurement.SeqIdx,
-			EntryPrice: tracker.entry.Float64(), ExitPrice: tracker.bid.Float64(),
-			PositionSize: tracker.cost.Float64(), Profit: effectiveProfit.Float64(),
-			ProfitFraction: effectiveProfit.Div(tracker.cost).Float64(),
-			Fee:            tracker.cost.Sub(tracker.entry).Add(tracker.bid.Sub(proceeds)).Float64(),
-			ExtremumTick:   tick, ExtremumPrice: extreme.Float64(),
-			GrossExcursion:   extreme.Sub(tracker.entry).Div(tracker.entry).Float64(),
-			ObservationCount: tracker.observations, Status: "baseline_shift",
-		}
+	record := &ExcursionRecord{
+		Epoch: detector.epoch, ID: fmt.Sprintf("%d:%s:%d", detector.epoch, measurement.Label, tracker.anchor),
+		Symbol: measurement.Label, Direction: direction, ClearsFriction: clearsFriction,
+		AnchorTick: tracker.anchor, PrecursorStartTick: precursorStart,
+		ExitTick: measurement.SeqIdx, PostEndTick: measurement.SeqIdx,
+		EntryPrice: tracker.entry.Float64(), ExitPrice: tracker.bid.Float64(),
+		PositionSize: tracker.cost.Float64(), Profit: effectiveProfit.Float64(),
+		ProfitFraction: effectiveProfit.Div(tracker.cost).Float64(),
+		Fee:            tracker.cost.Sub(tracker.entry).Add(tracker.bid.Sub(proceeds)).Float64(),
+		ExtremumTick:   tick, ExtremumPrice: extreme.Float64(),
+		GrossExcursion:   extreme.Sub(tracker.entry).Div(tracker.entry).Float64(),
+		ObservationCount: tracker.observations, Status: "baseline_shift",
 	}
 
 	tracker.precursorStart = tracker.anchor
-	tracker.anchor, tracker.observations = measurement.SeqIdx, 0
-	tracker.entry, tracker.cost = tracker.ask, cost
+	tracker.anchor = measurement.SeqIdx
+	tracker.observations = 0
+	tracker.entry = tracker.ask
+	tracker.cost = detector.price.WithFee(measurement.Label, tracker.ask, broker.BUY)
 	tracker.high, tracker.low = price, price
 	tracker.highTick, tracker.lowTick = measurement.SeqIdx, measurement.SeqIdx
+
 	return record, nil
 }

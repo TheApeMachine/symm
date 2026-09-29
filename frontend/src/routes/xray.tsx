@@ -3,11 +3,11 @@ import { useSelector } from "@tanstack/react-store";
 import { useEffect, useState } from "react";
 import {
 	DEFAULT_FOCUS_SYMBOL,
+	type RingBuffer,
 	focusAtom,
-	focusStore,
 	observeSymbols,
-	resonanceStore,
-	symbolsStore,
+	signals,
+	symbolsAtom,
 } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
 import { paintXrayHierarchy } from "#/components/terminal/xray-hierarchy";
@@ -24,24 +24,22 @@ import {
 	retainResonanceRow,
 } from "#/components/terminal/xray-view";
 import { Flex } from "#/components/ui";
+import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
 
 const XrayPaintBridge = () => {
-	const focusSymbol = useSelector(focusStore, (state) => state);
+	const focusSymbol = useSelector(focusAtom, (state) => state);
 
 	useEffect(() => {
-		const updatePaint = (state: typeof resonanceStore.state) => {
+		const updatePaint = (state: Record<string, RingBuffer<MeasurementT>>) => {
 			for (const ring of Object.values(state)) {
 				const last = ring && !ring.isEmpty() ? ring.getLast() : null;
 
 				if (!last) continue;
 
-				const row = (typeof (last as any).unpack === "function"
-					? (last as any).unpack()
-					: last) as unknown as Record<string, unknown>;
-				const sym = typeof row.symbol === "string" ? row.symbol : "";
+				const sym = typeof last.symbol === "string" ? last.symbol : "";
 
 				if (sym) {
-					retainResonanceRow(sym, row);
+					retainResonanceRow(sym, last as unknown as Record<string, unknown>);
 					observeSymbols([sym]);
 				}
 			}
@@ -51,8 +49,8 @@ const XrayPaintBridge = () => {
 			paintXrayLatent(universe, focusSymbol);
 		};
 
-		updatePaint(resonanceStore.state);
-		const subscription = resonanceStore.subscribe((state) => {
+		updatePaint(signals.resonance.state);
+		const subscription = signals.resonance.subscribe((state) => {
 			updatePaint(state);
 		});
 
@@ -65,9 +63,9 @@ const XrayPaintBridge = () => {
 };
 
 const XrayCarrierBar = () => {
-	const focusSymbol = useSelector(focusStore, (state) => state);
+	const focusSymbol = useSelector(focusAtom, (state) => state);
 	const [symbols, setSymbols] = useState<string[]>(() => {
-		const initial = new Set<string>(symbolsStore.state);
+		const initial = new Set<string>(symbolsAtom.get());
 		for (const row of getAllRetainedResonance()) {
 			if (row.symbol) initial.add(row.symbol as string);
 		}
@@ -77,7 +75,7 @@ const XrayCarrierBar = () => {
 
 	useEffect(() => {
 		const syncSymbols = () => {
-			const current = new Set<string>(symbolsStore.state);
+			const current = new Set<string>(symbolsAtom.get());
 			for (const row of getAllRetainedResonance()) {
 				if (row.symbol) current.add(row.symbol as string);
 			}
@@ -87,8 +85,8 @@ const XrayCarrierBar = () => {
 		};
 
 		syncSymbols();
-		const sub1 = symbolsStore.subscribe(syncSymbols);
-		const sub2 = resonanceStore.subscribe(syncSymbols);
+		const sub1 = symbolsAtom.subscribe(syncSymbols);
+		const sub2 = signals.resonance.subscribe(syncSymbols);
 
 		return () => {
 			sub1.unsubscribe();

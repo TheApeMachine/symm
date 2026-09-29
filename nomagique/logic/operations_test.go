@@ -204,10 +204,10 @@ func TestRejectNext(t *testing.T) {
 
 func TestGateNext(t *testing.T) {
 	Convey("Gate routes each arrival through pass or fail based on predicate", t, func() {
-		// Predicate: Finite()
+		// Predicate: And(true)
 		// Pass: Not()
 		// Fail: Not()
-		gate := NewGate(NewFinite(), NewNot(), NewNot())
+		gate := NewGate(NewAnd(true), NewNot(), NewNot())
 		in := tests.SliceToSeq([]bool{true, false})
 		out := tests.CollectSeq[bool](gate.Next(in))
 

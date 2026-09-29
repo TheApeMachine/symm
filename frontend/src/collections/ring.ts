@@ -1,9 +1,19 @@
 import type { RingBuffer as RingBufferType } from "ring-buffer-ts";
 import ringBufferPkg from "ring-buffer-ts";
 
-const BaseRing = ((ringBufferPkg as any).RingBuffer ??
-	(ringBufferPkg as any).default?.RingBuffer ??
-	ringBufferPkg) as typeof RingBufferType;
+type RingBufferModule = {
+	RingBuffer?: typeof RingBufferType;
+	default?: { RingBuffer?: typeof RingBufferType };
+};
+
+const pkg = ringBufferPkg as RingBufferModule | typeof RingBufferType;
+const BaseRing = (
+	"RingBuffer" in pkg && pkg.RingBuffer
+		? pkg.RingBuffer
+		: "default" in pkg && pkg.default?.RingBuffer
+			? pkg.default.RingBuffer
+			: pkg
+) as typeof RingBufferType;
 
 /** Adds publication positions to the existing storage implementation. */
 export class RingBuffer<T> extends BaseRing<T> {

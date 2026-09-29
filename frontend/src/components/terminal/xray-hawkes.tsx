@@ -1,6 +1,6 @@
 import { useSelector } from "@tanstack/react-store";
 import { useEffect, useRef } from "react";
-import { clockAtom, focusStore, signals } from "#/collections/app";
+import { clockAtom, focusAtom, signals } from "#/collections/app";
 import { Typography } from "#/components/ui/typography";
 import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
 import { type HawkesTraceSample, hawkesTrace } from "./xray-hawkes-trace";
@@ -47,7 +47,7 @@ export const hawkesSample = (row: MeasurementT): HawkesTraceSample | null => {
 };
 
 export const XrayHawkesPanel = () => {
-	const focusSymbol = useSelector(focusStore, (state) => state);
+	const focusSymbol = useSelector(focusAtom, (state) => state);
 	const root = useRef<HTMLDivElement>(null);
 	const hawkesCanvasRef = useRef<HTMLCanvasElement>(null);
 

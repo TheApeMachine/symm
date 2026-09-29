@@ -33,6 +33,7 @@ type Market struct {
 	valid           bool
 	Locked          bool
 	stability       statistic.Moments
+	lockedEdges     []float64
 }
 
 func newMarket(symbol string) *Market {
@@ -42,11 +43,16 @@ func newMarket(symbol string) *Market {
 
 func (market *Market) Lock() {
 	market.Locked = true
+	market.lockedEdges = make([]float64, len(market.edges))
+	for i, edge := range market.edges {
+		market.lockedEdges[i] = edge.Strength
+	}
 }
 
 func (market *Market) Unlock() {
 	market.Locked = false
 	market.stability = statistic.Moments{}
+	market.lockedEdges = nil
 }
 
 func (market *Market) IsLocked() bool {
@@ -162,6 +168,7 @@ func (market *Market) prepare() {
 
 	market.Locked = false
 	market.stability = statistic.Moments{}
+	market.lockedEdges = nil
 }
 
 func (market *Market) advance(measurement *data.Measurement[float64]) error {

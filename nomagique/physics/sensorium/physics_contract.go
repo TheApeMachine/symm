@@ -1,8 +1,11 @@
 package sensorium
 
 import (
+	"errors"
 	"fmt"
 	"math"
+
+	"github.com/theapemachine/errnie"
 )
 
 // ModelUnits is the nondimensional action/thermal contract used by every operator.
@@ -25,18 +28,43 @@ type PhysicsControls struct {
 }
 
 func defaultPhysicsControls() PhysicsControls {
-	return PhysicsControls{Units: ModelUnits{hbarEff, 1}, CFL: .4, ParticleCells: .4, PhaseRadians: .5, EtaPressure: 1e-3, EtaSync: .1, MaxStep: dtMax, MaxSubsteps: 4096, MaxRetries: 16, RemapWidthCells: 1, RemapTolerance: 2e-5, RemapIterations: 4096, PilotTolerance: 2e-5}
+	return PhysicsControls{
+		Units:           ModelUnits{hbarEff, 1},
+		CFL:             .4,
+		ParticleCells:   .4,
+		PhaseRadians:    .5,
+		EtaPressure:     1e-3,
+		EtaSync:         .1,
+		MaxStep:         dtMax,
+		MaxSubsteps:     4096,
+		MaxRetries:      16,
+		RemapWidthCells: 1,
+		RemapTolerance:  2e-5,
+		RemapIterations: 4096,
+		PilotTolerance:  2e-5,
+	}
 }
-func (p PhysicsControls) validate() error {
-	if err := p.Contacts.validate(); err != nil {
-		return err
+
+func (controls PhysicsControls) validate() error {
+	if err := controls.Contacts.validate(); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[sensorium:physics_contract:validate] invalid contacts",
+			err,
+		))
 	}
-	if !isPositiveFinite(p.Units.Hbar) || !isPositiveFinite(p.Units.Boltzmann) ||
-		!isPositiveFinite(p.CFL) || p.CFL > .5 || !isPositiveFinite(p.ParticleCells) || p.ParticleCells > .5 ||
-		!isPositiveFinite(p.PhaseRadians) || p.PhaseRadians > 1 || !isPositiveFinite(p.EtaSync) || !isPositiveFinite(p.EtaPressure) || p.EtaPressure >= 1 || p.EtaSync < p.EtaPressure || p.EtaSync >= 1 ||
-		!isPositiveFinite(p.MaxStep) || p.MaxSubsteps < 1 || p.MaxRetries < 0 || !finite(p.GravityG) || p.GravityG < 0 || !isPositiveFinite(p.RemapWidthCells) || !finite(p.RemapTolerance) || p.RemapTolerance < 8*math.Ldexp(1, -23) || p.RemapTolerance > 1e-3 || p.RemapIterations < 1 || !finite(p.PilotTolerance) || p.PilotTolerance < 8*math.Ldexp(1, -23) || p.PilotTolerance > .01 {
-		return fmt.Errorf("sensorium: invalid physics controls: %+v", p)
+
+	if !isPositiveFinite(controls.Units.Hbar) || !isPositiveFinite(controls.Units.Boltzmann) ||
+		!isPositiveFinite(controls.CFL) || controls.CFL > .5 || !isPositiveFinite(controls.ParticleCells) || controls.ParticleCells > .5 ||
+		!isPositiveFinite(controls.PhaseRadians) || controls.PhaseRadians > 1 || !isPositiveFinite(controls.EtaSync) || !isPositiveFinite(controls.EtaPressure) || controls.EtaPressure >= 1 || controls.EtaSync < controls.EtaPressure || controls.EtaSync >= 1 ||
+		!isPositiveFinite(controls.MaxStep) || controls.MaxSubsteps < 1 || controls.MaxRetries < 0 || !finite(controls.GravityG) || controls.GravityG < 0 || !isPositiveFinite(controls.RemapWidthCells) || !finite(controls.RemapTolerance) || controls.RemapTolerance < 8*math.Ldexp(1, -23) || controls.RemapTolerance > 1e-3 || controls.RemapIterations < 1 || !finite(controls.PilotTolerance) || controls.PilotTolerance < 8*math.Ldexp(1, -23) || controls.PilotTolerance > .01 {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf("[sensorium:physics_contract:validate] invalid physics controls: %+v", controls),
+			nil,
+		))
 	}
+
 	return nil
 }
 
@@ -45,69 +73,125 @@ func (p PhysicsControls) validate() error {
 func PlanckTarget(omega, temperature float64, units ModelUnits) (float64, error) {
 	if !finite(omega) || !finite(temperature) || temperature < 0 ||
 		!isPositiveFinite(units.Hbar) || !isPositiveFinite(units.Boltzmann) {
-		return 0, fmt.Errorf("invalid Planck arguments omega=%g T=%g units=%+v", omega, temperature, units)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf("[sensorium:physics_contract:PlanckTarget] invalid Planck arguments omega=%g T=%g units=%+v", omega, temperature, units),
+			nil,
+		))
 	}
+
 	theta := units.Boltzmann * temperature
 	epsilon := units.Hbar * math.Abs(omega)
+
 	if !finite(theta) || !finite(epsilon) {
-		return 0, fmt.Errorf("Planck scale overflow")
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[sensorium:physics_contract:PlanckTarget] Planck scale overflow",
+			nil,
+		))
 	}
+
 	if theta == 0 {
 		return 0, nil
 	}
+
 	if epsilon == 0 {
 		return theta, nil
 	}
-	x := epsilon / theta
-	if x == 0 {
+
+	ratio := epsilon / theta
+
+	if ratio == 0 {
 		return theta, nil
 	}
-	var result float64
-	if x > 50 {
-		result = epsilon * math.Exp(-x)
-	} else {
-		result = theta * (x / math.Expm1(x))
+
+	result := theta * (ratio / math.Expm1(ratio))
+
+	if ratio > 50 {
+		result = epsilon * math.Exp(-ratio)
 	}
+
 	if !finite(result) || result < 0 {
-		return 0, fmt.Errorf("invalid Planck target %g", result)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf("[sensorium:physics_contract:PlanckTarget] invalid Planck target %g", result),
+			nil,
+		))
 	}
+
 	return result, nil
 }
 
 // PlanckTransfer is a finite-reservoir, frozen-initial-temperature relaxation.
 // The interval intersection bounds the TRANSFER, never repairs an invalid state.
 // Both stores are validated before either is returned to a caller for commit.
-func PlanckTransfer(q, osc, mass, omega, cv, conductivity, radius, dt float64, units ModelUnits) (float32, float32, float64, error) {
-	bad := !finite(q) || q < 0 || !finite(osc) || osc < 0 || !isPositiveFinite(mass) ||
-		!isPositiveFinite(cv) || !finite(conductivity) || conductivity < 0 || !isPositiveFinite(radius) || !finite(dt) || dt < 0
+func PlanckTransfer(heat, osc, mass, omega, heatCapacity, conductivity, radius, dt float64, units ModelUnits) (float32, float32, float64, error) {
+	bad := !finite(heat) || heat < 0 || !finite(osc) || osc < 0 || !isPositiveFinite(mass) ||
+		!isPositiveFinite(heatCapacity) || !finite(conductivity) || conductivity < 0 || !isPositiveFinite(radius) || !finite(dt) || dt < 0
+
 	if bad {
-		return 0, 0, 0, fmt.Errorf("invalid reservoir: Q=%g osc=%g m=%g cv=%g k=%g r=%g dt=%g", q, osc, mass, cv, conductivity, radius, dt)
+		return 0, 0, 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf("[sensorium:physics_contract:PlanckTransfer] invalid reservoir: Q=%g osc=%g m=%g cv=%g k=%g r=%g dt=%g", heat, osc, mass, heatCapacity, conductivity, radius, dt),
+			nil,
+		))
 	}
-	capacity := mass * cv
+
+	capacity := mass * heatCapacity
+
 	if !isPositiveFinite(capacity) {
-		return 0, 0, 0, fmt.Errorf("invalid heat capacity")
+		return 0, 0, 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[sensorium:physics_contract:PlanckTransfer] invalid heat capacity",
+			nil,
+		))
 	}
-	target, err := PlanckTarget(omega, q/capacity, units)
+
+	target, err := PlanckTarget(omega, heat/capacity, units)
+
 	if err != nil {
-		return 0, 0, 0, err
+		return 0, 0, 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[sensorium:physics_contract:PlanckTransfer] target resolution failed",
+			err,
+		))
 	}
+
 	rate := 4 * math.Pi * conductivity * radius / capacity
+
 	if !finite(rate) {
-		return 0, 0, 0, fmt.Errorf("Planck relaxation rate overflow")
+		return 0, 0, 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[sensorium:physics_contract:PlanckTransfer] Planck relaxation rate overflow",
+			nil,
+		))
 	}
+
 	fraction := -math.Expm1(-dt * rate)
 	transfer := fraction * (target - osc)
-	transfer = math.Max(-osc, math.Min(q, transfer))
-	q1, e1 := float32(q-transfer), float32(osc+transfer)
-	if !finite(float64(q1)) || !finite(float64(e1)) || q1 < 0 || e1 < 0 {
-		return 0, 0, 0, fmt.Errorf("Planck poststate Q=%g osc=%g transfer=%g -> Q=%g osc=%g", q, osc, transfer, q1, e1)
+	transfer = math.Max(-osc, math.Min(heat, transfer))
+	heatNext, oscNext := float32(heat-transfer), float32(osc+transfer)
+
+	if !finite(float64(heatNext)) || !finite(float64(oscNext)) || heatNext < 0 || oscNext < 0 {
+		return 0, 0, 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf("[sensorium:physics_contract:PlanckTransfer] Planck poststate Q=%g osc=%g transfer=%g -> Q=%g osc=%g", heat, osc, transfer, heatNext, oscNext),
+			nil,
+		))
 	}
-	residual := float64(q1) + float64(e1) - q - osc
-	tolerance := 4 * math.Ldexp(1, -23) * (q + osc)
+
+	residual := float64(heatNext) + float64(oscNext) - heat - osc
+	tolerance := 4 * math.Ldexp(1, -23) * (heat + osc)
+
 	if math.Abs(residual) > tolerance {
-		return 0, 0, 0, fmt.Errorf("Planck conservation residual %g > %g", residual, tolerance)
+		return 0, 0, 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf("[sensorium:physics_contract:PlanckTransfer] Planck conservation residual %g > %g", residual, tolerance),
+			nil,
+		))
 	}
-	return q1, e1, residual, nil
+
+	return heatNext, oscNext, residual, nil
 }
 
 // CoupledStepError distinguishes a numerical retry from invalid input/model state.
@@ -118,8 +202,8 @@ type CoupledStepError struct {
 	Detail   string
 }
 
-func (e *CoupledStepError) Error() string {
-	return fmt.Sprintf("sensorium %s[%d]: %s", e.Operator, e.Index, e.Detail)
+func (stepErr *CoupledStepError) Error() string {
+	return fmt.Sprintf("sensorium %s[%d]: %s", stepErr.Operator, stepErr.Index, stepErr.Detail)
 }
 
 // advanceCoupled owns the entire macro interval. Every successful callback uses
@@ -129,65 +213,120 @@ func (e *CoupledStepError) Error() string {
 // snapshot/restore also cover phase/RNG state and source ledgers, not just gas.
 func advanceCoupled(request float64, controls PhysicsControls, snapshot func() func(),
 	limit func() (float64, error), attempt func(float32) error) (IntegratorHealth, error) {
-	h := IntegratorHealth{}
+	health := IntegratorHealth{}
+
 	if err := controls.validate(); err != nil {
-		return h, err
+		return health, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[sensorium:physics_contract:advanceCoupled] invalid physics controls",
+			err,
+		))
 	}
+
 	requested := float64(float32(request))
+
 	if !isPositiveFinite(request) || !isPositiveFinite(requested) {
-		return h, fmt.Errorf("invalid macro step %g", request)
+		return health, errnie.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf("[sensorium:physics_contract:advanceCoupled] invalid macro step %g", request),
+			nil,
+		))
 	}
-	h.RequestedDT = request
-	h.TargetDT = requested
+
+	health.RequestedDT = request
+	health.TargetDT = requested
 	rollbackMacro := snapshot()
 	remaining := requested
+
 	for remaining > 0 {
-		if h.Substeps >= controls.MaxSubsteps {
+		if health.Substeps >= controls.MaxSubsteps {
 			rollbackMacro()
-			return h, fmt.Errorf("macro interval not resolved: remaining=%g substeps=%d", remaining, h.Substeps)
+
+			return health, errnie.Error(errnie.Err(
+				errnie.Validation,
+				fmt.Sprintf("[sensorium:physics_contract:advanceCoupled] macro interval not resolved: remaining=%g substeps=%d", remaining, health.Substeps),
+				nil,
+			))
 		}
+
 		bound, err := limit()
+
 		if err != nil {
 			rollbackMacro()
-			return h, err
+
+			return health, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[sensorium:physics_contract:advanceCoupled] limit failed",
+				err,
+			))
 		}
+
 		if !isPositiveFinite(bound) {
 			rollbackMacro()
-			return h, fmt.Errorf("nonpositive/nonfinite stability bound %g", bound)
+
+			return health, errnie.Error(errnie.Err(
+				errnie.Validation,
+				fmt.Sprintf("[sensorium:physics_contract:advanceCoupled] nonpositive/nonfinite stability bound %g", bound),
+				nil,
+			))
 		}
+
 		dt := float32(math.Min(remaining, math.Min(controls.MaxStep, bound)))
+
 		if float64(dt) > math.Min(remaining, math.Min(controls.MaxStep, bound)) {
 			dt = math.Nextafter32(dt, 0)
 		}
+
 		rollbackAttempt := snapshot()
+
 		for retry := 0; ; retry++ {
 			if dt <= 0 || float64(dt) > remaining || remaining-float64(dt) == remaining {
 				rollbackMacro()
-				return h, fmt.Errorf("coupled timestep underflow dt=%g remaining=%g", dt, remaining)
+
+				return health, errnie.Error(errnie.Err(
+					errnie.Validation,
+					fmt.Sprintf("[sensorium:physics_contract:advanceCoupled] coupled timestep underflow dt=%g remaining=%g", dt, remaining),
+					nil,
+				))
 			}
+
 			err = attempt(dt)
+
 			if err == nil {
 				break
 			}
+
 			rollbackAttempt()
-			numerical, ok := err.(*CoupledStepError)
-			if !ok || !numerical.Retry || retry >= controls.MaxRetries {
+
+			var numerical *CoupledStepError
+
+			if !errors.As(err, &numerical) || !numerical.Retry || retry >= controls.MaxRetries {
 				rollbackMacro()
-				return h, err
+
+				return health, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"[sensorium:physics_contract:advanceCoupled] numerical step rejected",
+					err,
+				))
 			}
-			h.Rejections++
+
+			health.Rejections++
 			dt *= .5
 		}
+
 		used := float64(dt)
-		if h.Substeps == 0 || used < h.MinDT {
-			h.MinDT = used
+
+		if health.Substeps == 0 || used < health.MinDT {
+			health.MinDT = used
 		}
-		h.LastDT = used
-		h.AcceptedDT += used
-		h.Substeps++
+
+		health.LastDT = used
+		health.AcceptedDT += used
+		health.Substeps++
 		remaining -= used
 	}
-	return h, nil
+
+	return health, nil
 }
 
 // DefaultPhysicsControls returns the same explicit policy used by NewManifold.

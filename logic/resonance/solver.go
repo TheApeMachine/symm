@@ -267,14 +267,8 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 		}
 	}
 
-	if resonance != nil && resonance.Dynamics != nil && resonance.Dynamics.StoredEnergy > 0 {
-		noise := resonance.Dynamics.Dissipation
-
-		if noise <= 0 {
-			noise = 1e-6
-		}
-
-		measurement.SNR = resonance.Dynamics.StoredEnergy / noise
+	if resonance != nil && resonance.Dynamics != nil && resonance.Dynamics.StoredEnergy > 0 && resonance.Dynamics.Dissipation > 0 {
+		measurement.SNR = resonance.Dynamics.StoredEnergy / resonance.Dynamics.Dissipation
 		measurement.SNRDefined = true
 		measurement.Estimated = true
 	}
@@ -517,7 +511,7 @@ deadband is zero and the head learns raw direction, which recursive least
 squares averages out.
 */
 func (solver *Solver) directionalTarget(symbolName string) core.Primitive {
-	return &excursionTarget{
+	return &directionalTarget{
 		scale: func() float64 {
 			loader, found := solver.returnNoise.Load(symbolName)
 
@@ -541,15 +535,15 @@ func (solver *Solver) directionalTarget(symbolName string) core.Primitive {
 }
 
 /*
-excursionTarget measures continuous excursion magnitude scaled by empirical step noise.
+directionalTarget measures directional log return deadbanded by empirical step noise.
 */
-type excursionTarget struct {
+type directionalTarget struct {
 	err   error
 	scale func() float64
 	out   float64
 }
 
-func (op *excursionTarget) Next(
+func (op *directionalTarget) Next(
 	in iter.Seq[unsafe.Pointer],
 ) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
@@ -558,18 +552,23 @@ func (op *excursionTarget) Next(
 
 			if sample.Current <= 0 || sample.Past <= 0 {
 				op.Error(fmt.Errorf(
-					"%w: resonance: excursion target references must be positive",
+					"%w: resonance: directional target references must be positive",
 					core.ErrDomain,
 				))
 				return
 			}
 
-			logReturn := math.Abs(math.Log(sample.Current / sample.Past))
-			noiseScale := op.scale()
-			op.out = logReturn
+			logReturn := math.Log(sample.Current / sample.Past)
+			deadband := op.scale()
+			op.out = 0.0
 
-			if noiseScale > 0 {
-				op.out = logReturn / noiseScale
+			if math.Abs(logReturn) > deadband {
+				if logReturn > 0 {
+					op.out = 1.0
+				}
+				if logReturn < 0 {
+					op.out = -1.0
+				}
 			}
 
 			if !yield(unsafe.Pointer(&op.out)) {
@@ -579,7 +578,7 @@ func (op *excursionTarget) Next(
 	}
 }
 
-func (op *excursionTarget) Error(errs ...error) error {
+func (op *directionalTarget) Error(errs ...error) error {
 	for _, err := range errs {
 		if err != nil {
 			op.err = errors.Join(op.err, err)
@@ -789,7 +788,12 @@ func (solver *Solver) publishReturns(
 		call := 0.0
 
 		if forecast.Ready {
-			call = forecast.Value
+			if forecast.Value > 0 {
+				call = 1.0
+			}
+			if forecast.Value < 0 {
+				call = -1.0
+			}
 		}
 
 		artifact.Forecast = &types.ResonanceReturnForecast{

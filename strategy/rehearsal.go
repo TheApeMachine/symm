@@ -30,6 +30,7 @@ const TrainingFormat = "symm-volume-training/2"
 type trainingReading struct {
 	Learned, Resolved, Correct, Predicted, Entered, Profitable, Unsupported uint64
 	Return                                                                  float64
+	ReturnSq                                                                float64
 }
 
 type trainingAnchor struct {
@@ -61,19 +62,35 @@ type Rehearsal struct {
 	precursor       *Precursor
 	anchors         map[anchorKey]trainingAnchor
 	reading         trainingReading
+	readingMu       sync.RWMutex
 	published       atomic.Pointer[trainingReading]
-	lastExcursion   atomic.Pointer[tables.ExcursionRecord]
+	lastExcursion    atomic.Pointer[tables.ExcursionRecord]
+	lastExcursions   map[string]*tables.ExcursionRecord
+	lastExcursionsMu sync.RWMutex
 	sequence        int64
 	records         []tables.ExcursionRecord
-	checkpointEpoch int64
+	checkpointEpoch atomic.Int64
 	trainedRuns     map[int64]int64
 	trainedRunsMu   sync.RWMutex
 	onProgress      ReplayProgressFunc
 	isSaving        atomic.Bool
 }
 
-func (rehearsal *Rehearsal) LastExcursion() *tables.ExcursionRecord {
+func (rehearsal *Rehearsal) LastExcursion(symbol ...string) *tables.ExcursionRecord {
 	if rehearsal == nil {
+		return nil
+	}
+
+	if len(symbol) > 0 && symbol[0] != "" {
+		rehearsal.lastExcursionsMu.RLock()
+		defer rehearsal.lastExcursionsMu.RUnlock()
+
+		if rehearsal.lastExcursions != nil {
+			if rec, exists := rehearsal.lastExcursions[symbol[0]]; exists {
+				return rec
+			}
+		}
+
 		return nil
 	}
 
@@ -141,8 +158,9 @@ func NewRehearsal(ctx context.Context, epoch int64, price *broker.Price, engine 
 		detector:    tables.NewStreamingDetector(epoch, price),
 		space:       impulse.NewMap(),
 		precursor:   NewPrecursor(),
-		anchors:     make(map[anchorKey]trainingAnchor),
-		trainedRuns: make(map[int64]int64),
+		anchors:        make(map[anchorKey]trainingAnchor),
+		trainedRuns:    make(map[int64]int64),
+		lastExcursions: make(map[string]*tables.ExcursionRecord),
 	}
 }
 
@@ -175,6 +193,13 @@ func (rehearsal *Rehearsal) Step(frame *data.Measurement[float64]) ([]tables.Exc
 			rehearsal.records = append(rehearsal.records, *record)
 			copied := *record
 			rehearsal.lastExcursion.Store(&copied)
+
+			rehearsal.lastExcursionsMu.Lock()
+			if rehearsal.lastExcursions == nil {
+				rehearsal.lastExcursions = make(map[string]*tables.ExcursionRecord)
+			}
+			rehearsal.lastExcursions[record.Symbol] = &copied
+			rehearsal.lastExcursionsMu.Unlock()
 		}
 
 		if rehearsal.detector.Anchor(measurement.Label) == frame.SeqIdx {
@@ -191,12 +216,14 @@ func (rehearsal *Rehearsal) Step(frame *data.Measurement[float64]) ([]tables.Exc
 
 	rehearsal.sequence = frame.SeqIdx
 
-	if rehearsal.checkpointEpoch > 0 {
-		rehearsal.RecordTrainedRun(rehearsal.checkpointEpoch, frame.SeqIdx)
+	if epoch := rehearsal.checkpointEpoch.Load(); epoch > 0 {
+		rehearsal.RecordTrainedRun(epoch, frame.SeqIdx)
 	}
 
 	if len(rehearsal.records) > 0 {
+		rehearsal.readingMu.RLock()
 		reading := rehearsal.reading
+		rehearsal.readingMu.RUnlock()
 		rehearsal.published.Store(&reading)
 	}
 
@@ -269,14 +296,18 @@ func (rehearsal *Rehearsal) resolve(record tables.ExcursionRecord, exit *grid.Im
 	anchor, found := rehearsal.anchors[key]
 
 	if !found {
+		rehearsal.readingMu.Lock()
 		rehearsal.reading.Unsupported++
+		rehearsal.readingMu.Unlock()
 		return nil
 	}
 
 	delete(rehearsal.anchors, key)
 
 	if len(anchor.key) == 0 {
+		rehearsal.readingMu.Lock()
 		rehearsal.reading.Unsupported++
+		rehearsal.readingMu.Unlock()
 		return nil
 	}
 
@@ -287,6 +318,7 @@ func (rehearsal *Rehearsal) resolve(record tables.ExcursionRecord, exit *grid.Im
 	}
 
 	// Score the held-out prediction before this outcome updates the trie.
+	rehearsal.readingMu.Lock()
 	rehearsal.reading.Resolved++
 
 	if anchor.prediction != "" {
@@ -300,23 +332,30 @@ func (rehearsal *Rehearsal) resolve(record tables.ExcursionRecord, exit *grid.Im
 	if anchor.prediction == string(ActionEnter) {
 		rehearsal.reading.Entered++
 		rehearsal.reading.Return += record.ProfitFraction
+		rehearsal.reading.ReturnSq += record.ProfitFraction * record.ProfitFraction
 
 		if record.ProfitFraction > 0 {
 			rehearsal.reading.Profitable++
 		}
 	}
+	rehearsal.readingMu.Unlock()
 
 	if _, err := rehearsal.train(anchor.key, []byte(ActionEnter), record.ProfitFraction); err != nil {
 		return errnie.Error(err)
 	}
 
+	rehearsal.readingMu.Lock()
 	rehearsal.reading.Learned++
+	rehearsal.readingMu.Unlock()
 
 	if _, err := rehearsal.train(anchor.key, []byte(ActionWait), -record.ProfitFraction); err != nil {
 		return errnie.Error(err)
 	}
 
+	rehearsal.readingMu.Lock()
 	rehearsal.reading.Learned++
+	rehearsal.readingMu.Unlock()
+
 	// At a detected regime boundary the completed virtual position is closed.
 	// The holding bit keeps this lifecycle label separate from entry selection.
 	exitKey := rehearsal.precursor.Encode(exit, true)
@@ -326,7 +365,9 @@ func (rehearsal *Rehearsal) resolve(record tables.ExcursionRecord, exit *grid.Im
 			return errnie.Error(err)
 		}
 
+		rehearsal.readingMu.Lock()
 		rehearsal.reading.Learned++
+		rehearsal.readingMu.Unlock()
 	}
 
 	return nil
@@ -443,10 +484,16 @@ func (rehearsal *Rehearsal) SaveCheckpoint(epoch int64) error {
 		return errnie.Error(errnie.Err(errnie.Internal, "rehearsal: snapshot failed", err))
 	}
 
+	rehearsal.readingMu.RLock()
 	reading := rehearsal.reading
+	rehearsal.readingMu.RUnlock()
 
 	if published := rehearsal.published.Load(); published != nil {
 		reading = *published
+	}
+
+	if epoch > 0 {
+		rehearsal.RecordTrainedRun(epoch, math.MaxInt64)
 	}
 
 	checkpoint := RehearsalCheckpoint{
@@ -484,7 +531,7 @@ func (rehearsal *Rehearsal) SaveCheckpoint(epoch int64) error {
 		epoch, buffer.Len(), checkpoint.Reading.Learned,
 	))
 
-	rehearsal.checkpointEpoch = epoch
+	rehearsal.checkpointEpoch.Store(epoch)
 	return nil
 }
 
@@ -493,8 +540,8 @@ func (rehearsal *Rehearsal) LoadCheckpoint() (int64, error) {
 		return 0, nil
 	}
 
-	if rehearsal.checkpointEpoch > 0 {
-		return rehearsal.checkpointEpoch, nil
+	if epoch := rehearsal.checkpointEpoch.Load(); epoch > 0 {
+		return epoch, nil
 	}
 
 	targetPath := filepath.Join("runs", "rehearsal_checkpoint.bin")
@@ -527,13 +574,15 @@ func (rehearsal *Rehearsal) LoadCheckpoint() (int64, error) {
 		rehearsal.MergeTrainedRuns(checkpoint.TrainedRuns)
 	}
 
-	if checkpoint.Epoch > 0 && len(rehearsal.TrainedRunsSnapshot()) == 0 {
+	if checkpoint.Epoch > 0 {
 		rehearsal.RecordTrainedRun(checkpoint.Epoch, math.MaxInt64)
 	}
 
-	rehearsal.checkpointEpoch = checkpoint.Epoch
+	rehearsal.checkpointEpoch.Store(checkpoint.Epoch)
+	rehearsal.readingMu.Lock()
 	rehearsal.reading = checkpoint.Reading
-	rehearsal.published.Store(&rehearsal.reading)
+	rehearsal.readingMu.Unlock()
+	rehearsal.published.Store(&checkpoint.Reading)
 
 	errnie.Info(fmt.Sprintf(
 		"rehearsal: restored checkpoint for epoch %d (learned=%d, return=%.4f)",
@@ -551,7 +600,7 @@ func (rehearsal *Rehearsal) Restore(catalog *tables.Catalog) error {
 		errnie.Error(err)
 	}
 
-	if lastEpoch > 0 && len(rehearsal.TrainedRunsSnapshot()) == 0 {
+	if lastEpoch > 0 {
 		rehearsal.RecordTrainedRun(lastEpoch, math.MaxInt64)
 	}
 
@@ -646,7 +695,9 @@ func (rehearsal *Rehearsal) ReplayPending(catalog *tables.Catalog) error {
 		errnie.Info(fmt.Sprintf("rehearsal: finished replaying run epoch=%d", run.Epoch))
 	}
 
+	rehearsal.readingMu.RLock()
 	reading := rehearsal.reading
+	rehearsal.readingMu.RUnlock()
 	rehearsal.published.Store(&reading)
 
 	if latestEpoch > 0 {
@@ -659,13 +710,35 @@ func (rehearsal *Rehearsal) ReplayPending(catalog *tables.Catalog) error {
 	return nil
 }
 
+// MergeReading cumulatively merges another trainingReading into this rehearsal instance.
+func (rehearsal *Rehearsal) MergeReading(delta trainingReading) {
+	if rehearsal == nil {
+		return
+	}
+
+	rehearsal.readingMu.Lock()
+	rehearsal.reading.Learned += delta.Learned
+	rehearsal.reading.Resolved += delta.Resolved
+	rehearsal.reading.Correct += delta.Correct
+	rehearsal.reading.Predicted += delta.Predicted
+	rehearsal.reading.Entered += delta.Entered
+	rehearsal.reading.Profitable += delta.Profitable
+	rehearsal.reading.Unsupported += delta.Unsupported
+	rehearsal.reading.Return += delta.Return
+	rehearsal.reading.ReturnSq += delta.ReturnSq
+	combined := rehearsal.reading
+	rehearsal.readingMu.Unlock()
+
+	rehearsal.published.Store(&combined)
+}
+
 // PollUntrained checks the catalog for new excursions and pre-trains on them using an independent replay worker.
 func (rehearsal *Rehearsal) PollUntrained(catalog *tables.Catalog) error {
 	if rehearsal == nil || rehearsal.engine == nil || catalog == nil {
 		return nil
 	}
 
-	historical := NewRehearsal(rehearsal.ctx, rehearsal.checkpointEpoch, rehearsal.price, rehearsal.engine)
+	historical := NewRehearsal(rehearsal.ctx, rehearsal.checkpointEpoch.Load(), rehearsal.price, rehearsal.engine)
 	historical.MergeTrainedRuns(rehearsal.TrainedRunsSnapshot())
 
 	if rehearsal.onProgress != nil {
@@ -676,8 +749,11 @@ func (rehearsal *Rehearsal) PollUntrained(catalog *tables.Catalog) error {
 		return err
 	}
 
-	reading := historical.reading
-	rehearsal.published.Store(&reading)
+	historical.readingMu.RLock()
+	deltaReading := historical.reading
+	historical.readingMu.RUnlock()
+
+	rehearsal.MergeReading(deltaReading)
 	rehearsal.MergeTrainedRuns(historical.TrainedRunsSnapshot())
 
 	return nil

@@ -4,8 +4,8 @@ import { useEffect } from "react";
 import {
 	observeSymbols,
 	onlineAtom,
-	resonanceStore,
 	RingBuffer,
+	signals,
 	symbolsAtom,
 	updateClock,
 } from "#/collections/app";
@@ -46,7 +46,7 @@ const signalingURL = () => {
 const setTransport = (
 	status: "ONLINE" | "CONNECTING" | "OFFLINE",
 ) => {
-	onlineAtom.set(status)
+	onlineAtom.set(status);
 };
 
 export const dispatchResonanceRow = (row: {
@@ -59,15 +59,15 @@ export const dispatchResonanceRow = (row: {
 		observeSymbols([symbol]);
 	}
 
-	let ring = resonanceStore.state[symbol];
+	let ring = signals.resonance.state[symbol];
 
 	if (!ring) {
-		ring = new RingBuffer<MeasurementT | ResonanceT>(50);
-		resonanceStore.state[symbol] = ring;
+		ring = new RingBuffer<MeasurementT>(50);
+		signals.resonance.state[symbol] = ring;
 	}
 
 	const unpacked = row.unpack();
-	ring.add(unpacked);
+	ring.add(unpacked as MeasurementT);
 
 	if ("at" in unpacked && unpacked.at) {
 		updateClock(unpacked.at);
@@ -132,7 +132,7 @@ export const dispatchResonanceBuffer = (buffer: flatbuffers.ByteBuffer) => {
 		}
 
 		if (touched) {
-			resonanceStore.setState((prev) => ({ ...prev }));
+			signals.resonance.setState((prev) => ({ ...prev }));
 		}
 	});
 };

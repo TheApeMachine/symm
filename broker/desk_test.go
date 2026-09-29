@@ -8,6 +8,7 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/symm/broker/position"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/nomagique/runtime"
@@ -60,57 +61,70 @@ func TestDesk(t *testing.T) {
 		desk := NewDesk(ctx, api, price, balance)
 
 		Convey("When entering a position for a symbol with valid cash", func() {
-			pos := desk.Enter("BTC/USD")
+			pos, err := desk.Enter("BTC/USD")
 
-			Convey("Then a position is created with calculated entry volume", func() {
+			Convey("Then a position regulator is created with calculated entry volume", func() {
+				So(err, ShouldBeNil)
 				So(pos, ShouldNotBeNil)
-				So(pos.EntryOrder, ShouldNotBeNil)
-				So(pos.EntryOrder.Pair, ShouldEqual, "BTC/USD")
-				So(pos.EntryOrder.Type, ShouldEqual, "buy")
-				So(pos.EntryOrder.Volume, ShouldNotBeBlank)
-				So(pos.ExitOrder.Pair, ShouldEqual, "BTC/USD")
-				So(pos.ExitOrder.Type, ShouldEqual, "sell")
-				So(pos.ExitOrder.Volume, ShouldEqual, pos.EntryOrder.Volume)
+				So(pos.Pending, ShouldNotBeNil)
+				So(pos.Pending.Pair, ShouldEqual, "BTC/USD")
+				So(pos.Pending.Type, ShouldEqual, "buy")
+				So(pos.Pending.Volume, ShouldNotBeBlank)
+				So(pos.Status(), ShouldEqual, "entry_pending")
 			})
 		})
 
-		Convey("When exiting an active position", func() {
-			pos := desk.Enter("BTC/USD")
+		Convey("When attempting to exit before inventory fills", func() {
+			pos, err := desk.Enter("BTC/USD")
+			So(err, ShouldBeNil)
 			So(pos, ShouldNotBeNil)
 
-			err := desk.Exit(pos)
-			So(err, ShouldBeNil)
-
-			Convey("Then the exit response is recorded", func() {
-				So(pos.ExitResponse, ShouldNotBeNil)
+			exitErr := desk.Exit(pos)
+			Convey("Then Exit is rejected because no volume is held yet", func() {
+				So(exitErr, ShouldNotBeNil)
 			})
 		})
 
 		Convey("When entering with an onPending callback", func() {
-			var pendingPos *Position
-			pos := desk.Enter("BTC/USD", func(pending *Position) {
+			var pendingPos *position.Regulator
+			pos, err := desk.Enter("BTC/USD", func(pending *position.Regulator) {
 				pendingPos = pending
 			})
 
+			So(err, ShouldBeNil)
 			So(pos, ShouldNotBeNil)
 			So(pendingPos, ShouldNotBeNil)
 			So(pendingPos.PositionID, ShouldEqual, pos.PositionID)
-			So(pos.EntryOrder.ClOrdId, ShouldEqual, pos.PositionID)
+			So(pos.Pending.ClOrdId, ShouldEqual, pos.PositionID)
 		})
 
 		Convey("When an entry position is partially filled", func() {
-			pos := desk.Enter("BTC/USD")
+			pos, enterErr := desk.Enter("BTC/USD")
+			So(enterErr, ShouldBeNil)
 			So(pos, ShouldNotBeNil)
 
-			// Record partial fill of 0.001 volume
-			pos.SetFill(decimal.NewFromFloat64(50000.0), decimal.NewFromFloat64(0.001), decimal.NewFromFloat64(0.05))
-			So(pos.ExecutedVolume().Float64(), ShouldEqual, 0.001)
+			// Record partial fill of 0.001 volume via Reconcile with remainder canceled
+			report := kraken.ExecutionData{
+				OrderID:       "ORD-DESK-1",
+				ClientOrderID: pos.PositionID,
+				Symbol:        "BTC/USD",
+				OrderStatus:   "canceled",
+				CumQty:        decimal.NewFromFloat64(0.001),
+				CumCost:       decimal.NewFromFloat64(50.0),
+				FeeUsdEquiv:   decimal.NewFromFloat64(0.05),
+			}
+			recErr := pos.Reconcile(report)
+			So(recErr, ShouldBeNil)
+			So(pos.Volume().Float64(), ShouldEqual, 0.001)
 
 			err := desk.Exit(pos)
 			So(err, ShouldBeNil)
 
 			Convey("Then the exit order volume matches the executed volume, not requested volume", func() {
-				So(pos.ExitOrder.Volume, ShouldEqual, "0.001")
+				So(pos.Pending.Type, ShouldEqual, "sell")
+				exitVol, parseErr := decimal.NewFromString(pos.Pending.Volume)
+				So(parseErr, ShouldBeNil)
+				So(exitVol.Float64(), ShouldEqual, 0.001)
 			})
 		})
 
@@ -122,7 +136,7 @@ func TestDesk(t *testing.T) {
 
 			So(price.Anomalies().HasSevereFault("BTC/USD"), ShouldBeTrue)
 
-			pos := desk.Enter("BTC/USD")
+			pos, _ := desk.Enter("BTC/USD")
 
 			Convey("Then Enter short circuits, returns nil, and transitions desk to error", func() {
 				So(pos, ShouldBeNil)
@@ -145,7 +159,7 @@ func TestDesk(t *testing.T) {
 				price.Anomalies().Record("BTC/USD", AnomalyCrossedBook)
 			}
 
-			pos := desk.Enter("BTC/USD")
+			pos, _ := desk.Enter("BTC/USD")
 
 			Convey("Then Enter short circuits and halts execution", func() {
 				So(pos, ShouldBeNil)

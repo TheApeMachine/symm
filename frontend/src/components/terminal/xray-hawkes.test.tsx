@@ -1,17 +1,12 @@
 // @vitest-environment jsdom
 import { act, render } from "@testing-library/react";
-import {
-	clockAtom,
-	focusStore,
-	getMeasurementStore,
-	signals,
-} from "#/collections/app";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { hawkesSample, XrayHawkesPanel } from "./xray-hawkes";
+import { clockAtom, focusAtom, RingBuffer, signals } from "#/collections/app";
 import { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
 import { MetricT } from "#/providers/telemetry/telemetry/metric";
 import { NamedStringT } from "#/providers/telemetry/telemetry/named-string";
+import { hawkesSample, XrayHawkesPanel } from "./xray-hawkes";
 
 describe("XrayHawkesPanel", () => {
 	it("renders the arrival-process readouts and canvas shell", () => {
@@ -54,9 +49,12 @@ describe("hawkesSample", () => {
 
 	it("does not draw a declared but unfitted zero-valued model", () => {
 		const measurement = row("buy");
-		measurement.metrics.find(
+		const decay = measurement.metrics.find(
 			(metric) => metric.name === "excitation_decay",
-		)!.raw = 0;
+		);
+		if (decay) {
+			decay.raw = 0;
+		}
 		expect(hawkesSample(measurement)).toBeNull();
 	});
 
@@ -100,9 +98,13 @@ describe("XrayHawkesPanel market clock", () => {
 		const height = vi
 			.spyOn(HTMLCanvasElement.prototype, "clientHeight", "get")
 			.mockReturnValue(240);
-		const symbol = focusStore.state;
-		const store = getMeasurementStore("hawkes", symbol);
-		store.state.clear();
+		const symbol = focusAtom.get();
+		let ring = signals.hawkes.state[symbol];
+		if (!ring) {
+			ring = new RingBuffer<MeasurementT>(50);
+			signals.hawkes.state[symbol] = ring;
+		}
+		ring.clear();
 		const measurement = new MeasurementT();
 		measurement.at = 1_000_000_000n;
 		measurement.provenance = [new NamedStringT("side", "buy")];
@@ -113,7 +115,7 @@ describe("XrayHawkesPanel market clock", () => {
 			"excitation_amplitude:buy_from_buy": 0.4,
 			"excitation_amplitude:sell_from_buy": 0.1,
 		}).map(([name, value]) => new MetricT(name, value));
-		store.state.add(measurement);
+		ring.add(measurement);
 		const view = render(<XrayHawkesPanel />);
 
 		try {
@@ -126,7 +128,7 @@ describe("XrayHawkesPanel market clock", () => {
 			expect(
 				view.container.querySelector('[data-f="lambda"]')?.textContent,
 			).toBe("0.5033 /s");
-			expect(store.state.getBufferLength()).toBe(1);
+			expect(ring.getBufferLength()).toBe(1);
 			const baselineY = context.moveTo.mock.calls[0][1];
 			context.moveTo.mockClear();
 			act(() => clockAtom.set(5500));
@@ -136,7 +138,7 @@ describe("XrayHawkesPanel market clock", () => {
 			const next = new MeasurementT();
 			Object.assign(next, measurement, { at: 5_500_000_000n });
 			act(() => {
-				store.state.add(next);
+				ring.add(next);
 				signals.hawkes.setState((previous) => ({ ...previous }));
 			});
 			act(() => repaint?.(3));
@@ -151,7 +153,7 @@ describe("XrayHawkesPanel market clock", () => {
 			).toBe("0.7000 /s");
 		} finally {
 			view.unmount();
-			store.state.clear();
+			ring.clear();
 			canvas.mockRestore();
 			width.mockRestore();
 			height.mockRestore();

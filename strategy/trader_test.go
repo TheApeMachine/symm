@@ -56,18 +56,18 @@ func TestTrader(t *testing.T) {
 		Convey("When ActionEnter is received", func() {
 			trader.OnAction("BTC/USD", ActionEnter)
 
-			Convey("Then the trader holds the new position", func() {
-				So(trader.Holding("BTC/USD"), ShouldBeTrue)
+			Convey("Then an entry pending position is registered but holding is false until filled", func() {
+				So(trader.Holding("BTC/USD"), ShouldBeFalse)
 				So(trader.PositionCount(), ShouldEqual, 1)
-				So(trader.Position("BTC/USD"), ShouldNotBeNil)
+				pos := trader.Position("BTC/USD")
+				So(pos, ShouldNotBeNil)
+				So(pos.Status(), ShouldEqual, "entry_pending")
 
 				wireFrame := trader.PositionsWire()
 				So(wireFrame, ShouldNotBeNil)
 				So(len(wireFrame.Rows), ShouldEqual, 1)
 				So(wireFrame.Rows[0].Holding.Symbol, ShouldEqual, "BTC/USD")
-				So(wireFrame.Rows[0].Holding.Status, ShouldEqual, "active")
-				So(wireFrame.Rows[0].Holding.EntryPrice, ShouldNotBeEmpty)
-				So(wireFrame.Rows[0].Holding.Mark, ShouldNotBeEmpty)
+				So(wireFrame.Rows[0].Holding.Status, ShouldEqual, "entry_pending")
 
 				recentTrades, err := trader.RecentTrades(10)
 				So(err, ShouldBeNil)
@@ -77,51 +77,72 @@ func TestTrader(t *testing.T) {
 				So(decFrame, ShouldNotBeNil)
 				So(len(decFrame.Decisions), ShouldBeGreaterThanOrEqualTo, 1)
 				So(decFrame.Decisions[0].Symbol, ShouldEqual, "BTC/USD")
-			})
 
-			Convey("When ActionExit is received", func() {
-				trader.OnAction("BTC/USD", ActionExit)
-
-				Convey("Then the position is closed", func() {
-					So(trader.Holding("BTC/USD"), ShouldBeFalse)
-					So(trader.PositionCount(), ShouldEqual, 0)
-
-					wireFrame := trader.PositionsWire()
-					So(wireFrame, ShouldNotBeNil)
-					So(len(wireFrame.Rows), ShouldEqual, 0)
-				})
-			})
-
-			Convey("When execution arrives via ApplyExecution", func() {
-				pos := trader.Position("BTC/USD")
-				So(pos, ShouldNotBeNil)
-
-				exec := &kraken.Execution{
-					Channel: "executions",
-					Type:    "update",
-					Data: []kraken.ExecutionData{
-						{
-							Symbol:        "BTC/USD",
-							OrderID:       pos.OrderID(),
-							ClientOrderID: pos.PositionID,
-							AvgPrice:      decimal.NewFromFloat64(49980.0),
-							CumQty:        decimal.NewFromFloat64(0.0015),
-							FeeUsdEquiv:   decimal.NewFromFloat64(0.18),
+				Convey("When execution fill arrives via ApplyExecution", func() {
+					exec := &kraken.Execution{
+						Channel: "executions",
+						Type:    "update",
+						Data: []kraken.ExecutionData{
+							{
+								Symbol:        "BTC/USD",
+								OrderID:       pos.OrderID,
+								ClientOrderID: pos.PositionID,
+								OrderStatus:   "filled",
+								AvgPrice:      decimal.NewFromFloat64(49980.0),
+								CumQty:        decimal.NewFromFloat64(0.0015),
+								CumCost:       decimal.NewFromFloat64(74.97),
+								FeeUsdEquiv:   decimal.NewFromFloat64(0.18),
+							},
 						},
-					},
-				}
+					}
 
-				trader.ApplyExecution(exec)
+					trader.ApplyExecution(exec)
 
-				So(pos.ExecutedPrice().Float64(), ShouldEqual, 49980.0)
-				So(pos.ExecutedVolume().Float64(), ShouldEqual, 0.0015)
-				So(pos.Fee().Float64(), ShouldEqual, 0.18)
+					So(trader.Holding("BTC/USD"), ShouldBeTrue)
+					So(pos.Status(), ShouldEqual, "open")
+					So(pos.Volume().Float64(), ShouldAlmostEqual, 0.0015, 1e-6)
+					So(pos.Price().Float64(), ShouldAlmostEqual, 49980.0, 1e-2)
+					So(pos.Fee().Float64(), ShouldAlmostEqual, 0.18, 1e-4)
 
-				wireFrame := trader.PositionsWire()
-				So(wireFrame, ShouldNotBeNil)
-				So(len(wireFrame.Rows), ShouldEqual, 1)
-				So(wireFrame.Rows[0].Holding.EntryPrice, ShouldEqual, "49980")
-				So(wireFrame.Rows[0].Holding.Qty, ShouldEqual, "0.0015")
+					fillFrame := trader.PositionsWire()
+					So(fillFrame, ShouldNotBeNil)
+					So(len(fillFrame.Rows), ShouldEqual, 1)
+					So(fillFrame.Rows[0].Holding.Status, ShouldEqual, "open")
+
+					Convey("When ActionExit is received and exit execution arrives", func() {
+						trader.OnAction("BTC/USD", ActionExit)
+						So(pos.Status(), ShouldEqual, "exit_pending")
+						So(trader.Holding("BTC/USD"), ShouldBeTrue)
+
+						exitExec := &kraken.Execution{
+							Channel: "executions",
+							Type:    "update",
+							Data: []kraken.ExecutionData{
+								{
+									Symbol:        "BTC/USD",
+									OrderID:       pos.OrderID,
+									ClientOrderID: pos.Pending.ClOrdId,
+									OrderStatus:   "filled",
+									AvgPrice:      decimal.NewFromFloat64(51000.0),
+									CumQty:        decimal.NewFromFloat64(0.0015),
+									CumCost:       decimal.NewFromFloat64(76.50),
+									FeeUsdEquiv:   decimal.NewFromFloat64(0.19),
+								},
+							},
+						}
+
+						trader.ApplyExecution(exitExec)
+
+						Convey("Then the position is closed and removed", func() {
+							So(trader.Holding("BTC/USD"), ShouldBeFalse)
+							So(trader.PositionCount(), ShouldEqual, 0)
+
+							closedFrame := trader.PositionsWire()
+							So(closedFrame, ShouldNotBeNil)
+							So(len(closedFrame.Rows), ShouldEqual, 0)
+						})
+					})
+				})
 			})
 		})
 
@@ -138,8 +159,7 @@ func TestTrader(t *testing.T) {
 
 			wg.Wait()
 
-			Convey("Then exactly one position exists and duplicate orders are prevented", func() {
-				So(trader.Holding("BTC/USD"), ShouldBeTrue)
+			Convey("Then exactly one pending position exists and duplicate orders are prevented", func() {
 				So(trader.PositionCount(), ShouldEqual, 1)
 			})
 		})

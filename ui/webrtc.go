@@ -1,206 +1,226 @@
 package ui
 
 import (
-	"context"
+	"fmt"
 	"sync"
-	"sync/atomic"
 	"time"
 
+	"github.com/gofiber/fiber/v3"
 	flatbuffers "github.com/google/flatbuffers/go"
 	"github.com/pion/webrtc/v4"
-	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
 )
 
-const (
-	// fluidChunkHeaderSize is the per-SCTP-message framing: magic(4) +
-	// frameID(4) + chunkIndex(4) + chunkCount(4). Every chunk is self-
-	// identifying, so unordered, non-retransmitting channels can reassemble
-	// one complete frame and discard obsolete/incomplete ones.
-	fluidChunkHeaderSize = 16
-	// RFC 8831 recommends messages no larger than 16 KiB when SCTP message
-	// interleaving is unavailable. Records are segmented and reassembled.
-	fluidSegmentSize = 16 * 1024
-)
-
-var fluidRecordMagic = [4]byte{'S', 'F', 'D', '1'}
-
-/*
-FluidRTC owns the unordered, non-retransmitting WebRTC publication plane for
-the manifold, resonance, and diagnostics channels. Every channel is
-latest-wins, so the transport never queues a backlog of stale snapshots and
-never blocks the market pipeline.
-*/
-type FluidRTC struct {
-	*runtime.System
-	peers         sync.Map
-	consumerID    string
-	bufferedLimit uint64
-	sequence      atomic.Uint64
+type WebRTC struct {
+	hub      *Hub
+	pc       *webrtc.PeerConnection
+	channels sync.Map
 }
 
-/*
-NewFluidRTC configures the manifold transport without starting its Run loop.
-*/
-func NewFluidRTC(
-	ctx context.Context,
-	consumerID string,
-) *FluidRTC {
-	viper.SetDefault("ui.webrtc.buffered_segments", 64)
-	bufferedSegments := viper.GetUint64("ui.webrtc.buffered_segments")
-
-	fluidTransport := &FluidRTC{
-		consumerID:    consumerID,
-		bufferedLimit: bufferedSegments * fluidSegmentSize,
+func NewWebRTC(hub *Hub) *WebRTC {
+	wrtc := &WebRTC{
+		hub: hub,
 	}
 
-	fluidTransport.System = runtime.NewSystem(ctx, "webrtc", fluidTransport)
+	wrtc.Register()
 
-	if bufferedSegments < 1 {
-		fluidTransport.Error(errnie.Err(
-			errnie.Internal,
-			"webrtc: buffered_segments must be positive",
-			nil,
-		))
-	}
-
-	return fluidTransport
+	return wrtc
 }
 
-/*
-Run drains tee publications until shutdown or the first transport
-failure. Observer snapshots are replaceable: a bounded latest-wins boundary
-means a slow viewer receives a fresher replaceable state and, on a feed
-failure, the transport fails explicitly rather than silently losing frames.
-Durable historical truth lives in Hindsight/raw capture, never in this path.
-*/
-func (fluidTransport *FluidRTC) Run(tee *WebRTCTee) error {
-	// This is the dashboard publication cadence, not a market sampling window.
-	interval := viper.GetDuration("ui.websocket.learning_interval")
+func (wrtc *WebRTC) Register() {
+	wrtc.setupOfferHandler()
+	wrtc.setupCandidateHandler()
+	wrtc.setupStaticHandler()
+}
 
-	if interval <= 0 {
-		return errnie.Error(errnie.Err(errnie.Validation, "fluid: publication interval must be positive", nil))
+func (wrtc *WebRTC) setupOfferHandler() {
+	handler := func(fiberCtx fiber.Ctx) error {
+		var offer webrtc.SessionDescription
+
+		if err := fiberCtx.Bind().Body(&offer); err != nil {
+			return fiber.ErrBadRequest
+		}
+
+		settingEngine := webrtc.SettingEngine{}
+		settingEngine.SetIncludeLoopbackCandidate(true)
+
+		api := webrtc.NewAPI(webrtc.WithSettingEngine(settingEngine))
+		pc, err := api.NewPeerConnection(webrtc.Configuration{
+			ICEServers: []webrtc.ICEServer{
+				{URLs: []string{"stun:stun.l.google.com:19302"}},
+			},
+			BundlePolicy:  webrtc.BundlePolicyBalanced,
+			RTCPMuxPolicy: webrtc.RTCPMuxPolicyRequire,
+		})
+
+		if err != nil {
+			return fiber.ErrInternalServerError
+		}
+
+		wrtc.pc = pc
+		wrtc.setupICECandidateHandler(pc)
+		wrtc.setupDataChannelHandler(pc)
+
+		answer, err := wrtc.processOffer(pc, offer)
+
+		if err != nil {
+			return fiber.ErrInternalServerError
+		}
+
+		return fiberCtx.JSON(answer)
 	}
 
-	ticker := time.NewTicker(interval)
+	wrtc.hub.app.Post("/offer", handler)
+	wrtc.hub.app.Post("/webrtc/manifold", handler)
+}
+
+func (wrtc *WebRTC) setupICECandidateHandler(pc *webrtc.PeerConnection) {
+	pc.OnICECandidate(func(candidate *webrtc.ICECandidate) {
+		if candidate != nil {
+			errnie.Info(fmt.Sprintf("webrtc: new ICE candidate: %s", candidate.Address))
+		}
+	})
+}
+
+func (wrtc *WebRTC) setupDataChannelHandler(pc *webrtc.PeerConnection) {
+	pc.OnDataChannel(func(channel *webrtc.DataChannel) {
+		label := channel.Label()
+
+		channel.OnOpen(func() {
+			errnie.Info(fmt.Sprintf("webrtc: data channel opened: %s", label))
+			wrtc.channels.Store(channel, label)
+		})
+
+		channel.OnClose(func() {
+			errnie.Info(fmt.Sprintf("webrtc: data channel closed: %s", label))
+			wrtc.channels.Delete(channel)
+		})
+
+		if channel.ReadyState() == webrtc.DataChannelStateOpen {
+			wrtc.channels.Store(channel, label)
+		}
+	})
+}
+
+func (wrtc *WebRTC) processOffer(
+	pc *webrtc.PeerConnection,
+	offer webrtc.SessionDescription,
+) (*webrtc.SessionDescription, error) {
+	if err := pc.SetRemoteDescription(offer); err != nil {
+		return nil, err
+	}
+
+	answer, err := pc.CreateAnswer(nil)
+
+	if err != nil {
+		return nil, err
+	}
+
+	if err := pc.SetLocalDescription(answer); err != nil {
+		return nil, err
+	}
+
+	gatherComplete := webrtc.GatheringCompletePromise(pc)
+	<-gatherComplete
+
+	finalAnswer := pc.LocalDescription()
+
+	if finalAnswer == nil {
+		return nil, fmt.Errorf("local description is nil after ICE gathering")
+	}
+
+	return finalAnswer, nil
+}
+
+func (wrtc *WebRTC) setupCandidateHandler() {
+	wrtc.hub.app.Post("/candidate", func(fiberCtx fiber.Ctx) error {
+		var candidate webrtc.ICECandidateInit
+
+		if err := fiberCtx.Bind().Body(&candidate); err != nil {
+			return fiber.ErrBadRequest
+		}
+
+		if wrtc.pc != nil {
+			if err := wrtc.pc.AddICECandidate(candidate); err != nil {
+				errnie.Error(err)
+			}
+		}
+
+		return nil
+	})
+}
+
+func (wrtc *WebRTC) setupStaticHandler() {
+	wrtc.hub.app.Get("/", func(fiberCtx fiber.Ctx) error {
+		return fiberCtx.SendFile("./demo.html")
+	})
+}
+
+func (wrtc *WebRTC) Send(label string, payload []byte) {
+	wrtc.channels.Range(func(key, value any) bool {
+		if value.(string) != label {
+			return true
+		}
+
+		dc := key.(*webrtc.DataChannel)
+
+		if dc.ReadyState() == webrtc.DataChannelStateOpen {
+			if err := dc.Send(payload); err != nil {
+				errnie.Error(err)
+			}
+		}
+
+		return true
+	})
+}
+
+func (wrtc *WebRTC) Run(tee *WebRTCTee) error {
+	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
 
 	for {
 		select {
-		case <-fluidTransport.Context().Done():
-			return fluidTransport.Error()
+		case <-wrtc.hub.Context().Done():
+			return nil
 		case <-ticker.C:
 			if tee.Status() != runtime.READY {
 				continue
 			}
 
-			if err := fluidTransport.drain(tee); err != nil {
-				return err
+			for pointer := tee.Next(); pointer != nil; pointer = tee.Next() {
+				switch artifact := (*(*any)(pointer)).(type) {
+				case *types.ManifoldState:
+					payload := encodeManifold(artifact)
+					wrtc.Send(types.ManifoldChannel, payload)
+				case *types.ResonanceArtifact:
+					wireRow := artifact.EncodeWire(types.Allows(artifact.Symbol))
+
+					if wireRow != nil {
+						frame := &telemetry.ResonanceFrameT{
+							Rows: []*telemetry.ResonanceT{wireRow},
+						}
+						msg := &telemetry.MessageT{
+							Frame: &telemetry.FrameT{
+								Type:  telemetry.FrameResonanceFrame,
+								Value: frame,
+							},
+						}
+						payload := wrapMessage(msg)
+						wrtc.Send(types.ResonanceChannel, payload)
+					}
+				}
 			}
 		}
 	}
-}
-
-// drain consumes producer artifacts only through the tee boundary.
-func (fluidTransport *FluidRTC) drain(tee *WebRTCTee) error {
-	for pointer := tee.Next(); pointer != nil; pointer = tee.Next() {
-		var err error
-		switch artifact := (*(*any)(pointer)).(type) {
-		case *types.ManifoldState:
-			err = fluidTransport.Publish(artifact)
-		case *types.ResonanceArtifact:
-			err = fluidTransport.PublishResonance(artifact)
-		default:
-			err = errnie.Error(errnie.Err(errnie.Validation, "fluid: unsupported tee artifact", nil))
-		}
-
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-/*
-Publish encodes one manifold advance into a ManifoldFrame and fans it to every
-connected viewer that owns the manifold channel. A viewer without that channel
-is skipped; a fully-booked channel returns an error so the caller can observe
-backpressure rather than silently dropping a state.
-*/
-func (fluidTransport *FluidRTC) Publish(state *types.ManifoldState) error {
-	if state == nil || !fluidTransport.Wants(types.ManifoldChannel) {
-		return nil
-	}
-
-	sequence := fluidTransport.sequence.Add(1)
-	payload := encodeManifold(state, sequence)
-
-	return fluidTransport.publishBytes(types.ManifoldChannel, payload)
-}
-
-/*
-PublishResonance fans one resonance artifact to every viewer owning
-the resonance channel, wrapped in a canonical ResonanceFrame.
-*/
-func (fluidTransport *FluidRTC) PublishResonance(artifact *types.ResonanceArtifact) error {
-	if artifact == nil || !fluidTransport.Wants(types.ResonanceChannel) {
-		return nil
-	}
-
-	wireRow := artifact.EncodeWire(types.Allows(artifact.Symbol))
-
-	if wireRow == nil {
-		return nil
-	}
-
-	frame := &telemetry.ResonanceFrameT{
-		Rows: []*telemetry.ResonanceT{wireRow},
-	}
-	msg := &telemetry.MessageT{
-		Frame: &telemetry.FrameT{
-			Type:  telemetry.FrameResonanceFrame,
-			Value: frame,
-		},
-	}
-	payload := wrapMessage(msg)
-
-	return errnie.Error(fluidTransport.publishBytes(types.ResonanceChannel, payload))
-}
-
-/*
-publishBytes fans one encoded record to every viewer that owns the named
-channel. Every channel is latest-wins, so a busy viewer receives the freshest
-record and the market pipeline is never blocked or error-flooded.
-*/
-func (fluidTransport *FluidRTC) publishBytes(channelName string, payload []byte) error {
-	fluidTransport.peers.Range(func(_, value any) bool {
-		peer := value.(*fluidPeer)
-		channel := peer.getChannel(channelName)
-
-		if channel == nil || !channel.idle() {
-			return true
-		}
-
-		channel.enqueue(payload)
-
-		return true
-	})
-
-	return nil
 }
 
 var webrtcBuilders = sync.Pool{
 	New: func() any { return flatbuffers.NewBuilder(262144) },
 }
 
-/*
-wrapMessage wraps a message in the SYMM-identified Message buffer the browser
-uses for every WebRTC channel, so resonance and manifold share the transport's
-framing and identifier.
-*/
 func wrapMessage(msg *telemetry.MessageT) []byte {
 	builder := webrtcBuilders.Get().(*flatbuffers.Builder)
 
@@ -219,13 +239,7 @@ func wrapMessage(msg *telemetry.MessageT) []byte {
 	return frameBytes
 }
 
-/*
-encodeManifold mirrors one *types.ManifoldState into the ManifoldFrame the
-browser decodes, wrapped in the SYMM-identified Message the frontend's
-decodeManifold expects: the resident sensorium State and Reading, the packed
-Eulerian grid fields, and the spectral mode lattice, field for field.
-*/
-func encodeManifold(state *types.ManifoldState, sequence uint64) []byte {
+func encodeManifold(state *types.ManifoldState) []byte {
 	builder := webrtcBuilders.Get().(*flatbuffers.Builder)
 
 	defer func() {
@@ -360,7 +374,6 @@ func encodeManifold(state *types.ManifoldState, sequence uint64) []byte {
 	}
 
 	frame := &telemetry.ManifoldFrameT{
-		Sequence:      sequence,
 		At:            state.At.UnixNano(),
 		Version:       state.Version,
 		N:             particleCount,
@@ -396,7 +409,6 @@ func encodeManifold(state *types.ManifoldState, sequence uint64) []byte {
 	}
 
 	msg := &telemetry.MessageT{
-		Sequence: sequence,
 		Frame: &telemetry.FrameT{
 			Type:  telemetry.FrameManifoldFrame,
 			Value: frame,
@@ -411,132 +423,4 @@ func encodeManifold(state *types.ManifoldState, sequence uint64) []byte {
 	copy(frameBytes, encoded)
 
 	return frameBytes
-}
-
-/*
-Wants reports whether any connected viewer owns the named channel AND is ready
-for another frame. Every publisher asks this before encoding: the encode is the
-expensive half of a publication, and a record handed to a channel still
-draining the previous one is both wasted work and — for a multi-chunk record —
-a frame the viewer can never reassemble.
-*/
-func (fluidTransport *FluidRTC) Wants(channel string) bool {
-	wants := false
-
-	fluidTransport.peers.Range(func(_, value any) bool {
-		peer := value.(*fluidPeer)
-
-		if peer.ready(channel) {
-			wants = true
-
-			return false
-		}
-
-		return true
-	})
-
-	return wants
-}
-
-/*
-Answer accepts one browser offer and returns a complete non-trickle answer.
-*/
-func (fluidTransport *FluidRTC) Answer(
-	offer webrtc.SessionDescription,
-) (webrtc.SessionDescription, error) {
-	settingEngine := webrtc.SettingEngine{}
-	settingEngine.SetIncludeLoopbackCandidate(true)
-
-	if err := settingEngine.SetAnsweringDTLSRole(webrtc.DTLSRoleServer); err != nil {
-		return webrtc.SessionDescription{}, fluidError(
-			"unable to set answering DTLS role",
-			err,
-		)
-	}
-
-	api := webrtc.NewAPI(webrtc.WithSettingEngine(settingEngine))
-	peerConnection, err := api.NewPeerConnection(webrtc.Configuration{})
-
-	if err != nil {
-		return webrtc.SessionDescription{}, fluidTransport.Error(errnie.Err(
-			errnie.IO,
-			"unable to create peer connection",
-			err,
-		))
-	}
-
-	peer := newFluidPeer(
-		fluidTransport.Context(),
-		func(err error) {
-			fluidTransport.remove(peerConnection)
-		},
-		fluidTransport.bufferedLimit,
-	)
-	fluidTransport.add(peerConnection, peer)
-	peerConnection.OnDataChannel(peer.attach)
-	peerConnection.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
-		if state == webrtc.PeerConnectionStateFailed || state == webrtc.PeerConnectionStateClosed || state == webrtc.PeerConnectionStateDisconnected {
-			fluidTransport.remove(peerConnection)
-		}
-	})
-
-	if err = peerConnection.SetRemoteDescription(offer); err != nil {
-		fluidTransport.remove(peerConnection)
-		return webrtc.SessionDescription{}, fluidError("unable to set remote description", err)
-	}
-
-	answer, err := peerConnection.CreateAnswer(nil)
-
-	if err != nil {
-		fluidTransport.remove(peerConnection)
-		return webrtc.SessionDescription{}, fluidError("unable to create answer", err)
-	}
-
-	gathered := webrtc.GatheringCompletePromise(peerConnection)
-
-	if err = peerConnection.SetLocalDescription(answer); err != nil {
-		fluidTransport.remove(peerConnection)
-		return webrtc.SessionDescription{}, fluidError("unable to set local description", err)
-	}
-
-	select {
-	case <-fluidTransport.Context().Done():
-		fluidTransport.remove(peerConnection)
-		return webrtc.SessionDescription{}, errnie.Error(fluidTransport.Context().Err())
-	case <-gathered:
-	}
-
-	local := peerConnection.LocalDescription()
-
-	if local == nil {
-		fluidTransport.remove(peerConnection)
-		return webrtc.SessionDescription{}, fluidError("peer connection has no local description", nil)
-	}
-
-	return *local, nil
-}
-
-func (fluidTransport *FluidRTC) add(
-	peerConnection *webrtc.PeerConnection,
-	peer *fluidPeer,
-) {
-	fluidTransport.peers.Store(peerConnection, peer)
-}
-
-func (fluidTransport *FluidRTC) remove(peerConnection *webrtc.PeerConnection) {
-	value, loaded := fluidTransport.peers.LoadAndDelete(peerConnection)
-
-	if loaded && value != nil {
-		value.(*fluidPeer).close()
-	}
-
-	if peerConnection != nil {
-		if err := peerConnection.Close(); err != nil {
-			errnie.Error(err)
-		}
-	}
-}
-
-func fluidError(message string, err error) error {
-	return errnie.Error(errnie.Err(errnie.IO, "webrtc: "+message, err))
 }

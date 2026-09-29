@@ -5,6 +5,9 @@ import { SlidersHorizontal, Zap } from "lucide-react";
 import { cn } from "#/lib/utils";
 import type { FeasibleAction, TrieNodeData } from "./types";
 
+type TreeNode = d3.HierarchyPointNode<TrieNodeData>;
+type TreeLink = d3.HierarchyPointLink<TrieNodeData>;
+
 interface RadixTreeVizProps {
 	data?: TrieNodeData | null;
 	feasible?: FeasibleAction[];
@@ -231,18 +234,18 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 			treeLayout.nodeSize([nodeHeight * 1.5, nodeWidth * 2.2]);
 		}
 
-		treeLayout(root);
+		const pointRoot = treeLayout(root);
 
 		return {
-			nodes: root.descendants(),
-			links: root.links(),
+			nodes: pointRoot.descendants(),
+			links: pointRoot.links(),
 		};
 	}, [filteredTreeData, projection]);
 
 	const activePathIds = useMemo(() => {
 		if (!hoveredNodeId) return null;
 		const ids = new Set<string>();
-		let current: d3.HierarchyNode<TrieNodeData> | null | undefined =
+		let current: TreeNode | null | undefined =
 			nodes.find((n) => n.data.id === hoveredNodeId);
 		while (current) {
 			ids.add(current.data.id);
@@ -267,6 +270,47 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 		if (prob > 0.3) return "var(--acc)";
 		if (prob > 0.1) return "var(--warn)";
 		return "var(--line2)";
+	};
+
+	const getNodePos = (node: TreeNode) => {
+		const nx = node.x;
+		const ny = node.y;
+		if (projection === "radial") {
+			const angle = nx - Math.PI / 2;
+			return {
+				x: ny * Math.cos(angle),
+				y: ny * Math.sin(angle),
+			};
+		}
+		if (projection === "vertical") {
+			return { x: nx, y: ny };
+		}
+		return { x: ny, y: nx };
+	};
+
+	const getPath = (source: TreeNode, target: TreeNode) => {
+		if (projection === "radial") {
+			return (
+				d3
+					.linkRadial<TreeLink, TreeNode>()
+					.angle((d: TreeNode) => d.x)
+					.radius((d: TreeNode) => d.y)({ source, target }) ?? undefined
+			);
+		}
+		if (projection === "vertical") {
+			return (
+				d3
+					.linkVertical<TreeLink, TreeNode>()
+					.x((d: TreeNode) => d.x)
+					.y((d: TreeNode) => d.y)({ source, target }) ?? undefined
+			);
+		}
+		return (
+			d3
+				.linkHorizontal<TreeLink, TreeNode>()
+				.x((d: TreeNode) => d.y)
+				.y((d: TreeNode) => d.x)({ source, target }) ?? undefined
+		);
 	};
 
 	return (
@@ -394,63 +438,6 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 						<g className="links">
 							<AnimatePresence>
 								{links.map((link) => {
-									const getPath = (
-										source: d3.HierarchyNode<TrieNodeData> & {
-											x?: number;
-											y?: number;
-										},
-										target: d3.HierarchyNode<TrieNodeData> & {
-											x?: number;
-											y?: number;
-										},
-									) => {
-										if (projection === "radial") {
-											const angle = (d: any) => d.x;
-											const radius = (d: any) => d.y;
-											return (
-												d3
-													.linkRadial<any, any>()
-													.angle(angle)
-													.radius(radius)({ source, target }) || undefined
-											);
-										}
-										if (projection === "vertical") {
-											return (
-												d3
-													.linkVertical<any, any>()
-													.x((d) => d.x)
-													.y((d) => d.y)({ source, target }) || undefined
-											);
-										}
-										return (
-											d3
-												.linkHorizontal<any, any>()
-												.x((d) => d.y)
-												.y((d) => d.x)({ source, target }) || undefined
-										);
-									};
-
-									const getNodePos = (
-										node: d3.HierarchyNode<TrieNodeData> & {
-											x?: number;
-											y?: number;
-										},
-									) => {
-										const nx = node.x ?? 0;
-										const ny = node.y ?? 0;
-										if (projection === "radial") {
-											const angle = nx - Math.PI / 2;
-											return {
-												x: ny * Math.cos(angle),
-												y: ny * Math.sin(angle),
-											};
-										}
-										if (projection === "vertical") {
-											return { x: nx, y: ny };
-										}
-										return { x: ny, y: nx };
-									};
-
 									const d = getPath(link.source, link.target);
 									const initialD = getPath(link.source, link.source);
 
@@ -485,21 +472,38 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 												)}
 												strokeOpacity={0.7}
 											/>
-											{link.target.data.tokens && (
-												<motion.text
+											{link.target.data.tokens && link.target.data.tokens.length > 0 && (
+												<motion.g
 													initial={{ opacity: 0 }}
 													animate={{ opacity: 1 }}
 													exit={{ opacity: 0 }}
 													transition={{ duration: 0.3 }}
-													x={midX}
-													y={projection === "vertical" ? midY - 4 : midY - 6}
-													fill="var(--f4)"
-													fontSize="9px"
-													textAnchor="middle"
-													className="pointer-events-none select-none font-mono tracking-wider"
+													transform={`translate(${midX}, ${projection === "vertical" ? midY - 6 : midY - 8})`}
+													className="pointer-events-none select-none font-mono"
 												>
-													[{link.target.data.tokens.join(", ")}]
-												</motion.text>
+													<rect
+														x={-Math.max(28, link.target.data.tokens.join(", ").length * 5.5 + 8) / 2}
+														y={-7}
+														width={Math.max(28, link.target.data.tokens.join(", ").length * 5.5 + 8)}
+														height={14}
+														rx={2}
+														fill="var(--surface)"
+														stroke="var(--line2)"
+														strokeWidth={1}
+														opacity={0.95}
+													/>
+													<text
+														x={0}
+														y={3.5}
+														fill="var(--acc)"
+														fontSize="9px"
+														textAnchor="middle"
+														fontWeight="600"
+														className="font-mono tracking-wider"
+													>
+														[{link.target.data.tokens.join(", ")}]
+													</text>
+												</motion.g>
 											)}
 										</motion.g>
 									);
@@ -520,22 +524,6 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 									const isHighProb = nodeData.probability > 0.2;
 
 									const parent = node.parent;
-									const getNodePos = (n: typeof node) => {
-										const nx = n.x ?? 0;
-										const ny = n.y ?? 0;
-										if (projection === "radial") {
-											const angle = nx - Math.PI / 2;
-											return {
-												x: ny * Math.cos(angle),
-												y: ny * Math.sin(angle),
-											};
-										}
-										if (projection === "vertical") {
-											return { x: nx, y: ny };
-										}
-										return { x: ny, y: nx };
-									};
-
 									const pos = getNodePos(node);
 									const initialPos = parent ? getNodePos(parent) : pos;
 									const isNodeActive = activePathIds
@@ -603,7 +591,7 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 													projection === "radial"
 														? {
 																rotate:
-																	(((node.x ?? 0) * 180) /
+																	((node.x * 180) /
 																		Math.PI) -
 																	90,
 															}
@@ -616,18 +604,30 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 													y={-14}
 													width={100}
 													height={28}
-													rx={2}
-													fill="var(--surface)"
+													rx={3}
+													fill={
+														nodeData.prefix.toUpperCase() === "ENTER"
+															? "rgba(115, 190, 104, 0.15)"
+															: nodeData.prefix.toUpperCase() === "WAIT"
+																? "rgba(232, 163, 61, 0.15)"
+																: nodeData.prefix.toUpperCase() === "EXIT"
+																	? "rgba(240, 84, 79, 0.15)"
+																	: "var(--surface)"
+													}
 													stroke={
-														colorMode === "gradient"
-															? probColor
-															: isHighProb
-																? "var(--acc)"
-																: "var(--line2)"
+														nodeData.prefix.toUpperCase() === "ENTER"
+															? "var(--up)"
+															: nodeData.prefix.toUpperCase() === "WAIT"
+																? "var(--warn)"
+																: nodeData.prefix.toUpperCase() === "EXIT"
+																	? "var(--down)"
+																	: colorMode === "gradient"
+																		? probColor
+																		: isHighProb
+																			? "var(--acc)"
+																			: "var(--line2)"
 													}
-													strokeWidth={
-														isHighProb || colorMode === "gradient" ? 1.5 : 1
-													}
+													strokeWidth={1.5}
 													className={cn(
 														"transition-colors",
 														hasChildren && "hover:stroke-(--acc)",
@@ -665,18 +665,17 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 													y={0}
 													dy="0.32em"
 													fill={
-														colorMode === "gradient"
-															? (d3.interpolateRgb(
-																	"#cbc2b4",
-																	"#e8a33d",
-																)(nodeData.probability) as string)
-															: isHighProb
-																? "var(--acc)"
-																: "var(--f2)"
+														nodeData.prefix.toUpperCase() === "ENTER"
+															? "var(--up)"
+															: nodeData.prefix.toUpperCase() === "WAIT"
+																? "var(--warn)"
+																: nodeData.prefix.toUpperCase() === "EXIT"
+																	? "var(--down)"
+																	: "var(--f1)"
 													}
 													fontSize="11px"
-													fontWeight="600"
-													className="select-none pointer-events-none"
+													fontWeight="700"
+													className="select-none pointer-events-none font-mono tracking-wider"
 												>
 													{nodeData.prefix}
 												</text>

@@ -265,9 +265,9 @@ Committed tree roots never disagree with their logical clock. Retrieval traverse
 3. **Cognitive confidence exceeds prior**: Posterior action probability exceeds the uninformative baseline (0.5 for binary outcomes).
 4. **Surprisal is bounded**: The observation does not trigger a surprisal break.
 5. **Low ambiguity**: Normalized entropy is below 0.85.
-6. **Measured skill exceeds uncertainty**: For evaluated sample count $N \ge 10$, the empirical win rate $p = \frac{\text{wins}}{N}$ must exceed random chance (0.5) by more than its own binomial standard error:
-   $$p - 0.5 > \sqrt{\frac{p(1-p)}{N}}$$
-   and cumulative realized return must be positive. An edge must be statistically larger than its own measurement error before touching real risk.
+6. **Measured skill exceeds uncertainty**: For sample count $N \ge 2$, the sample mean return $\bar{r} = \frac{\sum r_i}{N}$ must exceed its own standard error $SE(\bar{r}) = \sqrt{\frac{s^2}{N}}$, where $s^2 = \frac{\sum r_i^2 - \frac{(\sum r_i)^2}{N}}{N - 1}$:
+   $$\bar{r} - SE(\bar{r}) > 0$$
+   An edge must be statistically larger than its own economic measurement error before touching real risk. Models with fewer than 2 completed trades or non-positive lower bounds remain unentitled to live risk.
 
 Training continuously tracks live metrics (`wins`, `losses`, `pnl`, and empirical win rate) without artificial smoothing or synthetic distributions.
 
@@ -281,24 +281,23 @@ Training continuously tracks live metrics (`wins`, `losses`, `pnl`, and empirica
 
 ## Execution and order lifecycle
 
-### Atomic per-symbol lifecycle
+### Atomic per-symbol lifecycle and capital admission
 
 Order placement and cancellation are inherently stateful exchange transactions. To eliminate race conditions where simultaneous signals could dispatch duplicate orders or overwrite positions:
-- [`strategy.Trader`](strategy/trader.go) serializes order lifecycle operations on a per-symbol mutex.
-- For `ActionEnter`, `Trader` generates a stable UUID client order ID (`ClOrdId`), instantiates a `broker.Position`, and registers it into the local position registry via an `onPending` hook *before* the order request is dispatched to the exchange.
+- [`strategy.Trader`](strategy/trader.go) coordinates portfolio admission across symbols through an atomic capital reservation boundary, and serializes order operations with per-symbol locks.
+- For `ActionEnter`, `Trader` generates a stable UUID client order ID (`ClOrdId`), reserves capital, and registers a pending [`position.Regulator`](broker/position/regulator.go) *before* the order request is dispatched to the exchange.
 - Incoming exchange execution events arriving over WebSocket cannot outrun local position awareness.
 
-### Immutable execution snapshots and fills
+### Cumulative fill reconciliation and lifecycle states
 
-[`broker.Position`](broker/position.go) stores execution facts (`ExecutedPrice`, `ExecutedVolume`, `Fee`) inside an atomically published, immutable `ExecutionSnapshot`.
-- When Kraken WebSocket execution events arrive, `Trader.ApplyExecution()` consumes authoritative average price, cumulative volume, and fees, updating the snapshot via `Position.SetFill()` with pointer CAS.
-- Readers in risk, UI telemetry, and accounting observe consistent snapshots without mutex contention or torn reads.
+[`position.Regulator`](broker/position/regulator.go) exclusively owns position inventory, pending order state, and cumulative venue fill reconciliation.
+- When Kraken WebSocket execution events arrive, `Trader.ApplyExecution()` matches the authoritative order ID and reconciles cumulative executed volume, price, and fees via `Regulator.ReconcileFill()`. Fills update inventory deltas, and fee allocations are retained with exact subtraction.
+- The position transitions through explicit lifecycle states (`entry_pending` -> `open` -> `exit_pending` -> `closed`), preventing exit fills from overwriting entry facts or premature position removal upon exit dispatch.
+- Readers in risk, UI telemetry, and accounting observe consistent position state without mutex contention or torn reads.
 
 ### Authoritative exit sizing
 
-[`broker.Desk.Exit`](broker/desk.go) derives exit order quantity directly from authoritative executed inventory (`position.Volume()`) rather than the originally requested entry volume. When an entry order only partially fills, subsequent exit orders sell only the volume that was actually filled on exchange.
-
-On boot, [`broker.Recovery`](broker/recovery.go) reconciles exchange balances, trade history and working orders. The exchange wallet is authoritative: snapshots replace local wallet state.
+[`broker.Desk.Exit`](broker/desk.go) derives exit order quantity strictly from held inventory (`regulator.Volume()`) rather than the originally requested entry volume. When an entry order only partially fills, subsequent exit orders sell only the volume that was actually filled on exchange; zero-inventory exits are rejected immediately.
 
 ### Paper and real
 
@@ -559,7 +558,7 @@ pnpm bench            # Vitest benchmarks
 | `signal/`           | The eleven numerical conditioners, their specs and the metric map.                                                                                                                                                                  |
 | `logic/`            | Category, cognition, resonance and manifold solvers.                                                                                                                                                                                |
 | `strategy/`         | The learning coordinator: impulse map and watershed regions, precursor token paths, cognition tree integration, training evaluation and skill-vs-uncertainty gating, atomic trader order management, rehearsal delayed supervision. |
-| `broker/`           | Instruments, price and fee economics, wallet, desk, positions, persistence, recovery.                                                                                                                                               |
+| `broker/`           | Instruments, price and fee economics, wallet, desk, position regulation.                                                                                                                                                            |
 | `hindsight/`        | Capture identity, sequencing, manifests, witnesses, episodes, replay, integrity, validation.                                                                                                                                        |
 | `store/`            | SQLite engine, ordered capture writer, async witness writer, learning journal, repositories.                                                                                                                                        |
 | `nomagique/`        | Embedded numeric library (composed primitives, learning grid, physics, estimators).                                                                                                                                                 |

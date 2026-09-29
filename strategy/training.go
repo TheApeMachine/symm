@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"sync/atomic"
 	"unsafe"
 
 	"github.com/theapemachine/errnie"
@@ -47,6 +48,8 @@ type TeePusher interface {
 type Training struct {
 	*runtime.System
 	measurement *data.Measurement[float64]
+	prototype   *data.Measurement[float64]
+	paths       map[string]*data.Measurement[float64]
 	precursor   *Precursor
 	pipeline    *nomagique.Number
 	engine      *cognition.Engine
@@ -55,7 +58,7 @@ type Training struct {
 	trader      *Trader
 	price       *broker.Price
 	uiTee       TeePusher
-	sequence    int64
+	sequence    atomic.Int64
 }
 
 func NewTraining(ctx context.Context, epoch int64, price *broker.Price) *Training {
@@ -155,6 +158,8 @@ func (training *Training) Register() *data.Measurement[float64] {
 
 	training.measurement.Label = "learner"
 	training.measurement.Metadata["peer-interest"] = "*"
+	training.prototype = training.measurement.Clone()
+	training.paths = make(map[string]*data.Measurement[float64])
 
 	return training.measurement
 }
@@ -170,10 +175,29 @@ func (training *Training) Step(measurement *data.Measurement[float64]) *data.Mea
 		return nil
 	}
 
-	current := measurement
+	symbol := measurement.Label
+	if symbol == "" && measurement.Metadata != nil {
+		symbol = measurement.Metadata["symbol"]
+	}
+	if symbol == "" && training.space.Current != nil {
+		symbol = training.space.Current.Symbol
+	}
+	if symbol == "" {
+		symbol = "BTC/USD"
+	}
 
-	if measurement.Source != "training" {
-		current = training.measurement
+	if training.paths == nil {
+		training.paths = make(map[string]*data.Measurement[float64])
+	}
+
+	current, exists := training.paths[symbol]
+	if !exists {
+		if training.prototype == nil {
+			training.Register()
+		}
+		current = training.prototype.Clone()
+		current.Label = symbol
+		training.paths[symbol] = current
 	}
 
 	if reading := training.Rehearsal.published.Load(); reading != nil {
@@ -194,18 +218,21 @@ func (training *Training) Step(measurement *data.Measurement[float64]) *data.Mea
 		}
 	}
 
-	current.Metrics["previous_input"] = current.Metrics["previous_input"].Write(float64(training.sequence))
+	current.Metrics["previous_input"] = current.Metrics["previous_input"].Write(float64(training.sequence.Load()))
 	current.Metrics["input_count"] = current.Metrics["input_count"].Write(float64(len(measurement.Peers)))
+	current.Peers = measurement.Peers
+	current.SeqIdx = measurement.SeqIdx
+	current.At = measurement.At
 	training.updatePortfolioMetrics(current)
 
 	input := func(yield func(unsafe.Pointer) bool) { yield(unsafe.Pointer(measurement)) }
 
 	for output := range training.pipeline.Next(input) {
 		evaluation := *(*cognition.Evaluation)(output)
-		current.Label = training.space.Current.Symbol
+		current.Label = symbol
 		current.Result = training.space.Current
 		current.SeqIdx = measurement.SeqIdx
-		current.At = training.space.Current.At
+		current.At = measurement.At
 		current.Metrics["steps"] = current.Metrics["steps"].Write(current.Metrics["steps"].Raw + 1)
 		current.Metrics["support"] = current.Metrics["support"].Write(float64(evaluation.Support))
 		current.Metrics["confidence"] = current.Metrics["confidence"].Write(evaluation.Confidence)
@@ -217,12 +244,10 @@ func (training *Training) Step(measurement *data.Measurement[float64]) *data.Mea
 
 		if action == ActionEnter {
 			actionValue = 1
-			current.Metrics["agent_entry"] = current.Metrics["agent_entry"].Write(float64(measurement.SeqIdx))
 		}
 
 		if action == ActionExit {
 			actionValue = 2
-			current.Metrics["agent_exit"] = current.Metrics["agent_exit"].Write(float64(measurement.SeqIdx))
 		}
 
 		current.Metrics["action"] = current.Metrics["action"].Write(actionValue)
@@ -239,16 +264,17 @@ func (training *Training) Step(measurement *data.Measurement[float64]) *data.Mea
 			}
 
 			if reading := training.Rehearsal.published.Load(); reading != nil {
-				if reading.Learned > 0 && reading.Return > 0 {
-					if reading.Entered >= 10 {
-						p := float64(reading.Profitable) / float64(reading.Entered)
-						se := math.Sqrt(p * (1.0 - p) / float64(reading.Entered))
-						hasModelEdge = (p - 0.5) > se
+				if reading.Learned > 0 && reading.Entered >= 2 {
+					n := float64(reading.Entered)
+					mean := reading.Return / n
+					variance := (reading.ReturnSq - (reading.Return*reading.Return)/n) / (n - 1.0)
+
+					if variance < 0 {
+						variance = 0
 					}
 
-					if reading.Entered < 10 {
-						hasModelEdge = true
-					}
+					se := math.Sqrt(variance / n)
+					hasModelEdge = (mean - se) > 0
 				}
 			}
 
@@ -280,6 +306,14 @@ func (training *Training) Step(measurement *data.Measurement[float64]) *data.Mea
 		}
 
 		if training.trader != nil && ((action == ActionEnter && authorized) || action == ActionExit) {
+			if action == ActionEnter {
+				current.Metrics["agent_entry"] = current.Metrics["agent_entry"].Write(float64(measurement.SeqIdx))
+			}
+
+			if action == ActionExit {
+				current.Metrics["agent_exit"] = current.Metrics["agent_exit"].Write(float64(measurement.SeqIdx))
+			}
+
 			training.trader.OnAction(current.Label, action)
 		}
 
@@ -314,11 +348,7 @@ func (training *Training) Step(measurement *data.Measurement[float64]) *data.Mea
 		priceSource = training.trader.price
 	}
 
-	targetSymbol := current.Label
-
-	if targetSymbol == "" {
-		targetSymbol = measurement.Label
-	}
+	targetSymbol := symbol
 
 	if priceSource != nil && targetSymbol != "" {
 		if mark := priceSource.CurrentMark(targetSymbol); mark != nil {
@@ -327,7 +357,7 @@ func (training *Training) Step(measurement *data.Measurement[float64]) *data.Mea
 	}
 
 	if training.Rehearsal != nil {
-		if lastRecord := training.Rehearsal.LastExcursion(); lastRecord != nil {
+		if lastRecord := training.Rehearsal.LastExcursion(symbol); lastRecord != nil {
 			extType := 0.0
 
 			if lastRecord.Direction == "upward" {
@@ -343,11 +373,16 @@ func (training *Training) Step(measurement *data.Measurement[float64]) *data.Mea
 			current.Metrics["mark_a"] = current.Metrics["mark_a"].Write(float64(lastRecord.PrecursorStartTick))
 			current.Metrics["mark_b"] = current.Metrics["mark_b"].Write(float64(lastRecord.AnchorTick))
 			current.Metrics["mark_c"] = current.Metrics["mark_c"].Write(float64(lastRecord.ExitTick))
+
+			if lastRecord.ClearsFriction || lastRecord.EntryPrice > 0 {
+				current.Metrics["agent_entry"] = current.Metrics["agent_entry"].Write(float64(lastRecord.AnchorTick))
+				current.Metrics["agent_exit"] = current.Metrics["agent_exit"].Write(float64(lastRecord.ExitTick))
+			}
 		}
 	}
 
 	current.Metrics["invalid_inputs"] = current.Metrics["invalid_inputs"].Write(float64(training.space.Invalid))
-	training.sequence = measurement.SeqIdx
+	training.sequence.Store(measurement.SeqIdx)
 	training.measurement = current
 	return current
 }
@@ -392,13 +427,15 @@ func (training *Training) publishProgress(frame *data.Measurement[float64], reco
 		return
 	}
 
-	prototype := training.Register()
+	if training.prototype == nil {
+		training.Register()
+	}
 
-	if prototype == nil {
+	if training.prototype == nil {
 		return
 	}
 
-	current := prototype.Clone()
+	current := training.prototype.Clone()
 	training.updatePortfolioMetrics(current)
 	reading := training.Rehearsal.published.Load()
 
@@ -471,12 +508,15 @@ func (training *Training) publishProgress(frame *data.Measurement[float64], reco
 		current.Metrics["mark_b"] = current.Metrics["mark_b"].Write(float64(record.AnchorTick))
 		current.Metrics["mark_c"] = current.Metrics["mark_c"].Write(float64(record.ExitTick))
 
+		if record.ClearsFriction || record.EntryPrice > 0 {
+			current.Metrics["agent_entry"] = current.Metrics["agent_entry"].Write(float64(record.AnchorTick))
+			current.Metrics["agent_exit"] = current.Metrics["agent_exit"].Write(float64(record.ExitTick))
+		}
+
 		actionVal := 0.0
 
 		if record.ClearsFriction {
 			actionVal = 1.0
-			current.Metrics["agent_entry"] = current.Metrics["agent_entry"].Write(float64(record.AnchorTick))
-			current.Metrics["agent_exit"] = current.Metrics["agent_exit"].Write(float64(record.ExitTick))
 		}
 
 		current.Metrics["action"] = current.Metrics["action"].Write(actionVal)

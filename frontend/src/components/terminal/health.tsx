@@ -1,5 +1,5 @@
-import { useRef } from "react";
-import { tickCountStore } from "#/collections/app";
+import { useEffect, useRef } from "react";
+import { tickCountAtom } from "#/collections/app";
 import type { Measurement } from "#/collections/types";
 import { sourceHeadlineMetric } from "#/components/terminal/kernel-meta";
 import { Badge } from "#/components/ui/badge";
@@ -84,13 +84,24 @@ export const terminalHealthSummary = (
 export const HealthPanel = () => {
 	const root = useRef<HTMLDivElement>(null);
 
-	tickCountStore.subscribe((tick) => {
-		if (!root.current) return;
-		const el = root.current.querySelector<HTMLElement>("[data-tick]");
-		if (el) {
-			el.textContent = String(tick);
+	useEffect(() => {
+		const unsub = tickCountAtom.subscribe((tick) => {
+			if (!root.current) return;
+			const el = root.current.querySelector<HTMLElement>("[data-tick]");
+			if (el) {
+				el.textContent = String(tick);
+			}
+		});
+		if (root.current) {
+			const el = root.current.querySelector<HTMLElement>("[data-tick]");
+			if (el) {
+				el.textContent = String(tickCountAtom.get());
+			}
 		}
-	});
+		return () => {
+			unsub?.unsubscribe?.();
+		};
+	}, []);
 
 	return (
 		<Panel size="lg" ref={root}>

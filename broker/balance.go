@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"maps"
 	"context"
 	"sync/atomic"
 
@@ -136,10 +137,7 @@ func (balance *Balance) Assets() map[string]*decimal.Decimal {
 	}
 
 	out := make(map[string]*decimal.Decimal, len(snapshot.Assets))
-
-	for key, value := range snapshot.Assets {
-		out[key] = value
-	}
+	maps.Copy(out, snapshot.Assets)
 
 	return out
 }

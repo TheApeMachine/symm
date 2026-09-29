@@ -10,6 +10,7 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/broker/position"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/nomagique/runtime"
@@ -134,13 +135,9 @@ func TestPriceMark(t *testing.T) {
 func TestPricePnL(t *testing.T) {
 	Convey("Setup", t, func() {
 		price, _ := newPriceSurface(t, "TEST3")
-		position := &Position{
-			EntryOrder: &spot.AddOrderRequest{
-				Pair:   "TEST3",
-				Volume: "1.0",
-				Price:  "45000.00",
-			},
-		}
+		reg := position.NewRegulator("TEST3")
+		reg.Quantity = decimal.NewFromFloat64(1.0).SetScale(decimal.DefaultScale)
+		reg.Basis = decimal.NewFromFloat64(45000.00).SetScale(decimal.DefaultScale)
 
 		Convey("Given an authoritative economic mark", func() {
 			price.Update(&kraken.TickerData{
@@ -150,7 +147,7 @@ func TestPricePnL(t *testing.T) {
 			})
 
 			Convey("When the PnL is calculated for a position", func() {
-				pnl := price.PnL("TEST3", position)
+				pnl := price.PnL("TEST3", reg)
 
 				Convey("It should return the profit or loss based on the authoritative mark, including fees", func() {
 					So(pnl, ShouldNotBeNil)
@@ -162,16 +159,10 @@ func TestPricePnL(t *testing.T) {
 
 	Convey("Given a position before its mark is set", t, func() {
 		price, _ := newPriceSurface(t, "COLD/USD")
-		position := &Position{
-			EntryOrder: &spot.AddOrderRequest{
-				Pair:   "COLD/USD",
-				Volume: "1.0",
-				Price:  "100",
-			},
-		}
+		reg := position.NewRegulator("COLD/USD")
 
 		Convey("It should reject the incomplete valuation without dereferencing it", func() {
-			So(price.PnL("COLD/USD", position), ShouldBeNil)
+			So(price.PnL("COLD/USD", reg), ShouldBeNil)
 		})
 	})
 }
@@ -179,13 +170,9 @@ func TestPricePnL(t *testing.T) {
 func TestPriceExitValue(t *testing.T) {
 	Convey("Setup", t, func() {
 		price, _ := newPriceSurface(t, "TEST4")
-		position := &Position{
-			EntryOrder: &spot.AddOrderRequest{
-				Pair:   "TEST4",
-				Volume: "2.0",
-				Price:  "60000.00",
-			},
-		}
+		reg := position.NewRegulator("TEST4")
+		reg.Quantity = decimal.NewFromFloat64(2.0).SetScale(decimal.DefaultScale)
+		reg.Basis = decimal.NewFromFloat64(120000.00).SetScale(decimal.DefaultScale)
 
 		Convey("Given an authoritative economic mark", func() {
 			price.Update(&kraken.TickerData{
@@ -195,7 +182,7 @@ func TestPriceExitValue(t *testing.T) {
 			})
 
 			Convey("When the exit value is calculated for a position", func() {
-				exitValue := price.ExitValue("TEST4", position)
+				exitValue := price.ExitValue("TEST4", reg)
 
 				Convey("It should return the exit value based on the authoritative mark, fee-net", func() {
 					So(exitValue, ShouldNotBeNil)

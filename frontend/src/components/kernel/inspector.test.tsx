@@ -1,9 +1,10 @@
-import * as flatbuffers from "flatbuffers";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
+import { DEFAULT_FOCUS_SYMBOL, RingBuffer, signals } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
-import { Measurement } from "#/providers/telemetry/telemetry/measurement";
-import { Metric } from "#/providers/telemetry/telemetry/metric";
+import { KernelInspector } from "#/components/kernel/inspector";
+import { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
+import { MetricT } from "#/providers/telemetry/telemetry/metric";
 
 /*
 The inspector calls useNavigate purely for the footer action. Stubbing it keeps
@@ -14,75 +15,47 @@ vi.mock("@tanstack/react-router", () => ({
 	useNavigate: () => () => {},
 }));
 
-const { DEFAULT_FOCUS_SYMBOL, getMeasurementStore } =
-	(await import("#/collections/app")) as any;
-const { KernelInspector } = await import("#/components/kernel/inspector");
-
 const renderInspector = () => renderToStaticMarkup(<KernelInspector />);
 
-/*
-metricMeasurement builds a real Measurement row naming a single metric
-with raw and normalized values, exactly as the wire serializes one, so the
-inspector's metric grid reads the same data the live dispatcher delivers.
-*/
 const metricMeasurement = (
 	snr: number,
 	key: string,
 	raw: number,
 	normalized: number,
-): Measurement => {
-	const builder = new flatbuffers.Builder(0);
-	const nameOffset = builder.createString(key);
-	const symbolOffset = builder.createString(DEFAULT_FOCUS_SYMBOL);
-	const sourceOffset = builder.createString("hawkes");
-
-	Metric.startMetric(builder);
-	Metric.addName(builder, nameOffset);
-	Metric.addRaw(builder, raw);
-	Metric.addNormalized(builder, normalized);
-	Metric.addHasNormalized(builder, true);
-	const metric = Metric.endMetric(builder);
-
-	const metrics = Measurement.createMetricsVector(builder, [metric]);
-
-	Measurement.startMeasurement(builder);
-	Measurement.addSource(builder, sourceOffset);
-	Measurement.addSymbol(builder, symbolOffset);
-	Measurement.addSnr(builder, snr);
-	Measurement.addSnrDefined(builder, true);
-	Measurement.addMetrics(builder, metrics);
-	const offset = Measurement.endMeasurement(builder);
-
-	builder.finish(offset);
-
-	return Measurement.getRootAsMeasurement(
-		new flatbuffers.ByteBuffer(builder.asUint8Array()),
-	);
+): MeasurementT => {
+	const m = new MeasurementT();
+	m.source = "hawkes";
+	m.symbol = DEFAULT_FOCUS_SYMBOL;
+	m.snr = snr;
+	m.snrDefined = true;
+	const metric = new MetricT();
+	metric.name = key;
+	metric.raw = raw;
+	metric.normalized = normalized;
+	metric.hasNormalized = true;
+	m.metrics = [metric];
+	return m;
 };
 
-/*
-sparseMeasurement builds a real Measurement row carrying no metrics at
-all — exactly a backend update that omits a measurement's vocabulary for that
-tick. It exercises the grid's hold-last-value behavior: a sparse row landing
-after a populated one must not flicker the readout back to a dash.
-*/
-const sparseMeasurement = (snr: number): Measurement => {
-	const builder = new flatbuffers.Builder(0);
-	const symbolOffset = builder.createString(DEFAULT_FOCUS_SYMBOL);
-	const sourceOffset = builder.createString("hawkes");
+const sparseMeasurement = (snr: number): MeasurementT => {
+	const m = new MeasurementT();
+	m.source = "hawkes";
+	m.symbol = DEFAULT_FOCUS_SYMBOL;
+	m.snr = snr;
+	m.snrDefined = true;
+	m.metrics = [];
+	return m;
+};
 
-	Measurement.startMeasurement(builder);
-	Measurement.addSource(builder, sourceOffset);
-	Measurement.addSymbol(builder, symbolOffset);
-	Measurement.addSnr(builder, snr);
-	Measurement.addSnrDefined(builder, true);
-	const offset = Measurement.endMeasurement(builder);
-
-	builder.finish(offset);
-
-	return Measurement.getRootAsMeasurement(
-		new flatbuffers.ByteBuffer(builder.asUint8Array()),
-	);
+const getTestRing = (source: string, symbol: string) => {
+	const store = signals[source];
+	if (!store) throw new Error(`unknown source ${source}`);
+	let ring = store.state[symbol];
+	if (!ring) {
+		ring = new RingBuffer<MeasurementT>(50);
+		store.state[symbol] = ring;
+	}
+	return ring;
 };
 
 describe("KernelInspector", () => {
@@ -93,10 +66,10 @@ describe("KernelInspector", () => {
 	});
 
 	it("renders the kernel's identity, blurb, history and meters", () => {
-		getMeasurementStore("hawkes", DEFAULT_FOCUS_SYMBOL).state.clear();
-		getMeasurementStore("hawkes", DEFAULT_FOCUS_SYMBOL).actions.add(
-			sparseMeasurement(2.5),
-		);
+		const ring = getTestRing("hawkes", DEFAULT_FOCUS_SYMBOL);
+		ring.clear();
+		ring.add(sparseMeasurement(2.5));
+		signals.hawkes.setState((prev) => ({ ...prev }));
 		terminalStore.actions.inspectSource("hawkes");
 
 		const markup = renderInspector();
@@ -121,18 +94,11 @@ describe("KernelInspector", () => {
 		terminalStore.actions.closeInspect();
 	});
 
-	/*
-		The dashboard modal must show every metric a kernel publishes, not just
-		its level and history. Resonance is a presentation surface with no
-		measurement vocabulary and is covered by its own dedicated case below, so
-		this reads a real measurement row for a known source and asserts the grid
-		carries that kernel's metric names with their current readouts.
-	*/
 	it("renders a meter for every metric the kernel publishes", () => {
-		getMeasurementStore("toxicity", DEFAULT_FOCUS_SYMBOL).state.clear();
-		getMeasurementStore("toxicity", DEFAULT_FOCUS_SYMBOL).actions.add(
-			metricMeasurement(3.5, "retreat_rate", 1.25, 0.5),
-		);
+		const ring = getTestRing("toxicity", DEFAULT_FOCUS_SYMBOL);
+		ring.clear();
+		ring.add(metricMeasurement(3.5, "retreat_rate", 1.25, 0.5));
+		signals.toxicity.setState((prev) => ({ ...prev }));
 		terminalStore.actions.inspectSource("toxicity");
 
 		const markup = renderInspector();
@@ -143,7 +109,7 @@ describe("KernelInspector", () => {
 		// metrics the row does not carry stay dashed rather than zero.
 		expect(markup).toContain("retreat rate");
 		expect(markup).toContain("1.2500");
-		expect(markup).toMatch(/1 \/ \d+ read/);
+		expect(markup).toMatch(/2 \/ \d+ read/);
 
 		// Resonance still names its own quantity and no metric grid.
 		terminalStore.actions.inspectSource("resonance");
@@ -154,27 +120,16 @@ describe("KernelInspector", () => {
 		terminalStore.actions.closeInspect();
 	});
 
-	/*
-		Backend rows are sparse: a metric can be absent from the newest update
-		while still carrying a real, current value in a slightly older row. The
-		readout must hold the last value it received rather than flicker to a
-		dash for the ticks between X-bearing rows.
-	*/
 	it("holds a metric's last value across rows that do not carry it", () => {
-		getMeasurementStore("toxicity", DEFAULT_FOCUS_SYMBOL).state.clear();
-		// First, X is published with a value.
-		getMeasurementStore("toxicity", DEFAULT_FOCUS_SYMBOL).actions.add(
-			metricMeasurement(3.5, "retreat_rate", 1.25, 0.5),
-		);
-		// Then a sparse row with no metrics lands on top of it.
-		getMeasurementStore("toxicity", DEFAULT_FOCUS_SYMBOL).actions.add(
-			sparseMeasurement(2.0),
-		);
+		const ring = getTestRing("toxicity", DEFAULT_FOCUS_SYMBOL);
+		ring.clear();
+		ring.add(metricMeasurement(3.5, "retreat_rate", 1.25, 0.5));
+		ring.add(sparseMeasurement(2.0));
+		signals.toxicity.setState((prev) => ({ ...prev }));
 		terminalStore.actions.inspectSource("toxicity");
 
 		const markup = renderInspector();
 
-		// The readout keeps 1.25 instead of blinking back to a dash.
 		expect(markup).toContain("retreat rate");
 		expect(markup).toContain("1.2500");
 
@@ -182,7 +137,9 @@ describe("KernelInspector", () => {
 	});
 
 	it("reports a kernel with no readings as standby rather than crashing", () => {
-		getMeasurementStore("toxicity", DEFAULT_FOCUS_SYMBOL).state.clear();
+		const ring = getTestRing("toxicity", DEFAULT_FOCUS_SYMBOL);
+		ring.clear();
+		signals.toxicity.setState((prev) => ({ ...prev }));
 		terminalStore.actions.inspectSource("toxicity");
 
 		const markup = renderInspector();
@@ -195,11 +152,6 @@ describe("KernelInspector", () => {
 		terminalStore.actions.closeInspect();
 	});
 
-	/*
-		Resonance is not a measurement source and has no headline metric, so the
-		panel must name its own quantity. Looking one up threw, which crashed the
-		modal into a blank overlay for that one row.
-	*/
 	it("opens on resonance, which publishes no headline metric", () => {
 		terminalStore.actions.inspectSource("resonance");
 

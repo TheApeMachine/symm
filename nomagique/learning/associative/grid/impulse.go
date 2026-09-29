@@ -41,4 +41,5 @@ type Quantity struct {
 	Source, Label                  string
 	X, Y, Value, Activity, Quality float64
 	Present                        bool
+	Basin                          uint64
 }

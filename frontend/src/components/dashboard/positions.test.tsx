@@ -1,46 +1,42 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { positionStore } from "#/collections/app";
+import { RingBuffer, signals } from "#/collections/app";
+import { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
+import { MetricT } from "#/providers/telemetry/telemetry/metric";
 import { Positions } from "./positions";
 
 describe("Positions", () => {
-	it("renders without error when positionStore is in default fallback state", () => {
+	it("renders without error when signals.positions is in default fallback state", () => {
 		const markup = renderToStaticMarkup(<Positions />);
 		expect(markup).toContain("no open positions");
 	});
 
-	it("renders without error when positionStore state does not have findLast function", () => {
-		const originalState = positionStore.state;
+	it("renders without error when signals.positions state does not have findLast function", () => {
+		const originalState = signals.positions.state;
 		try {
-			positionStore.setState({} as any);
+			signals.positions.setState(() => ({}));
 			const markup = renderToStaticMarkup(<Positions />);
 			expect(markup).toContain("no open positions");
 		} finally {
-			positionStore.setState(originalState);
+			signals.positions.setState(() => originalState);
 		}
 	});
 
-	it("renders active open positions when positionStore contains positions", () => {
-		const originalState = positionStore.state;
+	it("renders active open positions when signals.positions contains positions", () => {
+		const originalState = signals.positions.state;
 		try {
-			const mockHolding = {
-				symbol: () => "NMR/USD",
-				status: () => "active",
-				pnl: () => "0.4200",
-				entryPrice: () => "12.345600",
-				mark: () => "12.567800",
-				returnPct: () => 3.41,
-			};
-			const mockPosition = {
-				status: () => "active",
-				holding: () => mockHolding,
-			};
-			const mockFrame = {
-				rowsLength: () => 1,
-				rows: () => mockPosition,
-			};
+			const m = new MeasurementT();
+			m.symbol = "NMR/USD";
+			m.metrics = [
+				new MetricT("pnl", 0.42),
+				new MetricT("entry_price", 12.3456),
+				new MetricT("mark", 12.5678),
+				new MetricT("return_pct", 3.41),
+			];
+			const ring = new RingBuffer<MeasurementT>(1);
+			ring.add(m);
 
-			positionStore.setState(mockFrame as any);
+			signals.positions.setState(() => ({ "NMR/USD": ring }));
 			const markup = renderToStaticMarkup(<Positions />);
 			expect(markup).toContain("NMR/USD");
 			expect(markup).toContain("active");
@@ -50,7 +46,7 @@ describe("Positions", () => {
 			expect(markup).toContain("12.567800");
 			expect(markup).not.toContain("no open positions");
 		} finally {
-			positionStore.setState(originalState);
+			signals.positions.setState(() => originalState);
 		}
 	});
 });

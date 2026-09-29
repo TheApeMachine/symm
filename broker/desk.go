@@ -8,6 +8,7 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/broker/position"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
@@ -48,51 +49,45 @@ func NewDesk(
 	return desk
 }
 
-func (desk *Desk) Enter(symbol string, onPending ...func(*Position)) *Position {
+func (desk *Desk) Enter(symbol string, onPending ...func(*position.Regulator)) (*position.Regulator, error) {
 	if desk == nil || desk.api == nil || desk.price == nil || desk.balance == nil {
-		return nil
+		return nil, desk.Error(errnie.Err(
+			errnie.Validation, "[desk] uninitialized desk dependencies", nil,
+		))
 	}
 
 	if desk.Status() == runtime.ERROR || desk.price.Status() == runtime.ERROR {
-		errnie.Error(errnie.Err(
+		return nil, desk.Error(errnie.Err(
 			errnie.Validation,
 			"[desk] execution halted: broker in error status",
 			nil,
 		))
-
-		return nil
 	}
 
 	if desk.price.Anomalies() != nil && desk.price.Anomalies().HasSevereFault(symbol) {
-		errnie.Error(errnie.Err(
+		return nil, desk.Error(errnie.Err(
 			errnie.Validation,
 			"[desk] execution halted: severe structural venue fault for "+symbol,
 			nil,
 		))
-
-		return nil
 	}
 
 	if desk.price.MarketHealth(symbol) <= 0.0 {
-		errnie.Error(errnie.Err(
+		return nil, desk.Error(errnie.Err(
 			errnie.Validation,
 			"[desk] execution halted: market health critical failure for "+symbol,
 			nil,
 		))
-
-		return nil
 	}
 
 	maxFraction := viper.GetFloat64("trading.allocation.max_fraction")
 
 	if maxFraction <= 0 || maxFraction > 1 {
-		errnie.Error(errnie.Err(
+		return nil, desk.Error(errnie.Err(
 			errnie.Validation,
 			"[desk] invalid trading.allocation.max_fraction configuration",
 			nil,
 		))
-
-		return nil
 	}
 
 	cash := desk.balance.Cash()
@@ -103,118 +98,156 @@ func (desk *Desk) Enter(symbol string, onPending ...func(*Position)) *Position {
 	}
 
 	if cash == nil || cash.Sign() <= 0 {
-		errnie.Error(errnie.Err(
+		return nil, desk.Error(errnie.Err(
 			errnie.Validation,
 			"[desk] insufficient cash to enter "+symbol,
 			nil,
 		))
-
-		return nil
 	}
 
 	spend := cash.SetScale(decimal.DefaultScale).Mul(decimal.NewFromFloat64(maxFraction))
+	reg := position.NewRegulator(symbol)
+
+	if len(onPending) > 0 && onPending[0] != nil {
+		onPending[0](reg)
+	}
+
+	if err := desk.EnterWithRegulator(reg, spend); err != nil {
+		return nil, err
+	}
+
+	return reg, nil
+}
+
+func (desk *Desk) EnterWithRegulator(reg *position.Regulator, spend *decimal.Decimal) error {
+	if desk == nil || desk.api == nil || desk.price == nil || reg == nil || spend == nil || spend.Sign() <= 0 {
+		return desk.Error(errnie.Err(
+			errnie.Validation, "[desk] invalid enter request", nil,
+		))
+	}
+
+	symbol := reg.Symbol
+
+	if desk.Status() == runtime.ERROR || desk.price.Status() == runtime.ERROR {
+		return desk.Error(errnie.Err(
+			errnie.Validation,
+			"[desk] execution halted: broker in error status",
+			nil,
+		))
+	}
+
+	if desk.price.Anomalies() != nil && desk.price.Anomalies().HasSevereFault(symbol) {
+		return desk.Error(errnie.Err(
+			errnie.Validation,
+			"[desk] execution halted: severe structural venue fault for "+symbol,
+			nil,
+		))
+	}
+
+	if desk.price.MarketHealth(symbol) <= 0.0 {
+		return desk.Error(errnie.Err(
+			errnie.Validation,
+			"[desk] execution halted: market health critical failure for "+symbol,
+			nil,
+		))
+	}
+
 	volume, err := desk.price.Quantity(symbol, spend)
 
 	if err != nil || volume == nil || volume.Sign() <= 0 {
-		errnie.Error(errnie.Err(
+		return desk.Error(errnie.Err(
 			errnie.Validation,
 			"[desk] cannot determine valid entry volume for "+symbol,
 			err,
 		))
-
-		return nil
 	}
 
 	entryRequest := &spot.AddOrderRequest{
-		Pair:   symbol,
-		Type:   "buy",
-		Volume: volume.String(),
+		Pair:    symbol,
+		Type:    "buy",
+		Volume:  volume.String(),
+		ClOrdId: reg.PositionID,
 	}
 
 	if mark := desk.price.CurrentMark(symbol); mark != nil {
 		entryRequest.Price = mark.String()
 	}
 
-	exitRequest := &spot.AddOrderRequest{
-		Pair:   symbol,
-		Type:   "sell",
-		Volume: volume.String(),
+	if err := reg.Begin(entryRequest); err != nil {
+		return err
 	}
 
-	position := NewPosition(entryRequest, exitRequest)
-
-	if len(onPending) > 0 && onPending[0] != nil {
-		onPending[0](position)
-	}
-
-	response, err := desk.api.AddOrder(position.EntryOrder)
+	response, err := desk.api.AddOrder(reg.Pending)
 
 	if err != nil {
-		errnie.Error(errnie.Err(
+		reg.CancelPending()
+		return desk.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			"[desk] failed to enter "+symbol,
 			err,
 		))
-
-		return nil
 	}
-
-	position.AddEntryResponse(&response)
 
 	if len(response.ID) > 0 {
-		orderID := response.ID[0]
-		history, historyErr := desk.api.TradesHistory()
-
-		if historyErr == nil && history.Trades != nil {
-			for _, trade := range history.Trades {
-				if trade.OrderID == orderID {
-					position.SetFill(trade.Price, trade.Volume, trade.Fee)
-					break
-				}
-			}
-		}
+		reg.SetOrderID(response.ID[0])
 	}
 
-	desk.balance.Update()
-	return position
+	if desk.balance != nil {
+		desk.balance.Update()
+	}
+
+	return nil
 }
 
-func (desk *Desk) Exit(position *Position) error {
-	if desk == nil || desk.api == nil || position == nil || position.ExitOrder == nil {
-		return errnie.Error(errnie.Err(
+func (desk *Desk) Exit(reg *position.Regulator) error {
+	if desk == nil || desk.api == nil || reg == nil {
+		return desk.Error(errnie.Err(
 			errnie.Validation,
 			"[desk] invalid exit request",
 			nil,
 		))
 	}
 
-	if vol := position.Volume(); vol != nil && vol.Sign() > 0 {
-		position.ExitOrder.Volume = vol.String()
+	vol := reg.Volume()
+
+	if vol == nil || vol.Sign() <= 0 {
+		return desk.Error(errnie.Err(
+			errnie.Validation,
+			"[desk] cannot exit: no held volume",
+			nil,
+		))
 	}
 
-	if position.ExitOrder.Volume == "" && position.EntryOrder != nil {
-		position.ExitOrder.Volume = position.EntryOrder.Volume
+	exitRequest := &spot.AddOrderRequest{
+		Pair:    reg.Symbol,
+		Type:    "sell",
+		Volume:  vol.String(),
+		ClOrdId: uuid.New().String(),
 	}
 
-	if position.ExitOrder.ClOrdId == "" {
-		position.ExitOrder.ClOrdId = uuid.New().String()
+	if mark := desk.price.CurrentMark(reg.Symbol); mark != nil {
+		exitRequest.Price = mark.String()
 	}
 
-	if mark := desk.price.CurrentMark(position.ExitOrder.Pair); mark != nil {
-		position.ExitOrder.Price = mark.String()
+	if err := reg.Begin(exitRequest); err != nil {
+		return err
 	}
 
-	response, err := desk.api.AddOrder(position.ExitOrder)
+	response, err := desk.api.AddOrder(reg.Pending)
 
 	if err != nil {
-		return errnie.Error(errnie.Err(
+		reg.CancelPending()
+
+		return desk.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			"[desk] failed to exit",
 			err,
 		))
 	}
 
-	position.AddExitResponse(&response)
+	if len(response.ID) > 0 {
+		reg.SetOrderID(response.ID[0])
+	}
 
 	if desk.balance != nil {
 		desk.balance.Update()

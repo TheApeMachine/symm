@@ -3,10 +3,9 @@ import { ChevronRight, Pause, Play } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-	focusStore,
+	focusAtom,
 	type RingBuffer,
 	signals,
-	trainingStore,
 } from "#/collections/app";
 import { RingCursor } from "#/collections/ring";
 import { hubBaseUrl } from "#/lib/hub";
@@ -56,11 +55,15 @@ export const ForwardLearningViz = () => {
 	} | null>(null);
 
 	// Focus symbol
-	const [currentSymbol, setCurrentSymbol] = useState(focusStore.state || "");
+	const [currentSymbol, setCurrentSymbol] = useState(focusAtom.get() || "");
 
 	useEffect(() => {
-		const unsub = focusStore.subscribe((state) => {
-			if (state) setCurrentSymbol(state);
+		const unsub = focusAtom.subscribe((state) => {
+			if (state) {
+				setCurrentSymbol(state);
+				setPoints([]);
+				setExcursionEvent(null);
+			}
 		});
 		return () => {
 			unsub?.unsubscribe?.();
@@ -126,7 +129,7 @@ export const ForwardLearningViz = () => {
 					metricMap[String(m.name)] = m.raw ?? 0;
 				}
 
-				const edgeVal = (metricMap.edge ?? 0) * 10000;
+				const edgeVal = metricMap.edge ?? 0;
 				const evalCount = metricMap.evaluated ?? 0;
 				const winVal = metricMap.wins ?? 0;
 				const lossVal = metricMap.losses ?? 0;
@@ -138,38 +141,16 @@ export const ForwardLearningViz = () => {
 				setLosses(Math.floor(lossVal));
 				setGlobalPnl(pnlVal);
 
-				// Accumulate real point
-				let rawPrice =
+				// Accumulate real point directly from backend measurement
+				const rawPrice =
 					metricMap.price && metricMap.price > 0 ? metricMap.price : undefined;
 
-				if (rawPrice === undefined) {
-					const liqRing = signals.liquidity?.state?.[currentSymbol];
-					if (liqRing && !liqRing.isEmpty()) {
-						const lastLiq = liqRing.getLast();
-						if (lastLiq?.metrics) {
-							let bid = 0;
-							let ask = 0;
-							for (const lm of lastLiq.metrics) {
-								if (lm.name === "best_bid_price") bid = lm.raw ?? 0;
-								if (lm.name === "best_ask_price") ask = lm.raw ?? 0;
-							}
-							if (bid > 0 && ask > 0) {
-								rawPrice = (bid + ask) / 2;
-							} else if (bid > 0) {
-								rawPrice = bid;
-							} else if (ask > 0) {
-								rawPrice = ask;
-							}
-						}
-					}
-				}
-
-				if (rawPrice !== undefined && rawPrice > 0) {
+				if (rawPrice !== undefined) {
 					const seqVal = Number(measurement.tick ?? 0n);
 					setPoints((prev) => {
 						const next = [
 							...prev,
-							{ x: prev.length, y: rawPrice as number, seq: seqVal },
+							{ x: prev.length, y: rawPrice, seq: seqVal },
 						];
 						if (next.length > 200) {
 							return next.slice(next.length - 200).map((pt, i) => ({
@@ -222,70 +203,39 @@ export const ForwardLearningViz = () => {
 						type: extType,
 						magnitude: metricMap.excursion_mag ?? 0,
 						marks: {
-							A: Math.max(0, Math.floor(metricMap.mark_a ?? 0)),
-							B: Math.max(0, Math.floor(metricMap.mark_b ?? 0)),
-							C: Math.max(0, Math.floor(metricMap.mark_c ?? 0)),
+							A: Math.floor(metricMap.mark_a ?? 0),
+							B: Math.floor(metricMap.mark_b ?? 0),
+							C: Math.floor(metricMap.mark_c ?? 0),
 						},
 						entryIdx:
-							metricMap.agent_entry !== undefined
+							metricMap.agent_entry !== undefined && metricMap.agent_entry > 0
 								? Math.floor(metricMap.agent_entry)
 								: null,
 						exitIdx:
-							metricMap.agent_exit !== undefined
+							metricMap.agent_exit !== undefined && metricMap.agent_exit > 0
 								? Math.floor(metricMap.agent_exit)
 								: null,
 					});
+				} else {
+					setExcursionEvent(null);
 				}
 			});
 		};
 
-		const ring = trainingStore?.state?.[currentSymbol];
+		const ring = signals.training?.state?.[currentSymbol];
 		if (ring) {
 			handleRing(ring);
 		}
 
-		const unsub = trainingStore.subscribe((state) => {
+		const unsub = signals.training.subscribe((state) => {
 			const activeRing = state?.[currentSymbol];
 			if (activeRing) {
 				handleRing(activeRing);
 			}
 		});
 
-		const liqUnsub = signals.liquidity.subscribe((state) => {
-			const liqRing = state?.[currentSymbol];
-			if (liqRing && !liqRing.isEmpty()) {
-				const last = liqRing.getLast();
-				if (!last?.metrics) return;
-				let bid = 0;
-				let ask = 0;
-				for (const lm of last.metrics) {
-					if (lm.name === "best_bid_price") bid = lm.raw ?? 0;
-					if (lm.name === "best_ask_price") ask = lm.raw ?? 0;
-				}
-				if (bid > 0 && ask > 0) {
-					const mid = (bid + ask) / 2;
-					const seqVal = Number(last.tick ?? 0n);
-					setPoints((prev) => {
-						if (prev.length > 0 && prev[prev.length - 1].seq === seqVal) {
-							return prev;
-						}
-						const next = [...prev, { x: prev.length, y: mid, seq: seqVal }];
-						if (next.length > 200) {
-							return next.slice(next.length - 200).map((pt, i) => ({
-								x: i,
-								y: pt.y,
-								seq: pt.seq,
-							}));
-						}
-						return next;
-					});
-				}
-			}
-		});
-
 		return () => {
 			unsub?.unsubscribe?.();
-			liqUnsub?.unsubscribe?.();
 		};
 	}, [currentSymbol]);
 
@@ -480,155 +430,138 @@ export const ForwardLearningViz = () => {
 									</g>
 								)}
 
-								{/* Real Hindsight Markers A, B, C if excursion event is active */}
-								{excursionEvent && (
-									<g>
-										{(["A", "B", "C"] as const).map((m) => {
-											const markVal = excursionEvent.marks[m];
-											if (markVal <= 0) return null;
-
-											let targetIdx = -1;
-											if (markVal < points.length) {
-												targetIdx = markVal;
-											} else if (points.length > 0) {
-												let minDiff = Number.POSITIVE_INFINITY;
-												for (let i = 0; i < points.length; i++) {
-													const seq = points[i].seq ?? i;
-													const diff = Math.abs(seq - markVal);
-													if (diff < minDiff) {
-														minDiff = diff;
-														targetIdx = i;
-													}
-												}
+								{/* Hindsight Markers A, B, C and Agent Decisions */}
+								{excursionEvent && points.length > 0 && (() => {
+									const resolveIdx = (tickSeq: number | null): number | null => {
+										if (tickSeq === null || tickSeq <= 0 || points.length === 0) return null;
+										let minDiff = Number.POSITIVE_INFINITY;
+										let found = -1;
+										for (let i = 0; i < points.length; i++) {
+											const seq = points[i].seq;
+											if (seq === undefined || seq < 0) continue;
+											const diff = Math.abs(seq - tickSeq);
+											if (diff < minDiff) {
+												minDiff = diff;
+												found = i;
 											}
+										}
+										return found >= 0 ? found : null;
+									};
 
-											if (targetIdx < 0 || targetIdx >= points.length) {
-												return null;
-											}
+									const markAIdx =
+										excursionEvent.marks.A > 0
+											? resolveIdx(excursionEvent.marks.A)
+											: null;
+									const markBIdx =
+										excursionEvent.marks.B > 0
+											? resolveIdx(excursionEvent.marks.B)
+											: null;
+									const markCIdx =
+										excursionEvent.marks.C > 0
+											? resolveIdx(excursionEvent.marks.C)
+											: null;
 
-											const xPos = xScale(targetIdx);
+									const marksList: { name: string; idx: number }[] = [];
+									if (markAIdx !== null) marksList.push({ name: "A", idx: markAIdx });
+									if (markBIdx !== null) marksList.push({ name: "B", idx: markBIdx });
+									if (markCIdx !== null) marksList.push({ name: "C", idx: markCIdx });
 
-											return (
-												<g key={m} transform={`translate(${xPos}, 0)`}>
-													<line
-														x1={0}
-														y1={12}
-														x2={0}
-														y2={tapeDim.height}
-														stroke="var(--info)"
-														strokeWidth="1"
-														strokeDasharray="2 4"
-														opacity="0.35"
-													/>
-													<rect
-														x={-6}
-														y={6}
-														width={12}
-														height={12}
-														fill="var(--sunken)"
-														stroke="var(--info)"
-														strokeWidth="1"
-													/>
+									const entryPtIdx =
+										excursionEvent.entryIdx !== null && excursionEvent.entryIdx > 0
+											? resolveIdx(excursionEvent.entryIdx)
+											: null;
+									const exitPtIdx =
+										excursionEvent.exitIdx !== null && excursionEvent.exitIdx > 0
+											? resolveIdx(excursionEvent.exitIdx)
+											: null;
+
+									return (
+										<g>
+											{marksList.map(({ name, idx }) => {
+												if (idx < 0 || idx >= points.length) return null;
+												const xPos = xScale(idx);
+												return (
+													<g key={name} transform={`translate(${xPos}, 0)`}>
+														<line
+															x1={0}
+															y1={15}
+															x2={0}
+															y2={tapeDim.height}
+															stroke="#0ea5e9"
+															strokeWidth="1"
+															strokeDasharray="2 4"
+															opacity="0.35"
+														/>
+														<rect
+															x={-7}
+															y={8}
+															width={14}
+															height={14}
+															fill="#050505"
+															stroke="#0ea5e9"
+															strokeWidth="1"
+														/>
+														<text
+															x={0}
+															y={18}
+															fill="#0ea5e9"
+															fontSize="9px"
+															textAnchor="middle"
+														>
+															{name}
+														</text>
+													</g>
+												);
+											})}
+
+											{/* Agent Entry Marker */}
+											{entryPtIdx !== null && entryPtIdx >= 0 && entryPtIdx < points.length && (
+												<g
+													transform={`translate(${xScale(entryPtIdx)}, ${yScale(points[entryPtIdx].y)})`}
+												>
+													<circle r={4} fill="#22c55e" />
 													<text
-														x={0}
-														y={15}
-														fill="var(--info)"
-														fontSize="8px"
-														textAnchor="middle"
+														x={6}
+														y={-6}
+														fill="#22c55e"
+														fontSize="9px"
+														fontWeight="bold"
 													>
-														{m}
+														ENTER
 													</text>
+													<line
+														y2={tapeDim.height}
+														stroke="#22c55e"
+														opacity="0.3"
+													/>
 												</g>
-											);
-										})}
+											)}
 
-										{/* Agent Entry Marker */}
-										{excursionEvent.entryIdx !== null &&
-											(() => {
-												let entryPtIdx = -1;
-												const val = excursionEvent.entryIdx;
-												if (val < points.length) {
-													entryPtIdx = val;
-												} else if (points.length > 0) {
-													let minDiff = Number.POSITIVE_INFINITY;
-													for (let i = 0; i < points.length; i++) {
-														const seq = points[i].seq ?? i;
-														const diff = Math.abs(seq - val);
-														if (diff < minDiff) {
-															minDiff = diff;
-															entryPtIdx = i;
-														}
-													}
-												}
-												if (entryPtIdx < 0 || entryPtIdx >= points.length)
-													return null;
-												return (
-													<g
-														transform={`translate(${xScale(entryPtIdx)}, ${yScale(points[entryPtIdx].y)})`}
+											{/* Agent Exit Marker */}
+											{exitPtIdx !== null && exitPtIdx >= 0 && exitPtIdx < points.length && (
+												<g
+													transform={`translate(${xScale(exitPtIdx)}, ${yScale(points[exitPtIdx].y)})`}
+												>
+													<circle r={4} fill="#ef4444" />
+													<text
+														x={6}
+														y={-6}
+														fill="#ef4444"
+														fontSize="9px"
+														fontWeight="bold"
 													>
-														<circle r={3.5} fill="var(--up)" />
-														<text
-															x={5}
-															y={-5}
-															fill="var(--up)"
-															fontSize="8px"
-															fontWeight="bold"
-														>
-															ENTER
-														</text>
-														<line
-															y2={tapeDim.height}
-															stroke="var(--up)"
-															opacity="0.25"
-														/>
-													</g>
-												);
-											})()}
-
-										{/* Agent Exit Marker */}
-										{excursionEvent.exitIdx !== null &&
-											(() => {
-												let exitPtIdx = -1;
-												const val = excursionEvent.exitIdx;
-												if (val < points.length) {
-													exitPtIdx = val;
-												} else if (points.length > 0) {
-													let minDiff = Number.POSITIVE_INFINITY;
-													for (let i = 0; i < points.length; i++) {
-														const seq = points[i].seq ?? i;
-														const diff = Math.abs(seq - val);
-														if (diff < minDiff) {
-															minDiff = diff;
-															exitPtIdx = i;
-														}
-													}
-												}
-												if (exitPtIdx < 0 || exitPtIdx >= points.length)
-													return null;
-												return (
-													<g
-														transform={`translate(${xScale(exitPtIdx)}, ${yScale(points[exitPtIdx].y)})`}
-													>
-														<circle r={3.5} fill="var(--down)" />
-														<text
-															x={5}
-															y={-5}
-															fill="var(--down)"
-															fontSize="8px"
-															fontWeight="bold"
-														>
-															EXIT
-														</text>
-														<line
-															y2={tapeDim.height}
-															stroke="var(--down)"
-															opacity="0.25"
-														/>
-													</g>
-												);
-											})()}
-									</g>
-								)}
+														EXIT
+													</text>
+													<line
+														y2={tapeDim.height}
+														stroke="#ef4444"
+														opacity="0.3"
+													/>
+												</g>
+											)}
+										</g>
+									);
+								})()}
 							</svg>
 						)}
 					</div>
@@ -652,8 +585,7 @@ export const ForwardLearningViz = () => {
 								Mean Decision Benefit
 							</div>
 							<div className="text-(--f1) text-sm font-bold">
-								{meanEdge > 0 ? "+" : ""}
-								{meanEdge.toFixed(2)} bp
+								{basis(meanEdge)}
 							</div>
 							<div className="text-(--f4) text-[9px] mt-0.5 leading-tight">
 								Measured edge over starting basis. Honest uncertainty preserved.

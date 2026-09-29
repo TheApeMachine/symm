@@ -2,10 +2,10 @@ import { useSelector } from "@tanstack/react-store";
 import { useEffect, useRef, useState } from "react";
 import {
 	DEFAULT_FOCUS_SYMBOL,
-	focusStore,
-	positionStore,
+	focusAtom,
+	positionCountAtom,
 	type RingBuffer,
-	trainingStore,
+	signals,
 } from "#/collections/app";
 import { RingCursor } from "#/collections/ring";
 import { Flex } from "#/components/ui/flex";
@@ -47,7 +47,7 @@ const TABS: Array<{ key: Tab; label: string }> = [
 ];
 
 export const LearningDashboard = () => {
-	const focusSymbol = useSelector(focusStore, (state) => state);
+	const focusSymbol = useSelector(focusAtom, (state) => state);
 	const [tab, setTab] = useState<Tab>("forward");
 	const containerRef = useRef<HTMLDivElement>(null);
 
@@ -77,35 +77,13 @@ export const LearningDashboard = () => {
 
 	// Listen to open positions count
 	useEffect(() => {
-		const unsubPositions = positionStore.subscribe((state) => {
-			const frame = state as
-				| {
-						findLast?: (fn: () => boolean) => unknown;
-						rowsLength?: () => number;
-				  }
-				| unknown[]
-				| null
-				| undefined;
-			const latestFrame =
-				typeof (frame as { findLast?: (fn: () => boolean) => unknown })
-					?.findLast === "function"
-					? (frame as { findLast: (fn: () => boolean) => unknown }).findLast(
-							() => true,
-						)
-					: Array.isArray(frame)
-						? frame[frame.length - 1]
-						: frame;
-
-			const typed = latestFrame as
-				| { rowsLength?: () => number }
-				| null
-				| undefined;
-			if (!typed || typeof typed.rowsLength !== "function") {
-				setOpenPositionsCount(0);
-				return;
-			}
-			setOpenPositionsCount(typed.rowsLength());
+		const unsubPositions = positionCountAtom.subscribe((count) => {
+			setOpenPositionsCount(count);
+			setIsTrading(count > 0);
 		});
+		setOpenPositionsCount(positionCountAtom.get());
+		setIsTrading(positionCountAtom.get() > 0);
+
 		return () => {
 			unsubPositions?.unsubscribe?.();
 		};
@@ -324,19 +302,10 @@ export const LearningDashboard = () => {
 					grid?.symbol === focusSymbol ? grid.regions : [];
 
 				if (quantities.length > 0) {
-					const cellToRegion = new Map<number, number>();
-					for (const r of measuredRegions) {
-						if (Array.isArray(r.members)) {
-							for (const m of r.members) {
-								cellToRegion.set(Number(m), Number(r.id));
-							}
-						}
-					}
-
 					const mappedNodes: ImpulseNode[] = quantities.map((cell) => ({
 						id: String(cell.id),
 						label: String(cell.label ?? cell.source ?? `#${cell.id}`),
-						cluster: cellToRegion.get(Number(cell.id)) ?? Number(cell.id) % 4,
+						cluster: Number(cell.basin || cell.id),
 						snr: cell.quality ?? 0,
 						activation: cell.activity || 0,
 						value: cell.value,
@@ -355,16 +324,24 @@ export const LearningDashboard = () => {
 						})),
 					);
 
-					const hotCells = quantities
-						.filter((c) => (c.activity || 0) > 0.1)
-						.sort((a, b) => (b.activity || 0) - (a.activity || 0));
+					const sortedLitRegions = [...measuredRegions]
+						.filter((r) => (r.strength || 0) > 0)
+						.sort((a, b) => (b.strength || 0) - (a.strength || 0));
 
-					if (hotCells.length > 0) {
+					if (sortedLitRegions.length > 0) {
 						setActivePrecursors(
-							hotCells.slice(0, 4).map((c) => ({
-								label: String(c.label || c.source),
-								activity: c.activity ?? 0,
-							})),
+							sortedLitRegions.slice(0, 4).map((r, idx) => {
+								const peakCell = quantities.find(
+									(c) => Number(c.id) === Number(r.id),
+								);
+								const name = peakCell?.label
+									? `Region ${String.fromCharCode(65 + idx)} (${peakCell.label})`
+									: `Region ${String.fromCharCode(65 + idx)}`;
+								return {
+									label: name,
+									activity: r.strength,
+								};
+							}),
 						);
 					}
 				}
@@ -537,12 +514,12 @@ export const LearningDashboard = () => {
 			root.dataset.dropped = String(cursor.dropped);
 		};
 
-		const initial = trainingStore?.state?.[focusSymbol];
+		const initial = signals.training?.state?.[focusSymbol];
 		if (initial) {
 			update(initial);
 		}
 
-		const unsubTraining = trainingStore.subscribe((state) => {
+		const unsubTraining = signals.training.subscribe((state) => {
 			const activeRing = state?.[focusSymbol];
 			if (activeRing) {
 				update(activeRing);

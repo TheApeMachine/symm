@@ -129,9 +129,6 @@ func (op *Engine) TreeExport() CognitionTreeExport {
 		State:       "EVALUATED",
 	}
 
-	nodeIndex := make(map[string]*TrieNodeJSON, topLimit*4)
-	nodeIndex["root"] = rootNode
-
 	type scoredBranch struct {
 		branch   TrieBranchJSON
 		feasible FeasibleActionJSON
@@ -141,95 +138,98 @@ func (op *Engine) TreeExport() CognitionTreeExport {
 
 	for _, cand := range topCandidates {
 		tokens := cand.tokens
-		tokenNames := make([]string, len(tokens))
+		var regionTokens []string
 
 		for idx, tokenVal := range tokens {
-			tokenNames[idx] = fmt.Sprintf("0x%04x", tokenVal&0xffff)
-		}
-
-		currentPath := "root"
-		currentNode := rootNode
-
-		for level, tokenVal := range tokens {
-			stepID := fmt.Sprintf("%s:%04x", currentPath, tokenVal&0xffff)
-			childNode, exists := nodeIndex[stepID]
-
-			if !exists {
-				stepPrefix := fmt.Sprintf("t-%04x", tokenVal&0xffff)
-
-				if level == 0 {
-					stepPrefix = fmt.Sprintf("scope-%04x", tokenVal&0xffff)
-				}
-
-				childNode = &TrieNodeJSON{
-					ID:              stepID,
-					TokenPrefix:     stepPrefix,
-					Probability:     cand.probability,
-					StepProbability: cand.probability,
-					Count:           cand.count,
-					Tokens:          tokenNames[:level+1],
-					State:           "EVALUATED",
-				}
-				nodeIndex[stepID] = childNode
-				currentNode.Children = append(currentNode.Children, childNode)
+			if idx == 0 && len(tokens) > 1 {
+				// The first 64-bit token is the scopeToken(symbol, holding); subsequent are region tokens.
+				continue
 			}
 
-			if exists {
-				childNode.Count += cand.count
-
-				if cand.probability > childNode.Probability {
-					childNode.Probability = cand.probability
-				}
-			}
-
-			currentPath = stepID
-			currentNode = childNode
+			regionTokens = append(regionTokens, fmt.Sprintf("0x%04x", tokenVal&0xffff))
 		}
 
-		leafID := fmt.Sprintf("%s:%s", currentPath, cand.className)
+		if len(regionTokens) == 0 && len(tokens) > 0 {
+			regionTokens = append(regionTokens, fmt.Sprintf("0x%04x", tokens[0]&0xffff))
+		}
+
+		actionName := strings.ToUpper(cand.className)
 		policyState := "EVALUATED"
 
 		if cand.probability > 0.5 {
 			policyState = "POLICY CHOICE"
 		}
 
-		leafNode := &TrieNodeJSON{
-			ID:              leafID,
-			TokenPrefix:     cand.className,
-			Probability:     cand.probability,
-			StepProbability: cand.probability,
-			Count:           cand.count,
-			Tokens:          append(tokenNames, cand.className),
-			State:           policyState,
+		// Edges encode region tokens; nodes encode actions (WAIT, ENTER, EXIT).
+		currNode := rootNode
+		pathSoFar := "root"
+
+		for idx, regToken := range regionTokens {
+			isLast := idx == len(regionTokens)-1
+			nodeAction := "WAIT"
+			nodeState := "EVALUATED"
+			nodeProb := cand.probability
+			nodeCount := cand.count
+
+			if isLast {
+				nodeAction = actionName
+				nodeState = policyState
+			}
+
+			pathSoFar += "/" + regToken + ":" + nodeAction
+
+			var foundChild *TrieNodeJSON
+
+			for _, child := range currNode.Children {
+				if child.TokenPrefix == nodeAction && len(child.Tokens) > 0 && child.Tokens[0] == regToken {
+					foundChild = child
+					break
+				}
+			}
+
+			if foundChild == nil {
+				foundChild = &TrieNodeJSON{
+					ID:              pathSoFar,
+					TokenPrefix:     nodeAction,
+					Probability:     nodeProb,
+					StepProbability: nodeProb,
+					Count:           nodeCount,
+					Tokens:          []string{regToken},
+					State:           nodeState,
+				}
+				currNode.Children = append(currNode.Children, foundChild)
+			}
+
+			if isLast {
+				if cand.count > foundChild.Count {
+					foundChild.Count = cand.count
+				}
+
+				if cand.probability > foundChild.Probability {
+					foundChild.Probability = cand.probability
+					foundChild.StepProbability = cand.probability
+					foundChild.State = policyState
+				}
+			}
+
+			currNode = foundChild
 		}
-		currentNode.Children = append(currentNode.Children, leafNode)
 
 		hash := fmt.Sprintf("0x%x:%s", cand.keyBytes, cand.className)
-
-		policyStr := "WAIT"
-
-		if cand.className == "enter" {
-			policyStr = "ENTER"
-		}
-
-		if cand.className == "exit" {
-			policyStr = "EXIT"
-		}
-
 		associationBias := cand.probability - 0.5
 
 		collectedBranches = append(collectedBranches, scoredBranch{
 			branch: TrieBranchJSON{
 				Hash:       hash,
-				Depth:      len(tokens) + 1,
+				Depth:      len(regionTokens) + 1,
 				Visits:     cand.count,
 				MeanEdge:   associationBias,
 				Confidence: cand.probability * 100.0,
-				Policy:     policyStr,
+				Policy:     actionName,
 			},
 			feasible: FeasibleActionJSON{
 				Action:      cand.className,
-				TokenPrefix: fmt.Sprintf("ROOT / %s / %s", strings.Join(tokenNames, " / "), cand.className),
+				TokenPrefix: fmt.Sprintf("ROOT / [%s] -> %s", strings.Join(regionTokens, ", "), cand.className),
 				Probability: cand.probability,
 				State:       policyState,
 			},

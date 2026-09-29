@@ -1,11 +1,13 @@
 import { useSelector } from "@tanstack/react-store";
-import { focusStore, resonanceStore } from "#/collections/app";
+import { focusAtom, signals } from "#/collections/app";
 
 export const LiveResonanceTitle = () => {
-	const symbol = useSelector(focusStore, (state) => state);
-	const artifact = useSelector(resonanceStore, (state) => {
+	const symbol = useSelector(focusAtom, (state) => state);
+	const artifact = useSelector(signals.resonance, (state) => {
 		const ring = state[symbol];
-		return ring && !ring.isEmpty() ? (ring.getLast() as any) : null;
+		return ring && !ring.isEmpty()
+			? (ring.getLast() as unknown as Record<string, unknown>)
+			: null;
 	});
 
 	const horizonVal = artifact

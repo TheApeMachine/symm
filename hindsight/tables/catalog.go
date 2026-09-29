@@ -471,17 +471,42 @@ func parseBucketName(location string) string {
 Load returns one of the canonical Hindsight tables.
 */
 func (catalog *Catalog) Load(ctx context.Context, name string) (*table.Table, error) {
-	loaded, err := catalog.underlying.LoadTable(catalog.context(ctx), table.Identifier{Namespace, name})
+	retries := 3
 
-	if err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.BadGateway,
-			"[iceberg] failed to load table "+name,
-			err,
-		))
+	if system.Cfg != nil && system.Cfg.Storage != nil && system.Cfg.Storage.Iceberg != nil && system.Cfg.Storage.Iceberg.CommitRetries > 0 {
+		retries = system.Cfg.Storage.Iceberg.CommitRetries
 	}
 
-	return loaded, nil
+	var (
+		loaded *table.Table
+		err    error
+	)
+
+	for attempt := 0; attempt <= retries; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(time.Duration(attempt) * 100 * time.Millisecond):
+			}
+		}
+
+		loaded, err = catalog.underlying.LoadTable(catalog.context(ctx), table.Identifier{Namespace, name})
+
+		if err == nil {
+			return loaded, nil
+		}
+
+		if errors.Is(err, icecat.ErrNoSuchTable) {
+			break
+		}
+	}
+
+	return nil, errnie.Error(errnie.Err(
+		errnie.BadGateway,
+		"[iceberg] failed to load table "+name,
+		err,
+	))
 }
 
 func (catalog *Catalog) context(ctx context.Context) context.Context {

@@ -90,6 +90,7 @@ func MeasurementToWire(measurement *data.Measurement[float64]) *wire.Measurement
 			row.Grid.Quantities = append(row.Grid.Quantities, &wire.LearningQuantityT{
 				Id: cell.ID, Source: cell.Source, Label: cell.Label, X: cell.X, Y: cell.Y,
 				Value: cell.Value, Activity: cell.Activity, Quality: cell.Quality, Present: cell.Present,
+				Basin: cell.Basin,
 			})
 		}
 

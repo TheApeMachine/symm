@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"net/http/pprof"
 	"os"
@@ -192,10 +193,24 @@ var (
 			hub.Run()
 			hub.Transition(nmruntime.READY)
 
-			errnie.Info("symm: pre-training model on stored catalog excursions...")
-			if err := training.Rehearsal.Restore(catalog); err != nil {
+			errnie.Info("symm: restoring model checkpoint...")
+			lastEpoch, err := training.Rehearsal.LoadCheckpoint()
+
+			if err != nil {
 				errnie.Error(err)
 			}
+
+			if lastEpoch > 0 {
+				training.Rehearsal.RecordTrainedRun(lastEpoch, math.MaxInt64)
+			}
+
+			go func() {
+				errnie.Info("symm: background pre-training model on stored catalog excursions...")
+
+				if err := training.Rehearsal.ReplayPending(catalog); err != nil {
+					errnie.Error(err)
+				}
+			}()
 
 			defer func() {
 				if err := training.Rehearsal.SaveCheckpoint(epoch); err != nil {
@@ -372,7 +387,7 @@ var (
 			transportErrors := make(chan error, 1)
 
 			go func() {
-				transportErrors <- hub.Fluid.Run(webrtcTee)
+				transportErrors <- hub.WebRTC.Run(webrtcTee)
 			}()
 
 			// Every processing and off-ramp owner is ready before ingress opens.

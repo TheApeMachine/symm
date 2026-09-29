@@ -17,10 +17,8 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/nomagique/cognition"
-	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/physics/sensorium"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	"github.com/theapemachine/symm/signal"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
 )
@@ -40,6 +38,7 @@ PositionSource supplies active open positions and recent decisions for streaming
 type PositionSource interface {
 	PositionsWire() *wire.PositionsFrameT
 	DecisionsWire() *wire.StrategyFrameT
+	EquityWire() *wire.EquityFrameT
 }
 
 type CognitionSource interface {
@@ -65,7 +64,8 @@ type Hub struct {
 	positionSource   PositionSource
 	cognitionSource  CognitionSource
 	exitHandler      func(symbol string)
-	Fluid            *FluidRTC
+	routes           *Routes
+	WebRTC           *WebRTC
 	learningInterval time.Duration
 	lastLearning     time.Time
 }
@@ -94,10 +94,12 @@ func NewHub(
 			ReadBufferSize:  4194304,
 			WriteBufferSize: 4194304,
 		}),
-		Fluid:      NewFluidRTC(ctx, "hub"),
 		tradeStore: trades,
 		store:      hindsightStore,
 	}
+
+	hub.routes = NewRoutes(hub)
+	hub.WebRTC = NewWebRTC(hub)
 
 	closers := []io.Closer{}
 
@@ -128,216 +130,7 @@ func NewHub(
 		AllowPrivateNetwork: true,
 	}))
 
-	hub.registerPhysics()
-
-	hub.app.Use("/ws", func(c fiber.Ctx) error {
-		if websocket.IsWebSocketUpgrade(c) {
-			c.Locals("allowed", true)
-			return c.Next()
-		}
-
-		return fiber.ErrUpgradeRequired
-	})
-
-	hub.app.Get("/trades", func(c fiber.Ctx) error {
-		if hub.tradeStore == nil {
-			return c.JSON([]*wire.PositionT{})
-		}
-
-		trades, err := hub.tradeStore.RecentTrades(int(
-			min(parseUintQuery(c.Query("limit")), 2000),
-		))
-
-		if err != nil {
-			return err
-		}
-
-		if trades == nil {
-			trades = []*wire.PositionT{}
-		}
-
-		return c.JSON(trades)
-	})
-
-	hub.app.Get("/cognition/tree", func(c fiber.Ctx) error {
-		if hub.cognitionSource == nil {
-			return c.JSON(cognition.CognitionTreeExport{
-				Root: &cognition.TrieNodeJSON{
-					ID:          "root",
-					TokenPrefix: "ROOT",
-					Probability: 1.0,
-					State:       "ESTIMATED",
-				},
-				Branches: []cognition.TrieBranchJSON{},
-				Feasible: []cognition.FeasibleActionJSON{},
-			})
-		}
-
-		export := hub.cognitionSource.CognitionTree()
-		return c.JSON(export)
-	})
-
-	// Hindsight inspection projection reads
-	hub.app.Get("/hindsight/metric-map", func(c fiber.Ctx) error {
-		return c.JSON(signal.Semantics())
-	})
-
-	hub.app.Get("/hindsight/runs", func(c fiber.Ctx) error {
-		if hub.store == nil {
-			return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
-		}
-
-		runs, err := hub.store.Runs(hub.Context())
-
-		if err != nil {
-			return err
-		}
-
-		if runs == nil {
-			runs = []tables.Run{}
-		}
-
-		return c.JSON(runs)
-	})
-
-	hub.app.Use("/hindsight/timeline", func(ctx fiber.Ctx) error {
-		if websocket.IsWebSocketUpgrade(ctx) {
-			ctx.Locals("allowed", true)
-			return ctx.Next()
-		}
-
-		return fiber.ErrUpgradeRequired
-	})
-
-	hub.app.Get("/hindsight/timeline", websocket.New(func(conn *websocket.Conn) {
-		if hub.store == nil {
-			return
-		}
-
-		run := conn.Query("run")
-
-		if run == "" {
-			run = conn.Query("epoch")
-		}
-
-		if run == "" {
-			return
-		}
-
-		epoch := parseInt64Query(run)
-		symbol := conn.Query("symbol")
-		fromTick := parseInt64Query(conn.Query("from"))
-		toTick := parseInt64Query(conn.Query("to"))
-
-		const timelineBatchSize = 256
-		batch := make([]*data.Measurement[float64], 0, timelineBatchSize)
-
-		for measurement := range hub.store.Timeline(hub.Context(), epoch, symbol, fromTick, toTick) {
-			batch = append(batch, measurement)
-
-			if len(batch) < timelineBatchSize {
-				continue
-			}
-
-			err := types.EncodeMeasurementsFrameWith(batch, func(payload []byte) error {
-				return conn.WriteMessage(websocket.BinaryMessage, payload)
-			})
-
-			if err != nil {
-				return
-			}
-
-			batch = batch[:0]
-		}
-
-		if len(batch) > 0 {
-			err := types.EncodeMeasurementsFrameWith(batch, func(payload []byte) error {
-				return conn.WriteMessage(websocket.BinaryMessage, payload)
-			})
-
-			if err != nil {
-				return
-			}
-		}
-	}, websocket.Config{
-		Origins: []string{"*"},
-	}))
-
-	hub.app.Get("/hindsight/symbols", func(ctx fiber.Ctx) error {
-		if hub.store == nil {
-			return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
-		}
-
-		run := ctx.Query("run")
-
-		if run == "" {
-			run = ctx.Query("epoch")
-		}
-
-		epoch := parseInt64Query(run)
-		symbols, err := hub.store.Symbols(hub.Context(), epoch)
-
-		if err != nil {
-			return err
-		}
-
-		if symbols == nil {
-			symbols = []string{}
-		}
-
-		return ctx.JSON(symbols)
-	})
-
-	hub.app.Get("/hindsight/excursions", func(ctx fiber.Ctx) error {
-		if hub.store == nil {
-			return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
-		}
-
-		run := ctx.Query("run")
-
-		if run == "" {
-			run = ctx.Query("epoch")
-		}
-
-		epoch := parseInt64Query(run)
-		excursions, err := hub.store.Excursions(hub.Context(), epoch, nil)
-
-		if err != nil {
-			return err
-		}
-
-		if excursions == nil {
-			excursions = []tables.ExcursionRecord{}
-		}
-
-		return ctx.JSON(excursions)
-	})
-
-	hub.app.Get("/hindsight/data", func(ctx fiber.Ctx) error {
-		if hub.store == nil {
-			return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
-		}
-
-		epoch := parseInt64Query(ctx.Query("epoch"))
-		tableName := ctx.Query("table")
-
-		if tableName == "" {
-			tableName = tables.SpotTicker
-		}
-
-		limit := int(parseUintQuery(ctx.Query("limit")))
-		var measurements []*data.Measurement[float64]
-
-		for measurement := range hub.store.Scan(hub.Context(), tableName, epoch, nil, limit) {
-			measurements = append(measurements, measurement)
-		}
-
-		if measurements == nil {
-			measurements = []*data.Measurement[float64]{}
-		}
-
-		return ctx.JSON(measurements)
-	})
+	hub.routes.Register()
 	hub.registerWorkbench()
 
 	hub.app.Get("/ws", websocket.New(func(conn *websocket.Conn) {
@@ -437,11 +230,45 @@ func NewHub(
 			return conn.Conn.WriteMessage(websocket.BinaryMessage, payload)
 		}
 
+		var lastEquityPush time.Time
+
+		sendEquity := func() error {
+			if hub.positionSource == nil {
+				return nil
+			}
+
+			wireFrame := hub.positionSource.EquityWire()
+
+			if wireFrame == nil {
+				return nil
+			}
+
+			message := &wire.MessageT{
+				Sequence: uint64(time.Now().UnixNano()),
+				Frame: &wire.FrameT{
+					Type:  wire.FrameEquityFrame,
+					Value: wireFrame,
+				},
+			}
+
+			builder := flatbuffers.NewBuilder(1024)
+			offset := message.Pack(builder)
+			builder.FinishWithFileIdentifier(offset, []byte("SYMM"))
+			payload := builder.FinishedBytes()
+
+			lastEquityPush = time.Now()
+			return conn.Conn.WriteMessage(websocket.BinaryMessage, payload)
+		}
+
 		if err := sendPositions(); err != nil {
 			return
 		}
 
 		if err := sendDecisions(); err != nil {
+			return
+		}
+
+		if err := sendEquity(); err != nil {
 			return
 		}
 
@@ -460,6 +287,12 @@ func NewHub(
 
 			if time.Since(lastDecisionsPush) >= 1000*time.Millisecond {
 				if err := sendDecisions(); err != nil {
+					return
+				}
+			}
+
+			if time.Since(lastEquityPush) >= 500*time.Millisecond {
+				if err := sendEquity(); err != nil {
 					return
 				}
 			}
@@ -492,8 +325,6 @@ func NewHub(
 	}, websocket.Config{
 		Origins: []string{"*"},
 	}))
-
-	hub.registerFluidWebRTC()
 
 	return hub
 }

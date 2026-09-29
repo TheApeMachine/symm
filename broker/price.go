@@ -9,6 +9,7 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/broker/position"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/nomagique/runtime"
@@ -176,22 +177,18 @@ func notional(unit, quantity *decimal.Decimal) *decimal.Decimal {
 }
 
 /* PnL values the remaining inventory, including its retained entry fee. */
-func (price *Price) PnL(symbol string, position *Position) *decimal.Decimal {
-	exit := price.ExitValue(symbol, position)
-
-	if exit == nil || position == nil {
+func (price *Price) PnL(symbol string, reg *position.Regulator) *decimal.Decimal {
+	if price == nil || reg == nil || !reg.IsHolding() {
 		return nil
 	}
 
-	entryPrice := position.Price()
-	entryVolume := position.Volume()
+	exit := price.ExitValue(symbol, reg)
 
-	if entryPrice == nil || entryVolume == nil {
+	if exit == nil || reg.Basis == nil {
 		return nil
 	}
 
-	basis := notional(entryPrice, entryVolume)
-	return exit.Sub(basis)
+	return exit.Sub(reg.Basis)
 }
 
 /* CurrentMark returns the best observable reference price for a symbol. */
@@ -233,18 +230,18 @@ func (price *Price) CurrentMark(symbol string) *decimal.Decimal {
 }
 
 /* Value reports the net liquidation value of a position. */
-func (price *Price) Value(symbol string, position *Position) *decimal.Decimal {
-	return price.ExitValue(symbol, position)
+func (price *Price) Value(symbol string, reg *position.Regulator) *decimal.Decimal {
+	return price.ExitValue(symbol, reg)
 }
 
-func (price *Price) ExitValue(symbol string, position *Position) *decimal.Decimal {
-	if position == nil {
+func (price *Price) ExitValue(symbol string, reg *position.Regulator) *decimal.Decimal {
+	if price == nil || reg == nil || !reg.IsHolding() {
 		return nil
 	}
 
-	volume := position.Volume()
+	volume := reg.Volume()
 
-	if volume == nil {
+	if volume == nil || volume.Sign() <= 0 {
 		return nil
 	}
 
@@ -259,27 +256,14 @@ func (price *Price) ExitValue(symbol string, position *Position) *decimal.Decima
 	)
 }
 
-func (price *Price) ReturnPct(symbol string, position *Position) float64 {
-	pnl := price.PnL(symbol, position)
+func (price *Price) ReturnPct(symbol string, reg *position.Regulator) float64 {
+	pnl := price.PnL(symbol, reg)
 
-	if pnl == nil || position == nil {
+	if pnl == nil || reg == nil || reg.Basis == nil || reg.Basis.Sign() <= 0 {
 		return 0
 	}
 
-	entryPrice := position.Price()
-	entryVolume := position.Volume()
-
-	if entryPrice == nil || entryVolume == nil {
-		return 0
-	}
-
-	denom := notional(entryPrice, entryVolume)
-
-	if denom.Sign() == 0 {
-		return 0
-	}
-
-	return pnl.Div(denom).Mul(decimalHundred).Float64()
+	return pnl.Div(reg.Basis).Mul(decimalHundred).Float64()
 }
 
 /* Quantity sizes a buy against visible asks and available cash. */

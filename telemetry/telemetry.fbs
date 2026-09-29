@@ -901,7 +901,7 @@ table LearningAgent {
  open:int;
 }
 table LearningRegion { id:ulong; condition:ulong; level:double; change:double; strength:double; authority:double; members:int; }
-table LearningQuantity { source:string; label:string; x:double; y:double; value:double; activity:double; quality:double; present:bool; id:ulong; }
+table LearningQuantity { source:string; label:string; x:double; y:double; value:double; activity:double; quality:double; present:bool; id:ulong; basin:ulong; }
 table LearningDevelopment {
  symbol:string; atNs:long; status:string; decisions:ulong;
  context:[string]; regions:[LearningRegion]; quantities:[LearningQuantity]; fromNs:long;

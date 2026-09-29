@@ -205,10 +205,8 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 			measurement.Maturity = 1.0 - 1.0/float64(reading.NodeCount)
 		}
 
-		if reading.Contrast > 0 {
-			measurement.SNR = reading.Contrast
-			measurement.SNRDefined = true
-			measurement.Estimated = true
+		if m, ok := measurement.Metrics["contrast"]; ok {
+			measurement.Metrics["contrast"] = m.Write(reading.Contrast)
 		}
 
 		if m, ok := measurement.Metrics["surprisal"]; ok {
@@ -242,6 +240,9 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 
 func (solver *Solver) Register() *data.Measurement[float64] {
 	measurement := data.NewMeasurement("cognition", map[string]data.Metric[float64]{
+		"contrast": data.NewMetric[float64](
+			"contrast", data.UnitNat, data.TimescaleInstantaneous, 0, 1,
+		),
 		"surprisal": data.NewMetric[float64](
 			"surprisal", data.UnitNat, data.TimescaleInstantaneous, 0, 1,
 		),

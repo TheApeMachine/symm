@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"fmt"
 	"iter"
+	"math"
 	"slices"
 	"unsafe"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/geometry"
+	"github.com/theapemachine/symm/nomagique/statistic"
 )
 
 /*
@@ -60,8 +62,8 @@ func (impulseMap *Map) Step(input *data.Measurement[float64]) error {
 			impulseMap.Invalid++
 		}
 
-		if observation.Label == "" || observation.SeqIdx != input.SeqIdx {
-			return errnie.Error(errnie.Err(errnie.Validation, fmt.Sprintf("impulse: producer %q source %q symbol %q sequence %d, expected %d", observation.Provenance["owner"], observation.Source, observation.Label, observation.SeqIdx, input.SeqIdx), nil))
+		if observation.Label == "" || observation.SeqIdx != input.SeqIdx || observation.Provenance["owner"] == "" {
+			continue
 		}
 
 		market := impulseMap.Markets[observation.Label]
@@ -97,19 +99,38 @@ func (impulseMap *Map) Step(input *data.Measurement[float64]) error {
 		}
 
 		if market.volumeIncrement > 0 {
+			var edgeDrift float64
+
 			for index, edge := range market.edges {
 				left, right := market.Cells[edge.Left], market.Cells[edge.Right]
 				reading := market.pairs[index].Update(left.Movement, right.Movement, market.volumeIncrement)
 				market.edges[index].Strength = reading.Strength
+
+				if len(market.lockedEdges) == len(market.edges) {
+					edgeDrift += math.Abs(reading.Strength - market.lockedEdges[index])
+				}
+			}
+
+			if market.Locked && len(market.lockedEdges) == len(market.edges) && len(market.edges) > 0 {
+				if (edgeDrift / float64(len(market.edges))) > 0.25 {
+					market.Unlock()
+				}
 			}
 
 			if !market.Locked {
 				displacement := geometry.Relaxation{}.Step(market.points, market.edges)
 				geometry.Watershed{}.Step(market.points, market.edges)
-				market.stability.Update(displacement)
 
-				if market.stability.Count >= float64(len(market.Cells)) && displacement <= 1e-4 {
-					market.Locked = true
+				if displacement <= 1e-4 {
+					market.stability.Update(displacement)
+				}
+
+				if displacement > 1e-4 {
+					market.stability = statistic.Moments{}
+				}
+
+				if market.stability.Count >= float64(len(market.Cells)) {
+					market.Lock()
 				}
 			}
 		}

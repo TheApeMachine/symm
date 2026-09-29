@@ -1,6 +1,6 @@
 import { useSelector } from "@tanstack/react-store";
 import { useEffect, useRef } from "react";
-import { focusStore, resonanceStore } from "#/collections/app";
+import { focusAtom, type RingBuffer, signals } from "#/collections/app";
 import {
 	getRetainedResonance,
 	retainResonanceRow,
@@ -121,21 +121,24 @@ const DYNAMICS_FIELDS = [
 ] as const;
 
 export const XrayManifoldPanel = () => {
-	const focusSymbol = useSelector(focusStore, (state) => state);
+	const focusSymbol = useSelector(focusAtom, (state) => state);
 	const root = useRef<HTMLDivElement>(null);
 
 	useEffect(() => {
-		const updateFromState = (state: typeof resonanceStore.state) => {
+		const updateFromState = (state: Record<string, RingBuffer<unknown>>) => {
 			if (!root.current) return;
-			const ring = state[focusSymbol];
+			const ring = state[focusSymbol] as
+				| RingBuffer<{
+						symbol?: string | null;
+				  }>
+				| undefined;
 			const last = ring && !ring.isEmpty() ? ring.getLast() : null;
 
 			if (last) {
-				const row = (typeof (last as any).unpack === "function" ? (last as any).unpack() : last) as unknown as Record<string, unknown>;
-				const sym = typeof row.symbol === "string" ? row.symbol : "";
+				const sym = typeof last.symbol === "string" ? last.symbol : "";
 
 				if (sym) {
-					retainResonanceRow(sym, row);
+					retainResonanceRow(sym, last as unknown as Record<string, unknown>);
 				}
 			}
 
@@ -168,8 +171,8 @@ export const XrayManifoldPanel = () => {
 			}
 		};
 
-		updateFromState(resonanceStore.state);
-		const subscription = resonanceStore.subscribe((state) => {
+		updateFromState(signals.resonance.state);
+		const subscription = signals.resonance.subscribe((state) => {
 			updateFromState(state);
 		});
 

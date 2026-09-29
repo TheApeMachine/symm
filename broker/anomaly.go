@@ -1,13 +1,10 @@
 package broker
 
 import (
+	"maps"
 	"context"
 	"sync"
 	"sync/atomic"
-	"time"
-
-	"github.com/spf13/viper"
-	"golang.design/x/lockfree/wf"
 )
 
 type AnomalyKind uint8
@@ -31,12 +28,6 @@ func (kind AnomalyKind) String() string {
 	}
 }
 
-type MarketAnomaly struct {
-	Symbol string
-	Kind   AnomalyKind
-	At     time.Time
-}
-
 type symbolState struct {
 	consecutiveCrossed atomic.Uint64
 	consecutiveClean   atomic.Uint64
@@ -52,7 +43,6 @@ single-digit nanosecond execution while exposing quantitative venue health.
 type AnomalyMonitor struct {
 	ctx       context.Context
 	cancel    context.CancelFunc
-	ring      *wf.RingBuffer[MarketAnomaly]
 	symbols   atomic.Pointer[map[string]*symbolState]
 	mu        sync.Mutex
 	onFault   atomic.Pointer[[]func(symbol string)]
@@ -61,36 +51,23 @@ type AnomalyMonitor struct {
 	running   atomic.Bool
 }
 
-func NewAnomalyMonitor(ctx context.Context, capacity int) *AnomalyMonitor {
-	if capacity <= 0 {
-		configured := viper.GetInt("market.anomaly.capacity")
-		if configured > 0 {
-			capacity = configured
-		}
-
-		if capacity <= 0 {
-			capacity = 4096
-		}
-	}
-
+func NewAnomalyMonitor(ctx context.Context, _ int) *AnomalyMonitor {
 	monitorCtx, cancel := context.WithCancel(ctx)
 	monitor := &AnomalyMonitor{
 		ctx:    monitorCtx,
 		cancel: cancel,
-		ring:   wf.NewRingBuffer[MarketAnomaly](capacity),
 	}
 
 	initialMap := make(map[string]*symbolState)
 	monitor.symbols.Store(&initialMap)
 
 	monitor.running.Store(true)
-	go monitor.drain()
-
 	return monitor
 }
 
 func (monitor *AnomalyMonitor) lookup(symbol string) *symbolState {
 	current := monitor.symbols.Load()
+	
 	if current != nil {
 		if state, ok := (*current)[symbol]; ok {
 			return state
@@ -101,6 +78,7 @@ func (monitor *AnomalyMonitor) lookup(symbol string) *symbolState {
 	defer monitor.mu.Unlock()
 
 	current = monitor.symbols.Load()
+
 	if current != nil {
 		if state, ok := (*current)[symbol]; ok {
 			return state
@@ -109,9 +87,7 @@ func (monitor *AnomalyMonitor) lookup(symbol string) *symbolState {
 
 	newMap := make(map[string]*symbolState)
 	if current != nil {
-		for k, v := range *current {
-			newMap[k] = v
-		}
+		maps.Copy(newMap, *current)
 	}
 
 	state := &symbolState{}
@@ -186,12 +162,6 @@ func (monitor *AnomalyMonitor) Record(symbol string, kind AnomalyKind) {
 	state := monitor.lookup(symbol)
 	state.count.Add(1)
 
-	monitor.ring.Put(MarketAnomaly{
-		Symbol: symbol,
-		Kind:   kind,
-		At:     time.Now().UTC(),
-	})
-
 	if kind == AnomalyCrossedBook {
 		state.consecutiveClean.Store(0)
 		crossed := state.consecutiveCrossed.Add(1)
@@ -236,11 +206,13 @@ func (monitor *AnomalyMonitor) HasSevereFault(symbol string) bool {
 	}
 
 	current := monitor.symbols.Load()
+
 	if current == nil {
 		return false
 	}
 
 	state, ok := (*current)[symbol]
+	
 	if !ok {
 		return false
 	}
@@ -255,6 +227,7 @@ func (monitor *AnomalyMonitor) HasAnySevereFault() bool {
 	}
 
 	current := monitor.symbols.Load()
+
 	if current == nil {
 		return false
 	}
@@ -275,11 +248,13 @@ func (monitor *AnomalyMonitor) Count(symbol string) uint64 {
 	}
 
 	current := monitor.symbols.Load()
+	
 	if current == nil {
 		return 0
 	}
 
 	state, ok := (*current)[symbol]
+	
 	if !ok {
 		return 0
 	}
@@ -310,6 +285,7 @@ func (monitor *AnomalyMonitor) Health(symbol string) float64 {
 	}
 
 	count := monitor.Count(symbol)
+
 	if count == 0 {
 		return 1.0
 	}
@@ -317,7 +293,7 @@ func (monitor *AnomalyMonitor) Health(symbol string) float64 {
 	return 1.0 / (1.0 + float64(count))
 }
 
-/* Close gracefully shuts down the background drain worker. */
+/* Close gracefully shuts down the monitor. */
 func (monitor *AnomalyMonitor) Close() error {
 	if monitor == nil {
 		return nil
@@ -329,18 +305,4 @@ func (monitor *AnomalyMonitor) Close() error {
 
 	monitor.cancel()
 	return nil
-}
-
-func (monitor *AnomalyMonitor) drain() {
-	for monitor.running.Load() {
-		_, ok := monitor.ring.Get()
-		if !ok {
-			select {
-			case <-monitor.ctx.Done():
-				return
-			case <-time.After(5 * time.Millisecond):
-				continue
-			}
-		}
-	}
 }

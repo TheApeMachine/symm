@@ -1,10 +1,6 @@
 import { useNavigate } from "@tanstack/react-router";
 import { useSelector } from "@tanstack/react-store";
-import {
-	focusStore,
-	getMeasurementStore,
-	getResonanceReadingStore,
-} from "#/collections/app";
+import { type RingBuffer, focusAtom, signals } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
 import {
 	kernelCopy,
@@ -22,67 +18,30 @@ import { Flex } from "#/components/ui/flex";
 import { Meter } from "#/components/ui/meter";
 import { Modal } from "#/components/ui/modal";
 import { Typography } from "#/components/ui/typography";
-import { Metric } from "#/providers/telemetry/telemetry/metric";
-
-const metricObj = new Metric();
+import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
 
 const isResonance = (source: string) => source === "resonance";
 
 /*
 readings collects the accumulated values for one kernel directly from its store.
 */
-const readingsFromMeasurements = (ring: {
-	getBufferLength: () => number;
-	get: (index: number) => any;
-}) => {
+const readingsFromMeasurements = (
+	ring: RingBuffer<MeasurementT> | null | undefined,
+) => {
 	const points: number[] = [];
 	if (!ring || typeof ring.getBufferLength !== "function") return points;
 	const len = ring.getBufferLength();
 
 	for (let i = 0; i < len; i++) {
 		const m = ring.get(i);
-
-		if (m) {
-			const snr = typeof m.snr === "function" ? m.snr() : m.snr;
-			if (typeof snr === "number" && Number.isFinite(snr)) {
-				points.push(snr);
-			}
+		if (m?.snrDefined && Number.isFinite(m.snr)) {
+			points.push(m.snr);
 		}
 	}
 
 	return points;
 };
 
-const readingsFromNumbers = (ring: {
-	getBufferLength: () => number;
-	get: (index: number) => any;
-}) => {
-	const points: number[] = [];
-	if (!ring || typeof ring.getBufferLength !== "function") return points;
-	const len = ring.getBufferLength();
-
-	for (let i = 0; i < len; i++) {
-		const value = ring.get(i);
-		const numVal =
-			typeof value === "number"
-				? value
-				: typeof value?.confidence === "function"
-					? value.confidence()
-					: value?.confidence;
-
-		if (numVal !== undefined && Number.isFinite(numVal)) {
-			points.push(numVal);
-		}
-	}
-
-	return points;
-};
-
-/*
-relativeToOwnRange scales unbounded SNR against the range this kernel has
-actually observed — the same mapping the list row uses, for the same reason:
-there is no absolute "good SNR" threshold in the domain to assert.
-*/
 const relativeToOwnRange = (values: number[]): number[] => {
 	if (values.length === 0) return [];
 
@@ -93,46 +52,26 @@ const relativeToOwnRange = (values: number[]): number[] => {
 	return values.map((value) => (range > 0 ? (value - min) / range : 1));
 };
 
-/*
-metricValues reads every value a measurement row publishes for the given metric
-names, keyed by name. A sparse row simply omits a metric it does not carry that
-update, and a carried metric with no value reads the same way — an absent value
-stays null (the readout shows a dash) rather than being fabricated as zero.
-*/
 const metricValues = (
-	row: any,
+	row: MeasurementT | null | undefined,
 	names: string[],
 ): Record<string, { raw: number; normalized: number } | null> => {
 	const out: Record<string, { raw: number; normalized: number } | null> = {};
 	for (const name of names) out[name] = null;
 	if (!row) return out;
 
-	if (Array.isArray(row.metrics)) {
-		for (const m of row.metrics) {
-			if (!m) continue;
-			const name = m.name;
-			if (!name || !names.includes(name)) continue;
-			out[name] = {
-				raw: m.raw,
-				normalized: m.normalized,
-			};
-		}
-		return out;
+	if (names.includes("snr") && row.snrDefined && Number.isFinite(row.snr)) {
+		out.snr = { raw: row.snr, normalized: Math.min(1, Math.max(0, row.snr)) };
 	}
 
-	if (typeof row.metricsLength === "function") {
-		for (let j = 0; j < row.metricsLength(); j++) {
-			const m = row.metrics(j, metricObj);
-			if (!m) continue;
-
-			const name = m.name();
-			if (!name || !names.includes(name)) continue;
-
-			out[name] = {
-				raw: m.raw(),
-				normalized: m.normalized(),
-			};
-		}
+	for (const m of row.metrics ?? []) {
+		if (!m || !m.name) continue;
+		const name = typeof m.name === "string" ? m.name : null;
+		if (!name || !names.includes(name)) continue;
+		out[name] = {
+			raw: m.raw,
+			normalized: m.normalized ?? 0,
+		};
 	}
 
 	return out;
@@ -141,24 +80,16 @@ const metricValues = (
 export const KernelInspector = () => {
 	const navigate = useNavigate();
 	const source = useSelector(terminalStore, (state) => state.inspectorSource);
-	const focusSymbol = useSelector(focusStore, (state) => state);
+	const focusSymbol = useSelector(focusAtom, (state) => state);
 	const { closeInspect, selectSource } = terminalStore.actions;
 
 	const active = source !== null && source !== "";
 	const resonance = active && isResonance(source);
 
-	const resonanceReadings = useSelector(
-		getResonanceReadingStore(focusSymbol),
-		(state) => state,
-	);
-	// The metric grid holds each metric's most recent value across the whole
-	// buffer, not just the latest row: backend rows are sparse, so metric X may
-	// be absent from the newest update while still carrying a real, current
-	// value in a slightly older row. Reading the latest row alone would flicker
-	// X to a dash and back whenever a row without it lands.
-	const measurementState = useSelector(
-		getMeasurementStore(active && !resonance ? source : "", focusSymbol),
-		(state) => state,
+	const signalStore = source ? signals[source] : undefined;
+	const measurementRing = useSelector(
+		signalStore ?? signals.hawkes,
+		(state) => (signalStore ? state[focusSymbol] ?? null : null),
 	);
 
 	if (!active) {
@@ -166,34 +97,27 @@ export const KernelInspector = () => {
 	}
 
 	const copy = kernelCopy(source, "");
-	const points = resonance
-		? readingsFromNumbers(resonanceReadings)
-		: readingsFromMeasurements(measurementState);
+	const points = readingsFromMeasurements(measurementRing);
 	const latest = points.length > 0 ? points[points.length - 1] : null;
 	const status: SignalHealthStatus = latest === null ? "waiting" : "measured";
 	const badge = kernelStatusMeta(status);
 
-	// Confidence is already a real [0,1] quantity; only unbounded SNR needs
-	// scaling against its own observed range before it reads as a trace.
 	const relativePoints = resonance ? points : relativeToOwnRange(points);
 	const paths = kernelSparkPaths(relativePoints, status);
 	const level =
 		relativePoints.length > 0 ? relativePoints[relativePoints.length - 1] : 0;
 
-	// Resonance is a presentation surface with no measurement vocabulary, so it
-	// has no metric grid. Every measurement source names the metrics it
-	// publishes. Each metric's readout is its most recent value found scanning
-	// the buffer newest-first, so a metric absent from the newest sparse row
-	// keeps its last value instead of flickering to a dash.
 	const metrics = resonance ? [] : sourceMetrics(source);
 	const metricReadouts = metrics.map((name) => {
 		let raw: number | null = null;
 		let normalized = 0;
 
-		const count = (measurementState as any)?.getBufferLength ? (measurementState as any).getBufferLength() : 0;
-		let row: any = null;
+		const count = measurementRing?.getBufferLength
+			? measurementRing.getBufferLength()
+			: 0;
+		let row: MeasurementT | null = null;
 		for (let i = count - 1; i >= 0; i--) {
-			const candidate = (measurementState as any).get(i);
+			const candidate = measurementRing?.get(i);
 			if (candidate && metricValues(candidate, [name])[name] !== null) {
 				row = candidate;
 				break;
@@ -209,9 +133,6 @@ export const KernelInspector = () => {
 		return { name, raw, normalized };
 	});
 
-	// The headline names the metric this kernel leads with. Resonance is not a
-	// measurement source and has none, so it names its own quantity instead of
-	// borrowing one it does not publish.
 	const headline = resonance
 		? "predictive confidence"
 		: (sourceHeadline(source) ?? "");
@@ -290,7 +211,7 @@ export const KernelInspector = () => {
 						percent={level * 100}
 						label={resonance ? "Confidence" : "Level"}
 						value={valueLabel}
-						variant={status === "measured" ? "info" : "disabled"}
+						variant={status === "measured" ? "warning" : "disabled"}
 						size="s"
 						animated
 					/>
@@ -298,7 +219,7 @@ export const KernelInspector = () => {
 						percent={points.length === 0 ? 0 : (points.length / 50) * 100}
 						label="History"
 						value={`${points.length} / 50`}
-						variant={points.length === 0 ? "disabled" : "success"}
+						variant={points.length === 0 ? "disabled" : "warning"}
 						size="s"
 						animated
 					/>
@@ -322,7 +243,7 @@ export const KernelInspector = () => {
 									percent={metric.raw === null ? 0 : metric.normalized * 100}
 									label={metricLabel(metric.name)}
 									value={metric.raw === null ? "—" : metric.raw.toFixed(4)}
-									variant={metric.raw === null ? "disabled" : "info"}
+									variant={metric.raw === null ? "disabled" : "warning"}
 									size="xs"
 									animated
 								/>

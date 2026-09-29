@@ -1,11 +1,8 @@
 import { useSelector } from "@tanstack/react-store";
 import { useEffect, useRef } from "react";
-import { focusStore, getMeasurementStore } from "#/collections/app";
+import { focusAtom, signals } from "#/collections/app";
 import { Flex } from "#/components/ui/flex";
 import { Panel } from "#/components/ui/panel";
-import { Metric } from "#/providers/telemetry/telemetry/metric";
-
-const metricObj = new Metric();
 
 const radarAxes = [
 	{
@@ -28,34 +25,26 @@ const radarAxes = [
 ];
 
 export const RadarPanel = () => {
-	const focusSymbol = useSelector(focusStore, (state) => state);
+	const focusSymbol = useSelector(focusAtom, (state) => state);
 	const root = useRef<HTMLDivElement>(null);
 
 	useEffect(() => {
 		const subscriptions = radarAxes.map((axis) => {
-			const store = getMeasurementStore(axis.source, focusSymbol);
+			const store = signals[axis.source];
 
-			const apply = (state: any) => {
-				if (!root.current || !state || typeof state.getLast !== "function") return;
+			const apply = () => {
+				if (!root.current || !store) return;
+				const ring = store.state[focusSymbol];
+				if (!ring || typeof ring.getLast !== "function") return;
 
-				const row = state.getLast();
+				const row = ring.getLast();
 				let normalized = 0;
 
 				if (row) {
-					if (Array.isArray(row.metrics)) {
-						for (const m of row.metrics) {
-							if (m && m.name === axis.metric) {
-								normalized = m.normalized;
-								break;
-							}
-						}
-					} else if (typeof row.metricsLength === "function") {
-						for (let j = 0; j < row.metricsLength(); j++) {
-							const m = row.metrics(j, metricObj);
-							if (m && m.name() === axis.metric) {
-								normalized = m.normalized();
-								break;
-							}
+					for (const m of row.metrics ?? []) {
+						if (m?.name === axis.metric) {
+							normalized = m.normalized;
+							break;
 						}
 					}
 				}
@@ -71,8 +60,8 @@ export const RadarPanel = () => {
 				}
 			};
 
-			apply(store.state);
-			return store.subscribe(apply);
+			apply();
+			return store ? store.subscribe(apply) : { unsubscribe: () => {} };
 		});
 
 		return () => {

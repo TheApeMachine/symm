@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { categoryStore, getMeasurementStore, RingBuffer } from "./app";
-import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
+import { RingBuffer, signals } from "./app";
+import { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
+import { MetricT } from "#/providers/telemetry/telemetry/metric";
 
 describe("categoryStore", () => {
+	const categoryStore = signals.category;
+
 	it("initializes as an empty record of symbol ring buffers", () => {
 		expect(categoryStore).toBeDefined();
 		expect(typeof categoryStore.state).toBe("object");
@@ -14,29 +17,21 @@ describe("categoryStore", () => {
 			categoryStore.state[symbol] = new RingBuffer<MeasurementT>(50);
 		}
 
-		const measurement: MeasurementT = {
-			source: "category",
-			symbol,
-			tick: 100n,
-			at: 1718000000000000000n,
-			observedFrom: 1718000000000000000n,
-			horizon: 0n,
-			peerAt: 0n,
-			peerObservedFrom: 0n,
-			maturity: 1.0,
-			snr: 0.95,
-			snrDefined: true,
-			metrics: [
-				{
-					name: "loaded_imbalance",
-					raw: 0.85,
-					normalized: 0.85,
-					hasNormalized: true,
-					unit: "dimensionless",
-				},
-			],
-			metadata: [],
-		} as any;
+		const measurement = new MeasurementT();
+		measurement.source = "category";
+		measurement.symbol = symbol;
+		measurement.tick = 100n;
+		measurement.at = 1718000000000000000n;
+		measurement.observedFrom = 1718000000000000000n;
+		measurement.maturity = 1.0;
+		measurement.snr = 0.95;
+		measurement.snrDefined = true;
+		const m = new MetricT();
+		m.name = "loaded_imbalance";
+		m.raw = 0.85;
+		m.normalized = 0.85;
+		m.hasNormalized = true;
+		measurement.metrics = [m];
 
 		categoryStore.state[symbol].add(measurement);
 		categoryStore.setState((prev) => ({ ...prev }));
@@ -47,30 +42,27 @@ describe("categoryStore", () => {
 		expect(ring.getLast()?.source).toBe("category");
 	});
 
-	it("integrates seamlessly with getMeasurementStore", () => {
+	it("integrates seamlessly with signals.category", () => {
 		const symbol = "ETH/USD";
-		const store = getMeasurementStore("category", symbol);
+		const store = signals.category;
 		expect(store).toBeDefined();
+		if (!store.state[symbol]) {
+			store.state[symbol] = new RingBuffer<MeasurementT>(50);
+		}
 
-		const measurement: MeasurementT = {
-			source: "category",
-			symbol,
-			tick: 101n,
-			at: 1718000000000000000n,
-			observedFrom: 1718000000000000000n,
-			horizon: 0n,
-			peerAt: 0n,
-			peerObservedFrom: 0n,
-			maturity: 1.0,
-			snr: 0.9,
-			snrDefined: true,
-			metrics: [],
-			metadata: [],
-		} as any;
+		const measurement = new MeasurementT();
+		measurement.source = "category";
+		measurement.symbol = symbol;
+		measurement.tick = 101n;
+		measurement.at = 1718000000000000000n;
+		measurement.observedFrom = 1718000000000000000n;
+		measurement.maturity = 1.0;
+		measurement.snr = 0.9;
+		measurement.snrDefined = true;
 
-		store.add(measurement);
-		expect(store.state.isEmpty()).toBe(false);
-		expect(store.state.getLast()?.symbol).toBe("ETH/USD");
+		store.state[symbol].add(measurement);
+		expect(store.state[symbol].isEmpty()).toBe(false);
+		expect(store.state[symbol].getLast()?.symbol).toBe("ETH/USD");
 		expect(categoryStore.state[symbol]?.getLast()?.tick).toBe(101n);
 	});
 });

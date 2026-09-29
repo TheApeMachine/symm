@@ -1,5 +1,5 @@
 import { useSelector } from "@tanstack/react-store";
-import { strategyStore } from "#/collections/app";
+import { type RingBuffer, signals } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
 import {
 	setDecisionsPendingFocus,
@@ -8,6 +8,7 @@ import {
 import { Flex } from "#/components/ui/flex";
 import { List } from "#/components/ui/list";
 import { Typography } from "#/components/ui/typography";
+import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
 import { Decision } from "#/providers/telemetry/telemetry/decision";
 
 const decObj = new Decision();
@@ -21,39 +22,71 @@ type DecisionRow = {
 };
 
 export const Decisions = () => {
-	const decisions = useSelector(strategyStore, (stratState: any) => {
+	const decisions = useSelector(signals.strategies, (stratState: unknown) => {
 		const merged = new Map<string, DecisionRow>();
-		const frames =
-			typeof stratState?.toArray === "function"
-				? stratState.toArray()
+		if (!stratState || typeof stratState !== "object") return [];
+
+		const maybeArray =
+			typeof (stratState as { toArray?: () => unknown }).toArray === "function"
+				? (stratState as { toArray: () => unknown[] }).toArray()
 				: Array.isArray(stratState)
-					? stratState
-					: [];
+					? (stratState as unknown[])
+					: null;
 
-		for (const frame of frames) {
-			if (typeof frame?.decisionsLength !== "function") {
-				continue;
-			}
-
-			for (let i = 0; i < frame.decisionsLength(); i++) {
-				const dec = frame.decisions(i, decObj);
-				if (!dec) {
+		if (maybeArray) {
+			for (const frame of maybeArray) {
+				if (
+					!frame ||
+					typeof (frame as { decisionsLength?: () => number })
+						.decisionsLength !== "function"
+				) {
 					continue;
 				}
 
-				const symbol = dec.symbol() ?? "";
-				if (!symbol) {
-					continue;
-				}
+				const f = frame as {
+					decisionsLength: () => number;
+					decisions: (i: number, obj?: Decision) => Decision | null;
+				};
 
-				merged.set(symbol, {
-					id: dec.id() ?? `dec-${symbol}`,
-					symbol,
-					action: dec.action() ?? "—",
-					confidence: dec.confidence(),
-					reason: dec.reason() ?? "No rejection reason published",
-				});
+				for (let i = 0; i < f.decisionsLength(); i++) {
+					const dec = f.decisions(i, decObj);
+					if (!dec) {
+						continue;
+					}
+
+					const symbol = dec.symbol() ?? "";
+					if (!symbol) {
+						continue;
+					}
+
+					merged.set(symbol, {
+						id: dec.id() ?? `dec-${symbol}`,
+						symbol,
+						action: dec.action() ?? "—",
+						confidence: dec.confidence(),
+						reason: dec.reason() ?? "No rejection reason published",
+					});
+				}
 			}
+
+			return [...merged.values()];
+		}
+
+		for (const [symbol, ring] of Object.entries(
+			stratState as Record<string, RingBuffer<MeasurementT>>,
+		)) {
+			if (!ring || typeof ring.getLast !== "function") continue;
+			const last = ring.getLast();
+			if (!last) continue;
+			const sym =
+				typeof last.symbol === "string" && last.symbol ? last.symbol : symbol;
+			merged.set(sym, {
+				id: typeof last.id === "string" && last.id ? last.id : `dec-${sym}`,
+				symbol: sym,
+				action: "active",
+				confidence: last.snrDefined ? last.snr : 0,
+				reason: "strategy telemetry",
+			});
 		}
 
 		return [...merged.values()];

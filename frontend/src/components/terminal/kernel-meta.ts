@@ -115,7 +115,7 @@ const SOURCE_METRICS: Record<string, string[]> = {
 		"correlation_zscore",
 		"correlation_p_value",
 		"overlap_density",
-		"effective_sample_count",
+		"cohort_effective_peer_count",
 		"relative_return_energy_zscore",
 		"relative_return_energy_divergence",
 		"correlation_divergence",
@@ -596,10 +596,10 @@ export const kernelSparkPaths = (
 	return {
 		spark,
 		area,
-		line: active ? "var(--acc)" : "var(--info)",
+		line: active ? "var(--acc)" : "var(--f4)",
 		fill: active
 			? "color-mix(in srgb, var(--acc) 16%, transparent)"
-			: "color-mix(in srgb, var(--info) 12%, transparent)",
+			: "color-mix(in srgb, var(--f4) 10%, transparent)",
 		active,
 	};
 };

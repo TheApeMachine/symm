@@ -30,16 +30,19 @@ func (market *Market) light() error {
 		region.Change += cell.Activity * orientation * cell.Movement
 	}
 
-	active := market.regions[:0]
+	validRegions := market.regions[:0]
 
 	for _, region := range market.regions {
-		if region.Strength == 0 {
+		if region.Members == 0 {
 			continue
 		}
 
-		region.Authority /= region.Strength
-		region.Level /= region.Strength
-		region.Change /= region.Strength
+		if region.Strength > 0 {
+			region.Authority /= region.Strength
+			region.Level /= region.Strength
+			region.Change /= region.Strength
+		}
+
 		condition, err := grid.Condition(region.ID, region.Level, region.Change)
 
 		if err != nil {
@@ -47,35 +50,53 @@ func (market *Market) light() error {
 		}
 
 		region.Condition = condition
-		active = append(active, region)
+		validRegions = append(validRegions, region)
 	}
 
-	slices.SortFunc(active, func(left, right grid.Region) int {
+	// Sort regions by strength descending (most lit up first)
+	slices.SortFunc(validRegions, func(left, right grid.Region) int {
 		if ordering := cmp.Compare(right.Strength, left.Strength); ordering != 0 {
 			return ordering
 		}
 		return cmp.Compare(left.ID, right.ID)
 	})
 
-	// Exact one-dimensional Otsu split over measured region energies.
-	total, partial, bestVariance := 0.0, 0.0, 0.0
-	cutoff := len(active)
+	var litRegions []grid.Region
 
-	for _, region := range active {
-		total += region.Strength
+	for _, region := range validRegions {
+		if region.Strength > 0 {
+			litRegions = append(litRegions, region)
+		}
 	}
 
-	for split := 1; split < len(active); split++ {
-		partial += active[split-1].Strength
-		difference := partial/float64(split) - (total-partial)/float64(len(active)-split)
-		variance := float64(split*(len(active)-split)) * difference * difference
+	topN := len(litRegions)
 
-		if variance > bestVariance {
-			cutoff, bestVariance = split, variance
+	if len(litRegions) > 3 {
+		total, partial, bestVariance := 0.0, 0.0, 0.0
+		cutoff := 3
+
+		for _, region := range litRegions {
+			total += region.Strength
+		}
+
+		for split := 1; split < len(litRegions); split++ {
+			partial += litRegions[split-1].Strength
+			difference := partial/float64(split) - (total-partial)/float64(len(litRegions)-split)
+			variance := float64(split*(len(litRegions)-split)) * difference * difference
+
+			if variance > bestVariance {
+				cutoff, bestVariance = split, variance
+			}
+		}
+
+		topN = min(max(cutoff, 3), 4)
+
+		if topN > len(litRegions) {
+			topN = len(litRegions)
 		}
 	}
 
 	market.Impulse = grid.Impulse{Label: market.Symbol, SeqIdx: market.Sequence,
-		Version: uint64(market.Sequence), Ready: market.valid, Regions: active[:cutoff]}
+		Version: uint64(market.Sequence), Ready: market.valid, Regions: litRegions[:topN]}
 	return nil
 }

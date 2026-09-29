@@ -1,10 +1,10 @@
 import { useSelector } from "@tanstack/react-store";
 import {
-	candidatesStore,
-	onlineStore,
-	phaseStore,
-	positionCountStore,
-	tickCountStore,
+	candidatesAtom,
+	onlineAtom,
+	phaseAtom,
+	positionCountAtom,
+	tickCountAtom,
 } from "#/collections/app";
 import { Flex } from "#/components/ui/flex";
 import { Panel } from "#/components/ui/panel";
@@ -23,11 +23,11 @@ const Row = ({
 );
 
 export const Engine = () => {
-	const online = useSelector(onlineStore, (state) => state === "ONLINE");
-	const phase = useSelector(phaseStore, (state) => state);
-	const seq = useSelector(tickCountStore, (state) => state);
-	const cand = useSelector(candidatesStore, (state) => state);
-	const open = useSelector(positionCountStore, (state) => state);
+	const online = useSelector(onlineAtom, (state) => state === "ONLINE");
+	const phase = useSelector(phaseAtom, (state) => state);
+	const seq = useSelector(tickCountAtom, (state) => state);
+	const cand = useSelector(candidatesAtom, (state) => state);
+	const open = useSelector(positionCountAtom, (state) => state);
 
 	let phaseText = "offline";
 	if (online) {

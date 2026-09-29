@@ -19,7 +19,7 @@ func BenchmarkRelaxationStep(b *testing.B) {
 	edges := []Edge{{Left: 0, Right: 1, Strength: 1}}
 	b.ReportAllocs()
 
-	for index := 0; index < b.N; index++ {
+	for b.Loop() {
 		Relaxation{}.Step(points, edges)
 	}
 }

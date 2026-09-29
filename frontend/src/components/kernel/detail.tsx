@@ -1,11 +1,11 @@
 import { useSelector } from "@tanstack/react-store";
 import { useEffect, useRef } from "react";
 import {
-	focusStore,
-	getMeasurementStore,
-	kernelDetailStore,
-	measurementSourcesStore,
-	symbolsStore,
+	focusAtom,
+	kernelDetailAtom,
+	measurementSourcesAtom,
+	signals,
+	symbolsAtom,
 } from "#/collections/app";
 import {
 	kernelCopy,
@@ -16,9 +16,9 @@ import { Flex } from "#/components/ui/flex";
 import { Typography } from "#/components/ui/typography";
 
 export const SignalDetail = () => {
-	const focusSymbol = useSelector(focusStore, (state) => state);
-	const selected = useSelector(kernelDetailStore, (state) => state);
-	const symbols = useSelector(symbolsStore, (state) => state);
+	const focusSymbol = useSelector(focusAtom, (state) => state);
+	const selected = useSelector(kernelDetailAtom, (state) => state);
+	const symbols = useSelector(symbolsAtom, (state) => state);
 	const root = useRef<HTMLDivElement>(null);
 
 	const source = selected || "cvd";
@@ -30,11 +30,13 @@ export const SignalDetail = () => {
 
 	useEffect(() => {
 		if (source === "") return;
-		const sourceStore = getMeasurementStore(source, focusSymbol);
+		const sourceStore = signals[source];
+		if (!sourceStore) return;
 
 		const applyState = () => {
 			if (!root.current) return;
-			const row = sourceStore.state.getLast();
+			const ring = sourceStore.state[focusSymbol];
+			const row = ring?.getLast ? ring.getLast() : null;
 
 			const set = (q: string, value: string) => {
 				const el = root.current?.querySelector<HTMLElement>(`[data-f="${q}"]`);
@@ -54,7 +56,7 @@ export const SignalDetail = () => {
 				row?.maturity === undefined ? "—" : row.maturity.toFixed(3),
 			);
 			set("peer", "—");
-			set("epoch", String(measurementSourcesStore.state.length));
+			set("epoch", String(measurementSourcesAtom.get().length));
 
 			if (row && Array.isArray(row.metrics)) {
 				for (const m of row.metrics) {

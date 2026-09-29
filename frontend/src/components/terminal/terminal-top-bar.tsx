@@ -1,10 +1,9 @@
 import { useSelector } from "@tanstack/react-store";
 import {
-	focusStore,
+	focusAtom,
 	onlineAtom,
-	onlineStore,
-	tickCountStore,
-	trainingStore,
+	signals,
+	tickCountAtom,
 } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
 import { Balance } from "#/components/balance";
@@ -40,11 +39,11 @@ const SymmLogo = () => (
 );
 
 const ObservationCounter = () => {
-	const symbol = useSelector(focusStore, (s) => s);
-	const steps = useSelector(trainingStore, (state) => {
+	const symbol = useSelector(focusAtom, (s) => s);
+	const steps = useSelector(signals.training, (state) => {
 		const ring =
 			state[symbol] ??
-			state["learner"] ??
+			state.learner ??
 			state[""] ??
 			Object.values(state)[0];
 		const latest = ring?.getLast();
@@ -60,7 +59,7 @@ const ObservationCounter = () => {
 
 		return null;
 	});
-	const ticks = useSelector(tickCountStore, (s) => s);
+	const ticks = useSelector(tickCountAtom, (s) => s);
 
 	let count = steps;
 	if (count === null && ticks > 0) {
@@ -126,8 +125,8 @@ const ResonanceTransportBadge = () => {
 };
 
 export const TerminalTopBar = () => {
-	const online = useSelector(onlineStore, (state) => state === "ONLINE");
-	const focusSymbol = useSelector(focusStore, (state) => state);
+	const online = useSelector(onlineAtom, (state) => state === "ONLINE");
+	const focusSymbol = useSelector(focusAtom, (state) => state);
 	const { openPalette, openSymbolPalette } = terminalStore.actions;
 
 	return (
