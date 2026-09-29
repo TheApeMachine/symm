@@ -6,13 +6,17 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/spf13/viper"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/broker/position"
 	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/nomagique/cognition"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/tests/market"
+	"github.com/theapemachine/symm/tests/venue"
 )
 
 func TestStagedTrainingProgression(t *testing.T) {
@@ -78,7 +82,24 @@ func TestStagedTrainingProgression(t *testing.T) {
 			training.CheckStageGates()
 			stage, blocker := training.Stage()
 			So(stage, ShouldEqual, StageForwardPaperLearning)
-			So(blocker, ShouldContainSubstring, "forward paper round trips")
+			So(blocker, ShouldContainSubstring, "waiting for forward paper trades")
+		})
+
+		Convey("Forward skill demonstrated gate evaluates measured uncertainty without arbitrary sample caps", func() {
+			training.SetStage(StageForwardPaperLearning, "")
+
+			// Two profitable paper trades with positive variance and lower bound
+			training.RecordForwardPaperTrade("BTC/USD", 0.05, 0.001)
+			training.RecordForwardPaperTrade("BTC/USD", 0.04, 0.001)
+
+			training.stageMu.Lock()
+			training.forwardReading.CorrectWaitDown = 3
+			training.forwardReading.CorrectExit = 2
+			training.stageMu.Unlock()
+
+			training.CheckStageGates()
+			stage, _ := training.Stage()
+			So(stage, ShouldEqual, StageForwardSkillDemonstrated)
 		})
 
 		Convey("Historical and forward counters remain strictly separate", func() {
@@ -98,16 +119,52 @@ func TestStagedTrainingProgression(t *testing.T) {
 func TestForwardPaperLearning(t *testing.T) {
 	Convey("Forward paper learning scores frozen predictions before refinement and tracks execution", t, func() {
 		ctx := t.Context()
-		price := market.TrainingPrice(ctx)
+		viper.Set("trading.allocation.max_fraction", 0.5)
+		viper.Set("market.quote_currency", "USD")
+
+		conn := venue.NewConn()
+		conn.BalanceResult = kraken.NewBalance([]byte(`{
+			"channel": "balances",
+			"type": "snapshot",
+			"data": [{"asset": "USD", "balance": 1000.0}]
+		}`))
+
+		api := websocket.NewAPI(ctx, conn, conn, &websocket.FuturesLive{})
+		api.Normalizer().Update(&spot.AssetsManagerUpdate{
+			NewAssets: map[string]spot.AssetInfo{
+				"BTC": {AltName: "BTC", Decimals: 8, DisplayDecimals: 8},
+				"USD": {AltName: "USD", Decimals: 2, DisplayDecimals: 2},
+			},
+			NewPairs: map[string]spot.AssetPair{
+				"BTCUSD": {
+					WSName: "BTC/USD", Base: "BTC", Quote: "USD",
+					PairDecimals: 2, LotDecimals: 8, LotMultiplier: 1,
+				},
+			},
+		})
+		api.Transition(runtime.READY)
+
+		instrument := broker.NewInstrument(api)
+		price := broker.NewPrice(ctx, api, instrument)
+		price.SetFee("BTC/USD", kraken.TradeVolumeFee{
+			Fee: decimal.NewFromFloat64(0.001),
+		})
+		price.Update(&kraken.TickerData{
+			Symbol: "BTC/USD",
+			Ask:    decimal.NewFromFloat64(50000.0),
+			Bid:    decimal.NewFromFloat64(49950.0),
+		})
+		price.Transition(runtime.READY)
+
+		balance := broker.NewBalance(ctx, api)
+		trader := NewTrader(ctx, api, price, balance)
+
 		training := NewTraining(ctx, 1, price)
 		training.Transition(runtime.READY)
+		training.SetTrader(trader)
 
 		// Authorize forward paper learning stage
 		training.SetStage(StageForwardPaperLearning, "")
-
-		// Setup trader
-		trader := NewTrader(ctx, nil, price, nil)
-		training.SetTrader(trader)
 
 		// 1. Live model emits a prediction and freezes it before outcome arrives
 		testTokens := []uint64{101, 102}
@@ -145,12 +202,21 @@ func TestForwardPaperLearning(t *testing.T) {
 		postCensus := training.engine.Census()
 		So(postCensus["wait"], ShouldBeGreaterThan, initialCensus["wait"])
 
-		// 6. Paper trade execution integration: fill entry and complete exit via Trader.ApplyExecution
-		// creates closed position, triggers OnPositionClosed, and updates ForwardReading
+		// 6. Complete paper trade execution path:
+		// Training action -> Trader.OnAction -> Desk -> paper AddOrder -> paper execution callback -> Regulator -> close callback
 		system.Cfg.Market.Model = "paper"
-		reg := position.NewRegulator("BTC/USD")
-		So(reg.Begin(&spot.AddOrderRequest{Pair: "BTC/USD", Type: "buy", ClOrdId: reg.PositionID}), ShouldBeNil)
-		trader.positions.Store("BTC/USD", reg)
+		trader.SetOnPositionClosed(training.RecordForwardPaperTrade)
+
+		// Model selects ENTER: executes via Desk.EnterWithRegulator and places paper AddOrder
+		trader.OnAction("BTC/USD", ActionEnter)
+
+		posVal, found := trader.positions.Load("BTC/USD")
+		So(found, ShouldBeTrue)
+		reg := posVal.(*position.Regulator)
+		So(reg.Pending, ShouldNotBeNil)
+		So(reg.Pending.Type, ShouldEqual, "buy")
+
+		// Paper execution callback arrives from venue
 		enterExec := &kraken.Execution{
 			Channel: "executions",
 			Type:    "update",
@@ -167,12 +233,16 @@ func TestForwardPaperLearning(t *testing.T) {
 				},
 			},
 		}
-		trader.ApplyExecution(enterExec)
+		conn.EmitExecution(enterExec)
 		So(trader.Holding("BTC/USD"), ShouldBeTrue)
 		So(trader.HasFilledPosition("BTC/USD"), ShouldBeTrue)
 
-		exitClOrdId := "exit-order-1"
-		So(reg.Begin(&spot.AddOrderRequest{Pair: "BTC/USD", Type: "sell", ClOrdId: exitClOrdId}), ShouldBeNil)
+		// Model selects EXIT: executes via Desk.Exit and places paper AddOrder
+		trader.OnAction("BTC/USD", ActionExit)
+		So(reg.Pending, ShouldNotBeNil)
+		So(reg.Pending.Type, ShouldEqual, "sell")
+		exitClOrdId := reg.Pending.ClOrdId
+
 		exitExec := &kraken.Execution{
 			Channel: "executions",
 			Type:    "update",
@@ -189,14 +259,15 @@ func TestForwardPaperLearning(t *testing.T) {
 				},
 			},
 		}
-		trader.ApplyExecution(exitExec)
+		conn.EmitExecution(exitExec)
 		So(trader.Holding("BTC/USD"), ShouldBeFalse)
 
 		// Authoritative close callback fired from ApplyExecution and recorded forward paper trade!
 		fwd = training.ForwardReading()
 		So(fwd.PaperTrades, ShouldEqual, 1)
 		So(fwd.PaperProfitable, ShouldEqual, 1)
-		So(fwd.PaperReturn, ShouldAlmostEqual, 0.036, 1e-3)
+		So(fwd.PaperReturn, ShouldAlmostEqual, 0.0359, 1e-3)
+		So(fwd.PaperFees, ShouldAlmostEqual, 0.20, 1e-3)
 
 		// Forward stats contain no historical samples
 		So(training.Rehearsal.reading.Entered, ShouldEqual, 0)

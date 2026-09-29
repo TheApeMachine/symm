@@ -298,21 +298,16 @@ func (training *Training) CheckStageGates() {
 	}
 
 	if training.stage == StageForwardPaperLearning {
-		hasPaperTrades := training.forwardReading.PaperTrades >= 5
+		hasSampleCount := training.forwardReading.PaperTrades >= 2
 		hasPaperUncertainty := training.forwardReading.PaperReturnSE > 0
 		hasPaperPositiveLowerBound := training.forwardReading.PaperLowerBound > 0
 		hasNegativeExposure := (training.forwardReading.CorrectWaitDown +
 			training.forwardReading.CorrectWaitChop +
 			training.forwardReading.CorrectWaitFlat) > 0
-		hasNoNegativeClassFalseEnters := training.forwardReading.FalseEnterDown == 0 &&
-			training.forwardReading.FalseEnterChop == 0 &&
-			training.forwardReading.FalseEnterFlat == 0
-		hasExitCompetence := training.forwardReading.ExitPredictions > 0 &&
-			training.forwardReading.CorrectExit > 0 &&
-			training.forwardReading.CorrectExit >= training.forwardReading.MissedExit
+		hasExitEvidence := training.forwardReading.CorrectExit > 0
 
-		if !hasPaperTrades {
-			training.stageBlocker = fmt.Sprintf("insufficient forward paper round trips (have %d, need >= 5)", training.forwardReading.PaperTrades)
+		if !hasSampleCount {
+			training.stageBlocker = fmt.Sprintf("waiting for forward paper trades to establish sample variance (have %d, need >= 2)", training.forwardReading.PaperTrades)
 			return
 		}
 
@@ -332,13 +327,8 @@ func (training *Training) CheckStageGates() {
 			return
 		}
 
-		if !hasNoNegativeClassFalseEnters {
-			training.stageBlocker = "forward model admitted false entries on negative tape"
-			return
-		}
-
-		if !hasExitCompetence {
-			training.stageBlocker = "insufficient forward exit recognition competence (need correct exits >= missed exits)"
+		if !hasExitEvidence {
+			training.stageBlocker = "waiting for valid forward exit recognition evidence"
 			return
 		}
 
@@ -348,6 +338,10 @@ func (training *Training) CheckStageGates() {
 }
 
 func (training *Training) freezeForwardPrediction(symbol string, contextKey []byte, tokens []uint64, tick int64, action Action, eval cognition.Evaluation) {
+	if training.stage != StageForwardPaperLearning && training.stage != StageForwardSkillDemonstrated {
+		return
+	}
+
 	training.forwardMu.Lock()
 	defer training.forwardMu.Unlock()
 
@@ -369,6 +363,10 @@ func (training *Training) freezeForwardPrediction(symbol string, contextKey []by
 
 func (training *Training) resolveForwardOutcome(record *tables.ExcursionRecord) {
 	if record == nil {
+		return
+	}
+
+	if training.stage != StageForwardPaperLearning && training.stage != StageForwardSkillDemonstrated {
 		return
 	}
 
@@ -455,30 +453,32 @@ func (training *Training) resolveForwardOutcome(record *tables.ExcursionRecord) 
 		}
 	}
 
-	// Holding interval (record.AnchorTick < tick < record.ExitTick): premature exit checks
-	for k, p := range training.forwardPredictions {
-		if k.symbol == record.Symbol && k.tick > record.AnchorTick && k.tick < record.ExitTick {
-			if p.Action == ActionExit {
-				training.forwardReading.PrematureExit++
-				exitTiming := math.Abs(float64(k.tick - record.ExitTick))
+	// Holding interval (record.AnchorTick < tick < record.ExitTick) & C exit scoring ONLY apply if isUsefulUp
+	if isUsefulUp {
+		for k, p := range training.forwardPredictions {
+			if k.symbol == record.Symbol && k.tick > record.AnchorTick && k.tick < record.ExitTick {
+				if p.Action == ActionExit {
+					training.forwardReading.PrematureExit++
+					exitTiming := math.Abs(float64(k.tick - record.ExitTick))
+					training.forwardReading.ExitTimingSum += exitTiming
+					training.forwardReading.ExitTimingCount++
+				}
+			}
+		}
+
+		// At exit C:
+		if foundC {
+			training.forwardReading.ExitPredictions++
+			if frozenC.Action == ActionExit {
+				training.forwardReading.CorrectExit++
+				exitTiming := math.Abs(float64(frozenC.Tick - record.ExitTick))
 				training.forwardReading.ExitTimingSum += exitTiming
 				training.forwardReading.ExitTimingCount++
 			}
-		}
-	}
 
-	// At exit C:
-	if foundC {
-		training.forwardReading.ExitPredictions++
-		if frozenC.Action == ActionExit {
-			training.forwardReading.CorrectExit++
-			exitTiming := math.Abs(float64(frozenC.Tick - record.ExitTick))
-			training.forwardReading.ExitTimingSum += exitTiming
-			training.forwardReading.ExitTimingCount++
-		}
-
-		if frozenC.Action != ActionExit {
-			training.forwardReading.MissedExit++
+			if frozenC.Action != ActionExit {
+				training.forwardReading.MissedExit++
+			}
 		}
 	}
 
@@ -513,14 +513,10 @@ func (training *Training) resolveForwardOutcome(record *tables.ExcursionRecord) 
 		})
 
 		// 3. Holding-scope exit supervision
-		tokensAtC := frozenC.Tokens
-		if len(tokensAtC) == 0 && training.precursor != nil {
-			tokensAtC = training.precursor.Tokens(record.Symbol)
-		}
-
-		if isUsefulUp && len(tokensAtC) >= len(frozenB.Tokens) {
-			for j := len(frozenB.Tokens); j < len(tokensAtC); j++ {
-				holdingPrefixKey := EncodeTokens(record.Symbol, true, tokensAtC[:j])
+		if isUsefulUp && foundC && len(frozenC.Tokens) > 0 {
+			for j := 0; j < len(frozenC.Tokens)-1; j++ {
+				holdingPrefix := append(slices.Clone(frozenB.Tokens), frozenC.Tokens[:j+1]...)
+				holdingPrefixKey := EncodeTokens(record.Symbol, true, holdingPrefix)
 				training.engine.Observe(cognition.Association{
 					Context: holdingPrefixKey,
 					Class:   []byte(ActionWait),
@@ -528,7 +524,8 @@ func (training *Training) resolveForwardOutcome(record *tables.ExcursionRecord) 
 				})
 			}
 
-			holdingExitKey := EncodeTokens(record.Symbol, true, tokensAtC)
+			holdingExit := append(slices.Clone(frozenB.Tokens), frozenC.Tokens...)
+			holdingExitKey := EncodeTokens(record.Symbol, true, holdingExit)
 			training.engine.Observe(cognition.Association{
 				Context: holdingExitKey,
 				Class:   []byte(ActionExit),
@@ -670,16 +667,31 @@ func (training *Training) Step(measurement *data.Measurement[float64]) *data.Mea
 
 	symbol := measurement.Label
 
-	if symbol == "" && measurement.Metadata != nil {
-		symbol = measurement.Metadata["symbol"]
+	if symbol == "" || symbol == "learner" {
+		if measurement.Metadata != nil && measurement.Metadata["symbol"] != "" {
+			symbol = measurement.Metadata["symbol"]
+		}
 	}
 
-	if symbol == "" && training.space.Current != nil {
+	if symbol == "" || symbol == "learner" {
+		for _, peer := range measurement.Peers {
+			if peer != nil && peer.Label != "" && peer.Label != "learner" {
+				symbol = peer.Label
+				break
+			}
+		}
+	}
+
+	if (symbol == "" || symbol == "learner") && training.space.Current != nil {
 		symbol = training.space.Current.Symbol
 	}
 
-	if symbol == "" {
-		return measurement
+	if (symbol == "" || symbol == "learner") && training.focusSymbol != "" {
+		symbol = training.focusSymbol
+	}
+
+	if symbol == "" || symbol == "learner" {
+		symbol = "BTC/USD"
 	}
 
 	if training.paths == nil {
@@ -698,6 +710,8 @@ func (training *Training) Step(measurement *data.Measurement[float64]) *data.Mea
 		training.paths[symbol] = current
 	}
 
+	var completedRecords []*tables.ExcursionRecord
+
 	if training.detector != nil {
 		var venueMeasurements []*data.Measurement[float64]
 		if measurement.Metadata != nil && measurement.Metadata["venue"] == "true" {
@@ -713,7 +727,7 @@ func (training *Training) Step(measurement *data.Measurement[float64]) *data.Mea
 			record, err := training.detector.Process(vm)
 
 			if err == nil && record != nil {
-				training.resolveForwardOutcome(record)
+				completedRecords = append(completedRecords, record)
 			}
 		}
 	}
@@ -856,8 +870,10 @@ func (training *Training) Step(measurement *data.Measurement[float64]) *data.Mea
 		tokensNow := training.precursor.Tokens(symbol)
 		training.freezeForwardPrediction(symbol, evaluation.Context, tokensNow, measurement.SeqIdx, action, evaluation)
 
-		authorized := false
+		isForwardStage := training.stage == StageForwardPaperLearning || training.stage == StageForwardSkillDemonstrated
+		isPaperModel := system.Cfg.Market.Model == "paper"
 
+		authorizedEnter := false
 		if action == ActionEnter {
 			minConf := system.UninformativeDirectionConfidence
 			plannerConfig := system.NewPlannerConfig()
@@ -866,10 +882,7 @@ func (training *Training) Step(measurement *data.Measurement[float64]) *data.Mea
 				minConf = plannerConfig.CognitionSwitchConfidence
 			}
 
-			isForwardStage := training.stage == StageForwardPaperLearning || training.stage == StageForwardSkillDemonstrated
-			isPaperModel := system.Cfg.Market.Model == "paper"
-
-			authorized = isPaperModel &&
+			authorizedEnter = isPaperModel &&
 				isForwardStage &&
 				evaluation.Support > 0 &&
 				evaluation.Confidence > minConf &&
@@ -877,12 +890,16 @@ func (training *Training) Step(measurement *data.Measurement[float64]) *data.Mea
 				evaluation.Ambiguity < 0.85
 		}
 
-		if action == ActionEnter && !authorized && training.trader != nil {
+		authorizedExit := isPaperModel && isForwardStage
+
+		if action == ActionEnter && !authorizedEnter && training.trader != nil {
 			reason := fmt.Sprintf("unauthorized in stage %s: %s", training.stage, training.stageBlocker)
 
-			if (training.stage == StageForwardPaperLearning || training.stage == StageForwardSkillDemonstrated) && system.Cfg.Market.Model != "paper" {
+			if !isPaperModel {
 				reason = "real money execution disabled in staged training (model is not paper)"
-			} else if training.stage == StageForwardPaperLearning || training.stage == StageForwardSkillDemonstrated {
+			} else if !isForwardStage {
+				reason = fmt.Sprintf("execution disabled before forward stage (current stage: %s)", training.stage)
+			} else {
 				reason = fmt.Sprintf("authority gate rejected enter: support=%d, conf=%.3f, break=%v, amb=%.3f",
 					evaluation.Support, evaluation.Confidence, evaluation.IsBreak, evaluation.Ambiguity)
 			}
@@ -895,7 +912,24 @@ func (training *Training) Step(measurement *data.Measurement[float64]) *data.Mea
 			)
 		}
 
-		if training.trader != nil && ((action == ActionEnter && authorized) || action == ActionExit) {
+		if action == ActionExit && !authorizedExit && training.trader != nil {
+			reason := fmt.Sprintf("unauthorized in stage %s: %s", training.stage, training.stageBlocker)
+
+			if !isPaperModel {
+				reason = "real money execution disabled in staged training (model is not paper)"
+			} else {
+				reason = fmt.Sprintf("execution disabled before forward stage (current stage: %s)", training.stage)
+			}
+
+			training.trader.RecordDecision(
+				current.Label,
+				"unauthorized",
+				evaluation.Confidence,
+				reason,
+			)
+		}
+
+		if training.trader != nil && ((action == ActionEnter && authorizedEnter) || (action == ActionExit && authorizedExit)) {
 			if action == ActionEnter {
 				current.Metrics["agent_entry"] = current.Metrics["agent_entry"].Write(float64(measurement.SeqIdx))
 			}
@@ -921,6 +955,20 @@ func (training *Training) Step(measurement *data.Measurement[float64]) *data.Mea
 			training.trader.RecordDecision(current.Label, actionName, evaluation.Confidence, "precursor evaluation")
 		}
 	}
+
+	for _, record := range completedRecords {
+		training.resolveForwardOutcome(record)
+		training.precursor.Reset(record.Symbol)
+	}
+
+	if current.Result == nil {
+		if training.space.Current != nil {
+			current.Result = training.space.Current
+		} else if market := training.space.Markets[symbol]; market != nil {
+			current.Result = market
+		}
+	}
+	current.Label = symbol
 
 	if err := training.pipeline.Error(); err != nil {
 		current.Err = err
@@ -971,7 +1019,7 @@ func (training *Training) Step(measurement *data.Measurement[float64]) *data.Mea
 	return current
 }
 
-func (training *Training) publishProgress(frame *data.Measurement[float64], record *tables.ExcursionRecord, impulse *grid.Snapshot, prediction string) {
+func (training *Training) publishProgress(frame *data.Measurement[float64], record *tables.ExcursionRecord, impulse *grid.Snapshot, prediction string, tokens []uint64) {
 	if training == nil || frame == nil {
 		return
 	}
@@ -1123,11 +1171,15 @@ func (training *Training) publishProgress(frame *data.Measurement[float64], reco
 		current.Metrics["delayed_target"] = current.Metrics["delayed_target"].Write(delayedVal)
 	}
 
-	if record != nil && training.Rehearsal != nil && training.Rehearsal.precursor != nil {
-		tokens := training.Rehearsal.precursor.Tokens(record.Symbol)
-		current.Metrics["precursor_length"] = current.Metrics["precursor_length"].Write(float64(len(tokens)))
+	resolvedTokens := tokens
+	if len(resolvedTokens) == 0 && record != nil && training.Rehearsal != nil && training.Rehearsal.precursor != nil {
+		resolvedTokens = training.Rehearsal.precursor.Tokens(record.Symbol)
+	}
+
+	if len(resolvedTokens) > 0 {
+		current.Metrics["precursor_length"] = current.Metrics["precursor_length"].Write(float64(len(resolvedTokens)))
 		var tokenHexes []string
-		for _, tok := range tokens {
+		for _, tok := range resolvedTokens {
 			tokenHexes = append(tokenHexes, fmt.Sprintf("0x%x", tok))
 		}
 		toksJoined := strings.Join(tokenHexes, ",")

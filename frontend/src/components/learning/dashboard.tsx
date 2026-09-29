@@ -46,6 +46,20 @@ const TABS: Array<{ key: Tab; label: string }> = [
 	{ key: "influence", label: "Precursor discovery" },
 ];
 
+const getTrainingRing = (
+	records: Record<string, RingBuffer<MeasurementT>> | undefined,
+	focus: string,
+): RingBuffer<MeasurementT> | null => {
+	if (!records) return null;
+	return (
+		records[focus] ??
+		records.learner ??
+		records[""] ??
+		Object.values(records)[0] ??
+		null
+	);
+};
+
 export const LearningDashboard = () => {
 	const focusSymbol = useSelector(focusAtom, (state) => state);
 	const [tab, setTab] = useState<Tab>("forward");
@@ -63,7 +77,9 @@ export const LearningDashboard = () => {
 	);
 	const [frozenPrediction, setFrozenPrediction] = useState("WAIT");
 	const [delayedOutcome, setDelayedOutcome] = useState("RESOLVING");
-	const [precursorTokens, setPrecursorTokens] = useState<string[]>(["I₀"]);
+	const [precursorTokens, setPrecursorTokens] = useState<string[]>([
+		"unavailable",
+	]);
 	const [abcMarkers, setAbcMarkers] = useState({ a: 0, b: 0, c: 0 });
 
 	// Impulse Map real nodes & regions
@@ -315,7 +331,7 @@ export const LearningDashboard = () => {
 				} else if (precLen === 0) {
 					displayTokens = ["―"];
 				} else {
-					displayTokens = Array.from({ length: precLen }, (_, i) => `I${i}`);
+					displayTokens = ["unavailable"];
 				}
 
 				setStage(stageStr);
@@ -459,9 +475,13 @@ export const LearningDashboard = () => {
 				}
 
 				const grid = measurement.grid;
-				const quantities = grid?.symbol === focusSymbol ? grid.quantities : [];
-				const measuredRegions =
-					grid?.symbol === focusSymbol ? grid.regions : [];
+				const isGridSymbolMatch =
+					!grid?.symbol ||
+					grid.symbol === focusSymbol ||
+					grid.symbol === "learner" ||
+					focusSymbol === "";
+				const quantities = isGridSymbolMatch ? grid?.quantities ?? [] : [];
+				const measuredRegions = isGridSymbolMatch ? grid?.regions ?? [] : [];
 
 				if (quantities.length > 0) {
 					const mappedNodes: ImpulseNode[] = quantities.map((cell) => ({
@@ -676,13 +696,13 @@ export const LearningDashboard = () => {
 			root.dataset.dropped = String(cursor.dropped);
 		};
 
-		const initial = signals.training?.state?.[focusSymbol];
+		const initial = getTrainingRing(signals.training?.state, focusSymbol);
 		if (initial) {
 			update(initial);
 		}
 
 		const unsubTraining = signals.training.subscribe((state) => {
-			const activeRing = state?.[focusSymbol];
+			const activeRing = getTrainingRing(state, focusSymbol);
 			if (activeRing) {
 				update(activeRing);
 			}

@@ -5906,7 +5906,7 @@
       "metric": "accuracy",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/training.go",
-      "line": 461,
+      "line": 600,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -5917,7 +5917,7 @@
       "metric": "action",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/training.go",
-      "line": 457,
+      "line": 596,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -5928,7 +5928,7 @@
       "metric": "agent_entry",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/training.go",
-      "line": 474,
+      "line": 613,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -5939,7 +5939,7 @@
       "metric": "agent_exit",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/training.go",
-      "line": 475,
+      "line": 614,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -5950,7 +5950,7 @@
       "metric": "ambiguity",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/training.go",
-      "line": 456,
+      "line": 595,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -5961,7 +5961,7 @@
       "metric": "confidence",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/training.go",
-      "line": 453,
+      "line": 592,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -5972,7 +5972,7 @@
       "metric": "contrast",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/training.go",
-      "line": 454,
+      "line": 593,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -5983,7 +5983,18 @@
       "metric": "decisions",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/training.go",
-      "line": 451,
+      "line": 590,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "training/delayed_target",
+      "source": "training",
+      "metric": "delayed_target",
+      "package": "github.com/theapemachine/symm/strategy",
+      "file": "strategy/training.go",
+      "line": 644,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -5994,7 +6005,7 @@
       "metric": "edge",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/training.go",
-      "line": 459,
+      "line": 598,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -6005,7 +6016,7 @@
       "metric": "evaluated",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/training.go",
-      "line": 444,
+      "line": 583,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -6016,7 +6027,7 @@
       "metric": "excursion_mag",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/training.go",
-      "line": 467,
+      "line": 606,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -6027,7 +6038,7 @@
       "metric": "excursion_type",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/training.go",
-      "line": 466,
+      "line": 605,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -6038,7 +6049,7 @@
       "metric": "fragments_chop",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/training.go",
-      "line": 479,
+      "line": 618,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -6049,7 +6060,7 @@
       "metric": "fragments_down",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/training.go",
-      "line": 478,
+      "line": 617,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -6060,7 +6071,7 @@
       "metric": "fragments_flat",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/training.go",
-      "line": 480,
+      "line": 619,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -6071,7 +6082,7 @@
       "metric": "fragments_unsupported",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/training.go",
-      "line": 481,
+      "line": 620,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -6082,7 +6093,18 @@
       "metric": "fragments_up",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/training.go",
-      "line": 477,
+      "line": 616,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "training/frozen_prediction",
+      "source": "training",
+      "metric": "frozen_prediction",
+      "package": "github.com/theapemachine/symm/strategy",
+      "file": "strategy/training.go",
+      "line": 643,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -6093,7 +6115,18 @@
       "metric": "fwd_correct_enter",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/training.go",
-      "line": 494,
+      "line": 633,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "training/fwd_correct_exit",
+      "source": "training",
+      "metric": "fwd_correct_exit",
+      "package": "github.com/theapemachine/symm/strategy",
+      "file": "strategy/training.go",
+      "line": 637,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -6104,7 +6137,40 @@
       "metric": "fwd_enter_predictions",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/training.go",
-      "line": 493,
+      "line": 632,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "training/fwd_entry_timing_err",
+      "source": "training",
+      "metric": "fwd_entry_timing_err",
+      "package": "github.com/theapemachine/symm/strategy",
+      "file": "strategy/training.go",
+      "line": 640,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "training/fwd_exit_predictions",
+      "source": "training",
+      "metric": "fwd_exit_predictions",
+      "package": "github.com/theapemachine/symm/strategy",
+      "file": "strategy/training.go",
+      "line": 636,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "training/fwd_exit_timing_err",
+      "source": "training",
+      "metric": "fwd_exit_timing_err",
+      "package": "github.com/theapemachine/symm/strategy",
+      "file": "strategy/training.go",
+      "line": 641,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -6115,7 +6181,7 @@
       "metric": "fwd_false_enter",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/training.go",
-      "line": 495,
+      "line": 634,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -6126,7 +6192,18 @@
       "metric": "fwd_missed_enter",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/training.go",
-      "line": 496,
+      "line": 635,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "training/fwd_missed_exit",
+      "source": "training",
+      "metric": "fwd_missed_exit",
+      "package": "github.com/theapemachine/symm/strategy",
+      "file": "strategy/training.go",
+      "line": 639,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -6137,7 +6214,7 @@
       "metric": "fwd_paper_lower_bound",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/training.go",
-      "line": 500,
+      "line": 648,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -6148,7 +6225,7 @@
       "metric": "fwd_paper_mean_return",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/training.go",
-      "line": 498,
+      "line": 646,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -6159,7 +6236,7 @@
       "metric": "fwd_paper_return_se",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/training.go",
-      "line": 499,
+      "line": 647,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -6170,7 +6247,18 @@
       "metric": "fwd_paper_trades",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/training.go",
-      "line": 497,
+      "line": 645,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "training/fwd_premature_exit",
+      "source": "training",
+      "metric": "fwd_premature_exit",
+      "package": "github.com/theapemachine/symm/strategy",
+      "file": "strategy/training.go",
+      "line": 638,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -6181,7 +6269,7 @@
       "metric": "hist_correct_enter",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/training.go",
-      "line": 483,
+      "line": 622,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -6192,7 +6280,7 @@
       "metric": "hist_correct_exit",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/training.go",
-      "line": 488,
+      "line": 627,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -6203,7 +6291,7 @@
       "metric": "hist_correct_wait",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/training.go",
-      "line": 486,
+      "line": 625,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -6214,7 +6302,7 @@
       "metric": "hist_false_enter",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/training.go",
-      "line": 485,
+      "line": 624,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -6225,7 +6313,7 @@
       "metric": "hist_lower_bound",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/training.go",
-      "line": 492,
+      "line": 631,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -6236,7 +6324,7 @@
       "metric": "hist_mean_return",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/training.go",
-      "line": 490,
+      "line": 629,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -6247,7 +6335,7 @@
       "metric": "hist_missed_enter",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/training.go",
-      "line": 484,
+      "line": 623,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -6258,7 +6346,7 @@
       "metric": "hist_missed_exit",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/training.go",
-      "line": 489,
+      "line": 628,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -6269,7 +6357,7 @@
       "metric": "hist_opportunities",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/training.go",
-      "line": 482,
+      "line": 621,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -6280,7 +6368,7 @@
       "metric": "hist_premature_exit",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/training.go",
-      "line": 487,
+      "line": 626,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -6291,7 +6379,7 @@
       "metric": "hist_return_se",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/training.go",
-      "line": 491,
+      "line": 630,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -6302,7 +6390,7 @@
       "metric": "impulse_version",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/training.go",
-      "line": 448,
+      "line": 587,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -6313,7 +6401,7 @@
       "metric": "input_count",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/training.go",
-      "line": 449,
+      "line": 588,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -6324,7 +6412,7 @@
       "metric": "invalid_inputs",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/training.go",
-      "line": 447,
+      "line": 586,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -6335,7 +6423,7 @@
       "metric": "losses",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/training.go",
-      "line": 472,
+      "line": 611,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -6346,7 +6434,7 @@
       "metric": "mark_a",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/training.go",
-      "line": 468,
+      "line": 607,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -6357,7 +6445,7 @@
       "metric": "mark_b",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/training.go",
-      "line": 469,
+      "line": 608,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -6368,7 +6456,18 @@
       "metric": "mark_c",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/training.go",
-      "line": 470,
+      "line": 609,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "training/paper_filled",
+      "source": "training",
+      "metric": "paper_filled",
+      "package": "github.com/theapemachine/symm/strategy",
+      "file": "strategy/training.go",
+      "line": 642,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -6379,7 +6478,7 @@
       "metric": "pnl",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/training.go",
-      "line": 473,
+      "line": 612,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -6390,7 +6489,7 @@
       "metric": "precursor_length",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/training.go",
-      "line": 501,
+      "line": 649,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -6401,7 +6500,7 @@
       "metric": "previous_input",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/training.go",
-      "line": 446,
+      "line": 585,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -6412,7 +6511,7 @@
       "metric": "price",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/training.go",
-      "line": 465,
+      "line": 604,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -6423,7 +6522,7 @@
       "metric": "progress",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/training.go",
-      "line": 460,
+      "line": 599,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -6434,7 +6533,7 @@
       "metric": "quality",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/training.go",
-      "line": 463,
+      "line": 602,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -6445,7 +6544,7 @@
       "metric": "resolved",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/training.go",
-      "line": 452,
+      "line": 591,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -6456,7 +6555,7 @@
       "metric": "stage_code",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/training.go",
-      "line": 476,
+      "line": 615,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -6467,7 +6566,7 @@
       "metric": "steps",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/training.go",
-      "line": 450,
+      "line": 589,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -6478,7 +6577,7 @@
       "metric": "support",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/training.go",
-      "line": 462,
+      "line": 601,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -6489,7 +6588,7 @@
       "metric": "surprisal",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/training.go",
-      "line": 455,
+      "line": 594,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -6500,7 +6599,7 @@
       "metric": "trading",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/training.go",
-      "line": 464,
+      "line": 603,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -6511,7 +6610,7 @@
       "metric": "unsupported",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/training.go",
-      "line": 445,
+      "line": 584,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -6522,7 +6621,7 @@
       "metric": "win_rate",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/training.go",
-      "line": 458,
+      "line": 597,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -6533,7 +6632,7 @@
       "metric": "wins",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/training.go",
-      "line": 471,
+      "line": 610,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -7278,8 +7377,8 @@
     }
   ],
   "summary": {
-    "totalProducers": 463,
-    "deadProducers": 301,
+    "totalProducers": 472,
+    "deadProducers": 310,
     "referencedProducers": 162,
     "kernelOnlyProducers": 0,
     "boundConsumerEdges": 313,

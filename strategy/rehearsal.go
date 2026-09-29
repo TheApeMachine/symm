@@ -125,7 +125,7 @@ type anchorKey struct {
 	sequence int64
 }
 
-type ReplayProgressFunc func(frame *data.Measurement[float64], record *tables.ExcursionRecord, impulse *grid.Snapshot, prediction string)
+type ReplayProgressFunc func(frame *data.Measurement[float64], record *tables.ExcursionRecord, impulse *grid.Snapshot, prediction string, tokens []uint64)
 
 type Rehearsal struct {
 	ctx              context.Context
@@ -253,11 +253,11 @@ func (rehearsal *Rehearsal) Step(frame *data.Measurement[float64]) ([]tables.Exc
 
 	rehearsal.records = rehearsal.records[:0]
 
-	for _, measurement := range frame.Peers {
-		if market := rehearsal.space.Markets[measurement.Label]; market != nil {
-			rehearsal.precursor.Step(&market.Impulse)
-		}
+	for _, market := range rehearsal.space.Markets {
+		rehearsal.precursor.Step(&market.Impulse)
+	}
 
+	for _, measurement := range frame.Peers {
 		record, err := rehearsal.detector.Process(measurement)
 
 		if err != nil {
@@ -265,7 +265,7 @@ func (rehearsal *Rehearsal) Step(frame *data.Measurement[float64]) ([]tables.Exc
 		}
 
 		if record != nil {
-			if _, err := rehearsal.resolve(*record, &rehearsal.space.Markets[record.Symbol].Impulse); err != nil {
+			if _, _, err := rehearsal.resolve(*record, &rehearsal.space.Markets[record.Symbol].Impulse); err != nil {
 				return nil, err
 			}
 
@@ -289,6 +289,7 @@ func (rehearsal *Rehearsal) Step(frame *data.Measurement[float64]) ([]tables.Exc
 				if err := rehearsal.capture(&market.Impulse); err != nil {
 					return nil, err
 				}
+				rehearsal.precursor.Reset(measurement.Label)
 			}
 		}
 	}
@@ -363,9 +364,9 @@ func (rehearsal *Rehearsal) train(sequence []byte, class []byte) (cognition.Resu
 	})
 }
 
-func (rehearsal *Rehearsal) resolve(record tables.ExcursionRecord, exit *grid.Impulse) (string, error) {
+func (rehearsal *Rehearsal) resolve(record tables.ExcursionRecord, exit *grid.Impulse) (string, []uint64, error) {
 	if exit == nil || exit.Label != record.Symbol || exit.SeqIdx != record.ExitTick {
-		return "", errnie.Error(errnie.Err(errnie.Validation, "rehearsal: outcome exit market absent", nil))
+		return "", nil, errnie.Error(errnie.Err(errnie.Validation, "rehearsal: outcome exit market absent", nil))
 	}
 
 	if record.Direction == "" {
@@ -388,7 +389,7 @@ func (rehearsal *Rehearsal) resolve(record tables.ExcursionRecord, exit *grid.Im
 	if !found || len(anchor.key) == 0 || record.Status == "unsupported" {
 		rehearsal.reading.Unsupported++
 		rehearsal.reading.FragmentsUnsupported++
-		return "", nil
+		return "", nil, nil
 	}
 
 	rehearsal.reading.Resolved++
@@ -451,11 +452,13 @@ func (rehearsal *Rehearsal) resolve(record tables.ExcursionRecord, exit *grid.Im
 		}
 	}
 
-	tokensAtC := rehearsal.precursor.Tokens(record.Symbol)
+	excursionTokens := rehearsal.precursor.Tokens(record.Symbol)
+	holdingTokens := append(slices.Clone(anchor.tokens), excursionTokens...)
 
-	if isUsefulUp && len(tokensAtC) >= len(anchor.tokens) {
-		for j := len(anchor.tokens); j < len(tokensAtC); j++ {
-			holdingPrefixKey := EncodeTokens(record.Symbol, true, tokensAtC[:j])
+	if isUsefulUp && len(excursionTokens) > 0 {
+		for j := 0; j < len(excursionTokens)-1; j++ {
+			holdingPrefix := append(slices.Clone(anchor.tokens), excursionTokens[:j+1]...)
+			holdingPrefixKey := EncodeTokens(record.Symbol, true, holdingPrefix)
 			pred := rehearsal.evaluateContext(holdingPrefixKey)
 
 			if pred == string(ActionExit) {
@@ -467,7 +470,7 @@ func (rehearsal *Rehearsal) resolve(record tables.ExcursionRecord, exit *grid.Im
 			}
 		}
 
-		holdingExitKey := EncodeTokens(record.Symbol, true, tokensAtC)
+		holdingExitKey := EncodeTokens(record.Symbol, true, holdingTokens)
 		exitPred := rehearsal.evaluateContext(holdingExitKey)
 
 		if exitPred == string(ActionExit) {
@@ -484,7 +487,7 @@ func (rehearsal *Rehearsal) resolve(record tables.ExcursionRecord, exit *grid.Im
 		prefixKey := EncodeTokens(record.Symbol, false, anchor.tokens[:j])
 
 		if _, err := rehearsal.train(prefixKey, []byte(ActionWait)); err != nil {
-			return "", errnie.Error(err)
+			return "", nil, errnie.Error(err)
 		}
 
 		rehearsal.reading.Learned++
@@ -492,33 +495,34 @@ func (rehearsal *Rehearsal) resolve(record tables.ExcursionRecord, exit *grid.Im
 
 	// 2. Complete context at B teaches expectedAction (ENTER if useful UP, else WAIT)
 	if _, err := rehearsal.train(anchor.key, []byte(expectedAction)); err != nil {
-		return "", errnie.Error(err)
+		return "", nil, errnie.Error(err)
 	}
 
 	rehearsal.reading.Learned++
 
 	// 3. Holding-scope exit supervision
-	if isUsefulUp && len(tokensAtC) >= len(anchor.tokens) {
-		for j := len(anchor.tokens); j < len(tokensAtC); j++ {
-			holdingPrefixKey := EncodeTokens(record.Symbol, true, tokensAtC[:j])
+	if isUsefulUp && len(excursionTokens) > 0 {
+		for j := 0; j < len(excursionTokens)-1; j++ {
+			holdingPrefix := append(slices.Clone(anchor.tokens), excursionTokens[:j+1]...)
+			holdingPrefixKey := EncodeTokens(record.Symbol, true, holdingPrefix)
 
 			if _, err := rehearsal.train(holdingPrefixKey, []byte(ActionWait)); err != nil {
-				return "", errnie.Error(err)
+				return "", nil, errnie.Error(err)
 			}
 
 			rehearsal.reading.Learned++
 		}
 
-		holdingExitKey := EncodeTokens(record.Symbol, true, tokensAtC)
+		holdingExitKey := EncodeTokens(record.Symbol, true, holdingTokens)
 
 		if _, err := rehearsal.train(holdingExitKey, []byte(ActionExit)); err != nil {
-			return "", errnie.Error(err)
+			return "", nil, errnie.Error(err)
 		}
 
 		rehearsal.reading.Learned++
 	}
 
-	return anchor.prediction, nil
+	return anchor.prediction, anchor.tokens, nil
 }
 
 /*
@@ -558,7 +562,7 @@ func (rehearsal *Rehearsal) Replay(records []tables.ExcursionRecord, frames iter
 		}
 		stepCount++
 
-		if market := space.Markets[frame.Label]; market != nil {
+		for _, market := range space.Markets {
 			rehearsal.precursor.Step(&market.Impulse)
 		}
 
@@ -569,7 +573,7 @@ func (rehearsal *Rehearsal) Replay(records []tables.ExcursionRecord, frames iter
 			if market == nil {
 				return errnie.Error(errnie.Err(errnie.Validation, "rehearsal: exit market absent", nil))
 			}
-			pred, err := rehearsal.resolve(record, &market.Impulse)
+			pred, anchorTokens, err := rehearsal.resolve(record, &market.Impulse)
 			if err != nil {
 				return err
 			}
@@ -577,7 +581,7 @@ func (rehearsal *Rehearsal) Replay(records []tables.ExcursionRecord, frames iter
 			resolvedRecord = true
 
 			if rehearsal.onProgress != nil {
-				rehearsal.onProgress(frame, &record, market.Snapshot(), pred)
+				rehearsal.onProgress(frame, &record, market.Snapshot(), pred, anchorTokens)
 			}
 		}
 		delete(exits, frame.SeqIdx)
@@ -590,6 +594,7 @@ func (rehearsal *Rehearsal) Replay(records []tables.ExcursionRecord, frames iter
 			if err := rehearsal.capture(&market.Impulse); err != nil {
 				return err
 			}
+			rehearsal.precursor.Reset(record.Symbol)
 		}
 		delete(anchors, frame.SeqIdx)
 
@@ -601,7 +606,7 @@ func (rehearsal *Rehearsal) Replay(records []tables.ExcursionRecord, frames iter
 				snapshot = market.Snapshot()
 			}
 
-			rehearsal.onProgress(frame, nil, snapshot, "")
+			rehearsal.onProgress(frame, nil, snapshot, "", nil)
 		}
 	}
 

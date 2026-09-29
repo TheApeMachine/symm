@@ -2,13 +2,17 @@ package strategy
 
 import (
 	"bytes"
+	"math"
 	"slices"
 	"testing"
 	"unsafe"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/cognition"
+	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/learning/associative/grid"
+	"github.com/theapemachine/symm/strategy/impulse"
 )
 
 func TestPrecursorEncode(t *testing.T) {
@@ -115,39 +119,93 @@ func TestPrecursorEncode(t *testing.T) {
 }
 
 func TestLiveReplayKeyIdentity(t *testing.T) {
-	Convey("Identical observations produce byte-identical live and replay context keys across fragment boundaries", t, func() {
+	Convey("Real boundary: same tape -> live Map + live Precursor -> replay Map + replay Precursor -> same fragment-local key at B", t, func() {
+		liveMap := impulse.NewMap()
+		replayMap := impulse.NewMap()
 		livePrecursor := NewPrecursor()
 		replayPrecursor := NewPrecursor()
 
 		symbol := "BTC/USD"
-		var observations []*grid.Impulse
-
-		// Sequence of 20 distinct market impulses across multiple fragments
-		for i := uint64(1); i <= 20; i++ {
-			observations = append(observations, &grid.Impulse{
-				Label:   symbol,
-				Ready:   true,
-				SeqIdx:  int64(i),
-				Regions: []grid.Region{{Condition: i * 17}},
-			})
+		type testTape struct {
+			frame   *data.Measurement[float64]
+			trade   *data.Measurement[float64]
+			signals []*data.Measurement[float64]
 		}
 
-		// Replay simulates historical fragment completion at ticks 6, 12, 18
-		// CRITICAL REQUIREMENT: Neither live nor replay resets the precursor at fragment boundaries.
-		// Therefore, for every tick T, live key at T must equal replay key at T byte-for-byte.
-		for tickIdx, obs := range observations {
-			liveKey := livePrecursor.Encode(obs, false)
-			replayKey := replayPrecursor.Encode(obs, false)
+		sample := &testTape{
+			frame: data.NewMeasurement[float64]("frame", nil),
+			trade: data.NewMeasurement[float64]("spot", nil),
+		}
+		sample.trade.Label = symbol
+		sample.trade.Provenance["owner"] = "public"
+		sample.trade.Provenance["channel"] = "trade"
+		sample.trade.Metadata["venue"] = "true"
+		sample.trade.Metadata["volume-unit"] = "base"
+		sample.trade.Maturity = 1
+		sample.trade.Metrics["qty"] = data.Metric[float64]{Label: "qty", Raw: 1, Exact: decimal.NewFromInt64(1)}
+		sample.frame.Peers = append(sample.frame.Peers, sample.trade)
 
+		for index := 0; index < 3; index++ {
+			name := string(rune('a' + index))
+			measurement := data.NewMeasurement[float64](name, nil)
+			measurement.Label = symbol
+			measurement.Maturity = 1
+			measurement.Provenance["owner"] = name
+			measurement.Metrics["value"] = data.Metric[float64]{Label: "value"}
+			sample.signals = append(sample.signals, measurement)
+			sample.frame.Peers = append(sample.frame.Peers, measurement)
+		}
+
+		// Fragments end at ticks 6, 12, 18
+		boundaries := map[int64]bool{6: true, 12: true, 18: true}
+
+		for seq := int64(1); seq <= 24; seq++ {
+			sample.frame.SeqIdx = seq
+			sample.trade.SeqIdx = seq
+			for idx, sig := range sample.signals {
+				val := math.Sin(float64(seq))
+				if idx%2 != 0 {
+					val = -val
+				}
+				sig.SeqIdx = seq
+				sig.Metrics["value"] = data.Metric[float64]{Label: "value", Raw: val}
+			}
+
+			errLive := liveMap.Step(sample.frame)
+			So(errLive, ShouldBeNil)
+			// Reverse peers to verify order-independence in replay
+			slices.Reverse(sample.frame.Peers)
+			errReplay := replayMap.Step(sample.frame)
+			So(errReplay, ShouldBeNil)
+			slices.Reverse(sample.frame.Peers)
+
+			liveImpulse := liveMap.Markets[symbol].Impulse
+			replayImpulse := replayMap.Markets[symbol].Impulse
+
+			So(liveImpulse.Ready, ShouldBeTrue)
+			So(replayImpulse.Ready, ShouldBeTrue)
+
+			liveKey := livePrecursor.Encode(&liveImpulse, false)
+			replayKey := replayPrecursor.Encode(&replayImpulse, false)
+
+			// Byte-identical fragment-local key across real map + precursor pipelines
 			So(bytes.Equal(liveKey, replayKey), ShouldBeTrue)
-			So(liveKey, ShouldNotBeNil)
+			if len(liveImpulse.Regions) > 0 {
+				So(liveKey, ShouldNotBeNil)
+			}
 
-			// Verify tokens match byte-for-byte
 			liveTokens := livePrecursor.Tokens(symbol)
 			replayTokens := replayPrecursor.Tokens(symbol)
-			So(len(liveTokens), ShouldEqual, tickIdx+1)
-			So(len(replayTokens), ShouldEqual, tickIdx+1)
 			So(slices.Equal(liveTokens, replayTokens), ShouldBeTrue)
+
+			// Fragment boundaries reset precursor to ensure fragment-local context
+			if boundaries[seq] {
+				livePrecursor.Reset(symbol)
+				replayPrecursor.Reset(symbol)
+
+				So(livePrecursor.Tokens(symbol), ShouldBeNil)
+				So(replayPrecursor.Tokens(symbol), ShouldBeNil)
+			}
 		}
 	})
 }

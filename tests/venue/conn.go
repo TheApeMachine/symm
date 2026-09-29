@@ -3,7 +3,9 @@ package venue
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sync"
+	"sync/atomic"
 
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/callback"
@@ -38,11 +40,21 @@ type Conn struct {
 	book                *spotbook.Book
 	books               *sync.Map
 	wsBook              *websocket.Book
+	onExecution         func(*kraken.Execution)
+	orderSeq            atomic.Int64
 }
 
 func (conn *Conn) Transition(stage runtime.Stage) { conn.status = stage }
 
-func (conn *Conn) OnExecution(func(*kraken.Execution)) {}
+func (conn *Conn) OnExecution(handler func(*kraken.Execution)) {
+	conn.onExecution = handler
+}
+
+func (conn *Conn) EmitExecution(exec *kraken.Execution) {
+	if conn.onExecution != nil {
+		conn.onExecution(exec)
+	}
+}
 
 func NewConn() *Conn {
 	return &Conn{
@@ -115,7 +127,10 @@ func (conn *Conn) AddOrder(*spot.AddOrderRequest) (spot.AddOrderResult, error) {
 		return spot.AddOrderResult{}, conn.AddOrderErr
 	}
 
-	return spot.AddOrderResult{}, nil
+	orderID := fmt.Sprintf("order-%d", conn.orderSeq.Add(1))
+	return spot.AddOrderResult{
+		OrderPlacementSingle: spot.OrderPlacementSingle{ID: []string{orderID}},
+	}, nil
 }
 
 func (conn *Conn) OpenOrders() (spot.OpenOrdersResult, error) {

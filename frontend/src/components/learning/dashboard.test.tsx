@@ -129,15 +129,37 @@ describe("LearningDashboard", () => {
 		expect(container.querySelector('[data-metric="fragments_flat"]')?.textContent).toBe("7");
 		expect(container.querySelector('[data-metric="fragments_unsupported"]')?.textContent).toBe("2");
 
-		// Temporal Precursor sequence
+		// Temporal Precursor sequence: renders "unavailable" when token identities are absent
 		const precEl = container.querySelector('[data-l="temporal-precursor"]');
-		expect(precEl?.textContent).toContain("I0 → I1 → I2 → I3");
+		expect(precEl?.textContent).toContain("unavailable");
 
 		// ABC Boundaries
 		const abcEl = container.querySelector('[data-l="abc-markers"]');
 		expect(abcEl?.textContent).toContain("A: 100");
 		expect(abcEl?.textContent).toContain("B: 120");
 		expect(abcEl?.textContent).toContain("C: 150");
+	});
+
+	it("renders actual token hashes when precursor_tokens are published", () => {
+		focusAtom.set("BTC/USD");
+		const measurement = new MeasurementT();
+		measurement.source = "training";
+		measurement.symbol = "BTC/USD";
+		measurement.provenance = [
+			new NamedStringT("precursor_tokens", "0x1234,0x5678"),
+		];
+		measurement.metrics = [
+			new MetricT("stage_code", 0),
+			new MetricT("precursor_length", 2),
+		];
+
+		const ring = new RingBuffer<MeasurementT>(4);
+		ring.add(measurement);
+		signals.training.setState(() => ({ "BTC/USD": ring }));
+
+		const { container } = render(<LearningDashboard />);
+		const precEl = container.querySelector('[data-l="temporal-precursor"]');
+		expect(precEl?.textContent).toContain("[0x1234] → [0x5678]");
 	});
 
 	it("renders frozen predicted action, actual delayed label, and trie support", () => {

@@ -14,36 +14,40 @@ import (
 // Regulator owns inventory and one pending order. Only cumulative venue fills
 // change inventory; submission and acknowledgement are not fills.
 type Regulator struct {
-	mu          sync.RWMutex
-	PositionID  string
-	Symbol      string
-	Quantity    *decimal.Decimal
-	Basis       *decimal.Decimal
-	ClosedBasis *decimal.Decimal
-	EntryFee    *decimal.Decimal
-	Realized    *decimal.Decimal
-	Pending     *spot.AddOrderRequest
-	OrderID     string
-	LastOrderID string
-	EntryAt     time.Time
-	filled      *decimal.Decimal
-	cost        *decimal.Decimal
-	fee         *decimal.Decimal
+	mu             sync.RWMutex
+	PositionID     string
+	Symbol         string
+	Quantity       *decimal.Decimal
+	Basis          *decimal.Decimal
+	ClosedBasis    *decimal.Decimal
+	closedEntryFee *decimal.Decimal
+	closedFee      *decimal.Decimal
+	EntryFee       *decimal.Decimal
+	Realized       *decimal.Decimal
+	Pending        *spot.AddOrderRequest
+	OrderID        string
+	LastOrderID    string
+	EntryAt        time.Time
+	filled         *decimal.Decimal
+	cost           *decimal.Decimal
+	fee            *decimal.Decimal
 }
 
 func NewRegulator(symbol string) *Regulator {
 	return &Regulator{
-		PositionID:  uuid.New().String(),
-		Symbol:      symbol,
-		Quantity:    decimal.NewFromInt64(0).SetScale(decimal.DefaultScale),
-		Basis:       decimal.NewFromInt64(0).SetScale(decimal.DefaultScale),
-		ClosedBasis: decimal.NewFromInt64(0).SetScale(decimal.DefaultScale),
-		EntryFee:    decimal.NewFromInt64(0).SetScale(decimal.DefaultScale),
-		Realized:    decimal.NewFromInt64(0).SetScale(decimal.DefaultScale),
-		EntryAt:     time.Now(),
-		filled:      decimal.NewFromInt64(0).SetScale(decimal.DefaultScale),
-		cost:        decimal.NewFromInt64(0).SetScale(decimal.DefaultScale),
-		fee:         decimal.NewFromInt64(0).SetScale(decimal.DefaultScale),
+		PositionID:     uuid.New().String(),
+		Symbol:         symbol,
+		Quantity:       decimal.NewFromInt64(0).SetScale(decimal.DefaultScale),
+		Basis:          decimal.NewFromInt64(0).SetScale(decimal.DefaultScale),
+		ClosedBasis:    decimal.NewFromInt64(0).SetScale(decimal.DefaultScale),
+		closedEntryFee: decimal.NewFromInt64(0).SetScale(decimal.DefaultScale),
+		closedFee:      decimal.NewFromInt64(0).SetScale(decimal.DefaultScale),
+		EntryFee:       decimal.NewFromInt64(0).SetScale(decimal.DefaultScale),
+		Realized:       decimal.NewFromInt64(0).SetScale(decimal.DefaultScale),
+		EntryAt:        time.Now(),
+		filled:         decimal.NewFromInt64(0).SetScale(decimal.DefaultScale),
+		cost:           decimal.NewFromInt64(0).SetScale(decimal.DefaultScale),
+		fee:            decimal.NewFromInt64(0).SetScale(decimal.DefaultScale),
 	}
 }
 
@@ -122,7 +126,17 @@ func (regulator *Regulator) ClosedCost() *decimal.Decimal {
 
 	regulator.mu.RLock()
 	defer regulator.mu.RUnlock()
-	return regulator.ClosedBasis
+	return safeAdd(regulator.ClosedBasis, regulator.closedEntryFee)
+}
+
+func (regulator *Regulator) ClosedFee() *decimal.Decimal {
+	if regulator == nil {
+		return nil
+	}
+
+	regulator.mu.RLock()
+	defer regulator.mu.RUnlock()
+	return regulator.closedFee
 }
 
 func (regulator *Regulator) Volume() *decimal.Decimal {
@@ -329,6 +343,8 @@ func (regulator *Regulator) apply(report kraken.ExecutionData) error {
 		regulator.Quantity = safeSub(regulator.Quantity, quantity)
 		regulator.Basis = safeSub(regulator.Basis, basis)
 		regulator.ClosedBasis = safeAdd(regulator.ClosedBasis, basis)
+		regulator.closedEntryFee = safeAdd(regulator.closedEntryFee, entryFee)
+		regulator.closedFee = safeAdd(regulator.closedFee, safeAdd(entryFee, feeDelta))
 		regulator.EntryFee = safeSub(regulator.EntryFee, entryFee)
 
 		pnl := safeSub(safeSub(safeSub(cost, feeDelta), basis), entryFee)

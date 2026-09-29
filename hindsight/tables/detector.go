@@ -232,12 +232,13 @@ func (detector *StreamingDetector) advance(tracker *symbolTracker, measurement *
 		ObservationCount: tracker.observations, Status: status,
 	}
 
-	tracker.precursorStart = measurement.SeqIdx
-	tracker.anchor = 0
+	tracker.precursorStart = tracker.anchor
+	tracker.anchor = measurement.SeqIdx
 	tracker.observations = 0
-	tracker.entry = nil
-	tracker.cost = nil
-	tracker.high, tracker.low = nil, nil
+	tracker.entry = tracker.ask
+	tracker.cost = detector.price.WithFee(measurement.Label, tracker.ask, broker.BUY)
+	tracker.high, tracker.low = price, price
+	tracker.highTick, tracker.lowTick = measurement.SeqIdx, measurement.SeqIdx
 
 	return record, nil
 }

@@ -92,7 +92,7 @@ func TestRehearsalStep(t *testing.T) {
 			SeqIdx:  20,
 			Regions: []grid.Region{{Condition: 99999}},
 		}
-		_, err = training.Rehearsal.resolve(record, exitImpulse)
+		_, _, err = training.Rehearsal.resolve(record, exitImpulse)
 		So(err, ShouldBeNil)
 
 		impulse.SeqIdx = 30
@@ -108,7 +108,7 @@ func TestRehearsalStep(t *testing.T) {
 			ClearsFriction: true,
 		}
 		exitImpulse.SeqIdx = 40
-		_, err = training.Rehearsal.resolve(record2, exitImpulse)
+		_, _, err = training.Rehearsal.resolve(record2, exitImpulse)
 		So(err, ShouldBeNil)
 
 		So(training.Rehearsal.reading.Entered, ShouldEqual, 1)
@@ -139,7 +139,7 @@ func TestRehearsalStep(t *testing.T) {
 			ClearsFriction: false,
 		}
 		exitImpulse.SeqIdx = 60
-		_, err = training.Rehearsal.resolve(badRecord, exitImpulse)
+		_, _, err = training.Rehearsal.resolve(badRecord, exitImpulse)
 		So(err, ShouldBeNil)
 
 		// Capture the bad precursor again at tick 70
@@ -157,7 +157,7 @@ func TestRehearsalStep(t *testing.T) {
 			ClearsFriction: false,
 		}
 		exitImpulse.SeqIdx = 80
-		_, err = training.Rehearsal.resolve(badRecord2, exitImpulse)
+		_, _, err = training.Rehearsal.resolve(badRecord2, exitImpulse)
 		So(err, ShouldBeNil)
 
 		// Entered count and edge remain preserved from the good trade
@@ -233,7 +233,7 @@ func TestRehearsalCheckpoint(t *testing.T) {
 			SeqIdx:  20,
 			Regions: []grid.Region{{Condition: 88888}},
 		}
-		_, err = training.Rehearsal.resolve(record, exitImpulse)
+		_, _, err = training.Rehearsal.resolve(record, exitImpulse)
 		So(err, ShouldBeNil)
 		So(training.Rehearsal.reading.Learned, ShouldBeGreaterThan, 0)
 

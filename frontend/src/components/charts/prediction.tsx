@@ -256,6 +256,18 @@ const VectorLane = ({
 	const stateExtent = maxAbsExtent(values);
 	const ghostExtent =
 		ghost === undefined ? Number.EPSILON : maxAbsExtent(ghost);
+	const ghostSlots = ghost?.map((value, slotIndex) => ({
+		slotId: `ghost-${label}-slot-${slotIndex}`,
+		value,
+		index: slotIndex,
+		total: ghost.length,
+	}));
+	const stateSlots = values.map((value, slotIndex) => ({
+		slotId: `state-${label}-slot-${slotIndex}`,
+		value,
+		index: slotIndex,
+		total: values.length,
+	}));
 
 	return (
 		<div className="flex min-h-0 flex-1 items-stretch gap-3">
@@ -266,31 +278,31 @@ const VectorLane = ({
 				<span className="text-(--f4)">{meta}</span>
 			</div>
 			<div className="relative min-h-0 flex-1 overflow-hidden border border-(--line) bg-[linear-gradient(to_bottom,transparent_calc(50%-0.5px),var(--line2)_calc(50%-0.5px),var(--line2)_calc(50%+0.5px),transparent_calc(50%+0.5px))]">
-				{ghost !== undefined ? (
+				{ghostSlots !== undefined ? (
 					<div className="absolute inset-0">
-						{ghost.map((value, index) => (
+						{ghostSlots.map((slot) => (
 							<div
-								key={`ghost-${index}-${label}`}
+								key={slot.slotId}
 								className="absolute inset-y-0 right-1 left-1 origin-left"
-								style={{ transform: vectorSlotTransform(index, ghost.length) }}
+								style={{ transform: vectorSlotTransform(slot.index, slot.total) }}
 							>
 								<div
 									className="absolute top-1/2 right-px left-0 h-[calc(50%-1px)] origin-top bg-(--line2)"
-									style={vectorBarStyle(value / ghostExtent)}
+									style={vectorBarStyle(slot.value / ghostExtent)}
 								/>
 							</div>
 						))}
 					</div>
 				) : null}
-				{values.map((value, index) => (
+				{stateSlots.map((slot) => (
 					<div
-						key={`state-${index}-${label}`}
+						key={slot.slotId}
 						className="absolute inset-y-0 right-1 left-1 origin-left"
-						style={{ transform: vectorSlotTransform(index, values.length) }}
+						style={{ transform: vectorSlotTransform(slot.index, slot.total) }}
 					>
 						<div
 							className={`absolute top-1/2 right-1.5 left-1 h-[calc(50%-1px)] origin-top ${color}`}
-							style={vectorBarStyle(value / stateExtent)}
+							style={vectorBarStyle(slot.value / stateExtent)}
 						/>
 					</div>
 				))}

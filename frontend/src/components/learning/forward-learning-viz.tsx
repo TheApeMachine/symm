@@ -25,6 +25,20 @@ interface ForwardTapePoint {
 	seq?: number;
 }
 
+const getTrainingRing = (
+	records: Record<string, RingBuffer<MeasurementT>> | undefined,
+	focus: string,
+): RingBuffer<MeasurementT> | null => {
+	if (!records) return null;
+	return (
+		records[focus] ??
+		records.learner ??
+		records[""] ??
+		Object.values(records)[0] ??
+		null
+	);
+};
+
 export const ForwardLearningViz = () => {
 	const tapeRef = useRef<HTMLDivElement>(null);
 	const [tapeDim, setTapeDim] = useState({ width: 800, height: 300 });
@@ -310,13 +324,13 @@ export const ForwardLearningViz = () => {
 			});
 		};
 
-		const ring = signals.training?.state?.[currentSymbol];
+		const ring = getTrainingRing(signals.training?.state, currentSymbol);
 		if (ring) {
 			handleRing(ring);
 		}
 
 		const unsub = signals.training.subscribe((state) => {
-			const activeRing = state?.[currentSymbol];
+			const activeRing = getTrainingRing(state, currentSymbol);
 			if (activeRing) {
 				handleRing(activeRing);
 			}
@@ -379,7 +393,7 @@ export const ForwardLearningViz = () => {
 		if (precursorLength === 0) {
 			return ["―"];
 		}
-		return Array.from({ length: precursorLength }, (_, i) => `I${i}`);
+		return ["unavailable"];
 	}, [rawPrecursorTokens, precursorLength]);
 
 	return (

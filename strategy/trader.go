@@ -578,17 +578,20 @@ func (trader *Trader) ApplyExecution(exec *kraken.Execution) {
 
 		if err := matched.Reconcile(item); err != nil {
 			errnie.Error(err)
-		} else {
-			trader.positionsVersion.Add(1)
+			mu.Unlock()
+			continue
 		}
 
+		trader.positionsVersion.Add(1)
+
 		if matched.IsClosed() {
-			closedBasis := matched.ClosedCost()
-			if trader.onPositionClosed != nil && closedBasis != nil && closedBasis.Sign() > 0 && matched.Realized != nil {
-				returnFrac := matched.Realized.Div(closedBasis).Float64()
+			closedCost := matched.ClosedCost()
+
+			if trader.onPositionClosed != nil && closedCost != nil && closedCost.Sign() > 0 && matched.Realized != nil {
+				returnFrac := matched.Realized.Div(closedCost).Float64()
 				fee := 0.0
 
-				if feeDec := matched.Fee(); feeDec != nil {
+				if feeDec := matched.ClosedFee(); feeDec != nil {
 					fee = feeDec.Float64()
 				}
 
