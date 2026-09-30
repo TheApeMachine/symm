@@ -333,6 +333,19 @@ func sanitizeStatement(statement string) string {
 }
 
 /*
+Query runs a scalar or regular result set query using the standard sql interface,
+bypassing Arrow IPC. This is useful for fetching bounds or simple counts.
+*/
+func (warehouse *Warehouse) Query(ctx context.Context, statement string) (*sql.Rows, error) {
+	conn, err := warehouse.session(ctx)
+	if err != nil {
+		return nil, err
+	}
+	
+	return conn.QueryContext(ctx, statement)
+}
+
+/*
 Execute runs one statement and returns its result as an Apache Arrow IPC
 stream. A statement that produces no rows — the viewer materializing or
 dropping a view — returns an empty stream rather than an error.

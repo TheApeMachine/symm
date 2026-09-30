@@ -68,7 +68,7 @@ func NewTrader(
 	return trader
 }
 
-func (trader *Trader) OnAction(symbol string, action cognition.Action) {
+func (trader *Trader) OnAction(symbol string, action cognition.Action, confidence float64) {
 	if trader == nil || symbol == "" {
 		return
 	}
@@ -196,11 +196,11 @@ func (trader *Trader) OnAction(symbol string, action cognition.Action) {
 		if err := trader.desk.Execution.EnterWithRegulator(reg, spend); err != nil {
 			trader.positions.Delete(symbol)
 			trader.positionsVersion.Add(1)
-			trader.RecordDecision(symbol, "blocked", 0.0, fmt.Sprintf("enter failed: %v", err))
+			trader.RecordDecision(symbol, "blocked", confidence, fmt.Sprintf("enter failed: %v", err))
 			return
 		}
 
-		trader.RecordDecision(symbol, "enter", 1.0, "precursor trigger")
+		trader.RecordDecision(symbol, "enter", confidence, "precursor trigger")
 	case cognition.ActionExit:
 		val, found := trader.positions.Load(symbol)
 
@@ -225,11 +225,11 @@ func (trader *Trader) OnAction(symbol string, action cognition.Action) {
 		}
 
 		if err := trader.desk.Execution.Exit(reg); err != nil {
-			trader.RecordDecision(symbol, "exit_failed", 1.0, fmt.Sprintf("exit failed: %v", err))
+			trader.RecordDecision(symbol, "exit_failed", confidence, fmt.Sprintf("exit failed: %v", err))
 			return
 		}
 
-		trader.RecordDecision(symbol, "exit", 1.0, "exit trigger")
+		trader.RecordDecision(symbol, "exit", confidence, "exit trigger")
 	}
 }
 

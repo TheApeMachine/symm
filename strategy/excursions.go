@@ -26,6 +26,10 @@ type Excursions struct {
 	warehouse *workbench.Warehouse
 	query     string
 	err       error
+	
+	StartTick    int64
+	IgnitionTick int64
+	EndTick      int64
 }
 
 func NewExcursions(ctx context.Context, warehouse *workbench.Warehouse, extType int) *Excursions {
@@ -48,7 +52,11 @@ func NewExcursions(ctx context.Context, warehouse *workbench.Warehouse, extType 
 		condition = "peak_price >= start_price * 1.0005 AND peak_price <= start_price * 1.002 AND bottom_price <= start_price * 0.9995 AND peak_tick < start_tick + 500"
 	}
 	
-	query := fmt.Sprintf(`
+	// Phase 1: Determine the true ground truth bounds (A, B, C) of the excursion
+	// A: Random point during the precursor development (start_tick - random)
+	// B: Ignition (start_tick)
+	// C: Exhaustion/Reversal (peak_tick or bottom_tick)
+	boundsQuery := fmt.Sprintf(`
 		WITH recent_tape AS (
 			SELECT *,
 			       list_extract(map_extract(metrics, 'best_bid'), 1).raw AS price
@@ -77,19 +85,46 @@ func NewExcursions(ctx context.Context, warehouse *workbench.Warehouse, extType 
 			ORDER BY random()
 			LIMIT 1
 		)
-		SELECT m.* 
-		FROM %s.measurements m
-		JOIN valid_pumps p ON m.symbol = p.symbol
-		-- Extract the exact time fragment, bounding from the start to the peak/bottom
-		WHERE m.tick BETWEEN p.start_tick AND GREATEST(p.peak_tick, p.bottom_tick)
-		ORDER BY m.tick ASC
-	`, tables.Namespace, condition, tables.Namespace)
+		SELECT 
+			symbol,
+			p.start_tick - CAST(FLOOR(random() * 400 + 100) AS INT8) AS a_tick,
+			p.start_tick AS b_tick,
+			GREATEST(p.peak_tick, p.bottom_tick) AS c_tick
+		FROM valid_pumps p
+	`, tables.Namespace, condition)
 
-	return &Excursions{
+	op := &Excursions{
 		ctx:       ctx,
 		warehouse: warehouse,
-		query:     query,
 	}
+
+	rows, err := warehouse.Query(ctx, boundsQuery)
+	if err != nil {
+		op.err = err
+		return op
+	}
+	defer rows.Close()
+
+	var symbol string
+	if rows.Next() {
+		if err := rows.Scan(&symbol, &op.StartTick, &op.IgnitionTick, &op.EndTick); err != nil {
+			op.err = err
+			return op
+		}
+	} else {
+		// No excursion of this type found in the recent tape
+		return op
+	}
+
+	// Phase 2: Stream the exact fragment from A to C without any arbitrary padding
+	op.query = fmt.Sprintf(`
+		SELECT m.* 
+		FROM %s.measurements m
+		WHERE m.symbol = '%s' AND m.tick BETWEEN %d AND %d
+		ORDER BY m.tick ASC
+	`, tables.Namespace, symbol, op.StartTick, op.EndTick)
+
+	return op
 }
 
 func (op *Excursions) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {

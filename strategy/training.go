@@ -23,9 +23,9 @@ on pre-cursors is performed.
 */
 type Training struct {
 	*runtime.System
-	grid     *store.Grid
-	engine   *cognition.Engine
-	trader   *Trader
+	grid      *store.Grid
+	engine    *cognition.Engine
+	trader    *Trader
 	catalog   *tables.Catalog
 	warehouse *workbench.Warehouse
 	webrtc    runtime.Tee
@@ -44,16 +44,16 @@ func NewTraining(
 	engine := cognition.NewEngine(cognition.Config{})
 
 	training := &Training{
-		System:   runtime.NewSystem(ctx, "training", price),
-		grid:     grid,
+		System:    runtime.NewSystem(ctx, "training", price),
+		grid:      grid,
 		engine:    engine,
 		trader:    trader,
 		catalog:   catalog,
 		warehouse: warehouse,
 		webrtc:    webrtc,
 	}
-	
-	// The pipeline for training consists of the Grid and an Adapter that 
+
+	// The pipeline for training consists of the Grid and an Adapter that
 	// transforms the Grid's LitRegions into cognitive observations.
 	training.pipeline = nomagique.NewNumber(
 		grid,
@@ -63,22 +63,31 @@ func NewTraining(
 				if m == nil || !grid.Settled {
 					return nil
 				}
-				
+
 				token := grid.LitRegions(m, 3)
+
 				if len(token) == 0 {
 					return nil
 				}
-				
-				// For now we just observe the sequence of tokens.
-				// In a full implementation, we'd buffer the signature and predict.
+
+				var classBytes []byte
+				var graded bool
+
+				if class, ok := m.Metadata["ground_truth"]; ok && class != "" {
+					classBytes = []byte(class)
+					graded = true
+				}
+
 				return &cognition.Command{
 					Observe: &cognition.Association{
-						Context: token,
+						Context:  token,
+						Class:    classBytes,
+						Graded:   graded,
+						Feedback: 1.0,
 					},
 				}
 			},
-			func(m *data.Measurement[float64], res *cognition.Result) {
-			},
+			func(m *data.Measurement[float64], res *cognition.Result) {},
 		),
 	)
 
@@ -86,12 +95,6 @@ func NewTraining(
 	// has formed stable regions, and is frozen and checkpointed.
 	training.Transition(runtime.INIT)
 	return training
-}
-
-func (training *Training) Register() *data.Measurement[float64] {
-	measurement := data.NewMeasurement[float64]("training", nil)
-	measurement.Metadata["peer-interest"] = "*"
-	return measurement
 }
 
 /*
@@ -126,6 +129,7 @@ func (training *Training) Step(
 	} else if training.Status() == runtime.READY {
 		// Secondary stage: live prediction and paper trading against live tape!
 		token := training.grid.LitRegions(measurement, 3)
+
 		if len(token) > 0 {
 			// In fully matured state, we ask engine to Evaluate token and pass to trader
 			// For now, we simulate sending the evaluate command:
@@ -134,12 +138,22 @@ func (training *Training) Step(
 					Context: token,
 				},
 			}
-			
+
 			for out := range training.engine.Next(data.NewValue(evalCmd)) {
 				eval := (*cognition.Evaluation)(out)
+
 				if eval != nil {
-					// Predict action (Enter, Exit, Wait)
-					// training.trader.Enter() or .Exit()
+					if eval.WinnerClass == string(
+						cognition.ActionEnter,
+					) || eval.WinnerClass == string(
+						cognition.ActionExit,
+					) {
+						training.trader.OnAction(
+							measurement.Label,
+							cognition.Action(eval.WinnerClass),
+							eval.Confidence,
+						)
+					}
 				}
 			}
 		}
@@ -168,7 +182,7 @@ func (training *Training) Run() {
 				time.Sleep(100 * time.Millisecond)
 				continue
 			}
-			
+
 			if training.catalog == nil {
 				// No catalog available, can't train on historical tape.
 				time.Sleep(10 * time.Second)
@@ -179,101 +193,83 @@ func (training *Training) Run() {
 			// In symm, measurements are the sole source of truth in Iceberg.
 			// E.g. we fetch measurements for the last N epochs.
 			ctx := training.Context()
-			
+
 			// We scan the single Measurements table for tape fragments.
-			// Pipeline execution: 
+			// Pipeline execution:
 			// Remove unused seq
-			
+
 			// Cycle through the 5 excursion types described in TRAINING.md
 			// 1: Upward Profitable, 2: Upward Unprofitable, 3: Downward, 4: Choppy, 5: Flat
 			extType := ((iteration - 1) % 5) + 1
 			iteration++
-			
-			// Use the sophisticated DuckDB Excursions primitive to find a 
+
+			// Use the sophisticated DuckDB Excursions primitive to find a
 			// genuinely mature market excursion of the requested type
 			excursions := NewExcursions(ctx, training.warehouse, extType)
-			
-			// Buffer the tape fragment to annotate the markers for the dashboard
-			var fragment []*data.Measurement[float64]
+
+			// Buffer the tape fragment? No! We process the tape as a pure stream!
+			// We stream directly from DuckDB to preserve the ground truth continuously.
 			for ptr := range excursions.Next(nil) {
-				if ptr != nil {
-					fragment = append(fragment, (*data.Measurement[float64])(ptr))
+				if ptr == nil {
+					continue
 				}
-			}
-			
-			// The excursion primitive ensures we have a valid window of A -> B -> C.
-			// It pads 50 ticks before A, and 200 ticks after B (for C).
-			if len(fragment) > 100 {
-				var maxPrice float64
-				var minPrice float64 = 99999999999.0
-				var peakTick int64
-				var bottomTick int64
-				
-				// Find peak/bottom prices in the fragment
-				for _, m := range fragment {
-					if bid, ok := m.Metrics["best_bid"]; ok {
-						if bid.Raw > maxPrice {
-							maxPrice = bid.Raw
-							peakTick = m.SeqIdx
-						}
-						if bid.Raw < minPrice {
-							minPrice = bid.Raw
-							bottomTick = m.SeqIdx
-						}
+
+				m := (*data.Measurement[float64])(ptr)
+
+				// Rewrite the source so the UI Tee allows it through to the dashboard
+				m.Source = "training:historical"
+
+				if m.Metadata == nil {
+					m.Metadata = make(map[string]string)
+				}
+
+				// Apply ground truth label based on objective tape bounds from DuckDB
+				var gt string
+				if extType == 1 { // Upward Profitable (Enter and Exit)
+					if m.SeqIdx >= excursions.IgnitionTick-20 && m.SeqIdx <= excursions.IgnitionTick {
+						gt = string(cognition.ActionEnter)
+					} else if m.SeqIdx >= excursions.EndTick-20 && m.SeqIdx <= excursions.EndTick {
+						gt = string(cognition.ActionExit)
+					}
+				} else if extType == 3 { // Downward (Exit)
+					if m.SeqIdx >= excursions.IgnitionTick-20 && m.SeqIdx <= excursions.IgnitionTick {
+						gt = string(cognition.ActionExit)
 					}
 				}
-				
-				// B marker depends on the excursion type
-				var ignitionTick int64
-				if extType <= 2 {
-					ignitionTick = peakTick
-				} else if extType == 3 {
-					ignitionTick = bottomTick
-				} else {
-					// For flat/choppy, just pick the highest point as the center of gravity
-					ignitionTick = peakTick
+
+				if gt == "" {
+					gt = string(cognition.ActionWait)
 				}
-				
-				// A is exactly 50 ticks before the fragment start (as padded by DuckDB)
-				// Or safely just pick index 50
-				startTick := fragment[0].SeqIdx
-				if len(fragment) > 50 {
-					startTick = fragment[50].SeqIdx
+
+				m.Metadata["ground_truth"] = gt
+
+				// Evaluate the pure tape measurement in the learning system FIRST
+				for out := range training.pipeline.Next(data.NewValue(m)) {
+					// The Grid and Radix Trie evaluate the precursor here!
+					_ = out
 				}
-				
-				endTick := fragment[len(fragment)-1].SeqIdx
-				
-				// Replay the annotated fragment into the learning system and UI
-				for _, m := range fragment {
+
+				// Stream the trained historical fragment directly to the dashboard visualization
+				if training.webrtc != nil {
 					if m.Metadata == nil {
 						m.Metadata = make(map[string]string)
 					}
-					
-					// Annotate A, B, C markers for UI and training validation
-					m.Metadata["excursion_start"] = fmt.Sprintf("%d", startTick)
-					m.Metadata["excursion_ignition"] = fmt.Sprintf("%d", ignitionTick)
-					m.Metadata["excursion_extremum_tick"] = fmt.Sprintf("%d", endTick)
+
+					// Inject the ground truth bounds (discovered by DuckDB) strictly
+					// for the visualization AFTER the model evaluated it, preventing leakage.
+					m.Metadata["excursion_start"] = fmt.Sprintf("%d", excursions.StartTick)
+					m.Metadata["excursion_ignition"] = fmt.Sprintf("%d", excursions.IgnitionTick)
+					m.Metadata["excursion_extremum_tick"] = fmt.Sprintf("%d", excursions.EndTick)
 					m.Metadata["excursion_type"] = fmt.Sprintf("%d", extType)
 					m.Metadata["stage_code"] = "2" // FORWARD PAPER LEARNING
-					
-					// Rewrite the source so the UI Tee's `types.Filters` allows it through to the "learning" dashboard route
-					m.Source = "training:historical"
-					
-					for out := range training.pipeline.Next(data.NewValue(m)) {
-						// The Grid and Radix Trie evaluate the precursor here!
-						_ = out
-					}
-					
-					// Stream the trained historical fragment directly to the dashboard visualization!
-					if training.webrtc != nil {
-						training.webrtc.Push(m)
-					}
+
+					training.webrtc.Push(m)
 				}
 			}
-			
+
 			// Wait before scanning again to avoid busy-looping if no new excursions exist
 			time.Sleep(5 * time.Second)
-			
+
 			// Sleep before pulling the next tape fragment.
 			time.Sleep(1 * time.Second)
 		}
