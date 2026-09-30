@@ -244,14 +244,14 @@ schema before feeding streaming records.
 */
 func (ticker *Ticker) Register() *data.Measurement[float64] {
 	m := data.NewMeasurement[float64]("pumpdump:ticker", map[string]data.Metric[float64]{
-		"best_bid":                 data.NewMetric[float64]("best_bid", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
-		"best_ask":                 data.NewMetric[float64]("best_ask", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
-		"midpoint":                 data.NewMetric[float64]("midpoint", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
-		"spread":                   data.NewMetric[float64]("spread", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
-		"relative_spread":          data.NewMetric[float64]("relative_spread", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
-		"relative_spread_baseline": data.NewMetric[float64]("relative_spread_baseline", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
-		"spread_ratio":             data.NewMetric[float64]("spread_ratio", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
-		"spread_divergence":        data.NewMetric[float64]("spread_divergence", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
+		"best_bid":                 data.NewMetric[float64]("best_bid", data.UnitRate, data.TimescaleInstantaneous, 0, 0),
+		"best_ask":                 data.NewMetric[float64]("best_ask", data.UnitRate, data.TimescaleInstantaneous, 0, 0),
+		"midpoint":                 data.NewMetric[float64]("midpoint", data.UnitRate, data.TimescaleInstantaneous, 0, 0),
+		"spread":                   data.NewMetric[float64]("spread", data.UnitRate, data.TimescaleInstantaneous, 0, 0),
+		"relative_spread":          data.NewMetric[float64]("relative_spread", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 0),
+		"relative_spread_baseline": data.NewMetric[float64]("relative_spread_baseline", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 0),
+		"spread_ratio":             data.NewMetric[float64]("spread_ratio", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 0),
+		"spread_divergence":        data.NewMetric[float64]("spread_divergence", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 0),
 		"spread_zscore":            data.NewMetric[float64]("spread_zscore", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
 	})
 	m.Metadata["peer-interest"] = "*"

@@ -52,3 +52,38 @@ func (ticker *Ticker) Action() string {
 func (ticker *Ticker) IsSuccess() bool {
 	return len(ticker.Data) > 0
 }
+
+type TickerSubscription struct {
+	Method string                     `json:"method"`
+	Params TickerSubscriptionParams   `json:"params"`
+}
+
+type TickerSubscriptionParams struct {
+	Channel string   `json:"channel"`
+	Symbol  []string `json:"symbol"`
+}
+
+func NewTickerSubscription(symbols []string) TickerSubscription {
+	return TickerSubscription{
+		Method: "subscribe",
+		Params: TickerSubscriptionParams{
+			Channel: "ticker",
+			Symbol:  symbols,
+		},
+	}
+}
+
+func NewTickerUnsubscription(symbols []string) TickerSubscription {
+	return TickerSubscription{
+		Method: "unsubscribe",
+		Params: TickerSubscriptionParams{
+			Channel: "ticker",
+			Symbol:  symbols,
+		},
+	}
+}
+
+func (subscription TickerSubscription) MarshalJSON() ([]byte, error) {
+	type alias TickerSubscription
+	return sonic.Marshal((*alias)(&subscription))
+}

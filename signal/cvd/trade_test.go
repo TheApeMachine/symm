@@ -24,8 +24,8 @@ an invalid execution.
 */
 func row(symbol, side string, price, qty float64, at time.Time) *data.Measurement[float64] {
 	m := data.NewMeasurement("websocket", map[string]data.Metric[float64]{
-		"price": data.NewMetric[float64]("price", data.UnitRate, data.TimescaleInstantaneous, 0, 1).Write(price),
-		"qty":   data.NewMetric[float64]("qty", data.UnitCount, data.TimescaleInstantaneous, 0, 1).Write(qty),
+		"price": data.NewMetric[float64]("price", data.UnitRate, data.TimescaleInstantaneous, 0, 0).Write(price),
+		"qty":   data.NewMetric[float64]("qty", data.UnitCount, data.TimescaleInstantaneous, 0, 0).Write(qty),
 	})
 	m.Label, m.At, m.From = symbol, at, at
 	m.Provenance = map[string]string{"side": side}

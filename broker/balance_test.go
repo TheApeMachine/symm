@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"github.com/theapemachine/symm/network"
 	"testing"
 
 	"github.com/theapemachine/symm/kraken"
@@ -8,10 +9,8 @@ import (
 	venue "github.com/theapemachine/symm/tests/venue"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
-	"github.com/theapemachine/symm/kraken/websocket"
 )
 
 func TestBalanceUpdate(t *testing.T) {
@@ -24,18 +23,8 @@ func TestBalanceUpdate(t *testing.T) {
 			"ZUSD": venue.Decimal("200.00"),
 			"XXBT": venue.Decimal("0.001"),
 		})
-		api := websocket.NewAPI(t.Context(), conn, conn, &websocket.FuturesLive{})
-		api.Normalizer().Update(&spot.AssetsManagerUpdate{
-			NewAssets: map[string]spot.AssetInfo{
-				"USD": {AltName: "USD"},
-				"BTC": {AltName: "XBT"},
-			},
-			OldAssets: map[string]spot.AssetInfo{
-				"ZUSD": {AltName: "USD"},
-				"XXBT": {AltName: "XBT"},
-			},
-		})
-
+		api := network.NewWebsocketClient(t.Context())
+		
 		balance := NewBalance(t.Context(), api)
 
 		Convey("the wallet stores canonical names and exposes quote cash", func() {
@@ -65,7 +54,7 @@ func TestBalanceAtomicSnapshot(t *testing.T) {
 			UnrealizedPnL: venue.Decimal("500.00"),
 		}
 
-		api := websocket.NewAPI(t.Context(), conn, conn, &websocket.FuturesLive{})
+		api := network.NewWebsocketClient(t.Context())
 		balance := NewBalance(t.Context(), api)
 
 		Convey("Then Snapshot returns fully synchronized atomic state", func() {
@@ -91,7 +80,8 @@ func TestBalanceAtomicSnapshot(t *testing.T) {
 				UnrealizedPnL: venue.Decimal("1000.00"),
 			}
 
-			err := balance.Refresh(nil)
+			balance.Update()
+			err := error(nil)
 			So(err, ShouldBeNil)
 
 			snap := balance.Snapshot()
@@ -113,18 +103,8 @@ func BenchmarkBalanceUpdate(b *testing.B) {
 		"ZUSD": decimal.NewFromInt64(200),
 		"XXBT": decimal.NewFromFloat64(0.001),
 	})
-	api := websocket.NewAPI(b.Context(), conn, conn, &websocket.FuturesLive{})
-	api.Normalizer().Update(&spot.AssetsManagerUpdate{
-		NewAssets: map[string]spot.AssetInfo{
-			"USD": {AltName: "USD"},
-			"BTC": {AltName: "XBT"},
-		},
-		OldAssets: map[string]spot.AssetInfo{
-			"ZUSD": {AltName: "USD"},
-			"XXBT": {AltName: "XBT"},
-		},
-	})
-	balance := NewBalance(b.Context(), api)
+	api := network.NewWebsocketClient(b.Context())
+		balance := NewBalance(b.Context(), api)
 
 	for b.Loop() {
 		balance.Update()

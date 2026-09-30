@@ -6,7 +6,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 )
@@ -24,7 +23,7 @@ type Regulator struct {
 	closedFee      *decimal.Decimal
 	EntryFee       *decimal.Decimal
 	Realized       *decimal.Decimal
-	Pending        *spot.AddOrderRequest
+	Pending        *kraken.AddOrderRequest
 	OrderID        string
 	LastOrderID    string
 	EntryAt        time.Time
@@ -210,7 +209,7 @@ func (regulator *Regulator) CancelPending() {
 	regulator.Pending = nil
 }
 
-func (regulator *Regulator) Begin(request *spot.AddOrderRequest) error {
+func (regulator *Regulator) Begin(request *kraken.AddOrderRequest) error {
 	if regulator == nil {
 		return errnie.Error(errnie.Err(errnie.Validation, "position: nil regulator", nil))
 	}

@@ -16,12 +16,12 @@ func tradeRow(
 	at time.Time,
 ) *data.Measurement[float64] {
 	m := data.NewMeasurement("websocket", map[string]data.Metric[float64]{
-		"price":              data.NewMetric[float64]("price", data.UnitRate, data.TimescaleInstantaneous, 0, 1).Write(price),
-		"qty":                data.NewMetric[float64]("qty", data.UnitCount, data.TimescaleInstantaneous, 0, 1).Write(qty),
-		"best_price:bid":     data.NewMetric[float64]("best_price:bid", data.UnitRate, data.TimescaleInstantaneous, 0, 1).Write(bidPrice),
-		"best_price:ask":     data.NewMetric[float64]("best_price:ask", data.UnitRate, data.TimescaleInstantaneous, 0, 1).Write(askPrice),
-		"touch_quantity:bid": data.NewMetric[float64]("touch_quantity:bid", data.UnitCount, data.TimescaleInstantaneous, 0, 1).Write(bidQty),
-		"touch_quantity:ask": data.NewMetric[float64]("touch_quantity:ask", data.UnitCount, data.TimescaleInstantaneous, 0, 1).Write(askQty),
+		"price":              data.NewMetric[float64]("price", data.UnitRate, data.TimescaleInstantaneous, 0, 0).Write(price),
+		"qty":                data.NewMetric[float64]("qty", data.UnitCount, data.TimescaleInstantaneous, 0, 0).Write(qty),
+		"best_price:bid":     data.NewMetric[float64]("best_price:bid", data.UnitRate, data.TimescaleInstantaneous, 0, 0).Write(bidPrice),
+		"best_price:ask":     data.NewMetric[float64]("best_price:ask", data.UnitRate, data.TimescaleInstantaneous, 0, 0).Write(askPrice),
+		"touch_quantity:bid": data.NewMetric[float64]("touch_quantity:bid", data.UnitCount, data.TimescaleInstantaneous, 0, 0).Write(bidQty),
+		"touch_quantity:ask": data.NewMetric[float64]("touch_quantity:ask", data.UnitCount, data.TimescaleInstantaneous, 0, 0).Write(askQty),
 	})
 	m.Label, m.At, m.From = symbol, at, at
 	m.Provenance = map[string]string{"side": side}

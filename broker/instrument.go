@@ -1,18 +1,18 @@
 package broker
 
 import (
+	"encoding/json"
 	"fmt"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 
-	"github.com/krakenfx/api-go/v2/pkg/derivatives"
-	"github.com/spf13/viper"
+	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/network"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/system"
 )
 
 /*
@@ -21,7 +21,8 @@ are shared as immutable SDK values; arithmetic returns a new Decimal.
 */
 type Instrument struct {
 	*runtime.System
-	api     *websocket.API
+	public  *network.WebsocketClient
+	futures *network.WebsocketClient
 	cache   *sync.Map
 	quote   string
 	symbols []string
@@ -38,27 +39,26 @@ type Instrument struct {
 NewInstrument creates the market-instrument registry
 used by subscriptions and order validation.
 */
-func NewInstrument(api *websocket.API) *Instrument {
-	if api == nil {
-		panic("broker: api required")
+func NewInstrument(public *network.WebsocketClient, futures *network.WebsocketClient) *Instrument {
+	if public == nil {
+		panic("broker: public transport required")
 	}
 
 	instrument := &Instrument{
-		api:              api,
+		public:           public,
+		futures:          futures,
 		cache:            &sync.Map{},
 		symbols:          []string{},
-		quote:            viper.GetViper().GetString("market.quote_currency"),
+		quote:            system.Cfg.Market.QuoteCurrency,
 		products:         make(map[string]string),
 		symbolsByProduct: make(map[string]string),
 	}
 
-	instrument.System = runtime.NewSystem(api.Context(), "instrument", instrument)
+	instrument.System = runtime.NewSystem(public.Context(), "instrument", instrument)
 	instrument.Transition(runtime.BUSY)
 
-	callback := make(chan any, 1)
-	api.SubInstrument(callback)
-
-	if err := api.Error(); err != nil {
+	msg, _ := sonic.Marshal(kraken.NewInstrumentSubscription())
+	if err := public.Write(msg); err != nil {
 		instrument.Error(errnie.Err(
 			errnie.IO,
 			"instrument: snapshot subscription failed",
@@ -68,23 +68,20 @@ func NewInstrument(api *websocket.API) *Instrument {
 		return instrument
 	}
 
-	var returned any
-
-	select {
-	case returned = <-callback:
-	case <-instrument.Context().Done():
+	buf, err := public.Read()
+	if err != nil {
 		instrument.Error(errnie.Err(
 			errnie.IO,
 			"instrument: snapshot unavailable",
-			instrument.Error(),
+			err,
 		))
 
 		return instrument
 	}
 
-	snapshot, valid := returned.(*kraken.Instrument)
+	snapshot := kraken.NewInstrument(buf)
 
-	if !valid || snapshot == nil {
+	if snapshot == nil {
 		instrument.Error(errnie.Err(
 			errnie.Validation,
 			"instrument: invalid snapshot response",
@@ -95,7 +92,7 @@ func NewInstrument(api *websocket.API) *Instrument {
 	}
 
 	for _, pair := range snapshot.Data.Pairs {
-		if pair.Quote != instrument.quote || pair.Status != "online" || slices.Contains(viper.GetStringSlice("market.instrument.excluded"), pair.Base) {
+		if pair.Quote != instrument.quote || pair.Status != "online" || slices.Contains(system.Cfg.Market.Instrument.Excluded, pair.Base) {
 			continue
 		}
 
@@ -103,18 +100,7 @@ func NewInstrument(api *websocket.API) *Instrument {
 		instrument.cache.Store(pair.Symbol, pair)
 	}
 
-	if err := instrument.loadFuturesProducts(); err != nil {
-		instrument.Error(err)
-		instrument.Transition(runtime.ERROR)
 
-		return instrument
-	}
-
-	// The transport attributes inbound frames with the same mapping the
-	// subscription path uses, so both directions agree by construction.
-	if api.Futures() != nil {
-		api.Futures().SetResolver(instrument.FuturesSymbol)
-	}
 
 	instrument.Transition(runtime.WAITING)
 	return instrument
@@ -124,7 +110,7 @@ func (instrument *Instrument) Cache(pairs []kraken.InstrumentPair) {
 	for _, pair := range pairs {
 		if pair.Quote != instrument.quote ||
 			pair.Status != "online" ||
-			slices.Contains(viper.GetStringSlice("market.instrument.excluded"), pair.Base) {
+			slices.Contains(system.Cfg.Market.Instrument.Excluded, pair.Base) {
 			continue
 		}
 
@@ -193,21 +179,22 @@ the system.
 func (instrument *Instrument) Subscribe() error {
 	errnie.Info("subscribing to instruments")
 
-	subscribers := []func([]string){
-		instrument.api.SubL3,
-		instrument.api.SubTicker,
-		instrument.api.SubTrades,
-	}
-
 	for batch := range slices.Chunk(
-		instrument.symbols, viper.GetViper().GetInt("market.subscribe.batch"),
+		instrument.symbols, system.Cfg.Market.Subscribe.Batch,
 	) {
 		errnie.Info(fmt.Sprintf("subscribing to %d symbols", len(batch)))
 
-		for _, subscribe := range subscribers {
-			subscribe(batch)
+		subs := []json.Marshaler{
+			kraken.NewLevel3Subscription(batch),
+			kraken.NewTickerSubscription(batch),
+			kraken.NewTradeSubscription(batch),
+			kraken.NewFuturesSubscription("ticker", batch),
+			kraken.NewFuturesSubscription("trade", batch),
+		}
 
-			if err := instrument.api.Error(); err != nil {
+		for _, sub := range subs {
+			msg, _ := sonic.Marshal(sub)
+			if err := instrument.public.Write(msg); err != nil {
 				return instrument.Error(errnie.Err(
 					errnie.IO,
 					"instrument: required spot subscription failed",
@@ -216,31 +203,7 @@ func (instrument *Instrument) Subscribe() error {
 			}
 		}
 
-		if err := instrument.futuresLegs("subscribe", batch, []func([]string) error{
-			instrument.api.SubFuturesTicker,
-			instrument.api.SubFuturesTrades,
-		}); err != nil {
-			return instrument.Error(err)
-		}
-
-		pace := time.NewTimer(viper.GetViper().GetDuration("market.subscribe.pace"))
-
-		select {
-		case <-pace.C:
-		case <-instrument.Context().Done():
-			if !pace.Stop() {
-				select {
-				case <-pace.C:
-				default:
-				}
-			}
-
-			return instrument.Error(errnie.Err(
-				errnie.IO,
-				"instrument: subscription interrupted",
-				instrument.Error(),
-			))
-		}
+		time.Sleep(system.Cfg.Market.Subscribe.Pace)
 	}
 
 	instrument.Transition(runtime.READY)
@@ -256,19 +219,21 @@ sockets that are about to close.
 func (instrument *Instrument) Unsubscribe() error {
 	errnie.Info("unsubscribing from instruments")
 
-	unsubscribers := []func([]string){
-		instrument.api.UnsubTrades,
-		instrument.api.UnsubTicker,
-		instrument.api.UnsubL3,
-	}
-
 	for batch := range slices.Chunk(
-		instrument.symbols, viper.GetViper().GetInt("market.subscribe.batch"),
+		instrument.symbols, system.Cfg.Market.Subscribe.Batch,
 	) {
-		for _, unsubscribe := range unsubscribers {
-			unsubscribe(batch)
+		subs := []json.Marshaler{
+			kraken.NewTradeUnsubscription(batch),
+			kraken.NewTickerUnsubscription(batch),
+			kraken.NewLevel3Unsubscription(batch),
+			kraken.NewFuturesUnsubscription("ticker", batch),
+			kraken.NewFuturesUnsubscription("trade", batch),
+		}
 
-			if err := instrument.api.Error(); err != nil {
+		for _, sub := range subs {
+			msg, _ := sonic.Marshal(sub)
+
+			if err := instrument.public.Write(msg); err != nil {
 				return instrument.Error(errnie.Err(
 					errnie.IO,
 					"instrument: required spot unsubscription failed",
@@ -276,130 +241,13 @@ func (instrument *Instrument) Unsubscribe() error {
 				))
 			}
 		}
-
-		if err := instrument.futuresLegs("unsubscribe", batch, []func([]string) error{
-			instrument.api.UnsubFuturesTicker,
-			instrument.api.UnsubFuturesTrades,
-		}); err != nil {
-			return instrument.Error()
-		}
 	}
 
 	instrument.Transition(runtime.WAITING)
 	return nil
 }
 
-/*
-futuresLegs applies one batch of spot symbols to the futures feeds, translating
-them to the venue's product identifiers first. Symbols with no perpetual
-contract carry no futures leg and drop out of the batch, so the venue is never
-asked about a product it does not list.
-*/
-func (instrument *Instrument) futuresLegs(
-	action string,
-	batch []string,
-	feeds []func([]string) error,
-) error {
-	if instrument.api.Futures() == nil {
-		return nil
-	}
 
-	products := instrument.productIDs(batch)
-
-	if len(products) == 0 {
-		return nil
-	}
-
-	for _, feed := range feeds {
-		if err := feed(products); err != nil {
-			return instrument.Error(errnie.Err(
-				errnie.IO,
-				fmt.Sprintf("instrument: failed to %s futures feed", action),
-				err,
-			))
-		}
-	}
-
-	return nil
-}
-
-/*
-loadFuturesProducts indexes the venue's futures instrument specifications into
-both directions of the spot/futures mapping. The endpoint is public, so it needs
-no credentials, and it is read once here alongside the spot instrument snapshot
-so one construction settles the whole universe.
-*/
-func (instrument *Instrument) loadFuturesProducts() error {
-	// No derivative feed consumes this mapping when Futures is absent or unconfigured.
-	if instrument.api.Futures() == nil || instrument.api.Futures().Client() == nil {
-		return nil
-	}
-	response, err := derivatives.NewREST().Instruments()
-
-	if err != nil {
-		return errnie.Err(
-			errnie.IO,
-			"instrument: failed to load futures instrument specifications",
-			err,
-		)
-	}
-
-	for _, listed := range response.Result.Instruments {
-		// Pair is the venue's own spot-form name for the contract's underlying,
-		// which is the join to the spot universe and needs no alias table of
-		// ours. Futures reports it colon-separated ("BTC:USD") where the spot
-		// universe is slash-separated, so only the separator is reconciled.
-		symbol := strings.ToUpper(strings.ReplaceAll(listed.Pair, ":", "/"))
-		product := strings.ToUpper(listed.Symbol)
-
-		if symbol == "" || product == "" {
-			continue
-		}
-
-		instrument.symbolsByProduct[product] = symbol
-
-		// Only a tradeable perpetual is a subscription target. Dated futures
-		// and delisted contracts still resolve inbound frames above, but must
-		// not be subscribed as a symbol's futures leg.
-		if listed.Tradeable && strings.HasPrefix(product, "PF_") {
-			instrument.products[symbol] = product
-		}
-	}
-
-	return nil
-}
-
-/*
-productIDs returns the perpetual futures product identifiers for the spot
-symbols in a batch, dropping the symbols the venue lists no contract for.
-
-The two namespaces do not follow a derivable rule — the futures leg of "BTC/USD"
-is "PF_XBTUSD" while that of "DOGE/USD" is "PF_DOGEUSD", so no alias table gets
-both right — and most spot pairs have no futures contract at all. The venue's
-own instrument list is the authority on both questions, so the mapping is built
-from it and a lookup miss simply means the symbol carries no futures leg.
-*/
-func (instrument *Instrument) productIDs(batch []string) []string {
-	products := make([]string, 0, len(batch))
-
-	for _, symbol := range batch {
-		if product, listed := instrument.products[symbol]; listed {
-			products = append(products, product)
-		}
-	}
-
-	return products
-}
-
-/*
-FuturesSymbol returns the spot symbol carrying a futures product identifier, so
-inbound futures frames attribute to the same symbol the spot streams use.
-*/
-func (instrument *Instrument) FuturesSymbol(productID string) (string, bool) {
-	symbol, listed := instrument.symbolsByProduct[strings.ToUpper(productID)]
-
-	return symbol, listed
-}
 
 /*
 Symbols returns a copy of the subscribed market universe.

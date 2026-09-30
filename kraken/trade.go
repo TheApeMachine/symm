@@ -133,3 +133,38 @@ func (request *TradeVolumeRequest) MarshalJSON() ([]byte, error) {
 	type alias TradeVolumeRequest
 	return sonic.Marshal((*alias)(request))
 }
+
+type TradeSubscription struct {
+	Method string                     `json:"method"`
+	Params TradeSubscriptionParams    `json:"params"`
+}
+
+type TradeSubscriptionParams struct {
+	Channel string   `json:"channel"`
+	Symbol  []string `json:"symbol"`
+}
+
+func NewTradeSubscription(symbols []string) TradeSubscription {
+	return TradeSubscription{
+		Method: "subscribe",
+		Params: TradeSubscriptionParams{
+			Channel: "trade",
+			Symbol:  symbols,
+		},
+	}
+}
+
+func NewTradeUnsubscription(symbols []string) TradeSubscription {
+	return TradeSubscription{
+		Method: "unsubscribe",
+		Params: TradeSubscriptionParams{
+			Channel: "trade",
+			Symbol:  symbols,
+		},
+	}
+}
+
+func (subscription TradeSubscription) MarshalJSON() ([]byte, error) {
+	type alias TradeSubscription
+	return sonic.Marshal((*alias)(&subscription))
+}

@@ -12,8 +12,8 @@ import (
 
 func spotTicker(symbol string, bid float64, ask float64, at time.Time) *data.Measurement[float64] {
 	m := data.NewMeasurement[float64]("websocket", map[string]data.Metric[float64]{
-		"best_bid": data.NewMetric[float64]("best_bid", data.UnitRate, data.TimescaleInstantaneous, 0, 1).Write(bid),
-		"best_ask": data.NewMetric[float64]("best_ask", data.UnitRate, data.TimescaleInstantaneous, 0, 1).Write(ask),
+		"best_bid": data.NewMetric[float64]("best_bid", data.UnitRate, data.TimescaleInstantaneous, 0, 0).Write(bid),
+		"best_ask": data.NewMetric[float64]("best_ask", data.UnitRate, data.TimescaleInstantaneous, 0, 0).Write(ask),
 	})
 	m.Label, m.At, m.From = symbol, at, at
 

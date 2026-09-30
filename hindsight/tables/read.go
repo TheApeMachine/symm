@@ -85,7 +85,7 @@ func (catalog *Catalog) scan(
 			}
 
 			if batch != nil {
-				batchMeasurements, err := readMeasurements(batch)
+				batchMeasurements, err := ReadMeasurements(batch)
 				batch.Release()
 
 				if err != nil {

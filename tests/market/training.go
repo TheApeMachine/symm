@@ -13,7 +13,7 @@ import (
 
 // TrainingPrice supplies the fixture's explicit 0.1 percent fee, not a policy default.
 func TrainingPrice(ctx context.Context) *broker.Price {
-	price := broker.NewPrice(ctx, nil, nil)
+	price := broker.NewPrice(ctx, nil, nil, nil)
 	price.SetFee("BTC/USD", kraken.TradeVolumeFee{Fee: decimal.NewFromFloat64(0.1)})
 	return price
 }

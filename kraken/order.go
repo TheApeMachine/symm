@@ -65,3 +65,38 @@ func NewOrderResponseFromMap(model datura.Map[any], reqID int64) *OrderResponse 
 		ReqID:   reqID,
 	}
 }
+
+type AddOrderRequest struct {
+	Token   string `json:"token"`
+	Pair    string `json:"symbol"`
+	Type    string `json:"side"`
+	OrdType string `json:"order_type"`
+	Volume  string `json:"volume"`
+	Price   string `json:"limit_price,omitempty"`
+	ClOrdId string `json:"cl_ord_id,omitempty"`
+}
+
+type AddOrderMessage struct {
+	Method string          `json:"method"`
+	Params AddOrderRequest `json:"params"`
+}
+
+func NewAddOrderMessage(token string, req *AddOrderRequest) AddOrderMessage {
+	req.Token = token
+	if req.OrdType == "" {
+		if req.Price != "" {
+			req.OrdType = "limit"
+		} else {
+			req.OrdType = "market"
+		}
+	}
+	return AddOrderMessage{
+		Method: "add_order",
+		Params: *req,
+	}
+}
+
+func (msg AddOrderMessage) MarshalJSON() ([]byte, error) {
+	type alias AddOrderMessage
+	return sonic.Marshal((*alias)(&msg))
+}

@@ -11,9 +11,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/network"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/physics/sensorium"
 	"github.com/theapemachine/symm/nomagique/relation"
@@ -48,7 +47,7 @@ number of live orders rather than by the message rate.
 type Solver struct {
 	*runtime.System
 	isAdvancing atomic.Bool
-	api         *websocket.API
+	public      *network.WebsocketClient
 	dataset     *Dataset
 	physics     *sensorium.Manifold
 	forcing     sync.Map
@@ -95,9 +94,9 @@ var (
 	sellExcitationMetric = forcingInputs.Sell.Metric + ":" + forcingInputs.Sell.Side
 )
 
-func NewSolver(ctx context.Context, api *websocket.API) *Solver {
+func NewSolver(ctx context.Context, public *network.WebsocketClient) *Solver {
 	solver := &Solver{
-		api:     api,
+		public:  public,
 		dataset: NewDataset(),
 		loaded:  make(map[int64]struct{}),
 		wake:    make(chan struct{}, 1),
@@ -472,42 +471,14 @@ func (solver *Solver) markDirty(symbol string) {
 }
 
 func (solver *Solver) project() (departures []int64, batch *sensorium.State) {
-	if solver.api == nil {
+	if solver.public == nil {
 		return nil, nil
 	}
 
 	seen := make(map[int64]struct{}, len(solver.loaded))
 	states := make([]*sensorium.State, 0, len(solver.loaded))
 
-	solver.api.Books().Range(func(key, value any) bool {
-		symbol, ok := key.(string)
-
-		if !ok || symbol == "" {
-			return true
-		}
-
-		spotbook, ok := value.(*book.Book)
-
-		if !ok || spotbook == nil {
-			return true
-		}
-
-		forcing := solver.latestForcing(symbol)
-
-		for state := range solver.dataset.Step(
-			symbol, spotbook.Bids, spotbook.Asks, forcing,
-		) {
-			if state == nil || state.N != 1 {
-				sensorium.StatePool.Put(state)
-				continue
-			}
-
-			seen[state.ContentIDs[0]] = struct{}{}
-			states = append(states, state)
-		}
-
-		return true
-	})
+	/* TODO: Get books from router */
 
 	if solver.dataset.Error() != nil {
 		for _, state := range states {
@@ -792,22 +763,7 @@ func (solver *Solver) Crystallize(
 ) []float64 {
 	states := make([]*sensorium.State, 0)
 
-	solver.api.Book(symbol, func(spotbook *book.Book) {
-		if spotbook == nil {
-			return
-		}
-
-		for state := range solver.dataset.StepClamped(
-			symbol, spotbook.Bids, spotbook.Asks, forcing,
-		) {
-			if state == nil || state.N != 1 {
-				sensorium.StatePool.Put(state)
-				continue
-			}
-
-			states = append(states, state)
-		}
-	})
+	/* TODO: Get book from router */
 
 	if err := solver.dataset.Error(); err != nil {
 		for _, state := range states {

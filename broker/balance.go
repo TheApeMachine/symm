@@ -6,9 +6,8 @@ import (
 	"sync/atomic"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/network"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/system"
 )
@@ -33,16 +32,16 @@ any other object that wants to interact with the balance in any way.
 */
 type Balance struct {
 	*runtime.System
-	api      *websocket.API
+	private  *network.WebsocketClient
 	Quote    string
 	snapshot atomic.Pointer[AccountSnapshot]
 }
 
-func NewBalance(ctx context.Context, api *websocket.API) *Balance {
+func NewBalance(ctx context.Context, private *network.WebsocketClient) *Balance {
 	balance := &Balance{
-		System: runtime.NewSystem(ctx, "balance"),
-		api:    api,
-		Quote:  system.Cfg.Market.QuoteCurrency,
+		System:  runtime.NewSystem(ctx, "balance"),
+		private: private,
+		Quote:   system.Cfg.Market.QuoteCurrency,
 	}
 
 	balance.Update()
@@ -120,10 +119,7 @@ func (balance *Balance) Update() {
 	if balance == nil {
 		return
 	}
-
-	if err := balance.Refresh(nil); err != nil {
-		balance.Error(err)
-	}
+	// Websocket router calls UpdateWallet
 }
 
 /*
@@ -175,47 +171,10 @@ func (balance *Balance) Unrealized() *decimal.Decimal {
 	return snapshot.Unrealized
 }
 
-/*
-Refresh reports what the desk is worth if every open lot were closed now.
-
-Cash alone understates the account while positions are open. Unrealized is the
-profit/loss only; equity is cash plus the basis committed to open positions plus
-that profit/loss.
-*/
-func (balance *Balance) Refresh(instrument *Instrument) (err error) {
-	if balance == nil || balance.api == nil {
-		return nil
+func (balance *Balance) UpdateWallet(wallet *kraken.Balance) {
+	if balance == nil || wallet == nil {
+		return
 	}
-
-	if balance.Status() == runtime.BUSY {
-		return nil
-	}
-
-	balance.Transition(runtime.BUSY)
-	defer balance.Transition(runtime.READY)
-
-	wallet, err := balance.api.Balance()
-
-	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.IO,
-			"[balance] failed to retrieve account balance",
-			err,
-		))
-	}
-
-	tradeBalance, err := balance.api.TradeBalance()
-
-	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.IO,
-			"[balance] failed to retrieve trade balance",
-			err,
-		))
-	}
-
-	snapshot := newAccountSnapshot(balance.Quote, wallet, tradeBalance)
+	snapshot := newAccountSnapshot(balance.Quote, wallet, nil)
 	balance.snapshot.Store(snapshot)
-
-	return nil
 }

@@ -5,7 +5,6 @@ import (
 
 	"github.com/smarty/go-disruptor"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/system"
 )
 
@@ -21,36 +20,34 @@ pushes it to the Tees.
 */
 type Workspace[T any] struct {
 	*System
-	channel  disruptor.Disruptor
-	register *store.Register[T]
+	channel disruptor.Disruptor
+	buffer  []T
+	mask    int64
 }
 
 func NewWorkspace[T any](
 	ctx context.Context,
+	writerCount uint8,
 	label string,
 	stages [][]Node[T],
 	tees ...Tee,
 ) *Workspace[T] {
+	capacity := system.Cfg.Runtime.Workspace.Buffer
 	workload := &Workspace[T]{
-		register: store.NewRegister[T](int(system.Cfg.Runtime.Workspace.Buffer)),
+		buffer: make([]T, capacity),
+		mask:   int64(capacity - 1),
 	}
 
 	opts := optionList(
-		disruptor.Options.BufferCapacity(
-			system.Cfg.Runtime.Workspace.Buffer,
-		),
+		disruptor.Options.BufferCapacity(capacity),
+		disruptor.Options.WriterCount(writerCount),
 	)
-
-	peerLimit := 0
 
 	for _, stage := range stages {
 		group := make([]disruptor.Handler, len(stage))
-		stageLimit := peerLimit
 
-		for index, node := range stage {
-			consumer := NewConsumer(node, workload.register, tees...)
-			group[index] = consumer.SetPeerLimit(stageLimit)
-			peerLimit = consumer.Identity() + 1
+		for _, node := range stage {
+			group = append(group, NewConsumer(node, workload.buffer, workload.mask, tees...))
 		}
 
 		if len(group) > 0 {
@@ -101,6 +98,7 @@ func (workspace *Workspace[T]) Step(payload T) T {
 	}
 
 	seq := workspace.channel.Reserve(1)
+	workspace.buffer[seq&workspace.mask] = payload
 	workspace.channel.Commit(seq, seq)
 
 	return payload

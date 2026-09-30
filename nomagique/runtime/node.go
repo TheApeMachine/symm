@@ -2,12 +2,10 @@ package runtime
 
 import (
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/store"
 )
 
 type Node[T any] interface {
 	Step(T) T
-	Register() T
 }
 
 /*
@@ -17,67 +15,22 @@ appends it and answers the slot, and the node is told its identity so the
 values it produces name their own register slot.
 */
 type Consumer[T any] struct {
-	node      Node[T]
-	register  *store.Register[T]
-	ID        int
-	peerLimit int
-	tees      []Tee
-	owner     string
+	node   Node[T]
+	buffer []T
+	mask   int64
+	tees   []Tee
 }
 
 func NewConsumer[T any](
-	node Node[T], register *store.Register[T], tees ...Tee,
+	node Node[T], buffer []T, mask int64, tees ...Tee,
 ) *Consumer[T] {
 	consumer := &Consumer[T]{
-		node:      node,
-		register:  register,
-		peerLimit: -1,
-		tees:      tees,
+		node:   node,
+		buffer: buffer,
+		mask:   mask,
+		tees:   tees,
 	}
 
-	if node == nil || register == nil {
-		return consumer
-	}
-
-	val := node.Register()
-
-	if named, ok := any(node).(interface{ Name() string }); ok {
-		consumer.owner = named.Name()
-	}
-
-	data.Read[*store.Query[T]](consumer.register.Next(data.NewValue(*store.NewQuery(
-		consumer, data.ActionIdentify, data.NewValue(val),
-	))))
-
-	if meas, ok := any(val).(*data.Measurement[float64]); ok && meas != nil {
-		meas.ID = consumer.ID
-	}
-
-	return consumer
-}
-
-/*
-SetPeerLimit restricts the consumer's peer queries to register slots strictly below limit.
-*/
-func (consumer *Consumer[T]) SetPeerLimit(limit int) *Consumer[T] {
-	consumer.peerLimit = limit
-	return consumer
-}
-
-/*
-Identity names the register slot this consumer's node owns, so the consumer
-is the subject of every query against its slot.
-*/
-func (consumer *Consumer[T]) Identity() int {
-	return consumer.ID
-}
-
-/*
-Identify names the register slot this consumer's node owns, so the consumer
-is the subject of every query against its slot.
-*/
-func (consumer *Consumer[T]) Identify(id int) data.Identifiable[T] {
-	consumer.ID = id
 	return consumer
 }
 
@@ -90,66 +43,16 @@ clear that sequence slot without replacing the node's last working state.
 */
 func (consumer *Consumer[T]) Handle(lower, upper int64) {
 	for sequence := lower; sequence <= upper; sequence++ {
-		result := consumer.step(sequence)
-		payload := data.NewValue(result)
-
-		if measurement, ok := any(result).(*data.Measurement[float64]); any(result) == nil || (ok && measurement == nil) {
-			payload = nil
-		}
-
-		query := store.NewQuery(consumer, data.ActionWrite, payload).SetSequence(sequence)
-
-		out := data.Read[T](consumer.register.Next(data.NewValue(*query)))
-		measurement, ok := any(out).(*data.Measurement[float64])
-
-		if !ok || measurement == nil {
-			continue
-		}
+		payload := consumer.buffer[sequence&consumer.mask]
+		result := consumer.node.Step(payload)
 
 		for _, tee := range consumer.tees {
 			if tee != nil {
-				tee.Push(measurement)
+				// Convert to Measurement if it's a tee
+				if m, ok := any(result).(*data.Measurement[float64]); ok {
+					tee.Push(m)
+				}
 			}
 		}
 	}
-}
-
-func (consumer *Consumer[T]) step(sequence int64) T {
-	var empty T
-	query := store.NewQuery(consumer, data.ActionRead).SetSequence(sequence)
-
-	if consumer.peerLimit >= 0 {
-		query.SetPeerLimit(consumer.peerLimit)
-	}
-
-	value := data.Read[T](consumer.register.Next(data.NewValue(*query)))
-
-	if measurement, ok := any(value).(*data.Measurement[float64]); ok && measurement != nil {
-		peers := measurement.Peers[:0]
-
-		for _, peer := range measurement.Peers {
-			if peer != nil && peer.SeqIdx == sequence+1 {
-				peers = append(peers, peer)
-			}
-		}
-
-		measurement.Peers = peers
-
-		if consumer.peerLimit != 0 && measurement.Metadata["peer-interest"] != "" && len(peers) == 0 {
-			return empty
-		}
-
-		measurement.SeqIdx = sequence + 1
-		measurement.Result = nil
-		measurement.Err = nil
-	}
-
-	result := consumer.node.Step(value)
-
-	if measurement, ok := any(result).(*data.Measurement[float64]); ok && measurement != nil {
-		measurement.SeqIdx = sequence + 1
-		measurement.Provenance["owner"] = consumer.owner
-	}
-
-	return result
 }

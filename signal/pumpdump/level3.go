@@ -3,120 +3,153 @@ package pumpdump
 import (
 	"context"
 	"fmt"
-	"github.com/theapemachine/errnie"
-	"iter"
 	"unsafe"
 
+	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/broker"
+	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/arithmetic"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/probability"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/nomagique/statistic"
+	"github.com/theapemachine/symm/nomagique/temporal"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
-
-type level3EntityInput struct {
-	Symbol string
-	Bid    float64
-	Ask    float64
-}
-
-type level3EntityResult struct {
-	Bid            float64
-	Ask            float64
-	Midpoint       float64
-	Spread         float64
-	RelativeSpread float64
-	Valid          bool
-}
-
-type level3EntityState struct {
-	hasBid  bool
-	hasAsk  bool
-	prevBid float64
-	prevAsk float64
-}
-
-type level3EntityPipeline struct {
-	*core.PrimitiveError
-	paths map[string]*level3EntityState
-	out   level3EntityResult
-}
-
-func newLevel3EntityPipeline() core.Primitive {
-	return &level3EntityPipeline{
-		PrimitiveError: core.NewPrimitiveError(),
-		paths:          make(map[string]*level3EntityState),
-	}
-}
-
-func (op *level3EntityPipeline) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
-	return func(yield func(unsafe.Pointer) bool) {
-		for arriving := range in {
-			input := (*level3EntityInput)(arriving)
-
-			state := op.paths[input.Symbol]
-			if state == nil {
-				state = &level3EntityState{}
-				op.paths[input.Symbol] = state
-			}
-
-			if input.Bid > 0 {
-				state.prevBid = input.Bid
-				state.hasBid = true
-			}
-
-			if input.Ask > 0 {
-				state.prevAsk = input.Ask
-				state.hasAsk = true
-			}
-
-			if !state.hasBid || !state.hasAsk {
-				op.out = level3EntityResult{Valid: false}
-				if !yield(unsafe.Pointer(&op.out)) {
-					return
-				}
-				continue
-			}
-
-			midpoint := (state.prevBid + state.prevAsk) / 2.0
-			spread := state.prevAsk - state.prevBid
-			relativeSpread := 0.0
-
-			if midpoint > 0 {
-				relativeSpread = spread / midpoint
-			}
-
-			op.out = level3EntityResult{
-				Bid:            state.prevBid,
-				Ask:            state.prevAsk,
-				Midpoint:       midpoint,
-				Spread:         spread,
-				RelativeSpread: relativeSpread,
-				Valid:          true,
-			}
-
-			if !yield(unsafe.Pointer(&op.out)) {
-				return
-			}
-		}
-	}
-}
 
 /*
 Level3 is the authoritative executable-touch market entity. It holds no state
 and no logic of its own: its entire behavior is one nomagique pipeline over the
-measurement itself — every stage writes its facts into the measurement where it
-computes them, and the workload's register owns the measurement's lifetime.
+measurement itself.
 */
 type Level3 struct {
 	*runtime.System
+	books    broker.BookSource
 	pipeline core.Primitive
 	ID       int
 }
 
-func NewLevel3(ctx context.Context) *Level3 {
+func NewLevel3(ctx context.Context, books broker.BookSource) *Level3 {
 	level3 := &Level3{
-		pipeline: nomagique.NewNumber(newLevel3EntityPipeline()),
+		books: books,
+		pipeline: nomagique.NewNumber(
+			// 0. Extract Book Data via Adapter (intercepts measurement, queries book, yields measurement)
+			data.NewAdapter(
+				transport.NewPass(),
+				func(m *data.Measurement[float64]) *data.Measurement[float64] {
+					var bid, ask float64
+					books.Book(m.Label, func(b *spotbook.Book) {
+						if b == nil {
+							return
+						}
+						if bestBid := b.BestBid(); bestBid != nil {
+							bid = bestBid.Price.Float64()
+						}
+						if bestAsk := b.BestAsk(); bestAsk != nil {
+							ask = bestAsk.Price.Float64()
+						}
+					})
+
+					if bid > 0 && ask > 0 && bid >= ask {
+						m.Err = errnie.Err(
+							errnie.Internal,
+							fmt.Sprintf("pumpdump: crossed touch (%f >= %f)", bid, ask),
+							nil,
+						)
+					} else if bid > 0 && ask > 0 {
+						if m.Metrics == nil {
+							m.Metrics = make(map[string]data.Metric[float64])
+						}
+						m.Metrics["best_bid"] = m.Metrics["best_bid"].Write(bid)
+						m.Metrics["best_ask"] = m.Metrics["best_ask"].Write(ask)
+					}
+					return m
+				},
+				func(m *data.Measurement[float64], out *data.Measurement[float64]) {},
+			),
+
+			// 1. Calculate structural metrics using pure equations
+			data.NewEquations(
+				data.Equation{
+					Output: "spread",
+					Op:     arithmetic.NewSubtract(),
+					Left:   "best_ask",
+					Right:  "best_bid",
+				},
+				data.Equation{
+					Output: "midpoint",
+					Op:     arithmetic.NewAdd(),
+					Left:   "best_bid",
+					Right:  "best_ask",
+				},
+				data.Equation{
+					Output: "relative_spread",
+					Op:     arithmetic.NewDivide(),
+					Left:   "spread",
+					Right:  "midpoint",
+				},
+			),
+
+			// 2. Compute advanced statistical and temporal features in parallel
+			transport.NewFan(
+				data.NewAdapter(
+					temporal.NewVelocity(),
+					func(m *data.Measurement[float64]) *temporal.Observation {
+						return &temporal.Observation{
+							Value: m.Metrics["midpoint"].Raw,
+							At:    m.At.UnixNano(),
+						}
+					},
+					func(m *data.Measurement[float64], out *temporal.VelocityReading) {
+						if out.Defined {
+							m.Metrics["midpoint_velocity"] = m.Metrics["midpoint_velocity"].Write(out.Rate)
+						}
+					},
+				),
+				data.NewAdapter(
+					statistic.NewEstimator(),
+					func(m *data.Measurement[float64]) *float64 {
+						val := m.Metrics["spread"].Raw
+						return &val
+					},
+					func(m *data.Measurement[float64], out *statistic.MomentReading) {
+						if out.VarianceDefined {
+							m.Metrics["spread_variance"] = m.Metrics["spread_variance"].Write(out.Variance)
+						}
+					},
+				),
+				data.NewAdapter(
+					statistic.NewCUSUM(),
+					func(m *data.Measurement[float64]) *statistic.CUSUMObservation {
+						return &statistic.CUSUMObservation{
+							Sequence:  m.SeqIdx,
+							Value:     m.Metrics["midpoint"].Raw,
+							Hurdle:    0.0001, // example hurdle
+							Threshold: 1.0,
+						}
+					},
+					func(m *data.Measurement[float64], out *statistic.CUSUMReading) {
+						m.Metrics["cusum_upper"] = m.Metrics["cusum_upper"].Write(out.UpperSum)
+						m.Metrics["cusum_lower"] = m.Metrics["cusum_lower"].Write(out.LowerSum)
+					},
+				),
+				data.NewAdapter(
+					probability.NewEntropy(),
+					func(m *data.Measurement[float64]) *float64 {
+						val := m.Metrics["relative_spread"].Raw
+						return &val
+					},
+					func(m *data.Measurement[float64], out *float64) {
+						m.Metrics["spread_entropy"] = m.Metrics["spread_entropy"].Write(*out)
+					},
+				),
+			),
+
+			// 3. Finalize
+			data.NewFinalizer[float64](),
+		),
 	}
 
 	level3.System = runtime.NewSystem(ctx, "pumpdump:level3", level3)
@@ -127,95 +160,21 @@ func NewLevel3(ctx context.Context) *Level3 {
 Step supplies the arriving measurement to the pipeline and returns it: the
 measurement is the pipeline's state, enriched in place.
 */
-func (level3 *Level3) Step(m *data.Measurement[float64]) *data.Measurement[float64] {
+func (level3 *Level3) Step(
+	measurement *data.Measurement[float64],
+) *data.Measurement[float64] {
 	if level3.Status() != runtime.READY {
 		errnie.Warn(level3.Name() + ": Step called before READY; dropping event")
-		return m
+		return measurement
 	}
 
-	if m == nil {
-		return nil
+	if measurement == nil || measurement.Err != nil || measurement.Label == "" {
+		return measurement
 	}
 
-	if m.Err != nil {
-		return m
-	}
-
-	input := m
-
-	if len(m.Peers) > 0 {
-		peer := m.FindPeer(func(p *data.Measurement[float64]) bool {
-			if p.Label == "" || p.Provenance["channel"] == "ticker" || p.Provenance["channel"] == "trade" {
-				return false
-			}
-			b := p.Metrics["best_bid"].Raw
-			if b == 0 {
-				b = p.Metrics["bid"].Raw
-			}
-			a := p.Metrics["best_ask"].Raw
-			if a == 0 {
-				a = p.Metrics["ask"].Raw
-			}
-			return b > 0 && a > 0
-		})
-
-		if peer == nil {
-			return nil
-		}
-
-		input = peer
-	}
-
-	m.Pull(input)
-
-	bid := input.Metrics["best_bid"].Raw
-	if bid == 0 {
-		bid = input.Metrics["bid"].Raw
-	}
-	ask := input.Metrics["best_ask"].Raw
-	if ask == 0 {
-		ask = input.Metrics["ask"].Raw
-	}
-
-	if bid > 0 && ask > 0 && bid >= ask {
-		m.Err = fmt.Errorf("pumpdump: crossed touch (%f >= %f)", bid, ask)
-		return m
-	}
-
-	if m.Metadata == nil {
-		m.Metadata = make(map[string]string)
-	}
-
-	pipeInput := level3EntityInput{
-		Symbol: input.Label,
-		Bid:    bid,
-		Ask:    ask,
-	}
-
-	var valid bool
-	for out := range level3.pipeline.Next(transport.NewOne(unsafe.Pointer(&pipeInput)).Next(nil)) {
-		res := (*level3EntityResult)(out)
-		if !res.Valid {
-			return nil
-		}
-
-		valid = true
-		m.Metrics["best_bid"] = m.Metrics["best_bid"].Write(res.Bid)
-		m.Metrics["best_ask"] = m.Metrics["best_ask"].Write(res.Ask)
-		m.Metrics["midpoint"] = m.Metrics["midpoint"].Write(res.Midpoint)
-		m.Metrics["spread"] = m.Metrics["spread"].Write(res.Spread)
-		m.Metrics["relative_spread"] = m.Metrics["relative_spread"].Write(res.RelativeSpread)
-		m.Maturity = 1.0
-	}
-
-	if !valid {
-		return nil
-	}
-
-	m.Label = input.Label
-	m.At = input.At
-	m.Finalize()
-	return m
+	return data.Read[*data.Measurement[float64]](level3.pipeline.Next(
+		transport.NewOne(unsafe.Pointer(&measurement)).Next(nil),
+	))
 }
 
 /*
@@ -224,12 +183,17 @@ Values are empty; the workload uses this at startup to allocate the metric
 schema before feeding streaming records.
 */
 func (level3 *Level3) Register() *data.Measurement[float64] {
-	m := data.NewMeasurement[float64]("pumpdump:level3", map[string]data.Metric[float64]{
-		"best_bid":        data.NewMetric[float64]("best_bid", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
-		"best_ask":        data.NewMetric[float64]("best_ask", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
-		"midpoint":        data.NewMetric[float64]("midpoint", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
-		"spread":          data.NewMetric[float64]("spread", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
-		"relative_spread": data.NewMetric[float64]("relative_spread", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
+	m := data.NewMeasurement("pumpdump:level3", map[string]data.Metric[float64]{
+		"best_bid":          data.NewMetric[float64]("best_bid", data.UnitRate, data.TimescaleInstantaneous, 0, 0),
+		"best_ask":          data.NewMetric[float64]("best_ask", data.UnitRate, data.TimescaleInstantaneous, 0, 0),
+		"midpoint":          data.NewMetric[float64]("midpoint", data.UnitRate, data.TimescaleInstantaneous, 0, 0),
+		"spread":            data.NewMetric[float64]("spread", data.UnitRate, data.TimescaleInstantaneous, 0, 0),
+		"relative_spread":   data.NewMetric[float64]("relative_spread", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 0),
+		"midpoint_velocity": data.NewMetric[float64]("midpoint_velocity", data.UnitRate, data.TimescaleInstantaneous, 0, 0),
+		"spread_variance":   data.NewMetric[float64]("spread_variance", data.UnitRate, data.TimescaleInstantaneous, 0, 0),
+		"cusum_upper":       data.NewMetric[float64]("cusum_upper", data.UnitRate, data.TimescaleInstantaneous, 0, 0),
+		"cusum_lower":       data.NewMetric[float64]("cusum_lower", data.UnitRate, data.TimescaleInstantaneous, 0, 0),
+		"spread_entropy":    data.NewMetric[float64]("spread_entropy", data.UnitNat, data.TimescaleInstantaneous, 0, 0),
 	})
 	m.Metadata["peer-interest"] = "*"
 	return m

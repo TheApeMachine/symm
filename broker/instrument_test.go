@@ -5,11 +5,10 @@ import (
 	"testing"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/network"
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
@@ -62,7 +61,7 @@ func TestInstrumentNewInstrument(t *testing.T) {
 		Reset(viper.Reset)
 
 		conn := &instrumentConn{Conn: venue.NewConn()}
-		api := websocket.NewAPI(t.Context(), conn, conn, &websocket.FuturesLive{})
+		api := network.NewWebsocketClient(t.Context())
 		instrument := newTestInstrument(t, api)
 
 		Convey("It should remain pending without starting market flow", func() {
@@ -82,7 +81,7 @@ func TestInstrumentSubscribe(t *testing.T) {
 		Reset(viper.Reset)
 
 		conn := &instrumentConn{Conn: venue.NewConn()}
-		api := websocket.NewAPI(t.Context(), conn, conn, &websocket.FuturesLive{})
+		api := network.NewWebsocketClient(t.Context())
 		instrument := newTestInstrument(t, api)
 
 		Convey("When subscriptions are explicitly started", func() {
@@ -103,24 +102,10 @@ func TestInstrumentSubscribe(t *testing.T) {
 newTestInstrument builds an Instrument directly from an api,
 matching how boot wires the dependency.
 */
-func newTestInstrument(t testing.TB, api *websocket.API) *Instrument {
+func newTestInstrument(t testing.TB, api *network.WebsocketClient) *Instrument {
 	t.Helper()
-	api.Normalizer().Update(&spot.AssetsManagerUpdate{
-		NewAssets: map[string]spot.AssetInfo{
-			"BTC": {AltName: "BTC"},
-			"USD": {AltName: "USD"},
-		},
-		NewPairs: map[string]spot.AssetPair{
-			"BTC/USD": {
-				AltName: "BTCUSD",
-				WSName:  "BTC/USD",
-				Base:    "BTC",
-				Quote:   "USD",
-			},
-		},
-	})
-
-	instrument := NewInstrument(api)
+	
+	instrument := NewInstrument(api, nil)
 
 	if err := instrument.Error(); err != nil {
 		t.Fatalf("construct instrument: %v", err)

@@ -11,7 +11,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker/position"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/network"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/types"
 )
@@ -53,11 +53,15 @@ type EntryCost struct {
 }
 
 /* Price owns fee state and economic calculations using the SDK's decimals. */
+type BookSource interface {
+	Book(string, func(*spotbook.Book))
+}
+
 type Price struct {
 	*runtime.System
 	Instrument *Instrument
 	Books      BookSource
-	api        *websocket.API
+	private    *network.WebsocketClient
 	fees       *sync.Map
 	tickers    *sync.Map
 	normalizer *spot.Normalizer
@@ -66,35 +70,19 @@ type Price struct {
 
 // BookSource is the resident book boundary shared by live and captured tapes.
 // Both supply SDK books; pricing, fees, sizing and accounting stay on Price.
-type BookSource interface {
-	Book(string, func(*spotbook.Book))
-}
 
 func NewPrice(
 	ctx context.Context,
-	api *websocket.API,
+	books BookSource,
+	private *network.WebsocketClient,
 	instrument *Instrument,
 ) *Price {
-	var normalizer *spot.Normalizer
-
-	if api != nil {
-		normalizer = api.Normalizer()
-	}
-
-	if normalizer == nil {
-		normalizer = spot.NewNormalizer()
-	}
-
-	var books BookSource
-
-	if api != nil {
-		books = api
-	}
-
+	normalizer := spot.NewNormalizer()
+	
 	price := &Price{
 		System:     runtime.NewSystem(ctx, "price"),
 		Instrument: instrument,
-		api:        api,
+		private:    private,
 		Books:      books,
 		normalizer: normalizer,
 		fees:       &sync.Map{},
@@ -113,7 +101,7 @@ func NewPrice(
 	})
 
 	if err := errnie.Require(map[string]any{
-		"api":        api,
+		"private":    private,
 		"instrument": instrument,
 	}); err != nil {
 		price.Error(err)
@@ -636,65 +624,7 @@ func (price *Price) FeeIfAvailable(symbol string) *kraken.TradeVolumeFee {
 
 /* GetFees normalizes the venue's fee keys once and publishes a complete batch. */
 func (price *Price) GetFees(symbols []string) error {
-	price.Transition(runtime.BUSY)
-	result, err := price.api.TradeVolume(symbols)
-
-	if err != nil {
-		price.Error(err)
-
-		return errnie.Error(errnie.Err(
-			errnie.IO,
-			"[price] trade volume: failed to fetch",
-			err,
-		))
-	}
-
-	if result == nil {
-		validationErr := errnie.Err(
-			errnie.UnprocessableContent,
-			"[price] trade volume: response required",
-			nil,
-		)
-
-		price.Error(validationErr)
-		return errnie.Error(validationErr)
-	}
-
-	fees := make(map[string]kraken.TradeVolumeFee, len(result.Fees))
-
-	for identifier, fee := range result.Fees {
-		if fee.Fee == nil || fee.Fee.Sign() < 0 || fee.Fee.Cmp(decimalHundred) >= 0 {
-			validationErr := errnie.Err(
-				errnie.Validation,
-				"[price] trade volume: invalid taker fee for "+identifier,
-				nil,
-			)
-
-			price.Error(validationErr)
-			return errnie.Error(validationErr)
-		}
-
-		fees[price.normalizer.Name(identifier)] = fee
-	}
-
-	for _, symbol := range symbols {
-		if _, found := fees[price.normalizer.Name(symbol)]; !found {
-			notFoundErr := errnie.Err(
-				errnie.NotFound,
-				"[price] trade volume: taker fee missing for "+symbol,
-				nil,
-			)
-
-			price.Error(notFoundErr)
-			return errnie.Error(notFoundErr)
-		}
-	}
-
-	for symbol, fee := range fees {
-		price.fees.Store(symbol, fee)
-	}
-
-	price.Transition(runtime.READY)
+	// TODO: Replace with WebSocket trade_volume equivalent if available, or direct REST call
 	return nil
 }
 

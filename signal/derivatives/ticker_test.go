@@ -24,10 +24,10 @@ provenance fact; zero or negative prices are an invalid market.
 */
 func row(symbol string, last, index, mark, openInterest float64, at time.Time) *data.Measurement[float64] {
 	m := data.NewMeasurement[float64]("websocket", map[string]data.Metric[float64]{
-		"last":          data.NewMetric[float64]("last", data.UnitRate, data.TimescaleInstantaneous, 0, 1).Write(last),
-		"index_price":   data.NewMetric[float64]("index_price", data.UnitRate, data.TimescaleInstantaneous, 0, 1).Write(index),
-		"mark_price":    data.NewMetric[float64]("mark_price", data.UnitRate, data.TimescaleInstantaneous, 0, 1).Write(mark),
-		"open_interest": data.NewMetric[float64]("open_interest", data.UnitCount, data.TimescaleInstantaneous, 0, 1).Write(openInterest),
+		"last":          data.NewMetric[float64]("last", data.UnitRate, data.TimescaleInstantaneous, 0, 0).Write(last),
+		"index_price":   data.NewMetric[float64]("index_price", data.UnitRate, data.TimescaleInstantaneous, 0, 0).Write(index),
+		"mark_price":    data.NewMetric[float64]("mark_price", data.UnitRate, data.TimescaleInstantaneous, 0, 0).Write(mark),
+		"open_interest": data.NewMetric[float64]("open_interest", data.UnitCount, data.TimescaleInstantaneous, 0, 0).Write(openInterest),
 	})
 	m.Label, m.At, m.From = symbol, at, at
 

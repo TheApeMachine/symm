@@ -13,7 +13,8 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/broker/position"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/network"
+	"github.com/theapemachine/symm/nomagique/cognition"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/system"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
@@ -46,13 +47,13 @@ func (trader *Trader) symbolLock(symbol string) *sync.Mutex {
 
 func NewTrader(
 	ctx context.Context,
-	api *websocket.API,
+	private *network.WebsocketClient,
 	price *broker.Price,
 	balance *broker.Balance,
 ) *Trader {
 	trader := &Trader{
 		System:       runtime.NewSystem(ctx, "trader"),
-		desk:         broker.NewDesk(ctx, api, price, balance),
+		desk:         broker.NewDesk(ctx, private, price, balance),
 		balance:      balance,
 		price:        price,
 		reservedCash: decimal.NewFromInt64(0).SetScale(decimal.DefaultScale),
@@ -64,14 +65,10 @@ func NewTrader(
 	initialDecisions := make([]*wire.DecisionT, 0, 50)
 	trader.decisions.Store(&initialDecisions)
 
-	if api != nil {
-		api.OnExecution(trader.ApplyExecution)
-	}
-
 	return trader
 }
 
-func (trader *Trader) OnAction(symbol string, action Action) {
+func (trader *Trader) OnAction(symbol string, action cognition.Action) {
 	if trader == nil || symbol == "" {
 		return
 	}
@@ -87,7 +84,7 @@ func (trader *Trader) OnAction(symbol string, action Action) {
 	}
 
 	switch action {
-	case ActionEnter:
+	case cognition.ActionEnter:
 		if _, exists := trader.positions.Load(symbol); exists {
 			return
 		}
@@ -196,7 +193,7 @@ func (trader *Trader) OnAction(symbol string, action Action) {
 			trader.admissionMu.Unlock()
 		}()
 
-		if err := trader.desk.EnterWithRegulator(reg, spend); err != nil {
+		if err := trader.desk.Execution.EnterWithRegulator(reg, spend); err != nil {
 			trader.positions.Delete(symbol)
 			trader.positionsVersion.Add(1)
 			trader.RecordDecision(symbol, "blocked", 0.0, fmt.Sprintf("enter failed: %v", err))
@@ -204,7 +201,7 @@ func (trader *Trader) OnAction(symbol string, action Action) {
 		}
 
 		trader.RecordDecision(symbol, "enter", 1.0, "precursor trigger")
-	case ActionExit:
+	case cognition.ActionExit:
 		val, found := trader.positions.Load(symbol)
 
 		if !found || val == nil {
@@ -227,7 +224,7 @@ func (trader *Trader) OnAction(symbol string, action Action) {
 			return
 		}
 
-		if err := trader.desk.Exit(reg); err != nil {
+		if err := trader.desk.Execution.Exit(reg); err != nil {
 			trader.RecordDecision(symbol, "exit_failed", 1.0, fmt.Sprintf("exit failed: %v", err))
 			return
 		}

@@ -1,4 +1,4 @@
-package websocket
+package broker
 
 import (
 	"context"
@@ -14,7 +14,6 @@ import (
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/callback"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	sdk "github.com/krakenfx/api-go/v2/pkg/kraken"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
@@ -24,9 +23,7 @@ import (
 )
 
 type Book struct {
-	ctx        context.Context
-	cancel     context.CancelFunc
-	status     *runtime.Status
+	*runtime.System
 	pending    atomic.Pointer[map[string]struct{}]
 	seeded     chan struct{}
 	manager    *spot.BookManager
@@ -44,16 +41,14 @@ func NewBook(ctx context.Context, normalizer *spot.Normalizer) *Book {
 	}
 
 	errnie.Info("websocket: initializing book manager")
-	ctx, cancel := context.WithCancel(ctx)
+	
 
 	book := &Book{
-		ctx:        ctx,
-		cancel:     cancel,
-		status:     runtime.NewStatus(),
 		seeded:     make(chan struct{}, 1),
 		manager:    spot.NewBookManager(),
 		normalizer: normalizer,
 	}
+	book.System = runtime.NewSystem(ctx, "book", book)
 
 	book.manager.OnCreateBook.Recurring(func(
 		event *callback.Event[*spotbook.Book],
@@ -77,7 +72,7 @@ func NewBook(ctx context.Context, normalizer *spot.Normalizer) *Book {
 			bookEvent *callback.Event[*spotbook.ChecksumResult],
 		) {
 			if !bookEvent.Data.Match {
-				book.status.Transition(runtime.ERROR)
+				book.Transition(runtime.ERROR)
 
 				errnie.Error(errnie.Err(
 					errnie.Validation,
@@ -96,7 +91,7 @@ func NewBook(ctx context.Context, normalizer *spot.Normalizer) *Book {
 }
 
 func (book *Book) Status() runtime.Stage {
-	return book.status.Current()
+	return book.Status()
 }
 
 /*
@@ -111,7 +106,7 @@ func (book *Book) Expect(symbols []string) {
 	}
 
 	book.pending.Store(&newPending)
-	book.status.Transition(runtime.BUSY)
+	book.Transition(runtime.BUSY)
 }
 
 /*
@@ -120,9 +115,9 @@ Wait blocks boot on the owner's readiness, never on elapsed market time.
 func (book *Book) Wait() error {
 	for book.Status() != runtime.READY {
 		select {
-		case <-book.ctx.Done():
+		case <-book.Context().Done():
 			return errnie.Error(errnie.Err(
-				errnie.IO, "book: seed interrupted", book.ctx.Err(),
+				errnie.IO, "book: seed interrupted", book.Context().Err(),
 			))
 		case <-book.seeded:
 		}
@@ -175,10 +170,9 @@ func (book *Book) SetNotify(notify func(string, time.Time)) {
 }
 
 func (book *Book) Update(
-	event *callback.Event[*sdk.WebSocketMessage],
 	payload *kraken.Level3,
 ) (err error) {
-	if event == nil || event.Data == nil || payload == nil {
+	if payload == nil {
 		return nil
 	}
 
@@ -211,7 +205,7 @@ func (book *Book) Update(
 	}
 
 	if len(resynced) > 0 && resync != nil {
-		group, ctx := errgroup.WithContext(book.ctx)
+		group, ctx := errgroup.WithContext(book.Context())
 
 		for _, symbol := range resynced {
 			group.Go(func() error {
@@ -273,7 +267,7 @@ func (book *Book) Update(
 			})
 
 			if pendingCount == 0 && divergingEmpty {
-				book.status.Transition(runtime.READY)
+				book.Transition(runtime.READY)
 
 				select {
 				case book.seeded <- struct{}{}:
@@ -312,8 +306,8 @@ func (book *Book) apply(
 
 		err := func() error {
 			select {
-			case <-book.ctx.Done():
-				return errnie.Error(book.ctx.Err())
+			case <-book.Context().Done():
+				return errnie.Error(book.Context().Err())
 			default:
 			}
 
@@ -407,7 +401,7 @@ func (book *Book) apply(
 					if quantity.Sign() <= 0 && symbolSide.Levels[order.LimitPrice.String()] == nil {
 						book.manager.CreateBook(data.Symbol, depth)
 						book.diverging.Store(data.Symbol, struct{}{})
-						book.status.Transition(runtime.ERROR)
+						book.Transition(runtime.ERROR)
 						resynced = append(resynced, data.Symbol)
 
 						return errnie.Error(errnie.Err(

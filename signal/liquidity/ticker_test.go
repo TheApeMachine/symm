@@ -257,10 +257,10 @@ func TestTickerStepPeerIsolation(t *testing.T) {
 	Convey("Given a quoted peer and an owned liquidity measurement", t, func() {
 		entity := readyTicker(t.Context())
 		peer := data.NewMeasurement("public", map[string]data.Metric[float64]{
-			"bid":     data.NewMetric[float64]("bid", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
-			"ask":     data.NewMetric[float64]("ask", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
-			"bid_qty": data.NewMetric[float64]("bid_qty", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
-			"ask_qty": data.NewMetric[float64]("ask_qty", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
+			"bid":     data.NewMetric[float64]("bid", data.UnitRate, data.TimescaleInstantaneous, 0, 0),
+			"ask":     data.NewMetric[float64]("ask", data.UnitRate, data.TimescaleInstantaneous, 0, 0),
+			"bid_qty": data.NewMetric[float64]("bid_qty", data.UnitCount, data.TimescaleInstantaneous, 0, 0),
+			"ask_qty": data.NewMetric[float64]("ask_qty", data.UnitCount, data.TimescaleInstantaneous, 0, 0),
 		})
 		peer.Label = "BTC/USD"
 		peer.At = time.Unix(1, 0)
@@ -293,10 +293,10 @@ func TestTickerStepPeerIsolation(t *testing.T) {
 func TestTickerStepConcurrentPeers(t *testing.T) {
 	Convey("Given many instruments sharing one quote peer", t, func() {
 		peer := data.NewMeasurement("public", map[string]data.Metric[float64]{
-			"bid":     data.NewMetric[float64]("bid", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
-			"ask":     data.NewMetric[float64]("ask", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
-			"bid_qty": data.NewMetric[float64]("bid_qty", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
-			"ask_qty": data.NewMetric[float64]("ask_qty", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
+			"bid":     data.NewMetric[float64]("bid", data.UnitRate, data.TimescaleInstantaneous, 0, 0),
+			"ask":     data.NewMetric[float64]("ask", data.UnitRate, data.TimescaleInstantaneous, 0, 0),
+			"bid_qty": data.NewMetric[float64]("bid_qty", data.UnitCount, data.TimescaleInstantaneous, 0, 0),
+			"ask_qty": data.NewMetric[float64]("ask_qty", data.UnitCount, data.TimescaleInstantaneous, 0, 0),
 		})
 		peer.Label = "BTC/USD"
 		peer.At = time.Unix(1, 0)

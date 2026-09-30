@@ -1,4 +1,4 @@
-package websocket
+package broker
 
 import (
 	"bytes"
@@ -9,15 +9,13 @@ import (
 	"strings"
 	"sync/atomic"
 
-	"github.com/theapemachine/symm/nomagique/runtime"
-
 	"github.com/bytedance/sonic"
-	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
 /*
@@ -28,9 +26,7 @@ Private frames publish onto explicit typed subscriptions so Desk and tests use
 the same direct wiring as the live transport.
 */
 type Paper struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
-	simulator   *Simulator
+	*runtime.System
 	commandGate atomic.Pointer[chan struct{}]
 	executions  func(*kraken.Execution)
 }
@@ -40,15 +36,9 @@ NewPaper opens the paper spot transport with explicit private subscriptions.
 */
 func NewPaper(
 	ctx context.Context,
-	simulator *Simulator,
 ) *Paper {
-	ctx, cancel := context.WithCancel(ctx)
-
-	paper := &Paper{
-		ctx:       ctx,
-		cancel:    cancel,
-		simulator: simulator,
-	}
+	paper := &Paper{}
+	paper.System = runtime.NewSystem(ctx, "paper", paper)
 
 	gate := make(chan struct{}, 1)
 	gate <- struct{}{}
@@ -69,13 +59,6 @@ func (paper *Paper) OnExecution(handler func(*kraken.Execution)) {
 }
 
 /*
-Status reports the backing simulator status.
-*/
-func (paper *Paper) Status() runtime.Stage {
-	return paper.simulator.Status()
-}
-
-/*
 Balances loads the current paper wallet through the native CLI and returns the
 same asset-to-decimal map used by Kraken's real REST balance endpoint.
 */
@@ -85,9 +68,7 @@ func (paper *Paper) Balances() (*kraken.Balance, error) {
 		err   error
 	)
 
-	paper.simulator.Do(REST, func() {
-		model, err = paper.execute("balances", "balance", "--verbose")
-	})
+	model, err = paper.execute("balances", "balance", "--verbose")
 
 	if err != nil {
 		return nil, errnie.Error(errnie.Err(
@@ -110,46 +91,12 @@ func (paper *Paper) Balances() (*kraken.Balance, error) {
 	return kraken.NewPaperBalance(raw), nil
 }
 
-func (paper *Paper) SubInstrument(chan any) {}
-
-/*
-Level3Divergences reports none: paper never owns a live level3 delta stream,
-so no symbol can diverge from a venue checksum.
-*/
-func (paper *Paper) Level3Divergences() <-chan string { return nil }
-
-/*
-ResubscribeL3 is a no-op for the same reason Level3Divergences is.
-*/
-func (paper *Paper) ResubscribeL3(string) {}
-func (paper *Paper) SubTicker([]string)   {}
-func (paper *Paper) SubBook([]string)     {}
-func (paper *Paper) SubTrades([]string)   {}
-func (paper *Paper) SubL3([]string)       {}
-func (paper *Paper) SubCandles([]string)  {}
-
-/*
-Books returns no public book cache because paper hijacks the private transport
-only; the public websocket remains the source of market data.
-*/
-func (paper *Paper) Books() map[string]*book.Book {
-	return nil
-}
-
-/*
-Book returns no public book because paper does not own market subscriptions.
-*/
-func (paper *Paper) Book(_ string, read func(*book.Book)) {
-	read(nil)
-}
-
 /*
 Write routes the same subscription and order envelopes used by live transports
 through the paper CLI under simulator latency.
 */
 func (paper *Paper) Write(
 	params json.Marshaler,
-	callbacks ...Callback[any],
 ) error {
 	raw, err := params.MarshalJSON()
 
@@ -189,7 +136,7 @@ func (paper *Paper) Write(
 			return err
 		}
 
-		return paper.publishPlace(model, request.ReqID, callbacks)
+		return paper.publishPlace(model, request.ReqID)
 	}
 
 	switch request.Params.Channel {
@@ -241,14 +188,6 @@ func (paper *Paper) Post(string, json.Marshaler) ([]byte, error) {
 }
 
 /*
-Close cancels the paper transport context.
-*/
-func (paper *Paper) Close() error {
-	paper.cancel()
-	return nil
-}
-
-/*
 ResetPaperAccount calls `kraken paper reset --yes` via the system shell to restore
 the paper trading account to its default state.
 */
@@ -280,9 +219,7 @@ Reset resets the paper trading account via ResetPaperAccount and publishes a fre
 func (paper *Paper) Reset() error {
 	var err error
 
-	paper.simulator.Do(REST, func() {
-		err = ResetPaperAccount(paper.ctx)
-	})
+	err = ResetPaperAccount(paper.Context())
 
 	if err != nil {
 		return errnie.Error(err)
@@ -300,9 +237,7 @@ func (paper *Paper) TradesHistory() (spot.TradesHistoryResult, error) {
 		err   error
 	)
 
-	paper.simulator.Do(REST, func() {
-		model, err = paper.execute("history", "history", "--verbose")
-	})
+	model, err = paper.execute("history", "history", "--verbose")
 
 	if err != nil {
 		return spot.TradesHistoryResult{}, errnie.Error(errnie.Err(
@@ -324,9 +259,7 @@ func (paper *Paper) OpenOrders() (spot.OpenOrdersResult, error) {
 		err   error
 	)
 
-	paper.simulator.Do(REST, func() {
-		model, err = paper.execute("orders", "orders", "--verbose")
-	})
+	model, err = paper.execute("orders", "orders", "--verbose")
 
 	if err != nil {
 		return spot.OpenOrdersResult{}, errnie.Error(err)
@@ -411,9 +344,7 @@ func (paper *Paper) CancelOrder(
 
 	var err error
 
-	paper.simulator.Do(REST, func() {
-		_, err = paper.execute("cancel", "cancel", orderID, "--yes")
-	})
+	_, err = paper.execute("cancel", "cancel", orderID, "--yes")
 
 	if err != nil {
 		return spot.CancelResult{}, errnie.Error(err)
@@ -437,13 +368,11 @@ func (paper *Paper) TradeBalance() (*kraken.TradeBalanceResult, error) {
 		err    error
 	)
 
-	paper.simulator.Do(REST, func() {
-		model, err = paper.execute("status", "status", "--verbose")
+	model, err = paper.execute("status", "status", "--verbose")
 
-		if err == nil {
-			wallet, err = paper.execute("balances", "balance", "--verbose")
-		}
-	})
+	if err == nil {
+		wallet, err = paper.execute("balances", "balance", "--verbose")
+	}
 
 	if err != nil {
 		return nil, errnie.Error(errnie.Err(
@@ -501,9 +430,7 @@ func (paper *Paper) TradeVolume(symbols []string) (*kraken.TradeVolumeResult, er
 	var model datura.Map[any]
 	var err error
 
-	paper.simulator.Do(REST, func() {
-		model, err = paper.execute("status", "status", "--verbose")
-	})
+	model, err = paper.execute("status", "status", "--verbose")
 
 	if err != nil {
 		return nil, errnie.Error(errnie.Err(
@@ -577,7 +504,7 @@ func (paper *Paper) AddOrder(order *spot.AddOrderRequest) (spot.AddOrderResult, 
 		return spot.AddOrderResult{}, err
 	}
 
-	if err := paper.publishPlace(model, 0, nil); err != nil {
+	if err := paper.publishPlace(model, 0); err != nil {
 		return spot.AddOrderResult{}, err
 	}
 
@@ -619,15 +546,15 @@ func (paper *Paper) execute(entity string, command ...string) (datura.Map[any], 
 	select {
 	case <-gate:
 		defer func() { gate <- struct{}{} }()
-	case <-paper.ctx.Done():
-		return nil, paper.ctx.Err()
+	case <-paper.Context().Done():
+		return nil, paper.Context().Err()
 	}
 
 	input := []string{"paper"}
 	input = append(input, command...)
 	input = append(input, "--output", "json")
 
-	cmd := exec.CommandContext(paper.ctx, "kraken", input...)
+	cmd := exec.CommandContext(paper.Context(), "kraken", input...)
 
 	if errors.Is(cmd.Err, exec.ErrDot) {
 		cmd.Err = nil
@@ -731,18 +658,9 @@ publishPlace emits order ack, fill, and a balance snapshot for one paper order.
 func (paper *Paper) publishPlace(
 	model datura.Map[any],
 	reqID int64,
-	callbacks []Callback[any],
 ) error {
 	orderAck := kraken.NewOrderResponseFromMap(model, reqID)
 	paper.publish("add_order", orderAck)
-
-	for _, callback := range callbacks {
-		if callback.Channel != "add_order" {
-			continue
-		}
-
-		callback.Send(orderAck)
-	}
 
 	paper.publish("executions", kraken.NewExecutionFromMap(model))
 
@@ -771,9 +689,7 @@ func (paper *Paper) placeOrder(
 		err   error
 	)
 
-	paper.simulator.Do(REST, func() {
-		model, err = paper.execute("executions", command...)
-	})
+	model, err = paper.execute("executions", command...)
 
 	if err != nil {
 		return nil, errnie.Error(errnie.Err(

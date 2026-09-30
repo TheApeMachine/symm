@@ -4,9 +4,8 @@ import (
 	"testing"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/krakenfx/api-go/v2/pkg/spot"
-	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken"
+	. "github.com/smartystreets/goconvey/convey"
 )
 
 func TestRegulator(t *testing.T) {
@@ -20,7 +19,7 @@ func TestRegulator(t *testing.T) {
 		So(reg.IsClosed(), ShouldBeTrue)
 
 		Convey("When an entry order is initiated with Begin", func() {
-			entryReq := &spot.AddOrderRequest{
+			entryReq := &kraken.AddOrderRequest{
 				Pair:    "BTC/USD",
 				Type:    "buy",
 				Volume:  "0.01",
@@ -35,7 +34,7 @@ func TestRegulator(t *testing.T) {
 			So(reg.IsClosed(), ShouldBeFalse)
 			So(reg.Identifies("", reg.PositionID), ShouldBeTrue)
 
-			duplicateReq := &spot.AddOrderRequest{
+			duplicateReq := &kraken.AddOrderRequest{
 				Pair:    "BTC/USD",
 				Type:    "buy",
 				Volume:  "0.01",
@@ -47,7 +46,7 @@ func TestRegulator(t *testing.T) {
 
 	Convey("Given an entry order with partial fill", t, func() {
 		reg := NewRegulator("BTC/USD")
-		entryReq := &spot.AddOrderRequest{
+		entryReq := &kraken.AddOrderRequest{
 			Pair:    "BTC/USD",
 			Type:    "buy",
 			Volume:  "0.01",
@@ -98,7 +97,7 @@ func TestRegulator(t *testing.T) {
 
 	Convey("Given an open position ready for exit", t, func() {
 		reg := NewRegulator("BTC/USD")
-		entryReq := &spot.AddOrderRequest{
+		entryReq := &kraken.AddOrderRequest{
 			Pair:    "BTC/USD",
 			Type:    "buy",
 			Volume:  "0.01",
@@ -121,7 +120,7 @@ func TestRegulator(t *testing.T) {
 		So(reg.IsHolding(), ShouldBeTrue)
 
 		Convey("When initiating an exit order", func() {
-			exitReq := &spot.AddOrderRequest{
+			exitReq := &kraken.AddOrderRequest{
 				Pair:    "BTC/USD",
 				Type:    "sell",
 				Volume:  reg.Volume().String(),
@@ -173,7 +172,7 @@ func TestRegulator(t *testing.T) {
 
 	Convey("Given a pending entry order that is rejected", t, func() {
 		reg := NewRegulator("BTC/USD")
-		entryReq := &spot.AddOrderRequest{
+		entryReq := &kraken.AddOrderRequest{
 			Pair:    "BTC/USD",
 			Type:    "buy",
 			Volume:  "0.01",

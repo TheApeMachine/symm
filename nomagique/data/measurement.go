@@ -4,6 +4,8 @@ import (
 	"errors"
 	"iter"
 	"maps"
+	"math"
+	"strings"
 	"time"
 	"unsafe"
 
@@ -296,6 +298,88 @@ func (op *Finalizer[Value]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Po
 			measurement := *(**Measurement[Value])(arriving)
 
 			if measurement != nil {
+				// Dynamic Schema Scaling for Grid compatibility (Priority 3 Separation)
+				var midpoint, spread, totalQty float64
+
+				if metric, ok := measurement.Metrics["midpoint"]; ok {
+					midpoint, _ = any(metric.Raw).(float64)
+				}
+				if metric, ok := measurement.Metrics["spread"]; ok {
+					spread, _ = any(metric.Raw).(float64)
+				}
+
+				if midpoint == 0 {
+					var b, a float64
+					if metric, ok := measurement.Metrics["best_bid"]; ok {
+						b, _ = any(metric.Raw).(float64)
+					}
+					if metric, ok := measurement.Metrics["best_ask"]; ok {
+						a, _ = any(metric.Raw).(float64)
+					}
+					if b == 0 {
+						if metric, ok := measurement.Metrics["best_price:bid"]; ok {
+							b, _ = any(metric.Raw).(float64)
+						}
+					}
+					if a == 0 {
+						if metric, ok := measurement.Metrics["best_price:ask"]; ok {
+							a, _ = any(metric.Raw).(float64)
+						}
+					}
+					if b > 0 && a > 0 {
+						midpoint = (b + a) / 2.0
+						spread = a - b
+					}
+				}
+
+				if metric, ok := measurement.Metrics["touch_quantity:bid"]; ok {
+					if q, ok := any(metric.Raw).(float64); ok {
+						totalQty += q
+					}
+				}
+				if metric, ok := measurement.Metrics["touch_quantity:ask"]; ok {
+					if q, ok := any(metric.Raw).(float64); ok {
+						totalQty += q
+					}
+				}
+
+				for key, metric := range measurement.Metrics {
+					val, valid := any(metric.Raw).(float64)
+					if !valid {
+						continue
+					}
+
+					// 1. Assign dynamic Center/Scale for raw prices
+					if midpoint > 0 && spread > 0 {
+						if strings.Contains(key, "price") || key == "best_bid" || key == "best_ask" || key == "midpoint" {
+							metric.Center = midpoint
+							metric.Scale = spread
+						}
+					}
+
+					// 2. Assign dynamic Center/Scale for raw quantities
+					if totalQty > 0 && (strings.Contains(key, "quantity") || strings.Contains(key, "volume") || strings.Contains(key, "notional")) {
+						if !strings.Contains(key, "imbalance") && !strings.Contains(key, "fraction") && !strings.Contains(key, "rate") {
+							metric.Center = 0
+							metric.Scale = totalQty
+						}
+					}
+
+					// 3. Extract baseline as Center and stddev as Scale if we have them
+					if baseline, ok := measurement.Metrics[key+"_baseline"]; ok {
+						if bVal, ok := any(baseline.Raw).(float64); ok {
+							metric.Center = bVal
+							if zscore, ok := measurement.Metrics[key+"_zscore"]; ok {
+								if zVal, ok := any(zscore.Raw).(float64); ok && zVal != 0 {
+									metric.Scale = math.Abs((val - bVal) / zVal)
+								}
+							}
+						}
+					}
+
+					measurement.Metrics[key] = metric
+				}
+
 				readingEval := transport.NewEvaluate(op.quality)
 				var reading QualityReading
 

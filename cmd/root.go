@@ -14,21 +14,23 @@ import (
 	"runtime"
 	"runtime/debug"
 	"strings"
-	"sync/atomic"
 	"time"
 
+	"github.com/bytedance/sonic"
 	"github.com/grafana/pyroscope-go"
+	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/hindsight/tables"
-	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/logic/category"
 	"github.com/theapemachine/symm/logic/cognition"
 	"github.com/theapemachine/symm/logic/manifold"
 	"github.com/theapemachine/symm/logic/resonance"
+	"github.com/theapemachine/symm/network"
 	"github.com/theapemachine/symm/nomagique/data"
 	nmruntime "github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/signal/correlation"
@@ -46,6 +48,7 @@ import (
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
+	"github.com/theapemachine/symm/workbench"
 )
 
 /*
@@ -124,32 +127,19 @@ var (
 				return err
 			}
 
-			public := websocket.New(
-				ctx,
-				websocket.NewSimulator(),
-				false,
-				system.Cfg.WebSocket.Endpoints.Public,
-			)
+			public := network.NewWebsocketClient(ctx)
+			public.Open(system.Cfg.WebSocket.Endpoints.Public)
 
-			private := websocket.New(
-				ctx,
-				websocket.NewSimulator(),
-				true,
-				system.Cfg.WebSocket.Endpoints.Private,
-			)
+			private := network.NewWebsocketClient(ctx)
+			private.Open(system.Cfg.WebSocket.Endpoints.Private)
 
-			futures := websocket.NewFutures(
-				ctx,
-				system.Cfg.WebSocket.Endpoints.Futures,
-			)
+			futures := network.NewWebsocketClient(ctx)
+			futures.Open(system.Cfg.WebSocket.Endpoints.Futures)
 
-			api := websocket.NewAPI(
-				ctx, public, private, futures,
-			)
-
-			instrument := broker.NewInstrument(api)
-			price := broker.NewPrice(ctx, api, instrument)
-			balance := broker.NewBalance(ctx, api)
+			instrument := broker.NewInstrument(public, futures)
+			book := broker.NewBook(ctx, spot.NewNormalizer())
+			price := broker.NewPrice(ctx, book, private, instrument)
+			balance := broker.NewBalance(ctx, private)
 
 			if err := instrument.Error(); err != nil {
 				return errnie.Error(errnie.Err(
@@ -185,13 +175,10 @@ var (
 
 			errnie.Info("symm: initializing training and UI hub...")
 			storeTee := hindsight.NewStoreTee(ctx, "storeTee")
-			trader := strategy.NewTrader(ctx, api, price, balance)
-			training := strategy.NewTraining(ctx, price, trader, uiTee)
-			training.SetCatalog(catalog, epoch)
+			trader := strategy.NewTrader(ctx, private, price, balance)
 
-			uiTee.Transition(nmruntime.READY)
-			training.Transition(nmruntime.BUSY)
-			training.Run()
+			wh := workbench.New()
+			defer wh.Close()
 
 			webrtcTee := ui.NewUITee(
 				ctx, "webrtcTee", 1,
@@ -200,55 +187,19 @@ var (
 				},
 			)
 
+			training := strategy.NewTraining(ctx, price, trader, catalog, wh, webrtcTee)
+
+			uiTee.Transition(nmruntime.READY)
+			training.Transition(nmruntime.BUSY)
+			training.Run()
+
+			// webrtcTee was moved above
+
 			hub := ui.NewHub(ctx, trader, catalog, uiTee, webrtcTee)
 			hub.SetPositionSource(trader)
-			hub.SetCognitionSource(training)
-			hub.SetExitHandler(func(symbol string) {
-				trader.OnAction(symbol, strategy.ActionExit)
-			})
 
 			hub.Run()
 			hub.Transition(nmruntime.READY)
-
-			// Wire trade outcomes back to the training stage machine so it can
-			// track win rate and decide when to advance stages.
-			trader.SetOnPositionClosed(func(symbol string, returnFraction float64, fee float64) {
-				training.RecordTradeResult(returnFraction)
-			})
-
-			errnie.Info("symm: restoring model checkpoint...")
-
-			if err := training.LoadCheckpoint(); err != nil {
-				errnie.Error(err)
-			}
-
-			defer func() {
-				if err := training.SaveCheckpoint(); err != nil {
-					errnie.Error(err)
-				}
-			}()
-
-			go func() {
-				interval := system.Cfg.Learning.CheckpointInterval
-
-				if interval <= 0 {
-					interval = time.Minute
-				}
-
-				ticker := time.NewTicker(interval)
-				defer ticker.Stop()
-
-				for {
-					select {
-					case <-ctx.Done():
-						return
-					case <-ticker.C:
-						if err := training.SaveCheckpoint(); err != nil {
-							errnie.Error(err)
-						}
-					}
-				}
-			}()
 
 			codeCommit, buildID, configDigest := resolveRunIdentity()
 			errnie.Info("symm: recording active run in catalog...")
@@ -264,7 +215,7 @@ var (
 				return errnie.Error(errnie.Err(errnie.IO, "cmd: record training run", err))
 			}
 
-			manifoldSolver := manifold.NewSolver(ctx, api)
+			manifoldSolver := manifold.NewSolver(ctx, public)
 
 			correlationTicker := correlation.NewTicker(ctx)
 			leadlagTicker := leadlag.NewTicker(ctx)
@@ -275,10 +226,10 @@ var (
 			hawkesTrade := hawkes.NewTrade(ctx)
 			toxicityTrade := toxicity.NewTrade(ctx)
 			pumpdumpTrade := pumpdump.NewTrade(ctx)
-			depthflowLevel3 := depthflow.NewLevel3(ctx)
-			morphologyLevel3 := morphology.NewLevel3(ctx)
-			toxicityLevel3 := toxicity.NewLevel3(ctx)
-			pumpdumpLevel3 := pumpdump.NewLevel3(ctx)
+			depthflowLevel3 := depthflow.NewLevel3(ctx, book)
+			morphologyLevel3 := morphology.NewLevel3(ctx, book)
+			toxicityLevel3 := toxicity.NewLevel3(ctx, book)
+			pumpdumpLevel3 := pumpdump.NewLevel3(ctx, book)
 			derivativesTicker := derivatives.NewTicker(ctx)
 			derivativesTrade := derivatives.NewTrade(ctx)
 
@@ -290,13 +241,9 @@ var (
 			cognitionSolver := cognition.NewSolver(ctx)
 			workspace := nmruntime.NewWorkspace(
 				ctx,
+				2,
 				"workspace",
 				[][]nmruntime.Node[*data.Measurement[float64]]{
-					{
-						public,
-						private,
-						futures,
-					},
 					{
 						correlationTicker,
 						leadlagTicker,
@@ -378,7 +325,6 @@ var (
 				derivativesTicker,
 				derivativesTrade,
 				workspace,
-				api,
 			} {
 				runsys.Transition(nmruntime.READY)
 			}
@@ -386,7 +332,7 @@ var (
 			drainErrors := make(chan error, 1)
 
 			go func() {
-				drainErrors <- catalog.Drain(ctx, epoch, storeTee, training.ExcursionLearn)
+				drainErrors <- catalog.Drain(ctx, epoch, storeTee)
 			}()
 
 			manifoldSolver.Start()
@@ -398,15 +344,67 @@ var (
 			}()
 
 			// Every processing and off-ramp owner is ready before ingress opens.
-			for _, connection := range private.Connections() {
-				connection.Transition(nmruntime.READY)
-			}
 
 			for _, transport := range []nmruntime.RuntimeSystem{public, private, futures} {
 				transport.Transition(nmruntime.READY)
 			}
 
-			var totalSteps atomic.Uint64
+			startIngress := func(client *network.WebsocketClient) {
+				go func() {
+					for {
+						if ctx.Err() != nil {
+							return
+						}
+						buf, err := client.Read()
+						if err != nil {
+							continue
+						}
+
+						var msg struct {
+							Channel string `json:"channel"`
+						}
+						if err := sonic.Unmarshal(buf, &msg); err != nil {
+							continue
+						}
+
+						switch msg.Channel {
+						case "level3":
+							l3 := kraken.NewLevel3(buf)
+							if l3 != nil && book != nil {
+								book.Update(l3)
+							}
+						case "ticker":
+							t := kraken.NewTicker(buf)
+							if t != nil && t.IsSuccess() {
+								for _, td := range t.Data {
+									m := data.NewMeasurement("websocket", map[string]data.Metric[float64]{
+										"bid": {Raw: td.Bid.Float64()},
+										"ask": {Raw: td.Ask.Float64()},
+									})
+									m.Label = td.Symbol
+									workspace.Step(m)
+								}
+							}
+						case "trade":
+							t := kraken.NewTrade(buf)
+							if t != nil && t.IsSuccess() {
+								for _, td := range t.Data {
+									m := data.NewMeasurement("websocket", map[string]data.Metric[float64]{
+										"price":  {Raw: td.Price.Float64()},
+										"volume": {Raw: td.Qty},
+									})
+									m.Label = td.Symbol
+									workspace.Step(m)
+								}
+							}
+						}
+					}
+				}()
+			}
+
+			startIngress(public)
+			startIngress(private)
+			startIngress(futures)
 
 			for ctx.Err() == nil {
 				select {
@@ -418,16 +416,7 @@ var (
 					return errnie.Error(errnie.Err(
 						errnie.IO, "symm: catalog drain stopped", err,
 					))
-				default:
 				}
-
-				if public.Pending() > 0 || private.Pending() > 0 || futures.Pending() > 0 {
-					workspace.Step(nil)
-					totalSteps.Add(1)
-					continue
-				}
-
-				time.Sleep(100 * time.Microsecond)
 			}
 
 			return ctx.Err()
@@ -465,7 +454,7 @@ func startPprof() {
 }
 
 func resolveRunIdentity() (codeCommit string, buildID string, configDigest string) {
-	buildID = strategy.TrainingFormat
+	buildID = "training"
 	if info, ok := debug.ReadBuildInfo(); ok {
 		var vcsRev, vcsMod string
 		for _, setting := range info.Settings {

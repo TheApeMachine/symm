@@ -1,6 +1,8 @@
 package system
 
 import (
+	"time"
+
 	"github.com/spf13/viper"
 )
 
@@ -10,6 +12,7 @@ type Market struct {
 	Balance       int
 	Instrument    *Instrument
 	Book          *Book
+	Subscribe     *Subscribe
 }
 
 type Instrument struct {
@@ -18,6 +21,11 @@ type Instrument struct {
 
 type Book struct {
 	Depth int
+}
+
+type Subscribe struct {
+	Batch int
+	Pace  time.Duration
 }
 
 func NewMarket() *Market {
@@ -32,6 +40,8 @@ func NewMarket() *Market {
 	viper.SetDefault("market.quote_currency", "USD")
 	viper.SetDefault("market.book.depth", 10)
 	viper.SetDefault("market.balance", 200)
+	viper.SetDefault("market.subscribe.batch", 100)
+	viper.SetDefault("market.subscribe.pace", 500*time.Millisecond)
 	// l3_depth is the subscribed Kraken L3 depth: the number of PRICE LEVELS
 	// per side, not the number of individual orders. It stays in lockstep
 	// with cmd/cfg/config.yml (market.l3_depth) so the execution reducer can
@@ -47,6 +57,10 @@ func NewMarket() *Market {
 		},
 		Book: &Book{
 			Depth: viper.GetInt("market.book.depth"),
+		},
+		Subscribe: &Subscribe{
+			Batch: viper.GetInt("market.subscribe.batch"),
+			Pace:  viper.GetDuration("market.subscribe.pace"),
 		},
 	}
 }

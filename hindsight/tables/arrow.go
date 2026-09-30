@@ -139,7 +139,7 @@ func fillMeasurements(
 	}
 }
 
-func readMeasurements(batch arrow.RecordBatch) ([]*data.Measurement[float64], error) {
+func ReadMeasurements(batch arrow.RecordBatch) ([]*data.Measurement[float64], error) {
 	totalRows := int(batch.NumRows())
 	measurements := make([]*data.Measurement[float64], 0, totalRows)
 
