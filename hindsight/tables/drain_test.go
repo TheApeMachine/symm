@@ -15,7 +15,7 @@ import (
 
 func TestCatalog_Drain(t *testing.T) {
 	Convey("An idle or empty storage queue can be drained without dereferencing nil", t, func() {
-		tee := hindsight.NewStoreTee(t.Context(), "drain-test", 4)
+		tee := hindsight.NewStoreTee(t.Context(), "drain-test")
 		defer func() { So(tee.Close(), ShouldBeNil) }()
 		catalog := tables.Wrap(nil)
 
@@ -38,7 +38,7 @@ func TestCatalog_Drain(t *testing.T) {
 
 	Convey("Cancellation commits every already accepted observation", t, func() {
 		catalog := tablestest.New(t)
-		tee := hindsight.NewStoreTee(t.Context(), "shutdown", 8)
+		tee := hindsight.NewStoreTee(t.Context(), "shutdown")
 		tee.Transition(runtime.READY)
 		defer func() { So(tee.Close(), ShouldBeNil) }()
 		for sequence := int64(1); sequence <= 8; sequence++ {
@@ -64,7 +64,7 @@ func TestCatalog_Drain(t *testing.T) {
 
 func BenchmarkCatalog_Drain(b *testing.B) {
 	catalog := tablestest.New(b)
-	tee := hindsight.NewStoreTee(b.Context(), "drain-benchmark", 2048)
+	tee := hindsight.NewStoreTee(b.Context(), "drain-benchmark")
 	tee.Transition(runtime.READY)
 	b.Cleanup(func() {
 		if err := tee.Close(); err != nil {

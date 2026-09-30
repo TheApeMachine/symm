@@ -585,16 +585,17 @@ export const LearningDashboard = () => {
 
 					if (sortedLitRegions.length > 0) {
 						setActivePrecursors(
-							sortedLitRegions.slice(0, 4).map((r, idx) => {
+							sortedLitRegions.map((r) => {
 								const peakCell = currentNodes.find(
 									(c) => Number(c.cluster) === Number(r.id),
 								);
 								const name = peakCell?.label
-									? `Region ${String.fromCharCode(65 + idx)} (${peakCell.label})`
-									: `Region ${String.fromCharCode(65 + idx)}`;
+									? `Region #${r.id} (${peakCell.label})`
+									: `Region #${r.id}`;
 								return {
 									label: name,
 									activity: r.strength,
+									members: r.members,
 								};
 							}),
 						);

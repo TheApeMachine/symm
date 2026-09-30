@@ -18,7 +18,7 @@ func TestCalibratorRetention(t *testing.T) {
 		checkCalibrator(probability.NewCalibrator(nil), 0)
 	})
 
-	Convey("Non-finite samples are refused without changing the prior window", t, func() {
+	Convey("Non-finite samples fail fast and halt the primitive without producing further output", t, func() {
 		for _, bad := range []float64{math.NaN(), math.Inf(1), math.Inf(-1)} {
 			node := probability.NewCalibrator(nil)
 			_Eval := transport.NewEvaluate(node)
@@ -34,9 +34,8 @@ func TestCalibratorRetention(t *testing.T) {
 			So(node.Error(), ShouldNotBeNil)
 
 			got := tests.CollectSeq[probability.CalibratorReading](node.Next(transport.NewValues(5.0).Next(nil)))
-			So(len(got), ShouldEqual, 1)
-			So(got[0].PriorCount, ShouldEqual, 1)
-			So(got[0].Value, ShouldEqual, 1)
+			So(len(got), ShouldEqual, 0)
+			So(node.Error(), ShouldNotBeNil)
 		}
 	})
 }

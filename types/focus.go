@@ -1,7 +1,6 @@
 package types
 
 import (
-	"strings"
 	"sync/atomic"
 )
 
@@ -40,28 +39,4 @@ func Focus() string {
 	}
 
 	return symbol
-}
-
-/*
-Allows reports whether the given symbol is permitted under the current focus gate.
-An empty symbol (global or system metrics) is always permitted.
-When focus is explicit wildcard "*" or "all", all symbols are permitted.
-Empty/missing focus fails closed: non-empty symbols are rejected.
-*/
-func Allows(symbol string) bool {
-	if symbol == "" {
-		return true
-	}
-
-	focus := Focus()
-
-	if focus == "*" || focus == "all" {
-		return true
-	}
-
-	if focus == "" {
-		return false
-	}
-
-	return strings.EqualFold(symbol, focus)
 }

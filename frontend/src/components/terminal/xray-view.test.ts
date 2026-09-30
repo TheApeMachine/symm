@@ -60,6 +60,25 @@ describe("xray-view", () => {
 		expect(layers[0]?.error_norm).toBeCloseTo(0.1, 5);
 	});
 
+	it("leaves error_norm null when state or prediction are absent or lengths mismatch, never inventing error from surprise", () => {
+		const layers = xrayLayersFromResonance({
+			source: "resonance",
+			symbol: "BTC/USD",
+			at: "2026-07-12T00:00:00Z",
+			surprise: 0.85,
+			layers: [
+				{ state: [0.1, -0.2], prediction: [0.0] }, // Mismatched lengths
+				{ state: [], prediction: [] },             // Empty
+				{ state: [0.5] },                         // Missing prediction
+			],
+		});
+
+		expect(layers).toHaveLength(3);
+		expect(layers[0]?.error_norm).toBeNull();
+		expect(layers[1]?.error_norm).toBeNull();
+		expect(layers[2]?.error_norm).toBeNull();
+	});
+
 	it("ignores manifold density when building hierarchy", () => {
 		expect(
 			xrayLayersFromResonance({

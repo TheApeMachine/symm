@@ -1,15 +1,16 @@
 package strategy
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"math"
+	"math/rand/v2"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
@@ -21,53 +22,65 @@ import (
 	"github.com/theapemachine/symm/types"
 )
 
-type Action = cognition.Action
-
-const (
-	ActionEnter = cognition.ActionEnter
-	ActionExit  = cognition.ActionExit
-	ActionWait  = cognition.ActionWait
-)
+type Action = string
 
 const TrainingFormat = "symm-training-v1"
 
-// Training stages, progressing as the model matures.
 const (
-	StageModelDevelopment     = 0
-	StageHistoricalValidation = 1
-	StageForwardPaper         = 2
-	StageSkillDemonstrated    = 3
+	ActionEnter Action = "enter"
+	ActionExit  Action = "exit"
+	ActionWait  Action = "wait"
 )
 
+const (
+	StageGridSettling       int32 = 0
+	StageHistoricalTraining int32 = 1
+	StageForwardPaper       int32 = 2
+	StageSkillDemonstrated  int32 = 3
+)
+
+// Keep backward compat aliases for the old constant names used by tests / UI.
+const (
+	StageModelDevelopment     = StageGridSettling
+	StageHistoricalValidation = StageHistoricalTraining
+)
+
+/*
+Training is the learning orchestrator. Its lifecycle follows three stages:
+
+  - Stage 0 (GRID_SETTLING): Step() feeds every arriving measurement into
+    the grid, building regions. Nothing else happens.
+  - Stage 1 (HISTORICAL_TRAINING): The grid is frozen. Run() starts a
+    background goroutine that reads excursion fragments from the catalog and
+    trains the radix trie on ground-truth labelled enter/exit/wait actions.
+  - Stage 2 (FORWARD_PAPER): Step() uses the frozen grid + trained trie to
+    make real-time predictions. Paper trading validates the model.
+*/
 type Training struct {
 	*runtime.System
 	grid   *store.Grid
 	trie   *store.Radix
-	engine *cognition.Engine
 	trader *Trader
 	tee    runtime.Tee
 	mutex  sync.RWMutex
+	priors [][]byte
 
-	// Stored excursion fragments from the drain's learn callback.
-	// Run replays these at hardware speed to train the engine.
+	// Fragments tracked during a live or drained excursion
 	fragments []*data.Measurement[float64]
 
-	// Training state tracking
+	stageCode   atomic.Int32
 	steps       atomic.Uint64
 	decisions   atomic.Uint64
-	resolved    atomic.Uint64
 	evaluated   atomic.Uint64
-	wins        atomic.Uint64
 	totalTrades atomic.Uint64
-	stageCode   atomic.Int32
+	wins        atomic.Uint64
+	iterations  atomic.Uint64
 
-	// Latest evaluation results (written by Step, read by metrics emission)
-	lastConfidence atomic.Uint64 // float64 bits
-	lastContrast   atomic.Uint64 // float64 bits
-	cumReturn      atomic.Uint64 // float64 bits
+	// Catalog reference and epoch for historical replay.
+	catalog *tables.Catalog
+	epoch   int64
 
-	// Active position entry tokens mapped by symbol for online refinement.
-	activeTokens sync.Map
+	learnQueue chan tables.ExcursionRecord
 }
 
 func NewTraining(
@@ -77,12 +90,14 @@ func NewTraining(
 	tee runtime.Tee,
 ) *Training {
 	training := &Training{
-		System: runtime.NewSystem(ctx, "training", price),
-		grid:   store.NewGrid(),
-		trie:   store.NewRadix(),
-		engine: cognition.NewEngine(cognition.Config{}),
-		trader: trader,
-		tee:    tee,
+		System:     runtime.NewSystem(ctx, "training", price),
+		grid:       store.NewGrid(),
+		trie:       store.NewRadix(),
+		trader:     trader,
+		tee:        tee,
+		priors:     make([][]byte, 0, 3),
+		fragments:  make([]*data.Measurement[float64], 0),
+		learnQueue: make(chan tables.ExcursionRecord, 100000),
 	}
 
 	if trader != nil {
@@ -95,6 +110,11 @@ func NewTraining(
 	return training
 }
 
+// SetCatalog wires the catalog and epoch for historical training replay.
+func (training *Training) SetCatalog(catalog *tables.Catalog, epoch int64) {
+	training.catalog = catalog
+	training.epoch = epoch
+}
 
 func (training *Training) Register() *data.Measurement[float64] {
 	measurement := data.NewMeasurement[float64]("training", nil)
@@ -104,771 +124,409 @@ func (training *Training) Register() *data.Measurement[float64] {
 }
 
 /*
-Step develops the grid from live market data and evaluates the trained model.
+Run starts the background training goroutines. It processes two streams:
 
-In the MODEL DEVELOPMENT stage, Step only develops the impulse map grid from
-peer signal measurements — it does not train the engine.
-
-Once Run has trained the engine on stored excursion fragments, Step evaluates
-the model's predictions. In the FORWARD PAPER stage, Step feeds those predictions
-to the trader for paper trading validation.
+  - The learn queue: excursion records detected in real-time by the StoreTee
+    and fed through ExcursionLearn.
+  - Historical replay: once the grid settles, reads stored excursion fragments
+    from the catalog and trains on them at hardware speed.
 */
-func (training *Training) Step(
-	measurement *data.Measurement[float64],
-) *data.Measurement[float64] {
+func (training *Training) Run() {
+	// Live excursion learn queue consumer
+	go func() {
+		for {
+			select {
+			case <-training.Context().Done():
+				return
+			case record := <-training.learnQueue:
+				training.trainOnExcursion(record)
+			}
+		}
+	}()
+}
+
+/*
+Step is part of the LMAX Disruptor pipeline. Its behavior depends on the
+current stage:
+
+  - Stage 0: Feed measurements into the grid for settling. Once settled,
+    save checkpoint and transition to Stage 1, kicking off historical training.
+  - Stage 1: Emit wait actions while historical training runs in background.
+    Still feed region tokens to build context but don't act on them yet.
+  - Stage 2+: Use the frozen grid + trained trie to predict actions on the
+    live market tape. Forward predictions to the trader for paper trading.
+*/
+func (training *Training) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
 	if measurement == nil {
 		return nil
 	}
 
-	// Ensure the measurement has a timestamp for the dashboard.
-	if measurement.At.IsZero() {
-		measurement.At = time.Now().UTC()
-	}
-
 	training.steps.Add(1)
 
+	// Feed all peer measurements into the grid
 	peers := measurement.Peers
-
-	if len(peers) == 0 && len(measurement.Metrics) > 0 {
-		peers = []*data.Measurement[float64]{measurement}
-	}
-
 	for _, peer := range peers {
-		if peer == nil || peer.Metrics == nil || len(peer.Metrics) == 0 {
-			continue
+		if peer != nil && len(peer.Metrics) > 0 {
+			training.grid.Update(peer)
 		}
-
-		if measurement.Label == "" {
-			if peer.Label != "" {
-				measurement.Label = peer.Label
-			}
-
-			if peer.Label == "" {
-				measurement.Label = types.Focus()
-			}
-		}
-
-		// Update grid and stamp lattice coordinates (X, Y) and Region on peer metrics.
-		training.grid.Update(peer)
 	}
 
 	if len(measurement.Metrics) > 0 {
 		training.grid.Update(measurement)
 	}
 
-	// Forward price, spread, and excursion metadata from peers matching this measurement's symbol.
-	targetSymbol := measurement.Label
-
-	if targetSymbol == "" {
-		targetSymbol = types.Focus()
-	}
-
-	for _, peer := range peers {
-		if peer == nil || peer == measurement {
-			continue
-		}
-
-		if peer.Label != targetSymbol {
-			continue
-		}
-
-		if _, already := measurement.Metrics["price"]; !already {
-			for _, key := range []string{"price", "last_price", "last", "spot_price", "reference_price", "midpoint"} {
-				if priceMetric, found := peer.Metrics[key]; found && priceMetric.Raw > 0 {
-					priceMetric.Label = "price"
-					measurement.Metrics["price"] = priceMetric
-					break
-				}
-			}
-		}
-
-		if _, already := measurement.Metrics["spread"]; !already {
-			for _, key := range []string{"spread", "relative_spread"} {
-				if spreadMetric, found := peer.Metrics[key]; found && spreadMetric.Raw > 0 {
-					spreadMetric.Label = "spread"
-					measurement.Metrics["spread"] = spreadMetric
-					break
-				}
-			}
-		}
-
-		if peer.Metadata != nil && peer.Metadata["excursion"] != "" {
-			if measurement.Metadata == nil {
-				measurement.Metadata = make(map[string]string)
-			}
-
-			measurement.Metadata["excursion"] = peer.Metadata["excursion"]
-			measurement.Metadata["excursion_start"] = peer.Metadata["excursion_start"]
-			measurement.Metadata["excursion_ignition"] = peer.Metadata["excursion_ignition"]
-			measurement.Metadata["excursion_end"] = peer.Metadata["excursion_end"]
-		}
-	}
-
-	// In StageModelDevelopment, Step only develops the grid until it settles.
-	// Training does NOT evaluate predictions or emit actions until the grid has settled.
-	if training.stageCode.Load() == StageModelDevelopment {
+	// Stage 0: Grid settling — nothing else
+	if training.stageCode.Load() == StageGridSettling {
 		if training.grid.Settled {
 			if err := training.SaveCheckpoint(); err != nil {
 				errnie.Error(err)
 			}
+			training.stageCode.Store(StageHistoricalTraining)
+			errnie.Info("training: grid settled, starting historical training")
 
-			training.stageCode.Store(StageHistoricalValidation)
+			// Kick off historical training in background
+			go training.runHistoricalTraining()
 		}
 
 		if !training.grid.Settled {
-			if measurement.Provenance == nil {
-				measurement.Provenance = make(map[string]string)
-			}
-
-			measurement.Provenance["stage"] = training.stageName()
-			measurement.Provenance["stage_blocker"] = training.stageBlocker()
-			training.emitStateMetrics(measurement)
+			training.emitMetrics(measurement, ActionWait)
 			return measurement
 		}
 	}
 
-	var topRegion uint8
-	var maxActivity float64
-	var regionActivity [256]float64
-
-	for _, peer := range peers {
-		if peer == nil {
-			continue
-		}
-
-		for label, metric := range peer.Metrics {
-			region := training.grid.Region(label)
-
-			if region > 0 {
-				activity := math.Abs(metric.Raw)
-				regionActivity[region] += activity
-
-				if regionActivity[region] > maxActivity {
-					maxActivity = regionActivity[region]
-					topRegion = region
-				}
-			}
-		}
-	}
-
+	// Generate region token from the frozen grid
 	token := training.grid.LitRegions(measurement, 3)
-	if len(token) == 0 && topRegion > 0 {
-		token = []byte{topRegion}
-	}
 	if len(token) == 0 {
-		reg := training.grid.Region("price")
-		if reg == 0 {
-			reg = 1
-		}
-		token = []byte{reg}
+		training.emitMetrics(measurement, ActionWait)
+		return measurement
 	}
 
-	var evalConfidence, evalContrast float64
-
-	if len(token) > 0 {
-		action := ActionWait
-
-		evalResult, evalErr := training.engine.Evaluate(token)
-
-		if evalErr == nil && evalResult.Evaluation.WinnerClass != "" {
-			action = Action(evalResult.Evaluation.WinnerClass)
-			evalConfidence = evalResult.Evaluation.Confidence
-			evalContrast = evalResult.Evaluation.Contrast
-			training.evaluated.Add(1)
+	// Build temporal signature from priors
+	training.mutex.Lock()
+	if len(training.priors) > 0 && bytes.Equal(training.priors[len(training.priors)-1], token) {
+		// Do not append duplicate consecutive states
+	} else {
+		if len(training.priors) >= 3 {
+			training.priors = training.priors[1:]
 		}
-
-		if action == ActionWait || action == "" {
-			actionBytes, found := training.trie.Get(token)
-
-			if found && len(actionBytes) > 0 {
-				action = Action(actionBytes)
-			}
-		}
-
-		if action == ActionEnter {
-			training.activeTokens.Store(measurement.Label, token)
-			training.activeTokens.Store("__latest__", token)
-		}
-
-		// Only act on predictions in the paper trading stage.
-		if action != ActionWait && training.trader != nil && training.stageCode.Load() >= StageForwardPaper {
-			training.trader.OnAction(measurement.Label, action)
-		}
-
-		if evalErr == nil && evalResult.Evaluation.WinnerClass != "" {
-			measurement.Provenance["confidence"] = fmt.Sprintf("%.2f", evalResult.Evaluation.Confidence)
-			measurement.Provenance["surprisal"] = fmt.Sprintf("%.2f", evalResult.Evaluation.Surprisal)
-		}
-
-		var actionVal float64
-
-		if action == ActionEnter {
-			actionVal = 1
-		}
-
-		if action == ActionExit {
-			actionVal = 2
-		}
-
-		actionMetric := data.NewMetric[float64](
-			"action", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
-		)
-
-		actionMetric.Raw = actionVal
-		measurement.Metrics["action"] = actionMetric
-
-		// Store latest evaluation values atomically for metrics emission.
-		training.lastConfidence.Store(math.Float64bits(evalConfidence))
-		training.lastContrast.Store(math.Float64bits(evalContrast))
+		training.priors = append(training.priors, token)
 	}
 
-	// Always set provenance so the dashboard receives stage info
-	// regardless of whether the grid has active regions.
-	if measurement.Provenance == nil {
-		measurement.Provenance = make(map[string]string)
+	var sig []byte
+	for _, p := range training.priors {
+		sig = append(sig, p...)
+		sig = append(sig, 0x00) // temporal delimiter
+	}
+	sig = append(sig, token...)
+	training.mutex.Unlock()
+
+	action := ActionWait
+
+	if trieVal, ok := training.trie.Get(sig); ok && len(trieVal) > 0 {
+		action = string(trieVal)
+		training.evaluated.Add(1)
 	}
 
-	measurement.Provenance["stage"] = training.stageName()
-	measurement.Provenance["stage_blocker"] = training.stageBlocker()
+	symbol := measurement.Label
+	if symbol == "" {
+		symbol = types.Focus()
+	}
 
-	// Emit training state metrics the dashboard reads.
-	training.emitStateMetrics(measurement)
+	// Stage 2+: Forward paper trading
+	if action != ActionWait && training.trader != nil && training.stageCode.Load() >= StageForwardPaper {
+		training.trader.OnAction(symbol, action)
+	}
 
-	// Advance the stage machine.
-	training.advanceStage()
-
-	// Peers transport the grid structure to the frontend. Do not clear them.
+	training.emitMetrics(measurement, action)
 	return measurement
 }
 
-
 /*
-Run replays stored excursion fragments at hardware speed to train the model.
+runHistoricalTraining reads excursion records from the catalog and trains
+on them at hardware speed. Each excursion is replayed multiple times with
+random A-offsets for robustness. Once sufficient skill is demonstrated,
+transitions to Stage 2 (forward paper).
 */
-func (training *Training) Run() {
-	go func() {
-		ticker := time.NewTicker(2 * time.Second)
-		defer ticker.Stop()
+func (training *Training) runHistoricalTraining() {
+	if training.catalog == nil {
+		errnie.Info("training: no catalog available, skipping historical training")
+		training.stageCode.Store(StageForwardPaper)
+		return
+	}
 
-		for {
+	ctx := training.Context()
+	const iterationsPerExcursion = 5
+	const minIterationsForForward = 50
+
+	for iteration := 0; ctx.Err() == nil; iteration++ {
+		excursions, err := training.catalog.Excursions(ctx, training.epoch, nil)
+		if err != nil {
+			errnie.Error(err)
+			break
+		}
+
+		if len(excursions) == 0 {
+			errnie.Info("training: no excursion records found, will retry")
+			// Wait for some excursions to be detected and stored
 			select {
-			case <-training.Context().Done():
+			case <-ctx.Done():
 				return
-			case <-ticker.C:
-				training.trainFromFragments()
+			case record := <-training.learnQueue:
+				training.trainOnExcursion(record)
+				continue
 			}
 		}
-	}()
+
+		for _, excursion := range excursions {
+			if ctx.Err() != nil {
+				return
+			}
+
+			for rep := 0; rep < iterationsPerExcursion; rep++ {
+				training.replayExcursion(ctx, excursion, rep)
+				training.iterations.Add(1)
+			}
+		}
+
+		// Checkpoint after each full pass
+		if err := training.SaveCheckpoint(); err != nil {
+			errnie.Error(err)
+		}
+
+		totalIterations := training.iterations.Load()
+
+		if totalIterations >= uint64(minIterationsForForward) && training.stageCode.Load() < StageForwardPaper {
+			training.stageCode.Store(StageForwardPaper)
+			errnie.Info(fmt.Sprintf(
+				"training: %d iterations completed, advancing to forward paper",
+				totalIterations,
+			))
+		}
+	}
 }
 
-func (training *Training) trainFromFragments() {
+/*
+replayExcursion reads measurements from the catalog for one excursion record's
+tick range, runs them through the frozen grid, and trains the trie on
+ground-truth labels.
+
+The rep parameter controls the random A-offset: on rep 0 we use the original
+precursor start, on subsequent reps we pick a random point between precursor
+start and B (anchor), making the model robust to different observation
+entry points.
+*/
+func (training *Training) replayExcursion(
+	ctx context.Context,
+	excursion tables.ExcursionRecord,
+	rep int,
+) {
 	if !training.grid.Settled {
 		return
 	}
 
-	training.mutex.RLock()
+	// Read measurements for this excursion's tick range from the catalog
+	fragments := training.collectExcursionFragments(excursion)
 
-	if len(training.fragments) == 0 {
-		training.mutex.RUnlock()
+	if len(fragments) == 0 {
 		return
 	}
 
-	fragments := make([]*data.Measurement[float64], len(training.fragments))
-	copy(fragments, training.fragments)
-	training.mutex.RUnlock()
-
-	type excursionGroup struct {
-		direction      string
-		clearsFriction bool
-		category       string
-		startTick      int64
-		ignitionTick   int64
-		endTick        int64
-		measurements   []*data.Measurement[float64]
+	// Determine effective A offset
+	aStart := excursion.PrecursorStartTick
+	if rep > 0 && excursion.AnchorTick > aStart+10 {
+		// Random offset: pick a point between A and B, leaving at least 10 ticks
+		spread := excursion.AnchorTick - aStart - 10
+		if spread > 0 {
+			aStart = aStart + rand.Int64N(spread)
+		}
 	}
 
-	groups := make(map[string]*excursionGroup)
+	// Determine ground-truth action class for the excursion type
+	var entryAction, exitAction []byte
+	switch excursion.Direction {
+	case "upward", "upper":
+		if excursion.ClearsFriction {
+			entryAction = []byte(ActionEnter)
+		}
+		exitAction = []byte(ActionExit)
+	case "downward", "lower":
+		exitAction = []byte(ActionExit)
+	}
 
-	for _, fragment := range fragments {
-		if fragment == nil || fragment.Metadata == nil {
+	// Build region tokens and train
+	var localPriors [][]byte
+
+	for _, frag := range fragments {
+		if frag.SeqIdx < aStart {
 			continue
 		}
 
-		direction := fragment.Metadata["excursion"]
-
-		if direction == "" {
+		lit := training.grid.LitRegions(frag, 3)
+		if len(lit) == 0 {
 			continue
 		}
 
-		ignitionStr := fragment.Metadata["excursion_ignition"]
-
-		if ignitionStr == "" {
-			ignitionStr = fragment.Label
-		}
-
-		key := fmt.Sprintf("%s-%s", fragment.Label, ignitionStr)
-		group, found := groups[key]
-
-		if !found {
-			startTick, _ := strconv.ParseInt(fragment.Metadata["excursion_start"], 10, 64)
-			ignitionTick, _ := strconv.ParseInt(fragment.Metadata["excursion_ignition"], 10, 64)
-			endTick, _ := strconv.ParseInt(fragment.Metadata["excursion_end"], 10, 64)
-
-			group = &excursionGroup{
-				direction:      direction,
-				clearsFriction: fragment.Metadata["excursion_clears_friction"] == "true",
-				category:       fragment.Metadata["excursion_category"],
-				startTick:      startTick,
-				ignitionTick:   ignitionTick,
-				endTick:        endTick,
+		if len(localPriors) > 0 && bytes.Equal(localPriors[len(localPriors)-1], lit) {
+			// Do not append duplicate consecutive states
+		} else {
+			if len(localPriors) >= 3 {
+				localPriors = localPriors[1:]
 			}
-			groups[key] = group
+			localPriors = append(localPriors, lit)
 		}
 
-		group.measurements = append(group.measurements, fragment)
-	}
-
-	trained := false
-
-	// Replay excursion fragments across multiple passes at hardware speed.
-	// In each pass, randomize the A marker somewhat (as long as A < B),
-	// training a robust, scale-invariant model across varying precursor horizons.
-	const passes = 3
-
-	for _, group := range groups {
-		if group == nil || len(group.measurements) == 0 {
+		if len(localPriors) < 1 {
 			continue
 		}
 
+		// Build temporal signature
+		var sig []byte
+		for idx := 0; idx < len(localPriors)-1; idx++ {
+			sig = append(sig, localPriors[idx]...)
+			sig = append(sig, 0x00)
+		}
+		sig = append(sig, localPriors[len(localPriors)-1]...)
+
+		if len(sig) == 0 {
+			continue
+		}
+
+		// Determine ground-truth label for this tick
+		tick := frag.SeqIdx
 		var targetClass []byte
 
-		if group.direction == "upper" {
-			if group.clearsFriction || group.category == "upper_profitable" {
-				targetClass = []byte(ActionEnter)
-			}
-
-			if !group.clearsFriction && group.category != "upper_profitable" {
+		switch {
+		case tick == excursion.AnchorTick:
+			// Exact ignition point: learn the prefix that got us here
+			if entryAction != nil {
+				targetClass = entryAction
+			} else if excursion.Direction == "downward" || excursion.Direction == "lower" {
+				targetClass = []byte(ActionExit)
+			} else {
 				targetClass = []byte(ActionWait)
 			}
+		case exitAction != nil && excursion.ExitTick > 0 && tick == excursion.ExitTick:
+			// Exact exhaustion point: learn the prefix that got us here
+			targetClass = exitAction
 		}
 
-		if group.direction == "lower" {
-			targetClass = []byte(ActionExit)
-		}
-
-		if group.direction == "chop" || group.direction == "flat" {
-			targetClass = []byte(ActionWait)
-		}
-
-		if len(targetClass) == 0 {
-			targetClass = []byte(ActionWait)
-		}
-
-		for pass := 0; pass < passes; pass++ {
-			// Elastic A-marker jitter:
-			// Pass 0 uses the exact initial precursor start.
-			// Subsequent passes jitter the effective A marker forward within [A, B-1].
-			var activeMeas []*data.Measurement[float64]
-
-			if len(group.measurements) > 1 && group.ignitionTick > group.startTick+1 {
-				span := group.ignitionTick - group.startTick
-				jitterOffset := int64(0)
-
-				if pass > 0 {
-					fraction := float64(pass) / float64(passes+1)
-					jitterOffset = int64(float64(span) * fraction)
-				}
-
-				effectiveA := group.startTick + jitterOffset
-
-				if effectiveA >= group.ignitionTick {
-					effectiveA = group.ignitionTick - 1
-				}
-
-				for _, meas := range group.measurements {
-					if meas == nil {
-						continue
-					}
-
-					tick := meas.SeqIdx
-
-					if tick == 0 && meas.Metadata != nil {
-						if ts, err := strconv.ParseInt(meas.Metadata["tick"], 10, 64); err == nil {
-							tick = ts
-						}
-					}
-
-					// Include precursor observations from the effective A marker up to ignition B
-					if tick >= effectiveA && (group.ignitionTick == 0 || tick <= group.ignitionTick) {
-						activeMeas = append(activeMeas, meas)
-					}
-				}
-			}
-
-			if len(activeMeas) == 0 {
-				activeMeas = group.measurements
-			}
-
-			// Extract trajectory sequence of lit regions across the precursor window
-			var token []byte
-
-			for _, meas := range activeMeas {
-				lit := training.grid.LitRegions(meas, 1)
-
-				if len(lit) > 0 {
-					if len(token) == 0 || token[len(token)-1] != lit[0] {
-						token = append(token, lit[0])
-					}
-				}
-			}
-
-			if len(token) == 0 {
-				token = training.grid.LitRegions(activeMeas[len(activeMeas)-1], 3)
-			}
-
-			if len(token) == 0 {
-				reg := training.grid.Region("price")
-
-				if reg == 0 {
-					reg = 1
-				}
-
-				token = []byte{byte(reg)}
-			}
-
-			if _, err := training.engine.Train(token, targetClass, 1.0); err != nil {
-				errnie.Error(err)
-				continue
-			}
-
-			training.trie.Insert(token, targetClass)
+		// Only insert if we are explicitly on the event tick
+		if len(targetClass) > 0 {
+			training.trie.Insert(sig, targetClass)
 			training.decisions.Add(1)
-			trained = true
 		}
 	}
 
-	if trained {
-		if _, _, _, _, err := training.engine.Consolidate(1.0); err != nil {
-			errnie.Error(err)
-		}
-
-		training.engine.Prune(0.05)
-		training.advanceStage()
-
-		if err := training.SaveCheckpoint(); err != nil {
-			errnie.Error(err)
-		}
+	// Emit training visualization via tee
+	if training.tee != nil && len(fragments) > 0 {
+		training.emitTrainingViz(excursion, fragments, aStart)
 	}
 }
 
+/*
+collectExcursionFragments gathers measurement fragments for one excursion
+from the in-memory fragment buffer. The buffer is populated by ExcursionLearn
+from the live StoreTee drain.
+*/
+func (training *Training) collectExcursionFragments(
+	record tables.ExcursionRecord,
+) []*data.Measurement[float64] {
+	training.mutex.Lock()
+	defer training.mutex.Unlock()
+
+	var excursionFrags []*data.Measurement[float64]
+
+	for _, frag := range training.fragments {
+		if frag == nil {
+			continue
+		}
+
+		if frag.Label == record.Symbol &&
+			frag.SeqIdx >= record.PrecursorStartTick &&
+			frag.SeqIdx <= record.PostEndTick {
+			excursionFrags = append(excursionFrags, frag)
+		}
+	}
+
+	return excursionFrags
+}
 
 /*
-stageName returns the human-readable name of the current training stage.
+emitTrainingViz sends training episode visualization data through the tee
+for the learning dashboard. Shows the tape fragment with A, B, C markers
+and ENTER/EXIT prediction markers.
 */
-func (training *Training) stageName() string {
-	switch training.stageCode.Load() {
-	case StageHistoricalValidation:
-		return "HISTORICAL VALIDATION"
-	case StageForwardPaper:
-		return "FORWARD PAPER LEARNING"
-	case StageSkillDemonstrated:
-		return "FORWARD SKILL DEMONSTRATED"
+func (training *Training) emitTrainingViz(
+	record tables.ExcursionRecord,
+	fragments []*data.Measurement[float64],
+	aStart int64,
+) {
+	var targetAction string
+	var excursionTypeVal float64
+
+	switch record.Direction {
+	case "upward", "upper":
+		excursionTypeVal = 1
+		if record.ClearsFriction {
+			targetAction = ActionEnter
+		} else {
+			targetAction = ActionWait
+		}
+	case "downward", "lower":
+		excursionTypeVal = 2
+		targetAction = ActionExit
+	case "flat":
+		excursionTypeVal = 4
+		targetAction = ActionWait
 	default:
-		return "MODEL DEVELOPMENT"
+		excursionTypeVal = 3
+		targetAction = ActionWait
+	}
+
+	var delayedTargetVal float64
+	switch targetAction {
+	case ActionEnter:
+		delayedTargetVal = 1
+	case ActionExit:
+		delayedTargetVal = 2
+	}
+
+	for _, frag := range fragments {
+		if frag.SeqIdx < aStart {
+			continue
+		}
+
+		uiMsg := frag.Clone()
+		uiMsg.Source = "training"
+		uiMsg.Label = record.Symbol
+
+		if uiMsg.Metrics == nil {
+			uiMsg.Metrics = make(map[string]data.Metric[float64])
+		}
+		if uiMsg.Provenance == nil {
+			uiMsg.Provenance = make(map[string]string)
+		}
+		if uiMsg.Metadata == nil {
+			uiMsg.Metadata = make(map[string]string)
+		}
+
+		setMetric(uiMsg, "action", delayedTargetVal)
+		setMetric(uiMsg, "excursion_type", excursionTypeVal)
+		setMetric(uiMsg, "delayed_target", delayedTargetVal)
+		setMetric(uiMsg, "iteration", float64(training.iterations.Load()))
+
+		// Markers for the UI visualization
+		uiMsg.Provenance["excursion_start"] = strconv.FormatInt(aStart, 10)
+		uiMsg.Provenance["excursion_ignition"] = strconv.FormatInt(record.AnchorTick, 10)
+		uiMsg.Provenance["excursion_end"] = strconv.FormatInt(record.ExitTick, 10)
+
+		training.emitMetrics(uiMsg, targetAction)
+		training.tee.Push(uiMsg)
 	}
 }
 
-/*
-stageBlocker returns a description of what the current stage is waiting for.
-*/
-func (training *Training) stageBlocker() string {
-	switch training.stageCode.Load() {
-	case StageModelDevelopment:
-		if !training.grid.Settled {
-			return "waiting for grid regions to settle"
-		}
-
-		if training.decisions.Load() == 0 {
-			return "collecting initial excursion fragments"
-		}
-
-		return "accumulating excursion training data"
-	case StageHistoricalValidation:
-		return "replaying excursion fragments for validation"
-	case StageForwardPaper:
-		return "paper trading into real-time market"
-	case StageSkillDemonstrated:
-		return "edge demonstrated"
-	default:
-		return "collecting initial historical development samples"
-	}
-}
-
-/*
-advanceStage checks whether the training stage should be promoted based on
-measured model state. Stage transitions are one-way.
-*/
-func (training *Training) advanceStage() {
-	current := training.stageCode.Load()
-
-	if current >= StageSkillDemonstrated {
-		return
-	}
-
-	switch current {
-	case StageModelDevelopment:
-		// Advance when the grid has settled and the engine has learned
-		// at least one association.
-		if training.grid.Settled && training.engine.Len() > 0 {
-			training.stageCode.CompareAndSwap(StageModelDevelopment, StageHistoricalValidation)
-		}
-	case StageHistoricalValidation:
-		// Advance to paper trading when the engine has accumulated
-		// sufficient distinct associations (≥10 trie entries).
-		if training.engine.Len() >= 10 {
-			training.stageCode.CompareAndSwap(StageHistoricalValidation, StageForwardPaper)
-		}
-	case StageForwardPaper:
-		// Advance when the model has demonstrated positive edge:
-		// wins > 50% of total trades and at least 5 trades completed.
-		total := training.totalTrades.Load()
-		wins := training.wins.Load()
-
-		if total >= 5 && wins*2 > total {
-			training.stageCode.CompareAndSwap(StageForwardPaper, StageSkillDemonstrated)
-		}
-	}
-}
-
-/*
-emitStateMetrics writes the training state counters and evaluation results
-into the outgoing measurement so the dashboard reads real data.
-*/
-func (training *Training) emitStateMetrics(measurement *data.Measurement[float64]) {
-	if measurement.Metrics == nil {
-		measurement.Metrics = make(map[string]data.Metric[float64])
-	}
-
-	if measurement.Provenance == nil {
-		measurement.Provenance = make(map[string]string)
-	}
-
-	measurement.Provenance["stage_blocker"] = training.stageBlocker()
-
-	stageMetric := data.NewMetric[float64](
-		"stage_code", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
-	)
-	stageMetric.Raw = float64(training.stageCode.Load())
-	measurement.Metrics["stage_code"] = stageMetric
-
-	stepsMetric := data.NewMetric[float64](
-		"steps", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
-	)
-	stepsMetric.Raw = float64(training.steps.Load())
-	measurement.Metrics["steps"] = stepsMetric
-
-	decisionsMetric := data.NewMetric[float64](
-		"decisions", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
-	)
-	decisionsMetric.Raw = float64(training.decisions.Load())
-	measurement.Metrics["decisions"] = decisionsMetric
-
-	resolvedMetric := data.NewMetric[float64](
-		"resolved", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
-	)
-	resolvedMetric.Raw = float64(training.resolved.Load())
-	measurement.Metrics["resolved"] = resolvedMetric
-
-	evaluatedMetric := data.NewMetric[float64](
-		"evaluated", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
-	)
-	evaluatedMetric.Raw = float64(training.evaluated.Load())
-	measurement.Metrics["evaluated"] = evaluatedMetric
-
-	confidence := math.Float64frombits(training.lastConfidence.Load())
-	confidenceMetric := data.NewMetric[float64](
-		"confidence", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-	)
-	confidenceMetric.Raw = confidence
-	measurement.Metrics["confidence"] = confidenceMetric
-
-	contrast := math.Float64frombits(training.lastContrast.Load())
-	contrastMetric := data.NewMetric[float64](
-		"contrast", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-	)
-	contrastMetric.Raw = contrast
-	measurement.Metrics["contrast"] = contrastMetric
-
-	// Edge is the real realized average return fraction across closed trades, 0 if no trades.
-	totalTrades := training.totalTrades.Load()
-	var edge float64
-
-	if totalTrades > 0 {
-		edge = math.Float64frombits(training.cumReturn.Load()) / float64(totalTrades)
-	}
-
-	edgeMetric := data.NewMetric[float64](
-		"edge", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-	)
-	edgeMetric.Raw = edge
-	measurement.Metrics["edge"] = edgeMetric
-
-	// Win rate = wins / total trades, 0 if no trades.
-	var winRate float64
-
-	if totalTrades > 0 {
-		winRate = float64(training.wins.Load()) / float64(totalTrades)
-	}
-
-	winRateMetric := data.NewMetric[float64](
-		"win_rate", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-	)
-	winRateMetric.Raw = winRate
-	measurement.Metrics["win_rate"] = winRateMetric
-
-	// Trading active flag.
-	var tradingVal float64
-
-	if training.stageCode.Load() >= StageForwardPaper && training.trader != nil {
-		tradingVal = 1
-	}
-
-	tradingMetric := data.NewMetric[float64](
-		"trading", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
-	)
-	tradingMetric.Raw = tradingVal
-	measurement.Metrics["trading"] = tradingMetric
-
-	// Excursion markers for tape visualization
-	if measurement.Metadata != nil {
-		if exc := measurement.Metadata["excursion"]; exc != "" {
-			var extType float64
-			if exc == "upper" {
-				extType = 1
-			}
-			if exc == "lower" {
-				extType = 2
-			}
-			extMetric := data.NewMetric[float64](
-				"excursion_type", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
-			)
-			extMetric.Raw = extType
-			measurement.Metrics["excursion_type"] = extMetric
-
-			if startStr := measurement.Metadata["excursion_start"]; startStr != "" {
-				if st, err := strconv.ParseFloat(startStr, 64); err == nil {
-					ma := data.NewMetric[float64]("mark_a", data.UnitCount, data.TimescaleInstantaneous, 0, 1)
-					ma.Raw = st
-					measurement.Metrics["mark_a"] = ma
-				}
-			}
-
-			if ignStr := measurement.Metadata["excursion_ignition"]; ignStr != "" {
-				if ig, err := strconv.ParseFloat(ignStr, 64); err == nil {
-					mb := data.NewMetric[float64]("mark_b", data.UnitCount, data.TimescaleInstantaneous, 0, 1)
-					mb.Raw = ig
-					measurement.Metrics["mark_b"] = mb
-				}
-			}
-
-			if endStr := measurement.Metadata["excursion_end"]; endStr != "" {
-				if en, err := strconv.ParseFloat(endStr, 64); err == nil {
-					mc := data.NewMetric[float64]("mark_c", data.UnitCount, data.TimescaleInstantaneous, 0, 1)
-					mc.Raw = en
-					measurement.Metrics["mark_c"] = mc
-				}
-			}
-		}
-	}
-}
-
-/*
-RecordPositionResult processes a closed position outcome from the broker desk.
-It updates win/loss counters and uses the realized PnL to refine the trie model
-for the precursor token that initiated the entry.
-*/
-func (training *Training) RecordPositionResult(symbol string, returnFraction float64) {
-	training.totalTrades.Add(1)
-	training.resolved.Add(1)
-
-	for {
-		oldBits := training.cumReturn.Load()
-		newVal := math.Float64frombits(oldBits) + returnFraction
-
-		if training.cumReturn.CompareAndSwap(oldBits, math.Float64bits(newVal)) {
-			break
-		}
-	}
-
-	if returnFraction > 0 {
-		training.wins.Add(1)
-	}
-
-	// Retrieve the precursor token that triggered this entry.
-	var token []byte
-
-	if symbol != "" {
-		if rawToken, found := training.activeTokens.LoadAndDelete(symbol); found {
-			if tokenBytes, ok := rawToken.([]byte); ok {
-				token = tokenBytes
-			}
-		}
-	}
-
-	if len(token) == 0 {
-		if rawToken, found := training.activeTokens.LoadAndDelete("__latest__"); found {
-			if tokenBytes, ok := rawToken.([]byte); ok {
-				token = tokenBytes
-			}
-		}
-	}
-
-	if len(token) > 0 {
-		targetClass := []byte(ActionWait)
-		weight := math.Abs(returnFraction)
-
-		if weight <= 0 {
-			weight = 0.1
-		}
-
-		if returnFraction > 0 {
-			targetClass = []byte(ActionEnter)
-			weight = 1.0 + returnFraction
-		}
-
-		if _, err := training.engine.Train(token, targetClass, weight); err != nil {
-			errnie.Error(err)
-		}
-
-		training.trie.Insert(token, targetClass)
-
-		if _, _, _, _, err := training.engine.Consolidate(1.0); err != nil {
-			errnie.Error(err)
-		}
-
-		training.engine.Prune(0.05)
-		training.advanceStage()
-
-		if err := training.SaveCheckpoint(); err != nil {
-			errnie.Error(err)
-		}
-	}
-}
-
-/*
-RecordTradeResult is the callback used to report closed position outcomes.
-It delegates to RecordPositionResult with an empty symbol.
-*/
-func (training *Training) RecordTradeResult(returnFraction float64) {
-	training.RecordPositionResult("", returnFraction)
-}
-
-/*
-ExcursionLearn is the learn callback for catalog.Drain. It receives
-StoreTee-tagged measurements carrying excursion metadata and stores them
-as fragments for Run to replay at hardware speed. Returns excursion records
-for persistence in the Iceberg catalog only when an excursion completes.
-*/
+// ExcursionLearn is the learn callback for catalog.Drain (Iceberg). It receives
+// StoreTee-tagged measurements carrying excursion metadata.
 func (training *Training) ExcursionLearn(
 	measurement *data.Measurement[float64],
 ) ([]tables.ExcursionRecord, error) {
@@ -882,107 +540,35 @@ func (training *Training) ExcursionLearn(
 		return nil, nil
 	}
 
-	// Store the tagged measurement as a fragment for Run to replay.
 	training.mutex.Lock()
 	training.fragments = append(training.fragments, measurement.Clone())
 	training.mutex.Unlock()
 
-	// Only return an ExcursionRecord when the excursion has completed!
 	if measurement.Metadata["excursion_event"] != "completed" {
 		return nil, nil
 	}
 
 	var startTick, ignitionTick, extremumTick, endTick int64
-
 	if metaVal := measurement.Metadata["excursion_start"]; metaVal != "" {
 		startTick, _ = strconv.ParseInt(metaVal, 10, 64)
 	}
-
 	if metaVal := measurement.Metadata["excursion_ignition"]; metaVal != "" {
 		ignitionTick, _ = strconv.ParseInt(metaVal, 10, 64)
 	}
-
-	if metaVal := measurement.Metadata["excursion_extremum_tick"]; metaVal != "" {
-		extremumTick, _ = strconv.ParseInt(metaVal, 10, 64)
-	}
-
 	if metaVal := measurement.Metadata["excursion_end"]; metaVal != "" {
 		endTick, _ = strconv.ParseInt(metaVal, 10, 64)
 	}
 
-	var priceVal float64
-
-	for _, key := range []string{"price", "last_price", "last", "spot_price", "reference_price", "midpoint"} {
-		if metric, ok := measurement.Metrics[key]; ok && metric.Raw > 0 {
-			priceVal = metric.Raw
-			break
-		}
-	}
-
-	var entryPrice, extremumPrice, exitPrice float64
-
-	if metaVal := measurement.Metadata["excursion_entry_price"]; metaVal != "" {
-		entryPrice, _ = strconv.ParseFloat(metaVal, 64)
-	}
-
-	if metaVal := measurement.Metadata["excursion_extremum_price"]; metaVal != "" {
-		extremumPrice, _ = strconv.ParseFloat(metaVal, 64)
-	}
-
-	if metaVal := measurement.Metadata["excursion_exit_price"]; metaVal != "" {
-		exitPrice, _ = strconv.ParseFloat(metaVal, 64)
-	}
-
-	if entryPrice <= 0 {
-		entryPrice = priceVal
-	}
-
-	if extremumPrice <= 0 {
-		extremumPrice = priceVal
-	}
-
-	if exitPrice <= 0 {
-		exitPrice = priceVal
-	}
-
-	if extremumTick <= 0 {
-		extremumTick = ignitionTick
-	}
-
-	positionSize := 40.0
-
-	if metaVal := measurement.Metadata["excursion_position_size"]; metaVal != "" {
-		if posSize, err := strconv.ParseFloat(metaVal, 64); err == nil && posSize > 0 {
-			positionSize = posSize
-		}
-	}
-
-	var fee, profit, profitFraction, grossExcursion float64
-
-	if metaVal := measurement.Metadata["excursion_fee"]; metaVal != "" {
-		fee, _ = strconv.ParseFloat(metaVal, 64)
-	}
-
-	if metaVal := measurement.Metadata["excursion_profit"]; metaVal != "" {
-		profit, _ = strconv.ParseFloat(metaVal, 64)
-	}
-
-	if metaVal := measurement.Metadata["excursion_profit_fraction"]; metaVal != "" {
-		profitFraction, _ = strconv.ParseFloat(metaVal, 64)
-	}
-
-	if metaVal := measurement.Metadata["excursion_gross"]; metaVal != "" {
-		grossExcursion, _ = strconv.ParseFloat(metaVal, 64)
-	}
-
 	clearsFriction := measurement.Metadata["excursion_clears_friction"] == "true"
-
-	if profit > 0 && (excursionDirection == "upper" || measurement.Metadata["excursion_category"] == "upper_profitable") {
-		clearsFriction = true
+	if measurement.Metadata["excursion_profit"] != "" {
+		if profit, _ := strconv.ParseFloat(measurement.Metadata["excursion_profit"], 64); profit > 0 {
+			if excursionDirection == "upper" || measurement.Metadata["excursion_category"] == "upper_profitable" {
+				clearsFriction = true
+			}
+		}
 	}
 
 	direction := excursionDirection
-
 	if direction == "upper" {
 		direction = "upward"
 	}
@@ -999,42 +585,64 @@ func (training *Training) ExcursionLearn(
 	record.ExtremumTick = extremumTick
 	record.ExitTick = endTick
 	record.PostEndTick = measurement.SeqIdx
-	record.EntryPrice = entryPrice
-	record.ExtremumPrice = extremumPrice
-	record.ExitPrice = exitPrice
-	record.PositionSize = positionSize
-	record.GrossExcursion = grossExcursion
-	record.Fee = fee
-	record.Profit = profit
-	record.ProfitFraction = profitFraction
 	record.ClearsFriction = clearsFriction
 	record.ObservationCount = measurement.SeqIdx - startTick + 1
 	record.Status = "completed"
 
-	training.trainOnExcursion(record)
+	select {
+	case training.learnQueue <- record:
+	default:
+		errnie.Error(errnie.Err(errnie.Internal, "training: learn queue full, dropping excursion", nil))
+	}
 
 	return []tables.ExcursionRecord{record}, nil
 }
 
 func (training *Training) trainOnExcursion(record tables.ExcursionRecord) {
+	if !training.grid.Settled && len(training.grid.Metrics) > 0 {
+		training.grid.ForceSettle()
+	}
+
 	if !training.grid.Settled {
 		return
 	}
 
-	var token []byte
+	fragments := training.collectExcursionFragments(record)
 
-	training.mutex.RLock()
-	for idx := len(training.fragments) - 1; idx >= 0; idx-- {
-		frag := training.fragments[idx]
-		if frag != nil && frag.Label == record.Symbol {
-			lit := training.grid.LitRegions(frag, 3)
-			if len(lit) > 0 {
-				token = lit
-				break
+	if len(fragments) == 0 {
+		return
+	}
+
+	// Build region tokens from the excursion fragments
+	var localPriors [][]byte
+
+	for _, frag := range fragments {
+		if frag.SeqIdx > record.AnchorTick {
+			break
+		}
+		lit := training.grid.LitRegions(frag, 3)
+		if len(lit) > 0 {
+			if len(localPriors) > 0 && bytes.Equal(localPriors[len(localPriors)-1], lit) {
+				// Do not append duplicate consecutive states
+			} else {
+				if len(localPriors) >= 3 {
+					localPriors = localPriors[1:]
+				}
+				localPriors = append(localPriors, lit)
 			}
 		}
 	}
-	training.mutex.RUnlock()
+
+	var token []byte
+	if len(localPriors) > 0 {
+		var sig []byte
+		for i := 0; i < len(localPriors)-1; i++ {
+			sig = append(sig, localPriors[i]...)
+			sig = append(sig, 0x00)
+		}
+		sig = append(sig, localPriors[len(localPriors)-1]...)
+		token = sig
+	}
 
 	if len(token) == 0 {
 		region := training.grid.Region("price")
@@ -1050,36 +658,75 @@ func (training *Training) trainOnExcursion(record tables.ExcursionRecord) {
 	case "upward", "upper":
 		if record.ClearsFriction {
 			targetClass = []byte(ActionEnter)
-		}
-
-		if !record.ClearsFriction {
+		} else {
 			targetClass = []byte(ActionWait)
 		}
 	case "downward", "lower":
 		targetClass = []byte(ActionExit)
-	case "chop", "flat":
+	case "flat":
 		targetClass = []byte(ActionWait)
 	default:
 		targetClass = []byte(ActionWait)
 	}
 
-	if _, err := training.engine.Train(token, targetClass, 1.0); err != nil {
-		errnie.Error(err)
-		return
+	if len(targetClass) > 0 {
+		training.trie.Insert(token, targetClass)
+		training.decisions.Add(1)
+		training.iterations.Add(1)
 	}
 
-	training.trie.Insert(token, targetClass)
-	training.decisions.Add(1)
-
-	if _, _, _, _, err := training.engine.Consolidate(1.0); err != nil {
-		errnie.Error(err)
+	// Prune old fragments to prevent unbounded growth
+	training.mutex.Lock()
+	var survivingFrags []*data.Measurement[float64]
+	for _, frag := range training.fragments {
+		if frag != nil && frag.SeqIdx >= record.PrecursorStartTick-1000 {
+			survivingFrags = append(survivingFrags, frag)
+		}
 	}
-
-	training.engine.Prune(0.05)
-	training.advanceStage()
+	training.fragments = survivingFrags
+	training.mutex.Unlock()
 
 	if err := training.SaveCheckpoint(); err != nil {
 		errnie.Error(err)
+	}
+}
+
+func (training *Training) RecordTradeResult(returnFraction float64) {
+	training.RecordPositionResult("", returnFraction)
+}
+
+func (training *Training) RecordPositionResult(symbol string, returnFraction float64) {
+	training.totalTrades.Add(1)
+	if returnFraction > 0 {
+		training.wins.Add(1)
+	}
+
+	// Refine the model based on paper trading outcome
+	if training.stageCode.Load() >= StageForwardPaper {
+		training.mutex.RLock()
+		priorsSnapshot := make([][]byte, len(training.priors))
+		copy(priorsSnapshot, training.priors)
+		training.mutex.RUnlock()
+
+		if len(priorsSnapshot) > 0 {
+			var sig []byte
+			for idx, prior := range priorsSnapshot {
+				sig = append(sig, prior...)
+				if idx < len(priorsSnapshot)-1 {
+					sig = append(sig, 0x00)
+				}
+			}
+
+			if len(sig) > 0 {
+				if returnFraction > 0 {
+					// Winning trade: reinforce the enter action
+					training.trie.Insert(sig, []byte(ActionEnter))
+				} else {
+					// Losing trade: the entry was wrong, reinforce wait
+					training.trie.Insert(sig, []byte(ActionWait))
+				}
+			}
+		}
 	}
 }
 
@@ -1089,29 +736,25 @@ func (training *Training) SaveCheckpoint() error {
 	checkpointMu.Lock()
 	defer checkpointMu.Unlock()
 
-	var modelBytes []byte
-
-	if training.engine != nil {
-		if snap, err := training.engine.Snapshot(); err == nil {
-			modelBytes = snap.Model
-		}
+	file, err := os.Create("grid_checkpoint.json")
+	if err != nil {
+		return errnie.Error(err)
 	}
+	defer file.Close()
 
-	payload, err := json.MarshalIndent(struct {
-		Grid        *store.Grid  `json:"grid"`
-		Trie        *store.Radix `json:"trie"`
-		EngineModel []byte       `json:"engine_model,omitempty"`
+	err = json.NewEncoder(file).Encode(struct {
+		Grid *store.Grid  `json:"grid"`
+		Trie *store.Radix `json:"trie"`
 	}{
-		Grid:        training.grid,
-		Trie:        training.trie,
-		EngineModel: modelBytes,
-	}, "", "  ")
+		Grid: training.grid,
+		Trie: training.trie,
+	})
 
 	if err != nil {
 		return errnie.Error(err)
 	}
 
-	return os.WriteFile("grid_checkpoint.json", payload, 0644)
+	return nil
 }
 
 func (training *Training) LoadCheckpoint() error {
@@ -1119,15 +762,13 @@ func (training *Training) LoadCheckpoint() error {
 	defer checkpointMu.Unlock()
 
 	payload, err := os.ReadFile("grid_checkpoint.json")
-
 	if err != nil {
 		return err
 	}
 
 	state := struct {
-		Grid        *store.Grid  `json:"grid"`
-		Trie        *store.Radix `json:"trie"`
-		EngineModel []byte       `json:"engine_model,omitempty"`
+		Grid *store.Grid  `json:"grid"`
+		Trie *store.Radix `json:"trie"`
 	}{
 		Grid: training.grid,
 		Trie: training.trie,
@@ -1137,14 +778,9 @@ func (training *Training) LoadCheckpoint() error {
 		return errnie.Error(err)
 	}
 
-	if len(state.EngineModel) > 0 && training.engine != nil {
-		if _, err := training.engine.Restore(state.EngineModel); err != nil {
-			errnie.Error(err)
-		}
-	}
-
 	if training.grid.Settled {
 		training.Transition(runtime.READY)
+		training.stageCode.Store(StageHistoricalTraining)
 	}
 
 	return nil
@@ -1154,22 +790,139 @@ func (training *Training) CognitionTree() cognition.CognitionTreeExport {
 	training.mutex.RLock()
 	defer training.mutex.RUnlock()
 
-	if training.engine != nil {
-		tree := training.engine.TreeExport()
+	rootNode := &cognition.TrieNodeJSON{
+		ID:          "root",
+		TokenPrefix: "ROOT",
+		Probability: 1.0,
+		State:       "EVALUATED",
+	}
 
-		if len(tree.Branches) > 0 || len(tree.Feasible) > 0 {
-			return tree
+	tree := training.trie.Tree()
+	if tree != nil && tree.Len() > 0 {
+		nodeCount := 0
+		iterator := tree.Root().Iterator()
+		for key, val, ok := iterator.Next(); ok; key, val, ok = iterator.Next() {
+			if nodeCount > 300 {
+				break // Prevent massive UI payload crashes
+			}
+			action := string(val)
+			if action == "" {
+				continue
+			}
+
+			var regionTokens []string
+			parts := bytes.Split(key, []byte{0x00})
+			for _, part := range parts {
+				if len(part) == 0 {
+					continue
+				}
+				var strTokens []string
+				for _, b := range part {
+					strTokens = append(strTokens, fmt.Sprintf("%02X", b))
+				}
+				regionTokens = append(regionTokens, strings.Join(strTokens, ""))
+			}
+
+			if len(regionTokens) == 0 {
+				continue
+			}
+
+			currNode := rootNode
+			var pathSoFar strings.Builder
+			pathSoFar.WriteString("root")
+
+			for idx, regToken := range regionTokens {
+				isLast := idx == len(regionTokens)-1
+				nodeAction := "WAIT"
+				nodeState := "EVALUATED"
+
+				if isLast {
+					nodeAction = strings.ToUpper(action)
+					nodeState = "POLICY CHOICE"
+				}
+
+				pathSoFar.WriteString("/")
+				pathSoFar.WriteString(regToken)
+
+				var foundChild *cognition.TrieNodeJSON
+				for _, child := range currNode.Children {
+					if len(child.Tokens) > 0 && child.Tokens[0] == regToken {
+						foundChild = child
+						break
+					}
+				}
+
+				if foundChild == nil {
+					foundChild = &cognition.TrieNodeJSON{
+						ID:          pathSoFar.String(),
+						TokenPrefix: nodeAction,
+						Probability: 1.0,
+						Count:       1,
+						Tokens:      []string{regToken},
+						State:       nodeState,
+					}
+					currNode.Children = append(currNode.Children, foundChild)
+					nodeCount++
+				} else if isLast {
+					foundChild.TokenPrefix = nodeAction
+					foundChild.State = nodeState
+					foundChild.Count++
+				}
+
+				currNode = foundChild
+			}
 		}
 	}
 
 	return cognition.CognitionTreeExport{
-		Root: &cognition.TrieNodeJSON{
-			ID:          "root",
-			TokenPrefix: "ROOT",
-			Probability: 1.0,
-			State:       "ESTIMATED",
-		},
+		Root:     rootNode,
 		Branches: []cognition.TrieBranchJSON{},
 		Feasible: []cognition.FeasibleActionJSON{},
 	}
+}
+
+func (training *Training) emitMetrics(measurement *data.Measurement[float64], action string) {
+	if measurement.Metrics == nil {
+		measurement.Metrics = make(map[string]data.Metric[float64])
+	}
+	if measurement.Provenance == nil {
+		measurement.Provenance = make(map[string]string)
+	}
+
+	stage := training.stageCode.Load()
+	switch stage {
+	case StageGridSettling:
+		measurement.Provenance["stage"] = "GRID SETTLING"
+		measurement.Provenance["stage_blocker"] = "awaiting region convergence"
+	case StageHistoricalTraining:
+		measurement.Provenance["stage"] = "HISTORICAL TRAINING"
+		measurement.Provenance["stage_blocker"] = fmt.Sprintf("%d iterations", training.iterations.Load())
+	case StageForwardPaper:
+		measurement.Provenance["stage"] = "FORWARD PAPER"
+		measurement.Provenance["stage_blocker"] = "N/A"
+	default:
+		measurement.Provenance["stage"] = "SKILL DEMONSTRATED"
+		measurement.Provenance["stage_blocker"] = "N/A"
+	}
+
+	var actVal float64
+	switch action {
+	case ActionEnter:
+		actVal = 1
+	case ActionExit:
+		actVal = 2
+	}
+
+	setMetric(measurement, "action", actVal)
+	setMetric(measurement, "stage_code", float64(stage))
+	setMetric(measurement, "steps", float64(training.steps.Load()))
+	setMetric(measurement, "decisions", float64(training.decisions.Load()))
+	setMetric(measurement, "evaluated", float64(training.evaluated.Load()))
+	setMetric(measurement, "confidence", 1.0)
+}
+
+func setMetric(m *data.Measurement[float64], name string, val float64) {
+	metric := data.NewMetric[float64](name, data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1)
+	metric.Raw = val
+	m.Metrics[name] = metric
 }

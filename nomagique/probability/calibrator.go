@@ -39,11 +39,15 @@ func NewCalibrator(retention core.Primitive) core.Primitive {
 func (op *Calibrator) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
+			if op.err != nil {
+				return
+			}
+
 			val := *(*float64)(arriving)
 
 			if math.IsNaN(val) || math.IsInf(val, 0) {
 				op.err = errors.Join(op.err, core.ErrShape)
-				continue
+				return
 			}
 
 			reading := CalibratorReading{

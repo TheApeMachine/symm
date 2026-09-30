@@ -277,7 +277,7 @@ Severe structural faults immediately bypass gradual decay to 0.0.
 */
 func (monitor *AnomalyMonitor) Health(symbol string) float64 {
 	if monitor == nil {
-		return 1.0
+		return 0.0
 	}
 
 	if monitor.HasSevereFault(symbol) {

@@ -25,7 +25,7 @@ export type XrayLayer = {
 	label: string;
 	state: number[];
 	prediction: number[];
-	error_norm: number;
+	error_norm: number | null;
 };
 
 const finite = (value: unknown): number | null =>
@@ -74,7 +74,7 @@ const layerError = (
 	state: number[],
 	prediction: number[],
 	surprise: number | undefined,
-): number => {
+): number | null => {
 	if (state.length > 0 && prediction.length === state.length) {
 		requirePositiveLength(state.length, "xray mean absolute error");
 
@@ -86,9 +86,7 @@ const layerError = (
 		return total / state.length;
 	}
 
-	const fallback = finite(surprise);
-
-	return fallback === null ? 0 : Math.min(1, Math.abs(fallback));
+	return null;
 };
 
 /*

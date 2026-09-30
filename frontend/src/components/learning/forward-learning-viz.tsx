@@ -79,9 +79,17 @@ export const ForwardLearningViz = () => {
 		exitIdx: number | null;
 	} | null>(null);
 
+	// Episode Buffer for playback
+	const [episodeQueue, setEpisodeQueue] = useState<ForwardTapePoint[][]>([]);
+	const [currentEpisode, setCurrentEpisode] = useState<ForwardTapePoint[] | null>(null);
+	const [playbackTick, setPlaybackTick] = useState(0);
+	const [playbackPhase, setPlaybackPhase] = useState<"PLAYING" | "EVALUATING">("PLAYING");
+	const pendingEpisodeRef = useRef<ForwardTapePoint[]>([]);
+
 	// Current training symbol (not filtered by user focus atom — reflects whatever is training)
 	const [currentSymbol, setCurrentSymbol] = useState("TRAINING");
 	const lastSeenSymbolRef = useRef<string>("");
+	const lastSeenExcursionStartRef = useRef<number>(-1);
 
 	useEffect(() => {
 		const unsubPos = positionCountAtom.subscribe((count) => {
@@ -154,6 +162,56 @@ export const ForwardLearningViz = () => {
 		};
 	}, []);
 
+	// Playback Animation Loop
+	useEffect(() => {
+		if (!isPlaying) return;
+
+		let timer: number;
+		if (playbackPhase === "PLAYING") {
+			if (!currentEpisode) {
+				// Try to pull next episode from queue
+				setEpisodeQueue((prev) => {
+					if (prev.length > 0) {
+						setCurrentEpisode(prev[0]);
+						setPlaybackTick(0);
+						return prev.slice(1);
+					}
+					return prev;
+				});
+				return;
+			}
+
+			timer = window.setInterval(() => {
+				setPlaybackTick((t) => {
+					if (currentEpisode && t >= currentEpisode.length - 1) {
+						setPlaybackPhase("EVALUATING");
+						return t;
+					}
+					// Play fast: jump by 2 or 3 ticks depending on length
+					const step = currentEpisode.length > 200 ? 3 : 2;
+					return Math.min(t + step, currentEpisode.length - 1);
+				});
+			}, 16);
+		} else if (playbackPhase === "EVALUATING") {
+			timer = window.setTimeout(() => {
+				setCurrentEpisode(null);
+				setPlaybackPhase("PLAYING");
+			}, 1200); // Wait 1.2s at the end of the excursion to show the result
+		}
+
+		return () => {
+			clearInterval(timer);
+			clearTimeout(timer);
+		};
+	}, [isPlaying, playbackPhase, currentEpisode]);
+
+	// Update visible points from the animating episode
+	useEffect(() => {
+		if (currentEpisode && playbackTick < currentEpisode.length) {
+			setPoints(currentEpisode.slice(0, playbackTick + 1));
+		}
+	}, [currentEpisode, playbackTick]);
+
 	// Subscribe to real live training measurements stream across all symbols
 	// Unfiltered by user focus symbol: always tracks the active training subject
 	useEffect(() => {
@@ -215,14 +273,42 @@ export const ForwardLearningViz = () => {
 						}
 					}
 				}
-				if (tokensList.length === 0 && measurement.metadata) {
+				let excStart: number | undefined;
+				let excIgnition: number | undefined;
+				let excExtremum: number | undefined;
+
+				if (measurement.metadata) {
 					for (const m of measurement.metadata) {
 						if (m?.name === "precursor_tokens" && m.value) {
 							tokensList = String(m.value).split(",").filter(Boolean);
 						}
+						if (m?.name === "excursion_start" && m.value) {
+							excStart = Number(m.value);
+						}
+						if (m?.name === "excursion_ignition" && m.value) {
+							excIgnition = Number(m.value);
+						}
+						if (m?.name === "excursion_extremum_tick" && m.value) {
+							excExtremum = Number(m.value);
+						}
 					}
 				}
 				setRawPrecursorTokens(tokensList);
+
+				// Map the A, B, C markers from metadata to local scope for the excursion event later
+				const markA = excStart !== undefined ? Math.floor(excStart) : 0;
+				const markB = excIgnition !== undefined ? Math.floor(excIgnition) : 0;
+				const markC = excExtremum !== undefined ? Math.floor(excExtremum) : 0;
+
+				if (excStart !== undefined && excStart !== lastSeenExcursionStartRef.current) {
+					// Finish the pending episode
+					if (pendingEpisodeRef.current.length > 0) {
+						const readyEpisode = [...pendingEpisodeRef.current];
+						setEpisodeQueue((q) => [...q, readyEpisode].slice(-50)); // keep max 50 pending
+					}
+					pendingEpisodeRef.current = [];
+					lastSeenExcursionStartRef.current = excStart;
+				}
 
 				const filledRaw = metricMap.paper_filled ?? 0;
 				setIsPaperFilled(filledRaw === 1);
@@ -253,15 +339,16 @@ export const ForwardLearningViz = () => {
 				setFwdPaperMeanReturn(metricMap.fwd_paper_mean_return ?? 0);
 				setFwdPaperLowerBound(metricMap.fwd_paper_lower_bound ?? 0);
 
-				// Extract price directly from measurement or metrics
+				// Extract price directly from measurement or metrics (which is log-return)
 				let rawPrice: number | undefined;
-				if (metricMap.price && metricMap.price > 0) {
+				if (metricMap.price !== undefined) {
 					rawPrice = metricMap.price;
 				} else if (measurement.metrics) {
 					for (const [k, met] of Object.entries(measurement.metrics)) {
-						if ((met?.raw ?? 0) > 0) {
+						if (met?.raw !== undefined) {
 							const lk = k.toLowerCase();
-							if (lk === "price" || lk.includes("price") || lk === "mid" || lk === "close") {
+							const validPrices = ["price", "last_price", "mark_price", "best_bid_price", "best_ask_price", "trade_price", "mid", "close"];
+							if (validPrices.includes(lk)) {
 								rawPrice = met.raw;
 								break;
 							}
@@ -272,9 +359,10 @@ export const ForwardLearningViz = () => {
 				if (rawPrice === undefined && measurement.peers) {
 					for (const peer of measurement.peers) {
 						for (const m of peer.metrics ?? []) {
-							if (m?.name && (m?.raw ?? 0) > 0) {
+							if (m?.name && m?.raw !== undefined) {
 								const nm = String(m.name).toLowerCase();
-								if (nm === "price" || nm.includes("price") || nm === "mid" || nm === "close") {
+								const validPrices = ["price", "last_price", "mark_price", "best_bid_price", "best_ask_price", "trade_price", "mid", "close"];
+								if (validPrices.includes(nm)) {
 									rawPrice = m.raw;
 									break;
 								}
@@ -287,20 +375,18 @@ export const ForwardLearningViz = () => {
 				if (rawPrice !== undefined) {
 					const seqVal = Number(measurement.tick ?? 0n);
 					const pointPrice = rawPrice;
-					setPoints((prev) => {
-						const next = [
-							...prev,
-							{ x: prev.length, y: pointPrice, seq: seqVal },
-						];
-						if (next.length > 250) {
-							return next.slice(next.length - 250).map((pt, i) => ({
-								x: i,
-								y: pt.y,
-								seq: pt.seq,
-							}));
-						}
-						return next;
-					});
+					pendingEpisodeRef.current.push({ x: pendingEpisodeRef.current.length, y: pointPrice, seq: seqVal });
+
+					// If in live forward mode, just draw it immediately since there are no pre-recorded fragments
+					if (sCode >= 2) {
+						setPoints((prev) => {
+							const next = [...prev, { x: prev.length, y: pointPrice, seq: seqVal }];
+							if (next.length > 250) {
+								return next.slice(next.length - 250).map((pt, i) => ({ x: i, y: pt.y, seq: pt.seq }));
+							}
+							return next;
+						});
+					}
 				}
 
 				// Record real activity log entry
@@ -326,10 +412,7 @@ export const ForwardLearningViz = () => {
 					return [entry, ...prev].slice(0, 10);
 				});
 
-				// Extract A, B, C markers and predicted ENTER / EXIT points
-				const markA = metricMap.mark_a !== undefined ? Math.floor(metricMap.mark_a) : 0;
-				const markB = metricMap.mark_b !== undefined ? Math.floor(metricMap.mark_b) : 0;
-				const markC = metricMap.mark_c !== undefined ? Math.floor(metricMap.mark_c) : 0;
+				// Extract predicted ENTER / EXIT points
 				const entryIdx =
 					metricMap.agent_entry !== undefined && metricMap.agent_entry > 0
 						? Math.floor(metricMap.agent_entry)
@@ -364,6 +447,19 @@ export const ForwardLearningViz = () => {
 						entryIdx,
 						exitIdx,
 					});
+				}
+
+				// Complete fragment detection via metadata tag
+				if (measurement.metadata) {
+					for (const m of measurement.metadata) {
+						if (m?.name === "excursion_event" && m.value === "completed") {
+							if (pendingEpisodeRef.current.length > 0) {
+								const readyEpisode = [...pendingEpisodeRef.current];
+								setEpisodeQueue((q) => [...q, readyEpisode].slice(-50));
+							}
+							pendingEpisodeRef.current = [];
+						}
+					}
 				}
 			});
 		};
@@ -536,12 +632,12 @@ export const ForwardLearningViz = () => {
 						<div className="flex items-center gap-3">
 							{currentPoints.length > 0 && (
 								<span className="text-[11px] font-bold text-(--acc) bg-(--acc)/10 px-2 py-0.5 rounded border border-(--acc)/20">
-									$
+									Δ
 									{currentPoints[currentPoints.length - 1].y.toLocaleString(
 										undefined,
 										{
-											minimumFractionDigits: 2,
-											maximumFractionDigits: 2,
+											minimumFractionDigits: 5,
+											maximumFractionDigits: 5,
 										},
 									)}
 								</span>
@@ -569,7 +665,7 @@ export const ForwardLearningViz = () => {
 
 					{/* Confirmed Excursion Banner */}
 					<AnimatePresence>
-						{excursionEvent && (
+						{playbackPhase === "EVALUATING" && excursionEvent && (
 							<motion.div
 								initial={{ height: 0, opacity: 0 }}
 								animate={{ height: 22, opacity: 1 }}
@@ -648,12 +744,12 @@ export const ForwardLearningViz = () => {
 											fontWeight="bold"
 											textAnchor="end"
 										>
-											$
+											Δ
 											{currentPoints[currentPoints.length - 1].y.toLocaleString(
 												undefined,
 												{
-													minimumFractionDigits: 2,
-													maximumFractionDigits: 2,
+													minimumFractionDigits: 5,
+													maximumFractionDigits: 5,
 												},
 											)}
 										</text>
@@ -661,7 +757,7 @@ export const ForwardLearningViz = () => {
 								)}
 
 								{/* Hindsight Markers A, B, C and Decisions */}
-								{excursionEvent && points.length > 0 && (() => {
+								{playbackPhase === "EVALUATING" && excursionEvent && points.length > 0 && (() => {
 									const resolveIdx = (val: number | null): number | null => {
 										if (val === null || val <= 0 || points.length === 0) return null;
 										if (val < points.length && points[val]) return val;

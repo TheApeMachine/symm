@@ -1,6 +1,5 @@
 import * as d3 from "d3";
 import { SlidersHorizontal, Zap } from "lucide-react";
-import { AnimatePresence, motion } from "motion/react";
 import { type MouseEvent, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "#/lib/utils";
 import type { FeasibleAction, TrieNodeData } from "./types";
@@ -292,18 +291,28 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 			);
 		}
 		if (projection === "vertical") {
+			// Offset to connect exactly at the port boundaries
+			const s = { x: source.x + 40, y: source.y + 15 };
+			const t = { x: target.x + 40, y: target.y - 15 };
 			return (
 				d3
-					.linkVertical<TreeLink, TreeNode>()
-					.x((d: TreeNode) => d.x)
-					.y((d: TreeNode) => d.y)({ source, target }) ?? undefined
+					// biome-ignore lint/suspicious/noExplicitAny: Because I'm Batman
+					.linkVertical<any, { x: number; y: number }>()
+					.x((d) => d.x)
+					.y((d) => d.y)({ source: s, target: t }) ?? undefined
 			);
 		}
+
+		// Horizontal projection: d.y is x-axis, d.x is y-axis
+		// Source port is at cx: 90. Target port is at cx: -10
+		const s = { x: source.x, y: source.y + 90 };
+		const t = { x: target.x, y: target.y - 10 };
 		return (
 			d3
-				.linkHorizontal<TreeLink, TreeNode>()
-				.x((d: TreeNode) => d.y)
-				.y((d: TreeNode) => d.x)({ source, target }) ?? undefined
+				// biome-ignore lint/suspicious/noExplicitAny: Because I'm Batman
+				.linkHorizontal<any, { x: number; y: number }>()
+				.x((d) => d.y)
+				.y((d) => d.x)({ source: s, target: t }) ?? undefined
 		);
 	};
 
@@ -430,283 +439,269 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 					<g transform={transform.toString()}>
 						{/* Links Layer */}
 						<g className="links">
-							<AnimatePresence>
-								{links.map((link) => {
-									const d = getPath(link.source, link.target);
-									const initialD = getPath(link.source, link.source);
+							{links.map((link) => {
+								const d = getPath(link.source, link.target);
+								const sPos = getNodePos(link.source);
+								const tPos = getNodePos(link.target);
+								const midX = (sPos.x + tPos.x) / 2;
+								const midY = (sPos.y + tPos.y) / 2;
 
-									const sPos = getNodePos(link.source);
-									const tPos = getNodePos(link.target);
-									const midX = (sPos.x + tPos.x) / 2;
-									const midY = (sPos.y + tPos.y) / 2;
+								const isLinkActive = activePathIds
+									? activePathIds.has(link.target.data.id)
+									: true;
 
-									const isLinkActive = activePathIds
-										? activePathIds.has(link.target.data.id)
-										: true;
-
-									return (
-										<motion.g
-											key={`link-${link.source.data.id}-${link.target.data.id}`}
-											initial={{ opacity: 0 }}
-											animate={{ opacity: isLinkActive ? 1 : 0.15 }}
-											exit={{ opacity: 0 }}
-											transition={{ duration: 0.3 }}
-										>
-											<motion.path
-												d={d}
-												initial={{ d: initialD }}
-												animate={{ d: d }}
-												exit={{ d: initialD }}
-												transition={{ duration: 0.3, ease: "easeInOut" }}
-												fill="none"
-												stroke={getEdgeColor(link.target.data.probability)}
-												strokeWidth={Math.max(
-													1.5,
-													link.target.data.probability * 6,
-												)}
-												strokeOpacity={0.7}
-											/>
-											{link.target.data.tokens &&
-												link.target.data.tokens.length > 0 && (
-													<motion.g
-														initial={{ opacity: 0 }}
-														animate={{ opacity: 1 }}
-														exit={{ opacity: 0 }}
-														transition={{ duration: 0.3 }}
-														transform={`translate(${midX}, ${projection === "vertical" ? midY - 6 : midY - 8})`}
-														className="pointer-events-none select-none font-mono"
-													>
-														<rect
-															x={
-																-Math.max(
-																	28,
-																	link.target.data.tokens.join(", ").length *
-																		5.5 +
-																		8,
-																) / 2
-															}
-															y={-7}
-															width={Math.max(
+								return (
+									<g
+										key={`link-${link.source.data.id}-${link.target.data.id}`}
+										style={{
+											opacity: isLinkActive ? 1 : 0.15,
+											transition: "opacity 0.3s ease-in-out",
+										}}
+									>
+										<path
+											d={d}
+											fill="none"
+											stroke={getEdgeColor(link.target.data.probability)}
+											strokeWidth={Math.max(
+												1.5,
+												link.target.data.probability * 6,
+											)}
+											strokeOpacity={0.7}
+											style={{
+												transition: "d 0.3s ease-in-out",
+											}}
+										/>
+										{link.target.data.tokens &&
+											link.target.data.tokens.length > 0 && (
+												<g
+													transform={`translate(${midX}, ${projection === "vertical" ? midY - 6 : midY - 8})`}
+													className="pointer-events-none select-none font-mono"
+													style={{
+														transition: "transform 0.3s ease-in-out",
+													}}
+												>
+													<rect
+														x={
+															-Math.max(
 																28,
 																link.target.data.tokens.join(", ").length *
 																	5.5 +
 																	8,
-															)}
-															height={14}
-															rx={2}
-															fill="var(--surface)"
-															stroke="var(--line2)"
-															strokeWidth={1}
-															opacity={0.95}
-														/>
-														<text
-															x={0}
-															y={3.5}
-															fill="var(--acc)"
-															fontSize="9px"
-															textAnchor="middle"
-															fontWeight="600"
-															className="font-mono tracking-wider"
-														>
-															[{link.target.data.tokens.join(", ")}]
-														</text>
-													</motion.g>
-												)}
-										</motion.g>
-									);
-								})}
-							</AnimatePresence>
+															) / 2
+														}
+														y={-7}
+														width={Math.max(
+															28,
+															link.target.data.tokens.join(", ").length * 5.5 +
+																8,
+														)}
+														height={14}
+														rx={2}
+														fill="var(--surface)"
+														stroke="var(--line2)"
+														strokeWidth={1}
+														opacity={0.95}
+													/>
+													<text
+														x={0}
+														y={3.5}
+														fill="var(--acc)"
+														fontSize="9px"
+														textAnchor="middle"
+														fontWeight="600"
+														className="font-mono tracking-wider"
+													>
+														[{link.target.data.tokens.join(", ")}]
+													</text>
+												</g>
+											)}
+									</g>
+								);
+							})}
 						</g>
 
 						{/* Nodes Layer */}
 						<g className="nodes">
-							<AnimatePresence>
-								{nodes.map((node) => {
-									const nodeData = node.data;
-									const hasChildren = !!(
-										nodeData.children || nodeData._children
-									);
-									const isCollapsed = !!nodeData._children;
-									const probColor = getEdgeColor(nodeData.probability);
-									const isHighProb = nodeData.probability > 0.2;
+							{nodes.map((node) => {
+								const nodeData = node.data;
+								const hasChildren = !!(nodeData.children || nodeData._children);
+								const isCollapsed = !!nodeData._children;
+								const probColor = getEdgeColor(nodeData.probability);
+								const isHighProb = nodeData.probability > 0.2;
 
-									const parent = node.parent;
-									const pos = getNodePos(node);
-									const initialPos = parent ? getNodePos(parent) : pos;
-									const isNodeActive = activePathIds
-										? activePathIds.has(nodeData.id)
-										: true;
+								const parent = node.parent;
+								const pos = getNodePos(node);
+								const isNodeActive = activePathIds
+									? activePathIds.has(nodeData.id)
+									: true;
 
-									const parentPort =
-										projection === "vertical"
-											? { cx: 40, cy: -15 }
-											: { cx: -10, cy: 0 };
-									const childPort =
-										projection === "vertical"
-											? { cx: 40, cy: 15 }
-											: { cx: 90, cy: 0 };
+								const parentPort =
+									projection === "vertical"
+										? { cx: 40, cy: -15 }
+										: { cx: -10, cy: 0 };
+								const childPort =
+									projection === "vertical"
+										? { cx: 40, cy: 15 }
+										: { cx: 90, cy: 0 };
 
-									return (
-										<motion.g
-											key={`node-${nodeData.id}`}
-											initial={{
-												opacity: 0,
-												x: initialPos.x,
-												y: initialPos.y,
-											}}
-											animate={{
-												opacity: isNodeActive ? 1 : 0.15,
-												x: pos.x,
-												y: pos.y,
-											}}
-											exit={{
-												opacity: 0,
-												x: initialPos.x,
-												y: initialPos.y,
-												transition: { duration: 0.2 },
-											}}
-											transition={{ duration: 0.3, ease: "easeInOut" }}
-											onClick={(e: MouseEvent) => {
+								return (
+									// biome-ignore lint/a11y/noStaticElementInteractions: Because I'm Batman
+									<g
+										key={`node-${nodeData.id}`}
+										style={{
+											opacity: isNodeActive ? 1 : 0.15,
+											transform: `translate(${pos.x}px, ${pos.y}px)`,
+											transition: "all 0.3s ease-in-out",
+										}}
+										role={hasChildren ? "button" : "graphics-symbol"}
+										tabIndex={hasChildren ? 0 : undefined}
+										onKeyDown={(e) => {
+											if (e.key === "Enter" || e.key === " ") {
+												e.preventDefault();
 												e.stopPropagation();
 												if (hasChildren) handleNodeClick(nodeData);
-											}}
-											onMouseEnter={(e: MouseEvent) => {
-												setHoveredNodeId(nodeData.id);
-												setTooltip({
-													data: nodeData,
-													x: e.clientX,
-													y: e.clientY,
-												});
-											}}
-											onMouseMove={(e: MouseEvent) => {
-												setTooltip({
-													data: nodeData,
-													x: e.clientX,
-													y: e.clientY,
-												});
-											}}
-											onMouseLeave={() => {
-												setHoveredNodeId(null);
-												setTooltip(null);
-											}}
-											className={
-												hasChildren ? "cursor-pointer" : "cursor-default"
 											}
-										>
-											<motion.g
-												animate={
+										}}
+										onClick={(e: MouseEvent) => {
+											e.stopPropagation();
+											if (hasChildren) handleNodeClick(nodeData);
+										}}
+										onMouseEnter={(e: MouseEvent) => {
+											setHoveredNodeId(nodeData.id);
+											setTooltip({
+												data: nodeData,
+												x: e.clientX,
+												y: e.clientY,
+											});
+										}}
+										onMouseMove={(e: MouseEvent) => {
+											setTooltip({
+												data: nodeData,
+												x: e.clientX,
+												y: e.clientY,
+											});
+										}}
+										onMouseLeave={() => {
+											setHoveredNodeId(null);
+											setTooltip(null);
+										}}
+										className={
+											hasChildren ? "cursor-pointer" : "cursor-default"
+										}
+									>
+										<g
+											style={{
+												transform:
 													projection === "radial"
-														? {
-																rotate: (node.x * 180) / Math.PI - 90,
-															}
-														: { rotate: 0 }
+														? `rotate(${(node.x * 180) / Math.PI - 90}deg)`
+														: "rotate(0deg)",
+												transition: "transform 0.3s ease-in-out",
+											}}
+											className="origin-center"
+										>
+											<rect
+												x={-10}
+												y={-14}
+												width={100}
+												height={28}
+												rx={3}
+												fill={
+													nodeData.prefix.toUpperCase() === "ENTER"
+														? "rgba(115, 190, 104, 0.15)"
+														: nodeData.prefix.toUpperCase() === "WAIT"
+															? "rgba(232, 163, 61, 0.15)"
+															: nodeData.prefix.toUpperCase() === "EXIT"
+																? "rgba(240, 84, 79, 0.15)"
+																: "var(--surface)"
 												}
-												className="origin-center"
-											>
-												<rect
-													x={-10}
-													y={-14}
-													width={100}
-													height={28}
-													rx={3}
-													fill={
-														nodeData.prefix.toUpperCase() === "ENTER"
-															? "rgba(115, 190, 104, 0.15)"
-															: nodeData.prefix.toUpperCase() === "WAIT"
-																? "rgba(232, 163, 61, 0.15)"
-																: nodeData.prefix.toUpperCase() === "EXIT"
-																	? "rgba(240, 84, 79, 0.15)"
-																	: "var(--surface)"
-													}
-													stroke={
-														nodeData.prefix.toUpperCase() === "ENTER"
-															? "var(--up)"
-															: nodeData.prefix.toUpperCase() === "WAIT"
-																? "var(--warn)"
-																: nodeData.prefix.toUpperCase() === "EXIT"
-																	? "var(--down)"
-																	: colorMode === "gradient"
-																		? probColor
-																		: isHighProb
-																			? "var(--acc)"
-																			: "var(--line2)"
-													}
+												stroke={
+													nodeData.prefix.toUpperCase() === "ENTER"
+														? "var(--up)"
+														: nodeData.prefix.toUpperCase() === "WAIT"
+															? "var(--warn)"
+															: nodeData.prefix.toUpperCase() === "EXIT"
+																? "var(--down)"
+																: colorMode === "gradient"
+																	? probColor
+																	: isHighProb
+																		? "var(--acc)"
+																		: "var(--line2)"
+												}
+												strokeWidth={1.5}
+												className={cn(
+													"transition-colors",
+													hasChildren && "hover:stroke-(--acc)",
+												)}
+											/>
+
+											{parent && (
+												<circle
+													cx={parentPort.cx}
+													cy={parentPort.cy}
+													r={2.5}
+													fill="var(--surface)"
+													stroke="var(--f4)"
 													strokeWidth={1.5}
-													className={cn(
-														"transition-colors",
-														hasChildren && "hover:stroke-(--acc)",
-													)}
 												/>
+											)}
 
-												{parent && (
-													<circle
-														cx={parentPort.cx}
-														cy={parentPort.cy}
-														r={2.5}
-														fill="var(--surface)"
-														stroke="var(--f4)"
-														strokeWidth={1.5}
-													/>
-												)}
+											{(hasChildren || isCollapsed) && (
+												<circle
+													cx={childPort.cx}
+													cy={childPort.cy}
+													r={isCollapsed ? 3.5 : 2.5}
+													fill={isCollapsed ? "var(--acc)" : "var(--surface)"}
+													stroke={isCollapsed ? "var(--acc)" : "var(--f4)"}
+													strokeWidth={1.5}
+												/>
+											)}
 
-												{(hasChildren || isCollapsed) && (
-													<circle
-														cx={childPort.cx}
-														cy={childPort.cy}
-														r={isCollapsed ? 3.5 : 2.5}
-														fill={isCollapsed ? "var(--acc)" : "var(--surface)"}
-														stroke={isCollapsed ? "var(--acc)" : "var(--f4)"}
-														strokeWidth={1.5}
-													/>
-												)}
+											<text
+												x={0}
+												y={0}
+												dy="0.32em"
+												fill={
+													nodeData.prefix.toUpperCase() === "ENTER"
+														? "var(--up)"
+														: nodeData.prefix.toUpperCase() === "WAIT"
+															? "var(--warn)"
+															: nodeData.prefix.toUpperCase() === "EXIT"
+																? "var(--down)"
+																: "var(--f1)"
+												}
+												fontSize="11px"
+												fontWeight="700"
+												className="select-none pointer-events-none font-mono tracking-wider"
+											>
+												{nodeData.prefix}
+											</text>
 
+											<text
+												x={80}
+												y={-18}
+												fill="var(--f4)"
+												fontSize="9px"
+												textAnchor="end"
+												className="select-none pointer-events-none font-mono"
+											>
+												{(nodeData.probability * 100).toFixed(1)}%
+											</text>
+
+											{nodeData.state && (
 												<text
 													x={0}
-													y={0}
-													dy="0.32em"
-													fill={
-														nodeData.prefix.toUpperCase() === "ENTER"
-															? "var(--up)"
-															: nodeData.prefix.toUpperCase() === "WAIT"
-																? "var(--warn)"
-																: nodeData.prefix.toUpperCase() === "EXIT"
-																	? "var(--down)"
-																	: "var(--f1)"
-													}
-													fontSize="11px"
-													fontWeight="700"
-													className="select-none pointer-events-none font-mono tracking-wider"
-												>
-													{nodeData.prefix}
-												</text>
-
-												<text
-													x={80}
 													y={-18}
-													fill="var(--f4)"
-													fontSize="9px"
-													textAnchor="end"
-													className="select-none pointer-events-none font-mono"
+													fill={getStateColor(nodeData.state)}
+													fontSize="8px"
+													className="font-mono tracking-widest pointer-events-none select-none uppercase font-bold"
 												>
-													{(nodeData.probability * 100).toFixed(1)}%
+													{nodeData.state}
 												</text>
-
-												{nodeData.state && (
-													<text
-														x={0}
-														y={-18}
-														fill={getStateColor(nodeData.state)}
-														fontSize="8px"
-														className="font-mono tracking-widest pointer-events-none select-none uppercase font-bold"
-													>
-														{nodeData.state}
-													</text>
-												)}
-											</motion.g>
-										</motion.g>
-									);
-								})}
-							</AnimatePresence>
+											)}
+										</g>
+									</g>
+								);
+							})}
 						</g>
 					</g>
 				</svg>

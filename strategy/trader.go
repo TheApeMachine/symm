@@ -447,22 +447,22 @@ func (trader *Trader) PositionsWire() *wire.PositionsFrameT {
 			volumeStr = volume.String()
 		}
 
-		markStr := entryPriceStr
+		markStr := ""
 
 		if mark != nil {
 			markStr = mark.String()
 		}
 
-		pnlStr := "0.0000"
+		pnlStr := ""
 
 		if pnl != nil {
 			pnlStr = pnl.String()
 		}
 
-		entryAtNs := reg.EntryAt.UnixNano()
+		var entryAtNs int64
 
-		if entryAtNs <= 0 {
-			entryAtNs = time.Now().UnixNano()
+		if !reg.EntryAt.IsZero() {
+			entryAtNs = reg.EntryAt.UnixNano()
 		}
 
 		orderID := reg.OrderID
@@ -484,12 +484,16 @@ func (trader *Trader) PositionsWire() *wire.PositionsFrameT {
 			ReturnPct:   returnPct,
 		}
 
-		decision := &wire.DecisionT{
-			Id:         orderID,
-			Symbol:     symbolKey,
-			Action:     "enter",
-			Confidence: 1.0,
-			At:         entryAtNs,
+		var decision *wire.DecisionT
+
+		if orderID != "" {
+			decision = &wire.DecisionT{
+				Id:         orderID,
+				Symbol:     symbolKey,
+				Action:     "enter",
+				Confidence: 0.0,
+				At:         entryAtNs,
+			}
 		}
 
 		rows = append(rows, &wire.PositionT{
@@ -520,7 +524,7 @@ func (trader *Trader) RecentTrades(limit int) ([]*wire.PositionT, error) {
 
 func (trader *Trader) DecisionsWire() *wire.StrategyFrameT {
 	if trader == nil {
-		return &wire.StrategyFrameT{Evaluated: true, Decisions: []*wire.DecisionT{}}
+		return &wire.StrategyFrameT{Evaluated: false, Decisions: []*wire.DecisionT{}}
 	}
 
 	decPtr := trader.decisions.Load()
@@ -531,9 +535,15 @@ func (trader *Trader) DecisionsWire() *wire.StrategyFrameT {
 		copy(decisions, *decPtr)
 	}
 
+	outcome := ""
+
+	if len(decisions) > 0 {
+		outcome = "active"
+	}
+
 	return &wire.StrategyFrameT{
-		Evaluated: true,
-		Outcome:   "active",
+		Evaluated: len(decisions) > 0,
+		Outcome:   outcome,
 		Decisions: decisions,
 	}
 }

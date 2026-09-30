@@ -72,13 +72,23 @@ const paintHierarchyRows = (
 		}
 
 		if (error !== null) {
-			error.textContent = layer.error_norm.toFixed(3);
-			error.style.color = layerErrorTone(layer.error_norm);
+			error.textContent =
+				layer.error_norm !== null ? layer.error_norm.toFixed(3) : "—";
+			error.style.color =
+				layer.error_norm !== null
+					? layerErrorTone(layer.error_norm)
+					: "inherit";
 		}
 
 		if (fill !== null) {
-			fill.style.width = `${Math.min(100, Math.max(0, layer.error_norm * 100))}%`;
-			fill.style.background = layerErrorTone(layer.error_norm);
+			fill.style.width =
+				layer.error_norm !== null
+					? `${Math.min(100, Math.max(0, layer.error_norm * 100))}%`
+					: "0%";
+			fill.style.background =
+				layer.error_norm !== null
+					? layerErrorTone(layer.error_norm)
+					: "transparent";
 		}
 
 		if (cells === null) {

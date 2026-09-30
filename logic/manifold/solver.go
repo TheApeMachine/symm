@@ -332,9 +332,13 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 
 	if reading.Reading.KuramotoR > 0 {
 		r2 := reading.Reading.KuramotoR * reading.Reading.KuramotoR
-		measurement.SNR = r2 / (1.0 - r2 + 1e-6)
-		measurement.SNRDefined = true
-		measurement.Estimated = true
+		denom := 1.0 - r2
+
+		if denom > 0 {
+			measurement.SNR = r2 / denom
+			measurement.SNRDefined = true
+			measurement.Estimated = true
+		}
 	}
 
 	return measurement

@@ -100,9 +100,7 @@ func (tee *UITee) Next() unsafe.Pointer {
 			break
 		}
 
-		if types.AllowsRoute(measurement) {
-			batch = append(batch, measurement)
-		}
+		batch = append(batch, measurement)
 	}
 
 	if len(batch) == 0 {

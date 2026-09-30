@@ -53,6 +53,13 @@ func Check[T, U any](t *testing.T, example Case[T, U]) {
 
 			So(len(actual), ShouldEqual, 0)
 			So(op.Error(), ShouldBeNil)
+
+			nilSeq := SliceToSeq[T](nil)
+			nilOutSeq := op.Next(nilSeq)
+			nilActual := CollectSeq[U](nilOutSeq)
+
+			So(len(nilActual), ShouldEqual, 0)
+			So(op.Error(), ShouldBeNil)
 		})
 
 		Convey("multi-yield dynamic table runs", func() {

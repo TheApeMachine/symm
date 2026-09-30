@@ -51,16 +51,7 @@ func (routes *Routes) Register() {
 
 	routes.hub.app.Get("/cognition/tree", func(c fiber.Ctx) error {
 		if routes.hub.cognitionSource == nil {
-			return c.JSON(cognition.CognitionTreeExport{
-				Root: &cognition.TrieNodeJSON{
-					ID:          "root",
-					TokenPrefix: "ROOT",
-					Probability: 1.0,
-					State:       "ESTIMATED",
-				},
-				Branches: []cognition.TrieBranchJSON{},
-				Feasible: []cognition.FeasibleActionJSON{},
-			})
+			return c.JSON(cognition.CognitionTreeExport{})
 		}
 
 		export := routes.hub.cognitionSource.CognitionTree()

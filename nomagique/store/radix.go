@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"iter"
+	"sync"
 	"unsafe"
 
 	iradix "github.com/hashicorp/go-immutable-radix/v2"
@@ -19,6 +20,7 @@ type Radix struct {
 	err  error
 	held *iradix.Tree[[]byte]
 	out  *iradix.Tree[[]byte]
+	mu   sync.RWMutex
 }
 
 func NewRadix(current ...*iradix.Tree[[]byte]) *Radix {
@@ -32,6 +34,9 @@ func NewRadix(current ...*iradix.Tree[[]byte]) *Radix {
 }
 
 func (op *Radix) Insert(key, val []byte) {
+	op.mu.Lock()
+	defer op.mu.Unlock()
+
 	if op.held == nil {
 		op.held = iradix.New[[]byte]()
 	}
@@ -42,6 +47,9 @@ func (op *Radix) Insert(key, val []byte) {
 }
 
 func (op *Radix) Get(key []byte) ([]byte, bool) {
+	op.mu.RLock()
+	defer op.mu.RUnlock()
+
 	if op.held == nil {
 		return nil, false
 	}
@@ -50,14 +58,21 @@ func (op *Radix) Get(key []byte) ([]byte, bool) {
 }
 
 func (op *Radix) Tree() *iradix.Tree[[]byte] {
+	op.mu.RLock()
+	defer op.mu.RUnlock()
+
 	return op.held
 }
 
 func (op *Radix) MarshalJSON() ([]byte, error) {
+	op.mu.RLock()
+	held := op.held
+	op.mu.RUnlock()
+
 	entries := make(map[string][]byte)
 
-	if op.held != nil {
-		iterator := op.held.Root().Iterator()
+	if held != nil {
+		iterator := held.Root().Iterator()
 
 		for key, val, ok := iterator.Next(); ok; key, val, ok = iterator.Next() {
 			entries[string(key)] = val
@@ -74,6 +89,9 @@ func (op *Radix) UnmarshalJSON(payload []byte) error {
 		return err
 	}
 
+	op.mu.Lock()
+	defer op.mu.Unlock()
+
 	op.held = iradix.New[[]byte]()
 
 	for key, val := range entries {
@@ -87,6 +105,7 @@ func (op *Radix) UnmarshalJSON(payload []byte) error {
 func (op *Radix) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
+			op.mu.Lock()
 			if op.held == nil {
 				op.held = iradix.New[[]byte]()
 			}
@@ -97,30 +116,32 @@ func (op *Radix) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 
 			if !writing {
 				op.out = op.held
-
-				if !yield(unsafe.Pointer(&op.out)) {
+				ptr := unsafe.Pointer(&op.out)
+				op.mu.Unlock()
+				if !yield(ptr) {
 					return
 				}
-
 				continue
 			}
 
 			if !selecting {
 				op.Error(core.ErrShape)
 				op.out = op.held
-
-				if !yield(unsafe.Pointer(&op.out)) {
+				ptr := unsafe.Pointer(&op.out)
+				op.mu.Unlock()
+				if !yield(ptr) {
 					return
 				}
-
 				continue
 			}
 
 			written, _, _ := op.held.Insert(selector, bytes.Clone(data))
 			op.held = written
 			op.out = written
-
-			if !yield(unsafe.Pointer(&op.out)) {
+			ptr := unsafe.Pointer(&op.out)
+			op.mu.Unlock()
+			
+			if !yield(ptr) {
 				return
 			}
 		}

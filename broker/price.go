@@ -31,6 +31,27 @@ var (
 	decimalPercent     = decimalOne.Div(decimalHundred)
 )
 
+/*
+EntryCost is the current, observable execution boundary for one proposed long.
+It states only facts available at admission time: visible entry VWAP, the
+crossing costs paid now, and the sale price that would recover both known fees.
+It deliberately contains no future price, future spread, or expected return.
+*/
+type EntryCost struct {
+	Total              *decimal.Decimal `json:"total,omitempty"` // Gross notional plus the entry fee.
+	EntryPrice         *decimal.Decimal `json:"entryPrice,omitempty"`
+	BestAsk            *decimal.Decimal `json:"bestAsk,omitempty"`
+	BestBid            *decimal.Decimal `json:"bestBid,omitempty"`
+	Midpoint           *decimal.Decimal `json:"midpoint,omitempty"`
+	GrossNotional      *decimal.Decimal `json:"grossNotional,omitempty"`
+	EntryFee           *decimal.Decimal `json:"entryFee,omitempty"`
+	ExitFeeAtBreakEven *decimal.Decimal `json:"exitFeeAtBreakEven,omitempty"`
+	RoundTripFees      *decimal.Decimal `json:"roundTripFees,omitempty"`
+	Spread             *decimal.Decimal `json:"spread,omitempty"`
+	Impact             *decimal.Decimal `json:"impact,omitempty"`
+	BreakEven          *decimal.Decimal `json:"breakEven,omitempty"`
+}
+
 /* Price owns fee state and economic calculations using the SDK's decimals. */
 type Price struct {
 	*runtime.System
@@ -388,12 +409,12 @@ func (price *Price) Walk(
 }
 
 /* EntryCost prices a complete entry from the resident book and current fee. */
-func (price *Price) EntryCost(symbol string, quantity *decimal.Decimal) (*types.EntryCost, error) {
+func (price *Price) EntryCost(symbol string, quantity *decimal.Decimal) (*EntryCost, error) {
 	if quantity == nil || quantity.Sign() <= 0 {
 		return nil, errnie.Error(errnie.Err(errnie.Validation, "entry cost: positive quantity required", nil))
 	}
 
-	var cost *types.EntryCost
+	var cost *EntryCost
 	var err error
 
 	if price.Books == nil {
@@ -447,7 +468,7 @@ func (price *Price) EntryCost(symbol string, quantity *decimal.Decimal) (*types.
 		exitFee := breakEvenGross.Sub(total)
 		midpoint := book.Midpoint()
 
-		cost = &types.EntryCost{
+		cost = &EntryCost{
 			Total:              total,
 			EntryPrice:         entry,
 			BestAsk:            book.BestAsk().Price,
@@ -465,7 +486,12 @@ func (price *Price) EntryCost(symbol string, quantity *decimal.Decimal) (*types.
 
 	if cost == nil && err == nil {
 		price.recordAnomaly(symbol, AnomalyIncompleteBook)
-		err = errnie.Err(errnie.UnprocessableContent, "entry cost: complete executable book required for "+symbol, nil)
+
+		err = errnie.Err(
+			errnie.UnprocessableContent,
+			"entry cost: complete executable book required for "+symbol,
+			nil,
+		)
 	}
 
 	return cost, reported(err)
@@ -486,7 +512,9 @@ func reported(err error) error {
 }
 
 /* SellQuote prices a complete liquidation from visible bids and current fee. */
-func (price *Price) SellQuote(symbol string, quantity *decimal.Decimal) (*types.ExecutionSurface, error) {
+func (price *Price) SellQuote(
+	symbol string, quantity *decimal.Decimal,
+) (*types.ExecutionSurface, error) {
 	return price.Surface(symbol, quantity, time.Now().UTC())
 }
 
@@ -498,12 +526,23 @@ func (price *Price) Surface(
 	var err error
 
 	if price.Books == nil {
-		return nil, errnie.Error(errnie.Err(errnie.NotFound, "price: books unavailable", nil))
+		return nil, errnie.Error(
+			errnie.Err(
+				errnie.NotFound,
+				"[price] books unavailable",
+				nil,
+			),
+		)
 	}
 
 	price.Books.Book(symbol, func(book *spotbook.Book) {
 		if book == nil || book.BestBid() == nil || book.BestAsk() == nil {
-			err = errnie.Err(errnie.NotFound, "price: book unavailable for "+symbol, nil)
+			err = errnie.Err(
+				errnie.NotFound,
+				"[price] book unavailable for "+symbol,
+				nil,
+			)
+
 			return
 		}
 
@@ -511,7 +550,13 @@ func (price *Price) Surface(
 		// book shape, not as a fault. See EntryCost above.
 		if book.BestBid().Price.Cmp(book.BestAsk().Price) >= 0 {
 			price.recordAnomaly(symbol, AnomalyCrossedBook)
-			err = errnie.Err(errnie.UnprocessableContent, "price: crossed book for "+symbol, nil)
+
+			err = errnie.Err(
+				errnie.UnprocessableContent,
+				"[price] crossed book for "+symbol,
+				nil,
+			)
+
 			return
 		}
 
@@ -596,11 +641,21 @@ func (price *Price) GetFees(symbols []string) error {
 
 	if err != nil {
 		price.Error(err)
-		return errnie.Error(errnie.Err(errnie.IO, "trade volume: failed to fetch", err))
+
+		return errnie.Error(errnie.Err(
+			errnie.IO,
+			"[price] trade volume: failed to fetch",
+			err,
+		))
 	}
 
 	if result == nil {
-		validationErr := errnie.Err(errnie.UnprocessableContent, "trade volume: response required", nil)
+		validationErr := errnie.Err(
+			errnie.UnprocessableContent,
+			"[price] trade volume: response required",
+			nil,
+		)
+
 		price.Error(validationErr)
 		return errnie.Error(validationErr)
 	}
@@ -609,7 +664,12 @@ func (price *Price) GetFees(symbols []string) error {
 
 	for identifier, fee := range result.Fees {
 		if fee.Fee == nil || fee.Fee.Sign() < 0 || fee.Fee.Cmp(decimalHundred) >= 0 {
-			validationErr := errnie.Err(errnie.Validation, "trade volume: invalid taker fee for "+identifier, nil)
+			validationErr := errnie.Err(
+				errnie.Validation,
+				"[price] trade volume: invalid taker fee for "+identifier,
+				nil,
+			)
+
 			price.Error(validationErr)
 			return errnie.Error(validationErr)
 		}
@@ -619,7 +679,12 @@ func (price *Price) GetFees(symbols []string) error {
 
 	for _, symbol := range symbols {
 		if _, found := fees[price.normalizer.Name(symbol)]; !found {
-			notFoundErr := errnie.Err(errnie.NotFound, "trade volume: taker fee missing for "+symbol, nil)
+			notFoundErr := errnie.Err(
+				errnie.NotFound,
+				"[price] trade volume: taker fee missing for "+symbol,
+				nil,
+			)
+
 			price.Error(notFoundErr)
 			return errnie.Error(notFoundErr)
 		}
@@ -687,7 +752,7 @@ func (price *Price) Anomalies() *AnomalyMonitor {
 /* MarketHealth returns the continuous health score in [0.0, 1.0] for a symbol. */
 func (price *Price) MarketHealth(symbol string) float64 {
 	if price == nil || price.anomalies == nil {
-		return 1.0
+		return 0.0
 	}
 
 	return price.anomalies.Health(price.normalize(symbol))

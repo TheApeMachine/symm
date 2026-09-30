@@ -178,6 +178,44 @@ func TestComputePhaseResultants(t *testing.T) {
 	})
 }
 
+func TestSolverSNRCoherence(t *testing.T) {
+	Convey("Given a Solver decorating manifold measurements", t, func() {
+		solver := &Solver{
+			System: runtime.NewSystem(t.Context(), "snr-test"),
+		}
+		solver.Transition(runtime.READY)
+
+		Convey("When Kuramoto R reaches exact coherence 1.0, SNR is mathematically undefined and no artificial epsilon is used", func() {
+			measurement := data.NewMeasurement[float64]("manifold", nil)
+			reading := &State{
+				Reading: sensorium.Reading{
+					KuramotoR: 1.0,
+				},
+				State: &sensorium.State{N: 10},
+			}
+			solver.reading.Store(reading)
+			res := solver.Step(measurement)
+			So(res.SNRDefined, ShouldBeFalse)
+			So(res.SNR, ShouldEqual, 0.0)
+		})
+
+		Convey("When Kuramoto R is in (0, 1), SNR is computed exactly as r2 / (1 - r2)", func() {
+			measurement := data.NewMeasurement[float64]("manifold", nil)
+			reading := &State{
+				Reading: sensorium.Reading{
+					KuramotoR: 0.8,
+				},
+				State: &sensorium.State{N: 10},
+			}
+			solver.reading.Store(reading)
+			res := solver.Step(measurement)
+			So(res.SNRDefined, ShouldBeTrue)
+			expectedSNR := 0.64 / 0.36
+			So(res.SNR, ShouldAlmostEqual, expectedSNR, 1e-9)
+		})
+	})
+}
+
 // BenchmarkSolverPublishReading measures full production-sized grid publication.
 func BenchmarkSolverPublishReading(b *testing.B) {
 	physics := sensorium.NewManifold(64, 64, 64)

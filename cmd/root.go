@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"net/http/pprof"
 	"os"
@@ -70,6 +69,10 @@ var (
 		Short: "S.Y.M.M. is not financial advice, or a toaster.",
 		Long:  rootLong,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			errnie.Apply(&errnie.Config{
+				Level: viper.GetString("system.log.level"),
+			})
+
 			_, err := pyroscope.Start(pyroscope.Config{
 				ApplicationName: "symm.theapemachine.app",
 				ServerAddress:   "http://localhost:4040",
@@ -77,15 +80,15 @@ var (
 			})
 
 			if err != nil {
-				log.Fatalf("error starting pyroscope profiler: %v", err)
+				errnie.Error(errnie.Err(
+					errnie.IO,
+					"[root] error starting pyroscope profiler",
+					err,
+				))
 			}
 
-			errnie.Apply(&errnie.Config{
-				Level: viper.GetString("system.log.level"),
-			})
-
 			errnie.Info(fmt.Sprintf(
-				"symm started with %d CPUs", runtime.NumCPU(),
+				"[root] symm started with %d CPUs", runtime.NumCPU(),
 			))
 
 			ctx, cancel := context.WithCancel(cmd.Context())
@@ -100,35 +103,9 @@ var (
 
 			uiTee := ui.NewUITee(
 				ctx, "uiTee",
-				8,
+				4,
 				func(measurement *data.Measurement[float64]) bool {
-					if measurement == nil {
-						return false
-					}
-
-					source := measurement.Source
-					if colon := strings.IndexByte(source, ':'); colon >= 0 {
-						source = source[:colon]
-					}
-
-					switch types.SourceType(source) {
-					case types.SourceDepthFlow,
-						types.SourceCorrelation,
-						types.SourceCVD,
-						types.SourceHawkes,
-						types.SourceLeadLag,
-						types.SourceLiquidity,
-						types.SourcePumpDump,
-						types.SourceSentiment,
-						types.SourceToxicity,
-						types.SourceDerivatives,
-						types.SourceMorphology:
-						return measurement.Label == types.Focus()
-					case "training":
-						return true
-					default:
-						return false
-					}
+					return types.Filters(measurement)
 				},
 			)
 
@@ -207,9 +184,10 @@ var (
 			}
 
 			errnie.Info("symm: initializing training and UI hub...")
-			storeTee := hindsight.NewStoreTee(ctx, "storeTee", price, 131072)
+			storeTee := hindsight.NewStoreTee(ctx, "storeTee")
 			trader := strategy.NewTrader(ctx, api, price, balance)
 			training := strategy.NewTraining(ctx, price, trader, uiTee)
+			training.SetCatalog(catalog, epoch)
 
 			uiTee.Transition(nmruntime.READY)
 			training.Transition(nmruntime.BUSY)
@@ -218,19 +196,17 @@ var (
 			webrtcTee := ui.NewUITee(
 				ctx, "webrtcTee", 1,
 				func(measurement *data.Measurement[float64]) bool {
-					if measurement == nil {
-						return false
-					}
-
-					return types.AllowsWebRTC(measurement.Source, measurement.Label)
+					return types.Filters(measurement)
 				},
 			)
+
 			hub := ui.NewHub(ctx, trader, catalog, uiTee, webrtcTee)
 			hub.SetPositionSource(trader)
 			hub.SetCognitionSource(training)
 			hub.SetExitHandler(func(symbol string) {
 				trader.OnAction(symbol, strategy.ActionExit)
 			})
+
 			hub.Run()
 			hub.Transition(nmruntime.READY)
 
@@ -273,8 +249,10 @@ var (
 					}
 				}
 			}()
+
 			codeCommit, buildID, configDigest := resolveRunIdentity()
 			errnie.Info("symm: recording active run in catalog...")
+
 			if err := catalog.RecordRun(ctx, tables.Run{
 				Epoch:        epoch,
 				StartedAt:    processStartedAt,
@@ -308,6 +286,7 @@ var (
 			resonanceSolver := resonance.NewSolver(
 				ctx, system.Cfg.Resonance.LearningRate,
 			)
+
 			cognitionSolver := cognition.NewSolver(ctx)
 			workspace := nmruntime.NewWorkspace(
 				ctx,
