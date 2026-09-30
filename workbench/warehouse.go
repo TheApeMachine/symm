@@ -341,7 +341,7 @@ func (warehouse *Warehouse) Query(ctx context.Context, statement string) (*sql.R
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return conn.QueryContext(ctx, statement)
 }
 
@@ -354,7 +354,10 @@ to_arrow_ipc emits the stream in pieces: a schema message followed by one
 message per record batch, which concatenate into the stream the viewer reads.
 */
 func (warehouse *Warehouse) Execute(ctx context.Context, statement string) ([]byte, error) {
-	statement = sanitizeStatement(statement)
+	statement = strings.TrimSpace(sanitizeStatement(statement))
+	if statement == "" {
+		return []byte{}, nil
+	}
 
 	conn, err := warehouse.session(ctx)
 

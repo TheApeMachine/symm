@@ -3,9 +3,12 @@ package broker
 import (
 	"context"
 	"maps"
+	"os"
 	"sync/atomic"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/krakenfx/api-go/v2/pkg/spot"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/network"
 	"github.com/theapemachine/symm/nomagique/runtime"
@@ -45,6 +48,7 @@ func NewBalance(ctx context.Context, private *network.WebsocketClient) *Balance 
 	}
 
 	balance.Update()
+	balance.Transition(runtime.READY)
 	return balance
 }
 
@@ -119,7 +123,25 @@ func (balance *Balance) Update() {
 	if balance == nil {
 		return
 	}
-	// Websocket router calls UpdateWallet
+
+	client := spot.NewREST()
+	client.PublicKey = os.Getenv("KRAKEN_API_KEY")
+	client.PrivateKey = os.Getenv("KRAKEN_API_SECRET")
+
+	if nonce, err := kraken.ProcessAuthNonce(); err == nil && nonce != nil {
+		client.Nonce = nonce.Next
+	}
+
+	resp, err := client.Balances()
+	if err != nil {
+		errnie.Error(err)
+		return
+	}
+
+	if resp != nil && resp.Result != nil {
+		wallet := kraken.NewBalanceFromMap(resp.Result)
+		balance.UpdateWallet(wallet)
+	}
 }
 
 /*

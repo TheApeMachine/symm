@@ -304,21 +304,23 @@ type Level3TouchFrame struct {
 }
 
 type Level3Subscription struct {
-	Method string                     `json:"method"`
-	Params Level3SubscriptionParams   `json:"params"`
+	Method string                   `json:"method"`
+	Params Level3SubscriptionParams `json:"params"`
 }
 
 type Level3SubscriptionParams struct {
 	Channel string   `json:"channel"`
 	Symbol  []string `json:"symbol"`
+	Token   string   `json:"token,omitempty"`
 }
 
-func NewLevel3Subscription(symbols []string) Level3Subscription {
+func NewLevel3Subscription(symbols []string, token string) Level3Subscription {
 	return Level3Subscription{
 		Method: "subscribe",
 		Params: Level3SubscriptionParams{
 			Channel: "level3",
 			Symbol:  symbols,
+			Token:   token,
 		},
 	}
 }

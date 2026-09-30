@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"time"
 
@@ -149,7 +150,8 @@ var (
 				))
 			}
 
-			if err := price.GetFees(instrument.Symbols()); err != nil {
+			symbols := instrument.Symbols()
+			if err := price.GetFees(symbols); err != nil {
 				return errnie.Error(errnie.Err(
 					errnie.NotAcceptable,
 					"[symm] initial fees are not available",
@@ -377,11 +379,28 @@ var (
 							t := kraken.NewTicker(buf)
 							if t != nil && t.IsSuccess() {
 								for _, td := range t.Data {
-									m := data.NewMeasurement("websocket", map[string]data.Metric[float64]{
-										"bid": {Raw: td.Bid.Float64()},
-										"ask": {Raw: td.Ask.Float64()},
-									})
+									metrics := map[string]data.Metric[float64]{
+										"volume": {Raw: td.Volume},
+									}
+
+									if td.Bid != nil {
+										metrics["bid"] = data.Metric[float64]{Raw: td.Bid.Float64(), Exact: td.Bid}
+									}
+									if td.Ask != nil {
+										metrics["ask"] = data.Metric[float64]{Raw: td.Ask.Float64(), Exact: td.Ask}
+									}
+									if td.Last != nil {
+										metrics["last"] = data.Metric[float64]{Raw: td.Last.Float64(), Exact: td.Last}
+									}
+
+									m := data.NewMeasurement("websocket", metrics)
 									m.Label = td.Symbol
+									m.At = td.Timestamp
+									m.Metadata["type"] = "ticker"
+									if td.Trades != nil {
+										m.Metadata["trades"] = fmt.Sprintf("%d", *td.Trades)
+									}
+
 									workspace.Step(m)
 								}
 							}
@@ -389,11 +408,19 @@ var (
 							t := kraken.NewTrade(buf)
 							if t != nil && t.IsSuccess() {
 								for _, td := range t.Data {
-									m := data.NewMeasurement("websocket", map[string]data.Metric[float64]{
-										"price":  {Raw: td.Price.Float64()},
+									metrics := map[string]data.Metric[float64]{
+										"price":  {Raw: td.Price.Float64(), Exact: &td.Price},
 										"volume": {Raw: td.Qty},
-									})
+									}
+
+									m := data.NewMeasurement("websocket", metrics)
 									m.Label = td.Symbol
+									m.At = td.Timestamp
+									m.Metadata["type"] = "trade"
+									m.Metadata["side"] = td.Side
+									m.Metadata["ord_type"] = td.OrderType
+									m.Metadata["trade_id"] = fmt.Sprintf("%d", td.TradeID)
+
 									workspace.Step(m)
 								}
 							}
@@ -405,6 +432,42 @@ var (
 			startIngress(public)
 			startIngress(private)
 			startIngress(futures)
+
+			if len(symbols) > 0 {
+				restClient := spot.NewREST()
+				restClient.PublicKey = os.Getenv("KRAKEN_API_KEY")
+				restClient.PrivateKey = os.Getenv("KRAKEN_API_SECRET")
+
+				if nonce, err := kraken.ProcessAuthNonce(); err == nil && nonce != nil {
+					restClient.Nonce = nonce.Next
+				}
+				var wsToken string
+				if tokenRes, err := restClient.GetWebSocketsToken(); err == nil && tokenRes != nil {
+					wsToken = tokenRes.Result.Token
+					if bal, err := sonic.Marshal(kraken.NewBalanceSubscription(wsToken)); err == nil {
+						private.Write(bal)
+					}
+				}
+
+				for chunk := range slices.Chunk(symbols, 200) {
+					if tick, err := sonic.Marshal(kraken.NewTickerSubscription(chunk)); err == nil {
+						public.Write(tick)
+					}
+					if trd, err := sonic.Marshal(kraken.NewTradeSubscription(chunk)); err == nil {
+						public.Write(trd)
+					}
+
+					// New Level3 connection for each batch to bypass the 200 symbol limit
+					time.Sleep(200 * time.Millisecond)
+					l3Client := network.NewWebsocketClient(ctx)
+					if err := l3Client.Open(system.Cfg.WebSocket.Endpoints.Level3); err == nil {
+						if l3Msg, err := sonic.Marshal(kraken.NewLevel3Subscription(chunk, wsToken)); err == nil {
+							l3Client.Write(l3Msg)
+							startIngress(l3Client)
+						}
+					}
+				}
+			}
 
 			for ctx.Err() == nil {
 				select {

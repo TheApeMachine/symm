@@ -2,6 +2,7 @@ package broker
 
 import (
 	"context"
+	"os"
 	"sync"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/network"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -78,7 +80,7 @@ func NewPrice(
 	instrument *Instrument,
 ) *Price {
 	normalizer := spot.NewNormalizer()
-	
+
 	price := &Price{
 		System:     runtime.NewSystem(ctx, "price"),
 		Instrument: instrument,
@@ -624,7 +626,40 @@ func (price *Price) FeeIfAvailable(symbol string) *kraken.TradeVolumeFee {
 
 /* GetFees normalizes the venue's fee keys once and publishes a complete batch. */
 func (price *Price) GetFees(symbols []string) error {
-	// TODO: Replace with WebSocket trade_volume equivalent if available, or direct REST call
+	client := spot.NewREST()
+	client.PublicKey = os.Getenv("KRAKEN_API_KEY")
+	client.PrivateKey = os.Getenv("KRAKEN_API_SECRET")
+
+	if nonce, err := kraken.ProcessAuthNonce(); err == nil && nonce != nil {
+		client.Nonce = nonce.Next
+	}
+
+	req, err := client.NewRequest(spot.RequestOptions{
+		Method: "POST",
+		Path:   system.Cfg.WebSocket.Endpoints.TradeVolume,
+		Body:   kraken.NewTradeVolumeRequest(symbols),
+	})
+	if err != nil {
+		return err
+	}
+
+	resp, err := req.Do()
+	if err != nil {
+		return err
+	}
+
+	result := kraken.NewTradeVolume(resp.Body)
+	if result == nil {
+		return errnie.Err(errnie.Internal, "failed to decode trade volume", nil)
+	}
+
+	for symbol, fee := range result.Fees {
+		price.SetFee(symbol, fee)
+	}
+
+	if price.Status() == runtime.WAITING {
+		price.Transition(runtime.READY)
+	}
 	return nil
 }
 

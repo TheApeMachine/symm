@@ -2,10 +2,8 @@ package broker
 
 import (
 	"encoding/json"
-	"fmt"
 	"slices"
 	"sync"
-	"time"
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
@@ -68,18 +66,29 @@ func NewInstrument(public *network.WebsocketClient, futures *network.WebsocketCl
 		return instrument
 	}
 
-	buf, err := public.Read()
-	if err != nil {
-		instrument.Error(errnie.Err(
-			errnie.IO,
-			"instrument: snapshot unavailable",
-			err,
-		))
+	var snapshot *kraken.Instrument
 
-		return instrument
+	for {
+		buf, err := public.Read()
+		if err != nil {
+			instrument.Error(errnie.Err(
+				errnie.IO,
+				"instrument: snapshot unavailable",
+				err,
+			))
+
+			return instrument
+		}
+
+		var peek struct {
+			Channel string `json:"channel"`
+		}
+
+		if err := sonic.UnmarshalString(string(buf), &peek); err == nil && peek.Channel == "instrument" {
+			snapshot = kraken.NewInstrument(buf)
+			break
+		}
 	}
-
-	snapshot := kraken.NewInstrument(buf)
 
 	if snapshot == nil {
 		instrument.Error(errnie.Err(
@@ -91,7 +100,7 @@ func NewInstrument(public *network.WebsocketClient, futures *network.WebsocketCl
 		return instrument
 	}
 
-	for _, pair := range snapshot.Data.Pairs {
+	for _, pair := range snapshot.Data {
 		if pair.Quote != instrument.quote || pair.Status != "online" || slices.Contains(system.Cfg.Market.Instrument.Excluded, pair.Base) {
 			continue
 		}
@@ -100,9 +109,7 @@ func NewInstrument(public *network.WebsocketClient, futures *network.WebsocketCl
 		instrument.cache.Store(pair.Symbol, pair)
 	}
 
-
-
-	instrument.Transition(runtime.WAITING)
+	instrument.Transition(runtime.READY)
 	return instrument
 }
 
@@ -177,36 +184,6 @@ feed with no consumer would create an exact raw tape that can never influence
 the system.
 */
 func (instrument *Instrument) Subscribe() error {
-	errnie.Info("subscribing to instruments")
-
-	for batch := range slices.Chunk(
-		instrument.symbols, system.Cfg.Market.Subscribe.Batch,
-	) {
-		errnie.Info(fmt.Sprintf("subscribing to %d symbols", len(batch)))
-
-		subs := []json.Marshaler{
-			kraken.NewLevel3Subscription(batch),
-			kraken.NewTickerSubscription(batch),
-			kraken.NewTradeSubscription(batch),
-			kraken.NewFuturesSubscription("ticker", batch),
-			kraken.NewFuturesSubscription("trade", batch),
-		}
-
-		for _, sub := range subs {
-			msg, _ := sonic.Marshal(sub)
-			if err := instrument.public.Write(msg); err != nil {
-				return instrument.Error(errnie.Err(
-					errnie.IO,
-					"instrument: required spot subscription failed",
-					err,
-				))
-			}
-		}
-
-		time.Sleep(system.Cfg.Market.Subscribe.Pace)
-	}
-
-	instrument.Transition(runtime.READY)
 	return nil
 }
 
@@ -246,8 +223,6 @@ func (instrument *Instrument) Unsubscribe() error {
 	instrument.Transition(runtime.WAITING)
 	return nil
 }
-
-
 
 /*
 Symbols returns a copy of the subscribed market universe.

@@ -199,7 +199,11 @@ func (training *Training) Run() {
 			// Remove unused seq
 
 			// Cycle through the 5 excursion types described in TRAINING.md
-			// 1: Upward Profitable, 2: Upward Unprofitable, 3: Downward, 4: Choppy, 5: Flat
+			// 1: Upward Profitable,
+			// 2: Upward Unprofitable,
+			// 3: Downward,
+			// 4: Choppy,
+			// 5: Flat
 			extType := ((iteration - 1) % 5) + 1
 			iteration++
 
@@ -225,13 +229,15 @@ func (training *Training) Run() {
 
 				// Apply ground truth label based on objective tape bounds from DuckDB
 				var gt string
-				if extType == 1 { // Upward Profitable (Enter and Exit)
+				
+				switch extType {
+				case 1: // Upward Profitable (Enter and Exit)
 					if m.SeqIdx >= excursions.IgnitionTick-20 && m.SeqIdx <= excursions.IgnitionTick {
 						gt = string(cognition.ActionEnter)
 					} else if m.SeqIdx >= excursions.EndTick-20 && m.SeqIdx <= excursions.EndTick {
 						gt = string(cognition.ActionExit)
 					}
-				} else if extType == 3 { // Downward (Exit)
+				case 3: // Downward (Exit)
 					if m.SeqIdx >= excursions.IgnitionTick-20 && m.SeqIdx <= excursions.IgnitionTick {
 						gt = string(cognition.ActionExit)
 					}
@@ -242,10 +248,28 @@ func (training *Training) Run() {
 				}
 
 				m.Metadata["ground_truth"] = gt
+				
+				// 1. Get the current evaluation (Pre-Outcome Prediction) BEFORE training on this frame
+				token := training.grid.LitRegions(m, 3)
+				if len(token) > 0 {
+					evalCmd := &cognition.Command{
+						Evaluate: &cognition.Question{
+							Context: token,
+						},
+					}
+					
+					for out := range training.engine.Next(data.NewValue(evalCmd)) {
+						eval := (*cognition.Evaluation)(out)
+						if eval != nil {
+							m.Metadata["predicted_action"] = eval.WinnerClass
+							m.Metadata["predicted_confidence"] = fmt.Sprintf("%f", eval.Confidence)
+						}
+					}
+				}
 
-				// Evaluate the pure tape measurement in the learning system FIRST
+				// 2. Train the model by passing it into the pipeline (which sends Observe)
 				for out := range training.pipeline.Next(data.NewValue(m)) {
-					// The Grid and Radix Trie evaluate the precursor here!
+					// The Grid and Radix Trie observe the ground truth precursor here!
 					_ = out
 				}
 

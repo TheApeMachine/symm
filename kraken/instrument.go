@@ -7,19 +7,15 @@ import (
 )
 
 type Instrument struct {
-	Channel string         `json:"channel"`
-	Type    string         `json:"type"`
-	Data    InstrumentData `json:"data"`
+	Channel string           `json:"channel"`
+	Type    string           `json:"type"`
+	Data    []InstrumentPair `json:"data"`
 }
 
 func NewInstrument(buf []byte) *Instrument {
 	instrument := &Instrument{}
 	errnie.Error(sonic.Unmarshal(buf, instrument))
 	return instrument
-}
-
-type InstrumentData struct {
-	Pairs []InstrumentPair `json:"pairs"`
 }
 
 /*

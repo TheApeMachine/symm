@@ -19,14 +19,12 @@ type instrumentConn struct {
 }
 
 func (conn *instrumentConn) SubInstrument(callback chan any) {
-	callback <- &kraken.Instrument{Data: kraken.InstrumentData{
-		Pairs: []kraken.InstrumentPair{{
-			Symbol: "BTC/USD",
-			Base:   "BTC",
-			Quote:  "USD",
-			Status: "online",
-		}},
-	}}
+	callback <- &kraken.Instrument{Data: []kraken.InstrumentPair{{
+		Symbol: "BTC/USD",
+		Base:   "BTC",
+		Quote:  "USD",
+		Status: "online",
+	}}}
 }
 
 func (conn *instrumentConn) SubTicker([]string) {
