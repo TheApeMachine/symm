@@ -104,7 +104,7 @@ measurement may carry on to further bindings: a binding naming a fact the
 measurement does not hold fails the measurement.
 */
 func (op *Equations) apply(m *Measurement[float64], binding Equation) bool {
-	left, holds := m.Metrics[binding.Left]
+	left, holds := m.LookupMetric(binding.Left)
 
 	if !holds {
 		m.Err = fmt.Errorf("%w: equations: %s is not a declared metric", core.ErrDomain, binding.Left)
@@ -117,13 +117,13 @@ func (op *Equations) apply(m *Measurement[float64], binding Equation) bool {
 		answer, answered := driveAll[float64, float64](binding.Op, &value)
 
 		if answered {
-			m.Metrics[binding.Output] = m.Metrics[binding.Output].Write(answer)
+			m.WriteMetric(binding.Output, answer)
 		}
 
 		return true
 	}
 
-	right, holds := m.Metrics[binding.Right]
+	right, holds := m.LookupMetric(binding.Right)
 
 	if !holds {
 		m.Err = fmt.Errorf("%w: equations: %s is not a declared metric", core.ErrDomain, binding.Right)
@@ -135,7 +135,7 @@ func (op *Equations) apply(m *Measurement[float64], binding Equation) bool {
 	answer, answered := driveAll[[2]float64, float64](binding.Op, &pair)
 
 	if answered {
-		m.Metrics[binding.Output] = m.Metrics[binding.Output].Write(answer)
+		m.WriteMetric(binding.Output, answer)
 	}
 
 	return true

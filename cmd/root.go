@@ -2,18 +2,13 @@ package cmd
 
 import (
 	"context"
-	"crypto/sha256"
 	"embed"
-	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/pprof"
 	"os"
 	"path/filepath"
 	"runtime"
-	"runtime/debug"
-	"slices"
 	"strings"
 	"time"
 
@@ -98,8 +93,6 @@ var (
 			ctx, cancel := context.WithCancel(cmd.Context())
 			defer cancel()
 
-			startPprof()
-
 			// Everything started here implements *runtime.System, which allows you to pass
 			// a variadic amount of closers, and everything passes itself to that. There is
 			// thus no need to call a deferred Close method for anything.
@@ -150,8 +143,7 @@ var (
 				))
 			}
 
-			symbols := instrument.Symbols()
-			if err := price.GetFees(symbols); err != nil {
+			if err := price.GetFees(instrument.Symbols()); err != nil {
 				return errnie.Error(errnie.Err(
 					errnie.NotAcceptable,
 					"[symm] initial fees are not available",
@@ -192,33 +184,19 @@ var (
 			training := strategy.NewTraining(ctx, price, trader, catalog, wh, webrtcTee)
 
 			uiTee.Transition(nmruntime.READY)
-			training.Transition(nmruntime.BUSY)
+			// Start historical training loop which will wait for grid to settle
 			training.Run()
 
 			// webrtcTee was moved above
 
 			hub := ui.NewHub(ctx, trader, catalog, uiTee, webrtcTee)
 			hub.SetPositionSource(trader)
+			hub.SetCognitionSource(training)
 
 			hub.Run()
 			hub.Transition(nmruntime.READY)
 
-			codeCommit, buildID, configDigest := resolveRunIdentity()
-			errnie.Info("symm: recording active run in catalog...")
-
-			if err := catalog.RecordRun(ctx, tables.Run{
-				Epoch:        epoch,
-				StartedAt:    processStartedAt,
-				CodeCommit:   codeCommit,
-				BuildID:      buildID,
-				ConfigDigest: configDigest,
-				Status:       "ACTIVE",
-			}); err != nil {
-				return errnie.Error(errnie.Err(errnie.IO, "cmd: record training run", err))
-			}
-
 			manifoldSolver := manifold.NewSolver(ctx, public)
-
 			correlationTicker := correlation.NewTicker(ctx)
 			leadlagTicker := leadlag.NewTicker(ctx)
 			liquidityTicker := liquidity.NewTicker(ctx)
@@ -234,7 +212,6 @@ var (
 			pumpdumpLevel3 := pumpdump.NewLevel3(ctx, book)
 			derivativesTicker := derivatives.NewTicker(ctx)
 			derivativesTrade := derivatives.NewTrade(ctx)
-
 			categorySolver := category.NewSolver(ctx)
 			resonanceSolver := resonance.NewSolver(
 				ctx, system.Cfg.Resonance.LearningRate,
@@ -351,20 +328,35 @@ var (
 				transport.Transition(nmruntime.READY)
 			}
 
-			startIngress := func(client *network.WebsocketClient) {
+			startIngress := func(
+				client *network.WebsocketClient, name string,
+			) {
 				go func() {
+					errnie.Info(fmt.Sprintf("[root] starting %s ingress", name))
+
 					for {
-						if ctx.Err() != nil {
+						select {
+						case <-ctx.Done():
 							return
+						default:
 						}
+
 						buf, err := client.Read()
+
 						if err != nil {
+							errnie.Error(errnie.Err(
+								errnie.IO,
+								fmt.Sprintf("[root] %s ingress read failed", name),
+								err,
+							))
+
 							continue
 						}
 
 						var msg struct {
 							Channel string `json:"channel"`
 						}
+
 						if err := sonic.Unmarshal(buf, &msg); err != nil {
 							continue
 						}
@@ -377,6 +369,7 @@ var (
 							}
 						case "ticker":
 							t := kraken.NewTicker(buf)
+
 							if t != nil && t.IsSuccess() {
 								for _, td := range t.Data {
 									metrics := map[string]data.Metric[float64]{
@@ -384,21 +377,33 @@ var (
 									}
 
 									if td.Bid != nil {
-										metrics["bid"] = data.Metric[float64]{Raw: td.Bid.Float64(), Exact: td.Bid}
+										metrics["bid"] = data.Metric[float64]{
+											Raw:   td.Bid.Float64(),
+											Exact: td.Bid,
+										}
 									}
+
 									if td.Ask != nil {
-										metrics["ask"] = data.Metric[float64]{Raw: td.Ask.Float64(), Exact: td.Ask}
+										metrics["ask"] = data.Metric[float64]{
+											Raw:   td.Ask.Float64(),
+											Exact: td.Ask,
+										}
 									}
+
 									if td.Last != nil {
-										metrics["last"] = data.Metric[float64]{Raw: td.Last.Float64(), Exact: td.Last}
+										metrics["last"] = data.Metric[float64]{
+											Raw:   td.Last.Float64(),
+											Exact: td.Last,
+										}
 									}
 
 									m := data.NewMeasurement("websocket", metrics)
 									m.Label = td.Symbol
 									m.At = td.Timestamp
-									m.Metadata["type"] = "ticker"
+									m.SetMetadata("type", "ticker")
+
 									if td.Trades != nil {
-										m.Metadata["trades"] = fmt.Sprintf("%d", *td.Trades)
+										m.SetMetadata("trades", fmt.Sprintf("%d", *td.Trades))
 									}
 
 									workspace.Step(m)
@@ -406,6 +411,7 @@ var (
 							}
 						case "trade":
 							t := kraken.NewTrade(buf)
+							
 							if t != nil && t.IsSuccess() {
 								for _, td := range t.Data {
 									metrics := map[string]data.Metric[float64]{
@@ -416,10 +422,10 @@ var (
 									m := data.NewMeasurement("websocket", metrics)
 									m.Label = td.Symbol
 									m.At = td.Timestamp
-									m.Metadata["type"] = "trade"
-									m.Metadata["side"] = td.Side
-									m.Metadata["ord_type"] = td.OrderType
-									m.Metadata["trade_id"] = fmt.Sprintf("%d", td.TradeID)
+									m.SetMetadata("type", "trade")
+									m.SetMetadata("side", td.Side)
+									m.SetMetadata("ord_type", td.OrderType)
+									m.SetMetadata("trade_id", fmt.Sprintf("%d", td.TradeID))
 
 									workspace.Step(m)
 								}
@@ -429,45 +435,17 @@ var (
 				}()
 			}
 
-			startIngress(public)
-			startIngress(private)
-			startIngress(futures)
+			startIngress(public, "public")
+			startIngress(private, "private")
+			startIngress(futures, "futures")
 
-			if len(symbols) > 0 {
-				restClient := spot.NewREST()
-				restClient.PublicKey = os.Getenv("KRAKEN_API_KEY")
-				restClient.PrivateKey = os.Getenv("KRAKEN_API_SECRET")
-
-				if nonce, err := kraken.ProcessAuthNonce(); err == nil && nonce != nil {
-					restClient.Nonce = nonce.Next
-				}
-				var wsToken string
-				if tokenRes, err := restClient.GetWebSocketsToken(); err == nil && tokenRes != nil {
-					wsToken = tokenRes.Result.Token
-					if bal, err := sonic.Marshal(kraken.NewBalanceSubscription(wsToken)); err == nil {
-						private.Write(bal)
-					}
+			instrument.Level3.Range(func(key, value any) bool {
+				if client, ok := value.(*network.WebsocketClient); ok {
+					startIngress(client, "level3")
 				}
 
-				for chunk := range slices.Chunk(symbols, 200) {
-					if tick, err := sonic.Marshal(kraken.NewTickerSubscription(chunk)); err == nil {
-						public.Write(tick)
-					}
-					if trd, err := sonic.Marshal(kraken.NewTradeSubscription(chunk)); err == nil {
-						public.Write(trd)
-					}
-
-					// New Level3 connection for each batch to bypass the 200 symbol limit
-					time.Sleep(200 * time.Millisecond)
-					l3Client := network.NewWebsocketClient(ctx)
-					if err := l3Client.Open(system.Cfg.WebSocket.Endpoints.Level3); err == nil {
-						if l3Msg, err := sonic.Marshal(kraken.NewLevel3Subscription(chunk, wsToken)); err == nil {
-							l3Client.Write(l3Msg)
-							startIngress(l3Client)
-						}
-					}
-				}
-			}
+				return true
+			})
 
 			for ctx.Err() == nil {
 				select {
@@ -514,41 +492,6 @@ func startPprof() {
 	go func() {
 		errnie.Error(http.ListenAndServe(addr, mux))
 	}()
-}
-
-func resolveRunIdentity() (codeCommit string, buildID string, configDigest string) {
-	buildID = "training"
-	if info, ok := debug.ReadBuildInfo(); ok {
-		var vcsRev, vcsMod string
-		for _, setting := range info.Settings {
-			if setting.Key == "vcs.revision" {
-				vcsRev = setting.Value
-			}
-			if setting.Key == "vcs.modified" {
-				vcsMod = setting.Value
-			}
-		}
-		if vcsRev != "" {
-			codeCommit = vcsRev
-
-			if vcsMod == "true" {
-				codeCommit += "-dirty"
-			}
-		}
-
-		if codeCommit == "" && info.Main.Version != "" && info.Main.Version != "(devel)" {
-			codeCommit = info.Main.Version
-		}
-	}
-
-	settings := viper.AllSettings()
-	raw, err := json.Marshal(settings)
-	if err == nil {
-		hash := sha256.Sum256(raw)
-		configDigest = hex.EncodeToString(hash[:])
-	}
-
-	return codeCommit, buildID, configDigest
 }
 
 func init() {

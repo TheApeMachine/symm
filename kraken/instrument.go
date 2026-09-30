@@ -9,7 +9,9 @@ import (
 type Instrument struct {
 	Channel string           `json:"channel"`
 	Type    string           `json:"type"`
-	Data    []InstrumentPair `json:"data"`
+	Data    struct {
+		Pairs []InstrumentPair `json:"pairs"`
+	} `json:"data"`
 }
 
 func NewInstrument(buf []byte) *Instrument {

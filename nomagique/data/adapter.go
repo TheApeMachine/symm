@@ -46,6 +46,8 @@ func (wrapper *Adapter[In, Out]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsa
 				continue
 			}
 
+			m.EnsureMetadata()
+
 			// 1. Manipulate incoming: extract the specialized input shape
 			inputShape := wrapper.read(m)
 

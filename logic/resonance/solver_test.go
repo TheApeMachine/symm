@@ -19,7 +19,7 @@ func TestStep(t *testing.T) {
 		solver := NewSolver(context.Background(), 0)
 		defer solver.Close()
 
-		m := solver.Register()
+		m := data.NewMeasurement[float64]("resonance", nil)
 		m.Label = "TEST/USD"
 		m.At = time.Unix(1, 0)
 
@@ -40,14 +40,14 @@ func TestSignalFeatureIngestion(t *testing.T) {
 		createMetric := func(label, metricName string, value float64) *data.Measurement[float64] {
 			measurement := data.NewMeasurement[float64](label, nil)
 			measurement.Label, measurement.At, measurement.From = "BTC/USD", time.Unix(10, 0), time.Unix(10, 0)
-			measurement.Metrics[metricName] = data.Metric[float64]{Label: metricName, Raw: value}
+			measurement.SetMetric(metricName, data.Metric[float64]{Label: metricName, Raw: value})
 			measurement.Metadata = map[string]string{data.MetadataSupport: "1"}
 			for range data.NewFinalizer[float64]().Next(transport.NewOne(unsafe.Pointer(&measurement)).Next(nil)) {
 			}
 			return measurement
 		}
 
-		m := solver.Register()
+		m := data.NewMeasurement[float64]("resonance", nil)
 		m.Label = "BTC/USD"
 		m.At = time.Unix(10, 0)
 		m.Peers = []*data.Measurement[float64]{
@@ -68,8 +68,8 @@ func TestSignalFeatureIngestion(t *testing.T) {
 
 		Convey("the predictive coder ingests all 11 features and produces resonance dynamics", func() {
 			So(result, ShouldNotBeNil)
-			So(result.Metrics["energy"], ShouldNotBeNil)
-			So(result.Metrics["surprise"], ShouldNotBeNil)
+			So(result.GetMetric("energy"), ShouldNotBeNil)
+			So(result.GetMetric("surprise"), ShouldNotBeNil)
 		})
 	})
 }
@@ -80,14 +80,14 @@ func TestSurpriseBreakInCommonFlow(t *testing.T) {
 		defer solver.Close()
 
 		createMeasurement := func(sec int64, cvdVal, toxVal float64) *data.Measurement[float64] {
-			m := solver.Register()
+			m := data.NewMeasurement[float64]("resonance", nil)
 			m.Label = "ETH/USD"
 			m.At = time.Unix(sec, 0)
 
 			createMetric := func(label, metricName string, val float64) *data.Measurement[float64] {
 				measurement := data.NewMeasurement[float64](label, nil)
 				measurement.Label, measurement.At, measurement.From = "ETH/USD", time.Unix(sec, 0), time.Unix(sec, 0)
-				measurement.Metrics[metricName] = data.Metric[float64]{Label: metricName, Raw: val}
+				measurement.SetMetric(metricName, data.Metric[float64]{Label: metricName, Raw: val})
 				measurement.Metadata = map[string]string{data.MetadataSupport: "1"}
 				for range data.NewFinalizer[float64]().Next(transport.NewOne(unsafe.Pointer(&measurement)).Next(nil)) {
 				}
@@ -119,7 +119,7 @@ func TestSurpriseBreakInCommonFlow(t *testing.T) {
 		Convey("when an unexpected break in common flow occurs, the solver processes the surprise", func() {
 			disrupted := solver.Step(createMeasurement(11, 0.95, 0.85))
 			So(disrupted, ShouldNotBeNil)
-			So(disrupted.Metrics["surprise"].Raw, ShouldBeGreaterThanOrEqualTo, 0)
+			So(disrupted.GetMetric("surprise").Raw, ShouldBeGreaterThanOrEqualTo, 0)
 		})
 	})
 }
@@ -133,14 +133,14 @@ func TestNoVarianceCollapseOnAsynchronousSignals(t *testing.T) {
 		createMetric := func(label, metricName string, val float64, support float64) *data.Measurement[float64] {
 			measurement := data.NewMeasurement[float64](label, nil)
 			measurement.Label, measurement.At, measurement.From = "BTC/USD", time.Now(), time.Now()
-			measurement.Metrics[metricName] = data.Metric[float64]{Label: metricName, Raw: val}
+			measurement.SetMetric(metricName, data.Metric[float64]{Label: metricName, Raw: val})
 			measurement.Metadata = map[string]string{data.MetadataSupport: strconv.FormatFloat(support, 'f', -1, 64)}
 			for range data.NewFinalizer[float64]().Next(transport.NewOne(unsafe.Pointer(&measurement)).Next(nil)) {
 			}
 			return measurement
 		}
 
-		m1 := solver.Register()
+		m1 := data.NewMeasurement[float64]("resonance", nil)
 		m1.Label = "BTC/USD"
 		m1.At = time.Unix(100, 0)
 		m1.Peers = []*data.Measurement[float64]{
@@ -151,7 +151,7 @@ func TestNoVarianceCollapseOnAsynchronousSignals(t *testing.T) {
 
 		// 500 measurements arrive where CVD is absent (only DepthFlow is present)
 		for step := int64(1); step <= 500; step++ {
-			mL3 := solver.Register()
+			mL3 := data.NewMeasurement[float64]("resonance", nil)
 			mL3.Label = "BTC/USD"
 			mL3.At = time.Unix(100+step, 0)
 			mL3.Peers = []*data.Measurement[float64]{
@@ -162,7 +162,7 @@ func TestNoVarianceCollapseOnAsynchronousSignals(t *testing.T) {
 		}
 
 		// Subsequent measurement: CVD changes from 0.1 to 0.8
-		m2 := solver.Register()
+		m2 := data.NewMeasurement[float64]("resonance", nil)
 		m2.Label = "BTC/USD"
 		m2.At = time.Unix(700, 0)
 		m2.Peers = []*data.Measurement[float64]{
@@ -172,7 +172,7 @@ func TestNoVarianceCollapseOnAsynchronousSignals(t *testing.T) {
 
 		Convey("CVD standardizer does not collapse variance and surprise remains realistic", func() {
 			So(res2, ShouldNotBeNil)
-			So(res2.Metrics["surprise"].Raw, ShouldBeLessThan, 5.0)
+			So(res2.GetMetric("surprise").Raw, ShouldBeLessThan, 5.0)
 
 			scorer := solver.scorer("BTC/USD")
 			So(scorer.lastReading[4].Count, ShouldEqual, 2)
@@ -193,7 +193,7 @@ func TestSubSourceAndNonZeroLatents(t *testing.T) {
 			measurement.Label = "BTC/USD"
 			measurement.At = time.Now()
 			measurement.From = measurement.At
-			measurement.Metrics[metricName] = data.Metric[float64]{Label: metricName, Raw: val}
+			measurement.SetMetric(metricName, data.Metric[float64]{Label: metricName, Raw: val})
 			measurement.Metadata = map[string]string{data.MetadataSupport: strconv.FormatFloat(support, 'f', -1, 64)}
 			for range data.NewFinalizer[float64]().Next(transport.NewOne(unsafe.Pointer(&measurement)).Next(nil)) {
 			}
@@ -201,7 +201,7 @@ func TestSubSourceAndNonZeroLatents(t *testing.T) {
 		}
 
 		for step := 1; step <= 20; step++ {
-			m := solver.Register()
+			m := data.NewMeasurement[float64]("resonance", nil)
 			m.Label = "BTC/USD"
 			m.At = time.Now()
 			s := float64(step) + 10.0
@@ -222,7 +222,7 @@ func TestSubSourceAndNonZeroLatents(t *testing.T) {
 			}
 
 			priceMetric := data.NewMetric[float64]("midpoint", data.UnitRate, data.TimescaleInstantaneous, 0, 1)
-			m.Metrics["midpoint"] = priceMetric.Write(50000.0 + float64(step)*10.0)
+			m.SetMetric("midpoint", priceMetric.Write(50000.0 + float64(step)*10.0))
 
 			res := solver.Step(m)
 			lastMeasurement = res

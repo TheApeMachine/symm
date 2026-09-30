@@ -105,7 +105,7 @@ func TestRegisterPeers(t *testing.T) {
 				"price": data.NewMetric[float64]("price", data.UnitDimensionless, data.TimescaleInstantaneous, float64(100+index), float64(100+index)),
 			})
 			meas.Label = "BTC/USD"
-			meas.Metadata["peer-interest"] = "*"
+			meas.SetMetadata("peer-interest", "*")
 
 			identify := store.NewQuery(slots[index], data.ActionIdentify, data.NewValue(meas))
 			data.Read[*data.Measurement[float64]](register.Next(data.NewValue(*identify)))
@@ -141,19 +141,19 @@ func TestRegisterPeers(t *testing.T) {
 
 			snapshot := holder.Peers[0]
 			So(snapshot.Source, ShouldEqual, "node-1")
-			So(snapshot.Metrics["price"].Center, ShouldEqual, 101)
+			So(snapshot.GetMetric("price").Center, ShouldEqual, 101)
 
 			workingQuery := store.NewQuery(slots[1], data.ActionRead, nil)
 			working := data.Read[*data.Measurement[float64]](register.Next(data.NewValue(*workingQuery)))
 			So(working, ShouldNotBeNil)
-			working.Metrics["price"] = data.NewMetric[float64](
+			working.SetMetric("price", data.NewMetric[float64](
 				"price", data.UnitDimensionless, data.TimescaleInstantaneous, 999, 999,
-			)
+			))
 
 			write := store.NewQuery(slots[1], data.ActionWrite, data.NewValue(working))
 			data.Read[*data.Measurement[float64]](register.Next(data.NewValue(*write)))
 
-			So(snapshot.Metrics["price"].Center, ShouldEqual, 101)
+			So(snapshot.GetMetric("price").Center, ShouldEqual, 101)
 
 			reread := store.NewQuery(slots[0], data.ActionRead, nil)
 			updated := data.Read[*data.Measurement[float64]](register.Next(data.NewValue(*reread)))
@@ -166,10 +166,10 @@ func TestRegisterPeers(t *testing.T) {
 				val := data.Read[*data.Measurement[float64]](register.Next(data.NewValue(*readQuery)))
 				So(val, ShouldNotBeNil)
 
-				val.Metrics["price"] = data.NewMetric[float64](
+				val.SetMetric("price", data.NewMetric[float64](
 					"price", data.UnitDimensionless, data.TimescaleInstantaneous,
 					float64(200+iterCount), float64(200+iterCount),
-				)
+				))
 
 				writeQuery := store.NewQuery(slots[0], data.ActionWrite, data.NewValue(val))
 				data.Read[*data.Measurement[float64]](register.Next(data.NewValue(*writeQuery)))
@@ -178,7 +178,7 @@ func TestRegisterPeers(t *testing.T) {
 			finalQuery := store.NewQuery(slots[0], data.ActionRead, nil)
 			final := data.Read[*data.Measurement[float64]](register.Next(data.NewValue(*finalQuery)))
 			So(final, ShouldNotBeNil)
-			So(final.Metrics["price"].Center, ShouldEqual, 209)
+			So(final.GetMetric("price").Center, ShouldEqual, 209)
 			So(register.Error(), ShouldBeNil)
 		})
 	})

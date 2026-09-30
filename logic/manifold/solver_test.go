@@ -88,8 +88,8 @@ func TestSolverPublishReading(t *testing.T) {
 
 			steppedMeasurement := solver.Step(measurement)
 			So(steppedMeasurement, ShouldNotBeNil)
-			So(steppedMeasurement.Metrics["coherence_mag2"].Raw, ShouldEqual, reading.Reading.CoherenceMag2)
-			So(steppedMeasurement.Metrics["particle_count"].Raw, ShouldEqual, float64(reading.State.N))
+			So(steppedMeasurement.GetMetric("coherence_mag2").Raw, ShouldEqual, reading.Reading.CoherenceMag2)
+			So(steppedMeasurement.GetMetric("particle_count").Raw, ShouldEqual, float64(reading.State.N))
 
 			So(reading.GridX, ShouldEqual, 8)
 			So(len(reading.MomRho), ShouldEqual, 8*8*8*4)

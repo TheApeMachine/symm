@@ -103,39 +103,37 @@ func (op *Basis) observe(m *data.Measurement[float64], state *basisState) {
 	stamped, advanced := stamp(state.clock, m.Label, m.At, m.Provenance["synthetic_timestamp"] == "true")
 	m.At = stamped
 
-	if m.Metadata == nil {
-		m.Metadata = make(map[string]string)
-	}
+	m.EnsureMetadata()
 
-	last := m.Metrics["last"].Raw
-	index := m.Metrics["index_price"].Raw
-	mark := m.Metrics["mark_price"].Raw
-	oi := m.Metrics["open_interest"].Raw
+	last := m.GetMetric("last").Raw
+	index := m.GetMetric("index_price").Raw
+	mark := m.GetMetric("mark_price").Raw
+	oi := m.GetMetric("open_interest").Raw
 
 	basis := (last - index) / index
 	basisReading := drive[float64, adaptive.BaselineReading](state.basis, &basis)
 
 	m.From = stamped
 
-	m.Metrics["derivative_price"] = m.Metrics["derivative_price"].Write(last)
-	m.Metrics["reference_price"] = m.Metrics["reference_price"].Write(index)
-	m.Metrics["spot_price"] = m.Metrics["spot_price"].Write(mark)
-	m.Metrics["open_interest"] = m.Metrics["open_interest"].Write(oi)
-	m.Metrics["basis"] = m.Metrics["basis"].Write(basis)
-	m.Metrics["basis_baseline"] = m.Metrics["basis_baseline"].Write(basisReading.Baseline)
+	m.WriteMetric("derivative_price", last)
+	m.WriteMetric("reference_price", index)
+	m.WriteMetric("spot_price", mark)
+	m.WriteMetric("open_interest", oi)
+	m.WriteMetric("basis", basis)
+	m.WriteMetric("basis_baseline", basisReading.Baseline)
 
 	if basisReading.HasPrior {
-		m.Metrics["basis_zscore"] = m.Metrics["basis_zscore"].Write(basisReading.ZScore)
+		m.WriteMetric("basis_zscore", basisReading.ZScore)
 	}
 
 	if last > 0 && index > 0 {
-		m.Metrics["log_basis"] = m.Metrics["log_basis"].Write(math.Log(last / index))
+		m.WriteMetric("log_basis", math.Log(last / index))
 
 		if mark > 0 {
-			m.Metrics["derivative_index_log_basis"] = m.Metrics["derivative_index_log_basis"].Write(math.Log(last / index))
-			m.Metrics["index_spot_log_basis"] = m.Metrics["index_spot_log_basis"].Write(math.Log(index / mark))
-			m.Metrics["derivative_spot_log_basis"] = m.Metrics["derivative_spot_log_basis"].Write(math.Log(last / mark))
-			m.Metrics["basis_closure_error"] = m.Metrics["basis_closure_error"].Write(0.0)
+			m.WriteMetric("derivative_index_log_basis", math.Log(last / index))
+			m.WriteMetric("index_spot_log_basis", math.Log(index / mark))
+			m.WriteMetric("derivative_spot_log_basis", math.Log(last / mark))
+			m.WriteMetric("basis_closure_error", 0.0)
 		}
 	}
 
@@ -158,13 +156,13 @@ func (op *Basis) observe(m *data.Measurement[float64], state *basisState) {
 	// with no estimator behind it is a whole direct reading and declares no
 	// support at all.
 	if basisReading.HasPrior {
-		m.Metadata[data.MetadataSupport] = strconv.FormatFloat(basisReading.Prior.Count, 'f', -1, 64)
+		m.SetMetadata(data.MetadataSupport, strconv.FormatFloat(basisReading.Prior.Count, 'f', -1, 64))
 
 		// basis_zscore is this entity's headline reading, so its estimator
 		// supplies the departure and the noise power Finalize turns into SNR.
 		if basisReading.PriorVariance > 0 {
-			m.Metadata[data.MetadataDivergence] = strconv.FormatFloat(basisReading.Residual, 'f', -1, 64)
-			m.Metadata[data.MetadataNoiseVariance] = strconv.FormatFloat(basisReading.PriorVariance, 'f', -1, 64)
+			m.SetMetadata(data.MetadataDivergence, strconv.FormatFloat(basisReading.Residual, 'f', -1, 64))
+			m.SetMetadata(data.MetadataNoiseVariance, strconv.FormatFloat(basisReading.PriorVariance, 'f', -1, 64))
 		}
 	}
 }
@@ -182,32 +180,32 @@ func (op *Basis) differences(
 	dt := stamped.Sub(state.prevTime).Seconds()
 
 	oiChange := oi - state.prevOI
-	m.Metrics["open_interest_change"] = m.Metrics["open_interest_change"].Write(oiChange)
+	m.WriteMetric("open_interest_change", oiChange)
 
 	if state.prevOI > 0 && oi > 0 {
 		oiLogChange := math.Log(oi / state.prevOI)
-		m.Metrics["open_interest_log_change"] = m.Metrics["open_interest_log_change"].Write(oiLogChange)
+		m.WriteMetric("open_interest_log_change", oiLogChange)
 
 		if dt > 0 {
 			oiGrowthRate := oiLogChange / dt
-			m.Metrics["open_interest_growth_rate"] = m.Metrics["open_interest_growth_rate"].Write(oiGrowthRate)
+			m.WriteMetric("open_interest_growth_rate", oiGrowthRate)
 
 			growth := drive[float64, adaptive.BaselineReading](state.growth, &oiGrowthRate)
-			m.Metrics["open_interest_growth_baseline"] = m.Metrics["open_interest_growth_baseline"].Write(growth.Baseline)
+			m.WriteMetric("open_interest_growth_baseline", growth.Baseline)
 		}
 	}
 
 	if dt > 0 {
 		basisChange := basis - state.prevBasis
 		basisRate := basisChange / dt
-		m.Metrics["basis_change"] = m.Metrics["basis_change"].Write(basisChange)
-		m.Metrics["basis_rate"] = m.Metrics["basis_rate"].Write(basisRate)
+		m.WriteMetric("basis_change", basisChange)
+		m.WriteMetric("basis_rate", basisRate)
 
 		// Velocity is the change in the RATE between consecutive
 		// observations: basis_rate says how fast the basis is moving,
 		// basis_velocity says whether that movement is accelerating.
 		if state.hasPrevBasisRate {
-			m.Metrics["basis_velocity"] = m.Metrics["basis_velocity"].Write(basisRate - state.prevBasisRate)
+			m.WriteMetric("basis_velocity", basisRate - state.prevBasisRate)
 		}
 
 		state.prevBasisRate = basisRate
@@ -226,22 +224,22 @@ func (op *Basis) returns(m *data.Measurement[float64], state *basisState, last, 
 
 	if state.prevLast > 0 && last > 0 {
 		derivLogReturn = math.Log(last / state.prevLast)
-		m.Metrics["derivative_log_return"] = m.Metrics["derivative_log_return"].Write(derivLogReturn)
+		m.WriteMetric("derivative_log_return", derivLogReturn)
 		hasDerivReturn = true
 	}
 
 	if state.prevIndex > 0 && index > 0 {
 		refLogReturn = math.Log(index / state.prevIndex)
-		m.Metrics["reference_log_return"] = m.Metrics["reference_log_return"].Write(refLogReturn)
+		m.WriteMetric("reference_log_return", refLogReturn)
 		hasRefReturn = true
 	}
 
 	if hasDerivReturn && hasRefReturn {
 		returnGap := derivLogReturn - refLogReturn
-		m.Metrics["return_gap"] = m.Metrics["return_gap"].Write(returnGap)
+		m.WriteMetric("return_gap", returnGap)
 
 		if state.hasPrevReturnGap {
-			m.Metrics["return_gap_velocity"] = m.Metrics["return_gap_velocity"].Write(returnGap - state.prevReturnGap)
+			m.WriteMetric("return_gap_velocity", returnGap - state.prevReturnGap)
 		}
 
 		state.prevReturnGap = returnGap

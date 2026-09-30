@@ -36,9 +36,9 @@ func (op *Significance) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointe
 			m := *(**data.Measurement[float64])(arriving)
 
 			op.sample = nmcorrelation.FisherSample{
-				Correlation: m.Metrics["best_lag_correlation"].Raw,
-				Support:     m.Metrics["overlap_pair_count"].Raw,
-				SearchCount: m.Metrics["search_count"].Raw,
+				Correlation: m.GetMetric("best_lag_correlation").Raw,
+				Support:     m.GetMetric("overlap_pair_count").Raw,
+				SearchCount: m.GetMetric("search_count").Raw,
 			}
 
 			for out := range op.fisher.Next(transport.NewOne(unsafe.Pointer(&op.sample)).Next(nil)) {
@@ -56,8 +56,8 @@ func (op *Significance) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointe
 			}
 
 			if op.reading.Defined {
-				m.Metrics["correlation_p_value"] = m.Metrics["correlation_p_value"].Write(op.reading.PValue)
-				m.Metrics["search_adjusted_p_value"] = m.Metrics["search_adjusted_p_value"].Write(op.reading.SearchAdjustedPValue)
+				m.WriteMetric("correlation_p_value", op.reading.PValue)
+				m.WriteMetric("search_adjusted_p_value", op.reading.SearchAdjustedPValue)
 			}
 
 			if !yield(arriving) {

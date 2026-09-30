@@ -38,40 +38,38 @@ func (op *BaselineStep) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointe
 		for arriving := range in {
 			m := *(**data.Measurement[float64])(arriving)
 
-			lagVal := m.Metrics["best_lag_seconds"].Raw
-			gainVal := m.Metrics["absolute_correlation_gain"].Raw
-			corrVal := m.Metrics["best_lag_correlation"].Raw
+			lagVal := m.GetMetric("best_lag_seconds").Raw
+			gainVal := m.GetMetric("absolute_correlation_gain").Raw
+			corrVal := m.GetMetric("best_lag_correlation").Raw
 
 			lagReading := op.drive(op.lag, lagVal)
 			gainReading := op.drive(op.gain, gainVal)
 			corrReading := op.drive(op.corr, corrVal)
 
-			m.Metrics["lag_baseline_seconds"] = m.Metrics["lag_baseline_seconds"].Write(lagReading.Baseline)
-			m.Metrics["lag_divergence_seconds"] = m.Metrics["lag_divergence_seconds"].Write(lagReading.Residual)
-			m.Metrics["lag_zscore"] = m.Metrics["lag_zscore"].Write(lagReading.ZScore)
+			m.WriteMetric("lag_baseline_seconds", lagReading.Baseline)
+			m.WriteMetric("lag_divergence_seconds", lagReading.Residual)
+			m.WriteMetric("lag_zscore", lagReading.ZScore)
 
 			if lagReading.VarianceDefined {
-				m.Metrics["lag_noise_scale_seconds"] = m.Metrics["lag_noise_scale_seconds"].Write(lagReading.Dispersion)
+				m.WriteMetric("lag_noise_scale_seconds", lagReading.Dispersion)
 			}
 
-			m.Metrics["correlation_gain_baseline"] = m.Metrics["correlation_gain_baseline"].Write(gainReading.Baseline)
-			m.Metrics["correlation_gain_zscore"] = m.Metrics["correlation_gain_zscore"].Write(gainReading.ZScore)
+			m.WriteMetric("correlation_gain_baseline", gainReading.Baseline)
+			m.WriteMetric("correlation_gain_zscore", gainReading.ZScore)
 
-			m.Metrics["best_lag_correlation_baseline"] = m.Metrics["best_lag_correlation_baseline"].Write(corrReading.Baseline)
-			m.Metrics["best_lag_correlation_zscore"] = m.Metrics["best_lag_correlation_zscore"].Write(corrReading.ZScore)
+			m.WriteMetric("best_lag_correlation_baseline", corrReading.Baseline)
+			m.WriteMetric("best_lag_correlation_zscore", corrReading.ZScore)
 
-			if m.Metadata == nil {
-				m.Metadata = make(map[string]string)
-			}
+			m.EnsureMetadata()
 
-			m.Metadata[data.MetadataSupport] = strconv.FormatFloat(corrReading.Count, 'f', -1, 64)
+			m.SetMetadata(data.MetadataSupport, strconv.FormatFloat(corrReading.Count, 'f', -1, 64))
 
 			if corrReading.HasPrior {
-				m.Metadata[data.MetadataDivergence] = strconv.FormatFloat(corrReading.Residual, 'f', -1, 64)
+				m.SetMetadata(data.MetadataDivergence, strconv.FormatFloat(corrReading.Residual, 'f', -1, 64))
 			}
 
 			if corrReading.VarianceDefined {
-				m.Metadata[data.MetadataNoiseVariance] = strconv.FormatFloat(corrReading.Variance, 'f', -1, 64)
+				m.SetMetadata(data.MetadataNoiseVariance, strconv.FormatFloat(corrReading.Variance, 'f', -1, 64))
 			}
 
 			if !yield(arriving) {

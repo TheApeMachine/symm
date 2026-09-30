@@ -74,8 +74,8 @@ func TestStepIngestsStrandedFamilies(t *testing.T) {
 				out := solver.Step(m)
 
 				So(out, ShouldNotBeNil)
-				So(out.Metrics[string(testCase.expected)], ShouldNotBeNil)
-				So(out.Metrics[string(testCase.expected)].Raw, ShouldBeGreaterThan, 0)
+				So(out.GetMetric(string(testCase.expected)), ShouldNotBeNil)
+				So(out.GetMetric(string(testCase.expected)).Raw, ShouldBeGreaterThan, 0)
 			})
 		}
 	})

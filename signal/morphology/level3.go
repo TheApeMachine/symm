@@ -4,11 +4,13 @@ import (
 	"context"
 	"math"
 	"strconv"
+	"sync"
 	"unsafe"
 
 	"github.com/theapemachine/errnie"
 
 	"github.com/theapemachine/symm/broker"
+	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/adaptive"
 	"github.com/theapemachine/symm/nomagique/core"
@@ -25,147 +27,15 @@ workload's register owns the measurement's lifetime.
 */
 type Level3 struct {
 	*runtime.System
-	pipeline core.Primitive
-	ID       int
+	pipelines sync.Map
+	ID        int
+	books     broker.BookSource
 }
 
 func NewLevel3(ctx context.Context, books broker.BookSource) *Level3 {
-	type morphologyState struct {
-		hasPrev      bool
-		prevDistance float64
-	}
-	states := make(map[string]*morphologyState)
 
 	level3 := &Level3{
-		pipeline: nomagique.NewNumber(
-			// 0. Extract raw morphology facts from peers or self
-			data.NewAdapter(
-				transport.NewPass(),
-				func(m *data.Measurement[float64]) *data.Measurement[float64] {
-					input := m
-
-					if len(m.Peers) > 0 {
-						peer := m.FindPeer(func(p *data.Measurement[float64]) bool {
-							if p.Label == "" {
-								return false
-							}
-							_, hasDist := p.Metrics["book_shape_distance"]
-							if hasDist {
-								return true
-							}
-							b := p.Metrics["best_bid"].Raw
-							if b == 0 {
-								b = p.Metrics["bid"].Raw
-							}
-							a := p.Metrics["best_ask"].Raw
-							if a == 0 {
-								a = p.Metrics["ask"].Raw
-							}
-							return b > 0 && a > 0
-						})
-
-						if peer != nil {
-							input = peer
-						}
-					}
-
-					if input.Label != "" {
-						m.Label = input.Label
-					}
-					if !input.At.IsZero() {
-						m.At = input.At
-					}
-
-					distance := input.Metrics["book_shape_distance"].Raw
-					ks := input.Metrics["book_shape_ks"].Raw
-					concBid := input.Metrics["concentration:bid"].Raw
-					concAsk := input.Metrics["concentration:ask"].Raw
-					entBid := input.Metrics["entropy:bid"].Raw
-					entAsk := input.Metrics["entropy:ask"].Raw
-
-					if distance == 0 {
-						b := input.Metrics["best_bid"].Raw
-						if b == 0 {
-							b = input.Metrics["bid"].Raw
-						}
-						a := input.Metrics["best_ask"].Raw
-						if a == 0 {
-							a = input.Metrics["ask"].Raw
-						}
-						mid := (b + a) / 2.0
-						if mid > 0 {
-							distance = (a - b) / mid
-						}
-					}
-
-					if m.Metrics == nil {
-						m.Metrics = make(map[string]data.Metric[float64])
-					}
-
-					if distance > 0 {
-						m.Metrics["book_shape_distance"] = m.Metrics["book_shape_distance"].Write(distance)
-						m.Metrics["book_shape_ks"] = m.Metrics["book_shape_ks"].Write(ks)
-						m.Metrics["concentration:bid"] = m.Metrics["concentration:bid"].Write(concBid)
-						m.Metrics["concentration:ask"] = m.Metrics["concentration:ask"].Write(concAsk)
-						m.Metrics["entropy:bid"] = m.Metrics["entropy:bid"].Write(entBid)
-						m.Metrics["entropy:ask"] = m.Metrics["entropy:ask"].Write(entAsk)
-
-						state := states[m.Label]
-						if state == nil {
-							state = &morphologyState{}
-							states[m.Label] = state
-						}
-
-						if state.hasPrev {
-							change := math.Abs(distance - state.prevDistance)
-							m.Metrics["morphology_change"] = m.Metrics["morphology_change"].Write(change)
-						}
-
-						state.prevDistance = distance
-						state.hasPrev = true
-					}
-
-					if m.Metadata == nil {
-						m.Metadata = make(map[string]string)
-					}
-
-					return m
-				},
-				func(m *data.Measurement[float64], res *data.Measurement[float64]) {},
-			),
-			// 1. Baselines
-			transport.NewFan(
-				data.NewAdapter(
-					adaptive.NewBaseline(adaptive.NewWindow()),
-					func(m *data.Measurement[float64]) *float64 {
-						changeMetric, ok := m.Metrics["morphology_change"]
-						if !ok {
-							return nil
-						}
-						val := changeMetric.Raw
-						return &val
-					},
-					func(m *data.Measurement[float64], out *adaptive.BaselineReading) {
-						if out == nil {
-							return
-						}
-						m.Metadata[data.MetadataSupport] = strconv.FormatFloat(out.Count, 'f', -1, 64)
-
-						if out.HasPrior {
-							m.Metrics["morphology_change_baseline"] = m.Metrics["morphology_change_baseline"].Write(out.Baseline)
-							m.Metrics["morphology_change_zscore"] = m.Metrics["morphology_change_zscore"].Write(out.ZScore)
-							m.Metadata[data.MetadataDivergence] = strconv.FormatFloat(out.Residual, 'f', -1, 64)
-
-							if out.VarianceDefined {
-								m.Metadata[data.MetadataNoiseVariance] = strconv.FormatFloat(out.Variance, 'f', -1, 64)
-							}
-						}
-					},
-				),
-			),
-			// 2. Finalize
-			data.NewFinalizer[float64](),
-		),
+		books: books,
 	}
 
 	level3.System = runtime.NewSystem(ctx, "morphology:level3", level3)
@@ -176,6 +46,157 @@ func NewLevel3(ctx context.Context, books broker.BookSource) *Level3 {
 Step supplies the arriving measurement to the pipeline and returns it: the
 measurement is the pipeline's state, enriched in place.
 */
+
+func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
+	if existing, ok := level3.pipelines.Load(symbol); ok {
+		return existing.(core.Primitive)
+	}
+
+	type morphologyState struct {
+		hasPrev      bool
+		prevDistance float64
+	}
+	state := &morphologyState{}
+
+	pipeline := nomagique.NewNumber(
+		// 0. Extract raw morphology facts from peers or self
+		data.NewAdapter(
+			transport.NewPass(),
+			func(m *data.Measurement[float64]) *data.Measurement[float64] {
+				input := m
+
+				if len(m.Peers) > 0 {
+					peer := m.FindPeer(func(p *data.Measurement[float64]) bool {
+						if p.Label == "" {
+							return false
+						}
+						_, hasDist := p.LookupMetric("book_shape_distance")
+						if hasDist {
+							return true
+						}
+						b := p.GetMetric("best_bid").Raw
+						if b == 0 {
+							b = p.GetMetric("bid").Raw
+						}
+						a := p.GetMetric("best_ask").Raw
+						if a == 0 {
+							a = p.GetMetric("ask").Raw
+						}
+						return b > 0 && a > 0
+					})
+
+					if peer != nil {
+						input = peer
+					}
+				}
+
+				if input.Label != "" {
+					m.Label = input.Label
+				}
+				if !input.At.IsZero() {
+					m.At = input.At
+				}
+
+				distance := input.GetMetric("book_shape_distance").Raw
+				ks := input.GetMetric("book_shape_ks").Raw
+				concBid := input.GetMetric("concentration:bid").Raw
+				concAsk := input.GetMetric("concentration:ask").Raw
+				entBid := input.GetMetric("entropy:bid").Raw
+				entAsk := input.GetMetric("entropy:ask").Raw
+
+				if distance == 0 {
+					var bidPrice, askPrice float64
+					if level3.books != nil {
+						level3.books.Book(m.Label, func(b *spotbook.Book) {
+							if bid := b.BestBid(); bid != nil && bid.Price != nil {
+								bidPrice = bid.Price.Float64()
+							}
+							if ask := b.BestAsk(); ask != nil && ask.Price != nil {
+								askPrice = ask.Price.Float64()
+							}
+						})
+					}
+					
+					b := bidPrice
+					if b == 0 {
+						b = input.GetMetric("best_bid").Raw
+					}
+					if b == 0 {
+						b = input.GetMetric("bid").Raw
+					}
+					
+					a := askPrice
+					if a == 0 {
+						a = input.GetMetric("best_ask").Raw
+					}
+					if a == 0 {
+						a = input.GetMetric("ask").Raw
+					}
+					
+					mid := (b + a) / 2.0
+					if mid > 0 {
+						distance = (a - b) / mid
+					}
+				}
+
+				if m.Metrics == nil {
+					m.Metrics = make(map[string]data.Metric[float64])
+				}
+
+				if distance > 0 {
+					m.WriteMetric("book_shape_distance", distance)
+					m.WriteMetric("book_shape_ks", ks)
+					m.WriteMetric("concentration:bid", concBid)
+					m.WriteMetric("concentration:ask", concAsk)
+					m.WriteMetric("entropy:bid", entBid)
+					m.WriteMetric("entropy:ask", entAsk)
+
+
+					if state.hasPrev {
+						change := math.Abs(distance - state.prevDistance)
+						m.WriteMetric("morphology_change", change)
+					}
+
+					state.prevDistance = distance
+					state.hasPrev = true
+				}
+
+				m.EnsureMetadata()
+
+				return m
+			},
+			func(m *data.Measurement[float64], res *data.Measurement[float64]) {},
+		),
+		// 1. Baselines
+		transport.NewFan(
+			data.NewAdapter(
+				adaptive.NewBaseline(adaptive.NewWindow()),
+				func(m *data.Measurement[float64]) float64 {
+					return m.GetMetric("morphology_change").Raw
+				},
+				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
+					m.SetMetadata(data.MetadataSupport, strconv.FormatFloat(out.Count, 'f', -1, 64))
+
+					if out.HasPrior {
+						m.WriteMetric("morphology_change_baseline", out.Baseline)
+						m.WriteMetric("morphology_change_zscore", out.ZScore)
+						m.SetMetadata(data.MetadataDivergence, strconv.FormatFloat(out.Residual, 'f', -1, 64))
+
+						if out.VarianceDefined {
+							m.SetMetadata(data.MetadataNoiseVariance, strconv.FormatFloat(out.Variance, 'f', -1, 64))
+						}
+					}
+				},
+			),
+		),
+		// 2. Finalize
+		data.NewFinalizer[float64](),
+	)
+
+	actual, _ := level3.pipelines.LoadOrStore(symbol, pipeline)
+	return actual.(core.Primitive)
+}
+
 func (level3 *Level3) Step(m *data.Measurement[float64]) *data.Measurement[float64] {
 	if level3.Status() != runtime.READY {
 		errnie.Warn(level3.Name() + ": Step called before READY; dropping event")
@@ -186,7 +207,7 @@ func (level3 *Level3) Step(m *data.Measurement[float64]) *data.Measurement[float
 		return m
 	}
 
-	return data.Read[*data.Measurement[float64]](level3.pipeline.Next(
+	return data.Read[*data.Measurement[float64]](level3.pipelineFor(m.Label).Next(
 		transport.NewOne(unsafe.Pointer(&m)).Next(nil),
 	))
 }
@@ -208,6 +229,6 @@ func (level3 *Level3) Register() *data.Measurement[float64] {
 		"morphology_change_baseline": data.NewMetric[float64]("morphology_change_baseline", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 0),
 		"morphology_change_zscore":   data.NewMetric[float64]("morphology_change_zscore", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
 	})
-	m.Metadata["peer-interest"] = "*"
+	m.SetMetadata("peer-interest", "*")
 	return m
 }

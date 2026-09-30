@@ -48,10 +48,10 @@ func (op *Gate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 		for arriving := range in {
 			m := *(**data.Measurement[float64])(arriving)
 
-			last, traded := m.Metrics["last"]
-			index, referenced := m.Metrics["index_price"]
-			mark, spotted := m.Metrics["mark_price"]
-			oi, interested := m.Metrics["open_interest"]
+			last, traded := m.LookupMetric("last")
+			index, referenced := m.LookupMetric("index_price")
+			mark, spotted := m.LookupMetric("mark_price")
+			oi, interested := m.LookupMetric("open_interest")
 
 			if !traded || !referenced || !spotted || !interested {
 				m.Err = fmt.Errorf(
@@ -79,10 +79,10 @@ func (op *Gate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				continue
 			}
 
-			m.Metrics["last"] = last.Write(last.Raw)
-			m.Metrics["index_price"] = index.Write(index.Raw)
-			m.Metrics["mark_price"] = mark.Write(mark.Raw)
-			m.Metrics["open_interest"] = oi.Write(oi.Raw)
+			m.SetMetric("last", last.Write(last.Raw))
+			m.SetMetric("index_price", index.Write(index.Raw))
+			m.SetMetric("mark_price", mark.Write(mark.Raw))
+			m.SetMetric("open_interest", oi.Write(oi.Raw))
 
 			if !yield(arriving) {
 				return
@@ -120,8 +120,8 @@ func (op *TradeGate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 		for arriving := range in {
 			m := *(**data.Measurement[float64])(arriving)
 
-			price, priced := m.Metrics["price"]
-			quantity, quantified := m.Metrics["qty"]
+			price, priced := m.LookupMetric("price")
+			quantity, quantified := m.LookupMetric("qty")
 
 			if !priced || !quantified {
 				m.Err = fmt.Errorf("%w: derivatives: trade requires a price and a quantity", core.ErrDomain)
@@ -165,8 +165,8 @@ func (op *TradeGate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 				continue
 			}
 
-			m.Metrics["price"] = price.Write(price.Raw)
-			m.Metrics["qty"] = quantity.Write(quantity.Raw)
+			m.SetMetric("price", price.Write(price.Raw))
+			m.SetMetric("qty", quantity.Write(quantity.Raw))
 
 			if !yield(arriving) {
 				return

@@ -14,9 +14,9 @@ func liftedMeasurements() []*Measurement[float64] {
 
 	measurementOne := NewMeasurement("hawkes", map[string]Metric[float64]{})
 	measurementOne.Label, measurementOne.At, measurementOne.From = "test", currentTime, currentTime
-	measurementOne.Metrics["arrival_rate"] = Metric[float64]{
+	measurementOne.SetMetric("arrival_rate", Metric[float64]{
 		Label: "arrival_rate", Raw: 100.0,
-	}
+	})
 	measurementOne.Metadata = map[string]string{
 		MetadataSupport: "10",
 	}
@@ -28,9 +28,9 @@ func liftedMeasurements() []*Measurement[float64] {
 
 	measurementTwo := NewMeasurement("depthflow", map[string]Metric[float64]{})
 	measurementTwo.Label, measurementTwo.At, measurementTwo.From = "test", currentTime, currentTime
-	measurementTwo.Metrics["imbalance"] = Metric[float64]{
+	measurementTwo.SetMetric("imbalance", Metric[float64]{
 		Label: "imbalance", Raw: 50.0,
-	}
+	})
 
 	for range finalizer.Next(transport.NewValues(measurementTwo).Next(nil)) {
 	}

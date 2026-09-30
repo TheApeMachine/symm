@@ -98,23 +98,23 @@ func (op *PairSearch) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
 
 			resolution := selected.Spacing * 1e-9
 
-			m.Metrics["contemporaneous_correlation"] = m.Metrics["contemporaneous_correlation"].Write(selected.Contemporaneous)
-			m.Metrics["best_lag_correlation"] = m.Metrics["best_lag_correlation"].Write(selected.Correlation)
-			m.Metrics["absolute_correlation_gain"] = m.Metrics["absolute_correlation_gain"].Write(selected.AbsoluteGain)
-			m.Metrics["lag_fraction"] = m.Metrics["lag_fraction"].Write(selected.LagFraction)
-			m.Metrics["best_lag_index"] = m.Metrics["best_lag_index"].Write(selected.LagIndex)
-			m.Metrics["reference_return_count"] = m.Metrics["reference_return_count"].Write(selected.Observations)
-			m.Metrics["measured_return_count"] = m.Metrics["measured_return_count"].Write(selected.Observations)
-			m.Metrics["overlap_pair_count"] = m.Metrics["overlap_pair_count"].Write(selected.Support)
-			m.Metrics["effective_sample_count"] = m.Metrics["effective_sample_count"].Write(selected.Support)
-			m.Metrics["search_count"] = m.Metrics["search_count"].Write(selected.SearchCount)
-			m.Metrics["best_lag_seconds"] = m.Metrics["best_lag_seconds"].Write(selected.X)
-			m.Metrics["lag_search_resolution_seconds"] = m.Metrics["lag_search_resolution_seconds"].Write(resolution)
-			m.Metrics["lag_search_span"] = m.Metrics["lag_search_span"].Write(selected.Span * resolution)
+			m.WriteMetric("contemporaneous_correlation", selected.Contemporaneous)
+			m.WriteMetric("best_lag_correlation", selected.Correlation)
+			m.WriteMetric("absolute_correlation_gain", selected.AbsoluteGain)
+			m.WriteMetric("lag_fraction", selected.LagFraction)
+			m.WriteMetric("best_lag_index", selected.LagIndex)
+			m.WriteMetric("reference_return_count", selected.Observations)
+			m.WriteMetric("measured_return_count", selected.Observations)
+			m.WriteMetric("overlap_pair_count", selected.Support)
+			m.WriteMetric("effective_sample_count", selected.Support)
+			m.WriteMetric("search_count", selected.SearchCount)
+			m.WriteMetric("best_lag_seconds", selected.X)
+			m.WriteMetric("lag_search_resolution_seconds", resolution)
+			m.WriteMetric("lag_search_span", selected.Span * resolution)
 
 			if selected.ShapeDefined {
-				m.Metrics["lag_peak_prominence"] = m.Metrics["lag_peak_prominence"].Write(selected.Prominence)
-				m.Metrics["lag_peak_curvature"] = m.Metrics["lag_peak_curvature"].Write(selected.Curvature)
+				m.WriteMetric("lag_peak_prominence", selected.Prominence)
+				m.WriteMetric("lag_peak_curvature", selected.Curvature)
 			}
 
 			if !yield(arriving) {

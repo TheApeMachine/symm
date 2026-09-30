@@ -43,7 +43,7 @@ func (catalog *Catalog) Drain(
 				return errnie.Error(errnie.Err(errnie.Validation, "catalog: observation has no workspace sequence", nil))
 			}
 
-			if measurement.Metadata["excursion"] != "" && len(learn) > 0 {
+			if val, ok := measurement.GetMetadata("excursion"); ok && val != "" && len(learn) > 0 {
 				records, err := learn[0](measurement)
 				if err != nil {
 					return err
@@ -84,7 +84,7 @@ func (catalog *Catalog) Drain(
 }
 
 func deriveChannel(measurement *data.Measurement[float64]) string {
-	if measurement.Metadata["venue"] == "true" {
+	if val, ok := measurement.GetMetadata("venue"); ok && val == "true" {
 		switch channel := measurement.Provenance["channel"]; channel {
 		case "ticker", "trade", "level3":
 			return channel

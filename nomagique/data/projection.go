@@ -129,10 +129,10 @@ func (op *Projection) project(input ProjectionInput) *Measurement[float64] {
 		}
 
 		raw, _ := lookupPath(input, metric.Path)
-		measurement.Metrics[metric.Label] = Metric[float64]{
+		measurement.SetMetric(metric.Label, Metric[float64]{
 			Label: metric.Label, Raw: raw, Unit: metric.Unit,
 			Timescale: metric.Timescale,
-		}
+		})
 	}
 
 	if len(op.Facts) != 0 {
@@ -144,7 +144,7 @@ func (op *Projection) project(input ProjectionInput) *Measurement[float64] {
 			}
 
 			if value, ok := lookupPath(input, fact.Path); ok {
-				measurement.Metadata[fact.Name] = strconv.FormatFloat(value, 'f', -1, 64)
+				measurement.SetMetadata(fact.Name, strconv.FormatFloat(value, 'f', -1, 64))
 			}
 		}
 	}

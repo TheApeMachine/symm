@@ -13,8 +13,11 @@ import (
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/ui"
 	"github.com/theapemachine/symm/workbench"
 )
+
+var _ ui.CognitionSource = (*Training)(nil)
 
 /*
 Training is the learning orchestrator.
@@ -73,7 +76,7 @@ func NewTraining(
 				var classBytes []byte
 				var graded bool
 
-				if class, ok := m.Metadata["ground_truth"]; ok && class != "" {
+				if class, ok := m.GetMetadata("ground_truth"); ok && class != "" {
 					classBytes = []byte(class)
 					graded = true
 				}
@@ -163,6 +166,18 @@ func (training *Training) Step(
 }
 
 /*
+CognitionTree satisfies ui.CognitionSource to broadcast the cognitive topology
+and learning state to the dashboard.
+*/
+func (training *Training) CognitionTree() cognition.CognitionTreeExport {
+	if training.engine == nil {
+		return cognition.CognitionTreeExport{}
+	}
+
+	return training.engine.TreeExport()
+}
+
+/*
 Run is used for training on stored data. This is done by retrieving a stream
 of data from the Iceberg Tables, and replaying the past. We then need to detect
 the best excursions, which will for tape fragments we can train on.
@@ -223,9 +238,7 @@ func (training *Training) Run() {
 				// Rewrite the source so the UI Tee allows it through to the dashboard
 				m.Source = "training:historical"
 
-				if m.Metadata == nil {
-					m.Metadata = make(map[string]string)
-				}
+				m.EnsureMetadata()
 
 				// Apply ground truth label based on objective tape bounds from DuckDB
 				var gt string
@@ -247,7 +260,7 @@ func (training *Training) Run() {
 					gt = string(cognition.ActionWait)
 				}
 
-				m.Metadata["ground_truth"] = gt
+				m.SetMetadata("ground_truth", gt)
 				
 				// 1. Get the current evaluation (Pre-Outcome Prediction) BEFORE training on this frame
 				token := training.grid.LitRegions(m, 3)
@@ -261,8 +274,8 @@ func (training *Training) Run() {
 					for out := range training.engine.Next(data.NewValue(evalCmd)) {
 						eval := (*cognition.Evaluation)(out)
 						if eval != nil {
-							m.Metadata["predicted_action"] = eval.WinnerClass
-							m.Metadata["predicted_confidence"] = fmt.Sprintf("%f", eval.Confidence)
+							m.SetMetadata("predicted_action", eval.WinnerClass)
+							m.SetMetadata("predicted_confidence", fmt.Sprintf("%f", eval.Confidence))
 						}
 					}
 				}
@@ -275,17 +288,15 @@ func (training *Training) Run() {
 
 				// Stream the trained historical fragment directly to the dashboard visualization
 				if training.webrtc != nil {
-					if m.Metadata == nil {
-						m.Metadata = make(map[string]string)
-					}
+					m.EnsureMetadata()
 
 					// Inject the ground truth bounds (discovered by DuckDB) strictly
 					// for the visualization AFTER the model evaluated it, preventing leakage.
-					m.Metadata["excursion_start"] = fmt.Sprintf("%d", excursions.StartTick)
-					m.Metadata["excursion_ignition"] = fmt.Sprintf("%d", excursions.IgnitionTick)
-					m.Metadata["excursion_extremum_tick"] = fmt.Sprintf("%d", excursions.EndTick)
-					m.Metadata["excursion_type"] = fmt.Sprintf("%d", extType)
-					m.Metadata["stage_code"] = "2" // FORWARD PAPER LEARNING
+					m.SetMetadata("excursion_start", fmt.Sprintf("%d", excursions.StartTick))
+					m.SetMetadata("excursion_ignition", fmt.Sprintf("%d", excursions.IgnitionTick))
+					m.SetMetadata("excursion_extremum_tick", fmt.Sprintf("%d", excursions.EndTick))
+					m.SetMetadata("excursion_type", fmt.Sprintf("%d", extType))
+					m.SetMetadata("stage_code", "2") // FORWARD PAPER LEARNING
 
 					training.webrtc.Push(m)
 				}

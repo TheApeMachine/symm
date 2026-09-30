@@ -59,7 +59,7 @@ func (op *UpdateMember) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointe
 
 			reading := drive[store.LatestCommand[string, float64], store.LatestReading[string, float64]](
 				op.prices,
-				&store.LatestCommand[string, float64]{Key: m.Label, Value: m.Metrics[op.label].Raw},
+				&store.LatestCommand[string, float64]{Key: m.Label, Value: m.GetMetric(op.label).Raw},
 			)
 
 			if !reading.HasPrior {

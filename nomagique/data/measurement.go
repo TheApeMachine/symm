@@ -6,6 +6,7 @@ import (
 	"maps"
 	"math"
 	"strings"
+	"sync"
 	"time"
 	"unsafe"
 
@@ -49,12 +50,122 @@ type Measurement[T any] struct {
 	Estimated  bool                 `json:"estimated"`
 	Err        error                `json:"-"`
 	Metrics    map[string]Metric[T] `json:"metrics,omitempty"`
-	Metadata   map[string]string    `json:"metadata,omitempty"`
-	Provenance map[string]string    `json:"provenance,omitempty"`
-	Peers      []*Measurement[T]    `json:"peers"`
+	mu         sync.RWMutex
+	Metadata   map[string]string `json:"metadata,omitempty"`
+	Provenance map[string]string `json:"provenance,omitempty"`
+	Peers      []*Measurement[T] `json:"peers"`
 	// Result is the completed, immutable structured output of this observation.
 	// The register and tees share it; numeric persistence uses Metrics.
 	Result any `json:"-"`
+}
+
+// GetMetric safely retrieves a metric.
+func (m *Measurement[T]) GetMetric(key string) Metric[T] {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.Metrics == nil {
+		return Metric[T]{}
+	}
+	return m.Metrics[key]
+}
+
+// LookupMetric safely retrieves a metric and a boolean indicating if it was found.
+func (m *Measurement[T]) LookupMetric(key string) (Metric[T], bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.Metrics == nil {
+		return Metric[T]{}, false
+	}
+	metric, ok := m.Metrics[key]
+	return metric, ok
+}
+
+// SetMetric safely sets a metric.
+func (m *Measurement[T]) SetMetric(key string, val Metric[T]) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.Metrics == nil {
+		m.Metrics = make(map[string]Metric[T])
+	}
+	m.Metrics[key] = val
+}
+
+// WriteMetric safely writes a value to a metric and updates it in the map.
+func (m *Measurement[T]) WriteMetric(key string, val T) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.Metrics == nil {
+		m.Metrics = make(map[string]Metric[T])
+	}
+	metric := m.Metrics[key]
+	m.Metrics[key] = metric.Write(val)
+}
+
+// RangeMetrics safely iterates over metrics.
+func (m *Measurement[T]) RangeMetrics(f func(key string, metric Metric[T]) bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.Metrics == nil {
+		return
+	}
+	for k, v := range m.Metrics {
+		if !f(k, v) {
+			break
+		}
+	}
+}
+
+// EnsureMetadata safely initializes the metadata map if it is nil.
+func (m *Measurement[T]) EnsureMetadata() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.Metadata == nil {
+		m.Metadata = make(map[string]string)
+	}
+}
+
+// GetMetadata safely retrieves a metadata value.
+func (m *Measurement[T]) GetMetadata(key string) (string, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.Metadata == nil {
+		return "", false
+	}
+	val, ok := m.Metadata[key]
+	return val, ok
+}
+
+// SetMetadata safely sets a metadata value.
+func (m *Measurement[T]) SetMetadata(key, value string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.Metadata == nil {
+		m.Metadata = make(map[string]string)
+	}
+	m.Metadata[key] = value
+}
+
+// DeleteMetadata safely deletes a metadata value.
+func (m *Measurement[T]) DeleteMetadata(key string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.Metadata != nil {
+		delete(m.Metadata, key)
+	}
+}
+
+// RangeMetadata safely iterates over metadata.
+func (m *Measurement[T]) RangeMetadata(f func(key, value string) bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.Metadata == nil {
+		return
+	}
+	for k, v := range m.Metadata {
+		if !f(k, v) {
+			break
+		}
+	}
 }
 
 /*
@@ -75,6 +186,13 @@ func NewMeasurement[T any](
 		Metrics:    metrics,
 		Metadata:   make(map[string]string),
 		Provenance: make(map[string]string),
+	}
+}
+
+// SetSeqIdx implements runtime.Sequencer for the measurement.
+func (measurement *Measurement[T]) SetSeqIdx(seq int64) {
+	if measurement != nil {
+		measurement.SeqIdx = seq
 	}
 }
 
@@ -118,6 +236,9 @@ func (measurement *Measurement[T]) Clone() *Measurement[T] {
 	if measurement == nil {
 		return nil
 	}
+
+	measurement.mu.RLock()
+	defer measurement.mu.RUnlock()
 
 	metrics := make(map[string]Metric[T], len(measurement.Metrics))
 	maps.Copy(metrics, measurement.Metrics)
@@ -192,13 +313,15 @@ func (measurement *Measurement[T]) Pull(other *Measurement[T], keys ...string) {
 		return
 	}
 
+	measurement.mu.Lock()
 	if measurement.Metrics == nil {
 		measurement.Metrics = make(map[string]Metric[T], len(keys))
 	}
+	measurement.mu.Unlock()
 
 	for _, key := range keys {
-		if metric, ok := other.Metrics[key]; ok {
-			measurement.Metrics[key] = metric
+		if metric, ok := other.LookupMetric(key); ok {
+			measurement.SetMetric(key, metric)
 		}
 	}
 }
@@ -209,14 +332,21 @@ stage can fill each metric's normalized and standardized forms in place.
 */
 func (measurement *Measurement[T]) Standardize() iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
+		var keys []string
+		measurement.mu.RLock()
 		for key := range measurement.Metrics {
-			metric := measurement.Metrics[key]
+			keys = append(keys, key)
+		}
+		measurement.mu.RUnlock()
+
+		for _, key := range keys {
+			metric := measurement.GetMetric(key)
 
 			if !yield(unsafe.Pointer(&metric)) {
 				return
 			}
 
-			measurement.Metrics[key] = metric
+			measurement.SetMetric(key, metric)
 		}
 	}
 }
@@ -227,11 +357,19 @@ can flow through again without being reallocated. The declared schema never
 moves.
 */
 func (measurement *Measurement[T]) Reset() {
-	for key, metric := range measurement.Metrics {
+	var keys []string
+	measurement.mu.RLock()
+	for key := range measurement.Metrics {
+		keys = append(keys, key)
+	}
+	measurement.mu.RUnlock()
+
+	for _, key := range keys {
+		metric := measurement.GetMetric(key)
 		metric.Raw = zero[T]()
 		metric.Normalized = nil
 		metric.Standardized = nil
-		measurement.Metrics[key] = metric
+		measurement.SetMetric(key, metric)
 	}
 }
 
@@ -301,28 +439,28 @@ func (op *Finalizer[Value]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Po
 				// Dynamic Schema Scaling for Grid compatibility (Priority 3 Separation)
 				var midpoint, spread, totalQty float64
 
-				if metric, ok := measurement.Metrics["midpoint"]; ok {
+				if metric, ok := measurement.LookupMetric("midpoint"); ok {
 					midpoint, _ = any(metric.Raw).(float64)
 				}
-				if metric, ok := measurement.Metrics["spread"]; ok {
+				if metric, ok := measurement.LookupMetric("spread"); ok {
 					spread, _ = any(metric.Raw).(float64)
 				}
 
 				if midpoint == 0 {
 					var b, a float64
-					if metric, ok := measurement.Metrics["best_bid"]; ok {
+					if metric, ok := measurement.LookupMetric("best_bid"); ok {
 						b, _ = any(metric.Raw).(float64)
 					}
-					if metric, ok := measurement.Metrics["best_ask"]; ok {
+					if metric, ok := measurement.LookupMetric("best_ask"); ok {
 						a, _ = any(metric.Raw).(float64)
 					}
 					if b == 0 {
-						if metric, ok := measurement.Metrics["best_price:bid"]; ok {
+						if metric, ok := measurement.LookupMetric("best_price:bid"); ok {
 							b, _ = any(metric.Raw).(float64)
 						}
 					}
 					if a == 0 {
-						if metric, ok := measurement.Metrics["best_price:ask"]; ok {
+						if metric, ok := measurement.LookupMetric("best_price:ask"); ok {
 							a, _ = any(metric.Raw).(float64)
 						}
 					}
@@ -332,28 +470,32 @@ func (op *Finalizer[Value]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Po
 					}
 				}
 
-				if metric, ok := measurement.Metrics["touch_quantity:bid"]; ok {
+				if metric, ok := measurement.LookupMetric("touch_quantity:bid"); ok {
 					if q, ok := any(metric.Raw).(float64); ok {
 						totalQty += q
 					}
 				}
-				if metric, ok := measurement.Metrics["touch_quantity:ask"]; ok {
+				if metric, ok := measurement.LookupMetric("touch_quantity:ask"); ok {
 					if q, ok := any(metric.Raw).(float64); ok {
 						totalQty += q
 					}
 				}
 
-				for key, metric := range measurement.Metrics {
+				updates := make(map[string]Metric[Value])
+				measurement.RangeMetrics(func(key string, metric Metric[Value]) bool {
 					val, valid := any(metric.Raw).(float64)
 					if !valid {
-						continue
+						return true
 					}
+
+					modified := false
 
 					// 1. Assign dynamic Center/Scale for raw prices
 					if midpoint > 0 && spread > 0 {
 						if strings.Contains(key, "price") || key == "best_bid" || key == "best_ask" || key == "midpoint" {
 							metric.Center = midpoint
 							metric.Scale = spread
+							modified = true
 						}
 					}
 
@@ -362,14 +504,16 @@ func (op *Finalizer[Value]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Po
 						if !strings.Contains(key, "imbalance") && !strings.Contains(key, "fraction") && !strings.Contains(key, "rate") {
 							metric.Center = 0
 							metric.Scale = totalQty
+							modified = true
 						}
 					}
 
 					// 3. Extract baseline as Center and stddev as Scale if we have them
-					if baseline, ok := measurement.Metrics[key+"_baseline"]; ok {
+					if baseline, ok := measurement.Metrics[key+"_baseline"]; ok && baseline.Label != "" {
 						if bVal, ok := any(baseline.Raw).(float64); ok {
 							metric.Center = bVal
-							if zscore, ok := measurement.Metrics[key+"_zscore"]; ok {
+							modified = true
+							if zscore, ok := measurement.Metrics[key+"_zscore"]; ok && zscore.Label != "" {
 								if zVal, ok := any(zscore.Raw).(float64); ok && zVal != 0 {
 									metric.Scale = math.Abs((val - bVal) / zVal)
 								}
@@ -377,7 +521,14 @@ func (op *Finalizer[Value]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Po
 						}
 					}
 
-					measurement.Metrics[key] = metric
+					if modified {
+						updates[key] = metric
+					}
+					return true
+				})
+
+				for k, v := range updates {
+					measurement.SetMetric(k, v)
 				}
 
 				readingEval := transport.NewEvaluate(op.quality)

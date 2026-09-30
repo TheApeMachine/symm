@@ -35,8 +35,8 @@ func (op *VelocityStep) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointe
 
 			at := m.At.UnixNano()
 
-			lagObs := temporal.Observation{Value: m.Metrics["best_lag_seconds"].Raw, At: at}
-			gainObs := temporal.Observation{Value: m.Metrics["absolute_correlation_gain"].Raw, At: at}
+			lagObs := temporal.Observation{Value: m.GetMetric("best_lag_seconds").Raw, At: at}
+			gainObs := temporal.Observation{Value: m.GetMetric("absolute_correlation_gain").Raw, At: at}
 
 			var lagReading temporal.VelocityReading
 
@@ -51,11 +51,11 @@ func (op *VelocityStep) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointe
 			}
 
 			if lagReading.Defined {
-				m.Metrics["lag_velocity"] = m.Metrics["lag_velocity"].Write(lagReading.Rate)
+				m.WriteMetric("lag_velocity", lagReading.Rate)
 			}
 
 			if gainReading.Defined {
-				m.Metrics["correlation_gain_velocity"] = m.Metrics["correlation_gain_velocity"].Write(gainReading.Rate)
+				m.WriteMetric("correlation_gain_velocity", gainReading.Rate)
 			}
 
 			if !yield(arriving) {

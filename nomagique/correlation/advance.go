@@ -68,21 +68,19 @@ func (op *Fold) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			}
 
 			if summary.Defined {
-				m.Metrics["cohort_signed_correlation"] = m.Metrics["cohort_signed_correlation"].Write(summary.SignedCorrelation)
-				m.Metrics["cohort_absolute_correlation"] = m.Metrics["cohort_absolute_correlation"].Write(summary.AbsoluteCorrelation)
-				m.Metrics["cohort_effective_peer_count"] = m.Metrics["cohort_effective_peer_count"].Write(summary.EffectivePeers)
+				m.WriteMetric("cohort_signed_correlation", summary.SignedCorrelation)
+				m.WriteMetric("cohort_absolute_correlation", summary.AbsoluteCorrelation)
+				m.WriteMetric("cohort_effective_peer_count", summary.EffectivePeers)
 			}
-			m.Metrics["cohort_peer_count"] = m.Metrics["cohort_peer_count"].Write(summary.Peers)
+			m.WriteMetric("cohort_peer_count", summary.Peers)
 
 			if summary.FisherDefined {
-				m.Metrics["cohort_correlation_dispersion"] = m.Metrics["cohort_correlation_dispersion"].Write(summary.Dispersion)
+				m.WriteMetric("cohort_correlation_dispersion", summary.Dispersion)
 			}
 
 			if summary.PeerEnergyRate > 0 {
-				m.Metrics["peer_return_energy_rate"] = m.Metrics["peer_return_energy_rate"].Write(summary.PeerEnergyRate)
-				m.Metrics["relative_return_energy"] = m.Metrics["relative_return_energy"].Write(
-					m.Metrics["return_energy_rate:measured"].Raw / summary.PeerEnergyRate,
-				)
+				m.WriteMetric("peer_return_energy_rate", summary.PeerEnergyRate)
+				m.WriteMetric("relative_return_energy", m.GetMetric("return_energy_rate:measured").Raw / summary.PeerEnergyRate)
 			}
 
 			if !yield(arriving) {
@@ -142,15 +140,13 @@ func (op *History) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			m.Metrics["correlation_zscore"] = m.Metrics["correlation_zscore"].Write(view.ZScore)
 
 			if view.Defined {
-				if m.Metadata == nil {
-					m.Metadata = make(map[string]string)
-				}
+				m.EnsureMetadata()
 
-				m.Metadata[data.MetadataDivergence] = strconv.FormatFloat(view.Divergence, 'f', -1, 64)
-				m.Metadata[data.MetadataSupport] = strconv.FormatFloat(view.Count, 'f', -1, 64)
+				m.SetMetadata(data.MetadataDivergence, strconv.FormatFloat(view.Divergence, 'f', -1, 64))
+				m.SetMetadata(data.MetadataSupport, strconv.FormatFloat(view.Count, 'f', -1, 64))
 
 				if view.VarianceDefined {
-					m.Metadata[data.MetadataNoiseVariance] = strconv.FormatFloat(view.Variance, 'f', -1, 64)
+					m.SetMetadata(data.MetadataNoiseVariance, strconv.FormatFloat(view.Variance, 'f', -1, 64))
 				}
 			}
 

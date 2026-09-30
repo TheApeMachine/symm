@@ -145,7 +145,7 @@ func Open(ctx context.Context) *Catalog {
 		rest.WithCustomTransport(transport),
 	}
 
-	if err == nil {
+	if err == nil && !s3Config.Anonymous {
 		restOpts = append(restOpts, rest.WithAwsConfig(awsCfg))
 	}
 
@@ -377,7 +377,7 @@ func ensureTableBucket(
 
 	defer res.Body.Close()
 
-	if res.StatusCode == http.StatusOK || res.StatusCode == http.StatusCreated || res.StatusCode == http.StatusConflict {
+	if res.StatusCode == http.StatusOK || res.StatusCode == http.StatusCreated || res.StatusCode == http.StatusConflict || res.StatusCode == http.StatusForbidden {
 		return nil
 	}
 
@@ -432,7 +432,7 @@ func ensureS3Bucket(
 
 	defer res.Body.Close()
 
-	if res.StatusCode == http.StatusOK || res.StatusCode == http.StatusCreated || res.StatusCode == http.StatusNoContent || res.StatusCode == http.StatusConflict {
+	if res.StatusCode == http.StatusOK || res.StatusCode == http.StatusCreated || res.StatusCode == http.StatusNoContent || res.StatusCode == http.StatusConflict || res.StatusCode == http.StatusForbidden {
 		return nil
 	}
 

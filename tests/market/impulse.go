@@ -33,14 +33,14 @@ func ImpulseTape(symbol string, legs int) []*data.Measurement[float64] {
 				value = -value
 			}
 
-			observation.Metrics["value"] = data.Metric[float64]{Label: "value", Raw: value}
+			observation.SetMetric("value", data.Metric[float64]{Label: "value", Raw: value})
 
 			if name == "public" {
 				quantity := decimal.NewFromInt64(int64(index%2 + 1))
-				observation.Metadata["venue"] = "true"
-				observation.Metadata["volume-unit"] = "base"
+				observation.SetMetadata("venue", "true")
+				observation.SetMetadata("volume-unit", "base")
 				observation.Provenance["channel"] = "trade"
-				observation.Metrics["qty"] = data.Metric[float64]{Label: "qty", Raw: quantity.Float64(), Exact: quantity}
+				observation.SetMetric("qty", data.Metric[float64]{Label: "qty", Raw: quantity.Float64(), Exact: quantity})
 			}
 
 			frame.Peers = append(frame.Peers, observation)

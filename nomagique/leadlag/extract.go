@@ -52,7 +52,7 @@ func (op *ExtractPrice) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointe
 				continue
 			}
 
-			m.Metrics["last_price"] = m.Metrics["last_price"].Write(price)
+			m.WriteMetric("last_price", price)
 
 			if !yield(arriving) {
 				return
@@ -72,19 +72,19 @@ func (op *ExtractPrice) resolve(m *data.Measurement[float64]) (float64, bool) {
 				continue
 			}
 
-			if metric, ok := peer.Metrics["last_price"]; ok && metric.Raw > 0 {
+			if metric, ok := peer.LookupMetric("last_price"); ok && metric.Raw > 0 {
 				m.Label = peer.Label
 				m.At = peer.At
 				return metric.Raw, true
 			}
 
-			if metric, ok := peer.Metrics["last"]; ok && metric.Raw > 0 {
+			if metric, ok := peer.LookupMetric("last"); ok && metric.Raw > 0 {
 				m.Label = peer.Label
 				m.At = peer.At
 				return metric.Raw, true
 			}
 
-			if metric, ok := peer.Metrics["price"]; ok && metric.Raw > 0 {
+			if metric, ok := peer.LookupMetric("price"); ok && metric.Raw > 0 {
 				m.Label = peer.Label
 				m.At = peer.At
 				return metric.Raw, true
@@ -94,7 +94,7 @@ func (op *ExtractPrice) resolve(m *data.Measurement[float64]) (float64, bool) {
 		return 0, false
 	}
 
-	metric, ok := m.Metrics["last"]
+	metric, ok := m.LookupMetric("last")
 
 	if !ok || metric.Raw <= 0 {
 		return 0, false

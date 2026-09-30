@@ -175,8 +175,8 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 			if cat.Type != "" {
 				name := string(cat.Type)
 
-				if m, ok := measurement.Metrics[name]; ok {
-					measurement.Metrics[name] = m.Write(cat.Confidence)
+				if m, ok := measurement.LookupMetric(name); ok {
+					measurement.SetMetric(name, m.Write(cat.Confidence))
 				}
 			}
 		}
@@ -202,7 +202,7 @@ func (solver *Solver) Register() *data.Measurement[float64] {
 	}
 
 	measurement := data.NewMeasurement("category", metrics)
-	measurement.Metadata["peer-interest"] = "*"
+	measurement.SetMetadata("peer-interest", "*")
 
 	return measurement
 }
@@ -428,7 +428,7 @@ func (solver *Solver) accumulateCoords(
 			continue
 		}
 
-		sample, exists := measurement.Metrics[schema.Metric]
+		sample, exists := measurement.LookupMetric(schema.Metric)
 
 		if !exists {
 			continue

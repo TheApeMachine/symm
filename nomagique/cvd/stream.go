@@ -48,8 +48,8 @@ func (op *Gate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 		for arriving := range in {
 			m := *(**data.Measurement[float64])(arriving)
 
-			price, priced := m.Metrics["price"]
-			quantity, quantified := m.Metrics["qty"]
+			price, priced := m.LookupMetric("price")
+			quantity, quantified := m.LookupMetric("qty")
 
 			if !priced || !quantified {
 				m.Err = fmt.Errorf("%w: cvd: trade requires a price and a quantity", core.ErrDomain)
@@ -105,8 +105,8 @@ func (op *Gate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				continue
 			}
 
-			m.Metrics["price"] = price.Write(price.Raw)
-			m.Metrics["qty"] = quantity.Write(quantity.Raw)
+			m.SetMetric("price", price.Write(price.Raw))
+			m.SetMetric("qty", quantity.Write(quantity.Raw))
 
 			if !yield(arriving) {
 				return

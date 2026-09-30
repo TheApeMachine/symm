@@ -53,7 +53,7 @@ func (op *Quantity) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				continue
 			}
 
-			quantity := m.Metrics["qty"].Raw
+			quantity := m.GetMetric("qty").Raw
 			buy := m.Provenance["side"] == "buy"
 
 			one, zero := 1.0, 0.0
@@ -82,17 +82,17 @@ func (op *Quantity) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				sellTotal = drive[float64, float64](op.sellQty, &quantity)
 			}
 
-			m.Metrics["trade_count:buy"] = m.Metrics["trade_count:buy"].Write(buyCount)
-			m.Metrics["trade_count:sell"] = m.Metrics["trade_count:sell"].Write(sellCount)
-			m.Metrics["trade_count"] = m.Metrics["trade_count"].Write(buyCount + sellCount)
-			m.Metrics["executed_quantity:buy"] = m.Metrics["executed_quantity:buy"].Write(buyTotal)
-			m.Metrics["executed_quantity:sell"] = m.Metrics["executed_quantity:sell"].Write(sellTotal)
-			m.Metrics["gross_executed_quantity"] = m.Metrics["gross_executed_quantity"].Write(gross)
-			m.Metrics["net_executed_quantity"] = m.Metrics["net_executed_quantity"].Write(net)
-			m.Metrics["cumulative_volume_delta"] = m.Metrics["cumulative_volume_delta"].Write(net)
+			m.WriteMetric("trade_count:buy", buyCount)
+			m.WriteMetric("trade_count:sell", sellCount)
+			m.WriteMetric("trade_count", buyCount + sellCount)
+			m.WriteMetric("executed_quantity:buy", buyTotal)
+			m.WriteMetric("executed_quantity:sell", sellTotal)
+			m.WriteMetric("gross_executed_quantity", gross)
+			m.WriteMetric("net_executed_quantity", net)
+			m.WriteMetric("cumulative_volume_delta", net)
 
 			if gross > 0 {
-				m.Metrics["signed_count_fraction"] = m.Metrics["signed_count_fraction"].Write((buyCount - sellCount) / (buyCount + sellCount))
+				m.WriteMetric("signed_count_fraction", (buyCount - sellCount) / (buyCount + sellCount))
 			}
 
 			if !yield(arriving) {
@@ -152,7 +152,7 @@ func (op *Notional) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				continue
 			}
 
-			notional := m.Metrics["price"].Raw * m.Metrics["qty"].Raw
+			notional := m.GetMetric("price").Raw * m.GetMetric("qty").Raw
 			buy := m.Provenance["side"] == "buy"
 
 			zero := 0.0
@@ -176,35 +176,33 @@ func (op *Notional) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				sellTotal = drive[float64, float64](op.sell, &notional)
 			}
 
-			if m.Metadata == nil {
-				m.Metadata = make(map[string]string, 3)
-			}
+			m.EnsureMetadata()
 
-			m.Metrics["aggressive_notional:buy"] = m.Metrics["aggressive_notional:buy"].Write(buyTotal)
-			m.Metrics["aggressive_notional:sell"] = m.Metrics["aggressive_notional:sell"].Write(sellTotal)
-			m.Metrics["gross_notional"] = m.Metrics["gross_notional"].Write(gross)
-			m.Metrics["net_notional"] = m.Metrics["net_notional"].Write(net)
-			m.Metrics["cumulative_notional_delta"] = m.Metrics["cumulative_notional_delta"].Write(net)
+			m.WriteMetric("aggressive_notional:buy", buyTotal)
+			m.WriteMetric("aggressive_notional:sell", sellTotal)
+			m.WriteMetric("gross_notional", gross)
+			m.WriteMetric("net_notional", net)
+			m.WriteMetric("cumulative_notional_delta", net)
 
-			if tradeCount := m.Metrics["trade_count"].Raw; tradeCount > 0 {
-				m.Metrics["mean_trade_notional"] = m.Metrics["mean_trade_notional"].Write(gross / tradeCount)
+			if tradeCount := m.GetMetric("trade_count").Raw; tradeCount > 0 {
+				m.WriteMetric("mean_trade_notional", gross / tradeCount)
 			}
 
 			if gross > 0 {
 				fraction := net / gross
-				m.Metrics["signed_net_fraction"] = m.Metrics["signed_net_fraction"].Write(fraction)
+				m.WriteMetric("signed_net_fraction", fraction)
 
 				reading := drive[float64, adaptive.BaselineReading](op.reader, &fraction)
-				m.Metadata[data.MetadataSupport] = strconv.FormatFloat(reading.Count, 'f', -1, 64)
+				m.SetMetadata(data.MetadataSupport, strconv.FormatFloat(reading.Count, 'f', -1, 64))
 
 				if reading.HasPrior {
-					m.Metrics["signed_net_fraction_baseline"] = m.Metrics["signed_net_fraction_baseline"].Write(reading.Baseline)
-					m.Metrics["signed_net_fraction_divergence"] = m.Metrics["signed_net_fraction_divergence"].Write(reading.Residual)
-					m.Metrics["signed_net_fraction_zscore"] = m.Metrics["signed_net_fraction_zscore"].Write(reading.ZScore)
-					m.Metadata[data.MetadataDivergence] = strconv.FormatFloat(reading.Residual, 'f', -1, 64)
+					m.WriteMetric("signed_net_fraction_baseline", reading.Baseline)
+					m.WriteMetric("signed_net_fraction_divergence", reading.Residual)
+					m.WriteMetric("signed_net_fraction_zscore", reading.ZScore)
+					m.SetMetadata(data.MetadataDivergence, strconv.FormatFloat(reading.Residual, 'f', -1, 64))
 
 					if reading.VarianceDefined {
-						m.Metadata[data.MetadataNoiseVariance] = strconv.FormatFloat(reading.Variance, 'f', -1, 64)
+						m.SetMetadata(data.MetadataNoiseVariance, strconv.FormatFloat(reading.Variance, 'f', -1, 64))
 					}
 				}
 			}
@@ -259,7 +257,7 @@ func (op *Rates) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 
 			m.From = op.from
 
-			m.Metrics["cvd_epoch_from"] = m.Metrics["cvd_epoch_from"].Write(float64(op.from.UnixNano()) / float64(time.Second))
+			m.WriteMetric("cvd_epoch_from", float64(op.from.UnixNano()) / float64(time.Second))
 
 			elapsed := m.At.Sub(op.from).Seconds()
 
@@ -271,22 +269,22 @@ func (op *Rates) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				continue
 			}
 
-			tradeCount := m.Metrics["trade_count"].Raw
-			gross := m.Metrics["gross_notional"].Raw
-			net := m.Metrics["net_notional"].Raw
+			tradeCount := m.GetMetric("trade_count").Raw
+			gross := m.GetMetric("gross_notional").Raw
+			net := m.GetMetric("net_notional").Raw
 
-			m.Metrics["trade_rate"] = m.Metrics["trade_rate"].Write(tradeCount / elapsed)
-			m.Metrics["gross_notional_rate"] = m.Metrics["gross_notional_rate"].Write(gross / elapsed)
-			m.Metrics["net_notional_rate"] = m.Metrics["net_notional_rate"].Write(net / elapsed)
-			m.Metrics["buy_notional_rate"] = m.Metrics["buy_notional_rate"].Write(m.Metrics["aggressive_notional:buy"].Raw / elapsed)
-			m.Metrics["sell_notional_rate"] = m.Metrics["sell_notional_rate"].Write(m.Metrics["aggressive_notional:sell"].Raw / elapsed)
+			m.WriteMetric("trade_rate", tradeCount / elapsed)
+			m.WriteMetric("gross_notional_rate", gross / elapsed)
+			m.WriteMetric("net_notional_rate", net / elapsed)
+			m.WriteMetric("buy_notional_rate", m.GetMetric("aggressive_notional:buy").Raw / elapsed)
+			m.WriteMetric("sell_notional_rate", m.GetMetric("aggressive_notional:sell").Raw / elapsed)
 
 			rate := net / elapsed
 			observation := temporal.Observation{Value: rate, At: m.At.UnixNano()}
 			velocity := drive[temporal.Observation, temporal.VelocityReading](op.velocity, &observation)
 
 			if velocity.Defined {
-				m.Metrics["net_notional_rate_velocity"] = m.Metrics["net_notional_rate_velocity"].Write(velocity.Rate)
+				m.WriteMetric("net_notional_rate_velocity", velocity.Rate)
 			}
 
 			if !yield(arriving) {

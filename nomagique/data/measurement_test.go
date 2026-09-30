@@ -42,7 +42,7 @@ func TestMeasurementFinalize(t *testing.T) {
 			So(measurement.SNR, ShouldEqual, 0)
 
 			Convey("Fresh noise evidence restores a newly calculated ratio", func() {
-				measurement.Metadata[MetadataNoiseVariance] = "4"
+				measurement.SetMetadata(MetadataNoiseVariance, "4")
 				measurement.Finalize()
 				So(measurement.SNRDefined, ShouldBeTrue)
 				So(measurement.SNR, ShouldEqual, 4)
@@ -75,10 +75,10 @@ func TestMeasurementClone(t *testing.T) {
 			"bid": NewMetric[float64]("bid", UnitRate, TimescaleInstantaneous, 0, 1),
 		})
 		measurement.Label = "BTC/USD"
-		measurement.Metadata["peer-interest"] = "*"
+		measurement.SetMetadata("peer-interest", "*")
 		measurement.Provenance["channel"] = "ticker"
 		measurement.Peers = []*Measurement[float64]{peer}
-		measurement.Metrics["bid"] = measurement.Metrics["bid"].Write(100)
+		measurement.WriteMetric("bid", 100)
 
 		clone := measurement.Clone()
 
@@ -89,9 +89,9 @@ func TestMeasurementClone(t *testing.T) {
 			So(clone.Provenance["channel"], ShouldEqual, "ticker")
 			So(clone.Peers[0], ShouldEqual, peer)
 
-			measurement.Metrics["bid"] = measurement.Metrics["bid"].Write(200)
-			measurement.Metadata["peer-interest"] = "hawkes"
-			So(clone.Metrics["bid"].Raw, ShouldEqual, 100)
+			measurement.WriteMetric("bid", 200)
+			measurement.SetMetadata("peer-interest", "hawkes")
+			So(clone.GetMetric("bid").Raw, ShouldEqual, 100)
 			So(clone.Metadata["peer-interest"], ShouldEqual, "*")
 		})
 	})
@@ -106,15 +106,15 @@ func TestMeasurementPull(t *testing.T) {
 		})
 		feed.Label = "ETH/USD"
 		feed.Provenance["side"] = "buy"
-		feed.Metrics["bid"] = feed.Metrics["bid"].Write(10)
-		feed.Metrics["ask"] = feed.Metrics["ask"].Write(11)
-		feed.Metrics["volume"] = feed.Metrics["volume"].Write(5)
+		feed.WriteMetric("bid", 10)
+		feed.WriteMetric("ask", 11)
+		feed.WriteMetric("volume", 5)
 
 		owned := NewMeasurement("liquidity", map[string]Metric[float64]{
 			"bid": NewMetric[float64]("bid", UnitRate, TimescaleInstantaneous, 0, 1),
 			"ask": NewMetric[float64]("ask", UnitRate, TimescaleInstantaneous, 0, 1),
 		})
-		owned.Metadata["peer-interest"] = "*"
+		owned.SetMetadata("peer-interest", "*")
 		owned.Pull(feed, "bid", "ask")
 
 		Convey("named feed facts move without sharing the source map", func() {
@@ -122,13 +122,13 @@ func TestMeasurementPull(t *testing.T) {
 			So(owned.Label, ShouldEqual, "ETH/USD")
 			So(owned.Provenance["side"], ShouldEqual, "buy")
 			So(owned.Metadata["peer-interest"], ShouldEqual, "*")
-			So(owned.Metrics["bid"].Raw, ShouldEqual, 10)
-			So(owned.Metrics["ask"].Raw, ShouldEqual, 11)
-			_, hasVolume := owned.Metrics["volume"]
+			So(owned.GetMetric("bid").Raw, ShouldEqual, 10)
+			So(owned.GetMetric("ask").Raw, ShouldEqual, 11)
+			_, hasVolume := owned.LookupMetric("volume")
 			So(hasVolume, ShouldBeFalse)
 
-			owned.Metrics["bid"] = owned.Metrics["bid"].Write(99)
-			So(feed.Metrics["bid"].Raw, ShouldEqual, 10)
+			owned.WriteMetric("bid", 99)
+			So(feed.GetMetric("bid").Raw, ShouldEqual, 10)
 		})
 	})
 }

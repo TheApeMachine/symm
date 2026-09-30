@@ -3,107 +3,22 @@ package pumpdump
 import (
 	"context"
 	"fmt"
-	"github.com/theapemachine/errnie"
-	"iter"
+	"sync"
+
 	"math"
 	"strconv"
 	"unsafe"
 
+	"github.com/theapemachine/errnie"
+
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/adaptive"
+	"github.com/theapemachine/symm/nomagique/arithmetic"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
-
-type tickerInput struct {
-	Symbol string
-	Bid    float64
-	Ask    float64
-}
-
-type tickerResult struct {
-	Bid            float64
-	Ask            float64
-	Midpoint       float64
-	Spread         float64
-	RelativeSpread float64
-	SpreadRatio    float64
-	Divergence     float64
-	Reading        adaptive.BaselineReading
-}
-
-type tickerState struct {
-	baseline core.Primitive
-}
-
-type tickerPipeline struct {
-	*core.PrimitiveError
-	paths map[string]*tickerState
-	out   tickerResult
-}
-
-func newTickerPipeline() core.Primitive {
-	return &tickerPipeline{
-		PrimitiveError: core.NewPrimitiveError(),
-		paths:          make(map[string]*tickerState),
-	}
-}
-
-func (op *tickerPipeline) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
-	return func(yield func(unsafe.Pointer) bool) {
-		for arriving := range in {
-			input := (*tickerInput)(arriving)
-
-			state := op.paths[input.Symbol]
-			if state == nil {
-				state = &tickerState{
-					baseline: adaptive.NewBaseline(adaptive.NewWindow()),
-				}
-				op.paths[input.Symbol] = state
-			}
-
-			midpoint := (input.Bid + input.Ask) / 2.0
-			spread := input.Ask - input.Bid
-			relativeSpread := 0.0
-
-			if midpoint > 0 {
-				relativeSpread = spread / midpoint
-			}
-
-			var reading adaptive.BaselineReading
-			for rPtr := range state.baseline.Next(transport.NewOne(unsafe.Pointer(&relativeSpread)).Next(nil)) {
-				reading = *(*adaptive.BaselineReading)(rPtr)
-			}
-
-			spreadRatio := 0.0
-			divergence := 0.0
-
-			if reading.Baseline > 0 {
-				spreadRatio = relativeSpread / reading.Baseline
-				if relativeSpread > 0 {
-					divergence = math.Log(relativeSpread / reading.Baseline)
-				}
-			}
-
-			op.out = tickerResult{
-				Bid:            input.Bid,
-				Ask:            input.Ask,
-				Midpoint:       midpoint,
-				Spread:         spread,
-				RelativeSpread: relativeSpread,
-				SpreadRatio:    spreadRatio,
-				Divergence:     divergence,
-				Reading:        reading,
-			}
-
-			if !yield(unsafe.Pointer(&op.out)) {
-				return
-			}
-		}
-	}
-}
 
 /*
 Ticker is the executable-touch market entity. It holds no state and no logic of
@@ -113,17 +28,129 @@ workload's register owns the measurement's lifetime.
 */
 type Ticker struct {
 	*runtime.System
-	pipeline core.Primitive
-	ID       int
+	pipelines sync.Map
+	ID        int
 }
 
 func NewTicker(ctx context.Context) *Ticker {
-	ticker := &Ticker{
-		pipeline: nomagique.NewNumber(newTickerPipeline()),
-	}
+	ticker := &Ticker{}
 
 	ticker.System = runtime.NewSystem(ctx, "pumpdump:ticker", ticker)
 	return ticker
+}
+
+func (ticker *Ticker) pipelineFor(symbol string) core.Primitive {
+	if existing, ok := ticker.pipelines.Load(symbol); ok {
+		return existing.(core.Primitive)
+	}
+
+	pipeline := nomagique.NewNumber(
+		// 0. Extract source data
+		data.NewAdapter(
+			transport.NewPass(),
+			func(m *data.Measurement[float64]) *data.Measurement[float64] {
+				source := m
+				if len(m.Peers) > 0 {
+					peer := m.FindPeer(func(candidate *data.Measurement[float64]) bool {
+						if candidate.Label == "" {
+							return false
+						}
+						bid := candidate.GetMetric("best_bid").Raw
+						if bid == 0 {
+							bid = candidate.GetMetric("bid").Raw
+						}
+						ask := candidate.GetMetric("best_ask").Raw
+						if ask == 0 {
+							ask = candidate.GetMetric("ask").Raw
+						}
+						return bid > 0 && ask > 0
+					})
+					if peer != nil {
+						source = peer
+					}
+				}
+				m.Pull(source)
+
+				bid := source.GetMetric("best_bid").Raw
+				if bid == 0 {
+					bid = source.GetMetric("bid").Raw
+				}
+				ask := source.GetMetric("best_ask").Raw
+				if ask == 0 {
+					ask = source.GetMetric("ask").Raw
+				}
+
+				if bid > 0 && ask > 0 {
+					if bid >= ask {
+						m.Err = fmt.Errorf("pumpdump: crossed touch (%f >= %f)", bid, ask)
+					} else {
+						m.WriteMetric("best_bid", bid)
+						m.WriteMetric("best_ask", ask)
+					}
+				}
+				m.Label = source.Label
+				m.At = source.At
+				return m
+			},
+			func(m *data.Measurement[float64], out *data.Measurement[float64]) {},
+		),
+
+		// 1. Calculate structural metrics using pure equations
+		data.NewEquations(
+			data.Equation{
+				Output: "spread",
+				Op:     arithmetic.NewSubtract(),
+				Left:   "best_ask",
+				Right:  "best_bid",
+			},
+			data.Equation{
+				Output: "midpoint",
+				Op:     arithmetic.NewAdd(),
+				Left:   "best_bid",
+				Right:  "best_ask",
+			},
+			data.Equation{
+				Output: "relative_spread",
+				Op:     arithmetic.NewDivide(),
+				Left:   "spread",
+				Right:  "midpoint",
+			},
+		),
+
+		// 2. Compute advanced statistical baseline for relative_spread
+		data.NewAdapter(
+			adaptive.NewBaseline(adaptive.NewWindow()),
+			func(m *data.Measurement[float64]) float64 {
+				return m.GetMetric("relative_spread").Raw
+			},
+			func(m *data.Measurement[float64], out adaptive.BaselineReading) {
+				m.WriteMetric("relative_spread_baseline", out.Baseline)
+				m.EnsureMetadata()
+				m.SetMetadata(data.MetadataSupport, strconv.FormatFloat(out.Count, 'f', -1, 64))
+
+				if out.HasPrior {
+					if out.Baseline > 0 {
+						rs := m.GetMetric("relative_spread").Raw
+						spreadRatio := rs / out.Baseline
+						m.WriteMetric("spread_ratio", spreadRatio)
+						if rs > 0 {
+							divergence := math.Log(spreadRatio)
+							m.WriteMetric("spread_divergence", divergence)
+							m.SetMetadata(data.MetadataDivergence, strconv.FormatFloat(divergence, 'f', -1, 64))
+						}
+					}
+
+					m.WriteMetric("spread_zscore", out.ZScore)
+					if out.VarianceDefined {
+						m.SetMetadata(data.MetadataNoiseVariance, strconv.FormatFloat(out.Variance, 'f', -1, 64))
+					}
+				}
+			},
+		),
+	)
+
+	actual, _ := ticker.pipelines.LoadOrStore(symbol, pipeline)
+	return actual.(core.Primitive)
 }
 
 /*
@@ -136,124 +163,18 @@ func (ticker *Ticker) Step(m *data.Measurement[float64]) *data.Measurement[float
 		return m
 	}
 
-	if m == nil {
+	if m == nil || m.Err != nil {
+		return m
+	}
+
+	res := data.Read[*data.Measurement[float64]](ticker.pipelineFor(m.Label).Next(
+		transport.NewOne(unsafe.Pointer(&m)).Next(nil),
+	))
+
+	if res == nil {
 		return nil
 	}
 
-	if m.Err != nil {
-		return m
-	}
-
-	source := m
-
-	if len(m.Peers) > 0 {
-		peer := m.FindPeer(func(candidate *data.Measurement[float64]) bool {
-			if candidate.Label == "" {
-				return false
-			}
-
-			bid := candidate.Metrics["best_bid"].Raw
-
-			if bid == 0 {
-				bid = candidate.Metrics["bid"].Raw
-			}
-
-			ask := candidate.Metrics["best_ask"].Raw
-
-			if ask == 0 {
-				ask = candidate.Metrics["ask"].Raw
-			}
-
-			return bid > 0 && ask > 0
-		})
-
-		if peer == nil {
-			return nil
-		}
-
-		source = peer
-	}
-
-	m.Pull(source)
-
-	bid := source.Metrics["best_bid"].Raw
-
-	if bid == 0 {
-		bid = source.Metrics["bid"].Raw
-	}
-
-	ask := source.Metrics["best_ask"].Raw
-
-	if ask == 0 {
-		ask = source.Metrics["ask"].Raw
-	}
-
-	if bid <= 0 || ask <= 0 {
-		return m
-	}
-
-	if bid >= ask {
-		m.Err = fmt.Errorf("pumpdump: crossed touch (%f >= %f)", bid, ask)
-		return m
-	}
-
-	if m.Metadata == nil {
-		m.Metadata = make(map[string]string)
-	}
-
-	pipeInput := tickerInput{
-		Symbol: source.Label,
-		Bid:    bid,
-		Ask:    ask,
-	}
-
-	for out := range ticker.pipeline.Next(transport.NewOne(unsafe.Pointer(&pipeInput)).Next(nil)) {
-		res := (*tickerResult)(out)
-
-		m.Metrics["best_bid"] = m.Metrics["best_bid"].Write(res.Bid)
-		m.Metrics["best_ask"] = m.Metrics["best_ask"].Write(res.Ask)
-		m.Metrics["midpoint"] = m.Metrics["midpoint"].Write(res.Midpoint)
-		m.Metrics["spread"] = m.Metrics["spread"].Write(res.Spread)
-		m.Metrics["relative_spread"] = m.Metrics["relative_spread"].Write(res.RelativeSpread)
-		m.Metrics["relative_spread_baseline"] = m.Metrics["relative_spread_baseline"].Write(res.Reading.Baseline)
-		m.Metrics["spread_ratio"] = m.Metrics["spread_ratio"].Write(res.SpreadRatio)
-
-		m.Metadata[data.MetadataSupport] = strconv.FormatFloat(res.Reading.Count, 'f', -1, 64)
-
-		if res.Reading.HasPrior {
-			m.Metrics["spread_divergence"] = m.Metrics["spread_divergence"].Write(res.Divergence)
-			m.Metrics["spread_zscore"] = m.Metrics["spread_zscore"].Write(res.Reading.ZScore)
-			m.Metadata[data.MetadataDivergence] = strconv.FormatFloat(res.Divergence, 'f', -1, 64)
-
-			if res.Reading.VarianceDefined {
-				m.Metadata[data.MetadataNoiseVariance] = strconv.FormatFloat(res.Reading.Variance, 'f', -1, 64)
-			}
-		}
-	}
-
-	m.Label = source.Label
-	m.At = source.At
-	m.Finalize()
-	return m
-}
-
-/*
-Register returns the measurement declaring this entity's full metric schema.
-Values are empty; the workload uses this at startup to allocate the metric
-schema before feeding streaming records.
-*/
-func (ticker *Ticker) Register() *data.Measurement[float64] {
-	m := data.NewMeasurement[float64]("pumpdump:ticker", map[string]data.Metric[float64]{
-		"best_bid":                 data.NewMetric[float64]("best_bid", data.UnitRate, data.TimescaleInstantaneous, 0, 0),
-		"best_ask":                 data.NewMetric[float64]("best_ask", data.UnitRate, data.TimescaleInstantaneous, 0, 0),
-		"midpoint":                 data.NewMetric[float64]("midpoint", data.UnitRate, data.TimescaleInstantaneous, 0, 0),
-		"spread":                   data.NewMetric[float64]("spread", data.UnitRate, data.TimescaleInstantaneous, 0, 0),
-		"relative_spread":          data.NewMetric[float64]("relative_spread", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 0),
-		"relative_spread_baseline": data.NewMetric[float64]("relative_spread_baseline", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 0),
-		"spread_ratio":             data.NewMetric[float64]("spread_ratio", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 0),
-		"spread_divergence":        data.NewMetric[float64]("spread_divergence", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 0),
-		"spread_zscore":            data.NewMetric[float64]("spread_zscore", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
-	})
-	m.Metadata["peer-interest"] = "*"
-	return m
+	res.Finalize()
+	return res
 }

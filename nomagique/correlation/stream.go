@@ -47,7 +47,7 @@ func (op *Gate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 		for arriving := range in {
 			m := *(**data.Measurement[float64])(arriving)
 
-			metric, traded := m.Metrics["last_price"]
+			metric, traded := m.LookupMetric("last_price")
 
 			if !traded {
 				m.Err = fmt.Errorf("%w: correlation: ticker requires a last price", core.ErrDomain)
@@ -61,11 +61,9 @@ func (op *Gate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 
 			last := metric.Raw
 
-			if m.Metadata == nil {
-				m.Metadata = make(map[string]string, 1)
-			}
+			m.EnsureMetadata()
 
-			m.Metadata[data.MetadataSupport] = "0"
+			m.SetMetadata(data.MetadataSupport, "0")
 
 			if holds := drive[float64, bool](op.finite, &last); !holds || last < 0 {
 				m.Err = fmt.Errorf("%w: correlation: finite non-negative last price required", core.ErrDomain)
@@ -77,7 +75,7 @@ func (op *Gate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				continue
 			}
 
-			m.Metrics["last_price"] = metric.Write(last)
+			m.SetMetric("last_price", metric.Write(last))
 
 			if last == 0 {
 				m.Provenance = map[string]string{"last_trade_price_state": "unobserved"}

@@ -156,7 +156,7 @@ func (op *Excursions) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
 
 			for _, m := range measurements {
 				if m != nil {
-					if !yield(unsafe.Pointer(&m)) {
+					if !yield(unsafe.Pointer(m)) {
 						return
 					}
 				}

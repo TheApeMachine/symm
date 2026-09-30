@@ -40,27 +40,28 @@ func TrainingTape(legs int) []*data.Measurement[float64] {
 				frame.Peers[index].SeqIdx = sequence
 			}
 			trade := frame.Peers[0]
-			value := trade.Metrics["value"].Raw
-			trade.Metrics["price"] = data.Metric[float64]{Label: "price", Raw: value, Exact: decimal.NewFromFloat64(value)}
+			value := trade.GetMetric("value").Raw
+			trade.SetMetric("price", data.Metric[float64]{Label: "price", Raw: value, Exact: decimal.NewFromFloat64(value)})
 			quote := data.NewMeasurement[float64]("quote", nil)
 			quote.SeqIdx, quote.Label = sequence, "BTC/USD"
-			quote.Metadata["venue"], quote.Metadata["volume-unit"] = "true", "base"
+			quote.SetMetadata("venue", "true")
+			quote.SetMetadata("volume-unit", "base")
 			quote.Provenance["owner"], quote.Provenance["channel"] = "quote", "ticker"
 			for _, side := range []string{"bid", "ask"} {
 				amount := value
 				if side == "ask" {
 					amount += 0.01
 				}
-				quote.Metrics[side] = data.Metric[float64]{Label: side, Raw: amount, Exact: decimal.NewFromFloat64(amount)}
+				quote.SetMetric(side, data.Metric[float64]{Label: side, Raw: amount, Exact: decimal.NewFromFloat64(amount)})
 			}
 			frame.Peers = append([]*data.Measurement[float64]{quote}, frame.Peers...)
 			// Changing features within a price regime keeps region contexts observable.
 			for _, peer := range frame.Peers[2:] {
-				metric := peer.Metrics["value"]
+				metric := peer.GetMetric("value")
 				metric.Raw += float64(repeat%2) / 100
-				peer.Metrics["value"] = metric
+				peer.SetMetric("value", metric)
 			}
-			frame.Metadata["fixture"] = fmt.Sprint(sequence)
+			frame.SetMetadata("fixture", fmt.Sprint(sequence))
 			frames = append(frames, frame)
 		}
 	}

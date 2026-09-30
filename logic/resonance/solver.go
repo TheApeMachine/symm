@@ -22,7 +22,6 @@ import (
 	"github.com/theapemachine/symm/nomagique/learning"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/transport"
-
 )
 
 /*
@@ -262,20 +261,6 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 		}
 	}
 
-	return measurement
-}
-
-func (solver *Solver) Register() *data.Measurement[float64] {
-	measurement := data.NewMeasurement("resonance", map[string]data.Metric[float64]{
-		"energy": data.NewMetric[float64](
-			"energy", data.UnitNat, data.TimescaleInstantaneous, 0, 1,
-		),
-		"surprise": data.NewMetric[float64](
-			"surprise", data.UnitNat, data.TimescaleInstantaneous, 0, 1,
-		),
-	})
-
-	measurement.Metadata["peer-interest"] = "*"
 	return measurement
 }
 
@@ -717,30 +702,30 @@ func (solver *Solver) publishReturns(
 	if out.Calibrated {
 		measurement.Provenance["calibrated"] = "true"
 	}
-	
+
 	measurement.Provenance["supported_horizon"] = fmt.Sprintf("%d", out.SupportedHorizon)
 	measurement.Provenance["resolved_steps"] = fmt.Sprintf("%d", out.ResolvedSteps)
 	measurement.Provenance["confidence"] = fmt.Sprintf("%f", out.Confidence)
 
 	if out.Reading != nil {
-		measurement.Metrics["energy"] = data.Metric[float64]{
+		measurement.SetMetric("energy", data.Metric[float64]{
 			Label: "energy",
 			Raw:   out.Reading.Energy,
-		}
-		measurement.Metrics["surprise"] = data.Metric[float64]{
+		})
+		measurement.SetMetric("surprise", data.Metric[float64]{
 			Label: "surprise",
 			Raw:   out.Reading.Surprise,
-		}
-		measurement.Metrics["task_skill"] = data.Metric[float64]{
+		})
+		measurement.SetMetric("task_skill", data.Metric[float64]{
 			Label: "task_skill",
 			Raw:   out.Reading.SkillAverage,
-		}
-		measurement.Metrics["task_relative_precision"] = data.Metric[float64]{
+		})
+		measurement.SetMetric("task_relative_precision", data.Metric[float64]{
 			Label: "task_relative_precision",
 			Raw:   out.Reading.PrecisionAverage,
-		}
+		})
 	}
-	
+
 	// Add forward curve as indexed metrics
 	for i, val := range out.ForwardCurve {
 		label := fmt.Sprintf("forward_curve_%d", i)
@@ -759,7 +744,7 @@ func (solver *Solver) publishReturns(
 				Raw:   val,
 			}
 		}
-		
+
 		for i, layer := range out.Reading.Layers {
 			for j, val := range layer.State {
 				label := fmt.Sprintf("layer_%d_state_%d", i, j)

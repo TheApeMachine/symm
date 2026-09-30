@@ -12,6 +12,10 @@ func optionList[O any](initial ...O) []O {
 	return initial
 }
 
+type Sequencer interface {
+	SetSeqIdx(seq int64)
+}
+
 /*
 Workspace runs registered nodes in dependency stages. Nodes in one stage may
 execute concurrently and query only peers owned by earlier stages. Step admits
@@ -44,7 +48,7 @@ func NewWorkspace[T any](
 	)
 
 	for _, stage := range stages {
-		group := make([]disruptor.Handler, len(stage))
+		group := make([]disruptor.Handler, 0, len(stage))
 
 		for _, node := range stage {
 			group = append(group, NewConsumer(node, workload.buffer, workload.mask, tees...))
@@ -98,6 +102,11 @@ func (workspace *Workspace[T]) Step(payload T) T {
 	}
 
 	seq := workspace.channel.Reserve(1)
+
+	if s, ok := any(payload).(Sequencer); ok {
+		s.SetSeqIdx(seq + 1)
+	}
+
 	workspace.buffer[seq&workspace.mask] = payload
 	workspace.channel.Commit(seq, seq)
 

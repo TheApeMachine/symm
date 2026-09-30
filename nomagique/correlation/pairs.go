@@ -124,10 +124,10 @@ func (op *Pairs) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				continue
 			}
 
-			last := m.Metrics["last_price"].Raw
+			last := m.GetMetric("last_price").Raw
 
 			if last == 0 {
-				m.Metrics["observation_count"] = m.Metrics["observation_count"].Write(0)
+				m.WriteMetric("observation_count", 0)
 
 				if !yield(arriving) {
 					return
@@ -157,7 +157,7 @@ func (op *Pairs) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				continue
 			}
 
-			m.Metrics["observation_count"] = m.Metrics["observation_count"].Write(focal.Count)
+			m.WriteMetric("observation_count", focal.Count)
 
 			if !focal.Accepted {
 				m.Provenance = map[string]string{"event_time_state": "regressed"}
@@ -245,22 +245,22 @@ func (op *Pairs) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 					"pair_diagnostics_selection": "last_defined_peer_lexicographic",
 				}
 
-				m.Metrics["signed_correlation"] = m.Metrics["signed_correlation"].Write(selected.Correlation)
-				m.Metrics["absolute_correlation"] = m.Metrics["absolute_correlation"].Write(math.Abs(selected.Correlation))
-				m.Metrics["covariance"] = m.Metrics["covariance"].Write(selected.Covariance)
-				m.Metrics["return_energy:reference"] = m.Metrics["return_energy:reference"].Write(selected.RightEnergy)
-				m.Metrics["return_energy:measured"] = m.Metrics["return_energy:measured"].Write(selected.LeftEnergy)
-				m.Metrics["return_energy_rate:reference"] = m.Metrics["return_energy_rate:reference"].Write(selected.RightEnergyRate)
-				m.Metrics["return_energy_rate:measured"] = m.Metrics["return_energy_rate:measured"].Write(selected.LeftEnergyRate)
-				m.Metrics["overlap_density"] = m.Metrics["overlap_density"].Write(selected.OverlapDensity)
-				m.Metrics["supported_return_count:measured"] = m.Metrics["supported_return_count:measured"].Write(selected.LeftReturns)
-				m.Metrics["supported_return_count:reference"] = m.Metrics["supported_return_count:reference"].Write(selected.RightReturns)
-				m.Metrics["overlap_pair_count"] = m.Metrics["overlap_pair_count"].Write(selected.Support)
-				m.Metrics["shared_time"] = m.Metrics["shared_time"].Write(selected.SharedTime)
+				m.WriteMetric("signed_correlation", selected.Correlation)
+				m.WriteMetric("absolute_correlation", math.Abs(selected.Correlation))
+				m.WriteMetric("covariance", selected.Covariance)
+				m.WriteMetric("return_energy:reference", selected.RightEnergy)
+				m.WriteMetric("return_energy:measured", selected.LeftEnergy)
+				m.WriteMetric("return_energy_rate:reference", selected.RightEnergyRate)
+				m.WriteMetric("return_energy_rate:measured", selected.LeftEnergyRate)
+				m.WriteMetric("overlap_density", selected.OverlapDensity)
+				m.WriteMetric("supported_return_count:measured", selected.LeftReturns)
+				m.WriteMetric("supported_return_count:reference", selected.RightReturns)
+				m.WriteMetric("overlap_pair_count", selected.Support)
+				m.WriteMetric("shared_time", selected.SharedTime)
 
 				if significance.Defined {
-					m.Metrics["correlation_p_value"] = m.Metrics["correlation_p_value"].Write(significance.PValue)
-					m.Metrics["correlation_standard_error_fisher"] = m.Metrics["correlation_standard_error_fisher"].Write(significance.StandardError)
+					m.WriteMetric("correlation_p_value", significance.PValue)
+					m.WriteMetric("correlation_standard_error_fisher", significance.StandardError)
 				}
 			}
 

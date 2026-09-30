@@ -399,12 +399,12 @@ func TestSolverStep(t *testing.T) {
 		cvd := data.NewMeasurement[float64]("cvd", nil)
 		cvd.Label, cvd.At, cvd.From = "BTC/USD", at, at
 		cvd.Maturity = 1
-		cvd.Metrics["signed_net_fraction_zscore"] = data.Metric[float64]{Label: "signed_net_fraction_zscore", Raw: 0.8}
+		cvd.SetMetric("signed_net_fraction_zscore", data.Metric[float64]{Label: "signed_net_fraction_zscore", Raw: 0.8})
 
 		hawkes := data.NewMeasurement[float64]("hawkes", nil)
 		hawkes.Label, hawkes.At, hawkes.From = "BTC/USD", at, at
 		hawkes.Maturity = 1
-		hawkes.Metrics["arrival_rate"] = data.Metric[float64]{Label: "arrival_rate", Raw: 0.6}
+		hawkes.SetMetric("arrival_rate", data.Metric[float64]{Label: "arrival_rate", Raw: 0.6})
 
 		m.Peers = []*data.Measurement[float64]{cvd, hawkes}
 
@@ -429,12 +429,12 @@ func TestSolverStep(t *testing.T) {
 		cvd := data.NewMeasurement[float64]("cvd", nil)
 		cvd.Label, cvd.At, cvd.From = "BTC/USD", at1, at1
 		cvd.Maturity = 1
-		cvd.Metrics["signed_net_fraction_zscore"] = data.Metric[float64]{Label: "signed_net_fraction_zscore", Raw: -3.5}
+		cvd.SetMetric("signed_net_fraction_zscore", data.Metric[float64]{Label: "signed_net_fraction_zscore", Raw: -3.5})
 
 		hawkes := data.NewMeasurement[float64]("hawkes", nil)
 		hawkes.Label, hawkes.At, hawkes.From = "BTC/USD", at2, at2
 		hawkes.Maturity = 1
-		hawkes.Metrics["arrival_rate"] = data.Metric[float64]{Label: "arrival_rate", Raw: 0.6}
+		hawkes.SetMetric("arrival_rate", data.Metric[float64]{Label: "arrival_rate", Raw: 0.6})
 
 		m.Peers = []*data.Measurement[float64]{cvd, hawkes}
 
@@ -443,7 +443,7 @@ func TestSolverStep(t *testing.T) {
 		Convey("timestamp skew within tolerance is accepted and negative z-scores are retained", func() {
 			So(solver.Error(), ShouldBeNil)
 			So(result, ShouldNotBeNil)
-			So(result.Metrics[string(types.AggressiveDrive)].Raw, ShouldBeGreaterThan, 0)
+			So(result.GetMetric(string(types.AggressiveDrive)).Raw, ShouldBeGreaterThan, 0)
 		})
 	})
 }

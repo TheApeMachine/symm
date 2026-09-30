@@ -2,8 +2,10 @@ package leadlag
 
 import (
 	"context"
-	"github.com/theapemachine/errnie"
+	"sync"
 	"unsafe"
+
+	"github.com/theapemachine/errnie"
 
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/algo"
@@ -23,18 +25,12 @@ lifetime.
 */
 type Ticker struct {
 	*runtime.System
-	pipeline core.Primitive
-	ID       int
+	pipelines sync.Map
+	ID        int
 }
 
 func NewTicker(ctx context.Context) *Ticker {
-	ticker := &Ticker{
-		pipeline: nomagique.NewNumber(
-			nmleadlag.NewGate(),
-			nmleadlag.NewCross(algo.NewHayashiYoshida()),
-			data.NewFinalizer[float64](),
-		),
-	}
+	ticker := &Ticker{}
 
 	ticker.System = runtime.NewSystem(ctx, "leadlag:ticker", ticker)
 	return ticker
@@ -44,6 +40,22 @@ func NewTicker(ctx context.Context) *Ticker {
 Step supplies the arriving measurement to the pipeline and returns it: the
 measurement is the pipeline's state, enriched in place.
 */
+
+func (ticker *Ticker) pipelineFor(symbol string) core.Primitive {
+	if existing, ok := ticker.pipelines.Load(symbol); ok {
+		return existing.(core.Primitive)
+	}
+
+	pipeline := nomagique.NewNumber(
+		nmleadlag.NewGate(),
+		nmleadlag.NewCross(algo.NewHayashiYoshida()),
+		data.NewFinalizer[float64](),
+	)
+
+	actual, _ := ticker.pipelines.LoadOrStore(symbol, pipeline)
+	return actual.(core.Primitive)
+}
+
 func (ticker *Ticker) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
 	if ticker.Status() != runtime.READY {
 		errnie.Warn(ticker.Name() + ": Step called before READY; dropping event")
@@ -69,11 +81,11 @@ func (ticker *Ticker) Step(measurement *data.Measurement[float64]) *data.Measure
 
 		price := quotedPrice(peer)
 		measurement.Pull(peer)
-		measurement.Metrics["last"] = measurement.Metrics["last"].Write(price)
-		measurement.Metrics["last_price"] = measurement.Metrics["last_price"].Write(price)
+		measurement.WriteMetric("last", price)
+		measurement.WriteMetric("last_price", price)
 	}
 
-	res := data.Read[*data.Measurement[float64]](ticker.pipeline.Next(
+	res := data.Read[*data.Measurement[float64]](ticker.pipelineFor(measurement.Label).Next(
 		transport.NewOne(unsafe.Pointer(&measurement)).Next(nil),
 	))
 
@@ -86,113 +98,10 @@ func (ticker *Ticker) Step(measurement *data.Measurement[float64]) *data.Measure
 
 func quotedPrice(measurement *data.Measurement[float64]) float64 {
 	for _, key := range []string{"last_price", "last", "price"} {
-		if metric, ok := measurement.Metrics[key]; ok && metric.Raw > 0 {
+		if metric, ok := measurement.LookupMetric(key); ok && metric.Raw > 0 {
 			return metric.Raw
 		}
 	}
 
 	return 0
-}
-
-/*
-Register returns the pre-allocated measurement every lead-lag tick flows
-through: every metric the instrument can produce is declared, none valued.
-The last trade price is the feed's fact the stages consume; the rest are
-written where they are computed.
-*/
-func (ticker *Ticker) Register() *data.Measurement[float64] {
-	m := data.NewMeasurement("leadlag", map[string]data.Metric[float64]{
-		"last": data.NewMetric[float64](
-			"last", data.UnitRate, data.TimescaleInstantaneous, 0, 1,
-		),
-		"last_price": data.NewMetric[float64](
-			"last_price", data.UnitRate, data.TimescaleInstantaneous, 0, 1,
-		),
-		"observation_count": data.NewMetric[float64](
-			"observation_count", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
-		),
-		"contemporaneous_correlation": data.NewMetric[float64](
-			"contemporaneous_correlation", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"best_lag_correlation": data.NewMetric[float64](
-			"best_lag_correlation", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"absolute_correlation_gain": data.NewMetric[float64](
-			"absolute_correlation_gain", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"lag_fraction": data.NewMetric[float64](
-			"lag_fraction", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"best_lag_index": data.NewMetric[float64](
-			"best_lag_index", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
-		),
-		"reference_return_count": data.NewMetric[float64](
-			"reference_return_count", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
-		),
-		"measured_return_count": data.NewMetric[float64](
-			"measured_return_count", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
-		),
-		"overlap_pair_count": data.NewMetric[float64](
-			"overlap_pair_count", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
-		),
-		"effective_sample_count": data.NewMetric[float64](
-			"effective_sample_count", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
-		),
-		"search_count": data.NewMetric[float64](
-			"search_count", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
-		),
-		"best_lag_seconds": data.NewMetric[float64](
-			"best_lag_seconds", data.UnitSecond, data.TimescaleInstantaneous, 0, 1,
-		),
-		"lag_search_resolution_seconds": data.NewMetric[float64](
-			"lag_search_resolution_seconds", data.UnitSecond, data.TimescaleInstantaneous, 0, 1,
-		),
-		"lag_search_span": data.NewMetric[float64](
-			"lag_search_span", data.UnitSecond, data.TimescaleInstantaneous, 0, 1,
-		),
-		"lag_peak_prominence": data.NewMetric[float64](
-			"lag_peak_prominence", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"lag_peak_curvature": data.NewMetric[float64](
-			"lag_peak_curvature", data.UnitPerSecond, data.TimescaleInstantaneous, 0, 1,
-		),
-		"correlation_p_value": data.NewMetric[float64](
-			"correlation_p_value", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"search_adjusted_p_value": data.NewMetric[float64](
-			"search_adjusted_p_value", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"lag_baseline_seconds": data.NewMetric[float64](
-			"lag_baseline_seconds", data.UnitSecond, data.TimescaleInstantaneous, 0, 1,
-		),
-		"lag_divergence_seconds": data.NewMetric[float64](
-			"lag_divergence_seconds", data.UnitSecond, data.TimescaleInstantaneous, 0, 1,
-		),
-		"lag_noise_scale_seconds": data.NewMetric[float64](
-			"lag_noise_scale_seconds", data.UnitSecond, data.TimescaleInstantaneous, 0, 1,
-		),
-		"lag_zscore": data.NewMetric[float64](
-			"lag_zscore", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"lag_velocity": data.NewMetric[float64](
-			"lag_velocity", data.UnitPerSecond, data.TimescaleInstantaneous, 0, 1,
-		),
-		"correlation_gain_baseline": data.NewMetric[float64](
-			"correlation_gain_baseline", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"correlation_gain_zscore": data.NewMetric[float64](
-			"correlation_gain_zscore", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"correlation_gain_velocity": data.NewMetric[float64](
-			"correlation_gain_velocity", data.UnitPerSecond, data.TimescaleInstantaneous, 0, 1,
-		),
-		"best_lag_correlation_baseline": data.NewMetric[float64](
-			"best_lag_correlation_baseline", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"best_lag_correlation_zscore": data.NewMetric[float64](
-			"best_lag_correlation_zscore", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-	})
-	m.Metadata["peer-interest"] = "*"
-	return m
 }

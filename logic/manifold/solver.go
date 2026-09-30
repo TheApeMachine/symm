@@ -261,68 +261,68 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 		return measurement
 	}
 
-	if m, ok := measurement.Metrics["divergence"]; ok {
-		measurement.Metrics["divergence"] = m.Write(reading.Reading.Divergence)
+	if m, ok := measurement.LookupMetric("divergence"); ok {
+		measurement.SetMetric("divergence", m.Write(reading.Reading.Divergence))
 	}
 
-	if m, ok := measurement.Metrics["guidance_speed"]; ok {
-		measurement.Metrics["guidance_speed"] = m.Write(reading.Reading.GuidanceSpeed)
+	if m, ok := measurement.LookupMetric("guidance_speed"); ok {
+		measurement.SetMetric("guidance_speed", m.Write(reading.Reading.GuidanceSpeed))
 	}
 
-	if m, ok := measurement.Metrics["coherence_mag2"]; ok {
-		measurement.Metrics["coherence_mag2"] = m.Write(reading.Reading.CoherenceMag2)
+	if m, ok := measurement.LookupMetric("coherence_mag2"); ok {
+		measurement.SetMetric("coherence_mag2", m.Write(reading.Reading.CoherenceMag2))
 	}
 
-	if m, ok := measurement.Metrics["pressure_grad_norm"]; ok {
-		measurement.Metrics["pressure_grad_norm"] = m.Write(reading.Reading.PressureGradNorm)
+	if m, ok := measurement.LookupMetric("pressure_grad_norm"); ok {
+		measurement.SetMetric("pressure_grad_norm", m.Write(reading.Reading.PressureGradNorm))
 	}
 
-	if m, ok := measurement.Metrics["viscosity_proxy"]; ok {
-		measurement.Metrics["viscosity_proxy"] = m.Write(reading.Reading.ViscosityProxy)
+	if m, ok := measurement.LookupMetric("viscosity_proxy"); ok {
+		measurement.SetMetric("viscosity_proxy", m.Write(reading.Reading.ViscosityProxy))
 	}
 
-	if m, ok := measurement.Metrics["kuramoto_r"]; ok {
-		measurement.Metrics["kuramoto_r"] = m.Write(reading.Reading.KuramotoR)
+	if m, ok := measurement.LookupMetric("kuramoto_r"); ok {
+		measurement.SetMetric("kuramoto_r", m.Write(reading.Reading.KuramotoR))
 	}
 
-	if m, ok := measurement.Metrics["kuramoto_psi"]; ok {
-		measurement.Metrics["kuramoto_psi"] = m.Write(reading.Reading.KuramotoPsi)
+	if m, ok := measurement.LookupMetric("kuramoto_psi"); ok {
+		measurement.SetMetric("kuramoto_psi", m.Write(reading.Reading.KuramotoPsi))
 	}
 
-	if m, ok := measurement.Metrics["gas_kinetic"]; ok {
-		measurement.Metrics["gas_kinetic"] = m.Write(reading.Reading.Health.Gas.Kinetic)
+	if m, ok := measurement.LookupMetric("gas_kinetic"); ok {
+		measurement.SetMetric("gas_kinetic", m.Write(reading.Reading.Health.Gas.Kinetic))
 	}
 
-	if m, ok := measurement.Metrics["gas_internal"]; ok {
-		measurement.Metrics["gas_internal"] = m.Write(reading.Reading.Health.Gas.Internal)
+	if m, ok := measurement.LookupMetric("gas_internal"); ok {
+		measurement.SetMetric("gas_internal", m.Write(reading.Reading.Health.Gas.Internal))
 	}
 
-	if m, ok := measurement.Metrics["wave_norm"]; ok {
-		measurement.Metrics["wave_norm"] = m.Write(reading.Reading.Health.Wave.Norm)
+	if m, ok := measurement.LookupMetric("wave_norm"); ok {
+		measurement.SetMetric("wave_norm", m.Write(reading.Reading.Health.Wave.Norm))
 	}
 
-	if m, ok := measurement.Metrics["vorticity_rms"]; ok {
-		measurement.Metrics["vorticity_rms"] = m.Write(reading.Reading.Health.Gas.VorticityRMS)
+	if m, ok := measurement.LookupMetric("vorticity_rms"); ok {
+		measurement.SetMetric("vorticity_rms", m.Write(reading.Reading.Health.Gas.VorticityRMS))
 	}
 
-	if m, ok := measurement.Metrics["strain_rms"]; ok {
-		measurement.Metrics["strain_rms"] = m.Write(reading.Reading.Health.Gas.StrainRMS)
+	if m, ok := measurement.LookupMetric("strain_rms"); ok {
+		measurement.SetMetric("strain_rms", m.Write(reading.Reading.Health.Gas.StrainRMS))
 	}
 
-	if m, ok := measurement.Metrics["max_mach"]; ok {
-		measurement.Metrics["max_mach"] = m.Write(reading.Reading.Health.Gas.MaxMach)
+	if m, ok := measurement.LookupMetric("max_mach"); ok {
+		measurement.SetMetric("max_mach", m.Write(reading.Reading.Health.Gas.MaxMach))
 	}
 
-	if m, ok := measurement.Metrics["particle_count"]; ok && reading.State != nil {
-		measurement.Metrics["particle_count"] = m.Write(float64(reading.State.N))
+	if m, ok := measurement.LookupMetric("particle_count"); ok && reading.State != nil {
+		measurement.SetMetric("particle_count", m.Write(float64(reading.State.N)))
 	}
 
-	if m, ok := measurement.Metrics["particle_thermal"]; ok {
-		measurement.Metrics["particle_thermal"] = m.Write(reading.Reading.Health.ParticleThermal)
+	if m, ok := measurement.LookupMetric("particle_thermal"); ok {
+		measurement.SetMetric("particle_thermal", m.Write(reading.Reading.Health.ParticleThermal))
 	}
 
-	if m, ok := measurement.Metrics["particle_kinetic"]; ok {
-		measurement.Metrics["particle_kinetic"] = m.Write(reading.Reading.Health.ParticleKinetic)
+	if m, ok := measurement.LookupMetric("particle_kinetic"); ok {
+		measurement.SetMetric("particle_kinetic", m.Write(reading.Reading.Health.ParticleKinetic))
 	}
 
 	if reading.State != nil && reading.State.N > 1 {
@@ -394,7 +394,7 @@ func (solver *Solver) Register() *data.Measurement[float64] {
 			"particle_kinetic", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
 		),
 	})
-	measurement.Metadata["peer-interest"] = "*"
+	measurement.SetMetadata("peer-interest", "*")
 	return measurement
 }
 
@@ -409,8 +409,8 @@ func (solver *Solver) recordForcing(symbol string, hawkes *data.Measurement[floa
 		return
 	}
 
-	buyMetric, buyFound := hawkes.Metrics[buyExcitationMetric]
-	sellMetric, sellFound := hawkes.Metrics[sellExcitationMetric]
+	buyMetric, buyFound := hawkes.LookupMetric(buyExcitationMetric)
+	sellMetric, sellFound := hawkes.LookupMetric(sellExcitationMetric)
 
 	if !buyFound && !sellFound {
 		return
@@ -434,19 +434,6 @@ func (solver *Solver) recordForcing(symbol string, hawkes *data.Measurement[floa
 	}
 
 	solver.forcing.Store(symbol, forcingState{buyExcitation: buy, sellExcitation: sell})
-}
-
-/*
-latestForcing returns a symbol's retained forcing state (or the zero-value
-unit baseline when none has been observed yet). It must be called while the
-forcing read lock is held by advance.
-*/
-func (solver *Solver) latestForcing(symbol string) forcingState {
-	if val, ok := solver.forcing.Load(symbol); ok {
-		return val.(forcingState)
-	}
-
-	return forcingState{}
 }
 
 /*

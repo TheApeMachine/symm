@@ -53,13 +53,11 @@ func (op *Gate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 		for arriving := range in {
 			m := *(**data.Measurement[float64])(arriving)
 
-			if m.Metadata == nil {
-				m.Metadata = make(map[string]string, 1)
-			}
+			m.EnsureMetadata()
 
-			m.Metadata[data.MetadataSupport] = "0"
+			m.SetMetadata(data.MetadataSupport, "0")
 
-			metric, traded := m.Metrics["last"]
+			metric, traded := m.LookupMetric("last")
 
 			if !traded {
 				m.Err = fmt.Errorf("%w: leadlag: ticker requires a last price", core.ErrDomain)
@@ -83,7 +81,7 @@ func (op *Gate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				continue
 			}
 
-			m.Metrics["last_price"] = m.Metrics["last_price"].Write(last)
+			m.WriteMetric("last_price", last)
 
 			if last == 0 {
 				if m.Provenance == nil {
@@ -212,7 +210,7 @@ func (op *Cross) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				continue
 			}
 
-			last := m.Metrics["last_price"].Raw
+			last := m.GetMetric("last_price").Raw
 
 			if last == 0 {
 				if !yield(arriving) {
@@ -243,7 +241,7 @@ func (op *Cross) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				continue
 			}
 
-			m.Metrics["observation_count"] = m.Metrics["observation_count"].Write(focal.Count)
+			m.WriteMetric("observation_count", focal.Count)
 
 			if !focal.Accepted {
 				m.Provenance = map[string]string{"event_time_state": "regressed"}
@@ -358,64 +356,62 @@ func (op *Cross) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 
 			resolution := selectedPair.Spacing * 1e-9
 
-			m.Metrics["contemporaneous_correlation"] = m.Metrics["contemporaneous_correlation"].Write(selectedPair.Contemporaneous)
-			m.Metrics["best_lag_correlation"] = m.Metrics["best_lag_correlation"].Write(selectedPair.Correlation)
-			m.Metrics["absolute_correlation_gain"] = m.Metrics["absolute_correlation_gain"].Write(selectedPair.AbsoluteGain)
-			m.Metrics["lag_fraction"] = m.Metrics["lag_fraction"].Write(selectedPair.LagFraction)
-			m.Metrics["best_lag_index"] = m.Metrics["best_lag_index"].Write(selectedPair.LagIndex)
-			m.Metrics["reference_return_count"] = m.Metrics["reference_return_count"].Write(selectedPair.Observations)
-			m.Metrics["measured_return_count"] = m.Metrics["measured_return_count"].Write(selectedPair.Observations)
-			m.Metrics["overlap_pair_count"] = m.Metrics["overlap_pair_count"].Write(selectedPair.Support)
-			m.Metrics["effective_sample_count"] = m.Metrics["effective_sample_count"].Write(selectedPair.Support)
-			m.Metrics["search_count"] = m.Metrics["search_count"].Write(selectedPair.SearchCount)
-			m.Metrics["best_lag_seconds"] = m.Metrics["best_lag_seconds"].Write(selectedPair.X)
-			m.Metrics["lag_search_resolution_seconds"] = m.Metrics["lag_search_resolution_seconds"].Write(resolution)
-			m.Metrics["lag_search_span"] = m.Metrics["lag_search_span"].Write(selectedPair.Span * resolution)
+			m.WriteMetric("contemporaneous_correlation", selectedPair.Contemporaneous)
+			m.WriteMetric("best_lag_correlation", selectedPair.Correlation)
+			m.WriteMetric("absolute_correlation_gain", selectedPair.AbsoluteGain)
+			m.WriteMetric("lag_fraction", selectedPair.LagFraction)
+			m.WriteMetric("best_lag_index", selectedPair.LagIndex)
+			m.WriteMetric("reference_return_count", selectedPair.Observations)
+			m.WriteMetric("measured_return_count", selectedPair.Observations)
+			m.WriteMetric("overlap_pair_count", selectedPair.Support)
+			m.WriteMetric("effective_sample_count", selectedPair.Support)
+			m.WriteMetric("search_count", selectedPair.SearchCount)
+			m.WriteMetric("best_lag_seconds", selectedPair.X)
+			m.WriteMetric("lag_search_resolution_seconds", resolution)
+			m.WriteMetric("lag_search_span", selectedPair.Span * resolution)
 
 			if selectedPair.ShapeDefined {
-				m.Metrics["lag_peak_prominence"] = m.Metrics["lag_peak_prominence"].Write(selectedPair.Prominence)
-				m.Metrics["lag_peak_curvature"] = m.Metrics["lag_peak_curvature"].Write(selectedPair.Curvature)
+				m.WriteMetric("lag_peak_prominence", selectedPair.Prominence)
+				m.WriteMetric("lag_peak_curvature", selectedPair.Curvature)
 			}
 
 			if significance.Defined {
-				m.Metrics["correlation_p_value"] = m.Metrics["correlation_p_value"].Write(significance.PValue)
-				m.Metrics["search_adjusted_p_value"] = m.Metrics["search_adjusted_p_value"].Write(significance.SearchAdjustedPValue)
+				m.WriteMetric("correlation_p_value", significance.PValue)
+				m.WriteMetric("search_adjusted_p_value", significance.SearchAdjustedPValue)
 			}
 
-			m.Metrics["lag_baseline_seconds"] = m.Metrics["lag_baseline_seconds"].Write(selected.lag.Baseline)
-			m.Metrics["lag_divergence_seconds"] = m.Metrics["lag_divergence_seconds"].Write(selected.lag.Residual)
-			m.Metrics["lag_zscore"] = m.Metrics["lag_zscore"].Write(selected.lag.ZScore)
+			m.WriteMetric("lag_baseline_seconds", selected.lag.Baseline)
+			m.WriteMetric("lag_divergence_seconds", selected.lag.Residual)
+			m.WriteMetric("lag_zscore", selected.lag.ZScore)
 
 			if selected.lag.VarianceDefined {
-				m.Metrics["lag_noise_scale_seconds"] = m.Metrics["lag_noise_scale_seconds"].Write(selected.lag.Dispersion)
+				m.WriteMetric("lag_noise_scale_seconds", selected.lag.Dispersion)
 			}
 
 			if selected.lagVel.Defined {
-				m.Metrics["lag_velocity"] = m.Metrics["lag_velocity"].Write(selected.lagVel.Rate)
+				m.WriteMetric("lag_velocity", selected.lagVel.Rate)
 			}
 
-			m.Metrics["correlation_gain_baseline"] = m.Metrics["correlation_gain_baseline"].Write(selected.gain.Baseline)
-			m.Metrics["correlation_gain_zscore"] = m.Metrics["correlation_gain_zscore"].Write(selected.gain.ZScore)
+			m.WriteMetric("correlation_gain_baseline", selected.gain.Baseline)
+			m.WriteMetric("correlation_gain_zscore", selected.gain.ZScore)
 
 			if selected.gainVel.Defined {
-				m.Metrics["correlation_gain_velocity"] = m.Metrics["correlation_gain_velocity"].Write(selected.gainVel.Rate)
+				m.WriteMetric("correlation_gain_velocity", selected.gainVel.Rate)
 			}
 
-			m.Metrics["best_lag_correlation_baseline"] = m.Metrics["best_lag_correlation_baseline"].Write(selected.corr.Baseline)
-			m.Metrics["best_lag_correlation_zscore"] = m.Metrics["best_lag_correlation_zscore"].Write(selected.corr.ZScore)
+			m.WriteMetric("best_lag_correlation_baseline", selected.corr.Baseline)
+			m.WriteMetric("best_lag_correlation_zscore", selected.corr.ZScore)
 
-			if m.Metadata == nil {
-				m.Metadata = make(map[string]string)
-			}
+			m.EnsureMetadata()
 
-			m.Metadata[data.MetadataSupport] = strconv.FormatFloat(selected.corr.Count, 'f', -1, 64)
+			m.SetMetadata(data.MetadataSupport, strconv.FormatFloat(selected.corr.Count, 'f', -1, 64))
 
 			if selected.corr.HasPrior {
-				m.Metadata[data.MetadataDivergence] = strconv.FormatFloat(selected.corr.Residual, 'f', -1, 64)
+				m.SetMetadata(data.MetadataDivergence, strconv.FormatFloat(selected.corr.Residual, 'f', -1, 64))
 			}
 
 			if selected.corr.VarianceDefined {
-				m.Metadata[data.MetadataNoiseVariance] = strconv.FormatFloat(selected.corr.Variance, 'f', -1, 64)
+				m.SetMetadata(data.MetadataNoiseVariance, strconv.FormatFloat(selected.corr.Variance, 'f', -1, 64))
 			}
 
 			if !yield(arriving) {

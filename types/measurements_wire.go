@@ -130,5 +130,7 @@ func EncodeMeasurements(
 	offset := frame.Pack(builder)
 	builder.Finish(offset)
 
-	return builder.FinishedBytes(), nil
+	res := append([]byte{}, builder.FinishedBytes()...)
+
+	return res, nil
 }

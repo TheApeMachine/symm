@@ -56,8 +56,8 @@ func BenchmarkUITeeNext(b *testing.B) {
 	}()
 	measurement := data.NewMeasurement[float64]("hawkes:trade", nil)
 	measurement.Label = "BTC/USD"
-	measurement.Metrics["conditional_intensity"] = data.Metric[float64]{Label: "conditional_intensity", Raw: 1.2}
-	measurement.Metrics["background_rate"] = data.Metric[float64]{Label: "background_rate", Raw: 0.5}
+	measurement.SetMetric("conditional_intensity", data.Metric[float64]{Label: "conditional_intensity", Raw: 1.2})
+	measurement.SetMetric("background_rate", data.Metric[float64]{Label: "background_rate", Raw: 0.5})
 
 	for b.Loop() {
 		tee.Push(measurement)

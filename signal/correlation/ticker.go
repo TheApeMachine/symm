@@ -2,6 +2,7 @@ package correlation
 
 import (
 	"context"
+	"sync"
 	"unsafe"
 
 	"github.com/theapemachine/errnie"
@@ -24,22 +25,11 @@ measurement's lifetime.
 */
 type Ticker struct {
 	*runtime.System
-	pipeline core.Primitive
+	pipelines sync.Map
 }
 
 func NewTicker(ctx context.Context) *Ticker {
-	ticker := &Ticker{
-		pipeline: nomagique.NewNumber(
-			nmcorrelation.NewGate(),
-			nmcorrelation.NewPairs(algo.NewHayashiYoshida()),
-			nmcorrelation.NewFold(),
-			nmcorrelation.NewHistory(),
-			nmcorrelation.NewRelative(),
-			nmcorrelation.NewCorrelationVelocity(),
-			nmcorrelation.NewEnergyVelocity(),
-			data.NewFinalizer[float64](),
-		),
-	}
+	ticker := &Ticker{}
 
 	ticker.System = runtime.NewSystem(ctx, "correlation:ticker", ticker)
 	return ticker
@@ -49,6 +39,27 @@ func NewTicker(ctx context.Context) *Ticker {
 Step supplies the arriving measurement to the pipeline and returns it: the
 measurement is the pipeline's state, enriched in place.
 */
+
+func (ticker *Ticker) pipelineFor(symbol string) core.Primitive {
+	if existing, ok := ticker.pipelines.Load(symbol); ok {
+		return existing.(core.Primitive)
+	}
+
+	pipeline := nomagique.NewNumber(
+		nmcorrelation.NewGate(),
+		nmcorrelation.NewPairs(algo.NewHayashiYoshida()),
+		nmcorrelation.NewFold(),
+		nmcorrelation.NewHistory(),
+		nmcorrelation.NewRelative(),
+		nmcorrelation.NewCorrelationVelocity(),
+		nmcorrelation.NewEnergyVelocity(),
+		data.NewFinalizer[float64](),
+	)
+
+	actual, _ := ticker.pipelines.LoadOrStore(symbol, pipeline)
+	return actual.(core.Primitive)
+}
+
 func (ticker *Ticker) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
 	if ticker.Status() != runtime.READY {
 		errnie.Warn(ticker.Name() + ": Step called before READY; dropping event")
@@ -73,10 +84,10 @@ func (ticker *Ticker) Step(measurement *data.Measurement[float64]) *data.Measure
 		}
 
 		measurement.Pull(peer)
-		measurement.Metrics["last_price"] = measurement.Metrics["last_price"].Write(quotedPrice(peer))
+		measurement.WriteMetric("last_price", quotedPrice(peer))
 	}
 
-	res := data.Read[*data.Measurement[float64]](ticker.pipeline.Next(
+	res := data.Read[*data.Measurement[float64]](ticker.pipelineFor(measurement.Label).Next(
 		transport.NewOne(unsafe.Pointer(&measurement)).Next(nil),
 	))
 
@@ -89,7 +100,7 @@ func (ticker *Ticker) Step(measurement *data.Measurement[float64]) *data.Measure
 
 func quotedPrice(measurement *data.Measurement[float64]) float64 {
 	for _, key := range []string{"last_price", "last", "price"} {
-		if metric, ok := measurement.Metrics[key]; ok && metric.Raw > 0 {
+		if metric, ok := measurement.LookupMetric(key); ok && metric.Raw > 0 {
 			return metric.Raw
 		}
 	}
@@ -197,6 +208,6 @@ func (ticker *Ticker) Register() *data.Measurement[float64] {
 			"relative_return_energy_velocity", data.UnitPerSecond, data.TimescaleInstantaneous, 0, 1,
 		),
 	})
-	m.Metadata["peer-interest"] = "*"
+	m.SetMetadata("peer-interest", "*")
 	return m
 }

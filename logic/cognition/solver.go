@@ -205,19 +205,19 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 			measurement.Maturity = 1.0 - 1.0/float64(reading.NodeCount)
 		}
 
-		if m, ok := measurement.Metrics["contrast"]; ok {
-			measurement.Metrics["contrast"] = m.Write(reading.Contrast)
+		if m, ok := measurement.LookupMetric("contrast"); ok {
+			measurement.SetMetric("contrast", m.Write(reading.Contrast))
 		}
 
-		if m, ok := measurement.Metrics["surprisal"]; ok {
-			measurement.Metrics["surprisal"] = m.Write(reading.InterpolatedSurprisal)
+		if m, ok := measurement.LookupMetric("surprisal"); ok {
+			measurement.SetMetric("surprisal", m.Write(reading.InterpolatedSurprisal))
 		}
 
-		if m, ok := measurement.Metrics["stability"]; ok {
-			measurement.Metrics["stability"] = m.Write(reading.Confidence)
+		if m, ok := measurement.LookupMetric("stability"); ok {
+			measurement.SetMetric("stability", m.Write(reading.Confidence))
 		}
 
-		if m, ok := measurement.Metrics["ambiguity"]; ok {
+		if m, ok := measurement.LookupMetric("ambiguity"); ok {
 			ambiguityVal := 0.0
 			if reading.Ambiguous {
 				ambiguityVal = 1.0
@@ -225,7 +225,7 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 			if reading.EntropyBits != nil {
 				ambiguityVal = *reading.EntropyBits
 			}
-			measurement.Metrics["ambiguity"] = m.Write(ambiguityVal)
+			measurement.SetMetric("ambiguity", m.Write(ambiguityVal))
 		}
 	}
 
@@ -254,7 +254,7 @@ func (solver *Solver) Register() *data.Measurement[float64] {
 		),
 	})
 
-	measurement.Metadata["peer-interest"] = "category"
+	measurement.SetMetadata("peer-interest", "category")
 	return measurement
 }
 

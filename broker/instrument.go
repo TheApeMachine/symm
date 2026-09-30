@@ -2,10 +2,14 @@ package broker
 
 import (
 	"encoding/json"
+	"os"
 	"slices"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/bytedance/sonic"
+	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/network"
@@ -21,6 +25,7 @@ type Instrument struct {
 	*runtime.System
 	public  *network.WebsocketClient
 	futures *network.WebsocketClient
+	Level3  *sync.Map
 	cache   *sync.Map
 	quote   string
 	symbols []string
@@ -37,14 +42,14 @@ type Instrument struct {
 NewInstrument creates the market-instrument registry
 used by subscriptions and order validation.
 */
-func NewInstrument(public *network.WebsocketClient, futures *network.WebsocketClient) *Instrument {
-	if public == nil {
-		panic("broker: public transport required")
-	}
-
+func NewInstrument(
+	public *network.WebsocketClient,
+	futures *network.WebsocketClient,
+) *Instrument {
 	instrument := &Instrument{
 		public:           public,
 		futures:          futures,
+		Level3:           &sync.Map{},
 		cache:            &sync.Map{},
 		symbols:          []string{},
 		quote:            system.Cfg.Market.QuoteCurrency,
@@ -52,14 +57,28 @@ func NewInstrument(public *network.WebsocketClient, futures *network.WebsocketCl
 		symbolsByProduct: make(map[string]string),
 	}
 
-	instrument.System = runtime.NewSystem(public.Context(), "instrument", instrument)
+	instrument.System = runtime.NewSystem(
+		public.Context(), "instrument", instrument,
+	)
+
 	instrument.Transition(runtime.BUSY)
 
-	msg, _ := sonic.Marshal(kraken.NewInstrumentSubscription())
-	if err := public.Write(msg); err != nil {
+	message, err := kraken.NewInstrumentSubscription().MarshalJSON()
+
+	if err != nil {
 		instrument.Error(errnie.Err(
 			errnie.IO,
-			"instrument: snapshot subscription failed",
+			"[instrument] failed to marshal subscription request",
+			err,
+		))
+
+		return instrument
+	}
+
+	if err := public.Write(message); err != nil {
+		instrument.Error(errnie.Err(
+			errnie.IO,
+			"[instrument] snapshot subscription failed",
 			err,
 		))
 
@@ -70,38 +89,33 @@ func NewInstrument(public *network.WebsocketClient, futures *network.WebsocketCl
 
 	for {
 		buf, err := public.Read()
+
 		if err != nil {
 			instrument.Error(errnie.Err(
 				errnie.IO,
-				"instrument: snapshot unavailable",
+				"[instrument] snapshot unavailable",
 				err,
 			))
 
 			return instrument
 		}
 
-		var peek struct {
-			Channel string `json:"channel"`
+		node, _ := sonic.Get(buf, "channel")
+		var str string
+
+		if str, err = node.String(); err != nil || str != "instrument" {
+			continue
 		}
 
-		if err := sonic.UnmarshalString(string(buf), &peek); err == nil && peek.Channel == "instrument" {
-			snapshot = kraken.NewInstrument(buf)
-			break
-		}
+		snapshot = kraken.NewInstrument(buf)
+		errnie.Info("[instrument] received valid instrument snapshot")
+		break
 	}
 
-	if snapshot == nil {
-		instrument.Error(errnie.Err(
-			errnie.Validation,
-			"instrument: invalid snapshot response",
-			nil,
-		))
-
-		return instrument
-	}
-
-	for _, pair := range snapshot.Data {
-		if pair.Quote != instrument.quote || pair.Status != "online" || slices.Contains(system.Cfg.Market.Instrument.Excluded, pair.Base) {
+	for _, pair := range snapshot.Data.Pairs {
+		if pair.Quote != instrument.quote || pair.Status != "online" || slices.Contains(
+			system.Cfg.Market.Instrument.Excluded, pair.Base,
+		) {
 			continue
 		}
 
@@ -184,6 +198,66 @@ feed with no consumer would create an exact raw tape that can never influence
 the system.
 */
 func (instrument *Instrument) Subscribe() error {
+	errnie.Info("[instrument] subscribing to symbol pairs")
+
+	restClient := spot.NewREST()
+	restClient.PublicKey = os.Getenv("KRAKEN_API_KEY")
+	restClient.PrivateKey = os.Getenv("KRAKEN_API_SECRET")
+
+	if nonce, err := kraken.ProcessAuthNonce(); err == nil && nonce != nil {
+		restClient.Nonce = nonce.Next
+	}
+
+	var wsToken string
+
+	if tokenRes, err := restClient.GetWebSocketsToken(); err == nil && tokenRes != nil {
+		wsToken = tokenRes.Result.Token
+	}
+
+	for batch := range slices.Chunk(
+		instrument.symbols, system.Cfg.Market.Subscribe.Batch,
+	) {
+		subs := []json.Marshaler{
+			kraken.NewTradeSubscription(batch),
+			kraken.NewTickerSubscription(batch),
+			kraken.NewFuturesSubscription("ticker", batch),
+			kraken.NewFuturesSubscription("trade", batch),
+		}
+
+		for _, sub := range subs {
+			msg, _ := sonic.Marshal(sub)
+
+			if err := instrument.public.Write(msg); err != nil {
+				return instrument.Error(errnie.Err(
+					errnie.IO,
+					"[instrument] required spot subscription failed",
+					err,
+				))
+			}
+		}
+
+		l3Client := network.NewWebsocketClient(instrument.System.Context())
+
+		if err := l3Client.Open(system.Cfg.WebSocket.Endpoints.Level3); err == nil {
+			if l3Msg, err := sonic.Marshal(
+				kraken.NewLevel3Subscription(batch, wsToken),
+			); err == nil {
+				errnie.Info(
+					"[instrument] subscribed to level3 for " + strings.Join(batch, "|"),
+				)
+
+				l3Client.Write(l3Msg)
+
+				instrument.Level3.Store(
+					strings.Join(batch, "|"), l3Client,
+				)
+			}
+		}
+
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	instrument.Transition(runtime.READY)
 	return nil
 }
 
@@ -194,7 +268,7 @@ seam, so a deliberate teardown leaves the venue with no streams pointed at
 sockets that are about to close.
 */
 func (instrument *Instrument) Unsubscribe() error {
-	errnie.Info("unsubscribing from instruments")
+	errnie.Info("[instrument] unsubscribing from symbol pairs")
 
 	for batch := range slices.Chunk(
 		instrument.symbols, system.Cfg.Market.Subscribe.Batch,
@@ -213,7 +287,7 @@ func (instrument *Instrument) Unsubscribe() error {
 			if err := instrument.public.Write(msg); err != nil {
 				return instrument.Error(errnie.Err(
 					errnie.IO,
-					"instrument: required spot unsubscription failed",
+					"[instrument] required spot unsubscription failed",
 					err,
 				))
 			}

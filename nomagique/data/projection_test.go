@@ -41,10 +41,10 @@ func TestProjectionNext(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(measurement.Err, ShouldBeNil)
 			So(measurement.ID, ShouldEqual, -1)
-			So(measurement.Metrics["alpha"].Raw, ShouldEqual, value)
+			So(measurement.GetMetric("alpha").Raw, ShouldEqual, value)
 			So(measurement.Maturity, ShouldEqual, 0.75)
 			So(measurement.SNR, ShouldEqual, 4)
-			_, exists := measurement.Metrics["beta"]
+			_, exists := measurement.LookupMetric("beta")
 			So(exists, ShouldBeFalse)
 		}
 	})

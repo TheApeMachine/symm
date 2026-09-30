@@ -123,14 +123,12 @@ func (op *Touch) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				continue
 			}
 
-			if m.Metadata == nil {
-				m.Metadata = make(map[string]string)
-			}
+			m.EnsureMetadata()
 
-			m.Metadata[data.MetadataSupport] = strconv.FormatFloat(reading.Channels[0].Count, 'f', -1, 64)
+			m.SetMetadata(data.MetadataSupport, strconv.FormatFloat(reading.Channels[0].Count, 'f', -1, 64))
 
 			if reading.SNRDefined {
-				m.Metadata[data.MetadataMahalanobisSNR] = strconv.FormatFloat(reading.SNR, 'f', -1, 64)
+				m.SetMetadata(data.MetadataMahalanobisSNR, strconv.FormatFloat(reading.SNR, 'f', -1, 64))
 			}
 
 			failed := false
@@ -142,13 +140,13 @@ func (op *Touch) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 					continue
 				}
 
-				m.Metrics[baselineLabels[index]] = m.Metrics[baselineLabels[index]].Write(channel.Baseline)
-				m.Metrics[ratioLabels[index]] = m.Metrics[ratioLabels[index]].Write(originals[index] / channel.Baseline)
-				m.Metrics[divergenceLabels[index]] = m.Metrics[divergenceLabels[index]].Write(channel.Residual)
+				m.WriteMetric(baselineLabels[index], channel.Baseline)
+				m.WriteMetric(ratioLabels[index], originals[index]/channel.Baseline)
+				m.WriteMetric(divergenceLabels[index], channel.Residual)
 
 				if channel.ScoreScale > 0 {
-					m.Metrics[noiseLabels[index]] = m.Metrics[noiseLabels[index]].Write(channel.ScoreScale)
-					m.Metrics[zscoreLabels[index]] = m.Metrics[zscoreLabels[index]].Write(channel.ZScore)
+					m.WriteMetric(noiseLabels[index], channel.ScoreScale)
+					m.WriteMetric(zscoreLabels[index], channel.ZScore)
 				}
 
 				observation := temporal.Price{At: m.At.UnixNano(), Value: channel.Residual}
@@ -166,11 +164,11 @@ func (op *Touch) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				}
 
 				if summary.SlopeDefined {
-					m.Metrics[velocityLabels[index]] = m.Metrics[velocityLabels[index]].Write(summary.Slope)
+					m.WriteMetric(velocityLabels[index], summary.Slope)
 				}
 
 				if summary.SNRDefined {
-					m.Metrics[velocitySNRLabels[index]] = m.Metrics[velocitySNRLabels[index]].Write(summary.SNR)
+					m.WriteMetric(velocitySNRLabels[index], summary.SNR)
 				}
 			}
 

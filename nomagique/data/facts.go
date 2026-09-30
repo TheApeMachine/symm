@@ -42,7 +42,7 @@ func (op *MetricGate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
 		for arriving := range in {
 			m := *(**Measurement[float64])(arriving)
 
-			metric, holds := m.Metrics[op.label]
+			metric, holds := m.LookupMetric(op.label)
 
 			if !holds {
 				m.Err = fmt.Errorf("%w: metric gate requires %s", core.ErrDomain, op.label)
@@ -56,11 +56,9 @@ func (op *MetricGate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
 
 			value := metric.Raw
 
-			if m.Metadata == nil {
-				m.Metadata = make(map[string]string, 1)
-			}
+			m.EnsureMetadata()
 
-			m.Metadata[MetadataSupport] = "0"
+			m.SetMetadata(MetadataSupport, "0")
 
 			finite := drive[float64, bool](op.finite, &value)
 
@@ -87,7 +85,7 @@ func (op *MetricGate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
 				continue
 			}
 
-			m.Metrics[op.label] = metric.Write(value)
+			m.SetMetric(op.label, metric.Write(value))
 
 			if !yield(arriving) {
 				return

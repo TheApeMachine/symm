@@ -27,13 +27,13 @@ func TestGrid(t *testing.T) {
 				"beta":  {Label: "beta", Raw: 1.5},
 			}
 
-			in := transport.NewOne(unsafe.Pointer(meas)).Next(nil)
+			in := transport.NewOne(unsafe.Pointer(&meas)).Next(nil)
 
 			for out := range grid.Next(in) {
-				m := (*data.Measurement[float64])(out)
+				m := *(**data.Measurement[float64])(out)
 				So(m, ShouldNotBeNil)
-				So(m.Metrics["alpha"].Region, ShouldBeGreaterThan, 0)
-				So(m.Metrics["beta"].Region, ShouldBeGreaterThan, 0)
+				So(m.GetMetric("alpha").Region, ShouldBeGreaterThan, 0)
+				So(m.GetMetric("beta").Region, ShouldBeGreaterThan, 0)
 			}
 		})
 	})
@@ -88,10 +88,10 @@ func TestGridContinuousNoiseAdversarial(t *testing.T) {
 				}
 				states[i] += jitter
 				label := fmt.Sprintf("metric_%02d", i)
-				meas.Metrics[label] = data.Metric[float64]{
+				meas.SetMetric(label, data.Metric[float64]{
 					Label: label,
 					Raw:   states[i],
-				}
+				})
 			}
 
 			grid.Update(meas)
@@ -119,27 +119,27 @@ func TestGridSympatheticClusteringAdversarial(t *testing.T) {
 			swing := math.Sin(float64(tick)*0.2) * 50.0
 
 			// Sympathetic pair: leader and follower move in the same direction
-			meas.Metrics["leader"] = data.Metric[float64]{
+			meas.SetMetric("leader", data.Metric[float64]{
 				Label: "leader",
 				Raw:   base + swing,
-			}
-			meas.Metrics["follower"] = data.Metric[float64]{
+			})
+			meas.SetMetric("follower", data.Metric[float64]{
 				Label: "follower",
 				Raw:   base*0.5 + swing*0.9 + (rand.Float64()-0.5)*0.01,
-			}
+			})
 
 			// Adversary: moves in exact opposition — consistently inverse,
 			// which per the spec is also sympathetic (A+ B- when A- B+ holds).
-			meas.Metrics["adversary"] = data.Metric[float64]{
+			meas.SetMetric("adversary", data.Metric[float64]{
 				Label: "adversary",
 				Raw:   base - swing*1.1,
-			}
+			})
 
 			// Noise: uncorrelated random walk — not sympathetic
-			meas.Metrics["noise"] = data.Metric[float64]{
+			meas.SetMetric("noise", data.Metric[float64]{
 				Label: "noise",
 				Raw:   base + float64(tick)*0.01 + (rand.Float64()-0.5)*5.0,
-			}
+			})
 
 			grid.Update(meas)
 		}
@@ -203,10 +203,10 @@ func TestGridScaleStress200Metrics(t *testing.T) {
 				}
 				values[i] += delta
 				label := fmt.Sprintf("sym_%03d", i)
-				meas.Metrics[label] = data.Metric[float64]{
+				meas.SetMetric(label, data.Metric[float64]{
 					Label: label,
 					Raw:   values[i],
-				}
+				})
 			}
 
 			grid.Update(meas)
@@ -268,7 +268,7 @@ func TestGridExtremeEdgeCases(t *testing.T) {
 
 		Convey("Single metric handles boundary safely without division by zero", func() {
 			single := data.NewMeasurement[float64]("single", nil)
-			single.Metrics["lonely"] = data.Metric[float64]{Label: "lonely", Raw: 42.0}
+			single.SetMetric("lonely", data.Metric[float64]{Label: "lonely", Raw: 42.0})
 			grid.Update(single)
 
 			So(len(grid.Metrics), ShouldEqual, 1)
@@ -278,13 +278,13 @@ func TestGridExtremeEdgeCases(t *testing.T) {
 
 		Convey("Outlier spikes do not corrupt grid geometry", func() {
 			meas1 := data.NewMeasurement[float64]("spike", nil)
-			meas1.Metrics["a"] = data.Metric[float64]{Label: "a", Raw: 1.0}
-			meas1.Metrics["b"] = data.Metric[float64]{Label: "b", Raw: 1.0}
+			meas1.SetMetric("a", data.Metric[float64]{Label: "a", Raw: 1.0})
+			meas1.SetMetric("b", data.Metric[float64]{Label: "b", Raw: 1.0})
 			grid.Update(meas1)
 
 			meas2 := data.NewMeasurement[float64]("spike", nil)
-			meas2.Metrics["a"] = data.Metric[float64]{Label: "a", Raw: 1e12}
-			meas2.Metrics["b"] = data.Metric[float64]{Label: "b", Raw: -1e12}
+			meas2.SetMetric("a", data.Metric[float64]{Label: "a", Raw: 1e12})
+			meas2.SetMetric("b", data.Metric[float64]{Label: "b", Raw: -1e12})
 			So(func() { grid.Update(meas2) }, ShouldNotPanic)
 
 			for _, m := range grid.Metrics {
@@ -312,10 +312,10 @@ func TestGridPostSettledFreezing(t *testing.T) {
 		Convey("Violent market swings after settling must not alter the frozen grid", func() {
 			for i := 0; i < 50; i++ {
 				violent := data.NewMeasurement[float64]("violent", nil)
-				violent.Metrics[grid.Metrics[0].Label] = data.Metric[float64]{
+				violent.SetMetric(grid.Metrics[0].Label, data.Metric[float64]{
 					Label: grid.Metrics[0].Label,
 					Raw:   1e9 * float64(i+1),
-				}
+				})
 				grid.Update(violent)
 
 				// Assert frozen
@@ -326,7 +326,7 @@ func TestGridPostSettledFreezing(t *testing.T) {
 
 			// New unseen metric should not be added to frozen grid
 			unseen := data.NewMeasurement[float64]("unseen", nil)
-			unseen.Metrics["ghost"] = data.Metric[float64]{Label: "ghost", Raw: 999.0}
+			unseen.SetMetric("ghost", data.Metric[float64]{Label: "ghost", Raw: 999.0})
 			grid.Update(unseen)
 			So(len(grid.Metrics), ShouldEqual, initialLen)
 		})

@@ -2,9 +2,10 @@ package cvd
 
 import (
 	"context"
-	"github.com/theapemachine/errnie"
 	"sync"
 	"unsafe"
+
+	"github.com/theapemachine/errnie"
 
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/core"
@@ -65,8 +66,8 @@ func (trade *Trade) Step(measurement *data.Measurement[float64]) *data.Measureme
 
 	if len(measurement.Peers) > 0 {
 		peer := measurement.FindPeer(func(candidate *data.Measurement[float64]) bool {
-			_, hasPrice := candidate.Metrics["price"]
-			_, hasQty := candidate.Metrics["qty"]
+			_, hasPrice := candidate.LookupMetric("price")
+			_, hasQty := candidate.LookupMetric("qty")
 			return hasPrice && hasQty && candidate.Label != ""
 		})
 
@@ -81,11 +82,11 @@ func (trade *Trade) Step(measurement *data.Measurement[float64]) *data.Measureme
 		return measurement
 	}
 
-	if _, hasPrice := measurement.Metrics["price"]; !hasPrice {
+	if _, hasPrice := measurement.LookupMetric("price"); !hasPrice {
 		return measurement
 	}
 
-	if _, hasQty := measurement.Metrics["qty"]; !hasQty {
+	if _, hasQty := measurement.LookupMetric("qty"); !hasQty {
 		return measurement
 	}
 
@@ -98,93 +99,4 @@ func (trade *Trade) Step(measurement *data.Measurement[float64]) *data.Measureme
 	}
 
 	return res
-}
-
-/*
-Register returns the pre-allocated measurement every trade flows through:
-every metric the instrument can produce is declared, none valued.
-*/
-func (trade *Trade) Register() *data.Measurement[float64] {
-	measurement := data.NewMeasurement("cvd", map[string]data.Metric[float64]{
-		"trade_count": data.NewMetric[float64](
-			"trade_count", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
-		),
-		"trade_count:buy": data.NewMetric[float64](
-			"trade_count:buy", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
-		),
-		"trade_count:sell": data.NewMetric[float64](
-			"trade_count:sell", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
-		),
-		"executed_quantity:buy": data.NewMetric[float64](
-			"executed_quantity:buy", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
-		),
-		"executed_quantity:sell": data.NewMetric[float64](
-			"executed_quantity:sell", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
-		),
-		"gross_executed_quantity": data.NewMetric[float64](
-			"gross_executed_quantity", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
-		),
-		"net_executed_quantity": data.NewMetric[float64](
-			"net_executed_quantity", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
-		),
-		"cumulative_volume_delta": data.NewMetric[float64](
-			"cumulative_volume_delta", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
-		),
-		"aggressive_notional:buy": data.NewMetric[float64](
-			"aggressive_notional:buy", data.UnitRate, data.TimescaleInstantaneous, 0, 1,
-		),
-		"aggressive_notional:sell": data.NewMetric[float64](
-			"aggressive_notional:sell", data.UnitRate, data.TimescaleInstantaneous, 0, 1,
-		),
-		"gross_notional": data.NewMetric[float64](
-			"gross_notional", data.UnitRate, data.TimescaleInstantaneous, 0, 1,
-		),
-		"net_notional": data.NewMetric[float64](
-			"net_notional", data.UnitRate, data.TimescaleInstantaneous, 0, 1,
-		),
-		"mean_trade_notional": data.NewMetric[float64](
-			"mean_trade_notional", data.UnitRate, data.TimescaleInstantaneous, 0, 1,
-		),
-		"cumulative_notional_delta": data.NewMetric[float64](
-			"cumulative_notional_delta", data.UnitRate, data.TimescaleInstantaneous, 0, 1,
-		),
-		"trade_rate": data.NewMetric[float64](
-			"trade_rate", data.UnitPerSecond, data.TimescaleInstantaneous, 0, 1,
-		),
-		"gross_notional_rate": data.NewMetric[float64](
-			"gross_notional_rate", data.UnitPerSecond, data.TimescaleInstantaneous, 0, 1,
-		),
-		"net_notional_rate": data.NewMetric[float64](
-			"net_notional_rate", data.UnitPerSecond, data.TimescaleInstantaneous, 0, 1,
-		),
-		"buy_notional_rate": data.NewMetric[float64](
-			"buy_notional_rate", data.UnitPerSecond, data.TimescaleInstantaneous, 0, 1,
-		),
-		"sell_notional_rate": data.NewMetric[float64](
-			"sell_notional_rate", data.UnitPerSecond, data.TimescaleInstantaneous, 0, 1,
-		),
-		"net_notional_rate_velocity": data.NewMetric[float64](
-			"net_notional_rate_velocity", data.UnitPerSecond, data.TimescaleInstantaneous, 0, 1,
-		),
-		"signed_count_fraction": data.NewMetric[float64](
-			"signed_count_fraction", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"signed_net_fraction": data.NewMetric[float64](
-			"signed_net_fraction", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"cvd_epoch_from": data.NewMetric[float64](
-			"cvd_epoch_from", data.UnitSecond, data.TimescaleInstantaneous, 0, 1,
-		),
-		"signed_net_fraction_baseline": data.NewMetric[float64](
-			"signed_net_fraction_baseline", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"signed_net_fraction_divergence": data.NewMetric[float64](
-			"signed_net_fraction_divergence", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"signed_net_fraction_zscore": data.NewMetric[float64](
-			"signed_net_fraction_zscore", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-	})
-	measurement.Metadata["peer-interest"] = "*"
-	return measurement
 }

@@ -44,7 +44,7 @@ func (op *ChangeCounts) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointe
 			var maxAbsChange float64
 
 			for _, peer := range m.Peers {
-				change := peer.Metrics["change"].Raw
+				change := peer.GetMetric("change").Raw
 				absChange := math.Abs(change)
 
 				if absChange > maxAbsChange || extremeKey == "" {
@@ -64,13 +64,13 @@ func (op *ChangeCounts) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointe
 
 			valid := positive + negative + zero
 
-			m.Metrics["valid_member_count"] = m.Metrics["valid_member_count"].Write(valid)
-			m.Metrics["positive_count"] = m.Metrics["positive_count"].Write(positive)
-			m.Metrics["negative_count"] = m.Metrics["negative_count"].Write(negative)
-			m.Metrics["zero_count"] = m.Metrics["zero_count"].Write(zero)
+			m.WriteMetric("valid_member_count", valid)
+			m.WriteMetric("positive_count", positive)
+			m.WriteMetric("negative_count", negative)
+			m.WriteMetric("zero_count", zero)
 
 			if valid > 0 {
-				m.Metrics["signed_fraction"] = m.Metrics["signed_fraction"].Write((positive - negative) / valid)
+				m.WriteMetric("signed_fraction", (positive - negative) / valid)
 
 				if extremeKey != "" {
 					if m.Provenance == nil {
@@ -81,11 +81,9 @@ func (op *ChangeCounts) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointe
 				}
 			}
 
-			if m.Metadata == nil {
-				m.Metadata = make(map[string]string)
-			}
+			m.EnsureMetadata()
 
-			m.Metadata[data.MetadataSupport] = strconv.FormatFloat(valid, 'f', -1, 64)
+			m.SetMetadata(data.MetadataSupport, strconv.FormatFloat(valid, 'f', -1, 64))
 
 			if !yield(arriving) {
 				return
@@ -119,24 +117,22 @@ func (op *ChangeBaseline) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Poin
 				continue
 			}
 
-			valid := m.Metrics["valid_member_count"].Raw
+			valid := m.GetMetric("valid_member_count").Raw
 
 			if valid > 0 {
-				fraction := m.Metrics["signed_fraction"].Raw
+				fraction := m.GetMetric("signed_fraction").Raw
 				reading := drive[float64, adaptive.BaselineReading](op.baseline, &fraction)
 
 				if reading.HasPrior {
-					m.Metrics["signed_fraction_baseline"] = m.Metrics["signed_fraction_baseline"].Write(reading.Baseline)
-					m.Metrics["signed_fraction_divergence"] = m.Metrics["signed_fraction_divergence"].Write(reading.Residual)
-					m.Metrics["signed_fraction_zscore"] = m.Metrics["signed_fraction_zscore"].Write(reading.ZScore)
-					if m.Metadata == nil {
-						m.Metadata = make(map[string]string)
-					}
+					m.WriteMetric("signed_fraction_baseline", reading.Baseline)
+					m.WriteMetric("signed_fraction_divergence", reading.Residual)
+					m.WriteMetric("signed_fraction_zscore", reading.ZScore)
+					m.EnsureMetadata()
 
-					m.Metadata[data.MetadataDivergence] = strconv.FormatFloat(reading.Residual, 'f', -1, 64)
+					m.SetMetadata(data.MetadataDivergence, strconv.FormatFloat(reading.Residual, 'f', -1, 64))
 
 					if reading.VarianceDefined {
-						m.Metadata[data.MetadataNoiseVariance] = strconv.FormatFloat(reading.Variance, 'f', -1, 64)
+						m.SetMetadata(data.MetadataNoiseVariance, strconv.FormatFloat(reading.Variance, 'f', -1, 64))
 					}
 				}
 			}
@@ -220,7 +216,7 @@ func (op *ChangeMedian) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointe
 				continue
 			}
 
-			m.Metrics["signed_median"] = m.Metrics["signed_median"].Write(median)
+			m.WriteMetric("signed_median", median)
 
 			if !yield(arriving) {
 				return
@@ -247,7 +243,7 @@ func peerValues(m *data.Measurement[float64]) []float64 {
 	changes := make([]float64, 0, len(m.Peers))
 
 	for _, peer := range m.Peers {
-		changes = append(changes, peer.Metrics["change"].Raw)
+		changes = append(changes, peer.GetMetric("change").Raw)
 	}
 
 	return changes

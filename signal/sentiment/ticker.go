@@ -2,8 +2,10 @@ package sentiment
 
 import (
 	"context"
-	"github.com/theapemachine/errnie"
+	"sync"
 	"unsafe"
+
+	"github.com/theapemachine/errnie"
 
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/core"
@@ -23,24 +25,16 @@ lifetime.
 */
 type Ticker struct {
 	*runtime.System
-	pipeline core.Primitive
-	ID       int
+	pipelines sync.Map
+	prices    *store.Latest[string, float64]
+	changes   *store.Latest[string, data.CrossMember]
+	ID        int
 }
 
 func NewTicker(ctx context.Context) *Ticker {
-	prices := store.NewLatest[string, float64]()
-	changes := store.NewLatest[string, data.CrossMember]()
-
 	ticker := &Ticker{
-		pipeline: nomagique.NewNumber(
-			data.NewMetricGate("last"),
-			crosssection.NewUpdateMember("last", prices, changes),
-			crosssection.NewStampPeers(changes),
-			crosssection.NewChangeCounts(),
-			crosssection.NewChangeMedian(),
-			crosssection.NewChangeBaseline(),
-			data.NewFinalizer[float64](),
-		),
+		prices:  store.NewLatest[string, float64](),
+		changes: store.NewLatest[string, data.CrossMember](),
 	}
 
 	ticker.System = runtime.NewSystem(ctx, "sentiment:ticker", ticker)
@@ -51,6 +45,26 @@ func NewTicker(ctx context.Context) *Ticker {
 Step supplies the arriving measurement to the pipeline and returns it: the
 measurement is the pipeline's state, enriched in place.
 */
+
+func (ticker *Ticker) pipelineFor(symbol string) core.Primitive {
+	if existing, ok := ticker.pipelines.Load(symbol); ok {
+		return existing.(core.Primitive)
+	}
+
+	pipeline := nomagique.NewNumber(
+		data.NewMetricGate("last"),
+		crosssection.NewUpdateMember("last", ticker.prices, ticker.changes),
+		crosssection.NewStampPeers(ticker.changes),
+		crosssection.NewChangeCounts(),
+		crosssection.NewChangeMedian(),
+		crosssection.NewChangeBaseline(),
+		data.NewFinalizer[float64](),
+	)
+
+	actual, _ := ticker.pipelines.LoadOrStore(symbol, pipeline)
+	return actual.(core.Primitive)
+}
+
 func (ticker *Ticker) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
 	if ticker.Status() != runtime.READY {
 		errnie.Warn(ticker.Name() + ": Step called before READY; dropping event")
@@ -75,10 +89,10 @@ func (ticker *Ticker) Step(measurement *data.Measurement[float64]) *data.Measure
 		}
 
 		measurement.Pull(peer)
-		measurement.Metrics["last"] = measurement.Metrics["last"].Write(quotedPrice(peer))
+		measurement.WriteMetric("last", quotedPrice(peer))
 	}
 
-	res := data.Read[*data.Measurement[float64]](ticker.pipeline.Next(
+	res := data.Read[*data.Measurement[float64]](ticker.pipelineFor(measurement.Label).Next(
 		transport.NewOne(unsafe.Pointer(&measurement)).Next(nil),
 	))
 
@@ -91,169 +105,10 @@ func (ticker *Ticker) Step(measurement *data.Measurement[float64]) *data.Measure
 
 func quotedPrice(measurement *data.Measurement[float64]) float64 {
 	for _, key := range []string{"last", "last_price", "price"} {
-		if metric, ok := measurement.Metrics[key]; ok && metric.Raw > 0 {
+		if metric, ok := measurement.LookupMetric(key); ok && metric.Raw > 0 {
 			return metric.Raw
 		}
 	}
 
 	return 0
-}
-
-/*
-Register returns the pre-allocated measurement every sentiment tick flows
-through: the feed's last price plus every cross-section fact the pipeline can
-write, declared, none valued.
-*/
-func (ticker *Ticker) Register() *data.Measurement[float64] {
-	m := data.NewMeasurement("sentiment", map[string]data.Metric[float64]{
-		"last": data.NewMetric[float64](
-			"last", data.UnitRate, data.TimescaleInstantaneous, 0, 1,
-		),
-		"valid_member_count": data.NewMetric[float64](
-			"valid_member_count", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
-		),
-		"member_count": data.NewMetric[float64](
-			"member_count", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
-		),
-		"excluded_member_count": data.NewMetric[float64](
-			"excluded_member_count", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
-		),
-		"positive_count": data.NewMetric[float64](
-			"positive_count", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
-		),
-		"negative_count": data.NewMetric[float64](
-			"negative_count", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
-		),
-		"zero_count": data.NewMetric[float64](
-			"zero_count", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
-		),
-		"extreme_tie_count": data.NewMetric[float64](
-			"extreme_tie_count", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
-		),
-		"max_age": data.NewMetric[float64](
-			"max_age", data.UnitSecond, data.TimescaleInstantaneous, 0, 1,
-		),
-		"mean_age": data.NewMetric[float64](
-			"mean_age", data.UnitSecond, data.TimescaleInstantaneous, 0, 1,
-		),
-		"median_age": data.NewMetric[float64](
-			"median_age", data.UnitSecond, data.TimescaleInstantaneous, 0, 1,
-		),
-		"median_from_age": data.NewMetric[float64](
-			"median_from_age", data.UnitSecond, data.TimescaleInstantaneous, 0, 1,
-		),
-		"focal_age": data.NewMetric[float64](
-			"focal_age", data.UnitSecond, data.TimescaleInstantaneous, 0, 1,
-		),
-		"focal_from_age": data.NewMetric[float64](
-			"focal_from_age", data.UnitSecond, data.TimescaleInstantaneous, 0, 1,
-		),
-		"signed_median": data.NewMetric[float64](
-			"signed_median", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"mean_absolute": data.NewMetric[float64](
-			"mean_absolute", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"median_absolute": data.NewMetric[float64](
-			"median_absolute", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"mad": data.NewMetric[float64](
-			"mad", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"magnitude_mad": data.NewMetric[float64](
-			"magnitude_mad", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"interquartile_range": data.NewMetric[float64](
-			"interquartile_range", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"rms": data.NewMetric[float64](
-			"rms", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"extreme_magnitude": data.NewMetric[float64](
-			"extreme_magnitude", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"extreme_signed": data.NewMetric[float64](
-			"extreme_signed", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"peer_median_absolute": data.NewMetric[float64](
-			"peer_median_absolute", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"peer_mad": data.NewMetric[float64](
-			"peer_mad", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"signed_fraction": data.NewMetric[float64](
-			"signed_fraction", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"signed_fraction_baseline": data.NewMetric[float64](
-			"signed_fraction_baseline", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"signed_fraction_divergence": data.NewMetric[float64](
-			"signed_fraction_divergence", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"signed_fraction_zscore": data.NewMetric[float64](
-			"signed_fraction_zscore", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"signed_fraction_velocity": data.NewMetric[float64](
-			"signed_fraction_velocity", data.UnitPerSecond, data.TimescaleInstantaneous, 0, 1,
-		),
-		"median_absolute_baseline": data.NewMetric[float64](
-			"median_absolute_baseline", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"median_absolute_divergence": data.NewMetric[float64](
-			"median_absolute_divergence", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"median_absolute_zscore": data.NewMetric[float64](
-			"median_absolute_zscore", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"median_absolute_velocity": data.NewMetric[float64](
-			"median_absolute_velocity", data.UnitPerSecond, data.TimescaleInstantaneous, 0, 1,
-		),
-		"iqr": data.NewMetric[float64](
-			"iqr", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"iqr_baseline": data.NewMetric[float64](
-			"iqr_baseline", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"iqr_divergence": data.NewMetric[float64](
-			"iqr_divergence", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"iqr_zscore": data.NewMetric[float64](
-			"iqr_zscore", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"iqr_velocity": data.NewMetric[float64](
-			"iqr_velocity", data.UnitPerSecond, data.TimescaleInstantaneous, 0, 1,
-		),
-		"extreme_ratio": data.NewMetric[float64](
-			"extreme_ratio", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"extreme_ratio_baseline": data.NewMetric[float64](
-			"extreme_ratio_baseline", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"extreme_ratio_divergence": data.NewMetric[float64](
-			"extreme_ratio_divergence", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"extreme_ratio_zscore": data.NewMetric[float64](
-			"extreme_ratio_zscore", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"extreme_ratio_velocity": data.NewMetric[float64](
-			"extreme_ratio_velocity", data.UnitPerSecond, data.TimescaleInstantaneous, 0, 1,
-		),
-		"extreme_share": data.NewMetric[float64](
-			"extreme_share", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"extreme_share_baseline": data.NewMetric[float64](
-			"extreme_share_baseline", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"extreme_share_divergence": data.NewMetric[float64](
-			"extreme_share_divergence", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"extreme_share_zscore": data.NewMetric[float64](
-			"extreme_share_zscore", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"extreme_share_velocity": data.NewMetric[float64](
-			"extreme_share_velocity", data.UnitPerSecond, data.TimescaleInstantaneous, 0, 1,
-		),
-	})
-	m.Metadata["peer-interest"] = "*"
-	return m
 }

@@ -101,16 +101,16 @@ func (op *Counts) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 
 			m.From = from
 
-			m.Metrics["event_count"] = m.Metrics["event_count"].Write(count)
-			m.Metrics["event_count:buy"] = m.Metrics["event_count:buy"].Write(countBuy)
-			m.Metrics["event_count:sell"] = m.Metrics["event_count:sell"].Write(countSell)
-			m.Metrics["event_fraction:buy"] = m.Metrics["event_fraction:buy"].Write(countBuy / count)
-			m.Metrics["event_fraction:sell"] = m.Metrics["event_fraction:sell"].Write(countSell / count)
+			m.WriteMetric("event_count", count)
+			m.WriteMetric("event_count:buy", countBuy)
+			m.WriteMetric("event_count:sell", countSell)
+			m.WriteMetric("event_fraction:buy", countBuy / count)
+			m.WriteMetric("event_fraction:sell", countSell / count)
 
 			if span > 0 {
-				m.Metrics["arrival_rate:buy"] = m.Metrics["arrival_rate:buy"].Write(countBuy / span)
-				m.Metrics["arrival_rate:sell"] = m.Metrics["arrival_rate:sell"].Write(countSell / span)
-				m.Metrics["arrival_rate"] = m.Metrics["arrival_rate"].Write((countBuy + countSell) / span)
+				m.WriteMetric("arrival_rate:buy", countBuy / span)
+				m.WriteMetric("arrival_rate:sell", countSell / span)
+				m.WriteMetric("arrival_rate", (countBuy + countSell) / span)
 			}
 
 			if !yield(arriving) {
@@ -156,17 +156,15 @@ func (op *Excitation) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
 			m := *(**data.Measurement[float64])(arriving)
 			p := op.history.at(m.Label)
 
-			if m.Metadata == nil {
-				m.Metadata = make(map[string]string, 3)
-			}
+			m.EnsureMetadata()
 
-			m.Metadata[data.MetadataSupport] = strconv.FormatFloat(p.support(), 'f', -1, 64)
+			m.SetMetadata(data.MetadataSupport, strconv.FormatFloat(p.support(), 'f', -1, 64))
 			delete(m.Metadata, data.MetadataDivergence)
 			delete(m.Metadata, data.MetadataNoiseVariance)
 
 			if p.hasSNR {
-				m.Metadata[data.MetadataDivergence] = strconv.FormatFloat(p.divergence(), 'f', -1, 64)
-				m.Metadata[data.MetadataNoiseVariance] = "1"
+				m.SetMetadata(data.MetadataDivergence, strconv.FormatFloat(p.divergence(), 'f', -1, 64))
+				m.SetMetadata(data.MetadataNoiseVariance, "1")
 			}
 
 			if m.Err != nil || !p.modelReady {
@@ -226,56 +224,56 @@ func (op *Excitation) evaluate(
 	excessBuy := lambdaBuy - muX
 	excessSell := lambdaSell - muY
 
-	m.Metrics["conditional_intensity:buy"] = m.Metrics["conditional_intensity:buy"].Write(lambdaBuy)
-	m.Metrics["conditional_intensity:sell"] = m.Metrics["conditional_intensity:sell"].Write(lambdaSell)
-	m.Metrics["conditional_intensity"] = m.Metrics["conditional_intensity"].Write(lambdaBuy + lambdaSell)
-	m.Metrics["background_rate:buy"] = m.Metrics["background_rate:buy"].Write(muX)
-	m.Metrics["background_rate:sell"] = m.Metrics["background_rate:sell"].Write(muY)
-	m.Metrics["background_rate"] = m.Metrics["background_rate"].Write(muX + muY)
-	m.Metrics["excitation_intensity:buy"] = m.Metrics["excitation_intensity:buy"].Write(excessBuy)
-	m.Metrics["excitation_intensity:sell"] = m.Metrics["excitation_intensity:sell"].Write(excessSell)
+	m.WriteMetric("conditional_intensity:buy", lambdaBuy)
+	m.WriteMetric("conditional_intensity:sell", lambdaSell)
+	m.WriteMetric("conditional_intensity", lambdaBuy + lambdaSell)
+	m.WriteMetric("background_rate:buy", muX)
+	m.WriteMetric("background_rate:sell", muY)
+	m.WriteMetric("background_rate", muX + muY)
+	m.WriteMetric("excitation_intensity:buy", excessBuy)
+	m.WriteMetric("excitation_intensity:sell", excessSell)
 
 	if lambdaBuy > 0 {
-		m.Metrics["excitation_fraction:buy"] = m.Metrics["excitation_fraction:buy"].Write(excessBuy / lambdaBuy)
+		m.WriteMetric("excitation_fraction:buy", excessBuy / lambdaBuy)
 	}
 
 	if lambdaSell > 0 {
-		m.Metrics["excitation_fraction:sell"] = m.Metrics["excitation_fraction:sell"].Write(excessSell / lambdaSell)
+		m.WriteMetric("excitation_fraction:sell", excessSell / lambdaSell)
 	}
 
-	m.Metrics["excitation_amplitude:buy_from_buy"] = m.Metrics["excitation_amplitude:buy_from_buy"].Write(alphaXX)
-	m.Metrics["excitation_amplitude:buy_from_sell"] = m.Metrics["excitation_amplitude:buy_from_sell"].Write(alphaXY)
-	m.Metrics["excitation_amplitude:sell_from_buy"] = m.Metrics["excitation_amplitude:sell_from_buy"].Write(alphaYX)
-	m.Metrics["excitation_amplitude:sell_from_sell"] = m.Metrics["excitation_amplitude:sell_from_sell"].Write(alphaYY)
+	m.WriteMetric("excitation_amplitude:buy_from_buy", alphaXX)
+	m.WriteMetric("excitation_amplitude:buy_from_sell", alphaXY)
+	m.WriteMetric("excitation_amplitude:sell_from_buy", alphaYX)
+	m.WriteMetric("excitation_amplitude:sell_from_sell", alphaYY)
 
 	if beta > 0 {
 		timescale := 1.0 / beta
 
-		m.Metrics["excitation_decay"] = m.Metrics["excitation_decay"].Write(beta)
-		m.Metrics["excitation_decay:buy_from_buy"] = m.Metrics["excitation_decay:buy_from_buy"].Write(beta)
-		m.Metrics["excitation_decay:buy_from_sell"] = m.Metrics["excitation_decay:buy_from_sell"].Write(beta)
-		m.Metrics["excitation_decay:sell_from_buy"] = m.Metrics["excitation_decay:sell_from_buy"].Write(beta)
-		m.Metrics["excitation_decay:sell_from_sell"] = m.Metrics["excitation_decay:sell_from_sell"].Write(beta)
-		m.Metrics["excitation_timescale"] = m.Metrics["excitation_timescale"].Write(timescale)
-		m.Metrics["excitation_timescale:buy_from_buy"] = m.Metrics["excitation_timescale:buy_from_buy"].Write(timescale)
-		m.Metrics["excitation_timescale:buy_from_sell"] = m.Metrics["excitation_timescale:buy_from_sell"].Write(timescale)
-		m.Metrics["excitation_timescale:sell_from_buy"] = m.Metrics["excitation_timescale:sell_from_buy"].Write(timescale)
-		m.Metrics["excitation_timescale:sell_from_sell"] = m.Metrics["excitation_timescale:sell_from_sell"].Write(timescale)
+		m.WriteMetric("excitation_decay", beta)
+		m.WriteMetric("excitation_decay:buy_from_buy", beta)
+		m.WriteMetric("excitation_decay:buy_from_sell", beta)
+		m.WriteMetric("excitation_decay:sell_from_buy", beta)
+		m.WriteMetric("excitation_decay:sell_from_sell", beta)
+		m.WriteMetric("excitation_timescale", timescale)
+		m.WriteMetric("excitation_timescale:buy_from_buy", timescale)
+		m.WriteMetric("excitation_timescale:buy_from_sell", timescale)
+		m.WriteMetric("excitation_timescale:sell_from_buy", timescale)
+		m.WriteMetric("excitation_timescale:sell_from_sell", timescale)
 	}
 
 	matrix := branchingMatrix(alphaXX, alphaXY, alphaYX, alphaYY, beta)
 
-	m.Metrics["offspring:buy_from_buy"] = m.Metrics["offspring:buy_from_buy"].Write(matrix[0][0])
-	m.Metrics["offspring:buy_from_sell"] = m.Metrics["offspring:buy_from_sell"].Write(matrix[0][1])
-	m.Metrics["offspring:sell_from_buy"] = m.Metrics["offspring:sell_from_buy"].Write(matrix[1][0])
-	m.Metrics["offspring:sell_from_sell"] = m.Metrics["offspring:sell_from_sell"].Write(matrix[1][1])
-	m.Metrics["branching_spectral_radius"] = m.Metrics["branching_spectral_radius"].Write(spectralRadius(matrix))
+	m.WriteMetric("offspring:buy_from_buy", matrix[0][0])
+	m.WriteMetric("offspring:buy_from_sell", matrix[0][1])
+	m.WriteMetric("offspring:sell_from_buy", matrix[1][0])
+	m.WriteMetric("offspring:sell_from_sell", matrix[1][1])
+	m.WriteMetric("branching_spectral_radius", spectralRadius(matrix))
 
 	buyParent, sellParent, hasDesc := totalDescendants(alphaXX, alphaXY, alphaYX, alphaYY, beta)
 
 	if hasDesc {
-		m.Metrics["expected_descendants_from_buy"] = m.Metrics["expected_descendants_from_buy"].Write(buyParent)
-		m.Metrics["expected_descendants_from_sell"] = m.Metrics["expected_descendants_from_sell"].Write(sellParent)
+		m.WriteMetric("expected_descendants_from_buy", buyParent)
+		m.WriteMetric("expected_descendants_from_sell", sellParent)
 	}
 
 	streamPrior := newArrivalStream(buyArrivals, sellArrivals)
@@ -291,21 +289,21 @@ func (op *Excitation) evaluate(
 	hawkesLL, hawkesOK := model.logLikelihood(streamWindow, atSec)
 
 	if hawkesOK {
-		m.Metrics["log_likelihood:hawkes"] = m.Metrics["log_likelihood:hawkes"].Write(hawkesLL)
-		m.Metrics["log_likelihood_per_event:hawkes"] = m.Metrics["log_likelihood_per_event:hawkes"].Write(hawkesLL / markedCount)
+		m.WriteMetric("log_likelihood:hawkes", hawkesLL)
+		m.WriteMetric("log_likelihood_per_event:hawkes", hawkesLL / markedCount)
 	}
 
 	poisson := bivariateFit{muX: muX, muY: muY, beta: beta}
 	poissonLL, poissonOK := poisson.logLikelihood(streamWindow, atSec)
 
 	if poissonOK {
-		m.Metrics["log_likelihood:poisson"] = m.Metrics["log_likelihood:poisson"].Write(poissonLL)
+		m.WriteMetric("log_likelihood:poisson", poissonLL)
 	}
 
 	if hawkesOK && poissonOK {
 		gainPoisson := hawkesLL - poissonLL
-		m.Metrics["log_likelihood_gain_vs_poisson"] = m.Metrics["log_likelihood_gain_vs_poisson"].Write(gainPoisson)
-		m.Metrics["log_likelihood_gain_per_event_vs_poisson"] = m.Metrics["log_likelihood_gain_per_event_vs_poisson"].Write(gainPoisson / markedCount)
+		m.WriteMetric("log_likelihood_gain_vs_poisson", gainPoisson)
+		m.WriteMetric("log_likelihood_gain_per_event_vs_poisson", gainPoisson / markedCount)
 	}
 
 	if hawkesOK && p.selfOnlyReady {
@@ -313,9 +311,9 @@ func (op *Excitation) evaluate(
 
 		if selfOK {
 			gainSelf := hawkesLL - selfLL
-			m.Metrics["log_likelihood:self_only"] = m.Metrics["log_likelihood:self_only"].Write(selfLL)
-			m.Metrics["log_likelihood_gain_vs_self_only"] = m.Metrics["log_likelihood_gain_vs_self_only"].Write(gainSelf)
-			m.Metrics["log_likelihood_gain_per_event_vs_self_only"] = m.Metrics["log_likelihood_gain_per_event_vs_self_only"].Write(gainSelf / markedCount)
+			m.WriteMetric("log_likelihood:self_only", selfLL)
+			m.WriteMetric("log_likelihood_gain_vs_self_only", gainSelf)
+			m.WriteMetric("log_likelihood_gain_per_event_vs_self_only", gainSelf / markedCount)
 		}
 	}
 
@@ -328,17 +326,17 @@ func (op *Excitation) evaluate(
 	innoBuy := priorCountBuy - compBuy
 	innoSell := priorCountSell - compSell
 
-	m.Metrics["compensator:buy"] = m.Metrics["compensator:buy"].Write(compBuy)
-	m.Metrics["compensator:sell"] = m.Metrics["compensator:sell"].Write(compSell)
-	m.Metrics["count_innovation:buy"] = m.Metrics["count_innovation:buy"].Write(innoBuy)
-	m.Metrics["count_innovation:sell"] = m.Metrics["count_innovation:sell"].Write(innoSell)
+	m.WriteMetric("compensator:buy", compBuy)
+	m.WriteMetric("compensator:sell", compSell)
+	m.WriteMetric("count_innovation:buy", innoBuy)
+	m.WriteMetric("count_innovation:sell", innoSell)
 
 	if compBuy > 0 {
-		m.Metrics["standardized_innovation:buy"] = m.Metrics["standardized_innovation:buy"].Write(innoBuy / math.Sqrt(compBuy))
+		m.WriteMetric("standardized_innovation:buy", innoBuy / math.Sqrt(compBuy))
 	}
 
 	if compSell > 0 {
-		m.Metrics["standardized_innovation:sell"] = m.Metrics["standardized_innovation:sell"].Write(innoSell / math.Sqrt(compSell))
+		m.WriteMetric("standardized_innovation:sell", innoSell / math.Sqrt(compSell))
 	}
 
 	// excitation_share is the excitation's share of the integrated
@@ -353,19 +351,19 @@ func (op *Excitation) evaluate(
 	excessBuyMass := compBuy - muX*spanPrior
 	excessSellMass := compSell - muY*spanPrior
 
-	m.Metrics["excitation_mass:buy"] = m.Metrics["excitation_mass:buy"].Write(excessBuyMass)
-	m.Metrics["excitation_mass:sell"] = m.Metrics["excitation_mass:sell"].Write(excessSellMass)
+	m.WriteMetric("excitation_mass:buy", excessBuyMass)
+	m.WriteMetric("excitation_mass:sell", excessSellMass)
 
 	if compBuy > 0 {
-		m.Metrics["excitation_share:buy"] = m.Metrics["excitation_share:buy"].Write(excessBuyMass / compBuy)
+		m.WriteMetric("excitation_share:buy", excessBuyMass / compBuy)
 	}
 
 	if compSell > 0 {
-		m.Metrics["excitation_share:sell"] = m.Metrics["excitation_share:sell"].Write(excessSellMass / compSell)
+		m.WriteMetric("excitation_share:sell", excessSellMass / compSell)
 	}
 
 	if compTotal := compBuy + compSell; compTotal > 0 {
-		m.Metrics["excitation_share"] = m.Metrics["excitation_share"].Write((excessBuyMass + excessSellMass) / compTotal)
+		m.WriteMetric("excitation_share", (excessBuyMass + excessSellMass) / compTotal)
 	}
 
 	snrSum := 0.0
@@ -385,7 +383,7 @@ func (op *Excitation) evaluate(
 		p.snr = snrSum / float64(snrSides)
 		p.hasSNR = true
 
-		m.Metrics["snr"] = m.Metrics["snr"].Write(p.snr)
+		m.WriteMetric("snr", p.snr)
 	}
 }
 

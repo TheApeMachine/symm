@@ -207,17 +207,15 @@ func ReadMeasurements(batch arrow.RecordBatch) ([]*data.Measurement[float64], er
 			for itemIdx := startOffset; itemIdx < endOffset; itemIdx++ {
 				metricKey := keyArray.Value(itemIdx)
 				metricVal := valArray.Value(itemIdx)
-				measurement.Metrics[metricKey] = data.Metric[float64]{
+				measurement.SetMetric(metricKey, data.Metric[float64]{
 					Label: metricKey,
 					Raw:   metricVal,
-				}
+				})
 			}
 		}
 
 		if metadataCol != nil && !metadataCol.IsNull(rowIdx) {
-			if measurement.Metadata == nil {
-				measurement.Metadata = make(map[string]string)
-			}
+			measurement.EnsureMetadata()
 
 			keyArray := metadataCol.Keys().(*array.String)
 			valArray := metadataCol.Items().(*array.String)
@@ -226,7 +224,7 @@ func ReadMeasurements(batch arrow.RecordBatch) ([]*data.Measurement[float64], er
 			endOffset := int(offsets[rowIdx+1])
 
 			for itemIdx := startOffset; itemIdx < endOffset; itemIdx++ {
-				measurement.Metadata[keyArray.Value(itemIdx)] = valArray.Value(itemIdx)
+				measurement.SetMetadata(keyArray.Value(itemIdx), valArray.Value(itemIdx))
 			}
 		}
 
@@ -261,9 +259,9 @@ func ReadMeasurements(batch arrow.RecordBatch) ([]*data.Measurement[float64], er
 						return nil, errnie.Error(errnie.Err(errnie.Validation, "iceberg: invalid original decimal quantity", err))
 					}
 
-					metric := measurement.Metrics[metricKey]
+					metric := measurement.GetMetric(metricKey)
 					metric.Exact = exact
-					measurement.Metrics[metricKey] = metric
+					measurement.SetMetric(metricKey, metric)
 					continue
 				}
 

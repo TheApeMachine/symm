@@ -161,7 +161,7 @@ func (grid *Grid) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				continue
 			}
 
-			measurement := (*data.Measurement[float64])(arriving)
+			measurement := *(**data.Measurement[float64])(arriving)
 			if measurement != nil {
 				grid.Update(measurement)
 			}
@@ -608,7 +608,7 @@ func (grid *Grid) applySeparationAuthority(
 		}
 
 		scale := 1.0
-		if metric, ok := measurement.Metrics[label]; ok && metric.Scale > 0 {
+		if metric, ok := measurement.LookupMetric(label); ok && metric.Scale > 0 {
 			scale = metric.Scale
 		} else if stored := grid.find(label); stored != nil && stored.Scale > 0 {
 			scale = stored.Scale
@@ -914,7 +914,7 @@ func (grid *Grid) decorate(
 		incoming.Y = stored.Y
 		incoming.Region = stored.Region
 
-		measurement.Metrics[key] = incoming
+		measurement.SetMetric(key, incoming)
 	}
 }
 

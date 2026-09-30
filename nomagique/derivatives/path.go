@@ -92,12 +92,10 @@ the live event-time clock advances again.
 func (op *Liquidation) observe(m *data.Measurement[float64], state *liquidationState, existing bool) {
 	stamped, advanced := stamp(state.clock, m.Label, m.At, m.Provenance["synthetic_timestamp"] == "true")
 
-	if m.Metadata == nil {
-		m.Metadata = make(map[string]string)
-	}
+	m.EnsureMetadata()
 
-	price := m.Metrics["price"].Raw
-	quantity := m.Metrics["qty"].Raw
+	price := m.GetMetric("price").Raw
+	quantity := m.GetMetric("qty").Raw
 	notional := price * quantity
 
 	if !existing {
@@ -130,37 +128,37 @@ func (op *Liquidation) observe(m *data.Measurement[float64], state *liquidationS
 	m.From = state.startTime
 	m.At = state.lastAdvancedTime
 
-	m.Metrics["liquidation_notional:buy"] = m.Metrics["liquidation_notional:buy"].Write(state.liqBuyTotal)
-	m.Metrics["liquidation_notional:sell"] = m.Metrics["liquidation_notional:sell"].Write(state.liqSellTotal)
-	m.Metrics["gross_liquidation_notional"] = m.Metrics["gross_liquidation_notional"].Write(grossLiq)
-	m.Metrics["net_liquidation_notional"] = m.Metrics["net_liquidation_notional"].Write(netLiq)
-	m.Metrics["gross_derivative_trade_notional"] = m.Metrics["gross_derivative_trade_notional"].Write(state.grossTradeTotal)
+	m.WriteMetric("liquidation_notional:buy", state.liqBuyTotal)
+	m.WriteMetric("liquidation_notional:sell", state.liqSellTotal)
+	m.WriteMetric("gross_liquidation_notional", grossLiq)
+	m.WriteMetric("net_liquidation_notional", netLiq)
+	m.WriteMetric("gross_derivative_trade_notional", state.grossTradeTotal)
 
 	var currentShare float64
 
 	if grossLiq > 0 {
-		m.Metrics["liquidation_signed_fraction"] = m.Metrics["liquidation_signed_fraction"].Write(netLiq / grossLiq)
+		m.WriteMetric("liquidation_signed_fraction", netLiq / grossLiq)
 	}
 
 	if state.grossTradeTotal > 0 {
 		currentShare = grossLiq / state.grossTradeTotal
-		m.Metrics["liquidation_share"] = m.Metrics["liquidation_share"].Write(currentShare)
+		m.WriteMetric("liquidation_share", currentShare)
 	}
 
 	if advanced {
 		duration := state.lastAdvancedTime.Sub(state.startTime).Seconds()
 
 		if duration > 0 {
-			m.Metrics["liquidation_notional_rate"] = m.Metrics["liquidation_notional_rate"].Write(grossLiq / duration)
+			m.WriteMetric("liquidation_notional_rate", grossLiq / duration)
 		}
 
 		if state.hasPrevLiqShare {
-			m.Metrics["liquidation_share_velocity"] = m.Metrics["liquidation_share_velocity"].Write(currentShare - state.prevLiqShare)
+			m.WriteMetric("liquidation_share_velocity", currentShare - state.prevLiqShare)
 		}
 
 		state.prevLiqShare = currentShare
 		state.hasPrevLiqShare = true
 	}
 
-	m.Metadata[data.MetadataSupport] = strconv.FormatFloat(state.tradeCount, 'f', -1, 64)
+	m.SetMetadata(data.MetadataSupport, strconv.FormatFloat(state.tradeCount, 'f', -1, 64))
 }

@@ -48,7 +48,7 @@ func (op *PathStep) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				op.paths[m.Label] = path
 			}
 
-			price := temporal.Price{At: m.At.UnixNano(), Value: m.Metrics["last_price"].Raw}
+			price := temporal.Price{At: m.At.UnixNano(), Value: m.GetMetric("last_price").Raw}
 			var focal nmcorrelation.PathReading
 
 			for out := range path.Next(transport.NewOne(unsafe.Pointer(&price)).Next(nil)) {
@@ -60,7 +60,7 @@ func (op *PathStep) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				continue
 			}
 
-			m.Metrics["observation_count"] = m.Metrics["observation_count"].Write(focal.Count)
+			m.WriteMetric("observation_count", focal.Count)
 
 			if !focal.Accepted {
 				continue
