@@ -1,5 +1,5 @@
-import { useEffect, useRef } from "react";
 import { useSelector } from "@tanstack/react-store";
+import { useEffect, useRef } from "react";
 import { focusAtom, type RingBuffer, signals } from "#/collections/app";
 import { Badge } from "#/components/ui/badge";
 import { Flex } from "#/components/ui/flex";
@@ -31,7 +31,10 @@ export const AgentSkill = () => {
 				const winRate = metricMap.win_rate ?? 0;
 				const resolved = metricMap.resolved ?? 0;
 
-				const winRateEl = memoizedQuery(root, '[data-a="winrate"]') as HTMLElement;
+				const winRateEl = memoizedQuery(
+					root,
+					'[data-a="winrate"]',
+				) as HTMLElement;
 				if (winRateEl) {
 					winRateEl.innerText = resolved > 0 ? percent(winRate) : "—";
 				}

@@ -21,12 +21,22 @@ type UITee struct {
 	*runtime.System
 	queue     *lf.Queue[*data.Measurement[float64]]
 	batchSize int
+	filters   []func(
+		measurement *data.Measurement[float64],
+	) bool
 }
 
 /*
 NewUITee creates a new wait-free UITee off-ramp.
 */
-func NewUITee(ctx context.Context, label string, batchSize int) *UITee {
+func NewUITee(
+	ctx context.Context,
+	label string,
+	batchSize int,
+	filters ...func(
+		measurement *data.Measurement[float64],
+	) bool,
+) *UITee {
 	if batchSize < 1 {
 		batchSize = 1
 	}
@@ -34,6 +44,7 @@ func NewUITee(ctx context.Context, label string, batchSize int) *UITee {
 	tee := &UITee{
 		queue:     lf.NewQueue[*data.Measurement[float64]](),
 		batchSize: batchSize,
+		filters:   filters,
 	}
 
 	tee.System = runtime.NewSystem(ctx, label, tee)
@@ -55,11 +66,19 @@ func (tee *UITee) Push(measurement *data.Measurement[float64]) {
 		return
 	}
 
-	if !types.AllowsRoute(measurement) {
+	if len(tee.filters) == 0 {
+		tee.queue.Enqueue(measurement)
 		return
 	}
 
-	tee.queue.Enqueue(measurement)
+	for _, filter := range tee.filters {
+		if !filter(measurement) {
+			continue
+		}
+
+		tee.queue.Enqueue(measurement)
+		return
+	}
 }
 
 /*

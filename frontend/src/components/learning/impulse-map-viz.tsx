@@ -1,6 +1,8 @@
 import * as d3 from "d3";
+import { Grid2X2, RefreshCw, Waves } from "lucide-react";
 import type React from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { cn } from "#/lib/utils";
 import type { ImpulseNode } from "./types";
 
 interface ImpulseMapVizProps {
@@ -26,7 +28,9 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 }) => {
 	const containerRef = useRef<HTMLDivElement>(null);
 	const svgRef = useRef<SVGSVGElement>(null);
+	const gRef = useRef<SVGGElement | null>(null);
 	const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
+	const [layoutMode, setLayoutMode] = useState<"grid" | "regions">("grid");
 	const [hoveredNode, setHoveredNode] = useState<ImpulseNode | null>(null);
 
 	// Resize Observer
@@ -45,7 +49,7 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 		return () => resizeObserver.unobserve(observeTarget);
 	}, []);
 
-	// Activation heat map: dark neutral -> deep blue -> vivid green -> gold
+	// Color Scales - dark panel -> blue -> green -> gold
 	const colorScale = useMemo(() => {
 		return d3
 			.scaleSequential<string>((t) =>
@@ -54,188 +58,199 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 			.domain([0, 1]);
 	}, []);
 
-	// Categorical colors for basin IDs (for inactive node strokes or fallback)
-	const basinColors = useMemo(() => {
-		return d3.scaleOrdinal<number, string>(d3.schemeTableau10);
+	// Setup D3 Zoom on the SVG container
+	useEffect(() => {
+		if (!svgRef.current) return;
+		const svg = d3.select(svgRef.current);
+
+		const zoom = d3
+			.zoom<SVGSVGElement, unknown>()
+			.scaleExtent([0.5, 5])
+			.on("zoom", (event) => {
+				if (gRef.current) {
+					d3.select(gRef.current).attr("transform", event.transform);
+				}
+			});
+
+		svg.call(zoom);
 	}, []);
 
-	// Real 1:1 aspect-ratio coordinate projection preserving manifold geometry
-	const { projectedNodes, activeCentroids, links } = useMemo(() => {
-		if (!data || data.length === 0) {
-			return { projectedNodes: [], activeCentroids: [], links: [] };
+	// Reset zoom transform
+	const handleResetZoom = useCallback(() => {
+		if (!svgRef.current) return;
+		const svg = d3.select(svgRef.current);
+		svg.transition().duration(500).call(d3.zoom<SVGSVGElement, unknown>().transform, d3.zoomIdentity);
+	}, []);
+
+	// Project real SOM Grid coordinates (node.x, node.y) and calculate honest empirical region boundaries
+	const { nodesWithPositions, regionHulls } = useMemo(() => {
+		const width = dimensions.width || 800;
+		const height = dimensions.height || 600;
+
+		if (data.length === 0) {
+			return {
+				nodesWithPositions: [],
+				regionHulls: [],
+			};
 		}
 
+		// Find the bounding box of real SOM coordinates from nomagique/store/grid.go
 		let minX = Number.POSITIVE_INFINITY;
 		let maxX = Number.NEGATIVE_INFINITY;
 		let minY = Number.POSITIVE_INFINITY;
 		let maxY = Number.NEGATIVE_INFINITY;
 
-		for (const n of data) {
-			const nx = n.x ?? 0;
-			const ny = n.y ?? 0;
+		for (const node of data) {
+			const nx = node.x ?? 0;
+			const ny = node.y ?? 0;
 			if (nx < minX) minX = nx;
 			if (nx > maxX) maxX = nx;
 			if (ny < minY) minY = ny;
 			if (ny > maxY) maxY = ny;
 		}
 
-		if (!Number.isFinite(minX) || minX === maxX) {
+		if (minX === Number.POSITIVE_INFINITY || maxX === minX) {
 			minX = 0;
-			maxX = 1;
+			maxX = Math.max(32, minX + 1);
 		}
-		if (!Number.isFinite(minY) || minY === maxY) {
+
+		if (minY === Number.POSITIVE_INFINITY || maxY === minY) {
 			minY = 0;
-			maxY = 1;
+			maxY = Math.max(32, minY + 1);
 		}
 
-		// Preserve square aspect ratio so coordinate topology is not distorted
-		const pad = 48;
-		const mapWidth = Math.max(100, dimensions.width - pad * 2);
-		const mapHeight = Math.max(100, dimensions.height - pad * 2);
-		const size = Math.min(mapWidth, mapHeight);
-		const offsetX = (dimensions.width - size) / 2;
-		const offsetY = (dimensions.height - size) / 2;
+		const padX = Math.max(40, width * 0.08);
+		const padY = Math.max(40, height * 0.08);
+		const usableWidth = width - padX * 2;
+		const usableHeight = height - padY * 2;
+		const spanX = maxX - minX || 1;
+		const spanY = maxY - minY || 1;
 
-		const scaleX = d3
-			.scaleLinear()
-			.domain([minX, maxX])
-			.range([offsetX, offsetX + size]);
-		const scaleY = d3
-			.scaleLinear()
-			.domain([minY, maxY])
-			.range([offsetY + size, offsetY]);
+		// Map each node directly to its honest SOM coordinates
+		const positioned = data.map((node) => {
+			const nx = node.x ?? 0;
+			const ny = node.y ?? 0;
+			const posX = padX + ((nx - minX) / spanX) * usableWidth;
+			const posY = padY + ((ny - minY) / spanY) * usableHeight;
 
-		const projected = data.map((n) => ({
-			...n,
-			projX: scaleX(n.x ?? 0),
-			projY: scaleY(n.y ?? 0),
-		}));
-
-		// Compute centroid per basin from member nodes
-		const regionMap = new Map<number, { sumX: number; sumY: number; count: number }>();
-		for (const n of projected) {
-			const basinId = n.cluster ?? 0;
-			const entry = regionMap.get(basinId) || { sumX: 0, sumY: 0, count: 0 };
-			entry.sumX += n.projX;
-			entry.sumY += n.projY;
-			entry.count++;
-			regionMap.set(basinId, entry);
-		}
-
-		// Only show active centroids with non-zero strength to avoid cluttering with inactive basins
-		const litRegions = regions.filter((r) => r.strength > 0);
-		const centroids = litRegions.map((r) => {
-			const entry = regionMap.get(r.id);
 			return {
-				...r,
-				x: entry && entry.count > 0 ? entry.sumX / entry.count : dimensions.width / 2,
-				y: entry && entry.count > 0 ? entry.sumY / entry.count : dimensions.height / 2,
+				...node,
+				posX,
+				posY,
 			};
 		});
 
-		// Compute sympathy links between highly active co-basin cells
-		const sympathyLinks: Array<{
-			x1: number;
-			y1: number;
-			x2: number;
-			y2: number;
-			opacity: number;
-		}> = [];
-		const linkThreshold = 0.25;
-
-		for (let i = 0; i < projected.length; i++) {
-			const a = projected[i];
-			if ((a.activation ?? 0) < linkThreshold) continue;
-
-			for (let j = i + 1; j < projected.length; j++) {
-				const b = projected[j];
-				if ((b.activation ?? 0) < linkThreshold) continue;
-				if (a.cluster !== b.cluster) continue; // Same sympathetic basin
-
-				const dx = a.projX - b.projX;
-				const dy = a.projY - b.projY;
-				const distSq = dx * dx + dy * dy;
-
-				if (distSq < 100 * 100) {
-					sympathyLinks.push({
-						x1: a.projX,
-						y1: a.projY,
-						x2: b.projX,
-						y2: b.projY,
-						opacity: Math.min(0.8, ((a.activation ?? 0) + (b.activation ?? 0)) / 2),
-					});
-				}
+		// Compute empirical region boundaries directly from member nodes' real positions
+		const regionGroups = new Map<number, Array<{ posX: number; posY: number }>>();
+		for (const node of positioned) {
+			if (node.cluster > 0) {
+				const group = regionGroups.get(node.cluster) || [];
+				group.push({ posX: node.posX, posY: node.posY });
+				regionGroups.set(node.cluster, group);
 			}
 		}
 
-		return { projectedNodes: projected, activeCentroids: centroids, links: sympathyLinks };
-	}, [data, regions, dimensions]);
+		const hulls = Array.from(regionGroups.entries()).map(([regionId, members]) => {
+			let sumX = 0;
+			let sumY = 0;
+			for (const m of members) {
+				sumX += m.posX;
+				sumY += m.posY;
+			}
+			const centroidX = sumX / members.length;
+			const centroidY = sumY / members.length;
 
-	// Topographic density contours over the active manifold cells
-	const contourData = useMemo(() => {
-		if (!projectedNodes || projectedNodes.length === 0) return [];
-		try {
-			const computeDensity = d3
-				.contourDensity<typeof projectedNodes[0]>()
-				.x((d) => d.projX)
-				.y((d) => d.projY)
-				.weight((d) => (d.activation || 0.05) * ((d.snr || 1) + 1))
-				.size([dimensions.width, dimensions.height])
-				.bandwidth(32)
-				.thresholds(12);
-			return computeDensity(projectedNodes);
-		} catch {
-			return [];
-		}
-	}, [projectedNodes, dimensions]);
+			// Radius encompasses all member nodes with a small margin
+			let maxDist = 0;
+			for (const m of members) {
+				const dist = Math.hypot(m.posX - centroidX, m.posY - centroidY);
+				if (dist > maxDist) maxDist = dist;
+			}
+			const radius = Math.max(24, maxDist + 16);
 
-	// Setup d3 zoom
-	useEffect(() => {
-		if (!svgRef.current) return;
-		const svg = d3.select(svgRef.current);
-		const g = svg.select<SVGGElement>("g.map-container");
+			return {
+				regionId,
+				centroidX,
+				centroidY,
+				radius,
+				count: members.length,
+			};
+		});
 
-		const zoom = d3
-			.zoom<SVGSVGElement, unknown>()
-			.scaleExtent([0.5, 6])
-			.on("zoom", (e) => {
-				g.attr("transform", e.transform);
-			});
-
-		svg.call(zoom);
-	}, []);
-
-	const geoPath = useMemo(() => d3.geoPath(), []);
+		return {
+			nodesWithPositions: positioned,
+			regionHulls: hulls,
+		};
+	}, [data, dimensions.width, dimensions.height]);
 
 	return (
-		<div className={`flex flex-col w-full h-full ${className ?? ""}`}>
-			{/* Header Bar */}
-			<div className="h-8 border-b border-(--line) flex items-center justify-between px-4 text-xs bg-(--surface)">
-				<div className="flex gap-4 items-center">
-					<span className="text-(--acc) border-b border-(--acc) py-1 font-bold">
-						EMPIRICAL IMPULSE MAP
+		<div className={cn("flex flex-col w-full h-full bg-[#050505] text-(--f1)", className)}>
+			{/* Header / Dual-View Tab Switcher Bar */}
+			<div className="h-10 border-b border-(--line) flex items-center justify-between px-4 text-xs bg-(--surface)/90 backdrop-blur z-10 shrink-0 font-mono">
+				<div className="flex items-center gap-3">
+					<span className="text-(--f3) uppercase tracking-wider text-[10px] font-bold">
+						Impulse Topology:
 					</span>
-					<span className="text-(--f3)">
-						{data.length} cells · {regions.length} watershed basins
-					</span>
+					{/* Dual-View Tab Controls */}
+					<div className="flex items-center gap-1 bg-(--sunken) border border-(--line) p-0.5 rounded">
+						<button
+							type="button"
+							data-l="view-initial-grid"
+							onClick={() => setLayoutMode("grid")}
+							className={cn(
+								"px-2.5 py-1 rounded text-xs transition-all flex items-center gap-1.5 font-medium cursor-pointer",
+								layoutMode === "grid"
+									? "bg-(--surface) text-(--acc) shadow-sm border border-(--line)"
+									: "text-(--f4) hover:text-(--f2)",
+							)}
+						>
+							<Grid2X2 className="w-3.5 h-3.5" />
+							<span>Initial Grid</span>
+						</button>
+						<button
+							type="button"
+							data-l="view-sympathy-regions"
+							onClick={() => setLayoutMode("regions")}
+							className={cn(
+								"px-2.5 py-1 rounded text-xs transition-all flex items-center gap-1.5 font-medium cursor-pointer",
+								layoutMode === "regions"
+									? "bg-(--surface) text-(--acc) shadow-sm border border-(--line)"
+									: "text-(--f4) hover:text-(--f2)",
+							)}
+						>
+							<Waves className="w-3.5 h-3.5" />
+							<span>Discovered Regions</span>
+						</button>
+					</div>
 				</div>
-				<div className="flex items-center gap-4 text-[11px] text-(--f3)">
-					<div className="flex items-center gap-1.5">
+
+				<div className="flex items-center gap-3">
+					{regions.length > 0 && (
+						<span className="text-[10px] text-(--f3)">
+							{regions.length} regions
+						</span>
+					)}
+					<div className="flex items-center gap-1.5 text-[10px] text-(--f4)">
 						<span className="w-2 h-2 rounded-full bg-(--acc) opacity-80" />
-						<span>Agent Reaction Boundary (Otsu Split)</span>
+						<span>{layoutMode === "grid" ? "Geometric Lattice" : "Discovered Regional Basins"}</span>
 					</div>
 					<div className="h-3 w-px bg-(--line)" />
-					<span>Learned coordinate topology</span>
+					<button
+						type="button"
+						onClick={handleResetZoom}
+						className="text-(--f4) hover:text-(--f1) transition-colors p-1 cursor-pointer"
+						title="Reset Zoom / Pan"
+					>
+						<RefreshCw className="w-3.5 h-3.5" />
+					</button>
 				</div>
 			</div>
 
-			<div
-				ref={containerRef}
-				className="flex-1 relative bg-(--sunken) overflow-hidden"
-			>
-				{/* Background Grid Pattern */}
+			{/* Visualization Area */}
+			<div ref={containerRef} className="flex-1 relative overflow-hidden">
+				{/* Background Grid Accent */}
 				<div
-					className="absolute inset-0 pointer-events-none opacity-[0.12]"
+					className="absolute inset-0 pointer-events-none opacity-[0.08]"
 					style={{
 						backgroundImage:
 							"linear-gradient(var(--line) 1px, transparent 1px), linear-gradient(90deg, var(--line) 1px, transparent 1px)",
@@ -243,176 +258,125 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 					}}
 				/>
 
-				{data.length === 0 ? (
-					<div className="flex h-full w-full items-center justify-center font-mono text-xs text-(--f4)">
-						Waiting for real impulse map observations...
-					</div>
-				) : (
-					<svg
-						ref={svgRef}
-						className="w-full h-full absolute inset-0 cursor-grab active:cursor-grabbing"
-						role="img"
-						aria-label="Learned Impulse Map Topology"
-					>
-						<title>Learned Impulse Map Topology</title>
-						<g className="map-container">
-							{/* Topographic Contour Elevation Layer */}
-							<g className="contours-layer" pointerEvents="none">
-								{contourData.map((contour, idx) => {
-									const isHotBoundary = idx === 8;
-									const isMidBoundary = idx === 5;
-									const fillOpacity = Math.min(0.2, (idx + 1) * 0.015);
-									const stroke = isHotBoundary
-										? "rgba(251, 191, 36, 0.8)"
-										: isMidBoundary
-											? "rgba(34, 197, 94, 0.45)"
-											: "none";
-									const strokeWidth = isHotBoundary ? 1.5 : isMidBoundary ? 1 : 0;
-
+				<svg ref={svgRef} className="w-full h-full absolute inset-0 cursor-grab active:cursor-grabbing">
+					<title>Live SOM Impulse Map</title>
+					<g ref={gRef}>
+						{/* Discovered Regions Layer */}
+						{layoutMode === "regions" && (
+							<g className="regions-layer">
+								{regionHulls.map((hull) => {
+									const labelLetter = String.fromCharCode(65 + ((hull.regionId - 1) % 26));
 									return (
-										<path
-											key={`contour-${contour.value}-${idx}`}
-											d={geoPath(contour) ?? undefined}
-											fill="var(--acc)"
-											fillOpacity={fillOpacity}
-											stroke={stroke}
-											strokeWidth={strokeWidth}
-										/>
-									);
-								})}
-							</g>
-
-							{/* Sympathy Links Layer */}
-							<g className="links-layer" pointerEvents="none">
-								{links.map((link, idx) => (
-									<line
-										key={`link-${link.x1}-${link.y1}-${idx}`}
-										x1={link.x1}
-										y1={link.y1}
-										x2={link.x2}
-										y2={link.y2}
-										stroke="var(--acc)"
-										strokeOpacity={link.opacity}
-										strokeWidth={1.2}
-									/>
-								))}
-							</g>
-
-							{/* Active Basin Centroids (Lit Only) */}
-							<g className="regions-layer" pointerEvents="none">
-								{activeCentroids.map((r) => {
-									const hexId = `0x${(BigInt(r.id) & 0xffffn).toString(16).padStart(4, "0")}`;
-									const radius = Math.max(16, Math.min(48, r.members * 3));
-
-									return (
-										<g key={`centroid-${r.id}`} transform={`translate(${r.x}, ${r.y})`}>
+										<g key={hull.regionId} className="transition-opacity duration-300">
 											<circle
-												r={radius}
-												fill="none"
-												stroke="var(--acc)"
+												cx={hull.centroidX}
+												cy={hull.centroidY}
+												r={hull.radius}
+												fill="rgba(251, 191, 36, 0.04)"
+												stroke="rgba(251, 191, 36, 0.25)"
 												strokeWidth={1}
-												strokeOpacity={Math.min(0.6, r.strength)}
 												strokeDasharray="4 3"
 											/>
 											<text
-												y={-radius - 4}
+												x={hull.centroidX}
+												y={hull.centroidY - hull.radius - 6}
 												textAnchor="middle"
-												fill="var(--acc)"
-												fontSize="10px"
+												fill="#fbbf24"
+												fontSize={10}
 												fontFamily="monospace"
 												fontWeight="bold"
+												opacity={0.85}
 											>
-												Basin [{hexId}] (str: {(r.strength * 100).toFixed(0)}%)
+												{`Region ${labelLetter} (#${hull.regionId}) · ${hull.count} metrics`}
 											</text>
 										</g>
 									);
 								})}
 							</g>
+						)}
 
-							{/* Manifold Cells Layer */}
-							<g className="nodes-layer">
-								{projectedNodes.map((node) => {
-									const isHovered = hoveredNode?.id === node.id;
-									const baseRadius = Math.max(
-										3,
-										Math.min(8, (node.snr ?? 1) * 1.8 + 2),
-									);
-									const nodeFill = colorScale(node.activation ?? 0);
-									const basinColor = basinColors(node.cluster ?? 0);
+						{/* Metric Nodes Layer */}
+						<g className="nodes-layer">
+							{nodesWithPositions.map((node) => {
+								const radius = Math.max(3.5, (node.snr || 1) * 1.5 + 2);
+								const fill = colorScale(node.activation);
+								const isHovered = hoveredNode?.id === node.id;
 
-									return (
-										// biome-ignore lint/a11y/noStaticElementInteractions: SVG point inspection hover
-										<g
-											key={node.id}
-											transform={`translate(${node.projX}, ${node.projY})`}
-											onMouseEnter={() => setHoveredNode(node)}
-											onMouseLeave={() => setHoveredNode(null)}
-											className="cursor-pointer"
+								return (
+									// biome-ignore lint/a11y/noStaticElementInteractions: SVG node inspection
+									// biome-ignore lint/a11y/useKeyWithMouseEvents: SVG hover inspection
+									<g
+										key={node.id}
+										className="cursor-pointer"
+										onMouseOver={() => setHoveredNode(node)}
+										onMouseOut={() => setHoveredNode(null)}
+									>
+										<circle
+											cx={node.posX}
+											cy={node.posY}
+											r={radius}
+											fill={fill}
+											stroke={isHovered ? "#fbbf24" : "#09090b"}
+											strokeWidth={isHovered ? 2.5 : 1.2}
+											opacity={node.present ? 0.95 : 0.25}
+											className="transition-all duration-150"
 										>
-											{/* Activation pulse ring if active */}
-											{(node.activation ?? 0) > 0.1 && (
-												<circle
-													r={baseRadius + 5}
-													fill="none"
-													stroke="var(--acc)"
-													strokeWidth={1.5}
-													strokeOpacity={Math.min(0.9, node.activation ?? 0)}
-												/>
-											)}
-											<circle
-												r={isHovered ? baseRadius + 2.5 : baseRadius}
-												fill={nodeFill}
-												fillOpacity={node.present ? 0.95 : 0.25}
-												stroke={isHovered ? "var(--acc)" : basinColor}
-												strokeWidth={isHovered ? 2 : 1}
-											/>
-										</g>
-									);
-								})}
-							</g>
+											<title>{`${node.label} · Region ${node.cluster} · (${node.x ?? 0}, ${node.y ?? 0})`}</title>
+										</circle>
+									</g>
+								);
+							})}
 						</g>
-					</svg>
+					</g>
+				</svg>
+
+				{/* Empty state when no live telemetry has arrived yet - ZERO FAKE DATA */}
+				{(!data || data.length === 0) && (
+					<div className="absolute inset-0 flex items-center justify-center text-(--f4) font-mono text-xs pointer-events-none">
+						No numeric cells yet — waiting for tape telemetry
+					</div>
 				)}
 
-				{/* Hovered node inspection tooltip (Human provenance only per TRAINING.md Section 35) */}
+				{/* Hovered node inspection tooltip */}
 				{hoveredNode && (
 					<div className="absolute bottom-4 left-4 bg-(--surface)/95 backdrop-blur border border-(--line) rounded p-2.5 pointer-events-none shadow-xl text-[11px] font-mono z-10">
 						<div className="text-(--f1) font-bold mb-1 flex items-center gap-2">
 							<span>{hoveredNode.label}</span>
 							<span className="text-[10px] text-(--f4) font-normal">
-								(provenance)
+								(ID: {hoveredNode.id})
 							</span>
 						</div>
 						<div className="text-(--f3) flex flex-col gap-0.5">
 							<span>
-								Basin ID:{" "}
+								Discovered Region:{" "}
 								<strong className="text-(--acc)">
-									{hoveredNode.cluster}
+									{hoveredNode.cluster > 0
+										? `${String.fromCharCode(65 + ((hoveredNode.cluster - 1) % 26))} (ID ${hoveredNode.cluster})`
+										: "None"}
 								</strong>
 							</span>
 							<span>
-								Coordinates: ({hoveredNode.x?.toFixed(4)},{" "}
-								{hoveredNode.y?.toFixed(4)})
+								Lattice Position: ({hoveredNode.x ?? 0}, {hoveredNode.y ?? 0})
 							</span>
 							<span>
-								Activity:{" "}
+								Activation:{" "}
 								<strong className="text-(--f1)">
-									{hoveredNode.activation?.toFixed(3)}
+									{(hoveredNode.activation ?? 0).toFixed(4)}
 								</strong>
 							</span>
-							<span>SNR / Quality: {hoveredNode.snr?.toFixed(2)}</span>
+							<span>SNR Authority: {(hoveredNode.snr ?? 1).toFixed(2)}</span>
 						</div>
 					</div>
 				)}
 
-				{/* Active Basins Tape Overlay */}
+				{/* Active Regions Empirical Overlay */}
 				{activeEvents.length > 0 && (
-					<div className="absolute top-3 left-3 w-60 bg-(--surface)/90 backdrop-blur border border-(--line) rounded p-2.5 pointer-events-none shadow-lg">
+					<div className="absolute top-4 right-4 w-56 bg-(--surface)/90 backdrop-blur border border-(--line) rounded p-2.5 pointer-events-none shadow-lg z-10">
 						<div className="text-[10px] uppercase font-bold tracking-wider text-(--f4) mb-1.5 flex items-center justify-between">
-							<span>Active Basins (Empirical)</span>
+							<span>Active Precursor Regions</span>
 							<span className="w-1.5 h-1.5 rounded-full bg-(--up) animate-pulse" />
 						</div>
-						<div className="space-y-1.5 font-mono text-[10px]">
+						<div className="space-y-1 font-mono text-[10px]">
 							{activeEvents.slice(0, 4).map((evt) => (
 								<div
 									key={evt.label}

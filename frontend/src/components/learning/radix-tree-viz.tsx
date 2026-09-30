@@ -1,7 +1,7 @@
-import { type MouseEvent, useEffect, useMemo, useRef, useState } from "react";
 import * as d3 from "d3";
-import { AnimatePresence, motion } from "motion/react";
 import { SlidersHorizontal, Zap } from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
+import { type MouseEvent, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "#/lib/utils";
 import type { FeasibleAction, TrieNodeData } from "./types";
 
@@ -174,10 +174,7 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 		const newData: TrieNodeData = JSON.parse(JSON.stringify(data));
 
 		const expandGreedyPath = (node: TrieNodeData) => {
-			const allChildren = [
-				...(node.children || []),
-				...(node._children || []),
-			];
+			const allChildren = [...(node.children || []), ...(node._children || [])];
 			if (allChildren.length === 0) {
 				node.children = undefined;
 				node._children = undefined;
@@ -185,8 +182,7 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 			}
 
 			const bestChild = allChildren.reduce(
-				(max, child) =>
-					child.probability > max.probability ? child : max,
+				(max, child) => (child.probability > max.probability ? child : max),
 				allChildren[0],
 			);
 
@@ -197,10 +193,7 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 				if (child.id === bestChild.id) {
 					expandGreedyPath(child);
 				} else {
-					const cAll = [
-						...(child.children || []),
-						...(child._children || []),
-					];
+					const cAll = [...(child.children || []), ...(child._children || [])];
 					if (cAll.length > 0) {
 						child._children = cAll;
 						child.children = undefined;
@@ -247,8 +240,9 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 	const activePathIds = useMemo(() => {
 		if (!hoveredNodeId) return null;
 		const ids = new Set<string>();
-		let current: TreeNode | null | undefined =
-			nodes.find((n) => n.data.id === hoveredNodeId);
+		let current: TreeNode | null | undefined = nodes.find(
+			(n) => n.data.id === hoveredNodeId,
+		);
 		while (current) {
 			ids.add(current.data.id);
 			current = current.parent;
@@ -265,9 +259,7 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 
 	const getEdgeColor = (prob: number) => {
 		if (colorMode === "gradient") {
-			return (
-				d3.interpolateRgb("#3a342b", "#e8a33d")(prob) || "var(--line)"
-			);
+			return d3.interpolateRgb("#3a342b", "#e8a33d")(prob) || "var(--line)";
 		}
 		if (prob > 0.3) return "var(--acc)";
 		if (prob > 0.1) return "var(--warn)";
@@ -474,39 +466,52 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 												)}
 												strokeOpacity={0.7}
 											/>
-											{link.target.data.tokens && link.target.data.tokens.length > 0 && (
-												<motion.g
-													initial={{ opacity: 0 }}
-													animate={{ opacity: 1 }}
-													exit={{ opacity: 0 }}
-													transition={{ duration: 0.3 }}
-													transform={`translate(${midX}, ${projection === "vertical" ? midY - 6 : midY - 8})`}
-													className="pointer-events-none select-none font-mono"
-												>
-													<rect
-														x={-Math.max(28, link.target.data.tokens.join(", ").length * 5.5 + 8) / 2}
-														y={-7}
-														width={Math.max(28, link.target.data.tokens.join(", ").length * 5.5 + 8)}
-														height={14}
-														rx={2}
-														fill="var(--surface)"
-														stroke="var(--line2)"
-														strokeWidth={1}
-														opacity={0.95}
-													/>
-													<text
-														x={0}
-														y={3.5}
-														fill="var(--acc)"
-														fontSize="9px"
-														textAnchor="middle"
-														fontWeight="600"
-														className="font-mono tracking-wider"
+											{link.target.data.tokens &&
+												link.target.data.tokens.length > 0 && (
+													<motion.g
+														initial={{ opacity: 0 }}
+														animate={{ opacity: 1 }}
+														exit={{ opacity: 0 }}
+														transition={{ duration: 0.3 }}
+														transform={`translate(${midX}, ${projection === "vertical" ? midY - 6 : midY - 8})`}
+														className="pointer-events-none select-none font-mono"
 													>
-														[{link.target.data.tokens.join(", ")}]
-													</text>
-												</motion.g>
-											)}
+														<rect
+															x={
+																-Math.max(
+																	28,
+																	link.target.data.tokens.join(", ").length *
+																		5.5 +
+																		8,
+																) / 2
+															}
+															y={-7}
+															width={Math.max(
+																28,
+																link.target.data.tokens.join(", ").length *
+																	5.5 +
+																	8,
+															)}
+															height={14}
+															rx={2}
+															fill="var(--surface)"
+															stroke="var(--line2)"
+															strokeWidth={1}
+															opacity={0.95}
+														/>
+														<text
+															x={0}
+															y={3.5}
+															fill="var(--acc)"
+															fontSize="9px"
+															textAnchor="middle"
+															fontWeight="600"
+															className="font-mono tracking-wider"
+														>
+															[{link.target.data.tokens.join(", ")}]
+														</text>
+													</motion.g>
+												)}
 										</motion.g>
 									);
 								})}
@@ -592,10 +597,7 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 												animate={
 													projection === "radial"
 														? {
-																rotate:
-																	((node.x * 180) /
-																		Math.PI) -
-																	90,
+																rotate: (node.x * 180) / Math.PI - 90,
 															}
 														: { rotate: 0 }
 												}
@@ -652,12 +654,8 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 														cx={childPort.cx}
 														cy={childPort.cy}
 														r={isCollapsed ? 3.5 : 2.5}
-														fill={
-															isCollapsed ? "var(--acc)" : "var(--surface)"
-														}
-														stroke={
-															isCollapsed ? "var(--acc)" : "var(--f4)"
-														}
+														fill={isCollapsed ? "var(--acc)" : "var(--surface)"}
+														stroke={isCollapsed ? "var(--acc)" : "var(--f4)"}
 														strokeWidth={1.5}
 													/>
 												)}

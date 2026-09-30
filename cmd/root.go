@@ -45,6 +45,7 @@ import (
 	"github.com/theapemachine/symm/signal/toxicity"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/system"
+	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
 )
 
@@ -97,8 +98,39 @@ var (
 			// thus no need to call a deferred Close method for anything.
 			epoch := processStartedAt.UnixNano()
 
-			uiTee := ui.NewUITee(ctx, "uiTee", 16)
-			storeTee := hindsight.NewStoreTee(ctx, "storeTee", 131072)
+			uiTee := ui.NewUITee(
+				ctx, "uiTee",
+				8,
+				func(measurement *data.Measurement[float64]) bool {
+					if measurement == nil {
+						return false
+					}
+
+					source := measurement.Source
+					if colon := strings.IndexByte(source, ':'); colon >= 0 {
+						source = source[:colon]
+					}
+
+					switch types.SourceType(source) {
+					case types.SourceDepthFlow,
+						types.SourceCorrelation,
+						types.SourceCVD,
+						types.SourceHawkes,
+						types.SourceLeadLag,
+						types.SourceLiquidity,
+						types.SourcePumpDump,
+						types.SourceSentiment,
+						types.SourceToxicity,
+						types.SourceDerivatives,
+						types.SourceMorphology:
+						return measurement.Label == types.Focus()
+					case "training":
+						return true
+					default:
+						return false
+					}
+				},
+			)
 
 			// Hindsight's record families are Iceberg tables. The object store
 			// above keeps only genuine blobs, the model checkpoint chief among
@@ -175,14 +207,24 @@ var (
 			}
 
 			errnie.Info("symm: initializing training and UI hub...")
+			storeTee := hindsight.NewStoreTee(ctx, "storeTee", price, 131072)
 			trader := strategy.NewTrader(ctx, api, price, balance)
 			training := strategy.NewTraining(ctx, price, trader, uiTee)
 
 			uiTee.Transition(nmruntime.READY)
-			training.Transition(nmruntime.READY)
+			training.Transition(nmruntime.BUSY)
 			training.Run()
 
-			webrtcTee := ui.NewUITee(ctx, "webrtcTee", 1)
+			webrtcTee := ui.NewUITee(
+				ctx, "webrtcTee", 1,
+				func(measurement *data.Measurement[float64]) bool {
+					if measurement == nil {
+						return false
+					}
+
+					return types.AllowsWebRTC(measurement.Source, measurement.Label)
+				},
+			)
 			hub := ui.NewHub(ctx, trader, catalog, uiTee, webrtcTee)
 			hub.SetPositionSource(trader)
 			hub.SetCognitionSource(training)

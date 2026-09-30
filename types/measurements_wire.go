@@ -20,7 +20,7 @@ MeasurementToWire converts a data.Measurement to wire.MeasurementT including
 metrics, metadata, and provenance.
 */
 func MeasurementToWire(measurement *data.Measurement[float64], alloc data.Allocator) *wire.MeasurementT {
-	if measurement == nil {
+	if measurement == nil || measurement.Source == "cross-section" {
 		return nil
 	}
 
@@ -71,6 +71,10 @@ func MeasurementToWire(measurement *data.Measurement[float64], alloc data.Alloca
 	}
 	
 	for _, peer := range measurement.Peers {
+		if peer == nil || peer.Source == "cross-section" {
+			continue
+		}
+
 		if wirePeer := MeasurementToWire(peer, alloc); wirePeer != nil {
 			peers = data.AppendA(peers, wirePeer, alloc)
 		}

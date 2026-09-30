@@ -6,7 +6,6 @@ export { RingBuffer };
 import type { DecisionT } from "#/providers/telemetry/telemetry/decision";
 import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
 import type { PositionT } from "#/providers/telemetry/telemetry/position";
-import type { ResonanceT } from "#/providers/telemetry/telemetry/resonance";
 
 export const DEFAULT_KERNELS = [
 	"correlation",

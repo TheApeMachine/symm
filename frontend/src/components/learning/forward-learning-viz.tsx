@@ -3,7 +3,6 @@ import { ChevronRight, Pause, Play } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-	focusAtom,
 	positionCountAtom,
 	type RingBuffer,
 	signals,
@@ -25,23 +24,11 @@ interface ForwardTapePoint {
 	seq?: number;
 }
 
-const getTrainingRing = (
-	records: Record<string, RingBuffer<MeasurementT>> | undefined,
-	focus: string,
-): RingBuffer<MeasurementT> | null => {
-	if (!records) return null;
-	return (
-		records[focus] ??
-		records.learner ??
-		records[""] ??
-		Object.values(records)[0] ??
-		null
-	);
-};
-
 export const ForwardLearningViz = () => {
 	const tapeRef = useRef<HTMLDivElement>(null);
+	const distRef = useRef<HTMLDivElement>(null);
 	const [tapeDim, setTapeDim] = useState({ width: 800, height: 300 });
+	const [distDim, setDistDim] = useState({ width: 380, height: 160 });
 	const [isPlaying, setIsPlaying] = useState(true);
 
 	// Real tape points accumulated from the live training measurements
@@ -92,24 +79,17 @@ export const ForwardLearningViz = () => {
 		exitIdx: number | null;
 	} | null>(null);
 
-	// Focus symbol
-	const [currentSymbol, setCurrentSymbol] = useState(focusAtom.get() || "");
+	// Current training symbol (not filtered by user focus atom — reflects whatever is training)
+	const [currentSymbol, setCurrentSymbol] = useState("TRAINING");
+	const lastSeenSymbolRef = useRef<string>("");
 
 	useEffect(() => {
-		const unsubFocus = focusAtom.subscribe((state) => {
-			if (state) {
-				setCurrentSymbol(state);
-				setPoints([]);
-				setExcursionEvent(null);
-			}
-		});
 		const unsubPos = positionCountAtom.subscribe((count) => {
 			setOpenPositionsCount(count);
 		});
 		setOpenPositionsCount(positionCountAtom.get());
 
 		return () => {
-			unsubFocus?.unsubscribe?.();
 			unsubPos?.unsubscribe?.();
 		};
 	}, []);
@@ -128,6 +108,22 @@ export const ForwardLearningViz = () => {
 			}
 		});
 		ro.observe(tapeTarget);
+		return () => ro.disconnect();
+	}, []);
+
+	useEffect(() => {
+		const distTarget = distRef.current;
+		if (!distTarget || typeof ResizeObserver === "undefined") return;
+
+		const ro = new ResizeObserver((entries) => {
+			if (entries[0]) {
+				const { width, height } = entries[0].contentRect;
+				if (width > 0 && height > 0) {
+					setDistDim({ width, height });
+				}
+			}
+		});
+		ro.observe(distTarget);
 		return () => ro.disconnect();
 	}, []);
 
@@ -158,7 +154,8 @@ export const ForwardLearningViz = () => {
 		};
 	}, []);
 
-	// Subscribe to real live training measurements stream
+	// Subscribe to real live training measurements stream across all symbols
+	// Unfiltered by user focus symbol: always tracks the active training subject
 	useEffect(() => {
 		const cursor = new RingCursor<MeasurementT>();
 		let nextLogId = 1;
@@ -167,6 +164,16 @@ export const ForwardLearningViz = () => {
 			if (!ring || ring.isEmpty()) return;
 
 			cursor.read(ring, (measurement) => {
+				const activeSym = String(measurement.symbol || "TRAINING");
+
+				if (lastSeenSymbolRef.current !== "" && activeSym !== lastSeenSymbolRef.current) {
+					// Symbol switched (e.g. replay moved to another stored excursion fragment)
+					setPoints([]);
+					setExcursionEvent(null);
+				}
+				lastSeenSymbolRef.current = activeSym;
+				setCurrentSymbol(activeSym);
+
 				const metricMap: Record<string, number> = {};
 				for (const m of measurement.metrics ?? []) {
 					if (!m?.name) continue;
@@ -246,19 +253,47 @@ export const ForwardLearningViz = () => {
 				setFwdPaperMeanReturn(metricMap.fwd_paper_mean_return ?? 0);
 				setFwdPaperLowerBound(metricMap.fwd_paper_lower_bound ?? 0);
 
-				// Accumulate real point directly from backend measurement
-				const rawPrice =
-					metricMap.price && metricMap.price > 0 ? metricMap.price : undefined;
+				// Extract price directly from measurement or metrics
+				let rawPrice: number | undefined;
+				if (metricMap.price && metricMap.price > 0) {
+					rawPrice = metricMap.price;
+				} else if (measurement.metrics) {
+					for (const [k, met] of Object.entries(measurement.metrics)) {
+						if ((met?.raw ?? 0) > 0) {
+							const lk = k.toLowerCase();
+							if (lk === "price" || lk.includes("price") || lk === "mid" || lk === "close") {
+								rawPrice = met.raw;
+								break;
+							}
+						}
+					}
+				}
+
+				if (rawPrice === undefined && measurement.peers) {
+					for (const peer of measurement.peers) {
+						for (const m of peer.metrics ?? []) {
+							if (m?.name && (m?.raw ?? 0) > 0) {
+								const nm = String(m.name).toLowerCase();
+								if (nm === "price" || nm.includes("price") || nm === "mid" || nm === "close") {
+									rawPrice = m.raw;
+									break;
+								}
+							}
+						}
+						if (rawPrice !== undefined) break;
+					}
+				}
 
 				if (rawPrice !== undefined) {
 					const seqVal = Number(measurement.tick ?? 0n);
+					const pointPrice = rawPrice;
 					setPoints((prev) => {
 						const next = [
 							...prev,
-							{ x: prev.length, y: rawPrice, seq: seqVal },
+							{ x: prev.length, y: pointPrice, seq: seqVal },
 						];
-						if (next.length > 200) {
-							return next.slice(next.length - 200).map((pt, i) => ({
+						if (next.length > 250) {
+							return next.slice(next.length - 250).map((pt, i) => ({
 								x: i,
 								y: pt.y,
 								seq: pt.seq,
@@ -291,11 +326,24 @@ export const ForwardLearningViz = () => {
 					return [entry, ...prev].slice(0, 10);
 				});
 
-				// Check excursion state if present in measurement
-				if (
-					metricMap.excursion_type !== undefined &&
-					metricMap.excursion_type > 0
-				) {
+				// Extract A, B, C markers and predicted ENTER / EXIT points
+				const markA = metricMap.mark_a !== undefined ? Math.floor(metricMap.mark_a) : 0;
+				const markB = metricMap.mark_b !== undefined ? Math.floor(metricMap.mark_b) : 0;
+				const markC = metricMap.mark_c !== undefined ? Math.floor(metricMap.mark_c) : 0;
+				const entryIdx =
+					metricMap.agent_entry !== undefined && metricMap.agent_entry > 0
+						? Math.floor(metricMap.agent_entry)
+						: markB > 0
+							? markB
+							: null;
+				const exitIdx =
+					metricMap.agent_exit !== undefined && metricMap.agent_exit > 0
+						? Math.floor(metricMap.agent_exit)
+						: markC > 0
+							? markC
+							: null;
+
+				if (metricMap.excursion_type !== undefined && metricMap.excursion_type > 0) {
 					let extType: "UPWARD EXCURSION" | "DOWNWARD EXCURSION" | "CHOPPY MARKET" | "FLAT TAPE" = "UPWARD EXCURSION";
 					if (metricMap.excursion_type === 2) extType = "DOWNWARD EXCURSION";
 					if (metricMap.excursion_type === 3) extType = "CHOPPY MARKET";
@@ -304,42 +352,53 @@ export const ForwardLearningViz = () => {
 					setExcursionEvent({
 						type: extType,
 						magnitude: metricMap.excursion_mag ?? 0,
-						marks: {
-							A: Math.floor(metricMap.mark_a ?? 0),
-							B: Math.floor(metricMap.mark_b ?? 0),
-							C: Math.floor(metricMap.mark_c ?? 0),
-						},
-						entryIdx:
-							metricMap.agent_entry !== undefined && metricMap.agent_entry > 0
-								? Math.floor(metricMap.agent_entry)
-								: null,
-						exitIdx:
-							metricMap.agent_exit !== undefined && metricMap.agent_exit > 0
-								? Math.floor(metricMap.agent_exit)
-								: null,
+						marks: { A: markA, B: markB, C: markC },
+						entryIdx,
+						exitIdx,
 					});
-				} else {
-					setExcursionEvent(null);
+				} else if (markA > 0 || markB > 0 || markC > 0) {
+					setExcursionEvent({
+						type: "UPWARD EXCURSION",
+						magnitude: 0,
+						marks: { A: markA, B: markB, C: markC },
+						entryIdx,
+						exitIdx,
+					});
 				}
 			});
 		};
 
-		const ring = getTrainingRing(signals.training?.state, currentSymbol);
-		if (ring) {
-			handleRing(ring);
-		}
+		const checkAllTrainingRings = (state: Record<string, RingBuffer<MeasurementT>> | undefined) => {
+			if (!state) return;
+			let bestRing: RingBuffer<MeasurementT> | null = null;
+			let latestTick = -1n;
+
+			for (const ring of Object.values(state)) {
+				if (!ring || ring.isEmpty()) continue;
+				const len = ring.getBufferLength();
+				const last = len > 0 ? ring.get(len - 1) : undefined;
+				const tick = last?.tick ?? 0n;
+				if (tick >= latestTick || bestRing === null) {
+					latestTick = tick;
+					bestRing = ring;
+				}
+			}
+
+			if (bestRing) {
+				handleRing(bestRing);
+			}
+		};
+
+		checkAllTrainingRings(signals.training?.state);
 
 		const unsub = signals.training.subscribe((state) => {
-			const activeRing = getTrainingRing(state, currentSymbol);
-			if (activeRing) {
-				handleRing(activeRing);
-			}
+			checkAllTrainingRings(state);
 		});
 
 		return () => {
 			unsub?.unsubscribe?.();
 		};
-	}, [currentSymbol]);
+	}, []);
 
 	// Scales for real tape rendering
 	const { xScale, yScale, currentPoints, lineGenerator } = useMemo(() => {
@@ -385,6 +444,56 @@ export const ForwardLearningViz = () => {
 		};
 	}, [points, tapeDim.width, tapeDim.height]);
 
+	// Edge Distribution bell curve calculation from real measured model returns
+	const { curveData, meanEdgeBp } = useMemo(() => {
+		const evaluatedTrades = histOpportunities + fwdPaperTrades;
+		if (evaluatedTrades === 0 && histMeanReturn === 0 && fwdPaperMeanReturn === 0) {
+			return { curveData: [], meanEdgeBp: 0 };
+		}
+
+		const meanEdge = fwdPaperTrades > 0 ? fwdPaperMeanReturn * 10000 : histMeanReturn * 10000;
+		const lowerBound = fwdPaperTrades > 0 ? fwdPaperLowerBound * 10000 : histLowerBound * 10000;
+		const spread = Math.abs(meanEdge - lowerBound);
+		const sd = Math.max(1.0, spread > 0 ? spread / 1.645 : 4.0);
+
+		const distPdf = (x: number, m: number, s: number) =>
+			(1 / (s * Math.sqrt(2 * Math.PI))) * Math.exp(-0.5 * ((x - m) / s) ** 2);
+
+		const curvePoints: { x: number; y: number }[] = [];
+		const minX = -15;
+		const maxX = 15;
+		for (let x = minX; x <= maxX; x += 0.5) {
+			curvePoints.push({ x, y: distPdf(x, meanEdge, sd) });
+		}
+
+		return { curveData: curvePoints, meanEdgeBp: meanEdge };
+	}, [histOpportunities, fwdPaperTrades, histMeanReturn, fwdPaperMeanReturn, histLowerBound, fwdPaperLowerBound]);
+
+	// Distribution scales
+	const { distXScale, distAreaGen, distLineGen } = useMemo(() => {
+		const minX = -15;
+		const maxX = 15;
+		const distMaxY = Math.max(...curveData.map((d) => d.y), 0.1);
+
+		const xs = d3.scaleLinear().domain([minX, maxX]).range([20, distDim.width - 20]);
+		const ys = d3.scaleLinear().domain([0, distMaxY * 1.25]).range([distDim.height - 25, 20]);
+
+		const areaGen = d3
+			.area<{ x: number; y: number }>()
+			.x((d) => xs(d.x))
+			.y0(distDim.height - 25)
+			.y1((d) => ys(d.y))
+			.curve(d3.curveBasis);
+
+		const lineGen = d3
+			.line<{ x: number; y: number }>()
+			.x((d) => xs(d.x))
+			.y((d) => ys(d.y))
+			.curve(d3.curveBasis);
+
+		return { distXScale: xs, distYScale: ys, distAreaGen: areaGen, distLineGen: lineGen };
+	}, [curveData, distDim.width, distDim.height]);
+
 	const isForward = stageCode >= 2;
 	const precursorTokens = useMemo(() => {
 		if (rawPrecursorTokens.length > 0) {
@@ -416,7 +525,7 @@ export const ForwardLearningViz = () => {
 							>
 								{isForward ? "LIVE FORWARD PAPER TAPE" : "HISTORICAL REPLAY TAPE"}
 							</span>
-							<span className="bg-(--surface) border-(--line) border px-1.5 py-0.5 rounded text-[10px] text-(--f1)">
+							<span className="bg-(--surface) border-(--line) border px-1.5 py-0.5 rounded text-[10px] text-(--f1) font-bold">
 								{currentSymbol}
 							</span>
 							<ChevronRight className="w-3 h-3 text-(--f4)" />
@@ -553,14 +662,15 @@ export const ForwardLearningViz = () => {
 
 								{/* Hindsight Markers A, B, C and Decisions */}
 								{excursionEvent && points.length > 0 && (() => {
-									const resolveIdx = (tickSeq: number | null): number | null => {
-										if (tickSeq === null || tickSeq <= 0 || points.length === 0) return null;
+									const resolveIdx = (val: number | null): number | null => {
+										if (val === null || val <= 0 || points.length === 0) return null;
+										if (val < points.length && points[val]) return val;
 										let minDiff = Number.POSITIVE_INFINITY;
 										let found = -1;
 										for (let i = 0; i < points.length; i++) {
 											const seq = points[i].seq;
 											if (seq === undefined || seq < 0) continue;
-											const diff = Math.abs(seq - tickSeq);
+											const diff = Math.abs(seq - val);
 											if (diff < minDiff) {
 												minDiff = diff;
 												found = i;
@@ -635,7 +745,7 @@ export const ForwardLearningViz = () => {
 												);
 											})}
 
-											{/* Entry Boundary Marker (Rule 42: OPPORTUNITY B vs PAPER ENTER) */}
+											{/* Entry Boundary Marker */}
 											{entryPtIdx !== null && entryPtIdx >= 0 && entryPtIdx < points.length && (
 												<g
 													transform={`translate(${xScale(entryPtIdx)}, ${yScale(points[entryPtIdx].y)})`}
@@ -648,7 +758,7 @@ export const ForwardLearningViz = () => {
 														fontSize="9px"
 														fontWeight="bold"
 													>
-														{isForward ? "PAPER ENTER" : "OPPORTUNITY B"}
+														{isForward ? "PAPER ENTER" : "PREDICTED ENTER"}
 													</text>
 													<line
 														y2={tapeDim.height}
@@ -658,7 +768,7 @@ export const ForwardLearningViz = () => {
 												</g>
 											)}
 
-											{/* Paper Entry Fill Marker (Rule 52: Only when paper fill exists in forward stage) */}
+											{/* Paper Entry Fill Marker */}
 											{isForward && isPaperFilled && entryPtIdx !== null && entryPtIdx >= 0 && entryPtIdx < points.length && (
 												<g
 													transform={`translate(${xScale(entryPtIdx)}, ${yScale(points[entryPtIdx].y) + 14})`}
@@ -676,7 +786,7 @@ export const ForwardLearningViz = () => {
 												</g>
 											)}
 
-											{/* Exit Boundary Marker (Rule 42: CAUSAL EXIT C vs PAPER EXIT) */}
+											{/* Exit Boundary Marker */}
 											{exitPtIdx !== null && exitPtIdx >= 0 && exitPtIdx < points.length && (
 												<g
 													transform={`translate(${xScale(exitPtIdx)}, ${yScale(points[exitPtIdx].y)})`}
@@ -689,7 +799,7 @@ export const ForwardLearningViz = () => {
 														fontSize="9px"
 														fontWeight="bold"
 													>
-														{isForward ? "PAPER EXIT" : "CAUSAL EXIT C"}
+														{isForward ? "PAPER EXIT" : "PREDICTED EXIT"}
 													</text>
 													<line
 														y2={tapeDim.height}
@@ -705,7 +815,7 @@ export const ForwardLearningViz = () => {
 						)}
 					</div>
 
-					{/* Temporal Precursor Fragment Bar (Section 36) */}
+					{/* Temporal Precursor Fragment Bar */}
 					<div className="h-7 border-t border-(--line) bg-(--sunken) flex items-center px-3 justify-between text-[10px] text-(--f3) shrink-0">
 						<div className="flex items-center gap-1.5" data-l="temporal-precursor">
 							<span className="text-(--f4) uppercase tracking-wider font-bold">Temporal Precursor:</span>
@@ -771,7 +881,7 @@ export const ForwardLearningViz = () => {
 							</div>
 						</div>
 
-						{/* Forward Paper Evidence Card (Rule 41 & Rule 52: Independent from Historical) */}
+						{/* Forward Paper Evidence Card */}
 						<div className="border border-(--line) p-2.5 rounded bg-(--bg) flex flex-col gap-1.5">
 							<div className="uppercase tracking-widest text-(--f4) text-[9px] font-bold flex justify-between">
 								<span>Forward Paper Evidence</span>
@@ -855,7 +965,7 @@ export const ForwardLearningViz = () => {
 				</div>
 			</div>
 
-			{/* BOTTOM ROW: Real Radix Trie Memory Table */}
+			{/* BOTTOM ROW: Real Radix Trie Memory Table + Edge Distribution */}
 			<div className="flex h-2/5 gap-2 min-h-0">
 				{/* Radix Trie Memory Table */}
 				<div className="flex-1 bg-(--surface) border-(--line) border rounded flex flex-col min-w-0">
@@ -948,6 +1058,114 @@ export const ForwardLearningViz = () => {
 								)}
 							</tbody>
 						</table>
+					</div>
+				</div>
+
+				{/* Edge Distribution Panel */}
+				<div className="w-[380px] bg-(--surface) border-(--line) border rounded flex flex-col shrink-0 min-h-0">
+					<div className="h-8 border-(--line) border-b bg-(--sunken) flex items-center px-4 shrink-0 justify-between">
+						<div className="flex gap-4 uppercase tracking-widest text-[10px] font-bold">
+							<span className="text-(--f4)">Model</span>
+							<span className="text-(--acc)">Edge Distribution</span>
+						</div>
+						<span className="text-[10px] text-(--f4)">
+							{evaluatedCount > 0 ? `${evaluatedCount} evaluations` : "Impartial"}
+						</span>
+					</div>
+
+					<div ref={distRef} className="flex-1 relative overflow-hidden">
+						{curveData.length > 0 && distDim.width > 0 ? (
+							<svg width={distDim.width} height={distDim.height} className="absolute inset-0">
+								<title>Model Edge Distribution</title>
+								<defs>
+									<linearGradient id="distFill" x1="0" y1="0" x2="0" y2="1">
+										<stop offset="0%" stopColor="var(--info)" stopOpacity="0.3" />
+										<stop offset="100%" stopColor="var(--info)" stopOpacity="0.0" />
+									</linearGradient>
+								</defs>
+
+								{/* X Axis Base */}
+								<line
+									x1={20}
+									y1={distDim.height - 25}
+									x2={distDim.width - 20}
+									y2={distDim.height - 25}
+									stroke="var(--line)"
+									strokeWidth="1"
+								/>
+
+								{/* Breakeven Line (0.0 bp) */}
+								<line
+									x1={distXScale(0)}
+									y1={20}
+									x2={distXScale(0)}
+									y2={distDim.height - 25}
+									stroke="var(--f4)"
+									strokeWidth="1"
+									strokeDasharray="2 2"
+								/>
+								<text
+									x={distXScale(0)}
+									y={15}
+									fill="var(--f4)"
+									fontSize="9px"
+									textAnchor="middle"
+								>
+									0.0 bp
+								</text>
+
+								{/* Measured Mean Line */}
+								<line
+									x1={distXScale(meanEdgeBp)}
+									y1={20}
+									x2={distXScale(meanEdgeBp)}
+									y2={distDim.height - 25}
+									stroke={meanEdgeBp >= 0 ? "var(--up)" : "var(--down)"}
+									strokeWidth="1.5"
+								/>
+								<text
+									x={distXScale(meanEdgeBp)}
+									y={15}
+									fill={meanEdgeBp >= 0 ? "var(--up)" : "var(--down)"}
+									fontSize="9px"
+									fontWeight="bold"
+									textAnchor="middle"
+								>
+									μ {meanEdgeBp >= 0 ? "+" : ""}{meanEdgeBp.toFixed(1)} bp
+								</text>
+
+								{/* Curve Area & Line */}
+								<path d={distAreaGen(curveData) || undefined} fill="url(#distFill)" />
+								<path
+									d={distLineGen(curveData) || undefined}
+									fill="none"
+									stroke="var(--info)"
+									strokeWidth="1.5"
+								/>
+
+								{/* Boundary Labels */}
+								<text x={20} y={distDim.height - 10} fill="var(--f4)" fontSize="9px">
+									-15 bp
+								</text>
+								<text
+									x={distDim.width - 20}
+									y={distDim.height - 10}
+									fill="var(--f4)"
+									fontSize="9px"
+									textAnchor="end"
+								>
+									+15 bp
+								</text>
+							</svg>
+						) : (
+							<div className="absolute inset-0 flex items-center justify-center text-(--f4) text-[10px]">
+								No evaluated outcomes yet — distribution awaiting evidence
+							</div>
+						)}
+					</div>
+
+					<div className="p-2.5 border-t border-(--line) text-[10px] text-(--f4) leading-tight">
+						Authority-weighted empirical distribution of completed training excursion outcomes.
 					</div>
 				</div>
 			</div>

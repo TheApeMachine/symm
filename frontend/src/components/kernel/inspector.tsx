@@ -1,6 +1,6 @@
 import { useNavigate } from "@tanstack/react-router";
 import { useSelector } from "@tanstack/react-store";
-import { type RingBuffer, focusAtom, signals } from "#/collections/app";
+import { focusAtom, type RingBuffer, signals } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
 import {
 	kernelCopy,
@@ -87,9 +87,8 @@ export const KernelInspector = () => {
 	const resonance = active && isResonance(source);
 
 	const signalStore = source ? signals[source] : undefined;
-	const measurementRing = useSelector(
-		signalStore ?? signals.hawkes,
-		(state) => (signalStore ? state[focusSymbol] ?? null : null),
+	const measurementRing = useSelector(signalStore ?? signals.hawkes, (state) =>
+		signalStore ? (state[focusSymbol] ?? null) : null,
 	);
 
 	if (!active) {

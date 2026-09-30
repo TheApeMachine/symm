@@ -64,7 +64,10 @@ type Training struct {
 	// Latest evaluation results (written by Step, read by metrics emission)
 	lastConfidence atomic.Uint64 // float64 bits
 	lastContrast   atomic.Uint64 // float64 bits
-	lastEdge       atomic.Uint64 // float64 bits
+	cumReturn      atomic.Uint64 // float64 bits
+
+	// Active position entry tokens mapped by symbol for online refinement.
+	activeTokens sync.Map
 }
 
 func NewTraining(
@@ -80,6 +83,12 @@ func NewTraining(
 		engine: cognition.NewEngine(cognition.Config{}),
 		trader: trader,
 		tee:    tee,
+	}
+
+	if trader != nil {
+		trader.SetOnPositionClosed(func(symbol string, returnFraction float64, fee float64) {
+			training.RecordPositionResult(symbol, returnFraction)
+		})
 	}
 
 	training.Transition(runtime.INIT)
@@ -139,13 +148,12 @@ func (training *Training) Step(
 			}
 		}
 
-		if peer == measurement {
-			training.grid.Update(peer)
-		}
+		// Update grid and stamp lattice coordinates (X, Y) and Region on peer metrics.
+		training.grid.Update(peer)
+	}
 
-		if peer != measurement {
-			training.grid.Observe(peer)
-		}
+	if len(measurement.Metrics) > 0 {
+		training.grid.Update(measurement)
 	}
 
 	// Forward price, spread, and excursion metadata from peers matching this measurement's symbol.
@@ -196,6 +204,29 @@ func (training *Training) Step(
 		}
 	}
 
+	// In StageModelDevelopment, Step only develops the grid until it settles.
+	// Training does NOT evaluate predictions or emit actions until the grid has settled.
+	if training.stageCode.Load() == StageModelDevelopment {
+		if training.grid.Settled {
+			if err := training.SaveCheckpoint(); err != nil {
+				errnie.Error(err)
+			}
+
+			training.stageCode.Store(StageHistoricalValidation)
+		}
+
+		if !training.grid.Settled {
+			if measurement.Provenance == nil {
+				measurement.Provenance = make(map[string]string)
+			}
+
+			measurement.Provenance["stage"] = training.stageName()
+			measurement.Provenance["stage_blocker"] = training.stageBlocker()
+			training.emitStateMetrics(measurement)
+			return measurement
+		}
+	}
+
 	var topRegion uint8
 	var maxActivity float64
 	var regionActivity [256]float64
@@ -220,10 +251,21 @@ func (training *Training) Step(
 		}
 	}
 
+	token := training.grid.LitRegions(measurement, 3)
+	if len(token) == 0 && topRegion > 0 {
+		token = []byte{topRegion}
+	}
+	if len(token) == 0 {
+		reg := training.grid.Region("price")
+		if reg == 0 {
+			reg = 1
+		}
+		token = []byte{reg}
+	}
+
 	var evalConfidence, evalContrast float64
 
-	if topRegion > 0 && maxActivity > 0 {
-		token := []byte{byte(topRegion)}
+	if len(token) > 0 {
 		action := ActionWait
 
 		evalResult, evalErr := training.engine.Evaluate(token)
@@ -241,6 +283,11 @@ func (training *Training) Step(
 			if found && len(actionBytes) > 0 {
 				action = Action(actionBytes)
 			}
+		}
+
+		if action == ActionEnter {
+			training.activeTokens.Store(measurement.Label, token)
+			training.activeTokens.Store("__latest__", token)
 		}
 
 		// Only act on predictions in the paper trading stage.
@@ -273,15 +320,6 @@ func (training *Training) Step(
 		// Store latest evaluation values atomically for metrics emission.
 		training.lastConfidence.Store(math.Float64bits(evalConfidence))
 		training.lastContrast.Store(math.Float64bits(evalContrast))
-
-		// Compute and store edge: confidence minus the indifference baseline.
-		edge := evalConfidence - 0.5
-
-		if evalConfidence == 0 {
-			edge = 0
-		}
-
-		training.lastEdge.Store(math.Float64bits(edge))
 	}
 
 	// Always set provenance so the dashboard receives stage info
@@ -324,6 +362,10 @@ func (training *Training) Run() {
 }
 
 func (training *Training) trainFromFragments() {
+	if !training.grid.Settled {
+		return
+	}
+
 	training.mutex.RLock()
 
 	if len(training.fragments) == 0 {
@@ -335,49 +377,174 @@ func (training *Training) trainFromFragments() {
 	copy(fragments, training.fragments)
 	training.mutex.RUnlock()
 
-	trained := false
+	type excursionGroup struct {
+		direction      string
+		clearsFriction bool
+		category       string
+		startTick      int64
+		ignitionTick   int64
+		endTick        int64
+		measurements   []*data.Measurement[float64]
+	}
+
+	groups := make(map[string]*excursionGroup)
 
 	for _, fragment := range fragments {
-		if fragment == nil {
+		if fragment == nil || fragment.Metadata == nil {
 			continue
 		}
 
-		excursion := fragment.Metadata["excursion"]
+		direction := fragment.Metadata["excursion"]
 
-		if excursion == "" {
+		if direction == "" {
 			continue
 		}
 
-		training.grid.Update(fragment)
-		region := training.grid.Region("price")
+		ignitionStr := fragment.Metadata["excursion_ignition"]
 
-		if region == 0 {
-			region = 1
+		if ignitionStr == "" {
+			ignitionStr = fragment.Label
 		}
 
-		token := []byte{byte(region)}
+		key := fmt.Sprintf("%s-%s", fragment.Label, ignitionStr)
+		group, found := groups[key]
+
+		if !found {
+			startTick, _ := strconv.ParseInt(fragment.Metadata["excursion_start"], 10, 64)
+			ignitionTick, _ := strconv.ParseInt(fragment.Metadata["excursion_ignition"], 10, 64)
+			endTick, _ := strconv.ParseInt(fragment.Metadata["excursion_end"], 10, 64)
+
+			group = &excursionGroup{
+				direction:      direction,
+				clearsFriction: fragment.Metadata["excursion_clears_friction"] == "true",
+				category:       fragment.Metadata["excursion_category"],
+				startTick:      startTick,
+				ignitionTick:   ignitionTick,
+				endTick:        endTick,
+			}
+			groups[key] = group
+		}
+
+		group.measurements = append(group.measurements, fragment)
+	}
+
+	trained := false
+
+	// Replay excursion fragments across multiple passes at hardware speed.
+	// In each pass, randomize the A marker somewhat (as long as A < B),
+	// training a robust, scale-invariant model across varying precursor horizons.
+	const passes = 3
+
+	for _, group := range groups {
+		if group == nil || len(group.measurements) == 0 {
+			continue
+		}
+
 		var targetClass []byte
 
-		if excursion == "upper" {
-			targetClass = []byte(ActionEnter)
+		if group.direction == "upper" {
+			if group.clearsFriction || group.category == "upper_profitable" {
+				targetClass = []byte(ActionEnter)
+			}
+
+			if !group.clearsFriction && group.category != "upper_profitable" {
+				targetClass = []byte(ActionWait)
+			}
 		}
 
-		if excursion == "lower" {
+		if group.direction == "lower" {
 			targetClass = []byte(ActionExit)
+		}
+
+		if group.direction == "chop" || group.direction == "flat" {
+			targetClass = []byte(ActionWait)
 		}
 
 		if len(targetClass) == 0 {
 			targetClass = []byte(ActionWait)
 		}
 
-		if _, err := training.engine.Train(token, targetClass, 1.0); err != nil {
-			errnie.Error(err)
-			continue
-		}
+		for pass := 0; pass < passes; pass++ {
+			// Elastic A-marker jitter:
+			// Pass 0 uses the exact initial precursor start.
+			// Subsequent passes jitter the effective A marker forward within [A, B-1].
+			var activeMeas []*data.Measurement[float64]
 
-		training.trie.Insert(token, targetClass)
-		training.decisions.Add(1)
-		trained = true
+			if len(group.measurements) > 1 && group.ignitionTick > group.startTick+1 {
+				span := group.ignitionTick - group.startTick
+				jitterOffset := int64(0)
+
+				if pass > 0 {
+					fraction := float64(pass) / float64(passes+1)
+					jitterOffset = int64(float64(span) * fraction)
+				}
+
+				effectiveA := group.startTick + jitterOffset
+
+				if effectiveA >= group.ignitionTick {
+					effectiveA = group.ignitionTick - 1
+				}
+
+				for _, meas := range group.measurements {
+					if meas == nil {
+						continue
+					}
+
+					tick := meas.SeqIdx
+
+					if tick == 0 && meas.Metadata != nil {
+						if ts, err := strconv.ParseInt(meas.Metadata["tick"], 10, 64); err == nil {
+							tick = ts
+						}
+					}
+
+					// Include precursor observations from the effective A marker up to ignition B
+					if tick >= effectiveA && (group.ignitionTick == 0 || tick <= group.ignitionTick) {
+						activeMeas = append(activeMeas, meas)
+					}
+				}
+			}
+
+			if len(activeMeas) == 0 {
+				activeMeas = group.measurements
+			}
+
+			// Extract trajectory sequence of lit regions across the precursor window
+			var token []byte
+
+			for _, meas := range activeMeas {
+				lit := training.grid.LitRegions(meas, 1)
+
+				if len(lit) > 0 {
+					if len(token) == 0 || token[len(token)-1] != lit[0] {
+						token = append(token, lit[0])
+					}
+				}
+			}
+
+			if len(token) == 0 {
+				token = training.grid.LitRegions(activeMeas[len(activeMeas)-1], 3)
+			}
+
+			if len(token) == 0 {
+				reg := training.grid.Region("price")
+
+				if reg == 0 {
+					reg = 1
+				}
+
+				token = []byte{byte(reg)}
+			}
+
+			if _, err := training.engine.Train(token, targetClass, 1.0); err != nil {
+				errnie.Error(err)
+				continue
+			}
+
+			training.trie.Insert(token, targetClass)
+			training.decisions.Add(1)
+			trained = true
+		}
 	}
 
 	if trained {
@@ -532,7 +699,14 @@ func (training *Training) emitStateMetrics(measurement *data.Measurement[float64
 	contrastMetric.Raw = contrast
 	measurement.Metrics["contrast"] = contrastMetric
 
-	edge := math.Float64frombits(training.lastEdge.Load())
+	// Edge is the real realized average return fraction across closed trades, 0 if no trades.
+	totalTrades := training.totalTrades.Load()
+	var edge float64
+
+	if totalTrades > 0 {
+		edge = math.Float64frombits(training.cumReturn.Load()) / float64(totalTrades)
+	}
+
 	edgeMetric := data.NewMetric[float64](
 		"edge", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
 	)
@@ -540,7 +714,6 @@ func (training *Training) emitStateMetrics(measurement *data.Measurement[float64
 	measurement.Metrics["edge"] = edgeMetric
 
 	// Win rate = wins / total trades, 0 if no trades.
-	totalTrades := training.totalTrades.Load()
 	var winRate float64
 
 	if totalTrades > 0 {
@@ -610,16 +783,84 @@ func (training *Training) emitStateMetrics(measurement *data.Measurement[float64
 }
 
 /*
-RecordTradeResult is the callback the trader uses to report closed position outcomes.
-It updates the win/loss counters that drive the stage machine.
+RecordPositionResult processes a closed position outcome from the broker desk.
+It updates win/loss counters and uses the realized PnL to refine the trie model
+for the precursor token that initiated the entry.
 */
-func (training *Training) RecordTradeResult(returnFraction float64) {
+func (training *Training) RecordPositionResult(symbol string, returnFraction float64) {
 	training.totalTrades.Add(1)
 	training.resolved.Add(1)
+
+	for {
+		oldBits := training.cumReturn.Load()
+		newVal := math.Float64frombits(oldBits) + returnFraction
+
+		if training.cumReturn.CompareAndSwap(oldBits, math.Float64bits(newVal)) {
+			break
+		}
+	}
 
 	if returnFraction > 0 {
 		training.wins.Add(1)
 	}
+
+	// Retrieve the precursor token that triggered this entry.
+	var token []byte
+
+	if symbol != "" {
+		if rawToken, found := training.activeTokens.LoadAndDelete(symbol); found {
+			if tokenBytes, ok := rawToken.([]byte); ok {
+				token = tokenBytes
+			}
+		}
+	}
+
+	if len(token) == 0 {
+		if rawToken, found := training.activeTokens.LoadAndDelete("__latest__"); found {
+			if tokenBytes, ok := rawToken.([]byte); ok {
+				token = tokenBytes
+			}
+		}
+	}
+
+	if len(token) > 0 {
+		targetClass := []byte(ActionWait)
+		weight := math.Abs(returnFraction)
+
+		if weight <= 0 {
+			weight = 0.1
+		}
+
+		if returnFraction > 0 {
+			targetClass = []byte(ActionEnter)
+			weight = 1.0 + returnFraction
+		}
+
+		if _, err := training.engine.Train(token, targetClass, weight); err != nil {
+			errnie.Error(err)
+		}
+
+		training.trie.Insert(token, targetClass)
+
+		if _, _, _, _, err := training.engine.Consolidate(1.0); err != nil {
+			errnie.Error(err)
+		}
+
+		training.engine.Prune(0.05)
+		training.advanceStage()
+
+		if err := training.SaveCheckpoint(); err != nil {
+			errnie.Error(err)
+		}
+	}
+}
+
+/*
+RecordTradeResult is the callback used to report closed position outcomes.
+It delegates to RecordPositionResult with an empty symbol.
+*/
+func (training *Training) RecordTradeResult(returnFraction float64) {
+	training.RecordPositionResult("", returnFraction)
 }
 
 /*
@@ -651,18 +892,26 @@ func (training *Training) ExcursionLearn(
 		return nil, nil
 	}
 
-	var startTick, ignitionTick, endTick int64
-	if s := measurement.Metadata["excursion_start"]; s != "" {
-		startTick, _ = strconv.ParseInt(s, 10, 64)
+	var startTick, ignitionTick, extremumTick, endTick int64
+
+	if metaVal := measurement.Metadata["excursion_start"]; metaVal != "" {
+		startTick, _ = strconv.ParseInt(metaVal, 10, 64)
 	}
-	if s := measurement.Metadata["excursion_ignition"]; s != "" {
-		ignitionTick, _ = strconv.ParseInt(s, 10, 64)
+
+	if metaVal := measurement.Metadata["excursion_ignition"]; metaVal != "" {
+		ignitionTick, _ = strconv.ParseInt(metaVal, 10, 64)
 	}
-	if s := measurement.Metadata["excursion_end"]; s != "" {
-		endTick, _ = strconv.ParseInt(s, 10, 64)
+
+	if metaVal := measurement.Metadata["excursion_extremum_tick"]; metaVal != "" {
+		extremumTick, _ = strconv.ParseInt(metaVal, 10, 64)
+	}
+
+	if metaVal := measurement.Metadata["excursion_end"]; metaVal != "" {
+		endTick, _ = strconv.ParseInt(metaVal, 10, 64)
 	}
 
 	var priceVal float64
+
 	for _, key := range []string{"price", "last_price", "last", "spot_price", "reference_price", "midpoint"} {
 		if metric, ok := measurement.Metrics[key]; ok && metric.Raw > 0 {
 			priceVal = metric.Raw
@@ -670,27 +919,97 @@ func (training *Training) ExcursionLearn(
 		}
 	}
 
+	var entryPrice, extremumPrice, exitPrice float64
+
+	if metaVal := measurement.Metadata["excursion_entry_price"]; metaVal != "" {
+		entryPrice, _ = strconv.ParseFloat(metaVal, 64)
+	}
+
+	if metaVal := measurement.Metadata["excursion_extremum_price"]; metaVal != "" {
+		extremumPrice, _ = strconv.ParseFloat(metaVal, 64)
+	}
+
+	if metaVal := measurement.Metadata["excursion_exit_price"]; metaVal != "" {
+		exitPrice, _ = strconv.ParseFloat(metaVal, 64)
+	}
+
+	if entryPrice <= 0 {
+		entryPrice = priceVal
+	}
+
+	if extremumPrice <= 0 {
+		extremumPrice = priceVal
+	}
+
+	if exitPrice <= 0 {
+		exitPrice = priceVal
+	}
+
+	if extremumTick <= 0 {
+		extremumTick = ignitionTick
+	}
+
+	positionSize := 40.0
+
+	if metaVal := measurement.Metadata["excursion_position_size"]; metaVal != "" {
+		if posSize, err := strconv.ParseFloat(metaVal, 64); err == nil && posSize > 0 {
+			positionSize = posSize
+		}
+	}
+
+	var fee, profit, profitFraction, grossExcursion float64
+
+	if metaVal := measurement.Metadata["excursion_fee"]; metaVal != "" {
+		fee, _ = strconv.ParseFloat(metaVal, 64)
+	}
+
+	if metaVal := measurement.Metadata["excursion_profit"]; metaVal != "" {
+		profit, _ = strconv.ParseFloat(metaVal, 64)
+	}
+
+	if metaVal := measurement.Metadata["excursion_profit_fraction"]; metaVal != "" {
+		profitFraction, _ = strconv.ParseFloat(metaVal, 64)
+	}
+
+	if metaVal := measurement.Metadata["excursion_gross"]; metaVal != "" {
+		grossExcursion, _ = strconv.ParseFloat(metaVal, 64)
+	}
+
+	clearsFriction := measurement.Metadata["excursion_clears_friction"] == "true"
+
+	if profit > 0 && (excursionDirection == "upper" || measurement.Metadata["excursion_category"] == "upper_profitable") {
+		clearsFriction = true
+	}
+
+	direction := excursionDirection
+
+	if direction == "upper" {
+		direction = "upward"
+	}
+	if direction == "lower" {
+		direction = "downward"
+	}
+
 	var record tables.ExcursionRecord
 	record.ID = fmt.Sprintf("exc-%s-%d", measurement.Label, ignitionTick)
 	record.Symbol = measurement.Label
-	record.Direction = excursionDirection
+	record.Direction = direction
 	record.PrecursorStartTick = startTick
 	record.AnchorTick = ignitionTick
-	record.ExtremumTick = ignitionTick
+	record.ExtremumTick = extremumTick
 	record.ExitTick = endTick
 	record.PostEndTick = measurement.SeqIdx
-	record.EntryPrice = priceVal
-	record.ExtremumPrice = priceVal
-	record.ExitPrice = priceVal
+	record.EntryPrice = entryPrice
+	record.ExtremumPrice = extremumPrice
+	record.ExitPrice = exitPrice
+	record.PositionSize = positionSize
+	record.GrossExcursion = grossExcursion
+	record.Fee = fee
+	record.Profit = profit
+	record.ProfitFraction = profitFraction
+	record.ClearsFriction = clearsFriction
 	record.ObservationCount = measurement.SeqIdx - startTick + 1
 	record.Status = "completed"
-
-	switch excursionDirection {
-	case "upper":
-		record.ClearsFriction = true
-	case "lower":
-		record.ClearsFriction = false
-	}
 
 	training.trainOnExcursion(record)
 
@@ -698,21 +1017,49 @@ func (training *Training) ExcursionLearn(
 }
 
 func (training *Training) trainOnExcursion(record tables.ExcursionRecord) {
-	region := training.grid.Region("price")
-	if region == 0 {
-		region = 1
+	if !training.grid.Settled {
+		return
 	}
 
-	token := []byte{byte(region)}
+	var token []byte
+
+	training.mutex.RLock()
+	for idx := len(training.fragments) - 1; idx >= 0; idx-- {
+		frag := training.fragments[idx]
+		if frag != nil && frag.Label == record.Symbol {
+			lit := training.grid.LitRegions(frag, 3)
+			if len(lit) > 0 {
+				token = lit
+				break
+			}
+		}
+	}
+	training.mutex.RUnlock()
+
+	if len(token) == 0 {
+		region := training.grid.Region("price")
+		if region == 0 {
+			region = 1
+		}
+		token = []byte{byte(region)}
+	}
+
 	var targetClass []byte
 
-	if record.Direction == "upper" {
-		targetClass = []byte(ActionEnter)
-	}
-	if record.Direction == "lower" {
+	switch record.Direction {
+	case "upward", "upper":
+		if record.ClearsFriction {
+			targetClass = []byte(ActionEnter)
+		}
+
+		if !record.ClearsFriction {
+			targetClass = []byte(ActionWait)
+		}
+	case "downward", "lower":
 		targetClass = []byte(ActionExit)
-	}
-	if len(targetClass) == 0 {
+	case "chop", "flat":
+		targetClass = []byte(ActionWait)
+	default:
 		targetClass = []byte(ActionWait)
 	}
 
@@ -727,8 +1074,8 @@ func (training *Training) trainOnExcursion(record tables.ExcursionRecord) {
 	if _, _, _, _, err := training.engine.Consolidate(1.0); err != nil {
 		errnie.Error(err)
 	}
-	training.engine.Prune(0.05)
 
+	training.engine.Prune(0.05)
 	training.advanceStage()
 
 	if err := training.SaveCheckpoint(); err != nil {

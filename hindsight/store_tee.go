@@ -2,10 +2,13 @@ package hindsight
 
 import (
 	"context"
+	"math"
 	"strconv"
 	"unsafe"
 
+	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
@@ -17,13 +20,31 @@ import (
 const defaultWindowSize = 4096
 
 type symbolState struct {
-	cusum        core.Primitive
-	excursion    string
-	startTick    int64
-	ignitionTick int64
-	endTick      int64
-	tailTick     int64
-	span         int64
+	cusum         core.Primitive
+	excursion     string // "upper", "lower", "chop", "flat"
+	startTick     int64
+	ignitionTick  int64
+	extremumTick  int64
+	endTick       int64
+	tailTick      int64
+	span          int64
+	entryPrice    float64
+	extremumPrice float64
+	exitPrice     float64
+
+	// Noise resistance & stop-loss hunter immunity
+	reversalCandTick  int64
+	reversalCandPrice float64
+	pullbackTicks     int
+
+	// Rolling tape tracking for chop and flat detection
+	windowStartTick  int64
+	windowStartPrice float64
+	windowHigh       float64
+	windowLow        float64
+	windowTicks      int
+	dirFlips         int
+	lastDeltaSign    int
 }
 
 /*
@@ -35,6 +56,7 @@ tagging across all signal and logic stages before emitting to storage.
 */
 type StoreTee struct {
 	*runtime.System
+	price  *broker.Price
 	queue  *lf.Queue[*data.Measurement[float64]]
 	buffer []*data.Measurement[float64]
 	head   int
@@ -45,13 +67,29 @@ type StoreTee struct {
 }
 
 /*
-NewStoreTee creates an idle storage off-ramp.
+NewStoreTee creates an idle storage off-ramp wired to the broker's Level 3 price and book state.
+It flexibly accepts an optional *broker.Price and an optional capacity int.
 */
-func NewStoreTee(ctx context.Context, label string, _ ...int) *StoreTee {
+func NewStoreTee(ctx context.Context, label string, args ...any) *StoreTee {
+	var price *broker.Price
+	capVal := defaultWindowSize
+
+	for _, arg := range args {
+		switch v := arg.(type) {
+		case *broker.Price:
+			price = v
+		case int:
+			if v > 0 {
+				capVal = v
+			}
+		}
+	}
+
 	tee := &StoreTee{
+		price:  price,
 		queue:  lf.NewQueue[*data.Measurement[float64]](),
-		buffer: make([]*data.Measurement[float64], defaultWindowSize),
-		window: defaultWindowSize,
+		buffer: make([]*data.Measurement[float64], capVal),
+		window: capVal,
 		states: make(map[string]*symbolState),
 	}
 
@@ -77,6 +115,27 @@ func (tee *StoreTee) Push(measurement *data.Measurement[float64]) {
 	tee.queue.Enqueue(clone)
 }
 
+func (tee *StoreTee) priceAtTick(symbol string, tick int64) float64 {
+	for index := 0; index < tee.count; index++ {
+		slot := (tee.head + index) % tee.window
+		meas := tee.buffer[slot]
+
+		if meas != nil && (meas.Label == symbol || meas.Label == "") && meas.SeqIdx == tick {
+			if metric, ok := meas.Metrics["price"]; ok && metric.Raw > 0 {
+				return metric.Raw
+			}
+		}
+	}
+
+	if tee.price != nil {
+		if mark := tee.price.CurrentMark(symbol); mark != nil && mark.Sign() > 0 {
+			return mark.Float64()
+		}
+	}
+
+	return 0
+}
+
 func (tee *StoreTee) tag(measurement *data.Measurement[float64]) {
 	symbol := measurement.Label
 
@@ -92,32 +151,72 @@ func (tee *StoreTee) tag(measurement *data.Measurement[float64]) {
 	}
 
 	var priceVal float64
-	for _, key := range []string{"price", "last_price", "last", "spot_price", "reference_price", "midpoint"} {
-		if metric, ok := measurement.Metrics[key]; ok && metric.Raw > 0 {
-			priceVal = metric.Raw
-			break
+	var spreadVal float64
+	var bestAsk float64
+	var bestBid float64
+
+	// Authoritative price, book sides, and spread from Level 3 order book via broker.Price
+	if tee.price != nil {
+		if tee.price.Books != nil {
+			tee.price.Books.Book(symbol, func(b *spotbook.Book) {
+				if b != nil && b.BestAsk() != nil && b.BestBid() != nil {
+					bestAsk = b.BestAsk().Price.Float64()
+					bestBid = b.BestBid().Price.Float64()
+					s := b.BestAsk().Price.Sub(b.BestBid().Price)
+					if s != nil && s.Sign() > 0 {
+						spreadVal = s.Float64()
+					}
+				}
+			})
+		}
+
+		if mark := tee.price.CurrentMark(symbol); mark != nil && mark.Sign() > 0 {
+			priceVal = mark.Float64()
 		}
 	}
 
-	if priceVal > 0 {
-		var hurdle float64
-		var threshold float64
+	// Fallback to measurement metrics if price not yet published by Level 3 book
+	if priceVal == 0 {
+		if metric, ok := measurement.Metrics["price"]; ok && metric.Raw > 0 {
+			priceVal = metric.Raw
+		}
+	}
 
+	if spreadVal == 0 {
 		if spreadMetric, hasSpread := measurement.Metrics["spread"]; hasSpread && spreadMetric.Raw > 0 {
-			hurdle = spreadMetric.Raw / 2.0
-			threshold = spreadMetric.Raw * 2.0
+			spreadVal = spreadMetric.Raw
+		}
+	}
+
+	if spreadVal <= 0 && priceVal > 0 {
+		spreadVal = priceVal * 0.0002
+	}
+
+	if priceVal > 0 {
+		// Decorate measurement with the authoritative price
+		if _, hasPrice := measurement.Metrics["price"]; !hasPrice {
+			m := data.NewMetric[float64]("price", data.Unit("USD"), data.TimescaleInstantaneous, 0, 1)
+			m.Raw = priceVal
+			measurement.Metrics["price"] = m
 		}
 
-		if hurdle == 0 {
-			if relSpread, has := measurement.Metrics["relative_spread"]; has && relSpread.Raw > 0 {
-				spreadVal := relSpread.Raw * priceVal
-				hurdle = spreadVal / 2.0
-				threshold = spreadVal * 2.0
+		// Exact taker fee from broker.Price (real venue fee rate)
+		var feeRate float64
+		if tee.price != nil {
+			if fee := tee.price.FeeIfAvailable(symbol); fee != nil && fee.Fee != nil {
+				feeRate = fee.Fee.Float64() / 100.0 // Fee.Fee is in percent, e.g. 0.26% -> 0.0026
 			}
 		}
 
-		if hurdle == 0 && measurement.SNRDefined && measurement.SNR > 0 {
-			hurdle = priceVal / measurement.SNR
+		if feeRate <= 0 {
+			feeRate = 0.0026 // Standard 26bp base taker fee default
+		}
+
+		hurdle := spreadVal / 2.0
+		threshold := spreadVal * 2.0
+
+		if hurdle <= 0 {
+			hurdle = priceVal * 0.0001
 			threshold = hurdle * 4.0
 		}
 
@@ -141,17 +240,35 @@ func (tee *StoreTee) tag(measurement *data.Measurement[float64]) {
 		measurement.Metadata["cusum_upper"] = strconv.FormatFloat(reading.UpperSum, 'g', -1, 64)
 		measurement.Metadata["cusum_lower"] = strconv.FormatFloat(reading.LowerSum, 'g', -1, 64)
 
-		if reading.Signal == statistic.CUSUMUpper {
+		// Point B Ignition for Upper Excursion (only when idle)
+		if state.excursion == "" && reading.Signal == statistic.CUSUMUpper {
 			state.excursion = "upper"
 			state.startTick = reading.UpperStart
 			state.ignitionTick = obs.Sequence
+
+			if bestAsk > 0 {
+				state.entryPrice = bestAsk
+			} else {
+				state.entryPrice = tee.priceAtTick(symbol, state.startTick)
+				if state.entryPrice == 0 {
+					state.entryPrice = priceVal
+				}
+			}
+
+			state.extremumPrice = state.entryPrice
+			state.extremumTick = obs.Sequence
 			state.span = state.ignitionTick - state.startTick
 
 			if state.span < 1 {
 				state.span = 1
 			}
 
-			leadTick := state.startTick - state.span
+			leadSpan := state.span * 2
+			if leadSpan < 16 {
+				leadSpan = 16
+			}
+
+			leadTick := state.startTick - leadSpan
 
 			if leadTick < 1 {
 				leadTick = 1
@@ -159,20 +276,42 @@ func (tee *StoreTee) tag(measurement *data.Measurement[float64]) {
 
 			state.endTick = 0
 			state.tailTick = 0
+			state.reversalCandTick = 0
+			state.reversalCandPrice = 0
+			state.pullbackTicks = 0
+			state.windowTicks = 0 // Reset chop/flat tracking
 			tee.tagBuffer(symbol, "upper", state.startTick, leadTick)
 		}
 
-		if reading.Signal == statistic.CUSUMLower {
+		// Point B Ignition for Downward Excursion (only when idle)
+		if state.excursion == "" && reading.Signal == statistic.CUSUMLower {
 			state.excursion = "lower"
 			state.startTick = reading.LowerStart
 			state.ignitionTick = obs.Sequence
+
+			if bestBid > 0 {
+				state.entryPrice = bestBid
+			} else {
+				state.entryPrice = tee.priceAtTick(symbol, state.startTick)
+				if state.entryPrice == 0 {
+					state.entryPrice = priceVal
+				}
+			}
+
+			state.extremumPrice = state.entryPrice
+			state.extremumTick = obs.Sequence
 			state.span = state.ignitionTick - state.startTick
 
 			if state.span < 1 {
 				state.span = 1
 			}
 
-			leadTick := state.startTick - state.span
+			leadSpan := state.span * 2
+			if leadSpan < 16 {
+				leadSpan = 16
+			}
+
+			leadTick := state.startTick - leadSpan
 
 			if leadTick < 1 {
 				leadTick = 1
@@ -180,37 +319,231 @@ func (tee *StoreTee) tag(measurement *data.Measurement[float64]) {
 
 			state.endTick = 0
 			state.tailTick = 0
+			state.reversalCandTick = 0
+			state.reversalCandPrice = 0
+			state.pullbackTicks = 0
+			state.windowTicks = 0 // Reset chop/flat tracking
 			tee.tagBuffer(symbol, "lower", state.startTick, leadTick)
 		}
 
-		// Detect exhaustion / reversal (Point C)
-		if state.excursion == "upper" && state.ignitionTick > 0 && obs.Sequence > state.ignitionTick {
-			if reading.LowerSum < 0 || reading.UpperSum == 0 {
-				state.endTick = obs.Sequence
-				state.tailTick = state.endTick + state.span
+		// Noise-resistant tracking during active Upper Excursion
+		if state.excursion == "upper" {
+			if priceVal > state.extremumPrice {
+				// New high-water mark reached! Invalidate any pending candidate reversal.
+				state.extremumPrice = priceVal
+				state.extremumTick = obs.Sequence
+				state.reversalCandTick = 0
+				state.reversalCandPrice = 0
+				state.pullbackTicks = 0
+			} else if state.ignitionTick > 0 && obs.Sequence > state.ignitionTick && state.endTick == 0 {
+				drop := state.extremumPrice - priceVal
+				gain := state.extremumPrice - state.entryPrice
+
+				isCandidate := false
+				if gain > 0 {
+					// 38.2% Fibonacci pull-back or drop exceeding 2*hurdle or opposite CUSUM
+					if drop >= (0.382 * gain) || drop >= (2.0 * hurdle) || reading.Signal == statistic.CUSUMLower || priceVal <= state.entryPrice-hurdle {
+						isCandidate = true
+					}
+				} else if priceVal <= state.entryPrice-hurdle {
+					isCandidate = true
+				}
+
+				if isCandidate {
+					if state.reversalCandTick == 0 {
+						// First tick of pullback: mark candidate tick and price
+						state.reversalCandTick = obs.Sequence
+						state.reversalCandPrice = priceVal
+						state.pullbackTicks = 1
+					} else {
+						// Next tick: is it continuing or staying down?
+						if priceVal <= state.reversalCandPrice+(hurdle*0.5) || reading.Signal == statistic.CUSUMLower {
+							state.pullbackTicks++
+						} else {
+							// Price rebounded back up: it was just a 1-tick stop-loss hunter / wick!
+							state.reversalCandTick = 0
+							state.reversalCandPrice = 0
+							state.pullbackTicks = 0
+						}
+					}
+
+					// Confirm Point C only when sustained (>=2 ticks)
+					if state.pullbackTicks >= 2 {
+						state.endTick = state.reversalCandTick
+						if bestBid > 0 {
+							state.exitPrice = bestBid
+						} else {
+							state.exitPrice = priceVal
+						}
+						if state.exitPrice <= 0 {
+							state.exitPrice = priceVal
+						}
+						runSpan := state.extremumTick - state.ignitionTick
+						tailMargin := state.span
+						if runSpan/2 > tailMargin {
+							tailMargin = runSpan / 2
+						}
+						state.tailTick = obs.Sequence + tailMargin
+					}
+				} else {
+					if state.reversalCandTick > 0 {
+						// Recovered: reset candidate
+						state.reversalCandTick = 0
+						state.reversalCandPrice = 0
+						state.pullbackTicks = 0
+					}
+				}
 			}
 		}
 
-		if state.excursion == "lower" && state.ignitionTick > 0 && obs.Sequence > state.ignitionTick {
-			if reading.UpperSum > 0 || reading.LowerSum == 0 {
-				state.endTick = obs.Sequence
-				state.tailTick = state.endTick + state.span
+		// Noise-resistant tracking during active Downward Excursion
+		if state.excursion == "lower" {
+			if priceVal < state.extremumPrice || state.extremumPrice == 0 {
+				// New low-water mark reached!
+				state.extremumPrice = priceVal
+				state.extremumTick = obs.Sequence
+				state.reversalCandTick = 0
+				state.reversalCandPrice = 0
+				state.pullbackTicks = 0
+			} else if state.ignitionTick > 0 && obs.Sequence > state.ignitionTick && state.endTick == 0 {
+				bounce := priceVal - state.extremumPrice
+				drop := state.entryPrice - state.extremumPrice
+
+				isCandidate := false
+				if drop > 0 {
+					if bounce >= (0.382 * drop) || bounce >= (2.0 * hurdle) || reading.Signal == statistic.CUSUMUpper || priceVal >= state.entryPrice+hurdle {
+						isCandidate = true
+					}
+				} else if priceVal >= state.entryPrice+hurdle {
+					isCandidate = true
+				}
+
+				if isCandidate {
+					if state.reversalCandTick == 0 {
+						state.reversalCandTick = obs.Sequence
+						state.reversalCandPrice = priceVal
+						state.pullbackTicks = 1
+					} else {
+						if priceVal >= state.reversalCandPrice-(hurdle*0.5) || reading.Signal == statistic.CUSUMUpper {
+							state.pullbackTicks++
+						} else {
+							state.reversalCandTick = 0
+							state.reversalCandPrice = 0
+							state.pullbackTicks = 0
+						}
+					}
+
+					// Confirm Point C only when sustained (>=2 ticks)
+					if state.pullbackTicks >= 2 {
+						state.endTick = state.reversalCandTick
+						if bestAsk > 0 {
+							state.exitPrice = bestAsk
+						} else {
+							state.exitPrice = priceVal
+						}
+						if state.exitPrice <= 0 {
+							state.exitPrice = priceVal
+						}
+						runSpan := state.extremumTick - state.ignitionTick
+						tailMargin := state.span
+						if runSpan/2 > tailMargin {
+							tailMargin = runSpan / 2
+						}
+						state.tailTick = obs.Sequence + tailMargin
+					}
+				} else {
+					if state.reversalCandTick > 0 {
+						state.reversalCandTick = 0
+						state.reversalCandPrice = 0
+						state.pullbackTicks = 0
+					}
+				}
 			}
 		}
 
-		// Check if tail margin has completed
+		// Rolling evaluation for Chop and Flat lines when no directional excursion is active
+		if state.excursion == "" && priceVal > 0 {
+			if state.windowTicks == 0 {
+				state.windowStartTick = obs.Sequence
+				state.windowStartPrice = priceVal
+				state.windowHigh = priceVal
+				state.windowLow = priceVal
+				state.windowTicks = 1
+				state.dirFlips = 0
+				state.lastDeltaSign = 0
+			} else {
+				state.windowTicks++
+				if priceVal > state.windowHigh {
+					state.windowHigh = priceVal
+				}
+				if priceVal < state.windowLow {
+					state.windowLow = priceVal
+				}
+
+				delta := priceVal - state.windowStartPrice
+				deltaSign := 0
+				if delta > 0 {
+					deltaSign = 1
+				}
+				if delta < 0 {
+					deltaSign = -1
+				}
+				if deltaSign != 0 && state.lastDeltaSign != 0 && deltaSign != state.lastDeltaSign {
+					state.dirFlips++
+				}
+				if deltaSign != 0 {
+					state.lastDeltaSign = deltaSign
+				}
+
+				if state.windowTicks >= 32 {
+					rangeVal := state.windowHigh - state.windowLow
+
+					// Scenario 5: Flat line (near-zero range over 32 ticks)
+					if rangeVal <= 1.0*hurdle || (priceVal > 0 && rangeVal/priceVal < 0.0003) {
+						state.excursion = "flat"
+						state.startTick = state.windowStartTick
+						state.ignitionTick = state.windowStartTick + int64(state.windowTicks/2)
+						state.extremumTick = state.ignitionTick
+						state.endTick = obs.Sequence
+						state.tailTick = obs.Sequence
+						state.entryPrice = state.windowStartPrice
+						state.extremumPrice = (state.windowHigh + state.windowLow) / 2.0
+						state.exitPrice = priceVal
+						state.span = int64(state.windowTicks / 2)
+						tee.tagBuffer(symbol, "flat", state.startTick, state.startTick)
+						tee.completeExcursion(measurement, state, feeRate)
+						state.windowTicks = 0
+					} else if state.dirFlips >= 6 && rangeVal <= threshold {
+						// Scenario 4: Chop (oscillating noise trapped inside friction band)
+						state.excursion = "chop"
+						state.startTick = state.windowStartTick
+						state.ignitionTick = state.windowStartTick + int64(state.windowTicks/2)
+						state.extremumTick = state.ignitionTick
+						state.endTick = obs.Sequence
+						state.tailTick = obs.Sequence
+						state.entryPrice = state.windowStartPrice
+						state.extremumPrice = state.windowHigh
+						state.exitPrice = priceVal
+						state.span = int64(state.windowTicks / 2)
+						tee.tagBuffer(symbol, "chop", state.startTick, state.startTick)
+						tee.completeExcursion(measurement, state, feeRate)
+						state.windowTicks = 0
+					} else {
+						// Rolling slide
+						state.windowTicks = 16
+						state.windowStartTick = obs.Sequence - 16
+						state.windowStartPrice = priceVal
+						state.windowHigh = priceVal
+						state.windowLow = priceVal
+						state.dirFlips = 0
+					}
+				}
+			}
+		}
+
+		// Check if tail margin has completed for active excursion
 		if state.tailTick > 0 && obs.Sequence >= state.tailTick {
-			measurement.Metadata["excursion_event"] = "completed"
-			measurement.Metadata["excursion"] = state.excursion
-			measurement.Metadata["excursion_start"] = strconv.FormatInt(state.startTick, 10)
-			measurement.Metadata["excursion_ignition"] = strconv.FormatInt(state.ignitionTick, 10)
-			measurement.Metadata["excursion_end"] = strconv.FormatInt(state.endTick, 10)
-
-			state.excursion = ""
-			state.startTick = 0
-			state.ignitionTick = 0
-			state.endTick = 0
-			state.tailTick = 0
+			tee.completeExcursion(measurement, state, feeRate)
 		}
 	}
 
@@ -222,10 +555,105 @@ func (tee *StoreTee) tag(measurement *data.Measurement[float64]) {
 		measurement.Metadata["excursion"] = state.excursion
 		measurement.Metadata["excursion_start"] = strconv.FormatInt(state.startTick, 10)
 		measurement.Metadata["excursion_ignition"] = strconv.FormatInt(state.ignitionTick, 10)
+
 		if state.endTick > 0 {
 			measurement.Metadata["excursion_end"] = strconv.FormatInt(state.endTick, 10)
 		}
 	}
+}
+
+func (tee *StoreTee) completeExcursion(
+	measurement *data.Measurement[float64],
+	state *symbolState,
+	feeRate float64,
+) {
+	const positionSize = 40.0 // Realistic $40 position
+	var grossExcursion, profit, profitFraction, totalFee float64
+	clearsFriction := false
+	category := ""
+
+	if state.entryPrice > 0 {
+		entryCash := positionSize * (1.0 + feeRate)
+		var exitCash float64
+
+		if state.excursion == "upper" {
+			grossExcursion = (state.extremumPrice - state.entryPrice) / state.entryPrice
+			exitCash = positionSize * (state.exitPrice / state.entryPrice) * (1.0 - feeRate)
+			totalFee = (positionSize * feeRate) + (positionSize * (state.exitPrice / state.entryPrice) * feeRate)
+			profit = exitCash - entryCash
+			profitFraction = profit / entryCash
+
+			// Must be strictly profitable on a $40 position after taker fees and spread
+			if profit > 0 {
+				clearsFriction = true
+				category = "upper_profitable"
+			} else {
+				clearsFriction = false
+				category = "upper_unprofitable"
+			}
+		} else if state.excursion == "lower" {
+			grossExcursion = (state.entryPrice - state.extremumPrice) / state.entryPrice
+			exitCash = positionSize * (state.exitPrice / state.entryPrice) * (1.0 - feeRate)
+			totalFee = (positionSize * feeRate) + (positionSize * (state.exitPrice / state.entryPrice) * feeRate)
+			profit = exitCash - entryCash
+			profitFraction = profit / entryCash
+			clearsFriction = false
+			category = "downward"
+		} else if state.excursion == "chop" {
+			grossExcursion = math.Abs(state.extremumPrice-state.entryPrice) / state.entryPrice
+			exitCash = positionSize * (state.exitPrice / state.entryPrice) * (1.0 - feeRate)
+			totalFee = (positionSize * feeRate) + (positionSize * (state.exitPrice / state.entryPrice) * feeRate)
+			profit = exitCash - entryCash
+			profitFraction = profit / entryCash
+			clearsFriction = false
+			category = "chop"
+		} else if state.excursion == "flat" {
+			grossExcursion = math.Abs(state.extremumPrice-state.entryPrice) / state.entryPrice
+			exitCash = positionSize * (state.exitPrice / state.entryPrice) * (1.0 - feeRate)
+			totalFee = (positionSize * feeRate) + (positionSize * (state.exitPrice / state.entryPrice) * feeRate)
+			profit = exitCash - entryCash
+			profitFraction = profit / entryCash
+			clearsFriction = false
+			category = "flat"
+		}
+	}
+
+	if measurement.Metadata == nil {
+		measurement.Metadata = make(map[string]string)
+	}
+
+	measurement.Metadata["excursion_event"] = "completed"
+	measurement.Metadata["excursion"] = state.excursion
+	measurement.Metadata["excursion_category"] = category
+	measurement.Metadata["excursion_start"] = strconv.FormatInt(state.startTick, 10)
+	measurement.Metadata["excursion_ignition"] = strconv.FormatInt(state.ignitionTick, 10)
+	measurement.Metadata["excursion_extremum_tick"] = strconv.FormatInt(state.extremumTick, 10)
+	measurement.Metadata["excursion_end"] = strconv.FormatInt(state.endTick, 10)
+	measurement.Metadata["excursion_entry_price"] = strconv.FormatFloat(state.entryPrice, 'g', -1, 64)
+	measurement.Metadata["excursion_extremum_price"] = strconv.FormatFloat(state.extremumPrice, 'g', -1, 64)
+	measurement.Metadata["excursion_exit_price"] = strconv.FormatFloat(state.exitPrice, 'g', -1, 64)
+	measurement.Metadata["excursion_position_size"] = strconv.FormatFloat(positionSize, 'g', -1, 64)
+	measurement.Metadata["excursion_fee"] = strconv.FormatFloat(totalFee, 'g', -1, 64)
+	measurement.Metadata["excursion_profit"] = strconv.FormatFloat(profit, 'g', -1, 64)
+	measurement.Metadata["excursion_profit_fraction"] = strconv.FormatFloat(profitFraction, 'g', -1, 64)
+	measurement.Metadata["excursion_gross"] = strconv.FormatFloat(grossExcursion, 'g', -1, 64)
+	measurement.Metadata["excursion_clears_friction"] = strconv.FormatBool(clearsFriction)
+
+	// Reset state for next excursion
+	state.cusum = statistic.NewCUSUM()
+	state.excursion = ""
+	state.startTick = 0
+	state.ignitionTick = 0
+	state.extremumTick = 0
+	state.endTick = 0
+	state.tailTick = 0
+	state.entryPrice = 0
+	state.extremumPrice = 0
+	state.exitPrice = 0
+	state.reversalCandTick = 0
+	state.reversalCandPrice = 0
+	state.pullbackTicks = 0
+	state.windowTicks = 0
 }
 
 func (tee *StoreTee) tagBuffer(symbol, excursion string, startTick, leadTick int64) {

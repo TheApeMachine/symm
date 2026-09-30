@@ -74,6 +74,7 @@ export const LearningDashboard = () => {
 	const [abcMarkers, setAbcMarkers] = useState({ a: 0, b: 0, c: 0 });
 
 	// Impulse Map real nodes & regions
+	const knownNodesRef = useRef<Map<string, ImpulseNode>>(new Map());
 	const [impulseNodes, setImpulseNodes] = useState<ImpulseNode[]>([]);
 	const [impulseRegions, setImpulseRegions] = useState<
 		Array<{
@@ -465,63 +466,127 @@ export const LearningDashboard = () => {
 					}
 				}
 
-				const mappedNodes: ImpulseNode[] = [];
-				const regionActivity: Record<number, { activity: number; members: number }> = {};
-				
-				for (const peer of measurement.peers) {
-					if (!peer) continue;
-					
-					for (const metric of peer.metrics) {
-						if (!metric || !metric.name) continue;
-						
-						const nameStr = String(metric.name);
-						const x = Number(metric.x || 0n);
-						const y = Number(metric.y || 0n);
-						const regionId = metric.region || 0;
-						const raw = metric.raw || 0;
-						const activity = Math.abs(raw);
-						
-						mappedNodes.push({
-							id: nameStr,
-							label: String(peer.symbol || nameStr),
-							cluster: regionId,
-							snr: 1,
-							activation: activity,
-							value: raw,
-							x: x,
-							y: y,
-							present: true,
-						});
+				const grid = measurement.grid;
+				const isGridSymbolMatch =
+					!grid?.symbol ||
+					grid.symbol === focusSymbol ||
+					grid.symbol === "learner" ||
+					focusSymbol === "";
+				const quantities = isGridSymbolMatch ? grid?.quantities ?? [] : [];
+				let normalizedRegions: Array<{
+					id: number;
+					strength: number;
+					authority: number;
+					members: number;
+				}> = isGridSymbolMatch && grid?.regions
+					? grid.regions.map((r) => ({
+							id: Number(r.id),
+							strength: r.strength ?? 0,
+							authority: r.authority ?? 1.0,
+							members: r.members ?? 0,
+					  }))
+					: [];
 
-						if (regionId > 0) {
-							if (!regionActivity[regionId]) {
-								regionActivity[regionId] = { activity: 0, members: 0 };
+				let mappedNodes: ImpulseNode[] = [];
+				if (quantities.length > 0) {
+					mappedNodes = quantities.map((cell) => ({
+						id: String(cell.id),
+						label: String(cell.label ?? cell.source ?? `#${cell.id}`),
+						cluster: Number(cell.basin || 0),
+						snr: cell.quality ?? 0,
+						activation: cell.activity || 0,
+						value: cell.value ?? 0,
+						x: cell.x,
+						y: cell.y,
+						present: cell.present ?? true,
+					}));
+				} else {
+					const allPeers = [
+						...(measurement.metrics && measurement.metrics.length > 0
+							? [{ symbol: measurement.symbol, metrics: measurement.metrics }]
+							: []),
+						...(measurement.peers ?? []),
+					];
+
+					if (allPeers.length > 0) {
+						const regionActivity: Record<number, { activity: number; members: number }> = {};
+						for (const peer of allPeers) {
+							if (!peer) continue;
+							for (const metric of peer.metrics ?? []) {
+								if (!metric || !metric.name) continue;
+								const nameStr = String(metric.name);
+								const x = Number(metric.x || 0n);
+								const y = Number(metric.y || 0n);
+								const regionId = metric.region || 0;
+								const raw = metric.raw || 0;
+								const activity = Math.abs(raw);
+								mappedNodes.push({
+									id: nameStr,
+									label: String(peer.symbol || nameStr),
+									cluster: regionId,
+									snr: 1,
+									activation: activity,
+									value: raw,
+									x: x,
+									y: y,
+									present: true,
+								});
+								if (regionId > 0) {
+									if (!regionActivity[regionId]) {
+										regionActivity[regionId] = { activity: 0, members: 0 };
+									}
+									regionActivity[regionId].activity += activity;
+									regionActivity[regionId].members += 1;
+								}
 							}
-							regionActivity[regionId].activity += activity;
-							regionActivity[regionId].members += 1;
+						}
+						if (normalizedRegions.length === 0) {
+							normalizedRegions = Object.entries(regionActivity).map(([idStr, data]) => ({
+								id: Number(idStr),
+								strength: data.activity,
+								authority: 1.0,
+								members: data.members,
+							}));
 						}
 					}
 				}
 
-				const measuredRegions = Object.entries(regionActivity).map(([idStr, data]) => ({
-					id: Number(idStr),
-					strength: data.activity,
-					authority: 1.0,
-					members: data.members
-				}));
-
 				if (mappedNodes.length > 0) {
-					setImpulseNodes(mappedNodes);
-					setImpulseRegions(measuredRegions);
+					for (const node of mappedNodes) {
+						knownNodesRef.current.set(node.id, node);
+					}
+					const currentNodes = Array.from(knownNodesRef.current.values());
 
-					const sortedLitRegions = [...measuredRegions]
+					if (normalizedRegions.length === 0) {
+						const regionActivity: Record<number, { activity: number; members: number }> = {};
+						for (const node of currentNodes) {
+							if (node.cluster > 0) {
+								if (!regionActivity[node.cluster]) {
+									regionActivity[node.cluster] = { activity: 0, members: 0 };
+								}
+								regionActivity[node.cluster].activity += node.activation;
+								regionActivity[node.cluster].members += 1;
+							}
+						}
+						normalizedRegions = Object.entries(regionActivity).map(([idStr, data]) => ({
+							id: Number(idStr),
+							strength: data.activity,
+							authority: 1.0,
+							members: data.members,
+						}));
+					}
+
+					setImpulseNodes(currentNodes);
+					setImpulseRegions(normalizedRegions);
+
+					const sortedLitRegions = [...normalizedRegions]
 						.filter((r) => (r.strength || 0) > 0)
 						.sort((a, b) => (b.strength || 0) - (a.strength || 0));
 
 					if (sortedLitRegions.length > 0) {
 						setActivePrecursors(
 							sortedLitRegions.slice(0, 4).map((r, idx) => {
-								const peakCell = mappedNodes.find(
+								const peakCell = currentNodes.find(
 									(c) => Number(c.cluster) === Number(r.id),
 								);
 								const name = peakCell?.label
@@ -536,7 +601,7 @@ export const LearningDashboard = () => {
 					}
 				}
 
-				const activeRegions = measuredRegions.map((region) => ({
+				const activeRegions = normalizedRegions.map((region) => ({
 					source: String(
 						mappedNodes.find((cell) => cell.cluster === region.id)?.label ??
 							region.id,
@@ -614,18 +679,30 @@ export const LearningDashboard = () => {
 				) as HTMLElement;
 
 				if (mapPointsEl) {
-					const points: Point[] = mappedNodes.map((cell) => ({
-						id: cell.id,
-						source: String(cell.label),
-						label: String(cell.label),
-						x: cell.x || 0,
-						y: cell.y || 0,
-						value: cell.value || 0,
-						energy: cell.activation,
-						authority: cell.snr,
-						present: cell.present || false,
-					}));
-					const regions: Region[] = measuredRegions.map((region) => ({
+					const points: Point[] = quantities.length > 0
+						? quantities.map((cell) => ({
+								id: Number(cell.id),
+								source: String(cell.source ?? ""),
+								label: String(cell.label ?? ""),
+								x: cell.x,
+								y: cell.y,
+								value: cell.value,
+								energy: cell.activity,
+								authority: cell.quality,
+								present: cell.present,
+						  }))
+						: mappedNodes.map((cell) => ({
+								id: cell.id,
+								source: String(cell.label),
+								label: String(cell.label),
+								x: cell.x || 0,
+								y: cell.y || 0,
+								value: cell.value || 0,
+								energy: cell.activation,
+								authority: cell.snr,
+								present: cell.present || false,
+						  }));
+					const regions: Region[] = normalizedRegions.map((region) => ({
 						id: Number(region.id),
 						strength: region.strength,
 						authority: region.authority,

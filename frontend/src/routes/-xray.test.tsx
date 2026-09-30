@@ -34,7 +34,7 @@ const publish = (symbol: string, embedding: number[]) => {
 	ring.add(row);
 	resonanceStore.setState((state) => ({
 		...state,
-		[symbol]: ring,
+		[symbol]: ring as unknown as any,
 	}));
 };
 

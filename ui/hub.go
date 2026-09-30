@@ -439,10 +439,6 @@ func (hub *Hub) handleCommand(payload []byte) {
 		types.SetFocus(request.Symbol)
 	case "route":
 		types.SetRoute(request.Route)
-	case "position.exit":
-		if hub.exitHandler != nil && request.Symbol != "" {
-			hub.exitHandler(request.Symbol)
-		}
 	}
 }
 
