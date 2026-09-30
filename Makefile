@@ -4,6 +4,7 @@
 # Outside Make, run: export GOFLAGS=-ldflags=-checklinkname=0
 # No inner quotes: a single shell layer passes the flag through unambiguously.
 export GOFLAGS := -ldflags=-checklinkname=0
+export GOEXPERIMENT := arenas
 
 LDFLAGS := $(GOFLAGS)
 

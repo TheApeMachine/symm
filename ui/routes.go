@@ -129,11 +129,13 @@ func (routes *Routes) Register() {
 				continue
 			}
 
-			err := types.EncodeMeasurementsFrameWith(batch, func(payload []byte) error {
-				return conn.WriteMessage(websocket.BinaryMessage, payload)
-			})
+			payload, err := types.EncodeMeasurements(batch)
 
 			if err != nil {
+				return
+			}
+
+			if err := conn.WriteMessage(websocket.BinaryMessage, payload); err != nil {
 				return
 			}
 
@@ -141,11 +143,13 @@ func (routes *Routes) Register() {
 		}
 
 		if len(batch) > 0 {
-			err := types.EncodeMeasurementsFrameWith(batch, func(payload []byte) error {
-				return conn.WriteMessage(websocket.BinaryMessage, payload)
-			})
+			payload, err := types.EncodeMeasurements(batch)
 
 			if err != nil {
+				return
+			}
+
+			if err := conn.WriteMessage(websocket.BinaryMessage, payload); err != nil {
 				return
 			}
 		}

@@ -91,7 +91,15 @@ func (tee *StoreTee) tag(measurement *data.Measurement[float64]) {
 		tee.states[symbol] = state
 	}
 
-	if priceMetric, hasPrice := measurement.Metrics["price"]; hasPrice && priceMetric.Raw > 0 {
+	var priceVal float64
+	for _, key := range []string{"price", "last_price", "last", "spot_price", "reference_price", "midpoint"} {
+		if metric, ok := measurement.Metrics[key]; ok && metric.Raw > 0 {
+			priceVal = metric.Raw
+			break
+		}
+	}
+
+	if priceVal > 0 {
 		var hurdle float64
 		var threshold float64
 
@@ -100,13 +108,22 @@ func (tee *StoreTee) tag(measurement *data.Measurement[float64]) {
 			threshold = spreadMetric.Raw * 2.0
 		}
 
+		if hurdle == 0 {
+			if relSpread, has := measurement.Metrics["relative_spread"]; has && relSpread.Raw > 0 {
+				spreadVal := relSpread.Raw * priceVal
+				hurdle = spreadVal / 2.0
+				threshold = spreadVal * 2.0
+			}
+		}
+
 		if hurdle == 0 && measurement.SNRDefined && measurement.SNR > 0 {
-			hurdle = priceMetric.Raw / measurement.SNR
+			hurdle = priceVal / measurement.SNR
+			threshold = hurdle * 4.0
 		}
 
 		obs := statistic.CUSUMObservation{
 			Sequence:  measurement.SeqIdx,
-			Value:     priceMetric.Raw,
+			Value:     priceVal,
 			Hurdle:    hurdle,
 			Threshold: threshold,
 		}
@@ -183,6 +200,12 @@ func (tee *StoreTee) tag(measurement *data.Measurement[float64]) {
 
 		// Check if tail margin has completed
 		if state.tailTick > 0 && obs.Sequence >= state.tailTick {
+			measurement.Metadata["excursion_event"] = "completed"
+			measurement.Metadata["excursion"] = state.excursion
+			measurement.Metadata["excursion_start"] = strconv.FormatInt(state.startTick, 10)
+			measurement.Metadata["excursion_ignition"] = strconv.FormatInt(state.ignitionTick, 10)
+			measurement.Metadata["excursion_end"] = strconv.FormatInt(state.endTick, 10)
+
 			state.excursion = ""
 			state.startTick = 0
 			state.ignitionTick = 0
@@ -198,6 +221,10 @@ func (tee *StoreTee) tag(measurement *data.Measurement[float64]) {
 
 		measurement.Metadata["excursion"] = state.excursion
 		measurement.Metadata["excursion_start"] = strconv.FormatInt(state.startTick, 10)
+		measurement.Metadata["excursion_ignition"] = strconv.FormatInt(state.ignitionTick, 10)
+		if state.endTick > 0 {
+			measurement.Metadata["excursion_end"] = strconv.FormatInt(state.endTick, 10)
+		}
 	}
 }
 

@@ -24,13 +24,13 @@ import {
 	retainResonanceRow,
 } from "#/components/terminal/xray-view";
 import { Flex } from "#/components/ui";
-import type { ResonanceT } from "#/providers/telemetry/telemetry/resonance";
+import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
 
 const XrayPaintBridge = () => {
 	const focusSymbol = useSelector(focusAtom);
 
 	useEffect(() => {
-		const updatePaint = (state: Record<string, RingBuffer<ResonanceT>>) => {
+		const updatePaint = (state: Record<string, RingBuffer<MeasurementT>>) => {
 			for (const ring of Object.values(state)) {
 				const last = ring && !ring.isEmpty() ? ring.getLast() : null;
 

@@ -14,6 +14,14 @@ func Free(allocator Allocator) {
 	(*arena.Arena)(allocator).Free()
 }
 
+func New[T any](allocator Allocator) *T {
+	if allocator == nil {
+		return new(T)
+	}
+
+	return arena.New[T](allocator)
+}
+
 func MakeSlice[T any](allocator Allocator, l, c int) []T {
 	if allocator == nil {
 		return make([]T, l, c)

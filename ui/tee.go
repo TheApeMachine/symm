@@ -2,14 +2,10 @@ package ui
 
 import (
 	"context"
-	"sync/atomic"
-	"time"
 	"unsafe"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/learning/associative/grid"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/types"
 	"golang.design/x/lockfree/lf"
@@ -23,26 +19,21 @@ It satisfies runtime.Tee[*data.Measurement[float64], []byte].
 */
 type UITee struct {
 	*runtime.System
-	queue              *lf.Queue[*data.Measurement[float64]]
-	bound              uint64
-	snapshot           func() *types.ManifoldState
-	projectionInterval time.Duration
-	lastProjection     atomic.Int64
+	queue     *lf.Queue[*data.Measurement[float64]]
+	batchSize int
 }
 
 /*
 NewUITee creates a new wait-free UITee off-ramp.
 */
-func NewUITee(ctx context.Context, label string, capacity int) *UITee {
-	if capacity < 1 {
-		capacity = 1
+func NewUITee(ctx context.Context, label string, batchSize int) *UITee {
+	if batchSize < 1 {
+		batchSize = 1
 	}
 
-	viper.SetDefault("ui.websocket.learning_interval", "250ms")
 	tee := &UITee{
-		queue:              lf.NewQueue[*data.Measurement[float64]](),
-		bound:              uint64(capacity),
-		projectionInterval: viper.GetDuration("ui.websocket.learning_interval"),
+		queue:     lf.NewQueue[*data.Measurement[float64]](),
+		batchSize: batchSize,
 	}
 
 	tee.System = runtime.NewSystem(ctx, label, tee)
@@ -68,27 +59,7 @@ func (tee *UITee) Push(measurement *data.Measurement[float64]) {
 		return
 	}
 
-	if tee.queue.Length() >= tee.bound {
-		return
-	}
-
-	if _, projection := measurement.Result.(interface{ Snapshot() any }); projection {
-		now := time.Now().UnixNano()
-		previous := tee.lastProjection.Load()
-
-		if now-previous < int64(tee.projectionInterval) || !tee.lastProjection.CompareAndSwap(previous, now) {
-			return
-		}
-	}
-
-	publication := measurement.Clone()
-	publication.Peers = nil
-
-	if projection, ok := measurement.Result.(interface{ Snapshot() *grid.Snapshot }); ok {
-		publication.Result = projection.Snapshot()
-	}
-
-	tee.queue.Enqueue(publication)
+	tee.queue.Enqueue(measurement)
 }
 
 /*
@@ -101,10 +72,9 @@ func (tee *UITee) Next() unsafe.Pointer {
 		return nil
 	}
 
-	const batchCapacity = 32
-	batch := make([]*data.Measurement[float64], 0, batchCapacity)
+	batch := make([]*data.Measurement[float64], 0, tee.batchSize)
 
-	for len(batch) < batchCapacity {
+	for len(batch) < tee.batchSize {
 		measurement, ok := tee.queue.Dequeue()
 
 		if !ok {
@@ -120,23 +90,17 @@ func (tee *UITee) Next() unsafe.Pointer {
 		return nil
 	}
 
-	var payload []byte
-
-	err := types.EncodeMeasurementsFrameWith(batch, func(frame []byte) error {
-		payload = make([]byte, len(frame))
-		copy(payload, frame)
-		return nil
-	})
+	measurements, err := types.EncodeMeasurements(batch)
 
 	if err != nil {
 		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"ui tee: failed to encode measurements frame",
+			errnie.UnprocessableContent,
+			"[tee] Failed to encode measurements",
 			err,
 		))
 
 		return nil
 	}
 
-	return unsafe.Pointer(&payload)
+	return unsafe.Pointer(&measurements)
 }

@@ -1,18 +1,19 @@
 import { useSelector } from "@tanstack/react-store";
 import { focusAtom, resonanceStore } from "#/collections/app";
-import type { ResonanceT } from "#/providers/telemetry/telemetry/resonance";
+import { parseResonanceData, type ResonanceData } from "#/components/charts/prediction";
 
 export const LiveResonanceTitle = () => {
 	const symbol = useSelector(focusAtom);
-	const artifact: ResonanceT | null = useSelector(resonanceStore, (state) => {
+	const artifact: ResonanceData | null = useSelector(resonanceStore, (state) => {
 		const ring = state[symbol];
-		return ring && !ring.isEmpty() ? (ring.getLast() ?? null) : null;
+		const last = ring && !ring.isEmpty() ? (ring.getLast() ?? null) : null;
+		return last ? (parseResonanceData(last) ?? null) : null;
 	});
 
-	const horizonVal = artifact ? Number(artifact.supportedHorizon) : "—";
-	const reachVal = artifact ? artifact.forwardCurve.length : "—";
+	const horizonVal = artifact && artifact.supportedHorizon != null ? Number(artifact.supportedHorizon) : "—";
+	const reachVal = artifact?.forwardCurve ? artifact.forwardCurve.length : "—";
 	const precision =
-		artifact && Number.isFinite(artifact.taskRelativePrecision)
+		artifact && typeof artifact.taskRelativePrecision === "number" && Number.isFinite(artifact.taskRelativePrecision)
 			? artifact.taskRelativePrecision.toFixed(3)
 			: "—";
 

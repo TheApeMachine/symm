@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"time"
@@ -15,17 +16,21 @@ import (
 )
 
 type WebRTC struct {
+	*runtime.System
 	hub      *Hub
 	pc       *webrtc.PeerConnection
 	channels sync.Map
+	tee      runtime.Tee
 }
 
-func NewWebRTC(hub *Hub) *WebRTC {
+func NewWebRTC(ctx context.Context, hub *Hub, tee runtime.Tee) *WebRTC {
 	wrtc := &WebRTC{
 		hub: hub,
+		tee: tee,
 	}
 
 	wrtc.Register()
+	wrtc.System = runtime.NewSystem(ctx, "webrtc", wrtc)
 
 	return wrtc
 }
@@ -187,7 +192,7 @@ func (wrtc *WebRTC) Send(label string, payload []byte) {
 	})
 }
 
-func (wrtc *WebRTC) Run(tee *WebRTCTee) error {
+func (wrtc *WebRTC) Run() error {
 	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -196,32 +201,12 @@ func (wrtc *WebRTC) Run(tee *WebRTCTee) error {
 		case <-wrtc.hub.Context().Done():
 			return nil
 		case <-ticker.C:
-			if tee.Status() != runtime.READY {
-				continue
-			}
+			for pointer := wrtc.tee.Next(); pointer != nil; pointer = wrtc.tee.Next() {
+				// UITee yields unsafe.Pointer to []byte containing MeasurementsFrameT flatbuffer.
+				payload := *(*[]byte)(pointer)
 
-			for pointer := tee.Next(); pointer != nil; pointer = tee.Next() {
-				switch artifact := (*(*any)(pointer)).(type) {
-				case *types.ManifoldState:
-					payload := encodeManifold(artifact)
-					wrtc.Send(types.ManifoldChannel, payload)
-				case *types.ResonanceArtifact:
-					wireRow := artifact.EncodeWire(types.Allows(artifact.Symbol))
-
-					if wireRow != nil {
-						frame := &telemetry.ResonanceFrameT{
-							Rows: []*telemetry.ResonanceT{wireRow},
-						}
-						msg := &telemetry.MessageT{
-							Frame: &telemetry.FrameT{
-								Type:  telemetry.FrameResonanceFrame,
-								Value: frame,
-							},
-						}
-						payload := wrapMessage(msg)
-						wrtc.Send(types.ResonanceChannel, payload)
-					}
-				}
+				// Send the MeasurementsFrameT payload to the "telemetry" channel on WebRTC.
+				wrtc.Send(types.ChannelTelemetry, payload)
 			}
 		}
 	}
@@ -238,192 +223,6 @@ func wrapMessage(msg *telemetry.MessageT) []byte {
 		builder.Reset()
 		webrtcBuilders.Put(builder)
 	}()
-
-	offset := msg.Pack(builder)
-	telemetry.FinishMessageBuffer(builder, offset)
-
-	encoded := builder.FinishedBytes()
-	frameBytes := make([]byte, len(encoded))
-	copy(frameBytes, encoded)
-
-	return frameBytes
-}
-
-func encodeManifold(state *types.ManifoldState) []byte {
-	builder := webrtcBuilders.Get().(*flatbuffers.Builder)
-
-	defer func() {
-		builder.Reset()
-		webrtcBuilders.Put(builder)
-	}()
-
-	health := &telemetry.PhysicsHealthT{
-		Integrator: &telemetry.IntegratorHealthT{
-			ContactDt:    state.Reading.Health.Integrator.ContactDT,
-			RequestedDt:  state.Reading.Health.Integrator.RequestedDT,
-			TargetDt:     state.Reading.Health.Integrator.TargetDT,
-			AcceptedDt:   state.Reading.Health.Integrator.AcceptedDT,
-			LastDt:       state.Reading.Health.Integrator.LastDT,
-			MinDt:        state.Reading.Health.Integrator.MinDT,
-			Time:         state.Reading.Health.Integrator.Time,
-			HyperbolicDt: state.Reading.Health.Integrator.HyperbolicDT,
-			ViscousDt:    state.Reading.Health.Integrator.ViscousDT,
-			ThermalDt:    state.Reading.Health.Integrator.ThermalDT,
-			ParticleDt:   state.Reading.Health.Integrator.ParticleDT,
-			PhaseDt:      state.Reading.Health.Integrator.PhaseDT,
-			CombinedDt:   state.Reading.Health.Integrator.CombinedDT,
-			Substeps:     int32(state.Reading.Health.Integrator.Substeps),
-			Rejections:   int32(state.Reading.Health.Integrator.Rejections),
-		},
-		Gas: &telemetry.GasHealthT{
-			Mass:           state.Reading.Health.Gas.Mass,
-			Internal:       state.Reading.Health.Gas.Internal,
-			Kinetic:        state.Reading.Health.Gas.Kinetic,
-			Total:          state.Reading.Health.Gas.Total,
-			Momentum:       state.Reading.Health.Gas.Momentum[:],
-			MinDensity:     state.Reading.Health.Gas.MinDensity,
-			MinPressure:    state.Reading.Health.Gas.MinPressure,
-			MinTemperature: state.Reading.Health.Gas.MinTemperature,
-			MaxSpeed:       state.Reading.Health.Gas.MaxSpeed,
-			MaxSound:       state.Reading.Health.Gas.MaxSound,
-			MaxMach:        state.Reading.Health.Gas.MaxMach,
-			VorticityRms:   state.Reading.Health.Gas.VorticityRMS,
-			VorticityMax:   state.Reading.Health.Gas.VorticityMax,
-			StrainRms:      state.Reading.Health.Gas.StrainRMS,
-			StrainMax:      state.Reading.Health.Gas.StrainMax,
-			ViscousPower:   state.Reading.Health.Gas.ViscousPower,
-		},
-		Wave: &telemetry.WaveHealthT{
-			Norm:           state.Reading.Health.Wave.Norm,
-			Kinetic:        state.Reading.Health.Wave.Kinetic,
-			Potential:      state.Reading.Health.Wave.Potential,
-			Nonlinear:      state.Reading.Health.Wave.Nonlinear,
-			Chemical:       state.Reading.Health.Wave.Chemical,
-			ProjectedNorm:  state.Reading.Health.Wave.ProjectedNorm,
-			PhasePotential: state.Reading.Health.Wave.PhasePotential,
-		},
-		Pilot: &telemetry.PilotHealthT{
-			DensityP01:          state.Reading.Health.Pilot.DensityP01,
-			DensityP10:          state.Reading.Health.Pilot.DensityP10,
-			DensityMedian:       state.Reading.Health.Pilot.DensityMedian,
-			IntegrationErrorMax: state.Reading.Health.Pilot.IntegrationErrorMax,
-			SpeedRms:            state.Reading.Health.Pilot.SpeedRMS,
-			SpeedMax:            state.Reading.Health.Pilot.SpeedMax,
-			DisplacementRms:     state.Reading.Health.Pilot.DisplacementRMS,
-			DisplacementMax:     state.Reading.Health.Pilot.DisplacementMax,
-			MinDensity:          state.Reading.Health.Pilot.MinDensity,
-		},
-		Sources: &telemetry.SourceLedgerT{
-			GasEnergyResidual:        state.Reading.Health.Sources.GasEnergyResidual,
-			ConservativeWaveError:    state.Reading.Health.Sources.ConservativeWaveError,
-			PicDepositEnergyResidual: state.Reading.Health.Sources.PICDepositEnergyResidual,
-			ParticleBalanceResidual:  state.Reading.Health.Sources.ParticleBalanceResidual,
-			GravityBalanceResidual:   state.Reading.Health.Sources.GravityBalanceResidual,
-		},
-		ParticleThermal:       state.Reading.Health.ParticleThermal,
-		ParticleOscillator:    state.Reading.Health.ParticleOscillator,
-		ParticleKinetic:       state.Reading.Health.ParticleKinetic,
-		ParticleMaterialTotal: state.Reading.Health.ParticleMaterialTotal,
-	}
-
-	reading := &telemetry.ManifoldReadingT{
-		Divergence:       state.Reading.Divergence,
-		GuidanceSpeed:    state.Reading.GuidanceSpeed,
-		CoherenceMag2:    state.Reading.CoherenceMag2,
-		PressureGradNorm: state.Reading.PressureGradNorm,
-		ViscosityProxy:   state.Reading.ViscosityProxy,
-		KuramotoR:        state.Reading.KuramotoR,
-		KuramotoPsi:      state.Reading.KuramotoPsi,
-		Health:           health,
-	}
-
-	modes := make([]*telemetry.WaveModeT, len(state.Modes))
-
-	for index, mode := range state.Modes {
-		modes[index] = &telemetry.WaveModeT{
-			Omega:     mode.Omega,
-			Real:      mode.Real,
-			Imaginary: mode.Imag,
-			Linewidth: mode.Linewidth,
-		}
-	}
-
-	resultants := make([]*telemetry.PhaseResultantT, len(state.Resultants))
-
-	for index, resultant := range state.Resultants {
-		resultants[index] = &telemetry.PhaseResultantT{
-			Side:           resultant.Side,
-			Count:          int32(resultant.Count),
-			TotalAmplitude: resultant.TotalAmplitude,
-			Coherence:      resultant.Coherence,
-			Phase:          resultant.Phase,
-		}
-	}
-
-	var particleCount int64
-	var bytes, seqs, tokenIds, contentIds []int64
-	var phase, omega, energy, mass, heat, amp, pos, vel []float32
-	var clamped, dark []bool
-
-	if state.State != nil {
-		particleCount = int64(state.State.N)
-		bytes = state.State.Bytes
-		seqs = state.State.Seqs
-		tokenIds = state.State.TokenIDs
-		contentIds = state.State.ContentIDs
-		phase = state.State.Phase
-		omega = state.State.Omega
-		energy = state.State.Energy
-		mass = state.State.Mass
-		heat = state.State.Heat
-		amp = state.State.Amp
-		pos = state.State.Pos
-		vel = state.State.Vel
-		clamped = state.State.Clamped
-		dark = state.State.Dark
-	}
-
-	frame := &telemetry.ManifoldFrameT{
-		At:            state.At.UnixNano(),
-		Version:       state.Version,
-		N:             particleCount,
-		Bytes:         bytes,
-		Seqs:          seqs,
-		TokenIds:      tokenIds,
-		ContentIds:    contentIds,
-		Phase:         phase,
-		Omega:         omega,
-		Energy:        energy,
-		Mass:          mass,
-		Heat:          heat,
-		Amp:           amp,
-		Pos:           pos,
-		Vel:           vel,
-		Clamped:       clamped,
-		Dark:          dark,
-		Reading:       reading,
-		GridX:         int32(state.GridX),
-		GridY:         int32(state.GridY),
-		GridZ:         int32(state.GridZ),
-		GridSpacing:   state.GridSpacing,
-		MomRho:        state.MomRho,
-		FieldEnergy:   state.FieldEnergy,
-		WaveReal:      state.WaveReal,
-		WaveImag:      state.WaveImag,
-		DensityScale:  state.DensityScale,
-		MomentumScale: state.MomentumScale,
-		EnergyScale:   state.EnergyScale,
-		WaveScale:     state.WaveScale,
-		Modes:         modes,
-		Resultants:    resultants,
-	}
-
-	msg := &telemetry.MessageT{
-		Frame: &telemetry.FrameT{
-			Type:  telemetry.FrameManifoldFrame,
-			Value: frame,
-		},
-	}
 
 	offset := msg.Pack(builder)
 	telemetry.FinishMessageBuffer(builder, offset)

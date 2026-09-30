@@ -3,151 +3,151 @@
     "metrics": [
       {
         "label": "checksum",
-        "raw": 3675554932,
+        "raw": 1991984697,
         "exact": "1538799887",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274224,
+        "y": 17274271,
+        "region": 71
       },
       {
         "label": "limit_price",
-        "raw": 0.01375,
+        "raw": 0.3273,
         "exact": "0.001402",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274224,
+        "y": 17274271,
+        "region": 71
       },
       {
         "label": "order_qty",
-        "raw": 450,
+        "raw": 60.18282,
         "exact": "31010.94373072",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274224,
+        "y": 17274271,
+        "region": 71
       },
       {
         "label": "bid",
-        "raw": 9.017,
+        "raw": 0.7735,
         "exact": "0.4935",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274224,
+        "y": 17274271,
+        "region": 71
       },
       {
         "label": "index_price",
-        "raw": 9.0279,
+        "raw": 0.77397,
         "exact": "0.49391",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274224,
+        "y": 17274271,
+        "region": 71
       },
       {
         "label": "last",
-        "raw": 9.06,
+        "raw": 0.7732,
         "exact": "0.4926",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274224,
+        "y": 17274271,
+        "region": 71
       },
       {
         "label": "last_price",
-        "raw": 9.06,
+        "raw": 0.7732,
         "exact": "0.4926",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274224,
+        "y": 17274271,
+        "region": 71
       },
       {
         "label": "open_interest",
-        "raw": 208301.3,
+        "raw": 307972.4,
         "exact": "2279233",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274224,
+        "y": 17274271,
+        "region": 71
       },
       {
         "label": "volume",
-        "raw": 71153.9,
+        "raw": 1077183.6,
         "exact": "8490652",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274224,
+        "y": 17274271,
+        "region": 71
       },
       {
         "label": "ask",
-        "raw": 9.028,
+        "raw": 0.7745,
         "exact": "0.4943",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274224,
+        "y": 17274271,
+        "region": 71
       },
       {
         "label": "mark_price",
-        "raw": 9.02604096497,
+        "raw": 0.77358829969,
         "exact": "0.49402345306",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274224,
+        "y": 17274271,
+        "region": 71
       },
       {
         "label": "correlation_baseline",
-        "raw": 0.010540602486993194,
+        "raw": 0.017555552822342647,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274224,
+        "y": 17274271,
+        "region": 71
       },
       {
         "label": "correlation_velocity",
-        "raw": -0.017118335347482822,
+        "raw": -0.000042844846097251464,
         "scale": 1,
         "unit": "per_second",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274224,
+        "y": 17274271,
+        "region": 71
       },
       {
         "label": "cohort_correlation_dispersion",
-        "raw": 0.09250906035208553,
+        "raw": 0.1367499239490263,
         "scale": 1,
         "unit": "nat",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274224,
+        "y": 17274271,
+        "region": 71
       },
       {
         "label": "cohort_signed_correlation",
-        "raw": 0.003511319605348797,
+        "raw": -0.010276052490952498,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274224,
+        "y": 17274271,
+        "region": 71
       },
       {
         "label": "overlap_density",
-        "raw": 2.8259803679143842,
+        "raw": 0.8809584454004389,
         "scale": 1,
         "unit": "per_second",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274224,
+        "y": 17274271,
+        "region": 71
       },
       {
         "label": "supported_return_count:reference",
-        "raw": 2,
+        "raw": 166,
         "scale": 1,
         "unit": "count",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274224,
+        "y": 17274271,
+        "region": 71
       },
       {
         "label": "relative_return_energy_velocity",
@@ -155,19 +155,19 @@
         "scale": 1,
         "unit": "per_second",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274224,
+        "y": 17274271,
+        "region": 71
       },
       {
         "label": "return_energy:reference",
-        "raw": 3.248049931395693e-8,
+        "raw": 0.0026168329020469115,
         "scale": 1,
         "unit": "nat",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274224,
+        "y": 17274271,
+        "region": 71
       },
       {
         "label": "absolute_correlation",
@@ -175,9 +175,9 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274224,
+        "y": 17274271,
+        "region": 71
       },
       {
         "label": "return_energy_rate:measured",
@@ -185,20 +185,20 @@
         "scale": 1,
         "unit": "per_second",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274224,
+        "y": 17274271,
+        "region": 71
       },
       {
         "label": "observation_count",
-        "raw": 61,
+        "raw": 247,
         "standardized": 1,
         "scale": 1,
         "unit": "count",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274224,
+        "y": 17274271,
+        "region": 71
       },
       {
         "label": "relative_return_energy_zscore",
@@ -206,19 +206,19 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274224,
+        "y": 17274271,
+        "region": 71
       },
       {
         "label": "peer_return_energy_rate",
-        "raw": 0.0000011520395851804386,
+        "raw": 0.0000010936163809970883,
         "scale": 1,
         "unit": "per_second",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274224,
+        "y": 17274271,
+        "region": 71
       },
       {
         "label": "relative_return_energy_baseline",
@@ -226,19 +226,19 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274224,
+        "y": 17274271,
+        "region": 71
       },
       {
         "label": "cohort_absolute_correlation",
-        "raw": 0.023627140472186826,
+        "raw": 0.05187059004114411,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274224,
+        "y": 17274271,
+        "region": 71
       },
       {
         "label": "signed_correlation",
@@ -246,39 +246,39 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274224,
+        "y": 17274271,
+        "region": 71
       },
       {
         "label": "return_energy_rate:reference",
-        "raw": 8.194867449513986e-8,
+        "raw": 0,
         "scale": 1,
         "unit": "per_second",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274224,
+        "y": 17274271,
+        "region": 71
       },
       {
         "label": "return_energy:measured",
-        "raw": 0.0000011975504265182147,
+        "raw": 0.000015112858038104154,
         "scale": 1,
         "unit": "nat",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274224,
+        "y": 17274271,
+        "region": 71
       },
       {
         "label": "correlation_divergence",
-        "raw": -0.007029658845538317,
+        "raw": -0.027833770902886412,
         "scale": 1,
         "unit": "nat",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274224,
+        "y": 17274271,
+        "region": 71
       },
       {
         "label": "relative_return_energy",
@@ -286,69 +286,69 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274224,
+        "y": 17274271,
+        "region": 71
       },
       {
         "label": "overlap_pair_count",
-        "raw": 2,
+        "raw": 312,
         "scale": 1,
         "unit": "count",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274224,
+        "y": 17274271,
+        "region": 71
       },
       {
         "label": "supported_return_count:measured",
-        "raw": 79,
+        "raw": 246,
         "scale": 1,
         "unit": "count",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274224,
+        "y": 17274271,
+        "region": 71
       },
       {
         "label": "cohort_effective_peer_count",
-        "raw": 120.76593424275472,
+        "raw": 167.96180061778713,
         "scale": 1,
         "unit": "count",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274224,
+        "y": 17274271,
+        "region": 71
       },
       {
         "label": "correlation_zscore",
-        "raw": -0.4708841078686863,
+        "raw": -0.7045285000174517,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274224,
+        "y": 17274271,
+        "region": 71
       },
       {
         "label": "correlation_standard_error_fisher",
-        "raw": 0.10050378152592121,
+        "raw": 0.051708768999501914,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274224,
+        "y": 17274271,
+        "region": 71
       },
       {
         "label": "shared_time",
-        "raw": 0.707719,
+        "raw": 427.943,
         "scale": 1,
         "unit": "second",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274224,
+        "y": 17274271,
+        "region": 71
       },
       {
         "label": "relative_return_energy_divergence",
@@ -356,29 +356,29 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274224,
+        "y": 17274271,
+        "region": 71
       },
       {
         "label": "correlation_p_value",
-        "raw": 7.723310454836342e-20,
+        "raw": 5.516894190224333e-31,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274224,
+        "y": 17274271,
+        "region": 71
       },
       {
         "label": "cohort_peer_count",
-        "raw": 0,
+        "raw": 209,
         "scale": 1,
         "unit": "count",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274224,
+        "y": 17274271,
+        "region": 71
       },
       {
         "label": "covariance",
@@ -386,39 +386,39 @@
         "scale": 1,
         "unit": "nat",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274224,
+        "y": 17274271,
+        "region": 71
       },
       {
         "label": "lag_search_span",
-        "raw": 0.35385950000000005,
+        "raw": 279.345,
         "scale": 1,
         "unit": "second",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274224,
+        "y": 17274271,
+        "region": 71
       },
       {
         "label": "best_lag_correlation_zscore",
-        "raw": 0,
+        "raw": 0.3690261539420223,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274224,
+        "y": 17274271,
+        "region": 71
       },
       {
         "label": "lag_search_resolution_seconds",
-        "raw": 0.35385950000000005,
+        "raw": 1.693,
         "scale": 1,
         "unit": "second",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274225,
+        "y": 17274272,
+        "region": 98
       },
       {
         "label": "correlation_gain_velocity",
@@ -426,169 +426,169 @@
         "scale": 1,
         "unit": "per_second",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274226,
+        "y": 17274273,
+        "region": 125
       },
       {
         "label": "lag_divergence_seconds",
-        "raw": 0,
+        "raw": 0.8503333333333245,
         "scale": 1,
         "unit": "second",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274227,
+        "y": 17274274,
+        "region": 152
       },
       {
         "label": "lag_noise_scale_seconds",
-        "raw": 0,
+        "raw": 0.4563960307037157,
         "scale": 1,
         "unit": "second",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274228,
+        "y": 17274275,
+        "region": 179
       },
       {
         "label": "correlation_gain_baseline",
-        "raw": 0,
+        "raw": 0.6043503195290095,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274229,
+        "y": 17274276,
+        "region": 206
       },
       {
         "label": "absolute_correlation_gain",
-        "raw": 0,
+        "raw": 0.5773502691896258,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274230,
+        "y": 17274277,
+        "region": 233
       },
       {
         "label": "correlation_gain_zscore",
-        "raw": 0,
+        "raw": -0.3690261539420223,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274231,
+        "y": 17274278,
+        "region": 5
       },
       {
         "label": "best_lag_index",
-        "raw": -1,
+        "raw": 53,
         "scale": 1,
         "unit": "count",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274232,
+        "y": 17274279,
+        "region": 32
       },
       {
         "label": "lag_velocity",
-        "raw": 0.2411167512690349,
+        "raw": 0.09556437071763453,
         "scale": 1,
         "unit": "per_second",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274233,
+        "y": 17274280,
+        "region": 59
       },
       {
         "label": "reference_return_count",
-        "raw": 3,
+        "raw": 167,
         "scale": 1,
         "unit": "count",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274234,
+        "y": 17274281,
+        "region": 86
       },
       {
         "label": "lag_zscore",
-        "raw": 0,
+        "raw": 1.86314795950832,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274235,
+        "y": 17274282,
+        "region": 113
       },
       {
         "label": "best_lag_correlation_baseline",
-        "raw": 0,
+        "raw": -0.6043503195290095,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274236,
+        "y": 17274283,
+        "region": 140
       },
       {
         "label": "search_adjusted_p_value",
-        "raw": 9.113506336706884e-18,
+        "raw": 1.8205750827740297e-28,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274236,
+        "y": 17274283,
+        "region": 140
       },
       {
         "label": "best_lag_seconds",
-        "raw": -0.35385950000000005,
+        "raw": 89.729,
         "scale": 1,
         "unit": "second",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274236,
+        "y": 17274283,
+        "region": 140
       },
       {
         "label": "lag_peak_curvature",
-        "raw": 0.7407913025026451,
+        "raw": 0.20143060466471188,
         "scale": 1,
         "unit": "per_second",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274237,
+        "y": 17274284,
+        "region": 167
       },
       {
         "label": "best_lag_correlation",
-        "raw": 0,
+        "raw": -0.5773502691896258,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274238,
+        "y": 17274285,
+        "region": 194
       },
       {
         "label": "lag_baseline_seconds",
-        "raw": -0.35385950000000005,
+        "raw": 88.87866666666667,
         "scale": 1,
         "unit": "second",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274238,
+        "y": 17274285,
+        "region": 194
       },
       {
         "label": "effective_sample_count",
-        "raw": 2,
+        "raw": 312,
         "scale": 1,
         "unit": "count",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274238,
+        "y": 17274285,
+        "region": 194
       },
       {
         "label": "contemporaneous_correlation",
@@ -596,60 +596,60 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274238,
+        "y": 17274285,
+        "region": 194
       },
       {
         "label": "lag_peak_prominence",
-        "raw": 0.35355339059327373,
+        "raw": 0.2886751345948129,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274238,
+        "y": 17274285,
+        "region": 194
       },
       {
         "label": "measured_return_count",
-        "raw": 3,
+        "raw": 167,
         "scale": 1,
         "unit": "count",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274238,
+        "y": 17274285,
+        "region": 194
       },
       {
         "label": "search_count",
-        "raw": 2,
+        "raw": 330,
         "scale": 1,
         "unit": "count",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274238,
+        "y": 17274285,
+        "region": 194
       },
       {
         "label": "lag_fraction",
-        "raw": 0,
+        "raw": 0.3212121212121212,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274238,
+        "y": 17274285,
+        "region": 194
       },
       {
         "label": "negative_count",
-        "raw": 9,
+        "raw": 1,
         "standardized": 0,
         "scale": 1,
         "unit": "count",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274238,
+        "y": 17274285,
+        "region": 194
       },
       {
         "label": "mean_absolute",
@@ -657,9 +657,9 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274238,
+        "y": 17274285,
+        "region": 194
       },
       {
         "label": "extreme_magnitude",
@@ -667,9 +667,9 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274239,
+        "y": 17274286,
+        "region": 221
       },
       {
         "label": "mad",
@@ -677,9 +677,9 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274239,
+        "y": 17274286,
+        "region": 221
       },
       {
         "label": "excluded_member_count",
@@ -687,9 +687,9 @@
         "scale": 1,
         "unit": "count",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274240,
+        "y": 17274287,
+        "region": 248
       },
       {
         "label": "peer_median_absolute",
@@ -697,9 +697,9 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274241,
+        "y": 17274288,
+        "region": 20
       },
       {
         "label": "signed_fraction_velocity",
@@ -707,9 +707,9 @@
         "scale": 1,
         "unit": "per_second",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274242,
+        "y": 17274289,
+        "region": 47
       },
       {
         "label": "extreme_share_divergence",
@@ -717,9 +717,9 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274242,
+        "y": 17274289,
+        "region": 47
       },
       {
         "label": "iqr",
@@ -727,9 +727,9 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274243,
+        "y": 17274290,
+        "region": 74
       },
       {
         "label": "rms",
@@ -737,9 +737,9 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274244,
+        "y": 17274291,
+        "region": 101
       },
       {
         "label": "magnitude_mad",
@@ -747,19 +747,19 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274244,
+        "y": 17274291,
+        "region": 101
       },
       {
         "label": "signed_fraction_baseline",
-        "raw": 0.014034392918579228,
+        "raw": 0.02025946118540651,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274244,
+        "y": 17274291,
+        "region": 101
       },
       {
         "label": "median_from_age",
@@ -767,9 +767,9 @@
         "scale": 1,
         "unit": "second",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274244,
+        "y": 17274291,
+        "region": 101
       },
       {
         "label": "median_absolute_divergence",
@@ -777,9 +777,9 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274244,
+        "y": 17274291,
+        "region": 101
       },
       {
         "label": "extreme_tie_count",
@@ -787,19 +787,19 @@
         "scale": 1,
         "unit": "count",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274244,
+        "y": 17274291,
+        "region": 101
       },
       {
         "label": "signed_fraction_divergence",
-        "raw": -0.007784392918579228,
+        "raw": 0.016104175178229853,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274244,
+        "y": 17274291,
+        "region": 101
       },
       {
         "label": "focal_age",
@@ -807,20 +807,20 @@
         "scale": 1,
         "unit": "second",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274244,
+        "y": 17274291,
+        "region": 101
       },
       {
         "label": "zero_count",
-        "raw": 300,
+        "raw": 369,
         "standardized": 0,
         "scale": 1,
         "unit": "count",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274244,
+        "y": 17274291,
+        "region": 101
       },
       {
         "label": "max_age",
@@ -828,9 +828,9 @@
         "scale": 1,
         "unit": "second",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274244,
+        "y": 17274291,
+        "region": 101
       },
       {
         "label": "iqr_divergence",
@@ -838,9 +838,9 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274244,
+        "y": 17274291,
+        "region": 101
       },
       {
         "label": "iqr_zscore",
@@ -848,9 +848,9 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274244,
+        "y": 17274291,
+        "region": 101
       },
       {
         "label": "iqr_baseline",
@@ -858,20 +858,20 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274244,
+        "y": 17274291,
+        "region": 101
       },
       {
         "label": "positive_count",
-        "raw": 11,
+        "raw": 15,
         "standardized": 0,
         "scale": 1,
         "unit": "count",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274244,
+        "y": 17274291,
+        "region": 101
       },
       {
         "label": "median_absolute_baseline",
@@ -879,9 +879,9 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274244,
+        "y": 17274291,
+        "region": 101
       },
       {
         "label": "peer_mad",
@@ -889,9 +889,9 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274244,
+        "y": 17274291,
+        "region": 101
       },
       {
         "label": "extreme_ratio_baseline",
@@ -899,9 +899,9 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274244,
+        "y": 17274291,
+        "region": 101
       },
       {
         "label": "extreme_signed",
@@ -909,19 +909,19 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274244,
+        "y": 17274291,
+        "region": 101
       },
       {
         "label": "signed_median",
-        "raw": 4.78776257151816e-310,
+        "raw": 4.734329656306e-311,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274244,
+        "y": 17274291,
+        "region": 101
       },
       {
         "label": "extreme_ratio_divergence",
@@ -929,9 +929,9 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274244,
+        "y": 17274291,
+        "region": 101
       },
       {
         "label": "extreme_share",
@@ -939,9 +939,9 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274244,
+        "y": 17274291,
+        "region": 101
       },
       {
         "label": "extreme_ratio",
@@ -949,9 +949,9 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274244,
+        "y": 17274291,
+        "region": 101
       },
       {
         "label": "extreme_share_velocity",
@@ -959,9 +959,9 @@
         "scale": 1,
         "unit": "per_second",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274244,
+        "y": 17274291,
+        "region": 101
       },
       {
         "label": "member_count",
@@ -969,9 +969,9 @@
         "scale": 1,
         "unit": "count",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274244,
+        "y": 17274291,
+        "region": 101
       },
       {
         "label": "extreme_share_zscore",
@@ -979,9 +979,9 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274244,
+        "y": 17274291,
+        "region": 101
       },
       {
         "label": "extreme_ratio_velocity",
@@ -989,9 +989,9 @@
         "scale": 1,
         "unit": "per_second",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274244,
+        "y": 17274291,
+        "region": 101
       },
       {
         "label": "interquartile_range",
@@ -999,9 +999,9 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274244,
+        "y": 17274291,
+        "region": 101
       },
       {
         "label": "extreme_share_baseline",
@@ -1009,9 +1009,9 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274244,
+        "y": 17274291,
+        "region": 101
       },
       {
         "label": "iqr_velocity",
@@ -1019,9 +1019,9 @@
         "scale": 1,
         "unit": "per_second",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274244,
+        "y": 17274291,
+        "region": 101
       },
       {
         "label": "focal_from_age",
@@ -1029,9 +1029,9 @@
         "scale": 1,
         "unit": "second",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274244,
+        "y": 17274291,
+        "region": 101
       },
       {
         "label": "median_absolute",
@@ -1039,9 +1039,9 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274244,
+        "y": 17274291,
+        "region": 101
       },
       {
         "label": "median_age",
@@ -1049,9 +1049,9 @@
         "scale": 1,
         "unit": "second",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274244,
+        "y": 17274291,
+        "region": 101
       },
       {
         "label": "median_absolute_velocity",
@@ -1059,40 +1059,40 @@
         "scale": 1,
         "unit": "per_second",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274244,
+        "y": 17274291,
+        "region": 101
       },
       {
         "label": "valid_member_count",
-        "raw": 320,
+        "raw": 385,
         "standardized": 0,
         "scale": 1,
         "unit": "count",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274244,
+        "y": 17274291,
+        "region": 101
       },
       {
         "label": "signed_fraction_zscore",
-        "raw": -0.8990267463600696,
+        "raw": 2.6811270500188096,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274244,
+        "y": 17274291,
+        "region": 101
       },
       {
         "label": "signed_fraction",
-        "raw": 0.00625,
+        "raw": 0.03636363636363636,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274245,
+        "y": 17274292,
+        "region": 128
       },
       {
         "label": "mean_age",
@@ -1100,9 +1100,9 @@
         "scale": 1,
         "unit": "second",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "median_absolute_zscore",
@@ -1110,9 +1110,9 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "extreme_ratio_zscore",
@@ -1120,106 +1120,106 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "spread_divergence",
-        "raw": -0.1545987887942777,
+        "raw": -0.13468626905790188,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "spread_zscore",
-        "raw": -0.39139678399013983,
+        "raw": -0.27859062842882326,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "relative_spread_baseline",
-        "raw": 0.0014230075205040329,
+        "raw": 0.0014782658450497746,
         "standardized": 0.0016197610852399734,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "best_bid",
-        "raw": 9.017,
+        "raw": 0.7735,
         "standardized": 0.4935,
         "scale": 1,
         "unit": "rate",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "best_ask",
-        "raw": 9.028,
+        "raw": 0.7745,
         "standardized": 0.4943,
         "scale": 1,
         "unit": "rate",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "relative_spread",
-        "raw": 0.001219174286506069,
+        "raw": 0.0012919896640826885,
         "standardized": 0.0016197610852399734,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "spread_ratio",
-        "raw": 0.8567588497875502,
+        "raw": 0.8739900664072949,
         "standardized": 1,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "spread",
-        "raw": 0.011000000000001009,
+        "raw": 0.0010000000000000009,
         "standardized": 0.0008000000000000229,
         "scale": 1,
         "unit": "rate",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "midpoint",
-        "raw": 9.0225,
+        "raw": 0.774,
         "standardized": 0.4939,
         "scale": 1,
         "unit": "rate",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "observed_notional:ask",
@@ -1227,9 +1227,9 @@
         "scale": 1,
         "unit": "rate",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "add_notional:bid",
@@ -1237,9 +1237,9 @@
         "scale": 1,
         "unit": "rate",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "modify_remaining_notional:ask",
@@ -1247,9 +1247,9 @@
         "scale": 1,
         "unit": "rate",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "delete_count:ask",
@@ -1257,19 +1257,19 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "observed_notional_imbalance_baseline",
-        "raw": 0.6819377700156114,
+        "raw": 0.39930317842543095,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "add_notional:ask",
@@ -1277,9 +1277,9 @@
         "scale": 1,
         "unit": "rate",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "mutation_count:ask",
@@ -1287,19 +1287,19 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "observed_notional_diff",
-        "raw": 105.3654907365,
+        "raw": -3.308312480499808,
         "scale": 1,
         "unit": "rate",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "mutation_count",
@@ -1307,19 +1307,19 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "observed_notional_rate",
-        "raw": 89.37372546786776,
+        "raw": 2105.9160397931,
         "scale": 1,
         "unit": "rate",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "mutation_count:bid",
@@ -1327,19 +1327,19 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "observed_notional_rate_divergence",
-        "raw": -46.14045475706985,
+        "raw": 985.6033132698547,
         "scale": 1,
         "unit": "rate",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "observed_notional:bid",
@@ -1347,9 +1347,9 @@
         "scale": 1,
         "unit": "rate",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "modify_remaining_notional:bid",
@@ -1357,19 +1357,19 @@
         "scale": 1,
         "unit": "rate",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "observed_notional_imbalance_zscore",
-        "raw": -0.917277703813225,
+        "raw": -0.6375325836199759,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "delete_count:bid",
@@ -1377,19 +1377,19 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "observed_notional_rate_baseline",
-        "raw": 135.5141802249376,
+        "raw": 1120.3127265232454,
         "scale": 1,
         "unit": "rate",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "mutation_activity_imbalance",
@@ -1397,9 +1397,9 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "mutation_count_diff",
@@ -1407,60 +1407,60 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "observed_notional",
-        "raw": 155.5420682583,
+        "raw": 2105.9160397931,
         "scale": 1,
         "unit": "rate",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "observed_notional_imbalance",
-        "raw": 0.6774083173532542,
+        "raw": -0.0015709612434619377,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "observed_notional_rate_zscore",
-        "raw": -1.279729698125443,
+        "raw": 1.5005640189007776,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "observed_notional_imbalance_divergence",
-        "raw": -0.0045294526623571585,
+        "raw": -0.4008741396688929,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "book_shape_distance",
-        "raw": 0.001219174286506069,
+        "raw": 0.0012919896640826885,
         "standardized": 0.0016197610852399734,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "concentration:bid",
@@ -1469,19 +1469,19 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "morphology_change",
-        "raw": 0.0008831770274635158,
+        "raw": 0.0007751270203303226,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "entropy:bid",
@@ -1490,9 +1490,9 @@
         "scale": 1,
         "unit": "nat",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "entropy:ask",
@@ -1501,29 +1501,29 @@
         "scale": 1,
         "unit": "nat",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "morphology_change_zscore",
-        "raw": 1.3000462909517416,
+        "raw": 0.4667868727165158,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "morphology_change_baseline",
-        "raw": 0.00031005182714537784,
+        "raw": 0.0004571523631814838,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "book_shape_ks",
@@ -1532,9 +1532,9 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "concentration:ask",
@@ -1543,9 +1543,9 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "retreat_rate:ask",
@@ -1554,19 +1554,19 @@
         "scale": 1,
         "unit": "rate",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "previous_best_price:bid",
-        "raw": 9.017,
+        "raw": 0.7733,
         "scale": 1,
         "unit": "rate",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "net_replenished_quantity:bid",
@@ -1575,9 +1575,9 @@
         "scale": 1,
         "unit": "count",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "net_withdrawn_quantity:bid",
@@ -1586,9 +1586,9 @@
         "scale": 1,
         "unit": "count",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "retreat_fraction:ask",
@@ -1597,31 +1597,31 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "best_price:ask",
-        "raw": 9.028,
+        "raw": 0.7745,
         "standardized": 0.4943,
         "scale": 1,
         "unit": "rate",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "best_price:bid",
-        "raw": 9.017,
+        "raw": 0.7735,
         "standardized": 0.4935,
         "scale": 1,
         "unit": "rate",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "net_withdrawn_quantity:ask",
@@ -1630,29 +1630,29 @@
         "scale": 1,
         "unit": "count",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "previous_best_price:ask",
-        "raw": 9.028,
+        "raw": 0.7745,
         "scale": 1,
         "unit": "rate",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "touch_price_log_change:bid",
-        "raw": 0,
+        "raw": 0.0002585983981310789,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "retreated_quantity:bid",
@@ -1661,9 +1661,9 @@
         "scale": 1,
         "unit": "count",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "touch_quantity:bid",
@@ -1672,9 +1672,9 @@
         "scale": 1,
         "unit": "count",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "retreat_rate:bid",
@@ -1683,9 +1683,9 @@
         "scale": 1,
         "unit": "rate",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "touch_price_log_change:ask",
@@ -1693,9 +1693,9 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "retreated_quantity:ask",
@@ -1704,9 +1704,9 @@
         "scale": 1,
         "unit": "count",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "net_replenished_quantity:ask",
@@ -1715,9 +1715,9 @@
         "scale": 1,
         "unit": "count",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "unfilled_residual_quantity:ask",
@@ -1726,9 +1726,9 @@
         "scale": 1,
         "unit": "count",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "touch_quantity:ask",
@@ -1737,9 +1737,9 @@
         "scale": 1,
         "unit": "count",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "unfilled_residual_quantity:bid",
@@ -1748,9 +1748,9 @@
         "scale": 1,
         "unit": "count",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "net_withdrawal_fraction:ask",
@@ -1759,9 +1759,9 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "net_withdrawal_fraction:bid",
@@ -1770,9 +1770,9 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "retreat_fraction:bid",
@@ -1781,30 +1781,30 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "return_gap",
-        "raw": 0,
+        "raw": 0.000025840460995195095,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "log_basis",
-        "raw": 0.0035493378113661015,
+        "raw": -0.0009953658144526976,
         "standardized": -0.002655828668739162,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "basis_closure_error",
@@ -1813,9 +1813,9 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "derivative_log_return",
@@ -1823,72 +1823,72 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "derivative_index_log_basis",
-        "raw": 0.0035493378113661015,
+        "raw": -0.0009953658144526976,
         "standardized": -0.002655828668739162,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "reference_price",
-        "raw": 9.0279,
+        "raw": 0.77397,
         "standardized": 0.49391,
         "scale": 1,
         "unit": "rate",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "basis",
-        "raw": 0.0035556441697404484,
+        "raw": -0.0009948706022197868,
         "standardized": -0.002652305075823598,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "basis_zscore",
-        "raw": 0.667901955973605,
+        "raw": 0.9574066234149532,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "basis_velocity",
-        "raw": 0,
+        "raw": 0.00006438997060909975,
         "scale": 1,
         "unit": "per_second",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "return_gap_velocity",
-        "raw": 0,
+        "raw": 0.00006460140289097013,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "open_interest_growth_baseline",
@@ -1896,9 +1896,9 @@
         "scale": 1,
         "unit": "per_second",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "open_interest_change",
@@ -1906,20 +1906,20 @@
         "scale": 1,
         "unit": "count",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "index_spot_log_basis",
-        "raw": 0.00020594229705053188,
+        "raw": 0.0004932936197837274,
         "standardized": -0.00022967753576378744,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "open_interest_log_change",
@@ -1927,41 +1927,41 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "derivative_price",
-        "raw": 9.06,
+        "raw": 0.7732,
         "standardized": 0.4926,
         "scale": 1,
         "unit": "rate",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "derivative_spot_log_basis",
-        "raw": 0.0037552801084167636,
+        "raw": -0.0005020721946688556,
         "standardized": -0.002885506204502947,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "basis_change",
-        "raw": 0,
+        "raw": 0.00002581441955046542,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "open_interest_growth_rate",
@@ -1969,678 +1969,678 @@
         "scale": 1,
         "unit": "per_second",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "reference_log_return",
-        "raw": 0,
+        "raw": -0.000025840460995195095,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "basis_rate",
-        "raw": 0,
+        "raw": 0.000012760464434238961,
         "scale": 1,
         "unit": "per_second",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "basis_baseline",
-        "raw": 0.0031471465087852812,
+        "raw": -0.0018151257802143715,
         "standardized": -0.002652305075823598,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "spot_price",
-        "raw": 9.02604096497,
+        "raw": 0.77358829969,
         "standardized": 0.49402345306,
         "scale": 1,
         "unit": "rate",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "physical_field",
-        "raw": 0.004409313169227039,
+        "raw": 0.002902652314182394,
         "standardized": 0.017701330945760353,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "faded_exhaustion",
-        "raw": 0.004409307947726846,
+        "raw": 0.0029020751890894416,
         "standardized": 0.017701330945760353,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "aggressive_drive",
-        "raw": 0.1479503528130859,
+        "raw": 0.012030831160875237,
         "standardized": 0.017701330945760353,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "divergent_move",
-        "raw": 0.004409307947726846,
+        "raw": 0.005369806458211805,
         "standardized": 0.017701330945760353,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "inefficient_lag",
-        "raw": 0.005466328118091679,
+        "raw": 0.002902075206929982,
         "standardized": 0.017701330945760353,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "active_reversal",
-        "raw": 0.004409307947726846,
+        "raw": 0.0029020751890894416,
         "standardized": 0.017701330945760353,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "leveraged_ignition",
-        "raw": 0.004409307947726846,
+        "raw": 0.0029020751890894416,
         "standardized": 0.017701330945760353,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "book_thinning",
-        "raw": 0.00479376910768953,
+        "raw": 0.005442336714766635,
         "standardized": 0.017701330945760353,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "short_squeeze",
-        "raw": 0.004409307947726846,
+        "raw": 0.0029020751890894416,
         "standardized": 0.017701330945760353,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "systemic_beta",
-        "raw": 0.004409307947726846,
+        "raw": 0.0029020751890894416,
         "standardized": 0.017701330945760353,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "liquidity_shock",
-        "raw": 0.004409307947726846,
+        "raw": 0.0029020751890894416,
         "standardized": 0.017701330945760353,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "endogenous_alpha",
-        "raw": 0.004409307947726846,
+        "raw": 0.0029020751890894416,
         "standardized": 0.017701330945760353,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "extreme_scarcity",
-        "raw": 0.005437189223262459,
+        "raw": 0.003695017067623072,
         "standardized": 0.017701330945760353,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "hidden_absorption",
-        "raw": 0.004409307947726846,
+        "raw": 0.0029020751890894416,
         "standardized": 0.017701330945760353,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "equilibrium",
-        "raw": 0.00443761712910688,
+        "raw": 0.003953860375402168,
         "standardized": 0.026426797983180417,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "laminar_resonance",
-        "raw": 0.004409307947726846,
+        "raw": 0.0029020751890894416,
         "standardized": 0.017701330945760353,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "systemic_slump",
-        "raw": 0.004409307947726846,
+        "raw": 0.0029020751890894416,
         "standardized": 0.017701330945760353,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "turbulent",
-        "raw": 0.004409307947726846,
+        "raw": 0.0029020751890894416,
         "standardized": 0.017701330945760353,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "derivatives_decoupling",
-        "raw": 0.00800155727336335,
+        "raw": 0.002912218742371069,
         "standardized": 0.017701330945760353,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "systemic_herd",
-        "raw": 0.009864401770165196,
+        "raw": 0.020050398704806755,
         "standardized": 0.017701330945760353,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "loaded_imbalance",
-        "raw": 0.004409307947726846,
+        "raw": 0.0029020751890894416,
         "standardized": 0.017701330945760353,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "turbulent_resonance",
-        "raw": 0.004409307947726846,
+        "raw": 0.0029020751890894416,
         "standardized": 0.017701330945760353,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "stochastic_balance",
-        "raw": 0.03757262216091085,
+        "raw": 0.007241689786106681,
         "standardized": 0.017701330945760353,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "causal_noise",
-        "raw": 0.05098858608912592,
+        "raw": 0.699918018742566,
         "standardized": 0.035402661891520706,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "laminar",
-        "raw": 0.004409307947726846,
+        "raw": 0.0029020751890894416,
         "standardized": 0.017701330945760353,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "toxic_bluff",
-        "raw": 0.004409307947726846,
+        "raw": 0.0029020751890894416,
         "standardized": 0.017701330945760353,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "fragile_expansion",
-        "raw": 0.004409307947726846,
+        "raw": 0.0029020751890894416,
         "standardized": 0.017701330945760353,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "saturation",
-        "raw": 0.004409307947726846,
+        "raw": 0.0029020751890894416,
         "standardized": 0.017701330945760353,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "decoupled_move",
-        "raw": 0.008818615895453692,
+        "raw": 0.01561014132975769,
         "standardized": 0.017701330945760353,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "adverse_leverage_buildup",
-        "raw": 0.004409307947726846,
+        "raw": 0.0029020751890894416,
         "standardized": 0.017701330945760353,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "organic_trend",
-        "raw": 0.004409307947726846,
+        "raw": 0.0029020751890894416,
         "standardized": 0.017701330945760353,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "organic",
-        "raw": 0.004409307947726846,
+        "raw": 0.0029020751890894416,
         "standardized": 0.017701330945760353,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "robust_liquidity",
-        "raw": 0.14434537439382147,
+        "raw": 0.08114488367396495,
         "standardized": 0.017701330945760353,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "hard_support",
-        "raw": 0.004409307947726846,
+        "raw": 0.0029020751890894416,
         "standardized": 0.017701330945760353,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "viscous",
-        "raw": 0.004409307947726846,
+        "raw": 0.0029020751890894416,
         "standardized": 0.017701330945760353,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "long_deleveraging",
-        "raw": 0.004409307947726846,
+        "raw": 0.0029020751890894416,
         "standardized": 0.017701330945760353,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "exhaustion",
-        "raw": 0.004409307947726846,
+        "raw": 0.0029020751890894416,
         "standardized": 0.017701330945760353,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "spoof_trap",
-        "raw": 0.004409307947726846,
+        "raw": 0.0029020751890894416,
         "standardized": 0.017701330945760353,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "frenzy",
-        "raw": 0.004409307947726846,
+        "raw": 0.0029020751890894416,
         "standardized": 0.017701330945760353,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "dense_neutrality",
-        "raw": 0.004409307947726846,
+        "raw": 0.0029020751890894416,
         "standardized": 0.017701330945760353,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "inertial",
-        "raw": 0.004409307947726846,
+        "raw": 0.0029020751890894416,
         "standardized": 0.017701330945760353,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "vertical_ignition",
-        "raw": 0.006911823077894936,
+        "raw": 0.00784863985961574,
         "standardized": 0.017701330945760353,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "coiled_compression",
-        "raw": 0.004409307947726846,
+        "raw": 0.0029020751890894416,
         "standardized": 0.017701330945760353,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "risk_on_surge",
-        "raw": 0.004409307947726846,
+        "raw": 0.0029020751890894416,
         "standardized": 0.017701330945760353,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "thermal_exhaustion",
-        "raw": 0.004409307947726846,
+        "raw": 0.0029020751890894416,
         "standardized": 0.017701330945760353,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "median_depth",
-        "raw": 0.004409307947726846,
+        "raw": 0.0029020751890894416,
         "standardized": 0.017701330945760353,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "stochastic_noise",
-        "raw": 0.006025734443886513,
+        "raw": 0.0052719755926977216,
         "standardized": 0.017701330945760353,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "decoupled_alpha",
-        "raw": 0.004409311689900412,
+        "raw": 0.0029020783628464076,
         "standardized": 0.017701330945760353,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "liquidity_vacuum",
-        "raw": 0.004409307947726846,
+        "raw": 0.0029020751890894416,
         "standardized": 0.017701330945760353,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "divergent_stress",
-        "raw": 0.0044103243245745575,
+        "raw": 0.002917930492963825,
         "standardized": 0.017701330945760353,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "forecast_edge",
-        "raw": 0.004409307947726846,
+        "raw": 0.0029020751890894416,
         "standardized": 0.017701330945760353,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "synchronized_drift",
-        "raw": 0.004409307947726846,
+        "raw": 0.004616319530702094,
         "standardized": 0.017701330945760353,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "volume_starvation",
-        "raw": 0.3786033773068195,
+        "raw": 0.008249433214458906,
         "standardized": 0.017701330945760353,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "anchor_stall",
-        "raw": 0.004409307947726846,
+        "raw": 0.003447061051020875,
         "standardized": 0.017701330945760353,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "mechanical_collapse",
-        "raw": 0.004409307947726846,
+        "raw": 0.0029020751890894416,
         "standardized": 0.017701330945760353,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "surprise",
-        "raw": 0.1928844170603849,
+        "raw": 0.3830024913995506,
         "standardized": 0,
         "scale": 1,
         "unit": "nat",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "energy",
-        "raw": 0.6368793044175645,
+        "raw": 1.51337339275736,
         "standardized": 0,
         "scale": 1,
         "unit": "nat",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "max_mach",
@@ -2648,9 +2648,9 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "viscosity_proxy",
@@ -2658,9 +2658,9 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "particle_thermal",
@@ -2668,9 +2668,9 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "particle_kinetic",
@@ -2678,9 +2678,9 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "wave_norm",
@@ -2688,9 +2688,9 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "vorticity_rms",
@@ -2698,9 +2698,9 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "particle_count",
@@ -2708,9 +2708,9 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "kuramoto_psi",
@@ -2719,9 +2719,9 @@
         "scale": 3.141592653589793,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "strain_rms",
@@ -2729,9 +2729,9 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "gas_internal",
@@ -2739,9 +2739,9 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "gas_kinetic",
@@ -2749,9 +2749,9 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "kuramoto_r",
@@ -2759,9 +2759,9 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "coherence_mag2",
@@ -2769,9 +2769,9 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "pressure_grad_norm",
@@ -2779,9 +2779,9 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "guidance_speed",
@@ -2789,9 +2789,9 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "divergence",
@@ -2799,1201 +2799,1201 @@
         "scale": 1,
         "unit": "nat",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "contrast",
-        "raw": 0.9238316547859008,
+        "raw": 0.5206748037476255,
         "standardized": 0,
         "scale": 1,
         "unit": "nat",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "surprisal",
-        "raw": 0.7664329478462144,
+        "raw": 1.1572516404408264,
         "standardized": 9.965784284662087,
         "scale": 1,
         "unit": "nat",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "stability",
-        "raw": 0.9543322689928582,
+        "raw": 0.6857088767895291,
         "standardized": 0.035402661891520706,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "ambiguity",
-        "raw": 0,
+        "raw": 0.9992624189340218,
         "standardized": 0,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "bid_qty",
-        "raw": 1230.46387,
+        "raw": 3892.13233,
         "exact": "3095.90763714",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "ask_qty",
-        "raw": 236.03621,
+        "raw": 3892.13233,
         "exact": "31010.94373072",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "spread_noise_scale",
-        "raw": 0.0615558564309299,
+        "raw": 0.03430361658615331,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "best_bid_price",
-        "raw": 0.10602,
+        "raw": 0.002245,
         "standardized": 0.001287,
         "scale": 1,
         "unit": "rate",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "divergence_velocity:ask",
+        "raw": -0.003484605211142086,
+        "scale": 1,
+        "unit": "per_second",
+        "timescale": "per_second",
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "touch_notional:bid",
+        "raw": 11.3521630411,
+        "standardized": 3.98443312899918,
+        "scale": 1,
+        "unit": "rate",
+        "timescale": "instantaneous",
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "depth_zscore:bid",
+        "raw": 0.5174488938268198,
+        "scale": 1,
+        "unit": "dimensionless",
+        "timescale": "instantaneous",
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "depth_ratio:ask",
+        "raw": 0.6786515330956164,
+        "scale": 1,
+        "unit": "dimensionless",
+        "timescale": "instantaneous",
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "two_sided_touch_notional",
+        "raw": 11.3521630411,
+        "standardized": 3.98443312899918,
+        "scale": 1,
+        "unit": "rate",
+        "timescale": "instantaneous",
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "touch_notional_baseline:bid",
+        "raw": 11.352163041100003,
+        "scale": 1,
+        "unit": "rate",
+        "timescale": "instantaneous",
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "depth_ratio:bid",
+        "raw": 0.9999999999999999,
+        "scale": 1,
+        "unit": "dimensionless",
+        "timescale": "instantaneous",
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "divergence_velocity_snr:ask",
+        "raw": 0.13536340291378313,
+        "scale": 1,
+        "unit": "dimensionless",
+        "timescale": "instantaneous",
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "divergence_velocity:bid",
         "raw": 0,
         "scale": 1,
         "unit": "per_second",
         "timescale": "per_second",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
-      },
-      {
-        "label": "touch_notional:bid",
-        "raw": 130.4537794974,
-        "standardized": 3.98443312899918,
-        "scale": 1,
-        "unit": "rate",
-        "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
-      },
-      {
-        "label": "depth_zscore:bid",
-        "raw": -0.8929595714343647,
-        "scale": 1,
-        "unit": "dimensionless",
-        "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
-      },
-      {
-        "label": "depth_ratio:ask",
-        "raw": 1.0000000000000002,
-        "scale": 1,
-        "unit": "dimensionless",
-        "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
-      },
-      {
-        "label": "two_sided_touch_notional",
-        "raw": 25.0882887609,
-        "standardized": 3.98443312899918,
-        "scale": 1,
-        "unit": "rate",
-        "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
-      },
-      {
-        "label": "touch_notional_baseline:bid",
-        "raw": 132.68238481679728,
-        "scale": 1,
-        "unit": "rate",
-        "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
-      },
-      {
-        "label": "depth_ratio:bid",
-        "raw": 0.9832034574712051,
-        "scale": 1,
-        "unit": "dimensionless",
-        "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
-      },
-      {
-        "label": "divergence_velocity_snr:ask",
-        "raw": 0.04423261895301865,
-        "scale": 1,
-        "unit": "dimensionless",
-        "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
-      },
-      {
-        "label": "divergence_velocity:bid",
-        "raw": -0.008388524608673231,
-        "scale": 1,
-        "unit": "per_second",
-        "timescale": "per_second",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "touch_notional:ask",
-        "raw": 25.0882887609,
+        "raw": 126.9290404548,
         "standardized": 43.32228839181584,
         "scale": 1,
         "unit": "rate",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "best_ask_price",
-        "raw": 0.10629,
+        "raw": 0.002295,
         "standardized": 0.001397,
         "scale": 1,
         "unit": "rate",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "spread_divergence_velocity_snr",
-        "raw": 63.8136846638115,
+        "raw": 1.1646126959566248,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "depth_noise_scale:bid",
-        "raw": 0.018969732481901553,
+        "raw": 8.31304913855988,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "depth_divergence:bid",
-        "raw": -0.016939204187263357,
-        "scale": 1,
-        "unit": "dimensionless",
-        "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
-      },
-      {
-        "label": "spread_divergence_velocity",
-        "raw": -0.018618069085525553,
-        "scale": 1,
-        "unit": "per_second",
-        "timescale": "per_second",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
-      },
-      {
-        "label": "depth_divergence:ask",
         "raw": 0,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "spread_divergence_velocity",
+        "raw": -0.0006908415935971778,
+        "scale": 1,
+        "unit": "per_second",
+        "timescale": "per_second",
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "depth_divergence:ask",
+        "raw": -0.38764748920348424,
+        "scale": 1,
+        "unit": "dimensionless",
+        "timescale": "instantaneous",
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "touch_notional_imbalance",
-        "raw": 0.677408317353254,
+        "raw": -0.8358104680302904,
         "standardized": -0.8315489638297584,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "divergence_velocity_snr:bid",
-        "raw": 2.317809199466603,
+        "raw": 0.13092514035434752,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "touch_notional_baseline:ask",
-        "raw": 25.088288760899996,
+        "raw": 187.0312439667277,
         "scale": 1,
         "unit": "rate",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "depth_zscore:ask",
-        "raw": -0.2880586672334225,
+        "raw": -0.8585225586375257,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "depth_noise_scale:ask",
-        "raw": 1.56334239421568,
+        "raw": 0.45152860027193736,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "price",
-        "raw": 0.10512,
+        "raw": 0.02924,
         "exact": "309.1194",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "qty",
-        "raw": 2078.9016,
+        "raw": 1173.172142,
         "exact": "0.29100",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "trade_id",
-        "raw": 2106672,
+        "raw": 2244887,
         "exact": "6098125",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "cumulative_notional_delta",
-        "raw": -8566.003037710794,
+        "raw": -556.0771172465573,
         "standardized": -89.95374539999999,
         "scale": 1,
         "unit": "rate",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "trade_count",
-        "raw": 1278,
+        "raw": 9,
         "standardized": 1,
         "scale": 1,
         "unit": "count",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "signed_net_fraction_baseline",
-        "raw": -0.05113314556475032,
+        "raw": -0.4593156180209946,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "aggressive_notional:sell",
-        "raw": 629875.5748720666,
+        "raw": 634.853510748515,
         "standardized": 89.95374539999999,
         "scale": 1,
         "unit": "rate",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "executed_quantity:sell",
-        "raw": 5978919.017760003,
+        "raw": 21748.7237295,
         "standardized": 0.291,
         "scale": 1,
         "unit": "count",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "net_notional_rate_velocity",
-        "raw": 9.518970944358381,
+        "raw": 0.0023133467290096924,
         "scale": 1,
         "unit": "per_second",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "signed_net_fraction_divergence",
-        "raw": 0.04428683424123467,
+        "raw": -0.31990777765579775,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "mean_trade_notional",
-        "raw": 979.0181116638694,
+        "raw": 79.29221158338584,
         "standardized": 89.95374539999999,
         "scale": 1,
         "unit": "rate",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "executed_quantity:buy",
-        "raw": 5893989.504309995,
+        "raw": 2691.08901874,
         "standardized": 0,
         "scale": 1,
         "unit": "count",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "signed_net_fraction",
-        "raw": -0.006846311323515655,
+        "raw": -0.7792233956767923,
         "standardized": -1,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "gross_notional",
-        "raw": 1251185.1467064251,
+        "raw": 713.6299042504725,
         "standardized": 89.95374539999999,
         "scale": 1,
         "unit": "rate",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "signed_count_fraction",
-        "raw": 0.1705790297339593,
+        "raw": -0.3333333333333333,
         "standardized": -1,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "net_notional",
-        "raw": -8566.003037710794,
+        "raw": -556.0771172465573,
         "standardized": -89.95374539999999,
         "scale": 1,
         "unit": "rate",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "net_executed_quantity",
-        "raw": -84929.51345000057,
+        "raw": -19057.634710759998,
         "standardized": -0.291,
         "scale": 1,
         "unit": "count",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "gross_notional_rate",
-        "raw": 6063.931446220304,
+        "raw": 0.94114694928701,
         "scale": 1,
         "unit": "per_second",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "trade_count:sell",
-        "raw": 530,
+        "raw": 6,
         "standardized": 1,
         "scale": 1,
         "unit": "count",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "cumulative_volume_delta",
-        "raw": -84929.51345000057,
+        "raw": -19057.634710759998,
         "standardized": -0.291,
         "scale": 1,
         "unit": "count",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "gross_executed_quantity",
-        "raw": 11872908.522070011,
+        "raw": 24439.812748239998,
         "standardized": 0.291,
         "scale": 1,
         "unit": "count",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "aggressive_notional:buy",
-        "raw": 621309.5718343549,
+        "raw": 78.77639350195759,
         "standardized": 0,
         "scale": 1,
         "unit": "rate",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "sell_notional_rate",
-        "raw": 3052.723504372786,
+        "raw": 0.837255335470644,
         "scale": 1,
         "unit": "per_second",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "trade_rate",
-        "raw": 1.9028457692761447,
+        "raw": 0.09143586874238402,
         "scale": 1,
         "unit": "per_second",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "signed_net_fraction_zscore",
-        "raw": 1.0575448544259076,
+        "raw": -0.9959926443853906,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "net_notional_rate",
-        "raw": -41.51556252528073,
+        "raw": -0.7333637216542778,
         "scale": 1,
         "unit": "per_second",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "cvd_epoch_from",
-        "raw": 1790700455.140223,
+        "raw": 1790726480.1732109,
         "standardized": 1790700455.027463,
         "scale": 1,
         "unit": "second",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "buy_notional_rate",
-        "raw": 3011.2079418475005,
+        "raw": 0.10389161381636612,
         "scale": 1,
         "unit": "per_second",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "trade_count:buy",
-        "raw": 748,
+        "raw": 3,
         "standardized": 0,
         "scale": 1,
         "unit": "count",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "log_likelihood:self_only",
-        "raw": 108.63890138224123,
+        "raw": 0,
         "scale": 1,
         "unit": "nat",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "excitation_share",
-        "raw": 0.4051066478075329,
+        "raw": 0,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "arrival_rate:buy",
-        "raw": 5.644024468613469,
+        "raw": 0.0039564497373562,
         "scale": 1,
         "unit": "per_second",
         "timescale": "per_second",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "offspring:sell_from_sell",
-        "raw": 0.31624599720519936,
+        "raw": 0,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "log_likelihood_gain_per_event_vs_poisson",
-        "raw": 1.5715995850052187,
+        "raw": 0,
         "scale": 1,
         "unit": "nat",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "excitation_timescale",
-        "raw": 0.0071010597572363655,
+        "raw": 0,
         "scale": 1,
         "unit": "second",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "offspring:sell_from_buy",
-        "raw": 1.8773698834226082e-9,
+        "raw": 0,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "log_likelihood:poisson",
-        "raw": 6.484928320262945,
+        "raw": 0,
         "scale": 1,
         "unit": "nat",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "excitation_decay:sell_from_sell",
-        "raw": 140.82405080184625,
+        "raw": 0,
         "scale": 1,
         "unit": "per_second",
         "timescale": "per_second",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "excitation_fraction:sell",
-        "raw": 0.0005618204327093482,
+        "raw": 0,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "snr",
-        "raw": 4.316113684499461,
+        "raw": 0,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "event_count:sell",
-        "raw": 11,
+        "raw": 6,
         "standardized": 1,
         "scale": 1,
         "unit": "count",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "excitation_timescale:sell_from_sell",
-        "raw": 0.0071010597572363655,
+        "raw": 0,
         "scale": 1,
         "unit": "second",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "offspring:buy_from_sell",
-        "raw": 1.877369883422615e-9,
+        "raw": 0,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "excitation_mass:sell",
-        "raw": 3.478701468770046,
+        "raw": 0,
         "scale": 1,
         "unit": "count",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "excitation_timescale:sell_from_buy",
-        "raw": 0.0071010597572363655,
+        "raw": 0,
         "scale": 1,
         "unit": "second",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "offspring:buy_from_buy",
-        "raw": 0.31624599720519936,
+        "raw": 0,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "standardized_innovation:buy",
-        "raw": 3.11064223933705,
+        "raw": 0,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "excitation_timescale:buy_from_sell",
-        "raw": 0.0071010597572363655,
+        "raw": 0,
         "scale": 1,
         "unit": "second",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "excitation_decay:buy_from_sell",
-        "raw": 140.82405080184625,
+        "raw": 0,
         "scale": 1,
         "unit": "per_second",
         "timescale": "per_second",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "log_likelihood_gain_vs_poisson",
-        "raw": 102.15397302533921,
+        "raw": 0,
         "scale": 1,
         "unit": "nat",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "excitation_amplitude:buy_from_buy",
-        "raw": 44.535042376305526,
+        "raw": 0,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "event_count:buy",
-        "raw": 54,
+        "raw": 3,
         "standardized": 0,
         "scale": 1,
         "unit": "count",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "log_likelihood_per_event:hawkes",
-        "raw": 1.671367713009264,
+        "raw": 0,
         "scale": 1,
         "unit": "nat",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "excitation_share:sell",
-        "raw": 0.23991601497987627,
+        "raw": 0,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "count_innovation:sell",
-        "raw": -3.4996634303959784,
+        "raw": 0,
         "scale": 1,
         "unit": "count",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "conditional_intensity:sell",
-        "raw": 1.1525471347676417,
+        "raw": 0,
         "scale": 1,
         "unit": "per_second",
         "timescale": "per_second",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "conditional_intensity:buy",
-        "raw": 1.9060502725066892,
+        "raw": 0,
         "scale": 1,
         "unit": "per_second",
         "timescale": "per_second",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "expected_descendants_from_sell",
-        "raw": 0.4625142941149074,
+        "raw": 0,
         "scale": 1,
         "unit": "count",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "event_count",
-        "raw": 65,
+        "raw": 9,
         "standardized": 1,
         "scale": 1,
         "unit": "count",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "expected_descendants_from_buy",
-        "raw": 0.46251429411490763,
+        "raw": 0,
         "scale": 1,
         "unit": "count",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "standardized_innovation:sell",
-        "raw": -0.9190673091276022,
+        "raw": 0,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "arrival_rate",
-        "raw": 6.79373315666436,
+        "raw": 0.011869349212068602,
         "scale": 1,
         "unit": "per_second",
         "timescale": "per_second",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "excitation_decay",
-        "raw": 140.82405080184625,
+        "raw": 0,
         "scale": 1,
         "unit": "per_second",
         "timescale": "per_second",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "event_fraction:sell",
-        "raw": 0.16923076923076924,
+        "raw": 0.6666666666666666,
         "standardized": 1,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "excitation_decay:sell_from_buy",
-        "raw": 140.82405080184625,
+        "raw": 0,
         "scale": 1,
         "unit": "per_second",
         "timescale": "per_second",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "excitation_timescale:buy_from_buy",
-        "raw": 0.0071010597572363655,
+        "raw": 0,
         "scale": 1,
         "unit": "second",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "compensator:sell",
-        "raw": 14.499663430395978,
+        "raw": 0,
         "scale": 1,
         "unit": "count",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "excitation_intensity:buy",
-        "raw": 4.835087663579429e-9,
+        "raw": 0,
         "scale": 1,
         "unit": "per_second",
         "timescale": "per_second",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "conditional_intensity",
-        "raw": 3.058597407274331,
+        "raw": 0,
         "scale": 1,
         "unit": "per_second",
         "timescale": "per_second",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "excitation_amplitude:buy_from_sell",
-        "raw": 2.643788318369625e-7,
+        "raw": 0,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "log_likelihood_gain_vs_self_only",
-        "raw": -3.6639079326050705e-8,
+        "raw": 0,
         "scale": 1,
         "unit": "nat",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "excitation_share:buy",
-        "raw": 0.47417025611768854,
+        "raw": 0,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "background_rate",
-        "raw": 3.0579498779092704,
+        "raw": 0,
         "scale": 1,
         "unit": "per_second",
         "timescale": "per_second",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "background_rate:sell",
-        "raw": 1.1518996102376686,
+        "raw": 0,
         "scale": 1,
         "unit": "per_second",
         "timescale": "per_second",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "event_fraction:buy",
-        "raw": 0.8307692307692308,
+        "raw": 0.3333333333333333,
         "standardized": 0,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "excitation_mass:buy",
-        "raw": 16.444791875287105,
+        "raw": 0,
         "scale": 1,
         "unit": "count",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "excitation_decay:buy_from_buy",
-        "raw": 140.82405080184625,
+        "raw": 0,
         "scale": 1,
         "unit": "per_second",
         "timescale": "per_second",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "compensator:buy",
-        "raw": 34.681196602103036,
+        "raw": 0,
         "scale": 1,
         "unit": "count",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "excitation_amplitude:sell_from_sell",
-        "raw": 44.535042376305526,
+        "raw": 0,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "count_innovation:buy",
-        "raw": 18.318803397896964,
+        "raw": 0,
         "scale": 1,
         "unit": "count",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "log_likelihood:hawkes",
-        "raw": 108.63890134560215,
+        "raw": 0,
         "scale": 1,
         "unit": "nat",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "excitation_amplitude:sell_from_buy",
-        "raw": 2.6437883183696155e-7,
+        "raw": 0,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "excitation_intensity:sell",
-        "raw": 0.0006475245299730759,
+        "raw": 0,
         "scale": 1,
         "unit": "per_second",
         "timescale": "per_second",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "excitation_fraction:buy",
-        "raw": 2.536705213562231e-9,
+        "raw": 0,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "log_likelihood_gain_per_event_vs_self_only",
-        "raw": -5.636781434777032e-10,
+        "raw": 0,
         "scale": 1,
         "unit": "nat",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "branching_spectral_radius",
-        "raw": 0.31624599720519936,
+        "raw": 0,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "background_rate:buy",
-        "raw": 1.9060502676716016,
+        "raw": 0,
         "scale": 1,
         "unit": "per_second",
         "timescale": "per_second",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "arrival_rate:sell",
-        "raw": 1.1497086880508918,
+        "raw": 0.0079128994747124,
         "scale": 1,
         "unit": "per_second",
         "timescale": "per_second",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "fill_fraction_baseline:bid",
@@ -4001,9 +4001,9 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "matched_touch_trade_quantity:bid",
@@ -4012,9 +4012,9 @@
         "scale": 1,
         "unit": "count",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "touch_fill_rate:ask",
@@ -4022,9 +4022,9 @@
         "scale": 1,
         "unit": "rate",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "fill_fraction_baseline:ask",
@@ -4032,9 +4032,9 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "touch_fill_fraction:bid",
@@ -4043,9 +4043,9 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "touch_fill_rate:bid",
@@ -4053,9 +4053,9 @@
         "scale": 1,
         "unit": "rate",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "touch_fill_quantity:ask",
@@ -4064,9 +4064,9 @@
         "scale": 1,
         "unit": "count",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "touch_fill_quantity:bid",
@@ -4075,9 +4075,9 @@
         "scale": 1,
         "unit": "count",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "touch_fill_fraction:ask",
@@ -4086,9 +4086,9 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "matched_touch_trade_quantity:ask",
@@ -4097,9 +4097,9 @@
         "scale": 1,
         "unit": "count",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "fill_fraction_zscore:bid",
@@ -4107,9 +4107,9 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "fill_fraction_zscore:ask",
@@ -4117,20 +4117,20 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "bracket_trade_quantity",
-        "raw": 3871.59881,
+        "raw": 0,
         "standardized": 0,
         "scale": 1,
         "unit": "count",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "fill_fraction_divergence:bid",
@@ -4138,9 +4138,9 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "fill_fraction_divergence:ask",
@@ -4148,177 +4148,177 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "volume_bar_target_quantity",
-        "raw": 9290.225760618165,
+        "raw": 2715.5347498044443,
         "standardized": 0.291,
         "scale": 1,
         "unit": "count",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "trade_interval_seconds",
-        "raw": 0,
+        "raw": 36.650722,
         "scale": 1,
         "unit": "second",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "notional_rate_divergence",
-        "raw": -113.14663648363508,
+        "raw": -232420031.0781499,
         "scale": 1,
         "unit": "rate",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "volume_bar_trade_count",
-        "raw": 3,
+        "raw": 1,
         "standardized": 1,
         "scale": 1,
         "unit": "count",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "notional_rate_zscore",
-        "raw": -0.38938762371712216,
+        "raw": -0.13635086997539858,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "volume_bar_quantity",
-        "raw": 5603.672640000001,
+        "raw": 1173.172142,
         "standardized": 0.291,
         "scale": 1,
         "unit": "count",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "notional_rate_baseline",
-        "raw": 208.1889703163597,
+        "raw": 232420081.60719752,
         "scale": 1,
         "unit": "rate",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "notional_rate_ratio",
-        "raw": 0.4565195441828654,
+        "raw": 2.1740396632685613e-7,
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "trade_notional",
-        "raw": 218.53413619200003,
+        "raw": 34.303553432079994,
         "standardized": 89.95374539999999,
         "scale": 1,
         "unit": "count",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "volume_bar_notional",
-        "raw": 589.0020262264001,
+        "raw": 34.303553432079994,
         "standardized": 89.95374539999999,
         "scale": 1,
         "unit": "count",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "volume_rate",
-        "raw": 2855.839357954466,
+        "raw": 0.035578045172629136,
         "scale": 1,
         "unit": "rate",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "trade_price",
-        "raw": 0.10512,
+        "raw": 0.02924,
         "standardized": 309.1194,
         "scale": 1,
         "unit": "rate",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "notional_rate",
-        "raw": 95.04233383272462,
+        "raw": 50.52904759541632,
         "scale": 1,
         "unit": "rate",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "completed_volume_bar_ordinal",
-        "raw": 25,
+        "raw": 76,
         "scale": 1,
         "unit": "count",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "trade_quantity",
-        "raw": 2078.9016,
+        "raw": 1173.172142,
         "standardized": 0.291,
         "scale": 1,
         "unit": "count",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "volume_bar_duration",
-        "raw": 0.162974,
+        "raw": 36.650722,
         "standardized": 0,
         "scale": 1,
         "unit": "second",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "liquidation_signed_fraction",
@@ -4326,9 +4326,9 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "liquidation_notional_rate",
@@ -4336,9 +4336,9 @@
         "scale": 1,
         "unit": "per_second",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "liquidation_notional:sell",
@@ -4347,9 +4347,9 @@
         "scale": 1,
         "unit": "rate",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "gross_liquidation_notional",
@@ -4358,9 +4358,9 @@
         "scale": 1,
         "unit": "rate",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "liquidation_share_velocity",
@@ -4368,9 +4368,9 @@
         "scale": 1,
         "unit": "per_second",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "liquidation_notional:buy",
@@ -4379,20 +4379,20 @@
         "scale": 1,
         "unit": "rate",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "gross_derivative_trade_notional",
-        "raw": 1251185.1467064251,
+        "raw": 713.6299042504726,
         "standardized": 89.95374539999999,
         "scale": 1,
         "unit": "rate",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "liquidation_share",
@@ -4401,9 +4401,9 @@
         "scale": 1,
         "unit": "dimensionless",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "net_liquidation_notional",
@@ -4412,57 +4412,1550 @@
         "scale": 1,
         "unit": "rate",
         "timescale": "instantaneous",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "high",
-        "raw": 0.1309,
+        "raw": 0.03111,
         "exact": "318.9219",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "change_pct",
-        "raw": -17.93,
+        "raw": -4.85,
         "exact": "2.59",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "vwap",
-        "raw": 0.11928,
+        "raw": 0.02995,
         "exact": "307.4357",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "trades",
-        "raw": 41674,
+        "raw": 3359,
         "exact": "20685",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "low",
-        "raw": 0.10489,
+        "raw": 0.02898,
         "exact": "295.2948",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       },
       {
         "label": "change",
-        "raw": -0.02296,
+        "raw": -0.00149,
         "exact": "7.8184",
-        "x": 1073358,
-        "y": 1073358,
-        "region": 112
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_prediction_17",
+        "raw": 0.015227296254263433,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_2_state_17",
+        "raw": 0.0739616672277723,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_2_prediction_18",
+        "raw": 0.001579854801541131,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_3_prediction_2",
+        "raw": -0.0021593390260652772,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_prediction_1",
+        "raw": 0.04438756876364455,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_prediction_4",
+        "raw": 0.0010934787530770442,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_state_3",
+        "raw": -0.05281908057168789,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_state_24",
+        "raw": -0.06396197631536772,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_state_43",
+        "raw": 0.04825944180650246,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_prediction_5",
+        "raw": -0.008867937094282224,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_prediction_34",
+        "raw": 0.03558068326364597,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_prediction_39",
+        "raw": -0.012960730908979975,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_prediction_40",
+        "raw": 0.01107681620259317,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_3_state_10",
+        "raw": -0.0174926219446002,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_state_40",
+        "raw": -0.007044645946974373,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_prediction_31",
+        "raw": -0.02404291896585969,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_2_prediction_12",
+        "raw": -0.005549240742625572,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_3_prediction_4",
+        "raw": -0.026910046650479972,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_state_0",
+        "raw": 0.02592059720427045,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_prediction_30",
+        "raw": 0.01837377186605592,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_2_state_13",
+        "raw": -0.030526652288002134,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_2_prediction_7",
+        "raw": 0.03101128619391542,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_2_prediction_11",
+        "raw": -0.020473254632311543,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "task_skill",
+        "raw": 1.000235302039733,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_0_state_1",
+        "raw": 0,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_0_prediction_6",
+        "raw": 0.09948486479715672,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_state_20",
+        "raw": -0.03341853248875161,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_state_29",
+        "raw": -0.006359889547411873,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_prediction_10",
+        "raw": 0.0024986330782780517,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_prediction_16",
+        "raw": 0.05656970263986999,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_prediction_7",
+        "raw": -0.002834658060631471,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_prediction_22",
+        "raw": 0.021849443997442215,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_2_state_1",
+        "raw": 0.03315522646796313,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_2_state_9",
+        "raw": 0.00873248879830825,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_2_state_11",
+        "raw": -0.03854315266700992,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_3_state_4",
+        "raw": -0.024760773392301327,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "latent_2",
+        "raw": 0.019353131132558578,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_0_prediction_10",
+        "raw": -0.03314530215865664,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_prediction_15",
+        "raw": -0.03969608529254328,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_prediction_25",
+        "raw": -0.00908969378923981,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_prediction_27",
+        "raw": 0.014214783031250493,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_prediction_36",
+        "raw": 0.0020769873439930725,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_3_state_9",
+        "raw": -0.00006463530888425949,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_state_7",
+        "raw": 0.016888564960095977,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_state_32",
+        "raw": 0.011681177570017348,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_state_37",
+        "raw": -0.01676953742108257,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_2_state_4",
+        "raw": 0.003781147442485093,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_3_state_6",
+        "raw": 0.013602746941329583,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "latent_1",
+        "raw": -0.04778172452517057,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_state_38",
+        "raw": -0.060927179691871974,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_prediction_26",
+        "raw": 0.004303484948488243,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_prediction_35",
+        "raw": 0.00489353358484386,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_prediction_38",
+        "raw": 0.03825685571228727,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_2_state_15",
+        "raw": -0.0523682096630465,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_prediction_28",
+        "raw": -0.06494866407733019,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "latent_3",
+        "raw": -0.06944450089525461,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_state_2",
+        "raw": -0.031804194969559815,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_state_14",
+        "raw": 0.06812234484579897,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_2_prediction_20",
+        "raw": -0.000587203061996452,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_3_prediction_8",
+        "raw": 0.014961797481062234,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_prediction_23",
+        "raw": -0.03869258232411022,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "latent_7",
+        "raw": -0.019788789589021662,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_0_state_2",
+        "raw": 0.12829234415626814,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_0_prediction_0",
+        "raw": -0.02865679741917213,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_state_4",
+        "raw": 0.059290510862820923,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_state_19",
+        "raw": -0.0026820652927349387,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_2_prediction_9",
+        "raw": 0.02342654986170243,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_2_prediction_14",
+        "raw": 0.052786603533631696,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_3_prediction_1",
+        "raw": -0.0217912481575821,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_0_prediction_3",
+        "raw": -0.04062504523368041,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_state_16",
+        "raw": 0.08219761914408305,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_2_state_2",
+        "raw": -0.04923399163883274,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_3_prediction_0",
+        "raw": 0.006766278051446716,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "latent_9",
+        "raw": -0.00006463530888425949,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_state_5",
+        "raw": 0.008111048350207099,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_state_21",
+        "raw": 0.019786099094267224,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_state_39",
+        "raw": -0.035558897540328295,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_state_41",
+        "raw": 0.02367650833211594,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_2_state_16",
+        "raw": 0.009722309226718717,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_0_state_0",
+        "raw": 0,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_state_1",
+        "raw": 0.023870234581172274,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_prediction_13",
+        "raw": 0.0068289501008399305,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_prediction_20",
+        "raw": -0.03386053064954726,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_2_prediction_1",
+        "raw": 0.03252966222409016,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_2_prediction_3",
+        "raw": 0.019692096991522808,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_0_state_8",
+        "raw": -1.3427635450863264,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_state_18",
+        "raw": 0.05456554000466419,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_state_30",
+        "raw": -0.07138957488093112,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_2_state_6",
+        "raw": 0.030899048731793836,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_2_state_7",
+        "raw": 0.028033429823393973,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_3_state_5",
+        "raw": -0.04461231164398614,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_3_prediction_6",
+        "raw": -0.013419294208931684,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_state_15",
+        "raw": -0.057007594043629484,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "latent_6",
+        "raw": 0.013602746941329583,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "latent_10",
+        "raw": -0.0174926219446002,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_0_state_4",
+        "raw": 0,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_0_prediction_2",
+        "raw": 0.012642781631522725,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_0_prediction_9",
+        "raw": -0.03985441609817848,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_state_42",
+        "raw": -0.04000880791306828,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_prediction_8",
+        "raw": 0.019031550161897573,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_0_prediction_1",
+        "raw": -0.034448519747448884,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_state_8",
+        "raw": 0.09867288441727148,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_prediction_0",
+        "raw": 0.03108680000345247,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_prediction_19",
+        "raw": 0.024131083503511907,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_prediction_29",
+        "raw": 0.017019556753503404,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_prediction_33",
+        "raw": 0.039870050072714644,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_2_state_18",
+        "raw": 0.04333854890156101,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_2_prediction_0",
+        "raw": 0.002969878912399525,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_0_prediction_5",
+        "raw": -0.002797851869165963,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_prediction_14",
+        "raw": 0.08503170810839092,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_prediction_43",
+        "raw": -0.024281624000304387,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_2_state_0",
+        "raw": -0.022050174414813373,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_2_prediction_5",
+        "raw": 0.027997962406632586,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_2_prediction_8",
+        "raw": 0.06277089809596448,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_3_state_8",
+        "raw": 0.01710904894688823,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_3_prediction_7",
+        "raw": -0.008356534234352387,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_state_13",
+        "raw": -0.012106886940313035,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_state_22",
+        "raw": -0.03328709139012127,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_prediction_18",
+        "raw": -0.01779060484873223,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_prediction_32",
+        "raw": -0.0486667724362083,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_2_prediction_10",
+        "raw": 0.056912141121968865,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_2_prediction_19",
+        "raw": -0.018901873468931647,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_3_prediction_9",
+        "raw": -0.007939348758250723,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "latent_0",
+        "raw": -0.03864457842725833,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_0_state_10",
+        "raw": 0,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_state_6",
+        "raw": 0.019931709281559087,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_state_11",
+        "raw": -0.056772156162577476,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_prediction_41",
+        "raw": 0.027042438413625764,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_3_state_2",
+        "raw": 0.019353131132558578,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "task_relative_precision",
+        "raw": 1.438467029393756,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_prediction_24",
+        "raw": 0.002194727388263948,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_2_state_5",
+        "raw": 0.003987429678597354,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_2_state_12",
+        "raw": -0.03198127759740698,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_2_prediction_6",
+        "raw": 0.01711499554638035,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_state_35",
+        "raw": -0.07342500111276867,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_2_state_3",
+        "raw": 0.035022222442725015,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_state_31",
+        "raw": -0.002906735463115151,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_state_34",
+        "raw": 0.01902787521124197,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_prediction_9",
+        "raw": 0.052760564074906556,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_prediction_21",
+        "raw": 0.004593242630919191,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_prediction_42",
+        "raw": -0.0407859232219215,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_2_prediction_21",
+        "raw": 0.003669775278013504,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_3_state_7",
+        "raw": -0.019788789589021662,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_3_prediction_10",
+        "raw": 0.0001834248648041625,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_0_state_6",
+        "raw": -0.0008311068120207585,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_0_prediction_8",
+        "raw": -0.08521314435375521,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_state_12",
+        "raw": -0.013963209816128195,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_prediction_6",
+        "raw": 0.009746881029188094,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_2_state_8",
+        "raw": 0.04841478294288901,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_2_state_10",
+        "raw": 0.0576921036185151,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_2_state_20",
+        "raw": 0.03033018543305681,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_2_prediction_13",
+        "raw": -0.019196220238233874,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_0_state_7",
+        "raw": 0,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_0_prediction_4",
+        "raw": 0.006334502416358588,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_state_23",
+        "raw": 0.038742518747599694,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_state_26",
+        "raw": 0.04510675784750463,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_prediction_11",
+        "raw": -0.018871946562805095,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_prediction_12",
+        "raw": -0.0026901345437905146,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_2_state_19",
+        "raw": -0.03807591121163728,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_2_prediction_4",
+        "raw": 0.019494893001153646,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_0_state_3",
+        "raw": 0,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_0_prediction_7",
+        "raw": -0.048131135431410156,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_state_17",
+        "raw": -0.0777661603828587,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_state_25",
+        "raw": -0.011738047727968154,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_prediction_3",
+        "raw": -0.04102933990764716,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_prediction_37",
+        "raw": 0.010817536842136807,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_2_state_14",
+        "raw": 0.0302916609960598,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_2_prediction_16",
+        "raw": 0.012787859648086852,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "latent_5",
+        "raw": -0.04461231164398614,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "latent_8",
+        "raw": 0.01710904894688823,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_2_state_21",
+        "raw": 0.00404079511695068,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_3_state_0",
+        "raw": -0.03864457842725833,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_3_prediction_5",
+        "raw": -0.006366014423364045,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "latent_4",
+        "raw": -0.024760773392301327,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_state_27",
+        "raw": 0.012283037889381683,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_2_prediction_17",
+        "raw": 0.057783499467778006,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_3_state_1",
+        "raw": -0.04778172452517057,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_3_state_3",
+        "raw": -0.06944450089525461,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_3_prediction_3",
+        "raw": 0.006566073669269391,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_0_state_9",
+        "raw": 0,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_state_10",
+        "raw": 0.03888095015227331,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_state_28",
+        "raw": -0.05341633371405621,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_state_36",
+        "raw": 0.030628704200981325,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_2_prediction_2",
+        "raw": -0.03160539154428253,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_2_prediction_15",
+        "raw": -0.06240343806885027,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_0_state_5",
+        "raw": 0.002383097689991135,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_state_9",
+        "raw": 0.02125363405950361,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_state_33",
+        "raw": -0.02827439623357638,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "layer_1_prediction_2",
+        "raw": -0.030787799466287152,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "forward_curve_0",
+        "raw": 0,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "forward_curve_1",
+        "raw": 0,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "forward_curve_2",
+        "raw": 0,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "forward_curve_3",
+        "raw": 0,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "forward_curve_4",
+        "raw": 0,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "forward_curve_5",
+        "raw": 0,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "forward_curve_6",
+        "raw": 0,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "forward_curve_8",
+        "raw": 0,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "forward_curve_9",
+        "raw": 0,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "forward_curve_7",
+        "raw": 0,
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "decisions",
+        "raw": 0,
+        "scale": 1,
+        "unit": "count",
+        "timescale": "instantaneous",
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "action",
+        "raw": 0,
+        "scale": 1,
+        "unit": "count",
+        "timescale": "instantaneous",
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "stage_code",
+        "raw": 0,
+        "scale": 1,
+        "unit": "count",
+        "timescale": "instantaneous",
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "evaluated",
+        "raw": 0,
+        "scale": 1,
+        "unit": "count",
+        "timescale": "instantaneous",
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "confidence",
+        "raw": 0,
+        "scale": 1,
+        "unit": "dimensionless",
+        "timescale": "instantaneous",
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "edge",
+        "raw": 0,
+        "scale": 1,
+        "unit": "dimensionless",
+        "timescale": "instantaneous",
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "trading",
+        "raw": 0,
+        "scale": 1,
+        "unit": "count",
+        "timescale": "instantaneous",
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "win_rate",
+        "raw": 0,
+        "scale": 1,
+        "unit": "dimensionless",
+        "timescale": "instantaneous",
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "resolved",
+        "raw": 0,
+        "scale": 1,
+        "unit": "count",
+        "timescale": "instantaneous",
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
+      },
+      {
+        "label": "steps",
+        "raw": 19374,
+        "scale": 1,
+        "unit": "count",
+        "timescale": "instantaneous",
+        "x": 17274246,
+        "y": 17274293,
+        "region": 155
       }
     ],
     "settled": true
@@ -4595,133 +6088,7 @@
     "}": "d2FpdA==",
     "~": "d2FpdA==",
     "": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA==",
-    "\ufffd": "d2FpdA=="
-  }
+    "�": "d2FpdA=="
+  },
+  "engine_model": "HAwAGWNvZ25pdGlvbi9wYWNrZWQtd2VpZ2h0LzF7fwMBAQZDb25maWcB/4AAAQYBC01lbW9yeVNjYWxlAQgAAQ5EaXJpY2hsZXRBbHBoYQEIAAEPTWF4QmFja29mZk9yZGVyAQQAAQlCZWFtV2lkdGgBBAABB01heEhvcHMBBAABElN1cnByaXNhbEJyZWFrQml0cwEIAAAAFv+AAf1An0AB/uA/AQgBBgEEAf4MQAADBgAAAwQAAA7/gQQBAv+CAAEMAQQAAAT/ggAA"
 }

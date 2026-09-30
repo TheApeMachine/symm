@@ -6,7 +6,6 @@ import (
 
 	flatbuffers "github.com/google/flatbuffers/go"
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/learning/associative/grid"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 )
 
@@ -20,93 +19,76 @@ var measurementsBuilderPool = sync.Pool{
 MeasurementToWire converts a data.Measurement to wire.MeasurementT including
 metrics, metadata, and provenance.
 */
-func MeasurementToWire(measurement *data.Measurement[float64]) *wire.MeasurementT {
+func MeasurementToWire(measurement *data.Measurement[float64], alloc data.Allocator) *wire.MeasurementT {
 	if measurement == nil {
 		return nil
 	}
 
-	metrics := make([]*wire.MetricT, 0, len(measurement.Metrics))
+	metrics := data.MakeSlice[*wire.MetricT](alloc, 0, len(measurement.Metrics))
 	for _, metric := range measurement.Metrics {
-		wireMetric := &wire.MetricT{
-			Name:   metric.Label,
-			Raw:    metric.Raw,
-			Unit:   string(metric.Unit),
-			X:      metric.X,
-			Y:      metric.Y,
-			Region: metric.Region,
-		}
+		wireMetric := data.New[wire.MetricT](alloc)
+		wireMetric.Name = metric.Label
+		wireMetric.Raw = metric.Raw
+		wireMetric.Unit = string(metric.Unit)
+		wireMetric.X = metric.X
+		wireMetric.Y = metric.Y
+		wireMetric.Region = metric.Region
 
 		if metric.Normalized != nil {
 			wireMetric.Normalized = *metric.Normalized
 			wireMetric.HasNormalized = true
 		}
 
-		metrics = append(metrics, wireMetric)
+		metrics = data.AppendA(metrics, wireMetric, alloc)
 	}
 
-	provenance := make([]*wire.NamedStringT, 0, len(measurement.Provenance)+len(measurement.Metadata))
+	provenance := data.MakeSlice[*wire.NamedStringT](alloc, 0, len(measurement.Provenance)+len(measurement.Metadata))
 	for key, val := range measurement.Provenance {
-		provenance = append(provenance, &wire.NamedStringT{
-			Name:  key,
-			Value: val,
-		})
+		ns := data.New[wire.NamedStringT](alloc)
+		ns.Name = key
+		ns.Value = val
+		provenance = data.AppendA(provenance, ns, alloc)
 	}
 
-	metadata := make([]*wire.NamedNumberT, 0, len(measurement.Metadata))
+	metadata := data.MakeSlice[*wire.NamedNumberT](alloc, 0, len(measurement.Metadata))
 	for key, val := range measurement.Metadata {
 		if floatVal, err := strconv.ParseFloat(val, 64); err == nil {
-			metadata = append(metadata, &wire.NamedNumberT{
-				Name:  key,
-				Value: floatVal,
-			})
+			nn := data.New[wire.NamedNumberT](alloc)
+			nn.Name = key
+			nn.Value = floatVal
+			metadata = data.AppendA(metadata, nn, alloc)
 		} else if _, exists := measurement.Provenance[key]; !exists {
-			provenance = append(provenance, &wire.NamedStringT{
-				Name:  key,
-				Value: val,
-			})
+			ns := data.New[wire.NamedStringT](alloc)
+			ns.Name = key
+			ns.Value = val
+			provenance = data.AppendA(provenance, ns, alloc)
 		}
 	}
 
-	row := &wire.MeasurementT{
-		Source:       measurement.Source,
-		Symbol:       measurement.Label,
-		Tick:         measurement.SeqIdx,
-		At:           measurement.At.UnixNano(),
-		ObservedFrom: measurement.From.UnixNano(),
-		Maturity:     measurement.Maturity,
-		Snr:          measurement.SNR,
-		SnrDefined:   measurement.SNRDefined,
-		Metrics:      metrics,
-		Metadata:     metadata,
-		Provenance:   provenance,
+	var peers []*wire.MeasurementT
+	if len(measurement.Peers) > 0 {
+		peers = data.MakeSlice[*wire.MeasurementT](alloc, 0, len(measurement.Peers))
 	}
-
-	snapshot, ok := measurement.Result.(*grid.Snapshot)
-
-	if !ok && measurement.Result != nil {
-		if snapshotter, hasSnapshot := measurement.Result.(interface{ Snapshot() *grid.Snapshot }); hasSnapshot {
-			snapshot = snapshotter.Snapshot()
+	
+	for _, peer := range measurement.Peers {
+		if wirePeer := MeasurementToWire(peer, alloc); wirePeer != nil {
+			peers = data.AppendA(peers, wirePeer, alloc)
 		}
 	}
 
-	if snapshot != nil {
-		row.Grid = &wire.LearningDevelopmentT{Symbol: snapshot.Label, Volume: snapshot.Volume}
-
-		for _, cell := range snapshot.Cells {
-			row.Grid.Quantities = append(row.Grid.Quantities, &wire.LearningQuantityT{
-				Id: cell.ID, Source: cell.Source, Label: cell.Label, X: cell.X, Y: cell.Y,
-				Value: cell.Value, Activity: cell.Activity, Quality: cell.Quality, Present: cell.Present,
-				Basin: cell.Basin,
-			})
-		}
-
-		for _, region := range snapshot.Regions {
-			row.Grid.Regions = append(row.Grid.Regions, &wire.LearningRegionT{
-				Id: region.ID, Condition: region.Condition, Level: region.Level, Change: region.Change,
-				Strength: region.Strength, Authority: region.Authority, Members: int32(region.Members),
-			})
-		}
-	}
+	row := data.New[wire.MeasurementT](alloc)
+	row.Source = measurement.Source
+	row.Symbol = measurement.Label
+	row.Tick = measurement.SeqIdx
+	row.At = measurement.At.UnixNano()
+	row.ObservedFrom = measurement.From.UnixNano()
+	row.Maturity = measurement.Maturity
+	row.Snr = measurement.SNR
+	row.SnrDefined = measurement.SNRDefined
+	row.Metrics = metrics
+	row.Metadata = metadata
+	row.Provenance = provenance
+	row.Peers = peers
 
 	return row
 }
@@ -116,25 +98,26 @@ EncodeMeasurementsFrameWith serializes a batch of measurements and passes the
 borrowed FlatBuffer bytes directly to fn, returning the builder to the pool once
 fn returns. This avoids defensive heap cloning when writing directly to sockets.
 */
-func EncodeMeasurementsFrameWith(
+func EncodeMeasurements(
 	measurements []*data.Measurement[float64],
-	fn func([]byte) error,
-) error {
-	rows := make([]*wire.MeasurementT, 0, len(measurements))
+) ([]byte, error) {
+	alloc := data.NewAllocator()
+	defer data.Free(alloc)
+
+	rows := data.MakeSlice[*wire.MeasurementT](alloc, 0, len(measurements))
 
 	for _, measurement := range measurements {
-		if wireMeasurement := MeasurementToWire(measurement); wireMeasurement != nil {
-			rows = append(rows, wireMeasurement)
+		if wireMeasurement := MeasurementToWire(measurement, alloc); wireMeasurement != nil {
+			rows = data.AppendA(rows, wireMeasurement, alloc)
 		}
 	}
 
 	if len(rows) == 0 {
-		return nil
+		return nil, nil
 	}
 
-	frame := &wire.MeasurementsFrameT{
-		Rows: rows,
-	}
+	frame := data.New[wire.MeasurementsFrameT](alloc)
+	frame.Rows = rows
 
 	builder := measurementsBuilderPool.Get().(*flatbuffers.Builder)
 	builder.Reset()
@@ -143,5 +126,5 @@ func EncodeMeasurementsFrameWith(
 	offset := frame.Pack(builder)
 	builder.Finish(offset)
 
-	return fn(builder.FinishedBytes())
+	return builder.FinishedBytes(), nil
 }

@@ -1,14 +1,14 @@
 import { useSelector } from "@tanstack/react-store";
 import { useEffect, useRef } from "react";
 import { focusAtom, resonanceStore } from "#/collections/app";
+import { parseResonanceData, type ResonanceData } from "#/components/charts/prediction";
 import {
 	getRetainedResonance,
 	retainResonanceRow,
 } from "#/components/terminal/xray-view";
 import { Flex } from "#/components/ui/flex";
 import { Typography } from "#/components/ui/typography";
-import type { ResonanceT } from "#/providers/telemetry/telemetry/resonance";
-import type { ResonanceDynamicsT } from "#/providers/telemetry/telemetry/resonance-dynamics";
+import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
 
 const num = (value: unknown, digits: number): string =>
 	typeof value !== "number" || !Number.isFinite(value)
@@ -18,106 +18,106 @@ const num = (value: unknown, digits: number): string =>
 const ROWS = [
 	{
 		label: "energy",
-		read: (row: ResonanceT) => num(row.energy, 3),
+		read: (row: ResonanceData) => num(row.energy, 3),
 	},
 	{
 		label: "surprise",
-		read: (row: ResonanceT) => num(row.surprise, 3),
+		read: (row: ResonanceData) => num(row.surprise, 3),
 	},
 	{
 		label: "base alpha",
-		read: (row: ResonanceT) =>
+		read: (row: ResonanceData) =>
 			Array.isArray(row.forwardCurve) && row.forwardCurve.length > 0
 				? num(row.forwardCurve[row.forwardCurve.length - 1], 3)
 				: "—",
 	},
 	{
 		label: "horizon",
-		read: (row: ResonanceT) =>
+		read: (row: ResonanceData) =>
 			row.supportedHorizon != null
 				? `${num(Number(row.supportedHorizon), 0)} ticks`
 				: "—",
 	},
 	{
 		label: "reach",
-		read: (row: ResonanceT) =>
+		read: (row: ResonanceData) =>
 			Array.isArray(row.forwardCurve)
 				? `${row.forwardCurve.length} ticks`
 				: "—",
 	},
 	{
 		label: "samples",
-		read: (row: ResonanceT) =>
+		read: (row: ResonanceData) =>
 			row.resolvedSteps != null ? num(Number(row.resolvedSteps), 0) : "—",
 	},
 	{
 		label: "task skill",
-		read: (row: ResonanceT) => num(row.taskSkill, 3),
+		read: (row: ResonanceData) => num(row.taskSkill, 3),
 	},
 	{
 		label: "task scale",
-		read: (row: ResonanceT) => num(row.taskRelativePrecision, 8),
+		read: (row: ResonanceData) => num(row.taskRelativePrecision, 8),
 	},
 ] as const;
 
 const DYNAMICS_FIELDS = [
 	{
 		label: "velocity",
-		read: (d: ResonanceDynamicsT | null | undefined) =>
+		read: (d: Record<string, number> | null | undefined) =>
 			num(d?.velocity, 4),
 	},
 	{
 		label: "acceleration",
-		read: (d: ResonanceDynamicsT | null | undefined) =>
+		read: (d: Record<string, number> | null | undefined) =>
 			num(d?.acceleration, 4),
 	},
 	{
 		label: "liquid memory",
-		read: (d: ResonanceDynamicsT | null | undefined) => num(d?.memory, 4),
+		read: (d: Record<string, number> | null | undefined) => num(d?.memory, 4),
 	},
 	{
 		label: "memory scale",
-		read: (d: ResonanceDynamicsT | null | undefined) =>
+		read: (d: Record<string, number> | null | undefined) =>
 			num(d?.memoryScale, 4),
 	},
 	{
 		label: "stored energy",
-		read: (d: ResonanceDynamicsT | null | undefined) =>
+		read: (d: Record<string, number> | null | undefined) =>
 			num(d?.storedEnergy, 4),
 	},
 	{
 		label: "supplied power",
-		read: (d: ResonanceDynamicsT | null | undefined) =>
+		read: (d: Record<string, number> | null | undefined) =>
 			num(d?.suppliedPower, 4),
 	},
 	{
 		label: "dissipation",
-		read: (d: ResonanceDynamicsT | null | undefined) =>
+		read: (d: Record<string, number> | null | undefined) =>
 			num(d?.dissipation, 4),
 	},
 	{
 		label: "passivity residue",
-		read: (d: ResonanceDynamicsT | null | undefined) =>
+		read: (d: Record<string, number> | null | undefined) =>
 			num(d?.passivityResidue, 4),
 	},
 	{
 		label: "diffusion variance",
-		read: (d: ResonanceDynamicsT | null | undefined) =>
+		read: (d: Record<string, number> | null | undefined) =>
 			num(d?.continuousVariance, 6),
 	},
 	{
 		label: "jump amplitude",
-		read: (d: ResonanceDynamicsT | null | undefined) =>
+		read: (d: Record<string, number> | null | undefined) =>
 			num(d?.jumpAmplitude, 6),
 	},
 	{
 		label: "jump variance",
-		read: (d: ResonanceDynamicsT | null | undefined) =>
+		read: (d: Record<string, number> | null | undefined) =>
 			num(d?.jumpVariance, 6),
 	},
 	{
 		label: "rotor norm",
-		read: (d: ResonanceDynamicsT | null | undefined) =>
+		read: (d: Record<string, number> | null | undefined) =>
 			num(d?.equivarianceNorm, 4),
 	},
 ] as const;
@@ -141,7 +141,7 @@ export const XrayManifoldPanel = () => {
 			}
 
 			const retained = getRetainedResonance(focusSymbol);
-			const targetRow = (retained as unknown as ResonanceT | null) ?? last;
+			const targetRow = parseResonanceData((retained as unknown as MeasurementT | null) ?? last ?? undefined);
 
 			const set = (q: string, value: string) => {
 				const el = root.current?.querySelector<HTMLElement>(`[data-f="${q}"]`);
@@ -180,7 +180,7 @@ export const XrayManifoldPanel = () => {
 		<Flex.Column
 			ref={root}
 			gap={2}
-			className="flex flex-col gap-2 border-(--line) border-t px-3.5 py-3"
+			className="border-(--line) border-t px-3.5 py-3"
 		>
 			<div>
 				<div className="font-semibold text-[10px] text-(--f3) uppercase tracking-[0.13em]">

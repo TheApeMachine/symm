@@ -29,7 +29,7 @@ import { SkillPanel } from "./skill-panel";
 import type { CognitionTreeResponse, ImpulseNode } from "./types";
 import { LearningVisualizer } from "./visualizer";
 
-export type Tab = "forward" | "cognitive" | "impulse";
+export type Tab = "forward" | "cognitive" | "impulse" | "recognition" | "decision" | "influence";
 
 const TABS: Array<{ key: Tab; label: string }> = [
 	{ key: "forward", label: "Model training" },
@@ -465,37 +465,54 @@ export const LearningDashboard = () => {
 					}
 				}
 
-				const grid = measurement.grid;
-				const isGridSymbolMatch =
-					!grid?.symbol ||
-					grid.symbol === focusSymbol ||
-					grid.symbol === "learner" ||
-					focusSymbol === "";
-				const quantities = isGridSymbolMatch ? grid?.quantities ?? [] : [];
-				const measuredRegions = isGridSymbolMatch ? grid?.regions ?? [] : [];
+				const mappedNodes: ImpulseNode[] = [];
+				const regionActivity: Record<number, { activity: number; members: number }> = {};
+				
+				for (const peer of measurement.peers) {
+					if (!peer) continue;
+					
+					for (const metric of peer.metrics) {
+						if (!metric || !metric.name) continue;
+						
+						const nameStr = String(metric.name);
+						const x = Number(metric.x || 0n);
+						const y = Number(metric.y || 0n);
+						const regionId = metric.region || 0;
+						const raw = metric.raw || 0;
+						const activity = Math.abs(raw);
+						
+						mappedNodes.push({
+							id: nameStr,
+							label: String(peer.symbol || nameStr),
+							cluster: regionId,
+							snr: 1,
+							activation: activity,
+							value: raw,
+							x: x,
+							y: y,
+							present: true,
+						});
 
-				if (quantities.length > 0) {
-					const mappedNodes: ImpulseNode[] = quantities.map((cell) => ({
-						id: String(cell.id),
-						label: String(cell.label ?? cell.source ?? `#${cell.id}`),
-						cluster: Number(cell.basin || cell.id),
-						snr: cell.quality ?? 0,
-						activation: cell.activity || 0,
-						value: cell.value,
-						x: cell.x,
-						y: cell.y,
-						present: cell.present,
-					}));
+						if (regionId > 0) {
+							if (!regionActivity[regionId]) {
+								regionActivity[regionId] = { activity: 0, members: 0 };
+							}
+							regionActivity[regionId].activity += activity;
+							regionActivity[regionId].members += 1;
+						}
+					}
+				}
 
+				const measuredRegions = Object.entries(regionActivity).map(([idStr, data]) => ({
+					id: Number(idStr),
+					strength: data.activity,
+					authority: 1.0,
+					members: data.members
+				}));
+
+				if (mappedNodes.length > 0) {
 					setImpulseNodes(mappedNodes);
-					setImpulseRegions(
-						measuredRegions.map((r) => ({
-							id: Number(r.id),
-							strength: r.strength,
-							authority: r.authority,
-							members: r.members,
-						})),
-					);
+					setImpulseRegions(measuredRegions);
 
 					const sortedLitRegions = [...measuredRegions]
 						.filter((r) => (r.strength || 0) > 0)
@@ -504,8 +521,8 @@ export const LearningDashboard = () => {
 					if (sortedLitRegions.length > 0) {
 						setActivePrecursors(
 							sortedLitRegions.slice(0, 4).map((r, idx) => {
-								const peakCell = quantities.find(
-									(c) => Number(c.id) === Number(r.id),
+								const peakCell = mappedNodes.find(
+									(c) => Number(c.cluster) === Number(r.id),
 								);
 								const name = peakCell?.label
 									? `Region ${String.fromCharCode(65 + idx)} (${peakCell.label})`
@@ -521,7 +538,7 @@ export const LearningDashboard = () => {
 
 				const activeRegions = measuredRegions.map((region) => ({
 					source: String(
-						quantities.find((cell) => cell.id === region.id)?.label ??
+						mappedNodes.find((cell) => cell.cluster === region.id)?.label ??
 							region.id,
 					),
 					snr: region.strength,
@@ -597,16 +614,16 @@ export const LearningDashboard = () => {
 				) as HTMLElement;
 
 				if (mapPointsEl) {
-					const points: Point[] = quantities.map((cell) => ({
-						id: Number(cell.id),
-						source: String(cell.source ?? ""),
-						label: String(cell.label ?? ""),
-						x: cell.x,
-						y: cell.y,
-						value: cell.value,
-						energy: cell.activity,
-						authority: cell.quality,
-						present: cell.present,
+					const points: Point[] = mappedNodes.map((cell) => ({
+						id: cell.id,
+						source: String(cell.label),
+						label: String(cell.label),
+						x: cell.x || 0,
+						y: cell.y || 0,
+						value: cell.value || 0,
+						energy: cell.activation,
+						authority: cell.snr,
+						present: cell.present || false,
 					}));
 					const regions: Region[] = measuredRegions.map((region) => ({
 						id: Number(region.id),
@@ -636,7 +653,7 @@ export const LearningDashboard = () => {
 					);
 					const scale = extent > 0 ? 240 / extent : 0;
 					const maxEnergy = Math.max(...points.map((point) => point.energy), 0);
-					const peakSet = new Set(regions.map((reg) => reg.id));
+					const peakSet = new Set<string | number>(regions.map((reg) => reg.id));
 
 					while (mapPointsEl.children.length < points.length) {
 						const circle = document.createElementNS(

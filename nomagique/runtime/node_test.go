@@ -163,8 +163,8 @@ func (node *peerAwareNode) Register() *data.Measurement[float64] {
 func BenchmarkConsumerHandle(b *testing.B) {
 	register := store.NewRegister[*data.Measurement[float64]](8)
 	consumer := NewConsumer(&countingNode{}, register)
-	b.ResetTimer()
-	for sequence := 0; sequence < b.N; sequence++ {
+	
+	for sequence := 0; b.Loop(); sequence++ {
 		consumer.Handle(int64(sequence), int64(sequence))
 	}
 }

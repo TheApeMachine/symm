@@ -10,10 +10,10 @@ import {
 	updateClock,
 } from "#/collections/app";
 import { Message } from "#/providers/telemetry/telemetry/message";
-import type { ResonanceT } from "#/providers/telemetry/telemetry/resonance";
-import { ResonanceFrame } from "#/providers/telemetry/telemetry/resonance-frame";
+import { MeasurementsFrame } from "#/providers/telemetry/telemetry/measurements-frame";
+import { dispatchMeasurements } from "#/providers/websocket";
 
-const resonanceChannel = "resonance";
+const telemetryChannel = "telemetry";
 
 // Backoff policy mirrors the websocket worker so both transports degrade at the
 // same pace instead of one silently giving up on a transient failure.
@@ -45,64 +45,17 @@ const setTransport = (
 	onlineAtom.set(status);
 };
 
-export const dispatchResonanceRow = (row: {
-	symbol: () => string | null;
-	unpack: () => ResonanceT;
-}) => {
-	const symbol = row.symbol() ?? "";
-
-	if (symbol && !symbolsAtom.get().includes(symbol)) {
-		observeSymbols([symbol]);
-	}
-
-	let ring = resonanceStore.state[symbol];
-
-	if (!ring) {
-		ring = new RingBuffer<ResonanceT>(50);
-		resonanceStore.state[symbol] = ring;
-	}
-
-	const unpacked = row.unpack();
-	ring.add(unpacked);
-
-	if (unpacked.at) {
-		updateClock(unpacked.at);
-	}
-};
-
-export const dispatchResonanceBuffer = (buffer: flatbuffers.ByteBuffer) => {
-	let touched = false;
-
-	storeBatch(() => {
-		if (Message.bufferHasIdentifier(buffer)) {
-			const message = Message.getRootAsMessage(buffer);
-			const frame = message.frame(new ResonanceFrame());
-			if (frame) {
-				const count = frame.rowsLength();
-				for (let index = 0; index < count; index += 1) {
-					const row = frame.rows(index);
-					if (row) {
-						dispatchResonanceRow(row);
-						touched = true;
-					}
-				}
-			}
-		} else {
-			const frame = ResonanceFrame.getRootAsResonanceFrame(buffer);
-			const count = frame.rowsLength();
-			for (let index = 0; index < count; index += 1) {
-				const row = frame.rows(index);
-				if (row) {
-					dispatchResonanceRow(row);
-					touched = true;
-				}
-			}
+export const dispatchMeasurementsBuffer = (buffer: flatbuffers.ByteBuffer) => {
+	if (Message.bufferHasIdentifier(buffer)) {
+		const message = Message.getRootAsMessage(buffer);
+		const frame = message.frame(new MeasurementsFrame());
+		if (frame) {
+			dispatchMeasurements(frame);
 		}
-
-		if (touched) {
-			resonanceStore.setState((prev) => ({ ...prev }));
-		}
-	});
+	} else {
+		const frame = MeasurementsFrame.getRootAsMeasurementsFrame(buffer);
+		dispatchMeasurements(frame);
+	}
 };
 
 const waitForIceGathering = (connection: RTCPeerConnection) => {
@@ -254,10 +207,10 @@ export const RtcFeed = () => {
 				}
 			});
 
-			openChannel(resonanceChannel, (record) => {
+			openChannel(telemetryChannel, (record) => {
 				const bytes = new Uint8Array(record as ArrayBuffer);
 				const buffer = new flatbuffers.ByteBuffer(bytes);
-				dispatchResonanceBuffer(buffer);
+				dispatchMeasurementsBuffer(buffer);
 			});
 
 			try {

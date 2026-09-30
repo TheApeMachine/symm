@@ -82,6 +82,7 @@ func NewHub(
 	trades TradeJournalSource,
 	hindsightStore *tables.Catalog,
 	uiTee runtime.Tee,
+	webrtcTee runtime.Tee,
 ) *Hub {
 	viper.SetDefault("ui.addr", "127.0.0.1:8765")
 	viper.SetDefault("ui.websocket.max_message_bytes", 4*1024*1024)
@@ -102,7 +103,7 @@ func NewHub(
 	}
 
 	hub.routes = NewRoutes(hub)
-	hub.WebRTC = NewWebRTC(hub)
+	hub.WebRTC = NewWebRTC(ctx, hub, webrtcTee)
 
 	closers := []io.Closer{}
 

@@ -2,7 +2,7 @@ import { useSelector } from "@tanstack/react-store";
 import { type CSSProperties, useRef } from "react";
 import { focusAtom, resonanceStore } from "#/collections/app";
 import { semanticLayerName } from "#/components/terminal/xray-layers";
-import type { ResonanceT } from "#/providers/telemetry/telemetry/resonance";
+import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
 import { Flex } from "../ui";
 
 export const vectorSlotTransform = (slot: number, slotCount: number): string =>
@@ -24,13 +24,93 @@ const fmt = (value: number | undefined | null, digits: number): string =>
 		? "—"
 		: value.toFixed(digits);
 
-/*
-The resonance artifact rides every envelope (types.Envelope.Resonance), and the
-artifact store is not pre-scoped to one symbol — the solver keys its coder per
-symbol across the cross-section — so the focused symbol is selected here, the
-same way the other resonance surfaces do it.
-*/
-const useArtifact = (): ResonanceT | undefined => {
+export type LayerData = {
+	state?: number[];
+	prediction?: number[];
+};
+
+export type ResonanceData = {
+	taskRelativePrecision?: number;
+	taskSkill?: number;
+	supportedHorizon?: number;
+	resolvedSteps?: number;
+	surprise?: number;
+	energy?: number;
+	confidence?: number;
+	calibrated?: boolean;
+	taskCalibration?: string;
+	taskSkillStatus?: string;
+	taskSkillReady?: boolean;
+	forwardCurve: number[];
+	dynamics?: Record<string, number>;
+	latent?: number[];
+	layers?: LayerData[];
+};
+
+export const parseResonanceData = (measurement: MeasurementT | undefined): ResonanceData | undefined => {
+	if (!measurement) return undefined;
+	
+	const data: ResonanceData = { forwardCurve: [], dynamics: {}, latent: [], layers: [] };
+	
+	for (let i = 0; i < measurement.metrics.length; i++) {
+		const m = measurement.metrics[i];
+		const lbl = String(m.name);
+		if (lbl === "task_relative_precision") data.taskRelativePrecision = m.raw;
+		if (lbl === "task_skill") data.taskSkill = m.raw;
+		if (lbl === "surprise") data.surprise = m.raw;
+		if (lbl === "energy") data.energy = m.raw;
+		if (lbl?.startsWith("forward_curve_")) {
+			const idx = parseInt(lbl.split("_")[2], 10);
+			if (!Number.isNaN(idx)) {
+				data.forwardCurve[idx] = m.raw;
+			}
+		}
+		if (lbl?.startsWith("dynamics_")) {
+			const prop = lbl.replace("dynamics_", "");
+			if (data.dynamics) {
+				data.dynamics[prop] = m.raw;
+			}
+		}
+		if (lbl?.startsWith("latent_")) {
+			const idx = parseInt(lbl.split("_")[1], 10);
+			if (!Number.isNaN(idx) && data.latent) {
+				data.latent[idx] = m.raw;
+			}
+		}
+		if (lbl?.startsWith("layer_")) {
+			const parts = lbl.split("_");
+			const layerId = parseInt(parts[1], 10);
+			const prop = parts[2];
+			const idx = parseInt(parts[3], 10);
+			
+			if (!Number.isNaN(layerId) && !Number.isNaN(idx) && data.layers) {
+				if (!data.layers[layerId]) {
+					data.layers[layerId] = { state: [], prediction: [] };
+				}
+				const layer = data.layers[layerId];
+				if (prop === "state" && layer.state) {
+					layer.state[idx] = m.raw;
+				} else if (prop === "prediction" && layer.prediction) {
+					layer.prediction[idx] = m.raw;
+				}
+			}
+		}
+	}
+	
+	for (let i = 0; i < measurement.provenance.length; i++) {
+		const p = measurement.provenance[i];
+		const k = String(p.name);
+		const v = String(p.value);
+		if (k === "supported_horizon") data.supportedHorizon = parseInt(v, 10);
+		if (k === "resolved_steps") data.resolvedSteps = parseInt(v, 10);
+		if (k === "confidence") data.confidence = parseFloat(v);
+		if (k === "calibrated") data.calibrated = v === "true";
+	}
+	
+	return data;
+};
+
+const useArtifact = (): ResonanceData | undefined => {
 	const symbol = useSelector(focusAtom);
 
 	const row = useSelector(resonanceStore, (state) => {
@@ -38,18 +118,9 @@ const useArtifact = (): ResonanceT | undefined => {
 		return ring && !ring.isEmpty() ? (ring.getLast() ?? undefined) : undefined;
 	});
 
-	/*
-	The artifact ring is shared across the whole cross-section, so the focused
-	symbol's row is evicted whenever the other symbols out-produce it for a few
-	frames. That is sparsity, not an absence of state: the coder still holds the
-	values it last published. Latching the last row for the focused symbol keeps
-	the panel showing that state instead of blanking out until the symbol is
-	quoted again. The latch is cleared on a focus change so a new symbol never
-	inherits the previous one's numbers.
-	*/
 	const held = useRef<{
 		symbol: string | undefined;
-		row: ResonanceT | undefined;
+		row: MeasurementT | undefined;
 	}>({ symbol, row: undefined });
 
 	if (held.current.symbol !== symbol) {
@@ -60,10 +131,10 @@ const useArtifact = (): ResonanceT | undefined => {
 		held.current.row = row;
 	}
 
-	return held.current.row;
+	return parseResonanceData(held.current.row);
 };
 
-const taskCalibration = (res: ResonanceT | undefined): string => {
+const taskCalibration = (res: ResonanceData | undefined): string => {
 	if (!res) return "—";
 	if (typeof res.taskCalibration === "string" && res.taskCalibration.length > 0) {
 		return res.taskCalibration;
@@ -71,7 +142,7 @@ const taskCalibration = (res: ResonanceT | undefined): string => {
 	return res.calibrated ? "CALIBRATED" : "CALIBRATING";
 };
 
-const taskSkillStatus = (res: ResonanceT | undefined): string => {
+const taskSkillStatus = (res: ResonanceData | undefined): string => {
 	if (!res) return "—";
 	if (typeof res.taskSkillStatus === "string" && res.taskSkillStatus.length > 0) {
 		return res.taskSkillStatus;

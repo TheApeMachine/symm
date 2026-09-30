@@ -1,7 +1,7 @@
 import { Canvas } from "#/components/ui/canvas";
 import { cn } from "#/lib/utils";
 export type Point = {
-	id: number;
+	id: string | number;
 	source: string;
 	label: string;
 	x: number;
@@ -34,7 +34,7 @@ export const ImpulseMap = ({
 	);
 	const scale = extent > 0 ? 240 / extent : 0;
 	const energy = Math.max(...points.map((point) => point.energy), 0);
-	const peaks = new Set(regions.map((region) => region.id));
+	const peaks = new Set<string | number>(regions.map((region) => region.id));
 	return (
 		<Canvas
 			title="Impulse map"

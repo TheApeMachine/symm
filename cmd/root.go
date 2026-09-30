@@ -97,7 +97,7 @@ var (
 			// thus no need to call a deferred Close method for anything.
 			epoch := processStartedAt.UnixNano()
 
-			uiTee := ui.NewUITee(ctx, "uiTee", 131072)
+			uiTee := ui.NewUITee(ctx, "uiTee", 16)
 			storeTee := hindsight.NewStoreTee(ctx, "storeTee", 131072)
 
 			// Hindsight's record families are Iceberg tables. The object store
@@ -180,8 +180,10 @@ var (
 
 			uiTee.Transition(nmruntime.READY)
 			training.Transition(nmruntime.READY)
+			training.Run()
 
-			hub := ui.NewHub(ctx, trader, catalog, uiTee)
+			webrtcTee := ui.NewUITee(ctx, "webrtcTee", 1)
+			hub := ui.NewHub(ctx, trader, catalog, uiTee, webrtcTee)
 			hub.SetPositionSource(trader)
 			hub.SetCognitionSource(training)
 			hub.SetExitHandler(func(symbol string) {
@@ -189,6 +191,12 @@ var (
 			})
 			hub.Run()
 			hub.Transition(nmruntime.READY)
+
+			// Wire trade outcomes back to the training stage machine so it can
+			// track win rate and decide when to advance stages.
+			trader.SetOnPositionClosed(func(symbol string, returnFraction float64, fee float64) {
+				training.RecordTradeResult(returnFraction)
+			})
 
 			errnie.Info("symm: restoring model checkpoint...")
 
@@ -259,8 +267,6 @@ var (
 				ctx, system.Cfg.Resonance.LearningRate,
 			)
 			cognitionSolver := cognition.NewSolver(ctx)
-			webrtcTee := ui.NewWebRTCTee(ctx, "webrtcTee", 131072)
-
 			workspace := nmruntime.NewWorkspace(
 				ctx,
 				"workspace",
@@ -359,7 +365,7 @@ var (
 			drainErrors := make(chan error, 1)
 
 			go func() {
-				drainErrors <- catalog.Drain(ctx, epoch, storeTee)
+				drainErrors <- catalog.Drain(ctx, epoch, storeTee, training.ExcursionLearn)
 			}()
 
 			manifoldSolver.Start()
@@ -367,7 +373,7 @@ var (
 			transportErrors := make(chan error, 1)
 
 			go func() {
-				transportErrors <- hub.WebRTC.Run(webrtcTee)
+				transportErrors <- hub.WebRTC.Run()
 			}()
 
 			// Every processing and off-ramp owner is ready before ingress opens.

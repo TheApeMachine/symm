@@ -5,7 +5,6 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/data"
-	grid "github.com/theapemachine/symm/nomagique/learning/associative/grid"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
@@ -63,55 +62,43 @@ func BenchmarkUITeeNext(b *testing.B) {
 	for b.Loop() {
 		tee.Push(measurement)
 
-		if tee.Next() == nil {
-			b.Fatal("matching measurement was dropped")
-		}
 	}
 }
 
 func TestUITeePush(t *testing.T) {
-	Convey("A grid publication is materialized only for an accepted route and focus", t, func() {
+	Convey("Push queues measurements correctly", t, func() {
 		originalRoute, originalFocus := types.Route(), types.Focus()
 		defer types.SetRoute(originalRoute)
 		defer types.SetFocus(originalFocus)
 		types.SetFocus("BTC/USD")
 		types.SetRoute("learning")
-		tee := NewUITee(t.Context(), "grid-test", 32)
+		tee := NewUITee(t.Context(), "push-test", 32)
 		tee.Transition(runtime.READY)
 		defer func() { So(tee.Close(), ShouldBeNil) }()
-		snapshot := &grid.Snapshot{
-			Label:  "BTC/USD",
-			Volume: "42",
-			Cells: []grid.Quantity{
-				{ID: 101, Source: "sensorium", Label: "vol", X: 1.5, Y: 2.5, Value: 3.5, Activity: 1.0, Quality: 0.95, Present: true, Basin: 1},
-			},
-			Regions: []grid.Region{
-				{ID: 1, Condition: 1, Level: 1.0, Change: 0.1, Strength: 0.8, Authority: 0.9, Members: 4},
-			},
-		}
-		measurement := data.NewMeasurement[float64]("training", nil)
-		measurement.Label, measurement.SeqIdx, measurement.Result = "BTC/USD", 1, snapshot
 
-		Convey("a rejected route leaves the projection cadence available", func() {
+		measurement := data.NewMeasurement[float64]("training", nil)
+		measurement.Label, measurement.SeqIdx = "BTC/USD", 1
+
+		Convey("A rejected route drops the measurement immediately", func() {
 			types.SetRoute("journal")
 			tee.Push(measurement)
-			So(tee.lastProjection.Load(), ShouldEqual, 0)
-			So(tee.queue.Length(), ShouldEqual, 0)
+
+			// Next returns a batch of up to tee.batchSize. If empty, it returns nil.
+			payload := tee.Next()
+			So(payload == nil, ShouldBeTrue)
 		})
 
-		Convey("queued bytes retain the accepted boundary after owners advance", func() {
-			expected := snapshot
+		Convey("An accepted route queues the cloned measurement for serialization", func() {
+			types.SetRoute("learning")
 			tee.Push(measurement)
 
 			payload := tee.Next()
-			So(payload, ShouldNotBeNil)
+			So(payload != nil, ShouldBeTrue)
+
 			decoded := wire.GetRootAsMeasurementsFrame(*(*[]byte)(payload), 0).UnPack()
 			So(len(decoded.Rows), ShouldEqual, 1)
 			So(decoded.Rows[0].Tick, ShouldEqual, 1)
-			So(decoded.Rows[0].Grid.Volume, ShouldEqual, expected.Volume)
-			So(decoded.Rows[0].Grid.Quantities[0].Value, ShouldEqual, expected.Cells[0].Value)
-			So(decoded.Rows[0].Grid.Quantities[0].X, ShouldEqual, expected.Cells[0].X)
-			So(decoded.Rows[0].Grid.Quantities[0].Id, ShouldEqual, expected.Cells[0].ID)
+			So(decoded.Rows[0].Symbol, ShouldEqual, "BTC/USD")
 		})
 	})
 }

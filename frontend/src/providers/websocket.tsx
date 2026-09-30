@@ -54,7 +54,7 @@ const defaultWsUrl = () => {
 Dispatches one decoded MeasurementsFrame into per-measurement rings.
 Each Measurement row carries its own source, symbol, tick, snr, and metrics.
 */
-function dispatchMeasurements(frame: MeasurementsFrame) {
+export function dispatchMeasurements(frame: MeasurementsFrame) {
 	const count = frame.rowsLength();
 	const touched = new Set<string>();
 

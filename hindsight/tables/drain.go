@@ -43,7 +43,7 @@ func (catalog *Catalog) Drain(
 				return errnie.Error(errnie.Err(errnie.Validation, "catalog: observation has no workspace sequence", nil))
 			}
 
-			if measurement.Source == "training" && len(learn) > 0 {
+			if measurement.Metadata["excursion"] != "" && len(learn) > 0 {
 				records, err := learn[0](measurement)
 				if err != nil {
 					return err

@@ -22,7 +22,7 @@ import (
 	"github.com/theapemachine/symm/nomagique/learning"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/transport"
-	"github.com/theapemachine/symm/types"
+
 )
 
 /*
@@ -243,18 +243,7 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 	scorer := solver.scorer(symbol)
 	features := scorer.Step(signals)
 
-	resonance := solver.Update(symbol, at, features, midpoint)
-	measurement.Result = resonance
-
-	if resonance != nil && resonance.Snapshot != nil {
-		if energyMetric, ok := measurement.Metrics["energy"]; ok {
-			measurement.Metrics["energy"] = energyMetric.Write(resonance.Snapshot.Energy)
-		}
-
-		if surpriseMetric, ok := measurement.Metrics["surprise"]; ok {
-			measurement.Metrics["surprise"] = surpriseMetric.Write(resonance.Snapshot.Surprise)
-		}
-	}
+	solver.Update(measurement, symbol, at, features, midpoint)
 
 	measurement.Label = symbol
 	measurement.At = at
@@ -265,10 +254,12 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 		}
 	}
 
-	if resonance != nil && resonance.Dynamics != nil && resonance.Dynamics.Energy > 0 && resonance.Dynamics.ReconstructionError > 0 {
-		measurement.SNR = resonance.Dynamics.Energy / resonance.Dynamics.ReconstructionError
-		measurement.SNRDefined = true
-		measurement.Estimated = true
+	if energyMetric, ok := measurement.Metrics["energy"]; ok && energyMetric.Raw > 0 {
+		if surpriseMetric, ok := measurement.Metrics["surprise"]; ok && surpriseMetric.Raw > 0 {
+			measurement.SNR = energyMetric.Raw / surpriseMetric.Raw
+			measurement.SNRDefined = true
+			measurement.Estimated = true
+		}
 	}
 
 	return measurement
@@ -303,11 +294,12 @@ otherwise the skill posterior never calibrates regardless of how long the
 stream runs.
 */
 func (solver *Solver) Update(
+	measurement *data.Measurement[float64],
 	symbolName string,
 	at time.Time,
 	features []float64,
 	midpoint float64,
-) *types.ResonanceArtifact {
+) {
 	priorMidpoint := 0.0
 
 	if prior, found := solver.references.Load(symbolName); found {
@@ -346,7 +338,7 @@ func (solver *Solver) Update(
 			fmt.Sprintf("resonance: detector step failed for %s", symbolName),
 			nil,
 		))
-		return nil
+		return
 	}
 
 	hasReference := priorMidpoint > 0 && midpoint > 0
@@ -373,14 +365,14 @@ func (solver *Solver) Update(
 			fmt.Sprintf("resonance: detector step failed for %s", symbolName),
 			err,
 		))
-		return nil
+		return
 	}
 
 	if midpoint > 0 {
 		solver.references.Store(symbolName, midpoint)
 	}
 
-	return solver.publishReturns(symbolName, at, coder, out)
+	solver.publishReturns(measurement, coder, out)
 }
 
 func signalIndex(source string) int {
@@ -713,64 +705,78 @@ func authorityOf(measurement *data.Measurement[float64]) float64 {
 }
 
 func (solver *Solver) publishReturns(
-	symbol string,
-	at time.Time,
+	measurement *data.Measurement[float64],
 	coder *learning.PredictiveCoder,
 	out learning.PredictiveOutput,
-) *types.ResonanceArtifact {
-	if symbol == "" || coder == nil {
-		return nil
+) {
+	if measurement == nil || coder == nil {
+		return
 	}
 
-	artifact := types.ResonanceArtifact{
-		Symbol:           symbol,
-		At:               at,
-		Snapshot:         out.Reading,
-		Dynamics:         out.Dynamics,
-		ForwardCurve:     out.ForwardCurve,
-		ForwardRetention: out.ForwardRetention,
-		SupportedHorizon: out.SupportedHorizon,
-		Calibrated:       out.Calibrated,
-		ResolvedSteps:    out.ResolvedSteps,
-		Readout:          out.Readout,
-		Confidence:       out.Confidence,
+	measurement.Provenance["calibrated"] = "false"
+	if out.Calibrated {
+		measurement.Provenance["calibrated"] = "true"
 	}
+	
+	measurement.Provenance["supported_horizon"] = fmt.Sprintf("%d", out.SupportedHorizon)
+	measurement.Provenance["resolved_steps"] = fmt.Sprintf("%d", out.ResolvedSteps)
+	measurement.Provenance["confidence"] = fmt.Sprintf("%f", out.Confidence)
 
-	if out.LastResolution != nil {
-		artifact.LastResolutionPrediction = out.LastResolution.Prediction
-		artifact.LastResolutionTarget = out.LastResolution.Target
-		artifact.LastResolutionError = out.LastResolution.Error
-	}
-
-	// The coder produces a prior-based forecast on its very first step, so the
-	// artifact always carries the current call. Calibration stays truthful on
-	// the artifact and downstream modules weigh it themselves; the solver never
-	// withholds an output just because the head has not calibrated yet.
-	horizon := max(out.SupportedHorizon, 1)
-
-	if len(out.Forecast) > 0 {
-		// The last curve element is the supported horizon's cumulative
-		// directional prediction, which is the call the artifact carries.
-		forecast := out.Forecast[len(out.Forecast)-1]
-		call := 0.0
-
-		if forecast.Ready {
-			if forecast.Value > 0 {
-				call = 1.0
-			}
-			if forecast.Value < 0 {
-				call = -1.0
-			}
+	if out.Reading != nil {
+		measurement.Metrics["energy"] = data.Metric[float64]{
+			Label: "energy",
+			Raw:   out.Reading.Energy,
 		}
-
-		artifact.Forecast = &types.ResonanceReturnForecast{
-			Distribution:  forecast,
-			Horizon:       horizon,
-			CandidateCall: call,
-			Call:          call,
-			StableCall:    call,
+		measurement.Metrics["surprise"] = data.Metric[float64]{
+			Label: "surprise",
+			Raw:   out.Reading.Surprise,
+		}
+		measurement.Metrics["task_skill"] = data.Metric[float64]{
+			Label: "task_skill",
+			Raw:   out.Reading.SkillAverage,
+		}
+		measurement.Metrics["task_relative_precision"] = data.Metric[float64]{
+			Label: "task_relative_precision",
+			Raw:   out.Reading.PrecisionAverage,
+		}
+	}
+	
+	// Add forward curve as indexed metrics
+	for i, val := range out.ForwardCurve {
+		label := fmt.Sprintf("forward_curve_%d", i)
+		measurement.Metrics[label] = data.Metric[float64]{
+			Label: label,
+			Raw:   val,
 		}
 	}
 
-	return &artifact
+	// Add latent state as indexed metrics if needed
+	if out.Reading != nil {
+		for i, val := range out.Reading.Latent {
+			label := fmt.Sprintf("latent_%d", i)
+			measurement.Metrics[label] = data.Metric[float64]{
+				Label: label,
+				Raw:   val,
+			}
+		}
+		
+		for i, layer := range out.Reading.Layers {
+			for j, val := range layer.State {
+				label := fmt.Sprintf("layer_%d_state_%d", i, j)
+				measurement.Metrics[label] = data.Metric[float64]{
+					Label: label,
+					Raw:   val,
+				}
+			}
+			for j, val := range layer.Prediction {
+				label := fmt.Sprintf("layer_%d_prediction_%d", i, j)
+				measurement.Metrics[label] = data.Metric[float64]{
+					Label: label,
+					Raw:   val,
+				}
+			}
+		}
+	}
+
+	measurement.Result = nil
 }

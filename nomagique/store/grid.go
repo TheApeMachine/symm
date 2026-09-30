@@ -96,6 +96,23 @@ func (grid *Grid) Region(label string) uint8 {
 }
 
 func (grid *Grid) update(measurement *data.Measurement[float64], decorate bool) {
+	if grid.Settled {
+		if decorate {
+			for label, incoming := range measurement.Metrics {
+				stored := grid.find(label)
+
+				if stored != nil {
+					incoming.X = stored.X
+					incoming.Y = stored.Y
+					incoming.Region = stored.Region
+					measurement.Metrics[label] = incoming
+				}
+			}
+		}
+
+		return
+	}
+
 	for label, incoming := range measurement.Metrics {
 		existing := grid.find(label)
 
@@ -133,6 +150,9 @@ func (grid *Grid) update(measurement *data.Measurement[float64], decorate bool) 
 		return
 	}
 
+	width := max(int64(math.Ceil(math.Sqrt(float64(metricCount)))), 1)
+	maxBound := max(width*2, 32)
+
 	if cap(grid.deltas) < metricCount {
 		grid.deltas = make([]float64, metricCount)
 	}
@@ -152,6 +172,18 @@ func (grid *Grid) update(measurement *data.Measurement[float64], decorate bool) 
 	}
 
 	moved := false
+
+	clamp := func(val, minVal, maxVal int64) int64 {
+		if val < minVal {
+			return minVal
+		}
+
+		if val > maxVal {
+			return maxVal
+		}
+
+		return val
+	}
 
 	// Apply sympathetic attraction/repulsion rules directly on Metric.X and Metric.Y
 	for firstIdx := 0; firstIdx < metricCount; firstIdx++ {
@@ -197,53 +229,63 @@ func (grid *Grid) update(measurement *data.Measurement[float64], decorate bool) 
 				}
 
 				if math.Abs(float64(diffX)) > 1 {
-					moved = true
 					stepX := int64(math.Copysign(1, float64(diffX)))
-					firstMetric.X += stepX
-					secondMetric.X -= stepX
+					new1X := clamp(firstMetric.X+stepX, 0, maxBound)
+					new2X := clamp(secondMetric.X-stepX, 0, maxBound)
+
+					if new1X != firstMetric.X || new2X != secondMetric.X {
+						firstMetric.X = new1X
+						secondMetric.X = new2X
+						moved = true
+					}
 				}
 
 				if math.Abs(float64(diffY)) > 1 {
-					moved = true
 					stepY := int64(math.Copysign(1, float64(diffY)))
-					firstMetric.Y += stepY
-					secondMetric.Y -= stepY
+					new1Y := clamp(firstMetric.Y+stepY, 0, maxBound)
+					new2Y := clamp(secondMetric.Y-stepY, 0, maxBound)
+
+					if new1Y != firstMetric.Y || new2Y != secondMetric.Y {
+						firstMetric.Y = new1Y
+						secondMetric.Y = new2Y
+						moved = true
+					}
 				}
 
 				continue
 			}
 
-			// Repulsion pushes metrics apart
-			moved = true
-			stepX := int64(math.Copysign(1, float64(diffX)))
-			stepY := int64(math.Copysign(1, float64(diffY)))
+			// Repulsion pushes metrics apart only within the local interaction neighborhood
+			if math.Abs(float64(diffX)) <= float64(width) && math.Abs(float64(diffY)) <= float64(width) {
+				stepX := int64(math.Copysign(1, float64(diffX)))
+				stepY := int64(math.Copysign(1, float64(diffY)))
 
-			if diffX == 0 && diffY == 0 {
-				stepX = 1
+				if diffX == 0 && diffY == 0 {
+					stepX = 1
+				}
+
+				new1X := clamp(firstMetric.X-stepX, 0, maxBound)
+				new1Y := clamp(firstMetric.Y-stepY, 0, maxBound)
+				new2X := clamp(secondMetric.X+stepX, 0, maxBound)
+				new2Y := clamp(secondMetric.Y+stepY, 0, maxBound)
+
+				if new1X != firstMetric.X || new1Y != firstMetric.Y || new2X != secondMetric.X || new2Y != secondMetric.Y {
+					firstMetric.X = new1X
+					firstMetric.Y = new1Y
+					secondMetric.X = new2X
+					secondMetric.Y = new2Y
+					moved = true
+				}
 			}
-
-			firstMetric.X -= stepX
-			firstMetric.Y -= stepY
-			secondMetric.X += stepX
-			secondMetric.Y += stepY
 		}
 	}
 
 	// Update regions directly on metrics
-	width := max(int64(math.Ceil(math.Sqrt(float64(metricCount)))), 1)
-
 	for _, metric := range grid.Metrics {
-		regionX := metric.X
-		regionY := metric.Y
-
-		if regionX < 0 {
-			regionX = 0
-		}
-
-		if regionY < 0 {
-			regionY = 0
-		}
-
+		regionX := clamp(metric.X, 0, maxBound)
+		regionY := clamp(metric.Y, 0, maxBound)
+		metric.X = regionX
+		metric.Y = regionY
 		metric.Region = uint8((regionY*width+regionX)%255 + 1)
 	}
 

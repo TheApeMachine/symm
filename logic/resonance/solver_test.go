@@ -12,7 +12,6 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/transport"
-	"github.com/theapemachine/symm/types"
 )
 
 func TestStep(t *testing.T) {
@@ -186,7 +185,7 @@ func TestSubSourceAndNonZeroLatents(t *testing.T) {
 		solver := NewSolver(context.Background(), 0.05)
 		defer solver.Close()
 
-		var lastArtifact *types.ResonanceArtifact
+		var lastMeasurement *data.Measurement[float64]
 		solver.Transition(runtime.READY)
 
 		createMetric := func(source, metricName string, val, support float64) *data.Measurement[float64] {
@@ -226,39 +225,24 @@ func TestSubSourceAndNonZeroLatents(t *testing.T) {
 			m.Metrics["midpoint"] = priceMetric.Write(50000.0 + float64(step)*10.0)
 
 			res := solver.Step(m)
-			lastArtifact, _ = res.Result.(*types.ResonanceArtifact)
+			lastMeasurement = res
 			So(res, ShouldNotBeNil)
 		}
 
 		Convey("the manifold settles into non-zero latents and layer states", func() {
-			So(lastArtifact, ShouldNotBeNil)
-			So(lastArtifact.Snapshot, ShouldNotBeNil)
-			So(len(lastArtifact.Snapshot.Latent), ShouldBeGreaterThan, 0)
+			So(lastMeasurement, ShouldNotBeNil)
+			So(len(lastMeasurement.Metrics), ShouldBeGreaterThan, 0)
 
 			hasNonZeroLatent := false
-			for _, val := range lastArtifact.Snapshot.Latent {
-				if val != 0 {
-					hasNonZeroLatent = true
-					break
-				}
-			}
-			So(hasNonZeroLatent, ShouldBeTrue)
-
-			wire := lastArtifact.EncodeWire(true)
-			So(wire, ShouldNotBeNil)
-			So(len(wire.Latent), ShouldEqual, len(lastArtifact.Snapshot.Latent))
-			So(len(wire.Layers), ShouldEqual, len(lastArtifact.Snapshot.Layers))
-
-			for _, layer := range wire.Layers {
-				hasNonZeroState := false
-				for _, val := range layer.State {
-					if val != 0 {
-						hasNonZeroState = true
+			for k, val := range lastMeasurement.Metrics {
+				if len(k) > 7 && k[:7] == "latent_" {
+					if val.Raw != 0 {
+						hasNonZeroLatent = true
 						break
 					}
 				}
-				So(hasNonZeroState, ShouldBeTrue)
 			}
+			So(hasNonZeroLatent, ShouldBeTrue)
 		})
 	})
 }

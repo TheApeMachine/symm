@@ -95,7 +95,7 @@ export const kernelDetailAtom = createAtom<string>("cvd");
 
 export const positionsAtom = createAtom<PositionT[]>([]);
 export const decisionsAtom = createAtom<DecisionT[]>([]);
-export const resonanceStore = createStore<Record<string, RingBuffer<ResonanceT>>>({});
+export const resonanceStore = createStore<Record<string, RingBuffer<MeasurementT>>>({});
 
 export const signals: Record<
 	string,
@@ -113,6 +113,7 @@ export const signals: Record<
 	morphology: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
 	pumpdump: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
 	sentiment: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
+	resonance: resonanceStore,
 	toxicity: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
 	training: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
 };
