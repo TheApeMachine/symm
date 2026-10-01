@@ -472,69 +472,124 @@ func (training *Training) replayHistory() error {
 		))
 	}
 
+	// ExcursionRecord is the sole historical episode owner (TRAINING.md ground
+	// truth). Do not re-detect from Measurements — that invents a second episode
+	// timeline. Live Step still uses Detector for newly forming excursions.
+	excursions, err := training.catalog.Excursions(training.Context(), training.epoch, nil)
+
+	if err != nil {
+		return err
+	}
+
+	if len(excursions) == 0 {
+		return nil
+	}
+
 	rows, err := training.catalog.Collect(training.Context(), tables.Measurements, training.epoch)
 
 	if err != nil {
 		return err
 	}
 
-	session := &replay{
-		frames:     make(map[string][]*data.Measurement[float64]),
-		signatures: make(map[string][]byte),
-	}
-	detector := NewDetector(training.price)
+	bySymbol := tapeBySymbol(preferRows(rows))
 
-	for _, row := range preferRows(rows) {
+	for index := range excursions {
 		select {
 		case <-training.Context().Done():
 			return training.Context().Err()
 		default:
 		}
 
-		training.replayOne(session, detector, row)
+		if err := training.replayExcursion(&excursions[index], bySymbol[excursions[index].Symbol]); err != nil {
+			return err
+		}
 	}
 
 	return training.waitDrained()
 }
 
-type replay struct {
-	frames     map[string][]*data.Measurement[float64]
-	signatures map[string][]byte
+/*
+replayExcursion walks the stored tape fragment for one ExcursionRecord through
+the frozen grid, publishes learning frames, and enqueues that record as the
+episode — never a Detector re-observation.
+*/
+func (training *Training) replayExcursion(
+	record *tables.ExcursionRecord,
+	tape []*data.Measurement[float64],
+) error {
+	if record == nil || record.ID == "" || record.Symbol == "" {
+		return nil
+	}
+
+	if record.Epoch <= 0 {
+		record.Epoch = training.epoch
+	}
+
+	start := record.PrecursorStartTick
+	end := record.ExitTick
+
+	if record.PostEndTick > end {
+		end = record.PostEndTick
+	}
+
+	frames := make([]*data.Measurement[float64], 0)
+	signature := make([]byte, 0)
+
+	for _, measurement := range tape {
+		if measurement == nil {
+			continue
+		}
+
+		if measurement.SeqIdx < start || measurement.SeqIdx > end {
+			continue
+		}
+
+		clone := measurement.Clone()
+		training.grid.Update(clone)
+
+		if clone.SeqIdx < record.ExitTick {
+			frames = append(frames, clone)
+		}
+
+		token := training.grid.LitRegions(clone)
+
+		if len(token) > 0 {
+			signature = append(signature, token...)
+			signature = append(signature, 0)
+		}
+
+		reading := training.predictFrom(signature, clone.Label, clone.SeqIdx, true)
+		var published *tables.ExcursionRecord
+
+		if clone.SeqIdx == record.ExitTick {
+			published = record
+		}
+
+		training.publish(clone, published, reading, true)
+	}
+
+	if len(frames) == 0 {
+		return nil
+	}
+
+	return training.enqueue(heldEpisode{record: *record, frames: cloneFrames(frames)})
 }
 
-func (training *Training) replayOne(session *replay, detector *Detector, measurement *data.Measurement[float64]) {
-	if measurement == nil || measurement.Label == "" {
-		return
-	}
+/*
+tapeBySymbol groups preferred measurement rows by label for excursion windows.
+*/
+func tapeBySymbol(rows []*data.Measurement[float64]) map[string][]*data.Measurement[float64] {
+	bySymbol := make(map[string][]*data.Measurement[float64])
 
-	training.grid.Update(measurement)
-	session.frames[measurement.Label] = append(session.frames[measurement.Label], measurement.Clone())
-	token := training.grid.LitRegions(measurement)
-
-	if len(token) > 0 {
-		session.signatures[measurement.Label] = append(session.signatures[measurement.Label], token...)
-		session.signatures[measurement.Label] = append(session.signatures[measurement.Label], 0)
-	}
-
-	reading := training.predictFrom(session.signatures[measurement.Label], measurement.Label, measurement.SeqIdx, true)
-	record, err := detector.Observe(measurement)
-
-	if err != nil {
-		training.Error(err)
-	}
-
-	if record != nil {
-		record.Epoch = training.epoch
-		frames := cloneFrames(framesBefore(session.frames[measurement.Label], record.ExitTick))
-		session.frames[measurement.Label] = framesFrom(session.frames[measurement.Label], record.ExitTick)
-		session.signatures[measurement.Label] = training.signatureOf(session.frames[measurement.Label])
-
-		if err = training.enqueue(heldEpisode{record: *record, frames: frames}); err != nil {
-			training.Error(err)
+	for _, row := range rows {
+		if row == nil || row.Label == "" {
+			continue
 		}
+
+		bySymbol[row.Label] = append(bySymbol[row.Label], row)
 	}
 
-	training.publish(measurement, record, reading, true)
+	return bySymbol
 }
 
 func (training *Training) augment() {

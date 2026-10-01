@@ -14,6 +14,7 @@ interface ImpulseMapVizProps {
 		members: number;
 	}>;
 	activeEvents?: Array<{
+		id?: number;
 		label: string;
 		activity: number;
 		members?: number;
@@ -163,6 +164,35 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 			// Live tape must not reheat the layout — that was the visible drift.
 			simulationRef.current.alpha(0).stop();
 		}
+
+		// Restyle without restarting forces so lit regions track precursor_tokens.
+		if (svgRef.current) {
+			const maxActivation = d3.max(updatedNodes, (d) => d.activation || 0) || 1;
+			const colorScale = d3
+				.scaleSequential<string>((t) =>
+					d3.interpolateRgbBasis(["#111113", "#0ea5e9", "#22c55e", "#fbbf24"])(t),
+				)
+				.domain([0, maxActivation]);
+			d3.select(svgRef.current)
+				.select(".nodes")
+				.selectAll<SVGCircleElement, ImpulseNode>("circle")
+				.data(updatedNodes, (d) => d.id)
+				.join(
+					(enter) =>
+						enter
+							.append("circle")
+							.attr("r", (d) => (d.snr || 1) * 1.5 + 2)
+							.attr("stroke", "#050505")
+							.attr("stroke-width", 1.5)
+							.attr("cx", (d) => d.x || 0)
+							.attr("cy", (d) => d.y || 0),
+					(update) => update,
+					(exit) => exit.remove(),
+				)
+				.attr("fill", (d) => colorScale(d.activation || 0))
+				.attr("cx", (d) => d.x || 0)
+				.attr("cy", (d) => d.y || 0);
+		}
 	}, [data, dimensions.width, dimensions.height]);
 
 	// Initialize D3 Visualization
@@ -187,11 +217,12 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 		const nodes = nodesRef.current;
 
 		// Color Scales: dark panel -> dim blue -> green -> gold
+		const maxActivation = d3.max(nodes, (d) => d.activation || 0) || 1;
 		const colorScale = d3
 			.scaleSequential<string>((t) =>
 				d3.interpolateRgbBasis(["#111113", "#0ea5e9", "#22c55e", "#fbbf24"])(t),
 			)
-			.domain([0, 1]);
+			.domain([0, maxActivation]);
 
 		// Setup Initial Simulation
 		const simulation = d3
@@ -517,9 +548,9 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 							<span className="w-1.5 h-1.5 rounded-full bg-[#22c55e] animate-pulse" />
 						</div>
 						<div className="space-y-1.5 text-xs max-h-60 overflow-y-auto">
-							{activeEvents.map((evt) => (
+							{activeEvents.map((evt, index) => (
 								<div
-									key={evt.label}
+									key={`${(evt as { id?: number }).id ?? "r"}:${evt.label}:${index}`}
 									className="flex justify-between items-center text-[#d4d4d4]"
 								>
 									<span className="truncate pr-2">{evt.label}</span>

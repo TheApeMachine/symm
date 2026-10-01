@@ -74,7 +74,7 @@ export const ImpulseMap = ({
 						const light = energy > 0 ? Math.sqrt(point.energy / energy) : 0;
 						return (
 							<circle
-								key={point.id}
+								key={`${point.id}:${point.source}:${point.label}`}
 								cx={point.x * scale}
 								cy={point.y * scale}
 								r={peaks.has(point.id) ? 6 : 3}

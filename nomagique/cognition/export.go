@@ -2,9 +2,9 @@ package cognition
 
 import (
 	"cmp"
-	"encoding/binary"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -81,7 +81,7 @@ func (op *Engine) TreeExport() CognitionTreeExport {
 	type rawCandidate struct {
 		keyBytes    []byte
 		className   string
-		tokens      []uint64
+		context     []byte
 		probability float64
 		count       uint64
 	}
@@ -105,11 +105,10 @@ func (op *Engine) TreeExport() CognitionTreeExport {
 			continue
 		}
 
-		tokens := extractTokens(contextBytes)
 		candidates = append(candidates, rawCandidate{
 			keyBytes:    keyBytes,
 			className:   string(classBytes),
-			tokens:      tokens,
+			context:     append([]byte{}, contextBytes...),
 			probability: weight.Probability,
 			count:       weight.Count,
 		})
@@ -137,21 +136,9 @@ func (op *Engine) TreeExport() CognitionTreeExport {
 	var collectedBranches []scoredBranch
 
 	for _, cand := range topCandidates {
-		tokens := cand.tokens
-		var regionTokens []string
-
-		for idx, tokenVal := range tokens {
-			if idx == 0 && len(tokens) > 1 {
-				// The first 64-bit token is the scopeToken(symbol, holding); subsequent are region tokens.
-				continue
-			}
-
-			regionTokens = append(regionTokens, fmt.Sprintf("0x%04x", tokenVal&0xffff))
-		}
-
-		if len(regionTokens) == 0 && len(tokens) > 0 {
-			regionTokens = append(regionTokens, fmt.Sprintf("0x%04x", tokens[0]&0xffff))
-		}
+		// Training signatures are null-separated LitRegions frames (raw region
+		// ID bytes). Reading them as packed uint64 tokens invented private spines.
+		regionTokens := regionFrames(cand.context)
 
 		actionName := strings.ToUpper(cand.className)
 		policyState := "EVALUATED"
@@ -254,18 +241,42 @@ func (op *Engine) TreeExport() CognitionTreeExport {
 	}
 }
 
-func extractTokens(contextBytes []byte) []uint64 {
-	tokenCount := len(contextBytes) / 8
-
-	if tokenCount == 0 {
+/*
+regionFrames splits a training signature into null-separated LitRegions frames
+and formats each as [id,id,...] for the trie viz. ENTER/EXIT stay on the leaf
+action node — they are never emitted as region tokens.
+*/
+func regionFrames(context []byte) []string {
+	if len(context) == 0 {
 		return nil
 	}
 
-	tokens := make([]uint64, tokenCount)
+	var frames []string
+	start := 0
 
-	for idx := 0; idx < tokenCount; idx++ {
-		tokens[idx] = binary.BigEndian.Uint64(contextBytes[idx*8 : (idx+1)*8])
+	for index := 0; index <= len(context); index++ {
+		if index < len(context) && context[index] != 0 {
+			continue
+		}
+
+		if index > start {
+			parts := make([]string, 0, index-start)
+
+			for _, region := range context[start:index] {
+				if region == 0 {
+					continue
+				}
+
+				parts = append(parts, strconv.Itoa(int(region)))
+			}
+
+			if len(parts) > 0 {
+				frames = append(frames, "["+strings.Join(parts, ",")+"]")
+			}
+		}
+
+		start = index + 1
 	}
 
-	return tokens
+	return frames
 }

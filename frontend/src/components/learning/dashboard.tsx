@@ -83,7 +83,7 @@ export const LearningDashboard = () => {
 		}>
 	>([]);
 	const [activePrecursors, setActivePrecursors] = useState<
-		Array<{ label: string; activity: number }>
+		Array<{ id: number; label: string; activity: number; members?: number }>
 	>([]);
 
 	// Real Radix Tree data from backend
@@ -495,8 +495,8 @@ export const LearningDashboard = () => {
 
 				let mappedNodes: ImpulseNode[] = [];
 				if (quantities.length > 0) {
-					mappedNodes = quantities.map((cell) => ({
-						id: String(cell.id),
+					mappedNodes = quantities.map((cell, index) => ({
+						id: `${grid?.symbol || focusSymbol || "cell"}:${String(cell.id)}:${index}`,
 						label: String(cell.label ?? cell.source ?? `#${cell.id}`),
 						cluster: Number(cell.basin || 0),
 						snr: cell.quality ?? 0,
@@ -518,6 +518,7 @@ export const LearningDashboard = () => {
 						const regionActivity: Record<number, { activity: number; members: number }> = {};
 						for (const peer of allPeers) {
 							if (!peer) continue;
+							const peerSymbol = String(peer.symbol || measurement.symbol || "");
 							for (const metric of peer.metrics ?? []) {
 								if (!metric || !metric.name) continue;
 								const nameStr = String(metric.name);
@@ -525,10 +526,14 @@ export const LearningDashboard = () => {
 								const y = Number(metric.y || 0n);
 								const regionId = metric.region || 0;
 								const raw = metric.raw || 0;
-								const activity = Math.abs(raw);
+								const activity =
+									metric.hasNormalized === true
+										? Math.abs(metric.normalized || 0)
+										: Math.abs(raw);
+								const nodeId = peerSymbol ? `${peerSymbol}:${nameStr}` : nameStr;
 								mappedNodes.push({
-									id: nameStr,
-									label: String(peer.symbol || nameStr),
+									id: nodeId,
+									label: nameStr,
 									cluster: regionId,
 									snr: 1,
 									activation: activity,
@@ -582,16 +587,56 @@ export const LearningDashboard = () => {
 						}));
 					}
 
-					setImpulseNodes(currentNodes);
 					setImpulseRegions(normalizedRegions);
 
-					const sortedLitRegions = [...normalizedRegions]
-						.filter((r) => (r.strength || 0) > 0)
-						.sort((a, b) => (b.strength || 0) - (a.strength || 0));
+					// LitRegions publishes precursor_tokens — authoritative lit set.
+					const litFromTokens = new Set<number>();
+					for (const tok of parsedTokens) {
+						const n = Number(tok);
+						if (Number.isFinite(n) && n > 0) litFromTokens.add(n);
+					}
 
-					if (sortedLitRegions.length > 0) {
+					const regionById = new Map(
+						normalizedRegions.map((r) => [Number(r.id), r] as const),
+					);
+
+					let litRegions =
+						litFromTokens.size > 0
+							? [...litFromTokens].map((id) => {
+									const known = regionById.get(id);
+									return {
+										id,
+										strength: known?.strength ?? 0,
+										authority: known?.authority ?? 1,
+										members:
+											known?.members ??
+											currentNodes.filter((c) => Number(c.cluster) === id)
+												.length,
+									};
+							  })
+							: [...normalizedRegions].filter((r) => (r.strength || 0) > 0);
+
+					litRegions = litRegions.sort(
+						(a, b) => (b.strength || 0) - (a.strength || 0),
+					);
+
+					const litSet = new Set(litRegions.map((r) => Number(r.id)));
+
+					const displayNodes = currentNodes.map((node) => {
+						const lit = litSet.size === 0 || litSet.has(Number(node.cluster));
+						const base = node.activation || 0;
+						return {
+							...node,
+							activation: lit
+								? Math.max(base, litSet.size > 0 ? 0.85 : base)
+								: base * 0.15,
+						};
+					});
+					setImpulseNodes(displayNodes);
+
+					if (litRegions.length > 0) {
 						setActivePrecursors(
-							sortedLitRegions.map((r) => {
+							litRegions.map((r) => {
 								const peakCell = currentNodes.find(
 									(c) => Number(c.cluster) === Number(r.id),
 								);
@@ -599,8 +644,9 @@ export const LearningDashboard = () => {
 									? `Region #${r.id} (${peakCell.label})`
 									: `Region #${r.id}`;
 								return {
+									id: Number(r.id),
 									label: name,
-									activity: r.strength,
+									activity: r.strength || 0,
 									members: r.members,
 								};
 							}),
@@ -686,9 +732,9 @@ export const LearningDashboard = () => {
 				) as HTMLElement;
 
 				if (mapPointsEl) {
-					const points: Point[] = quantities.length > 0
-						? quantities.map((cell) => ({
-								id: Number(cell.id),
+					const points: Array<Point & { basin?: number }> = quantities.length > 0
+						? quantities.map((cell, index) => ({
+								id: `${String(cell.id)}:${index}`,
 								source: String(cell.source ?? ""),
 								label: String(cell.label ?? ""),
 								x: cell.x,
@@ -697,9 +743,10 @@ export const LearningDashboard = () => {
 								energy: cell.activity,
 								authority: cell.quality,
 								present: cell.present,
+								basin: Number(cell.basin || 0),
 						  }))
-						: mappedNodes.map((cell) => ({
-								id: cell.id,
+						: mappedNodes.map((cell, index) => ({
+								id: `${cell.id}:${index}`,
 								source: String(cell.label),
 								label: String(cell.label),
 								x: cell.x || 0,
@@ -708,6 +755,7 @@ export const LearningDashboard = () => {
 								energy: cell.activation,
 								authority: cell.snr,
 								present: cell.present || false,
+								basin: Number(cell.cluster || 0),
 						  }));
 					const regions: Region[] = normalizedRegions.map((region) => ({
 						id: Number(region.id),
@@ -737,7 +785,7 @@ export const LearningDashboard = () => {
 					);
 					const scale = extent > 0 ? 240 / extent : 0;
 					const maxEnergy = Math.max(...points.map((point) => point.energy), 0);
-					const peakSet = new Set<string | number>(regions.map((reg) => reg.id));
+					const peakSet = new Set<number>(regions.map((reg) => Number(reg.id)));
 
 					while (mapPointsEl.children.length < points.length) {
 						const circle = document.createElementNS(
@@ -762,7 +810,7 @@ export const LearningDashboard = () => {
 						const title = circle.firstElementChild as SVGTitleElement;
 						const cx = String((pt.x * scale).toFixed(1));
 						const cy = String((pt.y * scale).toFixed(1));
-						const isPeak = peakSet.has(pt.id);
+						const isPeak = peakSet.has(Number(pt.basin ?? -1));
 						const r = isPeak ? "6" : "3";
 						const fill = isPeak ? "var(--acc)" : "var(--info)";
 						const light = maxEnergy > 0 ? Math.sqrt(pt.energy / maxEnergy) : 0;

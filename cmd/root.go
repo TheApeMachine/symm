@@ -200,6 +200,7 @@ var (
 			hub.Transition(nmruntime.READY)
 
 			manifoldSolver := manifold.NewSolver(ctx, book)
+			hub.SetManifoldSource(manifoldSolver)
 			book.SetNotify(func(symbol string, _ time.Time) {
 				manifoldSolver.Wake(symbol)
 			})

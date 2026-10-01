@@ -182,7 +182,10 @@ func (grid *Grid) ForceSettle() {
 				labels = append(labels, m.Label)
 			}
 		}
+		sort.Strings(labels)
+		labels = slices.Compact(labels)
 		grid.formRegions(labels)
+		grid.writeCoordinates()
 	}
 }
 
@@ -197,10 +200,24 @@ func (grid *Grid) Region(label string) uint8 {
 }
 
 /*
-LitRegions is the region token for this measurement alone. A region is lit
-when its activity is above the mean activity of the regions present here.
-Peers are not scored: they are not part of the stored measurement, so a token
-that included them could not be replayed.
+litRegionTokenSize is N in TRAINING.md: the region token is the N most-lit
+regions (example [A, B, C]). Petal trained with the same N.
+*/
+const litRegionTokenSize = 3
+
+/*
+latticeSpacing is the initial step place() uses between adjacent cells.
+Binding and watershed neighborhoods are measured against this lattice, not an
+invented absolute.
+*/
+const latticeSpacing = 1.0
+
+/*
+LitRegions is the region token for this measurement alone: the N most-lit
+regions (TRAINING.md), not a mean-threshold or argmax. Activity prefers
+Standardized/Normalized over Raw so price-sized values cannot own every token.
+After selecting the top N by activity, region IDs are emitted in ascending
+order so identical sets share radix prefixes. Peers are not scored.
 */
 func (grid *Grid) LitRegions(measurement *data.Measurement[float64]) []byte {
 	if measurement == nil {
@@ -227,7 +244,7 @@ func (grid *Grid) LitRegions(measurement *data.Measurement[float64]) []byte {
 			continue
 		}
 
-		activity[region] += math.Abs(metric.Raw)
+		activity[region] += regionActivity(metric)
 		present[region] = true
 	}
 
@@ -237,10 +254,9 @@ func (grid *Grid) LitRegions(measurement *data.Measurement[float64]) []byte {
 	}
 
 	scores := make([]score, 0, 256)
-	total := 0.0
 
 	for region := 1; region < 256; region++ {
-		if !present[region] {
+		if !present[region] || activity[region] <= 0 {
 			continue
 		}
 
@@ -248,7 +264,6 @@ func (grid *Grid) LitRegions(measurement *data.Measurement[float64]) []byte {
 			region: uint8(region),
 			value:  activity[region],
 		})
-		total += activity[region]
 	}
 
 	if len(scores) == 0 {
@@ -267,26 +282,42 @@ func (grid *Grid) LitRegions(measurement *data.Measurement[float64]) []byte {
 		return int(left.region) - int(right.region)
 	})
 
-	mean := total / float64(len(scores))
-	lit := make([]score, 0, len(scores))
+	limit := min(litRegionTokenSize, len(scores))
+	lit := scores[:limit]
 
-	for _, item := range scores {
-		if item.value > mean {
-			lit = append(lit, item)
-		}
-	}
+	// Canonical ascending IDs after top-N selection so the same set is stable.
+	slices.SortFunc(lit, func(left, right score) int {
+		return int(left.region) - int(right.region)
+	})
 
-	if len(lit) == 0 {
-		lit = scores
-	}
-
-	token := make([]byte, len(lit))
+	token := make([]byte, limit)
 
 	for index := range lit {
 		token[index] = lit[index].region
 	}
 
 	return token
+}
+
+/*
+regionActivity is the contribution of one metric to its region score.
+Standardized/Normalized are unitless tape scales. Without them, presence
+counts as 1 — abs(Raw) would let price-sized cells own every top-N slot.
+*/
+func regionActivity(metric data.Metric[float64]) float64 {
+	if metric.Standardized != nil {
+		return math.Abs(*metric.Standardized)
+	}
+
+	if metric.Normalized != nil {
+		return math.Abs(*metric.Normalized)
+	}
+
+	if metric.Raw == 0 {
+		return 0
+	}
+
+	return 1.0
 }
 
 /*
@@ -350,6 +381,14 @@ func (grid *Grid) update(
 		baseAuthority = 1.0
 	}
 
+	// Register new cells in sorted label order so place() lattice indices are
+	// deterministic (measurement metric maps iterate in random order).
+	type arrival struct {
+		label  string
+		metric data.Metric[float64]
+	}
+	arrivals := make([]arrival, 0, len(metrics))
+
 	for key, incoming := range metrics {
 		name := incoming.Label
 
@@ -365,9 +404,18 @@ func (grid *Grid) update(
 		if grid.find(label) == nil {
 			metric := incoming
 			metric.Label = label
-			grid.Metrics = append(grid.Metrics, &metric)
-			grid.place(label)
+			arrivals = append(arrivals, arrival{label: label, metric: metric})
 		}
+	}
+
+	sort.Slice(arrivals, func(left, right int) bool {
+		return arrivals[left].label < arrivals[right].label
+	})
+
+	for index := range arrivals {
+		metric := arrivals[index].metric
+		grid.Metrics = append(grid.Metrics, &metric)
+		grid.place(arrivals[index].label)
 	}
 
 	labels := make([]string, 0, len(grid.Metrics))
@@ -812,6 +860,11 @@ func (grid *Grid) formRegions(labels []string) {
 
 	parent := make(map[string]string, len(labels))
 
+	// Watershed neighborhood: climb only within ~1.5 lattice steps. Positions
+	// already encode sympathy (attract/repel); requiring live sympathy here left
+	// most cells as singleton regions (about one region per metric).
+	neighborhood := latticeSpacing * 1.5
+
 	for _, label := range labels {
 		if boundTo, ok := grid.Bound[label]; ok {
 			parent[label] = boundTo
@@ -830,25 +883,25 @@ func (grid *Grid) formRegions(labels []string) {
 				continue
 			}
 
-			// Only attach to a stronger neighbor if they share positive sympathy.
-			// Without this gate, unrelated metrics form one giant component.
-			rel := grid.Relations[pair(label, candidate)]
-			if rel == nil || rel.sympathy() <= 0 {
-				continue
-			}
-
 			distance := math.Hypot(
 				grid.PosX[candidate]-grid.PosX[label],
 				grid.PosY[candidate]-grid.PosY[label],
 			)
 
-			if distance < bestDistance {
+			if distance > neighborhood {
+				continue
+			}
+
+			if distance < bestDistance || (distance == bestDistance && candidate < best) {
 				best = candidate
 				bestDistance = distance
 			}
 		}
 
-		if best != label && bestDistance < 0.5 {
+		// Bind when closer than the initial lattice step (TRAINING.md: attracted
+		// closely enough). The old 0.5 cutoff was inside one lattice cell and
+		// almost never fired, so Bound never reduced vocabulary.
+		if best != label && bestDistance < latticeSpacing {
 			bindRoot := best
 			if candidateRoot, ok := grid.Bound[best]; ok {
 				bindRoot = candidateRoot
