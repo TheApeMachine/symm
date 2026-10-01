@@ -34,7 +34,7 @@ func NewExecution(
 		balance:   balance,
 		auth:      kraken.NewAuth(),
 	}
-	
+
 	execution.System = runtime.NewSystem(ctx, "execution", execution)
 	return execution
 }
@@ -106,7 +106,9 @@ func (exec *Execution) Enter(symbol string, onPending ...func(*position.Regulato
 	}
 
 	if err := exec.EnterWithRegulator(reg, spend); err != nil {
-		return nil, err
+		// Return reg so callers that registered onPending can clean up or
+		// await a fill that raced ahead of the error path.
+		return reg, err
 	}
 
 	return reg, nil
@@ -160,10 +162,10 @@ func (exec *Execution) EnterWithRegulator(reg *position.Regulator, spend *decima
 	if exec.auth != nil && system.Cfg.Market.Model != "paper" {
 		var err error
 		token, err = exec.auth.Token()
-	
+
 		if err != nil {
 			reg.CancelPending()
-	
+
 			return exec.Error(errnie.Err(
 				errnie.NotAcceptable,
 				"[execution] missing websockets auth token",
@@ -173,10 +175,10 @@ func (exec *Execution) EnterWithRegulator(reg *position.Regulator, spend *decima
 	}
 
 	msg, err := sonic.Marshal(kraken.NewAddOrderMessage(token, entryRequest))
-	
+
 	if err != nil {
 		reg.CancelPending()
-	
+
 		return exec.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			"[execution] failed to marshal order message",
@@ -185,10 +187,10 @@ func (exec *Execution) EnterWithRegulator(reg *position.Regulator, spend *decima
 	}
 
 	err = exec.transport.Write(msg)
-	
+
 	if err != nil {
 		reg.CancelPending()
-	
+
 		return exec.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			"[execution] failed to enter "+symbol,
@@ -247,7 +249,7 @@ func (exec *Execution) Exit(reg *position.Regulator) error {
 
 		if err != nil {
 			reg.CancelPending()
-		
+
 			return exec.Error(errnie.Err(
 				errnie.NotAcceptable,
 				"[execution] missing websockets auth token",
@@ -257,10 +259,10 @@ func (exec *Execution) Exit(reg *position.Regulator) error {
 	}
 
 	msg, err := sonic.Marshal(kraken.NewAddOrderMessage(token, exitRequest))
-	
+
 	if err != nil {
 		reg.CancelPending()
-	
+
 		return exec.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			"[execution] failed to marshal order message",
@@ -272,7 +274,7 @@ func (exec *Execution) Exit(reg *position.Regulator) error {
 
 	if err != nil {
 		reg.CancelPending()
-	
+
 		return exec.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			"[execution] failed to exit",

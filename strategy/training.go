@@ -58,25 +58,37 @@ type Training struct {
 	graded     map[string]bool
 	// augmented records "episodeID\x00aIndex" already taught as a recognition
 	// variation so the infinite augment loop cannot inflate evidence Counts.
-	augmented        map[string]bool
-	skill            statistic.Moments
-	paper            statistic.Moments
-	paperTrades      float64
-	paperPredictions float64
-	checkpointed     bool
-	checkpointFailed bool
-	modelDirty       bool
-	restored         bool
-	replaying        bool
-	blocked          bool
-	writing          bool
-	persistFailed    bool
-	persistErr       error
-	durable          chan struct{}
-	durableOnce      sync.Once
-	wake             chan struct{}
-	settleWake       chan struct{}
-	episodeReady     chan struct{}
+	augmented            map[string]bool
+	skill                statistic.Moments
+	paper                statistic.Moments
+	paperTrades          float64
+	paperPredictions     float64
+	fragmentsUp          float64
+	fragmentsDown        float64
+	fragmentsChop        float64
+	fragmentsFlat        float64
+	fragmentsUnsupported float64
+	histCorrectEnter     float64
+	histMissedEnter      float64
+	histFalseEnter       float64
+	histCorrectExit      float64
+	histMissedExit       float64
+	histCorrectWait      float64
+	skillSamples         []float64
+	checkpointed         bool
+	checkpointFailed     bool
+	modelDirty           bool
+	restored             bool
+	replaying            bool
+	blocked              bool
+	writing              bool
+	persistFailed        bool
+	persistErr           error
+	durable              chan struct{}
+	durableOnce          sync.Once
+	wake                 chan struct{}
+	settleWake           chan struct{}
+	episodeReady         chan struct{}
 }
 
 type heldEpisode struct {
@@ -329,7 +341,12 @@ func (training *Training) predictFrom(signature []byte, symbol string, seq int64
 	}
 
 	training.gradePaperClosed(symbol, entryCtx, closed)
-	training.forget(symbol)
+
+	// Forget only after a reconciled closed grade — dropping entryCtx while
+	// the exit is still pending loses the teachable precursor.
+	if closed != nil && closed.IsClosed() {
+		training.forget(symbol)
+	}
 
 	return marker{action: string(action), exit: seq}
 }
@@ -389,6 +406,7 @@ func (training *Training) supervise(episode heldEpisode, score bool) {
 
 	if score {
 		training.graded[episode.record.ID] = true
+		training.countFragmentLocked(episode.record.Direction)
 	}
 
 	training.mu.Unlock()
@@ -413,6 +431,7 @@ func (training *Training) supervise(episode heldEpisode, score bool) {
 			correct := (wantEnter && predicted == cognition.ActionEnter) ||
 				(!wantEnter && predicted != cognition.ActionEnter)
 			training.recordSkill(correct)
+			training.noteEnterGrade(wantEnter, predicted == cognition.ActionEnter)
 		}
 	}
 
@@ -422,6 +441,7 @@ func (training *Training) supervise(episode heldEpisode, score bool) {
 
 		if score {
 			training.recordSkill(predicted == cognition.ActionExit)
+			training.noteExitGrade(predicted == cognition.ActionExit)
 		}
 	}
 }
@@ -478,9 +498,19 @@ func (training *Training) recordSkill(correct bool) {
 
 	training.mu.Lock()
 	training.skill.Update(sample)
+	training.skillSamples = append(training.skillSamples, sample)
+	const skillSampleCap = 256
+	if len(training.skillSamples) > skillSampleCap {
+		training.skillSamples = append([]float64(nil), training.skillSamples[len(training.skillSamples)-skillSampleCap:]...)
+	}
 	// Skill is part of the durable checkpoint; dirty so save() persists moments.
 	training.modelDirty = true
 	training.mu.Unlock()
+
+	select {
+	case training.settleWake <- struct{}{}:
+	default:
+	}
 }
 
 func (training *Training) replayHistory() error {
@@ -492,100 +522,293 @@ func (training *Training) replayHistory() error {
 		))
 	}
 
-	// ExcursionRecord is the sole historical episode owner (TRAINING.md ground
-	// truth). Do not re-detect from Measurements — that invents a second episode
-	// timeline. Live Step still uses Detector for newly forming excursions.
-	excursions, err := training.catalog.Excursions(training.Context(), training.epoch, nil)
+	// Stored ExcursionRecords are the episode owners for replay (no live
+	// Detector re-walk inventing a second timeline on the same marks).
+	// After-the-fact detection may *add* records from the persisted quote
+	// tape (ticker/measurements + SeqIdx sync) using the same Detector+fees.
+	durable, err := training.catalog.Excursions(training.Context(), training.epoch, nil)
 
 	if err != nil {
 		return err
 	}
+
+	tapeRows, err := training.loadQuoteTape()
+
+	if err != nil {
+		return err
+	}
+
+	offline, offErr := training.detectOffline(tapeRows, durable)
+
+	if offErr != nil {
+		return offErr
+	}
+
+	persistIDs := make(map[string]bool, len(offline))
+
+	for index := range offline {
+		persistIDs[offline[index].ID] = true
+	}
+
+	excursions := append(append([]tables.ExcursionRecord{}, durable...), offline...)
 
 	if len(excursions) == 0 {
 		return nil
 	}
 
-	rows, err := training.catalog.Collect(training.Context(), tables.Measurements, training.epoch)
+	bySymbol := tapeBySymbol(preferRows(tapeRows))
 
-	if err != nil {
-		return err
+	return training.replayCausal(excursions, bySymbol, persistIDs)
+}
+
+/*
+replayCausal walks every excursion frame and outcome on one chronological
+event stream so supervise(C) cannot run before predict(B) on an earlier tick.
+Durable Iceberg records are supervised only — never re-enqueued for persist.
+*/
+func (training *Training) replayCausal(
+	excursions []tables.ExcursionRecord,
+	bySymbol map[string][]*data.Measurement[float64],
+	persistIDs map[string]bool,
+) error {
+	type replayEvent struct {
+		seq   int64
+		phase int // 0 = frame (predict), 1 = outcome (supervise)
+		idx   int
+		frame *data.Measurement[float64]
 	}
 
-	bySymbol := tapeBySymbol(preferRows(rows))
+	events := make([]replayEvent, 0)
 
 	for index := range excursions {
+		record := &excursions[index]
+
+		if record.ID == "" || record.Symbol == "" {
+			continue
+		}
+
+		if record.Epoch <= 0 {
+			record.Epoch = training.epoch
+		}
+
+		start := record.PrecursorStartTick
+		end := record.ExitTick
+
+		if record.PostEndTick > end {
+			end = record.PostEndTick
+		}
+
+		for _, measurement := range bySymbol[record.Symbol] {
+			if measurement == nil {
+				continue
+			}
+
+			if measurement.SeqIdx < start || measurement.SeqIdx > end {
+				continue
+			}
+
+			events = append(events, replayEvent{
+				seq:   measurement.SeqIdx,
+				phase: 0,
+				idx:   index,
+				frame: measurement,
+			})
+		}
+
+		// Outcome is observable at ExitTick — never earlier.
+		events = append(events, replayEvent{
+			seq:   record.ExitTick,
+			phase: 1,
+			idx:   index,
+		})
+	}
+
+	sort.SliceStable(events, func(i, j int) bool {
+		if events[i].seq != events[j].seq {
+			return events[i].seq < events[j].seq
+		}
+
+		if events[i].phase != events[j].phase {
+			return events[i].phase < events[j].phase
+		}
+
+		return events[i].idx < events[j].idx
+	})
+
+	type openState struct {
+		signature []byte
+		frames    []*data.Measurement[float64]
+	}
+
+	states := make([]openState, len(excursions))
+
+	for _, event := range events {
 		select {
 		case <-training.Context().Done():
 			return training.Context().Err()
 		default:
 		}
 
-		if err := training.replayExcursion(&excursions[index], bySymbol[excursions[index].Symbol]); err != nil {
-			return err
+		record := &excursions[event.idx]
+
+		if event.phase == 0 {
+			if event.frame == nil {
+				continue
+			}
+
+			clone := event.frame.Clone()
+			training.grid.Update(clone)
+
+			if clone.SeqIdx < record.ExitTick {
+				states[event.idx].frames = append(states[event.idx].frames, clone)
+			}
+
+			token := training.grid.LitRegions(clone)
+			states[event.idx].signature = appendLitFrame(states[event.idx].signature, token)
+			reading := training.predictFrom(states[event.idx].signature, clone.Label, clone.SeqIdx, true)
+			training.publish(clone, record, reading, true)
+
+			continue
 		}
+
+		if len(states[event.idx].frames) == 0 {
+			continue
+		}
+
+		episode := heldEpisode{
+			record: *record,
+			frames: cloneFrames(states[event.idx].frames),
+		}
+
+		if persistIDs[record.ID] {
+			if err := training.enqueue(episode); err != nil {
+				return err
+			}
+
+			continue
+		}
+
+		// Already durable in Iceberg: teach when the outcome tick is reached —
+		// never re-persist the same ExcursionRecord.
+		training.acceptHistorical(episode)
 	}
 
 	return training.waitDrained()
 }
 
 /*
-replayExcursion walks the stored tape fragment for one ExcursionRecord through
-the frozen grid, publishes learning frames, and enqueues that record as the
-episode — never a Detector re-observation.
+acceptHistorical supervises a durable Iceberg episode without enqueue→persist.
+Before the grid is checkpointed, park on pending like live noteDurable.
+*/
+func (training *Training) acceptHistorical(episode heldEpisode) {
+	training.mu.Lock()
+	checkpointed := training.checkpointed
+
+	if !checkpointed {
+		training.pending = append(training.pending, episode)
+		training.mu.Unlock()
+
+		return
+	}
+
+	training.episodes = append(training.episodes, episode)
+	training.mu.Unlock()
+	training.supervise(episode, true)
+
+	select {
+	case training.episodeReady <- struct{}{}:
+	default:
+	}
+}
+
+/*
+loadQuoteTape loads venue ticker rows and generated measurements for the epoch.
+Ticker carries bid/ask for Detector; measurements carry sync SeqIdx overlays.
+*/
+func (training *Training) loadQuoteTape() ([]*data.Measurement[float64], error) {
+	ticker, err := training.catalog.Collect(training.Context(), tables.SpotTicker, training.epoch)
+
+	if err != nil {
+		return nil, err
+	}
+
+	measured, err := training.catalog.Collect(training.Context(), tables.Measurements, training.epoch)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return append(ticker, measured...), nil
+}
+
+/*
+detectOffline runs Detector over the stored quote tape and enqueues records
+whose IDs are not already in Iceberg — after-the-fact detection alongside live.
+*/
+func (training *Training) detectOffline(
+	tape []*data.Measurement[float64],
+	existing []tables.ExcursionRecord,
+) ([]tables.ExcursionRecord, error) {
+	if training.price == nil || len(tape) == 0 {
+		return nil, nil
+	}
+
+	known := make(map[string]bool, len(existing))
+
+	for index := range existing {
+		known[existing[index].ID] = true
+	}
+
+	detected, err := DetectExcursions(NewDetector(training.price), tape)
+
+	if err != nil {
+		return nil, err
+	}
+
+	added := make([]tables.ExcursionRecord, 0)
+
+	for index := range detected {
+		record := detected[index]
+
+		if known[record.ID] {
+			continue
+		}
+
+		if record.Epoch <= 0 {
+			record.Epoch = training.epoch
+		}
+
+		// Returned to replayCausal with persistIDs — do not enqueue frameless.
+		known[record.ID] = true
+		added = append(added, record)
+	}
+
+	return added, nil
+}
+
+/*
+replayExcursion walks one fragment for tests and offline tooling. persist=false
+accepts durable Iceberg records without re-writing them; persist=true enqueues
+new offline detections only.
 */
 func (training *Training) replayExcursion(
 	record *tables.ExcursionRecord,
 	tape []*data.Measurement[float64],
+	persist bool,
 ) error {
 	if record == nil || record.ID == "" || record.Symbol == "" {
 		return nil
 	}
 
-	if record.Epoch <= 0 {
-		record.Epoch = training.epoch
+	persistIDs := map[string]bool{}
+
+	if persist {
+		persistIDs[record.ID] = true
 	}
 
-	start := record.PrecursorStartTick
-	end := record.ExitTick
-
-	if record.PostEndTick > end {
-		end = record.PostEndTick
-	}
-
-	frames := make([]*data.Measurement[float64], 0)
-	signature := make([]byte, 0)
-
-	for _, measurement := range tape {
-		if measurement == nil {
-			continue
-		}
-
-		if measurement.SeqIdx < start || measurement.SeqIdx > end {
-			continue
-		}
-
-		clone := measurement.Clone()
-		training.grid.Update(clone)
-
-		if clone.SeqIdx < record.ExitTick {
-			frames = append(frames, clone)
-		}
-
-		token := training.grid.LitRegions(clone)
-
-		signature = appendLitFrame(signature, token)
-
-		reading := training.predictFrom(signature, clone.Label, clone.SeqIdx, true)
-		// Known ExcursionRecord owns A/B/C for the whole fragment — blank marks
-		// only at ExitTick hid the tape visualization mid-episode (TRAINING.md).
-		training.publish(clone, record, reading, true)
-	}
-
-	if len(frames) == 0 {
-		return nil
-	}
-
-	return training.enqueue(heldEpisode{record: *record, frames: cloneFrames(frames)})
+	return training.replayCausal([]tables.ExcursionRecord{*record}, map[string][]*data.Measurement[float64]{
+		record.Symbol: tape,
+	}, persistIDs)
 }
 
 /*
@@ -866,7 +1089,7 @@ func (training *Training) checkpointLoop() {
 			// TRAINING.md: grid settles once, then the trie is regularly
 			// checkpointed. Restoring a settled snapshot makes us durable but
 			// must not exit the loop — later teach() dirties the engine.
-			if !missing && training.grid.Settled {
+			if !missing && training.grid.IsSettled() {
 				training.markDurable()
 				training.waitSettle()
 
@@ -874,7 +1097,7 @@ func (training *Training) checkpointLoop() {
 			}
 		}
 
-		if training.grid.Settled && !checkpointed {
+		if training.grid.IsSettled() && !checkpointed {
 			if err := training.save(); err != nil {
 				training.failCheckpoint(err)
 				training.waitSettle()
@@ -996,7 +1219,6 @@ func (training *Training) save() error {
 	return training.catalog.PutBlob(training.Context(), skillKey, skillBlob)
 }
 
-
 /*
 skillCheckpoint encodes the observed historical skill moments for durable
 restore. Values are exactly what recordSkill accumulated — never invented.
@@ -1073,7 +1295,7 @@ func (training *Training) rebuildLocked() {
 }
 
 func (training *Training) nudge() {
-	if !training.grid.Settled || training.checkpointed {
+	if !training.grid.IsSettled() || training.checkpointed {
 		return
 	}
 
@@ -1118,7 +1340,7 @@ func (training *Training) stage() (float64, string, string) {
 	moments := training.skill
 	training.mu.Unlock()
 
-	if !training.grid.Settled {
+	if !training.grid.IsSettled() {
 		return 0, "MODEL DEVELOPMENT", "grid unsettled"
 	}
 
@@ -1209,6 +1431,18 @@ func (training *Training) writeSkill(clone *data.Measurement[float64]) {
 	paper := training.paper
 	trades := training.paperTrades
 	predictions := training.paperPredictions
+	up := training.fragmentsUp
+	down := training.fragmentsDown
+	chop := training.fragmentsChop
+	flat := training.fragmentsFlat
+	unsup := training.fragmentsUnsupported
+	correctEnter := training.histCorrectEnter
+	missedEnter := training.histMissedEnter
+	falseEnter := training.histFalseEnter
+	correctExit := training.histCorrectExit
+	missedExit := training.histMissedExit
+	correctWait := training.histCorrectWait
+	samples := append([]float64(nil), training.skillSamples...)
 	training.mu.Unlock()
 
 	if skill.Count > 1 {
@@ -1217,6 +1451,28 @@ func (training *Training) writeSkill(clone *data.Measurement[float64]) {
 		clone.WriteMetric("hist_mean_return", skill.Mean)
 		clone.WriteMetric("hist_lower_bound", skill.Mean-dispersion/math.Sqrt(skill.Count))
 	}
+
+	clone.WriteMetric("hist_correct_enter", correctEnter)
+	clone.WriteMetric("hist_missed_enter", missedEnter)
+	clone.WriteMetric("hist_false_enter", falseEnter)
+	clone.WriteMetric("hist_correct_exit", correctExit)
+	clone.WriteMetric("hist_missed_exit", missedExit)
+	clone.WriteMetric("hist_correct_wait", correctWait)
+
+	if len(samples) > 0 {
+		parts := make([]string, len(samples))
+		for index, value := range samples {
+			parts[index] = strconv.FormatFloat(value, 'f', -1, 64)
+		}
+		clone.SetMetadata("edge_samples", strings.Join(parts, ","))
+		clone.WriteMetric("edge_sample_count", float64(len(samples)))
+	}
+
+	clone.WriteMetric("fragments_up", up)
+	clone.WriteMetric("fragments_down", down)
+	clone.WriteMetric("fragments_chop", chop)
+	clone.WriteMetric("fragments_flat", flat)
+	clone.WriteMetric("fragments_unsupported", unsup)
 
 	if trades > 0 {
 		clone.WriteMetric("fwd_paper_trades", trades)
@@ -1233,11 +1489,118 @@ func (training *Training) writeSkill(clone *data.Measurement[float64]) {
 func (training *Training) writeQuote(clone *data.Measurement[float64], measurement *data.Measurement[float64]) {
 	seen, ok := quoteFrom(measurement)
 
-	if !ok {
+	if ok {
+		clone.WriteMetric("price", seen.mid)
 		return
 	}
 
-	clone.WriteMetric("price", seen.mid)
+	// Honest fallback when bid/ask quote is incomplete: mid/last/close/price
+	// already on the tape — never invent a level.
+	if price, ok := observedTapePrice(measurement); ok {
+		clone.WriteMetric("price", price)
+	}
+}
+
+/*
+observedTapePrice reads an already-measured price level from the frame.
+Prefers an explicit mid, then last/close/price, then bid+ask mid when both
+sides exist. Single-sided quotes are refused (not a mid).
+*/
+func observedTapePrice(measurement *data.Measurement[float64]) (float64, bool) {
+	if measurement == nil {
+		return 0, false
+	}
+
+	for _, name := range []string{"mid", "last", "last_price", "close", "price", "mark_price", "trade_price"} {
+		if value, ok := lookupPositiveMetric(measurement, name); ok {
+			return value, true
+		}
+	}
+
+	bid, bidOK := lookupPositiveMetric(measurement, "bid")
+	ask, askOK := lookupPositiveMetric(measurement, "ask")
+
+	if bidOK && askOK && ask >= bid {
+		return (bid + ask) / 2, true
+	}
+
+	return 0, false
+}
+
+func lookupPositiveMetric(measurement *data.Measurement[float64], name string) (float64, bool) {
+	metric, ok := measurement.LookupMetric(name)
+
+	if !ok {
+		return 0, false
+	}
+
+	value := metric.Raw
+
+	if metric.Exact != nil {
+		value = metric.Exact.Float64()
+	}
+
+	if !positiveFinite(value) {
+		return 0, false
+	}
+
+	return value, true
+}
+
+/*
+countFragmentLocked tallies a graded ExcursionRecord direction. Caller holds mu.
+*/
+func (training *Training) countFragmentLocked(direction string) {
+	switch direction {
+	case "up":
+		training.fragmentsUp++
+	case "down":
+		training.fragmentsDown++
+	case "chop":
+		training.fragmentsChop++
+	case "flat":
+		training.fragmentsFlat++
+	default:
+		training.fragmentsUnsupported++
+	}
+}
+
+/*
+noteEnterGrade records whether a frozen precursor Evaluate matched the enter
+requirement of a graded excursion — the same decision recordSkill uses.
+*/
+func (training *Training) noteEnterGrade(wantEnter, predictedEnter bool) {
+	training.mu.Lock()
+	defer training.mu.Unlock()
+
+	if wantEnter && predictedEnter {
+		training.histCorrectEnter++
+		return
+	}
+
+	if wantEnter && !predictedEnter {
+		training.histMissedEnter++
+		return
+	}
+
+	if !wantEnter && predictedEnter {
+		training.histFalseEnter++
+		return
+	}
+
+	training.histCorrectWait++
+}
+
+func (training *Training) noteExitGrade(correct bool) {
+	training.mu.Lock()
+	defer training.mu.Unlock()
+
+	if correct {
+		training.histCorrectExit++
+		return
+	}
+
+	training.histMissedExit++
 }
 
 func (training *Training) writeMarker(

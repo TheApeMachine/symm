@@ -330,16 +330,16 @@ func (instrument *Instrument) Unsubscribe() error {
 	for batch := range slices.Chunk(
 		instrument.symbols, system.Cfg.Market.Subscribe.Batch,
 	) {
-		subs := []json.Marshaler{
+		for _, sub := range []json.Marshaler{
 			kraken.NewTradeUnsubscription(batch),
 			kraken.NewTickerUnsubscription(batch),
-			kraken.NewLevel3Unsubscription(batch),
-			kraken.NewFuturesUnsubscription("ticker", batch),
-			kraken.NewFuturesUnsubscription("trade", batch),
-		}
-
-		for _, sub := range subs {
-			msg, _ := sonic.Marshal(sub)
+		} {
+			msg, err := sonic.Marshal(sub)
+			if err != nil {
+				return instrument.Error(errnie.Err(
+					errnie.IO, "[instrument] spot unsubscribe marshal failed", err,
+				))
+			}
 
 			if err := instrument.public.Write(msg); err != nil {
 				return instrument.Error(errnie.Err(
@@ -349,15 +349,34 @@ func (instrument *Instrument) Unsubscribe() error {
 				))
 			}
 		}
+
+		if instrument.futures != nil {
+			for _, sub := range []json.Marshaler{
+				kraken.NewFuturesUnsubscription("ticker", batch),
+				kraken.NewFuturesUnsubscription("trade", batch),
+			} {
+				msg, err := sonic.Marshal(sub)
+				if err != nil {
+					return instrument.Error(errnie.Err(
+						errnie.IO, "[instrument] futures unsubscribe marshal failed", err,
+					))
+				}
+
+				if err := instrument.futures.Write(msg); err != nil {
+					return instrument.Error(errnie.Err(
+						errnie.IO,
+						"[instrument] required futures unsubscription failed",
+						err,
+					))
+				}
+			}
+		}
 	}
 
 	instrument.Transition(runtime.WAITING)
 	return nil
 }
 
-/*
-Symbols returns a copy of the subscribed market universe.
-*/
 func (instrument *Instrument) Symbols() []string {
 	return slices.Clone(instrument.symbols)
 }

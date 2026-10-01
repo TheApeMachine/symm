@@ -18,6 +18,10 @@ import (
 Detector turns a quote tape into resolved episodes. A departure is only an
 anchor once the next quote stays outside the calm dispersion, and it becomes
 a record only when a later measured shift marks the episode's end.
+
+Finish requires pullback from the extreme beyond MeanShift Bound floored by
+calmDisp and open-impulse dispersion so multi-hour FOMO rises are not chopped
+into short fragments that each fail ClearsFriction.
 */
 type Detector struct {
 	price  *broker.Price
@@ -236,8 +240,9 @@ func (path *series) advance(detector *Detector, seen quote) (*tables.ExcursionRe
 		return nil, nil
 	}
 
+	impulseVar := path.impulse.M2 / (path.impulse.Count - 1)
 	bound := adaptive.MeanShift{
-		Variance:     path.impulse.M2 / (path.impulse.Count - 1),
+		Variance:     impulseVar,
 		Observations: path.impulse.Count,
 		RecentCount:  path.recent.Count,
 		PriorCount:   priorCount,
@@ -259,7 +264,38 @@ func (path *series) advance(detector *Detector, seen quote) (*tables.ExcursionRe
 		gap = -gap
 	}
 
-	if gap <= bound {
+	// MeanShift Bound shrinks as RecentCount grows, so a long FOMO climb's
+	// consolidations under the high would finish early into fee-failing chips.
+	// Floor the required pullback by measured calmDisp (ignition scale) and
+	// open-impulse dispersion — never invent a constant; both are observed.
+	impulseDisp := math.Sqrt(impulseVar)
+	need := bound
+
+	if path.calmDisp > need {
+		need = path.calmDisp
+	}
+
+	if impulseDisp > need {
+		need = impulseDisp
+	}
+
+	move := extreme - path.priorMean
+
+	if move < 0 {
+		move = -move
+	}
+
+	// Geometric bridge between ignition noise and open move size: plateaus
+	// smaller than √(calmDisp·move) stay open; deep givebacks still finish.
+	if move > 0 && path.calmDisp > 0 {
+		geo := math.Sqrt(path.calmDisp * move)
+
+		if geo > need {
+			need = geo
+		}
+	}
+
+	if gap <= need {
 		return nil, nil
 	}
 

@@ -98,11 +98,39 @@ func (catalog *Catalog) Drain(
 	}
 }
 
+/*
+deriveChannel routes a measurement into its Iceberg family from the channel
+the publisher already stamped (provenance or metadata type). The old
+venue=true gate never fired in production publishers, so ticker/trade/level3
+rows landed in Measurements and Timeline (SpotTicker-primary) stayed empty.
+*/
 func deriveChannel(measurement *data.Measurement[float64]) string {
+	if measurement == nil {
+		return "measurements"
+	}
+
+	channel := ""
+
+	if value, ok := measurement.Provenance["channel"]; ok {
+		channel = value
+	}
+
+	if channel == "" {
+		if value, ok := measurement.GetMetadata("type"); ok {
+			channel = value
+		}
+	}
+
+	switch channel {
+	case "ticker", "trade", "level3":
+		return channel
+	}
+
+	// Legacy publishers that only set venue=true + provenance channel.
 	if val, ok := measurement.GetMetadata("venue"); ok && val == "true" {
-		switch channel := measurement.Provenance["channel"]; channel {
+		switch value := measurement.Provenance["channel"]; value {
 		case "ticker", "trade", "level3":
-			return channel
+			return value
 		}
 	}
 

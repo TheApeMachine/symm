@@ -182,19 +182,37 @@ export const ProvenancePanel = ({
 	}, [envelope]);
 
 	const rawPreview = useMemo(() => {
-		if (typeof envelope?.payload !== "string" || envelope.payload === "") {
+		const payload = envelope?.payload;
+		if (typeof payload !== "string" || payload === "") {
 			return null;
 		}
 
+		const trimmed = payload.trim();
+
+		// Iceberg envelope endpoint returns JSON text of the Measurement frame.
+		if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+			try {
+				return JSON.stringify(JSON.parse(trimmed), null, 2).slice(0, 6000);
+			} catch {
+				return trimmed.slice(0, 6000);
+			}
+		}
+
+		// Legacy captures stored base64 wire bytes.
 		try {
-			return atob(envelope.payload).slice(0, 600);
+			return atob(payload).slice(0, 600);
 		} catch {
-			return null;
+			return trimmed.slice(0, 6000);
 		}
 	}, [envelope]);
 
-	if (envelope === null || envelope.manifests === undefined) {
-		return null;
+	if (envelope === null) {
+		return (
+			<p className="px-3 py-4 font-mono text-[10px] text-(--f4)">
+				No envelope at this capture yet. Park the playhead on a timeline frame
+				that loaded from Iceberg to inspect ingress and the raw frame.
+			</p>
+		);
 	}
 
 	return (

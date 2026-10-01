@@ -10,6 +10,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/broker/position"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/cognition"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
@@ -49,6 +50,12 @@ func NewTrader(
 	trader.decisionsVersion.Store(1)
 	initial := make([]*wire.DecisionT, 0, 50)
 	trader.decisions.Store(&initial)
+
+	// Paper synthesizes Execution frames in Write; without this handler
+	// Regulator.Reconcile never sees fills and inventory stays phantom.
+	if paper, ok := private.(*broker.Paper); ok && paper != nil {
+		paper.OnExecution(trader.ApplyExecution)
+	}
 
 	return trader
 }
@@ -91,25 +98,86 @@ func (trader *Trader) enter(symbol string, confidence float64) error {
 		return nil
 	}
 
-	regulator, err := trader.desk.Execution.Enter(symbol)
+	// Own the regulator under onPending BEFORE Write can synthesize a fill,
+	// otherwise ApplyExecution cannot Identifies/Reconcile the race.
+	regulator, err := trader.desk.Execution.Enter(symbol, func(reg *position.Regulator) {
+		trader.mu.Lock()
+		defer trader.mu.Unlock()
+
+		if trader.open == nil {
+			trader.open = make(map[string]*position.Regulator)
+		}
+
+		trader.open[symbol] = reg
+	})
 
 	if err != nil {
+		// Begin never ran → IsClosed; keep ownership if a pending order exists
+		// so a racing fill can still Reconcile.
+		if regulator != nil && regulator.IsClosed() {
+			trader.mu.Lock()
+			if trader.open[symbol] == regulator {
+				delete(trader.open, symbol)
+			}
+			trader.mu.Unlock()
+		}
+
 		trader.RecordDecision(symbol, "blocked", confidence, fmt.Sprintf("enter failed: %v", err))
 		return err
 	}
 
-	trader.mu.Lock()
-
-	if trader.open == nil {
-		trader.open = make(map[string]*position.Regulator)
-	}
-
-	trader.open[symbol] = regulator
-	trader.mu.Unlock()
 	trader.positionsVersion.Add(1)
 	trader.RecordDecision(symbol, "enter", confidence, "enter")
 
 	return nil
+}
+
+/*
+ApplyExecution routes venue/paper execution reports onto the matching open
+Regulator via Reconcile. No invent: only reports that Identifies an owned order.
+*/
+func (trader *Trader) ApplyExecution(execution *kraken.Execution) {
+	if trader == nil || execution == nil {
+		return
+	}
+
+	for index := range execution.Data {
+		report := execution.Data[index]
+		trader.applyReport(report)
+	}
+}
+
+func (trader *Trader) applyReport(report kraken.ExecutionData) {
+	trader.mu.Lock()
+	regs := make([]*position.Regulator, 0, len(trader.open))
+
+	for _, reg := range trader.open {
+		regs = append(regs, reg)
+	}
+
+	trader.mu.Unlock()
+
+	for _, reg := range regs {
+		if reg == nil || !reg.Identifies(report.OrderID, report.ClientOrderID) {
+			continue
+		}
+
+		if err := reg.Reconcile(report); err != nil {
+			errnie.Error(err)
+			continue
+		}
+
+		if reg.IsClosed() {
+			trader.mu.Lock()
+			if trader.open[reg.Symbol] == reg {
+				delete(trader.open, reg.Symbol)
+			}
+			trader.mu.Unlock()
+			trader.positionsVersion.Add(1)
+		}
+
+		return
+	}
 }
 
 func (trader *Trader) exit(symbol string, confidence float64) error {

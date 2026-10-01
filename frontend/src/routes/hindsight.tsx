@@ -16,6 +16,7 @@ import {
 	fetchHindsightRuns,
 	fetchHindsightState,
 	fetchHindsightTimeline,
+	capturesFromMeasurements,
 } from "#/components/hindsight/hindsight-api";
 import type {
 	HindsightCapture,
@@ -362,10 +363,19 @@ const HindsightRoute = () => {
 
 		fetchHindsightCaptures(run, from)
 			.then((loaded) => {
-				if (!cancelled) setCaptures(loaded.slice(0, 48));
+				if (cancelled) return;
+				if (loaded.length > 0) {
+					setCaptures(loaded.slice(0, 48));
+					return;
+				}
+				// Iceberg-only install: synthesize FrameStrip from the timeline tape.
+				const tape = (detail ?? overview)?.measurements ?? [];
+				setCaptures(capturesFromMeasurements(run, tape, from, 48));
 			})
 			.catch(() => {
-				if (!cancelled) setCaptures([]);
+				if (cancelled) return;
+				const tape = (detail ?? overview)?.measurements ?? [];
+				setCaptures(capturesFromMeasurements(run, tape, from, 48));
 			});
 
 		fetchHindsightEnvelope(run, playhead.sequence)
@@ -387,7 +397,7 @@ const HindsightRoute = () => {
 		return () => {
 			cancelled = true;
 		};
-	}, [run, playhead]);
+	}, [run, playhead, detail, overview]);
 
 	const positions = useMemo<Position[]>(
 		() => buildPositions(lifecycle),
@@ -476,6 +486,44 @@ const HindsightRoute = () => {
 			) ?? null
 		);
 	}, [envelope, captures, playhead]);
+
+	/*
+		When the hub has not yet served /hindsight/envelope, still expose the
+		Iceberg timeline frame as an honest raw payload so ProvenancePanel's
+		Raw frame section is usable for research.
+	*/
+	const displayEnvelope = useMemo(() => {
+		if (envelope !== null) return envelope;
+		if (run === null || playhead === null || selectedMeasurement === null) {
+			return null;
+		}
+
+		const sequence = playhead.sequence;
+		const identity = {
+			run,
+			sequence,
+			stream: selectedMeasurement.source || "spot_ticker",
+			streamEpoch: Number(run) || 0,
+			streamSequence: sequence,
+		};
+
+		return {
+			run,
+			sequence,
+			capture: {
+				identity,
+				kind: "ticker",
+				endpoint: selectedMeasurement.source || "spot_ticker",
+				receivedAt:
+					typeof selectedMeasurement.at === "string"
+						? selectedMeasurement.at
+						: "",
+			},
+			payload: JSON.stringify(selectedMeasurement),
+			manifests: [],
+			witnesses: [],
+		} satisfies HindsightEnvelope;
+	}, [envelope, run, playhead, selectedMeasurement]);
 
 	/*
 		Reference points are the navigable targets of the whole surface: [ and ]

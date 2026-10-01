@@ -108,7 +108,11 @@ export function dispatchMeasurements(frame: MeasurementsFrame) {
 		let ring = signalStore.state[symbol];
 
 		if (!ring) {
-			ring = new RingBuffer<MeasurementT>(50);
+			// Training historical replay can burst thousands of frames per
+			// excursion; a 50-slot ring drops the mid-fragment path and leaves
+			// the Model Training tape blank / incomplete.
+			const capacity = source === "training" ? 4096 : 50;
+			ring = new RingBuffer<MeasurementT>(capacity);
 			signalStore.state[symbol] = ring;
 		}
 

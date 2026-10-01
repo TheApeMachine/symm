@@ -87,3 +87,70 @@ func BenchmarkCatalog_Drain(b *testing.B) {
 		}
 	}
 }
+
+func TestDeriveChannelRoutesVenueTape(t *testing.T) {
+	Convey("Provenance channel routes ticker/trade without venue=true", t, func() {
+		catalog := tablestest.New(t)
+		tee := hindsight.NewStoreTee(t.Context(), "channel-route")
+		tee.Transition(runtime.READY)
+		defer func() { So(tee.Close(), ShouldBeNil) }()
+
+		ticker := data.NewMeasurement[float64]("websocket", map[string]data.Metric[float64]{
+			"bid": {Raw: 100},
+			"ask": {Raw: 101},
+		})
+		ticker.Label = "BTC/USD"
+		ticker.SeqIdx = 1
+		ticker.At = time.Unix(1, 0)
+		ticker.SetProvenance("channel", "ticker")
+		ticker.SetMetadata("type", "ticker")
+		tee.Push(ticker)
+
+		trade := data.NewMeasurement[float64]("websocket", map[string]data.Metric[float64]{
+			"price": {Raw: 100.5},
+			"qty":   {Raw: 0.2},
+		})
+		trade.Label = "BTC/USD"
+		trade.SeqIdx = 1
+		trade.At = time.Unix(1, 0)
+		trade.SetProvenance("channel", "trade")
+		trade.SetMetadata("type", "trade")
+		tee.Push(trade)
+
+		signal := data.NewMeasurement[float64]("cvd", map[string]data.Metric[float64]{
+			"cvd": {Raw: 1.5},
+		})
+		signal.Label = "BTC/USD"
+		signal.SeqIdx = 1
+		signal.At = time.Unix(1, 0)
+		tee.Push(signal)
+
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		So(catalog.Drain(ctx, 200, tee), ShouldBeNil)
+
+		tickers := 0
+		for range catalog.Scan(t.Context(), tables.SpotTicker, 200, nil, 0) {
+			tickers++
+		}
+		trades := 0
+		for range catalog.Scan(t.Context(), tables.SpotTrade, 200, nil, 0) {
+			trades++
+		}
+		measured := 0
+		for range catalog.Scan(t.Context(), tables.Measurements, 200, nil, 0) {
+			measured++
+		}
+
+		So(tickers, ShouldEqual, 1)
+		So(trades, ShouldEqual, 1)
+		So(measured, ShouldEqual, 1)
+
+		frames := 0
+		for frame := range catalog.Timeline(t.Context(), 200, "BTC/USD", 0, 0) {
+			frames++
+			So(len(frame.Peers), ShouldBeGreaterThanOrEqualTo, 1)
+		}
+		So(frames, ShouldEqual, 1)
+	})
+}

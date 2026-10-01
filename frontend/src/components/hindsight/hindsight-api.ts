@@ -218,22 +218,76 @@ export type RawExcursionRecord = {
 	id: string;
 	symbol: string;
 	direction: string;
-	clears_friction: boolean;
-	precursor_start_tick: number;
-	anchor_tick: number;
-	extremum_tick: number;
-	exit_tick: number;
-	post_end_tick: number;
-	entry_price: number;
-	extremum_price: number;
-	exit_price: number;
-	position_size: number;
+	clearsFriction: boolean;
+	precursorStartTick: number;
+	anchorTick: number;
+	extremumTick: number;
+	exitTick: number;
+	postEndTick: number;
+	entryPrice: number;
+	extremumPrice: number;
+	exitPrice: number;
+	positionSize: number;
 	fee: number;
 	profit: number;
-	profit_fraction: number;
-	gross_excursion: number;
-	observation_count: number;
+	profitFraction: number;
+	grossExcursion: number;
+	observationCount: number;
 	status: string;
+};
+
+/*
+normalizeExcursionRecord accepts the Go camelCase JSON wire shape and the
+older snake_case fixtures so episode geometry never collapses to NaN ticks.
+*/
+export const normalizeExcursionRecord = (raw: Record<string, unknown>): RawExcursionRecord => {
+	const num = (...keys: string[]): number => {
+		for (const key of keys) {
+			const value = raw[key];
+			if (typeof value === "number" && Number.isFinite(value)) return value;
+			if (typeof value === "string" && value !== "" && Number.isFinite(Number(value))) {
+				return Number(value);
+			}
+		}
+		return 0;
+	};
+	const str = (...keys: string[]): string => {
+		for (const key of keys) {
+			const value = raw[key];
+			if (typeof value === "string") return value;
+		}
+		return "";
+	};
+	const bool = (...keys: string[]): boolean => {
+		for (const key of keys) {
+			const value = raw[key];
+			if (typeof value === "boolean") return value;
+		}
+		return false;
+	};
+
+	return {
+		epoch: num("epoch"),
+		id: str("id"),
+		symbol: str("symbol"),
+		direction: str("direction"),
+		clearsFriction: bool("clearsFriction", "clears_friction"),
+		precursorStartTick: num("precursorStartTick", "precursor_start_tick"),
+		anchorTick: num("anchorTick", "anchor_tick"),
+		extremumTick: num("extremumTick", "extremum_tick"),
+		exitTick: num("exitTick", "exit_tick"),
+		postEndTick: num("postEndTick", "post_end_tick"),
+		entryPrice: num("entryPrice", "entry_price"),
+		extremumPrice: num("extremumPrice", "extremum_price"),
+		exitPrice: num("exitPrice", "exit_price"),
+		positionSize: num("positionSize", "position_size"),
+		fee: num("fee"),
+		profit: num("profit"),
+		profitFraction: num("profitFraction", "profit_fraction"),
+		grossExcursion: num("grossExcursion", "gross_excursion"),
+		observationCount: num("observationCount", "observation_count"),
+		status: str("status"),
+	};
 };
 
 export const fetchHindsightExcursions = async (
@@ -247,7 +301,89 @@ export const fetchHindsightExcursions = async (
 		return [];
 	}
 
-	return (await response.json()) as RawExcursionRecord[];
+	const payload = await response.json();
+	if (!Array.isArray(payload)) {
+		return [];
+	}
+
+	return payload.map((row) =>
+		normalizeExcursionRecord((row ?? {}) as Record<string, unknown>),
+	);
+};
+
+
+export const capturesFromMeasurements = (
+	run: string,
+	measurements: Measurement[],
+	after = 0,
+	limit = 48,
+): HindsightCapture[] => {
+	const captures: HindsightCapture[] = [];
+
+	for (const m of measurements) {
+		const sequence = Number(m.seqIdx ?? m.tick ?? 0);
+		if (!Number.isFinite(sequence) || sequence < after) continue;
+
+		captures.push({
+			identity: {
+				run,
+				sequence,
+				stream: m.source || "spot_ticker",
+				streamEpoch: Number(run) || 0,
+				streamSequence: sequence,
+			},
+			kind: "ticker",
+			endpoint: m.source || "spot_ticker",
+			receivedAt: typeof m.at === "string" ? m.at : "",
+		});
+
+		if (captures.length >= limit) break;
+	}
+
+	return captures;
+};
+
+
+const metaValue = (
+	metadata: Measurement["metadata"] | undefined,
+	key: string,
+): string => {
+	if (!metadata) return "";
+	if (Array.isArray(metadata)) {
+		for (const entry of metadata as Array<{ name?: string; value?: string }>) {
+			if (entry?.name === key) return String(entry.value ?? "");
+		}
+		return "";
+	}
+	const record = metadata as Record<string, string | number>;
+	return record[key] != null ? String(record[key]) : "";
+};
+
+const provenanceValue = (
+	provenance: Measurement["provenance"] | undefined,
+	key: string,
+): string => {
+	if (!provenance) return "";
+	if (Array.isArray(provenance)) {
+		for (const entry of provenance as Array<{ name?: string; value?: string }>) {
+			if (entry?.name === key) return String(entry.value ?? "");
+		}
+		return "";
+	}
+	const record = provenance as Record<string, string>;
+	return record[key] ?? "";
+};
+
+/*
+isTradePeer recognises Iceberg SpotTrade rows and live websocket trades whose
+Source stayed "websocket" while metadata/provenance carry type/channel=trade.
+*/
+export const isTradePeer = (peer: Measurement): boolean => {
+	const source = (peer.source ?? "").toLowerCase();
+	if (source.includes("trade")) return true;
+	if (metaValue(peer.metadata, "type") === "trade") return true;
+	if (provenanceValue(peer.provenance, "channel") === "trade") return true;
+	return false;
 };
 
 export const adaptMeasurementsToTimeline = (
@@ -313,31 +449,67 @@ export const adaptMeasurementsToTimeline = (
 		let trades = 0;
 		let tradeQty = 0;
 
+		let spreadSum = 0;
+		let spreadCount = 0;
+		let touchSum = 0;
+		let touchCount = 0;
+
 		chunk.forEach((m, idx) => {
 			const metrics = m.metrics as Record<string, { raw: number }> | undefined;
+			const bid = metrics?.bid?.raw;
+			const ask = metrics?.ask?.raw;
+			const mid =
+				bid !== undefined &&
+				ask !== undefined &&
+				bid > 0 &&
+				ask > 0 &&
+				ask >= bid
+					? (bid + ask) / 2
+					: undefined;
 			const price =
+				metrics?.mid?.raw ??
+				mid ??
 				metrics?.last?.raw ??
 				metrics?.price?.raw ??
-				((metrics?.bid?.raw ?? 0) + (metrics?.ask?.raw ?? 0)) / 2;
+				metrics?.close?.raw ??
+				0;
 
 			if (idx === 0) open = price;
 			if (price > high) high = price;
 			if (price < low) low = price;
 			close = price;
 
-			if (m.peers) {
-				m.peers.forEach((p) => {
-					if (p.source === "spot_trade") {
-						trades += 1;
-						const peerMetrics = p.metrics as Record<string, { raw: number }> | undefined;
-						tradeQty += peerMetrics?.qty?.raw ?? 0;
-					}
-				});
+			if (mid !== undefined && mid > 0 && bid !== undefined && ask !== undefined) {
+				spreadSum += (ask - bid) / mid;
+				spreadCount += 1;
+			}
+
+			const bidQty = metrics?.bid_qty?.raw;
+			const askQty = metrics?.ask_qty?.raw;
+			if (
+				bidQty !== undefined &&
+				askQty !== undefined &&
+				bidQty > 0 &&
+				askQty > 0
+			) {
+				touchSum += bidQty + askQty;
+				touchCount += 1;
+			}
+
+			const peers = m.peers ?? m.Peers ?? [];
+			for (const p of peers) {
+				if (!isTradePeer(p)) continue;
+				trades += 1;
+				const peerMetrics = p.metrics as Record<string, { raw: number }> | undefined;
+				tradeQty += peerMetrics?.qty?.raw ?? peerMetrics?.volume?.raw ?? 0;
 			}
 		});
 
 		if (high === -Infinity) high = 0;
 		if (low === Infinity) low = 0;
+
+		const spreadFraction = spreadCount > 0 ? spreadSum / spreadCount : 0;
+		const touchDepth = touchCount > 0 ? touchSum / touchCount : 0;
 
 		const chunkFirstSeq =
 			chunk[0]?.seqIdx != null ? Number(chunk[0].seqIdx) : 0;
@@ -376,10 +548,10 @@ export const adaptMeasurementsToTimeline = (
 			high,
 			low,
 			close,
-			spreadFraction: 0,
-			hasSpreadFraction: false,
-			touchDepth: 0,
-			hasTouchDepth: false,
+			spreadFraction,
+			hasSpreadFraction: spreadCount > 0,
+			touchDepth,
+			hasTouchDepth: touchCount > 0,
 			captureRate: 0,
 			hasCaptureRate: false,
 		});
@@ -389,91 +561,127 @@ export const adaptMeasurementsToTimeline = (
 		(e) => e.symbol === selectedSymbol,
 	);
 
-	const episodes: HindsightEpisode[] = selectedSymbolExcursions.map((e) => ({
-		id: e.id,
-		symbol: e.symbol,
-		kind:
-			e.direction === "upward"
-				? "upward_excursion"
-				: e.direction === "downward"
-					? "downward_excursion"
-					: "reversal",
-		coordinate: "last" as MarketCoordinate,
-		fromSequence: e.anchor_tick,
-		toSequence: e.exit_tick,
-		fromAt: "",
-		toAt: "",
-		observations: e.observation_count,
-		observedExcursion: e.gross_excursion,
-		hasObservedExcursion: true,
-		confirmed: e.clears_friction,
-		ratio: e.profit_fraction,
-		hasRatio: true,
-		traversed: e.profit_fraction,
-		hasTraversed: true,
-		threshold: 0.0052,
-		hasThreshold: true,
-		references: [
-			{
-				role: "anchor" as ReferenceRole,
-				capture: {
-					run: String(e.epoch),
-					sequence: e.anchor_tick,
-					stream: "excursions",
-					streamEpoch: e.epoch,
-					streamSequence: e.anchor_tick,
-				},
-				ordinal: e.anchor_tick,
-				venueAt: "",
-				receivedAt: "",
-				value: e.entry_price,
-				hasValue: true,
+	const episodeKind = (direction: string): EpisodeKind => {
+		if (direction === "up" || direction === "upward") return "upward_excursion";
+		if (direction === "down" || direction === "downward") return "downward_excursion";
+		if (direction === "chop") return "reversal";
+		if (direction === "flat") return "reversal";
+		return "reversal";
+	};
+
+	const atForSeq = (seq: number): string => {
+		if (!seq) return "";
+		let best: Measurement | null = null;
+		let bestDiff = Number.POSITIVE_INFINITY;
+		for (const m of filtered) {
+			const tick = Number(m.seqIdx ?? m.tick ?? 0);
+			const diff = Math.abs(tick - seq);
+			if (diff < bestDiff) {
+				bestDiff = diff;
+				best = m;
+			}
+			if (diff === 0) break;
+		}
+		if (!best?.at) return "";
+		return typeof best.at === "string" ? best.at : new Date(best.at).toISOString();
+	};
+
+	const priceAtSeq = (seq: number, fallback: number): number => {
+		if (!seq || !Number.isFinite(fallback)) return fallback;
+		for (const m of filtered) {
+			if (Number(m.seqIdx ?? m.tick ?? 0) !== seq) continue;
+			const metrics = m.metrics as Record<string, { raw: number }> | undefined;
+			const bid = metrics?.bid?.raw;
+			const ask = metrics?.ask?.raw;
+			if (bid && ask && ask >= bid) return (bid + ask) / 2;
+			return (
+				metrics?.mid?.raw ??
+				metrics?.last?.raw ??
+				metrics?.price?.raw ??
+				fallback
+			);
+		}
+		return fallback;
+	};
+
+	const episodes: HindsightEpisode[] = selectedSymbolExcursions.map((e) => {
+		const fromSequence = e.precursorStartTick || e.anchorTick;
+		const toSequence = e.exitTick;
+		const peakRole = (
+			e.direction === "down" || e.direction === "downward" ? "trough" : "peak"
+		) as ReferenceRole;
+		const runId = String(e.epoch);
+		const ref = (role: ReferenceRole, sequence: number, value: number) => ({
+			role,
+			capture: {
+				run: runId,
+				sequence,
+				stream: "excursions",
+				streamEpoch: e.epoch,
+				streamSequence: sequence,
 			},
-			{
-				role: "peak" as ReferenceRole,
-				capture: {
-					run: String(e.epoch),
-					sequence: e.extremum_tick,
-					stream: "excursions",
-					streamEpoch: e.epoch,
-					streamSequence: e.extremum_tick,
-				},
-				ordinal: e.extremum_tick,
-				venueAt: "",
-				receivedAt: "",
-				value: e.extremum_price,
-				hasValue: true,
-			},
-			{
-				role: "exit_anchor" as ReferenceRole,
-				capture: {
-					run: String(e.epoch),
-					sequence: e.exit_tick,
-					stream: "excursions",
-					streamEpoch: e.epoch,
-					streamSequence: e.exit_tick,
-				},
-				ordinal: e.exit_tick,
-				venueAt: "",
-				receivedAt: "",
-				value: e.exit_price,
-				hasValue: true,
-			},
-		],
-	}));
+			// Envelope ordinal within the capture — not the tick itself.
+			ordinal: 0,
+			venueAt: atForSeq(sequence),
+			receivedAt: atForSeq(sequence),
+			value,
+			hasValue: Number.isFinite(value) && value > 0,
+		});
+
+		const references = [
+			ref("anchor", e.anchorTick, e.entryPrice || priceAtSeq(e.anchorTick, 0)),
+			ref(
+				peakRole,
+				e.extremumTick || e.anchorTick,
+				e.extremumPrice || priceAtSeq(e.extremumTick, e.entryPrice),
+			),
+			ref("exit_anchor", e.exitTick, e.exitPrice || priceAtSeq(e.exitTick, 0)),
+		];
+
+		// Precursor A when it precedes ignition B — matches Detector A→B→C.
+		if (e.precursorStartTick > 0 && e.precursorStartTick < e.anchorTick) {
+			references.unshift(
+				ref(
+					"shock_onset",
+					e.precursorStartTick,
+					priceAtSeq(e.precursorStartTick, e.entryPrice),
+				),
+			);
+		}
+
+		return {
+			id: e.id,
+			symbol: e.symbol,
+			kind: episodeKind(e.direction),
+			coordinate: "midpoint" as MarketCoordinate,
+			fromSequence,
+			toSequence,
+			fromAt: atForSeq(fromSequence),
+			toAt: atForSeq(toSequence),
+			observations: e.observationCount,
+			observedExcursion: e.grossExcursion,
+			hasObservedExcursion: e.grossExcursion > 0,
+			confirmed: e.clearsFriction,
+			ratio: e.profitFraction,
+			hasRatio: Number.isFinite(e.profitFraction),
+			traversed: e.profitFraction,
+			hasTraversed: Number.isFinite(e.profitFraction),
+			threshold: 0.0052,
+			hasThreshold: true,
+			references,
+		};
+	});
 
 	const allSymbols = symbols.length > 0 ? symbols : [selectedSymbol];
 	const symbolSummaries: HindsightSymbolSummary[] = allSymbols.map((sym) => {
 		const symExcursions = excursions.filter((e) => e.symbol === sym);
 		const topExcursion = symExcursions.reduce(
-			(max, e) => Math.max(max, e.gross_excursion),
+			(max, e) => Math.max(max, e.grossExcursion),
 			0,
 		);
 		const topKind =
 			symExcursions.length > 0
-				? symExcursions[0].direction === "upward"
-					? ("upward_excursion" as EpisodeKind)
-					: ("downward_excursion" as EpisodeKind)
+				? episodeKind(symExcursions[0].direction)
 				: undefined;
 
 		return {

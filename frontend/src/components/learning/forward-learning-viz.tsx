@@ -92,6 +92,8 @@ export const ForwardLearningViz = () => {
 
 	// Overall counters
 	const [evaluatedCount, setEvaluatedCount] = useState(0);
+	// Observed skill return samples (+1/-1 from recordSkill) for the edge panel.
+	const [edgeSamples, setEdgeSamples] = useState<number[]>([]);
 
 	// Real Radix Trie branches fetched from backend engine
 	const [trieBranches, setTrieBranches] = useState<TrieBranch[]>([]);
@@ -114,6 +116,7 @@ export const ForwardLearningViz = () => {
 	const [playbackTick, setPlaybackTick] = useState(0);
 	const [playbackPhase, setPlaybackPhase] = useState<"PLAYING" | "EVALUATING">("PLAYING");
 	const pendingEpisodeRef = useRef<ForwardTapePoint[]>([]);
+	const currentEpisodeRef = useRef<ForwardTapePoint[] | null>(null);
 
 	// Current training symbol (not filtered by user focus atom — reflects whatever is training)
 	const [currentSymbol, setCurrentSymbol] = useState("TRAINING");
@@ -220,6 +223,7 @@ export const ForwardLearningViz = () => {
 
 	// Update visible points from the animating episode
 	useEffect(() => {
+		currentEpisodeRef.current = currentEpisode;
 		if (currentEpisode && playbackTick < currentEpisode.length) {
 			setPoints(currentEpisode.slice(0, playbackTick + 1));
 		}
@@ -342,6 +346,20 @@ export const ForwardLearningViz = () => {
 				setHistMeanReturn(metricMap.hist_mean_return ?? 0);
 				setHistLowerBound(metricMap.hist_lower_bound ?? 0);
 
+				if (measurement.metadata) {
+					for (const m of measurement.metadata) {
+						if (m?.name === "edge_samples" && m.value) {
+							const parsed = String(m.value)
+								.split(",")
+								.map((part) => Number(part.trim()))
+								.filter((value) => Number.isFinite(value));
+							if (parsed.length > 0) {
+								setEdgeSamples(parsed);
+							}
+						}
+					}
+				}
+
 				// Forward paper
 				setFwdPredictions(Math.floor(metricMap.fwd_enter_predictions ?? 0));
 				setFwdPaperTrades(Math.floor(metricMap.fwd_paper_trades ?? 0));
@@ -386,7 +404,9 @@ export const ForwardLearningViz = () => {
 					const pointPrice = rawPrice;
 					pendingEpisodeRef.current.push({ x: pendingEpisodeRef.current.length, y: pointPrice, seq: seqVal });
 
-					// If in live forward mode, just draw it immediately since there are no pre-recorded fragments
+					// Forward: rolling live tape. Historical: stream the developing
+					// fragment immediately so the desk is not stuck on "Awaiting…"
+					// while completed episodes wait for the playback queue.
 					if (sCode >= 2) {
 						setPoints((prev) => {
 							const next = [...prev, { x: prev.length, y: pointPrice, seq: seqVal }];
@@ -395,6 +415,9 @@ export const ForwardLearningViz = () => {
 							}
 							return next;
 						});
+					} else if (sCode === 1 && currentEpisodeRef.current === null) {
+						const pending = pendingEpisodeRef.current;
+						setPoints(pending.map((pt, i) => ({ x: i, y: pt.y, seq: pt.seq })));
 					}
 				}
 
@@ -441,7 +464,7 @@ export const ForwardLearningViz = () => {
 				// Complete fragment detection via metadata tag
 				if (measurement.metadata) {
 					for (const m of measurement.metadata) {
-						if (m?.name === "excursion_event" && m.value === "completed") {
+						if (m?.name === "excursion_event" && String(m.value) === "completed") {
 							if (pendingEpisodeRef.current.length > 0) {
 								const readyEpisode = [...pendingEpisodeRef.current];
 								setEpisodeQueue((q) => [...q, readyEpisode].slice(-50));
@@ -604,7 +627,7 @@ export const ForwardLearningViz = () => {
 
 					{/* Confirmed Excursion Banner */}
 					<AnimatePresence>
-						{excursionEvent && excursionEvent.type && (isForward || playbackPhase === "EVALUATING") && (
+						{excursionEvent && excursionEvent.type && (
 							<motion.div
 								initial={{ height: 0, opacity: 0 }}
 								animate={{ height: 22, opacity: 1 }}
@@ -1106,18 +1129,62 @@ export const ForwardLearningViz = () => {
 							<span className="text-(--acc)">Edge Distribution</span>
 						</div>
 						<span className="text-[10px] text-(--f4)">
-							{evaluatedCount > 0 ? `${evaluatedCount} evaluations` : "Impartial"}
+							{edgeSamples.length > 0
+								? `${edgeSamples.length} samples`
+								: evaluatedCount > 0
+									? `${evaluatedCount} evaluations`
+									: "Impartial"}
 						</span>
 					</div>
 
-					<div className="flex-1 relative overflow-hidden">
-						<div className="absolute inset-0 flex items-center justify-center text-(--f4) text-[10px] px-4 text-center">
-							No return distribution is drawn. Mean and lower bound stay in the evidence panel.
-						</div>
+					<div className="flex-1 relative overflow-hidden p-3">
+						{edgeSamples.length === 0 ? (
+							<div className="absolute inset-0 flex items-center justify-center text-(--f4) text-[10px] px-4 text-center">
+								No return distribution is drawn. Mean and lower bound stay in the evidence panel.
+							</div>
+						) : (
+							(() => {
+								const neg = edgeSamples.filter((v) => v < 0).length;
+								const zero = edgeSamples.filter((v) => v === 0).length;
+								const pos = edgeSamples.filter((v) => v > 0).length;
+								const total = Math.max(edgeSamples.length, 1);
+								const bars = [
+									{ label: "−1", count: neg, color: "var(--down)" },
+									{ label: "0", count: zero, color: "var(--f4)" },
+									{ label: "+1", count: pos, color: "var(--up)" },
+								];
+								const maxCount = Math.max(...bars.map((b) => b.count), 1);
+								return (
+									<svg viewBox="0 0 340 160" className="w-full h-full" aria-label="Observed skill return histogram">
+									{bars.map((bar, index) => {
+										const x = 40 + index * 100;
+										const height = (bar.count / maxCount) * 110;
+										const y = 130 - height;
+										return (
+											<g key={bar.label}>
+												<rect x={x} y={y} width={60} height={height} fill={bar.color} opacity={0.85} />
+												<text x={x + 30} y={144} textAnchor="middle" fill="var(--f3)" fontSize="10">
+													{bar.label}
+												</text>
+												<text x={x + 30} y={y - 4} textAnchor="middle" fill="var(--f1)" fontSize="10">
+													{bar.count}
+												</text>
+											</g>
+										);
+									})}
+									<text x={170} y={12} textAnchor="middle" fill="var(--f4)" fontSize="9">
+										{edgeSamples.length} observed skill outcomes · {(100 * pos) / total}% correct
+									</text>
+								</svg>
+								);
+							})()
+						)}
 					</div>
 
 					<div className="p-2.5 border-t border-(--line) text-[10px] text-(--f4) leading-tight">
-						A curve is omitted until completed outcomes supply their own return sample.
+						{edgeSamples.length === 0
+							? "A curve is omitted until completed outcomes supply their own return sample."
+							: "Histogram of graded skill samples from supervise (correct=+1, incorrect=−1). Not invented."}
 					</div>
 				</div>
 			</div>

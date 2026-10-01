@@ -1,6 +1,9 @@
 package ui
 
 import (
+	"encoding/json"
+	"strconv"
+
 	"github.com/gofiber/contrib/v3/websocket"
 	"github.com/gofiber/fiber/v3"
 	"github.com/theapemachine/symm/hindsight/tables"
@@ -201,5 +204,136 @@ func (routes *Routes) Register() {
 		}
 
 		return ctx.JSON(measurements)
+	})
+
+	// Captures: Iceberg SpotTicker rows projected as capture identities so the
+	// FrameStrip / CaptureCard work against the same tape Timeline streams.
+	routes.hub.app.Get("/hindsight/captures", func(ctx fiber.Ctx) error {
+		if routes.hub.store == nil {
+			return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
+		}
+
+		run := ctx.Query("run")
+		if run == "" {
+			run = ctx.Query("epoch")
+		}
+		epoch := parseInt64Query(run)
+		after := parseInt64Query(ctx.Query("after"))
+		symbol := ctx.Query("symbol")
+
+		const maxCaptures = 64
+		captures := make([]map[string]any, 0, maxCaptures)
+
+		for measurement := range routes.hub.store.Timeline(routes.hub.Context(), epoch, symbol, after, 0) {
+			if measurement == nil || measurement.SeqIdx < after {
+				continue
+			}
+
+			receivedAt := ""
+			if !measurement.At.IsZero() {
+				receivedAt = measurement.At.UTC().Format("2006-01-02T15:04:05.000Z07:00")
+			}
+
+			captures = append(captures, map[string]any{
+				"identity": map[string]any{
+					"run":            strconv.FormatInt(epoch, 10),
+					"sequence":       measurement.SeqIdx,
+					"stream":         measurement.Source,
+					"streamEpoch":    epoch,
+					"streamSequence": measurement.SeqIdx,
+				},
+				"kind":       "ticker",
+				"endpoint":   measurement.Source,
+				"receivedAt": receivedAt,
+			})
+
+			if len(captures) >= maxCaptures {
+				break
+			}
+		}
+
+		return ctx.JSON(captures)
+	})
+
+	// Envelope: honest projection of the Iceberg frame at seq — metrics + peers.
+	// No invented witnesses/manifests when the store never recorded them.
+	routes.hub.app.Get("/hindsight/envelope", func(ctx fiber.Ctx) error {
+		if routes.hub.store == nil {
+			return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
+		}
+
+		run := ctx.Query("run")
+		if run == "" {
+			run = ctx.Query("epoch")
+		}
+		epoch := parseInt64Query(run)
+		seq := parseInt64Query(ctx.Query("seq"))
+		symbol := ctx.Query("symbol")
+
+		if seq <= 0 {
+			return fiber.NewError(fiber.StatusBadRequest, "seq required")
+		}
+
+		var found *data.Measurement[float64]
+
+		for measurement := range routes.hub.store.Timeline(routes.hub.Context(), epoch, symbol, seq, seq) {
+			if measurement == nil {
+				continue
+			}
+			if measurement.SeqIdx == seq {
+				found = measurement
+				break
+			}
+		}
+
+		if found == nil {
+			return fiber.NewError(fiber.StatusNotFound, "frame not found")
+		}
+
+		payloadBytes, err := json.Marshal(found)
+		if err != nil {
+			return err
+		}
+
+		receivedAt := ""
+		if !found.At.IsZero() {
+			receivedAt = found.At.UTC().Format("2006-01-02T15:04:05.000Z07:00")
+		}
+
+		capture := map[string]any{
+			"identity": map[string]any{
+				"run":            strconv.FormatInt(epoch, 10),
+				"sequence":       found.SeqIdx,
+				"stream":         found.Source,
+				"streamEpoch":    epoch,
+				"streamSequence": found.SeqIdx,
+			},
+			"kind":       "ticker",
+			"endpoint":   found.Source,
+			"receivedAt": receivedAt,
+		}
+
+		return ctx.JSON(map[string]any{
+			"run":       strconv.FormatInt(epoch, 10),
+			"sequence":  found.SeqIdx,
+			"capture":   capture,
+			"payload":   string(payloadBytes),
+			"manifests": []any{},
+			"witnesses": []any{},
+		})
+	})
+
+	// Honest empties: these witness streams are not persisted in Iceberg yet.
+	routes.hub.app.Get("/hindsight/gaps", func(ctx fiber.Ctx) error {
+		return ctx.JSON([]any{})
+	})
+	routes.hub.app.Get("/hindsight/lifecycle", func(ctx fiber.Ctx) error {
+		return ctx.JSON([]any{})
+	})
+	routes.hub.app.Get("/hindsight/states", func(ctx fiber.Ctx) error {
+		return ctx.JSON([]any{})
+	})
+	routes.hub.app.Get("/hindsight/state", func(ctx fiber.Ctx) error {
+		return fiber.NewError(fiber.StatusNotFound, "no witnessed state at sequence")
 	})
 }

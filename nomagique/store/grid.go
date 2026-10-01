@@ -94,14 +94,30 @@ func NewGrid() *Grid {
 
 // Settle locks the current partition.
 func (grid *Grid) Settle() {
+	grid.mu.Lock()
+	defer grid.mu.Unlock()
 	grid.Settled = true
 }
 
 // ResetSettlement unlocks the grid if further training is required.
 func (grid *Grid) ResetSettlement() {
+	grid.mu.Lock()
+	defer grid.mu.Unlock()
 	grid.Settled = false
 	grid.PartitionRun = 0
 	grid.LongestPartitionRun = 0
+}
+
+// IsSettled reports whether the partition is frozen (RLock — never read Settled racy).
+func (grid *Grid) IsSettled() bool {
+	if grid == nil {
+		return false
+	}
+
+	grid.mu.RLock()
+	defer grid.mu.RUnlock()
+
+	return grid.Settled
 }
 
 func (grid *Grid) Add(metric *data.Metric[float64]) {

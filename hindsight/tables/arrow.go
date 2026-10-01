@@ -1,8 +1,8 @@
 package tables
 
 import (
-	"fmt"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -135,6 +135,16 @@ func fillMeasurements(
 					provenanceKey.Append("symm:exact:" + key)
 					provenanceVal.Append(metric.Exact.String())
 				}
+
+				if metric.Standardized != nil {
+					provenanceKey.Append("symm:standardized:" + key)
+					provenanceVal.Append(strconv.FormatFloat(*metric.Standardized, 'g', -1, 64))
+				}
+
+				if metric.Normalized != nil {
+					provenanceKey.Append("symm:normalized:" + key)
+					provenanceVal.Append(strconv.FormatFloat(*metric.Normalized, 'g', -1, 64))
+				}
 			}
 
 		}
@@ -263,6 +273,34 @@ func ReadMeasurements(batch arrow.RecordBatch) ([]*data.Measurement[float64], er
 
 					metric := measurement.GetMetric(metricKey)
 					metric.Exact = exact
+					measurement.SetMetric(metricKey, metric)
+					continue
+				}
+
+				if strings.HasPrefix(key, "symm:standardized:") {
+					metricKey := strings.TrimPrefix(key, "symm:standardized:")
+					parsed, err := strconv.ParseFloat(value, 64)
+
+					if err != nil {
+						return nil, errnie.Error(errnie.Err(errnie.Validation, "iceberg: invalid standardized metric", err))
+					}
+
+					metric := measurement.GetMetric(metricKey)
+					metric.Standardized = &parsed
+					measurement.SetMetric(metricKey, metric)
+					continue
+				}
+
+				if strings.HasPrefix(key, "symm:normalized:") {
+					metricKey := strings.TrimPrefix(key, "symm:normalized:")
+					parsed, err := strconv.ParseFloat(value, 64)
+
+					if err != nil {
+						return nil, errnie.Error(errnie.Err(errnie.Validation, "iceberg: invalid normalized metric", err))
+					}
+
+					metric := measurement.GetMetric(metricKey)
+					metric.Normalized = &parsed
 					measurement.SetMetric(metricKey, metric)
 					continue
 				}

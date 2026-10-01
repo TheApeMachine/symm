@@ -334,3 +334,48 @@ func TestRecordRejectsNonPositiveReference(t *testing.T) {
 		}, ShouldNotPanic)
 	})
 }
+
+func TestDetectorLongFOMOStaysOneEpisode(t *testing.T) {
+	Convey("A multi-plateau FOMO rise is one excursion that can clear friction", t, func() {
+		detector := NewDetector(priced(t, "BTC/USD", 0.1))
+		records := collect(detector, "BTC/USD", calmThenLongFOMO())
+
+		So(len(records), ShouldEqual, 1)
+		So(records[0].Direction, ShouldEqual, "up")
+		So(records[0].ClearsFriction, ShouldBeTrue)
+		So(records[0].ExitTick-records[0].AnchorTick, ShouldBeGreaterThan, 80)
+		// Peak retained through plateaus — not chopped into many short ups.
+		So(records[0].ExtremumPrice, ShouldBeGreaterThan, 350)
+	})
+}
+
+/*
+calmThenLongFOMO models a minutes-scale riser (same shape as SWEAT ~4x / ~80m+):
+calm base, staircase higher with plateaus (non-extending consolidations), then a
+deeper giveback to resolve C. Mids stay in a quote-valid mid±0.01 band.
+*/
+func calmThenLongFOMO() []float64 {
+	base := 100.0
+	mids := calm(50, base, 0.05)
+
+	price := mids[len(mids)-1]
+	target := 401.0
+
+	for step := 0; step < 12; step++ {
+		next := price + (target-price)/float64(12-step)
+		// ramp(start, per-tick step, count) — not total delta as step.
+		perTick := (next - price) / 14.0
+		mids = append(mids, ramp(price, perTick, 15)...)
+		price = mids[len(mids)-1]
+		// Plateau under the high — must not finish into fee-failing chips.
+		mids = append(mids, calm(20, price-0.15, 0.04)...)
+		price = mids[len(mids)-1]
+	}
+
+	// Exhaustion: long giveback toward prior so recent.Mean sheds the peak
+	// (MeanShift recent window) and retained drops through the FOMO floor.
+	perTick := -(price - base) * 0.97 / 99.0
+	mids = append(mids, ramp(price, perTick, 100)...)
+
+	return mids
+}
