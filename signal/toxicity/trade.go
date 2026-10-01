@@ -205,8 +205,8 @@ func (trade *Trade) pipelineFor(symbol string) core.Primitive {
 				m.WriteMetric("matched_touch_trade_quantity:ask", state.matchedAskQty)
 				m.WriteMetric("touch_fill_quantity:bid", state.touchFillBidQty)
 				m.WriteMetric("touch_fill_quantity:ask", state.touchFillAskQty)
-				m.WriteMetric("touch_fill_fraction:bid", bidFillFrac)
-				m.WriteMetric("touch_fill_fraction:ask", askFillFrac)
+				m.WriteNormalized("touch_fill_fraction:bid", bidFillFrac)
+				m.WriteNormalized("touch_fill_fraction:ask", askFillFrac)
 
 				if hasRate {
 					m.WriteMetric("touch_fill_rate:bid", bidRate)
@@ -229,7 +229,7 @@ func (trade *Trade) pipelineFor(symbol string) core.Primitive {
 					if out.HasPrior {
 						m.WriteMetric("fill_fraction_baseline:bid", out.Baseline)
 						m.WriteMetric("fill_fraction_divergence:bid", out.Residual)
-						m.WriteMetric("fill_fraction_zscore:bid", out.ZScore)
+						m.WriteStandardized("fill_fraction_zscore:bid", out.ZScore)
 					}
 					m.EnsureMetadata()
 					m.SetMetadata(data.MetadataSupport, strconv.FormatFloat(out.Count, 'f', -1, 64))
@@ -247,7 +247,7 @@ func (trade *Trade) pipelineFor(symbol string) core.Primitive {
 					if out.HasPrior {
 						m.WriteMetric("fill_fraction_baseline:ask", out.Baseline)
 						m.WriteMetric("fill_fraction_divergence:ask", out.Residual)
-						m.WriteMetric("fill_fraction_zscore:ask", out.ZScore)
+						m.WriteStandardized("fill_fraction_zscore:ask", out.ZScore)
 					}
 				},
 			),
@@ -279,7 +279,7 @@ func (trade *Trade) pipelineFor(symbol string) core.Primitive {
 						if n > 1 {
 							maturity = 1.0 - (1.0 / n)
 						}
-						m.WriteMetric("Maturity", maturity)
+						m.WriteNormalized("Maturity", maturity)
 					}
 				},
 			),

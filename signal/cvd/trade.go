@@ -127,7 +127,7 @@ func (trade *Trade) pipelineFor(symbol string) core.Primitive {
 								m.WriteMetric("gross_notional_rate_divergence", math.Log(ratio))
 							}
 						}
-						m.WriteMetric("gross_notional_rate_zscore", out.ZScore)
+						m.WriteStandardized("gross_notional_rate_zscore", out.ZScore)
 					}
 				},
 			),
@@ -152,7 +152,7 @@ func (trade *Trade) pipelineFor(symbol string) core.Primitive {
 					if out.HasPrior {
 						m.WriteMetric("midpoint_return_rate_baseline", out.Baseline)
 						m.WriteMetric("midpoint_return_rate_divergence", out.Residual)
-						m.WriteMetric("midpoint_return_rate_zscore", out.ZScore)
+						m.WriteStandardized("midpoint_return_rate_zscore", out.ZScore)
 					}
 				},
 			),
@@ -179,7 +179,7 @@ func (trade *Trade) pipelineFor(symbol string) core.Primitive {
 						if n > 1 {
 							maturity = 1.0 - (1.0 / n)
 						}
-						m.WriteMetric("Maturity", maturity)
+						m.WriteNormalized("Maturity", maturity)
 					}
 				},
 			),

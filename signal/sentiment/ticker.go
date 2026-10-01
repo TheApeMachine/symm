@@ -129,21 +129,21 @@ func (ticker *Ticker) pipelineFor(symbol string) core.Primitive {
 
 					advanceFraction := positive / valid
 					declineFraction := negative / valid
-					m.WriteMetric("advance_fraction", advanceFraction)
-					m.WriteMetric("decline_fraction", declineFraction)
-					m.WriteMetric("unchanged_fraction", zero/valid)
-					m.WriteMetric("advance_decline_spread", advanceFraction-declineFraction)
+					m.WriteNormalized("advance_fraction", advanceFraction)
+					m.WriteNormalized("decline_fraction", declineFraction)
+					m.WriteNormalized("unchanged_fraction", zero/valid)
+					m.WriteNormalized("advance_decline_spread", advanceFraction-declineFraction)
 
-					m.WriteMetric("signed_fraction", (positive-negative)/valid) // legacy support
+					m.WriteNormalized("signed_fraction", (positive-negative)/valid) // legacy support
 
-					m.WriteMetric("directional_participation", (positive+negative)/valid)
+					m.WriteNormalized("directional_participation", (positive+negative)/valid)
 
 					dirConsensus := 0.0
 					if positive+negative > 0 {
 						dirConsensus = math.Abs(positive-negative) / (positive + negative)
 					}
-					m.WriteMetric("directional_consensus", dirConsensus)
-					m.WriteMetric("directional_agreement", dirConsensus*((positive+negative)/valid))
+					m.WriteNormalized("directional_consensus", dirConsensus)
+					m.WriteNormalized("directional_agreement", dirConsensus*((positive+negative)/valid))
 
 					if extremeKey != "" {
 						m.EnsureMetadata()
@@ -204,7 +204,7 @@ func (ticker *Ticker) pipelineFor(symbol string) core.Primitive {
 					m.WriteMetric("return_interquartile_range", changes[q3Idx]-changes[q1Idx])
 
 					if sumAbs > 0 {
-						m.WriteMetric("largest_move_share", maxAbsChange/sumAbs)
+						m.WriteNormalized("largest_move_share", maxAbsChange/sumAbs)
 					}
 
 					if hasFocal {
@@ -214,9 +214,9 @@ func (ticker *Ticker) pipelineFor(symbol string) core.Primitive {
 						m.WriteMetric("opposite_direction_peer_count", oppDir)
 						m.WriteMetric("zero_return_peer_count", zeroDir)
 
-						m.WriteMetric("same_direction_peer_fraction", sameDir/valid)
-						m.WriteMetric("opposite_direction_peer_fraction", oppDir/valid)
-						m.WriteMetric("zero_return_peer_fraction", zeroDir/valid)
+						m.WriteNormalized("same_direction_peer_fraction", sameDir/valid)
+						m.WriteNormalized("opposite_direction_peer_fraction", oppDir/valid)
+						m.WriteNormalized("zero_return_peer_fraction", zeroDir/valid)
 					}
 				}
 
@@ -234,7 +234,7 @@ func (ticker *Ticker) pipelineFor(symbol string) core.Primitive {
 					if out.HasPrior {
 						m.WriteMetric("median_return_baseline", out.Baseline)
 						m.WriteMetric("median_return_divergence", out.Residual)
-						m.WriteMetric("median_return_zscore", out.ZScore)
+						m.WriteStandardized("median_return_zscore", out.ZScore)
 					}
 				},
 			),
@@ -247,7 +247,7 @@ func (ticker *Ticker) pipelineFor(symbol string) core.Primitive {
 					if out.HasPrior {
 						m.WriteMetric("breadth_baseline", out.Baseline)
 						m.WriteMetric("breadth_divergence", out.Residual)
-						m.WriteMetric("breadth_zscore", out.ZScore)
+						m.WriteStandardized("breadth_zscore", out.ZScore)
 					}
 				},
 			),
@@ -262,7 +262,7 @@ func (ticker *Ticker) pipelineFor(symbol string) core.Primitive {
 						if out.Baseline > 0 {
 							m.WriteMetric("median_absolute_return_ratio", m.GetMetric("median_absolute_return").Raw/out.Baseline)
 						}
-						m.WriteMetric("median_absolute_return_zscore", out.ZScore)
+						m.WriteStandardized("median_absolute_return_zscore", out.ZScore)
 					}
 				},
 			),
@@ -277,7 +277,7 @@ func (ticker *Ticker) pipelineFor(symbol string) core.Primitive {
 						if out.Baseline > 0 {
 							m.WriteMetric("return_dispersion_ratio", m.GetMetric("return_mad").Raw/out.Baseline)
 						}
-						m.WriteMetric("return_dispersion_zscore", out.ZScore)
+						m.WriteStandardized("return_dispersion_zscore", out.ZScore)
 					}
 				},
 			),
@@ -305,7 +305,7 @@ func (ticker *Ticker) pipelineFor(symbol string) core.Primitive {
 						if n > 1 {
 							maturity = 1.0 - (1.0 / n)
 						}
-						m.WriteMetric("Maturity", maturity)
+						m.WriteNormalized("Maturity", maturity)
 					}
 				},
 			),

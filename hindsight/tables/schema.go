@@ -111,6 +111,7 @@ func ExcursionsSchema() *iceberg.Schema {
 		iceberg.NestedField{ID: 18, Name: "gross_excursion", Type: iceberg.PrimitiveTypes.Float64, Required: true},
 		iceberg.NestedField{ID: 19, Name: "observation_count", Type: iceberg.PrimitiveTypes.Int64, Required: true},
 		iceberg.NestedField{ID: 20, Name: "status", Type: iceberg.PrimitiveTypes.String, Required: true},
+		iceberg.NestedField{ID: 21, Name: "post_end_price", Type: iceberg.PrimitiveTypes.Float64, Required: true},
 	)
 }
 

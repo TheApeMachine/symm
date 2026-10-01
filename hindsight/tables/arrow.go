@@ -473,6 +473,7 @@ type ExcursionRecord struct {
 	GrossExcursion     float64 `json:"grossExcursion"`
 	ObservationCount   int64   `json:"observationCount"`
 	Status             string  `json:"status"`
+	PostEndPrice       float64 `json:"postEndPrice"`
 }
 
 func fillExcursions(
@@ -500,6 +501,7 @@ func fillExcursions(
 	grossExcursionBuilder := recordBuilder.Field(17).(*array.Float64Builder)
 	observationCountBuilder := recordBuilder.Field(18).(*array.Int64Builder)
 	statusBuilder := recordBuilder.Field(19).(*array.StringBuilder)
+	postEndPriceBuilder := recordBuilder.Field(20).(*array.Float64Builder)
 
 	for _, excursion := range excursions {
 		recEpoch := excursion.Epoch
@@ -528,6 +530,7 @@ func fillExcursions(
 		grossExcursionBuilder.Append(excursion.GrossExcursion)
 		observationCountBuilder.Append(excursion.ObservationCount)
 		statusBuilder.Append(excursion.Status)
+		postEndPriceBuilder.Append(excursion.PostEndPrice)
 	}
 }
 
@@ -643,6 +646,12 @@ func readExcursions(batch arrow.RecordBatch) []ExcursionRecord {
 
 		if statusCol != nil && !statusCol.IsNull(rowIdx) {
 			excursion.Status = statusCol.Value(rowIdx)
+		}
+
+		postEndPriceCol, _ := cols["post_end_price"].(*array.Float64)
+
+		if postEndPriceCol != nil && !postEndPriceCol.IsNull(rowIdx) {
+			excursion.PostEndPrice = postEndPriceCol.Value(rowIdx)
 		}
 
 		excursions = append(excursions, excursion)

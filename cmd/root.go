@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -323,10 +324,64 @@ var (
 					m := data.NewMeasurement("websocket", metrics)
 					m.Label = touch.Symbol
 					m.At = touch.Timestamp
-					m.SetMetadata("type", "level3")
-					m.SetProvenance("ingress_channel", "level3")
-					m.SetProvenance("channel", "level3")
+					m.SetMetadata("type", "level3_touch")
+					m.SetProvenance("ingress_channel", "level3_touch")
+					m.SetProvenance("channel", "level3_touch")
 					workspace.Step(m)
+				}
+			})
+
+			book.SetMutations(func(dataList []kraken.Level3Data) {
+				for _, l3Data := range dataList {
+					checksumStr := strconv.FormatUint(uint64(l3Data.Checksum), 10)
+
+					for sideIndex, orders := range []*[]kraken.Level3Order{&l3Data.Bids, &l3Data.Asks} {
+						side := "bid"
+
+						if sideIndex == 1 {
+							side = "ask"
+						}
+
+						for _, order := range *orders {
+							metrics := map[string]data.Metric[float64]{}
+
+							if order.LimitPrice != nil {
+								metrics["limit_price"] = data.Metric[float64]{
+									Raw:   order.LimitPrice.Float64(),
+									Exact: order.LimitPrice,
+								}
+							}
+
+							if order.OrderQty != nil {
+								metrics["order_qty"] = data.Metric[float64]{
+									Raw:   order.OrderQty.Float64(),
+									Exact: order.OrderQty,
+								}
+							}
+
+							metrics["checksum"] = data.Metric[float64]{
+								Raw: float64(l3Data.Checksum),
+							}
+
+							m := data.NewMeasurement("websocket", metrics)
+							m.Label = l3Data.Symbol
+							m.At = order.Timestamp
+
+							if m.At.IsZero() {
+								m.At = l3Data.Timestamp
+							}
+
+							m.SetMetadata("type", l3Data.Type)
+							m.SetMetadata("order_id", order.OrderID)
+							m.SetMetadata("side", side)
+							m.SetMetadata("event", order.Event)
+							m.SetMetadata("checksum", checksumStr)
+							m.SetProvenance("ingress_channel", "level3")
+							m.SetProvenance("channel", "level3")
+							m.SetProvenance("side", side)
+							workspace.Step(m)
+						}
+					}
 				}
 			})
 

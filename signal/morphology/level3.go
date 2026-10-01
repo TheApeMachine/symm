@@ -227,7 +227,7 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 
 					if out.HasPrior {
 						m.WriteMetric("morphology_change_baseline", out.Baseline)
-						m.WriteMetric("morphology_change_zscore", out.ZScore)
+						m.WriteStandardized("morphology_change_zscore", out.ZScore)
 						m.SetMetadata(data.MetadataDivergence, strconv.FormatFloat(out.Residual, 'f', -1, 64))
 
 						if out.VarianceDefined {

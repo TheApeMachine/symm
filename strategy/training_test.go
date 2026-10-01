@@ -358,9 +358,12 @@ func TestSuperviseCausalEdge(t *testing.T) {
 				ClearsFriction:     true,
 				EntryPrice:         100.0,
 				ExitPrice:          110.0,
+				PostEndPrice:       95.0,
+				Fee:                0.001,
 				PrecursorStartTick: 0,
 				AnchorTick:         1,
 				ExitTick:           2,
+				PostEndTick:        3,
 			},
 			frames: []*data.Measurement[float64]{
 				enterFrame,
@@ -370,17 +373,20 @@ func TestSuperviseCausalEdge(t *testing.T) {
 
 		training.supervise(episode, true)
 
-		// Did not know EXIT yet -> incomplete -> 0 policy return
+		// Did not know EXIT yet -> missed exit -> forced liquidation at C (not 0.0!)
 		So(training.returns.Count, ShouldEqual, 1)
-		So(training.returns.Mean, ShouldEqual, 0.0)
+		firstReturn := training.returnSamples[0]
+		So(firstReturn, ShouldBeLessThan, 0)
 
-		// But supervise should have TAUGHT the exit frame as ActionExit
+		// But supervise taught the exit frame as ActionExit
 		episode2 := episode
 		episode2.record.ID = "BTC/USD:2"
 		training.supervise(episode2, true)
 
-		// Now it should predict EXIT and earn the full return
+		// Now cognition knows EXIT: predicts EXIT and earns full positive return
 		So(training.returns.Count, ShouldEqual, 2)
-		So(training.returns.Mean*training.returns.Count, ShouldAlmostEqual, 0.1)
+		secondReturn := training.returnSamples[1]
+		So(secondReturn, ShouldBeGreaterThan, 0)
+		So(secondReturn, ShouldBeGreaterThan, firstReturn)
 	})
 }

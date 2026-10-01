@@ -18,6 +18,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"golang.org/x/sync/errgroup"
 )
@@ -31,6 +32,7 @@ type Book struct {
 	notify     atomic.Pointer[func(string, time.Time)]
 	resync     atomic.Pointer[func(string)]
 	touch      atomic.Pointer[func([]kraken.Level3Touch)]
+	mutations  atomic.Pointer[func([]kraken.Level3Data)]
 	diverging  sync.Map
 	lastTouch  sync.Map
 }
@@ -202,6 +204,16 @@ func (book *Book) Update(
 
 	if touch != nil && len(touches) > 0 {
 		touch(touches)
+	}
+
+	var mutations func([]kraken.Level3Data)
+
+	if mutationsPtr := book.mutations.Load(); mutationsPtr != nil {
+		mutations = *mutationsPtr
+	}
+
+	if mutations != nil && len(accepted) > 0 {
+		mutations(accepted)
 	}
 
 	if len(resynced) > 0 && resync != nil {
@@ -488,6 +500,110 @@ SetTouch connects verified top-of-book reporting to the owning transport.
 */
 func (book *Book) SetTouch(touch func([]kraken.Level3Touch)) {
 	book.touch.Store(&touch)
+}
+
+/*
+SetMutations connects verified checksum-matched level3 order mutations to downstream consumers.
+*/
+func (book *Book) SetMutations(mutations func([]kraken.Level3Data)) {
+	book.mutations.Store(&mutations)
+}
+
+/*
+ApplyMeasurement updates the book from a persisted Level-3 tape measurement.
+It decodes the order mutation and mutates the internal SDK book.
+*/
+func (book *Book) ApplyMeasurement(measurement *data.Measurement[float64]) error {
+	if book == nil || measurement == nil {
+		return nil
+	}
+
+	orderID, hasOrder := measurement.GetMetadata("order_id")
+
+	if !hasOrder || orderID == "" {
+		return nil
+	}
+
+	side, _ := measurement.GetMetadata("side")
+	event, _ := measurement.GetMetadata("event")
+	orderType, _ := measurement.GetMetadata("type")
+
+	if orderType == "" {
+		orderType = "update"
+	}
+
+	var priceDec *decimal.Decimal
+
+	if pMetric, ok := measurement.LookupMetric("limit_price"); ok {
+		if pMetric.Exact != nil {
+			priceDec = pMetric.Exact
+		}
+
+		if priceDec == nil && pMetric.Raw > 0 {
+			priceDec = decimal.NewFromFloat64(pMetric.Raw)
+		}
+	}
+
+	var qtyDec *decimal.Decimal
+
+	if qMetric, ok := measurement.LookupMetric("order_qty"); ok {
+		if qMetric.Exact != nil {
+			qtyDec = qMetric.Exact
+		}
+
+		if qtyDec == nil && qMetric.Raw >= 0 {
+			qtyDec = decimal.NewFromFloat64(qMetric.Raw)
+		}
+	}
+
+	var checksum uint32
+
+	if cMetric, ok := measurement.LookupMetric("checksum"); ok {
+		checksum = uint32(cMetric.Raw)
+	}
+
+	if checksum == 0 {
+		if cStr, ok := measurement.GetMetadata("checksum"); ok {
+			if val, err := strconv.ParseUint(cStr, 10, 32); err == nil {
+				checksum = uint32(val)
+			}
+		}
+	}
+
+	order := kraken.Level3Order{
+		OrderID:    orderID,
+		LimitPrice: priceDec,
+		OrderQty:   qtyDec,
+		Timestamp:  measurement.At,
+		Event:      event,
+	}
+
+	bids := []kraken.Level3Order{}
+	asks := []kraken.Level3Order{}
+
+	if side == "bid" {
+		bids = append(bids, order)
+	}
+
+	if side == "ask" {
+		asks = append(asks, order)
+	}
+
+	payload := &kraken.Level3{
+		Channel: "level3",
+		Type:    orderType,
+		Data: []kraken.Level3Data{
+			{
+				Symbol:    measurement.Label,
+				Bids:      bids,
+				Asks:      asks,
+				Checksum:  checksum,
+				Timestamp: measurement.At,
+			},
+		},
+	}
+
+	return book.Update(payload)
 }
 
 /*

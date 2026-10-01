@@ -75,18 +75,18 @@ func TestFrozenPolicyEdgeEnterWithoutExitIsIncomplete(t *testing.T) {
 		training.supervise(heldEpisode{
 			record: tables.ExcursionRecord{
 				ID: "edge:enter-no-exit", Symbol: "BTC/USD", Direction: "up", ClearsFriction: true,
-				PrecursorStartTick: 1, AnchorTick: 4, ExitTick: 8,
-				EntryPrice: 100, ExitPrice: 101.5, ProfitFraction: 0.999, // decoy oracle C
+				PrecursorStartTick: 1, AnchorTick: 4, ExitTick: 8, PostEndTick: 10,
+				EntryPrice: 100, ExitPrice: 101.5, PostEndPrice: 97.0, Fee: 0.001,
 			},
 			frames: frames,
 		}, true)
 
 		So(training.returns.Count, ShouldEqual, 1)
-		// Incomplete hypo: abstain/forced incomplete = 0 — NOT (101.5-100)/100.
-		So(training.returns.Mean, ShouldEqual, 0)
-		So(training.returnSamples[0], ShouldEqual, 0)
+		// Missed exit: forced liquidation at C — NOT 0.0, and NOT oracle exit price.
+		So(training.returns.Mean, ShouldBeLessThan, 0)
+		So(training.returnSamples[0], ShouldBeLessThan, 0)
+		So(training.returns.Mean, ShouldNotEqual, 0)
 		So(training.returns.Mean, ShouldNotEqual, 0.015)
-		So(training.returns.Mean, ShouldNotEqual, 0.999)
 	})
 }
 

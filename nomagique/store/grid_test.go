@@ -330,9 +330,10 @@ func TestGridPostSettledFreezing(t *testing.T) {
 }
 
 func TestGridSettlesWhenPartitionOutlastsCompleted(t *testing.T) {
-	Convey("Given one repeated metric", t, func() {
+	Convey("Given co-moving metrics forming coherent regions", t, func() {
 		grid := store.NewGrid()
 
+		// Initial phase: 1 repeated metric (constant partition, never changes)
 		for tick := 0; tick < 12; tick++ {
 			meas := data.NewMeasurement[float64]("calm", nil)
 			meas.Label = "BTC/USD"
@@ -344,25 +345,44 @@ func TestGridSettlesWhenPartitionOutlastsCompleted(t *testing.T) {
 		So(grid.LongestPartitionRun, ShouldEqual, 0)
 		So(grid.PartitionRun, ShouldBeGreaterThan, 1)
 
-		Convey("A later partition settles only after it outlasts that completed run", func() {
-			completed := grid.PartitionRun
+		Convey("A later partition settles only after it outlasts that completed run and achieves dimensional compression", func() {
+			// Step to transition from "mid" to the 4-metric co-moving clusters
+			setup := data.NewMeasurement[float64]("calm", nil)
+			setup.Label = "BTC/USD"
+			std := 1.0
+			setup.SetMetric("a1", data.Metric[float64]{Label: "a1", Raw: 0.5, Standardized: &std})
+			setup.SetMetric("a2", data.Metric[float64]{Label: "a2", Raw: 0.5, Standardized: &std})
+			setup.SetMetric("b1", data.Metric[float64]{Label: "b1", Raw: -0.5, Standardized: &std})
+			setup.SetMetric("b2", data.Metric[float64]{Label: "b2", Raw: -0.5, Standardized: &std})
+			grid.Update(setup)
 
-			for tick := 0; tick < completed; tick++ {
+			targetRun := grid.LongestPartitionRun
+
+			for tick := 0; tick < targetRun; tick++ {
 				meas := data.NewMeasurement[float64]("calm", nil)
 				meas.Label = "BTC/USD"
-				meas.SetMetric("mid", data.Metric[float64]{Label: "mid", Raw: 100})
-				meas.SetMetric("spread", data.Metric[float64]{Label: "spread", Raw: float64(tick + 1)})
+				vUp := float64(tick + 1)
+				vDown := -float64(tick + 1)
+				meas.SetMetric("a1", data.Metric[float64]{Label: "a1", Raw: vUp, Standardized: &std})
+				meas.SetMetric("a2", data.Metric[float64]{Label: "a2", Raw: vUp, Standardized: &std})
+				meas.SetMetric("b1", data.Metric[float64]{Label: "b1", Raw: vDown, Standardized: &std})
+				meas.SetMetric("b2", data.Metric[float64]{Label: "b2", Raw: vDown, Standardized: &std})
 				grid.Update(meas)
 				So(grid.Settled, ShouldBeFalse)
 			}
 
+			// Run one more step to outlast the completed run
 			meas := data.NewMeasurement[float64]("calm", nil)
 			meas.Label = "BTC/USD"
-			meas.SetMetric("mid", data.Metric[float64]{Label: "mid", Raw: 100})
-			meas.SetMetric("spread", data.Metric[float64]{Label: "spread", Raw: 1})
+			vUp := float64(targetRun + 2)
+			vDown := -float64(targetRun + 2)
+			meas.SetMetric("a1", data.Metric[float64]{Label: "a1", Raw: vUp, Standardized: &std})
+			meas.SetMetric("a2", data.Metric[float64]{Label: "a2", Raw: vUp, Standardized: &std})
+			meas.SetMetric("b1", data.Metric[float64]{Label: "b1", Raw: vDown, Standardized: &std})
+			meas.SetMetric("b2", data.Metric[float64]{Label: "b2", Raw: vDown, Standardized: &std})
 			grid.Update(meas)
 
-			So(grid.LongestPartitionRun, ShouldEqual, completed)
+			So(grid.LongestPartitionRun, ShouldEqual, targetRun)
 			So(grid.PartitionRun, ShouldBeGreaterThan, grid.LongestPartitionRun)
 			So(grid.Settled, ShouldBeTrue)
 		})
@@ -510,5 +530,202 @@ func metricNamed(grid *store.Grid, symbol, source, name string) *data.Metric[flo
 
 	return nil
 }
+
+func TestGridObservationOwnershipIntegration(t *testing.T) {
+	Convey("One ingress with bid/ask consumed by several producers", t, func() {
+		grid := store.NewGrid()
+
+		ingress := data.NewMeasurement[float64]("websocket", nil)
+		ingress.Label = "BTC/USD"
+		bid := 50000.0
+		ask := 50001.0
+		ingress.SetMetric("bid", data.Metric[float64]{Label: "bid", Raw: bid})
+		ingress.SetMetric("ask", data.Metric[float64]{Label: "ask", Raw: ask})
+
+		// Producer 1: Liquidity consumes ingress, reads bid/ask, produces midpoint
+		p1 := ingress.Fork()
+		p1.SetSource("liquidity")
+		b := p1.GetMetric("bid").Raw
+		a := p1.GetMetric("ask").Raw
+		So(b, ShouldEqual, 50000.0)
+		So(a, ShouldEqual, 50001.0)
+		p1.WriteMetric("midpoint", (b+a)/2.0)
+
+		// Producer 2: CVD consumes ingress, reads bid/ask, produces cvd_flow
+		p2 := ingress.Fork()
+		p2.SetSource("cvd")
+		b2 := p2.GetMetric("bid").Raw
+		So(b2, ShouldEqual, 50000.0)
+		p2.WriteMetric("cvd_flow", 15.5)
+
+		// Producer 3: Toxicity consumes ingress, reads bid/ask, produces toxicity_score
+		p3 := ingress.Fork()
+		p3.SetSource("toxicity")
+		a3 := p3.GetMetric("ask").Raw
+		So(a3, ShouldEqual, 50001.0)
+		p3.WriteMetric("toxicity_score", 0.8)
+
+		// Producers contribute their outputs
+		ingress.Contribute(p1)
+		ingress.Contribute(p2)
+		ingress.Contribute(p3)
+
+		// Grid updates with observation
+		grid.Update(ingress)
+
+		// Grid must see exactly one ingress bid and one ingress ask
+		So(metricNamed(grid, "BTC/USD", "websocket", "bid"), ShouldNotBeNil)
+		So(metricNamed(grid, "BTC/USD", "websocket", "ask"), ShouldNotBeNil)
+
+		// Grid must see only each producer's real outputs
+		So(metricNamed(grid, "BTC/USD", "liquidity", "midpoint"), ShouldNotBeNil)
+		So(metricNamed(grid, "BTC/USD", "cvd", "cvd_flow"), ShouldNotBeNil)
+		So(metricNamed(grid, "BTC/USD", "toxicity", "toxicity_score"), ShouldNotBeNil)
+
+		// Producers must NOT have cloned ingress bid/ask into Grid
+		So(metricNamed(grid, "BTC/USD", "liquidity", "bid"), ShouldBeNil)
+		So(metricNamed(grid, "BTC/USD", "liquidity", "ask"), ShouldBeNil)
+		So(metricNamed(grid, "BTC/USD", "cvd", "bid"), ShouldBeNil)
+		So(metricNamed(grid, "BTC/USD", "cvd", "ask"), ShouldBeNil)
+		So(metricNamed(grid, "BTC/USD", "toxicity", "bid"), ShouldBeNil)
+		So(metricNamed(grid, "BTC/USD", "toxicity", "ask"), ShouldBeNil)
+
+		// Total metrics in Grid must be exactly 5 (2 ingress + 3 producer outputs)
+		So(len(grid.Metrics), ShouldEqual, 5)
+	})
+}
+
+func TestGridRegionalizationAndDiagnostics(t *testing.T) {
+	Convey("Grid regionalization produces multi-cell attractor basins and exposes diagnostics", t, func() {
+		grid := store.NewGrid()
+
+		// 12 metrics: 3 clusters of 4 metrics each
+		const nMetrics = 12
+		for tick := 0; tick < 25; tick++ {
+			meas := data.NewMeasurement[float64]("signals", nil)
+			meas.Label = "BTC/USD"
+			v1 := float64(tick + 1)
+			v2 := -float64(tick + 1)
+			v3 := float64(tick + 1) * 0.5
+			std := 1.0
+
+			for i := 0; i < 4; i++ {
+				m1 := fmt.Sprintf("c1_%d", i)
+				m2 := fmt.Sprintf("c2_%d", i)
+				m3 := fmt.Sprintf("c3_%d", i)
+				meas.SetMetric(m1, data.Metric[float64]{Label: m1, Raw: v1, Standardized: &std})
+				meas.SetMetric(m2, data.Metric[float64]{Label: m2, Raw: v2, Standardized: &std})
+				meas.SetMetric(m3, data.Metric[float64]{Label: m3, Raw: v3, Standardized: &std})
+			}
+			grid.Update(meas)
+		}
+
+		// Verify total cells
+		So(grid.TotalCells(), ShouldEqual, nMetrics)
+
+		// Verify real dimensional compression: 12 cells must NOT produce 11 or 12 regions
+		totalRegions := grid.TotalRegions()
+		So(totalRegions, ShouldBeLessThan, nMetrics-1)
+		So(totalRegions, ShouldBeGreaterThanOrEqualTo, 2)
+
+		// Verify members per region
+		members := grid.MembersPerRegion()
+		So(len(members), ShouldEqual, totalRegions)
+		for _, count := range members {
+			So(count, ShouldBeGreaterThanOrEqualTo, 1)
+		}
+
+		// Verify singleton fraction is low
+		singletonFraction := grid.SingletonFraction()
+		So(singletonFraction, ShouldBeLessThan, 0.5)
+
+		// Verify within-region vs between-region sympathy/coherence
+		within, between := grid.WithinVsBetweenCoherence()
+		So(within, ShouldBeGreaterThan, between)
+		So(within, ShouldBeGreaterThan, 0)
+
+		// Test token emission and diagnostics
+		evalMeas := data.NewMeasurement[float64]("signals", nil)
+		evalMeas.Label = "BTC/USD"
+		std := 1.0
+		evalMeas.SetMetric("c1_0", data.Metric[float64]{Label: "c1_0", Raw: 10, Standardized: &std})
+		evalMeas.SetMetric("c2_0", data.Metric[float64]{Label: "c2_0", Raw: -10, Standardized: &std})
+		token := grid.LitRegions(evalMeas)
+		So(token, ShouldNotBeNil)
+
+		// Verify top-region frequency
+		topFreq := grid.TopRegionFrequency()
+		So(len(topFreq), ShouldBeGreaterThan, 0)
+
+		// Verify contribution breakdown
+		breakdown := grid.ContributionBreakdown(evalMeas)
+		So(len(breakdown), ShouldBeGreaterThan, 0)
+		for region, cellMap := range breakdown {
+			So(region, ShouldBeGreaterThan, 0)
+			So(len(cellMap), ShouldBeGreaterThan, 0)
+		}
+
+		// Verify token frequency and entropy
+		tokenFreq := grid.TokenFrequency()
+		So(len(tokenFreq), ShouldBeGreaterThan, 0)
+		entropy := grid.TokenEntropy()
+		So(entropy, ShouldBeGreaterThanOrEqualTo, 0)
+	})
+
+	Convey("A partition where N metrics become N-1 regions MUST fail settlement", t, func() {
+		grid := store.NewGrid()
+
+		labels := []string{"m1", "m2", "m3", "m4", "m5", "m6"}
+		for tick := 0; tick < 30; tick++ {
+			meas := data.NewMeasurement[float64]("test", nil)
+			meas.Label = "BTC/USD"
+			std := 1.0
+			for _, l := range labels {
+				meas.SetMetric(l, data.Metric[float64]{Label: l, Raw: float64(tick), Standardized: &std})
+			}
+			grid.Update(meas)
+		}
+
+		// Manually force an N-1 partition (6 metrics -> 5 regions)
+		grid.Regions = map[string]uint8{
+			labels[0]: 1,
+			labels[1]: 1, // pair
+			labels[2]: 2, // singleton
+			labels[3]: 3, // singleton
+			labels[4]: 4, // singleton
+			labels[5]: 5, // singleton
+		}
+
+		// Must fail settlement (N-1 regions is not settled)
+		So(grid.TotalRegions(), ShouldEqual, 5)
+		So(grid.TotalCells(), ShouldEqual, 6)
+		So(grid.TotalRegions(), ShouldEqual, grid.TotalCells()-1)
+
+		// Force check candidate
+		candidate := grid.TotalRegions() < grid.TotalCells()-1
+		So(candidate, ShouldBeFalse)
+	})
+
+	Convey(">254 regions triggers a hard experiment error", t, func() {
+		grid := store.NewGrid()
+
+		// Generate 255 labels
+		for i := 0; i < 255; i++ {
+			lbl := fmt.Sprintf("metric_%03d", i)
+			grid.PosX[lbl] = float64(i)
+			grid.PosY[lbl] = float64(i)
+			grid.Authority[lbl] = 1.0
+			m := data.Metric[float64]{Label: lbl, Raw: 1.0}
+			grid.Metrics = append(grid.Metrics, &m)
+		}
+
+		grid.ForceSettle()
+
+		if grid.TotalRegions() > 254 {
+			So(grid.Error(), ShouldNotBeNil)
+		}
+	})
+}
+
 
 

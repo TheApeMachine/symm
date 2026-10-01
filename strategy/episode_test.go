@@ -31,12 +31,12 @@ func TestDetectorConfirmBeforeRecord(t *testing.T) {
 		So(len(records), ShouldEqual, 1)
 		So(emitted[records[0].AnchorTick], ShouldBeFalse)
 		So(emitted[records[0].AnchorTick+1], ShouldBeFalse)
-		So(emitted[records[0].ExitTick], ShouldBeTrue)
+		So(emitted[records[0].PostEndTick], ShouldBeTrue)
 		So(records[0].ExitTick, ShouldBeGreaterThan, records[0].AnchorTick)
+		So(records[0].PostEndTick, ShouldBeGreaterThanOrEqualTo, records[0].ExitTick)
 		So(records[0].Direction, ShouldEqual, "up")
 		So(records[0].ClearsFriction, ShouldBeTrue)
 		So(records[0].Status, ShouldEqual, "resolved")
-		So(records[0].PostEndTick, ShouldEqual, records[0].ExitTick)
 	})
 }
 
@@ -88,7 +88,7 @@ func TestDetectorDownChopFlatAndDuplicates(t *testing.T) {
 	})
 
 	Convey("Given both sides leave the calm and the long does not clear", t, func() {
-		detector := NewDetector(priced(t, "BTC/USD", 2.0))
+		detector := NewDetector(priced(t, "BTC/USD", 10.0))
 		record := firstRecord(detector, "BTC/USD", calmThenChop())
 
 		So(record, ShouldNotBeNil)
@@ -305,7 +305,7 @@ func TestRecordRejectsNonPositiveReference(t *testing.T) {
 		seen := quote{symbol: "BTC/USD", seq: 20, bid: bid, ask: ask, mid: 100}
 
 		So(func() {
-			_, err := path.record(seen, fee, cost, proceeds, "up", true, false)
+			_, err := path.record(seen, fee, cost, proceeds, 10, bid, "up", true, false)
 			So(err, ShouldNotBeNil)
 		}, ShouldNotPanic)
 	})
@@ -329,7 +329,7 @@ func TestRecordRejectsNonPositiveReference(t *testing.T) {
 		proceeds := bid
 
 		So(func() {
-			_, err := path.record(seen, fee, cost, proceeds, "up", false, false)
+			_, err := path.record(seen, fee, cost, proceeds, 10, bid, "up", false, false)
 			So(err, ShouldNotBeNil)
 		}, ShouldNotPanic)
 	})

@@ -93,7 +93,7 @@ func (op *Quantity) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			m.WriteMetric("cumulative_volume_delta", net)
 
 			if gross > 0 {
-				m.WriteMetric("signed_count_fraction", (buyCount-sellCount)/(buyCount+sellCount))
+				m.WriteNormalized("signed_count_fraction", (buyCount-sellCount)/(buyCount+sellCount))
 			}
 
 			if !yield(arriving) {
@@ -192,7 +192,7 @@ func (op *Notional) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 
 			if gross > 0 {
 				fraction := net / gross
-				m.WriteMetric("signed_net_fraction", fraction)
+				m.WriteNormalized("signed_net_fraction", fraction)
 
 				reading := drive[float64, adaptive.BaselineReading](op.reader, &fraction)
 				m.SetMetadata(data.MetadataSupport, strconv.FormatFloat(reading.Count, 'f', -1, 64))
@@ -200,7 +200,7 @@ func (op *Notional) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				if reading.HasPrior {
 					m.WriteMetric("signed_net_fraction_baseline", reading.Baseline)
 					m.WriteMetric("signed_net_fraction_divergence", reading.Residual)
-					m.WriteMetric("signed_net_fraction_zscore", reading.ZScore)
+					m.WriteStandardized("signed_net_fraction_zscore", reading.ZScore)
 					m.SetMetadata(data.MetadataDivergence, strconv.FormatFloat(reading.Residual, 'f', -1, 64))
 
 					if reading.VarianceDefined {

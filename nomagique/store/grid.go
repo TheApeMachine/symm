@@ -2,7 +2,9 @@ package store
 
 import (
 	"encoding/json"
+	"fmt"
 	"iter"
+	"maps"
 	"math"
 	"slices"
 	"sort"
@@ -13,6 +15,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/geometry"
 )
 
 /*
@@ -53,6 +56,11 @@ type Grid struct {
 	Observations        int64 `json:"observations"`
 	PartitionRun        int   `json:"partition_run"`
 	LongestPartitionRun int   `json:"longest_partition_run"`
+
+	statsMu        sync.Mutex
+	RegionLitCount [256]int       `json:"region_lit_count"`
+	TotalTokens    int            `json:"total_tokens"`
+	TokenCounts    map[string]int `json:"token_counts"`
 }
 
 /*
@@ -89,6 +97,7 @@ func NewGrid() *Grid {
 		Bound:          make(map[string]string),
 		PosX:           make(map[string]float64),
 		PosY:           make(map[string]float64),
+		TokenCounts:    make(map[string]int),
 	}
 }
 
@@ -341,6 +350,17 @@ func (grid *Grid) LitRegions(measurement *data.Measurement[float64]) []byte {
 		token[index] = lit[index].region
 	}
 
+	grid.statsMu.Lock()
+	grid.TotalTokens++
+	for _, r := range token {
+		grid.RegionLitCount[r]++
+	}
+	if grid.TokenCounts == nil {
+		grid.TokenCounts = make(map[string]int)
+	}
+	grid.TokenCounts[fmt.Sprintf("%v", token)]++
+	grid.statsMu.Unlock()
+
 	return token
 }
 
@@ -532,8 +552,8 @@ func (grid *Grid) update(
 		for j := i + 1; j < len(labels); j++ {
 			b := labels[j]
 
-			// Only update pair stats if at least one metric participated
-			if !currentPresent[a] && !currentPresent[b] {
+			// Only update pair stats if both metrics participated in this observation
+			if !currentPresent[a] || !currentPresent[b] {
 				continue
 			}
 
@@ -612,8 +632,8 @@ func (grid *Grid) update(
 		for j := i + 1; j < len(labels); j++ {
 			b := labels[j]
 
-			// Only move pairs if at least one was observed in this cycle
-			if !currentPresent[a] && !currentPresent[b] {
+			// Only move pairs if both were observed in this cycle
+			if !currentPresent[a] || !currentPresent[b] {
 				continue
 			}
 
@@ -704,7 +724,9 @@ func (grid *Grid) update(
 	}
 
 	if grid.LongestPartitionRun > 0 && grid.PartitionRun > grid.LongestPartitionRun {
-		grid.Settled = true
+		if grid.isSettlementCandidate(labels) {
+			grid.Settled = true
+		}
 	}
 
 	grid.writeCoordinates()
@@ -860,13 +882,10 @@ func (relation *GridRelation) sympathy() float64 {
 }
 
 /*
-formRegions assigns each metric label to a region using hill-climbing.
-Each label attaches to the nearest label with higher strength, forming a
-forest of attractors. Connected components become regions.
-
-Strength is Authority (Priority 3) scaled by total positive sympathy with
-neighbors, ensuring that well-connected, authoritative metrics become region
-centers.
+formRegions assigns each metric label to a region using geometry.Watershed.
+Points in 2D space climb along the minimum spanning forest of positive
+sympathy edges to density peaks (attractors). Connected components become
+multi-cell regions.
 */
 func (grid *Grid) formRegions(labels []string) {
 	if len(labels) == 0 {
@@ -876,22 +895,19 @@ func (grid *Grid) formRegions(labels []string) {
 
 	grid.Bound = make(map[string]string)
 
-	regionPower := make(map[string]float64)
-
-	strength := make(map[string]float64, len(labels))
-
-	for _, a := range labels {
-		auth := grid.Authority[a]
+	points := make([]*geometry.Point, len(labels))
+	for i, label := range labels {
+		auth := grid.Authority[label]
 		if auth <= 0 {
 			auth = 1.0
 		}
 
 		localSympathy := 0.0
 		for _, b := range labels {
-			if a == b {
+			if label == b {
 				continue
 			}
-			rel := grid.Relations[pair(a, b)]
+			rel := grid.Relations[pair(label, b)]
 			if rel != nil {
 				s := rel.sympathy()
 				if s > 0 {
@@ -900,132 +916,314 @@ func (grid *Grid) formRegions(labels []string) {
 			}
 		}
 
-		// Combined strength: Authority (Priority 3) scaled by sympathetic density
-		baseStrength := auth * (1.0 + localSympathy)
-
-		powerMultiplier := 1.0
-		root := a
-		if boundRoot, ok := grid.Bound[a]; ok {
-			root = boundRoot
+		points[i] = &geometry.Point{
+			X:         grid.PosX[label],
+			Y:         grid.PosY[label],
+			Authority: auth * (1.0 + localSympathy),
 		}
-		if extraPower, ok := regionPower[root]; ok {
-			powerMultiplier += extraPower * 0.5
-		}
-
-		strength[a] = baseStrength * powerMultiplier
 	}
 
-	parent := make(map[string]string, len(labels))
-
-	for _, label := range labels {
-		if boundTo, ok := grid.Bound[label]; ok {
-			parent[label] = boundTo
-			continue
-		}
-
-		parent[label] = label
-		best := label
-		bestEnergy := 0.0
-
-		for _, candidate := range labels {
-			if candidate == label {
-				continue
-			}
-			if strength[candidate] < strength[label] {
-				continue
-			}
-			if strength[candidate] == strength[label] && candidate >= label {
-				continue
-			}
-
-			distance := math.Hypot(
-				grid.PosX[candidate]-grid.PosX[label],
-				grid.PosY[candidate]-grid.PosY[label],
-			)
-			if distance == 0 {
-				distance = 0.001
-			}
-
-			rel := grid.Relations[pair(label, candidate)]
+	n := len(labels)
+	edges := make([]geometry.Edge, n*(n-1)/2)
+	for right := 1; right < n; right++ {
+		for left := 0; left < right; left++ {
+			a := labels[left]
+			b := labels[right]
+			rel := grid.Relations[pair(a, b)]
 			sym := 0.0
 			if rel != nil {
 				sym = rel.sympathy()
 			}
-
-			// Grouping derived from coherence (sympathy) and separation (distance).
-			// We only bind if there is positive sympathy.
-			if sym <= 0 {
-				continue
-			}
-
-			energy := sym / distance
-
-			if energy > bestEnergy {
-				best = candidate
-				bestEnergy = energy
+			edges[right*(right-1)/2+left] = geometry.Edge{
+				Left:     left,
+				Right:    right,
+				Strength: sym,
 			}
 		}
-
-		// Bind if the energy is strong enough (attracted closely enough).
-		if best != label {
-			bindRoot := best
-			if candidateRoot, ok := grid.Bound[best]; ok {
-				bindRoot = candidateRoot
-			}
-			grid.Bound[label] = bindRoot
-		}
-
-		parent[label] = best
 	}
 
-	var root func(string, map[string]bool) string
-	root = func(label string, visited map[string]bool) string {
-		if visited[label] {
-			return label // break cycle
-		}
-		visited[label] = true
-		next := parent[label]
-		if next == label {
-			return label
-		}
-		parent[label] = root(next, visited)
-		return parent[label]
+	geometry.Watershed{}.Step(points, edges)
+
+	groups := make(map[int][]string)
+	for i, label := range labels {
+		basin := points[i].Basin
+		groups[basin] = append(groups[basin], label)
+		grid.Bound[label] = labels[basin]
 	}
 
-	groups := make(map[string][]string)
-	for _, label := range labels {
-		r := root(label, make(map[string]bool))
-		groups[r] = append(groups[r], label)
+	basins := make([]int, 0, len(groups))
+	for b := range groups {
+		basins = append(basins, b)
 	}
 
-	roots := make([]string, 0, len(groups))
-	for r := range groups {
-		roots = append(roots, r)
+	if len(basins) > 254 {
+		grid.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf("hard experiment error: grid generated %d regions (> 254 limit)", len(basins)),
+			nil,
+		))
+		return
 	}
 
-	sort.Slice(roots, func(i, j int) bool {
-		a := append([]string(nil), groups[roots[i]]...)
-		b := append([]string(nil), groups[roots[j]]...)
+	sort.Slice(basins, func(i, j int) bool {
+		a := append([]string(nil), groups[basins[i]]...)
+		b := append([]string(nil), groups[basins[j]]...)
 		sort.Strings(a)
 		sort.Strings(b)
 		return strings.Join(a, "\x00") < strings.Join(b, "\x00")
 	})
 
 	grid.Regions = make(map[string]uint8, len(labels))
-	for index, r := range roots {
-		if index >= 254 {
-			grid.Error(errnie.Err(
-				errnie.Validation,
-				"impossible state: grid generated more than 254 regions",
-				nil,
-			))
-			break
-		}
+	for index, b := range basins {
 		region := uint8(index + 1)
-		for _, label := range groups[r] {
+		for _, label := range groups[b] {
 			grid.Regions[label] = region
 		}
 	}
+}
+
+func (grid *Grid) isSettlementCandidate(labels []string) bool {
+	totalCells := len(labels)
+	if totalCells <= 1 {
+		return false
+	}
+
+	totalRegions := grid.totalRegionsLocked()
+	// Hard requirement: N metrics becoming N-1 regions MUST fail
+	if totalRegions >= totalCells-1 {
+		return false
+	}
+
+	// Real dimensional compression required (at least 25% dimensional reduction)
+	if float64(totalRegions)/float64(totalCells) > 0.75 {
+		return false
+	}
+
+	// A stable near-singleton partition is NOT settled
+	if grid.singletonFractionLocked() >= 0.5 {
+		return false
+	}
+
+	// Stronger within-region coherence than between-region coherence
+	within, between := grid.withinVsBetweenCoherenceLocked()
+	if within <= between || within <= 0 {
+		return false
+	}
+
+	return true
+}
+
+func (grid *Grid) totalRegionsLocked() int {
+	regions := make(map[uint8]bool)
+	for _, r := range grid.Regions {
+		if r > 0 {
+			regions[r] = true
+		}
+	}
+	return len(regions)
+}
+
+func (grid *Grid) singletonFractionLocked() float64 {
+	counts := make(map[uint8]int)
+	for _, r := range grid.Regions {
+		if r > 0 {
+			counts[r]++
+		}
+	}
+	if len(counts) == 0 {
+		return 0
+	}
+	singletons := 0
+	for _, c := range counts {
+		if c == 1 {
+			singletons++
+		}
+	}
+	return float64(singletons) / float64(len(counts))
+}
+
+func (grid *Grid) withinVsBetweenCoherenceLocked() (within, between float64) {
+	var withinSum, betweenSum float64
+	var withinCount, betweenCount int
+
+	labels := make([]string, 0, len(grid.Regions))
+	for l, r := range grid.Regions {
+		if r > 0 {
+			labels = append(labels, l)
+		}
+	}
+
+	for i := 0; i < len(labels); i++ {
+		a := labels[i]
+		ra := grid.Regions[a]
+		for j := i + 1; j < len(labels); j++ {
+			b := labels[j]
+			rb := grid.Regions[b]
+			rel := grid.Relations[pair(a, b)]
+			if rel == nil {
+				continue
+			}
+			sym := rel.sympathy()
+			if ra == rb {
+				withinSum += sym
+				withinCount++
+			} else {
+				betweenSum += sym
+				betweenCount++
+			}
+		}
+	}
+
+	if withinCount > 0 {
+		within = withinSum / float64(withinCount)
+	}
+	if betweenCount > 0 {
+		between = betweenSum / float64(betweenCount)
+	}
+	return within, between
+}
+
+// TotalCells returns the total number of cells in the grid.
+func (grid *Grid) TotalCells() int {
+	grid.mu.RLock()
+	defer grid.mu.RUnlock()
+	return len(grid.Regions)
+}
+
+// TotalRegions returns the count of distinct non-zero regions.
+func (grid *Grid) TotalRegions() int {
+	grid.mu.RLock()
+	defer grid.mu.RUnlock()
+	return grid.totalRegionsLocked()
+}
+
+// MembersPerRegion returns a map of region ID to count of member cells.
+func (grid *Grid) MembersPerRegion() map[uint8]int {
+	grid.mu.RLock()
+	defer grid.mu.RUnlock()
+	counts := make(map[uint8]int)
+	for _, r := range grid.Regions {
+		if r > 0 {
+			counts[r]++
+		}
+	}
+	return counts
+}
+
+// SingletonFraction returns the fraction of active regions containing exactly one cell.
+func (grid *Grid) SingletonFraction() float64 {
+	grid.mu.RLock()
+	defer grid.mu.RUnlock()
+	return grid.singletonFractionLocked()
+}
+
+// WithinVsBetweenCoherence returns average sympathy within regions versus across regions.
+func (grid *Grid) WithinVsBetweenCoherence() (within, between float64) {
+	grid.mu.RLock()
+	defer grid.mu.RUnlock()
+	return grid.withinVsBetweenCoherenceLocked()
+}
+
+// TopRegionFrequency returns the frequency with which each region appears in emitted tokens.
+func (grid *Grid) TopRegionFrequency() map[uint8]float64 {
+	grid.statsMu.Lock()
+	defer grid.statsMu.Unlock()
+	if grid.TotalTokens == 0 {
+		return nil
+	}
+	freq := make(map[uint8]float64)
+	for r := 1; r < 256; r++ {
+		if count := grid.RegionLitCount[r]; count > 0 {
+			freq[uint8(r)] = float64(count) / float64(grid.TotalTokens)
+		}
+	}
+	return freq
+}
+
+// ContributionBreakdown decomposes a measurement's active lit regions into member cell contributions.
+func (grid *Grid) ContributionBreakdown(
+	measurement *data.Measurement[float64],
+) map[uint8]map[string]float64 {
+	if measurement == nil {
+		return nil
+	}
+
+	grid.mu.RLock()
+	defer grid.mu.RUnlock()
+
+	type incomingMetric struct {
+		source string
+		key    string
+		metric data.Metric[float64]
+	}
+
+	var allMetrics []incomingMetric
+
+	source := measurement.GetSource()
+	for key, metric := range measurement.MetricsSnapshot() {
+		allMetrics = append(allMetrics, incomingMetric{source, key, metric})
+	}
+
+	for _, peer := range measurement.Peers {
+		if peer == nil {
+			continue
+		}
+		peerSource := peer.GetSource()
+		for key, metric := range peer.MetricsSnapshot() {
+			allMetrics = append(allMetrics, incomingMetric{peerSource, key, metric})
+		}
+	}
+
+	breakdown := make(map[uint8]map[string]float64)
+
+	for _, item := range allMetrics {
+		name := item.metric.Label
+		if name == "" {
+			name = item.key
+		}
+
+		cell := cellKey(measurement.Label, item.source, name)
+		region := grid.Regions[cell]
+		if region == 0 {
+			continue
+		}
+
+		act := regionActivity(item.metric)
+		if act > 0 {
+			if breakdown[region] == nil {
+				breakdown[region] = make(map[string]float64)
+			}
+			breakdown[region][cell] += act
+		}
+	}
+
+	return breakdown
+}
+
+// TokenFrequency returns the count of each emitted token sequence.
+func (grid *Grid) TokenFrequency() map[string]int {
+	grid.statsMu.Lock()
+	defer grid.statsMu.Unlock()
+	out := make(map[string]int, len(grid.TokenCounts))
+	maps.Copy(out, grid.TokenCounts)
+	return out
+}
+
+// TokenEntropy returns the Shannon entropy of the emitted token distribution in bits.
+func (grid *Grid) TokenEntropy() float64 {
+	grid.statsMu.Lock()
+	defer grid.statsMu.Unlock()
+	if grid.TotalTokens == 0 {
+		return 0
+	}
+	var entropy float64
+	for _, count := range grid.TokenCounts {
+		if count > 0 {
+			p := float64(count) / float64(grid.TotalTokens)
+			entropy -= p * math.Log2(p)
+		}
+	}
+	return entropy
 }
 
 func (grid *Grid) writeCoordinates() {

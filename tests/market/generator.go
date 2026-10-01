@@ -4,6 +4,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/symm/nomagique/data"
 )
 
@@ -43,9 +44,14 @@ func (profile ExcursionProfile) GenerateTape(startSeq int64) []*data.Measurement
 		m.SeqIdx = currentSeq
 		m.Label = profile.Symbol
 		m.At = eventTime
+		halfSpread := profile.Spread / 2
+		bid := p - halfSpread
+		ask := p + halfSpread
 		m.Metrics = map[string]data.Metric[float64]{
 			"price":  {Label: "price", Raw: p, Standardized: &p},
 			"spread": {Label: "spread", Raw: profile.Spread, Standardized: &profile.Spread},
+			"bid":    {Label: "bid", Raw: bid, Standardized: &bid, Exact: decimal.NewFromFloat64(bid)},
+			"ask":    {Label: "ask", Raw: ask, Standardized: &ask, Exact: decimal.NewFromFloat64(ask)},
 		}
 		frames = append(frames, m)
 		currentSeq++

@@ -180,7 +180,7 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 
 					if bidPrice < state.prevBid {
 						m.WriteMetric("retreated_quantity:bid", state.prevBidQty)
-						m.WriteMetric("retreat_fraction:bid", 1.0)
+						m.WriteNormalized("retreat_fraction:bid", 1.0)
 						if dt > 0 {
 							m.WriteMetric("retreat_rate:bid", state.prevBidQty/dt)
 						}
@@ -191,7 +191,7 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 							withdrawn := state.prevBidQty - bidQty
 							m.WriteMetric("net_withdrawn_quantity:bid", withdrawn)
 							if state.prevBidQty > 0 {
-								m.WriteMetric("net_withdrawal_fraction:bid", withdrawn/state.prevBidQty)
+								m.WriteNormalized("net_withdrawal_fraction:bid", withdrawn/state.prevBidQty)
 							}
 							if dt > 0 {
 								m.WriteMetric("net_withdrawal_rate:bid", withdrawn/dt)
@@ -201,7 +201,7 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 							replenished := bidQty - state.prevBidQty
 							m.WriteMetric("net_replenished_quantity:bid", replenished)
 							if state.prevBidQty > 0 {
-								m.WriteMetric("net_replenishment_fraction:bid", replenished/state.prevBidQty)
+								m.WriteNormalized("net_replenishment_fraction:bid", replenished/state.prevBidQty)
 							}
 							if dt > 0 {
 								m.WriteMetric("net_replenishment_rate:bid", replenished/dt)
@@ -211,7 +211,7 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 
 					if askPrice > state.prevAsk {
 						m.WriteMetric("retreated_quantity:ask", state.prevAskQty)
-						m.WriteMetric("retreat_fraction:ask", 1.0)
+						m.WriteNormalized("retreat_fraction:ask", 1.0)
 						if dt > 0 {
 							m.WriteMetric("retreat_rate:ask", state.prevAskQty/dt)
 						}
@@ -222,7 +222,7 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 							withdrawn := state.prevAskQty - askQty
 							m.WriteMetric("net_withdrawn_quantity:ask", withdrawn)
 							if state.prevAskQty > 0 {
-								m.WriteMetric("net_withdrawal_fraction:ask", withdrawn/state.prevAskQty)
+								m.WriteNormalized("net_withdrawal_fraction:ask", withdrawn/state.prevAskQty)
 							}
 							if dt > 0 {
 								m.WriteMetric("net_withdrawal_rate:ask", withdrawn/dt)
@@ -232,7 +232,7 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 							replenished := askQty - state.prevAskQty
 							m.WriteMetric("net_replenished_quantity:ask", replenished)
 							if state.prevAskQty > 0 {
-								m.WriteMetric("net_replenishment_fraction:ask", replenished/state.prevAskQty)
+								m.WriteNormalized("net_replenishment_fraction:ask", replenished/state.prevAskQty)
 							}
 							if dt > 0 {
 								m.WriteMetric("net_replenishment_rate:ask", replenished/dt)
@@ -263,7 +263,7 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 					if out.HasPrior {
 						m.WriteMetric("withdrawal_fraction_baseline:bid", out.Baseline)
 						m.WriteMetric("withdrawal_fraction_divergence:bid", out.Residual)
-						m.WriteMetric("withdrawal_fraction_zscore:bid", out.ZScore)
+						m.WriteStandardized("withdrawal_fraction_zscore:bid", out.ZScore)
 					}
 				},
 			),
@@ -276,7 +276,7 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 					if out.HasPrior {
 						m.WriteMetric("withdrawal_fraction_baseline:ask", out.Baseline)
 						m.WriteMetric("withdrawal_fraction_divergence:ask", out.Residual)
-						m.WriteMetric("withdrawal_fraction_zscore:ask", out.ZScore)
+						m.WriteStandardized("withdrawal_fraction_zscore:ask", out.ZScore)
 					}
 				},
 			),
@@ -288,7 +288,7 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
 					if out.HasPrior {
 						m.WriteMetric("retreat_fraction_baseline:bid", out.Baseline)
-						m.WriteMetric("retreat_fraction_zscore:bid", out.ZScore)
+						m.WriteStandardized("retreat_fraction_zscore:bid", out.ZScore)
 					}
 				},
 			),
@@ -300,7 +300,7 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
 					if out.HasPrior {
 						m.WriteMetric("retreat_fraction_baseline:ask", out.Baseline)
-						m.WriteMetric("retreat_fraction_zscore:ask", out.ZScore)
+						m.WriteStandardized("retreat_fraction_zscore:ask", out.ZScore)
 					}
 				},
 			),
@@ -350,7 +350,7 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 						if n > 1 {
 							maturity = 1.0 - (1.0 / n)
 						}
-						m.WriteMetric("Maturity", maturity)
+						m.WriteNormalized("Maturity", maturity)
 					}
 				},
 			),

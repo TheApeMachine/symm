@@ -184,7 +184,7 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 					
 					observed := obsBid + obsAsk
 					if observed > 0 {
-						m.WriteMetric("book_imbalance", (obsBid-obsAsk)/observed)
+						m.WriteNormalized("book_imbalance", (obsBid-obsAsk)/observed)
 					}
 					
 					if !state.prevTime.IsZero() {
@@ -216,7 +216,7 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 					ta := input.GetMetric("touch_notional:ask").Raw
 					if tb > 0 || ta > 0 {
 						touchImb := (tb - ta) / (tb + ta)
-						m.WriteMetric("touch_imbalance", touchImb)
+						m.WriteNormalized("touch_imbalance", touchImb)
 						if observed > 0 {
 							bookImb := (obsBid - obsAsk) / observed
 							m.WriteMetric("imbalance_resolution_gap", touchImb-bookImb)
@@ -283,7 +283,7 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 					if out.HasPrior {
 						m.WriteMetric("observed_notional_imbalance_baseline", out.Baseline)
 						m.WriteMetric("observed_notional_imbalance_divergence", out.Residual)
-						m.WriteMetric("observed_notional_imbalance_zscore", out.ZScore)
+						m.WriteStandardized("observed_notional_imbalance_zscore", out.ZScore)
 						m.SetMetadata(data.MetadataDivergence, strconv.FormatFloat(out.Residual, 'f', -1, 64))
 
 						if out.VarianceDefined {
@@ -301,7 +301,7 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 					if out.HasPrior {
 						m.WriteMetric("observed_notional_rate_baseline", out.Baseline)
 						m.WriteMetric("observed_notional_rate_divergence", out.Residual)
-						m.WriteMetric("observed_notional_rate_zscore", out.ZScore)
+						m.WriteStandardized("observed_notional_rate_zscore", out.ZScore)
 					}
 				},
 			),
@@ -314,7 +314,7 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 					if out.HasPrior {
 						m.WriteMetric("book_turnover_rate_baseline", out.Baseline)
 						m.WriteMetric("book_turnover_rate_divergence", out.Residual)
-						m.WriteMetric("book_turnover_rate_zscore", out.ZScore)
+						m.WriteStandardized("book_turnover_rate_zscore", out.ZScore)
 					}
 				},
 			),
@@ -327,7 +327,7 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 					if out.HasPrior {
 						m.WriteMetric("net_book_change_rate_baseline", out.Baseline)
 						m.WriteMetric("net_book_change_rate_divergence", out.Residual)
-						m.WriteMetric("net_book_change_rate_zscore", out.ZScore)
+						m.WriteStandardized("net_book_change_rate_zscore", out.ZScore)
 					}
 				},
 			),
@@ -340,7 +340,7 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 					if out.HasPrior {
 						m.WriteMetric("net_displayed_flow_imbalance_baseline", out.Baseline)
 						m.WriteMetric("net_displayed_flow_imbalance_divergence", out.Residual)
-						m.WriteMetric("net_displayed_flow_imbalance_zscore", out.ZScore)
+						m.WriteStandardized("net_displayed_flow_imbalance_zscore", out.ZScore)
 					}
 				},
 			),
@@ -366,7 +366,7 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 						if n > 1 {
 							maturity = 1.0 - (1.0 / n)
 						}
-						m.WriteMetric("Maturity", maturity)
+						m.WriteNormalized("Maturity", maturity)
 					}
 				},
 			),

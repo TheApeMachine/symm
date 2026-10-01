@@ -72,7 +72,7 @@ func (ticker *Ticker) pipelineFor(symbol string) core.Primitive {
 				m.WriteMetric("spread", spread)
 				m.WriteMetric("relative_spread", relative)
 				m.WriteMetric("two_sided_touch_notional", math.Min(bidNotional, askNotional))
-				m.WriteMetric("touch_notional_imbalance", (bidNotional-askNotional)/(bidNotional+askNotional))
+				m.WriteNormalized("touch_notional_imbalance", (bidNotional-askNotional)/(bidNotional+askNotional))
 
 				m.WriteMetric("_log_bid_notional", math.Log(bidNotional))
 				m.WriteMetric("_log_ask_notional", math.Log(askNotional))
@@ -123,7 +123,7 @@ func (ticker *Ticker) pipelineFor(symbol string) core.Primitive {
 
 						if channel.ScoreScale > 0 {
 							m.WriteMetric(noiseLabels[index], channel.ScoreScale)
-							m.WriteMetric(zscoreLabels[index], channel.ZScore)
+							m.WriteStandardized(zscoreLabels[index], channel.ZScore)
 						}
 					}
 				},

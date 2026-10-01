@@ -532,10 +532,15 @@ func (training *Training) supervise(episode heldEpisode, score bool) {
 	}
 
 	// Causal policy edge: only a completed ENTER→EXIT hypo earns execReturn.
-	// ENTER without EXIT before C is incomplete — never silent oracle C.
+	// Missed exit at C is penalized with actual forced liquidation return at C (not 0.0!).
 	policyReturn := 0.0
+
 	if predicted == cognition.ActionEnter && predictedExit == cognition.ActionExit {
 		policyReturn = execReturn
+	}
+
+	if predicted == cognition.ActionEnter && predictedExit != cognition.ActionExit {
+		policyReturn = forcedEndReturn(record)
 	}
 
 	if score {
@@ -551,7 +556,9 @@ func (training *Training) supervise(episode heldEpisode, score bool) {
 		// so avoidance has honest negatives.
 		if wantEnter {
 			training.teach(enterCtx, string(cognition.ActionEnter), execReturn)
-		} else if record.Direction != "up" {
+		}
+
+		if !wantEnter && record.Direction != "up" {
 			training.teach(enterCtx, string(cognition.ActionEnter), -1)
 		}
 
@@ -573,6 +580,41 @@ func (training *Training) supervise(episode heldEpisode, score bool) {
 			training.noteExitGrade(predictedExit == cognition.ActionExit)
 		}
 	}
+}
+
+/*
+forcedEndReturn computes the economic return of an un-exited trade liquidated
+at confirmed structural reversal C (PostEndTick / PostEndPrice).
+*/
+func forcedEndReturn(record tables.ExcursionRecord) float64 {
+	if !finiteFloat(record.EntryPrice) || record.EntryPrice <= 0 {
+		return 0
+	}
+
+	endPrice := record.PostEndPrice
+
+	if !finiteFloat(endPrice) || endPrice <= 0 {
+		endPrice = record.ExitPrice
+	}
+
+	if !finiteFloat(endPrice) {
+		return 0
+	}
+
+	feeRate := record.Fee
+
+	if feeRate <= 0 {
+		feeRate = 0.0026
+	}
+
+	netProceeds := endPrice * (1.0 - feeRate)
+	fraction := (netProceeds - record.EntryPrice) / record.EntryPrice
+
+	if !finiteFloat(fraction) {
+		return 0
+	}
+
+	return fraction
 }
 
 /*
@@ -685,7 +727,9 @@ func (training *Training) recordPolicyReturnLocked(policyReturn float64, record 
 
 	if record.ClearsFriction {
 		training.histClears++
-	} else if record.Direction == "up" {
+	}
+
+	if !record.ClearsFriction && record.Direction == "up" {
 		training.histFeeFailUp++
 	}
 
@@ -701,10 +745,6 @@ func (training *Training) replayHistory() error {
 		))
 	}
 
-	// Stored ExcursionRecords are the episode owners for replay (no live
-	// Detector re-walk inventing a second timeline on the same marks).
-	// After-the-fact detection may *add* records from the persisted quote
-	// tape (ticker/measurements + SeqIdx sync) using the same Detector+fees.
 	durable, err := training.catalog.Excursions(training.Context(), training.epoch, nil)
 
 	if err != nil {
@@ -717,19 +757,14 @@ func (training *Training) replayHistory() error {
 		return err
 	}
 
-	offline, offErr := training.detectOffline(tapeRows, durable)
+	isolatedPrice := training.isolatedPrice()
+	canonical, offErr := DetectExcursions(NewDetector(isolatedPrice), tapeRows)
 
 	if offErr != nil {
 		return offErr
 	}
 
-	persistIDs := make(map[string]bool, len(offline))
-
-	for index := range offline {
-		persistIDs[offline[index].ID] = true
-	}
-
-	excursions := append(append([]tables.ExcursionRecord{}, durable...), offline...)
+	excursions, persistIDs := ReconcileExcursions(canonical, durable)
 
 	if len(excursions) == 0 {
 		return nil
@@ -738,6 +773,19 @@ func (training *Training) replayHistory() error {
 	bySymbol := tapeBySymbol(canonicalObservations(tapeRows))
 
 	return training.replayCausal(excursions, bySymbol, persistIDs)
+}
+
+func (training *Training) isolatedPrice() *broker.Price {
+	ctx := training.Context()
+	isolatedBook := broker.NewBook(ctx, nil)
+	price := broker.NewPrice(ctx, isolatedBook, nil, nil, nil)
+
+	if training.price != nil {
+		price.SetReferenceCash(training.price.ReferenceCash())
+		training.price.CopyFeesTo(price)
+	}
+
+	return price
 }
 
 /*
@@ -919,52 +967,13 @@ func (training *Training) loadQuoteTape() ([]*data.Measurement[float64], error) 
 		return nil, err
 	}
 
-	return append(ticker, measured...), nil
-}
+	level3, err := training.catalog.Collect(training.Context(), tables.SpotLevel3, training.epoch)
 
-/*
-detectOffline runs Detector over the stored quote tape and enqueues records
-whose IDs are not already in Iceberg — after-the-fact detection alongside live.
-*/
-func (training *Training) detectOffline(
-	tape []*data.Measurement[float64],
-	existing []tables.ExcursionRecord,
-) ([]tables.ExcursionRecord, error) {
-	if training.price == nil || len(tape) == 0 {
-		return nil, nil
-	}
-
-	known := make(map[string]bool, len(existing))
-
-	for index := range existing {
-		known[existing[index].ID] = true
-	}
-
-	detected, err := DetectExcursions(NewDetector(training.price), tape)
-
-	if err != nil {
+	if err != nil && !errnie.IsNotFound(err) {
 		return nil, err
 	}
 
-	added := make([]tables.ExcursionRecord, 0)
-
-	for index := range detected {
-		record := detected[index]
-
-		if known[record.ID] {
-			continue
-		}
-
-		if record.Epoch <= 0 {
-			record.Epoch = training.epoch
-		}
-
-		// Returned to replayCausal with persistIDs — do not enqueue frameless.
-		known[record.ID] = true
-		added = append(added, record)
-	}
-
-	return added, nil
+	return append(append(ticker, measured...), level3...), nil
 }
 
 /*
@@ -1078,7 +1087,9 @@ func (training *Training) replayVaried(episode heldEpisode) {
 	// uses executable economic feedback, never ±1 correctness.
 	if wantEnter {
 		training.teach(enterCtx, string(cognition.ActionEnter), execReturn)
-	} else if episode.record.Direction != "up" {
+	}
+
+	if !wantEnter && episode.record.Direction != "up" {
 		training.teach(enterCtx, string(cognition.ActionEnter), execReturn)
 	}
 }
@@ -1715,14 +1726,16 @@ func (training *Training) stage() (float64, string, string) {
 	// Durability blockers outrank "replay in progress" so a hung Iceberg
 	// Append cannot hide behind HISTORICAL VALIDATION with an empty reason.
 	if blocked {
-		detail := "durability blocked"
+		detail := "durability blocked: pending"
+
+		if writing {
+			detail = "durability blocked: writing"
+		}
+
 		if persistErr != nil {
 			detail = "durability blocked: " + persistErr.Error()
-		} else if writing {
-			detail = "durability blocked: writing"
-		} else {
-			detail = "durability blocked: pending"
 		}
+
 		return 1, "HISTORICAL VALIDATION", detail
 	}
 

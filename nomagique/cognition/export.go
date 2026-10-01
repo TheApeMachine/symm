@@ -114,12 +114,51 @@ func (op *Engine) TreeExport() CognitionTreeExport {
 		})
 	}
 
-	slices.SortFunc(candidates, func(left, right rawCandidate) int {
-		return cmp.Compare(right.count, left.count)
-	})
+	byClass := make(map[string][]rawCandidate)
+	classes := make([]string, 0)
+
+	for _, cand := range candidates {
+		cls := strings.ToUpper(cand.className)
+
+		if len(byClass[cls]) == 0 {
+			classes = append(classes, cls)
+		}
+
+		byClass[cls] = append(byClass[cls], cand)
+	}
+
+	for _, cls := range classes {
+		slices.SortFunc(byClass[cls], func(left, right rawCandidate) int {
+			return cmp.Compare(right.count, left.count)
+		})
+	}
 
 	topLimit := min(len(candidates), 64)
-	topCandidates := candidates[:topLimit]
+	topCandidates := make([]rawCandidate, 0, topLimit)
+	candIdx := 0
+
+	for len(topCandidates) < topLimit {
+		addedAny := false
+
+		for _, cls := range classes {
+			list := byClass[cls]
+
+			if candIdx < len(list) {
+				topCandidates = append(topCandidates, list[candIdx])
+				addedAny = true
+
+				if len(topCandidates) >= topLimit {
+					break
+				}
+			}
+		}
+
+		if !addedAny {
+			break
+		}
+
+		candIdx++
+	}
 
 	rootNode := &TrieNodeJSON{
 		ID:          "root",
@@ -173,18 +212,18 @@ func (op *Engine) TreeExport() CognitionTreeExport {
 					TokenPrefix:     regToken,
 					Probability:     cand.probability,
 					StepProbability: cand.probability,
-					Count:           cand.count,
+					Count:           0,
 					Tokens:          []string{regToken},
 					State:           "EVALUATED",
 				}
 				currNode.Children = append(currNode.Children, foundChild)
-			} else {
-				foundChild.Count += cand.count
+			}
 
-				if cand.probability > foundChild.Probability {
-					foundChild.Probability = cand.probability
-					foundChild.StepProbability = cand.probability
-				}
+			foundChild.Count += cand.count
+
+			if cand.probability > foundChild.Probability {
+				foundChild.Probability = cand.probability
+				foundChild.StepProbability = cand.probability
 			}
 
 			currNode = foundChild
@@ -202,23 +241,20 @@ func (op *Engine) TreeExport() CognitionTreeExport {
 
 		if actionLeaf == nil {
 			actionLeaf = &TrieNodeJSON{
-				ID:              actionID,
-				TokenPrefix:     actionName,
-				Probability:     cand.probability,
-				StepProbability: cand.probability,
-				Count:           cand.count,
-				Tokens:          []string{cand.className},
-				State:           policyState,
+				ID:          actionID,
+				TokenPrefix: actionName,
+				Count:       0,
+				Tokens:      []string{cand.className},
 			}
 			currNode.Children = append(currNode.Children, actionLeaf)
-		} else {
-			actionLeaf.Count += cand.count
+		}
 
-			if cand.probability >= actionLeaf.Probability {
-				actionLeaf.Probability = cand.probability
-				actionLeaf.StepProbability = cand.probability
-				actionLeaf.State = policyState
-			}
+		actionLeaf.Count += cand.count
+
+		if cand.probability >= actionLeaf.Probability {
+			actionLeaf.Probability = cand.probability
+			actionLeaf.StepProbability = cand.probability
+			actionLeaf.State = policyState
 		}
 
 		hash := fmt.Sprintf("0x%x:%s", cand.keyBytes, cand.className)

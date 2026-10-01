@@ -9,6 +9,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/hindsight/tables"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/adaptive"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/statistic"
@@ -24,9 +25,10 @@ calmDisp and open-impulse dispersion so multi-hour FOMO rises are not chopped
 into short fragments that each fail ClearsFriction.
 */
 type Detector struct {
-	price  *broker.Price
-	series map[string]*series
-	err    error
+	price         *broker.Price
+	referenceCash *decimal.Decimal
+	series        map[string]*series
+	err           error
 }
 
 type quote struct {
@@ -38,45 +40,65 @@ type quote struct {
 }
 
 type series struct {
-	symbol         string
-	lastSeq        int64
-	baseline       statistic.Moments
-	regimeStart    int64
-	calmCount      int
-	longestImpulse int
-	calmHigh       float64
-	calmLow        float64
-	calmHighTick   int64
-	calmLowTick    int64
-	calmHighBid    *decimal.Decimal
-	calmLowAsk     *decimal.Decimal
-	calmEntryAsk   *decimal.Decimal
-	candidate      bool
-	candidateSeq   int64
-	side           int
-	priorMean      float64
-	priorDisp      float64
-	held           quote
-	open           bool
-	anchor         int64
-	precursor      int64
-	calmDisp       float64
-	entryAsk       *decimal.Decimal
-	highMid        float64
-	lowMid         float64
-	highBid        *decimal.Decimal
-	lowAsk         *decimal.Decimal
-	highTick       int64
-	lowTick        int64
-	impulse        statistic.Moments
-	recent         statistic.Moments
-	openCount      int
+	symbol                string
+	lastSeq               int64
+	baseline              statistic.Moments
+	regimeStart           int64
+	calmCount             int
+	longestImpulse        int
+	calmHigh              float64
+	calmLow               float64
+	calmHighTick          int64
+	calmLowTick           int64
+	calmHighBid           *decimal.Decimal
+	calmLowAsk            *decimal.Decimal
+	calmEntryAsk          *decimal.Decimal
+	candidate             bool
+	candidateSeq          int64
+	side                  int
+	priorMean             float64
+	priorDisp             float64
+	held                  quote
+	open                  bool
+	anchor                int64
+	precursor             int64
+	calmDisp              float64
+	entryAsk              *decimal.Decimal
+	entryCost             *broker.EntryCost
+	clearsFriction        bool
+	exitAnchorSeq         int64
+	exitAnchorBid         *decimal.Decimal
+	exitAnchorNetProceeds *decimal.Decimal
+	highMid               float64
+	lowMid                float64
+	highBid               *decimal.Decimal
+	lowAsk                *decimal.Decimal
+	highTick              int64
+	lowTick               int64
+	impulse               statistic.Moments
+	recent                statistic.Moments
+	openCount             int
 }
 
-func NewDetector(price *broker.Price) *Detector {
+func NewDetector(price *broker.Price, referenceCash ...*decimal.Decimal) *Detector {
+	var refCash *decimal.Decimal
+
+	if len(referenceCash) > 0 && referenceCash[0] != nil && referenceCash[0].Sign() > 0 {
+		refCash = referenceCash[0]
+	}
+
+	if refCash == nil && price != nil && price.ReferenceCash() != nil {
+		refCash = price.ReferenceCash()
+	}
+
+	if refCash == nil {
+		refCash = decimal.NewFromFloat64(10000.0)
+	}
+
 	return &Detector{
-		price:  price,
-		series: make(map[string]*series),
+		price:         price,
+		referenceCash: refCash,
+		series:        make(map[string]*series),
 	}
 }
 
@@ -125,6 +147,14 @@ func (detector *Detector) Observe(measurement *data.Measurement[float64]) (*tabl
 
 	if !ok {
 		return nil, nil
+	}
+
+	if detector.price != nil && detector.price.Books == nil {
+		detector.price.Update(&kraken.TickerData{
+			Symbol: seen.symbol,
+			Ask:    seen.ask,
+			Bid:    seen.bid,
+		})
 	}
 
 	path := detector.series[seen.symbol]
@@ -218,6 +248,30 @@ func (path *series) confirm(detector *Detector, seen quote) (*tables.ExcursionRe
 	path.openCount = 2
 	path.recent.Update(seen.mid)
 
+	if detector.price != nil {
+		if detector.price.Books == nil && path.held.ask != nil {
+			detector.price.Update(&kraken.TickerData{
+				Symbol: path.symbol,
+				Ask:    path.held.ask,
+				Bid:    path.held.bid,
+			})
+		}
+
+		entryCost, err := detector.price.AllocateEntry(path.symbol, detector.referenceCash)
+
+		if err != nil && !errnie.IsNotFound(err) {
+			detector.err = err
+			return nil, err
+		}
+
+		path.entryCost = entryCost
+	}
+
+	path.clearsFriction = false
+	path.exitAnchorSeq = 0
+	path.exitAnchorBid = nil
+	path.exitAnchorNetProceeds = nil
+
 	return nil, nil
 }
 
@@ -225,6 +279,20 @@ func (path *series) advance(detector *Detector, seen quote) (*tables.ExcursionRe
 	path.openCount++
 	extended := seen.mid > path.highMid || seen.mid < path.lowMid
 	path.include(seen)
+
+	var netProceeds *decimal.Decimal
+
+	if detector.price != nil && path.entryCost != nil && path.entryCost.Quantity != nil {
+		net, _, liqErr := detector.price.Liquidate(path.symbol, path.entryCost.Quantity, seen.bid)
+
+		if liqErr == nil && net != nil {
+			netProceeds = net
+
+			if netProceeds.Cmp(path.entryCost.Total) > 0 {
+				path.clearsFriction = true
+			}
+		}
+	}
 
 	if extended {
 		path.recent = statistic.Moments{}
@@ -264,10 +332,12 @@ func (path *series) advance(detector *Detector, seen quote) (*tables.ExcursionRe
 		gap = -gap
 	}
 
-	// MeanShift Bound shrinks as RecentCount grows, so a long FOMO climb's
-	// consolidations under the high would finish early into fee-failing chips.
-	// Floor the required pullback by measured calmDisp (ignition scale) and
-	// open-impulse dispersion — never invent a constant; both are observed.
+	if path.exitAnchorSeq == 0 && path.recent.Count > 1 && gap >= bound && gap >= path.calmDisp {
+		path.exitAnchorSeq = seen.seq
+		path.exitAnchorBid = seen.bid
+		path.exitAnchorNetProceeds = netProceeds
+	}
+
 	impulseDisp := math.Sqrt(impulseVar)
 	need := bound
 
@@ -285,8 +355,6 @@ func (path *series) advance(detector *Detector, seen quote) (*tables.ExcursionRe
 		move = -move
 	}
 
-	// Geometric bridge between ignition noise and open move size: plateaus
-	// smaller than √(calmDisp·move) stay open; deep givebacks still finish.
 	if move > 0 && path.calmDisp > 0 {
 		geo := math.Sqrt(path.calmDisp * move)
 
@@ -317,7 +385,7 @@ func (path *series) finish(detector *Detector, seen quote) (*tables.ExcursionRec
 		return nil, nil
 	}
 
-	record, err := path.classify(seen, fee)
+	record, err := path.classify(detector, seen, fee)
 
 	if err != nil {
 		detector.err = err
@@ -331,7 +399,7 @@ func (path *series) finish(detector *Detector, seen quote) (*tables.ExcursionRec
 	return record, nil
 }
 
-func (path *series) classify(seen quote, fee *decimal.Decimal) (*tables.ExcursionRecord, error) {
+func (path *series) classify(detector *Detector, seen quote, fee *decimal.Decimal) (*tables.ExcursionRecord, error) {
 	if !positiveFinite(path.priorMean) || path.entryAsk == nil || seen.bid == nil {
 		return nil, errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -340,24 +408,68 @@ func (path *series) classify(seen quote, fee *decimal.Decimal) (*tables.Excursio
 		))
 	}
 
-	one := decimal.NewFromInt64(1)
-	cost := path.entryAsk.Mul(one.Add(fee))
-	proceeds := seen.bid.Mul(one.Sub(fee))
-	clears := proceeds.Cmp(cost) > 0
+	if path.entryCost == nil && detector.price != nil {
+		if detector.price.Books == nil && path.entryAsk != nil {
+			detector.price.Update(&kraken.TickerData{
+				Symbol: path.symbol,
+				Ask:    path.entryAsk,
+				Bid:    path.held.bid,
+			})
+		}
+
+		entryCost, allocErr := detector.price.AllocateEntry(path.symbol, detector.referenceCash)
+
+		if allocErr != nil && !errnie.IsNotFound(allocErr) {
+			return nil, allocErr
+		}
+
+		path.entryCost = entryCost
+	}
+
+	var entryCostTotal *decimal.Decimal
+	var exitProceeds *decimal.Decimal
+	exitSeq := seen.seq
+	exitPrice := seen.bid
+
+	if path.entryCost != nil && detector.price != nil {
+		entryCostTotal = path.entryCost.Total
+
+		if path.exitAnchorNetProceeds != nil && path.exitAnchorNetProceeds.Sign() > 0 {
+			exitProceeds = path.exitAnchorNetProceeds
+			exitSeq = path.exitAnchorSeq
+
+			if path.exitAnchorBid != nil {
+				exitPrice = path.exitAnchorBid
+			}
+		}
+
+		if exitProceeds == nil {
+			net, _, liqErr := detector.price.Liquidate(path.symbol, path.entryCost.Quantity, seen.bid)
+
+			if liqErr != nil && !errnie.IsNotFound(liqErr) {
+				return nil, liqErr
+			}
+
+			exitProceeds = net
+		}
+	}
+
+	if entryCostTotal == nil || exitProceeds == nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"episode: execution economics unavailable for "+path.symbol,
+			nil,
+		))
+	}
+
 	upDisp := path.highMid - path.priorMean
 	downDisp := path.priorMean - path.lowMid
 	upMove := upDisp > path.calmDisp
 	downMove := downDisp > path.calmDisp
 	direction := ""
-	friction := false
 
-	if upMove && downMove && !clears {
+	if upMove && downMove && !path.clearsFriction {
 		direction = "chop"
-	}
-
-	if direction == "" && upMove && upDisp >= downDisp && clears {
-		direction = "up"
-		friction = true
 	}
 
 	if direction == "" && upMove && upDisp >= downDisp {
@@ -372,7 +484,7 @@ func (path *series) classify(seen quote, fee *decimal.Decimal) (*tables.Excursio
 		return nil, nil
 	}
 
-	return path.record(seen, fee, cost, proceeds, direction, friction, false)
+	return path.record(seen, fee, entryCostTotal, exitProceeds, exitSeq, exitPrice, direction, path.clearsFriction, false)
 }
 
 func (path *series) maybeFlat(detector *Detector, seen quote) (*tables.ExcursionRecord, error) {
@@ -405,10 +517,54 @@ func (path *series) maybeFlat(detector *Detector, seen quote) (*tables.Excursion
 		))
 	}
 
-	one := decimal.NewFromInt64(1)
-	cost := path.calmEntryAsk.Mul(one.Add(fee))
-	proceeds := seen.bid.Mul(one.Sub(fee))
-	record, err := path.record(seen, fee, cost, proceeds, "flat", false, true)
+	var cost *decimal.Decimal
+	var proceeds *decimal.Decimal
+
+	if detector.price != nil {
+		if detector.price.Books == nil {
+			detector.price.Update(&kraken.TickerData{
+				Symbol: path.symbol,
+				Ask:    path.calmEntryAsk,
+				Bid:    seen.bid,
+			})
+		}
+
+		entryCost, allocErr := detector.price.AllocateEntry(path.symbol, detector.referenceCash)
+
+		if allocErr != nil && !errnie.IsNotFound(allocErr) {
+			detector.err = allocErr
+			path.regimeStart = seen.seq
+			path.calmCount = 1
+
+			return nil, allocErr
+		}
+
+		if entryCost != nil {
+			path.entryCost = entryCost
+			cost = entryCost.Total
+			net, _, liqErr := detector.price.Liquidate(path.symbol, entryCost.Quantity, seen.bid)
+
+			if liqErr != nil && !errnie.IsNotFound(liqErr) {
+				detector.err = liqErr
+				path.regimeStart = seen.seq
+				path.calmCount = 1
+
+				return nil, liqErr
+			}
+
+			proceeds = net
+		}
+	}
+
+	if cost == nil || proceeds == nil {
+		detector.err = errnie.Err(errnie.Validation, "episode: flat economics unavailable for "+path.symbol, nil)
+		path.regimeStart = seen.seq
+		path.calmCount = 1
+
+		return nil, detector.err
+	}
+
+	record, err := path.record(seen, fee, cost, proceeds, seen.seq, seen.bid, "flat", false, true)
 
 	if err != nil {
 		detector.err = err
@@ -436,6 +592,8 @@ func (path *series) record(
 	fee *decimal.Decimal,
 	cost *decimal.Decimal,
 	proceeds *decimal.Decimal,
+	exitSeq int64,
+	exitPrice *decimal.Decimal,
 	direction string,
 	friction bool,
 	flat bool,
@@ -474,16 +632,18 @@ func (path *series) record(
 		reference = path.baseline.Mean
 	}
 
-	// ProfitFraction and GrossExcursion are stored as float64. Computing them
-	// through Decimal.Div panics when the divisor's unscaled integer rounds to
-	// zero under the numerator's scale (krakenfx BankersRound QuoRem), even if
-	// Sign() is non-zero — common when NewFromFloat64 yields scale 0 for an
-	// integer-valued mid. Ratios stay honest: refuse non-positive / non-finite
-	// divisors rather than inventing a stand-in.
 	if cost == nil || cost.Sign() <= 0 {
 		return nil, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"episode: cost is not a positive executable price",
+			nil,
+		))
+	}
+
+	if proceeds == nil || proceeds.Sign() <= 0 {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"episode: exit proceeds is not positive",
 			nil,
 		))
 	}
@@ -525,6 +685,21 @@ func (path *series) record(
 		))
 	}
 
+	posSize := 1.0
+	entryPriceVal := cost.Float64()
+
+	if path.entryCost != nil {
+		if path.entryCost.Quantity != nil && path.entryCost.Quantity.Sign() > 0 {
+			posSize = path.entryCost.Quantity.Float64()
+		}
+
+		if path.entryCost.EntryPrice != nil {
+			entryPriceVal = path.entryCost.EntryPrice.Float64()
+		}
+	}
+
+	exitPriceVal := exitPrice.Float64()
+
 	return &tables.ExcursionRecord{
 		ID:                 path.symbol + ":" + formatInt(anchor) + ":" + formatInt(seen.seq),
 		Symbol:             path.symbol,
@@ -533,18 +708,19 @@ func (path *series) record(
 		PrecursorStartTick: precursor,
 		AnchorTick:         anchor,
 		ExtremumTick:       extremumTick,
-		ExitTick:           seen.seq,
+		ExitTick:           exitSeq,
 		PostEndTick:        seen.seq,
-		EntryPrice:         cost.Float64(),
+		EntryPrice:         entryPriceVal,
 		ExtremumPrice:      extremumPrice.Float64(),
-		ExitPrice:          proceeds.Float64(),
-		PositionSize:       1,
+		ExitPrice:          exitPriceVal,
+		PositionSize:       posSize,
 		Fee:                fee.Float64(),
 		Profit:             profit.Float64(),
 		ProfitFraction:     fraction,
 		GrossExcursion:     gross,
 		ObservationCount:   int64(count),
 		Status:             "resolved",
+		PostEndPrice:       seen.bid.Float64(),
 	}, nil
 }
 

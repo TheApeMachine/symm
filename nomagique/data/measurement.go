@@ -6,7 +6,6 @@ import (
 	"maps"
 	"math"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 	"unsafe"
@@ -51,6 +50,7 @@ type Measurement[T any] struct {
 	Estimated  bool                 `json:"estimated"`
 	Err        error                `json:"-"`
 	Metrics    map[string]Metric[T] `json:"metrics,omitempty"`
+	inputs     map[string]Metric[T]
 	mu         sync.RWMutex
 	Metadata   map[string]string `json:"metadata,omitempty"`
 	Provenance map[string]string `json:"provenance,omitempty"`
@@ -60,28 +60,41 @@ type Measurement[T any] struct {
 	Result any `json:"-"`
 }
 
-// GetMetric safely retrieves a metric.
+// GetMetric safely retrieves a metric, checking producer-owned Metrics first then inherited inputs.
 func (m *Measurement[T]) GetMetric(key string) Metric[T] {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	if m.Metrics == nil {
-		return Metric[T]{}
+	if m.Metrics != nil {
+		if val, ok := m.Metrics[key]; ok {
+			return val
+		}
 	}
-	return m.Metrics[key]
+	if m.inputs != nil {
+		if val, ok := m.inputs[key]; ok {
+			return val
+		}
+	}
+	return Metric[T]{}
 }
 
 // LookupMetric safely retrieves a metric and a boolean indicating if it was found.
 func (m *Measurement[T]) LookupMetric(key string) (Metric[T], bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	if m.Metrics == nil {
-		return Metric[T]{}, false
+	if m.Metrics != nil {
+		if val, ok := m.Metrics[key]; ok {
+			return val, true
+		}
 	}
-	metric, ok := m.Metrics[key]
-	return metric, ok
+	if m.inputs != nil {
+		if val, ok := m.inputs[key]; ok {
+			return val, true
+		}
+	}
+	return Metric[T]{}, false
 }
 
-// SetMetric safely sets a metric.
+// SetMetric safely sets a metric owned by this producer.
 func (m *Measurement[T]) SetMetric(key string, val Metric[T]) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -91,33 +104,75 @@ func (m *Measurement[T]) SetMetric(key string, val Metric[T]) {
 	m.Metrics[key] = val
 }
 
-// WriteMetric safely writes a value to a metric and updates it in the map.
+// WriteMetric safely writes a value to a metric and updates it in the owned Metrics map.
 func (m *Measurement[T]) WriteMetric(key string, val T) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.Metrics == nil {
 		m.Metrics = make(map[string]Metric[T])
 	}
-	metric := m.Metrics[key]
+	metric, ok := m.Metrics[key]
+	if !ok && m.inputs != nil {
+		metric = m.inputs[key]
+	}
 	m.Metrics[key] = metric.Write(val)
 }
 
-// RangeMetrics safely iterates over metrics.
+// WriteStandardized sets the raw value and marks the metric as standardized.
+func (m *Measurement[T]) WriteStandardized(key string, val T) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.Metrics == nil {
+		m.Metrics = make(map[string]Metric[T])
+	}
+	metric, ok := m.Metrics[key]
+	if !ok && m.inputs != nil {
+		metric = m.inputs[key]
+	}
+	metric = metric.Write(val)
+	v := val
+	metric.Standardized = &v
+	m.Metrics[key] = metric
+}
+
+// WriteNormalized sets the raw value and marks the metric as normalized.
+func (m *Measurement[T]) WriteNormalized(key string, val T) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.Metrics == nil {
+		m.Metrics = make(map[string]Metric[T])
+	}
+	metric, ok := m.Metrics[key]
+	if !ok && m.inputs != nil {
+		metric = m.inputs[key]
+	}
+	metric = metric.Write(val)
+	v := val
+	metric.Normalized = &v
+	m.Metrics[key] = metric
+}
+
+// RangeMetrics safely iterates over all visible metrics (owned and inherited inputs).
 func (m *Measurement[T]) RangeMetrics(f func(key string, metric Metric[T]) bool) {
 	m.mu.RLock()
-	defer m.mu.RUnlock()
-	if m.Metrics == nil {
-		return
+	all := make(map[string]Metric[T], len(m.Metrics)+len(m.inputs))
+	if m.inputs != nil {
+		maps.Copy(all, m.inputs)
 	}
-	for k, v := range m.Metrics {
+	if m.Metrics != nil {
+		maps.Copy(all, m.Metrics)
+	}
+	m.mu.RUnlock()
+
+	for k, v := range all {
 		if !f(k, v) {
-			break
+			return
 		}
 	}
 }
 
-// MetricsSnapshot returns a shallow copy of Metrics under the read lock so
-// callers can range without racing concurrent writers on the shared slot.
+// MetricsSnapshot returns a shallow copy of owned Metrics under the read lock.
+// It contains only facts this producer actually created or changed.
 func (m *Measurement[T]) MetricsSnapshot() map[string]Metric[T] {
 	if m == nil {
 		return nil
@@ -198,10 +253,9 @@ func (m *Measurement[T]) SetQuality(maturity, snr float64, snrDefined, estimated
 }
 
 /*
-Fork returns a working copy for one concurrent stage consumer: identity and
-metric/metadata/provenance maps are copied. Peers are a shallow pointer copy
-of already-Contribute'd fragments (those fragments have Peers cleared), so
-category/resonance see signal peers without deep-cloning a peer forest.
+Fork returns a working copy for one concurrent stage consumer.
+Inputs from the shared measurement are inherited in inputs (readable via GetMetric/LookupMetric),
+while Metrics starts empty so the consumer only owns facts it actually creates or changes.
 */
 func (measurement *Measurement[T]) Fork() *Measurement[T] {
 	if measurement == nil {
@@ -211,10 +265,12 @@ func (measurement *Measurement[T]) Fork() *Measurement[T] {
 	measurement.mu.RLock()
 	defer measurement.mu.RUnlock()
 
-	var metrics map[string]Metric[T]
+	forkInputs := make(map[string]Metric[T], len(measurement.inputs)+len(measurement.Metrics))
+	if len(measurement.inputs) > 0 {
+		maps.Copy(forkInputs, measurement.inputs)
+	}
 	if len(measurement.Metrics) > 0 {
-		metrics = make(map[string]Metric[T], len(measurement.Metrics))
-		maps.Copy(metrics, measurement.Metrics)
+		maps.Copy(forkInputs, measurement.Metrics)
 	}
 
 	var metadata map[string]string
@@ -246,7 +302,8 @@ func (measurement *Measurement[T]) Fork() *Measurement[T] {
 		SNRDefined: measurement.SNRDefined,
 		Estimated:  measurement.Estimated,
 		Err:        measurement.Err,
-		Metrics:    metrics,
+		Metrics:    make(map[string]Metric[T]),
+		inputs:     forkInputs,
 		Metadata:   metadata,
 		Provenance: provenance,
 		Peers:      peers,
@@ -255,16 +312,17 @@ func (measurement *Measurement[T]) Fork() *Measurement[T] {
 }
 
 /*
-PersistClone is a queue/off-ramp snapshot: maps copied, Peers stripped so
+PersistClone is a queue/off-ramp snapshot: maps copied, Peers and inputs stripped so
 StoreTee/UITee cannot retain the disruptor peer forest across drain lag.
 */
 func (measurement *Measurement[T]) PersistClone() *Measurement[T] {
 	if measurement == nil {
 		return nil
 	}
-	out := measurement.Fork()
+	out := measurement.Clone()
 	if out != nil {
 		out.Peers = nil
+		out.inputs = nil
 		out.Result = nil
 	}
 	return out
@@ -280,6 +338,7 @@ Ownership rules (memory-critical):
     Grid cellKey and Iceberg map columns with source-qualified duplicates)
   - quality merge stays order-invariant mins
   - Result stays on the owned peer
+  - producer contribution contains only facts that producer actually created or changed
 */
 func (measurement *Measurement[T]) Contribute(owned *Measurement[T]) {
 	if measurement == nil || owned == nil || measurement == owned {
@@ -294,9 +353,10 @@ func (measurement *Measurement[T]) Contribute(owned *Measurement[T]) {
 	estimated := owned.Estimated
 	owned.mu.RUnlock()
 
-	// Producer fragments must not retain the shared peer forest.
+	// Producer fragments must not retain the shared peer forest or input references.
 	owned.mu.Lock()
 	owned.Peers = nil
+	owned.inputs = nil
 	owned.mu.Unlock()
 
 	measurement.mu.Lock()
@@ -580,8 +640,17 @@ func (measurement *Measurement[T]) Clone() *Measurement[T] {
 	measurement.mu.RLock()
 	defer measurement.mu.RUnlock()
 
-	metrics := make(map[string]Metric[T], len(measurement.Metrics))
-	maps.Copy(metrics, measurement.Metrics)
+	var metrics map[string]Metric[T]
+	if len(measurement.Metrics) > 0 {
+		metrics = make(map[string]Metric[T], len(measurement.Metrics))
+		maps.Copy(metrics, measurement.Metrics)
+	}
+
+	var inputs map[string]Metric[T]
+	if len(measurement.inputs) > 0 {
+		inputs = make(map[string]Metric[T], len(measurement.inputs))
+		maps.Copy(inputs, measurement.inputs)
+	}
 
 	var metadata map[string]string
 
@@ -618,6 +687,7 @@ func (measurement *Measurement[T]) Clone() *Measurement[T] {
 		Estimated:  measurement.Estimated,
 		Err:        measurement.Err,
 		Metrics:    metrics,
+		inputs:     inputs,
 		Metadata:   metadata,
 		Provenance: provenance,
 		Peers:      peers,
@@ -796,51 +866,6 @@ func (op *Finalizer[Value]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Po
 			measurement := *(**Measurement[Value])(arriving)
 
 			if measurement != nil {
-				// Dynamic Schema Scaling for Grid compatibility (Priority 3 Separation)
-				var midpoint, spread, totalQty float64
-
-				if metric, ok := measurement.LookupMetric("midpoint"); ok {
-					midpoint, _ = any(metric.Raw).(float64)
-				}
-				if metric, ok := measurement.LookupMetric("spread"); ok {
-					spread, _ = any(metric.Raw).(float64)
-				}
-
-				if midpoint == 0 {
-					var b, a float64
-					if metric, ok := measurement.LookupMetric("best_bid"); ok {
-						b, _ = any(metric.Raw).(float64)
-					}
-					if metric, ok := measurement.LookupMetric("best_ask"); ok {
-						a, _ = any(metric.Raw).(float64)
-					}
-					if b == 0 {
-						if metric, ok := measurement.LookupMetric("best_price:bid"); ok {
-							b, _ = any(metric.Raw).(float64)
-						}
-					}
-					if a == 0 {
-						if metric, ok := measurement.LookupMetric("best_price:ask"); ok {
-							a, _ = any(metric.Raw).(float64)
-						}
-					}
-					if b > 0 && a > 0 {
-						midpoint = (b + a) / 2.0
-						spread = a - b
-					}
-				}
-
-				if metric, ok := measurement.LookupMetric("touch_quantity:bid"); ok {
-					if q, ok := any(metric.Raw).(float64); ok {
-						totalQty += q
-					}
-				}
-				if metric, ok := measurement.LookupMetric("touch_quantity:ask"); ok {
-					if q, ok := any(metric.Raw).(float64); ok {
-						totalQty += q
-					}
-				}
-
 				updates := make(map[string]Metric[Value])
 				measurement.RangeMetrics(func(key string, metric Metric[Value]) bool {
 					val, valid := any(metric.Raw).(float64)
@@ -850,30 +875,12 @@ func (op *Finalizer[Value]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Po
 
 					modified := false
 
-					// 1. Assign dynamic Center/Scale for raw prices
-					if midpoint > 0 && spread > 0 {
-						if strings.Contains(key, "price") || key == "best_bid" || key == "best_ask" || key == "midpoint" {
-							metric.Center = midpoint
-							metric.Scale = spread
-							modified = true
-						}
-					}
-
-					// 2. Assign dynamic Center/Scale for raw quantities
-					if totalQty > 0 && (strings.Contains(key, "quantity") || strings.Contains(key, "volume") || strings.Contains(key, "notional")) {
-						if !strings.Contains(key, "imbalance") && !strings.Contains(key, "fraction") && !strings.Contains(key, "rate") {
-							metric.Center = 0
-							metric.Scale = totalQty
-							modified = true
-						}
-					}
-
-					// 3. Extract baseline as Center and stddev as Scale if we have them
-					if baseline, ok := measurement.Metrics[key+"_baseline"]; ok && baseline.Label != "" {
+					// Extract baseline as Center and stddev as Scale from estimator evidence
+					if baseline, ok := measurement.LookupMetric(key + "_baseline"); ok && baseline.Label != "" {
 						if bVal, ok := any(baseline.Raw).(float64); ok {
 							metric.Center = bVal
 							modified = true
-							if zscore, ok := measurement.Metrics[key+"_zscore"]; ok && zscore.Label != "" {
+							if zscore, ok := measurement.LookupMetric(key + "_zscore"); ok && zscore.Label != "" {
 								if zVal, ok := any(zscore.Raw).(float64); ok && zVal != 0 {
 									metric.Scale = math.Abs((val - bVal) / zVal)
 								}

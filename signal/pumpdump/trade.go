@@ -221,7 +221,7 @@ func (trade *Trade) pipelineFor(symbol string) core.Primitive {
 								m.SetMetadata(data.MetadataDivergence, strconv.FormatFloat(div, 'f', -1, 64))
 							}
 						}
-						m.WriteMetric("notional_rate_zscore", out.ZScore)
+						m.WriteStandardized("notional_rate_zscore", out.ZScore)
 						if out.VarianceDefined {
 							m.SetMetadata(data.MetadataNoiseVariance, strconv.FormatFloat(out.Variance, 'f', -1, 64))
 						}
@@ -251,7 +251,7 @@ func (trade *Trade) pipelineFor(symbol string) core.Primitive {
 					if out.HasPrior {
 						m.WriteMetric("midpoint_return_baseline", out.Baseline)
 						m.WriteMetric("midpoint_return_divergence", out.Residual)
-						m.WriteMetric("midpoint_return_zscore", out.ZScore)
+						m.WriteStandardized("midpoint_return_zscore", out.ZScore)
 					}
 				},
 			),

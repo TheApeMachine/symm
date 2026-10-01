@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
@@ -41,6 +42,7 @@ It deliberately contains no future price, future spread, or expected return.
 */
 type EntryCost struct {
 	Total              *decimal.Decimal `json:"total,omitempty"` // Gross notional plus the entry fee.
+	Quantity           *decimal.Decimal `json:"quantity,omitempty"`
 	EntryPrice         *decimal.Decimal `json:"entryPrice,omitempty"`
 	BestAsk            *decimal.Decimal `json:"bestAsk,omitempty"`
 	BestBid            *decimal.Decimal `json:"bestBid,omitempty"`
@@ -61,13 +63,14 @@ type BookSource interface {
 
 type Price struct {
 	*runtime.System
-	Instrument *Instrument
-	Books      BookSource
-	private    Transport
-	fees       *sync.Map
-	tickers    *sync.Map
-	normalizer *spot.Normalizer
-	anomalies  *AnomalyMonitor
+	Instrument    *Instrument
+	Books         BookSource
+	private       Transport
+	fees          *sync.Map
+	tickers       *sync.Map
+	normalizer    *spot.Normalizer
+	anomalies     *AnomalyMonitor
+	referenceCash atomic.Pointer[decimal.Decimal]
 }
 
 // BookSource is the resident book boundary shared by live and captured tapes.
@@ -130,6 +133,34 @@ func (price *Price) normalize(symbol string) string {
 /* SetFee registers an authoritative fee for a symbol. */
 func (price *Price) SetFee(symbol string, fee kraken.TradeVolumeFee) {
 	price.fees.Store(price.normalize(symbol), fee)
+}
+
+/* CopyFeesTo transfers all configured symbol fees to destination price system. */
+func (price *Price) CopyFeesTo(dst *Price) {
+	if price == nil || dst == nil || price.fees == nil {
+		return
+	}
+
+	price.fees.Range(func(key, value any) bool {
+		dst.fees.Store(key, value)
+		return true
+	})
+}
+
+func (price *Price) SetReferenceCash(cash *decimal.Decimal) {
+	if price == nil || cash == nil {
+		return
+	}
+
+	price.referenceCash.Store(cash)
+}
+
+func (price *Price) ReferenceCash() *decimal.Decimal {
+	if price == nil {
+		return nil
+	}
+
+	return price.referenceCash.Load()
 }
 
 /* Normalizer returns the normalizer used for symbol and precision resolution. */
@@ -505,6 +536,7 @@ func (price *Price) EntryCost(symbol string, quantity *decimal.Decimal) (*EntryC
 
 		cost = &EntryCost{
 			Total:              total,
+			Quantity:           filled,
 			EntryPrice:         entry,
 			BestAsk:            book.BestAsk().Price,
 			BestBid:            book.BestBid().Price,
@@ -530,6 +562,334 @@ func (price *Price) EntryCost(symbol string, quantity *decimal.Decimal) (*EntryC
 	}
 
 	return cost, reported(err)
+}
+
+/*
+AllocateEntry prices an executable entry frozen at 20% of reference cash.
+It walks ask depth to derive the maximum executable quantity such that
+gross notional plus taker entry fee does not exceed the 20% virtual budget.
+*/
+func (price *Price) AllocateEntry(
+	symbol string,
+	referenceCash ...*decimal.Decimal,
+) (*EntryCost, error) {
+	if price == nil {
+		return nil, errnie.Error(errnie.Err(errnie.Validation, "price: price system required", nil))
+	}
+
+	var cash *decimal.Decimal
+
+	if len(referenceCash) > 0 && referenceCash[0] != nil && referenceCash[0].Sign() > 0 {
+		cash = referenceCash[0]
+	}
+
+	if cash == nil {
+		cash = price.ReferenceCash()
+	}
+
+	if cash == nil || cash.Sign() <= 0 {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"price: positive reference cash required to allocate entry",
+			nil,
+		))
+	}
+
+	// 20% virtual position allocation frozen at entry.
+	budget := cash.SetScale(decimal.DefaultScale).Div(decimal.NewFromInt64(5))
+	fee := price.Fee(symbol)
+
+	if fee == nil || fee.Fee == nil {
+		return nil, errnie.Error(errnie.Err(errnie.NotFound, "price: fee unavailable for "+symbol, nil))
+	}
+
+	feeRate := decimalPercent.Mul(fee.Fee)
+	maxGross := budget.Div(decimalOne.Add(feeRate))
+
+	var cost *EntryCost
+	var err error
+
+	if price.Books != nil {
+		price.Books.Book(symbol, func(book *spotbook.Book) {
+			if book == nil || book.BestAsk() == nil || book.BestBid() == nil {
+				err = errnie.Err(errnie.NotFound, "price: book unavailable for "+symbol, nil)
+				return
+			}
+
+			if book.BestBid().Price.Cmp(book.BestAsk().Price) >= 0 {
+				price.recordAnomaly(symbol, AnomalyCrossedBook)
+				err = errnie.Err(errnie.UnprocessableContent, "price: crossed book for "+symbol, nil)
+				return
+			}
+
+			price.recordClean(symbol)
+
+			qAccum := decimalZero
+			remainingGross := maxGross
+			level := book.BestAsk()
+
+			for level != nil && remainingGross.Sign() > 0 {
+				levelCost := notional(level.Price, level.Quantity)
+
+				if levelCost.Cmp(remainingGross) <= 0 {
+					qAccum = qAccum.Add(level.Quantity)
+					remainingGross = remainingGross.Sub(levelCost)
+					level = level.Higher
+					continue
+				}
+
+				partialQty := remainingGross.Div(level.Price)
+				qAccum = qAccum.Add(partialQty)
+				break
+			}
+
+			if qAccum.Sign() <= 0 {
+				err = errnie.Err(errnie.Validation, "price: budget insufficient to fill any ask depth for "+symbol, nil)
+				return
+			}
+
+			qNorm, normErr := price.normalizer.FormatSize(symbol, qAccum)
+
+			if normErr != nil {
+				qNorm = qAccum
+			}
+
+			filled, gross, walkErr := price.Walk(book, qNorm, BUY)
+
+			if walkErr != nil && !errnie.IsUnprocessableContent(walkErr) {
+				err = walkErr
+				return
+			}
+
+			total := price.WithFee(symbol, gross, BUY)
+
+			for total != nil && total.Cmp(budget) > 0 {
+				step := qNorm.GetSmallestIncrement()
+
+				if step == nil || step.Sign() <= 0 {
+					step = decimal.NewFromFloat64(0.0001)
+				}
+
+				if qNorm.Cmp(step) <= 0 {
+					err = errnie.Err(errnie.Validation, "price: budget insufficient for minimum tradable quantity for "+symbol, nil)
+					return
+				}
+
+				qNorm = qNorm.Sub(step)
+				filled, gross, walkErr = price.Walk(book, qNorm, BUY)
+
+				if walkErr != nil && !errnie.IsUnprocessableContent(walkErr) {
+					err = walkErr
+					return
+				}
+
+				total = price.WithFee(symbol, gross, BUY)
+			}
+
+			if filled == nil || filled.Sign() <= 0 || gross == nil || gross.Sign() <= 0 || total == nil {
+				err = errnie.Err(errnie.Validation, "price: executable depth walk failed for "+symbol, nil)
+				return
+			}
+
+			if price.Instrument != nil && !price.Tradable(symbol, qNorm, book.BestAsk().Price) {
+				err = errnie.Err(errnie.Validation, "price: allocated quantity below instrument minimum for "+symbol, nil)
+				return
+			}
+
+			entryPrice := gross.Div(filled)
+			entryFee := total.Sub(gross)
+			exitFactor := price.WithFee(symbol, decimalOne, SELL)
+
+			if exitFactor == nil {
+				err = errnie.Err(errnie.NotFound, "price: exit factor unavailable for "+symbol, nil)
+				return
+			}
+
+			breakEvenGross := total.Div(exitFactor)
+			exitFee := breakEvenGross.Sub(total)
+			midpoint := book.Midpoint()
+
+			cost = &EntryCost{
+				Total:              total,
+				Quantity:           qNorm,
+				EntryPrice:         entryPrice,
+				BestAsk:            book.BestAsk().Price,
+				BestBid:            book.BestBid().Price,
+				Midpoint:           midpoint,
+				GrossNotional:      gross,
+				EntryFee:           entryFee,
+				ExitFeeAtBreakEven: exitFee,
+				RoundTripFees:      entryFee.Add(exitFee),
+				BreakEven:          breakEvenGross.Div(filled),
+				Spread:             book.BestAsk().Price.Sub(midpoint),
+				Impact:             entryPrice.Sub(book.BestAsk().Price),
+			}
+		})
+	}
+
+	if cost != nil {
+		return cost, nil
+	}
+
+	if err != nil && !errnie.IsNotFound(err) {
+		return nil, reported(err)
+	}
+
+	tick := price.Tick(symbol)
+	var askPrice *decimal.Decimal
+
+	if tick != nil && tick.Ask != nil && tick.Ask.Sign() > 0 {
+		askPrice = tick.Ask
+	}
+
+	if askPrice == nil {
+		return nil, errnie.Error(errnie.Err(errnie.NotFound, "price: no book or quote available for "+symbol, nil))
+	}
+
+	qRaw := maxGross.Div(askPrice)
+	qNorm, normErr := price.normalizer.FormatSize(symbol, qRaw)
+
+	if normErr != nil {
+		qNorm = qRaw
+	}
+
+	gross := notional(askPrice, qNorm)
+	total := price.WithFee(symbol, gross, BUY)
+
+	for total != nil && total.Cmp(budget) > 0 {
+		step := qNorm.GetSmallestIncrement()
+
+		if step == nil || step.Sign() <= 0 {
+			step = decimal.NewFromFloat64(0.0001)
+		}
+
+		if qNorm.Cmp(step) <= 0 {
+			return nil, errnie.Error(errnie.Err(errnie.Validation, "price: budget insufficient for minimum quote order", nil))
+		}
+
+		qNorm = qNorm.Sub(step)
+		gross = notional(askPrice, qNorm)
+		total = price.WithFee(symbol, gross, BUY)
+	}
+
+	if total == nil || gross == nil {
+		return nil, errnie.Error(errnie.Err(errnie.Validation, "price: fee calculation failed for "+symbol, nil))
+	}
+
+	entryFee := total.Sub(gross)
+	exitFactor := price.WithFee(symbol, decimalOne, SELL)
+
+	if exitFactor == nil {
+		return nil, errnie.Error(errnie.Err(errnie.NotFound, "price: exit factor unavailable for "+symbol, nil))
+	}
+
+	breakEvenGross := total.Div(exitFactor)
+	exitFee := breakEvenGross.Sub(total)
+
+	cost = &EntryCost{
+		Total:              total,
+		Quantity:           qNorm,
+		EntryPrice:         askPrice,
+		BestAsk:            askPrice,
+		GrossNotional:      gross,
+		EntryFee:           entryFee,
+		ExitFeeAtBreakEven: exitFee,
+		RoundTripFees:      entryFee.Add(exitFee),
+		BreakEven:          breakEvenGross.Div(qNorm),
+	}
+
+	return cost, nil
+}
+
+/*
+Liquidate prices a full liquidation of the exact quantity against bid depth.
+It returns net proceeds (after exit fee), gross proceeds, and any execution error.
+*/
+func (price *Price) Liquidate(
+	symbol string,
+	quantity *decimal.Decimal,
+	fallbackBid ...*decimal.Decimal,
+) (*decimal.Decimal, *decimal.Decimal, error) {
+	if price == nil {
+		return nil, nil, errnie.Error(errnie.Err(errnie.Validation, "price: price system required", nil))
+	}
+
+	if quantity == nil || quantity.Sign() <= 0 {
+		return nil, nil, errnie.Error(errnie.Err(errnie.Validation, "price: positive quantity required to liquidate", nil))
+	}
+
+	var net *decimal.Decimal
+	var gross *decimal.Decimal
+	var err error
+
+	if price.Books != nil {
+		price.Books.Book(symbol, func(book *spotbook.Book) {
+			if book == nil || book.BestBid() == nil || book.BestAsk() == nil {
+				err = errnie.Err(errnie.NotFound, "price: book unavailable for "+symbol, nil)
+				return
+			}
+
+			if book.BestBid().Price.Cmp(book.BestAsk().Price) >= 0 {
+				price.recordAnomaly(symbol, AnomalyCrossedBook)
+				err = errnie.Err(errnie.UnprocessableContent, "price: crossed book for "+symbol, nil)
+				return
+			}
+
+			price.recordClean(symbol)
+
+			filled, g, walkErr := price.Walk(book, quantity, SELL)
+
+			if walkErr != nil {
+				if errnie.IsUnprocessableContent(walkErr) {
+					price.recordAnomaly(symbol, AnomalyInsufficientDepth)
+				}
+
+				err = walkErr
+				return
+			}
+
+			if filled == nil || filled.Sign() <= 0 {
+				err = errnie.Err(errnie.Validation, "price: zero fill during liquidation for "+symbol, nil)
+				return
+			}
+
+			gross = g
+			net = price.WithFee(symbol, gross, SELL)
+		})
+	}
+
+	if net != nil && gross != nil {
+		return net, gross, nil
+	}
+
+	if err != nil && !errnie.IsNotFound(err) {
+		return nil, nil, reported(err)
+	}
+
+	var bidPrice *decimal.Decimal
+
+	if len(fallbackBid) > 0 && fallbackBid[0] != nil && fallbackBid[0].Sign() > 0 {
+		bidPrice = fallbackBid[0]
+	}
+
+	if bidPrice == nil {
+		if tick := price.Tick(symbol); tick != nil && tick.Bid != nil && tick.Bid.Sign() > 0 {
+			bidPrice = tick.Bid
+		}
+	}
+
+	if bidPrice == nil {
+		return nil, nil, errnie.Error(errnie.Err(errnie.NotFound, "price: no book or bid price available for "+symbol, nil))
+	}
+
+	gross = notional(bidPrice, quantity)
+	net = price.WithFee(symbol, gross, SELL)
+
+	if net == nil {
+		return nil, nil, errnie.Error(errnie.Err(errnie.NotFound, "price: exit fee unavailable for "+symbol, nil))
+	}
+
+	return net, gross, nil
 }
 
 /*

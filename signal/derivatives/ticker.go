@@ -61,7 +61,7 @@ func (ticker *Ticker) pipelineFor(symbol string) core.Primitive {
 				},
 				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
 					if out.HasPrior {
-						m.WriteMetric("open_interest_growth_zscore", out.ZScore)
+						m.WriteStandardized("open_interest_growth_zscore", out.ZScore)
 					}
 				},
 			),
@@ -75,7 +75,7 @@ func (ticker *Ticker) pipelineFor(symbol string) core.Primitive {
 				},
 				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
 					if out.HasPrior {
-						m.WriteMetric("return_gap_zscore", out.ZScore)
+						m.WriteStandardized("return_gap_zscore", out.ZScore)
 					}
 				},
 			),

@@ -142,7 +142,7 @@ func (ticker *Ticker) pipelineFor(symbol string) core.Primitive {
 							}
 						}
 
-						m.WriteMetric("spread_zscore", out.ZScore)
+						m.WriteStandardized("spread_zscore", out.ZScore)
 						if out.VarianceDefined {
 							m.SetMetadata(data.MetadataNoiseVariance, strconv.FormatFloat(out.Variance, 'f', -1, 64))
 						}
