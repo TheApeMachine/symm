@@ -14,7 +14,7 @@ import (
 
 func TestDetectorConfirmBeforeRecord(t *testing.T) {
 	Convey("Given a calm tape and a sustained move", t, func() {
-		detector := NewDetector(priced(t, "BTC/USD", 0.001))
+		detector := NewDetector(priced(t, "BTC/USD", 0.1))
 		emitted := map[int64]bool{}
 		var records []*tables.ExcursionRecord
 
@@ -42,7 +42,7 @@ func TestDetectorConfirmBeforeRecord(t *testing.T) {
 
 func TestDetectorFeeGates(t *testing.T) {
 	Convey("Given an up move smaller than the fee", t, func() {
-		detector := NewDetector(priced(t, "BTC/USD", 0.02))
+		detector := NewDetector(priced(t, "BTC/USD", 2.0))
 		var records []*tables.ExcursionRecord
 
 		for seq, mid := range calmThenSmallRise() {
@@ -62,29 +62,24 @@ func TestDetectorFeeGates(t *testing.T) {
 	Convey("Given a missing fee", t, func() {
 		detector := NewDetector(broker.NewPrice(context.Background(), nil, nil, nil))
 		var emitted *tables.ExcursionRecord
-		var failed error
 
 		for seq, mid := range calmThenRise() {
 			record, err := detector.Observe(quoteAt("BTC/USD", int64(seq+1), mid))
-
-			if err != nil {
-				failed = err
-			}
+			So(err, ShouldBeNil)
 
 			if record != nil {
 				emitted = record
 			}
 		}
 
-		So(failed, ShouldNotBeNil)
 		So(emitted, ShouldBeNil)
-		So(detector.Error(), ShouldNotBeNil)
+		So(detector.Error(), ShouldBeNil)
 	})
 }
 
 func TestDetectorDownChopFlatAndDuplicates(t *testing.T) {
 	Convey("Given a downward move", t, func() {
-		detector := NewDetector(priced(t, "BTC/USD", 0.001))
+		detector := NewDetector(priced(t, "BTC/USD", 0.1))
 		records := collect(detector, "BTC/USD", calmThenDrop())
 
 		So(len(records), ShouldEqual, 1)
@@ -93,7 +88,7 @@ func TestDetectorDownChopFlatAndDuplicates(t *testing.T) {
 	})
 
 	Convey("Given both sides leave the calm and the long does not clear", t, func() {
-		detector := NewDetector(priced(t, "BTC/USD", 0.02))
+		detector := NewDetector(priced(t, "BTC/USD", 2.0))
 		record := firstRecord(detector, "BTC/USD", calmThenChop())
 
 		So(record, ShouldNotBeNil)
@@ -102,7 +97,7 @@ func TestDetectorDownChopFlatAndDuplicates(t *testing.T) {
 	})
 
 	Convey("Given a completed impulse followed by a longer calm", t, func() {
-		detector := NewDetector(priced(t, "BTC/USD", 0.001))
+		detector := NewDetector(priced(t, "BTC/USD", 0.1))
 		mids := calmThenRise()
 		impulse, used := untilRecord(detector, "BTC/USD", mids)
 
@@ -126,7 +121,7 @@ func TestDetectorDownChopFlatAndDuplicates(t *testing.T) {
 	})
 
 	Convey("Given a repeated sequence", t, func() {
-		detector := NewDetector(priced(t, "BTC/USD", 0.001))
+		detector := NewDetector(priced(t, "BTC/USD", 0.1))
 		frame := quoteAt("BTC/USD", 1, 100)
 		_, err := detector.Observe(frame)
 		So(err, ShouldBeNil)
@@ -136,8 +131,8 @@ func TestDetectorDownChopFlatAndDuplicates(t *testing.T) {
 	})
 
 	Convey("Given two symbols on one detector", t, func() {
-		detector := NewDetector(priced(t, "BTC/USD", 0.001))
-		detector.price.SetFee("ETH/USD", kraken.TradeVolumeFee{Fee: decimal.NewFromFloat64(0.001)})
+		detector := NewDetector(priced(t, "BTC/USD", 0.1))
+		detector.price.SetFee("ETH/USD", kraken.TradeVolumeFee{Fee: decimal.NewFromFloat64(0.1)})
 		btc := collect(detector, "BTC/USD", calmThenRise())
 		eth := collect(detector, "ETH/USD", calmThenDrop())
 
@@ -260,4 +255,82 @@ func ramp(start float64, step float64, count int) []float64 {
 	}
 
 	return mids
+}
+
+func TestDecimalRatioAvoidsDivPanic(t *testing.T) {
+	Convey("Given a scale-mismatched Decimal.Div that panics", t, func() {
+		// NewFromFloat64(100) has scale 0; 1e-7 SetScale(0) rounds to 0 and
+		// Decimal.Div panics inside BankersRound even though Sign() != 0.
+		num := decimal.NewFromFloat64(100.0)
+		den := decimal.NewFromFloat64(1e-7)
+
+		So(func() { _ = num.Sub(den).Div(den) }, ShouldPanic)
+
+		ratio, ok := decimalRatio(num.Sub(den), den)
+		So(ok, ShouldBeTrue)
+		So(ratio, ShouldBeGreaterThan, 0)
+	})
+
+	Convey("Given a zero divisor", t, func() {
+		num := decimal.NewFromInt64(1)
+		den := decimal.NewFromInt64(0)
+		ratio, ok := decimalRatio(num, den)
+		So(ok, ShouldBeFalse)
+		So(ratio, ShouldEqual, 0)
+	})
+}
+
+func TestRecordRejectsNonPositiveReference(t *testing.T) {
+	Convey("Given a resolved path with a zero prior mean", t, func() {
+		ask := decimal.NewFromFloat64(100.1)
+		bid := decimal.NewFromFloat64(99.9)
+		fee := decimal.NewFromFloat64(0.001)
+		path := &series{
+			symbol:    "BTC/USD",
+			priorMean: 0,
+			entryAsk:  ask,
+			highMid:   110,
+			lowMid:    90,
+			highBid:   bid,
+			lowAsk:    ask,
+			highTick:  10,
+			lowTick:   8,
+			anchor:    5,
+			precursor: 1,
+			openCount: 4,
+		}
+		one := decimal.NewFromInt64(1)
+		cost := ask.Mul(one.Add(fee))
+		proceeds := bid.Mul(one.Sub(fee))
+		seen := quote{symbol: "BTC/USD", seq: 20, bid: bid, ask: ask, mid: 100}
+
+		So(func() {
+			_, err := path.record(seen, fee, cost, proceeds, "up", true, false)
+			So(err, ShouldNotBeNil)
+		}, ShouldNotPanic)
+	})
+
+	Convey("Given a zero cost", t, func() {
+		ask := decimal.NewFromFloat64(100.1)
+		bid := decimal.NewFromFloat64(99.9)
+		fee := decimal.NewFromFloat64(0.001)
+		path := &series{
+			symbol:    "BTC/USD",
+			priorMean: 100,
+			highMid:   110,
+			highBid:   bid,
+			highTick:  10,
+			anchor:    5,
+			precursor: 1,
+			openCount: 4,
+		}
+		seen := quote{symbol: "BTC/USD", seq: 20, bid: bid, ask: ask, mid: 100}
+		cost := decimal.NewFromInt64(0)
+		proceeds := bid
+
+		So(func() {
+			_, err := path.record(seen, fee, cost, proceeds, "up", false, false)
+			So(err, ShouldNotBeNil)
+		}, ShouldNotPanic)
+	})
 }

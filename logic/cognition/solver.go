@@ -215,28 +215,20 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 			measurement.Maturity = 1.0 - 1.0/float64(reading.NodeCount)
 		}
 
-		if m, ok := measurement.LookupMetric("contrast"); ok {
-			measurement.SetMetric("contrast", m.Write(reading.Contrast))
-		}
+		// Live workspace slots are not seeded from Register(); write readings
+		// unconditionally so training.grid.Update / LitRegions see them.
+		measurement.WriteMetric("contrast", reading.Contrast)
+		measurement.WriteMetric("surprisal", reading.InterpolatedSurprisal)
+		measurement.WriteMetric("stability", reading.Confidence)
 
-		if m, ok := measurement.LookupMetric("surprisal"); ok {
-			measurement.SetMetric("surprisal", m.Write(reading.InterpolatedSurprisal))
+		ambiguityVal := 0.0
+		if reading.Ambiguous {
+			ambiguityVal = 1.0
 		}
-
-		if m, ok := measurement.LookupMetric("stability"); ok {
-			measurement.SetMetric("stability", m.Write(reading.Confidence))
+		if reading.EntropyBits != nil {
+			ambiguityVal = *reading.EntropyBits
 		}
-
-		if m, ok := measurement.LookupMetric("ambiguity"); ok {
-			ambiguityVal := 0.0
-			if reading.Ambiguous {
-				ambiguityVal = 1.0
-			}
-			if reading.EntropyBits != nil {
-				ambiguityVal = *reading.EntropyBits
-			}
-			measurement.SetMetric("ambiguity", m.Write(ambiguityVal))
-		}
+		measurement.WriteMetric("ambiguity", ambiguityVal)
 	}
 
 	if len(results) == 0 {

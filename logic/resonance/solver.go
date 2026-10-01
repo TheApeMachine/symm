@@ -261,6 +261,9 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 		}
 	}
 
+	// Resonance owns this observation's published artifact for the UI tee.
+	measurement.Source = "resonance"
+
 	return measurement
 }
 

@@ -4,201 +4,87 @@ import {
 	type FluidParticleFrame,
 	type FluidPhase,
 } from "./wire";
-import { hubBaseUrl } from "#/lib/hub";
+import { onlineAtom } from "#/collections/app";
+import { subscribeManifold } from "#/providers/websocket";
 
-const manifoldChannel = "manifold";
+export type FluidFeedState = "connecting" | "connected" | "disconnected";
 
 export type FluidFeedHandlers = {
 	onFields: (fields: FluidFields) => void;
 	onParticles: (particles: FluidParticleFrame) => void;
 	onPhase: (phase: FluidPhase) => void;
-	onState: (state: RTCPeerConnectionState | "connecting") => void;
+	onState: (state: FluidFeedState) => void;
 	onError: (error: Error) => void;
-};
-
-const signalingURL = () => {
-	if (import.meta.env.VITE_SYMM_WEBRTC_URL?.trim()) {
-		return import.meta.env.VITE_SYMM_WEBRTC_URL.trim();
-	}
-	return `${hubBaseUrl()}/webrtc/manifold`;
-};
-
-const waitForIceGathering = (connection: RTCPeerConnection) => {
-	if (connection.iceGatheringState === "complete") {
-		return Promise.resolve();
-	}
-
-	return new Promise<void>((resolve) => {
-		const onState = () => {
-			if (connection.iceGatheringState !== "complete") {
-				return;
-			}
-
-			connection.removeEventListener("icegatheringstatechange", onState);
-			resolve();
-		};
-
-		connection.addEventListener("icegatheringstatechange", onState);
-	});
 };
 
 const errorValue = (value: unknown) =>
 	value instanceof Error ? value : new Error(String(value));
 
 /*
-FluidWebRTCFeed owns one peer connection carrying the manifold channel and
-decodes each ManifoldFrame once into the fields/particles/phase views the
-viewer paints.
+FluidManifoldFeed consumes ManifoldFrame payloads from the hub WebSocket
+(uiTee → /ws). It does not open WebRTC or POST /webrtc/manifold.
 */
-const RECONNECT_BASE_MS = 500;
-const RECONNECT_MAX_MS = 5_000;
-const TERMINAL_CONNECTION_STATES: ReadonlySet<RTCPeerConnectionState> = new Set(
-	["failed", "disconnected", "closed"],
-);
-
-export class FluidWebRTCFeed {
-	private connection: RTCPeerConnection | null = null;
+export class FluidManifoldFeed {
 	private disposed = false;
-	private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-	private reconnectAttempts = 0;
+	private unsubscribe: (() => void) | null = null;
+	private unsubscribeOnline: (() => void) | null = null;
 
 	constructor(private readonly handlers: FluidFeedHandlers) {}
 
-	private scheduleReconnect() {
-		if (this.disposed || this.reconnectTimer !== null) {
-			return;
-		}
-
-		const delay = Math.min(
-			RECONNECT_BASE_MS * 2 ** this.reconnectAttempts,
-			RECONNECT_MAX_MS,
-		);
-		this.reconnectAttempts += 1;
-		this.handlers.onState("connecting");
-
-		this.reconnectTimer = setTimeout(() => {
-			this.reconnectTimer = null;
-			void this.connect();
-		}, delay);
-	}
-
-	async connect() {
+	connect() {
 		if (this.disposed) {
 			return;
 		}
 
-		this.destroyConnection();
-		this.handlers.onState("connecting");
-		const connection = new RTCPeerConnection({
-			iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
-		});
-		this.connection = connection;
+		this.handlers.onState(
+			onlineAtom.get() === "ONLINE" ? "connected" : "connecting",
+		);
 
-		connection.addEventListener("connectionstatechange", () => {
-			if (this.connection !== connection) {
+		const onlineSub = onlineAtom.subscribe((status) => {
+			if (this.disposed) {
 				return;
 			}
 
-			this.handlers.onState(connection.connectionState);
-
-			if (connection.connectionState === "connected") {
-				this.reconnectAttempts = 0;
+			if (status === "ONLINE") {
+				this.handlers.onState("connected");
+				return;
 			}
 
-			if (TERMINAL_CONNECTION_STATES.has(connection.connectionState)) {
-				this.scheduleReconnect();
+			if (status === "CONNECTING") {
+				this.handlers.onState("connecting");
+				return;
 			}
-		});
 
-		const channel = connection.createDataChannel(manifoldChannel, {
-			ordered: false,
-			maxRetransmits: 0,
+			this.handlers.onState("disconnected");
 		});
-		channel.binaryType = "arraybuffer";
-		channel.addEventListener("open", () => {
-			console.log("[FluidRTC] data channel opened:", channel.label);
-			this.reconnectAttempts = 0;
-		});
-		channel.addEventListener("close", () => {
-			console.log("[FluidRTC] data channel closed:", channel.label);
-			this.scheduleReconnect();
-		});
-		channel.addEventListener("error", (event) => {
-			console.error("[FluidRTC] data channel error:", event);
-		});
+		this.unsubscribeOnline = () => onlineSub.unsubscribe();
 
-		channel.addEventListener("message", (event) => {
+		this.unsubscribe = subscribeManifold((bytes) => {
+			if (this.disposed) {
+				return;
+			}
+
 			try {
-				if (!(event.data instanceof ArrayBuffer)) {
-					throw new Error(`${channel.label} received a non-binary message`);
-				}
-
-				const { fields, particles, phase } = decodeManifold(
-					new Uint8Array(event.data),
-				);
+				const { fields, particles, phase } = decodeManifold(bytes);
 				this.handlers.onFields(fields);
 				this.handlers.onParticles(particles);
 				this.handlers.onPhase(phase);
+				this.handlers.onState("connected");
 			} catch (error) {
-				console.error("[FluidRTC] message error:", error);
 				this.handlers.onError(errorValue(error));
 			}
 		});
-
-		try {
-			await connection.setLocalDescription(await connection.createOffer());
-			await waitForIceGathering(connection);
-
-			if (this.connection !== connection) {
-				return;
-			}
-
-			const offer = connection.localDescription;
-
-			if (offer === null) {
-				throw new Error("fluid WebRTC offer has no local description");
-			}
-
-			const response = await fetch(signalingURL(), {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ type: offer.type, sdp: offer.sdp }),
-			});
-
-			if (!response.ok) {
-				throw new Error(
-					`fluid WebRTC signaling failed with ${response.status}`,
-				);
-			}
-
-			if (this.connection !== connection) {
-				return;
-			}
-
-			await connection.setRemoteDescription(await response.json());
-		} catch (error) {
-			if (this.connection === connection) {
-				this.handlers.onError(errorValue(error));
-				this.destroyConnection();
-				this.scheduleReconnect();
-			}
-		}
-	}
-
-	private destroyConnection() {
-		const connection = this.connection;
-		this.connection = null;
-		connection?.close();
 	}
 
 	close() {
 		this.disposed = true;
-
-		if (this.reconnectTimer !== null) {
-			clearTimeout(this.reconnectTimer);
-			this.reconnectTimer = null;
-		}
-
-		this.destroyConnection();
+		this.unsubscribe?.();
+		this.unsubscribe = null;
+		this.unsubscribeOnline?.();
+		this.unsubscribeOnline = null;
+		this.handlers.onState("disconnected");
 	}
 }
+
+/** @deprecated Prefer FluidManifoldFeed. */
+export class FluidWebRTCFeed extends FluidManifoldFeed {}

@@ -15,7 +15,7 @@ func TestTrainingSupervision(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		training := NewTraining(ctx, 1, priced(t, "BTC/USD", 0.001), NewTrader(ctx, nil, nil, nil), nil, nil)
+		training := NewTraining(ctx, 1, priced(t, "BTC/USD", 0.1), NewTrader(ctx, nil, nil, nil), nil, nil)
 		btc := regionFrame("BTC/USD", 1, 2)
 		eth := regionFrame("ETH/USD", 1, 4)
 		training.grid.Update(btc)
@@ -52,7 +52,7 @@ func TestTrainingPaperWaitsForSkill(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		training := NewTraining(ctx, 1, priced(t, "BTC/USD", 0.001), NewTrader(ctx, nil, nil, nil), nil, nil)
+		training := NewTraining(ctx, 1, priced(t, "BTC/USD", 0.1), NewTrader(ctx, nil, nil, nil), nil, nil)
 		frame := regionFrame("BTC/USD", 1, 3)
 		training.grid.Update(frame)
 		training.grid.Settle()
@@ -90,7 +90,7 @@ func TestTrainingCheckpointBlocksSupervision(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		training := NewTraining(ctx, 1, priced(t, "BTC/USD", 0.001), nil, nil, nil)
+		training := NewTraining(ctx, 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
 		frame := regionFrame("BTC/USD", 2, 1)
 		training.grid.Update(frame)
 		training.frames["BTC/USD"] = []*data.Measurement[float64]{frame}

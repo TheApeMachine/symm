@@ -43,6 +43,24 @@ export const sendRoute = (route: string) => {
 	});
 };
 
+
+type ManifoldListener = (bytes: Uint8Array) => void;
+const manifoldListeners = new Set<ManifoldListener>();
+
+export const subscribeManifold = (listener: ManifoldListener) => {
+	manifoldListeners.add(listener);
+	return () => {
+		manifoldListeners.delete(listener);
+	};
+};
+
+const publishManifold = (bytes: Uint8Array) => {
+	for (const listener of manifoldListeners) {
+		listener(bytes);
+	}
+};
+
+
 const defaultWsUrl = () => {
 	if (typeof window === "undefined") return "ws://127.0.0.1:8765/ws";
 	const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -102,6 +120,25 @@ export function dispatchMeasurements(frame: MeasurementsFrame) {
 		signals[source]?.setState((prev) => ({ ...prev }));
 	}
 }
+
+
+/*
+dispatchMeasurementsBuffer accepts a FlatBuffer ByteBuffer that is either a
+SYMM Message wrapping MeasurementsFrame or a bare MeasurementsFrame root.
+*/
+export const dispatchMeasurementsBuffer = (buffer: flatbuffers.ByteBuffer) => {
+	if (Message.bufferHasIdentifier(buffer)) {
+		const message = Message.getRootAsMessage(buffer);
+		const frame = message.frame(new MeasurementsFrame());
+		if (frame) {
+			dispatchMeasurements(frame);
+		}
+		return;
+	}
+
+	const frame = MeasurementsFrame.getRootAsMeasurementsFrame(buffer);
+	dispatchMeasurements(frame);
+};
 
 export const WsFeed = () => {
 	useEffect(() => {
@@ -183,6 +220,11 @@ export const WsFeed = () => {
 								const decisions = strategyFrame.unpack().decisions;
 								decisionsAtom.set(decisions);
 							}
+							return;
+						}
+
+						if (frameType === Frame.ManifoldFrame) {
+							publishManifold(bytes);
 							return;
 						}
 					}

@@ -220,3 +220,34 @@ func TestSolverStepEmptyBatch(t *testing.T) {
 		So(solver.Error(), ShouldBeNil)
 	})
 }
+
+func TestStepWritesMetricsWithoutRegister(t *testing.T) {
+	Convey("Given a live measurement without Register templates", t, func() {
+		solver := NewSolver(t.Context())
+		solver.Transition(runtime.READY)
+
+		measurement := data.NewMeasurement[float64]("websocket", nil)
+		category := data.NewMeasurement[float64]("category", nil)
+		category.Result = [][]types.Category{{
+			{
+				Type:       types.OrganicTrend,
+				Confidence: 0.91,
+				Strength:   1,
+				Symbol:     "BTC/USD",
+				At:         time.Unix(10, 0),
+			},
+		}}
+		measurement.Peers = []*data.Measurement[float64]{category}
+
+		out := solver.Step(measurement)
+		So(out, ShouldNotBeNil)
+		_, ok := out.LookupMetric("contrast")
+		So(ok, ShouldBeTrue)
+		_, ok = out.LookupMetric("surprisal")
+		So(ok, ShouldBeTrue)
+		_, ok = out.LookupMetric("stability")
+		So(ok, ShouldBeTrue)
+		_, ok = out.LookupMetric("ambiguity")
+		So(ok, ShouldBeTrue)
+	})
+}

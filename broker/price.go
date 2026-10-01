@@ -3,6 +3,7 @@ package broker
 import (
 	"context"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -623,8 +624,54 @@ func (price *Price) FeeIfAvailable(symbol string) *kraken.TradeVolumeFee {
 	return &fee
 }
 
-/* GetFees normalizes the venue's fee keys once and publishes a complete batch. */
+/* GetFees normalizes fee keys once and requires a complete batch for symbols. */
 func (price *Price) GetFees(symbols []string) error {
+	result, err := price.loadFees(symbols)
+
+	if err != nil {
+		return err
+	}
+
+	if result == nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"price: trade volume result is required",
+			nil,
+		))
+	}
+
+	for symbol, fee := range result.Fees {
+		price.SetFee(symbol, fee)
+	}
+
+	missing := make([]string, 0)
+
+	for _, symbol := range symbols {
+		if price.FeeIfAvailable(symbol) == nil {
+			missing = append(missing, symbol)
+		}
+	}
+
+	if len(missing) > 0 {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"price: fees missing for "+strings.Join(missing, ","),
+			nil,
+		))
+	}
+
+	if price.Status() == runtime.WAITING {
+		price.Transition(runtime.READY)
+	}
+
+	return nil
+}
+
+func (price *Price) loadFees(symbols []string) (*kraken.TradeVolumeResult, error) {
+	if paper, ok := price.private.(*Paper); ok {
+		return paper.TradeVolume(symbols)
+	}
+
 	client := spot.NewREST()
 	client.PublicKey = os.Getenv("KRAKEN_API_KEY")
 	client.PrivateKey = os.Getenv("KRAKEN_API_SECRET")
@@ -638,28 +685,28 @@ func (price *Price) GetFees(symbols []string) error {
 		Path:   system.Cfg.WebSocket.Endpoints.TradeVolume,
 		Body:   kraken.NewTradeVolumeRequest(symbols),
 	})
+
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	resp, err := req.Do()
+
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	result := kraken.NewTradeVolume(resp.Body)
+
 	if result == nil {
-		return errnie.Err(errnie.Internal, "failed to decode trade volume", nil)
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"failed to decode trade volume",
+			nil,
+		))
 	}
 
-	for symbol, fee := range result.Fees {
-		price.SetFee(symbol, fee)
-	}
-
-	if price.Status() == runtime.WAITING {
-		price.Transition(runtime.READY)
-	}
-	return nil
+	return result, nil
 }
 
 /* WithFee applies the symbol's taker fee in the requested direction. */

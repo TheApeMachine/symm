@@ -262,69 +262,39 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 		return measurement
 	}
 
-	if m, ok := measurement.LookupMetric("divergence"); ok {
-		measurement.SetMetric("divergence", m.Write(reading.Reading.Divergence))
+	measurement.WriteMetric("divergence", reading.Reading.Divergence)
+
+	measurement.WriteMetric("guidance_speed", reading.Reading.GuidanceSpeed)
+
+	measurement.WriteMetric("coherence_mag2", reading.Reading.CoherenceMag2)
+
+	measurement.WriteMetric("pressure_grad_norm", reading.Reading.PressureGradNorm)
+
+	measurement.WriteMetric("viscosity_proxy", reading.Reading.ViscosityProxy)
+
+	measurement.WriteMetric("kuramoto_r", reading.Reading.KuramotoR)
+
+	measurement.WriteMetric("kuramoto_psi", reading.Reading.KuramotoPsi)
+
+	measurement.WriteMetric("gas_kinetic", reading.Reading.Health.Gas.Kinetic)
+
+	measurement.WriteMetric("gas_internal", reading.Reading.Health.Gas.Internal)
+
+	measurement.WriteMetric("wave_norm", reading.Reading.Health.Wave.Norm)
+
+	measurement.WriteMetric("vorticity_rms", reading.Reading.Health.Gas.VorticityRMS)
+
+	measurement.WriteMetric("strain_rms", reading.Reading.Health.Gas.StrainRMS)
+
+	measurement.WriteMetric("max_mach", reading.Reading.Health.Gas.MaxMach)
+
+	if reading.State != nil {
+		measurement.WriteMetric("particle_count", float64(reading.State.N))
 	}
 
-	if m, ok := measurement.LookupMetric("guidance_speed"); ok {
-		measurement.SetMetric("guidance_speed", m.Write(reading.Reading.GuidanceSpeed))
-	}
+	measurement.WriteMetric("particle_thermal", reading.Reading.Health.ParticleThermal)
 
-	if m, ok := measurement.LookupMetric("coherence_mag2"); ok {
-		measurement.SetMetric("coherence_mag2", m.Write(reading.Reading.CoherenceMag2))
-	}
-
-	if m, ok := measurement.LookupMetric("pressure_grad_norm"); ok {
-		measurement.SetMetric("pressure_grad_norm", m.Write(reading.Reading.PressureGradNorm))
-	}
-
-	if m, ok := measurement.LookupMetric("viscosity_proxy"); ok {
-		measurement.SetMetric("viscosity_proxy", m.Write(reading.Reading.ViscosityProxy))
-	}
-
-	if m, ok := measurement.LookupMetric("kuramoto_r"); ok {
-		measurement.SetMetric("kuramoto_r", m.Write(reading.Reading.KuramotoR))
-	}
-
-	if m, ok := measurement.LookupMetric("kuramoto_psi"); ok {
-		measurement.SetMetric("kuramoto_psi", m.Write(reading.Reading.KuramotoPsi))
-	}
-
-	if m, ok := measurement.LookupMetric("gas_kinetic"); ok {
-		measurement.SetMetric("gas_kinetic", m.Write(reading.Reading.Health.Gas.Kinetic))
-	}
-
-	if m, ok := measurement.LookupMetric("gas_internal"); ok {
-		measurement.SetMetric("gas_internal", m.Write(reading.Reading.Health.Gas.Internal))
-	}
-
-	if m, ok := measurement.LookupMetric("wave_norm"); ok {
-		measurement.SetMetric("wave_norm", m.Write(reading.Reading.Health.Wave.Norm))
-	}
-
-	if m, ok := measurement.LookupMetric("vorticity_rms"); ok {
-		measurement.SetMetric("vorticity_rms", m.Write(reading.Reading.Health.Gas.VorticityRMS))
-	}
-
-	if m, ok := measurement.LookupMetric("strain_rms"); ok {
-		measurement.SetMetric("strain_rms", m.Write(reading.Reading.Health.Gas.StrainRMS))
-	}
-
-	if m, ok := measurement.LookupMetric("max_mach"); ok {
-		measurement.SetMetric("max_mach", m.Write(reading.Reading.Health.Gas.MaxMach))
-	}
-
-	if m, ok := measurement.LookupMetric("particle_count"); ok && reading.State != nil {
-		measurement.SetMetric("particle_count", m.Write(float64(reading.State.N)))
-	}
-
-	if m, ok := measurement.LookupMetric("particle_thermal"); ok {
-		measurement.SetMetric("particle_thermal", m.Write(reading.Reading.Health.ParticleThermal))
-	}
-
-	if m, ok := measurement.LookupMetric("particle_kinetic"); ok {
-		measurement.SetMetric("particle_kinetic", m.Write(reading.Reading.Health.ParticleKinetic))
-	}
+	measurement.WriteMetric("particle_kinetic", reading.Reading.Health.ParticleKinetic)
 
 	if reading.State != nil && reading.State.N > 1 {
 		measurement.Maturity = 1.0 - 1.0/float64(reading.State.N)

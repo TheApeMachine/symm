@@ -173,11 +173,8 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 
 		for _, cat := range categories {
 			if cat.Type != "" {
-				name := string(cat.Type)
-
-				if m, ok := measurement.LookupMetric(name); ok {
-					measurement.SetMetric(name, m.Write(cat.Confidence))
-				}
+				// Register() templates are not applied on live disruptor slots.
+				measurement.WriteMetric(string(cat.Type), cat.Confidence)
 			}
 		}
 	}

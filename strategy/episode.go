@@ -2,6 +2,7 @@ package strategy
 
 import (
 	"math"
+	"math/big"
 	"strconv"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
@@ -85,9 +86,9 @@ func (detector *Detector) Error() error {
 
 /*
 Observe accepts one measurement. Quotes without both sides, non-positive
-prices, a crossed book, or a repeated sequence produce no record. A fee that
-is missing or negative when an episode would resolve is an error, and that
-episode is not emitted.
+prices, a crossed book, or a repeated sequence produce no record. A missing
+fee leaves the episode unresolved until the fee surface has it; a negative
+fee is an error and that episode is not emitted.
 */
 func (detector *Detector) Observe(measurement *data.Measurement[float64]) (*tables.ExcursionRecord, error) {
 	if detector == nil {
@@ -258,6 +259,10 @@ func (path *series) finish(detector *Detector, seen quote) (*tables.ExcursionRec
 		return nil, err
 	}
 
+	if fee == nil {
+		return nil, nil
+	}
+
 	record, err := path.classify(seen, fee)
 
 	if err != nil {
@@ -273,7 +278,7 @@ func (path *series) finish(detector *Detector, seen quote) (*tables.ExcursionRec
 }
 
 func (path *series) classify(seen quote, fee *decimal.Decimal) (*tables.ExcursionRecord, error) {
-	if path.priorMean <= 0 || path.entryAsk == nil || seen.bid == nil {
+	if !positiveFinite(path.priorMean) || path.entryAsk == nil || seen.bid == nil {
 		return nil, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"episode: resolved quote has no executable price",
@@ -313,7 +318,7 @@ func (path *series) classify(seen quote, fee *decimal.Decimal) (*tables.Excursio
 		return nil, nil
 	}
 
-	return path.record(seen, fee, cost, proceeds, direction, friction, false), nil
+	return path.record(seen, fee, cost, proceeds, direction, friction, false)
 }
 
 func (path *series) maybeFlat(detector *Detector, seen quote) (*tables.ExcursionRecord, error) {
@@ -331,7 +336,11 @@ func (path *series) maybeFlat(detector *Detector, seen quote) (*tables.Excursion
 		return nil, err
 	}
 
-	if path.calmEntryAsk == nil || seen.bid == nil || path.baseline.Mean <= 0 {
+	if fee == nil {
+		return nil, nil
+	}
+
+	if path.calmEntryAsk == nil || seen.bid == nil || !positiveFinite(path.baseline.Mean) {
 		path.regimeStart = seen.seq
 		path.calmCount = 1
 
@@ -345,7 +354,16 @@ func (path *series) maybeFlat(detector *Detector, seen quote) (*tables.Excursion
 	one := decimal.NewFromInt64(1)
 	cost := path.calmEntryAsk.Mul(one.Add(fee))
 	proceeds := seen.bid.Mul(one.Sub(fee))
-	record := path.record(seen, fee, cost, proceeds, "flat", false, true)
+	record, err := path.record(seen, fee, cost, proceeds, "flat", false, true)
+
+	if err != nil {
+		detector.err = err
+		path.regimeStart = seen.seq
+		path.calmCount = 1
+
+		return nil, err
+	}
+
 	path.regimeStart = seen.seq
 	path.calmCount = 1
 	path.calmEntryAsk = seen.ask
@@ -367,7 +385,7 @@ func (path *series) record(
 	direction string,
 	friction bool,
 	flat bool,
-) *tables.ExcursionRecord {
+) (*tables.ExcursionRecord, error) {
 	anchor := path.anchor
 	precursor := path.precursor
 	extremumTick := path.highTick
@@ -396,15 +414,62 @@ func (path *series) record(
 		}
 	}
 
-	profit := proceeds.Sub(cost)
-	fraction := profit.Div(cost)
-	reference := decimal.NewFromFloat64(path.priorMean)
+	reference := path.priorMean
 
 	if flat {
-		reference = decimal.NewFromFloat64(path.baseline.Mean)
+		reference = path.baseline.Mean
 	}
 
-	gross := decimal.NewFromFloat64(extremeMid).Sub(reference).Div(reference)
+	// ProfitFraction and GrossExcursion are stored as float64. Computing them
+	// through Decimal.Div panics when the divisor's unscaled integer rounds to
+	// zero under the numerator's scale (krakenfx BankersRound QuoRem), even if
+	// Sign() is non-zero — common when NewFromFloat64 yields scale 0 for an
+	// integer-valued mid. Ratios stay honest: refuse non-positive / non-finite
+	// divisors rather than inventing a stand-in.
+	if cost == nil || cost.Sign() <= 0 {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"episode: cost is not a positive executable price",
+			nil,
+		))
+	}
+
+	if !positiveFinite(reference) || !finiteFloat(extremeMid) {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"episode: gross reference is not a positive finite price",
+			nil,
+		))
+	}
+
+	if extremumPrice == nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"episode: extremum price is missing",
+			nil,
+		))
+	}
+
+	profit := proceeds.Sub(cost)
+	fraction, ok := decimalRatio(profit, cost)
+
+	if !ok {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"episode: profit fraction is undefined",
+			nil,
+		))
+	}
+
+	gross := (extremeMid - reference) / reference
+
+	if !finiteFloat(gross) || !finiteFloat(fraction) {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"episode: excursion ratio is non-finite",
+			nil,
+		))
+	}
 
 	return &tables.ExcursionRecord{
 		ID:                 path.symbol + ":" + formatInt(anchor) + ":" + formatInt(seen.seq),
@@ -422,11 +487,11 @@ func (path *series) record(
 		PositionSize:       1,
 		Fee:                fee.Float64(),
 		Profit:             profit.Float64(),
-		ProfitFraction:     fraction.Float64(),
-		GrossExcursion:     gross.Float64(),
+		ProfitFraction:     fraction,
+		GrossExcursion:     gross,
 		ObservationCount:   int64(count),
 		Status:             "resolved",
-	}
+	}, nil
 }
 
 func (path *series) restart(seen quote, completed int) {
@@ -513,11 +578,7 @@ func (detector *Detector) fee(symbol string) (*decimal.Decimal, error) {
 	schedule := detector.price.FeeIfAvailable(symbol)
 
 	if schedule == nil || schedule.Fee == nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"episode: fee is not available for "+symbol,
-			nil,
-		))
+		return nil, nil
 	}
 
 	if schedule.Fee.Sign() < 0 {
@@ -528,7 +589,9 @@ func (detector *Detector) fee(symbol string) (*decimal.Decimal, error) {
 		))
 	}
 
-	return schedule.Fee, nil
+	// TradeVolumeFee.Fee is a percentage (Kraken / paper). Classification uses a fraction.
+	// Order matches broker.Price.WithFee: (1/100).Mul(fee). fee.Mul(1/100) truncates at scale 0.
+	return decimal.NewFromInt64(1).Div(decimal.NewFromInt64(100)).Mul(schedule.Fee), nil
 }
 
 func quoteFrom(measurement *data.Measurement[float64]) (quote, bool) {
@@ -567,6 +630,32 @@ func decimalPrice(metric data.Metric[float64]) *decimal.Decimal {
 	}
 
 	return decimal.NewFromFloat64(metric.Raw)
+}
+
+func positiveFinite(value float64) bool {
+	return value > 0 && finiteFloat(value)
+}
+
+func finiteFloat(value float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0)
+}
+
+/*
+decimalRatio returns num/den as float64 without Decimal.Div. Div panics when
+den.Sign() is non-zero but den rounds to a zero integer under num's scale.
+*/
+func decimalRatio(num *decimal.Decimal, den *decimal.Decimal) (float64, bool) {
+	if num == nil || den == nil || den.Sign() == 0 {
+		return 0, false
+	}
+
+	ratio, _ := new(big.Rat).Quo(num.Rat(), den.Rat()).Float64()
+
+	if !finiteFloat(ratio) {
+		return 0, false
+	}
+
+	return ratio, true
 }
 
 func formatInt(value int64) string {

@@ -190,6 +190,7 @@ var (
 
 			hub := ui.NewHub(ctx, catalog, uiTee)
 			hub.SetCognitionSource(training)
+			hub.SetPositionSource(trader)
 
 			hub.Run()
 			hub.Transition(nmruntime.READY)
@@ -413,17 +414,19 @@ var (
 							if t != nil && t.IsSuccess() {
 								for _, td := range t.Data {
 									metrics := map[string]data.Metric[float64]{
-										"price":  {Raw: td.Price.Float64(), Exact: &td.Price},
-										"volume": {Raw: td.Qty},
+										"price": {Raw: td.Price.Float64(), Exact: &td.Price},
+										// Pipelines (cvd/hawkes Gates) read qty + Provenance side.
+										"qty": {Raw: td.Qty},
 									}
 
 									m := data.NewMeasurement("websocket", metrics)
 									m.Label = td.Symbol
 									m.At = td.Timestamp
 									m.SetMetadata("type", "trade")
-									m.SetMetadata("side", td.Side)
 									m.SetMetadata("ord_type", td.OrderType)
 									m.SetMetadata("trade_id", fmt.Sprintf("%d", td.TradeID))
+									m.SetProvenance("channel", "trade")
+									m.SetProvenance("side", td.Side)
 
 									workspace.Step(m)
 								}

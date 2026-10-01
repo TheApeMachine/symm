@@ -16,7 +16,7 @@ import {
 } from "./phase-portrait";
 import { PhysicsDiagnosticsHUD } from "./physics-diagnostics";
 import { FluidScene, type FluidSceneOptions } from "./scene";
-import { FluidWebRTCFeed } from "./transport";
+import { FluidManifoldFeed, type FluidFeedState } from "./transport";
 import type { FluidGrid, FluidParticle, FluidPhaseReading } from "./wire";
 
 const initialOptions: FluidSceneOptions = {
@@ -112,10 +112,8 @@ Eulerian gas fields, and complex spatial wave field.
 export const FluidInspector = () => {
 	const viewportRef = useRef<HTMLDivElement>(null);
 	const sceneRef = useRef<FluidScene | null>(null);
-	const feedRef = useRef<FluidWebRTCFeed | null>(null);
-	const [state, setState] = useState<RTCPeerConnectionState | "connecting">(
-		"connecting",
-	);
+	const feedRef = useRef<FluidManifoldFeed | null>(null);
+	const [state, setState] = useState<FluidFeedState>("connecting");
 	const [error, setError] = useState<string | null>(null);
 	const [grid, setGrid] = useState<FluidGrid | null>(null);
 	const [particleCount, setParticleCount] = useState(0);
@@ -161,7 +159,7 @@ export const FluidInspector = () => {
 			return;
 		}
 
-		const feed = new FluidWebRTCFeed({
+		const feed = new FluidManifoldFeed({
 			onFields: (fields) => {
 				console.log("fields", fields);
 				scene.updateFields(fields);

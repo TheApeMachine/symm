@@ -149,10 +149,9 @@ const healthTable = new PhysicsHealth();
 const resultantObj = new PhaseResultantTable();
 
 /*
-decodeManifold reads one ManifoldFrame flatbuffer, exactly as
-logic/manifold.Solver.Step returned it and ui/webrtc.go's encodeManifold
-mirrored it, field for field. bytes is one complete WebRTC record payload
-(the FluidRecordReader already stripped the SFD1 record framing).
+decodeManifold reads one ManifoldFrame flatbuffer as published on the hub
+WebSocket (types.EncodeManifold → ui.UITee → /ws). bytes is one complete
+SYMM-identified Message carrying FrameManifoldFrame.
 */
 export const decodeManifold = (bytes: Uint8Array): FluidManifoldFrame => {
 	const buffer = new flatbuffers.ByteBuffer(bytes);

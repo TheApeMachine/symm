@@ -545,3 +545,36 @@ func TestSolverStepUnmeasured(t *testing.T) {
 		So(solver.Error(), ShouldBeNil)
 	})
 }
+
+func TestStepWritesCategoryMetricsWithoutRegister(t *testing.T) {
+	Convey("Given a live measurement without Register templates", t, func() {
+		solver := NewSolver(t.Context())
+		solver.Transition(runtime.READY)
+		at := time.Unix(1, 0)
+		m := data.NewMeasurement[float64]("websocket", nil)
+		m.Label, m.At, m.From = "BTC/USD", at, at
+
+		cvd := data.NewMeasurement[float64]("cvd", nil)
+		cvd.Label, cvd.At, cvd.From = "BTC/USD", at, at
+		cvd.Maturity = 1
+		cvd.SetMetric("signed_net_fraction_zscore", data.Metric[float64]{Label: "signed_net_fraction_zscore", Raw: 0.8})
+
+		hawkes := data.NewMeasurement[float64]("hawkes", nil)
+		hawkes.Label, hawkes.At, hawkes.From = "BTC/USD", at, at
+		hawkes.Maturity = 1
+		hawkes.SetMetric("arrival_rate", data.Metric[float64]{Label: "arrival_rate", Raw: 0.6})
+
+		m.Peers = []*data.Measurement[float64]{cvd, hawkes}
+		result := solver.Step(m)
+		So(result, ShouldNotBeNil)
+		So(solver.Error(), ShouldBeNil)
+
+		written := 0
+		for _, cat := range solver.categories {
+			if _, ok := result.LookupMetric(string(cat)); ok {
+				written++
+			}
+		}
+		So(written, ShouldBeGreaterThan, 0)
+	})
+}

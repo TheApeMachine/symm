@@ -62,12 +62,24 @@ func Filters(measurement *data.Measurement[float64]) bool {
 
 	switch Route() {
 	case "dashboard":
-		return isSignal(measurement) && isFocus(measurement)
+		if !isFocus(measurement) {
+			return false
+		}
+
+		return isSignal(measurement) || isLogic(measurement, "resonance", "category", "cognition")
 	case "learning":
 		return isStrategy(measurement, "training")
 	case "xray":
-		return isSignal(measurement, "hawkes")
+		if !isFocus(measurement) {
+			return false
+		}
+
+		return isSignal(measurement, "hawkes") || isLogic(measurement, "resonance")
 	case "fluid":
+		if _, ok := measurement.Result.(*ManifoldState); ok {
+			return true
+		}
+
 		return isLogic(measurement, "manifold")
 	default:
 		return false

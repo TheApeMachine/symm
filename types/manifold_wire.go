@@ -226,7 +226,7 @@ func EncodeManifold(manifold *ManifoldState) ([]byte, error) {
 	wire.MessageAddFrame(builder, manifoldOffset)
 	msgOffset := wire.MessageEnd(builder)
 	
-	builder.Finish(msgOffset)
+	builder.FinishWithFileIdentifier(msgOffset, []byte("SYMM"))
 
 	return append([]byte{}, builder.FinishedBytes()...), nil
 }

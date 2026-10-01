@@ -13,8 +13,8 @@ import (
 
 /*
 UITee is a concrete off-ramp that accepts *data.Measurement[float64]
-and yields encoded FlatBuffer []byte frames for the dashboard, as well as
-streaming fluid manifold frames over WebRTC.
+and yields encoded FlatBuffer []byte frames for the dashboard websocket,
+including ManifoldFrame payloads when a measurement carries a ManifoldState.
 It satisfies runtime.Tee[*data.Measurement[float64], []byte].
 */
 type UITee struct {
@@ -98,6 +98,43 @@ func (tee *UITee) Next() unsafe.Pointer {
 			break
 		}
 
+		dropped := false
+
+		for _, filter := range tee.filters {
+			if !filter(measurement) {
+				dropped = true
+				break
+			}
+		}
+
+		if dropped {
+			continue
+		}
+
+		if manifoldState, ok := measurement.Result.(*types.ManifoldState); ok {
+			payload, err := types.EncodeManifold(manifoldState)
+
+			if err != nil {
+				errnie.Error(errnie.Err(
+					errnie.UnprocessableContent,
+					"[tee] Failed to encode manifold",
+					err,
+				))
+				continue
+			}
+
+			if payload == nil {
+				continue
+			}
+
+			if len(batch) > 0 {
+				tee.queue.Enqueue(measurement)
+				break
+			}
+
+			return unsafe.Pointer(&payload)
+		}
+
 		batch = append(batch, measurement)
 	}
 
@@ -117,72 +154,9 @@ func (tee *UITee) Next() unsafe.Pointer {
 		return nil
 	}
 
+	if measurements == nil {
+		return nil
+	}
+
 	return unsafe.Pointer(&measurements)
-}
-
-type ManifoldTee struct {
-	*runtime.System
-	queue     *lf.Queue[*data.Measurement[float64]]
-	filters   []func(measurement *data.Measurement[float64]) bool
-}
-
-func NewManifoldTee(
-	ctx context.Context,
-	label string,
-	filters ...func(measurement *data.Measurement[float64]) bool,
-) *ManifoldTee {
-	if len(filters) == 0 {
-		filters = []func(*data.Measurement[float64]) bool{types.Filters}
-	}
-
-	tee := &ManifoldTee{
-		queue:     lf.NewQueue[*data.Measurement[float64]](),
-		filters:   filters,
-	}
-
-	tee.System = runtime.NewSystem(ctx, label, tee)
-	return tee
-}
-
-func (tee *ManifoldTee) Push(measurement *data.Measurement[float64]) {
-	if tee.Status() != runtime.READY {
-		return
-	}
-
-	if measurement == nil {
-		return
-	}
-
-	for _, filter := range tee.filters {
-		if !filter(measurement) {
-			return
-		}
-	}
-
-	tee.queue.Enqueue(measurement.Clone())
-}
-
-func (tee *ManifoldTee) Next() unsafe.Pointer {
-	if tee.Status() != runtime.READY {
-		return nil
-	}
-
-	// We only process one measurement at a time, since each one yields one manifold frame
-	measurement, ok := tee.queue.Dequeue()
-	if !ok || measurement == nil {
-		return nil
-	}
-
-	if measurement.Result == nil {
-		return nil
-	}
-
-	if manifoldState, ok := measurement.Result.(*types.ManifoldState); ok {
-		payload, err := types.EncodeManifold(manifoldState)
-		if err == nil && payload != nil {
-			return unsafe.Pointer(&payload)
-		}
-	}
-
-	return nil
 }
