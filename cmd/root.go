@@ -124,16 +124,28 @@ var (
 			public := network.NewWebsocketClient(ctx)
 			public.Open(system.Cfg.WebSocket.Endpoints.Public)
 
-			private := network.NewWebsocketClient(ctx)
-			private.Open(system.Cfg.WebSocket.Endpoints.Private)
-
 			futures := network.NewWebsocketClient(ctx)
 			futures.Open(system.Cfg.WebSocket.Endpoints.Futures)
 
+			var (
+				privateTransport broker.Transport
+				privateWS        *network.WebsocketClient
+			)
+
+			if system.Cfg.Market.Model == "paper" {
+				privateTransport = broker.NewPaper(ctx)
+			}
+
+			if privateTransport == nil {
+				privateWS = network.NewWebsocketClient(ctx)
+				privateWS.Open(system.Cfg.WebSocket.Endpoints.Private)
+				privateTransport = privateWS
+			}
+
 			instrument := broker.NewInstrument(public, futures)
 			book := broker.NewBook(ctx, spot.NewNormalizer())
-			price := broker.NewPrice(ctx, book, private, instrument)
-			balance := broker.NewBalance(ctx, private)
+			price := broker.NewPrice(ctx, book, privateTransport, instrument)
+			balance := broker.NewBalance(ctx, privateTransport)
 
 			if err := instrument.Error(); err != nil {
 				return errnie.Error(errnie.Err(
@@ -169,7 +181,7 @@ var (
 
 			errnie.Info("symm: initializing training and UI hub...")
 			storeTee := hindsight.NewStoreTee(ctx, "storeTee")
-			trader := strategy.NewTrader(ctx, private, price, balance)
+			trader := strategy.NewTrader(ctx, privateTransport, price, balance)
 
 			wh := workbench.New()
 			defer wh.Close()
@@ -189,14 +201,16 @@ var (
 
 			// webrtcTee was moved above
 
-			hub := ui.NewHub(ctx, trader, catalog, uiTee, webrtcTee)
-			hub.SetPositionSource(trader)
+			hub := ui.NewHub(ctx, catalog, uiTee, webrtcTee)
 			hub.SetCognitionSource(training)
 
 			hub.Run()
 			hub.Transition(nmruntime.READY)
 
-			manifoldSolver := manifold.NewSolver(ctx, public)
+			manifoldSolver := manifold.NewSolver(ctx, book)
+			book.SetNotify(func(symbol string, _ time.Time) {
+				manifoldSolver.Wake(symbol)
+			})
 			correlationTicker := correlation.NewTicker(ctx)
 			leadlagTicker := leadlag.NewTicker(ctx)
 			liquidityTicker := liquidity.NewTicker(ctx)
@@ -324,7 +338,12 @@ var (
 
 			// Every processing and off-ramp owner is ready before ingress opens.
 
-			for _, transport := range []nmruntime.RuntimeSystem{public, private, futures} {
+			transports := []nmruntime.RuntimeSystem{public, futures}
+			if privateSys, ok := privateTransport.(nmruntime.RuntimeSystem); ok {
+				transports = append(transports, privateSys)
+			}
+
+			for _, transport := range transports {
 				transport.Transition(nmruntime.READY)
 			}
 
@@ -436,7 +455,11 @@ var (
 			}
 
 			startIngress(public, "public")
-			startIngress(private, "private")
+
+			if privateWS != nil {
+				startIngress(privateWS, "private")
+			}
+
 			startIngress(futures, "futures")
 
 			instrument.Level3.Range(func(key, value any) bool {

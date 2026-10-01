@@ -186,18 +186,20 @@ func (trade *Trade) pipelineFor(symbol string) core.Primitive {
 Step supplies the arriving measurement to the pipeline and returns it: the
 measurement is the pipeline's state, enriched in place.
 */
-func (trade *Trade) Step(m *data.Measurement[float64]) *data.Measurement[float64] {
+func (trade *Trade) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
 	if trade.Status() != runtime.READY {
 		errnie.Warn(trade.Name() + ": Step called before READY; dropping event")
-		return m
+		return measurement
 	}
 
-	if m == nil || m.Err != nil {
-		return m
+	if measurement == nil || measurement.Err != nil {
+		return measurement
 	}
 
-	res := data.Read[*data.Measurement[float64]](trade.pipelineFor(m.Label).Next(
-		transport.NewOne(unsafe.Pointer(&m)).Next(nil),
+	measurement.Source = "pumpdump:trade"
+
+	res := data.Read[*data.Measurement[float64]](trade.pipelineFor(measurement.Label).Next(
+		transport.NewOne(unsafe.Pointer(&measurement)).Next(nil),
 	))
 
 	if res == nil {
@@ -207,33 +209,3 @@ func (trade *Trade) Step(m *data.Measurement[float64]) *data.Measurement[float64
 	res.Finalize()
 	return res
 }
-
-/*
-Register returns the measurement declaring this entity's full metric schema.
-Values are empty; the workload uses this at startup to allocate the metric
-schema before feeding streaming records.
-*/
-func (trade *Trade) Register() *data.Measurement[float64] {
-	m := data.NewMeasurement[float64]("pumpdump:trade", map[string]data.Metric[float64]{
-		"trade_price":                  data.NewMetric[float64]("trade_price", data.UnitRate, data.TimescaleInstantaneous, 0, 0),
-		"trade_quantity":               data.NewMetric[float64]("trade_quantity", data.UnitCount, data.TimescaleInstantaneous, 0, 0),
-		"trade_notional":               data.NewMetric[float64]("trade_notional", data.UnitCount, data.TimescaleInstantaneous, 0, 0),
-		"volume_bar_target_quantity":   data.NewMetric[float64]("volume_bar_target_quantity", data.UnitCount, data.TimescaleInstantaneous, 0, 0),
-		"volume_bar_quantity":          data.NewMetric[float64]("volume_bar_quantity", data.UnitCount, data.TimescaleInstantaneous, 0, 0),
-		"volume_bar_notional":          data.NewMetric[float64]("volume_bar_notional", data.UnitCount, data.TimescaleInstantaneous, 0, 0),
-		"volume_bar_trade_count":       data.NewMetric[float64]("volume_bar_trade_count", data.UnitCount, data.TimescaleInstantaneous, 0, 0),
-		"volume_bar_duration":          data.NewMetric[float64]("volume_bar_duration", data.UnitSecond, data.TimescaleInstantaneous, 0, 0),
-		"completed_volume_bar_ordinal": data.NewMetric[float64]("completed_volume_bar_ordinal", data.UnitCount, data.TimescaleInstantaneous, 0, 0),
-		"trade_interval_seconds":       data.NewMetric[float64]("trade_interval_seconds", data.UnitSecond, data.TimescaleInstantaneous, 0, 0),
-		"volume_rate":                  data.NewMetric[float64]("volume_rate", data.UnitRate, data.TimescaleInstantaneous, 0, 0),
-		"notional_rate":                data.NewMetric[float64]("notional_rate", data.UnitRate, data.TimescaleInstantaneous, 0, 0),
-		"trade_rate":                   data.NewMetric[float64]("trade_rate", data.UnitRate, data.TimescaleInstantaneous, 0, 0),
-		"notional_rate_baseline":       data.NewMetric[float64]("notional_rate_baseline", data.UnitRate, data.TimescaleInstantaneous, 0, 0),
-		"notional_rate_ratio":          data.NewMetric[float64]("notional_rate_ratio", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 0),
-		"notional_rate_divergence":     data.NewMetric[float64]("notional_rate_divergence", data.UnitRate, data.TimescaleInstantaneous, 0, 0),
-		"notional_rate_zscore":         data.NewMetric[float64]("notional_rate_zscore", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
-	})
-	m.Metadata["peer-interest"] = "*"
-	return m
-}
-

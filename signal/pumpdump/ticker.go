@@ -157,18 +157,20 @@ func (ticker *Ticker) pipelineFor(symbol string) core.Primitive {
 Step supplies the arriving measurement to the pipeline and returns it: the
 measurement is the pipeline's state, enriched in place.
 */
-func (ticker *Ticker) Step(m *data.Measurement[float64]) *data.Measurement[float64] {
+func (ticker *Ticker) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
 	if ticker.Status() != runtime.READY {
 		errnie.Warn(ticker.Name() + ": Step called before READY; dropping event")
-		return m
+		return measurement
 	}
 
-	if m == nil || m.Err != nil {
-		return m
+	if measurement == nil || measurement.Err != nil {
+		return measurement
 	}
 
-	res := data.Read[*data.Measurement[float64]](ticker.pipelineFor(m.Label).Next(
-		transport.NewOne(unsafe.Pointer(&m)).Next(nil),
+	measurement.Source = "pumpdump:ticker"
+
+	res := data.Read[*data.Measurement[float64]](ticker.pipelineFor(measurement.Label).Next(
+		transport.NewOne(unsafe.Pointer(&measurement)).Next(nil),
 	))
 
 	if res == nil {

@@ -44,11 +44,18 @@ func (op *Fold) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			admitted := make([]Peer, len(m.Peers))
 
 			for index, peer := range m.Peers {
-				support, _ := strconv.ParseFloat(peer.Metadata["support"], 64)
-				peerEnergy, _ := strconv.ParseFloat(peer.Metadata["peer_energy_rate"], 64)
+				supportStr, _ := peer.GetMetadata("support")
+				support, _ := strconv.ParseFloat(supportStr, 64)
+				peerEnergyStr, _ := peer.GetMetadata("peer_energy_rate")
+				peerEnergy, _ := strconv.ParseFloat(peerEnergyStr, 64)
+
+				var corr float64
+				if metric, ok := peer.LookupMetric("signed_correlation"); ok {
+					corr = metric.Raw
+				}
 
 				admitted[index] = Peer{
-					Correlation: peer.Metrics["signed_correlation"].Raw,
+					Correlation: corr,
 					Support:     support,
 					PeerEnergy:  peerEnergy,
 				}

@@ -55,13 +55,22 @@ NewOrderResponseFromMap adapts a paper fill acknowledgement to Kraken's model.
 */
 func NewOrderResponseFromMap(model datura.Map[any], reqID int64) *OrderResponse {
 	orderID, _ := model["order_id"].(string)
+	success := false
+
+	if s, ok := model["success"].(bool); ok {
+		success = s
+	}
+
+	if !success && orderID != "" {
+		success = true
+	}
 
 	return &OrderResponse{
 		Method: "add_order",
 		Result: OrderResponseResult{
 			OrderID: orderID,
 		},
-		Success: true,
+		Success: success,
 		ReqID:   reqID,
 	}
 }

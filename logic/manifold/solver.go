@@ -11,8 +11,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/network"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/physics/sensorium"
 	"github.com/theapemachine/symm/nomagique/relation"
@@ -47,7 +48,7 @@ number of live orders rather than by the message rate.
 type Solver struct {
 	*runtime.System
 	isAdvancing atomic.Bool
-	public      *network.WebsocketClient
+	book        *broker.Book
 	dataset     *Dataset
 	physics     *sensorium.Manifold
 	forcing     sync.Map
@@ -94,9 +95,9 @@ var (
 	sellExcitationMetric = forcingInputs.Sell.Metric + ":" + forcingInputs.Sell.Side
 )
 
-func NewSolver(ctx context.Context, public *network.WebsocketClient) *Solver {
+func NewSolver(ctx context.Context, book *broker.Book) *Solver {
 	solver := &Solver{
-		public:  public,
+		book:    book,
 		dataset: NewDataset(),
 		loaded:  make(map[int64]struct{}),
 		wake:    make(chan struct{}, 1),
@@ -343,61 +344,6 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 	return measurement
 }
 
-func (solver *Solver) Register() *data.Measurement[float64] {
-	measurement := data.NewMeasurement("manifold", map[string]data.Metric[float64]{
-		"divergence": data.NewMetric[float64](
-			"divergence", data.UnitNat, data.TimescaleInstantaneous, 0, 1,
-		),
-		"guidance_speed": data.NewMetric[float64](
-			"guidance_speed", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"coherence_mag2": data.NewMetric[float64](
-			"coherence_mag2", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"pressure_grad_norm": data.NewMetric[float64](
-			"pressure_grad_norm", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"viscosity_proxy": data.NewMetric[float64](
-			"viscosity_proxy", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"kuramoto_r": data.NewMetric[float64](
-			"kuramoto_r", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"kuramoto_psi": data.NewMetric[float64](
-			"kuramoto_psi", data.UnitDimensionless, data.TimescaleInstantaneous, -math.Pi, math.Pi,
-		),
-		"gas_kinetic": data.NewMetric[float64](
-			"gas_kinetic", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"gas_internal": data.NewMetric[float64](
-			"gas_internal", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"wave_norm": data.NewMetric[float64](
-			"wave_norm", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"vorticity_rms": data.NewMetric[float64](
-			"vorticity_rms", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"strain_rms": data.NewMetric[float64](
-			"strain_rms", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"max_mach": data.NewMetric[float64](
-			"max_mach", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"particle_count": data.NewMetric[float64](
-			"particle_count", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"particle_thermal": data.NewMetric[float64](
-			"particle_thermal", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"particle_kinetic": data.NewMetric[float64](
-			"particle_kinetic", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-	})
-	measurement.SetMetadata("peer-interest", "*")
-	return measurement
-}
-
 /*
 recordForcing stores the symbol's latest Hawkes excitation fractions under the
 forcing lock alone. A non-finite or invalid fraction is rejected rather than
@@ -458,14 +404,59 @@ func (solver *Solver) markDirty(symbol string) {
 }
 
 func (solver *Solver) project() (departures []int64, batch *sensorium.State) {
-	if solver.public == nil {
+	if solver.book == nil {
 		return nil, nil
 	}
 
 	seen := make(map[int64]struct{}, len(solver.loaded))
 	states := make([]*sensorium.State, 0, len(solver.loaded))
 
-	/* TODO: Get books from router */
+	dirtySymbols := make([]string, 0)
+	solver.dirty.Range(func(key, _ any) bool {
+		if symbol, ok := key.(string); ok && symbol != "" {
+			dirtySymbols = append(dirtySymbols, symbol)
+		}
+		return true
+	})
+
+	for _, sym := range dirtySymbols {
+		solver.dirty.Delete(sym)
+	}
+
+	if len(dirtySymbols) == 0 && len(solver.loaded) == 0 {
+		if all := solver.book.All(); all != nil {
+			all.Range(func(key, _ any) bool {
+				if symbol, ok := key.(string); ok && symbol != "" {
+					dirtySymbols = append(dirtySymbols, symbol)
+				}
+				return true
+			})
+		}
+	}
+
+	for _, symbol := range dirtySymbols {
+		var forcingVal forcingState
+		if f, ok := solver.forcing.Load(symbol); ok {
+			forcingVal, _ = f.(forcingState)
+		}
+
+		solver.book.Book(symbol, func(b *spotbook.Book) {
+			if b == nil || b.Bids == nil || b.Asks == nil {
+				return
+			}
+
+			for state := range solver.dataset.Step(symbol, b.Bids, b.Asks, forcingVal) {
+				if state == nil {
+					continue
+				}
+
+				if len(state.ContentIDs) > 0 {
+					seen[state.ContentIDs[0]] = struct{}{}
+				}
+				states = append(states, state)
+			}
+		})
+	}
 
 	if solver.dataset.Error() != nil {
 		for _, state := range states {
@@ -750,7 +741,19 @@ func (solver *Solver) Crystallize(
 ) []float64 {
 	states := make([]*sensorium.State, 0)
 
-	/* TODO: Get book from router */
+	if solver.book != nil {
+		solver.book.Book(symbol, func(b *spotbook.Book) {
+			if b == nil || b.Bids == nil || b.Asks == nil {
+				return
+			}
+
+			for state := range solver.dataset.StepClamped(symbol, b.Bids, b.Asks, forcing) {
+				if state != nil {
+					states = append(states, state)
+				}
+			}
+		})
+	}
 
 	if err := solver.dataset.Error(); err != nil {
 		for _, state := range states {

@@ -2,6 +2,7 @@ package tables
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/theapemachine/errnie"
@@ -40,14 +41,28 @@ func (catalog *Catalog) Drain(
 			}
 
 			if measurement.SeqIdx <= 0 {
-				return errnie.Error(errnie.Err(errnie.Validation, "catalog: observation has no workspace sequence", nil))
+				errnie.Error(errnie.Err(
+					errnie.Validation,
+					fmt.Sprintf("[catalog] observation (source=%s, label=%s, id=%d, seq=%d, at=%v) has no workspace sequence", measurement.Source, measurement.Label, measurement.ID, measurement.SeqIdx, measurement.At),
+					nil,
+				))
+
+				continue
 			}
 
 			if val, ok := measurement.GetMetadata("excursion"); ok && val != "" && len(learn) > 0 {
 				records, err := learn[0](measurement)
+
 				if err != nil {
-					return err
+					errnie.Error(errnie.Err(
+						errnie.Validation,
+						fmt.Sprintf("[catalog] observation (source=%s, label=%s, id=%d, seq=%d, at=%v) has no workspace sequence", measurement.Source, measurement.Label, measurement.ID, measurement.SeqIdx, measurement.At),
+						nil,
+					))
+
+					continue
 				}
+
 				for _, record := range records {
 					writer.AddExcursion(record)
 				}

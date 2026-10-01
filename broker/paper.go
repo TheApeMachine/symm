@@ -96,14 +96,8 @@ Write routes the same subscription and order envelopes used by live transports
 through the paper CLI under simulator latency.
 */
 func (paper *Paper) Write(
-	params json.Marshaler,
+	buf []byte,
 ) error {
-	raw, err := params.MarshalJSON()
-
-	if err != nil {
-		return err
-	}
-
 	request := struct {
 		Method string `json:"method"`
 		ReqID  int64  `json:"req_id"`
@@ -118,7 +112,7 @@ func (paper *Paper) Write(
 		} `json:"params"`
 	}{}
 
-	if err := sonic.Unmarshal(raw, &request); err != nil {
+	if err := sonic.Unmarshal(buf, &request); err != nil {
 		return err
 	}
 

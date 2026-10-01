@@ -168,6 +168,18 @@ func (m *Measurement[T]) RangeMetadata(f func(key, value string) bool) {
 	}
 }
 
+// Facts extracts QualityFacts from Metadata safely under RLock.
+func (m *Measurement[T]) Facts() QualityFacts {
+	if m == nil {
+		return QualityFacts{}
+	}
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	return factsFromMetadata(m.Metadata)
+}
+
 /*
 NewMeasurement creates one identified observation with empty metric storage.
 Its identity is unstamped: the register slot that owns it is assigned when a
@@ -534,7 +546,7 @@ func (op *Finalizer[Value]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Po
 				readingEval := transport.NewEvaluate(op.quality)
 				var reading QualityReading
 
-				for out := range readingEval.Next(transport.NewValues(factsFromMetadata(measurement.Metadata)).Next(nil)) {
+				for out := range readingEval.Next(transport.NewValues(measurement.Facts()).Next(nil)) {
 					reading = *(*QualityReading)(out)
 				}
 

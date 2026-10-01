@@ -41,6 +41,10 @@ func NewUITee(
 		batchSize = 1
 	}
 
+	if len(filters) == 0 {
+		filters = []func(*data.Measurement[float64]) bool{types.Filters}
+	}
+
 	tee := &UITee{
 		queue:     lf.NewQueue[*data.Measurement[float64]](),
 		batchSize: batchSize,
@@ -66,19 +70,13 @@ func (tee *UITee) Push(measurement *data.Measurement[float64]) {
 		return
 	}
 
-	if len(tee.filters) == 0 {
-		tee.queue.Enqueue(measurement)
-		return
-	}
-
 	for _, filter := range tee.filters {
 		if !filter(measurement) {
-			continue
+			return
 		}
-
-		tee.queue.Enqueue(measurement)
-		return
 	}
+
+	tee.queue.Enqueue(measurement.Clone())
 }
 
 /*

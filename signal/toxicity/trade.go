@@ -282,22 +282,24 @@ func (trade *Trade) pipelineFor(symbol string) core.Primitive {
 Step supplies the arriving measurement to the pipeline and returns it: the
 measurement is the pipeline's state, enriched in place.
 */
-func (trade *Trade) Step(m *data.Measurement[float64]) *data.Measurement[float64] {
+func (trade *Trade) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
 	if trade.Status() != runtime.READY {
 		errnie.Warn(trade.Name() + ": Step called before READY; dropping event")
-		return m
+		return measurement
 	}
 
-	if m == nil {
-		return nil
+	if measurement == nil || measurement.Err != nil {
+		return measurement
 	}
 
-	if m.Err != nil {
-		return m
+	if measurement.Err != nil {
+		return measurement
 	}
 
-	res := data.Read[*data.Measurement[float64]](trade.pipelineFor(m.Label).Next(
-		transport.NewOne(unsafe.Pointer(&m)).Next(nil),
+	measurement.Source = "toxicity:trade"
+
+	res := data.Read[*data.Measurement[float64]](trade.pipelineFor(measurement.Label).Next(
+		transport.NewOne(unsafe.Pointer(&measurement)).Next(nil),
 	))
 
 	if res == nil {
@@ -307,31 +309,3 @@ func (trade *Trade) Step(m *data.Measurement[float64]) *data.Measurement[float64
 	res.Finalize()
 	return res
 }
-
-/*
-Register returns the measurement declaring this entity's full metric schema.
-Values are empty; the workload uses this at startup to allocate the metric
-schema before feeding streaming records.
-*/
-func (trade *Trade) Register() *data.Measurement[float64] {
-	m := data.NewMeasurement("toxicity:trade", map[string]data.Metric[float64]{
-		"bracket_trade_quantity":           data.NewMetric[float64]("bracket_trade_quantity", data.UnitCount, data.TimescaleInstantaneous, 0, 0),
-		"matched_touch_trade_quantity:bid": data.NewMetric[float64]("matched_touch_trade_quantity:bid", data.UnitCount, data.TimescaleInstantaneous, 0, 0),
-		"matched_touch_trade_quantity:ask": data.NewMetric[float64]("matched_touch_trade_quantity:ask", data.UnitCount, data.TimescaleInstantaneous, 0, 0),
-		"touch_fill_quantity:bid":          data.NewMetric[float64]("touch_fill_quantity:bid", data.UnitCount, data.TimescaleInstantaneous, 0, 0),
-		"touch_fill_quantity:ask":          data.NewMetric[float64]("touch_fill_quantity:ask", data.UnitCount, data.TimescaleInstantaneous, 0, 0),
-		"touch_fill_fraction:bid":          data.NewMetric[float64]("touch_fill_fraction:bid", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 0),
-		"touch_fill_fraction:ask":          data.NewMetric[float64]("touch_fill_fraction:ask", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 0),
-		"touch_fill_rate:bid":              data.NewMetric[float64]("touch_fill_rate:bid", data.UnitRate, data.TimescaleInstantaneous, 0, 0),
-		"touch_fill_rate:ask":              data.NewMetric[float64]("touch_fill_rate:ask", data.UnitRate, data.TimescaleInstantaneous, 0, 0),
-		"fill_fraction_baseline:bid":       data.NewMetric[float64]("fill_fraction_baseline:bid", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 0),
-		"fill_fraction_baseline:ask":       data.NewMetric[float64]("fill_fraction_baseline:ask", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 0),
-		"fill_fraction_divergence:bid":     data.NewMetric[float64]("fill_fraction_divergence:bid", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 0),
-		"fill_fraction_divergence:ask":     data.NewMetric[float64]("fill_fraction_divergence:ask", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 0),
-		"fill_fraction_zscore:bid":         data.NewMetric[float64]("fill_fraction_zscore:bid", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 0),
-		"fill_fraction_zscore:ask":         data.NewMetric[float64]("fill_fraction_zscore:ask", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 0),
-	})
-	m.Metadata["peer-interest"] = "*"
-	return m
-}
-

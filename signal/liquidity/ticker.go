@@ -63,6 +63,8 @@ func (ticker *Ticker) Step(measurement *data.Measurement[float64]) *data.Measure
 		return measurement
 	}
 
+	measurement.Source = "liquidity:ticker"
+
 	if len(measurement.Peers) > 0 {
 		peer := measurement.FindPeer(func(candidate *data.Measurement[float64]) bool {
 			_, hasBid := candidate.LookupMetric("bid")

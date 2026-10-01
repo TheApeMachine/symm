@@ -2,10 +2,11 @@ package tables
 
 import (
 	"errors"
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/array"
@@ -111,11 +112,11 @@ func fillMeasurements(
 			}
 		}
 
-		if len(measurement.Provenance) == 0 && len(measurement.Metrics) == 0 && measurement.Err == nil {
+		if len(measurement.Provenance) == 0 && len(measurement.Metrics) == 0 && measurement.Err == nil && !measurement.Estimated {
 			provenanceBuilder.AppendNull()
 		}
 
-		if len(measurement.Provenance) > 0 || len(measurement.Metrics) > 0 || measurement.Err != nil {
+		if len(measurement.Provenance) > 0 || len(measurement.Metrics) > 0 || measurement.Err != nil || measurement.Estimated {
 			provenanceBuilder.Append(true)
 
 			for provKey, provVal := range measurement.Provenance {

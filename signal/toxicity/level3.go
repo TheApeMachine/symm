@@ -141,7 +141,6 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 				m.WriteMetric("unfilled_residual_quantity:bid", bidQty)
 				m.WriteMetric("unfilled_residual_quantity:ask", askQty)
 
-
 				if state.hasPrev {
 					m.WriteMetric("previous_best_price:bid", state.prevBid)
 					m.WriteMetric("previous_best_price:ask", state.prevAsk)
@@ -149,18 +148,18 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 					dt := input.At.Sub(state.prevTime).Seconds()
 
 					if state.prevBid > 0 && bidPrice > 0 {
-						m.WriteMetric("touch_price_log_change:bid", math.Log(bidPrice / state.prevBid))
+						m.WriteMetric("touch_price_log_change:bid", math.Log(bidPrice/state.prevBid))
 					}
 
 					if state.prevAsk > 0 && askPrice > 0 {
-						m.WriteMetric("touch_price_log_change:ask", math.Log(askPrice / state.prevAsk))
+						m.WriteMetric("touch_price_log_change:ask", math.Log(askPrice/state.prevAsk))
 					}
 
 					if bidPrice < state.prevBid {
 						m.WriteMetric("retreated_quantity:bid", state.prevBidQty)
 						m.WriteMetric("retreat_fraction:bid", 1.0)
 						if dt > 0 {
-							m.WriteMetric("retreat_rate:bid", state.prevBidQty / dt)
+							m.WriteMetric("retreat_rate:bid", state.prevBidQty/dt)
 						}
 					}
 
@@ -169,14 +168,14 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 							withdrawn := state.prevBidQty - bidQty
 							m.WriteMetric("net_withdrawn_quantity:bid", withdrawn)
 							if state.prevBidQty > 0 {
-								m.WriteMetric("net_withdrawal_fraction:bid", withdrawn / state.prevBidQty)
+								m.WriteMetric("net_withdrawal_fraction:bid", withdrawn/state.prevBidQty)
 							}
 							if dt > 0 {
-								m.WriteMetric("retreat_rate:bid", withdrawn / dt)
+								m.WriteMetric("retreat_rate:bid", withdrawn/dt)
 							}
 						}
 						if bidQty > state.prevBidQty {
-							m.WriteMetric("net_replenished_quantity:bid", bidQty - state.prevBidQty)
+							m.WriteMetric("net_replenished_quantity:bid", bidQty-state.prevBidQty)
 						}
 					}
 
@@ -184,7 +183,7 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 						m.WriteMetric("retreated_quantity:ask", state.prevAskQty)
 						m.WriteMetric("retreat_fraction:ask", 1.0)
 						if dt > 0 {
-							m.WriteMetric("retreat_rate:ask", state.prevAskQty / dt)
+							m.WriteMetric("retreat_rate:ask", state.prevAskQty/dt)
 						}
 					}
 
@@ -193,14 +192,14 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 							withdrawn := state.prevAskQty - askQty
 							m.WriteMetric("net_withdrawn_quantity:ask", withdrawn)
 							if state.prevAskQty > 0 {
-								m.WriteMetric("net_withdrawal_fraction:ask", withdrawn / state.prevAskQty)
+								m.WriteMetric("net_withdrawal_fraction:ask", withdrawn/state.prevAskQty)
 							}
 							if dt > 0 {
-								m.WriteMetric("retreat_rate:ask", withdrawn / dt)
+								m.WriteMetric("retreat_rate:ask", withdrawn/dt)
 							}
 						}
 						if askQty > state.prevAskQty {
-							m.WriteMetric("net_replenished_quantity:ask", askQty - state.prevAskQty)
+							m.WriteMetric("net_replenished_quantity:ask", askQty-state.prevAskQty)
 						}
 					}
 				}
@@ -231,51 +230,19 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 	return actual.(core.Primitive)
 }
 
-func (level3 *Level3) Step(m *data.Measurement[float64]) *data.Measurement[float64] {
+func (level3 *Level3) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
 	if level3.Status() != runtime.READY {
 		errnie.Warn(level3.Name() + ": Step called before READY; dropping event")
-		return m
+		return measurement
 	}
 
-	if m == nil || m.Err != nil {
-		return m
+	if measurement == nil || measurement.Err != nil {
+		return measurement
 	}
 
-	return data.Read[*data.Measurement[float64]](level3.pipelineFor(m.Label).Next(
-		transport.NewOne(unsafe.Pointer(&m)).Next(nil),
+	measurement.Source = "toxicity:level3"
+
+	return data.Read[*data.Measurement[float64]](level3.pipelineFor(measurement.Label).Next(
+		transport.NewOne(unsafe.Pointer(&measurement)).Next(nil),
 	))
-}
-
-/*
-Register returns the measurement declaring this entity's full metric schema.
-Values are empty; the workload uses this at startup to allocate the metric
-schema before feeding streaming records.
-*/
-func (level3 *Level3) Register() *data.Measurement[float64] {
-	m := data.NewMeasurement("toxicity:level3", map[string]data.Metric[float64]{
-		"best_price:bid":                 data.NewMetric[float64]("best_price:bid", data.UnitRate, data.TimescaleInstantaneous, 0, 0),
-		"best_price:ask":                 data.NewMetric[float64]("best_price:ask", data.UnitRate, data.TimescaleInstantaneous, 0, 0),
-		"touch_quantity:bid":             data.NewMetric[float64]("touch_quantity:bid", data.UnitCount, data.TimescaleInstantaneous, 0, 0),
-		"touch_quantity:ask":             data.NewMetric[float64]("touch_quantity:ask", data.UnitCount, data.TimescaleInstantaneous, 0, 0),
-		"unfilled_residual_quantity:bid": data.NewMetric[float64]("unfilled_residual_quantity:bid", data.UnitCount, data.TimescaleInstantaneous, 0, 0),
-		"unfilled_residual_quantity:ask": data.NewMetric[float64]("unfilled_residual_quantity:ask", data.UnitCount, data.TimescaleInstantaneous, 0, 0),
-		"previous_best_price:bid":        data.NewMetric[float64]("previous_best_price:bid", data.UnitRate, data.TimescaleInstantaneous, 0, 0),
-		"previous_best_price:ask":        data.NewMetric[float64]("previous_best_price:ask", data.UnitRate, data.TimescaleInstantaneous, 0, 0),
-		"touch_price_log_change:bid":     data.NewMetric[float64]("touch_price_log_change:bid", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 0),
-		"touch_price_log_change:ask":     data.NewMetric[float64]("touch_price_log_change:ask", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 0),
-		"retreated_quantity:bid":         data.NewMetric[float64]("retreated_quantity:bid", data.UnitCount, data.TimescaleInstantaneous, 0, 0),
-		"net_withdrawn_quantity:bid":     data.NewMetric[float64]("net_withdrawn_quantity:bid", data.UnitCount, data.TimescaleInstantaneous, 0, 0),
-		"net_replenished_quantity:bid":   data.NewMetric[float64]("net_replenished_quantity:bid", data.UnitCount, data.TimescaleInstantaneous, 0, 0),
-		"retreat_fraction:bid":           data.NewMetric[float64]("retreat_fraction:bid", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 0),
-		"net_withdrawal_fraction:bid":    data.NewMetric[float64]("net_withdrawal_fraction:bid", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 0),
-		"retreat_rate:bid":               data.NewMetric[float64]("retreat_rate:bid", data.UnitRate, data.TimescaleInstantaneous, 0, 0),
-		"retreated_quantity:ask":         data.NewMetric[float64]("retreated_quantity:ask", data.UnitCount, data.TimescaleInstantaneous, 0, 0),
-		"net_withdrawn_quantity:ask":     data.NewMetric[float64]("net_withdrawn_quantity:ask", data.UnitCount, data.TimescaleInstantaneous, 0, 0),
-		"net_replenished_quantity:ask":   data.NewMetric[float64]("net_replenished_quantity:ask", data.UnitCount, data.TimescaleInstantaneous, 0, 0),
-		"retreat_fraction:ask":           data.NewMetric[float64]("retreat_fraction:ask", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 0),
-		"net_withdrawal_fraction:ask":    data.NewMetric[float64]("net_withdrawal_fraction:ask", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 0),
-		"retreat_rate:ask":               data.NewMetric[float64]("retreat_rate:ask", data.UnitRate, data.TimescaleInstantaneous, 0, 0),
-	})
-	m.SetMetadata("peer-interest", "*")
-	return m
 }

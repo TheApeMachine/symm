@@ -3,14 +3,12 @@ package broker
 import (
 	"context"
 
-	"github.com/theapemachine/symm/network"
-
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
 type Desk struct {
 	*runtime.System
-	private   *network.WebsocketClient
+	transport Transport
 	price     *Price
 	balance   *Balance
 	Execution *Execution
@@ -18,15 +16,15 @@ type Desk struct {
 
 func NewDesk(
 	ctx context.Context,
-	private *network.WebsocketClient,
+	transport Transport,
 	price *Price,
 	balance *Balance,
 ) *Desk {
 	desk := &Desk{
-		private:   private,
+		transport: transport,
 		price:     price,
 		balance:   balance,
-		Execution: NewExecution(ctx, private, price, balance),
+		Execution: NewExecution(ctx, transport, price, balance),
 	}
 
 	desk.System = runtime.NewSystem(ctx, "desk", desk)

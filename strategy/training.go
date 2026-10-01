@@ -296,7 +296,7 @@ func (training *Training) Run() {
 					m.SetMetadata("excursion_ignition", fmt.Sprintf("%d", excursions.IgnitionTick))
 					m.SetMetadata("excursion_extremum_tick", fmt.Sprintf("%d", excursions.EndTick))
 					m.SetMetadata("excursion_type", fmt.Sprintf("%d", extType))
-					m.SetMetadata("stage_code", "2") // FORWARD PAPER LEARNING
+					m.SetMetadata("stage_code", "1") // HISTORICAL VALIDATION
 
 					training.webrtc.Push(m)
 				}

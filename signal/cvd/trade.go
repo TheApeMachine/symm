@@ -64,6 +64,8 @@ func (trade *Trade) Step(measurement *data.Measurement[float64]) *data.Measureme
 		return measurement
 	}
 
+	measurement.Source = "cvd:trade"
+
 	if len(measurement.Peers) > 0 {
 		peer := measurement.FindPeer(func(candidate *data.Measurement[float64]) bool {
 			_, hasPrice := candidate.LookupMetric("price")

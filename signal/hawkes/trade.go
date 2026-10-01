@@ -79,6 +79,8 @@ func (trade *Trade) Step(measurement *data.Measurement[float64]) *data.Measureme
 		return measurement
 	}
 
+	measurement.Source = "hawkes:trade"
+
 	if len(measurement.Peers) > 0 {
 		measurement.Err = nil
 

@@ -65,18 +65,39 @@ func (execution *Execution) IsSuccess() bool {
 }
 
 func NewExecutionFromMap(model datura.Map[any]) *Execution {
-	execType := "trade"
-	orderStatus := "filled"
+	var execType string
+	var orderStatus string
+
+	if et, ok := model["exec_type"].(string); ok {
+		execType = et
+	}
+
+	if os, ok := model["order_status"].(string); ok {
+		orderStatus = os
+	}
+
+	if status, ok := model["status"].(string); ok && orderStatus == "" {
+		orderStatus = status
+	}
 
 	if action, ok := model["action"].(string); ok {
 		if action == "limit_order_placed" {
-			execType = "new"
-			orderStatus = "open"
+			if execType == "" {
+				execType = "new"
+			}
+			if orderStatus == "" {
+				orderStatus = "open"
+			}
 		}
-	}
 
-	if status, ok := model["status"].(string); ok {
-		orderStatus = status
+		if action == "order_cancelled" {
+			if execType == "" {
+				execType = "canceled"
+			}
+			if orderStatus == "" {
+				orderStatus = "canceled"
+			}
+		}
 	}
 
 	orderID, _ := model["order_id"].(string)
@@ -94,11 +115,23 @@ func NewExecutionFromMap(model datura.Map[any]) *Execution {
 	cost, _ := model["cost"].(float64)
 	fee, _ := model["fee"].(float64)
 
-	timestamp := time.Now()
+	var timestamp time.Time
 
-	if timeRaw, ok := model["time"].(string); ok {
+	if timeRaw, ok := model["time"].(string); ok && timeRaw != "" {
 		if parsed, err := time.Parse(time.RFC3339, timeRaw); err == nil {
 			timestamp = parsed
+		}
+
+		if timestamp.IsZero() {
+			if parsed, err := time.Parse(time.RFC3339Nano, timeRaw); err == nil {
+				timestamp = parsed
+			}
+		}
+	}
+
+	if timestamp.IsZero() {
+		if sec, ok := model["timestamp"].(float64); ok && sec > 0 {
+			timestamp = time.Unix(int64(sec), int64((sec-float64(int64(sec)))*1e9))
 		}
 	}
 

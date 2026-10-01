@@ -10,34 +10,37 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker/position"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/network"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/system"
 )
 
 type Execution struct {
 	*runtime.System
-	private *network.WebsocketClient
-	price   *Price
-	balance *Balance
+	transport Transport
+	price     *Price
+	balance   *Balance
+	auth      *kraken.Auth
 }
 
 func NewExecution(
 	ctx context.Context,
-	private *network.WebsocketClient,
+	transport Transport,
 	price *Price,
 	balance *Balance,
 ) *Execution {
 	execution := &Execution{
-		private: private,
-		price:   price,
-		balance: balance,
+		transport: transport,
+		price:     price,
+		balance:   balance,
+		auth:      kraken.NewAuth(),
 	}
+	
 	execution.System = runtime.NewSystem(ctx, "execution", execution)
 	return execution
 }
 
 func (exec *Execution) Enter(symbol string, onPending ...func(*position.Regulator)) (*position.Regulator, error) {
-	if exec == nil || exec.private == nil || exec.price == nil || exec.balance == nil {
+	if exec == nil || exec.transport == nil || exec.price == nil || exec.balance == nil {
 		return nil, exec.Error(errnie.Err(
 			errnie.Validation, "[execution] uninitialized dependencies", nil,
 		))
@@ -80,7 +83,10 @@ func (exec *Execution) Enter(symbol string, onPending ...func(*position.Regulato
 	cash := exec.balance.Cash()
 
 	if cash == nil || cash.Sign() <= 0 {
-		exec.balance.Update()
+		if err := exec.balance.Update(); err != nil {
+			errnie.Error(err)
+		}
+
 		cash = exec.balance.Cash()
 	}
 
@@ -107,7 +113,7 @@ func (exec *Execution) Enter(symbol string, onPending ...func(*position.Regulato
 }
 
 func (exec *Execution) EnterWithRegulator(reg *position.Regulator, spend *decimal.Decimal) error {
-	if exec == nil || exec.private == nil || exec.price == nil || reg == nil || spend == nil || spend.Sign() <= 0 {
+	if exec == nil || exec.transport == nil || exec.price == nil || reg == nil || spend == nil || spend.Sign() <= 0 {
 		return exec.Error(errnie.Err(
 			errnie.Validation, "[execution] invalid enter request", nil,
 		))
@@ -149,11 +155,40 @@ func (exec *Execution) EnterWithRegulator(reg *position.Regulator, spend *decima
 		return err
 	}
 
-	msg, _ := sonic.Marshal(kraken.NewAddOrderMessage("", entryRequest))
-	err = exec.private.Write(msg)
+	var token string
 
+	if exec.auth != nil && system.Cfg.Market.Model != "paper" {
+		var err error
+		token, err = exec.auth.Token()
+	
+		if err != nil {
+			reg.CancelPending()
+	
+			return exec.Error(errnie.Err(
+				errnie.NotAcceptable,
+				"[execution] missing websockets auth token",
+				err,
+			))
+		}
+	}
+
+	msg, err := sonic.Marshal(kraken.NewAddOrderMessage(token, entryRequest))
+	
 	if err != nil {
 		reg.CancelPending()
+	
+		return exec.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"[execution] failed to marshal order message",
+			err,
+		))
+	}
+
+	err = exec.transport.Write(msg)
+	
+	if err != nil {
+		reg.CancelPending()
+	
 		return exec.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			"[execution] failed to enter "+symbol,
@@ -162,14 +197,16 @@ func (exec *Execution) EnterWithRegulator(reg *position.Regulator, spend *decima
 	}
 
 	if exec.balance != nil {
-		exec.balance.Update()
+		if err := exec.balance.Update(); err != nil {
+			errnie.Error(err)
+		}
 	}
 
 	return nil
 }
 
 func (exec *Execution) Exit(reg *position.Regulator) error {
-	if exec == nil || exec.private == nil || reg == nil {
+	if exec == nil || exec.transport == nil || reg == nil {
 		return exec.Error(errnie.Err(
 			errnie.Validation,
 			"[execution] invalid exit request",
@@ -203,11 +240,39 @@ func (exec *Execution) Exit(reg *position.Regulator) error {
 		return err
 	}
 
-	msg, _ := sonic.Marshal(kraken.NewAddOrderMessage("", exitRequest))
-	err := exec.private.Write(msg)
+	var token string
+	if exec.auth != nil && system.Cfg.Market.Model != "paper" {
+		var err error
+		token, err = exec.auth.Token()
+
+		if err != nil {
+			reg.CancelPending()
+		
+			return exec.Error(errnie.Err(
+				errnie.NotAcceptable,
+				"[execution] missing websockets auth token",
+				err,
+			))
+		}
+	}
+
+	msg, err := sonic.Marshal(kraken.NewAddOrderMessage(token, exitRequest))
+	
+	if err != nil {
+		reg.CancelPending()
+	
+		return exec.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"[execution] failed to marshal order message",
+			err,
+		))
+	}
+
+	err = exec.transport.Write(msg)
 
 	if err != nil {
 		reg.CancelPending()
+	
 		return exec.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			"[execution] failed to exit",
@@ -216,7 +281,9 @@ func (exec *Execution) Exit(reg *position.Regulator) error {
 	}
 
 	if exec.balance != nil {
-		exec.balance.Update()
+		if err := exec.balance.Update(); err != nil {
+			errnie.Error(err)
+		}
 	}
 
 	return nil

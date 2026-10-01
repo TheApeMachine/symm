@@ -182,29 +182,9 @@ func (level3 *Level3) Step(
 		return measurement
 	}
 
+	measurement.Source = "pumpdump:level3"
+
 	return data.Read[*data.Measurement[float64]](level3.pipelineFor(measurement.Label).Next(
 		transport.NewOne(unsafe.Pointer(&measurement)).Next(nil),
 	))
-}
-
-/*
-Register returns the measurement declaring this entity's full metric schema.
-Values are empty; the workload uses this at startup to allocate the metric
-schema before feeding streaming records.
-*/
-func (level3 *Level3) Register() *data.Measurement[float64] {
-	m := data.NewMeasurement("pumpdump:level3", map[string]data.Metric[float64]{
-		"best_bid":          data.NewMetric[float64]("best_bid", data.UnitRate, data.TimescaleInstantaneous, 0, 0),
-		"best_ask":          data.NewMetric[float64]("best_ask", data.UnitRate, data.TimescaleInstantaneous, 0, 0),
-		"midpoint":          data.NewMetric[float64]("midpoint", data.UnitRate, data.TimescaleInstantaneous, 0, 0),
-		"spread":            data.NewMetric[float64]("spread", data.UnitRate, data.TimescaleInstantaneous, 0, 0),
-		"relative_spread":   data.NewMetric[float64]("relative_spread", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 0),
-		"midpoint_velocity": data.NewMetric[float64]("midpoint_velocity", data.UnitRate, data.TimescaleInstantaneous, 0, 0),
-		"spread_variance":   data.NewMetric[float64]("spread_variance", data.UnitRate, data.TimescaleInstantaneous, 0, 0),
-		"cusum_upper":       data.NewMetric[float64]("cusum_upper", data.UnitRate, data.TimescaleInstantaneous, 0, 0),
-		"cusum_lower":       data.NewMetric[float64]("cusum_lower", data.UnitRate, data.TimescaleInstantaneous, 0, 0),
-		"spread_entropy":    data.NewMetric[float64]("spread_entropy", data.UnitNat, data.TimescaleInstantaneous, 0, 0),
-	})
-	m.SetMetadata("peer-interest", "*")
-	return m
 }

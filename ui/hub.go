@@ -63,7 +63,6 @@ type Hub struct {
 	listenAddr       string
 	frontend         atomic.Pointer[websocket.Conn]
 	store            *tables.Catalog
-	tradeStore       TradeJournalSource
 	positionSource   PositionSource
 	cognitionSource  CognitionSource
 	exitHandler      func(symbol string)
@@ -79,7 +78,6 @@ registers it on the workspace so live frames reach it through Step.
 */
 func NewHub(
 	ctx context.Context,
-	trades TradeJournalSource,
 	hindsightStore *tables.Catalog,
 	uiTee runtime.Tee,
 	webrtcTee runtime.Tee,
@@ -98,8 +96,7 @@ func NewHub(
 			ReadBufferSize:  4194304,
 			WriteBufferSize: 4194304,
 		}),
-		tradeStore: trades,
-		store:      hindsightStore,
+		store: hindsightStore,
 	}
 
 	hub.routes = NewRoutes(hub)

@@ -7,7 +7,6 @@ import (
 	"github.com/theapemachine/symm/nomagique/cognition"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/signal"
-	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -27,26 +26,6 @@ func (routes *Routes) Register() {
 		}
 
 		return fiber.ErrUpgradeRequired
-	})
-
-	routes.hub.app.Get("/trades", func(c fiber.Ctx) error {
-		if routes.hub.tradeStore == nil {
-			return c.JSON([]*wire.PositionT{})
-		}
-
-		trades, err := routes.hub.tradeStore.RecentTrades(int(
-			min(parseUintQuery(c.Query("limit")), 2000),
-		))
-
-		if err != nil {
-			return err
-		}
-
-		if trades == nil {
-			trades = []*wire.PositionT{}
-		}
-
-		return c.JSON(trades)
 	})
 
 	routes.hub.app.Get("/cognition/tree", func(c fiber.Ctx) error {

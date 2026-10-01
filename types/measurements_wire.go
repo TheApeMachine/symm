@@ -52,12 +52,16 @@ func MeasurementToWire(measurement *data.Measurement[float64], alloc data.Alloca
 
 	metadata := data.MakeSlice[*wire.NamedNumberT](alloc, 0, len(measurement.Metadata))
 	for key, val := range measurement.Metadata {
-		if floatVal, err := strconv.ParseFloat(val, 64); err == nil {
+		floatVal, err := strconv.ParseFloat(val, 64)
+		if err == nil {
 			nn := data.New[wire.NamedNumberT](alloc)
 			nn.Name = key
 			nn.Value = floatVal
 			metadata = data.AppendA(metadata, nn, alloc)
-		} else if _, exists := measurement.Provenance[key]; !exists {
+			continue
+		}
+
+		if _, exists := measurement.Provenance[key]; !exists {
 			ns := data.New[wire.NamedStringT](alloc)
 			ns.Name = key
 			ns.Value = val

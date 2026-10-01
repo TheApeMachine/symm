@@ -12,7 +12,6 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker/position"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/network"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
@@ -63,7 +62,7 @@ type Price struct {
 	*runtime.System
 	Instrument *Instrument
 	Books      BookSource
-	private    *network.WebsocketClient
+	private    Transport
 	fees       *sync.Map
 	tickers    *sync.Map
 	normalizer *spot.Normalizer
@@ -76,7 +75,7 @@ type Price struct {
 func NewPrice(
 	ctx context.Context,
 	books BookSource,
-	private *network.WebsocketClient,
+	private Transport,
 	instrument *Instrument,
 ) *Price {
 	normalizer := spot.NewNormalizer()

@@ -166,22 +166,32 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 		return nil
 	}
 
-	// Registration binds cognition's sole dependency to the category slot.
-	if len(measurement.Peers) != 1 || measurement.Peers[0] == nil {
-		solver.Error(errnie.Err(
-			errnie.Validation, "cognition: one bound category measurement is required", nil,
-		))
-		return measurement
+	var (
+		batches    [][]types.Category
+		hasBatches bool
+	)
+
+	if b, ok := measurement.Result.([][]types.Category); ok {
+		batches = b
+		hasBatches = true
 	}
 
-	peer := measurement.Peers[0]
-	batches, ok := peer.Result.([][]types.Category)
+	if !hasBatches {
+		for _, peer := range measurement.Peers {
+			if peer == nil {
+				continue
+			}
 
-	if !ok {
-		solver.Error(errnie.Err(
-			errnie.Validation, "cognition: completed category batches are required", nil,
-		))
-		return nil
+			if b, ok := peer.Result.([][]types.Category); ok {
+				batches = b
+				hasBatches = true
+				break
+			}
+		}
+	}
+
+	if !hasBatches {
+		return measurement
 	}
 
 	results := make([]types.Cognition, 0, len(batches))

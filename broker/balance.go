@@ -10,7 +10,6 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/network"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/system"
 )
@@ -35,19 +34,28 @@ any other object that wants to interact with the balance in any way.
 */
 type Balance struct {
 	*runtime.System
-	private  *network.WebsocketClient
-	Quote    string
-	snapshot atomic.Pointer[AccountSnapshot]
+	transport Transport
+	paper     *Paper
+	Quote     string
+	snapshot  atomic.Pointer[AccountSnapshot]
 }
 
-func NewBalance(ctx context.Context, private *network.WebsocketClient) *Balance {
+func NewBalance(ctx context.Context, transport Transport) *Balance {
 	balance := &Balance{
-		System:  runtime.NewSystem(ctx, "balance"),
-		private: private,
-		Quote:   system.Cfg.Market.QuoteCurrency,
+		System:    runtime.NewSystem(ctx, "balance"),
+		transport: transport,
+		Quote:     system.Cfg.Market.QuoteCurrency,
 	}
 
-	balance.Update()
+	if paper, ok := transport.(*Paper); ok {
+		balance.paper = paper
+	}
+
+	if err := balance.Update(); err != nil {
+		balance.Transition(runtime.ERROR)
+		return balance
+	}
+
 	balance.Transition(runtime.READY)
 	return balance
 }
@@ -119,9 +127,31 @@ func (balance *Balance) Snapshot() *AccountSnapshot {
 /*
 Update refreshes the holistic account state atomically.
 */
-func (balance *Balance) Update() {
+func (balance *Balance) Update() error {
 	if balance == nil {
-		return
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[balance] nil balance instance",
+			nil,
+		))
+	}
+
+	if balance.paper != nil {
+		wallet, err := balance.paper.Balances()
+		if err != nil {
+			return errnie.Error(err)
+		}
+
+		if wallet == nil {
+			return errnie.Error(errnie.Err(
+				errnie.IO,
+				"[balance] empty paper balance response",
+				nil,
+			))
+		}
+
+		balance.UpdateWallet(wallet)
+		return nil
 	}
 
 	client := spot.NewREST()
@@ -134,14 +164,20 @@ func (balance *Balance) Update() {
 
 	resp, err := client.Balances()
 	if err != nil {
-		errnie.Error(err)
-		return
+		return errnie.Error(err)
 	}
 
-	if resp != nil && resp.Result != nil {
-		wallet := kraken.NewBalanceFromMap(resp.Result)
-		balance.UpdateWallet(wallet)
+	if resp == nil || resp.Result == nil {
+		return errnie.Error(errnie.Err(
+			errnie.IO,
+			"[balance] empty balance response",
+			nil,
+		))
 	}
+
+	wallet := kraken.NewBalanceFromMap(resp.Result)
+	balance.UpdateWallet(wallet)
+	return nil
 }
 
 /*

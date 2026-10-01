@@ -65,6 +65,8 @@ func (trade *Trade) Step(measurement *data.Measurement[float64]) *data.Measureme
 		return measurement
 	}
 
+	measurement.Source = "derivatives:trade"
+
 	if len(measurement.Peers) > 0 {
 		peer := measurement.FindPeer(func(candidate *data.Measurement[float64]) bool {
 			if candidate.Label == "" {

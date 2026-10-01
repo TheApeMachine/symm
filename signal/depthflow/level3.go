@@ -10,7 +10,6 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
-	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/adaptive"
@@ -99,55 +98,6 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 				obsAsk := input.GetMetric("observed_notional:ask").Raw
 				mutBid := input.GetMetric("mutation_count:bid").Raw
 				mutAsk := input.GetMetric("mutation_count:ask").Raw
-
-				if obsBid == 0 && obsAsk == 0 {
-					var bidPrice, bidQty, askPrice, askQty float64
-					if level3.books != nil {
-						level3.books.Book(m.Label, func(b *spotbook.Book) {
-							if bid := b.BestBid(); bid != nil && bid.Price != nil && bid.Quantity != nil {
-								bidPrice = bid.Price.Float64()
-								bidQty = bid.Quantity.Float64()
-							}
-							if ask := b.BestAsk(); ask != nil && ask.Price != nil && ask.Quantity != nil {
-								askPrice = ask.Price.Float64()
-								askQty = ask.Quantity.Float64()
-							}
-						})
-					}
-
-					if bidPrice == 0 {
-						bidPrice = input.GetMetric("best_bid").Raw
-						if bidPrice == 0 {
-							bidPrice = input.GetMetric("bid").Raw
-						}
-					}
-					if askPrice == 0 {
-						askPrice = input.GetMetric("best_ask").Raw
-						if askPrice == 0 {
-							askPrice = input.GetMetric("ask").Raw
-						}
-					}
-					if bidQty == 0 {
-						bidQty = input.GetMetric("touch_quantity:bid").Raw
-						if bidQty == 0 {
-							bidQty = input.GetMetric("bid_qty").Raw
-						}
-					}
-					if askQty == 0 {
-						askQty = input.GetMetric("touch_quantity:ask").Raw
-						if askQty == 0 {
-							askQty = input.GetMetric("ask_qty").Raw
-						}
-					}
-					if bidPrice > 0 && bidQty > 0 {
-						obsBid = bidPrice * bidQty
-						mutBid = 1
-					}
-					if askPrice > 0 && askQty > 0 {
-						obsAsk = askPrice * askQty
-						mutAsk = 1
-					}
-				}
 
 				if m.Metrics == nil {
 					m.Metrics = make(map[string]data.Metric[float64])
@@ -260,52 +210,19 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 	return actual.(core.Primitive)
 }
 
-func (level3 *Level3) Step(m *data.Measurement[float64]) *data.Measurement[float64] {
+func (level3 *Level3) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
 	if level3.Status() != runtime.READY {
 		errnie.Warn(level3.Name() + ": Step called before READY; dropping event")
-		return m
+		return measurement
 	}
 
-	if m == nil || m.Err != nil {
-		return m
+	if measurement == nil || measurement.Err != nil {
+		return measurement
 	}
 
-	return data.Read[*data.Measurement[float64]](level3.pipelineFor(m.Label).Next(
-		transport.NewOne(unsafe.Pointer(&m)).Next(nil),
+	measurement.Source = "depthflow:level3"
+
+	return data.Read[*data.Measurement[float64]](level3.pipelineFor(measurement.Label).Next(
+		transport.NewOne(unsafe.Pointer(&measurement)).Next(nil),
 	))
-}
-
-/*
-Register returns the measurement declaring this entity's full metric schema.
-Values are empty; the workload uses this at startup to allocate the metric
-schema before feeding streaming records.
-*/
-func (level3 *Level3) Register() *data.Measurement[float64] {
-	m := data.NewMeasurement("depthflow:level3", map[string]data.Metric[float64]{
-		"observed_notional:bid":                  data.NewMetric[float64]("observed_notional:bid", data.UnitRate, data.TimescaleInstantaneous, 0, 0),
-		"observed_notional:ask":                  data.NewMetric[float64]("observed_notional:ask", data.UnitRate, data.TimescaleInstantaneous, 0, 0),
-		"observed_notional":                      data.NewMetric[float64]("observed_notional", data.UnitRate, data.TimescaleInstantaneous, 0, 0),
-		"observed_notional_diff":                 data.NewMetric[float64]("observed_notional_diff", data.UnitRate, data.TimescaleInstantaneous, 0, 0),
-		"add_notional:bid":                       data.NewMetric[float64]("add_notional:bid", data.UnitRate, data.TimescaleInstantaneous, 0, 0),
-		"add_notional:ask":                       data.NewMetric[float64]("add_notional:ask", data.UnitRate, data.TimescaleInstantaneous, 0, 0),
-		"modify_remaining_notional:bid":          data.NewMetric[float64]("modify_remaining_notional:bid", data.UnitRate, data.TimescaleInstantaneous, 0, 0),
-		"modify_remaining_notional:ask":          data.NewMetric[float64]("modify_remaining_notional:ask", data.UnitRate, data.TimescaleInstantaneous, 0, 0),
-		"delete_count:bid":                       data.NewMetric[float64]("delete_count:bid", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 0),
-		"delete_count:ask":                       data.NewMetric[float64]("delete_count:ask", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 0),
-		"mutation_count:bid":                     data.NewMetric[float64]("mutation_count:bid", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 0),
-		"mutation_count:ask":                     data.NewMetric[float64]("mutation_count:ask", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 0),
-		"mutation_count":                         data.NewMetric[float64]("mutation_count", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 0),
-		"mutation_count_diff":                    data.NewMetric[float64]("mutation_count_diff", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 0),
-		"mutation_activity_imbalance":            data.NewMetric[float64]("mutation_activity_imbalance", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
-		"observed_notional_imbalance":            data.NewMetric[float64]("observed_notional_imbalance", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
-		"observed_notional_rate":                 data.NewMetric[float64]("observed_notional_rate", data.UnitRate, data.TimescaleInstantaneous, 0, 0),
-		"observed_notional_imbalance_baseline":   data.NewMetric[float64]("observed_notional_imbalance_baseline", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 0),
-		"observed_notional_imbalance_divergence": data.NewMetric[float64]("observed_notional_imbalance_divergence", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 0),
-		"observed_notional_imbalance_zscore":     data.NewMetric[float64]("observed_notional_imbalance_zscore", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
-		"observed_notional_rate_baseline":        data.NewMetric[float64]("observed_notional_rate_baseline", data.UnitRate, data.TimescaleInstantaneous, 0, 0),
-		"observed_notional_rate_divergence":      data.NewMetric[float64]("observed_notional_rate_divergence", data.UnitRate, data.TimescaleInstantaneous, 0, 0),
-		"observed_notional_rate_zscore":          data.NewMetric[float64]("observed_notional_rate_zscore", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
-	})
-	m.SetMetadata("peer-interest", "*")
-	return m
 }

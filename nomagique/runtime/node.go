@@ -49,7 +49,10 @@ func (consumer *Consumer[T]) Handle(lower, upper int64) {
 		for _, tee := range consumer.tees {
 			if tee != nil {
 				// Convert to Measurement if it's a tee
-				if m, ok := any(result).(*data.Measurement[float64]); ok {
+				if m, ok := any(result).(*data.Measurement[float64]); ok && m != nil {
+					if m.SeqIdx <= 0 {
+						m.SeqIdx = sequence + 1
+					}
 					tee.Push(m)
 				}
 			}
