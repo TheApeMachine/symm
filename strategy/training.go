@@ -175,34 +175,37 @@ func (training *Training) Step(input *runtime.StageInput, output *data.Measureme
 		return nil
 	}
 
-	// Merge all prior-stage output metrics onto the output measurement so
-	// training's internal methods can read them from a single measurement.
+	scratch := data.NewMeasurement[float64]("training:scratch", nil)
+	scratch.Label = output.Label
+	data.StampInterval(scratch, input.At(), input.From())
+
+	// Merge all prior-stage output metrics onto the SCRATCH measurement so
+	// training's internal methods (predict, detector) can read them from a single place.
 	for _, prior := range input.AllPriorOutputs() {
 		if prior == nil || prior.Metrics == nil {
 			continue
 		}
 
 		for key, metric := range prior.Metrics {
-			output.SetMetric(key, metric)
+			scratch.SetMetric(key, metric)
 		}
 
 		// Carry Result from cognition if available.
-		if prior.Result != nil && output.Result == nil {
-			output.Result = prior.Result
+		if prior.Result != nil && scratch.Result == nil {
+			scratch.Result = prior.Result
 		}
 	}
 
 	// Also merge ingress metrics.
 	if ingress := input.Ingress(); ingress != nil && ingress.Metrics != nil {
 		for key, metric := range ingress.Metrics {
-			// Don't overwrite signal-derived metrics with raw ingress values.
-			if _, exists := output.LookupMetric(key); !exists {
-				output.SetMetric(key, metric)
+			if _, exists := scratch.LookupMetric(key); !exists {
+				scratch.SetMetric(key, metric)
 			}
 		}
 	}
 
-	training.live(output)
+	training.live(input, scratch, output)
 
 	return output
 }
@@ -254,12 +257,18 @@ func (training *Training) Run() {
 	}()
 }
 
-func (training *Training) live(measurement *data.Measurement[float64]) {
-	training.grid.Update(measurement)
-	training.retain(measurement)
-	training.extendSignature(measurement)
-	reading := training.predict(measurement, false)
-	record, err := training.detector.Observe(measurement)
+func (training *Training) live(input *runtime.StageInput, scratch, output *data.Measurement[float64]) {
+	var gridInventory []*data.Measurement[float64]
+	if input.Ingress() != nil {
+		gridInventory = append(gridInventory, input.Ingress())
+	}
+	gridInventory = append(gridInventory, input.AllPriorOutputs()...)
+
+	training.grid.Update(gridInventory)
+	training.retain(gridInventory)
+	training.extendSignature(gridInventory)
+	reading := training.predict(scratch, false)
+	record, err := training.detector.Observe(scratch)
 
 	if err != nil {
 		training.Error(err)
@@ -267,37 +276,51 @@ func (training *Training) live(measurement *data.Measurement[float64]) {
 
 	if record != nil {
 		record.Epoch = training.epoch
-		training.resolve(measurement.Label, record)
+		training.resolve(scratch.Label, record)
 	}
 
-	training.publish(measurement, record, reading, false)
+	training.publish(gridInventory, scratch, output, record, reading, false)
 	training.nudge()
 }
 
-func (training *Training) retain(measurement *data.Measurement[float64]) {
-	if measurement.Label == "" {
+func (training *Training) retain(measurements []*data.Measurement[float64]) {
+	if len(measurements) == 0 {
+		return
+	}
+
+	label := measurements[0].Label
+	if label == "" {
 		return
 	}
 
 	training.mu.Lock()
-	training.frames[measurement.Label] = append(training.frames[measurement.Label], measurement.Clone())
+	for _, m := range measurements {
+		if m != nil {
+			training.frames[label] = append(training.frames[label], m.Clone())
+		}
+	}
 	training.mu.Unlock()
 }
 
-func (training *Training) extendSignature(measurement *data.Measurement[float64]) {
-	if measurement.Label == "" || !training.ready() {
+func (training *Training) extendSignature(measurements []*data.Measurement[float64]) {
+	if len(measurements) == 0 {
 		return
 	}
 
-	token := training.grid.LitRegions(measurement)
+	label := measurements[0].Label
+	if label == "" || !training.ready() {
+		return
+	}
+
+	token := training.grid.LitRegions(measurements)
 
 	if len(token) == 0 {
 		return
 	}
 
 	training.mu.Lock()
-	training.signatures[measurement.Label] = appendLitFrame(
-		append([]byte{}, training.signatures[measurement.Label]...),
+	training.signatures[label] = appendLitFrame(
+		append([]byte{}, training.signatures[label]...),
 		token,
 	)
 	training.mu.Unlock()
@@ -911,16 +934,17 @@ func (training *Training) replayCausal(
 			}
 
 			clone := event.frame.Clone()
-			training.grid.Update(clone)
+			inventory := []*data.Measurement[float64]{clone}
+			training.grid.Update(inventory)
 
 			if clone.SeqIdx < record.ExitTick {
 				states[event.idx].frames = append(states[event.idx].frames, clone)
 			}
 
-			token := training.grid.LitRegions(clone)
+			token := training.grid.LitRegions(inventory)
 			states[event.idx].signature = appendLitFrame(states[event.idx].signature, token)
 			reading := training.predictFrom(states[event.idx].signature, clone.Label, clone.SeqIdx, true)
-			training.publish(clone, record, reading, true)
+			training.publish(inventory, clone, clone, record, reading, true)
 
 			continue
 		}
@@ -1789,20 +1813,21 @@ func (training *Training) stage() (float64, string, string) {
 }
 
 func (training *Training) publish(
-	measurement *data.Measurement[float64],
+	gridInventory []*data.Measurement[float64],
+	scratch *data.Measurement[float64],
+	output *data.Measurement[float64],
 	record *tables.ExcursionRecord,
 	reading marker,
 	historical bool,
 ) {
-	if training.tee == nil || measurement == nil {
+	if training.tee == nil || output == nil {
 		return
 	}
 
-	clone := measurement.Clone()
-	clone.SetSource("training:live")
+	output.SetSource("training:live")
 
 	if historical {
-		clone.SetSource("training:historical")
+		output.SetSource("training:historical")
 	}
 
 	code, name, blocker := training.stage()
@@ -1817,26 +1842,26 @@ func (training *Training) publish(
 		}
 	}
 
-	clone.WriteMetric("stage_code", code)
-	clone.SetProvenance("stage", name)
-	clone.SetProvenance("stage_blocker", blocker)
-	training.writeSkill(clone)
-	training.writeQuote(clone, measurement)
-	training.writeMarker(clone, reading, measurement)
-	training.writeEpisode(clone, record)
+	output.WriteMetric("stage_code", code)
+	output.SetProvenance("stage", name)
+	output.SetProvenance("stage_blocker", blocker)
+	training.writeSkill(output)
+	training.writeQuote(output, scratch)
+	training.writeMarker(output, reading, gridInventory)
+	training.writeEpisode(output, record)
 
 	// Live open excursions: stamp A/B from Detector while C is still unknown.
-	if record == nil && !historical && measurement.Label != "" && training.detector != nil {
-		if precursor, anchor, open := training.detector.OpenMarks(measurement.Label); open {
-			clone.SetMetadata("excursion_event", "open")
-			clone.SetMetadata("excursion_start", strconv.FormatInt(precursor, 10))
-			clone.SetMetadata("excursion_ignition", strconv.FormatInt(anchor, 10))
-			clone.WriteMetric("mark_a", float64(precursor))
-			clone.WriteMetric("mark_b", float64(anchor))
+	if record == nil && !historical && output.Label != "" && training.detector != nil {
+		if precursor, anchor, open := training.detector.OpenMarks(output.Label); open {
+			output.SetMetadata("excursion_event", "open")
+			output.SetMetadata("excursion_start", strconv.FormatInt(precursor, 10))
+			output.SetMetadata("excursion_ignition", strconv.FormatInt(anchor, 10))
+			output.WriteMetric("mark_a", float64(precursor))
+			output.WriteMetric("mark_b", float64(anchor))
 		}
 	}
 
-	training.tee.Push(clone)
+	training.tee.Push(output)
 }
 
 func (training *Training) writeSkill(clone *data.Measurement[float64]) {
@@ -2047,7 +2072,7 @@ func (training *Training) noteExitGrade(correct bool) {
 func (training *Training) writeMarker(
 	clone *data.Measurement[float64],
 	reading marker,
-	observed *data.Measurement[float64],
+	measurements []*data.Measurement[float64],
 ) {
 	if reading.action == string(cognition.ActionEnter) {
 		clone.WriteMetric("frozen_prediction", 1)
@@ -2071,7 +2096,7 @@ func (training *Training) writeMarker(
 	// published clone is stamped training:* for UI routing; that Source never
 	// matched grid cells when Source was part of the key, and even after the
 	// cellKey fix the clone may carry overlay-only metrics.
-	token := training.grid.LitRegions(observed)
+	token := training.grid.LitRegions(measurements)
 
 	if len(token) == 0 {
 		clone.WriteMetric("precursor_length", 0)
@@ -2116,7 +2141,7 @@ func (training *Training) signatureOf(frames []*data.Measurement[float64]) []byt
 	var signature []byte
 
 	for _, frame := range frames {
-		signature = appendLitFrame(signature, training.grid.LitRegions(frame))
+		signature = appendLitFrame(signature, training.grid.LitRegions([]*data.Measurement[float64]{frame}))
 	}
 
 	return signature

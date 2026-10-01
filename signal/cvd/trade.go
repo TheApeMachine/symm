@@ -237,40 +237,40 @@ func (trade *Trade) Step(input *runtime.StageInput, output *data.Measurement[flo
 		return nil
 	}
 
-	output.SetMetric("price", priceMetric)
-	output.SetMetric("qty", qtyMetric)
+	scratch := data.NewMeasurement[float64]("cvd:scratch", nil)
+	scratch.Label = output.Label
+	scratch.SetMetric("price", priceMetric)
+	scratch.SetMetric("qty", qtyMetric)
 
-	// Forward bid/ask from ingress for midpoint response computation.
 	if bidMetric, hasBid := input.IngressMetric("bid"); hasBid {
-		output.SetMetric("best_bid", bidMetric)
+		scratch.SetMetric("best_bid", bidMetric)
 	}
 
 	if askMetric, hasAsk := input.IngressMetric("ask"); hasAsk {
-		output.SetMetric("best_ask", askMetric)
+		scratch.SetMetric("best_ask", askMetric)
 	}
 
-	// Forward provenance side for the CVD gate.
 	if side, hasSide := input.IngressProvenance("side"); hasSide {
-		output.SetProvenance("side", side)
+		scratch.SetProvenance("side", side)
 	}
 
 	if channel, hasCh := input.IngressProvenance("channel"); hasCh {
-		output.SetProvenance("channel", channel)
+		scratch.SetProvenance("channel", channel)
 	}
 
 	if ingress.From.IsZero() {
-		data.StampInterval(output, ingress.At, ingress.At)
+		data.StampInterval(scratch, ingress.At, ingress.At)
 	} else {
-		data.StampInterval(output, ingress.At, ingress.From)
+		data.StampInterval(scratch, ingress.At, ingress.From)
 	}
 
 	res := data.Read[*data.Measurement[float64]](trade.pipelineFor(output.Label).Next(
-		transport.NewOne(unsafe.Pointer(&output)).Next(nil),
+		transport.NewOne(unsafe.Pointer(&scratch)).Next(nil),
 	))
 
-	if res == nil {
-		return output
+	if res != nil {
+		data.CopyProducedFacts(res, output, "price", "qty", "best_bid", "best_ask", "bid", "ask")
 	}
 
-	return res
+	return output
 }

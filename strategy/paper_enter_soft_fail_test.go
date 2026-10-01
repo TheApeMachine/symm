@@ -46,7 +46,7 @@ func TestPaperEnterSoftFailKeepsTrainingReady(t *testing.T) {
 
 		training := NewTraining(ctx, 1, price, trader, nil, nil)
 		frame := regionFrame("ETH/USD", 1, 2)
-		training.grid.Update(frame)
+		training.grid.Update([]*data.Measurement[float64]{frame})
 		training.grid.Settle()
 
 		training.mu.Lock()

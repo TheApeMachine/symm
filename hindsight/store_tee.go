@@ -47,11 +47,9 @@ func (tee *StoreTee) Push(measurement *data.Measurement[float64]) {
 		return
 	}
 
-	clone := measurement.PersistClone()
-
 	for {
 		if tee.queue.Length() < storeTeeQueueCap {
-			tee.queue.Enqueue(clone)
+			tee.queue.Enqueue(measurement)
 			return
 		}
 

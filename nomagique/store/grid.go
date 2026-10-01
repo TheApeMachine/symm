@@ -180,7 +180,7 @@ func (grid *Grid) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 
 			measurement := *(**data.Measurement[float64])(arriving)
 			if measurement != nil {
-				grid.Update(measurement)
+				grid.Update([]*data.Measurement[float64]{measurement})
 			}
 
 			if !yield(arriving) {
@@ -190,8 +190,8 @@ func (grid *Grid) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	}
 }
 
-func (grid *Grid) Update(measurement *data.Measurement[float64]) {
-	grid.update(measurement, true)
+func (grid *Grid) Update(measurements []*data.Measurement[float64]) {
+	grid.update(measurements, true)
 }
 
 // ForceSettle forces the grid to finalize its regions immediately.
@@ -214,8 +214,8 @@ func (grid *Grid) ForceSettle() {
 	}
 }
 
-func (grid *Grid) Observe(measurement *data.Measurement[float64]) {
-	grid.update(measurement, false)
+func (grid *Grid) Observe(measurements []*data.Measurement[float64]) {
+	grid.update(measurements, false)
 }
 
 func (grid *Grid) Region(label string) uint8 {
@@ -247,8 +247,8 @@ order so identical sets share radix prefixes.
 Scores the canonical observation: parent Metrics plus Source-keyed Peers,
 matching Grid.Update inventory folds (parent key wins on collision).
 */
-func (grid *Grid) LitRegions(measurement *data.Measurement[float64]) []byte {
-	if measurement == nil {
+func (grid *Grid) LitRegions(measurements []*data.Measurement[float64]) []byte {
+	if len(measurements) == 0 {
 		return nil
 	}
 
@@ -267,18 +267,17 @@ func (grid *Grid) LitRegions(measurement *data.Measurement[float64]) []byte {
 
 	var allMetrics []incomingMetric
 
-	source := measurement.GetSource()
-	for key, metric := range measurement.MetricsSnapshot() {
-		allMetrics = append(allMetrics, incomingMetric{source, key, metric})
-	}
-
-	for _, peer := range measurement.Peers {
-		if peer == nil {
+	label := ""
+	for _, measurement := range measurements {
+		if measurement == nil {
 			continue
 		}
-		peerSource := peer.GetSource()
-		for key, metric := range peer.MetricsSnapshot() {
-			allMetrics = append(allMetrics, incomingMetric{peerSource, key, metric})
+		if label == "" {
+			label = measurement.Label
+		}
+		source := measurement.GetSource()
+		for key, metric := range measurement.MetricsSnapshot() {
+			allMetrics = append(allMetrics, incomingMetric{source, key, metric})
 		}
 	}
 
@@ -288,7 +287,7 @@ func (grid *Grid) LitRegions(measurement *data.Measurement[float64]) []byte {
 			name = item.key
 		}
 
-		region := grid.Regions[cellKey(measurement.Label, item.source, name)]
+		region := grid.Regions[cellKey(label, item.source, name)]
 
 		if region == 0 {
 			continue
@@ -395,10 +394,10 @@ func cellKey(symbol, source, name string) string {
 }
 
 func (grid *Grid) update(
-	measurement *data.Measurement[float64],
+	measurements []*data.Measurement[float64],
 	decorate bool,
 ) {
-	if measurement == nil {
+	if len(measurements) == 0 {
 		return
 	}
 
@@ -410,32 +409,23 @@ func (grid *Grid) update(
 
 	var arrivals []arrival
 
-	source := measurement.GetSource()
-	for key, metric := range measurement.MetricsSnapshot() {
-		name := metric.Label
-		if name == "" {
-			name = key
-		}
-		arrivals = append(arrivals, arrival{
-			source: source,
-			label:  cellKey(measurement.Label, source, name),
-			metric: metric,
-		})
-	}
-
-	for _, peer := range measurement.Peers {
-		if peer == nil {
+	label := ""
+	for _, measurement := range measurements {
+		if measurement == nil {
 			continue
 		}
-		peerSource := peer.GetSource()
-		for key, metric := range peer.MetricsSnapshot() {
+		if label == "" {
+			label = measurement.Label
+		}
+		source := measurement.GetSource()
+		for key, metric := range measurement.MetricsSnapshot() {
 			name := metric.Label
 			if name == "" {
 				name = key
 			}
 			arrivals = append(arrivals, arrival{
-				source: peerSource,
-				label:  cellKey(measurement.Label, peerSource, name),
+				source: source,
+				label:  cellKey(measurement.Label, source, name),
 				metric: metric,
 			})
 		}
@@ -450,7 +440,7 @@ func (grid *Grid) update(
 
 	if grid.Settled {
 		if decorate {
-			grid.decorate(measurement)
+			grid.decorate(measurements)
 		}
 		return
 	}
@@ -461,12 +451,18 @@ func (grid *Grid) update(
 	// Priority 3 Authority: Maturity × SNR when available.
 	// When neither is defined, authority stays at 1.0 and separation
 	// (computed per-metric below) takes over.
-	baseAuthority := measurement.Maturity
-	if measurement.SNRDefined && measurement.SNR > 0 {
-		baseAuthority *= measurement.SNR
-	}
-	if baseAuthority <= 0 {
-		baseAuthority = 1.0
+	baseAuthority := 1.0
+	for _, m := range measurements {
+		if m == nil {
+			continue
+		}
+		a := m.Maturity
+		if m.SNRDefined && m.SNR > 0 {
+			a *= m.SNR
+		}
+		if a > baseAuthority {
+			baseAuthority = a
+		}
 	}
 
 	// Register new cells in sorted label order so place() lattice indices are
@@ -538,8 +534,8 @@ func (grid *Grid) update(
 
 	// Priority 3 fallback: "separation" — when maturity/SNR is unavailable,
 	// compute per-measurement bucket separation to determine authority.
-	if !measurement.SNRDefined && measurement.Maturity <= 0 {
-		grid.applySeparationAuthority(labels, state, delta, currentPresent, measurement)
+	if baseAuthority <= 1.0 {
+		grid.applySeparationAuthority(labels, state, delta, currentPresent, measurements)
 	}
 
 	/*
@@ -732,7 +728,7 @@ func (grid *Grid) update(
 	grid.writeCoordinates()
 
 	if decorate {
-		grid.decorate(measurement)
+		grid.decorate(measurements)
 	}
 }
 
@@ -747,7 +743,7 @@ func (grid *Grid) applySeparationAuthority(
 	state map[string]int,
 	delta map[string]float64,
 	currentPresent map[string]bool,
-	measurement *data.Measurement[float64],
+	measurements []*data.Measurement[float64],
 ) {
 	// Bucket metrics by movement direction
 	var positiveSum, negativeSum float64
@@ -759,8 +755,18 @@ func (grid *Grid) applySeparationAuthority(
 		}
 
 		scale := 1.0
-		if metric, ok := measurement.LookupMetric(label); ok && metric.Scale > 0 {
-			scale = metric.Scale
+		var foundMetric *data.Metric[float64]
+		for _, m := range measurements {
+			if m == nil {
+				continue
+			}
+			if metric, ok := m.LookupMetric(label); ok {
+				foundMetric = &metric
+				break
+			}
+		}
+		if foundMetric != nil && foundMetric.Scale > 0 {
+			scale = foundMetric.Scale
 		} else if stored := grid.find(label); stored != nil && stored.Scale > 0 {
 			scale = stored.Scale
 		}
@@ -1239,26 +1245,32 @@ func (grid *Grid) writeCoordinates() {
 
 
 func (grid *Grid) decorate(
-	measurement *data.Measurement[float64],
+	measurements []*data.Measurement[float64],
 ) {
-	source := measurement.GetSource()
-	for key, incoming := range measurement.MetricsSnapshot() {
-		name := incoming.Label
-
-		if name == "" {
-			name = key
-		}
-
-		stored := grid.find(cellKey(measurement.Label, source, name))
-		if stored == nil {
+	for _, measurement := range measurements {
+		if measurement == nil {
 			continue
 		}
 
-		incoming.X = stored.X
-		incoming.Y = stored.Y
-		incoming.Region = stored.Region
+		source := measurement.GetSource()
+		for key, incoming := range measurement.MetricsSnapshot() {
+			name := incoming.Label
 
-		measurement.SetMetric(key, incoming)
+			if name == "" {
+				name = key
+			}
+
+			stored := grid.find(cellKey(measurement.Label, source, name))
+			if stored == nil {
+				continue
+			}
+
+			incoming.X = stored.X
+			incoming.Y = stored.Y
+			incoming.Region = stored.Region
+
+			measurement.SetMetric(key, incoming)
+		}
 	}
 }
 

@@ -222,19 +222,32 @@ func (level3 *Level3) Step(input *runtime.StageInput, output *data.Measurement[f
 	}
 
 	ingress := input.Ingress()
+	scratch := data.NewMeasurement[float64]("morphology:scratch", nil)
+	scratch.Label = output.Label
+
 	if ingress.Metrics != nil {
 		for key, metric := range ingress.Metrics {
-			output.SetMetric(key, metric)
+			scratch.SetMetric(key, metric)
 		}
 	}
 
 	if channel, hasCh := input.IngressProvenance("channel"); hasCh {
-		output.SetProvenance("channel", channel)
+		scratch.SetProvenance("channel", channel)
 	}
 
-	data.StampInterval(output, input.At(), input.From())
+	data.StampInterval(scratch, input.At(), input.From())
 
-	return data.Read[*data.Measurement[float64]](level3.pipelineFor(output.Label).Next(
-		transport.NewOne(unsafe.Pointer(&output)).Next(nil),
+	res := data.Read[*data.Measurement[float64]](level3.pipelineFor(output.Label).Next(
+		transport.NewOne(unsafe.Pointer(&scratch)).Next(nil),
 	))
+
+	if res != nil {
+		exclude := make([]string, 0, len(ingress.Metrics))
+		for k := range ingress.Metrics {
+			exclude = append(exclude, k)
+		}
+		data.CopyProducedFacts(res, output, exclude...)
+	}
+
+	return output
 }

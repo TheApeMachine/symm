@@ -221,9 +221,9 @@ func TestPaperCloseOwnsFeedbackFraction(t *testing.T) {
 
 		training := NewTraining(ctx, 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
 		frame := regionFrame("BTC/USD", 1, 2)
-		training.grid.Update(frame)
+		training.grid.Update([]*data.Measurement[float64]{frame})
 		training.grid.Settle()
-		token := training.grid.LitRegions(frame)
+		token := training.grid.LitRegions([]*data.Measurement[float64]{frame})
 		entryCtx := append(append([]byte{}, token...), 0)
 
 		reg := position.NewRegulator("BTC/USD")

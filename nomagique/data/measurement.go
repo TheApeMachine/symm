@@ -825,12 +825,7 @@ func (measurement *Measurement[T]) ResetSlot() {
 	measurement.Peers = measurement.Peers[:0]
 	measurement.inputs = nil
 
-	for key, metric := range measurement.Metrics {
-		metric.Raw = zero[T]()
-		metric.Normalized = nil
-		metric.Standardized = nil
-		measurement.Metrics[key] = metric
-	}
+	clear(measurement.Metrics)
 
 	clear(measurement.Metadata)
 	clear(measurement.Provenance)
@@ -903,6 +898,42 @@ func zero[T any]() T {
 	var value T
 
 	return value
+}
+
+/*
+CopyProducedFacts copies all metrics, metadata, error, and quality fields from the
+transient scratch measurement to the published output, omitting the inputs provided
+in the exclude list. This ensures the output measurement only contains facts actually produced.
+*/
+func CopyProducedFacts[T any](scratch, output *Measurement[T], exclude ...string) {
+	if scratch == nil || output == nil {
+		return
+	}
+
+	excludeMap := make(map[string]bool, len(exclude))
+	for _, key := range exclude {
+		excludeMap[key] = true
+	}
+
+	scratch.mu.RLock()
+	defer scratch.mu.RUnlock()
+
+	for key, metric := range scratch.Metrics {
+		if !excludeMap[key] {
+			output.SetMetric(key, metric)
+		}
+	}
+
+	for key, val := range scratch.Metadata {
+		output.EnsureMetadata()
+		output.SetMetadata(key, val)
+	}
+
+	output.Err = scratch.Err
+
+	if scratch.SNRDefined {
+		output.SetQuality(scratch.Maturity, scratch.SNR, scratch.SNRDefined, scratch.Estimated)
+	}
 }
 
 const (

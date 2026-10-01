@@ -163,34 +163,37 @@ func (ticker *Ticker) Step(input *runtime.StageInput, output *data.Measurement[f
 	}
 
 	// Seed bid/ask from ingress so pipeline closure can read them.
+	scratch := data.NewMeasurement[float64]("pumpdump:scratch", nil)
+	scratch.Label = output.Label
+
 	if bid, hasBid := input.IngressMetric("bid"); hasBid {
-		output.SetMetric("best_bid", bid)
-		output.SetMetric("bid", bid)
+		scratch.SetMetric("best_bid", bid)
+		scratch.SetMetric("bid", bid)
 	}
 
 	if ask, hasAsk := input.IngressMetric("ask"); hasAsk {
-		output.SetMetric("best_ask", ask)
-		output.SetMetric("ask", ask)
+		scratch.SetMetric("best_ask", ask)
+		scratch.SetMetric("ask", ask)
 	}
 
 	if vol, hasVol := input.IngressMetric("volume"); hasVol {
-		output.SetMetric("volume", vol)
+		scratch.SetMetric("volume", vol)
 	}
 
 	if channel, hasCh := input.IngressProvenance("channel"); hasCh {
-		output.SetProvenance("channel", channel)
+		scratch.SetProvenance("channel", channel)
 	}
 
-	data.StampInterval(output, input.At(), input.From())
+	data.StampInterval(scratch, input.At(), input.From())
 
 	res := data.Read[*data.Measurement[float64]](ticker.pipelineFor(output.Label).Next(
-		transport.NewOne(unsafe.Pointer(&output)).Next(nil),
+		transport.NewOne(unsafe.Pointer(&scratch)).Next(nil),
 	))
 
-	if res == nil {
-		return nil
+	if res != nil {
+		res.Finalize()
+		data.CopyProducedFacts(res, output, "best_bid", "bid", "best_ask", "ask", "volume")
 	}
 
-	res.Finalize()
-	return res
+	return output
 }

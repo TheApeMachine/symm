@@ -41,7 +41,7 @@ func TestSkillCheckpointRestoresPaperOpenGate(t *testing.T) {
 
 		training := NewTraining(ctx, 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
 		frame := regionFrame("BTC/USD", 1, 2)
-		training.grid.Update(frame)
+		training.grid.Update([]*data.Measurement[float64]{frame})
 		training.grid.Settle()
 
 		// Two +1 samples → mean 1, lower bound > 0 (same as live grading path).
@@ -52,7 +52,7 @@ func TestSkillCheckpointRestoresPaperOpenGate(t *testing.T) {
 		So(err, ShouldBeNil)
 
 		again := NewTraining(ctx, 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
-		again.grid.Update(frame)
+		again.grid.Update([]*data.Measurement[float64]{frame})
 		again.grid.Settle()
 		again.mu.Lock()
 		again.checkpointed = true

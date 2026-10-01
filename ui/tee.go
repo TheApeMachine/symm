@@ -82,9 +82,7 @@ func (tee *UITee) Push(measurement *data.Measurement[float64]) {
 		return
 	}
 
-	// PersistClone strips Peers — Clone retained the disruptor peer forest and
-	// EncodeMeasurements recursed it into multi-GiB FlatBuffers.
-	tee.queue.Enqueue(measurement.PersistClone())
+	tee.queue.Enqueue(measurement)
 }
 
 /*

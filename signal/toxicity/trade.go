@@ -237,30 +237,37 @@ func (trade *Trade) Step(input *runtime.StageInput, output *data.Measurement[flo
 	}
 
 	ingress := input.Ingress()
+	scratch := data.NewMeasurement[float64]("toxicity:scratch", nil)
+	scratch.Label = output.Label
+	
 	if ingress.Metrics != nil {
 		for key, metric := range ingress.Metrics {
-			output.SetMetric(key, metric)
+			scratch.SetMetric(key, metric)
 		}
 	}
 
 	if side, hasSide := input.IngressProvenance("side"); hasSide {
-		output.SetProvenance("side", side)
+		scratch.SetProvenance("side", side)
 	}
 
 	if channel, hasCh := input.IngressProvenance("channel"); hasCh {
-		output.SetProvenance("channel", channel)
+		scratch.SetProvenance("channel", channel)
 	}
 
-	data.StampInterval(output, input.At(), input.From())
+	data.StampInterval(scratch, input.At(), input.From())
 
 	res := data.Read[*data.Measurement[float64]](trade.pipelineFor(output.Label).Next(
-		transport.NewOne(unsafe.Pointer(&output)).Next(nil),
+		transport.NewOne(unsafe.Pointer(&scratch)).Next(nil),
 	))
 
-	if res == nil {
-		return nil
+	if res != nil {
+		res.Finalize()
+		exclude := make([]string, 0, len(ingress.Metrics))
+		for k := range ingress.Metrics {
+			exclude = append(exclude, k)
+		}
+		data.CopyProducedFacts(res, output, exclude...)
 	}
 
-	res.Finalize()
-	return res
+	return output
 }
