@@ -82,9 +82,10 @@ func TestLitRegionsTopNNotMean(t *testing.T) {
 			cellKey("BTC/USD", "", "e"): 5,
 		}
 
+		eq := 1.0
 		frame := &data.Measurement[float64]{Label: "BTC/USD"}
 		for _, name := range []string{"a", "b", "c", "d", "e"} {
-			frame.SetMetric(name, data.Metric[float64]{Label: name, Raw: 1})
+			frame.SetMetric(name, data.Metric[float64]{Label: name, Raw: 1, Normalized: &eq})
 		}
 
 		token := grid.LitRegions(frame)

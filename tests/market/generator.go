@@ -44,8 +44,8 @@ func (profile ExcursionProfile) GenerateTape(startSeq int64) []*data.Measurement
 		m.Label = profile.Symbol
 		m.At = eventTime
 		m.Metrics = map[string]data.Metric[float64]{
-			"price":  {Label: "price", Raw: p},
-			"spread": {Label: "spread", Raw: profile.Spread},
+			"price":  {Label: "price", Raw: p, Standardized: &p},
+			"spread": {Label: "spread", Raw: profile.Spread, Standardized: &profile.Spread},
 		}
 		frames = append(frames, m)
 		currentSeq++
@@ -180,8 +180,8 @@ func NewChopWhipsawTape(symbol string, basePrice, spread float64, ticks int) []*
 		m.Label = symbol
 		m.At = eventTime
 		m.Metrics = map[string]data.Metric[float64]{
-			"price":  {Label: "price", Raw: p},
-			"spread": {Label: "spread", Raw: spread},
+			"price":  {Label: "price", Raw: p, Standardized: &p},
+			"spread": {Label: "spread", Raw: spread, Standardized: &spread},
 		}
 		frames[i] = m
 		eventTime = eventTime.Add(50 * time.Millisecond)
@@ -203,8 +203,8 @@ func NewFlatQuiescentTape(symbol string, basePrice, spread float64, ticks int) [
 		m.Label = symbol
 		m.At = eventTime
 		m.Metrics = map[string]data.Metric[float64]{
-			"price":  {Label: "price", Raw: basePrice},
-			"spread": {Label: "spread", Raw: spread},
+			"price":  {Label: "price", Raw: basePrice, Standardized: &basePrice},
+			"spread": {Label: "spread", Raw: spread, Standardized: &spread},
 		}
 		frames[i] = m
 		eventTime = eventTime.Add(100 * time.Millisecond)

@@ -222,9 +222,9 @@ func TestSuperviseTeachesEnterFromGroundTruth(t *testing.T) {
 		frames := []*data.Measurement[float64]{
 			regionFrame("BTC/USD", 1, 2),
 			regionFrame("BTC/USD", 2, 3),
-			regionFrameWithPeer("BTC/USD", 4, 10, 1.5, "energy"),
+			regionFrameWithPeer("BTC/USD", 4, 10, 3.5, "energy"),
 			regionFrameWithPeer("BTC/USD", 5, 11, 2.5, "energy"),
-			regionFrameWithPeer("BTC/USD", 7, 12, 3.5, "energy"),
+			regionFrameWithPeer("BTC/USD", 7, 12, 1.5, "energy"),
 		}
 		for _, f := range frames {
 			training.grid.Update(f)

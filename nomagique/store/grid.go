@@ -247,37 +247,50 @@ func (grid *Grid) LitRegions(measurement *data.Measurement[float64]) []byte {
 	defer grid.mu.RUnlock()
 
 	var activity [256]float64
+	var count [256]int
 	var present [256]bool
 
-	metrics := measurement.MetricsSnapshot()
+	type incomingMetric struct {
+		source string
+		key    string
+		metric data.Metric[float64]
+	}
+
+	var allMetrics []incomingMetric
+
+	source := measurement.GetSource()
+	for key, metric := range measurement.MetricsSnapshot() {
+		allMetrics = append(allMetrics, incomingMetric{source, key, metric})
+	}
+
 	for _, peer := range measurement.Peers {
 		if peer == nil {
 			continue
 		}
-		for key, incoming := range peer.MetricsSnapshot() {
-			if _, exists := metrics[key]; exists {
-				continue
-			}
-			metrics[key] = incoming
+		peerSource := peer.GetSource()
+		for key, metric := range peer.MetricsSnapshot() {
+			allMetrics = append(allMetrics, incomingMetric{peerSource, key, metric})
 		}
 	}
 
-	source := measurement.GetSource()
-	for key, metric := range metrics {
-		name := metric.Label
-
+	for _, item := range allMetrics {
+		name := item.metric.Label
 		if name == "" {
-			name = key
+			name = item.key
 		}
 
-		region := grid.Regions[cellKey(measurement.Label, source, name)]
+		region := grid.Regions[cellKey(measurement.Label, item.source, name)]
 
 		if region == 0 {
 			continue
 		}
 
-		activity[region] += regionActivity(metric)
-		present[region] = true
+		act := regionActivity(item.metric)
+		if act > 0 {
+			activity[region] += act
+			count[region]++
+			present[region] = true
+		}
 	}
 
 	type score struct {
@@ -288,13 +301,13 @@ func (grid *Grid) LitRegions(measurement *data.Measurement[float64]) []byte {
 	scores := make([]score, 0, 256)
 
 	for region := 1; region < 256; region++ {
-		if !present[region] || activity[region] <= 0 {
+		if !present[region] || count[region] == 0 {
 			continue
 		}
 
 		scores = append(scores, score{
 			region: uint8(region),
-			value:  activity[region],
+			value:  activity[region] / float64(count[region]),
 		})
 	}
 
@@ -345,11 +358,7 @@ func regionActivity(metric data.Metric[float64]) float64 {
 		return math.Abs(*metric.Normalized)
 	}
 
-	if metric.Raw == 0 {
-		return 0
-	}
-
-	return 1.0
+	return 0
 }
 
 /*
@@ -361,17 +370,8 @@ rather than cell identity. Replay rebuilds ingress + Source-keyed peers via
 canonicalObservations so LitRegions matches live Training.Step; publish may
 still rewrite Source to training:* on the UI clone only.
 */
-func cellKey(symbol, _source, name string) string {
-	return symbol + "\x00" + name
-}
-
-// modernizeCellKey rewrites legacy symbol\0source\0name keys from checkpoints.
-func modernizeCellKey(label string) string {
-	parts := strings.Split(label, "\x00")
-	if len(parts) != 3 {
-		return label
-	}
-	return parts[0] + "\x00" + parts[2]
+func cellKey(symbol, source, name string) string {
+	return symbol + "\x00" + source + "\x00" + name
 }
 
 func (grid *Grid) update(
@@ -382,28 +382,48 @@ func (grid *Grid) update(
 		return
 	}
 
-	metrics := measurement.MetricsSnapshot()
-	// Peers carry concurrent signal/logic snapshots (Timeline, Register). Fold
-	// their metrics into the impulse-map inventory — same fold LitRegions uses.
+	type arrival struct {
+		source string
+		label  string
+		metric data.Metric[float64]
+	}
+
+	var arrivals []arrival
+
+	source := measurement.GetSource()
+	for key, metric := range measurement.MetricsSnapshot() {
+		name := metric.Label
+		if name == "" {
+			name = key
+		}
+		arrivals = append(arrivals, arrival{
+			source: source,
+			label:  cellKey(measurement.Label, source, name),
+			metric: metric,
+		})
+	}
+
 	for _, peer := range measurement.Peers {
 		if peer == nil {
 			continue
 		}
-
-		for key, incoming := range peer.MetricsSnapshot() {
-			if _, exists := metrics[key]; exists {
-				continue
+		peerSource := peer.GetSource()
+		for key, metric := range peer.MetricsSnapshot() {
+			name := metric.Label
+			if name == "" {
+				name = key
 			}
-
-			metrics[key] = incoming
+			arrivals = append(arrivals, arrival{
+				source: peerSource,
+				label:  cellKey(measurement.Label, peerSource, name),
+				metric: metric,
+			})
 		}
 	}
 
-	if len(metrics) == 0 {
+	if len(arrivals) == 0 {
 		return
 	}
-
-	source := measurement.GetSource()
 
 	grid.mu.Lock()
 	defer grid.mu.Unlock()
@@ -415,8 +435,8 @@ func (grid *Grid) update(
 		return
 	}
 
-	current := make(map[string]float64, len(metrics))
-	currentPresent := make(map[string]bool, len(metrics))
+	current := make(map[string]float64, len(arrivals))
+	currentPresent := make(map[string]bool, len(arrivals))
 
 	// Priority 3 Authority: Maturity × SNR when available.
 	// When neither is defined, authority stays at 1.0 and separation
@@ -430,21 +450,14 @@ func (grid *Grid) update(
 	}
 
 	// Register new cells in sorted label order so place() lattice indices are
-	// deterministic (measurement metric maps iterate in random order).
-	type arrival struct {
-		label  string
-		metric data.Metric[float64]
-	}
-	arrivals := make([]arrival, 0, len(metrics))
+	// deterministic.
 
-	for key, incoming := range metrics {
-		name := incoming.Label
+	var newArrivals []arrival
+	for i := range arrivals {
+		a := &arrivals[i]
+		label := a.label
+		incoming := a.metric
 
-		if name == "" {
-			name = key
-		}
-
-		label := cellKey(measurement.Label, source, name)
 		current[label] = incoming.Raw
 		currentPresent[label] = true
 		grid.Authority[label] = baseAuthority
@@ -452,18 +465,19 @@ func (grid *Grid) update(
 		if grid.find(label) == nil {
 			metric := incoming
 			metric.Label = label
-			arrivals = append(arrivals, arrival{label: label, metric: metric})
+			a.metric = metric
+			newArrivals = append(newArrivals, *a)
 		}
 	}
 
-	sort.Slice(arrivals, func(left, right int) bool {
-		return arrivals[left].label < arrivals[right].label
+	sort.Slice(newArrivals, func(left, right int) bool {
+		return newArrivals[left].label < newArrivals[right].label
 	})
 
-	for index := range arrivals {
-		metric := arrivals[index].metric
+	for index := range newArrivals {
+		metric := newArrivals[index].metric
 		grid.Metrics = append(grid.Metrics, &metric)
-		grid.place(arrivals[index].label)
+		grid.place(newArrivals[index].label)
 	}
 
 	labels := make([]string, 0, len(grid.Metrics))
@@ -840,13 +854,9 @@ func (relation *GridRelation) sympathy() float64 {
 		magnitudeScore = relation.MagnitudeSimilarity / float64(relation.MagnitudeSamples)
 	}
 
-	// Priorities are additive when directional is positive (consistent)
-	if directionalScore >= 0 {
-		return directionalScore + magnitudeScore
-	}
-
-	// Contradictory / inconsistent relationships repel
-	return directionalScore
+	// Multiply directional score by magnitude similarity so uncorrelated items
+	// do not attract simply because they have similar magnitudes.
+	return directionalScore * magnitudeScore
 }
 
 /*
@@ -864,10 +874,9 @@ func (grid *Grid) formRegions(labels []string) {
 		return
 	}
 
+	grid.Bound = make(map[string]string)
+
 	regionPower := make(map[string]float64)
-	for _, root := range grid.Bound {
-		regionPower[root] += 1.0
-	}
 
 	strength := make(map[string]float64, len(labels))
 
@@ -908,11 +917,6 @@ func (grid *Grid) formRegions(labels []string) {
 
 	parent := make(map[string]string, len(labels))
 
-	// Watershed neighborhood: climb only within ~1.5 lattice steps. Positions
-	// already encode sympathy (attract/repel); requiring live sympathy here left
-	// most cells as singleton regions (about one region per metric).
-	neighborhood := latticeSpacing * 1.5
-
 	for _, label := range labels {
 		if boundTo, ok := grid.Bound[label]; ok {
 			parent[label] = boundTo
@@ -921,13 +925,16 @@ func (grid *Grid) formRegions(labels []string) {
 
 		parent[label] = label
 		best := label
-		bestDistance := math.Inf(1)
+		bestEnergy := 0.0
 
 		for _, candidate := range labels {
 			if candidate == label {
 				continue
 			}
-			if strength[candidate] <= strength[label] {
+			if strength[candidate] < strength[label] {
+				continue
+			}
+			if strength[candidate] == strength[label] && candidate >= label {
 				continue
 			}
 
@@ -935,21 +942,32 @@ func (grid *Grid) formRegions(labels []string) {
 				grid.PosX[candidate]-grid.PosX[label],
 				grid.PosY[candidate]-grid.PosY[label],
 			)
+			if distance == 0 {
+				distance = 0.001
+			}
 
-			if distance > neighborhood {
+			rel := grid.Relations[pair(label, candidate)]
+			sym := 0.0
+			if rel != nil {
+				sym = rel.sympathy()
+			}
+
+			// Grouping derived from coherence (sympathy) and separation (distance).
+			// We only bind if there is positive sympathy.
+			if sym <= 0 {
 				continue
 			}
 
-			if distance < bestDistance || (distance == bestDistance && candidate < best) {
+			energy := sym / distance
+
+			if energy > bestEnergy {
 				best = candidate
-				bestDistance = distance
+				bestEnergy = energy
 			}
 		}
 
-		// Bind when closer than the initial lattice step (TRAINING.md: attracted
-		// closely enough). The old 0.5 cutoff was inside one lattice cell and
-		// almost never fired, so Bound never reduced vocabulary.
-		if best != label && bestDistance < latticeSpacing {
+		// Bind if the energy is strong enough (attracted closely enough).
+		if best != label {
 			bindRoot := best
 			if candidateRoot, ok := grid.Bound[best]; ok {
 				bindRoot = candidateRoot
@@ -995,7 +1013,12 @@ func (grid *Grid) formRegions(labels []string) {
 
 	grid.Regions = make(map[string]uint8, len(labels))
 	for index, r := range roots {
-		if index >= 255 {
+		if index >= 254 {
+			grid.Error(errnie.Err(
+				errnie.Validation,
+				"impossible state: grid generated more than 254 regions",
+				nil,
+			))
 			break
 		}
 		region := uint8(index + 1)
@@ -1016,112 +1039,6 @@ func (grid *Grid) writeCoordinates() {
 	}
 }
 
-func (grid *Grid) modernizeLegacyKeys() {
-	rewrite := func(store map[string]float64) {
-		if store == nil {
-			return
-		}
-		next := make(map[string]float64, len(store))
-		for key, value := range store {
-			next[modernizeCellKey(key)] = value
-		}
-		for key := range store {
-			delete(store, key)
-		}
-		for key, value := range next {
-			store[key] = value
-		}
-	}
-	rewriteBool := func(store map[string]bool) {
-		if store == nil {
-			return
-		}
-		next := make(map[string]bool, len(store))
-		for key, value := range store {
-			next[modernizeCellKey(key)] = value
-		}
-		for key := range store {
-			delete(store, key)
-		}
-		for key, value := range next {
-			store[key] = value
-		}
-	}
-	rewriteU8 := func(store map[string]uint8) {
-		if store == nil {
-			return
-		}
-		next := make(map[string]uint8, len(store))
-		for key, value := range store {
-			next[modernizeCellKey(key)] = value
-		}
-		for key := range store {
-			delete(store, key)
-		}
-		for key, value := range next {
-			store[key] = value
-		}
-	}
-	rewriteStr := func(store map[string]string) {
-		if store == nil {
-			return
-		}
-		next := make(map[string]string, len(store))
-		for key, value := range store {
-			next[modernizeCellKey(key)] = modernizeCellKey(value)
-		}
-		for key := range store {
-			delete(store, key)
-		}
-		for key, value := range next {
-			store[key] = value
-		}
-	}
-
-	rewrite(grid.Last)
-	rewriteBool(grid.Present)
-	rewrite(grid.Authority)
-	rewrite(grid.PosX)
-	rewrite(grid.PosY)
-	rewriteU8(grid.Regions)
-	rewriteStr(grid.Bound)
-
-	oldToNew := make(map[string]string, len(grid.Metrics))
-	for _, metric := range grid.Metrics {
-		if metric == nil || metric.Label == "" {
-			continue
-		}
-		oldToNew[metric.Label] = modernizeCellKey(metric.Label)
-	}
-
-	if grid.Relations != nil {
-		next := make(map[string]*GridRelation, len(grid.Relations))
-		labels := make([]string, 0, len(oldToNew))
-		for old := range oldToNew {
-			labels = append(labels, old)
-		}
-		sort.Strings(labels)
-		for i := 0; i < len(labels); i++ {
-			for j := i + 1; j < len(labels); j++ {
-				oldKey := pair(labels[i], labels[j])
-				rel := grid.Relations[oldKey]
-				if rel == nil {
-					continue
-				}
-				next[pair(oldToNew[labels[i]], oldToNew[labels[j]])] = rel
-			}
-		}
-		grid.Relations = next
-	}
-
-	for _, metric := range grid.Metrics {
-		if metric != nil {
-			metric.Label = modernizeCellKey(metric.Label)
-		}
-	}
-
-	grid.Partition = ""
-}
 
 func (grid *Grid) decorate(
 	measurement *data.Measurement[float64],
@@ -1270,6 +1187,5 @@ func (grid *Grid) RestoreSnapshot(encoded []byte) error {
 	grid.Observations = snapshot.Observations
 	grid.PartitionRun = snapshot.PartitionRun
 	grid.LongestPartitionRun = snapshot.LongestPartitionRun
-	grid.modernizeLegacyKeys()
 	return nil
 }

@@ -25,7 +25,8 @@ func TestRegionVocabularyAntiCorrelatedGroups(t *testing.T) {
 				values[i] += 0.1 * float64((tick%2)*2-1)
 			}
 			label := fmt.Sprintf("m%02d", i)
-			m.SetMetric(label, data.Metric[float64]{Label: label, Raw: values[i]})
+			val := values[i]
+			m.SetMetric(label, data.Metric[float64]{Label: label, Raw: val, Standardized: &val})
 		}
 		grid.Update(m)
 	}

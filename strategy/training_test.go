@@ -118,7 +118,7 @@ func regionFrame(symbol string, seq int64, raw float64) *data.Measurement[float6
 	measurement := data.NewMeasurement[float64]("websocket", nil)
 	measurement.Label = symbol
 	measurement.SeqIdx = seq
-	measurement.SetMetric("mid", data.Metric[float64]{Label: "mid", Raw: raw})
+	measurement.SetMetric("mid", data.Metric[float64]{Label: "mid", Raw: raw, Standardized: &raw})
 
 	return measurement
 }
@@ -127,7 +127,7 @@ func regionFrame(symbol string, seq int64, raw float64) *data.Measurement[float6
 func regionFrameWithPeer(symbol string, seq int64, mid, peerRaw float64, peerMetric string) *data.Measurement[float64] {
 	measurement := regionFrame(symbol, seq, mid)
 	peer := data.NewMeasurement[float64]("resonance", map[string]data.Metric[float64]{
-		peerMetric: {Label: peerMetric, Raw: peerRaw},
+		peerMetric: {Label: peerMetric, Raw: peerRaw, Standardized: &peerRaw},
 	})
 	peer.Label = symbol
 	peer.SeqIdx = seq
@@ -187,9 +187,9 @@ func TestSuperviseScoresFrozenPrediction(t *testing.T) {
 		frames := []*data.Measurement[float64]{
 			regionFrame("BTC/USD", 1, 2),
 			regionFrame("BTC/USD", 2, 3),
-			regionFrameWithPeer("BTC/USD", 4, 10, 1.5, "energy"),
+			regionFrameWithPeer("BTC/USD", 4, 10, 3.5, "energy"),
 			regionFrameWithPeer("BTC/USD", 5, 11, 2.5, "energy"),
-			regionFrameWithPeer("BTC/USD", 7, 12, 3.5, "energy"),
+			regionFrameWithPeer("BTC/USD", 7, 12, 1.5, "energy"),
 		}
 		for _, f := range frames {
 			training.grid.Update(f)
@@ -320,5 +320,67 @@ func TestTeachMarksModelDirty(t *testing.T) {
 		dirty := training.modelRevision > 0
 		training.mu.Unlock()
 		So(dirty, ShouldBeTrue)
+	})
+}
+
+func TestSuperviseCausalEdge(t *testing.T) {
+	Convey("Given a cold engine with an ENTER prediction but no EXIT prediction", t, func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		price := priced(t, "BTC/USD", 0.1)
+		training := NewTraining(ctx, 1, price, nil, nil, nil)
+
+		enterFrame := data.NewMeasurement[float64]("source", nil)
+		enterFrame.Label = "BTC/USD"
+		enterFrame.SeqIdx = 0
+		val := 1.0
+		enterFrame.SetMetric("x", data.Metric[float64]{Label: "x", Raw: val, Standardized: &val})
+
+		exitFrame := data.NewMeasurement[float64]("source", nil)
+		exitFrame.Label = "BTC/USD"
+		exitFrame.SeqIdx = 1
+		val2 := 2.0
+		exitFrame.SetMetric("y", data.Metric[float64]{Label: "y", Raw: val2, Standardized: &val2})
+
+		training.grid.Update(enterFrame)
+		training.grid.Update(exitFrame)
+		training.grid.Settle()
+
+		// Manually teach ENTER so it predicts ENTER
+		enterToken := append(training.grid.LitRegions(enterFrame), 0)
+		training.teach(enterToken, string(cognition.ActionEnter), 1.0)
+
+		episode := heldEpisode{
+			record: tables.ExcursionRecord{
+				ID:                 "BTC/USD:1",
+				Symbol:             "BTC/USD",
+				Direction:          "up",
+				ClearsFriction:     true,
+				EntryPrice:         100.0,
+				ExitPrice:          110.0,
+				PrecursorStartTick: 0,
+				AnchorTick:         1,
+				ExitTick:           2,
+			},
+			frames: []*data.Measurement[float64]{
+				enterFrame,
+				exitFrame,
+			},
+		}
+
+		training.supervise(episode, true)
+
+		// Did not know EXIT yet -> incomplete -> 0 policy return
+		So(training.returns.Count, ShouldEqual, 1)
+		So(training.returns.Mean, ShouldEqual, 0.0)
+
+		// But supervise should have TAUGHT the exit frame as ActionExit
+		episode2 := episode
+		episode2.record.ID = "BTC/USD:2"
+		training.supervise(episode2, true)
+
+		// Now it should predict EXIT and earn the full return
+		So(training.returns.Count, ShouldEqual, 2)
+		So(training.returns.Mean*training.returns.Count, ShouldAlmostEqual, 0.1)
 	})
 }
