@@ -66,17 +66,25 @@ func newAccountSnapshot(
 	tradeBalance *kraken.TradeBalanceResult,
 ) *AccountSnapshot {
 	assets := make(map[string]*decimal.Decimal)
+	var cash *decimal.Decimal
 
 	if wallet != nil {
 		for _, data := range wallet.Data {
 			assets[data.Asset] = data.Balance
+
+			if data.Asset != quote {
+				continue
+			}
+
+			// Size and enter use spendable cash. Paper (and extended live balances)
+			// keep reserved/open-order holds out of Available — Total alone would
+			// request ~100 when Available is 0.19.
+			if data.Available != nil {
+				cash = data.Available
+			} else {
+				cash = data.Balance
+			}
 		}
-	}
-
-	var cash *decimal.Decimal
-
-	if quoteAmount, found := assets[quote]; found {
-		cash = quoteAmount
 	}
 
 	var equity *decimal.Decimal
@@ -196,7 +204,7 @@ func (balance *Balance) Assets() map[string]*decimal.Decimal {
 	return out
 }
 
-/* Cash reports the quote balance exactly as the exchange last stated it. */
+/* Cash reports spendable quote funds (Available when present, else Balance). */
 func (balance *Balance) Cash() *decimal.Decimal {
 	snapshot := balance.Snapshot()
 

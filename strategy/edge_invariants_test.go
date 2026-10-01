@@ -39,22 +39,26 @@ func TestFrozenPolicyEdgeAbstainIsZero(t *testing.T) {
 	})
 }
 
-func TestFrozenPolicyEdgeEnterUsesExecutableReturn(t *testing.T) {
-	Convey("Frozen Enter scores (ExitPrice-EntryPrice)/EntryPrice as edge", t, func() {
+func TestFrozenPolicyEdgeEnterWithoutExitIsIncomplete(t *testing.T) {
+	Convey("ENTER predicted but EXIT never predicted must NOT receive oracle C return", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
 		training := NewTraining(ctx, 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
+		// Peer-enriched B→C keeps exitCtx distinct; only ENTER is seeded (no EXIT).
 		frames := []*data.Measurement[float64]{
 			regionFrame("BTC/USD", 1, 2),
 			regionFrame("BTC/USD", 2, 3),
+			regionFrameWithPeer("BTC/USD", 4, 10, 1.5, "energy"),
+			regionFrameWithPeer("BTC/USD", 5, 11, 2.5, "energy"),
+			regionFrameWithPeer("BTC/USD", 7, 12, 3.5, "energy"),
 		}
 		for _, f := range frames {
 			training.grid.Update(f)
 		}
 		training.grid.Settle()
 
-		enterCtx := training.signatureOf(framesBefore(frames, 2))
+		enterCtx := training.signatureOf(framesBefore(frames, 4))
 		So(len(enterCtx), ShouldBeGreaterThan, 0)
 		_, err := training.engine.Observe(cognition.Association{
 			Context: append([]byte{}, enterCtx...), Class: []byte(cognition.ActionEnter),
@@ -63,10 +67,73 @@ func TestFrozenPolicyEdgeEnterUsesExecutableReturn(t *testing.T) {
 		So(err, ShouldBeNil)
 		So(training.frozenAction(enterCtx), ShouldEqual, cognition.ActionEnter)
 
+		exitCtx := training.signatureOf(framesRange(frames, 4, 8))
+		So(len(exitCtx), ShouldBeGreaterThan, 0)
+		So(string(exitCtx), ShouldNotEqual, string(enterCtx))
+		So(training.frozenAction(exitCtx), ShouldNotEqual, cognition.ActionExit)
+
 		training.supervise(heldEpisode{
 			record: tables.ExcursionRecord{
-				ID: "edge:enter", Symbol: "BTC/USD", Direction: "up", ClearsFriction: true,
-				PrecursorStartTick: 1, AnchorTick: 2, ExitTick: 4,
+				ID: "edge:enter-no-exit", Symbol: "BTC/USD", Direction: "up", ClearsFriction: true,
+				PrecursorStartTick: 1, AnchorTick: 4, ExitTick: 8,
+				EntryPrice: 100, ExitPrice: 101.5, ProfitFraction: 0.999, // decoy oracle C
+			},
+			frames: frames,
+		}, true)
+
+		So(training.returns.Count, ShouldEqual, 1)
+		// Incomplete hypo: abstain/forced incomplete = 0 — NOT (101.5-100)/100.
+		So(training.returns.Mean, ShouldEqual, 0)
+		So(training.returnSamples[0], ShouldEqual, 0)
+		So(training.returns.Mean, ShouldNotEqual, 0.015)
+		So(training.returns.Mean, ShouldNotEqual, 0.999)
+	})
+}
+
+func TestFrozenPolicyEdgeEnterExitUsesExecutableReturn(t *testing.T) {
+	Convey("Frozen ENTER+EXIT scores (ExitPrice-EntryPrice)/EntryPrice as edge", t, func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		training := NewTraining(ctx, 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
+		// Bare mid on A→B; peer-enriched B→C so Enter/Exit associations do not collide.
+		frames := []*data.Measurement[float64]{
+			regionFrame("BTC/USD", 1, 2),
+			regionFrame("BTC/USD", 2, 3),
+			regionFrameWithPeer("BTC/USD", 4, 10, 1.5, "energy"),
+			regionFrameWithPeer("BTC/USD", 5, 11, 2.5, "energy"),
+			regionFrameWithPeer("BTC/USD", 7, 12, 3.5, "energy"),
+		}
+		for _, f := range frames {
+			training.grid.Update(f)
+		}
+		training.grid.Settle()
+
+		enterCtx := training.signatureOf(framesBefore(frames, 4))
+		So(len(enterCtx), ShouldBeGreaterThan, 0)
+		_, err := training.engine.Observe(cognition.Association{
+			Context: append([]byte{}, enterCtx...), Class: []byte(cognition.ActionEnter),
+			Feedback: 1, Graded: true,
+		})
+		So(err, ShouldBeNil)
+		So(training.frozenAction(enterCtx), ShouldEqual, cognition.ActionEnter)
+
+		exitCtx := training.signatureOf(framesRange(frames, 4, 8))
+		So(len(exitCtx), ShouldBeGreaterThan, 0)
+		So(string(exitCtx), ShouldNotEqual, string(enterCtx))
+		_, err = training.engine.Observe(cognition.Association{
+			Context: append([]byte{}, exitCtx...), Class: []byte(cognition.ActionExit),
+			Feedback: 1, Graded: true,
+		})
+		So(err, ShouldBeNil)
+		So(training.frozenAction(exitCtx), ShouldEqual, cognition.ActionExit)
+		// Exit seed must not overwrite Enter on the distinct A→B context.
+		So(training.frozenAction(enterCtx), ShouldEqual, cognition.ActionEnter)
+
+		training.supervise(heldEpisode{
+			record: tables.ExcursionRecord{
+				ID: "edge:enter-exit", Symbol: "BTC/USD", Direction: "up", ClearsFriction: true,
+				PrecursorStartTick: 1, AnchorTick: 4, ExitTick: 8,
 				EntryPrice: 100, ExitPrice: 101.5, ProfitFraction: 0.999, // decoy
 			},
 			frames: frames,
@@ -184,3 +251,4 @@ func TestExecutableEnterReturnFromBidAskFees(t *testing.T) {
 		So(executableEnterReturn(tables.ExcursionRecord{EntryPrice: 100, ExitPrice: 99}), ShouldAlmostEqual, -0.01, 1e-12)
 	})
 }
+

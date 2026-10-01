@@ -39,12 +39,11 @@ func TestTrainingSupervision(t *testing.T) {
 		}
 		training.supervise(episode, true)
 
-		// Frozen Evaluate on an empty trie does not emit Enter; for a downward
-		// episode that is the correct abstention, so skill samples +1.
-		// Abstain does not teach Enter (policy-return supervision).
+		// Cold freeze abstains (not Enter) — correct for a downward episode, so
+		// skill samples +1. Ground truth still teaches ENTER avoidance (-1).
 		So(training.skill.Count, ShouldEqual, 1)
 		So(training.skill.Mean, ShouldEqual, 1)
-		So(classCount(training, "enter"), ShouldEqual, 0)
+		So(classCount(training, "enter"), ShouldBeGreaterThan, int32(0))
 		So(training.returns.Count, ShouldEqual, 1)
 		So(training.returns.Mean, ShouldEqual, 0)
 		So(training.signatureOf(btcFrames), ShouldNotResemble, training.signatureOf(append(append([]*data.Measurement[float64]{}, btcFrames...), eth)))
@@ -124,6 +123,18 @@ func regionFrame(symbol string, seq int64, raw float64) *data.Measurement[float6
 	return measurement
 }
 
+// regionFrameWithPeer adds a source-keyed peer metric so LitRegions differs from a bare mid frame.
+func regionFrameWithPeer(symbol string, seq int64, mid, peerRaw float64, peerMetric string) *data.Measurement[float64] {
+	measurement := regionFrame(symbol, seq, mid)
+	peer := data.NewMeasurement[float64]("resonance", map[string]data.Metric[float64]{
+		peerMetric: {Label: peerMetric, Raw: peerRaw},
+	})
+	peer.Label = symbol
+	peer.SeqIdx = seq
+	measurement.Peers = []*data.Measurement[float64]{peer}
+	return measurement
+}
+
 func classCount(training *Training, class string) int32 {
 	return training.engine.Census()[class]
 }
@@ -166,20 +177,26 @@ func TestCanonicalObservationsIngressPlusSourceKeyedPeers(t *testing.T) {
 }
 
 func TestSuperviseScoresFrozenPrediction(t *testing.T) {
-	Convey("Given a trie that wrongly prefers Enter before a losing excursion", t, func() {
+	Convey("Given a trie that wrongly prefers Enter+Exit before a losing excursion", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
 		training := NewTraining(ctx, 1, priced(t, "BTC/USD", 0.1), NewTrader(ctx, nil, nil, nil), nil, nil)
-		frame := regionFrame("BTC/USD", 1, 2)
-		training.grid.Update(frame)
+
+		// Bare mid on A→B; peer-enriched B→C so signatures do not collide/dedupe.
+		frames := []*data.Measurement[float64]{
+			regionFrame("BTC/USD", 1, 2),
+			regionFrame("BTC/USD", 2, 3),
+			regionFrameWithPeer("BTC/USD", 4, 10, 1.5, "energy"),
+			regionFrameWithPeer("BTC/USD", 5, 11, 2.5, "energy"),
+			regionFrameWithPeer("BTC/USD", 7, 12, 3.5, "energy"),
+		}
+		for _, f := range frames {
+			training.grid.Update(f)
+		}
 		training.grid.Settle()
 
-		frames := []*data.Measurement[float64]{
-			regionFrame("BTC/USD", 2, 2),
-			regionFrame("BTC/USD", 3, 3),
-		}
-		enterCtx := training.signatureOf(frames)
+		enterCtx := training.signatureOf(framesBefore(frames, 4))
 		So(len(enterCtx), ShouldBeGreaterThan, 0)
 
 		_, err := training.engine.Observe(cognition.Association{
@@ -189,6 +206,19 @@ func TestSuperviseScoresFrozenPrediction(t *testing.T) {
 			Graded:   true,
 		})
 		So(err, ShouldBeNil)
+		So(training.frozenAction(enterCtx), ShouldEqual, cognition.ActionEnter)
+
+		exitCtx := training.signatureOf(framesRange(frames, 4, 8))
+		So(len(exitCtx), ShouldBeGreaterThan, 0)
+		So(string(exitCtx), ShouldNotEqual, string(enterCtx))
+		_, err = training.engine.Observe(cognition.Association{
+			Context:  append([]byte{}, exitCtx...),
+			Class:    []byte(cognition.ActionExit),
+			Feedback: 1,
+			Graded:   true,
+		})
+		So(err, ShouldBeNil)
+		So(training.frozenAction(exitCtx), ShouldEqual, cognition.ActionExit)
 		So(training.frozenAction(enterCtx), ShouldEqual, cognition.ActionEnter)
 
 		episode := heldEpisode{
@@ -208,7 +238,7 @@ func TestSuperviseScoresFrozenPrediction(t *testing.T) {
 
 		So(training.skill.Count, ShouldEqual, 1)
 		So(training.skill.Mean, ShouldEqual, -1)
-		// Frozen Enter on a loser → negative policy return, not raw skip.
+		// Completed ENTER→EXIT hypo on a loser → negative policy return, not raw skip.
 		So(training.returns.Count, ShouldEqual, 1)
 		So(training.returns.Mean, ShouldBeLessThan, 0)
 	})

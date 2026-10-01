@@ -2,11 +2,7 @@ import * as d3 from "d3";
 import { ChevronRight, Pause, Play } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import {
-	positionCountAtom,
-	type RingBuffer,
-	signals,
-} from "#/collections/app";
+import { positionCountAtom, type RingBuffer, signals } from "#/collections/app";
 import { RingCursor } from "#/collections/ring";
 import { hubBaseUrl } from "#/lib/hub";
 import { cn } from "#/lib/utils";
@@ -30,7 +26,10 @@ type ExcursionKind =
 	| "CHOPPY MARKET"
 	| "FLAT TAPE";
 
-function excursionKind(direction: string, typeCode: number): ExcursionKind | null {
+function excursionKind(
+	direction: string,
+	typeCode: number,
+): ExcursionKind | null {
 	const named = outcome(direction, typeCode);
 	if (named === "UP") return "UPWARD EXCURSION";
 	if (named === "DOWN") return "DOWNWARD EXCURSION";
@@ -39,7 +38,11 @@ function excursionKind(direction: string, typeCode: number): ExcursionKind | nul
 	return null;
 }
 
-function outcomeText(direction: string, typeCode: number, target: number | undefined): string {
+function outcomeText(
+	direction: string,
+	typeCode: number,
+	target: number | undefined,
+): string {
 	const named = outcome(direction, typeCode);
 	if (named) return named;
 	if (target === 1) return "ENTER (CLEARS)";
@@ -112,9 +115,13 @@ export const ForwardLearningViz = () => {
 
 	// Episode Buffer for playback
 	const [episodeQueue, setEpisodeQueue] = useState<ForwardTapePoint[][]>([]);
-	const [currentEpisode, setCurrentEpisode] = useState<ForwardTapePoint[] | null>(null);
+	const [currentEpisode, setCurrentEpisode] = useState<
+		ForwardTapePoint[] | null
+	>(null);
 	const [playbackTick, setPlaybackTick] = useState(0);
-	const [playbackPhase, setPlaybackPhase] = useState<"PLAYING" | "EVALUATING">("PLAYING");
+	const [playbackPhase, setPlaybackPhase] = useState<"PLAYING" | "EVALUATING">(
+		"PLAYING",
+	);
 	const pendingEpisodeRef = useRef<ForwardTapePoint[]>([]);
 	const currentEpisodeRef = useRef<ForwardTapePoint[] | null>(null);
 
@@ -241,7 +248,10 @@ export const ForwardLearningViz = () => {
 			cursor.read(ring, (measurement) => {
 				const activeSym = String(measurement.symbol || "TRAINING");
 
-				if (lastSeenSymbolRef.current !== "" && activeSym !== lastSeenSymbolRef.current) {
+				if (
+					lastSeenSymbolRef.current !== "" &&
+					activeSym !== lastSeenSymbolRef.current
+				) {
 					// Symbol switched (e.g. replay moved to another stored excursion fragment)
 					setPoints([]);
 					setExcursionEvent(null);
@@ -316,11 +326,23 @@ export const ForwardLearningViz = () => {
 				}
 				setRawPrecursorTokens(tokensList);
 
-				const markA = excStart !== undefined ? Math.floor(excStart) : Math.floor(metricMap.mark_a ?? 0);
-				const markB = excIgnition !== undefined ? Math.floor(excIgnition) : Math.floor(metricMap.mark_b ?? 0);
-				const markC = excExit !== undefined ? Math.floor(excExit) : Math.floor(metricMap.mark_c ?? 0);
+				const markA =
+					excStart !== undefined
+						? Math.floor(excStart)
+						: Math.floor(metricMap.mark_a ?? 0);
+				const markB =
+					excIgnition !== undefined
+						? Math.floor(excIgnition)
+						: Math.floor(metricMap.mark_b ?? 0);
+				const markC =
+					excExit !== undefined
+						? Math.floor(excExit)
+						: Math.floor(metricMap.mark_c ?? 0);
 
-				if (excStart !== undefined && excStart !== lastSeenExcursionStartRef.current) {
+				if (
+					excStart !== undefined &&
+					excStart !== lastSeenExcursionStartRef.current
+				) {
 					// Finish the pending episode
 					if (pendingEpisodeRef.current.length > 0) {
 						const readyEpisode = [...pendingEpisodeRef.current];
@@ -334,9 +356,18 @@ export const ForwardLearningViz = () => {
 				setIsPaperFilled(filledRaw === 1);
 
 				const actRaw = metricMap.action;
-				const frozenRaw = metricMap.frozen_prediction !== undefined ? metricMap.frozen_prediction : actRaw;
+				const frozenRaw =
+					metricMap.frozen_prediction !== undefined
+						? metricMap.frozen_prediction
+						: actRaw;
 				setFrozenAction(prediction(frozenRaw));
-				setDelayedLabel(outcomeText(excDirection, metricMap.excursion_type ?? 0, metricMap.delayed_target));
+				setDelayedLabel(
+					outcomeText(
+						excDirection,
+						metricMap.excursion_type ?? 0,
+						metricMap.delayed_target,
+					),
+				);
 
 				// Historical held-out
 				setHistOpportunities(Math.floor(metricMap.hist_opportunities ?? 0));
@@ -374,7 +405,16 @@ export const ForwardLearningViz = () => {
 					for (const [k, met] of Object.entries(measurement.metrics)) {
 						if (met?.raw !== undefined) {
 							const lk = k.toLowerCase();
-							const validPrices = ["price", "last_price", "mark_price", "best_bid_price", "best_ask_price", "trade_price", "mid", "close"];
+							const validPrices = [
+								"price",
+								"last_price",
+								"mark_price",
+								"best_bid_price",
+								"best_ask_price",
+								"trade_price",
+								"mid",
+								"close",
+							];
 							if (validPrices.includes(lk)) {
 								rawPrice = met.raw;
 								break;
@@ -388,7 +428,16 @@ export const ForwardLearningViz = () => {
 						for (const m of peer.metrics ?? []) {
 							if (m?.name && m?.raw !== undefined) {
 								const nm = String(m.name).toLowerCase();
-								const validPrices = ["price", "last_price", "mark_price", "best_bid_price", "best_ask_price", "trade_price", "mid", "close"];
+								const validPrices = [
+									"price",
+									"last_price",
+									"mark_price",
+									"best_bid_price",
+									"best_ask_price",
+									"trade_price",
+									"mid",
+									"close",
+								];
 								if (validPrices.includes(nm)) {
 									rawPrice = m.raw;
 									break;
@@ -402,16 +451,25 @@ export const ForwardLearningViz = () => {
 				if (rawPrice !== undefined) {
 					const seqVal = Number(measurement.tick ?? 0n);
 					const pointPrice = rawPrice;
-					pendingEpisodeRef.current.push({ x: pendingEpisodeRef.current.length, y: pointPrice, seq: seqVal });
+					pendingEpisodeRef.current.push({
+						x: pendingEpisodeRef.current.length,
+						y: pointPrice,
+						seq: seqVal,
+					});
 
 					// Forward: rolling live tape. Historical: stream the developing
 					// fragment immediately so the desk is not stuck on "Awaiting…"
 					// while completed episodes wait for the playback queue.
 					if (sCode >= 2) {
 						setPoints((prev) => {
-							const next = [...prev, { x: prev.length, y: pointPrice, seq: seqVal }];
+							const next = [
+								...prev,
+								{ x: prev.length, y: pointPrice, seq: seqVal },
+							];
 							if (next.length > 250) {
-								return next.slice(next.length - 250).map((pt, i) => ({ x: i, y: pt.y, seq: pt.seq }));
+								return next
+									.slice(next.length - 250)
+									.map((pt, i) => ({ x: i, y: pt.y, seq: pt.seq }));
 							}
 							return next;
 						});
@@ -427,7 +485,12 @@ export const ForwardLearningViz = () => {
 					atNs > 0n
 						? clock(new Date(Number(atNs / 1_000_000n)).toISOString())
 						: clock("");
-				const actStr = actRaw === 1 ? action("enter", 1, false) : actRaw === 2 ? action("exit", 1, false) : "ABSTAIN";
+				const actStr =
+					actRaw === 1
+						? action("enter", 1, false)
+						: actRaw === 2
+							? action("exit", 1, false)
+							: "ABSTAIN";
 
 				setActivityLogs((prev) => {
 					const edgeReady = (metricMap.edge_sample_count ?? 0) > 0;
@@ -466,7 +529,10 @@ export const ForwardLearningViz = () => {
 				// Complete fragment detection via metadata tag
 				if (measurement.metadata) {
 					for (const m of measurement.metadata) {
-						if (m?.name === "excursion_event" && String(m.value) === "completed") {
+						if (
+							m?.name === "excursion_event" &&
+							String(m.value) === "completed"
+						) {
 							if (pendingEpisodeRef.current.length > 0) {
 								const readyEpisode = [...pendingEpisodeRef.current];
 								setEpisodeQueue((q) => [...q, readyEpisode].slice(-50));
@@ -478,7 +544,9 @@ export const ForwardLearningViz = () => {
 			});
 		};
 
-		const checkAllTrainingRings = (state: Record<string, RingBuffer<MeasurementT>> | undefined) => {
+		const checkAllTrainingRings = (
+			state: Record<string, RingBuffer<MeasurementT>> | undefined,
+		) => {
 			if (!state) return;
 			let bestRing: RingBuffer<MeasurementT> | null = null;
 			let latestTick = -1n;
@@ -583,7 +651,9 @@ export const ForwardLearningViz = () => {
 										: "bg-(--info)/10 text-(--info) border border-(--info)/30",
 								)}
 							>
-								{isForward ? "LIVE FORWARD PAPER TAPE" : "HISTORICAL REPLAY TAPE"}
+								{isForward
+									? "LIVE FORWARD PAPER TAPE"
+									: "HISTORICAL REPLAY TAPE"}
 							</span>
 							<span className="bg-(--surface) border-(--line) border px-1.5 py-0.5 rounded text-[10px] text-(--f1) font-bold">
 								{currentSymbol}
@@ -608,7 +678,10 @@ export const ForwardLearningViz = () => {
 							)}
 							<span className="text-[10px] uppercase tracking-widest text-(--f4)">
 								STAGE:{" "}
-								<span data-l="training-stage" className="border-(--line) border text-(--f2) px-1 rounded ml-1 font-bold">
+								<span
+									data-l="training-stage"
+									className="border-(--line) border text-(--f2) px-1 rounded ml-1 font-bold"
+								>
 									{stageName}
 								</span>
 							</span>
@@ -629,7 +702,7 @@ export const ForwardLearningViz = () => {
 
 					{/* Confirmed Excursion Banner */}
 					<AnimatePresence>
-						{excursionEvent && excursionEvent.type && (
+						{excursionEvent?.type && (
 							<motion.div
 								initial={{ height: 0, opacity: 0 }}
 								animate={{ height: 22, opacity: 1 }}
@@ -660,7 +733,9 @@ export const ForwardLearningViz = () => {
 					<div ref={tapeRef} className="flex-1 relative overflow-hidden">
 						{points.length === 0 && (
 							<div className="absolute inset-0 flex items-center justify-center text-(--f4) text-xs tracking-wider">
-								Awaiting {isForward ? "live market forward" : "historical replay"} tape stream for {currentSymbol}...
+								Awaiting{" "}
+								{isForward ? "live market forward" : "historical replay"} tape
+								stream for {currentSymbol}...
 							</div>
 						)}
 
@@ -720,167 +795,202 @@ export const ForwardLearningViz = () => {
 								)}
 
 								{/* Hindsight Markers A, B, C and Decisions */}
-								{excursionEvent && points.length > 0 && (isForward || playbackPhase === "EVALUATING" || excursionEvent.marks.A > 0 || excursionEvent.marks.B > 0 || excursionEvent.marks.C > 0) && (() => {
-									const resolveIdx = (val: number | null): number | null => {
-										if (val === null || val <= 0 || points.length === 0) return null;
-										// Absolute tape seq → index inside the visible window only.
-										// Nearest-seq matching misplaced A/B/C and ENTER/EXIT when the
-										// forward ring had already rolled the marked ticks off (max 250).
-										for (let i = 0; i < points.length; i++) {
-											const seq = points[i].seq;
-											if (seq !== undefined && seq >= 0 && seq === val) return i;
-										}
-										// Playback episodes may store marks as window-local indices.
-										if (
-											val < points.length &&
-											points[val] &&
-											(points[val].seq === undefined || points[val].seq < 0)
-										) {
-											return val;
-										}
-										return null;
-									};
+								{excursionEvent &&
+									points.length > 0 &&
+									(isForward ||
+										playbackPhase === "EVALUATING" ||
+										excursionEvent.marks.A > 0 ||
+										excursionEvent.marks.B > 0 ||
+										excursionEvent.marks.C > 0) &&
+									(() => {
+										const resolveIdx = (val: number | null): number | null => {
+											if (val === null || val <= 0 || points.length === 0)
+												return null;
+											// Absolute tape seq → index inside the visible window only.
+											// Nearest-seq matching misplaced A/B/C and ENTER/EXIT when the
+											// forward ring had already rolled the marked ticks off (max 250).
+											for (let i = 0; i < points.length; i++) {
+												const seq = points[i].seq;
+												if (seq !== undefined && seq >= 0 && seq === val)
+													return i;
+											}
+											// Playback episodes may store marks as window-local indices.
+											if (
+												val < points.length &&
+												points[val] &&
+												(points[val].seq === undefined || points[val].seq < 0)
+											) {
+												return val;
+											}
+											return null;
+										};
 
-									const markAIdx =
-										excursionEvent.marks.A > 0
-											? resolveIdx(excursionEvent.marks.A)
-											: null;
-									const markBIdx =
-										excursionEvent.marks.B > 0
-											? resolveIdx(excursionEvent.marks.B)
-											: null;
-									const markCIdx =
-										excursionEvent.marks.C > 0
-											? resolveIdx(excursionEvent.marks.C)
-											: null;
+										const markAIdx =
+											excursionEvent.marks.A > 0
+												? resolveIdx(excursionEvent.marks.A)
+												: null;
+										const markBIdx =
+											excursionEvent.marks.B > 0
+												? resolveIdx(excursionEvent.marks.B)
+												: null;
+										const markCIdx =
+											excursionEvent.marks.C > 0
+												? resolveIdx(excursionEvent.marks.C)
+												: null;
 
-									const marksList: { name: string; idx: number }[] = [];
-									if (markAIdx !== null) marksList.push({ name: "A", idx: markAIdx });
-									if (markBIdx !== null) marksList.push({ name: "B", idx: markBIdx });
-									if (markCIdx !== null) marksList.push({ name: "C", idx: markCIdx });
+										const marksList: { name: string; idx: number }[] = [];
+										if (markAIdx !== null)
+											marksList.push({ name: "A", idx: markAIdx });
+										if (markBIdx !== null)
+											marksList.push({ name: "B", idx: markBIdx });
+										if (markCIdx !== null)
+											marksList.push({ name: "C", idx: markCIdx });
 
-									const entryPtIdx =
-										excursionEvent.entryIdx !== null && excursionEvent.entryIdx > 0
-											? resolveIdx(excursionEvent.entryIdx)
-											: null;
-									const exitPtIdx =
-										excursionEvent.exitIdx !== null && excursionEvent.exitIdx > 0
-											? resolveIdx(excursionEvent.exitIdx)
-											: null;
+										const entryPtIdx =
+											excursionEvent.entryIdx !== null &&
+											excursionEvent.entryIdx > 0
+												? resolveIdx(excursionEvent.entryIdx)
+												: null;
+										const exitPtIdx =
+											excursionEvent.exitIdx !== null &&
+											excursionEvent.exitIdx > 0
+												? resolveIdx(excursionEvent.exitIdx)
+												: null;
 
-									return (
-										<g>
-											{marksList.map(({ name, idx }) => {
-												if (idx < 0 || idx >= points.length) return null;
-												const xPos = xScale(idx);
-												return (
-													<g key={name} transform={`translate(${xPos}, 0)`}>
-														<line
-															x1={0}
-															y1={15}
-															x2={0}
-															y2={tapeDim.height}
-															stroke="#0ea5e9"
-															strokeWidth="1"
-															strokeDasharray="2 4"
-															opacity="0.35"
-														/>
-														<rect
-															x={-7}
-															y={8}
-															width={14}
-															height={14}
-															fill="#050505"
-															stroke="#0ea5e9"
-															strokeWidth="1"
-														/>
-														<text
-															x={0}
-															y={18}
-															fill="#0ea5e9"
-															fontSize="9px"
-															textAnchor="middle"
+										return (
+											<g>
+												{marksList.map(({ name, idx }) => {
+													if (idx < 0 || idx >= points.length) return null;
+													const xPos = xScale(idx);
+													return (
+														<g key={name} transform={`translate(${xPos}, 0)`}>
+															<line
+																x1={0}
+																y1={15}
+																x2={0}
+																y2={tapeDim.height}
+																stroke="#0ea5e9"
+																strokeWidth="1"
+																strokeDasharray="2 4"
+																opacity="0.35"
+															/>
+															<rect
+																x={-7}
+																y={8}
+																width={14}
+																height={14}
+																fill="#050505"
+																stroke="#0ea5e9"
+																strokeWidth="1"
+															/>
+															<text
+																x={0}
+																y={18}
+																fill="#0ea5e9"
+																fontSize="9px"
+																textAnchor="middle"
+															>
+																{name}
+															</text>
+														</g>
+													);
+												})}
+
+												{/* Entry Boundary Marker */}
+												{entryPtIdx !== null &&
+													entryPtIdx >= 0 &&
+													entryPtIdx < points.length && (
+														<g
+															transform={`translate(${xScale(entryPtIdx)}, ${yScale(points[entryPtIdx].y)})`}
 														>
-															{name}
-														</text>
-													</g>
-												);
-											})}
+															<circle r={4} fill="#22c55e" />
+															<text
+																x={6}
+																y={-6}
+																fill="#22c55e"
+																fontSize="9px"
+																fontWeight="bold"
+															>
+																{isForward ? "PAPER ENTER" : "PREDICTED ENTER"}
+															</text>
+															<line
+																y2={tapeDim.height}
+																stroke="#22c55e"
+																opacity="0.3"
+															/>
+														</g>
+													)}
 
-											{/* Entry Boundary Marker */}
-											{entryPtIdx !== null && entryPtIdx >= 0 && entryPtIdx < points.length && (
-												<g
-													transform={`translate(${xScale(entryPtIdx)}, ${yScale(points[entryPtIdx].y)})`}
-												>
-													<circle r={4} fill="#22c55e" />
-													<text
-														x={6}
-														y={-6}
-														fill="#22c55e"
-														fontSize="9px"
-														fontWeight="bold"
-													>
-														{isForward ? "PAPER ENTER" : "PREDICTED ENTER"}
-													</text>
-													<line
-														y2={tapeDim.height}
-														stroke="#22c55e"
-														opacity="0.3"
-													/>
-												</g>
-											)}
+												{/* Paper Entry Fill Marker */}
+												{isForward &&
+													isPaperFilled &&
+													entryPtIdx !== null &&
+													entryPtIdx >= 0 &&
+													entryPtIdx < points.length && (
+														<g
+															transform={`translate(${xScale(entryPtIdx)}, ${yScale(points[entryPtIdx].y) + 14})`}
+														>
+															<rect
+																x={4}
+																y={-10}
+																width={90}
+																height={12}
+																fill="#050505"
+																stroke="#22c55e"
+																strokeWidth={0.5}
+															/>
+															<text
+																x={6}
+																y={-1}
+																fill="#22c55e"
+																fontSize="8px"
+																fontWeight="bold"
+															>
+																PAPER ENTRY FILL
+															</text>
+														</g>
+													)}
 
-											{/* Paper Entry Fill Marker */}
-											{isForward && isPaperFilled && entryPtIdx !== null && entryPtIdx >= 0 && entryPtIdx < points.length && (
-												<g
-													transform={`translate(${xScale(entryPtIdx)}, ${yScale(points[entryPtIdx].y) + 14})`}
-												>
-													<rect x={4} y={-10} width={90} height={12} fill="#050505" stroke="#22c55e" strokeWidth={0.5} />
-													<text
-														x={6}
-														y={-1}
-														fill="#22c55e"
-														fontSize="8px"
-														fontWeight="bold"
-													>
-														PAPER ENTRY FILL
-													</text>
-												</g>
-											)}
-
-											{/* Exit Boundary Marker */}
-											{exitPtIdx !== null && exitPtIdx >= 0 && exitPtIdx < points.length && (
-												<g
-													transform={`translate(${xScale(exitPtIdx)}, ${yScale(points[exitPtIdx].y)})`}
-												>
-													<circle r={4} fill="#ef4444" />
-													<text
-														x={6}
-														y={-6}
-														fill="#ef4444"
-														fontSize="9px"
-														fontWeight="bold"
-													>
-														{isForward ? "PAPER EXIT" : "PREDICTED EXIT"}
-													</text>
-													<line
-														y2={tapeDim.height}
-														stroke="#ef4444"
-														opacity="0.3"
-													/>
-												</g>
-											)}
-										</g>
-									);
-								})()}
+												{/* Exit Boundary Marker */}
+												{exitPtIdx !== null &&
+													exitPtIdx >= 0 &&
+													exitPtIdx < points.length && (
+														<g
+															transform={`translate(${xScale(exitPtIdx)}, ${yScale(points[exitPtIdx].y)})`}
+														>
+															<circle r={4} fill="#ef4444" />
+															<text
+																x={6}
+																y={-6}
+																fill="#ef4444"
+																fontSize="9px"
+																fontWeight="bold"
+															>
+																{isForward ? "PAPER EXIT" : "PREDICTED EXIT"}
+															</text>
+															<line
+																y2={tapeDim.height}
+																stroke="#ef4444"
+																opacity="0.3"
+															/>
+														</g>
+													)}
+											</g>
+										);
+									})()}
 							</svg>
 						)}
 					</div>
 
 					{/* Temporal Precursor Fragment Bar */}
 					<div className="h-7 border-t border-(--line) bg-(--sunken) flex items-center px-3 justify-between text-[10px] text-(--f3) shrink-0">
-						<div className="flex items-center gap-1.5" data-l="temporal-precursor">
-							<span className="text-(--f4) uppercase tracking-wider font-bold">Temporal Precursor:</span>
+						<div
+							className="flex items-center gap-1.5"
+							data-l="temporal-precursor"
+						>
+							<span className="text-(--f4) uppercase tracking-wider font-bold">
+								Temporal Precursor:
+							</span>
 							<span className="text-(--acc) font-mono">
 								{precursorTokens.join(" → ")}
 							</span>
@@ -895,7 +1005,10 @@ export const ForwardLearningViz = () => {
 						</div>
 						<div className="flex items-center gap-2">
 							<span className="text-(--f4)">Pre-Outcome Prediction:</span>
-							<span data-l="frozen-prediction" className="font-bold text-(--acc)">
+							<span
+								data-l="frozen-prediction"
+								className="font-bold text-(--acc)"
+							>
 								{frozenAction}
 							</span>
 							<span className="text-(--f4)">Actual Delayed Label:</span>
@@ -926,20 +1039,52 @@ export const ForwardLearningViz = () => {
 							</div>
 							<div className="flex justify-between items-baseline text-[11px]">
 								<span className="text-(--f4)">Mean Return:</span>
-								<span className="text-(--f1) font-bold" data-metric="hist_mean_return" data-format="insufficient_if_zero">
+								<span
+									className="text-(--f1) font-bold"
+									data-metric="hist_mean_return"
+									data-format="insufficient_if_zero"
+								>
 									{histOpportunities > 0 ? basis(histMeanReturn) : "—"}
 								</span>
 							</div>
 							<div className="flex justify-between items-baseline text-[10px]">
 								<span className="text-(--f4)">Lower Bound (L95):</span>
-								<span className="text-(--acc) font-bold" data-metric="hist_lower_bound" data-format="insufficient_if_zero">
+								<span
+									className="text-(--acc) font-bold"
+									data-metric="hist_lower_bound"
+									data-format="insufficient_if_zero"
+								>
 									{histOpportunities > 0 ? basis(histLowerBound) : "—"}
 								</span>
 							</div>
 							<div className="flex justify-between items-baseline text-[10px] text-(--f3)">
-								<span>Correct: <strong className="text-(--up)" data-metric="hist_correct_enter">{histCorrectEnter}</strong></span>
-								<span>False: <strong className="text-(--down)" data-metric="hist_false_enter">{histFalseEnter}</strong></span>
-								<span>Missed: <strong className="text-(--down)" data-metric="hist_missed_enter">{histMissedEnter}</strong></span>
+								<span>
+									Correct:{" "}
+									<strong
+										className="text-(--up)"
+										data-metric="hist_correct_enter"
+									>
+										{histCorrectEnter}
+									</strong>
+								</span>
+								<span>
+									False:{" "}
+									<strong
+										className="text-(--down)"
+										data-metric="hist_false_enter"
+									>
+										{histFalseEnter}
+									</strong>
+								</span>
+								<span>
+									Missed:{" "}
+									<strong
+										className="text-(--down)"
+										data-metric="hist_missed_enter"
+									>
+										{histMissedEnter}
+									</strong>
+								</span>
 							</div>
 						</div>
 
@@ -947,30 +1092,62 @@ export const ForwardLearningViz = () => {
 						<div className="border border-(--line) p-2.5 rounded bg-(--bg) flex flex-col gap-1.5">
 							<div className="uppercase tracking-widest text-(--f4) text-[9px] font-bold flex justify-between">
 								<span>Forward Paper Evidence</span>
-								<span className={isForward ? "text-(--up) font-bold" : "text-(--f4)"}>
+								<span
+									className={
+										isForward ? "text-(--up) font-bold" : "text-(--f4)"
+									}
+								>
 									{isForward ? "ACTIVE" : "GATED"}
 								</span>
 							</div>
 							<div className="flex justify-between items-baseline text-[11px]">
 								<span className="text-(--f4)">Paper Mean Return:</span>
-								<span className="text-(--f1) font-bold" data-metric="fwd_paper_mean_return" data-format="insufficient_if_zero">
+								<span
+									className="text-(--f1) font-bold"
+									data-metric="fwd_paper_mean_return"
+									data-format="insufficient_if_zero"
+								>
 									{fwdPaperTrades > 0 ? basis(fwdPaperMeanReturn) : "—"}
 								</span>
 							</div>
 							<div className="flex justify-between items-baseline text-[10px]">
 								<span className="text-(--f4)">Paper Lower Bound:</span>
-								<span className="text-(--acc) font-bold" data-metric="fwd_paper_lower_bound" data-format="insufficient_if_zero">
+								<span
+									className="text-(--acc) font-bold"
+									data-metric="fwd_paper_lower_bound"
+									data-format="insufficient_if_zero"
+								>
 									{fwdPaperTrades > 0 ? basis(fwdPaperLowerBound) : "—"}
 								</span>
 							</div>
 							<div className="flex justify-between items-baseline text-[10px] text-(--f3)">
-								<span>Trades: <strong className="text-(--f1)" data-metric="fwd_paper_trades" data-format="integer">{fwdPaperTrades}</strong></span>
-								<span>Predictions: <strong className="text-(--f2)" data-metric="fwd_enter_predictions" data-format="integer">{fwdPredictions}</strong></span>
+								<span>
+									Trades:{" "}
+									<strong
+										className="text-(--f1)"
+										data-metric="fwd_paper_trades"
+										data-format="integer"
+									>
+										{fwdPaperTrades}
+									</strong>
+								</span>
+								<span>
+									Predictions:{" "}
+									<strong
+										className="text-(--f2)"
+										data-metric="fwd_enter_predictions"
+										data-format="integer"
+									>
+										{fwdPredictions}
+									</strong>
+								</span>
 							</div>
 							<div className="flex justify-between items-baseline text-[10px] text-(--f4)">
 								<span>Active Position:</span>
 								<span data-l="paper-position" className="text-(--f2) font-bold">
-									{openPositionsCount > 0 ? `${openPositionsCount} active` : "None"}
+									{openPositionsCount > 0
+										? `${openPositionsCount} active`
+										: "None"}
 								</span>
 							</div>
 						</div>
@@ -979,48 +1156,12 @@ export const ForwardLearningViz = () => {
 						<div className="text-[10px] border border-(--line) p-2 rounded bg-(--sunken) flex flex-col gap-1">
 							<div className="flex justify-between font-bold">
 								<span className="text-(--f4) uppercase">Gate Blocker:</span>
-								<span data-l="stage-blocker" className="text-(--down) truncate max-w-[130px]">
+								<span
+									data-l="stage-blocker"
+									className="text-(--down) truncate max-w-32.5"
+								>
 									{stageBlocker || "—"}
 								</span>
-							</div>
-						</div>
-
-						{/* Recent Activity Log */}
-						<div className="mt-1 pt-2 border-(--line) border-t flex-1 overflow-hidden flex flex-col">
-							<div className="uppercase tracking-widest text-(--f4) text-[9px] mb-1 font-bold">
-								Recent Learning Activity
-							</div>
-							<div className="flex flex-col gap-1.5 overflow-y-auto flex-1">
-								<AnimatePresence initial={false}>
-									{activityLogs.map((log) => (
-										<motion.div
-											key={log.id}
-											initial={{ opacity: 0, height: 0 }}
-											animate={{ opacity: 1, height: "auto" }}
-											className="text-[10px]"
-										>
-											<div className="text-(--f3)">
-												{log.time} · {log.message}
-											</div>
-											<div className="text-(--f4) text-[9px]">
-												Outcome:{" "}
-												<span
-													className={
-														log.pnl >= 0 ? "text-(--up)" : "text-(--down)"
-													}
-												>
-													{log.pnl >= 0 ? "+" : ""}
-													{log.pnl.toFixed(1)} bp
-												</span>
-											</div>
-										</motion.div>
-									))}
-								</AnimatePresence>
-								{activityLogs.length === 0 && (
-									<div className="text-(--f4) text-[10px]">
-										Listening for model decisions...
-									</div>
-								)}
 							</div>
 						</div>
 					</div>
@@ -1124,7 +1265,7 @@ export const ForwardLearningViz = () => {
 				</div>
 
 				{/* Edge Distribution Panel */}
-				<div className="w-[380px] bg-(--surface) border-(--line) border rounded flex flex-col shrink-0 min-h-0">
+				<div className="w-95 bg-(--surface) border-(--line) border rounded flex flex-col shrink-0 min-h-0">
 					<div className="h-8 border-(--line) border-b bg-(--sunken) flex items-center px-4 shrink-0 justify-between">
 						<div className="flex gap-4 uppercase tracking-widest text-[10px] font-bold">
 							<span className="text-(--f4)">Model</span>
@@ -1142,7 +1283,8 @@ export const ForwardLearningViz = () => {
 					<div className="flex-1 relative overflow-hidden p-3">
 						{edgeSamples.length === 0 ? (
 							<div className="absolute inset-0 flex items-center justify-center text-(--f4) text-[10px] px-4 text-center">
-								No return distribution is drawn. Mean and lower bound stay in the evidence panel.
+								No return distribution is drawn. Mean and lower bound stay in
+								the evidence panel.
 							</div>
 						) : (
 							(() => {
@@ -1157,27 +1299,58 @@ export const ForwardLearningViz = () => {
 								];
 								const maxCount = Math.max(...bars.map((b) => b.count), 1);
 								return (
-									<svg viewBox="0 0 340 160" className="w-full h-full" aria-label="Observed skill return histogram">
-									{bars.map((bar, index) => {
-										const x = 40 + index * 100;
-										const height = (bar.count / maxCount) * 110;
-										const y = 130 - height;
-										return (
-											<g key={bar.label}>
-												<rect x={x} y={y} width={60} height={height} fill={bar.color} opacity={0.85} />
-												<text x={x + 30} y={144} textAnchor="middle" fill="var(--f3)" fontSize="10">
-													{bar.label}
-												</text>
-												<text x={x + 30} y={y - 4} textAnchor="middle" fill="var(--f1)" fontSize="10">
-													{bar.count}
-												</text>
-											</g>
-										);
-									})}
-									<text x={170} y={12} textAnchor="middle" fill="var(--f4)" fontSize="9">
-										{edgeSamples.length} observed skill outcomes · {(100 * pos) / total}% correct
-									</text>
-								</svg>
+									<svg
+										viewBox="0 0 340 160"
+										className="w-full h-full"
+										aria-label="Observed skill return histogram"
+									>
+										<title>Observed skill return histogram</title>
+										{bars.map((bar, index) => {
+											const x = 40 + index * 100;
+											const height = (bar.count / maxCount) * 110;
+											const y = 130 - height;
+											return (
+												<g key={bar.label}>
+													<rect
+														x={x}
+														y={y}
+														width={60}
+														height={height}
+														fill={bar.color}
+														opacity={0.85}
+													/>
+													<text
+														x={x + 30}
+														y={144}
+														textAnchor="middle"
+														fill="var(--f3)"
+														fontSize="10"
+													>
+														{bar.label}
+													</text>
+													<text
+														x={x + 30}
+														y={y - 4}
+														textAnchor="middle"
+														fill="var(--f1)"
+														fontSize="10"
+													>
+														{bar.count}
+													</text>
+												</g>
+											);
+										})}
+										<text
+											x={170}
+											y={12}
+											textAnchor="middle"
+											fill="var(--f4)"
+											fontSize="9"
+										>
+											{edgeSamples.length} observed skill outcomes ·{" "}
+											{(100 * pos) / total}% correct
+										</text>
+									</svg>
 								);
 							})()
 						)}

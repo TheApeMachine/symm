@@ -2,6 +2,7 @@ package broker
 
 import (
 	"context"
+	"strings"
 
 	"github.com/bytedance/sonic"
 	"github.com/google/uuid"
@@ -91,11 +92,8 @@ func (exec *Execution) Enter(symbol string, onPending ...func(*position.Regulato
 	}
 
 	if cash == nil || cash.Sign() <= 0 {
-		return nil, exec.Error(errnie.Err(
-			errnie.Validation,
-			"[execution] insufficient cash to enter "+symbol,
-			nil,
-		))
+		// Soft validation: depleted paper cash must not halt Execution/Training.
+		return nil, softEnterErr("[execution] insufficient cash to enter "+symbol, nil)
 	}
 
 	spend := cash.SetScale(decimal.DefaultScale).Mul(decimal.NewFromFloat64(maxFraction))
@@ -134,11 +132,10 @@ func (exec *Execution) EnterWithRegulator(reg *position.Regulator, spend *decima
 	volume, err := exec.price.Quantity(symbol, spend)
 
 	if err != nil || volume == nil || volume.Sign() <= 0 {
-		return exec.Error(errnie.Err(
-			errnie.Validation,
+		return softEnterErr(
 			"[execution] cannot determine valid entry volume for "+symbol,
 			err,
-		))
+		)
 	}
 
 	entryRequest := &kraken.AddOrderRequest{
@@ -190,6 +187,10 @@ func (exec *Execution) EnterWithRegulator(reg *position.Regulator, spend *decima
 
 	if err != nil {
 		reg.CancelPending()
+
+		if IsEnterSoftFail(err) {
+			return softEnterErr("[execution] enter skipped for "+symbol, err)
+		}
 
 		return exec.Error(errnie.Err(
 			errnie.UnprocessableContent,
@@ -289,4 +290,35 @@ func (exec *Execution) Exit(reg *position.Regulator) error {
 	}
 
 	return nil
+}
+
+
+/*
+softEnterErr returns a validation-class error without transitioning Execution
+to ERROR. Depleted paper cash / below-min / venue insufficient-available are
+expected during training and must leave the broker READY for a later retry.
+*/
+func softEnterErr(message string, cause error) error {
+	return errnie.Error(errnie.Err(errnie.Validation, message, cause))
+}
+
+/*
+IsEnterSoftFail reports enter failures that must not cascade Training → ERROR:
+insufficient available cash, below-min sizing, and paper place validation.
+Not every Validation (e.g. uninitialized deps) — only cash/size abstentions.
+*/
+func IsEnterSoftFail(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	msg := strings.ToLower(err.Error())
+
+	return strings.Contains(msg, "insufficient") ||
+		strings.Contains(msg, "below minimum") ||
+		strings.Contains(msg, "available cash") ||
+		strings.Contains(msg, "cannot determine valid entry volume") ||
+		strings.Contains(msg, "positive cash required") ||
+		strings.Contains(msg, "order rejected") ||
+		strings.Contains(msg, "enter skipped")
 }

@@ -166,7 +166,7 @@ func TestWriteSkillPublishesEdgeSamples(t *testing.T) {
 }
 
 func TestSuperviseTeachesExitOnlyForWantEnter(t *testing.T) {
-	Convey("supervise teaches EXIT only when frozen decision is Exit on clearing up", t, func() {
+	Convey("supervise always teaches EXIT from resolved C on clearing up (ground truth)", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
@@ -184,14 +184,9 @@ func TestSuperviseTeachesExitOnlyForWantEnter(t *testing.T) {
 
 		exitCtx := training.signatureOf(framesRange([]*data.Measurement[float64]{frameA, frameB, frameC}, 2, 4))
 		So(len(exitCtx), ShouldBeGreaterThan, 0)
-		_, err := training.engine.Observe(cognition.Association{
-			Context: append([]byte{}, exitCtx...), Class: []byte(cognition.ActionExit),
-			Feedback: 1, Graded: true,
-		})
-		So(err, ShouldBeNil)
 
 		before := training.engine.Census()
-		exitBefore := before["exit"]
+		So(before["exit"], ShouldEqual, int32(0))
 
 		training.supervise(heldEpisode{
 			record: tables.ExcursionRecord{
@@ -208,12 +203,71 @@ func TestSuperviseTeachesExitOnlyForWantEnter(t *testing.T) {
 			frames: []*data.Measurement[float64]{frameA, frameB, frameC},
 		}, true)
 
-		// Pre-seeded Exit association: freeze predicts Exit, teach reinforces it.
+		after := training.engine.Census()
+		So(after["exit"], ShouldBeGreaterThan, int32(0))
 		So(training.frozenAction(exitCtx), ShouldEqual, cognition.ActionExit)
 		So(training.returns.Count, ShouldEqual, 1)
-		So(training.returns.Mean, ShouldEqual, 0) // abstain on enter
-		So(training.histCorrectExit+training.histMissedExit, ShouldBeGreaterThan, 0)
-		_ = exitBefore
+		So(training.returns.Mean, ShouldEqual, 0) // abstain on enter → incomplete/zero edge
+		So(training.histMissedExit, ShouldEqual, 1) // cold freeze missed EXIT
+	})
+}
+
+func TestSuperviseTeachesEnterFromGroundTruth(t *testing.T) {
+	Convey("supervise always teaches ENTER from resolved C on clearing up (ground truth)", t, func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		training := NewTraining(ctx, 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
+		// Bare A→B; peer-enriched B→C so Enter/Exit associations do not collide.
+		frames := []*data.Measurement[float64]{
+			regionFrame("BTC/USD", 1, 2),
+			regionFrame("BTC/USD", 2, 3),
+			regionFrameWithPeer("BTC/USD", 4, 10, 1.5, "energy"),
+			regionFrameWithPeer("BTC/USD", 5, 11, 2.5, "energy"),
+			regionFrameWithPeer("BTC/USD", 7, 12, 3.5, "energy"),
+		}
+		for _, f := range frames {
+			training.grid.Update(f)
+		}
+		training.grid.Settle()
+		training.mu.Lock()
+		training.checkpointed = true
+		training.mu.Unlock()
+
+		enterCtx := training.signatureOf(framesBefore(frames, 4))
+		So(len(enterCtx), ShouldBeGreaterThan, 0)
+		exitCtx := training.signatureOf(framesRange(frames, 4, 8))
+		So(len(exitCtx), ShouldBeGreaterThan, 0)
+		So(string(exitCtx), ShouldNotEqual, string(enterCtx))
+		// Cold freeze must not already be Enter — association comes from teach.
+		So(training.frozenAction(enterCtx), ShouldNotEqual, cognition.ActionEnter)
+
+		before := training.engine.Census()
+		So(before["enter"], ShouldEqual, int32(0))
+
+		training.supervise(heldEpisode{
+			record: tables.ExcursionRecord{
+				ID:                 "BTC/USD:up:enter-gt",
+				Symbol:             "BTC/USD",
+				Direction:          "up",
+				ClearsFriction:     true,
+				PrecursorStartTick: 1,
+				AnchorTick:         4,
+				ExitTick:           8,
+				EntryPrice:         100,
+				ExitPrice:          101,
+			},
+			frames: frames,
+		}, true)
+
+		after := training.engine.Census()
+		So(after["enter"], ShouldBeGreaterThan, int32(0))
+		So(training.frozenAction(enterCtx), ShouldEqual, cognition.ActionEnter)
+		// EXIT teach must not overwrite the distinct A→B ENTER association.
+		So(training.frozenAction(enterCtx), ShouldNotEqual, cognition.ActionExit)
+		So(training.returns.Count, ShouldEqual, 1)
+		So(training.returns.Mean, ShouldEqual, 0) // cold abstain → incomplete/zero edge
+		So(training.histMissedEnter, ShouldEqual, 1) // cold freeze missed ENTER
 	})
 }
 

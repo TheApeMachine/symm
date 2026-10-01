@@ -31,7 +31,7 @@ func TestFramesRangeExitIsBToC(t *testing.T) {
 }
 
 func TestSuperviseExitUsesBToCNotFullPath(t *testing.T) {
-	Convey("Given an up clears episode, EXIT is taught and B→C is shorter than A→C", t, func() {
+	Convey("Cold engine: one eligible B→C episode teaches EXIT without seed prediction", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
@@ -56,12 +56,11 @@ func TestSuperviseExitUsesBToCNotFullPath(t *testing.T) {
 
 		exitCtx := training.signatureOf(bToC)
 		So(len(exitCtx), ShouldBeGreaterThan, 0)
-		_, err := training.engine.Observe(cognition.Association{
-			Context: append([]byte{}, exitCtx...), Class: []byte(cognition.ActionExit),
-			Feedback: 1, Graded: true,
-		})
-		So(err, ShouldBeNil)
-		So(training.frozenAction(exitCtx), ShouldEqual, cognition.ActionExit)
+
+		// Cold engine: zero EXIT associations — freeze must not already predict EXIT.
+		before := training.engine.Census()
+		So(before["exit"], ShouldEqual, int32(0))
+		So(training.frozenAction(exitCtx), ShouldNotEqual, cognition.ActionExit)
 
 		episode := heldEpisode{
 			record: tables.ExcursionRecord{
@@ -79,9 +78,13 @@ func TestSuperviseExitUsesBToCNotFullPath(t *testing.T) {
 		}
 		training.supervise(episode, true)
 
-		// Frozen Exit on B→C is reinforced; skill grades the exit decision.
+		// Ground-truth teach from resolved C installs EXIT even when freeze missed.
+		after := training.engine.Census()
+		So(after["exit"], ShouldBeGreaterThan, int32(0))
 		So(training.frozenAction(exitCtx), ShouldEqual, cognition.ActionExit)
-		So(training.histCorrectExit, ShouldEqual, 1)
+		// Cold freeze missed EXIT → grade as miss; skill still recorded.
+		So(training.histMissedExit, ShouldEqual, 1)
+		So(training.histCorrectExit, ShouldEqual, 0)
 		So(training.skill.Count, ShouldBeGreaterThan, 0)
 	})
 }

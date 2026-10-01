@@ -358,6 +358,16 @@ func (training *Training) predictFrom(signature []byte, symbol string, seq int64
 
 		if training.trader != nil {
 			if err := training.trader.OnAction(symbol, action, result.Evaluation.Confidence); err != nil {
+				// Soft-fail: insufficient available cash / below-min / paper
+				// place validation — skip enter, keep training READY (same
+				// spirit as RemapConservative soft-fail).
+				if broker.IsEnterSoftFail(err) {
+					errnie.Warn("[training] paper enter skipped: " + err.Error())
+					training.forget(symbol)
+
+					return marker{}
+				}
+
 				training.Error(err)
 
 				return marker{action: string(action), entry: seq}
@@ -473,12 +483,23 @@ func (training *Training) applyPaperGrade(symbol string, entryCtx []byte, feedba
 
 
 /*
-supervise freezes the model decision BEFORE the outcome is used, then scores
-the economic result of THAT decision with executable bid/ask + fees.
+supervise freezes model decisions BEFORE outcomes are used, then scores the
+economic result of THAT causal policy with executable bid/ask + fees.
+
+Causal policy edge (historical):
+  - A→B freeze ENTER? open hypo at executable ask+fee
+  - B→C freeze EXIT? close at executable bid+fee at that decision
+  - ENTER but never EXIT before C → incomplete policy return 0 (NOT oracle C)
+C's liquidation (execReturn) is delayed supervision for teach only.
+
 Abstain (non-Enter) = zero policy return. edge / historical returns come only
 from these frozen model-policy returns — never raw episode ProfitFraction.
-Prediction accuracy (skill ±1) stays separate. One episode ID is taught/scored
-once; A-offset augmentation is the explicit exception (replayVaried).
+Prediction accuracy (skill ±1) stays separate: prediction grades; ground truth
+teaches. ENTER and EXIT are always taught from resolved C when wantEnter
+(breaks the bootstrap deadlock of teaching only if already predicted).
+Fee-failing ups stay silent; down/chop/flat teach ENTER avoidance (-1).
+One episode ID is taught/scored once; A-offset augmentation is the explicit
+exception (replayVaried).
 */
 func (training *Training) supervise(episode heldEpisode, score bool) {
 	training.mu.Lock()
@@ -500,14 +521,20 @@ func (training *Training) supervise(episode heldEpisode, score bool) {
 	wantEnter := record.Direction == "up" && record.ClearsFriction
 	execReturn := executableEnterReturn(record)
 
-	// FREEZE model decision before outcome-dependent teaching/scoring.
+	// FREEZE model decisions before outcome-dependent teaching/scoring.
 	var predicted cognition.Action
 	if len(enterCtx) > 0 {
 		predicted = training.frozenAction(enterCtx)
 	}
+	var predictedExit cognition.Action
+	if len(exitCtx) > 0 {
+		predictedExit = training.frozenAction(exitCtx)
+	}
 
+	// Causal policy edge: only a completed ENTER→EXIT hypo earns execReturn.
+	// ENTER without EXIT before C is incomplete — never silent oracle C.
 	policyReturn := 0.0
-	if predicted == cognition.ActionEnter {
+	if predicted == cognition.ActionEnter && predictedExit == cognition.ActionExit {
 		policyReturn = execReturn
 	}
 
@@ -518,9 +545,14 @@ func (training *Training) supervise(episode heldEpisode, score bool) {
 	}
 
 	if len(enterCtx) > 0 {
-		// Teach with economic feedback of the frozen decision. Abstain → no Enter teach.
-		if predicted == cognition.ActionEnter {
-			training.teach(enterCtx, string(cognition.ActionEnter), policyReturn)
+		// Ground truth teaches ENTER; prediction grades only.
+		// Fee-clearing ups: economic execReturn. Fee-failing ups stay silent
+		// (detector may have chopped a longer move). Down/chop/flat: ENTER -1
+		// so avoidance has honest negatives.
+		if wantEnter {
+			training.teach(enterCtx, string(cognition.ActionEnter), execReturn)
+		} else if record.Direction != "up" {
+			training.teach(enterCtx, string(cognition.ActionEnter), -1)
 		}
 
 		if score {
@@ -531,11 +563,10 @@ func (training *Training) supervise(episode heldEpisode, score bool) {
 		}
 	}
 
+	// Ground truth controls learning: always teach EXIT from resolved C when
+	// wantEnter, regardless of frozen prediction (prediction grades only).
 	if wantEnter && len(exitCtx) > 0 {
-		predictedExit := training.frozenAction(exitCtx)
-		if predictedExit == cognition.ActionExit {
-			training.teach(exitCtx, string(cognition.ActionExit), execReturn)
-		}
+		training.teach(exitCtx, string(cognition.ActionExit), execReturn)
 
 		if score {
 			training.recordSkill(predictedExit == cognition.ActionExit)

@@ -313,24 +313,40 @@ func (price *Price) Quantity(symbol string, cash *decimal.Decimal) (*decimal.Dec
 	}
 
 	var quantity *decimal.Decimal
+	var unit *decimal.Decimal
 	var err error
 
 	if price.Books != nil {
 		price.Books.Book(symbol, func(managedBook *spotbook.Book) {
 			if managedBook != nil && managedBook.BestAsk() != nil {
-				quantity, err = price.Affordable(symbol, cash, managedBook.BestAsk().Price)
+				unit = managedBook.BestAsk().Price
+				quantity, err = price.Affordable(symbol, cash, unit)
 			}
 		})
 	}
 
 	if quantity == nil {
 		if tick := price.Tick(symbol); tick != nil && tick.Ask != nil {
-			quantity, err = price.Affordable(symbol, cash, tick.Ask)
+			unit = tick.Ask
+			quantity, err = price.Affordable(symbol, cash, unit)
 		}
 	}
 
 	if quantity == nil && err == nil {
 		err = errnie.Err(errnie.NotFound, "price: book unavailable for "+symbol, nil)
+	}
+
+	// Cash too small for QtyMin/CostMin → abstain, do not round up into an
+	// unaffordable venue order (paper CLI: Insufficient USD Available).
+	if err == nil && quantity != nil && unit != nil && price.Instrument != nil {
+		if !price.Tradable(symbol, quantity, unit) {
+			err = errnie.Err(
+				errnie.Validation,
+				"price: available cash below minimum order for "+symbol,
+				nil,
+			)
+			quantity = nil
+		}
 	}
 
 	return quantity, errnie.Error(err)

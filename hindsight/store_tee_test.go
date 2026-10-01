@@ -17,6 +17,7 @@ func TestStoreTeeBackpressureDoesNotSilentDrop(t *testing.T) {
 		tee := hindsight.NewStoreTee(ctx, "backpressure")
 		tee.Transition(runtime.READY)
 
+		// Fill to capacity.
 		for i := 0; i < 8192; i++ {
 			m := data.NewMeasurement[float64]("websocket", nil)
 			m.Label = "BTC/USD"
@@ -26,6 +27,7 @@ func TestStoreTeeBackpressureDoesNotSilentDrop(t *testing.T) {
 		So(tee.Pending(), ShouldEqual, 8192)
 		So(tee.Error(), ShouldBeNil)
 
+		// Next push must not silently drop — cancel while blocked → explicit error.
 		done := make(chan struct{})
 		go func() {
 			m := data.NewMeasurement[float64]("websocket", nil)
@@ -43,6 +45,7 @@ func TestStoreTeeBackpressureDoesNotSilentDrop(t *testing.T) {
 			t.Fatal("Push did not return after cancel")
 		}
 		So(tee.Error(), ShouldNotBeNil)
+		// Queue still full — the blocked push did not enqueue a silent replacement.
 		So(tee.Pending(), ShouldEqual, 8192)
 	})
 }

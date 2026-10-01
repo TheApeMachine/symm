@@ -838,6 +838,16 @@ func (paper *Paper) placeOrder(
 	model, err = paper.execute("executions", command...)
 
 	if err != nil {
+		// Keep insufficient-available / validation place failures soft so
+		// Execution/Training stay READY instead of cascading to ERROR.
+		if IsEnterSoftFail(err) {
+			return nil, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"paper: order rejected — insufficient available funds or below minimum",
+				err,
+			))
+		}
+
 		return nil, errnie.Error(errnie.Err(
 			errnie.Internal,
 			"failed to place paper order",
