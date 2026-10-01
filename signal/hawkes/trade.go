@@ -79,7 +79,7 @@ func (trade *Trade) Step(measurement *data.Measurement[float64]) *data.Measureme
 		return measurement
 	}
 
-	measurement.Source = "hawkes:trade"
+	measurement.SetSource("hawkes:trade")
 
 	if len(measurement.Peers) > 0 {
 		measurement.Err = nil
@@ -87,7 +87,8 @@ func (trade *Trade) Step(measurement *data.Measurement[float64]) *data.Measureme
 		peer := measurement.FindPeer(func(candidate *data.Measurement[float64]) bool {
 			_, hasPrice := candidate.LookupMetric("price")
 			_, hasQty := candidate.LookupMetric("qty")
-			return candidate.Provenance["channel"] == "trade" &&
+			ch, _ := candidate.GetProvenance("channel")
+			return ch == "trade" &&
 				hasPrice && hasQty && candidate.Label != "" && candidate.Err == nil
 		})
 

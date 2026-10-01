@@ -47,66 +47,90 @@ export type ResonanceData = {
 	layers?: LayerData[];
 };
 
+const metricName = (value: string | Uint8Array | null | undefined): string => {
+	if (value == null) return "";
+	if (typeof value === "string") return value;
+	return new TextDecoder().decode(value);
+};
+
+const densify = (sparse: number[] | undefined): number[] => {
+	if (!sparse || sparse.length === 0) return [];
+	const out: number[] = [];
+	for (let i = 0; i < sparse.length; i++) {
+		const v = sparse[i];
+		out.push(typeof v === "number" && Number.isFinite(v) ? v : 0);
+	}
+	return out;
+};
+
 export const parseResonanceData = (measurement: MeasurementT | undefined): ResonanceData | undefined => {
 	if (!measurement) return undefined;
-	
+
+	const metrics = measurement.metrics ?? [];
+	const provenance = measurement.provenance ?? [];
 	const data: ResonanceData = { forwardCurve: [], dynamics: {}, latent: [], layers: [] };
-	
-	for (let i = 0; i < measurement.metrics.length; i++) {
-		const m = measurement.metrics[i];
-		const lbl = String(m.name);
-		if (lbl === "task_relative_precision") data.taskRelativePrecision = m.raw;
-		if (lbl === "task_skill") data.taskSkill = m.raw;
-		if (lbl === "surprise") data.surprise = m.raw;
-		if (lbl === "energy") data.energy = m.raw;
-		if (lbl?.startsWith("forward_curve_")) {
-			const idx = parseInt(lbl.split("_")[2], 10);
-			if (!Number.isNaN(idx)) {
-				data.forwardCurve[idx] = m.raw;
-			}
+
+	for (let i = 0; i < metrics.length; i++) {
+		const m = metrics[i];
+		if (!m) continue;
+		const lbl = metricName(m.name as string | Uint8Array | null);
+		const raw = typeof m.raw === "number" && Number.isFinite(m.raw) ? m.raw : undefined;
+		if (raw === undefined) continue;
+
+		if (lbl === "task_relative_precision") data.taskRelativePrecision = raw;
+		if (lbl === "task_skill") data.taskSkill = raw;
+		if (lbl === "surprise") data.surprise = raw;
+		if (lbl === "energy") data.energy = raw;
+		if (lbl.startsWith("forward_curve_")) {
+			const idx = Number.parseInt(lbl.slice("forward_curve_".length), 10);
+			if (!Number.isNaN(idx)) data.forwardCurve[idx] = raw;
 		}
-		if (lbl?.startsWith("dynamics_")) {
-			const prop = lbl.replace("dynamics_", "");
-			if (data.dynamics) {
-				data.dynamics[prop] = m.raw;
-			}
+		if (lbl.startsWith("dynamics_")) {
+			const prop = lbl.slice("dynamics_".length);
+			if (data.dynamics) data.dynamics[prop] = raw;
 		}
-		if (lbl?.startsWith("latent_")) {
-			const idx = parseInt(lbl.split("_")[1], 10);
-			if (!Number.isNaN(idx) && data.latent) {
-				data.latent[idx] = m.raw;
-			}
+		if (lbl.startsWith("latent_")) {
+			const idx = Number.parseInt(lbl.slice("latent_".length), 10);
+			if (!Number.isNaN(idx) && data.latent) data.latent[idx] = raw;
 		}
-		if (lbl?.startsWith("layer_")) {
+		if (lbl.startsWith("layer_")) {
 			const parts = lbl.split("_");
-			const layerId = parseInt(parts[1], 10);
+			const layerId = Number.parseInt(parts[1] ?? "", 10);
 			const prop = parts[2];
-			const idx = parseInt(parts[3], 10);
-			
+			const idx = Number.parseInt(parts[3] ?? "", 10);
+
 			if (!Number.isNaN(layerId) && !Number.isNaN(idx) && data.layers) {
 				if (!data.layers[layerId]) {
 					data.layers[layerId] = { state: [], prediction: [] };
 				}
 				const layer = data.layers[layerId];
-				if (prop === "state" && layer.state) {
-					layer.state[idx] = m.raw;
-				} else if (prop === "prediction" && layer.prediction) {
-					layer.prediction[idx] = m.raw;
-				}
+				if (prop === "state" && layer.state) layer.state[idx] = raw;
+				else if (prop === "prediction" && layer.prediction) layer.prediction[idx] = raw;
 			}
 		}
 	}
-	
-	for (let i = 0; i < measurement.provenance.length; i++) {
-		const p = measurement.provenance[i];
-		const k = String(p.name);
-		const v = String(p.value);
-		if (k === "supported_horizon") data.supportedHorizon = parseInt(v, 10);
-		if (k === "resolved_steps") data.resolvedSteps = parseInt(v, 10);
-		if (k === "confidence") data.confidence = parseFloat(v);
+
+	for (let i = 0; i < provenance.length; i++) {
+		const p = provenance[i];
+		if (!p) continue;
+		const k = metricName(p.name as string | Uint8Array | null);
+		const v = metricName(p.value as string | Uint8Array | null);
+		if (k === "supported_horizon") data.supportedHorizon = Number.parseInt(v, 10);
+		if (k === "resolved_steps") data.resolvedSteps = Number.parseInt(v, 10);
+		if (k === "confidence") data.confidence = Number.parseFloat(v);
 		if (k === "calibrated") data.calibrated = v === "true";
 	}
-	
+
+	// Indexed metrics arrive sparse; densify so VectorLane has contiguous bars.
+	data.forwardCurve = densify(data.forwardCurve);
+	data.latent = densify(data.latent);
+	data.layers = (data.layers ?? [])
+		.filter((layer): layer is LayerData => layer != null)
+		.map((layer) => ({
+			state: densify(layer.state),
+			prediction: densify(layer.prediction),
+		}));
+
 	return data;
 };
 
@@ -392,14 +416,16 @@ const HierarchyLanes = () => {
 	const layersData = res?.layers ?? [];
 	const layerCount = layersData.length;
 
-	const layers = layersData.map((layer, index) => ({
-		label: `L${index} · ${semanticLayerName(index, layerCount)}`,
-		meta:
-			index < layerCount - 1 ? "adjacent generative link" : "context state",
-		color: "bg-(--f3)",
-		values: layer.state ?? [],
-		ghost: layer.prediction ?? [],
-	}));
+	const layers = layersData
+		.map((layer, index) => ({
+			label: `L${index} · ${semanticLayerName(index, layerCount)}`,
+			meta:
+				index < layerCount - 1 ? "adjacent generative link" : "context state",
+			color: "bg-(--f3)",
+			values: layer.state ?? [],
+			ghost: layer.prediction ?? [],
+		}))
+		.filter((layer) => layer.values.length > 0);
 
 	const latentVec = res?.latent ?? [];
 	const forwardVec = res?.forwardCurve ?? [];

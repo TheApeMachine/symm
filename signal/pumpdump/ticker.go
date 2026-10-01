@@ -185,7 +185,7 @@ func (ticker *Ticker) Step(measurement *data.Measurement[float64]) *data.Measure
 		return measurement
 	}
 
-	measurement.Source = "pumpdump:ticker"
+	measurement.SetSource("pumpdump:ticker")
 
 	res := data.Read[*data.Measurement[float64]](ticker.pipelineFor(measurement.Label).Next(
 		transport.NewOne(unsafe.Pointer(&measurement)).Next(nil),

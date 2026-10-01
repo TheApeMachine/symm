@@ -72,7 +72,8 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 
 				if len(m.Peers) > 0 {
 					peer := m.FindPeer(func(p *data.Measurement[float64]) bool {
-						if p.Label == "" || p.Provenance["channel"] == "ticker" || p.Provenance["channel"] == "trade" {
+						ch, _ := p.GetProvenance("channel")
+						if p.Label == "" || ch == "ticker" || ch == "trade" {
 							return false
 						}
 						b := p.GetMetric("best_price:bid").Raw
@@ -332,7 +333,7 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 					return statistic.JointInput{Values: []float64{wb, wa, rb, ra}}
 				},
 				func(m *data.Measurement[float64], out statistic.JointReading) {
-					if out.SNRDefined {
+					if out.SNRDefined && out.SNR < 1/math.Sqrt(2.220446049250313e-16) {
 						m.WriteMetric("SNR", out.SNR)
 						m.EnsureMetadata()
 						m.SetMetadata(data.MetadataMahalanobisSNR, strconv.FormatFloat(out.SNR, 'f', -1, 64))
@@ -366,7 +367,7 @@ func (level3 *Level3) Step(measurement *data.Measurement[float64]) *data.Measure
 		return measurement
 	}
 
-	measurement.Source = "toxicity:level3"
+	measurement.SetSource("toxicity:level3")
 
 	return data.Read[*data.Measurement[float64]](level3.pipelineFor(measurement.Label).Next(
 		transport.NewOne(unsafe.Pointer(&measurement)).Next(nil),

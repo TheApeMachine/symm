@@ -71,7 +71,7 @@ func splitMeasurement(
 		observations = append(observations, Observation{
 			Coordinate: Coordinate{
 				Symbol:    measurement.Label,
-				Peer:      measurement.Provenance["peer"],
+				Peer: func() string { v, _ := measurement.GetProvenance("peer"); return v }(),
 				Source:    measurement.Source,
 				Metric:    metricName,
 				Side:      side,

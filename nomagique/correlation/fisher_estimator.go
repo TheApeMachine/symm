@@ -98,8 +98,24 @@ func (op *FisherEstimator) Next(
 				view.PriorCount = priorCount
 				view.Count = reading.Count
 				view.ZScore = res.ZScore
-				view.Variance = reading.Variance
-				view.VarianceDefined = reading.VarianceDefined
+				// Noise for Quality SNR is the causal prior variance, not the
+				// post-update sample variance (which collapses when correlation
+				// sits still and then explodes d²/σ²).
+				// Publish causal prior variance only when it cleared the same
+				// ScoreScale distinguishability gate. A collapsed PriorVariance
+				// must not become MetadataNoiseVariance or Quality will emit
+				// Divergence²/ε astronomical SNR.
+				if priorCount > 1 && res.PriorVariance > 0 {
+					disp := math.Sqrt(res.PriorVariance)
+					ref := math.Abs(res.Residual)
+					if ref < 1 {
+						ref = 1
+					}
+					if disp > math.Sqrt(2.220446049250313e-16)*ref {
+						view.Variance = res.PriorVariance
+						view.VarianceDefined = true
+					}
+				}
 				view.HasPrior = res.HasPrior
 			}
 

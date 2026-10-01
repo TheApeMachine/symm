@@ -55,7 +55,7 @@ func (op *Counts) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 
 			p := op.history.at(m.Label)
 
-			side := m.Provenance["side"]
+			side, _ := m.GetProvenance("side")
 			mark := -1.0
 
 			if side == "buy" {
@@ -104,13 +104,13 @@ func (op *Counts) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			m.WriteMetric("event_count", count)
 			m.WriteMetric("event_count:buy", countBuy)
 			m.WriteMetric("event_count:sell", countSell)
-			m.WriteMetric("event_fraction:buy", countBuy / count)
-			m.WriteMetric("event_fraction:sell", countSell / count)
+			m.WriteMetric("event_fraction:buy", countBuy/count)
+			m.WriteMetric("event_fraction:sell", countSell/count)
 
 			if span > 0 {
-				m.WriteMetric("arrival_rate:buy", countBuy / span)
-				m.WriteMetric("arrival_rate:sell", countSell / span)
-				m.WriteMetric("arrival_rate", (countBuy + countSell) / span)
+				m.WriteMetric("arrival_rate:buy", countBuy/span)
+				m.WriteMetric("arrival_rate:sell", countSell/span)
+				m.WriteMetric("arrival_rate", (countBuy+countSell)/span)
 			}
 
 			if !yield(arriving) {
@@ -177,7 +177,7 @@ func (op *Excitation) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
 
 			buyArrivals, sellArrivals := p.sides()
 
-			side := m.Provenance["side"]
+			side, _ := m.GetProvenance("side")
 			mark := -1.0
 
 			if side == "buy" {
@@ -226,19 +226,19 @@ func (op *Excitation) evaluate(
 
 	m.WriteMetric("conditional_intensity:buy", lambdaBuy)
 	m.WriteMetric("conditional_intensity:sell", lambdaSell)
-	m.WriteMetric("conditional_intensity", lambdaBuy + lambdaSell)
+	m.WriteMetric("conditional_intensity", lambdaBuy+lambdaSell)
 	m.WriteMetric("background_rate:buy", muX)
 	m.WriteMetric("background_rate:sell", muY)
-	m.WriteMetric("background_rate", muX + muY)
+	m.WriteMetric("background_rate", muX+muY)
 	m.WriteMetric("excitation_intensity:buy", excessBuy)
 	m.WriteMetric("excitation_intensity:sell", excessSell)
 
 	if lambdaBuy > 0 {
-		m.WriteMetric("excitation_fraction:buy", excessBuy / lambdaBuy)
+		m.WriteMetric("excitation_fraction:buy", excessBuy/lambdaBuy)
 	}
 
 	if lambdaSell > 0 {
-		m.WriteMetric("excitation_fraction:sell", excessSell / lambdaSell)
+		m.WriteMetric("excitation_fraction:sell", excessSell/lambdaSell)
 	}
 
 	m.WriteMetric("excitation_amplitude:buy_from_buy", alphaXX)
@@ -290,7 +290,7 @@ func (op *Excitation) evaluate(
 
 	if hawkesOK {
 		m.WriteMetric("log_likelihood:hawkes", hawkesLL)
-		m.WriteMetric("log_likelihood_per_event:hawkes", hawkesLL / markedCount)
+		m.WriteMetric("log_likelihood_per_event:hawkes", hawkesLL/markedCount)
 	}
 
 	poisson := bivariateFit{muX: muX, muY: muY, beta: beta}
@@ -303,7 +303,7 @@ func (op *Excitation) evaluate(
 	if hawkesOK && poissonOK {
 		gainPoisson := hawkesLL - poissonLL
 		m.WriteMetric("log_likelihood_gain_vs_poisson", gainPoisson)
-		m.WriteMetric("log_likelihood_gain_per_event_vs_poisson", gainPoisson / markedCount)
+		m.WriteMetric("log_likelihood_gain_per_event_vs_poisson", gainPoisson/markedCount)
 	}
 
 	if hawkesOK && p.selfOnlyReady {
@@ -313,7 +313,7 @@ func (op *Excitation) evaluate(
 			gainSelf := hawkesLL - selfLL
 			m.WriteMetric("log_likelihood:self_only", selfLL)
 			m.WriteMetric("log_likelihood_gain_vs_self_only", gainSelf)
-			m.WriteMetric("log_likelihood_gain_per_event_vs_self_only", gainSelf / markedCount)
+			m.WriteMetric("log_likelihood_gain_per_event_vs_self_only", gainSelf/markedCount)
 		}
 	}
 
@@ -332,11 +332,11 @@ func (op *Excitation) evaluate(
 	m.WriteMetric("count_innovation:sell", innoSell)
 
 	if compBuy > 0 {
-		m.WriteMetric("standardized_innovation:buy", innoBuy / math.Sqrt(compBuy))
+		m.WriteMetric("standardized_innovation:buy", innoBuy/math.Sqrt(compBuy))
 	}
 
 	if compSell > 0 {
-		m.WriteMetric("standardized_innovation:sell", innoSell / math.Sqrt(compSell))
+		m.WriteMetric("standardized_innovation:sell", innoSell/math.Sqrt(compSell))
 	}
 
 	// excitation_share is the excitation's share of the integrated
@@ -355,15 +355,15 @@ func (op *Excitation) evaluate(
 	m.WriteMetric("excitation_mass:sell", excessSellMass)
 
 	if compBuy > 0 {
-		m.WriteMetric("excitation_share:buy", excessBuyMass / compBuy)
+		m.WriteMetric("excitation_share:buy", excessBuyMass/compBuy)
 	}
 
 	if compSell > 0 {
-		m.WriteMetric("excitation_share:sell", excessSellMass / compSell)
+		m.WriteMetric("excitation_share:sell", excessSellMass/compSell)
 	}
 
 	if compTotal := compBuy + compSell; compTotal > 0 {
-		m.WriteMetric("excitation_share", (excessBuyMass + excessSellMass) / compTotal)
+		m.WriteMetric("excitation_share", (excessBuyMass+excessSellMass)/compTotal)
 	}
 
 	snrSum := 0.0
@@ -421,7 +421,7 @@ func (op *Refit) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			p := op.history.at(m.Label)
 
 			if m.Err == nil {
-				side := m.Provenance["side"]
+				side, _ := m.GetProvenance("side")
 				mark := -1.0
 
 				if side == "buy" {

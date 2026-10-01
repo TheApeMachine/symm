@@ -168,7 +168,7 @@ func (trade *Trade) pipelineFor(symbol string) core.Primitive {
 					return statistic.JointInput{Values: []float64{g, f, r}}
 				},
 				func(m *data.Measurement[float64], out statistic.JointReading) {
-					if out.SNRDefined {
+					if out.SNRDefined && out.SNR < 1/math.Sqrt(2.220446049250313e-16) {
 						m.WriteMetric("SNR", out.SNR)
 						m.EnsureMetadata()
 						m.SetMetadata(data.MetadataMahalanobisSNR, strconv.FormatFloat(out.SNR, 'f', -1, 64))
@@ -228,7 +228,7 @@ func (trade *Trade) Step(measurement *data.Measurement[float64]) *data.Measureme
 		return measurement
 	}
 
-	measurement.Source = "cvd:trade"
+	measurement.SetSource("cvd:trade")
 
 	if len(measurement.Peers) > 0 {
 		peer := measurement.FindPeer(func(candidate *data.Measurement[float64]) bool {

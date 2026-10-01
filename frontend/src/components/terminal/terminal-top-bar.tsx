@@ -96,7 +96,7 @@ const Rule = () => (
 );
 
 /*
-ResonanceTransportBadge surfaces WebRTC data-channel health next to the websocket
+ResonanceTransportBadge surfaces manifold WebSocket feed health next to the hub websocket
 liveness badge so a dead telemetry transport is never mistaken for a quiet
 predictive coder. Offline here means the resonance/diagnostics channels are down
 or reconnecting — the model may be fine, but no artifacts are arriving.
@@ -115,11 +115,11 @@ const ResonanceTransportBadge = () => {
 
 	return (
 		<Badge
-			label="WebRTC"
+			label="Manifold"
 			variant={variant}
 			dot
 			pulse={live}
-			title={`WebRTC ${state}`}
+			title={`Manifold WS ${state}`}
 		/>
 	);
 };

@@ -54,7 +54,8 @@ func (op *Quantity) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			}
 
 			quantity := m.GetMetric("qty").Raw
-			buy := m.Provenance["side"] == "buy"
+			side, _ := m.GetProvenance("side")
+			buy := side == "buy"
 
 			one, zero := 1.0, 0.0
 			signed := quantity
@@ -153,7 +154,8 @@ func (op *Notional) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			}
 
 			notional := m.GetMetric("price").Raw * m.GetMetric("qty").Raw
-			buy := m.Provenance["side"] == "buy"
+			side, _ := m.GetProvenance("side")
+			buy := side == "buy"
 
 			zero := 0.0
 			signed := notional

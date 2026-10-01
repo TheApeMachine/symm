@@ -62,7 +62,10 @@ metric-lineage:
 metric-map:
 	go run ./tools/metricmap signal/metric_map.csv signal/metric_map.json
 
-run: metric-lineage
+# metric-lineage is a separate audit target. Regenerating it on every `make run`
+# currently collapses producers (Number/WriteMetric pipelines are invisible to the
+# static Project/Binding scanner) and the Influence UI loses most of the graph.
+run:
 	go run main.go
 
 experimental:

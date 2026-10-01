@@ -1,6 +1,7 @@
 package toxicity
 
 import (
+	"math"
 	"context"
 	"sync"
 
@@ -160,7 +161,7 @@ func (trade *Trade) pipelineFor(symbol string) core.Primitive {
 					}
 				}
 
-				side := input.Provenance["side"]
+				side, _ := input.GetProvenance("side")
 				inBracket := (price >= bidPrice && price <= askPrice)
 				if inBracket {
 					state.bracketQty += qty
@@ -267,7 +268,7 @@ func (trade *Trade) pipelineFor(symbol string) core.Primitive {
 					return statistic.JointInput{Values: []float64{b, a}}
 				},
 				func(m *data.Measurement[float64], out statistic.JointReading) {
-					if out.SNRDefined {
+					if out.SNRDefined && out.SNR < 1/math.Sqrt(2.220446049250313e-16) {
 						m.WriteMetric("SNR", out.SNR)
 						m.EnsureMetadata()
 						m.SetMetadata(data.MetadataMahalanobisSNR, strconv.FormatFloat(out.SNR, 'f', -1, 64))
@@ -308,7 +309,7 @@ func (trade *Trade) Step(measurement *data.Measurement[float64]) *data.Measureme
 		return measurement
 	}
 
-	measurement.Source = "toxicity:trade"
+	measurement.SetSource("toxicity:trade")
 
 	res := data.Read[*data.Measurement[float64]](trade.pipelineFor(measurement.Label).Next(
 		transport.NewOne(unsafe.Pointer(&measurement)).Next(nil),

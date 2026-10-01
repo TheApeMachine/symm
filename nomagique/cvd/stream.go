@@ -93,7 +93,7 @@ func (op *Gate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				continue
 			}
 
-			side := m.Provenance["side"]
+			side, _ := m.GetProvenance("side")
 
 			if price.Raw <= 0 || quantity.Raw <= 0 || (side != "buy" && side != "sell") {
 				m.Err = fmt.Errorf("%w: cvd: positive price and quantity and a known aggressor side required", core.ErrDomain)

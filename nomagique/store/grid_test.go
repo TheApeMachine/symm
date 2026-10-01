@@ -424,7 +424,8 @@ func TestGridSnapshotRoundTrip(t *testing.T) {
 }
 
 func metricNamed(grid *store.Grid, symbol, source, name string) *data.Metric[float64] {
-	key := symbol + "\x00" + source + "\x00" + name
+	key := symbol + "\x00" + name
+	_ = source
 
 	for _, metric := range grid.Metrics {
 		if metric != nil && metric.Label == key {
@@ -433,4 +434,51 @@ func metricNamed(grid *store.Grid, symbol, source, name string) *data.Metric[flo
 	}
 
 	return nil
+}
+
+func TestCellKeyOmitsSource(t *testing.T) {
+	Convey("Given the same symbol and metric under different sources", t, func() {
+		grid := store.NewGrid()
+		a := data.NewMeasurement[float64]("resonance", nil)
+		a.Label = "BTC/USD"
+		a.SetMetric("energy", data.Metric[float64]{Label: "energy", Raw: 1})
+		grid.Update(a)
+
+		b := data.NewMeasurement[float64]("hawkes:trade", nil)
+		b.Label = "BTC/USD"
+		b.SetMetric("energy", data.Metric[float64]{Label: "energy", Raw: 2})
+		grid.Update(b)
+
+		So(metricNamed(grid, "BTC/USD", "resonance", "energy"), ShouldNotBeNil)
+		So(metricNamed(grid, "BTC/USD", "hawkes:trade", "energy"), ShouldEqual, metricNamed(grid, "BTC/USD", "resonance", "energy"))
+		So(len(grid.Metrics), ShouldEqual, 1)
+	})
+}
+
+func TestLitRegionsIgnoresSourceRewrite(t *testing.T) {
+	Convey("Given a settled grid registered under one source", t, func() {
+		grid := store.NewGrid()
+		frame := data.NewMeasurement[float64]("resonance", map[string]data.Metric[float64]{
+			"energy":   {Label: "energy", Raw: 1.2},
+			"surprise": {Label: "surprise", Raw: 0.4},
+			"midpoint": {Label: "midpoint", Raw: 100},
+		})
+		frame.Label = "BTC/USD"
+		frame.SeqIdx = 1
+
+		for i := 0; i < 40; i++ {
+			frame.WriteMetric("energy", 1.0+float64(i%3))
+			frame.WriteMetric("surprise", 0.2+float64(i%2)*0.1)
+			frame.WriteMetric("midpoint", 100+float64(i))
+			grid.Update(frame)
+		}
+		grid.ForceSettle()
+
+		token := grid.LitRegions(frame)
+		So(len(token), ShouldBeGreaterThan, 0)
+
+		clone := frame.Clone()
+		clone.Source = "training:historical"
+		So(grid.LitRegions(clone), ShouldResemble, token)
+	})
 }

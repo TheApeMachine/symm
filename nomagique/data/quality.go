@@ -3,6 +3,7 @@ package data
 import (
 	"errors"
 	"iter"
+	"math"
 	"strconv"
 	"unsafe"
 
@@ -61,18 +62,32 @@ func (op *Quality) Next(
 				Maturity:  1,
 			}
 
-			if facts.HasDivergence && facts.HasNoise && facts.NoiseVariance > 0 {
-				reading.SNR = facts.Divergence * facts.Divergence / facts.NoiseVariance
-				reading.SNRDefined = true
-			}
-
+			// Scalar and Mahalanobis SNR both require Support > 1 so a near-zero
+			// noise estimate from an immature sample cannot publish astronomical
+			// SNR. Inf/NaN are refused rather than clamped.
 			if facts.HasSupport {
 				reading.Maturity = 0
 
 				if facts.Support > 1 {
 					reading.Maturity = 1 - 1/facts.Support
 
-					if facts.HasMahalanobis && facts.MahalanobisSNR >= 0 {
+					if facts.HasDivergence && facts.HasNoise &&
+						distinguishableNoise(facts.NoiseVariance, facts.Divergence) {
+						snr := facts.Divergence * facts.Divergence / facts.NoiseVariance
+						bound := 1 / math.Sqrt(machineEpsilon)
+
+						if !math.IsInf(snr, 0) && !math.IsNaN(snr) && snr < bound {
+							reading.SNR = snr
+							reading.SNRDefined = true
+						}
+					}
+
+					// Mahalanobis SNR is refused when non-finite or when it exceeds the
+					// float64 relative condition bound 1/sqrt(eps). Values beyond that
+					// imply a noise floor below relative ULP — not an estimable SNR.
+					if facts.HasMahalanobis && facts.MahalanobisSNR >= 0 &&
+						!math.IsInf(facts.MahalanobisSNR, 0) && !math.IsNaN(facts.MahalanobisSNR) &&
+						facts.MahalanobisSNR < 1/math.Sqrt(machineEpsilon) {
 						reading.SNR = facts.MahalanobisSNR
 						reading.SNRDefined = true
 					}
@@ -100,6 +115,31 @@ func (op *Quality) Error(errs ...error) error {
 	}
 
 	return op.err
+}
+
+
+// machineEpsilon is float64 epsilon (math.Nextafter(1, 2) - 1).
+const machineEpsilon = 2.220446049250313e-16
+
+/*
+distinguishableNoise reports whether a variance estimate is large enough,
+relative to a reference magnitude, to support a float64 SNR = d²/v without
+publishing astronomical values from a collapsed noise floor. The floor is
+sqrt(eps)·max(1, |reference|) — the same relative distinguishability used by
+Fisher/CausalResidual ScoreScale gates, raised to relative form so near-zero
+processes cannot claim billion-scale SNR from sub-ULP variance.
+*/
+func distinguishableNoise(variance, reference float64) bool {
+	if variance <= 0 || math.IsNaN(variance) || math.IsInf(variance, 0) {
+		return false
+	}
+
+	ref := math.Abs(reference)
+	if ref < 1 {
+		ref = 1
+	}
+
+	return math.Sqrt(variance) > math.Sqrt(machineEpsilon)*ref
 }
 
 func factsFromMetadata(metadata map[string]string) QualityFacts {

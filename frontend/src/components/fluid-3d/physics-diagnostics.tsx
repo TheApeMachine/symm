@@ -126,7 +126,7 @@ export const PhysicsDiagnosticsHUD = ({
 			<div className="flex-1 overflow-y-auto p-3 text-xs">
 				{phaseReading === null && (
 					<div className="mb-3 rounded border border-(--line) bg-(--surface) p-2 text-center text-[11px] text-(--f4)">
-						Waiting for WebRTC manifold stream...
+						Waiting for WebSocket manifold stream…
 					</div>
 				)}
 

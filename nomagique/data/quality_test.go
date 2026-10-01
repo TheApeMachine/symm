@@ -39,18 +39,23 @@ func TestQualityNext(t *testing.T) {
 
 			snr, defined, maturity := 0.0, false, 1.0
 
-			if facts.HasDivergence && facts.HasNoise && facts.NoiseVariance > 0 {
-				snr = facts.Divergence * facts.Divergence / facts.NoiseVariance
-				defined = true
-			}
-
 			if facts.HasSupport {
 				maturity = 0
 
 				if facts.Support > 1 {
 					maturity = 1 - 1/facts.Support
 
-					if facts.HasMahalanobis && facts.MahalanobisSNR >= 0 {
+					if facts.HasDivergence && facts.HasNoise && facts.NoiseVariance > 0 {
+						candidate := facts.Divergence * facts.Divergence / facts.NoiseVariance
+
+						if !math.IsInf(candidate, 0) && !math.IsNaN(candidate) {
+							snr = candidate
+							defined = true
+						}
+					}
+
+					if facts.HasMahalanobis && facts.MahalanobisSNR >= 0 &&
+						!math.IsInf(facts.MahalanobisSNR, 0) && !math.IsNaN(facts.MahalanobisSNR) {
 						snr = facts.MahalanobisSNR
 						defined = true
 					}
@@ -88,5 +93,76 @@ func TestQualityNext(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(weight, ShouldAlmostEqual, math.Min(1, math.Max(0, maturity*factor)))
 		}
+	})
+}
+
+func TestQualityRefusesImmatureNoise(t *testing.T) {
+	Convey("Given divergence and tiny noise without mature support", t, func() {
+		quality := data.NewQuality()
+		facts := data.QualityFacts{
+			Divergence:    1,
+			NoiseVariance: 1e-30,
+			HasDivergence: true,
+			HasNoise:      true,
+		}
+		readingEval := transport.NewEvaluate(quality)
+		var reading data.QualityReading
+		for out := range readingEval.Next(transport.NewValues(facts).Next(nil)) {
+			reading = *(*data.QualityReading)(out)
+		}
+		So(reading.SNRDefined, ShouldBeFalse)
+	})
+
+	Convey("Given Inf Mahalanobis under mature support", t, func() {
+		quality := data.NewQuality()
+		facts := data.QualityFacts{
+			Support:        10,
+			HasSupport:     true,
+			MahalanobisSNR: math.Inf(1),
+			HasMahalanobis: true,
+		}
+		readingEval := transport.NewEvaluate(quality)
+		var reading data.QualityReading
+		for out := range readingEval.Next(transport.NewValues(facts).Next(nil)) {
+			reading = *(*data.QualityReading)(out)
+		}
+		So(reading.SNRDefined, ShouldBeFalse)
+	})
+}
+
+
+func TestQualityRefusesAstronomicalSNR(t *testing.T) {
+	Convey("Given mature support with collapsed noise variance", t, func() {
+		quality := data.NewQuality()
+		facts := data.QualityFacts{
+			Support:        100,
+			HasSupport:     true,
+			Divergence:     1,
+			NoiseVariance:  1e-40,
+			HasDivergence:  true,
+			HasNoise:       true,
+		}
+		readingEval := transport.NewEvaluate(quality)
+		var reading data.QualityReading
+		for out := range readingEval.Next(transport.NewValues(facts).Next(nil)) {
+			reading = *(*data.QualityReading)(out)
+		}
+		So(reading.SNRDefined, ShouldBeFalse)
+	})
+
+	Convey("Given Mahalanobis beyond 1/sqrt(eps)", t, func() {
+		quality := data.NewQuality()
+		facts := data.QualityFacts{
+			Support:        100,
+			HasSupport:     true,
+			MahalanobisSNR: 1e12,
+			HasMahalanobis: true,
+		}
+		readingEval := transport.NewEvaluate(quality)
+		var reading data.QualityReading
+		for out := range readingEval.Next(transport.NewValues(facts).Next(nil)) {
+			reading = *(*data.QualityReading)(out)
+		}
+		So(reading.SNRDefined, ShouldBeFalse)
 	})
 }

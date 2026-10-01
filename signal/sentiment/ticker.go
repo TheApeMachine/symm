@@ -294,7 +294,7 @@ func (ticker *Ticker) pipelineFor(symbol string) core.Primitive {
 					return statistic.JointInput{Values: []float64{mb, br, ma, rd}}
 				},
 				func(m *data.Measurement[float64], out statistic.JointReading) {
-					if out.SNRDefined {
+					if out.SNRDefined && out.SNR < 1/math.Sqrt(2.220446049250313e-16) {
 						m.WriteMetric("SNR", out.SNR)
 						m.EnsureMetadata()
 						m.SetMetadata(data.MetadataMahalanobisSNR, strconv.FormatFloat(out.SNR, 'f', -1, 64))
@@ -327,7 +327,7 @@ func (ticker *Ticker) Step(measurement *data.Measurement[float64]) *data.Measure
 		return measurement
 	}
 
-	measurement.Source = "sentiment:ticker"
+	measurement.SetSource("sentiment:ticker")
 
 	if len(measurement.Peers) > 0 {
 		peer := measurement.FindPeer(func(candidate *data.Measurement[float64]) bool {

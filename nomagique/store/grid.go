@@ -213,14 +213,15 @@ func (grid *Grid) LitRegions(measurement *data.Measurement[float64]) []byte {
 	var activity [256]float64
 	var present [256]bool
 
-	for key, metric := range measurement.Metrics {
+	source := measurement.GetSource()
+	for key, metric := range measurement.MetricsSnapshot() {
 		name := metric.Label
 
 		if name == "" {
 			name = key
 		}
 
-		region := grid.Regions[cellKey(measurement.Label, measurement.Source, name)]
+		region := grid.Regions[cellKey(measurement.Label, source, name)]
 
 		if region == 0 {
 			continue
@@ -288,17 +289,42 @@ func (grid *Grid) LitRegions(measurement *data.Measurement[float64]) []byte {
 	return token
 }
 
-func cellKey(symbol, source, name string) string {
-	return symbol + "\x00" + source + "\x00" + name
+/*
+cellKey identifies one impulse-map cell by symbol and metric name.
+
+Source is intentionally excluded: the disruptor shared-slot design mutates one
+measurement across concurrent signal/logic stages, so Source is racy provenance
+rather than cell identity. Including it made LitRegions miss during historical
+replay (preferRows kept a different Source than Training.Update registered) and
+blanked precursor_tokens after publish rewrote Source to training:*.
+*/
+func cellKey(symbol, _source, name string) string {
+	return symbol + "\x00" + name
+}
+
+// modernizeCellKey rewrites legacy symbol\0source\0name keys from checkpoints.
+func modernizeCellKey(label string) string {
+	parts := strings.Split(label, "\x00")
+	if len(parts) != 3 {
+		return label
+	}
+	return parts[0] + "\x00" + parts[2]
 }
 
 func (grid *Grid) update(
 	measurement *data.Measurement[float64],
 	decorate bool,
 ) {
-	if measurement == nil || len(measurement.Metrics) == 0 {
+	if measurement == nil {
 		return
 	}
+
+	metrics := measurement.MetricsSnapshot()
+	if len(metrics) == 0 {
+		return
+	}
+
+	source := measurement.GetSource()
 
 	grid.mu.Lock()
 	defer grid.mu.Unlock()
@@ -310,8 +336,8 @@ func (grid *Grid) update(
 		return
 	}
 
-	current := make(map[string]float64, len(measurement.Metrics))
-	currentPresent := make(map[string]bool, len(measurement.Metrics))
+	current := make(map[string]float64, len(metrics))
+	currentPresent := make(map[string]bool, len(metrics))
 
 	// Priority 3 Authority: Maturity × SNR when available.
 	// When neither is defined, authority stays at 1.0 and separation
@@ -324,14 +350,14 @@ func (grid *Grid) update(
 		baseAuthority = 1.0
 	}
 
-	for key, incoming := range measurement.Metrics {
+	for key, incoming := range metrics {
 		name := incoming.Label
 
 		if name == "" {
 			name = key
 		}
 
-		label := cellKey(measurement.Label, measurement.Source, name)
+		label := cellKey(measurement.Label, source, name)
 		current[label] = incoming.Raw
 		currentPresent[label] = true
 		grid.Authority[label] = baseAuthority
@@ -889,17 +915,125 @@ func (grid *Grid) writeCoordinates() {
 	}
 }
 
+func (grid *Grid) modernizeLegacyKeys() {
+	rewrite := func(store map[string]float64) {
+		if store == nil {
+			return
+		}
+		next := make(map[string]float64, len(store))
+		for key, value := range store {
+			next[modernizeCellKey(key)] = value
+		}
+		for key := range store {
+			delete(store, key)
+		}
+		for key, value := range next {
+			store[key] = value
+		}
+	}
+	rewriteBool := func(store map[string]bool) {
+		if store == nil {
+			return
+		}
+		next := make(map[string]bool, len(store))
+		for key, value := range store {
+			next[modernizeCellKey(key)] = value
+		}
+		for key := range store {
+			delete(store, key)
+		}
+		for key, value := range next {
+			store[key] = value
+		}
+	}
+	rewriteU8 := func(store map[string]uint8) {
+		if store == nil {
+			return
+		}
+		next := make(map[string]uint8, len(store))
+		for key, value := range store {
+			next[modernizeCellKey(key)] = value
+		}
+		for key := range store {
+			delete(store, key)
+		}
+		for key, value := range next {
+			store[key] = value
+		}
+	}
+	rewriteStr := func(store map[string]string) {
+		if store == nil {
+			return
+		}
+		next := make(map[string]string, len(store))
+		for key, value := range store {
+			next[modernizeCellKey(key)] = modernizeCellKey(value)
+		}
+		for key := range store {
+			delete(store, key)
+		}
+		for key, value := range next {
+			store[key] = value
+		}
+	}
+
+	rewrite(grid.Last)
+	rewriteBool(grid.Present)
+	rewrite(grid.Authority)
+	rewrite(grid.PosX)
+	rewrite(grid.PosY)
+	rewriteU8(grid.Regions)
+	rewriteStr(grid.Bound)
+
+	oldToNew := make(map[string]string, len(grid.Metrics))
+	for _, metric := range grid.Metrics {
+		if metric == nil || metric.Label == "" {
+			continue
+		}
+		oldToNew[metric.Label] = modernizeCellKey(metric.Label)
+	}
+
+	if grid.Relations != nil {
+		next := make(map[string]*GridRelation, len(grid.Relations))
+		labels := make([]string, 0, len(oldToNew))
+		for old := range oldToNew {
+			labels = append(labels, old)
+		}
+		sort.Strings(labels)
+		for i := 0; i < len(labels); i++ {
+			for j := i + 1; j < len(labels); j++ {
+				oldKey := pair(labels[i], labels[j])
+				rel := grid.Relations[oldKey]
+				if rel == nil {
+					continue
+				}
+				next[pair(oldToNew[labels[i]], oldToNew[labels[j]])] = rel
+			}
+		}
+		grid.Relations = next
+	}
+
+	for _, metric := range grid.Metrics {
+		if metric != nil {
+			metric.Label = modernizeCellKey(metric.Label)
+		}
+	}
+
+	grid.Partition = ""
+}
+
 func (grid *Grid) decorate(
 	measurement *data.Measurement[float64],
 ) {
-	for key, incoming := range measurement.Metrics {
+	source := measurement.GetSource()
+	for key, incoming := range measurement.MetricsSnapshot() {
 		name := incoming.Label
 
 		if name == "" {
 			name = key
 		}
 
-		stored := grid.find(cellKey(measurement.Label, measurement.Source, name))
+		stored := grid.find(cellKey(measurement.Label, source, name))
 		if stored == nil {
 			continue
 		}
@@ -948,7 +1082,7 @@ func pair(a, b string) string {
 
 /*
 GridSnapshot is the frozen geometry and the per-series memory required to
-continue it. Cell keys are symbol, source, and metric name.
+continue it. Cell keys are symbol and metric name (source is not part of identity).
 */
 type GridSnapshot struct {
 	Metrics             []*data.Metric[float64]  `json:"metrics"`
@@ -1035,5 +1169,6 @@ func (grid *Grid) RestoreSnapshot(encoded []byte) error {
 	grid.Observations = snapshot.Observations
 	grid.PartitionRun = snapshot.PartitionRun
 	grid.LongestPartitionRun = snapshot.LongestPartitionRun
+	grid.modernizeLegacyKeys()
 	return nil
 }

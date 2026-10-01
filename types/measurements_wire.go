@@ -20,12 +20,16 @@ MeasurementToWire converts a data.Measurement to wire.MeasurementT including
 metrics, metadata, and provenance.
 */
 func MeasurementToWire(measurement *data.Measurement[float64], alloc data.Allocator) *wire.MeasurementT {
-	if measurement == nil || measurement.Source == "cross-section" {
+	if measurement == nil || measurement.GetSource() == "cross-section" {
 		return nil
 	}
 
-	metrics := data.MakeSlice[*wire.MetricT](alloc, 0, len(measurement.Metrics))
-	for _, metric := range measurement.Metrics {
+	snapMetrics := measurement.MetricsSnapshot()
+	snapProvenance := measurement.ProvenanceSnapshot()
+	snapMeta := measurement.MetadataSnapshot()
+
+	metrics := data.MakeSlice[*wire.MetricT](alloc, 0, len(snapMetrics))
+	for _, metric := range snapMetrics {
 		wireMetric := data.New[wire.MetricT](alloc)
 		wireMetric.Name = metric.Label
 		wireMetric.Raw = metric.Raw
@@ -42,16 +46,16 @@ func MeasurementToWire(measurement *data.Measurement[float64], alloc data.Alloca
 		metrics = data.AppendA(metrics, wireMetric, alloc)
 	}
 
-	provenance := data.MakeSlice[*wire.NamedStringT](alloc, 0, len(measurement.Provenance)+len(measurement.Metadata))
-	for key, val := range measurement.Provenance {
+	provenance := data.MakeSlice[*wire.NamedStringT](alloc, 0, len(snapProvenance)+len(snapMeta))
+	for key, val := range snapProvenance {
 		ns := data.New[wire.NamedStringT](alloc)
 		ns.Name = key
 		ns.Value = val
 		provenance = data.AppendA(provenance, ns, alloc)
 	}
 
-	metadata := data.MakeSlice[*wire.NamedNumberT](alloc, 0, len(measurement.Metadata))
-	for key, val := range measurement.Metadata {
+	metadata := data.MakeSlice[*wire.NamedNumberT](alloc, 0, len(snapMeta))
+	for key, val := range snapMeta {
 		floatVal, err := strconv.ParseFloat(val, 64)
 		if err == nil {
 			nn := data.New[wire.NamedNumberT](alloc)
@@ -61,7 +65,7 @@ func MeasurementToWire(measurement *data.Measurement[float64], alloc data.Alloca
 			continue
 		}
 
-		if _, exists := measurement.GetProvenance(key); !exists {
+		if _, exists := snapProvenance[key]; !exists {
 			ns := data.New[wire.NamedStringT](alloc)
 			ns.Name = key
 			ns.Value = val
@@ -75,7 +79,7 @@ func MeasurementToWire(measurement *data.Measurement[float64], alloc data.Alloca
 	}
 	
 	for _, peer := range measurement.Peers {
-		if peer == nil || peer.Source == "cross-section" {
+		if peer == nil || peer.GetSource() == "cross-section" {
 			continue
 		}
 
@@ -85,7 +89,7 @@ func MeasurementToWire(measurement *data.Measurement[float64], alloc data.Alloca
 	}
 
 	row := data.New[wire.MeasurementT](alloc)
-	row.Source = measurement.Source
+	row.Source = measurement.GetSource()
 	row.Symbol = measurement.Label
 	row.Tick = measurement.SeqIdx
 	row.At = measurement.At.UnixNano()

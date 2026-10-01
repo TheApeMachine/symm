@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { ResonanceFrame } from "#/collections/types";
 import {
+	parseResonanceData,
 	signedVectorTransform,
 	vectorSlotTransform,
 } from "#/components/charts/prediction";
+import { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
+import { MetricT } from "#/providers/telemetry/telemetry/metric";
 import {
 	predictiveCodingSeries,
 	reconstructionError,
@@ -116,3 +119,25 @@ describe("signedVectorTransform", () => {
 	});
 });
 
+
+
+describe("parseResonanceData", () => {
+	it("densifies sparse latent and forward_curve metrics into lane vectors", () => {
+		const measurement = new MeasurementT();
+		measurement.metrics = [
+			new MetricT("latent_0", 0.2),
+			new MetricT("latent_2", -0.4),
+			new MetricT("forward_curve_0", 0.01),
+			new MetricT("forward_curve_1", -0.02),
+			new MetricT("layer_0_state_0", 1),
+			new MetricT("layer_0_prediction_0", 0.5),
+		];
+		measurement.provenance = [];
+
+		const parsed = parseResonanceData(measurement);
+		expect(parsed?.latent).toEqual([0.2, 0, -0.4]);
+		expect(parsed?.forwardCurve).toEqual([0.01, -0.02]);
+		expect(parsed?.layers?.[0]?.state).toEqual([1]);
+		expect(parsed?.layers?.[0]?.prediction).toEqual([0.5]);
+	});
+});

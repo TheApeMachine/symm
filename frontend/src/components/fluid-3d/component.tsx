@@ -161,17 +161,14 @@ export const FluidInspector = () => {
 
 		const feed = new FluidManifoldFeed({
 			onFields: (fields) => {
-				console.log("fields", fields);
 				scene.updateFields(fields);
 				setGrid(fields.grid);
 			},
 			onParticles: (particles) => {
-				console.log("particles", particles);
 				scene.updateParticles(particles);
 				setParticleCount(particles.count);
 			},
 			onPhase: (phase) => {
-				console.log("phase", phase);
 				const { reading, oscillators, modes } = phase;
 				setPhaseReading(reading);
 
@@ -232,7 +229,6 @@ export const FluidInspector = () => {
 		feedRef.current = feed;
 		scene.setOptions(initialOptions);
 		void feed.connect();
-		console.log(feed);
 
 		return () => {
 			feed.close();
@@ -265,7 +261,7 @@ export const FluidInspector = () => {
 						<Badge label={state} variant={statusVariant} size="xs" dot />
 						<Typography.Mono size="s" tone="f4">
 							{grid === null
-								? "waiting for fields"
+								? "waiting for WebSocket manifold fields"
 								: `${grid.x}×${grid.y}×${grid.z} · ${particleCount} orders/particles`}
 						</Typography.Mono>
 						{hydro !== null ? (

@@ -255,7 +255,7 @@ func (level3 *Level3) Step(measurement *data.Measurement[float64]) *data.Measure
 		return measurement
 	}
 
-	measurement.Source = "morphology:level3"
+	measurement.SetSource("morphology:level3")
 
 	return data.Read[*data.Measurement[float64]](level3.pipelineFor(measurement.Label).Next(
 		transport.NewOne(unsafe.Pointer(&measurement)).Next(nil),

@@ -350,7 +350,7 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 					return statistic.JointInput{Values: []float64{i, g, f, c}}
 				},
 				func(m *data.Measurement[float64], out statistic.JointReading) {
-					if out.SNRDefined {
+					if out.SNRDefined && out.SNR < 1/math.Sqrt(2.220446049250313e-16) {
 						m.WriteMetric("SNR", out.SNR)
 						m.EnsureMetadata()
 						m.SetMetadata(data.MetadataMahalanobisSNR, strconv.FormatFloat(out.SNR, 'f', -1, 64))
@@ -384,7 +384,7 @@ func (level3 *Level3) Step(measurement *data.Measurement[float64]) *data.Measure
 		return measurement
 	}
 
-	measurement.Source = "depthflow:level3"
+	measurement.SetSource("depthflow:level3")
 
 	return data.Read[*data.Measurement[float64]](level3.pipelineFor(measurement.Label).Next(
 		transport.NewOne(unsafe.Pointer(&measurement)).Next(nil),

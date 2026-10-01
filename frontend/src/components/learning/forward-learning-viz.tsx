@@ -604,7 +604,7 @@ export const ForwardLearningViz = () => {
 
 					{/* Confirmed Excursion Banner */}
 					<AnimatePresence>
-						{playbackPhase === "EVALUATING" && excursionEvent && excursionEvent.type && (
+						{excursionEvent && excursionEvent.type && (isForward || playbackPhase === "EVALUATING") && (
 							<motion.div
 								initial={{ height: 0, opacity: 0 }}
 								animate={{ height: 22, opacity: 1 }}
@@ -695,22 +695,25 @@ export const ForwardLearningViz = () => {
 								)}
 
 								{/* Hindsight Markers A, B, C and Decisions */}
-								{playbackPhase === "EVALUATING" && excursionEvent && points.length > 0 && (() => {
+								{excursionEvent && points.length > 0 && (isForward || playbackPhase === "EVALUATING" || excursionEvent.marks.A > 0 || excursionEvent.marks.B > 0 || excursionEvent.marks.C > 0) && (() => {
 									const resolveIdx = (val: number | null): number | null => {
 										if (val === null || val <= 0 || points.length === 0) return null;
-										if (val < points.length && points[val]) return val;
-										let minDiff = Number.POSITIVE_INFINITY;
-										let found = -1;
+										// Absolute tape seq → index inside the visible window only.
+										// Nearest-seq matching misplaced A/B/C and ENTER/EXIT when the
+										// forward ring had already rolled the marked ticks off (max 250).
 										for (let i = 0; i < points.length; i++) {
 											const seq = points[i].seq;
-											if (seq === undefined || seq < 0) continue;
-											const diff = Math.abs(seq - val);
-											if (diff < minDiff) {
-												minDiff = diff;
-												found = i;
-											}
+											if (seq !== undefined && seq >= 0 && seq === val) return i;
 										}
-										return found >= 0 ? found : null;
+										// Playback episodes may store marks as window-local indices.
+										if (
+											val < points.length &&
+											points[val] &&
+											(points[val].seq === undefined || points[val].seq < 0)
+										) {
+											return val;
+										}
+										return null;
 									};
 
 									const markAIdx =

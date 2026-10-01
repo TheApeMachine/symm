@@ -115,6 +115,69 @@ func (m *Measurement[T]) RangeMetrics(f func(key string, metric Metric[T]) bool)
 	}
 }
 
+// MetricsSnapshot returns a shallow copy of Metrics under the read lock so
+// callers can range without racing concurrent writers on the shared slot.
+func (m *Measurement[T]) MetricsSnapshot() map[string]Metric[T] {
+	if m == nil {
+		return nil
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.Metrics == nil {
+		return nil
+	}
+	out := make(map[string]Metric[T], len(m.Metrics))
+	maps.Copy(out, m.Metrics)
+	return out
+}
+
+// ProvenanceSnapshot returns a copy of Provenance under the read lock.
+func (m *Measurement[T]) ProvenanceSnapshot() map[string]string {
+	if m == nil {
+		return nil
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.Provenance == nil {
+		return nil
+	}
+	return maps.Clone(m.Provenance)
+}
+
+
+// MetadataSnapshot returns a copy of Metadata under the read lock.
+func (m *Measurement[T]) MetadataSnapshot() map[string]string {
+	if m == nil {
+		return nil
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.Metadata == nil {
+		return nil
+	}
+	return maps.Clone(m.Metadata)
+}
+
+// GetSource returns Source under the read lock.
+func (m *Measurement[T]) GetSource() string {
+	if m == nil {
+		return ""
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.Source
+}
+
+// SetSource sets Source under the write lock.
+func (m *Measurement[T]) SetSource(source string) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.Source = source
+}
+
 // EnsureMetadata safely initializes the metadata map if it is nil.
 func (m *Measurement[T]) EnsureMetadata() {
 	m.mu.Lock()
@@ -359,35 +422,48 @@ func (measurement *Measurement[T]) Pull(other *Measurement[T], keys ...string) {
 		return
 	}
 
-	measurement.Label = other.Label
-	measurement.At = other.At
-	measurement.From = other.From
-	measurement.SeqIdx = other.SeqIdx
-	measurement.Timestamp = other.Timestamp
-
-	if other.Provenance != nil {
-		if measurement.Provenance == nil {
-			measurement.Provenance = make(map[string]string, len(other.Provenance))
+	// Snapshot other under its read lock, then apply under this measurement's
+	// write lock. Never touch Provenance/Metrics maps without mu — disruptor
+	// HandlerGroups share one slot across concurrent consumers.
+	other.mu.RLock()
+	label := other.Label
+	at := other.At
+	from := other.From
+	seq := other.SeqIdx
+	timestamp := other.Timestamp
+	var provenance map[string]string
+	if len(other.Provenance) > 0 {
+		provenance = maps.Clone(other.Provenance)
+	}
+	pulled := make(map[string]Metric[T], len(keys))
+	for _, key := range keys {
+		if metric, ok := other.Metrics[key]; ok {
+			pulled[key] = metric
 		}
-
-		maps.Copy(measurement.Provenance, other.Provenance)
 	}
-
-	if len(keys) == 0 {
-		return
-	}
+	other.mu.RUnlock()
 
 	measurement.mu.Lock()
-	if measurement.Metrics == nil {
-		measurement.Metrics = make(map[string]Metric[T], len(keys))
+	measurement.Label = label
+	measurement.At = at
+	measurement.From = from
+	measurement.SeqIdx = seq
+	measurement.Timestamp = timestamp
+	if provenance != nil {
+		if measurement.Provenance == nil {
+			measurement.Provenance = make(map[string]string, len(provenance))
+		}
+		maps.Copy(measurement.Provenance, provenance)
 	}
-	measurement.mu.Unlock()
-
-	for _, key := range keys {
-		if metric, ok := other.LookupMetric(key); ok {
-			measurement.SetMetric(key, metric)
+	if len(pulled) > 0 {
+		if measurement.Metrics == nil {
+			measurement.Metrics = make(map[string]Metric[T], len(pulled))
+		}
+		for key, metric := range pulled {
+			measurement.Metrics[key] = metric
 		}
 	}
+	measurement.mu.Unlock()
 }
 
 /*

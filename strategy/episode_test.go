@@ -60,7 +60,7 @@ func TestDetectorFeeGates(t *testing.T) {
 	})
 
 	Convey("Given a missing fee", t, func() {
-		detector := NewDetector(broker.NewPrice(context.Background(), nil, nil, nil))
+		detector := NewDetector(broker.NewPrice(context.Background(), nil, nil, nil, nil))
 		var emitted *tables.ExcursionRecord
 
 		for seq, mid := range calmThenRise() {
@@ -145,7 +145,7 @@ func TestDetectorDownChopFlatAndDuplicates(t *testing.T) {
 
 func priced(t *testing.T, symbol string, fee float64) *broker.Price {
 	t.Helper()
-	price := broker.NewPrice(context.Background(), nil, nil, nil)
+	price := broker.NewPrice(context.Background(), nil, nil, nil, nil)
 	price.SetFee(symbol, kraken.TradeVolumeFee{Fee: decimal.NewFromFloat64(fee)})
 
 	return price

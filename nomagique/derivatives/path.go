@@ -90,7 +90,7 @@ totals and the earliest boundary, but do not emit a rate or share change until
 the live event-time clock advances again.
 */
 func (op *Liquidation) observe(m *data.Measurement[float64], state *liquidationState, existing bool) {
-	stamped, advanced := stamp(state.clock, m.Label, m.At, m.Provenance["synthetic_timestamp"] == "true")
+	stamped, advanced := stamp(state.clock, m.Label, m.At, func() bool { v, _ := m.GetProvenance("synthetic_timestamp"); return v == "true" }())
 
 	m.EnsureMetadata()
 
@@ -104,8 +104,10 @@ func (op *Liquidation) observe(m *data.Measurement[float64], state *liquidationS
 
 	state.grossTradeTotal += notional
 
-	if m.Provenance["type"] == "liquidation" {
-		switch m.Provenance["side"] {
+	typ, _ := m.GetProvenance("type")
+	if typ == "liquidation" {
+		side, _ := m.GetProvenance("side")
+	switch side {
 		case "buy":
 			state.liqBuyTotal += notional
 		case "sell":

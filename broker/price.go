@@ -78,8 +78,13 @@ func NewPrice(
 	books BookSource,
 	private Transport,
 	instrument *Instrument,
+	normalizer *spot.Normalizer,
 ) *Price {
-	normalizer := spot.NewNormalizer()
+	if normalizer == nil {
+		// Tests and callers that never size orders may omit the seeded map.
+		// Live trading must pass a Normalizer loaded via Use or Update.
+		normalizer = spot.NewNormalizer()
+	}
 
 	price := &Price{
 		System:     runtime.NewSystem(ctx, "price"),
@@ -134,6 +139,30 @@ func (price *Price) Normalizer() *spot.Normalizer {
 	}
 
 	return price.normalizer
+}
+
+/*
+SeedNormalizer loads public Assets and AssetPairs into n so FormatSize/FormatPrice
+and Name resolve venue lot facts. Call once at construction; do not invent scales.
+*/
+func SeedNormalizer(n *spot.Normalizer) error {
+	if n == nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"price: normalizer required for asset pair seeding",
+			nil,
+		))
+	}
+
+	if err := n.Use(spot.NewREST()); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.IO,
+			"price: failed to load asset pair normalizer from public REST",
+			err,
+		))
+	}
+
+	return nil
 }
 
 func (price *Price) Update(ticker *kraken.TickerData) {

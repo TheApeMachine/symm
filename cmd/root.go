@@ -142,8 +142,12 @@ var (
 			}
 
 			instrument := broker.NewInstrument(public, futures)
-			book := broker.NewBook(ctx, spot.NewNormalizer())
-			price := broker.NewPrice(ctx, book, privateTransport, instrument)
+			normalizer := spot.NewNormalizer()
+			if err := broker.SeedNormalizer(normalizer); err != nil {
+				return err
+			}
+			book := broker.NewBook(ctx, normalizer)
+			price := broker.NewPrice(ctx, book, privateTransport, instrument, normalizer)
 			balance := broker.NewBalance(ctx, privateTransport)
 
 			if err := instrument.Error(); err != nil {

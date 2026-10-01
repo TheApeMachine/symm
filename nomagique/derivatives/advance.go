@@ -100,7 +100,7 @@ publishes, while everything derived from the event clock publishes only when
 the symbol's causal timeline advanced.
 */
 func (op *Basis) observe(m *data.Measurement[float64], state *basisState) {
-	stamped, advanced := stamp(state.clock, m.Label, m.At, m.Provenance["synthetic_timestamp"] == "true")
+	stamped, advanced := stamp(state.clock, m.Label, m.At, func() bool { v, _ := m.GetProvenance("synthetic_timestamp"); return v == "true" }())
 	m.At = stamped
 
 	m.EnsureMetadata()

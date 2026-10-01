@@ -37,6 +37,14 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 	const nodesRef = useRef<ImpulseNode[]>([]);
 	const layoutModeRef = useRef<"grid" | "regions">(layoutMode);
 	layoutModeRef.current = layoutMode;
+	const settledCountRef = useRef(0);
+	const fitLockedRef = useRef(false);
+	const fitBoundsRef = useRef<{
+		minX: number;
+		maxX: number;
+		minY: number;
+		maxY: number;
+	} | null>(null);
 
 	// Resize Observer
 	useEffect(() => {
@@ -54,14 +62,14 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 		return () => resizeObserver.unobserve(observeTarget);
 	}, []);
 
-	// Keep nodesRef in sync with incoming data
+	// Keep nodesRef in sync with incoming data. Auto-fit while the cell census
+	// is still growing, then lock the fit so the camera does not drift.
 	useEffect(() => {
 		if (!data || data.length === 0) return;
 
 		const width = dimensions.width || 800;
 		const height = dimensions.height || 600;
 
-		// Calculate coordinate bounds from real SOM data
 		let minX = Number.POSITIVE_INFINITY;
 		let maxX = Number.NEGATIVE_INFINITY;
 		let minY = Number.POSITIVE_INFINITY;
@@ -85,12 +93,31 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 			maxY = Math.max(32, minY + 1);
 		}
 
-		const spanX = maxX - minX || 1;
-		const spanY = maxY - minY || 1;
-		const startX = width * 0.1;
-		const startY = height * 0.1;
-		const usableW = width * 0.8;
-		const usableH = height * 0.8;
+		if (data.length > settledCountRef.current) {
+			settledCountRef.current = data.length;
+			fitLockedRef.current = false;
+			fitBoundsRef.current = null;
+		} else if (data.length >= settledCountRef.current && settledCountRef.current > 0) {
+			fitLockedRef.current = true;
+		}
+
+		// Freeze the data→screen projection after the first settled fit so live
+		// tape min/max churn cannot slide the grid under the cursor.
+		if (!fitLockedRef.current || fitBoundsRef.current === null) {
+			fitBoundsRef.current = { minX, maxX, minY, maxY };
+		}
+		const fit = fitBoundsRef.current;
+		const spanX = fit.maxX - fit.minX || 1;
+		const spanY = fit.maxY - fit.minY || 1;
+		minX = fit.minX;
+		maxX = fit.maxX;
+		minY = fit.minY;
+		maxY = fit.maxY;
+		const pad = 0.06;
+		const startX = width * pad;
+		const startY = height * pad;
+		const usableW = width * (1 - 2 * pad);
+		const usableH = height * (1 - 2 * pad);
 
 		const existingMap = new Map<string, ImpulseNode>();
 		for (const n of nodesRef.current) {
@@ -107,8 +134,14 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 				existing.snr = d.snr;
 				existing.cluster = d.cluster;
 				existing.present = d.present;
-				existing.gridX = targetGridX;
-				existing.gridY = targetGridY;
+				if (!fitLockedRef.current) {
+					existing.gridX = targetGridX;
+					existing.gridY = targetGridY;
+					existing.x = targetGridX;
+					existing.y = targetGridY;
+					existing.vx = 0;
+					existing.vy = 0;
+				}
 				return existing;
 			}
 
@@ -118,6 +151,8 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 				gridY: targetGridY,
 				x: targetGridX,
 				y: targetGridY,
+				vx: 0,
+				vy: 0,
 			};
 		});
 
@@ -125,7 +160,8 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 
 		if (simulationRef.current) {
 			simulationRef.current.nodes(updatedNodes);
-			simulationRef.current.alpha(0.15).restart();
+			// Live tape must not reheat the layout — that was the visible drift.
+			simulationRef.current.alpha(0).stop();
 		}
 	}, [data, dimensions.width, dimensions.height]);
 
@@ -139,15 +175,8 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 		const width = dimensions.width;
 		const height = dimensions.height;
 
-		// Zoom behavior
-		const zoom = d3
-			.zoom<SVGSVGElement, unknown>()
-			.scaleExtent([0.5, 4])
-			.on("zoom", (e) => {
-				g.attr("transform", e.transform);
-			});
-		svg.call(zoom);
-
+		// Static full-frame view: no zoom/pan. Fit is owned by the data→grid
+		// projection so the map never drifts under the cursor or live tape.
 		const g = svg.append("g");
 
 		// Layer groups to ensure correct z-index
@@ -169,23 +198,18 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 			.forceSimulation(nodes)
 			.force(
 				"x",
-				d3.forceX<ImpulseNode>((d) => d.gridX ?? width / 2).strength(0.3),
+				d3.forceX<ImpulseNode>((d) => d.gridX ?? width / 2).strength(1),
 			)
 			.force(
 				"y",
-				d3.forceY<ImpulseNode>((d) => d.gridY ?? height / 2).strength(0.3),
+				d3.forceY<ImpulseNode>((d) => d.gridY ?? height / 2).strength(1),
 			)
-			.force(
-				"collide",
-				d3
-					.forceCollide<ImpulseNode>()
-					.radius((d) => (d.snr || 1) * 1.5 + 2)
-					.iterations(1)
-					.strength(0.1),
-			)
-			.force("charge", d3.forceManyBody().strength(-2))
-			.force("center", d3.forceCenter(width / 2, height / 2).strength(0.01))
-			.alphaDecay(0.02);
+			.force("collide", null)
+			.force("charge", null)
+			.force("center", null)
+			.alpha(0)
+			.alphaDecay(1)
+			.stop();
 
 		simulationRef.current = simulation;
 
@@ -330,20 +354,17 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 			simulation
 				.force(
 					"x",
-					d3.forceX<ImpulseNode>((d) => d.gridX ?? width / 2).strength(0.15),
+					d3.forceX<ImpulseNode>((d) => d.gridX ?? width / 2).strength(1),
 				)
 				.force(
 					"y",
-					d3.forceY<ImpulseNode>((d) => d.gridY ?? height / 2).strength(0.15),
+					d3.forceY<ImpulseNode>((d) => d.gridY ?? height / 2).strength(1),
 				)
 				.force("collide", null)
-				.force("charge", null)
-				.alphaDecay(0.015);
+				.force("charge", null);
 
 			d3.select(svgRef.current)
 				.select(".contours")
-				.transition()
-				.duration(600)
 				.style("opacity", 0);
 		} else {
 			simulation
@@ -370,8 +391,8 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 						.radius((d) => (d.snr || 1) * 1.5 + 2)
 						.iterations(2),
 				)
-				.force("charge", d3.forceManyBody().strength(-15))
-				.alphaDecay(0.015);
+				.force("charge", d3.forceManyBody().strength(-8))
+				.alphaDecay(0.08);
 
 			d3.select(svgRef.current)
 				.select(".contours")
@@ -380,16 +401,34 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 				.style("opacity", 1);
 		}
 
-		simulation.alpha(1).restart();
+		if (layoutMode === "grid") {
+			for (const n of nodes) {
+				n.x = n.gridX ?? width / 2;
+				n.y = n.gridY ?? height / 2;
+				n.vx = 0;
+				n.vy = 0;
+			}
+			simulation.alpha(0).stop();
+		} else {
+			// One short settle into region foci, then freeze — no continuous drift.
+			simulation.alpha(0.35).restart();
+			window.setTimeout(() => {
+				simulationRef.current?.alpha(0).stop();
+			}, 900);
+		}
 	}, [layoutMode, dimensions]);
 
 	const handleReset = useCallback(() => {
-		if (!svgRef.current) return;
-		d3.select(svgRef.current)
-			.transition()
-			.duration(500)
-			.call(d3.zoom<SVGSVGElement, unknown>().transform, d3.zoomIdentity);
-		simulationRef.current?.alpha(0.3).restart();
+		fitLockedRef.current = false;
+		fitBoundsRef.current = null;
+		settledCountRef.current = 0;
+		for (const n of nodesRef.current) {
+			n.x = n.gridX ?? n.x;
+			n.y = n.gridY ?? n.y;
+			n.vx = 0;
+			n.vy = 0;
+		}
+		simulationRef.current?.alpha(0).stop();
 	}, []);
 
 	return (
@@ -465,7 +504,7 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 
 				<svg
 					ref={svgRef}
-					className="w-full h-full absolute inset-0 cursor-grab active:cursor-grabbing"
+					className="w-full h-full absolute inset-0"
 				>
 					<title>Live SOM Impulse Map</title>
 				</svg>

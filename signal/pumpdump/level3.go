@@ -180,7 +180,7 @@ func (level3 *Level3) Step(
 		return measurement
 	}
 
-	measurement.Source = "pumpdump:level3"
+	measurement.SetSource("pumpdump:level3")
 
 	return data.Read[*data.Measurement[float64]](level3.pipelineFor(measurement.Label).Next(
 		transport.NewOne(unsafe.Pointer(&measurement)).Next(nil),

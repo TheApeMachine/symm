@@ -44,21 +44,25 @@ type Training struct {
 	epoch    int64
 	detector *Detector
 
-	mu               sync.Mutex
-	cond             *sync.Cond
-	frames           map[string][]*data.Measurement[float64]
-	signatures       map[string][]byte
-	entries          map[string][]byte
-	pending          []heldEpisode
-	episodes         []heldEpisode
-	queue            []heldEpisode
-	graded           map[string]bool
+	mu         sync.Mutex
+	cond       *sync.Cond
+	frames     map[string][]*data.Measurement[float64]
+	signatures map[string][]byte
+	entries    map[string][]byte
+	pending    []heldEpisode
+	episodes   []heldEpisode
+	queue      []heldEpisode
+	graded     map[string]bool
+	// augmented records "episodeID\x00aIndex" already taught as a recognition
+	// variation so the infinite augment loop cannot inflate evidence Counts.
+	augmented        map[string]bool
 	skill            statistic.Moments
 	paper            statistic.Moments
 	paperTrades      float64
 	paperPredictions float64
 	checkpointed     bool
 	checkpointFailed bool
+	modelDirty       bool
 	restored         bool
 	blocked          bool
 	writing          bool
@@ -104,6 +108,7 @@ func NewTraining(
 		signatures:   make(map[string][]byte),
 		entries:      make(map[string][]byte),
 		graded:       make(map[string]bool),
+		augmented:    make(map[string]bool),
 		durable:      make(chan struct{}),
 		wake:         make(chan struct{}, 1),
 		settleWake:   make(chan struct{}, 1),
@@ -288,55 +293,77 @@ func (training *Training) predictFrom(signature []byte, symbol string, seq int64
 		return marker{action: string(action), exit: seq}
 	}
 
-	training.gradePaper(symbol)
-	training.forget(symbol)
+	// Grade paper only after EXIT is submitted and the position has reconciled.
+	// Mark-to-market PnL before Exit still prices an open inventory and forgets
+	// the entry context before the fill exists (review P0).
+	training.mu.Lock()
+	entryCtx := append([]byte{}, training.entries[symbol]...)
+	training.mu.Unlock()
+
+	var closed *position.Regulator
 
 	if training.trader != nil {
+		closed = training.trader.Position(symbol)
+
 		if err := training.trader.OnAction(symbol, action, result.Evaluation.Confidence); err != nil {
 			training.Error(err)
+
+			return marker{action: string(action), exit: seq}
 		}
 	}
+
+	training.gradePaperClosed(symbol, entryCtx, closed)
+	training.forget(symbol)
 
 	return marker{action: string(action), exit: seq}
 }
 
-func (training *Training) gradePaper(symbol string) {
-	if training.price == nil || training.trader == nil {
+/*
+gradePaperClosed scores the remembered enter context against a reconciled exit.
+Requires a closed regulator with Realized PnL — open mark-to-market is not an
+episode outcome.
+*/
+func (training *Training) gradePaperClosed(
+	symbol string,
+	entryCtx []byte,
+	regulator *position.Regulator,
+) {
+	if len(entryCtx) == 0 || regulator == nil || !regulator.IsClosed() {
 		return
 	}
 
-	regulator := training.trader.Position(symbol)
-	pnl := training.price.PnL(symbol, regulator)
-
-	if pnl == nil {
+	if regulator.Realized == nil {
 		return
 	}
-
-	training.mu.Lock()
-	context := append([]byte{}, training.entries[symbol]...)
-	training.mu.Unlock()
 
 	feedback := 0.0
 
-	if pnl.Sign() > 0 {
+	if regulator.Realized.Sign() > 0 {
 		feedback = 1
 	}
 
-	if pnl.Sign() < 0 {
+	if regulator.Realized.Sign() < 0 {
 		feedback = -1
 	}
-
-	training.observe(context, string(cognition.ActionEnter), feedback, true)
 
 	if feedback == 0 {
 		return
 	}
+
+	// Teach the enter association from realized outcome; paper moments track
+	// forward proof. Historical skill is scored separately in supervise.
+	training.teach(entryCtx, string(cognition.ActionEnter), feedback)
 
 	training.mu.Lock()
 	training.paper.Update(feedback)
 	training.mu.Unlock()
 }
 
+/*
+supervise teaches the trie from ground-truth excursion outcomes and, when
+score is set, updates skill from whether a frozen Evaluate of the precursor
+matched what the outcome required — not from profitability alone.
+*/
 func (training *Training) supervise(episode heldEpisode, score bool) {
 	training.mu.Lock()
 
@@ -353,22 +380,51 @@ func (training *Training) supervise(episode heldEpisode, score bool) {
 	record := episode.record
 	enterCtx := training.signatureOf(framesBefore(episode.frames, record.AnchorTick))
 	exitCtx := training.signatureOf(framesBefore(episode.frames, record.ExitTick))
-	clears := record.Direction == "up" && record.ClearsFriction
+	wantEnter := record.Direction == "up" && record.ClearsFriction
 
-	if len(enterCtx) > 0 && clears {
-		training.observe(enterCtx, string(cognition.ActionEnter), 1, score)
+	if len(enterCtx) > 0 {
+		predicted := training.frozenAction(enterCtx)
+
+		if wantEnter {
+			training.teach(enterCtx, string(cognition.ActionEnter), 1)
+		} else {
+			training.teach(enterCtx, string(cognition.ActionEnter), -1)
+		}
+
+		if score {
+			correct := (wantEnter && predicted == cognition.ActionEnter) ||
+				(!wantEnter && predicted != cognition.ActionEnter)
+			training.recordSkill(correct)
+		}
 	}
 
-	if len(enterCtx) > 0 && !clears {
-		training.observe(enterCtx, string(cognition.ActionEnter), -1, score)
-	}
+	if wantEnter && len(exitCtx) > 0 {
+		predicted := training.frozenAction(exitCtx)
+		training.teach(exitCtx, string(cognition.ActionExit), 1)
 
-	if clears && len(exitCtx) > 0 {
-		training.observe(exitCtx, string(cognition.ActionExit), 1, false)
+		if score {
+			training.recordSkill(predicted == cognition.ActionExit)
+		}
 	}
 }
 
-func (training *Training) observe(context []byte, class string, feedback float64, score bool) {
+func (training *Training) frozenAction(signature []byte) cognition.Action {
+	if len(signature) == 0 {
+		return ""
+	}
+
+	result, err := training.engine.Evaluate(signature)
+
+	if err != nil {
+		training.Error(err)
+
+		return ""
+	}
+
+	return cognition.Action(result.Evaluation.WinnerClass)
+}
+
+func (training *Training) teach(context []byte, class string, feedback float64) {
 	if len(context) == 0 || class == "" || class == string(cognition.ActionWait) {
 		return
 	}
@@ -382,17 +438,23 @@ func (training *Training) observe(context []byte, class string, feedback float64
 
 	if err != nil {
 		training.Error(err)
-
 		return
 	}
 
-	if !score || feedback == 0 {
-		return
-	}
+	training.mu.Lock()
+	training.modelDirty = true
+	training.mu.Unlock()
 
+	select {
+	case training.settleWake <- struct{}{}:
+	default:
+	}
+}
+
+func (training *Training) recordSkill(correct bool) {
 	sample := -1.0
 
-	if feedback > 0 {
+	if correct {
 		sample = 1
 	}
 
@@ -477,25 +539,19 @@ func (training *Training) replayOne(session *replay, detector *Detector, measure
 
 func (training *Training) augment() {
 	for {
+		select {
+		case <-training.Context().Done():
+			return
+		case <-training.episodeReady:
+		}
+
 		training.mu.Lock()
 		episodes := append([]heldEpisode{}, training.episodes...)
 		training.mu.Unlock()
 
-		if len(episodes) == 0 {
-			select {
-			case <-training.Context().Done():
-				return
-			case <-training.episodeReady:
-			}
-
-			continue
-		}
-
 		for _, episode := range episodes {
-			select {
-			case <-training.Context().Done():
+			if training.Context().Err() != nil {
 				return
-			default:
 			}
 
 			training.replayVaried(episode)
@@ -503,6 +559,11 @@ func (training *Training) augment() {
 	}
 }
 
+/*
+replayVaried teaches one unused A-offset precursor per call. Keys are
+episodeID + frame index so recognition variation cannot re-count the same
+evidence forever while the augment loop runs.
+*/
 func (training *Training) replayVaried(episode heldEpisode) {
 	var eligible []int
 
@@ -516,16 +577,36 @@ func (training *Training) replayVaried(episode heldEpisode) {
 		return
 	}
 
-	pick := eligible[rand.IntN(len(eligible))]
+	training.mu.Lock()
+	var unused []int
+
+	for _, index := range eligible {
+		key := episode.record.ID + "\x00" + strconv.Itoa(index)
+
+		if !training.augmented[key] {
+			unused = append(unused, index)
+		}
+	}
+
+	if len(unused) == 0 {
+		training.mu.Unlock()
+
+		return
+	}
+
+	pick := unused[rand.IntN(len(unused))]
+	training.augmented[episode.record.ID+"\x00"+strconv.Itoa(pick)] = true
+	training.mu.Unlock()
+
 	enterCtx := training.signatureOf(episode.frames[:pick+1])
-	clears := episode.record.Direction == "up" && episode.record.ClearsFriction
+	wantEnter := episode.record.Direction == "up" && episode.record.ClearsFriction
 	feedback := -1.0
 
-	if clears {
+	if wantEnter {
 		feedback = 1
 	}
 
-	training.observe(enterCtx, string(cognition.ActionEnter), feedback, false)
+	training.teach(enterCtx, string(cognition.ActionEnter), feedback)
 }
 
 func (training *Training) enqueue(episode heldEpisode) error {
@@ -667,6 +748,7 @@ func (training *Training) checkpointLoop() {
 		training.mu.Lock()
 		restored := training.restored
 		checkpointed := training.checkpointed
+		dirty := training.modelDirty
 		training.mu.Unlock()
 
 		if !restored {
@@ -683,10 +765,14 @@ func (training *Training) checkpointLoop() {
 			training.restored = true
 			training.mu.Unlock()
 
+			// TRAINING.md: grid settles once, then the trie is regularly
+			// checkpointed. Restoring a settled snapshot makes us durable but
+			// must not exit the loop — later teach() dirties the engine.
 			if !missing && training.grid.Settled {
 				training.markDurable()
+				training.waitSettle()
 
-				return
+				continue
 			}
 		}
 
@@ -699,8 +785,24 @@ func (training *Training) checkpointLoop() {
 			}
 
 			training.markDurable()
+			training.waitSettle()
 
-			return
+			continue
+		}
+
+		// Persist trie updates after each graded teach once the grid is frozen.
+		if checkpointed && dirty {
+			if err := training.save(); err != nil {
+				training.failCheckpoint(err)
+				training.waitSettle()
+
+				continue
+			}
+
+			training.mu.Lock()
+			training.modelDirty = false
+			training.checkpointFailed = false
+			training.mu.Unlock()
 		}
 
 		training.waitSettle()
@@ -875,10 +977,10 @@ func (training *Training) publish(
 	}
 
 	clone := measurement.Clone()
-	clone.Source = "training:live"
+	clone.SetSource("training:live")
 
 	if historical {
-		clone.Source = "training:historical"
+		clone.SetSource("training:historical")
 	}
 
 	code, name, blocker := training.stage()
@@ -894,7 +996,7 @@ func (training *Training) publish(
 	clone.SetProvenance("stage_blocker", blocker)
 	training.writeSkill(clone)
 	training.writeQuote(clone, measurement)
-	training.writeMarker(clone, reading)
+	training.writeMarker(clone, reading, measurement)
 	training.writeEpisode(clone, record)
 	training.tee.Push(clone)
 }
@@ -936,7 +1038,11 @@ func (training *Training) writeQuote(clone *data.Measurement[float64], measureme
 	clone.WriteMetric("price", seen.mid)
 }
 
-func (training *Training) writeMarker(clone *data.Measurement[float64], reading marker) {
+func (training *Training) writeMarker(
+	clone *data.Measurement[float64],
+	reading marker,
+	observed *data.Measurement[float64],
+) {
 	if reading.action == string(cognition.ActionEnter) {
 		clone.WriteMetric("frozen_prediction", 1)
 		clone.WriteMetric("action", 1)
@@ -955,7 +1061,11 @@ func (training *Training) writeMarker(clone *data.Measurement[float64], reading 
 		clone.WriteMetric("agent_exit", float64(reading.exit))
 	}
 
-	token := training.grid.LitRegions(clone)
+	// LitRegions must use the observed measurement (pre Source rewrite). The
+	// published clone is stamped training:* for UI routing; that Source never
+	// matched grid cells when Source was part of the key, and even after the
+	// cellKey fix the clone may carry overlay-only metrics.
+	token := training.grid.LitRegions(observed)
 
 	if len(token) == 0 {
 		return
@@ -1119,6 +1229,26 @@ func preferRows(rows []*data.Measurement[float64]) []*data.Measurement[float64] 
 			return rows[left].SeqIdx < rows[right].SeqIdx
 		}
 
+		// training:* overlays are UI publications (stage_code, marks), never
+		// tape fragments — exclude them even if they carry extra overlay metrics.
+		leftTrain := strings.HasPrefix(rows[left].Source, "training:")
+		rightTrain := strings.HasPrefix(rows[right].Source, "training:")
+
+		if leftTrain != rightTrain {
+			return !leftTrain
+		}
+
+		// Keep the richest observation for this symbol/seq. Concurrent stage
+		// consumers push the shared slot at different mutation depths; raw
+		// websocket ingress cannot light frozen regions the way Training.Step
+		// saw them.
+		leftN := metricCount(rows[left])
+		rightN := metricCount(rows[right])
+
+		if leftN != rightN {
+			return leftN > rightN
+		}
+
 		return sourceRank(rows[left].Source) < sourceRank(rows[right].Source)
 	})
 
@@ -1135,14 +1265,22 @@ func preferRows(rows []*data.Measurement[float64]) []*data.Measurement[float64] 
 	return kept
 }
 
-func sourceRank(source string) int {
-	if source == "training:live" {
+func metricCount(measurement *data.Measurement[float64]) int {
+	if measurement == nil {
 		return 0
 	}
 
-	if source == "websocket" {
-		return 1
+	return len(measurement.Metrics)
+}
+
+func sourceRank(source string) int {
+	if strings.HasPrefix(source, "training:") {
+		return 100
 	}
 
-	return 2
+	if source == "websocket" {
+		return 50
+	}
+
+	return 0
 }

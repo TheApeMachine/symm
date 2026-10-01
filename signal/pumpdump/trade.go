@@ -293,7 +293,7 @@ func (trade *Trade) Step(measurement *data.Measurement[float64]) *data.Measureme
 		return measurement
 	}
 
-	measurement.Source = "pumpdump:trade"
+	measurement.SetSource("pumpdump:trade")
 
 	res := data.Read[*data.Measurement[float64]](trade.pipelineFor(measurement.Label).Next(
 		transport.NewOne(unsafe.Pointer(&measurement)).Next(nil),
