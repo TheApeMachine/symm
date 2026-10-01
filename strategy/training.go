@@ -78,7 +78,12 @@ type Training struct {
 	histCorrectExit      float64
 	histMissedExit       float64
 	histCorrectWait      float64
+	histClears           float64
+	histFeeFailUp        float64
 	skillSamples         []float64
+	returns              statistic.Moments
+	returnSamples        []float64
+	fragmentSpanSum      float64
 	checkpointed         bool
 	checkpointFailed     bool
 	modelRevision        uint64
@@ -444,6 +449,7 @@ func (training *Training) supervise(episode heldEpisode, score bool) {
 	if score {
 		training.graded[episode.record.ID] = true
 		training.countFragmentLocked(episode.record.Direction)
+		training.recordReturnLocked(episode.record)
 	}
 
 	training.mu.Unlock()
@@ -458,9 +464,12 @@ func (training *Training) supervise(episode heldEpisode, score bool) {
 	if len(enterCtx) > 0 {
 		predicted := training.frozenAction(enterCtx)
 
+		// Teach ENTER +1 only on fee-clearing ups. Fee-failing ups keep the
+		// precursor silent (detector may have chopped a longer move); down /
+		// chop / flat still teach ENTER -1 so avoidance has honest negatives.
 		if wantEnter {
 			training.teach(enterCtx, string(cognition.ActionEnter), 1)
-		} else {
+		} else if record.Direction != "up" {
 			training.teach(enterCtx, string(cognition.ActionEnter), -1)
 		}
 
@@ -548,6 +557,36 @@ func (training *Training) recordSkill(correct bool) {
 	case training.settleWake <- struct{}{}:
 	default:
 	}
+}
+
+/*
+recordReturnLocked accumulates ProfitFraction for economic edge / hist_mean_return.
+Caller holds mu. Skill ±1 correctness is separate — never publish it as bp.
+*/
+func (training *Training) recordReturnLocked(record tables.ExcursionRecord) {
+	if !finiteFloat(record.ProfitFraction) {
+		return
+	}
+
+	training.returns.Update(record.ProfitFraction)
+	training.returnSamples = append(training.returnSamples, record.ProfitFraction)
+	const returnSampleCap = 256
+	if len(training.returnSamples) > returnSampleCap {
+		training.returnSamples = append([]float64(nil), training.returnSamples[len(training.returnSamples)-returnSampleCap:]...)
+	}
+
+	span := float64(record.ExitTick - record.AnchorTick)
+	if span > 0 {
+		training.fragmentSpanSum += span
+	}
+
+	if record.ClearsFriction {
+		training.histClears++
+	} else if record.Direction == "up" {
+		training.histFeeFailUp++
+	}
+
+	training.modelRevision++
 }
 
 func (training *Training) replayHistory() error {
@@ -930,13 +969,12 @@ func (training *Training) replayVaried(episode heldEpisode) {
 
 	enterCtx := training.signatureOf(episode.frames[:pick+1])
 	wantEnter := episode.record.Direction == "up" && episode.record.ClearsFriction
-	feedback := -1.0
 
 	if wantEnter {
-		feedback = 1
+		training.teach(enterCtx, string(cognition.ActionEnter), 1)
+	} else if episode.record.Direction != "up" {
+		training.teach(enterCtx, string(cognition.ActionEnter), -1)
 	}
-
-	training.teach(enterCtx, string(cognition.ActionEnter), feedback)
 }
 
 /*
@@ -955,7 +993,7 @@ func (training *Training) persistAndSupervise(episode heldEpisode) error {
 	writer := tables.NewWriter(training.catalog, training.epoch)
 	writer.AddExcursion(episode.record)
 	commitCtx, cancel := context.WithTimeout(training.Context(), persistCommitTimeout)
-	err := writer.CommitExcursions(commitCtx)
+	err := training.commitExcursionsBounded(commitCtx, writer)
 	cancel()
 	if err != nil {
 		return err
@@ -963,6 +1001,47 @@ func (training *Training) persistAndSupervise(episode heldEpisode) error {
 
 	training.noteDurable(episode)
 	return nil
+}
+
+/*
+commitExcursionsBounded runs CommitExcursions but surfaces ctx cancellation to
+the UI before Append returns. Iceberg Append may ignore cancellation after the
+commitGate is held; without this, writing stays true forever and the learning
+UI latches on "durability blocked: writing".
+*/
+func (training *Training) commitExcursionsBounded(ctx context.Context, writer *tables.Writer) error {
+	if writer == nil {
+		return nil
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- writer.CommitExcursions(ctx)
+	}()
+
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		// Prefer a precise persistErr over "writing" while the orphan Append
+		// still holds the catalog commitGate.
+		training.mu.Lock()
+		training.persistErr = errnie.Error(errnie.Err(
+			errnie.Timeout,
+			"training: excursion commit exceeded "+persistCommitTimeout.String(),
+			ctx.Err(),
+		))
+		training.cond.Broadcast()
+		training.mu.Unlock()
+
+		err := <-done
+		if err != nil {
+			return err
+		}
+		// Append finished successfully after the deadline — treat as success so
+		// finishWrite / noteDurable still run; persistErr is cleared there.
+		return nil
+	}
 }
 
 func (training *Training) enqueue(episode heldEpisode) error {
@@ -1034,7 +1113,7 @@ func (training *Training) persistLoop() {
 			}
 
 			commitCtx, cancel := context.WithTimeout(training.Context(), persistCommitTimeout)
-			err := writer.CommitExcursions(commitCtx)
+			err := training.commitExcursionsBounded(commitCtx, writer)
 			cancel()
 			training.finishWrite(batch, err)
 
@@ -1295,12 +1374,13 @@ skillCheckpoint encodes the observed historical skill moments for durable
 restore. Values are exactly what recordSkill accumulated — never invented.
 */
 type skillCheckpoint struct {
-	Skill statistic.Moments `json:"skill"`
+	Skill   statistic.Moments `json:"skill"`
+	Returns statistic.Moments `json:"returns,omitempty"`
 }
 
 func (training *Training) skillCheckpoint() ([]byte, error) {
 	training.mu.Lock()
-	payload := skillCheckpoint{Skill: training.skill}
+	payload := skillCheckpoint{Skill: training.skill, Returns: training.returns}
 	training.mu.Unlock()
 
 	encoded, err := json.Marshal(payload)
@@ -1336,8 +1416,17 @@ func (training *Training) applySkillCheckpoint(encoded []byte) error {
 		))
 	}
 
+	if payload.Returns.Count < 0 || math.IsNaN(payload.Returns.Mean) || math.IsNaN(payload.Returns.M2) {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"training: returns checkpoint moments are invalid",
+			nil,
+		))
+	}
+
 	training.mu.Lock()
 	training.skill = payload.Skill
+	training.returns = payload.Returns
 	training.mu.Unlock()
 
 	return nil
@@ -1419,10 +1508,8 @@ func (training *Training) stage() (float64, string, string) {
 		return 0, "MODEL DEVELOPMENT", "checkpoint missing"
 	}
 
-	if replaying {
-		return 1, "HISTORICAL VALIDATION", "historical replay in progress"
-	}
-
+	// Durability blockers outrank "replay in progress" so a hung Iceberg
+	// Append cannot hide behind HISTORICAL VALIDATION with an empty reason.
 	if blocked {
 		detail := "durability blocked"
 		if persistErr != nil {
@@ -1435,15 +1522,23 @@ func (training *Training) stage() (float64, string, string) {
 		return 1, "HISTORICAL VALIDATION", detail
 	}
 
+	if replaying {
+		return 1, "HISTORICAL VALIDATION", "historical replay in progress"
+	}
+
+	if moments.Count == 0 {
+		return 1, "HISTORICAL VALIDATION", "no graded skill outcomes yet"
+	}
+
 	if moments.Count <= 1 {
-		return 1, "HISTORICAL VALIDATION", "skill lower bound not positive"
+		return 1, "HISTORICAL VALIDATION", "skill samples=" + strconv.FormatFloat(moments.Count, 'f', 0, 64) + " (need >1 for lower bound)"
 	}
 
 	dispersion := math.Sqrt(moments.M2 / (moments.Count - 1))
 	lower := moments.Mean - dispersion/math.Sqrt(moments.Count)
 
 	if lower <= 0 {
-		return 1, "HISTORICAL VALIDATION", "skill lower bound not positive"
+		return 1, "HISTORICAL VALIDATION", "skill lower bound not positive (samples=" + strconv.FormatFloat(moments.Count, 'f', 0, 64) + ")"
 	}
 
 	return 2, "FORWARD PAPER LEARNING", ""
@@ -1471,7 +1566,11 @@ func (training *Training) publish(
 	if historical {
 		code = 1
 		name = "HISTORICAL VALIDATION"
-		blocker = ""
+		// Keep durability / skill-gate blockers visible. Only drop the noisy
+		// in-progress label so frames still show why the gate is closed.
+		if blocker == "historical replay in progress" {
+			blocker = ""
+		}
 	}
 
 	clone.WriteMetric("stage_code", code)
@@ -1499,6 +1598,7 @@ func (training *Training) publish(
 func (training *Training) writeSkill(clone *data.Measurement[float64]) {
 	training.mu.Lock()
 	skill := training.skill
+	returns := training.returns
 	paper := training.paper
 	trades := training.paperTrades
 	predictions := training.paperPredictions
@@ -1507,20 +1607,28 @@ func (training *Training) writeSkill(clone *data.Measurement[float64]) {
 	chop := training.fragmentsChop
 	flat := training.fragmentsFlat
 	unsup := training.fragmentsUnsupported
+	clears := training.histClears
+	feeFail := training.histFeeFailUp
+	spanSum := training.fragmentSpanSum
 	correctEnter := training.histCorrectEnter
 	missedEnter := training.histMissedEnter
 	falseEnter := training.histFalseEnter
 	correctExit := training.histCorrectExit
 	missedExit := training.histMissedExit
 	correctWait := training.histCorrectWait
-	samples := append([]float64(nil), training.skillSamples...)
+	samples := append([]float64(nil), training.returnSamples...)
 	training.mu.Unlock()
 
-	if skill.Count > 1 {
-		dispersion := math.Sqrt(skill.M2 / (skill.Count - 1))
-		clone.WriteMetric("hist_opportunities", skill.Count)
-		clone.WriteMetric("hist_mean_return", skill.Mean)
-		clone.WriteMetric("hist_lower_bound", skill.Mean-dispersion/math.Sqrt(skill.Count))
+	// hist_mean_return / edge are ProfitFraction means (return fractions).
+	// skill.Mean is ±1 correctness — never publish it as bp.
+	if returns.Count > 0 {
+		clone.WriteMetric("hist_opportunities", returns.Count)
+		clone.WriteMetric("hist_mean_return", returns.Mean)
+		if returns.Count > 1 {
+			dispersion := math.Sqrt(returns.M2 / (returns.Count - 1))
+			clone.WriteMetric("hist_lower_bound", returns.Mean-dispersion/math.Sqrt(returns.Count))
+		}
+		clone.WriteMetric("edge", returns.Mean)
 	}
 
 	clone.WriteMetric("hist_correct_enter", correctEnter)
@@ -1529,6 +1637,11 @@ func (training *Training) writeSkill(clone *data.Measurement[float64]) {
 	clone.WriteMetric("hist_correct_exit", correctExit)
 	clone.WriteMetric("hist_missed_exit", missedExit)
 	clone.WriteMetric("hist_correct_wait", correctWait)
+	clone.WriteMetric("fragments_clears", clears)
+	clone.WriteMetric("fragments_fee_fail_up", feeFail)
+	if returns.Count > 0 && spanSum > 0 {
+		clone.WriteMetric("fragment_mean_ticks", spanSum/returns.Count)
+	}
 
 	if len(samples) > 0 {
 		parts := make([]string, len(samples))
@@ -1554,6 +1667,19 @@ func (training *Training) writeSkill(clone *data.Measurement[float64]) {
 		dispersion := math.Sqrt(paper.M2 / (paper.Count - 1))
 		clone.WriteMetric("fwd_paper_mean_return", paper.Mean)
 		clone.WriteMetric("fwd_paper_lower_bound", paper.Mean-dispersion/math.Sqrt(paper.Count))
+	}
+
+	// win_rate / accuracy = skill accuracy from ±1 grades. edge (above) is
+	// economic mean ProfitFraction so UI basis (×10000) is honest bp.
+	clone.WriteMetric("resolved", skill.Count)
+	if training.engine != nil {
+		clone.WriteMetric("steps", float64(training.engine.Step()))
+		clone.WriteMetric("decisions", float64(training.engine.Len()))
+	}
+	if skill.Count > 0 {
+		winRate := (skill.Mean + 1) / 2
+		clone.WriteMetric("win_rate", winRate)
+		clone.WriteMetric("accuracy", winRate)
 	}
 }
 
@@ -1704,6 +1830,7 @@ func (training *Training) writeMarker(
 	token := training.grid.LitRegions(observed)
 
 	if len(token) == 0 {
+		clone.WriteMetric("precursor_length", 0)
 		return
 	}
 
@@ -1713,6 +1840,7 @@ func (training *Training) writeMarker(
 		parts[index] = strconv.Itoa(int(value))
 	}
 
+	clone.WriteMetric("precursor_length", float64(len(token)))
 	clone.SetMetadata("precursor_tokens", strings.Join(parts, ","))
 	clone.SetProvenance("precursor_tokens", strings.Join(parts, ","))
 }

@@ -8,8 +8,8 @@ export const amount = (value: number) =>
 	value.toLocaleString(undefined, { maximumFractionDigits: 4 });
 
 /*
-basis writes a return as basis points. Returns here are fractions of a lane's
-starting capital, and the interesting ones are far smaller than a percent.
+basis writes a return fraction as basis points (×10000). Use only for economic
+returns (ProfitFraction / paper PnL fraction) — never for skill±1 correctness.
 */
 export const basis = (value: number) => `${(10000 * value).toFixed(1)} bp`;
 

@@ -14,7 +14,7 @@ export const SkillPanel = () => (
 					Mean forward trade return
 				</Typography.Label>
 				<Typography.Mono size="lg" tone="accent" data-metric="edge" data-format="basis">
-					0.0 bp
+					—
 				</Typography.Mono>
 				<Typography.Mono size="s" tone="f4">
 					Forward testing outcomes evaluated against the live book. Positive edge indicates readiness for paper trading.
@@ -25,7 +25,7 @@ export const SkillPanel = () => (
 					Prediction accuracy
 				</Typography.Label>
 				<Typography.Mono size="lg" tone="f1" data-metric="accuracy" data-format="percent">
-					0.0%
+					—
 				</Typography.Mono>
 				<Typography.Mono size="s" tone="f4">
 					Causal precursor direction accuracy compared to honest tape resolution.

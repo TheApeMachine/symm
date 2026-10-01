@@ -9,7 +9,7 @@ export const CandidateReview = () => (
 		/>
 		<Section.Body className="space-y-2 p-3">
 			<Typography.Mono>
-				<span data-metric="resolved" data-format="integer">0</span> completed evaluations · Mean edge: <span data-metric="edge" data-format="basis">0.0 bp</span> · Win rate: <span data-metric="win_rate" data-format="percent">0.0%</span>
+				<span data-metric="resolved" data-format="integer">0</span> completed evaluations · Mean edge: <span data-metric="edge" data-format="basis">—</span> · Win rate: <span data-metric="win_rate" data-format="percent">—</span>
 			</Typography.Mono>
 			<Typography.Mono tone="f4">
 				Continuous forward test evaluations against live order book outcomes.

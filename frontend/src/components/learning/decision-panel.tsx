@@ -9,7 +9,7 @@ export const ForwardPanel = () => (
 		/>
 		<Section.Body className="space-y-2 p-3">
 			<Typography.Mono>
-				Evaluated decisions: <span data-metric="resolved" data-format="integer">0</span> · Win rate: <span data-metric="win_rate" data-format="percent">0.0%</span> · Mean edge: <span data-metric="edge" data-format="basis">0.0 bp</span>
+				Evaluated decisions: <span data-metric="resolved" data-format="integer">0</span> · Win rate: <span data-metric="win_rate" data-format="percent">—</span> · Mean edge: <span data-metric="edge" data-format="basis">—</span>
 			</Typography.Mono>
 			<Typography.Mono>
 				Prediction accuracy: <span data-metric="accuracy" data-format="percent">0.0%</span>
@@ -43,7 +43,7 @@ export const CandidatePanel = () => (
 		/>
 		<Section.Body className="p-3">
 			<Typography.Mono>
-				Policy decision: <span data-metric="action" data-format="action">ABSTAIN</span> · Conf <span data-metric="confidence" data-format="percent">0.0%</span> · Contrast <span data-metric="contrast" data-format="bits">0.00 bits</span> · Edge <span data-metric="edge" data-format="basis">0.0 bp</span>
+				Policy decision: <span data-metric="action" data-format="action">ABSTAIN</span> · Conf <span data-metric="confidence" data-format="percent">0.0%</span> · Contrast <span data-metric="contrast" data-format="bits">0.00 bits</span> · Edge <span data-metric="edge" data-format="basis">—</span>
 			</Typography.Mono>
 		</Section.Body>
 	</Section>

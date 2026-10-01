@@ -94,7 +94,7 @@ func TestSkillCheckpointLegacyMissingIsZero(t *testing.T) {
 
 		So(training.skill.Count, ShouldEqual, 0)
 		_, _, detail := training.stage()
-		So(detail, ShouldEqual, "skill lower bound not positive")
+		So(detail, ShouldEqual, "no graded skill outcomes yet")
 	})
 }
 

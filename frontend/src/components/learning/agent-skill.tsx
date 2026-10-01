@@ -30,6 +30,8 @@ export const AgentSkill = () => {
 				const edge = metricMap.edge ?? 0;
 				const winRate = metricMap.win_rate ?? 0;
 				const resolved = metricMap.resolved ?? 0;
+				// edge is ProfitFraction mean; only format as bp when samples exist.
+				const edgeReady = (metricMap.edge_sample_count ?? 0) > 0;
 
 				const winRateEl = memoizedQuery(
 					root,
@@ -41,7 +43,7 @@ export const AgentSkill = () => {
 
 				const edgeEl = memoizedQuery(root, '[data-a="edge"]') as HTMLElement;
 				if (edgeEl) {
-					edgeEl.innerText = resolved > 0 ? basis(edge) : "—";
+					edgeEl.innerText = edgeReady ? basis(edge) : "—";
 				}
 			}
 		};

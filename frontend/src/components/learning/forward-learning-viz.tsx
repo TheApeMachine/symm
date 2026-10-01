@@ -430,11 +430,13 @@ export const ForwardLearningViz = () => {
 				const actStr = actRaw === 1 ? action("enter", 1, false) : actRaw === 2 ? action("exit", 1, false) : "ABSTAIN";
 
 				setActivityLogs((prev) => {
+					const edgeReady = (metricMap.edge_sample_count ?? 0) > 0;
+					const edgeVal = metricMap.edge ?? 0;
 					const entry: LearningActivityEntry = {
 						id: nextLogId++,
 						time: timeStr,
-						message: `${actStr} · edge ${basis(metricMap.edge ?? 0)}`,
-						pnl: metricMap.edge ?? 0,
+						message: `${actStr} · edge ${edgeReady ? basis(edgeVal) : "—"}`,
+						pnl: edgeReady ? edgeVal : 0,
 						action: actStr,
 					};
 					return [entry, ...prev].slice(0, 10);

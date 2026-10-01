@@ -39,9 +39,13 @@ func measurementToWire(
 	snapMeta := measurement.MetadataSnapshot()
 
 	metrics := data.MakeSlice[*wire.MetricT](alloc, 0, len(snapMetrics))
-	for _, metric := range snapMetrics {
+	for key, metric := range snapMetrics {
 		wireMetric := data.New[wire.MetricT](alloc)
-		wireMetric.Name = metric.Label
+		name := metric.Label
+		if name == "" {
+			name = key
+		}
+		wireMetric.Name = name
 		wireMetric.Raw = metric.Raw
 		wireMetric.Unit = string(metric.Unit)
 		wireMetric.X = metric.X

@@ -222,3 +222,67 @@ func TestCommitExcursionsTimesOutWhenGateHeld(t *testing.T) {
 		close(release)
 	})
 }
+
+
+func TestCommitExcursionsBoundedSurfacesTimeout(t *testing.T) {
+	Convey("Given a held commit gate, bounded commit sets persistErr before Append returns", t, func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		catalog := tablestest.New(t)
+		held := make(chan struct{})
+		release := make(chan struct{})
+
+		go func() {
+			_ = catalog.WithCommit(context.Background(), func() error {
+				close(held)
+				<-release
+				return nil
+			})
+		}()
+		<-held
+
+		training := NewTraining(ctx, 13, priced(t, "BTC/USD", 0.1), nil, catalog, nil)
+		frame := regionFrame("BTC/USD", 1, 2)
+		training.grid.Update(frame)
+		training.grid.Settle()
+		training.mu.Lock()
+		training.checkpointed = true
+		training.writing = true
+		training.blocked = true
+		training.mu.Unlock()
+
+		writer := tables.NewWriter(catalog, 13)
+		writer.AddExcursion(tables.ExcursionRecord{
+			ID: "BTC/USD:bounded:1", Symbol: "BTC/USD", AnchorTick: 1, ExitTick: 2, Epoch: 13,
+		})
+
+		commitCtx, commitCancel := context.WithTimeout(ctx, 80*time.Millisecond)
+		errCh := make(chan error, 1)
+		go func() {
+			errCh <- training.commitExcursionsBounded(commitCtx, writer)
+		}()
+
+		deadline := time.Now().Add(2 * time.Second)
+		for {
+			training.mu.Lock()
+			perr := training.persistErr
+			training.mu.Unlock()
+			if perr != nil {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("persistErr not set while Append blocked on gate")
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+
+		_, _, detail := training.stage()
+		So(detail, ShouldContainSubstring, "durability blocked")
+		So(detail, ShouldNotEqual, "durability blocked: writing")
+
+		close(release)
+		commitCancel()
+		<-errCh
+	})
+}

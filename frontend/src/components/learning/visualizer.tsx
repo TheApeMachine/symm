@@ -52,7 +52,7 @@ export const LearningVisualizer = ({
 						<span>
 							Edge:{" "}
 							<strong className="text-(--acc)" data-metric="edge" data-format="basis">
-								0.0 bp
+								—
 							</strong>
 						</span>
 						<span>

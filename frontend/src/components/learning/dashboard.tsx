@@ -58,7 +58,7 @@ export const LearningDashboard = () => {
 
 	// Real data states
 	const [skillPct, setSkillPct] = useState(0);
-	const [edgeBp, setEdgeBp] = useState(0);
+	const [edgeBp, setEdgeBp] = useState(Number.NaN);
 	const [openPositionsCount, setOpenPositionsCount] = useState(0);
 
 	// Staged training state
@@ -237,19 +237,43 @@ export const LearningDashboard = () => {
 				const confidence = metricMap.confidence ?? 0;
 				const contrast = metricMap.contrast ?? 0;
 				const edge = metricMap.edge ?? 0;
+				const edgeReady = (metricMap.edge_sample_count ?? 0) > 0;
 				const evaluated = metricMap.evaluated ?? 0;
 				const tradingActive = (metricMap.trading ?? 0) > 0;
 				const skill = (metricMap.win_rate ?? metricMap.accuracy ?? 0) * 100;
 
-				setSkillPct(skill);
-				setEdgeBp(edge * 10000);
+				// win_rate = skill accuracy %; edge = ProfitFraction mean → bp.
+				// Never format skill±1 as bp; never pretend 0 when absent.
+				if (resolved <= 0) {
+					setSkillPct(0);
+					for (const name of ["win_rate", "accuracy"] as const) {
+						const els = root.querySelectorAll(`[data-metric="${name}"]`);
+						for (let j = 0; j < els.length; j++) {
+							setText(els[j] as HTMLElement, "—");
+						}
+					}
+				} else {
+					setSkillPct(skill);
+				}
+				if (!edgeReady) {
+					setEdgeBp(Number.NaN);
+					const els = root.querySelectorAll('[data-metric="edge"]');
+					for (let j = 0; j < els.length; j++) {
+						setText(els[j] as HTMLElement, "—");
+					}
+				} else {
+					setEdgeBp(edge * 10000);
+				}
 
 				if (metaEl) {
 					metaEl.innerText = `${Math.floor(steps).toLocaleString()} frames · ${Math.floor(decisions).toLocaleString()} learned situations · ${Math.floor(resolved).toLocaleString()} resolved`;
 				}
 
 				if (statusMetaEl) {
-					statusMetaEl.innerText = `conf: ${(confidence * 100).toFixed(1)}% · contrast: ${contrast.toFixed(2)} bits · edge: ${(edge * 10000).toFixed(1)} bp`;
+					const edgeLabel = edgeReady
+						? `edge: ${(edge * 10000).toFixed(1)} bp`
+						: "edge: —";
+					statusMetaEl.innerText = `conf: ${(confidence * 100).toFixed(1)}% · contrast: ${contrast.toFixed(2)} bits · ${edgeLabel}`;
 				}
 
 				// Update backend-owned canonical stage and blocker (Section 33)
@@ -396,9 +420,12 @@ export const LearningDashboard = () => {
 				}
 
 				if (statusMetaEl) {
+					const edgeLabel = (metricMap.edge_sample_count ?? 0) > 0
+						? `edge: ${(edge * 10000).toFixed(1)} bp`
+						: "edge: —";
 					setText(
 						statusMetaEl,
-						`conf: ${(confidence * 100).toFixed(1)}% · contrast: ${contrast.toFixed(2)} bits · edge: ${(edge * 10000).toFixed(1)} bp`,
+						`conf: ${(confidence * 100).toFixed(1)}% · contrast: ${contrast.toFixed(2)} bits · ${edgeLabel}`,
 					);
 				}
 
@@ -443,7 +470,8 @@ export const LearningDashboard = () => {
 							? clock(new Date(Number(atNs / 1_000_000n)).toISOString())
 							: clock("");
 					const actStr = actionVal === 1 ? action("enter", 1, false) : actionVal === 2 ? action("exit", 1, false) : "ABSTAIN";
-					const edgeStr = basis(edgeVal);
+					const edgeStr =
+						(metricMap.edge_sample_count ?? 0) > 0 ? basis(edgeVal) : "—";
 
 					const rowDiv = document.createElement("div");
 					rowDiv.className =
@@ -895,7 +923,7 @@ export const LearningDashboard = () => {
 					<div className="flex items-center gap-1.5">
 						<span>WIN RATE</span>
 						<span className="text-(--f1) font-bold">
-							{skillPct.toFixed(1)}%
+							{Number.isFinite(edgeBp) ? `${skillPct.toFixed(1)}%` : "—"}
 						</span>
 					</div>
 					<div className="flex items-center gap-1.5">
@@ -903,11 +931,16 @@ export const LearningDashboard = () => {
 						<span
 							className={cn(
 								"font-bold",
-								edgeBp >= 0 ? "text-(--up)" : "text-(--down)",
+								!Number.isFinite(edgeBp)
+									? "text-(--f3)"
+									: edgeBp >= 0
+										? "text-(--up)"
+										: "text-(--down)",
 							)}
 						>
-							{edgeBp >= 0 ? "+" : ""}
-							{edgeBp.toFixed(1)} bp
+							{Number.isFinite(edgeBp)
+								? `${edgeBp >= 0 ? "+" : ""}${edgeBp.toFixed(1)} bp`
+								: "—"}
 						</span>
 					</div>
 					<div className="flex items-center gap-1.5">
