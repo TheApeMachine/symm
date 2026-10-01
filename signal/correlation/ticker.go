@@ -2,6 +2,7 @@ package correlation
 
 import (
 	"context"
+	"time"
 	"sync"
 	"unsafe"
 
@@ -141,6 +142,9 @@ func (ticker *Ticker) Step(measurement *data.Measurement[float64]) *data.Measure
 		}
 
 		measurement.Pull(peer)
+		if !measurement.From.IsZero() && measurement.From.After(measurement.At) {
+			measurement.From = time.Time{}
+		}
 		measurement.WriteMetric("last_price", quotedPrice(peer))
 	}
 

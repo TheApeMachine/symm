@@ -27,7 +27,7 @@ ADVISOR_FLAGS ?=
 
 DUMP_OUTPUT ?= symm.txt
 
-.PHONY: build test test-go test-race test-cover test-e2e test-frontend bench run optimize dump profile profile-stack profile-report strip-trailing-newlines debug debug-inspect backtest generate-telemetry physics-metallib physics-manifold-metallib experimental metric-lineage metric-map goodindahood build-cuda
+.PHONY: build test test-go test-race test-cover test-e2e test-frontend bench run workbench optimize dump profile profile-stack profile-report strip-trailing-newlines debug debug-inspect backtest generate-telemetry physics-metallib physics-manifold-metallib experimental metric-lineage metric-map goodindahood build-cuda
 
 generate-telemetry:
 	flatc --no-warnings --go --gen-object-api -o telemetry/generated telemetry/telemetry.fbs
@@ -68,9 +68,18 @@ metric-map:
 run:
 	go run main.go
 
+# Analytical Workbench is a separate process on purpose: DuckDB/cgo must not share
+# the trading binary. Hub proxies POST /workbench/query → workbench.url (default
+# http://127.0.0.1:8081/workbench/query). Start this beside `make run` / `pnpm dev`
+# for /workbench and Hindsight research timelines; trading stays up if it dies.
+workbench:
+	@echo "symm-workbench on :8081 (Ctrl+C to stop) — hub proxies /workbench/query here"
+	go run $(LDFLAGS) ./cmd/workbench
+
 experimental:
 	@echo "symm running (Ctrl+C to stop)"
 	@echo "UI ws://127.0.0.1:8765/ws · fluid http://127.0.0.1:8765/webrtc/manifold — dashboard: cd frontend && pnpm dev"
+	@echo "Analytical workbench (separate): make workbench"
 	go run $(LDFLAGS) main.go experimental
 
 backtest:

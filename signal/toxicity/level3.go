@@ -145,8 +145,18 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 				m.WriteMetric("unfilled_residual_quantity:bid", bidQty)
 				m.WriteMetric("unfilled_residual_quantity:ask", askQty)
 
+				if !input.At.IsZero() {
+					m.At = input.At
+				}
+				if input.Label != "" {
+					m.Label = input.Label
+				}
+
 				if state.hasPrev {
-					m.From = state.prevTime
+					// Only stamp From when the prior touch is not after At.
+					if !state.prevTime.IsZero() && !state.prevTime.After(m.At) {
+						m.From = state.prevTime
+					}
 					m.WriteMetric("previous_touch_quantity:bid", state.prevBidQty)
 					m.WriteMetric("previous_touch_quantity:ask", state.prevAskQty)
 					m.EnsureMetadata()
@@ -155,7 +165,10 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 					m.WriteMetric("previous_best_price:bid", state.prevBid)
 					m.WriteMetric("previous_best_price:ask", state.prevAsk)
 
-					dt := input.At.Sub(state.prevTime).Seconds()
+					dt := 0.0
+					if !m.From.IsZero() {
+						dt = m.At.Sub(m.From).Seconds()
+					}
 
 					if state.prevBid > 0 && bidPrice > 0 {
 						m.WriteMetric("touch_price_log_change:bid", math.Log(bidPrice/state.prevBid))
@@ -234,13 +247,6 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 				state.prevBidQty = bidQty
 				state.prevAskQty = askQty
 				state.hasPrev = true
-
-				if input.Label != "" {
-					m.Label = input.Label
-				}
-				if !input.At.IsZero() {
-					m.At = input.At
-				}
 
 				return m
 			},

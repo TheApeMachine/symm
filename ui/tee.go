@@ -17,6 +17,8 @@ and yields encoded FlatBuffer []byte frames for the dashboard websocket,
 including ManifoldFrame payloads when a measurement carries a ManifoldState.
 It satisfies runtime.Tee[*data.Measurement[float64], []byte].
 */
+const uiTeeQueueCap = 4096
+
 type UITee struct {
 	*runtime.System
 	queue     *lf.Queue[*data.Measurement[float64]]
@@ -76,7 +78,13 @@ func (tee *UITee) Push(measurement *data.Measurement[float64]) {
 		}
 	}
 
-	tee.queue.Enqueue(measurement.Clone())
+	if tee.queue.Length() >= uiTeeQueueCap {
+		return
+	}
+
+	// PersistClone strips Peers — Clone retained the disruptor peer forest and
+	// EncodeMeasurements recursed it into multi-GiB FlatBuffers.
+	tee.queue.Enqueue(measurement.PersistClone())
 }
 
 /*

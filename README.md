@@ -425,7 +425,7 @@ The frontend is a React 19 / TanStack Start terminal on port 3000.
 |--------------------------|--------------------------------------------------------------------------------------------------------------|
 | `/` Dashboard            | Equity, balances, positions, queue depths, system telemetry.                                                 |
 | `/learning`              | The learning coordinator: impulse map, regions, cognition predictions, training metrics, and live decisions. |
-| `/hindsight`             | Run and capture browser, episode timeline, state inspector, position index, comparison view.                 |
+| `/hindsight`             | Run browser + DuckDB-bucketed research timeline (needs `make workbench`); envelope/excursions stay typed.   |
 | `/fluid`                 | Live L3 manifold: particle fields and pressure maps over WebRTC.                                             |
 | `/signals`               | Per-signal metric timeseries and estimator state.                                                            |
 | `/xray`                  | Resonance hidden state and prequential skill history.                                                        |
@@ -433,7 +433,12 @@ The frontend is a React 19 / TanStack Start terminal on port 3000.
 | `/influence`, `/lineage` | Relationship, influence and metric-lineage views.                                                            |
 | `/journal`               | Completed round trips and realized PnL.                                                                      |
 | `/diagnostics`           | Live pipeline topology, per-stage and per-queue health and latency.                                          |
-| `/workbench`             | Interactive development and inspection workbench.                                                            |
+| `/workbench`             | Perspective Virtual Server over DuckDB/Iceberg (Arrow IPC). Requires `make workbench`.                       |
+
+Analytical DuckDB is a **separate process** so cgo/GC never share the trading
+binary. In one terminal run `make workbench` (listens on `:8081`); the hub proxies
+`POST /workbench/query` there. Trading/`make run` is unchanged if workbench is down —
+only `/workbench` and Hindsight research timelines need it.
 
 The browser sends the selected focus symbol back to the backend, so detailed telemetry is
 gated to the active market rather than broadcast for every pair.

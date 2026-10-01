@@ -256,7 +256,47 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 		return "var(--f4)";
 	};
 
+	const isActionPrefix = (prefix?: string) => {
+		switch ((prefix ?? "").toUpperCase()) {
+			case "ENTER":
+			case "EXIT":
+			case "WAIT":
+				return true;
+			default:
+				return false;
+		}
+	};
+
+	const isRootNode = (node: TrieNodeData) =>
+		node.id === "root" || (node.prefix ?? "").toUpperCase() === "ROOT";
+
+	// Edges carry region tokens; nodes carry actions (and ROOT). Region path
+	// junctions stay structural dots — their token already labels the inbound edge.
+	const nodeLabel = (node: TrieNodeData) => {
+		if (isRootNode(node) || isActionPrefix(node.prefix)) {
+			return node.prefix;
+		}
+		return "·";
+	};
+
+	const edgeTokenLabel = (target: TrieNodeData) => {
+		if (isActionPrefix(target.prefix)) {
+			return null;
+		}
+		const tokens = target.tokens ?? [];
+		if (tokens.length === 0) {
+			return null;
+		}
+		// Frames arrive already as [id,...]; do not wrap again.
+		const joined = tokens.join(", ");
+		if (joined.startsWith("[") && joined.endsWith("]")) {
+			return joined;
+		}
+		return `[${joined}]`;
+	};
+
 	const getEdgeColor = (prob: number) => {
+
 		if (colorMode === "gradient") {
 			return d3.interpolateRgb("#3a342b", "#e8a33d")(prob) || "var(--line)";
 		}
@@ -471,8 +511,10 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 												transition: "d 0.3s ease-in-out",
 											}}
 										/>
-										{link.target.data.tokens &&
-											link.target.data.tokens.length > 0 && (
+										{(() => {
+											const label = edgeTokenLabel(link.target.data);
+											if (!label) return null;
+											return (
 												<g
 													transform={`translate(${midX}, ${projection === "vertical" ? midY - 6 : midY - 8})`}
 													className="pointer-events-none select-none font-mono"
@@ -481,20 +523,9 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 													}}
 												>
 													<rect
-														x={
-															-Math.max(
-																28,
-																link.target.data.tokens.join(", ").length *
-																	5.5 +
-																	8,
-															) / 2
-														}
+														x={-Math.max(28, label.length * 5.5 + 8) / 2}
 														y={-7}
-														width={Math.max(
-															28,
-															link.target.data.tokens.join(", ").length * 5.5 +
-																8,
-														)}
+														width={Math.max(28, label.length * 5.5 + 8)}
 														height={14}
 														rx={2}
 														fill="var(--surface)"
@@ -511,10 +542,11 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 														fontWeight="600"
 														className="font-mono tracking-wider"
 													>
-														[{link.target.data.tokens.join(", ")}]
+														{label}
 													</text>
 												</g>
-											)}
+											);
+										})()}
 									</g>
 								);
 							})}
@@ -673,7 +705,7 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 												fontWeight="700"
 												className="select-none pointer-events-none font-mono tracking-wider"
 											>
-												{nodeData.prefix}
+												{nodeLabel(nodeData)}
 											</text>
 
 											<text

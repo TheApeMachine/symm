@@ -271,19 +271,21 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 	measurement.Label = symbol
 	measurement.At = at
 
+	maturity, snr, snrDefined, estimated := measurement.Maturity, measurement.SNR, measurement.SNRDefined, measurement.Estimated
 	if loadedStep, found := solver.steps.Load(symbol); found {
 		if stepCount := loadedStep.(*atomic.Int64).Load(); stepCount > 1 {
-			measurement.Maturity = 1.0 - 1.0/float64(stepCount)
+			maturity = 1.0 - 1.0/float64(stepCount)
 		}
 	}
 
-	if energyMetric, ok := measurement.Metrics["energy"]; ok && energyMetric.Raw > 0 {
-		if surpriseMetric, ok := measurement.Metrics["surprise"]; ok && surpriseMetric.Raw > 0 {
-			measurement.SNR = energyMetric.Raw / surpriseMetric.Raw
-			measurement.SNRDefined = true
-			measurement.Estimated = true
+	if energyMetric, ok := measurement.LookupMetric("energy"); ok && energyMetric.Raw > 0 {
+		if surpriseMetric, ok := measurement.LookupMetric("surprise"); ok && surpriseMetric.Raw > 0 {
+			snr = energyMetric.Raw / surpriseMetric.Raw
+			snrDefined = true
+			estimated = true
 		}
 	}
+	measurement.SetQuality(maturity, snr, snrDefined, estimated)
 
 	// Resonance owns this observation's published artifact for the UI tee.
 	measurement.SetSource("resonance")

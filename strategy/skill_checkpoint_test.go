@@ -105,13 +105,13 @@ func TestRecordSkillMarksModelDirty(t *testing.T) {
 
 		training := NewTraining(ctx, 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
 		training.mu.Lock()
-		So(training.modelDirty, ShouldBeFalse)
+		So(training.modelRevision, ShouldEqual, 0)
 		training.mu.Unlock()
 
 		training.recordSkill(true)
 
 		training.mu.Lock()
-		dirty := training.modelDirty
+		dirty := training.modelRevision > 0
 		training.mu.Unlock()
 		So(dirty, ShouldBeTrue)
 	})

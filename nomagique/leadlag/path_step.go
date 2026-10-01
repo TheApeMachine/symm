@@ -66,7 +66,10 @@ func (op *PathStep) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				continue
 			}
 
-			m.From = time.Unix(0, focal.From)
+			from := time.Unix(0, focal.From)
+			if !from.After(m.At) {
+				m.From = from
+			}
 			op.Retained[m.Label] = focal
 
 			if !yield(arriving) {

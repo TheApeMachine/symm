@@ -154,3 +154,58 @@ func TestDeriveChannelRoutesVenueTape(t *testing.T) {
 		So(frames, ShouldEqual, 1)
 	})
 }
+
+
+func TestDrainDoesNotPolluteVenueTapeWithSignals(t *testing.T) {
+	Convey("Workspace-style signal publications with inherited channel go to Measurements", t, func() {
+		catalog := tablestest.New(t)
+		tee := hindsight.NewStoreTee(t.Context(), "signal-isolation")
+		tee.Transition(runtime.READY)
+		defer func() { So(tee.Close(), ShouldBeNil) }()
+
+		raw := data.NewMeasurement[float64]("websocket", map[string]data.Metric[float64]{
+			"bid": {Raw: 100},
+			"ask": {Raw: 101},
+		})
+		raw.Label = "BTC/USD"
+		raw.SeqIdx = 1
+		raw.At = time.Unix(1, 0)
+		raw.SetProvenance("ingress_channel", "ticker")
+		raw.SetProvenance("channel", "ticker")
+		raw.SetMetadata("type", "ticker")
+		tee.Push(raw)
+
+		// Mimic liquidity:ticker after Fork+SetSource while retaining channel=ticker.
+		signal := raw.Fork()
+		signal.SetSource("liquidity:ticker")
+		signal.WriteMetric("relative_spread", 0.01)
+		signal.SeqIdx = 1
+		tee.Push(signal)
+
+		toxicity := raw.Fork()
+		toxicity.SetSource("toxicity:level3")
+		toxicity.WriteMetric("retreat_fraction:bid", 0.2)
+		toxicity.SeqIdx = 1
+		tee.Push(toxicity)
+
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		So(catalog.Drain(ctx, 201, tee), ShouldBeNil)
+
+		tickers := 0
+		for range catalog.Scan(t.Context(), tables.SpotTicker, 201, nil, 0) {
+			tickers++
+		}
+		measured := 0
+		sources := map[string]int{}
+		for m := range catalog.Scan(t.Context(), tables.Measurements, 201, nil, 0) {
+			measured++
+			sources[m.Source]++
+		}
+
+		So(tickers, ShouldEqual, 1)
+		So(measured, ShouldEqual, 2)
+		So(sources["liquidity:ticker"], ShouldEqual, 1)
+		So(sources["toxicity:level3"], ShouldEqual, 1)
+	})
+}

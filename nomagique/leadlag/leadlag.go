@@ -253,7 +253,10 @@ func (op *Cross) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				continue
 			}
 
-			m.From = time.Unix(0, focal.From)
+			from := time.Unix(0, focal.From)
+			if !from.After(m.At) {
+				m.From = from
+			}
 			op.retained[m.Label] = focal
 
 			failed := false

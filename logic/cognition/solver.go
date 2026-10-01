@@ -212,7 +212,12 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 		measurement.At = reading.At
 
 		if reading.NodeCount > 1 {
-			measurement.Maturity = 1.0 - 1.0/float64(reading.NodeCount)
+			measurement.SetQuality(
+				1.0-1.0/float64(reading.NodeCount),
+				measurement.SNR,
+				measurement.SNRDefined,
+				measurement.Estimated,
+			)
 		}
 
 		// Live workspace slots are not seeded from Register(); write readings
@@ -236,6 +241,7 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 	}
 
 	measurement.Result = results
+	measurement.SetSource("cognition")
 
 	return measurement
 }

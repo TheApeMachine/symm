@@ -3,13 +3,15 @@ package tables
 import "github.com/apache/iceberg-go"
 
 const (
-	Namespace    = "hindsight"
-	SpotTicker   = "spot_ticker"
-	SpotTrade    = "spot_trade"
-	SpotLevel3   = "spot_level3"
-	Measurements = "measurements"
-	Runs         = "runs"
-	Excursions   = "excursions"
+	Namespace      = "hindsight"
+	SpotTicker     = "spot_ticker"
+	SpotTrade      = "spot_trade"
+	SpotLevel3     = "spot_level3"
+	FuturesTicker  = "futures_ticker"
+	FuturesTrade   = "futures_trade"
+	Measurements   = "measurements"
+	Runs           = "runs"
+	Excursions     = "excursions"
 )
 
 /*

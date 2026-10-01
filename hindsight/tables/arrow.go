@@ -87,14 +87,15 @@ func fillMeasurements(
 
 		snrDefinedBuilder.Append(measurement.SNRDefined)
 
-		if len(measurement.Metrics) == 0 {
+		snapMetrics := measurement.MetricsSnapshot()
+		if len(snapMetrics) == 0 {
 			metricsBuilder.AppendNull()
 		}
 
-		if len(measurement.Metrics) > 0 {
+		if len(snapMetrics) > 0 {
 			metricsBuilder.Append(true)
 
-			for metricKey, metricVal := range measurement.Metrics {
+			for metricKey, metricVal := range snapMetrics {
 				metricsKey.Append(metricKey)
 				metricsVal.Append(metricVal.Raw)
 			}
@@ -113,11 +114,11 @@ func fillMeasurements(
 			}
 		}
 
-		if len(measurement.Provenance) == 0 && len(measurement.Metrics) == 0 && measurement.Err == nil && !measurement.Estimated {
+		if len(measurement.Provenance) == 0 && len(snapMetrics) == 0 && measurement.Err == nil && !measurement.Estimated {
 			provenanceBuilder.AppendNull()
 		}
 
-		if len(measurement.Provenance) > 0 || len(measurement.Metrics) > 0 || measurement.Err != nil || measurement.Estimated {
+		if len(measurement.Provenance) > 0 || len(snapMetrics) > 0 || measurement.Err != nil || measurement.Estimated {
 			provenanceBuilder.Append(true)
 
 			for provKey, provVal := range measurement.Provenance {
@@ -130,7 +131,7 @@ func fillMeasurements(
 			}
 			provenanceKey.Append("symm:estimated")
 			provenanceVal.Append(strconv.FormatBool(measurement.Estimated))
-			for key, metric := range measurement.Metrics {
+			for key, metric := range snapMetrics {
 				if metric.Exact != nil {
 					provenanceKey.Append("symm:exact:" + key)
 					provenanceVal.Append(metric.Exact.String())
@@ -388,6 +389,14 @@ func measurementRecords(
 	measurements []*data.Measurement[float64],
 	epoch int64,
 ) (array.RecordReader, error) {
+	if len(measurements) == 0 {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[iceberg] measurementRecords requires rows",
+			nil,
+		))
+	}
+
 	converted, err := arrowSchemaFor(schema)
 
 	if err != nil {

@@ -99,7 +99,9 @@ func (op *Counts) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			fromSec := float64(from.UnixNano()) * 1e-9
 			span := atSec - fromSec
 
-			m.From = from
+			if !from.After(m.At) {
+				m.From = from
+			}
 
 			m.WriteMetric("event_count", count)
 			m.WriteMetric("event_count:buy", countBuy)
@@ -156,11 +158,9 @@ func (op *Excitation) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
 			m := *(**data.Measurement[float64])(arriving)
 			p := op.history.at(m.Label)
 
-			m.EnsureMetadata()
-
 			m.SetMetadata(data.MetadataSupport, strconv.FormatFloat(p.support(), 'f', -1, 64))
-			delete(m.Metadata, data.MetadataDivergence)
-			delete(m.Metadata, data.MetadataNoiseVariance)
+			m.DeleteMetadata(data.MetadataDivergence)
+			m.DeleteMetadata(data.MetadataNoiseVariance)
 
 			if p.hasSNR {
 				m.SetMetadata(data.MetadataDivergence, strconv.FormatFloat(p.divergence(), 'f', -1, 64))

@@ -266,13 +266,13 @@ func TestTeachMarksModelDirty(t *testing.T) {
 		So(len(token), ShouldBeGreaterThan, 0)
 
 		training.mu.Lock()
-		So(training.modelDirty, ShouldBeFalse)
+		So(training.modelRevision, ShouldEqual, 0)
 		training.mu.Unlock()
 
 		training.teach(append(append([]byte{}, token...), 0), string(cognition.ActionEnter), 1)
 
 		training.mu.Lock()
-		dirty := training.modelDirty
+		dirty := training.modelRevision > 0
 		training.mu.Unlock()
 		So(dirty, ShouldBeTrue)
 	})

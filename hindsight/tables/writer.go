@@ -27,10 +27,12 @@ type Writer struct {
 	epoch   int64
 
 	gate         atomic.Int64
-	spotTicker   []*data.Measurement[float64]
-	spotTrade    []*data.Measurement[float64]
-	spotLevel3   []*data.Measurement[float64]
-	measurements []*data.Measurement[float64]
+	spotTicker     []*data.Measurement[float64]
+	spotTrade      []*data.Measurement[float64]
+	spotLevel3     []*data.Measurement[float64]
+	futuresTicker  []*data.Measurement[float64]
+	futuresTrade   []*data.Measurement[float64]
+	measurements   []*data.Measurement[float64]
 	excursions   []ExcursionRecord
 }
 
@@ -89,6 +91,18 @@ func (writer *Writer) Add(channel string, measurement *data.Measurement[float64]
 		return
 	}
 
+	if channel == "futures_ticker" {
+		writer.futuresTicker = append(writer.futuresTicker, measurement)
+
+		return
+	}
+
+	if channel == "futures_trade" {
+		writer.futuresTrade = append(writer.futuresTrade, measurement)
+
+		return
+	}
+
 	writer.measurements = append(writer.measurements, measurement)
 }
 
@@ -109,7 +123,9 @@ func (writer *Writer) Pending() int {
 	writer.lock()
 	defer writer.unlock()
 
-	return len(writer.spotTicker) + len(writer.spotTrade) + len(writer.spotLevel3) + len(writer.measurements) + len(writer.excursions)
+	return len(writer.spotTicker) + len(writer.spotTrade) + len(writer.spotLevel3) +
+		len(writer.futuresTicker) + len(writer.futuresTrade) +
+		len(writer.measurements) + len(writer.excursions)
 }
 
 /*
@@ -149,6 +165,28 @@ func (writer *Writer) CommitReady(ctx context.Context, forceAll bool) error {
 		return err
 	}
 
+	if err := writer.commitFamily(ctx, FuturesTicker, tickerBatchThreshold, forceAll, func() []*data.Measurement[float64] {
+		rows := writer.futuresTicker
+		writer.futuresTicker = nil
+
+		return rows
+	}, func(remaining []*data.Measurement[float64]) {
+		writer.futuresTicker = append(remaining, writer.futuresTicker...)
+	}); err != nil {
+		return err
+	}
+
+	if err := writer.commitFamily(ctx, FuturesTrade, tradeBatchThreshold, forceAll, func() []*data.Measurement[float64] {
+		rows := writer.futuresTrade
+		writer.futuresTrade = nil
+
+		return rows
+	}, func(remaining []*data.Measurement[float64]) {
+		writer.futuresTrade = append(remaining, writer.futuresTrade...)
+	}); err != nil {
+		return err
+	}
+
 	if err := writer.commitFamily(ctx, Measurements, measurementBatchThreshold, forceAll, func() []*data.Measurement[float64] {
 		rows := writer.measurements
 		writer.measurements = nil
@@ -170,6 +208,15 @@ func (writer *Writer) CommitReady(ctx context.Context, forceAll bool) error {
 	}
 
 	return nil
+}
+
+/*
+CommitExcursions persists only the excursions buffer. Training durability uses
+this path so a hung tape-family Append in Drain cannot keep writing=true while
+CommitReady walks empty Spot/Futures/Measurements families.
+*/
+func (writer *Writer) CommitExcursions(ctx context.Context) error {
+	return writer.commitExcursions(ctx)
 }
 
 func (writer *Writer) commitExcursions(ctx context.Context) error {
@@ -208,9 +255,11 @@ func (writer *Writer) commitExcursions(ctx context.Context) error {
 
 	defer reader.Release()
 
-	_, appendErr := tbl.Append(writer.catalog.context(ctx), reader, nil)
-
-	if appendErr != nil {
+	var appendErr error
+	if err := writer.catalog.WithCommit(ctx, func() error {
+		_, appendErr = tbl.Append(writer.catalog.context(ctx), reader, nil)
+		return appendErr
+	}); err != nil {
 		writer.lock()
 		writer.excursions = append(rowsToCommit, writer.excursions...)
 		writer.unlock()
@@ -218,7 +267,7 @@ func (writer *Writer) commitExcursions(ctx context.Context) error {
 		return errnie.Error(errnie.Err(
 			errnie.BadGateway,
 			"[iceberg] failed to append to "+Excursions,
-			appendErr,
+			err,
 		))
 	}
 
@@ -274,9 +323,11 @@ func (writer *Writer) commitFamily(
 
 	defer reader.Release()
 
-	_, appendErr := tbl.Append(writer.catalog.context(ctx), reader, nil)
-
-	if appendErr != nil {
+	var appendErr error
+	if err := writer.catalog.WithCommit(ctx, func() error {
+		_, appendErr = tbl.Append(writer.catalog.context(ctx), reader, nil)
+		return appendErr
+	}); err != nil {
 		writer.lock()
 		putRows(rowsToCommit)
 		writer.unlock()
@@ -284,7 +335,7 @@ func (writer *Writer) commitFamily(
 		return errnie.Error(errnie.Err(
 			errnie.BadGateway,
 			"[iceberg] failed to append to "+tableName,
-			appendErr,
+			err,
 		))
 	}
 

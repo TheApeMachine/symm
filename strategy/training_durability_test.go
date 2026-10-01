@@ -164,3 +164,61 @@ func TestWaitDrainedDoesNotBailOnTransientPersistErr(t *testing.T) {
 		}
 	})
 }
+
+func TestCommitExcursionsTimesOutWhenGateHeld(t *testing.T) {
+	Convey("Given a held commit gate, CommitExcursions returns ctx error and finishWrite clears writing", t, func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		catalog := tablestest.New(t)
+		held := make(chan struct{})
+		release := make(chan struct{})
+
+		go func() {
+			_ = catalog.WithCommit(context.Background(), func() error {
+				close(held)
+				<-release
+				return nil
+			})
+		}()
+		<-held
+
+		training := NewTraining(ctx, 11, priced(t, "BTC/USD", 0.1), nil, catalog, nil)
+		frame := regionFrame("BTC/USD", 1, 2)
+		training.grid.Update(frame)
+		training.grid.Settle()
+		training.mu.Lock()
+		training.checkpointed = true
+		training.writing = true
+		training.blocked = true
+		training.mu.Unlock()
+
+		writer := tables.NewWriter(catalog, 11)
+		writer.AddExcursion(tables.ExcursionRecord{
+			ID: "BTC/USD:timeout:1", Symbol: "BTC/USD", AnchorTick: 1, ExitTick: 2, Epoch: 11,
+		})
+		commitCtx, commitCancel := context.WithTimeout(ctx, 80*time.Millisecond)
+		err := writer.CommitExcursions(commitCtx)
+		commitCancel()
+		So(err, ShouldNotBeNil)
+
+		training.finishWrite([]heldEpisode{{
+			record: tables.ExcursionRecord{ID: "BTC/USD:timeout:1", Symbol: "BTC/USD"},
+		}}, err)
+
+		training.mu.Lock()
+		writing := training.writing
+		blocked := training.blocked
+		perr := training.persistErr
+		training.mu.Unlock()
+		So(writing, ShouldBeFalse)
+		So(blocked, ShouldBeTrue)
+		So(perr, ShouldNotBeNil)
+
+		_, _, detail := training.stage()
+		So(detail, ShouldContainSubstring, "durability blocked")
+		So(detail, ShouldNotEqual, "durability blocked: writing")
+
+		close(release)
+	})
+}

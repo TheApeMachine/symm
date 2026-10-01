@@ -407,25 +407,38 @@ const HindsightRoute = () => {
 	const activeTimeline = detail ?? overview;
 	const selectedMeasurement = useMemo<Measurement | null>(() => {
 		const list = activeTimeline?.measurements ?? overview?.measurements;
-		if (!list || list.length === 0) return null;
-		if (playhead === null) return list[0] ?? null;
+		if (list && list.length > 0) {
+			if (playhead === null) return list[0] ?? null;
 
-		const targetSeq = playhead.sequence;
-		let closest: Measurement = list[0];
-		let minDiff = Infinity;
+			const targetSeq = playhead.sequence;
+			let closest: Measurement = list[0];
+			let minDiff = Infinity;
 
-		for (const item of list) {
-			const seq = Number(item.seqIdx ?? item.id ?? 0);
-			const diff = Math.abs(seq - targetSeq);
-			if (diff < minDiff) {
-				minDiff = diff;
-				closest = item;
+			for (const item of list) {
+				const seq = Number(item.seqIdx ?? item.id ?? 0);
+				const diff = Math.abs(seq - targetSeq);
+				if (diff < minDiff) {
+					minDiff = diff;
+					closest = item;
+				}
+				if (diff === 0) break;
 			}
-			if (diff === 0) break;
+
+			return closest;
 		}
 
-		return closest;
-	}, [activeTimeline, overview, playhead]);
+		// Research timelines are bucketed via DuckDB and omit the full tape; the
+		// exact frame at the playhead still arrives through /hindsight/envelope.
+		if (envelope?.payload) {
+			try {
+				return JSON.parse(envelope.payload) as Measurement;
+			} catch {
+				return null;
+			}
+		}
+
+		return null;
+	}, [activeTimeline, overview, playhead, envelope]);
 
 	/*
 		Each mark's state is read by its own exact capture identity, never

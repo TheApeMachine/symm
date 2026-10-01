@@ -257,7 +257,9 @@ func (op *Rates) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				op.from = m.At
 			}
 
-			m.From = op.from
+			if !op.from.After(m.At) {
+				m.From = op.from
+			}
 
 			m.WriteMetric("cvd_epoch_from", float64(op.from.UnixNano())/float64(time.Second))
 

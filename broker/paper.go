@@ -7,7 +7,9 @@ import (
 	"errors"
 	"os/exec"
 	"strings"
+	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
@@ -29,6 +31,16 @@ type Paper struct {
 	*runtime.System
 	commandGate atomic.Pointer[chan struct{}]
 	executions  func(*kraken.Execution)
+	// watching tracks limit orders that acknowledged open so a later CLI fill
+	// can be published as kraken.Execution → ApplyExecution.
+	watching sync.Map // orderID -> paperWatch
+}
+
+type paperWatch struct {
+	orderID       string
+	clientOrderID string
+	pair          string
+	side          string
 }
 
 /*
@@ -647,7 +659,8 @@ func (paper *Paper) Replay(trades []any) error {
 }
 
 /*
-publishPlace emits order ack, fill, and a balance snapshot for one paper order.
+publishPlace emits order ack + execution, then soft-fails balance refresh.
+Open limit acks are tracked so a later CLI fill becomes a real Execution.
 */
 func (paper *Paper) publishPlace(
 	model datura.Map[any],
@@ -656,12 +669,143 @@ func (paper *Paper) publishPlace(
 	orderAck := kraken.NewOrderResponseFromMap(model, reqID)
 	paper.publish("add_order", orderAck)
 
-	paper.publish("executions", kraken.NewExecutionFromMap(model))
+	execution := kraken.NewExecutionFromMap(model)
+	paper.publish("executions", execution)
 
-	// Paper balance is a full wallet dump that omits zero assets. Emitting it
-	// as an incremental update leaves stale positive rows in Balance and keeps
-	// phantom OPEN lots.
-	return paper.publishBalance("snapshot")
+	if paperExecutionStillOpen(execution) {
+		paper.watchOpenExecution(execution)
+	}
+
+	// Success of the execution must not fail if only the wallet refresh fails.
+	if err := paper.publishBalance("snapshot"); err != nil {
+		errnie.Warn("[paper] balance refresh after place failed: " + err.Error())
+	}
+
+	return nil
+}
+
+func paperExecutionStillOpen(execution *kraken.Execution) bool {
+	if execution == nil || len(execution.Data) == 0 {
+		return false
+	}
+	for _, row := range execution.Data {
+		status := strings.ToLower(row.OrderStatus)
+		execType := strings.ToLower(row.ExecType)
+		if status == "open" || status == "pending" || status == "new" ||
+			execType == "new" || execType == "pending_new" {
+			return true
+		}
+	}
+	return false
+}
+
+func (paper *Paper) watchOpenExecution(execution *kraken.Execution) {
+	if paper == nil || execution == nil {
+		return
+	}
+	for _, row := range execution.Data {
+		orderID := row.OrderID
+		if orderID == "" {
+			continue
+		}
+		watch := paperWatch{
+			orderID:       orderID,
+			clientOrderID: row.ClientOrderID,
+			pair:          row.Symbol,
+			side:          row.Side,
+		}
+		if _, loaded := paper.watching.LoadOrStore(orderID, watch); loaded {
+			continue
+		}
+		go paper.pollOpenFill(watch)
+	}
+}
+
+/*
+pollOpenFill converts a later CLI fill/cancel into an Execution for ApplyExecution.
+Paper has no private WS; OpenOrders + TradesHistory is the venue ledger.
+*/
+func (paper *Paper) pollOpenFill(watch paperWatch) {
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	deadline := time.Now().Add(2 * time.Minute)
+
+	for {
+		select {
+		case <-paper.Context().Done():
+			paper.watching.Delete(watch.orderID)
+			return
+		case <-ticker.C:
+		}
+
+		if time.Now().After(deadline) {
+			paper.watching.Delete(watch.orderID)
+			errnie.Warn("[paper] open order watch timed out: " + watch.orderID)
+			return
+		}
+
+		open, err := paper.OpenOrders()
+		if err != nil {
+			continue
+		}
+		if _, stillOpen := open.Open[watch.orderID]; stillOpen {
+			continue
+		}
+
+		// Order left the open book — look up the fill in history.
+		history, err := paper.TradesHistory()
+		if err != nil {
+			continue
+		}
+
+		for tradeID, trade := range history.Trades {
+			if trade.OrderID != watch.orderID {
+				continue
+			}
+			fill := datura.Map[any]{
+				"order_id":     watch.orderID,
+				"cl_ord_id":    watch.clientOrderID,
+				"id":           tradeID,
+				"pair":         trade.Pair,
+				"side":         trade.Type,
+				"price":        trade.Price.Float64(),
+				"cost":         trade.Cost.Float64(),
+				"fee":          trade.Fee.Float64(),
+				"volume":       trade.Volume.Float64(),
+				"time":         trade.Time.String(),
+				"status":       "filled",
+				"order_status": "filled",
+				"exec_type":    "trade",
+			}
+			if watch.pair != "" {
+				fill["pair"] = watch.pair
+			}
+			if watch.side != "" {
+				fill["side"] = watch.side
+			}
+			paper.publish("executions", kraken.NewExecutionFromMap(fill))
+			if err := paper.publishBalance("snapshot"); err != nil {
+				errnie.Warn("[paper] balance refresh after fill failed: " + err.Error())
+			}
+			paper.watching.Delete(watch.orderID)
+			return
+		}
+
+		// Not in open orders and no matching trade → canceled/expired.
+		cancel := datura.Map[any]{
+			"order_id":     watch.orderID,
+			"cl_ord_id":    watch.clientOrderID,
+			"pair":         watch.pair,
+			"side":         watch.side,
+			"status":       "canceled",
+			"order_status": "canceled",
+			"exec_type":    "canceled",
+			"action":       "order_cancelled",
+		}
+		paper.publish("executions", kraken.NewExecutionFromMap(cancel))
+		paper.watching.Delete(watch.orderID)
+		return
+	}
 }
 
 func (paper *Paper) placeOrder(

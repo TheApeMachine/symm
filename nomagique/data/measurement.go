@@ -5,6 +5,7 @@ import (
 	"iter"
 	"maps"
 	"math"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -178,6 +179,195 @@ func (m *Measurement[T]) SetSource(source string) {
 	m.Source = source
 }
 
+/*
+SetQuality publishes Finalizer/interpreter quality fields under the write lock.
+Bare field stores race when a shared workspace slot is still reachable.
+*/
+func (m *Measurement[T]) SetQuality(maturity, snr float64, snrDefined, estimated bool) {
+	if m == nil {
+		return
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.Maturity = maturity
+	m.SNR = snr
+	m.SNRDefined = snrDefined
+	m.Estimated = estimated
+}
+
+/*
+Fork returns a working copy for one concurrent stage consumer: identity and
+metric/metadata/provenance maps are copied. Peers are a shallow pointer copy
+of already-Contribute'd fragments (those fragments have Peers cleared), so
+category/resonance see signal peers without deep-cloning a peer forest.
+*/
+func (measurement *Measurement[T]) Fork() *Measurement[T] {
+	if measurement == nil {
+		return nil
+	}
+
+	measurement.mu.RLock()
+	defer measurement.mu.RUnlock()
+
+	var metrics map[string]Metric[T]
+	if len(measurement.Metrics) > 0 {
+		metrics = make(map[string]Metric[T], len(measurement.Metrics))
+		maps.Copy(metrics, measurement.Metrics)
+	}
+
+	var metadata map[string]string
+	if len(measurement.Metadata) > 0 {
+		metadata = maps.Clone(measurement.Metadata)
+	}
+
+	var provenance map[string]string
+	if len(measurement.Provenance) > 0 {
+		provenance = maps.Clone(measurement.Provenance)
+	}
+
+	var peers []*Measurement[T]
+	if len(measurement.Peers) > 0 {
+		peers = make([]*Measurement[T], len(measurement.Peers))
+		copy(peers, measurement.Peers)
+	}
+
+	return &Measurement[T]{
+		ID:         measurement.ID,
+		Label:      measurement.Label,
+		Source:     measurement.Source,
+		SeqIdx:     measurement.SeqIdx,
+		Timestamp:  measurement.Timestamp,
+		At:         measurement.At,
+		From:       measurement.From,
+		Maturity:   measurement.Maturity,
+		SNR:        measurement.SNR,
+		SNRDefined: measurement.SNRDefined,
+		Estimated:  measurement.Estimated,
+		Err:        measurement.Err,
+		Metrics:    metrics,
+		Metadata:   metadata,
+		Provenance: provenance,
+		Peers:      peers,
+		Result:     measurement.Result,
+	}
+}
+
+/*
+PersistClone is a queue/off-ramp snapshot: maps copied, Peers stripped so
+StoreTee/UITee cannot retain the disruptor peer forest across drain lag.
+*/
+func (measurement *Measurement[T]) PersistClone() *Measurement[T] {
+	if measurement == nil {
+		return nil
+	}
+	out := measurement.Fork()
+	if out != nil {
+		out.Peers = nil
+		out.Result = nil
+	}
+	return out
+}
+
+/*
+Contribute attaches one independently owned producer fragment as a Peer on the
+shared observation. Concurrent stage nodes Fork → Step → Contribute.
+
+Ownership rules (memory-critical):
+  - replace any existing peer with the same Source (bounded peer set)
+  - never dump producer metrics onto the shared Metrics map (that exploded
+    Grid cellKey and Iceberg map columns with source-qualified duplicates)
+  - quality merge stays order-invariant mins
+  - Result stays on the owned peer
+*/
+func (measurement *Measurement[T]) Contribute(owned *Measurement[T]) {
+	if measurement == nil || owned == nil || measurement == owned {
+		return
+	}
+
+	owned.mu.RLock()
+	source := owned.Source
+	maturity := owned.Maturity
+	snr := owned.SNR
+	snrDefined := owned.SNRDefined
+	estimated := owned.Estimated
+	owned.mu.RUnlock()
+
+	// Producer fragments must not retain the shared peer forest.
+	owned.mu.Lock()
+	owned.Peers = nil
+	owned.mu.Unlock()
+
+	measurement.mu.Lock()
+	defer measurement.mu.Unlock()
+
+	replaced := false
+	if source != "" {
+		for index, peer := range measurement.Peers {
+			if peer != nil && peer.Source == source {
+				measurement.Peers[index] = owned
+				replaced = true
+				break
+			}
+		}
+	}
+	if !replaced {
+		measurement.Peers = append(measurement.Peers, owned)
+	}
+
+	sort.SliceStable(measurement.Peers, func(i, j int) bool {
+		left, right := measurement.Peers[i], measurement.Peers[j]
+		if left == nil {
+			return false
+		}
+		if right == nil {
+			return true
+		}
+		if left.Source != right.Source {
+			return left.Source < right.Source
+		}
+		return left.SeqIdx < right.SeqIdx
+	})
+
+	mergeQualityLocked(measurement, maturity, snr, snrDefined, estimated)
+}
+
+// mergeQualityLocked folds producer quality into the shared slot. Caller holds mu.
+// Min maturity and min defined SNR are commutative — contribute order does not matter.
+func mergeQualityLocked[T any](
+	measurement *Measurement[T], maturity, snr float64, snrDefined, estimated bool,
+) {
+	if maturity == 0 && !snrDefined && !estimated {
+		return
+	}
+
+	if measurement.Maturity == 0 && !measurement.SNRDefined && !measurement.Estimated {
+		measurement.Maturity = maturity
+		measurement.SNR = snr
+		measurement.SNRDefined = snrDefined
+		measurement.Estimated = estimated
+		return
+	}
+
+	if maturity > 0 {
+		if measurement.Maturity == 0 || maturity < measurement.Maturity {
+			measurement.Maturity = maturity
+		}
+	}
+
+	if snrDefined {
+		if !measurement.SNRDefined {
+			measurement.SNR = snr
+			measurement.SNRDefined = true
+		} else if snr < measurement.SNR {
+			measurement.SNR = snr
+		}
+	}
+
+	measurement.Estimated = measurement.Estimated || estimated
+}
+
 // EnsureMetadata safely initializes the metadata map if it is nil.
 func (m *Measurement[T]) EnsureMetadata() {
 	m.mu.Lock()
@@ -283,16 +473,20 @@ func (m *Measurement[T]) RangeProvenance(f func(key, value string) bool) {
 	}
 }
 
-// Facts extracts QualityFacts from Metadata safely under RLock.
+// Facts extracts QualityFacts from a Metadata snapshot. Never hand the live
+// map to factsFromMetadata — concurrent SetMetadata/DeleteMetadata would
+// fatal on concurrent map read/write even under RLock if any writer bypasses
+// mu, and snapshot keeps the parse off the critical section.
 func (m *Measurement[T]) Facts() QualityFacts {
 	if m == nil {
 		return QualityFacts{}
 	}
 
 	m.mu.RLock()
-	defer m.mu.RUnlock()
+	snap := maps.Clone(m.Metadata)
+	m.mu.RUnlock()
 
-	return factsFromMetadata(m.Metadata)
+	return factsFromMetadata(snap)
 }
 
 /*
@@ -300,6 +494,25 @@ NewMeasurement creates one identified observation with empty metric storage.
 Its identity is unstamped: the register slot that owns it is assigned when a
 workload registers it, and the node stamps the slot back via SetID.
 */
+
+/*
+StampInterval sets At and an optional From window start. From is only stored when
+it is not after At — out-of-order venue clocks must not flood Category with
+inverted intervals.
+*/
+func StampInterval[T any](measurement *Measurement[T], at, from time.Time) {
+	if measurement == nil {
+		return
+	}
+	if !at.IsZero() {
+		measurement.At = at
+	}
+	if from.IsZero() || (!measurement.At.IsZero() && from.After(measurement.At)) {
+		return
+	}
+	measurement.From = from
+}
+
 func NewMeasurement[T any](
 	source string, metrics map[string]Metric[T],
 ) *Measurement[T] {
@@ -534,6 +747,13 @@ const (
 qualityOf reads the measurement's own quality facts as one reading.
 */
 func qualityOf[T any](measurement *Measurement[T]) QualityReading {
+	if measurement == nil {
+		return QualityReading{}
+	}
+
+	measurement.mu.RLock()
+	defer measurement.mu.RUnlock()
+
 	return QualityReading{
 		SNR:        measurement.SNR,
 		SNRDefined: measurement.SNRDefined,
@@ -685,10 +905,9 @@ func (op *Finalizer[Value]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Po
 					measurement.Err = err
 				}
 
-				measurement.Maturity = reading.Maturity
-				measurement.SNR = reading.SNR
-				measurement.SNRDefined = reading.SNRDefined
-				measurement.Estimated = reading.Estimated
+				measurement.SetQuality(
+					reading.Maturity, reading.SNR, reading.SNRDefined, reading.Estimated,
+				)
 			}
 
 			if !yield(arriving) {

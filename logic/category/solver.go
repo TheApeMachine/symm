@@ -166,13 +166,14 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 		results = append(results, categories)
 		measurement.Label = symbol
 		measurement.At = categories[0].At
-		measurement.Maturity = categories[0].Maturity
-
+		maturity := categories[0].Maturity
+		snr, snrDefined, estimated := 0.0, false, false
 		if categories[0].Uncertainty > 0 {
-			measurement.SNR = categories[0].Confidence / categories[0].Uncertainty
-			measurement.SNRDefined = true
-			measurement.Estimated = true
+			snr = categories[0].Confidence / categories[0].Uncertainty
+			snrDefined = true
+			estimated = true
 		}
+		measurement.SetQuality(maturity, snr, snrDefined, estimated)
 
 		for _, cat := range categories {
 			if cat.Type != "" {
@@ -187,6 +188,7 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 	}
 
 	measurement.Result = results
+	measurement.SetSource("category")
 
 	return measurement
 }
@@ -317,7 +319,7 @@ func (solver *Solver) stepMeasurements(
 			}
 		}
 
-		failed := false
+		skipped := 0
 
 		for _, measurement := range measurements {
 			if measurement == nil || measurement.Err != nil {
@@ -325,13 +327,20 @@ func (solver *Solver) stepMeasurements(
 			}
 
 			if err := solver.accumulateCoords(newCoords, measurement); err != nil {
-				solver.fail("category: invalid measurement", err)
-				failed = true
-				break
+				// Soft-skip inverted/out-of-order intervals (From after At) and
+				// other coordinate rejects. Never FATAL: a late correlation peer
+				// must not take Category READY->ERROR and starve Step with
+				// before-READY floods.
+				skipped++
+				errnie.Warn(fmt.Sprintf(
+					"[category] skipped invalid measurement: %v", err,
+				))
+				continue
 			}
 		}
 
-		if failed {
+		if skipped > 0 && len(newCoords) == 0 {
+			// Every peer in this envelope was unusable; nothing to classify.
 			return nil
 		}
 
@@ -660,6 +669,11 @@ func (solver *Solver) buildBatch(
 	return categories, nil
 }
 
+/*
+fail records a hard Category invariant breach and transitions FATAL.
+Coordinate-level rejects (inverted From/At, late peers) must soft-skip instead —
+see stepMeasurements — so one bad signal cannot freeze the regime path.
+*/
 func (solver *Solver) fail(message string, err error) {
 	solver.Error(errnie.Err(errnie.Validation, message, err))
 	solver.Transition(runtime.FATAL)

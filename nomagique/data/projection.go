@@ -136,8 +136,6 @@ func (op *Projection) project(input ProjectionInput) *Measurement[float64] {
 	}
 
 	if len(op.Facts) != 0 {
-		measurement.Metadata = make(map[string]string, len(op.Facts))
-
 		for _, fact := range op.Facts {
 			if len(fact.Defined) != 0 && !flagged(input, fact.Defined) {
 				continue

@@ -120,6 +120,16 @@ var (
 				return err
 			}
 
+			// Register this process in the Runs metadata table so Hindsight can
+			// list a capture identity even when the tape is still thin.
+			if err := catalog.RecordRun(ctx, tables.Run{
+				Epoch:     epoch,
+				StartedAt: processStartedAt.UTC(),
+				Status:    "running",
+			}); err != nil {
+				errnie.Warn("[root] failed to record hindsight run: " + err.Error())
+			}
+
 			public := network.NewWebsocketClient(ctx)
 			if err := public.Open(system.Cfg.WebSocket.Endpoints.Public); err != nil {
 				return errnie.Error(errnie.Err(
@@ -314,10 +324,18 @@ var (
 					m.Label = touch.Symbol
 					m.At = touch.Timestamp
 					m.SetMetadata("type", "level3")
+					m.SetProvenance("ingress_channel", "level3")
 					m.SetProvenance("channel", "level3")
 					workspace.Step(m)
 				}
 			})
+
+			// Map spot symbols onto Futures perpetuals before subscribe so the
+			// futures socket receives product_ids (not spot names). Soft-fail:
+			// a missing catalog leaves spot-only running; derivatives stay dark.
+			if err := instrument.LoadFuturesProducts(ctx); err != nil {
+				errnie.Warn("[root] futures product map unavailable: " + err.Error())
+			}
 
 			// Subscribe and seed while transports remain BUSY. Only a complete
 			// instrument universe and restored learner may open the workspace.
@@ -335,6 +353,49 @@ var (
 					"symm: instrument universe is not seeded",
 					nil,
 				))
+			}
+
+			// Live private WS must subscribe executions (+ balances) so fills
+			// reach Trader.ApplyExecution — Paper wires OnExecution directly.
+			if privateWS != nil {
+				auth := kraken.NewAuth()
+				token, tokErr := auth.Token()
+				if tokErr != nil {
+					return errnie.Error(errnie.Err(
+						errnie.NotAcceptable,
+						"symm: private websocket auth token unavailable",
+						tokErr,
+					))
+				}
+				subscribePrivate := func(tok string) error {
+					for _, payload := range []any{
+						kraken.NewExecutionSubscription(tok),
+						kraken.NewBalanceSubscription(tok),
+					} {
+						msg, err := sonic.Marshal(payload)
+						if err != nil {
+							return errnie.Error(errnie.Err(
+								errnie.IO, "symm: private subscribe marshal failed", err,
+							))
+						}
+						if err := privateWS.Write(msg); err != nil {
+							return errnie.Error(errnie.Err(
+								errnie.IO, "symm: private subscribe failed", err,
+							))
+						}
+					}
+					return nil
+				}
+				if err := subscribePrivate(token); err != nil {
+					return err
+				}
+				privateWS.OnReconnect(func() error {
+					tok, err := auth.Token()
+					if err != nil {
+						return err
+					}
+					return subscribePrivate(tok)
+				})
 			}
 
 			// Start consumers before opening market ingress. All construction,
@@ -409,6 +470,16 @@ var (
 						}
 
 						switch msg.Channel {
+						case "executions":
+							execution := kraken.NewExecution(buf)
+							if execution != nil && trader != nil {
+								trader.ApplyExecution(execution)
+							}
+						case "balances":
+							wallet := kraken.NewBalance(buf)
+							if wallet != nil && balance != nil {
+								balance.UpdateWallet(wallet)
+							}
 						case "level3":
 							l3 := kraken.NewLevel3(buf)
 							if l3 != nil && book != nil {
@@ -452,6 +523,7 @@ var (
 									m.Label = td.Symbol
 									m.At = td.Timestamp
 									m.SetMetadata("type", "ticker")
+									m.SetProvenance("ingress_channel", "ticker")
 									m.SetProvenance("channel", "ticker")
 
 									if td.Trades != nil {
@@ -478,6 +550,7 @@ var (
 									m.SetMetadata("type", "trade")
 									m.SetMetadata("ord_type", td.OrderType)
 									m.SetMetadata("trade_id", fmt.Sprintf("%d", td.TradeID))
+									m.SetProvenance("ingress_channel", "trade")
 									m.SetProvenance("channel", "trade")
 									m.SetProvenance("side", td.Side)
 
@@ -495,7 +568,100 @@ var (
 				startIngress(privateWS, "private")
 			}
 
-			startIngress(futures, "futures")
+			// Futures WS uses feed= (not channel=). Spot ingress cannot parse it.
+			go func() {
+				errnie.Info("[root] starting futures ingress")
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					default:
+					}
+
+					buf, err := futures.Read()
+					if err != nil {
+						continue
+					}
+
+					var envelope struct {
+						Feed  string `json:"feed"`
+						Event string `json:"event"`
+					}
+					if err := sonic.Unmarshal(buf, &envelope); err != nil {
+						continue
+					}
+					if envelope.Event != "" && envelope.Feed == "" {
+						continue
+					}
+
+					switch envelope.Feed {
+					case "ticker":
+						ft := kraken.NewFuturesTicker(buf)
+						if ft == nil || ft.Data.ProductID == "" {
+							continue
+						}
+						spot := instrument.SpotForProduct(ft.Data.ProductID)
+						if spot == "" {
+							continue
+						}
+						if ft.Data.Last == nil || ft.Data.IndexPrice == nil || ft.Data.MarkPrice == nil {
+							continue
+						}
+
+						metrics := map[string]data.Metric[float64]{
+							"last":          {Raw: ft.Data.Last.Float64(), Exact: ft.Data.Last},
+							"index_price":   {Raw: ft.Data.IndexPrice.Float64(), Exact: ft.Data.IndexPrice},
+							"mark_price":    {Raw: ft.Data.MarkPrice.Float64(), Exact: ft.Data.MarkPrice},
+							"open_interest": {Raw: ft.Data.OpenInterest},
+							"volume":        {Raw: ft.Data.Volume},
+						}
+						if ft.Data.Bid != nil {
+							metrics["bid"] = data.Metric[float64]{Raw: ft.Data.Bid.Float64(), Exact: ft.Data.Bid}
+						}
+						if ft.Data.Ask != nil {
+							metrics["ask"] = data.Metric[float64]{Raw: ft.Data.Ask.Float64(), Exact: ft.Data.Ask}
+						}
+
+						m := data.NewMeasurement("websocket", metrics)
+						m.Label = spot
+						m.At = ft.Data.Timestamp
+						m.SetMetadata("type", "futures_ticker")
+						m.SetProvenance("ingress_channel", "futures_ticker")
+						m.SetProvenance("channel", "futures_ticker")
+						m.SetProvenance("product_id", ft.Data.ProductID)
+						workspace.Step(m)
+
+					case "trade", "trade_snapshot":
+						ft := kraken.NewFuturesTrade(buf)
+						if ft == nil {
+							continue
+						}
+						for _, td := range ft.Data {
+							spot := instrument.SpotForProduct(td.ProductID)
+							if spot == "" || td.ProductID == "" {
+								continue
+							}
+							price := td.Price
+							metrics := map[string]data.Metric[float64]{
+								"price": {Raw: price.Float64(), Exact: &price},
+								"qty":   {Raw: td.Qty},
+							}
+							m := data.NewMeasurement("websocket", metrics)
+							m.Label = spot
+							m.At = td.Timestamp
+							m.SetMetadata("type", "futures_trade")
+							m.SetProvenance("ingress_channel", "futures_trade")
+							m.SetProvenance("channel", "futures_trade")
+							m.SetProvenance("product_id", td.ProductID)
+							m.SetProvenance("side", td.Side)
+							if td.Type != "" {
+								m.SetProvenance("type", td.Type)
+							}
+							workspace.Step(m)
+						}
+					}
+				}
+			}()
 
 			instrument.Level3.Range(func(key, value any) bool {
 				if client, ok := value.(*network.WebsocketClient); ok {

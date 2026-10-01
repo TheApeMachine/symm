@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strconv"
 
+	"github.com/apache/iceberg-go"
 	"github.com/gofiber/contrib/v3/websocket"
 	"github.com/gofiber/fiber/v3"
 	"github.com/theapemachine/symm/hindsight/tables"
@@ -206,8 +207,8 @@ func (routes *Routes) Register() {
 		return ctx.JSON(measurements)
 	})
 
-	// Captures: Iceberg SpotTicker rows projected as capture identities so the
-	// FrameStrip / CaptureCard work against the same tape Timeline streams.
+	// Captures: bounded SpotTicker identities for FrameStrip / CaptureCard.
+	// Full research timelines go through DuckDB/workbench, not this listing.
 	routes.hub.app.Get("/hindsight/captures", func(ctx fiber.Ctx) error {
 		if routes.hub.store == nil {
 			return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
@@ -221,10 +222,24 @@ func (routes *Routes) Register() {
 		after := parseInt64Query(ctx.Query("after"))
 		symbol := ctx.Query("symbol")
 
+		// Bounded SpotTicker scan only — research timelines use DuckDB/workbench;
+		// this neighbourhood listing must not pull every peer family through Timeline.
 		const maxCaptures = 64
 		captures := make([]map[string]any, 0, maxCaptures)
 
-		for measurement := range routes.hub.store.Timeline(routes.hub.Context(), epoch, symbol, after, 0) {
+		var filter iceberg.BooleanExpression
+		if symbol != "" {
+			filter = iceberg.EqualTo(iceberg.Reference("symbol"), symbol)
+		}
+		if after > 0 {
+			expression := iceberg.BooleanExpression(iceberg.GreaterThanEqual(iceberg.Reference("tick"), after))
+			if filter != nil {
+				expression = iceberg.NewAnd(filter, expression)
+			}
+			filter = expression
+		}
+
+		for measurement := range routes.hub.store.Scan(routes.hub.Context(), tables.SpotTicker, epoch, filter, maxCaptures) {
 			if measurement == nil || measurement.SeqIdx < after {
 				continue
 			}

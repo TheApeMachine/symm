@@ -1,6 +1,6 @@
-import * as flatbuffers from "flatbuffers";
-import { hubBaseUrl, hubWsUrl } from "#/lib/hub";
-import { MeasurementsFrame } from "#/providers/telemetry/telemetry/measurements-frame";
+import { tableFromIPC } from "apache-arrow";
+import { hubBaseUrl } from "#/lib/hub";
+import { runWarehouseStatement } from "#/components/workbench/workbench-api";
 import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
 import type {
 	EpisodeKind,
@@ -81,22 +81,119 @@ export const fetchHindsightRuns = async (): Promise<HindsightRun[]> => {
 	return uniqueRuns;
 };
 
+const sqlString = (value: string): string =>
+	`'${value.replaceAll("'", "''")}'`;
+
+type WarehouseTableRow = {
+	database?: string;
+	schema?: string;
+	name?: string;
+};
+
+let cachedHindsightTables: Promise<Record<string, string>> | undefined;
+
+/*
+resolveHindsightTables maps logical Iceberg family names to catalog.schema.table
+qualified names in the DuckDB session the workbench attaches.
+*/
+export const resolveHindsightTables = async (): Promise<Record<string, string>> => {
+	if (!cachedHindsightTables) {
+		cachedHindsightTables = (async () => {
+			const ipc = await runWarehouseStatement("SHOW ALL TABLES");
+			if (ipc.byteLength === 0) {
+				throw new Error(
+					"workbench returned no tables — is `make workbench` running?",
+				);
+			}
+
+			const listing = tableFromIPC(ipc);
+			const found: Record<string, string> = {};
+
+			for (const row of listing.toArray()) {
+				const record = (
+					row as { toJSON: () => WarehouseTableRow }
+				).toJSON();
+				if (record.database === "memory" || record.schema !== "hindsight") {
+					continue;
+				}
+				if (!record.database || !record.name) continue;
+				found[record.name] = `${record.database}.${record.schema}.${record.name}`;
+			}
+
+			if (!found.spot_ticker) {
+				throw new Error(
+					"hindsight.spot_ticker missing from workbench catalog",
+				);
+			}
+
+			return found;
+		})().catch((cause) => {
+			cachedHindsightTables = undefined;
+			throw cause;
+		});
+	}
+
+	return cachedHindsightTables;
+};
+
+const arrowRows = async (
+	sql: string,
+): Promise<Record<string, unknown>[]> => {
+	const ipc = await runWarehouseStatement(sql);
+	if (ipc.byteLength === 0) return [];
+	return tableFromIPC(ipc)
+		.toArray()
+		.map((row) => (row as { toJSON: () => Record<string, unknown> }).toJSON());
+};
+
+const numField = (row: Record<string, unknown>, ...keys: string[]): number => {
+	for (const key of keys) {
+		const value = row[key];
+		if (typeof value === "number" && Number.isFinite(value)) return value;
+		if (typeof value === "bigint") return Number(value);
+		if (typeof value === "string" && value !== "" && Number.isFinite(Number(value))) {
+			return Number(value);
+		}
+	}
+	return 0;
+};
+
+const strField = (row: Record<string, unknown>, ...keys: string[]): string => {
+	for (const key of keys) {
+		const value = row[key];
+		if (typeof value === "string") return value;
+		if (value instanceof Date) return value.toISOString();
+	}
+	return "";
+};
+
 export const fetchHindsightSymbols = async (
 	run: string,
 ): Promise<string[]> => {
-	const response = await fetch(
-		`${hubBaseUrl()}/hindsight/symbols?run=${encodeURIComponent(run)}`,
-	);
-
-	if (response.status === 404) return [];
-
-	if (!response.ok) {
-		throw new Error(
-			`Hindsight request failed (${response.status}): ${await response.text()}`,
+	try {
+		const tables = await resolveHindsightTables();
+		const epoch = Number(run) || 0;
+		const rows = await arrowRows(
+			`SELECT DISTINCT symbol AS symbol FROM ${tables.spot_ticker} ` +
+				`WHERE epoch = ${epoch} AND symbol IS NOT NULL AND symbol <> '' ` +
+				`ORDER BY symbol`,
 		);
-	}
+		return rows.map((row) => strField(row, "symbol")).filter(Boolean);
+	} catch {
+		const response = await fetch(
+			`${hubBaseUrl()}/hindsight/symbols?run=${encodeURIComponent(run)}`,
+		);
 
-	return (await response.json()) as string[];
+		if (response.status === 404) return [];
+
+		if (!response.ok) {
+			throw new Error(
+				`Hindsight request failed (${response.status}): ${await response.text()}`,
+			);
+		}
+
+		return (await response.json()) as string[];
+	}
 };
 
 export const fetchHindsightCaptures = async (
@@ -864,22 +961,328 @@ export type TimelineStreamOptions = {
 	onProgress?: (timeline: HindsightTimeline) => void;
 };
 
+const emptyPolicy = {
+	coordinate: "midpoint" as const,
+	floorExcursion: 0,
+	excursionSigmas: 0,
+	excursionHorizon: 0,
+	retraceFraction: 0,
+	regimeWindow: 0,
+	regimeBaseline: 0,
+	volatilityRatio: 0,
+	spreadRatio: 0,
+	depthRatio: 0,
+	arrivalRatio: 0,
+	minRegimeSpan: 0,
+	minObservations: 0,
+	maxEpisodesPerSet: 0,
+};
+
+const episodeKind = (direction: string): EpisodeKind => {
+	if (direction === "up" || direction === "upward") return "upward_excursion";
+	if (direction === "down" || direction === "downward") return "downward_excursion";
+	if (direction === "chop") return "reversal";
+	if (direction === "flat") return "reversal";
+	return "reversal";
+};
+
+const isoOrEmpty = (value: unknown): string => {
+	if (typeof value === "string" && value !== "") {
+		const parsed = new Date(value);
+		return Number.isNaN(parsed.getTime()) ? value : parsed.toISOString();
+	}
+	if (value instanceof Date) return value.toISOString();
+	return "";
+};
+
 /*
-fetchHindsightTimeline streams timeline measurements over WebSocket as FlatBuffers
-and adapts them directly into a HindsightTimeline.
+bucketTimelineSQL asks DuckDB to aggregate the Iceberg tape into a bounded
+OHLC window. The viewer never pulls the full family into Go or the browser.
+*/
+const bucketTimelineSQL = (
+	ticker: string,
+	trade: string | undefined,
+	epoch: number,
+	symbol: string,
+	buckets: number,
+	fromTick: number,
+	toTick: number,
+): string => {
+	const symbolPred =
+		symbol === "" ? "TRUE" : `symbol = ${sqlString(symbol)}`;
+	const fromPred = fromTick > 0 ? `tick >= ${fromTick}` : "TRUE";
+	const toPred = toTick > 0 ? `tick <= ${toTick}` : "TRUE";
+	const n = Math.max(1, buckets);
+
+	const tradeCte =
+		trade === undefined
+			? `trade_buckets AS (
+  SELECT CAST(NULL AS BIGINT) AS bucket_idx,
+    CAST(0 AS BIGINT) AS trades,
+    CAST(0 AS DOUBLE) AS trade_qty
+  WHERE FALSE
+)`
+			: `trades AS (
+  SELECT
+    tick,
+    COALESCE(element_at(metrics, 'qty'), element_at(metrics, 'volume'), 0) AS qty,
+    CASE
+      WHEN (SELECT max_tick FROM bounds) = (SELECT min_tick FROM bounds) THEN 0
+      ELSE least(
+        ${n} - 1,
+        CAST(floor(
+          (tick - (SELECT min_tick FROM bounds)) * ${n} * 1.0
+          / nullif((SELECT max_tick FROM bounds) - (SELECT min_tick FROM bounds), 0)
+        ) AS BIGINT)
+      )
+    END AS bucket_idx
+  FROM ${trade}
+  WHERE epoch = ${epoch}
+    AND (${symbolPred})
+    AND (${fromPred})
+    AND (${toPred})
+),
+trade_buckets AS (
+  SELECT bucket_idx,
+    count(*)::BIGINT AS trades,
+    coalesce(sum(qty), 0)::DOUBLE AS trade_qty
+  FROM trades
+  GROUP BY 1
+)`;
+
+	return `
+WITH bounds AS (
+  SELECT
+    min(tick) AS min_tick,
+    max(tick) AS max_tick
+  FROM ${ticker}
+  WHERE epoch = ${epoch}
+    AND (${symbolPred})
+    AND (${fromPred})
+    AND (${toPred})
+),
+ticker AS (
+  SELECT
+    tick,
+    venue_at,
+    COALESCE(
+      element_at(metrics, 'mid'),
+      CASE
+        WHEN element_at(metrics, 'bid') IS NOT NULL
+         AND element_at(metrics, 'ask') IS NOT NULL
+         AND element_at(metrics, 'ask') >= element_at(metrics, 'bid')
+        THEN (element_at(metrics, 'bid') + element_at(metrics, 'ask')) / 2.0
+        ELSE COALESCE(
+          element_at(metrics, 'last'),
+          element_at(metrics, 'price'),
+          element_at(metrics, 'close')
+        )
+      END
+    ) AS mid,
+    element_at(metrics, 'bid') AS bid,
+    element_at(metrics, 'ask') AS ask,
+    element_at(metrics, 'bid_qty') AS bid_qty,
+    element_at(metrics, 'ask_qty') AS ask_qty,
+    CASE
+      WHEN (SELECT max_tick FROM bounds) = (SELECT min_tick FROM bounds) THEN 0
+      ELSE least(
+        ${n} - 1,
+        CAST(floor(
+          (tick - (SELECT min_tick FROM bounds)) * ${n} * 1.0
+          / nullif((SELECT max_tick FROM bounds) - (SELECT min_tick FROM bounds), 0)
+        ) AS BIGINT)
+      )
+    END AS bucket_idx
+  FROM ${ticker}
+  WHERE epoch = ${epoch}
+    AND (${symbolPred})
+    AND (${fromPred})
+    AND (${toPred})
+),
+${tradeCte}
+SELECT
+  t.bucket_idx AS index,
+  min(t.tick) AS from_sequence,
+  max(t.tick) AS to_sequence,
+  min(t.venue_at) AS from_at,
+  max(t.venue_at) AS to_at,
+  count(*)::BIGINT AS tickers,
+  count(*)::BIGINT AS observations,
+  arg_min(t.mid, t.tick) AS open,
+  max(t.mid) AS high,
+  min(t.mid) AS low,
+  arg_max(t.mid, t.tick) AS close,
+  avg(
+    CASE
+      WHEN t.bid IS NOT NULL AND t.ask IS NOT NULL AND t.mid > 0
+      THEN (t.ask - t.bid) / t.mid
+    END
+  ) AS spread_fraction,
+  avg(
+    CASE
+      WHEN t.bid_qty IS NOT NULL AND t.ask_qty IS NOT NULL
+      THEN t.bid_qty + t.ask_qty
+    END
+  ) AS touch_depth,
+  coalesce(max(tb.trades), 0)::BIGINT AS trades,
+  coalesce(max(tb.trade_qty), 0)::DOUBLE AS trade_qty
+FROM ticker t
+LEFT JOIN trade_buckets tb ON tb.bucket_idx = t.bucket_idx
+GROUP BY t.bucket_idx
+ORDER BY t.bucket_idx
+`.trim();
+};
+
+const pickDefaultSymbol = async (
+	ticker: string,
+	epoch: number,
+): Promise<string> => {
+	const rows = await arrowRows(
+		`SELECT symbol AS symbol, count(*)::BIGINT AS n FROM ${ticker} ` +
+			`WHERE epoch = ${epoch} AND symbol IS NOT NULL AND symbol <> '' ` +
+			`GROUP BY 1 ORDER BY n DESC LIMIT 1`,
+	);
+	return rows.length > 0 ? strField(rows[0], "symbol") : "";
+};
+
+const episodesFromExcursions = (
+	excursions: RawExcursionRecord[],
+	selectedSymbol: string,
+): HindsightEpisode[] => {
+	const selected = excursions.filter((e) => e.symbol === selectedSymbol);
+
+	return selected.map((e) => {
+		const fromSequence = e.precursorStartTick || e.anchorTick;
+		const toSequence = e.exitTick;
+		const peakRole = (
+			e.direction === "down" || e.direction === "downward" ? "trough" : "peak"
+		) as ReferenceRole;
+		const runId = String(e.epoch);
+		const ref = (role: ReferenceRole, sequence: number, value: number) => ({
+			role,
+			capture: {
+				run: runId,
+				sequence,
+				stream: "excursions",
+				streamEpoch: e.epoch,
+				streamSequence: sequence,
+			},
+			ordinal: 0,
+			venueAt: "",
+			receivedAt: "",
+			value,
+			hasValue: Number.isFinite(value) && value > 0,
+		});
+
+		const references = [
+			ref("anchor", e.anchorTick, e.entryPrice),
+			ref(
+				peakRole,
+				e.extremumTick || e.anchorTick,
+				e.extremumPrice || e.entryPrice,
+			),
+			ref("exit_anchor", e.exitTick, e.exitPrice),
+		];
+
+		if (e.precursorStartTick > 0 && e.precursorStartTick < e.anchorTick) {
+			references.unshift(
+				ref("shock_onset", e.precursorStartTick, e.entryPrice),
+			);
+		}
+
+		return {
+			id: e.id,
+			symbol: e.symbol,
+			kind: episodeKind(e.direction),
+			coordinate: "midpoint" as MarketCoordinate,
+			fromSequence,
+			toSequence,
+			fromAt: "",
+			toAt: "",
+			observations: e.observationCount,
+			observedExcursion: e.grossExcursion,
+			hasObservedExcursion: e.grossExcursion > 0,
+			confirmed: e.clearsFriction,
+			ratio: e.profitFraction,
+			hasRatio: Number.isFinite(e.profitFraction),
+			traversed: e.profitFraction,
+			hasTraversed: Number.isFinite(e.profitFraction),
+			threshold: 0.0052,
+			hasThreshold: true,
+			references,
+		};
+	});
+};
+
+const bucketsFromRows = (
+	rows: Record<string, unknown>[],
+): HindsightTimelineBucket[] =>
+	rows.map((row, index) => {
+		const fromSequence = numField(row, "from_sequence");
+		const toSequence = numField(row, "to_sequence");
+		const fromAt = isoOrEmpty(row.from_at);
+		const toAt = isoOrEmpty(row.to_at);
+		const spreadFraction = numField(row, "spread_fraction");
+		const touchDepth = numField(row, "touch_depth");
+		const hasSpread =
+			row.spread_fraction !== null &&
+			row.spread_fraction !== undefined &&
+			Number.isFinite(spreadFraction);
+		const hasTouch =
+			row.touch_depth !== null &&
+			row.touch_depth !== undefined &&
+			Number.isFinite(touchDepth);
+
+		return {
+			index: numField(row, "index") || index,
+			fromSequence,
+			toSequence,
+			fromAt,
+			toAt,
+			observedFromSequence: fromSequence,
+			observedToSequence: toSequence,
+			observedFromAt: fromAt,
+			observedToAt: toAt,
+			observations: numField(row, "observations"),
+			tickers: numField(row, "tickers"),
+			trades: numField(row, "trades"),
+			tradeQty: numField(row, "trade_qty"),
+			defined: true,
+			open: numField(row, "open"),
+			high: numField(row, "high"),
+			low: numField(row, "low"),
+			close: numField(row, "close"),
+			spreadFraction: hasSpread ? spreadFraction : 0,
+			hasSpreadFraction: hasSpread,
+			touchDepth: hasTouch ? touchDepth : 0,
+			hasTouchDepth: hasTouch,
+			captureRate: 0,
+			hasCaptureRate: false,
+		};
+	});
+
+/*
+fetchHindsightTimeline loads research timelines through /workbench/query
+(DuckDB over Iceberg → Arrow IPC). Live typed Scan/Timeline paths stay out of
+this UI so analytical windows stay memory-bounded.
 */
 export const fetchHindsightTimeline = async (
 	query: HindsightTimelineQuery,
 	options?: TimelineStreamOptions,
 ): Promise<HindsightTimeline | null> => {
-	const params = new URLSearchParams({ run: query.run });
+	if (options?.signal?.aborted) {
+		throw new DOMException("Aborted", "AbortError");
+	}
 
-	if (query.symbol) params.set("symbol", query.symbol);
-	if (query.coordinate) params.set("coordinate", query.coordinate);
-	if (query.axis) params.set("axis", query.axis);
-	if (query.buckets) params.set("buckets", String(query.buckets));
-	if (query.from) params.set("from", String(query.from));
-	if (query.to) params.set("to", String(query.to));
+	const epoch = Number(query.run) || 0;
+	const buckets = query.buckets && query.buckets > 0 ? query.buckets : 200;
+	const fromTick = query.from && query.from > 0 ? query.from : 0;
+	const toTick = query.to && query.to > 0 ? query.to : 0;
+
+	const tables = await resolveHindsightTables();
+	if (options?.signal?.aborted) {
+		throw new DOMException("Aborted", "AbortError");
+	}
 
 	let symbols: string[] = [];
 	if (query.symbols) {
@@ -897,82 +1300,121 @@ export const fetchHindsightTimeline = async (
 		// optional discovery
 	}
 
-	return new Promise((resolve, reject) => {
-		if (options?.signal?.aborted) {
-			reject(new DOMException("Aborted", "AbortError"));
-			return;
-		}
+	if (options?.signal?.aborted) {
+		throw new DOMException("Aborted", "AbortError");
+	}
 
-		const wsUrl = `${hubWsUrl()}/hindsight/timeline?${params.toString()}`;
-		let socket: WebSocket | null = null;
-		const measurements: Measurement[] = [];
+	let selectedSymbol = query.symbol ?? "";
+	if (!selectedSymbol) {
+		selectedSymbol = await pickDefaultSymbol(tables.spot_ticker, epoch);
+	}
 
-		try {
-			socket = new WebSocket(wsUrl);
-			socket.binaryType = "arraybuffer";
-		} catch (err) {
-			reject(err);
-			return;
-		}
+	const rows = await arrowRows(
+		bucketTimelineSQL(
+			tables.spot_ticker,
+			tables.spot_trade,
+			epoch,
+			selectedSymbol,
+			buckets,
+			fromTick,
+			toTick,
+		),
+	);
 
-		const onAbort = () => {
-			if (socket) {
-				socket.close();
-			}
-			reject(new DOMException("Aborted", "AbortError"));
-		};
+	if (options?.signal?.aborted) {
+		throw new DOMException("Aborted", "AbortError");
+	}
 
-		if (options?.signal) {
-			options.signal.addEventListener("abort", onAbort, { once: true });
-		}
+	const timelineBuckets = bucketsFromRows(rows);
+	const first = timelineBuckets[0];
+	const last = timelineBuckets[timelineBuckets.length - 1];
+	const span = {
+		fromSequence: first?.fromSequence ?? 0,
+		toSequence: last?.toSequence ?? 0,
+		fromAt: first?.fromAt ?? "",
+		toAt: last?.toAt ?? "",
+	};
+	const totalObservations = timelineBuckets.reduce(
+		(acc, bucket) => acc + bucket.observations,
+		0,
+	);
+	const episodes = episodesFromExcursions(excursions, selectedSymbol || "");
+	const allSymbols =
+		symbols.length > 0
+			? symbols
+			: selectedSymbol
+				? [selectedSymbol]
+				: [];
+	const symbolSummaries: HindsightSymbolSummary[] = allSymbols.map((sym) => {
+		const symExcursions = excursions.filter((e) => e.symbol === sym);
+		const topExcursion = symExcursions.reduce(
+			(max, e) => Math.max(max, e.grossExcursion),
+			0,
+		);
+		const topKind =
+			symExcursions.length > 0
+				? episodeKind(symExcursions[0].direction)
+				: undefined;
 
-		socket.onmessage = (event: MessageEvent) => {
-			if (!(event.data instanceof ArrayBuffer)) {
-				return;
-			}
-
-			try {
-				const bytes = new Uint8Array(event.data);
-				const buffer = new flatbuffers.ByteBuffer(bytes);
-				const frame = MeasurementsFrame.getRootAsMeasurementsFrame(buffer);
-				const count = frame.rowsLength();
-
-				for (let i = 0; i < count; i++) {
-					const row = frame.rows(i);
-					if (row) {
-						measurements.push(flatbufferToMeasurement(row.unpack()));
-					}
-				}
-
-				if (options?.onProgress && measurements.length > 0) {
-					options.onProgress(
-						adaptMeasurementsToTimeline(measurements, query, symbols, excursions),
-					);
-				}
-			} catch (err) {
-				console.error("Failed to decode FlatBuffers MeasurementsFrame:", err);
-			}
-		};
-
-		socket.onerror = () => {
-			if (options?.signal) {
-				options.signal.removeEventListener("abort", onAbort);
-			}
-			reject(
-				new Error(
-					`Hindsight request failed (WebSocket): connection error to ${wsUrl}`,
-				),
-			);
-		};
-
-		socket.onclose = () => {
-			if (options?.signal) {
-				options.signal.removeEventListener("abort", onAbort);
-			}
-
-			resolve(adaptMeasurementsToTimeline(measurements, query, symbols, excursions));
+		return {
+			symbol: sym,
+			observations: sym === selectedSymbol ? totalObservations : 0,
+			defined: sym === selectedSymbol ? timelineBuckets.length : 0,
+			tickers: sym === selectedSymbol ? totalObservations : 0,
+			trades: 0,
+			firstSequence: span.fromSequence,
+			lastSequence: span.toSequence,
+			firstAt: span.fromAt,
+			lastAt: span.toAt,
+			episodes: symExcursions.length,
+			insufficientData: false,
+			topExcursion,
+			topKind,
+			priceEpisodes: symExcursions.length,
+			regimeEpisodes: 0,
 		};
 	});
+
+	const timeline: HindsightTimeline = {
+		run: query.run,
+		symbol: selectedSymbol,
+		coordinate: query.coordinate || "midpoint",
+		policy: {
+			...emptyPolicy,
+			coordinate: query.coordinate || "midpoint",
+		},
+		axis: query.axis || "time",
+		span,
+		runSpan: span,
+		buckets: timelineBuckets,
+		discovery: {
+			symbol: selectedSymbol,
+			coordinate: query.coordinate || "midpoint",
+			policy: {
+				...emptyPolicy,
+				coordinate: query.coordinate || "midpoint",
+			},
+			observations: totalObservations,
+			defined: timelineBuckets.length,
+			undefined: 0,
+			sigma: 0,
+			hasSigma: false,
+			qualifyingMove: 0,
+			episodes,
+			insufficientData: timelineBuckets.length === 0,
+		},
+		streams: [],
+		symbols: symbolSummaries,
+		totalObservations,
+		totalSymbols: symbolSummaries.length,
+		indexedAt: new Date().toISOString(),
+		// Research path stays bucketed; frame-level payload comes from
+		// /hindsight/envelope or a bounded capture neighbourhood.
+		measurements: [],
+	};
+
+	options?.onProgress?.(timeline);
+	return timeline;
 };
 
 export const fetchHindsightMetricMap =

@@ -2,11 +2,13 @@ package manifold
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	goruntime "runtime"
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -257,6 +259,7 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 
 	reading := solver.Reading()
 	measurement.Result = reading
+	measurement.SetSource("manifold")
 
 	if reading == nil {
 		return measurement
@@ -296,8 +299,9 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 
 	measurement.WriteMetric("particle_kinetic", reading.Reading.Health.ParticleKinetic)
 
+	maturity, snr, snrDefined, estimated := measurement.Maturity, measurement.SNR, measurement.SNRDefined, measurement.Estimated
 	if reading.State != nil && reading.State.N > 1 {
-		measurement.Maturity = 1.0 - 1.0/float64(reading.State.N)
+		maturity = 1.0 - 1.0/float64(reading.State.N)
 	}
 
 	if reading.Reading.KuramotoR > 0 {
@@ -305,11 +309,12 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 		denom := 1.0 - r2
 
 		if denom > 0 {
-			measurement.SNR = r2 / denom
-			measurement.SNRDefined = true
-			measurement.Estimated = true
+			snr = r2 / denom
+			snrDefined = true
+			estimated = true
 		}
 	}
+	measurement.SetQuality(maturity, snr, snrDefined, estimated)
 
 	return measurement
 }
@@ -541,8 +546,22 @@ func (solver *Solver) Advance() {
 	state, err := solver.physics.Step(batch)
 
 	if err != nil {
+		// RemapConservative status=2 (and other numerical PIC retries) must not
+		// take manifold READY→ERROR and kill training at boot. Soft-fail: keep
+		// READY, skip this advance, try again on the next wake.
+		var numerical *sensorium.CoupledStepError
+		if errors.As(err, &numerical) && numerical.Retry {
+			errnie.Warn("[manifold] numerical physics step skipped: " + err.Error())
+			return
+		}
+		msg := err.Error()
+		if strings.Contains(msg, "physics status=2") ||
+			strings.Contains(msg, "RemapConservative") ||
+			strings.Contains(msg, "PIC gather") {
+			errnie.Warn("[manifold] soft-failing PIC remap: " + msg)
+			return
+		}
 		solver.Error(err)
-
 		return
 	}
 

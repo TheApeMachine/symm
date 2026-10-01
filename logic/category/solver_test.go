@@ -366,6 +366,42 @@ func TestSolverStepMeasurement(t *testing.T) {
 			So(solver.Version(), ShouldEqual, uint64(2))
 		})
 	})
+
+	Convey("Given a peer whose From is after At (inverted interval)", t, func() {
+		solver := NewSolver(t.Context())
+		solver.Transition(runtime.READY)
+		at := time.Unix(10, 0)
+		good := categoryMeasurement("BTC/USD", true, 0.8)
+		good.At = at
+		good.From = at
+
+		bad := &data.Measurement[float64]{
+			ID:     -1,
+			Source: "correlation:ticker",
+			Label:  "BTC/USD",
+			At:     at,
+			From:   at.Add(time.Second), // inverted: interval begins after event
+			Metrics: map[string]data.Metric[float64]{
+				"cohort_signed_correlation": {Raw: 0.5},
+			},
+		}
+
+		So(solver.StepMeasurement(good), ShouldNotBeNil)
+		categories := solver.stepMeasurements([]*data.Measurement[float64]{bad, good})
+
+		Convey("Category soft-skips the inverted peer and stays READY", func() {
+			So(solver.Error(), ShouldBeNil)
+			So(solver.Status(), ShouldEqual, runtime.READY)
+			So(categories, ShouldNotBeNil)
+			So(solver.Version(), ShouldBeGreaterThan, uint64(0))
+		})
+
+		Convey("later Steps are not blocked by a before-READY flood", func() {
+			again := solver.StepMeasurement(good)
+			So(again, ShouldNotBeNil)
+			So(solver.Status(), ShouldEqual, runtime.READY)
+		})
+	})
 }
 
 func TestSolverStep(t *testing.T) {

@@ -3,6 +3,7 @@ package tables
 import (
 	"context"
 	"iter"
+	"sort"
 
 	"github.com/apache/iceberg-go"
 	icetable "github.com/apache/iceberg-go/table"
@@ -135,15 +136,23 @@ func (catalog *Catalog) Collect(ctx context.Context, tableName string, epoch int
 }
 
 // Scan exposes the existing display scan; replay uses scan directly to propagate failures.
+// Rows are sorted by SeqIdx so Timeline merge (which assumes ordered streams) is correct.
 func (catalog *Catalog) Scan(ctx context.Context, tableName string, epoch int64,
 	filter iceberg.BooleanExpression, limit int, fields ...string,
 ) iter.Seq[*data.Measurement[float64]] {
 	return func(yield func(*data.Measurement[float64]) bool) {
+		rows := make([]*data.Measurement[float64], 0)
 		for measurement, err := range catalog.scan(ctx, tableName, epoch, filter, limit, fields...) {
 			if err != nil {
 				errnie.Error(err)
 				return
 			}
+			rows = append(rows, measurement)
+		}
+		sort.SliceStable(rows, func(i, j int) bool {
+			return rows[i].SeqIdx < rows[j].SeqIdx
+		})
+		for _, measurement := range rows {
 			if !yield(measurement) {
 				return
 			}

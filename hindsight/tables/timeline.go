@@ -51,6 +51,8 @@ func (catalog *Catalog) Timeline(
 		tickerSeq := catalog.Scan(ctx, SpotTicker, epoch, filter, 0)
 		tradeSeq := catalog.Scan(ctx, SpotTrade, epoch, filter, 0)
 		level3Seq := catalog.Scan(ctx, SpotLevel3, epoch, filter, 0)
+		futuresTickerSeq := catalog.Scan(ctx, FuturesTicker, epoch, filter, 0)
+		futuresTradeSeq := catalog.Scan(ctx, FuturesTrade, epoch, filter, 0)
 		measurementSeq := catalog.Scan(ctx, Measurements, epoch, filter, 0)
 
 		nextTicker, stopTicker := iter.Pull(tickerSeq)
@@ -64,11 +66,19 @@ func (catalog *Catalog) Timeline(
 		nextLevel3, stopLevel3 := iter.Pull(level3Seq)
 		defer stopLevel3()
 
+		nextFuturesTicker, stopFuturesTicker := iter.Pull(futuresTickerSeq)
+		defer stopFuturesTicker()
+
+		nextFuturesTrade, stopFuturesTrade := iter.Pull(futuresTradeSeq)
+		defer stopFuturesTrade()
+
 		nextMeasurement, stopMeasurement := iter.Pull(measurementSeq)
 		defer stopMeasurement()
 
 		currentTrade, hasTrade := nextTrade()
 		currentLevel3, hasLevel3 := nextLevel3()
+		currentFuturesTicker, hasFuturesTicker := nextFuturesTicker()
+		currentFuturesTrade, hasFuturesTrade := nextFuturesTrade()
 		currentMeasurement, hasMeasurement := nextMeasurement()
 
 		attachPeers := func(frame *data.Measurement[float64]) {
@@ -80,6 +90,16 @@ func (catalog *Catalog) Timeline(
 			for hasLevel3 && currentLevel3.SeqIdx <= frame.SeqIdx {
 				frame.Peers = append(frame.Peers, currentLevel3)
 				currentLevel3, hasLevel3 = nextLevel3()
+			}
+
+			for hasFuturesTicker && currentFuturesTicker.SeqIdx <= frame.SeqIdx {
+				frame.Peers = append(frame.Peers, currentFuturesTicker)
+				currentFuturesTicker, hasFuturesTicker = nextFuturesTicker()
+			}
+
+			for hasFuturesTrade && currentFuturesTrade.SeqIdx <= frame.SeqIdx {
+				frame.Peers = append(frame.Peers, currentFuturesTrade)
+				currentFuturesTrade, hasFuturesTrade = nextFuturesTrade()
 			}
 
 			for hasMeasurement && currentMeasurement.SeqIdx <= frame.SeqIdx {

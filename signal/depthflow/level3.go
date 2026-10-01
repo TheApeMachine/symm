@@ -164,7 +164,12 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 				})
 
 				if obsBid > 0 || obsAsk > 0 {
-					m.From = state.prevTime
+					if !input.At.IsZero() {
+						m.At = input.At
+					}
+					if !state.prevTime.IsZero() && !state.prevTime.After(m.At) {
+						m.From = state.prevTime
+					}
 					m.WriteMetric("book_notional:bid", obsBid)
 					m.WriteMetric("book_notional:ask", obsAsk)
 					m.WriteMetric("observed_notional:bid", obsBid)

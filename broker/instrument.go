@@ -1,7 +1,9 @@
 package broker
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"slices"
 	"strings"
@@ -192,6 +194,76 @@ func (instrument *Instrument) Pair(symbol string) kraken.InstrumentPair {
 }
 
 /*
+LoadFuturesProducts maps each online spot symbol onto one tradeable Futures
+perpetual product_id. Without this map, futures subscriptions using spot names
+are silent no-ops and derivatives never see index/mark/OI.
+*/
+func (instrument *Instrument) LoadFuturesProducts(ctx context.Context) error {
+	if instrument == nil {
+		return nil
+	}
+
+	listed, err := kraken.FetchFuturesInstruments(ctx)
+	if err != nil {
+		return err
+	}
+
+	bySpot := make(map[string][]kraken.FuturesInstrument)
+	for _, item := range listed {
+		spot := kraken.SpotSymbolForFutures(item)
+		if spot == "" || !instrument.Has(spot) {
+			continue
+		}
+		bySpot[spot] = append(bySpot[spot], item)
+	}
+
+	instrument.products = make(map[string]string, len(bySpot))
+	instrument.symbolsByProduct = make(map[string]string, len(bySpot))
+
+	for spot, candidates := range bySpot {
+		product := kraken.PreferPerpetual(candidates)
+		if product == "" {
+			continue
+		}
+		instrument.products[spot] = product
+		instrument.symbolsByProduct[product] = spot
+	}
+
+	errnie.Info(fmt.Sprintf(
+		"[instrument] mapped %d spot symbols onto futures perpetuals",
+		len(instrument.products),
+	))
+
+	return nil
+}
+
+/*
+FuturesProductIDs returns the subscribed perpetual product identifiers.
+*/
+func (instrument *Instrument) FuturesProductIDs() []string {
+	if instrument == nil || len(instrument.products) == 0 {
+		return nil
+	}
+
+	ids := make([]string, 0, len(instrument.products))
+	for _, product := range instrument.products {
+		ids = append(ids, product)
+	}
+	slices.Sort(ids)
+	return ids
+}
+
+/*
+SpotForProduct returns the spot WS symbol for a Futures product_id, or "".
+*/
+func (instrument *Instrument) SpotForProduct(productID string) string {
+	if instrument == nil || productID == "" {
+		return ""
+	}
+	return instrument.symbolsByProduct[productID]
+}
+
+/*
 Subscribe issues paced market-data batches for the online quote universe. It
 subscribes only streams that enter a declared Workspace workload; capturing a
 feed with no consumer would create an exact raw tape that can never influence
@@ -242,27 +314,6 @@ func (instrument *Instrument) Subscribe() error {
 			}
 		}
 
-		for _, sub := range []json.Marshaler{
-			kraken.NewFuturesSubscription("ticker", batch),
-			kraken.NewFuturesSubscription("trade", batch),
-		} {
-			msg, err := sonic.Marshal(sub)
-			if err != nil {
-				return instrument.Error(errnie.Err(
-					errnie.IO, "[instrument] futures subscribe marshal failed", err,
-				))
-			}
-			futuresSubs = append(futuresSubs, msg)
-			if instrument.futures != nil {
-				if err := instrument.futures.Write(msg); err != nil {
-					return instrument.Error(errnie.Err(
-						errnie.IO,
-						"[instrument] required futures subscription failed",
-						err,
-					))
-				}
-			}
-		}
 
 		l3Client := network.NewWebsocketClient(instrument.System.Context())
 		l3Msg, l3Err := sonic.Marshal(kraken.NewLevel3Subscription(batch, wsToken))
@@ -290,6 +341,35 @@ func (instrument *Instrument) Subscribe() error {
 		instrument.Level3.Store(batchKey, l3Client)
 
 		time.Sleep(100 * time.Millisecond)
+	}
+
+	productIDs := instrument.FuturesProductIDs()
+	if instrument.futures != nil && len(productIDs) > 0 {
+		for batch := range slices.Chunk(productIDs, system.Cfg.Market.Subscribe.Batch) {
+			for _, sub := range []json.Marshaler{
+				kraken.NewFuturesSubscription("ticker", batch),
+				kraken.NewFuturesSubscription("trade", batch),
+			} {
+				msg, err := sonic.Marshal(sub)
+				if err != nil {
+					return instrument.Error(errnie.Err(
+						errnie.IO, "[instrument] futures subscribe marshal failed", err,
+					))
+				}
+				futuresSubs = append(futuresSubs, msg)
+				if err := instrument.futures.Write(msg); err != nil {
+					return instrument.Error(errnie.Err(
+						errnie.IO,
+						"[instrument] required futures subscription failed",
+						err,
+					))
+				}
+			}
+		}
+	}
+
+	if instrument.futures != nil && len(productIDs) == 0 {
+		errnie.Warn("[instrument] no futures perpetuals mapped; skipping futures subscribe")
 	}
 
 	instrument.public.OnReconnect(func() error {
@@ -350,7 +430,11 @@ func (instrument *Instrument) Unsubscribe() error {
 			}
 		}
 
-		if instrument.futures != nil {
+	}
+
+	productIDs := instrument.FuturesProductIDs()
+	if instrument.futures != nil && len(productIDs) > 0 {
+		for batch := range slices.Chunk(productIDs, system.Cfg.Market.Subscribe.Batch) {
 			for _, sub := range []json.Marshaler{
 				kraken.NewFuturesUnsubscription("ticker", batch),
 				kraken.NewFuturesUnsubscription("trade", batch),

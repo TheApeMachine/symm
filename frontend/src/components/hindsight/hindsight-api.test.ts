@@ -1,7 +1,5 @@
-import * as flatbuffers from "flatbuffers";
+import { tableFromArrays, tableToIPC } from "apache-arrow";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { MeasurementsFrame } from "#/providers/telemetry/telemetry/measurements-frame";
-import { Measurement } from "#/providers/telemetry/telemetry/measurement";
 import {
 	fetchHindsightRuns,
 	fetchHindsightCaptures,
@@ -23,9 +21,12 @@ const respond = (status: number, body: unknown) => {
 	vi.stubGlobal("window", {
 		location: { protocol: "http:", hostname: "localhost" },
 	});
+	const payload = typeof body === "string" ? body : JSON.stringify(body);
 	vi.stubGlobal(
 		"fetch",
-		vi.fn().mockResolvedValue(new Response(JSON.stringify(body), { status })),
+		vi.fn().mockImplementation(() =>
+			Promise.resolve(new Response(payload, { status })),
+		),
 	);
 };
 
@@ -56,66 +57,62 @@ describe("Hindsight archive reads", () => {
 		await expect(read()).rejects.toThrow("503");
 	});
 
-	it("surfaces a failed timeline WebSocket connection instead of returning an empty archive", async () => {
-		respond(200, []);
-		vi.stubGlobal(
-			"WebSocket",
-			class {
-				onerror: (() => void) | null = null;
-
-				constructor() {
-					queueMicrotask(() => this.onerror?.());
-				}
-			},
-		);
+	it("surfaces a failed workbench timeline query instead of returning an empty archive", async () => {
+		respond(503, "workbench service unavailable");
 		await expect(fetchHindsightTimeline({ run: "run" })).rejects.toThrow(
-			"WebSocket",
+			"workbench",
 		);
 	});
 
-	it("streams and decodes FlatBuffers MeasurementsFrame over WebSocket", async () => {
-		respond(200, []);
+	it("decodes DuckDB Arrow IPC buckets from /workbench/query", async () => {
+		vi.stubGlobal("window", {
+			location: { protocol: "http:", hostname: "localhost" },
+		});
 
-		const builder = new flatbuffers.Builder(1024);
-		const source = builder.createString("spot_ticker");
-		const symbol = builder.createString("BTC/USD");
-		Measurement.startMeasurement(builder);
-		Measurement.addSource(builder, source);
-		Measurement.addSymbol(builder, symbol);
-		Measurement.addTick(builder, 10n);
-		Measurement.addAt(builder, 1000000000000n);
-		const measurementOffset = Measurement.endMeasurement(builder);
+		const listing = tableToIPC(
+			tableFromArrays({
+				database: ["symmtables", "symmtables"],
+				schema: ["hindsight", "hindsight"],
+				name: ["spot_ticker", "spot_trade"],
+			}),
+		);
+		const buckets = tableToIPC(
+			tableFromArrays({
+				index: [0],
+				from_sequence: [10],
+				to_sequence: [10],
+				from_at: ["2026-10-01T12:00:00.000Z"],
+				to_at: ["2026-10-01T12:00:00.000Z"],
+				tickers: [1],
+				observations: [1],
+				open: [101],
+				high: [101],
+				low: [101],
+				close: [101],
+				spread_fraction: [0.02],
+				touch_depth: [3],
+				trades: [0],
+				trade_qty: [0],
+			}),
+		);
 
-		const rowsOffset = MeasurementsFrame.createRowsVector(builder, [
-			measurementOffset,
-		]);
-		MeasurementsFrame.startMeasurementsFrame(builder);
-		MeasurementsFrame.addRows(builder, rowsOffset);
-		const frameOffset = MeasurementsFrame.endMeasurementsFrame(builder);
-		builder.finish(frameOffset);
-		const bytes = builder.asUint8Array().slice();
+		const asBody = (bytes: Uint8Array): BodyInit =>
+			bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 
-		class MockWebSocket {
-			binaryType = "blob";
-			onmessage: ((event: MessageEvent) => void) | null = null;
-			onclose: (() => void) | null = null;
-			onerror: (() => void) | null = null;
-
-			constructor() {
-				setTimeout(() => {
-					if (this.onmessage) {
-						this.onmessage({ data: bytes.buffer } as MessageEvent);
-					}
-					if (this.onclose) {
-						this.onclose();
-					}
-				}, 5);
+		const fetcher = vi.fn().mockImplementation(async (_url: string, init?: RequestInit) => {
+			const body = typeof init?.body === "string" ? init.body : "";
+			if (body.includes("SHOW ALL TABLES")) {
+				return new Response(asBody(listing), { status: 200 });
 			}
-
-			close() {}
-		}
-
-		vi.stubGlobal("WebSocket", MockWebSocket);
+			if (init?.method === "POST" && body.includes("bucket_idx")) {
+				return new Response(asBody(buckets), { status: 200 });
+			}
+			if (_url.includes("/hindsight/excursions")) {
+				return new Response("[]", { status: 200 });
+			}
+			return new Response("unexpected", { status: 500 });
+		});
+		vi.stubGlobal("fetch", fetcher);
 
 		let progressCount = 0;
 		const timeline = await fetchHindsightTimeline(
@@ -131,6 +128,8 @@ describe("Hindsight archive reads", () => {
 		expect(timeline).not.toBeNull();
 		expect(timeline?.symbol).toBe("BTC/USD");
 		expect(timeline?.totalObservations).toBe(1);
+		expect(timeline?.buckets[0]?.open).toBe(101);
+		expect(timeline?.measurements).toEqual([]);
 		expect(progressCount).toBeGreaterThan(0);
 	});
 

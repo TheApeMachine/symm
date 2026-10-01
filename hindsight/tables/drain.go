@@ -99,22 +99,36 @@ func (catalog *Catalog) Drain(
 }
 
 /*
-deriveChannel routes a measurement into its Iceberg family from the channel
-the publisher already stamped (provenance or metadata type). The old
-venue=true gate never fired in production publishers, so ticker/trade/level3
-rows landed in Measurements and Timeline (SpotTicker-primary) stayed empty.
+deriveChannel routes a measurement into its Iceberg family.
+
+Venue tape tables (SpotTicker/Trade/Level3, futures) accept ONLY raw ingress
+snapshots whose Source is still "websocket". Signal producers Fork the ingress,
+SetSource to e.g. liquidity:ticker, and keep provenance channel=ticker — without
+an immutable ingress identity those snapshots polluted SpotTicker.
+
+Prefer provenance ingress_channel (set once at websocket ingress and never
+rewritten by stage consumers). Fall back to channel/type only for raw sources.
 */
 func deriveChannel(measurement *data.Measurement[float64]) string {
 	if measurement == nil {
 		return "measurements"
 	}
 
-	channel := ""
-
-	if value, ok := measurement.Provenance["channel"]; ok {
-		channel = value
+	source := measurement.GetSource()
+	// Signal / solver publications always land in Measurements.
+	if source != "" && source != "websocket" {
+		return "measurements"
 	}
 
+	channel := ""
+	if value, ok := measurement.GetProvenance("ingress_channel"); ok {
+		channel = value
+	}
+	if channel == "" {
+		if value, ok := measurement.GetProvenance("channel"); ok {
+			channel = value
+		}
+	}
 	if channel == "" {
 		if value, ok := measurement.GetMetadata("type"); ok {
 			channel = value
@@ -122,15 +136,17 @@ func deriveChannel(measurement *data.Measurement[float64]) string {
 	}
 
 	switch channel {
-	case "ticker", "trade", "level3":
+	case "ticker", "trade", "level3", "futures_ticker", "futures_trade":
 		return channel
 	}
 
 	// Legacy publishers that only set venue=true + provenance channel.
 	if val, ok := measurement.GetMetadata("venue"); ok && val == "true" {
-		switch value := measurement.Provenance["channel"]; value {
-		case "ticker", "trade", "level3":
-			return value
+		if value, ok := measurement.GetProvenance("channel"); ok {
+			switch value {
+			case "ticker", "trade", "level3":
+				return value
+			}
 		}
 	}
 

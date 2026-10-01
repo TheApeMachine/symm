@@ -132,8 +132,13 @@ func (fluid *workspace) validateInputs() error {
 func checkFlags(label string, b *Buffer, n int) error {
 	for i, s := range b.UInt32Slice()[:n] {
 		if s != 0 {
-			log.Printf("FATAL PHYSICS ERROR: label=%s i=%d s=%d", label, i, s)
-			return &CoupledStepError{label, i, s == 2 || s == 3 || s == 4, fmt.Sprintf("physics status=%d", s)}
+			retry := s == 2 || s == 3 || s == 4
+			if retry {
+				log.Printf("WARN PHYSICS STATUS: label=%s i=%d s=%d (numerical retry)", label, i, s)
+			} else {
+				log.Printf("FATAL PHYSICS ERROR: label=%s i=%d s=%d", label, i, s)
+			}
+			return &CoupledStepError{label, i, retry, fmt.Sprintf("physics status=%d", s)}
 		}
 	}
 	return nil

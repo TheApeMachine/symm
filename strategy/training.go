@@ -28,6 +28,10 @@ const (
 	gridKey   = "model/grid.json"
 	engineKey = "model/cognition.gob"
 	skillKey  = "model/skill.json"
+
+	// persistCommitTimeout bounds Iceberg excursion commits so writing cannot
+	// latch forever when the catalog/object store stalls (UI: durability blocked: writing).
+	persistCommitTimeout = 45 * time.Second
 )
 
 var _ ui.CognitionSource = (*Training)(nil)
@@ -77,7 +81,8 @@ type Training struct {
 	skillSamples         []float64
 	checkpointed         bool
 	checkpointFailed     bool
-	modelDirty           bool
+	modelRevision        uint64
+	snapshotRevision     uint64
 	restored             bool
 	replaying            bool
 	blocked              bool
@@ -132,6 +137,10 @@ func NewTraining(
 	}
 	training.cond = sync.NewCond(&training.mu)
 	training.Transition(runtime.INIT)
+
+	if trader != nil {
+		trader.OnPositionClosed(training.onPositionClosed)
+	}
 
 	go training.persistLoop()
 	go training.checkpointLoop()
@@ -274,6 +283,22 @@ func (training *Training) predictFrom(signature []byte, symbol string, seq int64
 	}
 
 	action := cognition.Action(result.Evaluation.WinnerClass)
+
+	// Historical replay has no live inventory. Surface ENTER/EXIT markers for
+	// training viz without requiring trader holding — otherwise LegalActions
+	// (holding=false → enter/wait only) drops every EXIT leaf from the stream.
+	if historical {
+		if action == cognition.ActionEnter {
+			return marker{action: string(action), entry: seq}
+		}
+
+		if action == cognition.ActionExit {
+			return marker{action: string(action), exit: seq}
+		}
+
+		return marker{}
+	}
+
 	holding := training.holding(symbol)
 
 	if !admitted(holding, action) {
@@ -282,10 +307,6 @@ func (training *Training) predictFrom(signature []byte, symbol string, seq int64
 
 	if action == cognition.ActionEnter && training.busy(symbol) {
 		return marker{}
-	}
-
-	if action == cognition.ActionEnter && historical {
-		return marker{action: string(action), entry: seq}
 	}
 
 	if action == cognition.ActionEnter && !training.paperOpen() {
@@ -317,10 +338,6 @@ func (training *Training) predictFrom(signature []byte, symbol string, seq int64
 		return marker{action: string(action), entry: seq}
 	}
 
-	if historical {
-		return marker{action: string(action), exit: seq}
-	}
-
 	// Grade paper only after EXIT is submitted and the position has reconciled.
 	// Mark-to-market PnL before Exit still prices an open inventory and forgets
 	// the entry context before the fill exists (review P0).
@@ -349,6 +366,26 @@ func (training *Training) predictFrom(signature []byte, symbol string, seq int64
 	}
 
 	return marker{action: string(action), exit: seq}
+}
+
+/*
+onPositionClosed grades and forgets when a regulator closes via ApplyExecution
+(async fill path). Sync Exit that already closed still grades in the decision path.
+*/
+func (training *Training) onPositionClosed(symbol string, regulator *position.Regulator) {
+	if training == nil || symbol == "" || regulator == nil {
+		return
+	}
+
+	training.mu.Lock()
+	entryCtx := append([]byte{}, training.entries[symbol]...)
+	training.mu.Unlock()
+
+	training.gradePaperClosed(symbol, entryCtx, regulator)
+
+	if regulator.IsClosed() {
+		training.forget(symbol)
+	}
 }
 
 /*
@@ -480,7 +517,7 @@ func (training *Training) teach(context []byte, class string, feedback float64) 
 	}
 
 	training.mu.Lock()
-	training.modelDirty = true
+	training.modelRevision++
 	training.mu.Unlock()
 
 	select {
@@ -503,8 +540,8 @@ func (training *Training) recordSkill(correct bool) {
 	if len(training.skillSamples) > skillSampleCap {
 		training.skillSamples = append([]float64(nil), training.skillSamples[len(training.skillSamples)-skillSampleCap:]...)
 	}
-	// Skill is part of the durable checkpoint; dirty so save() persists moments.
-	training.modelDirty = true
+	// Skill is part of the durable checkpoint; bump revision so save() persists.
+	training.modelRevision++
 	training.mu.Unlock()
 
 	select {
@@ -681,7 +718,9 @@ func (training *Training) replayCausal(
 		}
 
 		if persistIDs[record.ID] {
-			if err := training.enqueue(episode); err != nil {
+			// Persist C then introduce supervision BEFORE advancing the replay
+			// clock — async enqueue would let later predictions race Iceberg.
+			if err := training.persistAndSupervise(episode); err != nil {
 				return err
 			}
 
@@ -900,6 +939,32 @@ func (training *Training) replayVaried(episode heldEpisode) {
 	training.teach(enterCtx, string(cognition.ActionEnter), feedback)
 }
 
+/*
+persistAndSupervise writes one offline C to Iceberg then supervises it before
+the caller advances the causal replay clock.
+*/
+func (training *Training) persistAndSupervise(episode heldEpisode) error {
+	if training.catalog == nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"training: catalog is required to store an episode",
+			nil,
+		))
+	}
+
+	writer := tables.NewWriter(training.catalog, training.epoch)
+	writer.AddExcursion(episode.record)
+	commitCtx, cancel := context.WithTimeout(training.Context(), persistCommitTimeout)
+	err := writer.CommitExcursions(commitCtx)
+	cancel()
+	if err != nil {
+		return err
+	}
+
+	training.noteDurable(episode)
+	return nil
+}
+
 func (training *Training) enqueue(episode heldEpisode) error {
 	if training.catalog == nil {
 		return errnie.Error(errnie.Err(
@@ -959,8 +1024,8 @@ func (training *Training) persistLoop() {
 				break
 			}
 
-			// Fresh Writer per attempt. CommitReady restores uncommitted rows
-			// into the same Writer on failure; re-AddExcursion on a reused
+			// Fresh Writer per attempt. CommitExcursions restores uncommitted
+			// rows into the same Writer on failure; re-AddExcursion on a reused
 			// Writer would duplicate Iceberg appends after a transient error.
 			writer := tables.NewWriter(training.catalog, training.epoch)
 
@@ -968,7 +1033,9 @@ func (training *Training) persistLoop() {
 				writer.AddExcursion(episode.record)
 			}
 
-			err := writer.CommitReady(training.Context(), true)
+			commitCtx, cancel := context.WithTimeout(training.Context(), persistCommitTimeout)
+			err := writer.CommitExcursions(commitCtx)
+			cancel()
 			training.finishWrite(batch, err)
 
 			if err == nil {
@@ -980,7 +1047,7 @@ func (training *Training) persistLoop() {
 				return
 			}
 
-			// Do not wait for a new enqueue wake: a failed CommitReady left
+			// Do not wait for a new enqueue wake: a failed commit left
 			// the batch requeued and blocked=true with nothing else waking us.
 			select {
 			case <-training.Context().Done():
@@ -1069,7 +1136,8 @@ func (training *Training) checkpointLoop() {
 		training.mu.Lock()
 		restored := training.restored
 		checkpointed := training.checkpointed
-		dirty := training.modelDirty
+		rev := training.modelRevision
+		snap := training.snapshotRevision
 		training.mu.Unlock()
 
 		if !restored {
@@ -1112,7 +1180,8 @@ func (training *Training) checkpointLoop() {
 		}
 
 		// Persist trie updates after each graded teach once the grid is frozen.
-		if checkpointed && dirty {
+		// Monotonic revision: save only when snapshot lags; never clear a newer dirty.
+		if checkpointed && snap < rev {
 			if err := training.save(); err != nil {
 				training.failCheckpoint(err)
 				training.waitSettle()
@@ -1121,7 +1190,9 @@ func (training *Training) checkpointLoop() {
 			}
 
 			training.mu.Lock()
-			training.modelDirty = false
+			if training.modelRevision == rev {
+				training.snapshotRevision = rev
+			}
 			training.checkpointFailed = false
 			training.mu.Unlock()
 		}

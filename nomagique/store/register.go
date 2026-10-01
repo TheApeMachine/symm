@@ -136,11 +136,11 @@ func (op *Register[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 			meas, ok := any(slotVal).(*data.Measurement[float64])
 
 			if ok && meas != nil {
-				working := meas.Clone()
+				working := meas.PersistClone()
 				interest := ""
 
-				if working.Metadata != nil {
-					interest = working.Metadata["peer-interest"]
+				if v, ok := working.GetMetadata("peer-interest"); ok {
+					interest = v
 				}
 
 				if interest != "" {

@@ -157,3 +157,31 @@ func NewExecutionFromMap(model datura.Map[any]) *Execution {
 		}},
 	}
 }
+
+/*
+ExecutionSubscription requests the authenticated executions stream on the
+private websocket — the live counterpart to Paper.OnExecution.
+*/
+type ExecutionSubscription struct {
+	Token string
+}
+
+/*
+NewExecutionSubscription binds the current authenticated websocket token.
+*/
+func NewExecutionSubscription(token string) ExecutionSubscription {
+	return ExecutionSubscription{Token: token}
+}
+
+/*
+MarshalJSON encodes Kraken's private executions subscription request.
+*/
+func (subscription ExecutionSubscription) MarshalJSON() ([]byte, error) {
+	return sonic.Marshal(map[string]any{
+		"method": "subscribe",
+		"params": map[string]any{
+			"channel": "executions",
+			"token":   subscription.Token,
+		},
+	})
+}

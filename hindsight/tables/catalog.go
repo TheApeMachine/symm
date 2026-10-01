@@ -36,6 +36,10 @@ Catalog manages connections and schemas for canonical Iceberg tables.
 type Catalog struct {
 	underlying icecat.Catalog
 	awsConfig  *aws.Config
+	// commitGate serializes Iceberg Append/commit across Drain and Training so
+	// concurrent writers cannot wedge optimistic retries into an apparent hang
+	// (UI: durability blocked: writing with writing=true forever). Capacity 1.
+	commitGate chan struct{}
 }
 
 /*
@@ -44,7 +48,34 @@ Wrap adapts an Iceberg catalog implementation (REST for production, SQLite for t
 func Wrap(underlying icecat.Catalog) *Catalog {
 	return &Catalog{
 		underlying: underlying,
+		commitGate: make(chan struct{}, 1),
 	}
+}
+
+/*
+WithCommit runs fn while holding the catalog commit gate. All Iceberg Append
+paths must use this so StoreTee Drain and Training.persistLoop cannot contend.
+ctx cancellation unblocks waiters so Training writing cannot latch past
+persistCommitTimeout while Drain holds the gate.
+*/
+func (catalog *Catalog) WithCommit(ctx context.Context, fn func() error) error {
+	if catalog == nil {
+		return fn()
+	}
+
+	if catalog.commitGate == nil {
+		catalog.commitGate = make(chan struct{}, 1)
+	}
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case catalog.commitGate <- struct{}{}:
+	}
+
+	defer func() { <-catalog.commitGate }()
+
+	return fn()
 }
 
 /*
@@ -209,6 +240,8 @@ func (catalog *Catalog) Ensure(ctx context.Context) error {
 		{SpotTicker, MeasurementSchema(), MeasurementPartitioning()},
 		{SpotTrade, MeasurementSchema(), MeasurementPartitioning()},
 		{SpotLevel3, MeasurementSchema(), MeasurementPartitioning()},
+		{FuturesTicker, MeasurementSchema(), MeasurementPartitioning()},
+		{FuturesTrade, MeasurementSchema(), MeasurementPartitioning()},
 		{Measurements, MeasurementSchema(), MeasurementPartitioning()},
 		{Runs, RunsSchema(), RunsPartitioning()},
 		{Excursions, ExcursionsSchema(), ExcursionsPartitioning()},
@@ -535,13 +568,17 @@ func (catalog *Catalog) RecordRun(ctx context.Context, run Run) error {
 
 	defer reader.Release()
 
-	_, appendErr := tbl.Append(catalog.context(ctx), reader, nil)
+	var appendErr error
+	err = catalog.WithCommit(ctx, func() error {
+		_, appendErr = tbl.Append(catalog.context(ctx), reader, nil)
+		return appendErr
+	})
 
-	if appendErr != nil {
+	if err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.BadGateway,
 			"[iceberg] failed to record run",
-			appendErr,
+			err,
 		))
 	}
 

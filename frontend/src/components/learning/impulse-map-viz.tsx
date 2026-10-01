@@ -114,11 +114,14 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 		maxX = fit.maxX;
 		minY = fit.minY;
 		maxY = fit.maxY;
+		// Full-center fit: uniform scale (contain) + center in the viewport.
+		// Independent X/Y stretch skewed lattice geometry and left empty margins.
 		const pad = 0.06;
-		const startX = width * pad;
-		const startY = height * pad;
 		const usableW = width * (1 - 2 * pad);
 		const usableH = height * (1 - 2 * pad);
+		const scale = Math.min(usableW / spanX, usableH / spanY);
+		const offsetX = width * pad + (usableW - spanX * scale) / 2;
+		const offsetY = height * pad + (usableH - spanY * scale) / 2;
 
 		const existingMap = new Map<string, ImpulseNode>();
 		for (const n of nodesRef.current) {
@@ -127,8 +130,8 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 
 		const updatedNodes: ImpulseNode[] = data.map((d) => {
 			const existing = existingMap.get(d.id);
-			const targetGridX = startX + (((d.x ?? 0) - minX) / spanX) * usableW;
-			const targetGridY = startY + (((d.y ?? 0) - minY) / spanY) * usableH;
+			const targetGridX = offsetX + (((d.x ?? 0) - minX) * scale);
+			const targetGridY = offsetY + (((d.y ?? 0) - minY) * scale);
 
 			if (existing) {
 				existing.activation = d.activation;

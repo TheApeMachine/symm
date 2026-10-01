@@ -27,6 +27,7 @@ type Trader struct {
 	balance          *broker.Balance
 	mu               sync.Mutex
 	open             map[string]*position.Regulator
+	onClosed         func(symbol string, reg *position.Regulator)
 	positionsVersion atomic.Uint64
 	decisionsVersion atomic.Uint64
 	decisions        atomic.Pointer[[]*wire.DecisionT]
@@ -58,6 +59,19 @@ func NewTrader(
 	}
 
 	return trader
+}
+
+/*
+OnPositionClosed registers a callback invoked when ApplyExecution reconciles a
+regulator to closed — so Training can grade+forget async paper/live exits.
+*/
+func (trader *Trader) OnPositionClosed(handler func(symbol string, reg *position.Regulator)) {
+	if trader == nil {
+		return
+	}
+	trader.mu.Lock()
+	trader.onClosed = handler
+	trader.mu.Unlock()
 }
 
 func (trader *Trader) Position(symbol string) *position.Regulator {
@@ -172,8 +186,12 @@ func (trader *Trader) applyReport(report kraken.ExecutionData) {
 			if trader.open[reg.Symbol] == reg {
 				delete(trader.open, reg.Symbol)
 			}
+			handler := trader.onClosed
 			trader.mu.Unlock()
 			trader.positionsVersion.Add(1)
+			if handler != nil {
+				handler(reg.Symbol, reg)
+			}
 		}
 
 		return

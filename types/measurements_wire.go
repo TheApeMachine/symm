@@ -17,9 +17,19 @@ var measurementsBuilderPool = sync.Pool{
 
 /*
 MeasurementToWire converts a data.Measurement to wire.MeasurementT including
-metrics, metadata, and provenance.
+metrics, metadata, and provenance. Peers are encoded one level deep only —
+recursive MeasurementToWire on peer.Peers exploded FlatBuffer alloc when the
+disruptor Contribute forest was still attached.
 */
 func MeasurementToWire(measurement *data.Measurement[float64], alloc data.Allocator) *wire.MeasurementT {
+	return measurementToWire(measurement, alloc, true)
+}
+
+func measurementToWire(
+	measurement *data.Measurement[float64],
+	alloc data.Allocator,
+	includePeers bool,
+) *wire.MeasurementT {
 	if measurement == nil || measurement.GetSource() == "cross-section" {
 		return nil
 	}
@@ -74,17 +84,16 @@ func MeasurementToWire(measurement *data.Measurement[float64], alloc data.Alloca
 	}
 
 	var peers []*wire.MeasurementT
-	if len(measurement.Peers) > 0 {
+	if includePeers && len(measurement.Peers) > 0 {
 		peers = data.MakeSlice[*wire.MeasurementT](alloc, 0, len(measurement.Peers))
-	}
-	
-	for _, peer := range measurement.Peers {
-		if peer == nil || peer.GetSource() == "cross-section" {
-			continue
-		}
-
-		if wirePeer := MeasurementToWire(peer, alloc); wirePeer != nil {
-			peers = data.AppendA(peers, wirePeer, alloc)
+		for _, peer := range measurement.Peers {
+			if peer == nil || peer.GetSource() == "cross-section" {
+				continue
+			}
+			// Depth 1 only: peer maps, never peer.Peers.
+			if wirePeer := measurementToWire(peer, alloc, false); wirePeer != nil {
+				peers = data.AppendA(peers, wirePeer, alloc)
+			}
 		}
 	}
 

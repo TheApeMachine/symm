@@ -7,6 +7,7 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/hindsight/tables"
+	"github.com/theapemachine/symm/nomagique/cognition"
 	"github.com/theapemachine/symm/nomagique/data"
 )
 
@@ -149,5 +150,75 @@ func TestWriteSkillPublishesEdgeSamples(t *testing.T) {
 		count, ok := clone.LookupMetric("edge_sample_count")
 		So(ok, ShouldBeTrue)
 		So(count.Raw, ShouldEqual, 3)
+	})
+}
+
+func TestSuperviseTeachesExitOnlyForWantEnter(t *testing.T) {
+	Convey("supervise teaches EXIT on B→C only when up+clearsFriction", t, func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		training := NewTraining(ctx, 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
+		frameA := regionFrame("BTC/USD", 1, 10)
+		frameB := regionFrame("BTC/USD", 2, 11)
+		frameC := regionFrame("BTC/USD", 3, 12)
+		training.grid.Update(frameA)
+		training.grid.Update(frameB)
+		training.grid.Update(frameC)
+		training.grid.Settle()
+		training.mu.Lock()
+		training.checkpointed = true
+		training.mu.Unlock()
+
+		before := training.engine.Census()
+		enterBefore := before["enter"]
+		exitBefore := before["exit"]
+
+		training.supervise(heldEpisode{
+			record: tables.ExcursionRecord{
+				ID:                 "BTC/USD:up:1",
+				Symbol:             "BTC/USD",
+				Direction:          "up",
+				ClearsFriction:     true,
+				PrecursorStartTick: 1,
+				AnchorTick:         2,
+				ExitTick:           4,
+			},
+			frames: []*data.Measurement[float64]{frameA, frameB, frameC},
+		}, true)
+
+		after := training.engine.Census()
+		So(after["enter"], ShouldBeGreaterThan, enterBefore)
+		So(after["exit"], ShouldBeGreaterThan, exitBefore)
+	})
+}
+
+func TestHistoricalPredictSurfacesExitWithoutHolding(t *testing.T) {
+	Convey("historical predictFrom returns EXIT markers without trader inventory", t, func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		training := NewTraining(ctx, 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
+		frame := regionFrame("BTC/USD", 1, 2)
+		training.grid.Update(frame)
+		training.grid.Settle()
+		training.mu.Lock()
+		training.checkpointed = true
+		training.mu.Unlock()
+
+		// Seed an exit association so Evaluate can win exit.
+		token := training.grid.LitRegions(frame)
+		So(len(token), ShouldBeGreaterThan, 0)
+		_, err := training.engine.Observe(cognition.Association{
+			Context:  append([]byte{}, token...),
+			Class:    []byte(cognition.ActionExit),
+			Feedback: 1,
+			Graded:   true,
+		})
+		So(err, ShouldBeNil)
+
+		reading := training.predictFrom(token, "BTC/USD", 9, true)
+		So(reading.action, ShouldEqual, string(cognition.ActionExit))
+		So(reading.exit, ShouldEqual, int64(9))
 	})
 }

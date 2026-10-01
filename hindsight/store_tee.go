@@ -13,6 +13,8 @@ import (
 /*
 StoreTee queues measurements for the catalog drain.
 */
+const storeTeeQueueCap = 8192
+
 type StoreTee struct {
 	*runtime.System
 	queue *lf.Queue[*data.Measurement[float64]]
@@ -40,7 +42,11 @@ func (tee *StoreTee) Push(measurement *data.Measurement[float64]) {
 		return
 	}
 
-	tee.queue.Enqueue(measurement.Clone())
+	if tee.queue.Length() >= storeTeeQueueCap {
+		return
+	}
+
+	tee.queue.Enqueue(measurement.PersistClone())
 }
 
 func (tee *StoreTee) Next() unsafe.Pointer {
