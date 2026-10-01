@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/nomagique/statistic"
 )
 
@@ -73,9 +74,26 @@ func TestSkillCheckpointRejectsNaN(t *testing.T) {
 		defer cancel()
 
 		training := NewTraining(ctx, 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
-		err := training.applySkillCheckpoint([]byte(`{"skill":{"Count":2,"Mean":"NaN","M2":1}}`))
+		err := training.applySkillCheckpoint([]byte(`{"version":2,"skill":{"Count":2,"Mean":"NaN","M2":1}}`))
 		So(err, ShouldNotBeNil)
 		So(training.skill, ShouldResemble, statistic.Moments{})
+	})
+}
+
+func TestSkillCheckpointRejectsOldSupervisionVersion(t *testing.T) {
+	Convey("Given a skill blob from old supervision rules, restore is refused", t, func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		training := NewTraining(ctx, 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
+		err := training.applySkillCheckpoint([]byte(`{"version":1,"skill":{"Count":2,"Mean":1,"M2":0},"returns":{"Count":1,"Mean":0.01,"M2":0}}`))
+		So(err, ShouldNotBeNil)
+		So(training.skill.Count, ShouldEqual, 0)
+		So(training.returns.Count, ShouldEqual, 0)
+
+		err = training.applySkillCheckpoint([]byte(`{"skill":{"Count":2,"Mean":1,"M2":0}}`))
+		So(err, ShouldNotBeNil)
+		So(training.skill.Count, ShouldEqual, 0)
 	})
 }
 
@@ -114,5 +132,38 @@ func TestRecordSkillMarksModelDirty(t *testing.T) {
 		dirty := training.modelRevision > 0
 		training.mu.Unlock()
 		So(dirty, ShouldBeTrue)
+	})
+}
+
+
+func TestSkillCheckpointRestoresHistGrades(t *testing.T) {
+	Convey("hist enter/exit/wait counters and return samples survive skill checkpoint", t, func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		training := NewTraining(ctx, 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
+		training.recordSkill(true)
+		training.recordSkill(false)
+		training.noteEnterGrade(true, false)  // missed
+		training.noteEnterGrade(false, false) // correct wait
+		training.noteEnterGrade(true, true)   // correct enter
+		training.noteExitGrade(true)
+		training.mu.Lock()
+		training.recordPolicyReturnLocked(0.0, tables.ExcursionRecord{ExitTick: 5, AnchorTick: 2})
+		training.recordPolicyReturnLocked(-0.00013, tables.ExcursionRecord{ExitTick: 6, AnchorTick: 3})
+		training.mu.Unlock()
+
+		encoded, err := training.skillCheckpoint()
+		So(err, ShouldBeNil)
+
+		again := NewTraining(ctx, 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
+		So(again.applySkillCheckpoint(encoded), ShouldBeNil)
+		So(again.histMissedEnter, ShouldEqual, 1)
+		So(again.histCorrectWait, ShouldEqual, 1)
+		So(again.histCorrectEnter, ShouldEqual, 1)
+		So(again.histCorrectExit, ShouldEqual, 1)
+		So(again.returns.Count, ShouldEqual, 2)
+		So(len(again.returnSamples), ShouldEqual, 2)
+		So(again.skill.Count, ShouldEqual, training.skill.Count)
 	})
 }

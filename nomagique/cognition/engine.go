@@ -1312,7 +1312,7 @@ func (op *Engine) snapshot() (Result, error) {
 	var buffer bytes.Buffer
 	encoder := gob.NewEncoder(&buffer)
 
-	for _, value := range []any{"cognition/packed-weight/1", op.cfg, step, root.Len(), op.census()} {
+	for _, value := range []any{"cognition/packed-weight/2", op.cfg, step, root.Len(), op.census()} {
 		if err := encoder.Encode(value); err != nil {
 			return Result{}, errnie.Error(err)
 		}
@@ -1365,7 +1365,7 @@ func (op *Engine) restore(encoded []byte) (Result, error) {
 		}
 	}
 
-	if format != "cognition/packed-weight/1" || count < 0 {
+	if format != "cognition/packed-weight/2" || count < 0 {
 		return Result{}, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"[nomagique.cognition.engine] unsupported packed model format",

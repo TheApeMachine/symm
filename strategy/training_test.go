@@ -41,9 +41,12 @@ func TestTrainingSupervision(t *testing.T) {
 
 		// Frozen Evaluate on an empty trie does not emit Enter; for a downward
 		// episode that is the correct abstention, so skill samples +1.
+		// Abstain does not teach Enter (policy-return supervision).
 		So(training.skill.Count, ShouldEqual, 1)
 		So(training.skill.Mean, ShouldEqual, 1)
-		So(classCount(training, "enter"), ShouldBeGreaterThan, 0)
+		So(classCount(training, "enter"), ShouldEqual, 0)
+		So(training.returns.Count, ShouldEqual, 1)
+		So(training.returns.Mean, ShouldEqual, 0)
 		So(training.signatureOf(btcFrames), ShouldNotResemble, training.signatureOf(append(append([]*data.Measurement[float64]{}, btcFrames...), eth)))
 	})
 }
@@ -125,8 +128,8 @@ func classCount(training *Training, class string) int32 {
 	return training.engine.Census()[class]
 }
 
-func TestPreferRowsKeepsRichestNonTraining(t *testing.T) {
-	Convey("Given duplicate seq rows of different richness", t, func() {
+func TestCanonicalObservationsIngressPlusSourceKeyedPeers(t *testing.T) {
+	Convey("Given ingress + producer + training overlay at one seq", t, func() {
 		raw := data.NewMeasurement[float64]("websocket", map[string]data.Metric[float64]{
 			"bid": {Raw: 1},
 			"ask": {Raw: 2},
@@ -135,8 +138,6 @@ func TestPreferRowsKeepsRichestNonTraining(t *testing.T) {
 		raw.SeqIdx = 7
 
 		rich := data.NewMeasurement[float64]("resonance", map[string]data.Metric[float64]{
-			"bid":      {Raw: 1},
-			"ask":      {Raw: 2},
 			"energy":   {Raw: 3},
 			"surprise": {Raw: 4},
 			"contrast": {Raw: 5},
@@ -144,14 +145,23 @@ func TestPreferRowsKeepsRichestNonTraining(t *testing.T) {
 		rich.Label = "BTC/USD"
 		rich.SeqIdx = 7
 
+		hawkes := data.NewMeasurement[float64]("hawkes:trade", map[string]data.Metric[float64]{
+			"intensity": {Raw: 9},
+		})
+		hawkes.Label = "BTC/USD"
+		hawkes.SeqIdx = 7
+
 		overlay := rich.Clone()
 		overlay.Source = "training:live"
 		overlay.WriteMetric("stage_code", 1)
 
-		kept := preferRows([]*data.Measurement[float64]{raw, overlay, rich})
+		kept := canonicalObservations([]*data.Measurement[float64]{raw, overlay, rich, hawkes})
 		So(len(kept), ShouldEqual, 1)
-		So(kept[0].Source, ShouldEqual, "resonance")
-		So(len(kept[0].Metrics), ShouldBeGreaterThan, len(raw.Metrics))
+		So(kept[0].Source, ShouldEqual, "websocket")
+		So(len(kept[0].Metrics), ShouldEqual, 2) // ingress bid/ask only
+		So(len(kept[0].Peers), ShouldEqual, 2)
+		So(kept[0].Peers[0].Source, ShouldEqual, "hawkes:trade")
+		So(kept[0].Peers[1].Source, ShouldEqual, "resonance")
 	})
 }
 
@@ -189,6 +199,8 @@ func TestSuperviseScoresFrozenPrediction(t *testing.T) {
 				PrecursorStartTick: 1,
 				AnchorTick:         4,
 				ExitTick:           8,
+				EntryPrice:         100.1,
+				ExitPrice:          99.0,
 			},
 			frames: frames,
 		}
@@ -196,6 +208,9 @@ func TestSuperviseScoresFrozenPrediction(t *testing.T) {
 
 		So(training.skill.Count, ShouldEqual, 1)
 		So(training.skill.Mean, ShouldEqual, -1)
+		// Frozen Enter on a loser → negative policy return, not raw skip.
+		So(training.returns.Count, ShouldEqual, 1)
+		So(training.returns.Mean, ShouldBeLessThan, 0)
 	})
 }
 

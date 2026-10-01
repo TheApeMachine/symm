@@ -410,7 +410,66 @@ func TestGridLitRegionsIgnoresPeers(t *testing.T) {
 		peer.SetMetric("quiet", data.Metric[float64]{Label: "quiet", Raw: 1000})
 		withPeer.Peers = []*data.Measurement[float64]{peer}
 
+		// Same key on peer cannot override parent activity (Update fold parity).
 		So(grid.LitRegions(withPeer), ShouldResemble, grid.LitRegions(parent))
+	})
+}
+
+func TestGridLitRegionsScoresSourceKeyedPeers(t *testing.T) {
+	Convey("Given ingress plus a Source-keyed producer peer with a new metric", t, func() {
+		grid := store.NewGrid()
+
+		// Register mid and energy as separate cells via canonical ingress+peer.
+		for tick := 0; tick < 12; tick++ {
+			ingress := data.NewMeasurement[float64]("websocket", nil)
+			ingress.Label = "BTC/USD"
+			std := 0.1 * float64(tick)
+			ingress.SetMetric("mid", data.Metric[float64]{Label: "mid", Raw: 100, Standardized: &std})
+			peer := data.NewMeasurement[float64]("resonance", nil)
+			peer.Label = "BTC/USD"
+			energyStd := 5.0 + float64(tick)
+			peer.SetMetric("energy", data.Metric[float64]{Label: "energy", Raw: 1, Standardized: &energyStd})
+			ingress.Contribute(peer)
+			grid.Update(ingress)
+		}
+		grid.ForceSettle()
+
+		midRegion := grid.Region("BTC/USD\x00mid")
+		energyRegion := grid.Region("BTC/USD\x00energy")
+		So(midRegion, ShouldNotEqual, 0)
+		So(energyRegion, ShouldNotEqual, 0)
+		So(energyRegion, ShouldNotEqual, midRegion)
+
+		ingress := data.NewMeasurement[float64]("websocket", nil)
+		ingress.Label = "BTC/USD"
+		std := 0.1
+		ingress.SetMetric("mid", data.Metric[float64]{Label: "mid", Raw: 100, Standardized: &std})
+		bare := grid.LitRegions(ingress)
+
+		peer := data.NewMeasurement[float64]("resonance", nil)
+		peer.Label = "BTC/USD"
+		energyStd := 50.0
+		peer.SetMetric("energy", data.Metric[float64]{Label: "energy", Raw: 1, Standardized: &energyStd})
+		withPeer := ingress.Clone()
+		withPeer.Contribute(peer)
+		lit := grid.LitRegions(withPeer)
+
+		So(len(lit), ShouldBeGreaterThan, 0)
+		// Energy region must appear when the peer is present.
+		foundEnergy := false
+		for _, id := range lit {
+			if id == energyRegion {
+				foundEnergy = true
+			}
+		}
+		So(foundEnergy, ShouldBeTrue)
+		foundBareEnergy := false
+		for _, id := range bare {
+			if id == energyRegion {
+				foundBareEnergy = true
+			}
+		}
+		So(foundBareEnergy, ShouldBeFalse)
 	})
 }
 

@@ -54,7 +54,14 @@ func TestSuperviseExitUsesBToCNotFullPath(t *testing.T) {
 		So(len(bToC), ShouldBeLessThan, len(aToC))
 		So(len(bToC), ShouldEqual, 3)
 
-		before := classCount(training, string(cognition.ActionExit))
+		exitCtx := training.signatureOf(bToC)
+		So(len(exitCtx), ShouldBeGreaterThan, 0)
+		_, err := training.engine.Observe(cognition.Association{
+			Context: append([]byte{}, exitCtx...), Class: []byte(cognition.ActionExit),
+			Feedback: 1, Graded: true,
+		})
+		So(err, ShouldBeNil)
+		So(training.frozenAction(exitCtx), ShouldEqual, cognition.ActionExit)
 
 		episode := heldEpisode{
 			record: tables.ExcursionRecord{
@@ -65,16 +72,17 @@ func TestSuperviseExitUsesBToCNotFullPath(t *testing.T) {
 				PrecursorStartTick: 1,
 				AnchorTick:         4,
 				ExitTick:           8,
+				EntryPrice:         100,
+				ExitPrice:          101,
 			},
 			frames: frames,
 		}
 		training.supervise(episode, true)
 
-		So(classCount(training, string(cognition.ActionExit)), ShouldBeGreaterThan, before)
-
-		exitCtx := training.signatureOf(bToC)
-		So(len(exitCtx), ShouldBeGreaterThan, 0)
+		// Frozen Exit on B→C is reinforced; skill grades the exit decision.
 		So(training.frozenAction(exitCtx), ShouldEqual, cognition.ActionExit)
+		So(training.histCorrectExit, ShouldEqual, 1)
+		So(training.skill.Count, ShouldBeGreaterThan, 0)
 	})
 }
 

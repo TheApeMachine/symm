@@ -234,6 +234,22 @@ describe("LearningDashboard", () => {
 		expect(container.querySelector('[data-metric="hist_false_enter"]')?.textContent).toBe("2");
 		expect(container.querySelector('[data-metric="hist_mean_return"]')?.textContent).toBe("25.0 bp");
 		expect(container.querySelector('[data-metric="hist_lower_bound"]')?.textContent).toBe("10.0 bp");
+
+		// Legitimate all-abstain mean (0) with opportunities must show 0.0 bp, not "—".
+		const zeroMean = new MeasurementT();
+		zeroMean.source = "training";
+		zeroMean.symbol = "BTC/USD";
+		zeroMean.metrics = [
+			new MetricT("hist_opportunities", 8),
+			new MetricT("hist_mean_return", 0),
+			new MetricT("hist_lower_bound", 0),
+		];
+		act(() => {
+			ring.add(zeroMean);
+			signals.training.setState((s) => ({ ...s }));
+		});
+		expect(container.querySelector('[data-metric="hist_mean_return"]')?.textContent).toBe("0.0 bp");
+		expect(container.querySelector('[data-metric="hist_lower_bound"]')?.textContent).toBe("0.0 bp");
 	});
 
 	it("renders forward paper metrics and keeps historical and forward counts strictly separate", () => {

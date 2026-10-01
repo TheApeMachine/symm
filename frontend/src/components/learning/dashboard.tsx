@@ -206,13 +206,28 @@ export const LearningDashboard = () => {
 							case "surprisal":
 								setText(el, `Surprisal ${raw.toFixed(2)} nat`);
 								break;
-							case "insufficient_if_zero":
-								if (raw === 0) {
-									setText(el, "—");
+							case "insufficient_if_zero": {
+								// 0 is a valid mean (all abstains → policy return 0). Gate on
+								// sample counts, not raw===0 — otherwise held-out mean shows "—"
+								// while edge_samples / resolved are already non-zero.
+								let ready = false;
+								if (
+									name === "hist_mean_return" ||
+									name === "hist_lower_bound" ||
+									name === "hist_return_se"
+								) {
+									ready = (metricMap.hist_opportunities ?? 0) > 0;
+								} else if (
+									name === "fwd_paper_mean_return" ||
+									name === "fwd_paper_lower_bound"
+								) {
+									ready = (metricMap.fwd_paper_trades ?? 0) > 0;
 								} else {
-									setText(el, basis(raw));
+									ready = raw !== 0;
 								}
+								setText(el, ready ? basis(raw) : "—");
 								break;
+							}
 							case "action":
 								if (raw === 1) {
 									setText(el, "ENTER");

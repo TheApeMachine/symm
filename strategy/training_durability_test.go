@@ -286,3 +286,43 @@ func TestCommitExcursionsBoundedSurfacesTimeout(t *testing.T) {
 		<-errCh
 	})
 }
+
+
+func TestEnqueuePreservesPersistErrWhileWriting(t *testing.T) {
+	Convey("enqueue must not clear persistErr while orphan Append still writing", t, func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		catalog := tablestest.New(t)
+		training := NewTraining(ctx, 17, priced(t, "BTC/USD", 0.1), nil, catalog, nil)
+		frame := regionFrame("BTC/USD", 1, 2)
+		training.grid.Update(frame)
+		training.grid.Settle()
+
+		training.mu.Lock()
+		training.checkpointed = true
+		training.writing = true
+		training.blocked = true
+		training.persistErr = errors.New("training: excursion commit exceeded 45s")
+		training.mu.Unlock()
+
+		err := training.enqueue(heldEpisode{
+			record: tables.ExcursionRecord{
+				ID: "BTC/USD:enqueue:1", Symbol: "BTC/USD", AnchorTick: 1, ExitTick: 2, Epoch: 17,
+			},
+		})
+		So(err, ShouldBeNil)
+
+		training.mu.Lock()
+		perr := training.persistErr
+		writing := training.writing
+		training.mu.Unlock()
+		So(writing, ShouldBeTrue)
+		So(perr, ShouldNotBeNil)
+		So(perr.Error(), ShouldContainSubstring, "exceeded")
+
+		_, _, detail := training.stage()
+		So(detail, ShouldContainSubstring, "durability blocked")
+		So(detail, ShouldNotEqual, "durability blocked: writing")
+	})
+}

@@ -233,7 +233,10 @@ LitRegions is the region token for this measurement alone: the N most-lit
 regions (TRAINING.md), not a mean-threshold or argmax. Activity prefers
 Standardized/Normalized over Raw so price-sized values cannot own every token.
 After selecting the top N by activity, region IDs are emitted in ascending
-order so identical sets share radix prefixes. Peers are not scored.
+order so identical sets share radix prefixes.
+
+Scores the canonical observation: parent Metrics plus Source-keyed Peers,
+matching Grid.Update inventory folds (parent key wins on collision).
 */
 func (grid *Grid) LitRegions(measurement *data.Measurement[float64]) []byte {
 	if measurement == nil {
@@ -246,8 +249,21 @@ func (grid *Grid) LitRegions(measurement *data.Measurement[float64]) []byte {
 	var activity [256]float64
 	var present [256]bool
 
+	metrics := measurement.MetricsSnapshot()
+	for _, peer := range measurement.Peers {
+		if peer == nil {
+			continue
+		}
+		for key, incoming := range peer.MetricsSnapshot() {
+			if _, exists := metrics[key]; exists {
+				continue
+			}
+			metrics[key] = incoming
+		}
+	}
+
 	source := measurement.GetSource()
-	for key, metric := range measurement.MetricsSnapshot() {
+	for key, metric := range metrics {
 		name := metric.Label
 
 		if name == "" {
@@ -341,9 +357,9 @@ cellKey identifies one impulse-map cell by symbol and metric name.
 
 Source is intentionally excluded: the disruptor shared-slot design mutates one
 measurement across concurrent signal/logic stages, so Source is racy provenance
-rather than cell identity. Including it made LitRegions miss during historical
-replay (preferRows kept a different Source than Training.Update registered) and
-blanked precursor_tokens after publish rewrote Source to training:*.
+rather than cell identity. Replay rebuilds ingress + Source-keyed peers via
+canonicalObservations so LitRegions matches live Training.Step; publish may
+still rewrite Source to training:* on the UI clone only.
 */
 func cellKey(symbol, _source, name string) string {
 	return symbol + "\x00" + name
@@ -368,8 +384,7 @@ func (grid *Grid) update(
 
 	metrics := measurement.MetricsSnapshot()
 	// Peers carry concurrent signal/logic snapshots (Timeline, Register). Fold
-	// their metrics into the impulse-map inventory; LitRegions still scores the
-	// parent row only.
+	// their metrics into the impulse-map inventory — same fold LitRegions uses.
 	for _, peer := range measurement.Peers {
 		if peer == nil {
 			continue

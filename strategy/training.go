@@ -29,6 +29,10 @@ const (
 	engineKey = "model/cognition.gob"
 	skillKey  = "model/skill.json"
 
+	// supervisionCheckpointVersion rejects cognition/skill created under older
+	// supervision rules (ProfitFraction edge, ±1 paper feedback, richest-row replay).
+	supervisionCheckpointVersion = 2
+
 	// persistCommitTimeout bounds Iceberg excursion commits so writing cannot
 	// latch forever when the catalog/object store stalls (UI: durability blocked: writing).
 	persistCommitTimeout = 45 * time.Second
@@ -94,11 +98,23 @@ type Training struct {
 	writing              bool
 	persistFailed        bool
 	persistErr           error
+	// deferredLearn holds live episodes persisted during historical replay;
+	// cognition teaching waits until replay completes (replay isolation).
+	deferredLearn []heldEpisode
+	// deferredPaper holds reconciled paper grades arriving during replay.
+	deferredPaper []paperGrade
+	paperGraded          map[string]bool
 	durable              chan struct{}
 	durableOnce          sync.Once
 	wake                 chan struct{}
 	settleWake           chan struct{}
 	episodeReady         chan struct{}
+}
+
+type paperGrade struct {
+	symbol   string
+	entryCtx []byte
+	feedback float64
 }
 
 type heldEpisode struct {
@@ -135,6 +151,7 @@ func NewTraining(
 		entries:      make(map[string][]byte),
 		graded:       make(map[string]bool),
 		augmented:    make(map[string]bool),
+		paperGraded:  make(map[string]bool),
 		durable:      make(chan struct{}),
 		wake:         make(chan struct{}, 1),
 		settleWake:   make(chan struct{}, 1),
@@ -187,12 +204,23 @@ func (training *Training) Run() {
 
 		training.mu.Lock()
 		training.replaying = false
+		deferred := training.deferredLearn
+		training.deferredLearn = nil
+		deferredPaper := training.deferredPaper
+		training.deferredPaper = nil
 		training.mu.Unlock()
 
 		if err != nil {
 			training.Error(err)
 
 			return
+		}
+
+		for _, episode := range deferred {
+			training.supervise(episode, true)
+		}
+		for _, grade := range deferredPaper {
+			training.applyPaperGrade(grade.symbol, grade.entryCtx, grade.feedback)
 		}
 
 		training.augment()
@@ -343,18 +371,9 @@ func (training *Training) predictFrom(signature []byte, symbol string, seq int64
 		return marker{action: string(action), entry: seq}
 	}
 
-	// Grade paper only after EXIT is submitted and the position has reconciled.
-	// Mark-to-market PnL before Exit still prices an open inventory and forgets
-	// the entry context before the fill exists (review P0).
-	training.mu.Lock()
-	entryCtx := append([]byte{}, training.entries[symbol]...)
-	training.mu.Unlock()
-
-	var closed *position.Regulator
-
+	// Paper feedback is owned solely by onPositionClosed after a reconciled
+	// fill — never grade synchronously on the EXIT decision path.
 	if training.trader != nil {
-		closed = training.trader.Position(symbol)
-
 		if err := training.trader.OnAction(symbol, action, result.Evaluation.Confidence); err != nil {
 			training.Error(err)
 
@@ -362,20 +381,12 @@ func (training *Training) predictFrom(signature []byte, symbol string, seq int64
 		}
 	}
 
-	training.gradePaperClosed(symbol, entryCtx, closed)
-
-	// Forget only after a reconciled closed grade — dropping entryCtx while
-	// the exit is still pending loses the teachable precursor.
-	if closed != nil && closed.IsClosed() {
-		training.forget(symbol)
-	}
-
 	return marker{action: string(action), exit: seq}
 }
 
 /*
-onPositionClosed grades and forgets when a regulator closes via ApplyExecution
-(async fill path). Sync Exit that already closed still grades in the decision path.
+onPositionClosed is the sole owner of paper feedback. Position close after a
+reconciled fill grades once; the EXIT decision path never grades synchronously.
 */
 func (training *Training) onPositionClosed(symbol string, regulator *position.Regulator) {
 	if training == nil || symbol == "" || regulator == nil {
@@ -395,8 +406,8 @@ func (training *Training) onPositionClosed(symbol string, regulator *position.Re
 
 /*
 gradePaperClosed scores the remembered enter context against a reconciled exit.
-Requires a closed regulator with Realized PnL — open mark-to-market is not an
-episode outcome.
+Forward paper return is realized PnL / economic basis (fraction), never ±1 sign.
+One reconciled closed position => exactly one learning update.
 */
 func (training *Training) gradePaperClosed(
 	symbol string,
@@ -411,22 +422,48 @@ func (training *Training) gradePaperClosed(
 		return
 	}
 
-	feedback := 0.0
-
-	if regulator.Realized.Sign() > 0 {
-		feedback = 1
-	}
-
-	if regulator.Realized.Sign() < 0 {
-		feedback = -1
-	}
-
-	if feedback == 0 {
+	basis := regulator.ClosedCost()
+	if basis == nil || basis.Sign() <= 0 {
 		return
 	}
 
-	// Teach the enter association from realized outcome; paper moments track
-	// forward proof. Historical skill is scored separately in supervise.
+	denom := basis.Float64()
+	if !finiteFloat(denom) || denom == 0 {
+		return
+	}
+
+	feedback := regulator.Realized.Float64() / denom
+	if !finiteFloat(feedback) {
+		return
+	}
+
+	key := symbol + "\x00" + string(entryCtx)
+	training.mu.Lock()
+	if training.paperGraded[key] {
+		training.mu.Unlock()
+		return
+	}
+	training.paperGraded[key] = true
+	replaying := training.replaying
+	if replaying {
+		training.deferredPaper = append(training.deferredPaper, paperGrade{
+			symbol:   symbol,
+			entryCtx: append([]byte{}, entryCtx...),
+			feedback: feedback,
+		})
+		training.mu.Unlock()
+		return
+	}
+	training.mu.Unlock()
+
+	training.applyPaperGrade(symbol, entryCtx, feedback)
+}
+
+func (training *Training) applyPaperGrade(symbol string, entryCtx []byte, feedback float64) {
+	if len(entryCtx) == 0 || !finiteFloat(feedback) {
+		return
+	}
+
 	training.teach(entryCtx, string(cognition.ActionEnter), feedback)
 
 	training.mu.Lock()
@@ -434,24 +471,25 @@ func (training *Training) gradePaperClosed(
 	training.mu.Unlock()
 }
 
+
 /*
-supervise teaches the trie from ground-truth excursion outcomes and, when
-score is set, updates skill from whether a frozen Evaluate of the precursor
-matched what the outcome required — not from profitability alone.
+supervise freezes the model decision BEFORE the outcome is used, then scores
+the economic result of THAT decision with executable bid/ask + fees.
+Abstain (non-Enter) = zero policy return. edge / historical returns come only
+from these frozen model-policy returns — never raw episode ProfitFraction.
+Prediction accuracy (skill ±1) stays separate. One episode ID is taught/scored
+once; A-offset augmentation is the explicit exception (replayVaried).
 */
 func (training *Training) supervise(episode heldEpisode, score bool) {
 	training.mu.Lock()
-
 	if training.graded[episode.record.ID] {
-		score = false
+		training.mu.Unlock()
+		return
 	}
-
 	if score {
 		training.graded[episode.record.ID] = true
 		training.countFragmentLocked(episode.record.Direction)
-		training.recordReturnLocked(episode.record)
 	}
-
 	training.mu.Unlock()
 
 	record := episode.record
@@ -460,17 +498,29 @@ func (training *Training) supervise(episode heldEpisode, score bool) {
 	// Exit: B→C (ignition developing into exhaustion) — not the full A→C path.
 	exitCtx := training.signatureOf(framesRange(episode.frames, record.AnchorTick, record.ExitTick))
 	wantEnter := record.Direction == "up" && record.ClearsFriction
+	execReturn := executableEnterReturn(record)
+
+	// FREEZE model decision before outcome-dependent teaching/scoring.
+	var predicted cognition.Action
+	if len(enterCtx) > 0 {
+		predicted = training.frozenAction(enterCtx)
+	}
+
+	policyReturn := 0.0
+	if predicted == cognition.ActionEnter {
+		policyReturn = execReturn
+	}
+
+	if score {
+		training.mu.Lock()
+		training.recordPolicyReturnLocked(policyReturn, record)
+		training.mu.Unlock()
+	}
 
 	if len(enterCtx) > 0 {
-		predicted := training.frozenAction(enterCtx)
-
-		// Teach ENTER +1 only on fee-clearing ups. Fee-failing ups keep the
-		// precursor silent (detector may have chopped a longer move); down /
-		// chop / flat still teach ENTER -1 so avoidance has honest negatives.
-		if wantEnter {
-			training.teach(enterCtx, string(cognition.ActionEnter), 1)
-		} else if record.Direction != "up" {
-			training.teach(enterCtx, string(cognition.ActionEnter), -1)
+		// Teach with economic feedback of the frozen decision. Abstain → no Enter teach.
+		if predicted == cognition.ActionEnter {
+			training.teach(enterCtx, string(cognition.ActionEnter), policyReturn)
 		}
 
 		if score {
@@ -482,14 +532,35 @@ func (training *Training) supervise(episode heldEpisode, score bool) {
 	}
 
 	if wantEnter && len(exitCtx) > 0 {
-		predicted := training.frozenAction(exitCtx)
-		training.teach(exitCtx, string(cognition.ActionExit), 1)
+		predictedExit := training.frozenAction(exitCtx)
+		if predictedExit == cognition.ActionExit {
+			training.teach(exitCtx, string(cognition.ActionExit), execReturn)
+		}
 
 		if score {
-			training.recordSkill(predicted == cognition.ActionExit)
-			training.noteExitGrade(predicted == cognition.ActionExit)
+			training.recordSkill(predictedExit == cognition.ActionExit)
+			training.noteExitGrade(predictedExit == cognition.ActionExit)
 		}
 	}
+}
+
+/*
+executableEnterReturn is the economic fraction of buying at the episode's
+executable entry (ask+fee) and selling at its executable exit (bid-fee).
+Uses stored EntryPrice/ExitPrice produced by the Detector's bid/ask+fee path.
+*/
+func executableEnterReturn(record tables.ExcursionRecord) float64 {
+	if !finiteFloat(record.EntryPrice) || record.EntryPrice <= 0 {
+		return 0
+	}
+	if !finiteFloat(record.ExitPrice) {
+		return 0
+	}
+	fraction := (record.ExitPrice - record.EntryPrice) / record.EntryPrice
+	if !finiteFloat(fraction) {
+		return 0
+	}
+	return fraction
 }
 
 func (training *Training) frozenAction(signature []byte) cognition.Action {
@@ -560,16 +631,17 @@ func (training *Training) recordSkill(correct bool) {
 }
 
 /*
-recordReturnLocked accumulates ProfitFraction for economic edge / hist_mean_return.
-Caller holds mu. Skill ±1 correctness is separate — never publish it as bp.
+recordPolicyReturnLocked accumulates frozen model-policy returns for edge /
+hist_mean_return. Caller holds mu. Abstain contributes 0. Skill ±1 correctness
+is separate — never publish it as bp. Never records raw ProfitFraction.
 */
-func (training *Training) recordReturnLocked(record tables.ExcursionRecord) {
-	if !finiteFloat(record.ProfitFraction) {
+func (training *Training) recordPolicyReturnLocked(policyReturn float64, record tables.ExcursionRecord) {
+	if !finiteFloat(policyReturn) {
 		return
 	}
 
-	training.returns.Update(record.ProfitFraction)
-	training.returnSamples = append(training.returnSamples, record.ProfitFraction)
+	training.returns.Update(policyReturn)
+	training.returnSamples = append(training.returnSamples, policyReturn)
 	const returnSampleCap = 256
 	if len(training.returnSamples) > returnSampleCap {
 		training.returnSamples = append([]float64(nil), training.returnSamples[len(training.returnSamples)-returnSampleCap:]...)
@@ -632,7 +704,7 @@ func (training *Training) replayHistory() error {
 		return nil
 	}
 
-	bySymbol := tapeBySymbol(preferRows(tapeRows))
+	bySymbol := tapeBySymbol(canonicalObservations(tapeRows))
 
 	return training.replayCausal(excursions, bySymbol, persistIDs)
 }
@@ -890,7 +962,7 @@ func (training *Training) replayExcursion(
 }
 
 /*
-tapeBySymbol groups preferred measurement rows by label for excursion windows.
+tapeBySymbol groups canonical observations by label for excursion windows.
 */
 func tapeBySymbol(rows []*data.Measurement[float64]) map[string][]*data.Measurement[float64] {
 	bySymbol := make(map[string][]*data.Measurement[float64])
@@ -969,11 +1041,14 @@ func (training *Training) replayVaried(episode heldEpisode) {
 
 	enterCtx := training.signatureOf(episode.frames[:pick+1])
 	wantEnter := episode.record.Direction == "up" && episode.record.ClearsFriction
+	execReturn := executableEnterReturn(episode.record)
 
+	// A-offset augmentation is the explicit exception to one-shot teach: still
+	// uses executable economic feedback, never ±1 correctness.
 	if wantEnter {
-		training.teach(enterCtx, string(cognition.ActionEnter), 1)
+		training.teach(enterCtx, string(cognition.ActionEnter), execReturn)
 	} else if episode.record.Direction != "up" {
-		training.teach(enterCtx, string(cognition.ActionEnter), -1)
+		training.teach(enterCtx, string(cognition.ActionEnter), execReturn)
 	}
 }
 
@@ -999,7 +1074,9 @@ func (training *Training) persistAndSupervise(episode heldEpisode) error {
 		return err
 	}
 
-	training.noteDurable(episode)
+	// Historical offline C: supervise immediately on the causal clock. Do not
+	// route through noteDurable — that defers live learning during replay.
+	training.acceptHistorical(episode)
 	return nil
 }
 
@@ -1056,7 +1133,11 @@ func (training *Training) enqueue(episode heldEpisode) error {
 	training.mu.Lock()
 	training.queue = append(training.queue, episode)
 	training.blocked = true
-	training.persistErr = nil
+	// Keep persistErr while an orphan Append still holds writing; clearing it
+	// here made stage() fall back to "durability blocked: writing" forever.
+	if !training.writing {
+		training.persistErr = nil
+	}
 	training.mu.Unlock()
 
 	select {
@@ -1176,6 +1257,14 @@ func (training *Training) noteDurable(episode heldEpisode) {
 		training.pending = append(training.pending, episode)
 		training.mu.Unlock()
 
+		return
+	}
+
+	// Live persist during historical replay: keep the Iceberg write, queue
+	// cognition teaching until replay completes (replay isolation).
+	if training.replaying {
+		training.deferredLearn = append(training.deferredLearn, episode)
+		training.mu.Unlock()
 		return
 	}
 
@@ -1308,12 +1397,19 @@ func (training *Training) restore() (bool, error) {
 
 	model, err := training.catalog.GetBlob(training.Context(), engineKey)
 
+	if errors.Is(err, tables.ErrBlobMissing) {
+		training.resetCognitionLocked()
+		return true, nil
+	}
+
 	if err != nil {
 		return false, err
 	}
 
 	if _, err = training.engine.Restore(model); err != nil {
-		return false, err
+		// packed-weight/1 and other old formats: refuse contamination.
+		training.resetCognitionLocked()
+		return true, nil
 	}
 
 	skillBlob, skillErr := training.catalog.GetBlob(training.Context(), skillKey)
@@ -1324,11 +1420,35 @@ func (training *Training) restore() (bool, error) {
 
 	if skillErr == nil {
 		if err = training.applySkillCheckpoint(skillBlob); err != nil {
-			return false, err
+			// Old supervisionCheckpointVersion: start uncontaminated.
+			training.resetCognitionLocked()
+			return true, nil
 		}
 	}
 
 	return false, nil
+}
+
+// resetCognitionLocked drops restored grid/engine/skill so an experiment under
+// new supervision rules cannot inherit contaminated state. Caller need not hold mu.
+func (training *Training) resetCognitionLocked() {
+	training.grid = store.NewGrid()
+	training.engine = cognition.NewEngine(cognition.Config{})
+	training.mu.Lock()
+	training.skill = statistic.Moments{}
+	training.returns = statistic.Moments{}
+	training.skillSamples = nil
+	training.returnSamples = nil
+	training.histCorrectEnter = 0
+	training.histMissedEnter = 0
+	training.histFalseEnter = 0
+	training.histCorrectExit = 0
+	training.histMissedExit = 0
+	training.histCorrectWait = 0
+	training.histClears = 0
+	training.histFeeFailUp = 0
+	training.fragmentSpanSum = 0
+	training.mu.Unlock()
 }
 
 func (training *Training) save() error {
@@ -1370,17 +1490,43 @@ func (training *Training) save() error {
 }
 
 /*
-skillCheckpoint encodes the observed historical skill moments for durable
-restore. Values are exactly what recordSkill accumulated — never invented.
+skillCheckpoint encodes observed skill / policy-return moments and hist grade
+counters for durable restore. Values are exactly what recordSkill /
+noteEnterGrade / recordPolicyReturn accumulated — never invented.
 */
 type skillCheckpoint struct {
-	Skill   statistic.Moments `json:"skill"`
-	Returns statistic.Moments `json:"returns,omitempty"`
+	Version          int               `json:"version"`
+	Skill            statistic.Moments `json:"skill"`
+	Returns          statistic.Moments `json:"returns,omitempty"`
+	ReturnSamples    []float64         `json:"return_samples,omitempty"`
+	HistCorrectEnter float64           `json:"hist_correct_enter,omitempty"`
+	HistMissedEnter  float64           `json:"hist_missed_enter,omitempty"`
+	HistFalseEnter   float64           `json:"hist_false_enter,omitempty"`
+	HistCorrectExit  float64           `json:"hist_correct_exit,omitempty"`
+	HistMissedExit   float64           `json:"hist_missed_exit,omitempty"`
+	HistCorrectWait  float64           `json:"hist_correct_wait,omitempty"`
+	HistClears       float64           `json:"hist_clears,omitempty"`
+	HistFeeFailUp    float64           `json:"hist_fee_fail_up,omitempty"`
+	FragmentSpanSum  float64           `json:"fragment_span_sum,omitempty"`
 }
 
 func (training *Training) skillCheckpoint() ([]byte, error) {
 	training.mu.Lock()
-	payload := skillCheckpoint{Skill: training.skill, Returns: training.returns}
+	payload := skillCheckpoint{
+		Version:          supervisionCheckpointVersion,
+		Skill:            training.skill,
+		Returns:          training.returns,
+		ReturnSamples:    append([]float64(nil), training.returnSamples...),
+		HistCorrectEnter: training.histCorrectEnter,
+		HistMissedEnter:  training.histMissedEnter,
+		HistFalseEnter:   training.histFalseEnter,
+		HistCorrectExit:  training.histCorrectExit,
+		HistMissedExit:   training.histMissedExit,
+		HistCorrectWait:  training.histCorrectWait,
+		HistClears:       training.histClears,
+		HistFeeFailUp:    training.histFeeFailUp,
+		FragmentSpanSum:  training.fragmentSpanSum,
+	}
 	training.mu.Unlock()
 
 	encoded, err := json.Marshal(payload)
@@ -1407,6 +1553,14 @@ func (training *Training) applySkillCheckpoint(encoded []byte) error {
 		))
 	}
 
+	if payload.Version != supervisionCheckpointVersion {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"training: refuse skill checkpoint from old supervision rules",
+			nil,
+		))
+	}
+
 	// Reject empty/partial garbage without inventing samples.
 	if payload.Skill.Count < 0 || math.IsNaN(payload.Skill.Mean) || math.IsNaN(payload.Skill.M2) {
 		return errnie.Error(errnie.Err(
@@ -1424,9 +1578,28 @@ func (training *Training) applySkillCheckpoint(encoded []byte) error {
 		))
 	}
 
+	if payload.HistCorrectEnter < 0 || payload.HistMissedEnter < 0 || payload.HistFalseEnter < 0 ||
+		payload.HistCorrectExit < 0 || payload.HistMissedExit < 0 || payload.HistCorrectWait < 0 {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"training: hist grade counters in skill checkpoint are invalid",
+			nil,
+		))
+	}
+
 	training.mu.Lock()
 	training.skill = payload.Skill
 	training.returns = payload.Returns
+	training.returnSamples = append([]float64(nil), payload.ReturnSamples...)
+	training.histCorrectEnter = payload.HistCorrectEnter
+	training.histMissedEnter = payload.HistMissedEnter
+	training.histFalseEnter = payload.HistFalseEnter
+	training.histCorrectExit = payload.HistCorrectExit
+	training.histMissedExit = payload.HistMissedExit
+	training.histCorrectWait = payload.HistCorrectWait
+	training.histClears = payload.HistClears
+	training.histFeeFailUp = payload.HistFeeFailUp
+	training.fragmentSpanSum = payload.FragmentSpanSum
 	training.mu.Unlock()
 
 	return nil
@@ -1619,7 +1792,7 @@ func (training *Training) writeSkill(clone *data.Measurement[float64]) {
 	samples := append([]float64(nil), training.returnSamples...)
 	training.mu.Unlock()
 
-	// hist_mean_return / edge are ProfitFraction means (return fractions).
+	// hist_mean_return / edge are frozen model-policy return means (abstain=0).
 	// skill.Mean is ±1 correctness — never publish it as bp.
 	if returns.Count > 0 {
 		clone.WriteMetric("hist_opportunities", returns.Count)
@@ -1670,7 +1843,7 @@ func (training *Training) writeSkill(clone *data.Measurement[float64]) {
 	}
 
 	// win_rate / accuracy = skill accuracy from ±1 grades. edge (above) is
-	// economic mean ProfitFraction so UI basis (×10000) is honest bp.
+	// economic mean policy return so UI basis (×10000) is honest bp.
 	clone.WriteMetric("resolved", skill.Count)
 	if training.engine != nil {
 		clone.WriteMetric("steps", float64(training.engine.Step()))
@@ -2002,83 +2175,131 @@ func cloneFrames(frames []*data.Measurement[float64]) []*data.Measurement[float6
 	return copied
 }
 
-func preferRows(rows []*data.Measurement[float64]) []*data.Measurement[float64] {
-	sort.Slice(rows, func(left, right int) bool {
-		if rows[left].Label != rows[right].Label {
-			return rows[left].Label < rows[right].Label
-		}
-
-		if rows[left].SeqIdx != rows[right].SeqIdx {
-			return rows[left].SeqIdx < rows[right].SeqIdx
-		}
-
-		// training:* overlays are UI publications (stage_code, marks), never
-		// tape fragments — exclude them even if they carry extra overlay metrics.
-		leftTrain := strings.HasPrefix(rows[left].Source, "training:")
-		rightTrain := strings.HasPrefix(rows[right].Source, "training:")
-
-		if leftTrain != rightTrain {
-			return !leftTrain
-		}
-
-		// Keep the richest observation for this symbol/seq. Concurrent stage
-		// consumers push the shared slot at different mutation depths; raw
-		// websocket ingress cannot light frozen regions the way Training.Step
-		// saw them.
-		leftN := metricCount(rows[left])
-		rightN := metricCount(rows[right])
-
-		if leftN != rightN {
-			return leftN > rightN
-		}
-
-		return sourceRank(rows[left].Source) < sourceRank(rows[right].Source)
-	})
-
-	kept := make([]*data.Measurement[float64], 0, len(rows))
-
-	for _, row := range rows {
-		if len(kept) > 0 && kept[len(kept)-1].Label == row.Label && kept[len(kept)-1].SeqIdx == row.SeqIdx {
-			continue
-		}
-
-		kept = append(kept, row)
+/*
+canonicalObservations rebuilds the live disruptor observation per workspace
+sequence: websocket ingress as root + deterministic Source-keyed producer peers.
+training:* overlays are excluded. Same representation Live Training.Step,
+Grid.Update, LitRegions, and historical replay consume — no richest-row heuristic.
+*/
+func canonicalObservations(rows []*data.Measurement[float64]) []*data.Measurement[float64] {
+	type key struct {
+		label string
+		seq   int64
 	}
 
+	groups := make(map[key][]*data.Measurement[float64])
+	order := make([]key, 0)
+
+	for _, row := range rows {
+		if row == nil || row.Label == "" {
+			continue
+		}
+		if strings.HasPrefix(row.Source, "training:") {
+			continue
+		}
+		k := key{label: row.Label, seq: row.SeqIdx}
+		if _, seen := groups[k]; !seen {
+			order = append(order, k)
+		}
+		groups[k] = append(groups[k], row)
+	}
+
+	sort.SliceStable(order, func(i, j int) bool {
+		if order[i].label != order[j].label {
+			return order[i].label < order[j].label
+		}
+		return order[i].seq < order[j].seq
+	})
+
+	kept := make([]*data.Measurement[float64], 0, len(order))
+	for _, k := range order {
+		obs := assembleCanonical(groups[k])
+		if obs != nil {
+			kept = append(kept, obs)
+		}
+	}
 	return kept
 }
 
-func metricCount(measurement *data.Measurement[float64]) int {
-	if measurement == nil {
-		return 0
+func assembleCanonical(rows []*data.Measurement[float64]) *data.Measurement[float64] {
+	if len(rows) == 0 {
+		return nil
 	}
 
-	seen := make(map[string]struct{}, len(measurement.Metrics))
-	for key := range measurement.Metrics {
-		seen[key] = struct{}{}
-	}
+	var ingress *data.Measurement[float64]
+	peers := make([]*data.Measurement[float64], 0, len(rows))
 
-	for _, peer := range measurement.Peers {
-		if peer == nil {
+	for _, row := range rows {
+		if row == nil {
 			continue
 		}
+		if isIngressSource(row) {
+			if ingress == nil {
+				ingress = row.Clone()
+				ingress.Peers = nil
+			}
+			continue
+		}
+		peers = append(peers, row)
+	}
 
-		for key := range peer.Metrics {
-			seen[key] = struct{}{}
+	if ingress == nil {
+		// No raw websocket row for this seq — synthesize ingress shell from the
+		// first producer so Label/SeqIdx/provenance match live shared-slot identity.
+		seed := rows[0]
+		for _, row := range rows {
+			if row != nil {
+				seed = row
+				break
+			}
+		}
+		if seed == nil {
+			return nil
+		}
+		ingress = data.NewMeasurement[float64]("websocket", nil)
+		ingress.Label = seed.Label
+		ingress.SeqIdx = seed.SeqIdx
+		ingress.At = seed.At
+		if ch, ok := seed.GetProvenance("ingress_channel"); ok {
+			ingress.SetProvenance("ingress_channel", ch)
+		}
+		if ch, ok := seed.GetProvenance("channel"); ok {
+			ingress.SetProvenance("channel", ch)
 		}
 	}
 
-	return len(seen)
+	// Deterministic Contribute order by Source then SeqIdx (Contribute also sorts).
+	sort.SliceStable(peers, func(i, j int) bool {
+		if peers[i].Source != peers[j].Source {
+			return peers[i].Source < peers[j].Source
+		}
+		return peers[i].SeqIdx < peers[j].SeqIdx
+	})
+
+	for _, peer := range peers {
+		owned := peer.Clone()
+		owned.Peers = nil
+		ingress.Contribute(owned)
+	}
+
+	return ingress
 }
 
-func sourceRank(source string) int {
-	if strings.HasPrefix(source, "training:") {
-		return 100
+func isIngressSource(row *data.Measurement[float64]) bool {
+	if row == nil {
+		return false
 	}
-
-	if source == "websocket" {
-		return 50
+	if row.Source == "websocket" {
+		return true
 	}
-
-	return 0
+	// Legacy venue rows may keep channel provenance with empty/rewritten Source.
+	if row.Source == "" {
+		if ch, ok := row.GetProvenance("ingress_channel"); ok {
+			switch ch {
+			case "ticker", "trade", "level3", "futures_ticker", "futures_trade":
+				return true
+			}
+		}
+	}
+	return false
 }

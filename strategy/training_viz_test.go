@@ -132,18 +132,18 @@ func TestSuperviseCountsFragmentOnce(t *testing.T) {
 }
 
 func TestWriteSkillPublishesEdgeSamples(t *testing.T) {
-	Convey("writeSkill stamps ProfitFraction samples for the edge panel", t, func() {
+	Convey("writeSkill stamps frozen policy-return samples for the edge panel", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
 		training := NewTraining(ctx, 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
 		training.mu.Lock()
-		training.recordReturnLocked(tables.ExcursionRecord{
-			Direction: "up", ClearsFriction: true, ProfitFraction: 0.0025,
+		training.recordPolicyReturnLocked(0.0025, tables.ExcursionRecord{
+			Direction: "up", ClearsFriction: true,
 			AnchorTick: 1, ExitTick: 40,
 		})
-		training.recordReturnLocked(tables.ExcursionRecord{
-			Direction: "up", ClearsFriction: false, ProfitFraction: -0.001,
+		training.recordPolicyReturnLocked(-0.001, tables.ExcursionRecord{
+			Direction: "up", ClearsFriction: false,
 			AnchorTick: 1, ExitTick: 5,
 		})
 		training.mu.Unlock()
@@ -166,7 +166,7 @@ func TestWriteSkillPublishesEdgeSamples(t *testing.T) {
 }
 
 func TestSuperviseTeachesExitOnlyForWantEnter(t *testing.T) {
-	Convey("supervise teaches EXIT on B→C only when up+clearsFriction", t, func() {
+	Convey("supervise teaches EXIT only when frozen decision is Exit on clearing up", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
@@ -182,8 +182,15 @@ func TestSuperviseTeachesExitOnlyForWantEnter(t *testing.T) {
 		training.checkpointed = true
 		training.mu.Unlock()
 
+		exitCtx := training.signatureOf(framesRange([]*data.Measurement[float64]{frameA, frameB, frameC}, 2, 4))
+		So(len(exitCtx), ShouldBeGreaterThan, 0)
+		_, err := training.engine.Observe(cognition.Association{
+			Context: append([]byte{}, exitCtx...), Class: []byte(cognition.ActionExit),
+			Feedback: 1, Graded: true,
+		})
+		So(err, ShouldBeNil)
+
 		before := training.engine.Census()
-		enterBefore := before["enter"]
 		exitBefore := before["exit"]
 
 		training.supervise(heldEpisode{
@@ -195,13 +202,18 @@ func TestSuperviseTeachesExitOnlyForWantEnter(t *testing.T) {
 				PrecursorStartTick: 1,
 				AnchorTick:         2,
 				ExitTick:           4,
+				EntryPrice:         100,
+				ExitPrice:          101,
 			},
 			frames: []*data.Measurement[float64]{frameA, frameB, frameC},
 		}, true)
 
-		after := training.engine.Census()
-		So(after["enter"], ShouldBeGreaterThan, enterBefore)
-		So(after["exit"], ShouldBeGreaterThan, exitBefore)
+		// Pre-seeded Exit association: freeze predicts Exit, teach reinforces it.
+		So(training.frozenAction(exitCtx), ShouldEqual, cognition.ActionExit)
+		So(training.returns.Count, ShouldEqual, 1)
+		So(training.returns.Mean, ShouldEqual, 0) // abstain on enter
+		So(training.histCorrectExit+training.histMissedExit, ShouldBeGreaterThan, 0)
+		_ = exitBefore
 	})
 }
 
@@ -237,7 +249,7 @@ func TestHistoricalPredictSurfacesExitWithoutHolding(t *testing.T) {
 
 
 func TestWriteSkillPublishesEdgeWinRate(t *testing.T) {
-	Convey("writeSkill stamps win_rate from skill±1 and edge from ProfitFraction", t, func() {
+	Convey("writeSkill stamps win_rate from skill±1 and edge from policy returns", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
@@ -247,12 +259,12 @@ func TestWriteSkillPublishesEdgeWinRate(t *testing.T) {
 		training.skill.Update(1)
 		training.skill.Update(-1)
 		mean := training.skill.Mean
-		training.recordReturnLocked(tables.ExcursionRecord{
-			Direction: "up", ClearsFriction: true, ProfitFraction: 0.01,
+		training.recordPolicyReturnLocked(0.01, tables.ExcursionRecord{
+			Direction: "up", ClearsFriction: true,
 			AnchorTick: 10, ExitTick: 100,
 		})
-		training.recordReturnLocked(tables.ExcursionRecord{
-			Direction: "down", ClearsFriction: false, ProfitFraction: -0.002,
+		training.recordPolicyReturnLocked(-0.002, tables.ExcursionRecord{
+			Direction: "down", ClearsFriction: false,
 			AnchorTick: 10, ExitTick: 20,
 		})
 		retMean := training.returns.Mean
@@ -363,7 +375,7 @@ func TestStageReportsNoGradedOutcomes(t *testing.T) {
 
 
 func TestSuperviseSilentOnFeeFailingUp(t *testing.T) {
-	Convey("fee-failing ups grade skill but do not teach ENTER -1", t, func() {
+	Convey("fee-failing ups grade skill; abstain edge is 0; no ENTER teach", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
@@ -394,7 +406,8 @@ func TestSuperviseSilentOnFeeFailingUp(t *testing.T) {
 		So(classCount(training, "enter"), ShouldEqual, before)
 		So(training.skill.Count, ShouldEqual, 1)
 		So(training.returns.Count, ShouldEqual, 1)
-		So(training.returns.Mean, ShouldEqual, -0.0015)
+		// Abstain (no Enter prediction) → policy return 0, never raw ProfitFraction.
+		So(training.returns.Mean, ShouldEqual, 0)
 		So(training.histFeeFailUp, ShouldEqual, 1)
 		So(training.histClears, ShouldEqual, 0)
 	})

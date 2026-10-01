@@ -2,6 +2,7 @@ package hindsight
 
 import (
 	"context"
+	"time"
 	"unsafe"
 
 	"github.com/theapemachine/errnie"
@@ -12,6 +13,9 @@ import (
 
 /*
 StoreTee queues measurements for the catalog drain.
+Training tape must not silently drop: a full queue applies backpressure, and
+if the consumer cannot catch up before context cancellation the push fails
+explicitly so the tape never contains invisible gaps.
 */
 const storeTeeQueueCap = 8192
 
@@ -31,10 +35,11 @@ func NewStoreTee(ctx context.Context, label string) *StoreTee {
 
 func (tee *StoreTee) Push(measurement *data.Measurement[float64]) {
 	if tee.Status() != runtime.READY {
-		errnie.Warn(
-			"[storeTee] pushing to a non-ready system may have unintended consequences",
-		)
-
+		tee.Error(errnie.Error(errnie.Err(
+			errnie.Conflict,
+			"storeTee: push refused — system not READY (would create a silent tape gap)",
+			nil,
+		)))
 		return
 	}
 
@@ -42,11 +47,35 @@ func (tee *StoreTee) Push(measurement *data.Measurement[float64]) {
 		return
 	}
 
-	if tee.queue.Length() >= storeTeeQueueCap {
-		return
-	}
+	clone := measurement.PersistClone()
 
-	tee.queue.Enqueue(measurement.PersistClone())
+	for {
+		if tee.queue.Length() < storeTeeQueueCap {
+			tee.queue.Enqueue(clone)
+			return
+		}
+
+		// Backpressure: wait for drain rather than drop. Fail explicitly if
+		// the run ends while still full so callers see the gap.
+		select {
+		case <-tee.Context().Done():
+			tee.Error(errnie.Error(errnie.Err(
+				errnie.Timeout,
+				"storeTee: queue full at shutdown — tape push failed (no silent drop)",
+				tee.Context().Err(),
+			)))
+			return
+		case <-time.After(time.Millisecond):
+			if tee.Status() != runtime.READY {
+				tee.Error(errnie.Error(errnie.Err(
+					errnie.Conflict,
+					"storeTee: queue full and system left READY — tape push failed",
+					nil,
+				)))
+				return
+			}
+		}
+	}
 }
 
 func (tee *StoreTee) Next() unsafe.Pointer {
