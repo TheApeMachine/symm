@@ -2,6 +2,7 @@ package strategy
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"math"
 	"math/rand/v2"
@@ -9,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
@@ -25,6 +27,7 @@ import (
 const (
 	gridKey   = "model/grid.json"
 	engineKey = "model/cognition.gob"
+	skillKey  = "model/skill.json"
 )
 
 var _ ui.CognitionSource = (*Training)(nil)
@@ -64,6 +67,7 @@ type Training struct {
 	checkpointFailed bool
 	modelDirty       bool
 	restored         bool
+	replaying        bool
 	blocked          bool
 	writing          bool
 	persistFailed    bool
@@ -149,7 +153,17 @@ func (training *Training) Run() {
 		case <-training.durable:
 		}
 
-		if err := training.replayHistory(); err != nil {
+		training.mu.Lock()
+		training.replaying = true
+		training.mu.Unlock()
+
+		err := training.replayHistory()
+
+		training.mu.Lock()
+		training.replaying = false
+		training.mu.Unlock()
+
+		if err != nil {
 			training.Error(err)
 
 			return
@@ -201,8 +215,10 @@ func (training *Training) extendSignature(measurement *data.Measurement[float64]
 	}
 
 	training.mu.Lock()
-	signature := append(append([]byte{}, training.signatures[measurement.Label]...), token...)
-	training.signatures[measurement.Label] = append(signature, 0)
+	training.signatures[measurement.Label] = appendLitFrame(
+		append([]byte{}, training.signatures[measurement.Label]...),
+		token,
+	)
 	training.mu.Unlock()
 }
 
@@ -378,8 +394,10 @@ func (training *Training) supervise(episode heldEpisode, score bool) {
 	training.mu.Unlock()
 
 	record := episode.record
+	// Enter: A→B (precursor developing into ignition).
 	enterCtx := training.signatureOf(framesBefore(episode.frames, record.AnchorTick))
-	exitCtx := training.signatureOf(framesBefore(episode.frames, record.ExitTick))
+	// Exit: B→C (ignition developing into exhaustion) — not the full A→C path.
+	exitCtx := training.signatureOf(framesRange(episode.frames, record.AnchorTick, record.ExitTick))
 	wantEnter := record.Direction == "up" && record.ClearsFriction
 
 	if len(enterCtx) > 0 {
@@ -460,6 +478,8 @@ func (training *Training) recordSkill(correct bool) {
 
 	training.mu.Lock()
 	training.skill.Update(sample)
+	// Skill is part of the durable checkpoint; dirty so save() persists moments.
+	training.modelDirty = true
 	training.mu.Unlock()
 }
 
@@ -553,19 +573,12 @@ func (training *Training) replayExcursion(
 
 		token := training.grid.LitRegions(clone)
 
-		if len(token) > 0 {
-			signature = append(signature, token...)
-			signature = append(signature, 0)
-		}
+		signature = appendLitFrame(signature, token)
 
 		reading := training.predictFrom(signature, clone.Label, clone.SeqIdx, true)
-		var published *tables.ExcursionRecord
-
-		if clone.SeqIdx == record.ExitTick {
-			published = record
-		}
-
-		training.publish(clone, published, reading, true)
+		// Known ExcursionRecord owns A/B/C for the whole fragment — blank marks
+		// only at ExitTick hid the tape visualization mid-episode (TRAINING.md).
+		training.publish(clone, record, reading, true)
 	}
 
 	if len(frames) == 0 {
@@ -698,7 +711,7 @@ func (training *Training) persistLoop() {
 		return
 	}
 
-	writer := tables.NewWriter(training.catalog, training.epoch)
+	backoff := time.Second
 
 	for {
 		select {
@@ -711,23 +724,51 @@ func (training *Training) persistLoop() {
 		case <-training.wake:
 		}
 
-		training.mu.Lock()
-		batch := training.queue
-		training.queue = nil
-		training.writing = len(batch) > 0
-		training.blocked = training.writing
-		training.mu.Unlock()
+		for {
+			training.mu.Lock()
+			batch := training.queue
+			training.queue = nil
+			training.writing = len(batch) > 0
+			training.blocked = training.writing
+			training.mu.Unlock()
 
-		if len(batch) == 0 {
-			continue
+			if len(batch) == 0 {
+				break
+			}
+
+			// Fresh Writer per attempt. CommitReady restores uncommitted rows
+			// into the same Writer on failure; re-AddExcursion on a reused
+			// Writer would duplicate Iceberg appends after a transient error.
+			writer := tables.NewWriter(training.catalog, training.epoch)
+
+			for _, episode := range batch {
+				writer.AddExcursion(episode.record)
+			}
+
+			err := writer.CommitReady(training.Context(), true)
+			training.finishWrite(batch, err)
+
+			if err == nil {
+				backoff = time.Second
+				continue
+			}
+
+			if training.Context().Err() != nil {
+				return
+			}
+
+			// Do not wait for a new enqueue wake: a failed CommitReady left
+			// the batch requeued and blocked=true with nothing else waking us.
+			select {
+			case <-training.Context().Done():
+				return
+			case <-time.After(backoff):
+			}
+
+			if backoff < 30*time.Second {
+				backoff *= 2
+			}
 		}
-
-		for _, episode := range batch {
-			writer.AddExcursion(episode.record)
-		}
-
-		err := writer.CommitReady(training.Context(), true)
-		training.finishWrite(batch, err)
 	}
 }
 
@@ -783,9 +824,11 @@ func (training *Training) waitDrained() error {
 	training.mu.Lock()
 	defer training.mu.Unlock()
 
+	// Persist failures requeue and retry in persistLoop; do not bail on the
+	// first persistErr or historical replay aborts while durability stays blocked.
 	for len(training.queue) > 0 || training.writing {
-		if training.persistErr != nil && !training.writing {
-			return training.persistErr
+		if err := training.Context().Err(); err != nil {
+			return err
 		}
 
 		training.cond.Wait()
@@ -900,6 +943,18 @@ func (training *Training) restore() (bool, error) {
 		return false, err
 	}
 
+	skillBlob, skillErr := training.catalog.GetBlob(training.Context(), skillKey)
+
+	if skillErr != nil && !errors.Is(skillErr, tables.ErrBlobMissing) {
+		return false, skillErr
+	}
+
+	if skillErr == nil {
+		if err = training.applySkillCheckpoint(skillBlob); err != nil {
+			return false, err
+		}
+	}
+
 	return false, nil
 }
 
@@ -928,7 +983,71 @@ func (training *Training) save() error {
 		return err
 	}
 
-	return training.catalog.PutBlob(training.Context(), engineKey, model.Model)
+	if err = training.catalog.PutBlob(training.Context(), engineKey, model.Model); err != nil {
+		return err
+	}
+
+	skillBlob, err := training.skillCheckpoint()
+
+	if err != nil {
+		return err
+	}
+
+	return training.catalog.PutBlob(training.Context(), skillKey, skillBlob)
+}
+
+
+/*
+skillCheckpoint encodes the observed historical skill moments for durable
+restore. Values are exactly what recordSkill accumulated — never invented.
+*/
+type skillCheckpoint struct {
+	Skill statistic.Moments `json:"skill"`
+}
+
+func (training *Training) skillCheckpoint() ([]byte, error) {
+	training.mu.Lock()
+	payload := skillCheckpoint{Skill: training.skill}
+	training.mu.Unlock()
+
+	encoded, err := json.Marshal(payload)
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"training: encode skill checkpoint",
+			err,
+		))
+	}
+
+	return encoded, nil
+}
+
+func (training *Training) applySkillCheckpoint(encoded []byte) error {
+	var payload skillCheckpoint
+
+	if err := json.Unmarshal(encoded, &payload); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"training: decode skill checkpoint",
+			err,
+		))
+	}
+
+	// Reject empty/partial garbage without inventing samples.
+	if payload.Skill.Count < 0 || math.IsNaN(payload.Skill.Mean) || math.IsNaN(payload.Skill.M2) {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"training: skill checkpoint moments are invalid",
+			nil,
+		))
+	}
+
+	training.mu.Lock()
+	training.skill = payload.Skill
+	training.mu.Unlock()
+
+	return nil
 }
 
 func (training *Training) markDurable() {
@@ -976,9 +1095,10 @@ func (training *Training) paperOpen() bool {
 	moments := training.skill
 	blocked := training.blocked
 	checkpointed := training.checkpointed
+	replaying := training.replaying
 	training.mu.Unlock()
 
-	if blocked || !checkpointed || moments.Count <= 1 {
+	if blocked || replaying || !checkpointed || moments.Count <= 1 {
 		return false
 	}
 
@@ -992,6 +1112,9 @@ func (training *Training) stage() (float64, string, string) {
 	training.mu.Lock()
 	checkpointed := training.checkpointed
 	blocked := training.blocked
+	writing := training.writing
+	persistErr := training.persistErr
+	replaying := training.replaying
 	moments := training.skill
 	training.mu.Unlock()
 
@@ -1003,8 +1126,20 @@ func (training *Training) stage() (float64, string, string) {
 		return 0, "MODEL DEVELOPMENT", "checkpoint missing"
 	}
 
+	if replaying {
+		return 1, "HISTORICAL VALIDATION", "historical replay in progress"
+	}
+
 	if blocked {
-		return 1, "HISTORICAL VALIDATION", "durability blocked"
+		detail := "durability blocked"
+		if persistErr != nil {
+			detail = "durability blocked: " + persistErr.Error()
+		} else if writing {
+			detail = "durability blocked: writing"
+		} else {
+			detail = "durability blocked: pending"
+		}
+		return 1, "HISTORICAL VALIDATION", detail
 	}
 
 	if moments.Count <= 1 {
@@ -1053,6 +1188,18 @@ func (training *Training) publish(
 	training.writeQuote(clone, measurement)
 	training.writeMarker(clone, reading, measurement)
 	training.writeEpisode(clone, record)
+
+	// Live open excursions: stamp A/B from Detector while C is still unknown.
+	if record == nil && !historical && measurement.Label != "" && training.detector != nil {
+		if precursor, anchor, open := training.detector.OpenMarks(measurement.Label); open {
+			clone.SetMetadata("excursion_event", "open")
+			clone.SetMetadata("excursion_start", strconv.FormatInt(precursor, 10))
+			clone.SetMetadata("excursion_ignition", strconv.FormatInt(anchor, 10))
+			clone.WriteMetric("mark_a", float64(precursor))
+			clone.WriteMetric("mark_b", float64(anchor))
+		}
+	}
+
 	training.tee.Push(clone)
 }
 
@@ -1146,7 +1293,13 @@ func (training *Training) writeEpisode(clone *data.Measurement[float64], record 
 	clone.SetMetadata("excursion_start", strconv.FormatInt(record.PrecursorStartTick, 10))
 	clone.SetMetadata("excursion_ignition", strconv.FormatInt(record.AnchorTick, 10))
 	clone.SetMetadata("excursion_exit", strconv.FormatInt(record.ExitTick, 10))
-	clone.SetMetadata("excursion_event", "completed")
+
+	event := "developing"
+	if clone.SeqIdx >= record.ExitTick {
+		event = "completed"
+	}
+	clone.SetMetadata("excursion_event", event)
+
 	clone.WriteMetric("mark_a", float64(record.PrecursorStartTick))
 	clone.WriteMetric("mark_b", float64(record.AnchorTick))
 	clone.WriteMetric("mark_c", float64(record.ExitTick))
@@ -1157,14 +1310,7 @@ func (training *Training) signatureOf(frames []*data.Measurement[float64]) []byt
 	var signature []byte
 
 	for _, frame := range frames {
-		token := training.grid.LitRegions(frame)
-
-		if len(token) == 0 {
-			continue
-		}
-
-		signature = append(signature, token...)
-		signature = append(signature, 0)
+		signature = appendLitFrame(signature, training.grid.LitRegions(frame))
 	}
 
 	return signature
@@ -1250,6 +1396,26 @@ func framesBefore(frames []*data.Measurement[float64], tick int64) []*data.Measu
 	return chosen
 }
 
+/*
+framesRange keeps [start, end) by SeqIdx — B→C exit learning uses
+AnchorTick inclusive through ExitTick exclusive.
+*/
+func framesRange(frames []*data.Measurement[float64], start, end int64) []*data.Measurement[float64] {
+	chosen := make([]*data.Measurement[float64], 0)
+
+	for _, frame := range frames {
+		if frame == nil {
+			continue
+		}
+
+		if frame.SeqIdx >= start && frame.SeqIdx < end {
+			chosen = append(chosen, frame)
+		}
+	}
+
+	return chosen
+}
+
 func framesFrom(frames []*data.Measurement[float64], tick int64) []*data.Measurement[float64] {
 	chosen := make([]*data.Measurement[float64], 0)
 
@@ -1325,7 +1491,22 @@ func metricCount(measurement *data.Measurement[float64]) int {
 		return 0
 	}
 
-	return len(measurement.Metrics)
+	seen := make(map[string]struct{}, len(measurement.Metrics))
+	for key := range measurement.Metrics {
+		seen[key] = struct{}{}
+	}
+
+	for _, peer := range measurement.Peers {
+		if peer == nil {
+			continue
+		}
+
+		for key := range peer.Metrics {
+			seen[key] = struct{}{}
+		}
+	}
+
+	return len(seen)
 }
 
 func sourceRank(source string) int {

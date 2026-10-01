@@ -214,19 +214,25 @@ func (instrument *Instrument) Subscribe() error {
 		wsToken = tokenRes.Result.Token
 	}
 
+	var (
+		spotSubs    [][]byte
+		futuresSubs [][]byte
+	)
+
 	for batch := range slices.Chunk(
 		instrument.symbols, system.Cfg.Market.Subscribe.Batch,
 	) {
-		subs := []json.Marshaler{
+		for _, sub := range []json.Marshaler{
 			kraken.NewTradeSubscription(batch),
 			kraken.NewTickerSubscription(batch),
-			kraken.NewFuturesSubscription("ticker", batch),
-			kraken.NewFuturesSubscription("trade", batch),
-		}
-
-		for _, sub := range subs {
-			msg, _ := sonic.Marshal(sub)
-
+		} {
+			msg, err := sonic.Marshal(sub)
+			if err != nil {
+				return instrument.Error(errnie.Err(
+					errnie.IO, "[instrument] spot subscribe marshal failed", err,
+				))
+			}
+			spotSubs = append(spotSubs, msg)
 			if err := instrument.public.Write(msg); err != nil {
 				return instrument.Error(errnie.Err(
 					errnie.IO,
@@ -236,25 +242,76 @@ func (instrument *Instrument) Subscribe() error {
 			}
 		}
 
-		l3Client := network.NewWebsocketClient(instrument.System.Context())
-
-		if err := l3Client.Open(system.Cfg.WebSocket.Endpoints.Level3); err == nil {
-			if l3Msg, err := sonic.Marshal(
-				kraken.NewLevel3Subscription(batch, wsToken),
-			); err == nil {
-				errnie.Info(
-					"[instrument] subscribed to level3 for " + strings.Join(batch, "|"),
-				)
-
-				l3Client.Write(l3Msg)
-
-				instrument.Level3.Store(
-					strings.Join(batch, "|"), l3Client,
-				)
+		for _, sub := range []json.Marshaler{
+			kraken.NewFuturesSubscription("ticker", batch),
+			kraken.NewFuturesSubscription("trade", batch),
+		} {
+			msg, err := sonic.Marshal(sub)
+			if err != nil {
+				return instrument.Error(errnie.Err(
+					errnie.IO, "[instrument] futures subscribe marshal failed", err,
+				))
+			}
+			futuresSubs = append(futuresSubs, msg)
+			if instrument.futures != nil {
+				if err := instrument.futures.Write(msg); err != nil {
+					return instrument.Error(errnie.Err(
+						errnie.IO,
+						"[instrument] required futures subscription failed",
+						err,
+					))
+				}
 			}
 		}
 
+		l3Client := network.NewWebsocketClient(instrument.System.Context())
+		l3Msg, l3Err := sonic.Marshal(kraken.NewLevel3Subscription(batch, wsToken))
+		if l3Err != nil {
+			continue
+		}
+
+		batchKey := strings.Join(batch, "|")
+		l3Client.OnReconnect(func() error {
+			errnie.Info("[instrument] level3 resubscribe after reconnect for " + batchKey)
+			return l3Client.Write(l3Msg)
+		})
+
+		if err := l3Client.Open(system.Cfg.WebSocket.Endpoints.Level3); err != nil {
+			errnie.Warn("[instrument] level3 open failed for " + batchKey + ": " + err.Error())
+			continue
+		}
+
+		if err := l3Client.Write(l3Msg); err != nil {
+			errnie.Warn("[instrument] level3 subscribe failed for " + batchKey + ": " + err.Error())
+			continue
+		}
+
+		errnie.Info("[instrument] subscribed to level3 for " + batchKey)
+		instrument.Level3.Store(batchKey, l3Client)
+
 		time.Sleep(100 * time.Millisecond)
+	}
+
+	instrument.public.OnReconnect(func() error {
+		errnie.Info("[instrument] public resubscribe after reconnect")
+		for _, msg := range spotSubs {
+			if err := instrument.public.Write(msg); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+
+	if instrument.futures != nil {
+		instrument.futures.OnReconnect(func() error {
+			errnie.Info("[instrument] futures resubscribe after reconnect")
+			for _, msg := range futuresSubs {
+				if err := instrument.futures.Write(msg); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
 	}
 
 	instrument.Transition(runtime.READY)

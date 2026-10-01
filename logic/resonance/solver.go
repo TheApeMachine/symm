@@ -223,9 +223,22 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 
 	var signals [11]*data.Measurement[float64]
 
+	// Live shared-slot: concurrent signals WriteMetric onto one measurement and
+	// race Source. Index by headline metric presence (extractHeadlineMetric),
+	// not Source. Peers still win when Timeline/Register stamped them.
 	if measurement.Label == symbol {
 		if idx := signalIndex(measurement.Source); idx >= 0 {
 			signals[idx] = measurement
+		}
+
+		for index := 0; index < len(signals); index++ {
+			if signals[index] != nil {
+				continue
+			}
+
+			if _, ok := extractHeadlineMetric(index, measurement); ok {
+				signals[index] = measurement
+			}
 		}
 	}
 
@@ -236,6 +249,17 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 
 		if idx := signalIndex(peer.Source); idx >= 0 {
 			signals[idx] = peer
+			continue
+		}
+
+		for index := 0; index < len(signals); index++ {
+			if signals[index] != nil {
+				continue
+			}
+
+			if _, ok := extractHeadlineMetric(index, peer); ok {
+				signals[index] = peer
+			}
 		}
 	}
 

@@ -351,6 +351,23 @@ func (grid *Grid) update(
 	}
 
 	metrics := measurement.MetricsSnapshot()
+	// Peers carry concurrent signal/logic snapshots (Timeline, Register). Fold
+	// their metrics into the impulse-map inventory; LitRegions still scores the
+	// parent row only.
+	for _, peer := range measurement.Peers {
+		if peer == nil {
+			continue
+		}
+
+		for key, incoming := range peer.MetricsSnapshot() {
+			if _, exists := metrics[key]; exists {
+				continue
+			}
+
+			metrics[key] = incoming
+		}
+	}
+
 	if len(metrics) == 0 {
 		return
 	}

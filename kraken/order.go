@@ -80,7 +80,9 @@ type AddOrderRequest struct {
 	Pair    string `json:"symbol"`
 	Type    string `json:"side"`
 	OrdType string `json:"order_type"`
-	Volume  string `json:"volume"`
+	// Volume is the venue size string. WS v2 names it order_qty (REST still
+	// says volume); paper and live add_order both consume order_qty.
+	Volume  string `json:"order_qty"`
 	Price   string `json:"limit_price,omitempty"`
 	ClOrdId string `json:"cl_ord_id,omitempty"`
 }

@@ -672,6 +672,14 @@ func (paper *Paper) placeOrder(
 	limitPrice string,
 	clientOrderID string,
 ) (datura.Map[any], error) {
+	if quantity == "" {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"paper: order_qty is required (empty volume string)",
+			nil,
+		))
+	}
+
 	command := []string{side, symbol, quantity}
 
 	if orderType == "limit" && limitPrice != "" {

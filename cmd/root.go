@@ -121,10 +121,18 @@ var (
 			}
 
 			public := network.NewWebsocketClient(ctx)
-			public.Open(system.Cfg.WebSocket.Endpoints.Public)
+			if err := public.Open(system.Cfg.WebSocket.Endpoints.Public); err != nil {
+				return errnie.Error(errnie.Err(
+					errnie.IO, "symm: public websocket open failed", err,
+				))
+			}
 
 			futures := network.NewWebsocketClient(ctx)
-			futures.Open(system.Cfg.WebSocket.Endpoints.Futures)
+			if err := futures.Open(system.Cfg.WebSocket.Endpoints.Futures); err != nil {
+				return errnie.Error(errnie.Err(
+					errnie.IO, "symm: futures websocket open failed", err,
+				))
+			}
 
 			var (
 				privateTransport broker.Transport
@@ -137,7 +145,11 @@ var (
 
 			if privateTransport == nil {
 				privateWS = network.NewWebsocketClient(ctx)
-				privateWS.Open(system.Cfg.WebSocket.Endpoints.Private)
+				if err := privateWS.Open(system.Cfg.WebSocket.Endpoints.Private); err != nil {
+					return errnie.Error(errnie.Err(
+						errnie.IO, "symm: private websocket open failed", err,
+					))
+				}
 				privateTransport = privateWS
 			}
 
@@ -263,6 +275,50 @@ var (
 				storeTee,
 			)
 
+			// Level3 previously only updated the book — depthflow/morphology/toxicity
+			// level3 nodes never received a workspace event. Feed verified touches
+			// (real top-of-book from checksum-matched frames, not invented).
+			book.SetTouch(func(touches []kraken.Level3Touch) {
+				for _, touch := range touches {
+					metrics := map[string]data.Metric[float64]{}
+
+					if touch.Bid != nil {
+						metrics["bid"] = data.Metric[float64]{
+							Raw: touch.Bid.Float64(), Exact: touch.Bid,
+						}
+					}
+
+					if touch.Ask != nil {
+						metrics["ask"] = data.Metric[float64]{
+							Raw: touch.Ask.Float64(), Exact: touch.Ask,
+						}
+					}
+
+					if touch.BidQty != nil {
+						metrics["bid_qty"] = data.Metric[float64]{
+							Raw: touch.BidQty.Float64(), Exact: touch.BidQty,
+						}
+					}
+
+					if touch.AskQty != nil {
+						metrics["ask_qty"] = data.Metric[float64]{
+							Raw: touch.AskQty.Float64(), Exact: touch.AskQty,
+						}
+					}
+
+					if len(metrics) == 0 || touch.Symbol == "" {
+						continue
+					}
+
+					m := data.NewMeasurement("websocket", metrics)
+					m.Label = touch.Symbol
+					m.At = touch.Timestamp
+					m.SetMetadata("type", "level3")
+					m.SetProvenance("channel", "level3")
+					workspace.Step(m)
+				}
+			})
+
 			// Subscribe and seed while transports remain BUSY. Only a complete
 			// instrument universe and restored learner may open the workspace.
 			if err := instrument.Subscribe(); err != nil {
@@ -323,15 +379,6 @@ var (
 
 			// Every processing and off-ramp owner is ready before ingress opens.
 
-			transports := []nmruntime.RuntimeSystem{public, futures}
-			if privateSys, ok := privateTransport.(nmruntime.RuntimeSystem); ok {
-				transports = append(transports, privateSys)
-			}
-
-			for _, transport := range transports {
-				transport.Transition(nmruntime.READY)
-			}
-
 			startIngress := func(
 				client *network.WebsocketClient, name string,
 			) {
@@ -348,12 +395,8 @@ var (
 						buf, err := client.Read()
 
 						if err != nil {
-							errnie.Error(errnie.Err(
-								errnie.IO,
-								fmt.Sprintf("[root] %s ingress read failed", name),
-								err,
-							))
-
+							// Soft disconnect/reconnect is expected (1006, reset).
+							// Read redials with backoff and warnOnce; do not ERROR-flood here.
 							continue
 						}
 
@@ -376,8 +419,12 @@ var (
 
 							if t != nil && t.IsSuccess() {
 								for _, td := range t.Data {
+									// Venue ticker already carries touch size; liquidity and
+									// toxicity gates require bid_qty/ask_qty (not invented).
 									metrics := map[string]data.Metric[float64]{
-										"volume": {Raw: td.Volume},
+										"volume":  {Raw: td.Volume},
+										"bid_qty": {Raw: td.BidQty},
+										"ask_qty": {Raw: td.AskQty},
 									}
 
 									if td.Bid != nil {
@@ -405,6 +452,7 @@ var (
 									m.Label = td.Symbol
 									m.At = td.Timestamp
 									m.SetMetadata("type", "ticker")
+									m.SetProvenance("channel", "ticker")
 
 									if td.Trades != nil {
 										m.SetMetadata("trades", fmt.Sprintf("%d", *td.Trades))

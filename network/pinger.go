@@ -2,10 +2,9 @@ package network
 
 import (
 	"context"
+	"sync"
 	"time"
 
-	"github.com/gorilla/websocket"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/system"
 )
@@ -13,6 +12,8 @@ import (
 type Pinger struct {
 	*runtime.System
 	client *WebsocketClient
+	mu     sync.Mutex
+	stop   chan struct{}
 }
 
 func NewPinger(ctx context.Context, client *WebsocketClient) *Pinger {
@@ -22,40 +23,61 @@ func NewPinger(ctx context.Context, client *WebsocketClient) *Pinger {
 }
 
 func (pinger *Pinger) Start() {
+	pinger.mu.Lock()
+	defer pinger.mu.Unlock()
+
+	if pinger.stop != nil {
+		close(pinger.stop)
+		pinger.stop = nil
+	}
+
+	stop := make(chan struct{})
+	pinger.stop = stop
 	pinger.Transition(runtime.READY)
 
-	go func() {
-		interval := system.Cfg.WebSocket.PingInterval
+	go pinger.loop(stop)
+}
 
-		if interval <= 0 {
-			interval = 10 * time.Second
-		}
+func (pinger *Pinger) Stop() {
+	pinger.mu.Lock()
+	defer pinger.mu.Unlock()
 
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
+	if pinger.stop == nil {
+		return
+	}
 
-		for {
-			select {
-			case <-ticker.C:
-				if pinger.Status() != runtime.READY {
-					continue
-				}
+	close(pinger.stop)
+	pinger.stop = nil
 
-				if err := pinger.client.conn.WriteMessage(
-					websocket.PingMessage, nil,
-				); err != nil {
-					pinger.Error(errnie.Err(
-						errnie.IO,
-						"network.pinger: ping failed",
-						err,
-					))
+	if pinger.Status() == runtime.READY {
+		pinger.Transition(runtime.WAITING)
+	}
+}
 
-					pinger.Transition(runtime.ERROR)
-					return
-				}
-			case <-pinger.Context().Done():
-				return
+func (pinger *Pinger) loop(stop <-chan struct{}) {
+	interval := system.Cfg.WebSocket.PingInterval
+
+	if interval <= 0 {
+		interval = 10 * time.Second
+	}
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-stop:
+			return
+		case <-pinger.Context().Done():
+			return
+		case <-ticker.C:
+			if pinger.Status() != runtime.READY {
+				continue
 			}
+
+			// Soft-fail: writePing drops the client to WAITING for reconnect.
+			// Do not System.Error — that floods ERROR and kills the session.
+			_ = pinger.client.writePing()
 		}
-	}()
+	}
 }

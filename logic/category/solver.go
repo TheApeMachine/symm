@@ -135,13 +135,16 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 		return nil
 	}
 
-	if len(measurement.Peers) == 0 {
-		return measurement
+	// Live disruptor slots share one measurement; signals WriteMetric in place
+	// and Peers stay empty. Historical Timeline fills Peers. Accept either.
+	peers := measurement.Peers
+	if len(peers) == 0 {
+		peers = []*data.Measurement[float64]{measurement}
 	}
 
 	bySymbol := make(map[string][]*data.Measurement[float64])
 
-	for _, peer := range measurement.Peers {
+	for _, peer := range peers {
 		if peer != nil && peer.Label != "" && peer.Err == nil {
 			bySymbol[peer.Label] = append(bySymbol[peer.Label], peer)
 		}

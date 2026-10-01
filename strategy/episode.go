@@ -85,6 +85,24 @@ func (detector *Detector) Error() error {
 }
 
 /*
+OpenMarks returns the live precursor (A) and ignition (B) ticks while an
+excursion is still open. No C until finish — never invents marks.
+*/
+func (detector *Detector) OpenMarks(symbol string) (precursor, anchor int64, open bool) {
+	if detector == nil || symbol == "" {
+		return 0, 0, false
+	}
+
+	path := detector.series[symbol]
+
+	if path == nil || !path.open {
+		return 0, 0, false
+	}
+
+	return path.precursor, path.anchor, true
+}
+
+/*
 Observe accepts one measurement. Quotes without both sides, non-positive
 prices, a crossed book, or a repeated sequence produce no record. A missing
 fee leaves the episode unresolved until the fee surface has it; a negative

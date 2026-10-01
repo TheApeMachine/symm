@@ -147,30 +147,21 @@ func (op *Engine) TreeExport() CognitionTreeExport {
 			policyState = "POLICY CHOICE"
 		}
 
-		// Edges encode region tokens; nodes encode actions (WAIT, ENTER, EXIT).
+		// Path nodes are region frames only. ENTER/EXIT is a dedicated leaf —
+		// never painted onto intermediate region nodes (shared prefixes would
+		// otherwise show green ENTER mid-chain).
 		currNode := rootNode
 		var pathSoFar strings.Builder
 		pathSoFar.WriteString("root")
 
-		for idx, regToken := range regionTokens {
-			isLast := idx == len(regionTokens)-1
-			nodeAction := "WAIT"
-			nodeState := "EVALUATED"
-			nodeProb := cand.probability
-			nodeCount := cand.count
-
-			if isLast {
-				nodeAction = actionName
-				nodeState = policyState
-			}
-
+		for _, regToken := range regionTokens {
 			pathSoFar.WriteString("/")
 			pathSoFar.WriteString(regToken)
 
 			var foundChild *TrieNodeJSON
 
 			for _, child := range currNode.Children {
-				if len(child.Tokens) > 0 && child.Tokens[0] == regToken {
+				if !isActionLeaf(child) && len(child.Tokens) > 0 && child.Tokens[0] == regToken {
 					foundChild = child
 					break
 				}
@@ -179,28 +170,55 @@ func (op *Engine) TreeExport() CognitionTreeExport {
 			if foundChild == nil {
 				foundChild = &TrieNodeJSON{
 					ID:              pathSoFar.String(),
-					TokenPrefix:     nodeAction,
-					Probability:     nodeProb,
-					StepProbability: nodeProb,
-					Count:           nodeCount,
+					TokenPrefix:     regToken,
+					Probability:     cand.probability,
+					StepProbability: cand.probability,
+					Count:           cand.count,
 					Tokens:          []string{regToken},
-					State:           nodeState,
+					State:           "EVALUATED",
 				}
 				currNode.Children = append(currNode.Children, foundChild)
-			}
-
-			if isLast {
+			} else {
 				foundChild.Count += cand.count
 
-				if cand.probability >= foundChild.Probability {
-					foundChild.TokenPrefix = actionName
+				if cand.probability > foundChild.Probability {
 					foundChild.Probability = cand.probability
 					foundChild.StepProbability = cand.probability
-					foundChild.State = policyState
 				}
 			}
 
 			currNode = foundChild
+		}
+
+		actionID := pathSoFar.String() + "/" + actionName
+		var actionLeaf *TrieNodeJSON
+
+		for _, child := range currNode.Children {
+			if child.TokenPrefix == actionName && isActionLeaf(child) {
+				actionLeaf = child
+				break
+			}
+		}
+
+		if actionLeaf == nil {
+			actionLeaf = &TrieNodeJSON{
+				ID:              actionID,
+				TokenPrefix:     actionName,
+				Probability:     cand.probability,
+				StepProbability: cand.probability,
+				Count:           cand.count,
+				Tokens:          []string{cand.className},
+				State:           policyState,
+			}
+			currNode.Children = append(currNode.Children, actionLeaf)
+		} else {
+			actionLeaf.Count += cand.count
+
+			if cand.probability >= actionLeaf.Probability {
+				actionLeaf.Probability = cand.probability
+				actionLeaf.StepProbability = cand.probability
+				actionLeaf.State = policyState
+			}
 		}
 
 		hash := fmt.Sprintf("0x%x:%s", cand.keyBytes, cand.className)
@@ -243,9 +261,12 @@ func (op *Engine) TreeExport() CognitionTreeExport {
 
 /*
 regionFrames splits a training signature into null-separated LitRegions frames
-and formats each as [id,id,...] for the trie viz. ENTER/EXIT stay on the leaf
-action node — they are never emitted as region tokens.
+and formats each as [id,id,...] for the trie viz. Consecutive identical frames
+collapse (change-point only). ENTER/EXIT stay on the leaf action node — they
+are never emitted as region tokens.
 */
+const litRegionsFrameCap = 3 // matches store.litRegionTokenSize (TRAINING.md N)
+
 func regionFrames(context []byte) []string {
 	if len(context) == 0 {
 		return nil
@@ -270,8 +291,18 @@ func regionFrames(context []byte) []string {
 				parts = append(parts, strconv.Itoa(int(region)))
 			}
 
+			// Cap to designed LitRegions N. Longer frames are legacy/corrupt
+			// signatures (pre-null-separator or pre-top-N) — keep first N IDs.
+			if len(parts) > litRegionsFrameCap {
+				parts = parts[:litRegionsFrameCap]
+			}
+
 			if len(parts) > 0 {
-				frames = append(frames, "["+strings.Join(parts, ",")+"]")
+				frame := "[" + strings.Join(parts, ",") + "]"
+				// Collapse consecutive identical frames (change-point only).
+				if len(frames) == 0 || frames[len(frames)-1] != frame {
+					frames = append(frames, frame)
+				}
 			}
 		}
 
@@ -279,4 +310,17 @@ func regionFrames(context []byte) []string {
 	}
 
 	return frames
+}
+
+func isActionLeaf(node *TrieNodeJSON) bool {
+	if node == nil {
+		return false
+	}
+
+	switch strings.ToUpper(node.TokenPrefix) {
+	case "ENTER", "EXIT", "WAIT":
+		return true
+	default:
+		return false
+	}
 }
