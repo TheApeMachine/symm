@@ -38,13 +38,16 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 	const nodesRef = useRef<ImpulseNode[]>([]);
 	const layoutModeRef = useRef<"grid" | "regions">(layoutMode);
 	layoutModeRef.current = layoutMode;
-	const settledCountRef = useRef(0);
-	const fitLockedRef = useRef(false);
-	const fitBoundsRef = useRef<{
+
+	// Keep track of previous bounds and node count to detect grid growth
+	const prevBoundsRef = useRef<{
 		minX: number;
 		maxX: number;
 		minY: number;
 		maxY: number;
+		count: number;
+		width: number;
+		height: number;
 	} | null>(null);
 
 	// Resize Observer
@@ -63,8 +66,274 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 		return () => resizeObserver.unobserve(observeTarget);
 	}, []);
 
-	// Keep nodesRef in sync with incoming data. Auto-fit while the cell census
-	// is still growing, then lock the fit so the camera does not drift.
+	// Render scene function: updates contours, links, halos, nodes, and region badges.
+	const renderScene = useCallback(
+		(
+			nodes: ImpulseNode[],
+			mode: "grid" | "regions",
+			currentWidth: number,
+			currentHeight: number,
+			scale: number,
+		) => {
+			if (!svgRef.current || currentWidth === 0 || currentHeight === 0) return;
+
+			const svg = d3.select(svgRef.current);
+			const contourLayer = svg.select<SVGGElement>(".contours");
+			const linkLayer = svg.select<SVGGElement>(".links");
+			const haloLayer = svg.select<SVGGElement>(".halos");
+			const nodeLayer = svg.select<SVGGElement>(".nodes");
+			const badgeLayer = svg.select<SVGGElement>(".region-badges");
+
+			const maxActivation = d3.max(nodes, (d) => d.activation || 0) || 1;
+			const colorScale = d3
+				.scaleSequential<string>((t) =>
+					d3.interpolateRgbBasis([
+						"#1c1917", // Subtle dark warm stone for quiescent/inactive
+						"#0ea5e9", // Sky blue for low activity
+						"#22c55e", // Emerald green for medium activity
+						"#fbbf24", // Radiant amber for peak activation
+					])(t),
+				)
+				.domain([0, Math.max(1, maxActivation)]);
+
+			// 1. Topographic Regions (Contours) in "regions" mode
+			if (mode === "regions" && nodes.length > 0) {
+				const bandwidth = Math.max(24, Math.min(scale * 0.7, 72));
+				const computeDensity = d3
+					.contourDensity<ImpulseNode>()
+					.x((d) => d.x || 0)
+					.y((d) => d.y || 0)
+					.weight((d) => Math.max(0.02, (d.activation || 0) * (d.snr || 1)))
+					.size([currentWidth, currentHeight])
+					.bandwidth(bandwidth)
+					.thresholds(12);
+
+				const contourData = computeDensity(nodes);
+				const paths = contourLayer.selectAll<SVGPathElement, d3.ContourMultiPolygon>("path").data(contourData);
+
+				paths
+					.enter()
+					.append("path")
+					.merge(paths)
+					.attr("d", d3.geoPath())
+					.attr("fill", (_, i) => {
+						const opacity = Math.min(0.015 + i * 0.025, 0.38);
+						return `rgba(251, 191, 36, ${opacity})`;
+					})
+					.attr("stroke", (_, i) => {
+						if (i >= 7) return "rgba(251, 191, 36, 0.85)";
+						if (i >= 3) return "rgba(34, 197, 94, 0.45)";
+						return "rgba(14, 165, 233, 0.25)";
+					})
+					.attr("stroke-width", (_, i) => (i >= 7 ? 1.5 : 1))
+					.attr("stroke-dasharray", (_, i) => (i % 2 === 1 ? "4 3" : "none"))
+					.style("opacity", 1);
+
+				paths.exit().remove();
+				contourLayer.style("opacity", 1);
+			} else {
+				contourLayer.selectAll("path").remove();
+			}
+
+			// 2. Sympathy Links: Connect active nodes in the same region
+			const activeLinks: { source: ImpulseNode; target: ImpulseNode; strength: number }[] = [];
+			const linkThreshold = 0.3;
+
+			for (let i = 0; i < nodes.length; i++) {
+				const a = nodes[i];
+				if ((a.activation || 0) < linkThreshold) continue;
+				for (let j = i + 1; j < nodes.length; j++) {
+					const b = nodes[j];
+					if ((b.activation || 0) < linkThreshold) continue;
+					if (a.cluster !== b.cluster) continue;
+
+					const dx = (a.x || 0) - (b.x || 0);
+					const dy = (a.y || 0) - (b.y || 0);
+					const dist = Math.hypot(dx, dy);
+					const maxDist = Math.max(scale * 2.2, 160);
+
+					if (dist < maxDist) {
+						const strength = ((a.activation || 0) + (b.activation || 0)) / 2;
+						activeLinks.push({ source: a, target: b, strength });
+					}
+				}
+			}
+
+			const links = linkLayer.selectAll<SVGLineElement, (typeof activeLinks)[0]>("line").data(activeLinks);
+
+			links
+				.enter()
+				.append("line")
+				.merge(links)
+				.attr("x1", (d) => d.source.x || 0)
+				.attr("y1", (d) => d.source.y || 0)
+				.attr("x2", (d) => d.target.x || 0)
+				.attr("y2", (d) => d.target.y || 0)
+				.attr("stroke", "#fbbf24")
+				.attr("stroke-opacity", (d) => Math.min(d.strength * 0.9, 0.8))
+				.attr("stroke-width", (d) => 1 + d.strength * 1.5);
+
+			links.exit().remove();
+
+			// 3. Halos for highly active nodes
+			const activeNodes = nodes.filter((d) => (d.activation || 0) >= 0.5);
+			const baseR = Math.max(4, Math.min(scale * 0.12, 12));
+			const halos = haloLayer.selectAll<SVGCircleElement, ImpulseNode>("circle").data(activeNodes, (d) => d.id);
+
+			halos
+				.enter()
+				.append("circle")
+				.merge(halos)
+				.attr("cx", (d) => d.x || 0)
+				.attr("cy", (d) => d.y || 0)
+				.attr("r", (d) => baseR * (1.6 + (d.activation || 0) * 0.8))
+				.attr("fill", "none")
+				.attr("stroke", "#fbbf24")
+				.attr("stroke-width", 1.5)
+				.attr("stroke-opacity", (d) => Math.min((d.activation || 0) * 0.6, 0.75))
+				.style("filter", "url(#impulse-glow)");
+
+			halos.exit().remove();
+
+			// 4. Nodes
+			const nodeElements = nodeLayer.selectAll<SVGCircleElement, ImpulseNode>("circle").data(nodes, (d) => d.id);
+
+			const nodeEnter = nodeElements
+				.enter()
+				.append("circle")
+				.attr("stroke", (d) => ((d.activation || 0) >= 0.5 ? "#fbbf24" : "#09090b"))
+				.attr("stroke-width", (d) => ((d.activation || 0) >= 0.5 ? 2 : 1.5))
+				.on("mouseover", function () {
+					d3.select(this).attr("stroke", "#fbbf24").attr("stroke-width", 2.5);
+				})
+				.on("mouseout", function (_, d) {
+					d3.select(this)
+						.attr("stroke", (d.activation || 0) >= 0.5 ? "#fbbf24" : "#09090b")
+						.attr("stroke-width", (d.activation || 0) >= 0.5 ? 2 : 1.5);
+				});
+
+			nodeEnter
+				.append("title")
+				.text(
+					(d) =>
+						`${d.label}\nRegion: #${d.cluster}\nActivation: ${(d.activation || 0).toFixed(2)}\nSNR: ${(d.snr || 0).toFixed(2)}`,
+				);
+
+			const nodeMerged = nodeEnter.merge(nodeElements);
+
+			nodeMerged
+				.attr("cx", (d) => d.x || 0)
+				.attr("cy", (d) => d.y || 0)
+				.attr("r", (d) => baseR * (1 + (d.activation || 0) * 0.5))
+				.attr("fill", (d) => colorScale(d.activation || 0))
+				.attr("stroke", (d) => ((d.activation || 0) >= 0.5 ? "#fbbf24" : "#09090b"))
+				.attr("stroke-width", (d) => ((d.activation || 0) >= 0.5 ? 2 : 1.5));
+
+			nodeMerged.select("title").text(
+				(d) =>
+					`${d.label}\nRegion: #${d.cluster}\nActivation: ${(d.activation || 0).toFixed(2)}\nSNR: ${(d.snr || 0).toFixed(2)}`,
+			);
+
+			nodeElements.exit().remove();
+
+			// 5. Cluster / Region Centroid Badges in "regions" mode
+			if (mode === "regions" && nodes.length > 0) {
+				const clusterMap = new Map<number, { sumX: number; sumY: number; count: number; maxAct: number }>();
+				for (const n of nodes) {
+					const c = n.cluster || 0;
+					const entry = clusterMap.get(c) || { sumX: 0, sumY: 0, count: 0, maxAct: 0 };
+					entry.sumX += n.x || 0;
+					entry.sumY += n.y || 0;
+					entry.count++;
+					entry.maxAct = Math.max(entry.maxAct, n.activation || 0);
+					clusterMap.set(c, entry);
+				}
+
+				const badgeData = Array.from(clusterMap.entries()).map(([clusterId, data]) => ({
+					clusterId,
+					x: data.sumX / data.count,
+					y: data.sumY / data.count,
+					count: data.count,
+					maxAct: data.maxAct,
+				}));
+
+				const badges = badgeLayer.selectAll<SVGGElement, (typeof badgeData)[0]>("g").data(badgeData, (d) => d.clusterId);
+
+				const badgeEnter = badges.enter().append("g");
+				badgeEnter
+					.append("text")
+					.attr("text-anchor", "middle")
+					.attr("font-family", "monospace")
+					.attr("font-size", "10px")
+					.attr("font-weight", "600");
+
+				const badgeMerged = badgeEnter.merge(badges);
+				badgeMerged
+					.attr("transform", (d) => `translate(${d.x}, ${d.y - baseR * 2 - 4})`)
+					.select("text")
+					.attr("fill", (d) => (d.maxAct >= 0.5 ? "#fbbf24" : "#71717a"))
+					.text((d) => `R${d.clusterId} (${d.count}m)`);
+
+				badges.exit().remove();
+			} else {
+				badgeLayer.selectAll("g").remove();
+			}
+		},
+		[],
+	);
+
+	// Setup SVG DOM elements once or on dimension change
+	useEffect(() => {
+		if (!svgRef.current || dimensions.width === 0) return;
+
+		const svg = d3.select(svgRef.current);
+		svg.selectAll("*").remove();
+
+		// Add filter definitions for glowing effects
+		const defs = svg.append("defs");
+		const filter = defs
+			.append("filter")
+			.attr("id", "impulse-glow")
+			.attr("x", "-30%")
+			.attr("y", "-30%")
+			.attr("width", "160%")
+			.attr("height", "160%");
+		filter.append("feGaussianBlur").attr("stdDeviation", "4").attr("result", "blur");
+		const feMerge = filter.append("feMerge");
+		feMerge.append("feMergeNode").attr("in", "blur");
+		feMerge.append("feMergeNode").attr("in", "SourceGraphic");
+
+		const g = svg.append("g");
+		g.append("g").attr("class", "contours");
+		g.append("g").attr("class", "links");
+		g.append("g").attr("class", "halos");
+		g.append("g").attr("class", "nodes");
+		g.append("g").attr("class", "region-badges");
+
+		// Initialize D3 simulation
+		const simulation = d3
+			.forceSimulation(nodesRef.current)
+			.alpha(0)
+			.stop();
+
+		simulation.on("tick", () => {
+			const width = dimensions.width || 800;
+			const height = dimensions.height || 600;
+			const pad = 0.08;
+			const usableW = Math.max(width * (1 - 2 * pad), 50);
+			const usableH = Math.max(height * (1 - 2 * pad), 50);
+			const scale = Math.min(usableW, usableH) / 10;
+			renderScene(nodesRef.current, layoutModeRef.current, width, height, scale);
+		});
+
+		simulationRef.current = simulation;
+
+		return () => {
+			simulation.stop();
+		};
+	}, [dimensions.width, dimensions.height, renderScene]);
+
+	// Keep nodesRef in sync with incoming data, compute centered projection, and refit on growth
 	useEffect(() => {
 		if (!data || data.length === 0) return;
 
@@ -85,43 +354,52 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 			if (ny > maxY) maxY = ny;
 		}
 
-		if (minX === Number.POSITIVE_INFINITY || maxX === minX) {
-			minX = 0;
-			maxX = Math.max(32, minX + 1);
-		}
-		if (minY === Number.POSITIVE_INFINITY || maxY === minY) {
-			minY = 0;
-			maxY = Math.max(32, minY + 1);
+		if (minX === Number.POSITIVE_INFINITY) return;
+
+		const spanX = maxX - minX;
+		const spanY = maxY - minY;
+
+		// Contain scale to fill all available space with uniform aspect ratio
+		const pad = 0.08;
+		const usableW = Math.max(width * (1 - 2 * pad), 50);
+		const usableH = Math.max(height * (1 - 2 * pad), 50);
+
+		let scale = 1;
+		if (spanX > 0 && spanY > 0) {
+			scale = Math.min(usableW / spanX, usableH / spanY);
+		} else if (spanX > 0) {
+			scale = usableW / spanX;
+		} else if (spanY > 0) {
+			scale = usableH / spanY;
+		} else {
+			scale = Math.min(usableW, usableH) / 2;
 		}
 
-		if (data.length > settledCountRef.current) {
-			settledCountRef.current = data.length;
-			fitLockedRef.current = false;
-			fitBoundsRef.current = null;
-		} else if (data.length >= settledCountRef.current && settledCountRef.current > 0) {
-			fitLockedRef.current = true;
-		}
+		// Centered projection: (midX, midY) maps exactly to container center (centerX, centerY)
+		const midX = (minX + maxX) / 2;
+		const midY = (minY + maxY) / 2;
+		const centerX = width / 2;
+		const centerY = height / 2;
 
-		// Freeze the data→screen projection after the first settled fit so live
-		// tape min/max churn cannot slide the grid under the cursor.
-		if (!fitLockedRef.current || fitBoundsRef.current === null) {
-			fitBoundsRef.current = { minX, maxX, minY, maxY };
-		}
-		const fit = fitBoundsRef.current;
-		const spanX = fit.maxX - fit.minX || 1;
-		const spanY = fit.maxY - fit.minY || 1;
-		minX = fit.minX;
-		maxX = fit.maxX;
-		minY = fit.minY;
-		maxY = fit.maxY;
-		// Full-center fit: uniform scale (contain) + center in the viewport.
-		// Independent X/Y stretch skewed lattice geometry and left empty margins.
-		const pad = 0.06;
-		const usableW = width * (1 - 2 * pad);
-		const usableH = height * (1 - 2 * pad);
-		const scale = Math.min(usableW / spanX, usableH / spanY);
-		const offsetX = width * pad + (usableW - spanX * scale) / 2;
-		const offsetY = height * pad + (usableH - spanY * scale) / 2;
+		const boundsChanged =
+			!prevBoundsRef.current ||
+			prevBoundsRef.current.minX !== minX ||
+			prevBoundsRef.current.maxX !== maxX ||
+			prevBoundsRef.current.minY !== minY ||
+			prevBoundsRef.current.maxY !== maxY ||
+			prevBoundsRef.current.count !== data.length ||
+			prevBoundsRef.current.width !== width ||
+			prevBoundsRef.current.height !== height;
+
+		prevBoundsRef.current = {
+			minX,
+			maxX,
+			minY,
+			maxY,
+			count: data.length,
+			width,
+			height,
+		};
 
 		const existingMap = new Map<string, ImpulseNode>();
 		for (const n of nodesRef.current) {
@@ -130,17 +408,21 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 
 		const updatedNodes: ImpulseNode[] = data.map((d) => {
 			const existing = existingMap.get(d.id);
-			const targetGridX = offsetX + (((d.x ?? 0) - minX) * scale);
-			const targetGridY = offsetY + (((d.y ?? 0) - minY) * scale);
+			const targetGridX = centerX + (((d.x ?? 0) - midX) * scale);
+			const targetGridY = centerY + (((d.y ?? 0) - midY) * scale);
 
 			if (existing) {
 				existing.activation = d.activation;
 				existing.snr = d.snr;
 				existing.cluster = d.cluster;
 				existing.present = d.present;
-				if (!fitLockedRef.current) {
-					existing.gridX = targetGridX;
-					existing.gridY = targetGridY;
+				existing.label = d.label;
+				existing.value = d.value;
+				existing.gridX = targetGridX;
+				existing.gridY = targetGridY;
+
+				// In grid mode, or when bounds grew significantly, refit node positions
+				if (layoutModeRef.current === "grid" || boundsChanged) {
 					existing.x = targetGridX;
 					existing.y = targetGridY;
 					existing.vx = 0;
@@ -162,300 +444,141 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 
 		nodesRef.current = updatedNodes;
 
-		if (simulationRef.current) {
-			simulationRef.current.nodes(updatedNodes);
-			// Live tape must not reheat the layout — that was the visible drift.
-			simulationRef.current.alpha(0).stop();
-		}
+		// If in regions mode and the grid grew, settle into regional foci
+		if (layoutModeRef.current === "regions" && boundsChanged && simulationRef.current) {
+			const clusterCentroids = new Map<number, { sumX: number; sumY: number; count: number }>();
+			for (const n of updatedNodes) {
+				const c = n.cluster || 0;
+				const entry = clusterCentroids.get(c) || { sumX: 0, sumY: 0, count: 0 };
+				entry.sumX += n.gridX ?? centerX;
+				entry.sumY += n.gridY ?? centerY;
+				entry.count++;
+				clusterCentroids.set(c, entry);
+			}
 
-		// Restyle without restarting forces so lit regions track precursor_tokens.
-		if (svgRef.current) {
-			const maxActivation = d3.max(updatedNodes, (d) => d.activation || 0) || 1;
-			const colorScale = d3
-				.scaleSequential<string>((t) =>
-					d3.interpolateRgbBasis(["#111113", "#0ea5e9", "#22c55e", "#fbbf24"])(t),
-				)
-				.domain([0, maxActivation]);
-			d3.select(svgRef.current)
-				.select(".nodes")
-				.selectAll<SVGCircleElement, ImpulseNode>("circle")
-				.data(updatedNodes, (d) => d.id)
-				.join(
-					(enter) =>
-						enter
-							.append("circle")
-							.attr("r", (d) => (d.snr || 1) * 1.5 + 2)
-							.attr("stroke", "#050505")
-							.attr("stroke-width", 1.5)
-							.attr("cx", (d) => d.x || 0)
-							.attr("cy", (d) => d.y || 0),
-					(update) => update,
-					(exit) => exit.remove(),
-				)
-				.attr("fill", (d) => colorScale(d.activation || 0))
-				.attr("cx", (d) => d.x || 0)
-				.attr("cy", (d) => d.y || 0);
-		}
-	}, [data, dimensions.width, dimensions.height]);
-
-	// Initialize D3 Visualization
-	useEffect(() => {
-		if (!svgRef.current || dimensions.width === 0) return;
-
-		const svg = d3.select(svgRef.current);
-		svg.selectAll("*").remove();
-
-		const width = dimensions.width;
-		const height = dimensions.height;
-
-		// Static full-frame view: no zoom/pan. Fit is owned by the data→grid
-		// projection so the map never drifts under the cursor or live tape.
-		const g = svg.append("g");
-
-		// Layer groups to ensure correct z-index
-		const contourLayer = g.append("g").attr("class", "contours");
-		const linkLayer = g.append("g").attr("class", "links");
-		const nodeLayer = g.append("g").attr("class", "nodes");
-
-		const nodes = nodesRef.current;
-
-		// Color Scales: dark panel -> dim blue -> green -> gold
-		const maxActivation = d3.max(nodes, (d) => d.activation || 0) || 1;
-		const colorScale = d3
-			.scaleSequential<string>((t) =>
-				d3.interpolateRgbBasis(["#111113", "#0ea5e9", "#22c55e", "#fbbf24"])(t),
-			)
-			.domain([0, maxActivation]);
-
-		// Setup Initial Simulation
-		const simulation = d3
-			.forceSimulation(nodes)
-			.force(
-				"x",
-				d3.forceX<ImpulseNode>((d) => d.gridX ?? width / 2).strength(1),
-			)
-			.force(
-				"y",
-				d3.forceY<ImpulseNode>((d) => d.gridY ?? height / 2).strength(1),
-			)
-			.force("collide", null)
-			.force("charge", null)
-			.force("center", null)
-			.alpha(0)
-			.alphaDecay(1)
-			.stop();
-
-		simulationRef.current = simulation;
-
-		// Create node elements
-		const nodeElements = nodeLayer
-			.selectAll<SVGCircleElement, ImpulseNode>("circle")
-			.data(nodes, (d) => d.id)
-			.enter()
-			.append("circle")
-			.attr("r", (d) => (d.snr || 1) * 1.5 + 2)
-			.attr("fill", (d) => colorScale(d.activation || 0))
-			.attr("stroke", "#050505")
-			.attr("stroke-width", 1.5)
-			.on("mouseover", function () {
-				d3.select(this).attr("stroke", "#fbbf24").attr("stroke-width", 2);
-			})
-			.on("mouseout", function () {
-				d3.select(this).attr("stroke", "#050505").attr("stroke-width", 1.5);
+			const foci = new Map<number, { x: number; y: number }>();
+			clusterCentroids.forEach((val, c) => {
+				foci.set(c, { x: val.sumX / val.count, y: val.sumY / val.count });
 			});
 
-		// Contour Generator for Regions / Water Table
-		const computeDensity = d3
-			.contourDensity<ImpulseNode>()
-			.x((d) => d.x || 0)
-			.y((d) => d.y || 0)
-			.weight((d) => (d.activation || 0.05) * (d.snr || 1))
-			.size([width, height])
-			.bandwidth(30)
-			.thresholds(15);
-
-		// Render loop
-		simulation.on("tick", () => {
-			// Update Node Positions & Colors
-			nodeElements
-				.attr("cx", (d) => d.x || 0)
-				.attr("cy", (d) => d.y || 0)
-				.attr("fill", (d) => colorScale(d.activation || 0));
-
-			// Topographic Regions (Contours)
-			if (layoutModeRef.current === "regions") {
-				const contourData = computeDensity(nodes);
-				const paths = contourLayer.selectAll("path").data(contourData);
-
-				paths
-					.enter()
-					.append("path")
-					.merge(paths as any)
-					.attr("d", d3.geoPath())
-					.attr("fill", (_, i) => {
-						return (
-							d3.color("#fbbf24")?.copy({ opacity: i * 0.015 }).toString() ||
-							"none"
-						);
-					})
-					.attr("stroke", (_, i) => {
-						if (i === 6) return "rgba(34, 197, 94, 0.4)";
-						if (i === 10) return "rgba(251, 191, 36, 0.8)";
-						return "none";
-					})
-					.attr("stroke-width", (_, i) => (i === 10 ? 1.5 : i === 6 ? 1 : 0));
-
-				paths.exit().remove();
-			} else {
-				contourLayer.selectAll("path").remove();
-			}
-
-			// Sympathy Links: Connect active nodes in the same region
-			const activeLinks: { source: ImpulseNode; target: ImpulseNode }[] = [];
-			const threshold = 0.5;
-
-			for (let i = 0; i < nodes.length; i++) {
-				if ((nodes[i].activation || 0) < threshold) continue;
-				for (let j = i + 1; j < nodes.length; j++) {
-					if ((nodes[j].activation || 0) < threshold) continue;
-					if (nodes[i].cluster !== nodes[j].cluster) continue;
-
-					const dx = (nodes[i].x || 0) - (nodes[j].x || 0);
-					const dy = (nodes[i].y || 0) - (nodes[j].y || 0);
-					const dist = Math.hypot(dx, dy);
-
-					if (dist < 100) {
-						activeLinks.push({ source: nodes[i], target: nodes[j] });
-					}
-				}
-			}
-
-			const links = linkLayer.selectAll("line").data(activeLinks);
-
-			links
-				.enter()
-				.append("line")
-				.merge(links as any)
-				.attr("x1", (d) => d.source.x || 0)
-				.attr("y1", (d) => d.source.y || 0)
-				.attr("x2", (d) => d.target.x || 0)
-				.attr("y2", (d) => d.target.y || 0)
-				.attr("stroke", "#fbbf24")
-				.attr(
-					"stroke-opacity",
-					(d) =>
-						Math.min(
-							((d.source.activation || 0) + (d.target.activation || 0)) / 2,
-							0.8,
-						),
-				)
-				.attr("stroke-width", 1.5);
-
-			links.exit().remove();
-		});
-
-		return () => {
-			simulation.stop();
-		};
-	}, [dimensions]);
-
-	// Handle Mode Transitions (Grid vs Regions)
-	useEffect(() => {
-		const simulation = simulationRef.current;
-		if (!simulation || dimensions.width === 0) return;
-
-		const width = dimensions.width;
-		const height = dimensions.height;
-		const nodes = nodesRef.current;
-
-		// Compute focal points for each real cluster
-		const clusterCentroids = new Map<number, { sumX: number; sumY: number; count: number }>();
-		for (const n of nodes) {
-			const c = n.cluster || 0;
-			const entry = clusterCentroids.get(c) || { sumX: 0, sumY: 0, count: 0 };
-			entry.sumX += n.gridX ?? width / 2;
-			entry.sumY += n.gridY ?? height / 2;
-			entry.count++;
-			clusterCentroids.set(c, entry);
-		}
-
-		const foci = new Map<number, { x: number; y: number }>();
-		clusterCentroids.forEach((val, c) => {
-			foci.set(c, { x: val.sumX / val.count, y: val.sumY / val.count });
-		});
-
-		if (layoutMode === "grid") {
-			simulation
+			simulationRef.current
+				.nodes(updatedNodes)
 				.force(
 					"x",
-					d3.forceX<ImpulseNode>((d) => d.gridX ?? width / 2).strength(1),
+					d3.forceX<ImpulseNode>((d) => foci.get(d.cluster)?.x ?? d.gridX ?? centerX).strength(0.15),
 				)
 				.force(
 					"y",
-					d3.forceY<ImpulseNode>((d) => d.gridY ?? height / 2).strength(1),
-				)
-				.force("collide", null)
-				.force("charge", null);
-
-			d3.select(svgRef.current)
-				.select(".contours")
-				.style("opacity", 0);
-		} else {
-			simulation
-				.force(
-					"x",
-					d3
-						.forceX<ImpulseNode>(
-							(d) => foci.get(d.cluster)?.x ?? d.gridX ?? width / 2,
-						)
-						.strength(0.08),
-				)
-				.force(
-					"y",
-					d3
-						.forceY<ImpulseNode>(
-							(d) => foci.get(d.cluster)?.y ?? d.gridY ?? height / 2,
-						)
-						.strength(0.08),
+					d3.forceY<ImpulseNode>((d) => foci.get(d.cluster)?.y ?? d.gridY ?? centerY).strength(0.15),
 				)
 				.force(
 					"collide",
 					d3
 						.forceCollide<ImpulseNode>()
-						.radius((d) => (d.snr || 1) * 1.5 + 2)
+						.radius((d) => Math.max(6, Math.min(scale * 0.15, 14)) * 1.5)
 						.iterations(2),
 				)
-				.force("charge", d3.forceManyBody().strength(-8))
-				.alphaDecay(0.08);
+				.force("charge", d3.forceManyBody().strength(-10))
+				.alpha(0.3)
+				.restart();
 
-			d3.select(svgRef.current)
-				.select(".contours")
-				.transition()
-				.duration(600)
-				.style("opacity", 1);
+			window.setTimeout(() => {
+				simulationRef.current?.alpha(0).stop();
+				renderScene(nodesRef.current, layoutModeRef.current, width, height, scale);
+			}, 500);
+		} else if (simulationRef.current) {
+			simulationRef.current.nodes(updatedNodes);
+			simulationRef.current.alpha(0).stop();
 		}
 
+		// Always render the latest activation states in real-time
+		renderScene(updatedNodes, layoutModeRef.current, width, height, scale);
+	}, [data, dimensions.width, dimensions.height, renderScene]);
+
+	// Handle Mode Transitions (Grid vs Regions)
+	useEffect(() => {
+		const simulation = simulationRef.current;
+		const width = dimensions.width || 800;
+		const height = dimensions.height || 600;
+		const nodes = nodesRef.current;
+		if (!simulation || width === 0) return;
+
+		const pad = 0.08;
+		const usableW = Math.max(width * (1 - 2 * pad), 50);
+		const usableH = Math.max(height * (1 - 2 * pad), 50);
+		let minX = Number.POSITIVE_INFINITY;
+		let maxX = Number.NEGATIVE_INFINITY;
+		let minY = Number.POSITIVE_INFINITY;
+		let maxY = Number.NEGATIVE_INFINITY;
+		for (const d of nodes) {
+			const nx = d.x ?? 0;
+			const ny = d.y ?? 0;
+			if (nx < minX) minX = nx;
+			if (nx > maxX) maxX = nx;
+			if (ny < minY) minY = ny;
+			if (ny > maxY) maxY = ny;
+		}
+		const spanX = maxX - minX;
+		const spanY = maxY - minY;
+		const scale = spanX > 0 && spanY > 0 ? Math.min(usableW / spanX, usableH / spanY) : 30;
+
 		if (layoutMode === "grid") {
+			simulation.alpha(0).stop();
 			for (const n of nodes) {
 				n.x = n.gridX ?? width / 2;
 				n.y = n.gridY ?? height / 2;
 				n.vx = 0;
 				n.vy = 0;
 			}
-			simulation.alpha(0).stop();
+			renderScene(nodes, "grid", width, height, scale);
 		} else {
-			// One short settle into region foci, then freeze — no continuous drift.
-			simulation.alpha(0.35).restart();
+			// Compute focal points for each cluster
+			const clusterCentroids = new Map<number, { sumX: number; sumY: number; count: number }>();
+			for (const n of nodes) {
+				const c = n.cluster || 0;
+				const entry = clusterCentroids.get(c) || { sumX: 0, sumY: 0, count: 0 };
+				entry.sumX += n.gridX ?? width / 2;
+				entry.sumY += n.gridY ?? height / 2;
+				entry.count++;
+				clusterCentroids.set(c, entry);
+			}
+
+			const foci = new Map<number, { x: number; y: number }>();
+			clusterCentroids.forEach((val, c) => {
+				foci.set(c, { x: val.sumX / val.count, y: val.sumY / val.count });
+			});
+
+			simulation
+				.nodes(nodes)
+				.force(
+					"x",
+					d3.forceX<ImpulseNode>((d) => foci.get(d.cluster)?.x ?? d.gridX ?? width / 2).strength(0.15),
+				)
+				.force(
+					"y",
+					d3.forceY<ImpulseNode>((d) => foci.get(d.cluster)?.y ?? d.gridY ?? height / 2).strength(0.15),
+				)
+				.force(
+					"collide",
+					d3
+						.forceCollide<ImpulseNode>()
+						.radius((d) => Math.max(6, Math.min(scale * 0.15, 14)) * 1.5)
+						.iterations(2),
+				)
+				.force("charge", d3.forceManyBody().strength(-10))
+				.alpha(0.35)
+				.restart();
+
 			window.setTimeout(() => {
 				simulationRef.current?.alpha(0).stop();
-			}, 900);
+				renderScene(nodesRef.current, "regions", width, height, scale);
+			}, 600);
 		}
-	}, [layoutMode, dimensions]);
+	}, [layoutMode, dimensions.width, dimensions.height, renderScene]);
 
 	const handleReset = useCallback(() => {
-		fitLockedRef.current = false;
-		fitBoundsRef.current = null;
-		settledCountRef.current = 0;
+		const width = dimensions.width || 800;
+		const height = dimensions.height || 600;
 		for (const n of nodesRef.current) {
 			n.x = n.gridX ?? n.x;
 			n.y = n.gridY ?? n.y;
@@ -463,7 +586,8 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 			n.vy = 0;
 		}
 		simulationRef.current?.alpha(0).stop();
-	}, []);
+		renderScene(nodesRef.current, layoutModeRef.current, width, height, 30);
+	}, [dimensions.width, dimensions.height, renderScene]);
 
 	return (
 		<div className={cn("flex flex-col w-full h-full", className)}>

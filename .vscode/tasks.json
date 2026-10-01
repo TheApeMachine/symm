@@ -1,0 +1,15 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "De-slop Code Structure",
+			"type": "shell",
+			"command": "ast-grep run --pattern 'if !!!$A { $$$B }' --rewrite 'if $A { $$$B }' && gopls modernize -fix ./...",
+			"problemMatcher": [],
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			}
+		}
+	]
+}
