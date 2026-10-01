@@ -70,40 +70,6 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 		data.NewAdapter(
 			transport.NewPass(),
 			func(m *data.Measurement[float64]) *data.Measurement[float64] {
-				input := m
-
-				if len(m.Peers) > 0 {
-					peer := m.FindPeer(func(p *data.Measurement[float64]) bool {
-						if p.Label == "" {
-							return false
-						}
-						_, hasObsBid := p.LookupMetric("observed_notional:bid")
-						_, hasObsAsk := p.LookupMetric("observed_notional:ask")
-						if hasObsBid || hasObsAsk {
-							return true
-						}
-						b := p.GetMetric("best_bid").Raw
-						if b == 0 {
-							b = p.GetMetric("bid").Raw
-						}
-						a := p.GetMetric("best_ask").Raw
-						if a == 0 {
-							a = p.GetMetric("ask").Raw
-						}
-						return b > 0 && a > 0
-					})
-
-					if peer != nil {
-						input = peer
-					}
-				}
-
-				if input.Label != "" {
-					m.Label = input.Label
-				}
-				if !input.At.IsZero() {
-					m.At = input.At
-				}
 
 				var obsBid, obsAsk float64
 				var addedBid, removedBid float64
@@ -164,9 +130,7 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 				})
 
 				if obsBid > 0 || obsAsk > 0 {
-					if !input.At.IsZero() {
-						m.At = input.At
-					}
+
 					if !state.prevTime.IsZero() && !state.prevTime.After(m.At) {
 						m.From = state.prevTime
 					}
@@ -212,8 +176,8 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 					state.prevNotional = observed
 					state.prevTime = m.At
 					
-					tb := input.GetMetric("touch_notional:bid").Raw
-					ta := input.GetMetric("touch_notional:ask").Raw
+					tb := m.GetMetric("touch_notional:bid").Raw
+					ta := m.GetMetric("touch_notional:ask").Raw
 					if tb > 0 || ta > 0 {
 						touchImb := (tb - ta) / (tb + ta)
 						m.WriteNormalized("touch_imbalance", touchImb)
@@ -379,19 +343,30 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 	return actual.(core.Primitive)
 }
 
-func (level3 *Level3) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
+func (level3 *Level3) Step(input *runtime.StageInput, output *data.Measurement[float64]) *data.Measurement[float64] {
 	if level3.Status() != runtime.READY {
 		errnie.Warn(level3.Name() + ": Step called before READY; dropping event")
-		return measurement
+		return nil
 	}
 
-	if measurement == nil || measurement.Err != nil {
-		return measurement
+	if input == nil || input.Ingress() == nil || input.Symbol() == "" {
+		return nil
 	}
 
-	measurement.SetSource("depthflow:level3")
+	ingress := input.Ingress()
+	if ingress.Metrics != nil {
+		for key, metric := range ingress.Metrics {
+			output.SetMetric(key, metric)
+		}
+	}
 
-	return data.Read[*data.Measurement[float64]](level3.pipelineFor(measurement.Label).Next(
-		transport.NewOne(unsafe.Pointer(&measurement)).Next(nil),
+	if channel, hasCh := input.IngressProvenance("channel"); hasCh {
+		output.SetProvenance("channel", channel)
+	}
+
+	data.StampInterval(output, input.At(), input.From())
+
+	return data.Read[*data.Measurement[float64]](level3.pipelineFor(output.Label).Next(
+		transport.NewOne(unsafe.Pointer(&output)).Next(nil),
 	))
 }

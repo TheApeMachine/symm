@@ -170,14 +170,41 @@ func NewTraining(
 	return training
 }
 
-func (training *Training) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
-	if measurement == nil {
+func (training *Training) Step(input *runtime.StageInput, output *data.Measurement[float64]) *data.Measurement[float64] {
+	if input == nil {
 		return nil
 	}
 
-	training.live(measurement)
+	// Merge all prior-stage output metrics onto the output measurement so
+	// training's internal methods can read them from a single measurement.
+	for _, prior := range input.AllPriorOutputs() {
+		if prior == nil || prior.Metrics == nil {
+			continue
+		}
 
-	return measurement
+		for key, metric := range prior.Metrics {
+			output.SetMetric(key, metric)
+		}
+
+		// Carry Result from cognition if available.
+		if prior.Result != nil && output.Result == nil {
+			output.Result = prior.Result
+		}
+	}
+
+	// Also merge ingress metrics.
+	if ingress := input.Ingress(); ingress != nil && ingress.Metrics != nil {
+		for key, metric := range ingress.Metrics {
+			// Don't overwrite signal-derived metrics with raw ingress values.
+			if _, exists := output.LookupMetric(key); !exists {
+				output.SetMetric(key, metric)
+			}
+		}
+	}
+
+	training.live(output)
+
+	return output
 }
 
 func (training *Training) CognitionTree() cognition.CognitionTreeExport {

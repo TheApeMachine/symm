@@ -116,44 +116,49 @@ func (ticker *Ticker) pipelineFor(symbol string) core.Primitive {
 	return actual.(core.Primitive)
 }
 
-func (ticker *Ticker) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
+func (ticker *Ticker) Step(input *runtime.StageInput, output *data.Measurement[float64]) *data.Measurement[float64] {
 	if ticker.Status() != runtime.READY {
 		errnie.Warn(ticker.Name() + ": Step called before READY; dropping event")
-		return measurement
+		return nil
 	}
 
-	if measurement == nil {
-		return measurement
+	if input == nil || input.Ingress() == nil || input.Symbol() == "" {
+		return nil
 	}
 
-	measurement.SetSource("correlation:ticker")
+	ingress := input.Ingress()
+	price := quotedPrice(ingress)
 
-	if len(measurement.Peers) > 0 {
-		peer := measurement.FindPeer(func(candidate *data.Measurement[float64]) bool {
-			if candidate.Label == "" {
-				return false
-			}
-
-			return quotedPrice(candidate) > 0
-		})
-
-		if peer == nil {
-			return nil
-		}
-
-		measurement.Pull(peer)
-		if !measurement.From.IsZero() && measurement.From.After(measurement.At) {
-			measurement.From = time.Time{}
-		}
-		measurement.WriteMetric("last_price", quotedPrice(peer))
+	if price <= 0 {
+		return nil
 	}
 
-	res := data.Read[*data.Measurement[float64]](ticker.pipelineFor(measurement.Label).Next(
-		transport.NewOne(unsafe.Pointer(&measurement)).Next(nil),
+	output.WriteMetric("last_price", price)
+
+	// Forward bid/ask if available.
+	if bid, hasBid := input.IngressMetric("bid"); hasBid {
+		output.SetMetric("bid", bid)
+	}
+
+	if ask, hasAsk := input.IngressMetric("ask"); hasAsk {
+		output.SetMetric("ask", ask)
+	}
+
+	if channel, hasCh := input.IngressProvenance("channel"); hasCh {
+		output.SetProvenance("channel", channel)
+	}
+
+	data.StampInterval(output, ingress.At, ingress.From)
+	if !output.From.IsZero() && output.From.After(output.At) {
+		output.From = time.Time{}
+	}
+
+	res := data.Read[*data.Measurement[float64]](ticker.pipelineFor(output.Label).Next(
+		transport.NewOne(unsafe.Pointer(&output)).Next(nil),
 	))
 
 	if res == nil {
-		return measurement
+		return output
 	}
 
 	return res

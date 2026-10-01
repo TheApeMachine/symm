@@ -68,60 +68,30 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 		data.NewAdapter(
 			transport.NewPass(),
 			func(m *data.Measurement[float64]) *data.Measurement[float64] {
-				input := m
-
-				if len(m.Peers) > 0 {
-					peer := m.FindPeer(func(p *data.Measurement[float64]) bool {
-						ch, _ := p.GetProvenance("channel")
-						if p.Label == "" || ch == "ticker" || ch == "trade" {
-							return false
-						}
-						b := p.GetMetric("best_price:bid").Raw
-						if b == 0 {
-							b = p.GetMetric("best_bid").Raw
-						}
-						if b == 0 {
-							b = p.GetMetric("bid").Raw
-						}
-						a := p.GetMetric("best_price:ask").Raw
-						if a == 0 {
-							a = p.GetMetric("best_ask").Raw
-						}
-						if a == 0 {
-							a = p.GetMetric("ask").Raw
-						}
-						return b > 0 && a > 0
-					})
-
-					if peer != nil {
-						input = peer
-					}
-				}
-
-				bidPrice := input.GetMetric("best_price:bid").Raw
+				bidPrice := m.GetMetric("best_price:bid").Raw
 				if bidPrice == 0 {
-					bidPrice = input.GetMetric("best_bid").Raw
+					bidPrice = m.GetMetric("best_bid").Raw
 				}
 				if bidPrice == 0 {
-					bidPrice = input.GetMetric("bid").Raw
+					bidPrice = m.GetMetric("bid").Raw
 				}
 
-				askPrice := input.GetMetric("best_price:ask").Raw
+				askPrice := m.GetMetric("best_price:ask").Raw
 				if askPrice == 0 {
-					askPrice = input.GetMetric("best_ask").Raw
+					askPrice = m.GetMetric("best_ask").Raw
 				}
 				if askPrice == 0 {
-					askPrice = input.GetMetric("ask").Raw
+					askPrice = m.GetMetric("ask").Raw
 				}
 
-				bidQty := input.GetMetric("touch_quantity:bid").Raw
+				bidQty := m.GetMetric("touch_quantity:bid").Raw
 				if bidQty == 0 {
-					bidQty = input.GetMetric("bid_qty").Raw
+					bidQty = m.GetMetric("bid_qty").Raw
 				}
 
-				askQty := input.GetMetric("touch_quantity:ask").Raw
+				askQty := m.GetMetric("touch_quantity:ask").Raw
 				if askQty == 0 {
-					askQty = input.GetMetric("ask_qty").Raw
+					askQty = m.GetMetric("ask_qty").Raw
 				}
 
 				if bidPrice <= 0 || askPrice <= 0 {
@@ -145,12 +115,7 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 				m.WriteMetric("unfilled_residual_quantity:bid", bidQty)
 				m.WriteMetric("unfilled_residual_quantity:ask", askQty)
 
-				if !input.At.IsZero() {
-					m.At = input.At
-				}
-				if input.Label != "" {
-					m.Label = input.Label
-				}
+
 
 				if state.hasPrev {
 					// Only stamp From when the prior touch is not after At.
@@ -241,7 +206,7 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 					}
 				}
 
-				state.prevTime = input.At
+				state.prevTime = m.At
 				state.prevBid = bidPrice
 				state.prevAsk = askPrice
 				state.prevBidQty = bidQty
@@ -363,19 +328,30 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 	return actual.(core.Primitive)
 }
 
-func (level3 *Level3) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
+func (level3 *Level3) Step(input *runtime.StageInput, output *data.Measurement[float64]) *data.Measurement[float64] {
 	if level3.Status() != runtime.READY {
 		errnie.Warn(level3.Name() + ": Step called before READY; dropping event")
-		return measurement
+		return nil
 	}
 
-	if measurement == nil || measurement.Err != nil {
-		return measurement
+	if input == nil || input.Ingress() == nil || input.Symbol() == "" {
+		return nil
 	}
 
-	measurement.SetSource("toxicity:level3")
+	ingress := input.Ingress()
+	if ingress.Metrics != nil {
+		for key, metric := range ingress.Metrics {
+			output.SetMetric(key, metric)
+		}
+	}
 
-	return data.Read[*data.Measurement[float64]](level3.pipelineFor(measurement.Label).Next(
-		transport.NewOne(unsafe.Pointer(&measurement)).Next(nil),
+	if channel, hasCh := input.IngressProvenance("channel"); hasCh {
+		output.SetProvenance("channel", channel)
+	}
+
+	data.StampInterval(output, input.At(), input.From())
+
+	return data.Read[*data.Measurement[float64]](level3.pipelineFor(output.Label).Next(
+		transport.NewOne(unsafe.Pointer(&output)).Next(nil),
 	))
 }

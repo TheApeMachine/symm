@@ -133,42 +133,36 @@ func NewSolver(
 
 /*
 Step advances the symbol's predictive coder over the canonical microstructure
-sensory features carried in Peers and writes the resulting resonance metrics
-onto the measurement.
+sensory features from completed prior-stage signal outputs and writes the
+resulting resonance metrics onto the owned output measurement.
 */
-func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
+func (solver *Solver) Step(input *runtime.StageInput, output *data.Measurement[float64]) *data.Measurement[float64] {
 	if solver.Status() != runtime.READY {
 		errnie.Warn(solver.Name() + ": Step called before READY; dropping event")
-		return measurement
-	}
-
-	if solver.Error() != nil {
-		return measurement
-	}
-
-	if measurement == nil {
 		return nil
 	}
 
-	for _, peer := range measurement.Peers {
-		if peer != nil && peer.Label != "" {
-			measurement.Pull(peer)
-			break
-		}
+	if solver.Error() != nil {
+		return nil
 	}
 
-	symbol := measurement.Label
+	if input == nil {
+		return nil
+	}
+
+	symbol := input.Symbol()
 
 	if symbol == "" {
-		return measurement
+		return nil
 	}
 
-	at := measurement.At
+	at := input.At()
 
 	if at.IsZero() {
-		for _, peer := range measurement.Peers {
-			if peer != nil && !peer.At.IsZero() {
-				at = peer.At
+		// Fall back to prior-stage outputs for event time.
+		for _, prior := range input.AllPriorOutputs() {
+			if prior != nil && !prior.At.IsZero() {
+				at = prior.At
 				break
 			}
 		}
@@ -180,41 +174,44 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 
 	midpoint := 0.0
 
-	if measurement.Label == symbol && measurement.Metrics != nil {
-		if metric, found := measurement.Metrics["midpoint"]; found && metric.Raw > 0 {
+	// Read midpoint from ingress first.
+	ingress := input.Ingress()
+	if ingress != nil && ingress.Label == symbol && ingress.Metrics != nil {
+		if metric, found := ingress.Metrics["midpoint"]; found && metric.Raw > 0 {
 			midpoint = metric.Raw
 		}
 
 		if midpoint == 0.0 {
-			if metric, found := measurement.Metrics["last_price"]; found && metric.Raw > 0 {
+			if metric, found := ingress.Metrics["last_price"]; found && metric.Raw > 0 {
 				midpoint = metric.Raw
 			}
 		}
 
 		if midpoint == 0.0 {
-			if metric, found := measurement.Metrics["price"]; found && metric.Raw > 0 {
+			if metric, found := ingress.Metrics["price"]; found && metric.Raw > 0 {
 				midpoint = metric.Raw
 			}
 		}
 	}
 
+	// Search prior-stage outputs for midpoint if not found in ingress.
 	if midpoint == 0.0 {
-		for _, peer := range measurement.Peers {
-			if peer == nil || peer.Label != symbol || peer.Metrics == nil {
+		for _, prior := range input.AllPriorOutputs() {
+			if prior == nil || prior.Label != symbol || prior.Metrics == nil {
 				continue
 			}
 
-			if metric, found := peer.Metrics["midpoint"]; found && metric.Raw > 0 {
+			if metric, found := prior.Metrics["midpoint"]; found && metric.Raw > 0 {
 				midpoint = metric.Raw
 				break
 			}
 
-			if metric, found := peer.Metrics["last_price"]; found && metric.Raw > 0 {
+			if metric, found := prior.Metrics["last_price"]; found && metric.Raw > 0 {
 				midpoint = metric.Raw
 				break
 			}
 
-			if metric, found := peer.Metrics["price"]; found && metric.Raw > 0 {
+			if metric, found := prior.Metrics["price"]; found && metric.Raw > 0 {
 				midpoint = metric.Raw
 				break
 			}
@@ -223,12 +220,15 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 
 	var signals [11]*data.Measurement[float64]
 
-	// Live shared-slot: concurrent signals WriteMetric onto one measurement and
-	// race Source. Index by headline metric presence (extractHeadlineMetric),
-	// not Source. Peers still win when Timeline/Register stamped them.
-	if measurement.Label == symbol {
-		if idx := signalIndex(measurement.Source); idx >= 0 {
-			signals[idx] = measurement
+	// Index prior-stage producer outputs by source name.
+	for _, prior := range input.AllPriorOutputs() {
+		if prior == nil || prior.Label != symbol {
+			continue
+		}
+
+		if idx := signalIndex(prior.Source); idx >= 0 {
+			signals[idx] = prior
+			continue
 		}
 
 		for index := 0; index < len(signals); index++ {
@@ -236,20 +236,16 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 				continue
 			}
 
-			if _, ok := extractHeadlineMetric(index, measurement); ok {
-				signals[index] = measurement
+			if _, ok := extractHeadlineMetric(index, prior); ok {
+				signals[index] = prior
 			}
 		}
 	}
 
-	for _, peer := range measurement.Peers {
-		if peer == nil || peer.Label != symbol {
-			continue
-		}
-
-		if idx := signalIndex(peer.Source); idx >= 0 {
-			signals[idx] = peer
-			continue
+	// Also check ingress for metrics.
+	if ingress != nil && ingress.Label == symbol {
+		if idx := signalIndex(ingress.Source); idx >= 0 && signals[idx] == nil {
+			signals[idx] = ingress
 		}
 
 		for index := 0; index < len(signals); index++ {
@@ -257,8 +253,8 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 				continue
 			}
 
-			if _, ok := extractHeadlineMetric(index, peer); ok {
-				signals[index] = peer
+			if _, ok := extractHeadlineMetric(index, ingress); ok {
+				signals[index] = ingress
 			}
 		}
 	}
@@ -266,31 +262,28 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 	scorer := solver.scorer(symbol)
 	features := scorer.Step(signals)
 
-	solver.Update(measurement, symbol, at, features, midpoint)
+	solver.Update(output, symbol, at, features, midpoint)
 
-	measurement.Label = symbol
-	measurement.At = at
+	output.Label = symbol
+	output.At = at
 
-	maturity, snr, snrDefined, estimated := measurement.Maturity, measurement.SNR, measurement.SNRDefined, measurement.Estimated
+	maturity, snr, snrDefined, estimated := output.Maturity, output.SNR, output.SNRDefined, output.Estimated
 	if loadedStep, found := solver.steps.Load(symbol); found {
 		if stepCount := loadedStep.(*atomic.Int64).Load(); stepCount > 1 {
 			maturity = 1.0 - 1.0/float64(stepCount)
 		}
 	}
 
-	if energyMetric, ok := measurement.LookupMetric("energy"); ok && energyMetric.Raw > 0 {
-		if surpriseMetric, ok := measurement.LookupMetric("surprise"); ok && surpriseMetric.Raw > 0 {
+	if energyMetric, ok := output.LookupMetric("energy"); ok && energyMetric.Raw > 0 {
+		if surpriseMetric, ok := output.LookupMetric("surprise"); ok && surpriseMetric.Raw > 0 {
 			snr = energyMetric.Raw / surpriseMetric.Raw
 			snrDefined = true
 			estimated = true
 		}
 	}
-	measurement.SetQuality(maturity, snr, snrDefined, estimated)
+	output.SetQuality(maturity, snr, snrDefined, estimated)
 
-	// Resonance owns this observation's published artifact for the UI tee.
-	measurement.SetSource("resonance")
-
-	return measurement
+	return output
 }
 
 /*

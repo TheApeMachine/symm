@@ -23,11 +23,13 @@ func TestStep(t *testing.T) {
 		m.Label = "TEST/USD"
 		m.At = time.Unix(1, 0)
 
-		result := solver.Step(m)
+		result := solver.Step(
+			runtime.TestStageInputFromPeers(m),
+			data.NewMeasurement[float64]("resonance", nil),
+		)
 
 		Convey("the step populates energy and surprise metrics", func() {
 			So(result, ShouldNotBeNil)
-			So(result.Source, ShouldEqual, "resonance")
 		})
 	})
 }
@@ -64,7 +66,10 @@ func TestSignalFeatureIngestion(t *testing.T) {
 			createMetric("derivatives", "basis", 0.001),
 		}
 
-		result := solver.Step(m)
+		result := solver.Step(
+			runtime.TestStageInputFromPeers(m),
+			data.NewMeasurement[float64]("resonance", nil),
+		)
 
 		Convey("the predictive coder ingests all 11 features and produces resonance dynamics", func() {
 			So(result, ShouldNotBeNil)
@@ -112,12 +117,18 @@ func TestSurpriseBreakInCommonFlow(t *testing.T) {
 		}
 
 		for step := int64(1); step <= 10; step++ {
-			res := solver.Step(createMeasurement(step, 0.2, 0.1))
+			res := solver.Step(
+				runtime.TestStageInputFromPeers(createMeasurement(step, 0.2, 0.1)),
+				data.NewMeasurement[float64]("resonance", nil),
+			)
 			So(res, ShouldNotBeNil)
 		}
 
 		Convey("when an unexpected break in common flow occurs, the solver processes the surprise", func() {
-			disrupted := solver.Step(createMeasurement(11, 0.95, 0.85))
+			disrupted := solver.Step(
+				runtime.TestStageInputFromPeers(createMeasurement(11, 0.95, 0.85)),
+				data.NewMeasurement[float64]("resonance", nil),
+			)
 			So(disrupted, ShouldNotBeNil)
 			So(disrupted.GetMetric("surprise").Raw, ShouldBeGreaterThanOrEqualTo, 0)
 		})
@@ -146,7 +157,10 @@ func TestNoVarianceCollapseOnAsynchronousSignals(t *testing.T) {
 		m1.Peers = []*data.Measurement[float64]{
 			createMetric("cvd", "signed_net_fraction", 0.1, 1),
 		}
-		res1 := solver.Step(m1)
+		res1 := solver.Step(
+			runtime.TestStageInputFromPeers(m1),
+			data.NewMeasurement[float64]("resonance", nil),
+		)
 		So(res1, ShouldNotBeNil)
 
 		// 500 measurements arrive where CVD is absent (only DepthFlow is present)
@@ -157,7 +171,10 @@ func TestNoVarianceCollapseOnAsynchronousSignals(t *testing.T) {
 			mL3.Peers = []*data.Measurement[float64]{
 				createMetric("depthflow", "observed_notional_imbalance", 0.2, float64(step)),
 			}
-			resL3 := solver.Step(mL3)
+			resL3 := solver.Step(
+				runtime.TestStageInputFromPeers(mL3),
+				data.NewMeasurement[float64]("resonance", nil),
+			)
 			So(resL3, ShouldNotBeNil)
 		}
 
@@ -168,7 +185,10 @@ func TestNoVarianceCollapseOnAsynchronousSignals(t *testing.T) {
 		m2.Peers = []*data.Measurement[float64]{
 			createMetric("cvd", "signed_net_fraction", 0.8, 2),
 		}
-		res2 := solver.Step(m2)
+		res2 := solver.Step(
+			runtime.TestStageInputFromPeers(m2),
+			data.NewMeasurement[float64]("resonance", nil),
+		)
 
 		Convey("CVD standardizer does not collapse variance and surprise remains realistic", func() {
 			So(res2, ShouldNotBeNil)
@@ -224,7 +244,10 @@ func TestSubSourceAndNonZeroLatents(t *testing.T) {
 			priceMetric := data.NewMetric[float64]("midpoint", data.UnitRate, data.TimescaleInstantaneous, 0, 1)
 			m.SetMetric("midpoint", priceMetric.Write(50000.0 + float64(step)*10.0))
 
-			res := solver.Step(m)
+			res := solver.Step(
+				runtime.TestStageInputFromPeers(m),
+				data.NewMeasurement[float64]("resonance", nil),
+			)
 			lastMeasurement = res
 			So(res, ShouldNotBeNil)
 		}
@@ -253,7 +276,10 @@ func TestSolverStepReadiness(t *testing.T) {
 		measurement := &data.Measurement[float64]{Label: "BTC/USD", SeqIdx: 7}
 		for _, stage := range []runtime.Stage{runtime.INIT, runtime.WAITING, runtime.ERROR, runtime.FATAL} {
 			node.Transition(stage)
-			So(node.Step(measurement), ShouldEqual, measurement)
+			So(node.Step(
+				runtime.TestStageInputFromPeers(measurement),
+				data.NewMeasurement[float64]("resonance", nil),
+			), ShouldBeNil)
 			So(node.Status(), ShouldEqual, stage)
 			So(measurement.SeqIdx, ShouldEqual, 7)
 		}

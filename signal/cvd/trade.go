@@ -59,24 +59,23 @@ func (trade *Trade) pipelineFor(symbol string) core.Primitive {
 			transport.NewPass(),
 			func(m *data.Measurement[float64]) *data.Measurement[float64] {
 				var bid, ask float64
-				if touchPeer := m.FindPeer(func(p *data.Measurement[float64]) bool {
-					_, hasB := p.LookupMetric("best_bid")
-					_, hasA := p.LookupMetric("best_ask")
-					if !hasB {
-						_, hasB = p.LookupMetric("bid")
+				if metric, ok := m.LookupMetric("best_bid"); ok {
+					bid = metric.Raw
+				}
+
+				if bid == 0 {
+					if metric, ok := m.LookupMetric("bid"); ok {
+						bid = metric.Raw
 					}
-					if !hasA {
-						_, hasA = p.LookupMetric("ask")
-					}
-					return hasB && hasA
-				}); touchPeer != nil {
-					bid = touchPeer.GetMetric("best_bid").Raw
-					if bid == 0 {
-						bid = touchPeer.GetMetric("bid").Raw
-					}
-					ask = touchPeer.GetMetric("best_ask").Raw
-					if ask == 0 {
-						ask = touchPeer.GetMetric("ask").Raw
+				}
+
+				if metric, ok := m.LookupMetric("best_ask"); ok {
+					ask = metric.Raw
+				}
+
+				if ask == 0 {
+					if metric, ok := m.LookupMetric("ask"); ok {
+						ask = metric.Raw
 					}
 				}
 
@@ -215,53 +214,62 @@ func (trade *Trade) pipelineFor(symbol string) core.Primitive {
 }
 
 /*
-Step supplies the arriving measurement to the pipeline and returns it: the
-measurement is the pipeline's state, enriched in place.
+Step reads trade data (price, qty, side) from the ingress via StageInput and
+writes CVD metrics into the owned output measurement. The nomagique pipeline
+operates on the output measurement. No Pull, no Fork, no Peers mutation.
 */
-func (trade *Trade) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
+func (trade *Trade) Step(input *runtime.StageInput, output *data.Measurement[float64]) *data.Measurement[float64] {
 	if trade.Status() != runtime.READY {
 		errnie.Warn(trade.Name() + ": Step called before READY; dropping event")
-		return measurement
+		return nil
 	}
 
-	if measurement == nil {
-		return measurement
+	if input == nil || input.Ingress() == nil {
+		return nil
 	}
 
-	measurement.SetSource("cvd:trade")
+	ingress := input.Ingress()
 
-	if len(measurement.Peers) > 0 {
-		peer := measurement.FindPeer(func(candidate *data.Measurement[float64]) bool {
-			_, hasPrice := candidate.LookupMetric("price")
-			_, hasQty := candidate.LookupMetric("qty")
-			return hasPrice && hasQty && candidate.Label != ""
-		})
+	priceMetric, hasPrice := input.IngressMetric("price")
+	qtyMetric, hasQty := input.IngressMetric("qty")
 
-		if peer == nil {
-			return nil
-		}
-
-		measurement.Pull(peer, "price", "qty")
+	if !hasPrice || !hasQty || input.Symbol() == "" {
+		return nil
 	}
 
-	if measurement.Label == "" {
-		return measurement
+	output.SetMetric("price", priceMetric)
+	output.SetMetric("qty", qtyMetric)
+
+	// Forward bid/ask from ingress for midpoint response computation.
+	if bidMetric, hasBid := input.IngressMetric("bid"); hasBid {
+		output.SetMetric("best_bid", bidMetric)
 	}
 
-	if _, hasPrice := measurement.LookupMetric("price"); !hasPrice {
-		return measurement
+	if askMetric, hasAsk := input.IngressMetric("ask"); hasAsk {
+		output.SetMetric("best_ask", askMetric)
 	}
 
-	if _, hasQty := measurement.LookupMetric("qty"); !hasQty {
-		return measurement
+	// Forward provenance side for the CVD gate.
+	if side, hasSide := input.IngressProvenance("side"); hasSide {
+		output.SetProvenance("side", side)
 	}
 
-	res := data.Read[*data.Measurement[float64]](trade.pipelineFor(measurement.Label).Next(
-		transport.NewOne(unsafe.Pointer(&measurement)).Next(nil),
+	if channel, hasCh := input.IngressProvenance("channel"); hasCh {
+		output.SetProvenance("channel", channel)
+	}
+
+	if ingress.From.IsZero() {
+		data.StampInterval(output, ingress.At, ingress.At)
+	} else {
+		data.StampInterval(output, ingress.At, ingress.From)
+	}
+
+	res := data.Read[*data.Measurement[float64]](trade.pipelineFor(output.Label).Next(
+		transport.NewOne(unsafe.Pointer(&output)).Next(nil),
 	))
 
 	if res == nil {
-		return measurement
+		return output
 	}
 
 	return res

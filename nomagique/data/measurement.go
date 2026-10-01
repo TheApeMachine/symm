@@ -200,7 +200,6 @@ func (m *Measurement[T]) ProvenanceSnapshot() map[string]string {
 	return maps.Clone(m.Provenance)
 }
 
-
 // MetadataSnapshot returns a copy of Metadata under the read lock.
 func (m *Measurement[T]) MetadataSnapshot() map[string]string {
 	if m == nil {
@@ -793,6 +792,107 @@ func (measurement *Measurement[T]) Reset() {
 		metric.Normalized = nil
 		metric.Standardized = nil
 		measurement.SetMetric(key, metric)
+	}
+}
+
+/*
+ResetSlot prepares a preallocated producer ring slot for reuse. It preserves
+the declared metric schema and map capacity while clearing all observation
+values, quality, provenance, metadata, and transient fields.
+
+This is the hot-path reset for the WORM producer ring: O(schema keys) work,
+zero allocation when map capacity is retained.
+*/
+func (measurement *Measurement[T]) ResetSlot() {
+	if measurement == nil {
+		return
+	}
+
+	measurement.mu.Lock()
+	defer measurement.mu.Unlock()
+
+	measurement.Label = ""
+	measurement.SeqIdx = 0
+	measurement.Timestamp = 0
+	measurement.At = time.Time{}
+	measurement.From = time.Time{}
+	measurement.Maturity = 0
+	measurement.SNR = 0
+	measurement.SNRDefined = false
+	measurement.Estimated = false
+	measurement.Err = nil
+	measurement.Result = nil
+	measurement.Peers = measurement.Peers[:0]
+	measurement.inputs = nil
+
+	for key, metric := range measurement.Metrics {
+		metric.Raw = zero[T]()
+		metric.Normalized = nil
+		metric.Standardized = nil
+		measurement.Metrics[key] = metric
+	}
+
+	clear(measurement.Metadata)
+	clear(measurement.Provenance)
+}
+
+/*
+DetachedSnapshot creates an independent immutable heap copy for async off-ramp
+queues (StoreTee, UITee). It contains ONLY this producer's published state:
+
+  - No Peers forest
+  - No inherited inputs
+  - No Result reference
+  - No arena-backed pointers
+  - No references to reusable ring storage
+
+One DetachedSnapshot is shared by all Tees for the same producer output. Go GC
+manages its lifetime.
+*/
+func (measurement *Measurement[T]) DetachedSnapshot() *Measurement[T] {
+	if measurement == nil {
+		return nil
+	}
+
+	measurement.mu.RLock()
+	defer measurement.mu.RUnlock()
+
+	var metrics map[string]Metric[T]
+	if len(measurement.Metrics) > 0 {
+		metrics = make(map[string]Metric[T], len(measurement.Metrics))
+		maps.Copy(metrics, measurement.Metrics)
+	}
+
+	var metadata map[string]string
+	if len(measurement.Metadata) > 0 {
+		metadata = make(map[string]string, len(measurement.Metadata))
+		maps.Copy(metadata, measurement.Metadata)
+	}
+
+	var provenance map[string]string
+	if len(measurement.Provenance) > 0 {
+		provenance = make(map[string]string, len(measurement.Provenance))
+		maps.Copy(provenance, measurement.Provenance)
+	}
+
+	return &Measurement[T]{
+		ID:         measurement.ID,
+		Label:      measurement.Label,
+		Source:     measurement.Source,
+		SeqIdx:     measurement.SeqIdx,
+		Timestamp:  measurement.Timestamp,
+		At:         measurement.At,
+		From:       measurement.From,
+		Maturity:   measurement.Maturity,
+		SNR:        measurement.SNR,
+		SNRDefined: measurement.SNRDefined,
+		Estimated:  measurement.Estimated,
+		Err:        measurement.Err,
+		Metrics:    metrics,
+		Metadata:   metadata,
+		Provenance: provenance,
+		// Explicitly nil: Peers, inputs, Result — these must not escape into
+		// async queues or retain ring/arena references.
 	}
 }
 

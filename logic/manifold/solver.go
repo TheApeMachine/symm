@@ -206,50 +206,46 @@ func (solver *Solver) run() {
 /*
 Step dispatches on the envelope kind:
 */
-func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
+func (solver *Solver) Step(input *runtime.StageInput, output *data.Measurement[float64]) *data.Measurement[float64] {
 	if solver.Status() != runtime.READY {
-		return measurement
+		return nil
 	}
 
-	if measurement == nil {
+	if input == nil {
 		solver.Error(errnie.Err(
 			errnie.NotFound,
-			"[manifold] Step must be invoked with a non-nil Measurement",
+			"[manifold] Step must be invoked with a non-nil StageInput",
 			nil,
 		))
 
 		return nil
 	}
 
-	symbol := measurement.Label
+	symbol := input.Symbol()
 
-	if measurement.Source == "hawkes" {
-		solver.recordForcing(symbol, measurement)
-		return measurement
-	}
-
-	for _, peer := range measurement.Peers {
-		if peer == nil {
+	// Process hawkes forcing from prior-stage outputs.
+	for _, prior := range input.AllPriorOutputs() {
+		if prior == nil {
 			continue
 		}
 
-		if peer.Source == "hawkes" {
-			solver.recordForcing(peer.Label, peer)
+		if prior.Source == "hawkes:trade" || prior.Source == "hawkes" {
+			solver.recordForcing(prior.Label, prior)
 		}
 
-		if peer.Label == "" {
+		if prior.Label == "" {
 			continue
 		}
 
-		solver.markDirty(peer.Label)
+		solver.markDirty(prior.Label)
 
 		if symbol == "" {
-			symbol = peer.Label
+			symbol = prior.Label
 		}
 	}
 
 	if symbol != "" {
-		measurement.Label = symbol
+		output.Label = symbol
 	}
 
 	select {
@@ -258,48 +254,47 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 	}
 
 	reading := solver.Reading()
-	measurement.Result = reading
-	measurement.SetSource("manifold")
+	output.Result = reading
 
 	if reading == nil {
-		return measurement
+		return output
 	}
 
-	measurement.WriteMetric("divergence", reading.Reading.Divergence)
+	output.WriteMetric("divergence", reading.Reading.Divergence)
 
-	measurement.WriteMetric("guidance_speed", reading.Reading.GuidanceSpeed)
+	output.WriteMetric("guidance_speed", reading.Reading.GuidanceSpeed)
 
-	measurement.WriteMetric("coherence_mag2", reading.Reading.CoherenceMag2)
+	output.WriteMetric("coherence_mag2", reading.Reading.CoherenceMag2)
 
-	measurement.WriteMetric("pressure_grad_norm", reading.Reading.PressureGradNorm)
+	output.WriteMetric("pressure_grad_norm", reading.Reading.PressureGradNorm)
 
-	measurement.WriteMetric("viscosity_proxy", reading.Reading.ViscosityProxy)
+	output.WriteMetric("viscosity_proxy", reading.Reading.ViscosityProxy)
 
-	measurement.WriteMetric("kuramoto_r", reading.Reading.KuramotoR)
+	output.WriteMetric("kuramoto_r", reading.Reading.KuramotoR)
 
-	measurement.WriteMetric("kuramoto_psi", reading.Reading.KuramotoPsi)
+	output.WriteMetric("kuramoto_psi", reading.Reading.KuramotoPsi)
 
-	measurement.WriteMetric("gas_kinetic", reading.Reading.Health.Gas.Kinetic)
+	output.WriteMetric("gas_kinetic", reading.Reading.Health.Gas.Kinetic)
 
-	measurement.WriteMetric("gas_internal", reading.Reading.Health.Gas.Internal)
+	output.WriteMetric("gas_internal", reading.Reading.Health.Gas.Internal)
 
-	measurement.WriteMetric("wave_norm", reading.Reading.Health.Wave.Norm)
+	output.WriteMetric("wave_norm", reading.Reading.Health.Wave.Norm)
 
-	measurement.WriteMetric("vorticity_rms", reading.Reading.Health.Gas.VorticityRMS)
+	output.WriteMetric("vorticity_rms", reading.Reading.Health.Gas.VorticityRMS)
 
-	measurement.WriteMetric("strain_rms", reading.Reading.Health.Gas.StrainRMS)
+	output.WriteMetric("strain_rms", reading.Reading.Health.Gas.StrainRMS)
 
-	measurement.WriteMetric("max_mach", reading.Reading.Health.Gas.MaxMach)
+	output.WriteMetric("max_mach", reading.Reading.Health.Gas.MaxMach)
 
 	if reading.State != nil {
-		measurement.WriteMetric("particle_count", float64(reading.State.N))
+		output.WriteMetric("particle_count", float64(reading.State.N))
 	}
 
-	measurement.WriteMetric("particle_thermal", reading.Reading.Health.ParticleThermal)
+	output.WriteMetric("particle_thermal", reading.Reading.Health.ParticleThermal)
 
-	measurement.WriteMetric("particle_kinetic", reading.Reading.Health.ParticleKinetic)
+	output.WriteMetric("particle_kinetic", reading.Reading.Health.ParticleKinetic)
 
-	maturity, snr, snrDefined, estimated := measurement.Maturity, measurement.SNR, measurement.SNRDefined, measurement.Estimated
+	maturity, snr, snrDefined, estimated := output.Maturity, output.SNR, output.SNRDefined, output.Estimated
 	if reading.State != nil && reading.State.N > 1 {
 		maturity = 1.0 - 1.0/float64(reading.State.N)
 	}
@@ -314,9 +309,9 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 			estimated = true
 		}
 	}
-	measurement.SetQuality(maturity, snr, snrDefined, estimated)
+	output.SetQuality(maturity, snr, snrDefined, estimated)
 
-	return measurement
+	return output
 }
 
 /*

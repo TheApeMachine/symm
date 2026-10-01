@@ -317,41 +317,42 @@ func (ticker *Ticker) pipelineFor(symbol string) core.Primitive {
 	return actual.(core.Primitive)
 }
 
-func (ticker *Ticker) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
+func (ticker *Ticker) Step(input *runtime.StageInput, output *data.Measurement[float64]) *data.Measurement[float64] {
 	if ticker.Status() != runtime.READY {
 		errnie.Warn(ticker.Name() + ": Step called before READY; dropping event")
-		return measurement
+		return nil
 	}
 
-	if measurement == nil {
-		return measurement
+	if input == nil || input.Ingress() == nil || input.Symbol() == "" {
+		return nil
 	}
 
-	measurement.SetSource("sentiment:ticker")
+	ingress := input.Ingress()
+	price := quotedPrice(ingress)
 
-	if len(measurement.Peers) > 0 {
-		peer := measurement.FindPeer(func(candidate *data.Measurement[float64]) bool {
-			if candidate.Label == "" {
-				return false
-			}
-
-			return quotedPrice(candidate) > 0
-		})
-
-		if peer == nil {
-			return nil
-		}
-
-		measurement.Pull(peer)
-		measurement.WriteMetric("last", quotedPrice(peer))
+	if price <= 0 {
+		return nil
 	}
 
-	res := data.Read[*data.Measurement[float64]](ticker.pipelineFor(measurement.Label).Next(
-		transport.NewOne(unsafe.Pointer(&measurement)).Next(nil),
+	output.WriteMetric("last", price)
+
+	// Forward volume if available.
+	if vol, hasVol := input.IngressMetric("volume"); hasVol {
+		output.SetMetric("volume", vol)
+	}
+
+	if channel, hasCh := input.IngressProvenance("channel"); hasCh {
+		output.SetProvenance("channel", channel)
+	}
+
+	data.StampInterval(output, ingress.At, ingress.From)
+
+	res := data.Read[*data.Measurement[float64]](ticker.pipelineFor(output.Label).Next(
+		transport.NewOne(unsafe.Pointer(&output)).Next(nil),
 	))
 
 	if res == nil {
-		return measurement
+		return output
 	}
 
 	return res

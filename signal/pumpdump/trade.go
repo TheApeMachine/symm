@@ -64,21 +64,8 @@ func (trade *Trade) pipelineFor(symbol string) core.Primitive {
 		data.NewAdapter(
 			transport.NewPass(),
 			func(m *data.Measurement[float64]) *data.Measurement[float64] {
-				input := m
-				if len(m.Peers) > 0 {
-					peer := m.FindPeer(func(p *data.Measurement[float64]) bool {
-						_, hasP := p.LookupMetric("price")
-						_, hasQ := p.LookupMetric("qty")
-						return hasP && hasQ && p.Label != ""
-					})
-					if peer != nil {
-						input = peer
-					}
-				}
-				m.Pull(input)
-
-				priceMetric, hasPrice := input.LookupMetric("price")
-				qtyMetric, hasQty := input.LookupMetric("qty")
+				priceMetric, hasPrice := m.LookupMetric("price")
+				qtyMetric, hasQty := m.LookupMetric("qty")
 
 				if !hasPrice || !hasQty || priceMetric.Raw <= 0 || qtyMetric.Raw <= 0 {
 					m.Err = fmt.Errorf("pumpdump: non-positive price or quantity")
@@ -90,24 +77,23 @@ func (trade *Trade) pipelineFor(symbol string) core.Primitive {
 				notional := price * qty
 
 				var bid, ask float64
-				if touchPeer := m.FindPeer(func(candidate *data.Measurement[float64]) bool {
-					_, hasB := candidate.LookupMetric("best_bid")
-					_, hasA := candidate.LookupMetric("best_ask")
-					if !hasB {
-						_, hasB = candidate.LookupMetric("bid")
+				if metric, ok := m.LookupMetric("best_bid"); ok {
+					bid = metric.Raw
+				}
+
+				if bid == 0 {
+					if metric, ok := m.LookupMetric("bid"); ok {
+						bid = metric.Raw
 					}
-					if !hasA {
-						_, hasA = candidate.LookupMetric("ask")
-					}
-					return hasB && hasA
-				}); touchPeer != nil {
-					bid = touchPeer.GetMetric("best_bid").Raw
-					if bid == 0 {
-						bid = touchPeer.GetMetric("bid").Raw
-					}
-					ask = touchPeer.GetMetric("best_ask").Raw
-					if ask == 0 {
-						ask = touchPeer.GetMetric("ask").Raw
+				}
+
+				if metric, ok := m.LookupMetric("best_ask"); ok {
+					ask = metric.Raw
+				}
+
+				if ask == 0 {
+					if metric, ok := m.LookupMetric("ask"); ok {
+						ask = metric.Raw
 					}
 				}
 
@@ -118,7 +104,7 @@ func (trade *Trade) pipelineFor(symbol string) core.Primitive {
 
 				if !state.hasTrade {
 					state.targetQty = qty
-					state.barStartTime = input.At
+					state.barStartTime = m.At
 					if mid > 0 {
 						state.barFromMidpoint = mid
 					}
@@ -131,18 +117,18 @@ func (trade *Trade) pipelineFor(symbol string) core.Primitive {
 				var hasInterval bool
 
 				if state.hasTrade {
-					interval = input.At.Sub(state.prevTradeTime).Seconds()
+					interval = m.At.Sub(state.prevTradeTime).Seconds()
 					hasInterval = true
 				}
 
-				state.prevTradeTime = input.At
+				state.prevTradeTime = m.At
 				state.hasTrade = true
 
 				state.barQty += qty
 				state.barNotional += notional
 				state.barTradeCount++
 
-				duration := input.At.Sub(state.barStartTime).Seconds()
+				duration := m.At.Sub(state.barStartTime).Seconds()
 
 				m.WriteMetric("trade_price", price)
 				m.WriteMetric("trade_quantity", qty)
@@ -175,12 +161,10 @@ func (trade *Trade) pipelineFor(symbol string) core.Primitive {
 					state.barQty = 0
 					state.barNotional = 0
 					state.barTradeCount = 0
-					state.barStartTime = input.At
+					state.barStartTime = m.At
 					state.barFromMidpoint = mid
 				}
 
-				m.Label = input.Label
-				m.At = input.At
 				return m
 			},
 			func(m *data.Measurement[float64], out *data.Measurement[float64]) {},
@@ -279,24 +263,46 @@ func (trade *Trade) pipelineFor(symbol string) core.Primitive {
 	return actual.(core.Primitive)
 }
 
-/*
-Step supplies the arriving measurement to the pipeline and returns it: the
-measurement is the pipeline's state, enriched in place.
-*/
-func (trade *Trade) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
+func (trade *Trade) Step(input *runtime.StageInput, output *data.Measurement[float64]) *data.Measurement[float64] {
 	if trade.Status() != runtime.READY {
 		errnie.Warn(trade.Name() + ": Step called before READY; dropping event")
-		return measurement
+		return nil
 	}
 
-	if measurement == nil || measurement.Err != nil {
-		return measurement
+	if input == nil || input.Ingress() == nil || input.Symbol() == "" {
+		return nil
 	}
 
-	measurement.SetSource("pumpdump:trade")
+	// Seed price/qty from ingress so pipeline closure can read them.
+	if price, hasPrice := input.IngressMetric("price"); hasPrice {
+		output.SetMetric("price", price)
+	}
 
-	res := data.Read[*data.Measurement[float64]](trade.pipelineFor(measurement.Label).Next(
-		transport.NewOne(unsafe.Pointer(&measurement)).Next(nil),
+	if qty, hasQty := input.IngressMetric("qty"); hasQty {
+		output.SetMetric("qty", qty)
+	}
+
+	// Seed bid/ask for midpoint computation inside the pipeline.
+	if bid, hasBid := input.IngressMetric("bid"); hasBid {
+		output.SetMetric("best_bid", bid)
+	}
+
+	if ask, hasAsk := input.IngressMetric("ask"); hasAsk {
+		output.SetMetric("best_ask", ask)
+	}
+
+	if side, hasSide := input.IngressProvenance("side"); hasSide {
+		output.SetProvenance("side", side)
+	}
+
+	if channel, hasCh := input.IngressProvenance("channel"); hasCh {
+		output.SetProvenance("channel", channel)
+	}
+
+	data.StampInterval(output, input.At(), input.From())
+
+	res := data.Read[*data.Measurement[float64]](trade.pipelineFor(output.Label).Next(
+		transport.NewOne(unsafe.Pointer(&output)).Next(nil),
 	))
 
 	if res == nil {

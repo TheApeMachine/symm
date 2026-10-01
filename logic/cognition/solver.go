@@ -152,17 +152,17 @@ func NewSolver(
 Step folds the category observations in Peers into the symbol's cognition
 state machine and writes the freshest reading back onto the measurement.
 */
-func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
+func (solver *Solver) Step(input *runtime.StageInput, output *data.Measurement[float64]) *data.Measurement[float64] {
 	if solver.Status() != runtime.READY {
 		errnie.Warn(solver.Name() + ": Step called before READY; dropping event")
-		return measurement
+		return nil
 	}
 
 	if solver.Error() != nil {
-		return measurement
+		return nil
 	}
 
-	if measurement == nil {
+	if input == nil {
 		return nil
 	}
 
@@ -171,18 +171,23 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 		hasBatches bool
 	)
 
-	if b, ok := measurement.Result.([][]types.Category); ok {
-		batches = b
-		hasBatches = true
+	// Find category result from prior-stage producer outputs.
+	categoryOutput := input.ProducerOutput("category")
+	if categoryOutput != nil {
+		if b, ok := categoryOutput.Result.([][]types.Category); ok {
+			batches = b
+			hasBatches = true
+		}
 	}
 
+	// Fall back: search all prior outputs for category results.
 	if !hasBatches {
-		for _, peer := range measurement.Peers {
-			if peer == nil {
+		for _, prior := range input.AllPriorOutputs() {
+			if prior == nil {
 				continue
 			}
 
-			if b, ok := peer.Result.([][]types.Category); ok {
+			if b, ok := prior.Result.([][]types.Category); ok {
 				batches = b
 				hasBatches = true
 				break
@@ -191,7 +196,7 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 	}
 
 	if !hasBatches {
-		return measurement
+		return nil
 	}
 
 	results := make([]types.Cognition, 0, len(batches))
@@ -208,23 +213,21 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 		}
 
 		results = append(results, reading.Clone())
-		measurement.Label = reading.Symbol
-		measurement.At = reading.At
+		output.Label = reading.Symbol
+		output.At = reading.At
 
 		if reading.NodeCount > 1 {
-			measurement.SetQuality(
+			output.SetQuality(
 				1.0-1.0/float64(reading.NodeCount),
-				measurement.SNR,
-				measurement.SNRDefined,
-				measurement.Estimated,
+				output.SNR,
+				output.SNRDefined,
+				output.Estimated,
 			)
 		}
 
-		// Live workspace slots are not seeded from Register(); write readings
-		// unconditionally so training.grid.Update / LitRegions see them.
-		measurement.WriteMetric("contrast", reading.Contrast)
-		measurement.WriteMetric("surprisal", reading.InterpolatedSurprisal)
-		measurement.WriteMetric("stability", reading.Confidence)
+		output.WriteMetric("contrast", reading.Contrast)
+		output.WriteMetric("surprisal", reading.InterpolatedSurprisal)
+		output.WriteMetric("stability", reading.Confidence)
 
 		ambiguityVal := 0.0
 		if reading.Ambiguous {
@@ -233,17 +236,16 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 		if reading.EntropyBits != nil {
 			ambiguityVal = *reading.EntropyBits
 		}
-		measurement.WriteMetric("ambiguity", ambiguityVal)
+		output.WriteMetric("ambiguity", ambiguityVal)
 	}
 
 	if len(results) == 0 {
 		return nil
 	}
 
-	measurement.Result = results
-	measurement.SetSource("cognition")
+	output.Result = results
 
-	return measurement
+	return output
 }
 
 func (solver *Solver) Register() *data.Measurement[float64] {

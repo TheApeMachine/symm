@@ -118,36 +118,49 @@ func NewSolver(ctx context.Context) *Solver {
 }
 
 /*
-Step folds every signal measurement populated in Peers into its
-symbol's evidence snapshot and returns the updated category measurement.
+Step reads all completed prior-stage signal outputs from the StageInput,
+groups them by symbol, folds them into per-symbol evidence snapshots, and
+writes the resulting category metrics onto the owned output measurement.
 */
-func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
+func (solver *Solver) Step(input *runtime.StageInput, output *data.Measurement[float64]) *data.Measurement[float64] {
 	if solver.Status() != runtime.READY {
 		errnie.Warn(solver.Name() + ": Step called before READY; dropping event")
-		return measurement
-	}
-
-	if solver.Error() != nil {
-		return measurement
-	}
-
-	if measurement == nil {
 		return nil
 	}
 
-	// Live disruptor slots share one measurement; signals WriteMetric in place
-	// and Peers stay empty. Historical Timeline fills Peers. Accept either.
-	peers := measurement.Peers
-	if len(peers) == 0 {
-		peers = []*data.Measurement[float64]{measurement}
+	if solver.Error() != nil {
+		return nil
+	}
+
+	if input == nil {
+		return nil
+	}
+
+	// Collect all prior-stage producer outputs (Stage 0 signal results).
+	priorOutputs := input.AllPriorOutputs()
+
+	// Also include the ingress measurement itself as a fallback for live slots
+	// where signals wrote metrics directly onto the shared measurement.
+	ingress := input.Ingress()
+	sources := make([]*data.Measurement[float64], 0, len(priorOutputs)+1)
+	if ingress != nil && ingress.Label != "" && ingress.Err == nil {
+		sources = append(sources, ingress)
+	}
+
+	for _, prior := range priorOutputs {
+		if prior != nil && prior.Label != "" && prior.Err == nil {
+			sources = append(sources, prior)
+		}
+	}
+
+	if len(sources) == 0 {
+		return nil
 	}
 
 	bySymbol := make(map[string][]*data.Measurement[float64])
 
-	for _, peer := range peers {
-		if peer != nil && peer.Label != "" && peer.Err == nil {
-			bySymbol[peer.Label] = append(bySymbol[peer.Label], peer)
-		}
+	for _, src := range sources {
+		bySymbol[src.Label] = append(bySymbol[src.Label], src)
 	}
 
 	results := make([][]types.Category, 0, len(bySymbol))
@@ -164,8 +177,8 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 		}
 
 		results = append(results, categories)
-		measurement.Label = symbol
-		measurement.At = categories[0].At
+		output.Label = symbol
+		output.At = categories[0].At
 		maturity := categories[0].Maturity
 		snr, snrDefined, estimated := 0.0, false, false
 		if categories[0].Uncertainty > 0 {
@@ -173,12 +186,11 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 			snrDefined = true
 			estimated = true
 		}
-		measurement.SetQuality(maturity, snr, snrDefined, estimated)
+		output.SetQuality(maturity, snr, snrDefined, estimated)
 
 		for _, cat := range categories {
 			if cat.Type != "" {
-				// Register() templates are not applied on live disruptor slots.
-				measurement.WriteMetric(string(cat.Type), cat.Confidence)
+				output.WriteMetric(string(cat.Type), cat.Confidence)
 			}
 		}
 	}
@@ -187,10 +199,9 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 		return nil
 	}
 
-	measurement.Result = results
-	measurement.SetSource("category")
+	output.Result = results
 
-	return measurement
+	return output
 }
 
 func (solver *Solver) Register() *data.Measurement[float64] {

@@ -28,7 +28,10 @@ func TestSolverStep(t *testing.T) {
 		}
 		measurement := solver.Register()
 		measurement.Peers = []*data.Measurement[float64]{category}
-		result := solver.Step(measurement)
+		result := solver.Step(
+			runtime.TestStageInputFromPeers(measurement),
+			data.NewMeasurement[float64]("cognition", nil),
+		)
 		readings, ok := result.Result.([]types.Cognition)
 		So(ok, ShouldBeTrue)
 		So(len(readings), ShouldEqual, 2)
@@ -76,7 +79,10 @@ func TestSolverStep(t *testing.T) {
 						}}}
 						m.Peers = []*data.Measurement[float64]{cat}
 
-						result := solver.Step(m)
+						result := solver.Step(
+							runtime.TestStageInputFromPeers(m),
+							data.NewMeasurement[float64]("cognition", nil),
+						)
 						if result == nil {
 							t.Errorf("step returned nil")
 						}
@@ -176,7 +182,10 @@ func TestSolverStepReadiness(t *testing.T) {
 		measurement := &data.Measurement[float64]{Label: "BTC/USD", SeqIdx: 7}
 		for _, stage := range []runtime.Stage{runtime.INIT, runtime.WAITING, runtime.ERROR, runtime.FATAL} {
 			node.Transition(stage)
-			So(node.Step(measurement), ShouldEqual, measurement)
+			So(node.Step(
+				runtime.TestStageInputFromPeers(measurement),
+				data.NewMeasurement[float64]("cognition", nil),
+			), ShouldBeNil)
 			So(node.Status(), ShouldEqual, stage)
 			So(measurement.SeqIdx, ShouldEqual, 7)
 		}
@@ -200,7 +209,10 @@ func BenchmarkSolverStep(b *testing.B) {
 		sequence++
 		categories[0][0].At = time.Unix(sequence, 0)
 		categories[0][0].Type = []types.CategoryType{types.OrganicTrend, types.Turbulent}[sequence%2]
-		solver.Step(measurement)
+		solver.Step(
+			runtime.TestStageInputFromPeers(measurement),
+			data.NewMeasurement[float64]("cognition", nil),
+		)
 
 		if err := solver.Error(); err != nil {
 			b.Fatal(err)
@@ -216,7 +228,10 @@ func TestSolverStepEmptyBatch(t *testing.T) {
 		category.Result = [][]types.Category{}
 		measurement := solver.Register()
 		measurement.Peers = []*data.Measurement[float64]{category}
-		So(solver.Step(measurement), ShouldBeNil)
+		So(solver.Step(
+			runtime.TestStageInputFromPeers(measurement),
+			data.NewMeasurement[float64]("cognition", nil),
+		), ShouldBeNil)
 		So(solver.Error(), ShouldBeNil)
 	})
 }
@@ -239,7 +254,10 @@ func TestStepWritesMetricsWithoutRegister(t *testing.T) {
 		}}
 		measurement.Peers = []*data.Measurement[float64]{category}
 
-		out := solver.Step(measurement)
+		out := solver.Step(
+			runtime.TestStageInputFromPeers(measurement),
+			data.NewMeasurement[float64]("cognition", nil),
+		)
 		So(out, ShouldNotBeNil)
 		_, ok := out.LookupMetric("contrast")
 		So(ok, ShouldBeTrue)

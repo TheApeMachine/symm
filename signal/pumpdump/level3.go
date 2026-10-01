@@ -169,20 +169,32 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 }
 
 func (level3 *Level3) Step(
-	measurement *data.Measurement[float64],
+	input *runtime.StageInput, output *data.Measurement[float64],
 ) *data.Measurement[float64] {
 	if level3.Status() != runtime.READY {
 		errnie.Warn(level3.Name() + ": Step called before READY; dropping event")
-		return measurement
+		return nil
 	}
 
-	if measurement == nil || measurement.Err != nil || measurement.Label == "" {
-		return measurement
+	if input == nil || input.Ingress() == nil || input.Symbol() == "" {
+		return nil
 	}
 
-	measurement.SetSource("pumpdump:level3")
+	// Forward L3 metrics from ingress.
+	ingress := input.Ingress()
+	if ingress.Metrics != nil {
+		for key, metric := range ingress.Metrics {
+			output.SetMetric(key, metric)
+		}
+	}
 
-	return data.Read[*data.Measurement[float64]](level3.pipelineFor(measurement.Label).Next(
-		transport.NewOne(unsafe.Pointer(&measurement)).Next(nil),
+	if channel, hasCh := input.IngressProvenance("channel"); hasCh {
+		output.SetProvenance("channel", channel)
+	}
+
+	data.StampInterval(output, input.At(), input.From())
+
+	return data.Read[*data.Measurement[float64]](level3.pipelineFor(output.Label).Next(
+		transport.NewOne(unsafe.Pointer(&output)).Next(nil),
 	))
 }

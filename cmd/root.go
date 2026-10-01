@@ -252,7 +252,7 @@ var (
 				ctx,
 				2,
 				"workspace",
-				[][]nmruntime.Node[*data.Measurement[float64]]{
+				[][]nmruntime.Node{
 					{
 						correlationTicker,
 						leadlagTicker,

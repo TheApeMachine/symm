@@ -77,46 +77,12 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 		data.NewAdapter(
 			transport.NewPass(),
 			func(m *data.Measurement[float64]) *data.Measurement[float64] {
-				input := m
-
-				if len(m.Peers) > 0 {
-					peer := m.FindPeer(func(p *data.Measurement[float64]) bool {
-						if p.Label == "" {
-							return false
-						}
-						_, hasDist := p.LookupMetric("book_shape_distance")
-						if hasDist {
-							return true
-						}
-						b := p.GetMetric("best_bid").Raw
-						if b == 0 {
-							b = p.GetMetric("bid").Raw
-						}
-						a := p.GetMetric("best_ask").Raw
-						if a == 0 {
-							a = p.GetMetric("ask").Raw
-						}
-						return b > 0 && a > 0
-					})
-
-					if peer != nil {
-						input = peer
-					}
-				}
-
-				if input.Label != "" {
-					m.Label = input.Label
-				}
-				if !input.At.IsZero() {
-					m.At = input.At
-				}
-
-				distance := input.GetMetric("book_shape_distance").Raw
-				ks := input.GetMetric("book_shape_ks").Raw
-				concBid := input.GetMetric("concentration:bid").Raw
-				concAsk := input.GetMetric("concentration:ask").Raw
-				entBid := input.GetMetric("entropy:bid").Raw
-				entAsk := input.GetMetric("entropy:ask").Raw
+				distance := m.GetMetric("book_shape_distance").Raw
+				ks := m.GetMetric("book_shape_ks").Raw
+				concBid := m.GetMetric("concentration:bid").Raw
+				concAsk := m.GetMetric("concentration:ask").Raw
+				entBid := m.GetMetric("entropy:bid").Raw
+				entAsk := m.GetMetric("entropy:ask").Raw
 
 				if distance == 0 && level3.books != nil {
 					var bidPoints []distribution.WeightedPoint
@@ -245,19 +211,30 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 	return actual.(core.Primitive)
 }
 
-func (level3 *Level3) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
+func (level3 *Level3) Step(input *runtime.StageInput, output *data.Measurement[float64]) *data.Measurement[float64] {
 	if level3.Status() != runtime.READY {
 		errnie.Warn(level3.Name() + ": Step called before READY; dropping event")
-		return measurement
+		return nil
 	}
 
-	if measurement == nil || measurement.Err != nil {
-		return measurement
+	if input == nil || input.Ingress() == nil || input.Symbol() == "" {
+		return nil
 	}
 
-	measurement.SetSource("morphology:level3")
+	ingress := input.Ingress()
+	if ingress.Metrics != nil {
+		for key, metric := range ingress.Metrics {
+			output.SetMetric(key, metric)
+		}
+	}
 
-	return data.Read[*data.Measurement[float64]](level3.pipelineFor(measurement.Label).Next(
-		transport.NewOne(unsafe.Pointer(&measurement)).Next(nil),
+	if channel, hasCh := input.IngressProvenance("channel"); hasCh {
+		output.SetProvenance("channel", channel)
+	}
+
+	data.StampInterval(output, input.At(), input.From())
+
+	return data.Read[*data.Measurement[float64]](level3.pipelineFor(output.Label).Next(
+		transport.NewOne(unsafe.Pointer(&output)).Next(nil),
 	))
 }

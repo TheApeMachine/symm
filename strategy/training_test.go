@@ -8,6 +8,7 @@ import (
 	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/nomagique/cognition"
 	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
 func TestTrainingSupervision(t *testing.T) {
@@ -71,7 +72,10 @@ func TestTrainingPaperWaitsForSkill(t *testing.T) {
 		training.mu.Lock()
 		training.checkpointed = true
 		training.mu.Unlock()
-		training.Step(frame)
+		training.Step(
+			runtime.TestStageInputFromPeers(frame),
+			data.NewMeasurement[float64]("training", nil),
+		)
 
 		So(training.entries["BTC/USD"], ShouldBeNil)
 		So(training.paperTrades, ShouldEqual, 0)
@@ -82,7 +86,10 @@ func TestTrainingPaperWaitsForSkill(t *testing.T) {
 		training.signatures["BTC/USD"] = nil
 		training.mu.Unlock()
 		frame.SeqIdx = 2
-		training.Step(frame)
+		training.Step(
+			runtime.TestStageInputFromPeers(frame),
+			data.NewMeasurement[float64]("training", nil),
+		)
 
 		So(len(training.entries["BTC/USD"]), ShouldBeGreaterThan, 0)
 	})

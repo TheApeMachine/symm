@@ -413,7 +413,10 @@ func TestSolverStep(t *testing.T) {
 			categoryMeasurement("ETH/USD", true, 0.4),
 			categoryMeasurement("BTC/USD", true, 0.8),
 		}
-		result := solver.Step(measurement)
+		result := solver.Step(
+			runtime.TestStageInputFromPeers(measurement),
+			data.NewMeasurement[float64]("category", nil),
+		)
 		batches, ok := result.Result.([][]types.Category)
 		So(ok, ShouldBeTrue)
 		So(len(batches), ShouldEqual, 2)
@@ -444,10 +447,13 @@ func TestSolverStep(t *testing.T) {
 
 		m.Peers = []*data.Measurement[float64]{cvd, hawkes}
 
-		result := solver.Step(m)
+		result := solver.Step(
+			runtime.TestStageInputFromPeers(m),
+			data.NewMeasurement[float64]("category", nil),
+		)
 
 		Convey("the observation commits one classification revision", func() {
-			So(result, ShouldEqual, m)
+			So(result, ShouldNotBeNil)
 			So(solver.Version(), ShouldEqual, uint64(1))
 			So(solver.Error(), ShouldBeNil)
 		})
@@ -474,7 +480,10 @@ func TestSolverStep(t *testing.T) {
 
 		m.Peers = []*data.Measurement[float64]{cvd, hawkes}
 
-		result := solver.Step(m)
+		result := solver.Step(
+			runtime.TestStageInputFromPeers(m),
+			data.NewMeasurement[float64]("category", nil),
+		)
 
 		Convey("timestamp skew within tolerance is accepted and negative z-scores are retained", func() {
 			So(solver.Error(), ShouldBeNil)
@@ -542,7 +551,10 @@ func TestSolverStepReadiness(t *testing.T) {
 		measurement := &data.Measurement[float64]{Label: "BTC/USD", SeqIdx: 7}
 		for _, stage := range []runtime.Stage{runtime.INIT, runtime.WAITING, runtime.ERROR, runtime.FATAL} {
 			node.Transition(stage)
-			So(node.Step(measurement), ShouldEqual, measurement)
+			So(node.Step(
+				runtime.TestStageInputFromPeers(measurement),
+				data.NewMeasurement[float64]("category", nil),
+			), ShouldBeNil)
 			So(node.Status(), ShouldEqual, stage)
 			So(measurement.SeqIdx, ShouldEqual, 7)
 		}
@@ -560,7 +572,10 @@ func BenchmarkSolverStep(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		solver.Step(measurement)
+		solver.Step(
+			runtime.TestStageInputFromPeers(measurement),
+			data.NewMeasurement[float64]("category", nil),
+		)
 
 		if err := solver.Error(); err != nil {
 			b.Fatal(err)
@@ -577,7 +592,10 @@ func TestSolverStepUnmeasured(t *testing.T) {
 		peer.Label = "BTC/USD"
 		peer.At = time.Unix(1, 0)
 		measurement.Peers = []*data.Measurement[float64]{peer}
-		So(solver.Step(measurement), ShouldBeNil)
+		So(solver.Step(
+			runtime.TestStageInputFromPeers(measurement),
+			data.NewMeasurement[float64]("category", nil),
+		), ShouldBeNil)
 		So(solver.Error(), ShouldBeNil)
 	})
 }
@@ -601,7 +619,10 @@ func TestStepWritesCategoryMetricsWithoutRegister(t *testing.T) {
 		hawkes.SetMetric("arrival_rate", data.Metric[float64]{Label: "arrival_rate", Raw: 0.6})
 
 		m.Peers = []*data.Measurement[float64]{cvd, hawkes}
-		result := solver.Step(m)
+		result := solver.Step(
+			runtime.TestStageInputFromPeers(m),
+			data.NewMeasurement[float64]("category", nil),
+		)
 		So(result, ShouldNotBeNil)
 		So(solver.Error(), ShouldBeNil)
 

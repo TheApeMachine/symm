@@ -71,7 +71,10 @@ func TestStepIngestsStrandedFamilies(t *testing.T) {
 				m.At = at
 				m.Peers = []*data.Measurement[float64]{testCase.peer}
 
-				out := solver.Step(m)
+				out := solver.Step(
+					runtime.TestStageInputFromPeers(m),
+					data.NewMeasurement[float64]("category", nil),
+				)
 
 				So(out, ShouldNotBeNil)
 				So(out.GetMetric(string(testCase.expected)), ShouldNotBeNil)

@@ -50,35 +50,13 @@ func (ticker *Ticker) pipelineFor(symbol string) core.Primitive {
 		data.NewAdapter(
 			transport.NewPass(),
 			func(m *data.Measurement[float64]) *data.Measurement[float64] {
-				source := m
-				if len(m.Peers) > 0 {
-					peer := m.FindPeer(func(candidate *data.Measurement[float64]) bool {
-						if candidate.Label == "" {
-							return false
-						}
-						bid := candidate.GetMetric("best_bid").Raw
-						if bid == 0 {
-							bid = candidate.GetMetric("bid").Raw
-						}
-						ask := candidate.GetMetric("best_ask").Raw
-						if ask == 0 {
-							ask = candidate.GetMetric("ask").Raw
-						}
-						return bid > 0 && ask > 0
-					})
-					if peer != nil {
-						source = peer
-					}
-				}
-				m.Pull(source)
-
-				bid := source.GetMetric("best_bid").Raw
+				bid := m.GetMetric("best_bid").Raw
 				if bid == 0 {
-					bid = source.GetMetric("bid").Raw
+					bid = m.GetMetric("bid").Raw
 				}
-				ask := source.GetMetric("best_ask").Raw
+				ask := m.GetMetric("best_ask").Raw
 				if ask == 0 {
-					ask = source.GetMetric("ask").Raw
+					ask = m.GetMetric("ask").Raw
 				}
 
 				if bid > 0 && ask > 0 {
@@ -89,8 +67,6 @@ func (ticker *Ticker) pipelineFor(symbol string) core.Primitive {
 						m.WriteMetric("best_ask", ask)
 					}
 				}
-				m.Label = source.Label
-				m.At = source.At
 				return m
 			},
 			func(m *data.Measurement[float64], out *data.Measurement[float64]) {},
@@ -172,23 +148,43 @@ func (ticker *Ticker) pipelineFor(symbol string) core.Primitive {
 }
 
 /*
-Step supplies the arriving measurement to the pipeline and returns it: the
-measurement is the pipeline's state, enriched in place.
+Step reads bid/ask from the ingress via StageInput and writes pumpdump metrics
+into the owned output measurement. The pipeline's internal closure reads from
+the output measurement.
 */
-func (ticker *Ticker) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
+func (ticker *Ticker) Step(input *runtime.StageInput, output *data.Measurement[float64]) *data.Measurement[float64] {
 	if ticker.Status() != runtime.READY {
 		errnie.Warn(ticker.Name() + ": Step called before READY; dropping event")
-		return measurement
+		return nil
 	}
 
-	if measurement == nil || measurement.Err != nil {
-		return measurement
+	if input == nil || input.Ingress() == nil || input.Symbol() == "" {
+		return nil
 	}
 
-	measurement.SetSource("pumpdump:ticker")
+	// Seed bid/ask from ingress so pipeline closure can read them.
+	if bid, hasBid := input.IngressMetric("bid"); hasBid {
+		output.SetMetric("best_bid", bid)
+		output.SetMetric("bid", bid)
+	}
 
-	res := data.Read[*data.Measurement[float64]](ticker.pipelineFor(measurement.Label).Next(
-		transport.NewOne(unsafe.Pointer(&measurement)).Next(nil),
+	if ask, hasAsk := input.IngressMetric("ask"); hasAsk {
+		output.SetMetric("best_ask", ask)
+		output.SetMetric("ask", ask)
+	}
+
+	if vol, hasVol := input.IngressMetric("volume"); hasVol {
+		output.SetMetric("volume", vol)
+	}
+
+	if channel, hasCh := input.IngressProvenance("channel"); hasCh {
+		output.SetProvenance("channel", channel)
+	}
+
+	data.StampInterval(output, input.At(), input.From())
+
+	res := data.Read[*data.Measurement[float64]](ticker.pipelineFor(output.Label).Next(
+		transport.NewOne(unsafe.Pointer(&output)).Next(nil),
 	))
 
 	if res == nil {

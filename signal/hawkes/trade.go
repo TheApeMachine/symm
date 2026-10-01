@@ -69,55 +69,44 @@ func (trade *Trade) pipelineFor(symbol string) core.Primitive {
 	return actual.(core.Primitive)
 }
 
-func (trade *Trade) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
+func (trade *Trade) Step(input *runtime.StageInput, output *data.Measurement[float64]) *data.Measurement[float64] {
 	if trade.Status() != runtime.READY {
 		errnie.Warn(trade.Name() + ": Step called before READY; dropping event")
-		return measurement
+		return nil
 	}
 
-	if measurement == nil {
-		return measurement
+	if input == nil || input.Ingress() == nil {
+		return nil
 	}
 
-	measurement.SetSource("hawkes:trade")
-
-	if len(measurement.Peers) > 0 {
-		measurement.Err = nil
-
-		peer := measurement.FindPeer(func(candidate *data.Measurement[float64]) bool {
-			_, hasPrice := candidate.LookupMetric("price")
-			_, hasQty := candidate.LookupMetric("qty")
-			ch, _ := candidate.GetProvenance("channel")
-			return ch == "trade" &&
-				hasPrice && hasQty && candidate.Label != "" && candidate.Err == nil
-		})
-
-		if peer == nil {
-			return nil
-		}
-
-		measurement.Reset()
-		measurement.Pull(peer, "price", "qty")
+	channel, _ := input.IngressProvenance("channel")
+	if channel != "trade" {
+		return nil
 	}
 
-	if measurement.Err != nil {
-		return measurement
+	priceMetric, hasPrice := input.IngressMetric("price")
+	qtyMetric, hasQty := input.IngressMetric("qty")
+
+	if !hasPrice || !hasQty || input.Symbol() == "" {
+		return nil
 	}
 
-	if _, hasPrice := measurement.LookupMetric("price"); !hasPrice {
-		return measurement
+	output.SetMetric("price", priceMetric)
+	output.SetMetric("qty", qtyMetric)
+
+	if side, hasSide := input.IngressProvenance("side"); hasSide {
+		output.SetProvenance("side", side)
 	}
 
-	if _, hasQty := measurement.LookupMetric("qty"); !hasQty {
-		return measurement
-	}
+	output.SetProvenance("channel", channel)
+	data.StampInterval(output, input.At(), input.From())
 
-	res := data.Read[*data.Measurement[float64]](trade.pipelineFor(measurement.Label).Next(
-		transport.NewOne(unsafe.Pointer(&measurement)).Next(nil),
+	res := data.Read[*data.Measurement[float64]](trade.pipelineFor(output.Label).Next(
+		transport.NewOne(unsafe.Pointer(&output)).Next(nil),
 	))
 
 	if res == nil {
-		return measurement
+		return output
 	}
 
 	return res

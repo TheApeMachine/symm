@@ -60,108 +60,40 @@ func (trade *Trade) pipelineFor(symbol string) core.Primitive {
 		data.NewAdapter(
 			transport.NewPass(),
 			func(m *data.Measurement[float64]) *data.Measurement[float64] {
-				input := m
-				if len(m.Peers) > 0 {
-					peer := m.FindPeer(func(p *data.Measurement[float64]) bool {
-						_, hasP := p.LookupMetric("price")
-						_, hasQ := p.LookupMetric("qty")
-						return hasP && hasQ && p.Label != ""
-					})
-					if peer != nil {
-						input = peer
-					}
-				}
-
-				price := input.GetMetric("price").Raw
-				qty := input.GetMetric("qty").Raw
+				price := m.GetMetric("price").Raw
+				qty := m.GetMetric("qty").Raw
 
 				if price <= 0 || qty <= 0 {
 					return m
 				}
 
-				bidPrice := input.GetMetric("best_price:bid").Raw
+				bidPrice := m.GetMetric("best_price:bid").Raw
 				if bidPrice == 0 {
-					bidPrice = input.GetMetric("best_bid").Raw
+					bidPrice = m.GetMetric("best_bid").Raw
 				}
 				if bidPrice == 0 {
-					bidPrice = input.GetMetric("bid").Raw
+					bidPrice = m.GetMetric("bid").Raw
 				}
 
-				askPrice := input.GetMetric("best_price:ask").Raw
+				askPrice := m.GetMetric("best_price:ask").Raw
 				if askPrice == 0 {
-					askPrice = input.GetMetric("best_ask").Raw
+					askPrice = m.GetMetric("best_ask").Raw
 				}
 				if askPrice == 0 {
-					askPrice = input.GetMetric("ask").Raw
+					askPrice = m.GetMetric("ask").Raw
 				}
 
-				bidQty := input.GetMetric("touch_quantity:bid").Raw
+				bidQty := m.GetMetric("touch_quantity:bid").Raw
 				if bidQty == 0 {
-					bidQty = input.GetMetric("bid_qty").Raw
+					bidQty = m.GetMetric("bid_qty").Raw
 				}
 
-				askQty := input.GetMetric("touch_quantity:ask").Raw
+				askQty := m.GetMetric("touch_quantity:ask").Raw
 				if askQty == 0 {
-					askQty = input.GetMetric("ask_qty").Raw
+					askQty = m.GetMetric("ask_qty").Raw
 				}
 
-				if bidPrice == 0 || askPrice == 0 {
-					touchPeer := m.FindPeer(func(p *data.Measurement[float64]) bool {
-						if p.Label == "" {
-							return false
-						}
-						b := p.GetMetric("best_price:bid").Raw
-						if b == 0 {
-							b = p.GetMetric("best_bid").Raw
-						}
-						if b == 0 {
-							b = p.GetMetric("bid").Raw
-						}
-						a := p.GetMetric("best_price:ask").Raw
-						if a == 0 {
-							a = p.GetMetric("best_ask").Raw
-						}
-						if a == 0 {
-							a = p.GetMetric("ask").Raw
-						}
-						return b > 0 && a > 0
-					})
-
-					if touchPeer != nil {
-						if bidPrice == 0 {
-							bidPrice = touchPeer.GetMetric("best_price:bid").Raw
-							if bidPrice == 0 {
-								bidPrice = touchPeer.GetMetric("best_bid").Raw
-							}
-							if bidPrice == 0 {
-								bidPrice = touchPeer.GetMetric("bid").Raw
-							}
-						}
-						if askPrice == 0 {
-							askPrice = touchPeer.GetMetric("best_price:ask").Raw
-							if askPrice == 0 {
-								askPrice = touchPeer.GetMetric("best_ask").Raw
-							}
-							if askPrice == 0 {
-								askPrice = touchPeer.GetMetric("ask").Raw
-							}
-						}
-						if bidQty == 0 {
-							bidQty = touchPeer.GetMetric("touch_quantity:bid").Raw
-							if bidQty == 0 {
-								bidQty = touchPeer.GetMetric("bid_qty").Raw
-							}
-						}
-						if askQty == 0 {
-							askQty = touchPeer.GetMetric("touch_quantity:ask").Raw
-							if askQty == 0 {
-								askQty = touchPeer.GetMetric("ask_qty").Raw
-							}
-						}
-					}
-				}
-
-				side, _ := input.GetProvenance("side")
+				side, _ := m.GetProvenance("side")
 				inBracket := (price >= bidPrice && price <= askPrice)
 				if inBracket {
 					state.bracketQty += qty
@@ -189,7 +121,7 @@ func (trade *Trade) pipelineFor(symbol string) core.Primitive {
 				var hasRate bool
 
 				if state.hasPrevTime {
-					dt := input.At.Sub(state.prevTime).Seconds()
+					dt := m.At.Sub(state.prevTime).Seconds()
 					if dt > 0 {
 						bidRate = state.touchFillBidQty / dt
 						askRate = state.touchFillAskQty / dt
@@ -197,7 +129,7 @@ func (trade *Trade) pipelineFor(symbol string) core.Primitive {
 					}
 				}
 
-				state.prevTime = input.At
+				state.prevTime = m.At
 				state.hasPrevTime = true
 
 				m.WriteMetric("bracket_trade_quantity", state.bracketQty)
@@ -213,8 +145,7 @@ func (trade *Trade) pipelineFor(symbol string) core.Primitive {
 					m.WriteMetric("touch_fill_rate:ask", askRate)
 				}
 
-				m.Label = input.Label
-				m.At = input.At
+
 				return m
 			},
 			func(m *data.Measurement[float64], out *data.Measurement[float64]) {},
@@ -295,24 +226,35 @@ func (trade *Trade) pipelineFor(symbol string) core.Primitive {
 Step supplies the arriving measurement to the pipeline and returns it: the
 measurement is the pipeline's state, enriched in place.
 */
-func (trade *Trade) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
+func (trade *Trade) Step(input *runtime.StageInput, output *data.Measurement[float64]) *data.Measurement[float64] {
 	if trade.Status() != runtime.READY {
 		errnie.Warn(trade.Name() + ": Step called before READY; dropping event")
-		return measurement
+		return nil
 	}
 
-	if measurement == nil || measurement.Err != nil {
-		return measurement
+	if input == nil || input.Ingress() == nil || input.Symbol() == "" {
+		return nil
 	}
 
-	if measurement.Err != nil {
-		return measurement
+	ingress := input.Ingress()
+	if ingress.Metrics != nil {
+		for key, metric := range ingress.Metrics {
+			output.SetMetric(key, metric)
+		}
 	}
 
-	measurement.SetSource("toxicity:trade")
+	if side, hasSide := input.IngressProvenance("side"); hasSide {
+		output.SetProvenance("side", side)
+	}
 
-	res := data.Read[*data.Measurement[float64]](trade.pipelineFor(measurement.Label).Next(
-		transport.NewOne(unsafe.Pointer(&measurement)).Next(nil),
+	if channel, hasCh := input.IngressProvenance("channel"); hasCh {
+		output.SetProvenance("channel", channel)
+	}
+
+	data.StampInterval(output, input.At(), input.From())
+
+	res := data.Read[*data.Measurement[float64]](trade.pipelineFor(output.Label).Next(
+		transport.NewOne(unsafe.Pointer(&output)).Next(nil),
 	))
 
 	if res == nil {
