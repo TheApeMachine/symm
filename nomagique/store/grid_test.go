@@ -51,10 +51,10 @@ func TestGridMarketTapeReplay(t *testing.T) {
 			}
 
 			So(len(grid.Metrics), ShouldBeGreaterThan, 1)
-			So(grid.Settled, ShouldBeTrue)
+			So(grid.Settled, ShouldBeFalse)
 
 			Convey("LitRegions produces valid non-zero region tokens", func() {
-				token := grid.LitRegions(tape[len(tape)-1], 3)
+				token := grid.LitRegions(tape[len(tape)-1])
 				So(len(token), ShouldBeGreaterThan, 0)
 				for _, r := range token {
 					So(r, ShouldBeGreaterThan, 0)
@@ -76,8 +76,6 @@ func TestGridContinuousNoiseAdversarial(t *testing.T) {
 			states[i] = 100.0 + float64(i)*10.0
 		}
 
-		settledAt := -1
-
 		for tick := 0; tick < tickCount; tick++ {
 			meas := data.NewMeasurement[float64]("noise", nil)
 			for i := 0; i < metricCount; i++ {
@@ -95,15 +93,15 @@ func TestGridContinuousNoiseAdversarial(t *testing.T) {
 			}
 
 			grid.Update(meas)
-
-			if grid.Settled && settledAt == -1 {
-				settledAt = tick
-			}
 		}
 
-		Convey("The grid must settle within the observation horizon despite continuous noise", func() {
-			So(settledAt, ShouldBeGreaterThanOrEqualTo, 0)
-			So(grid.Settled, ShouldBeTrue)
+		Convey("A stable metric set does not settle unless one partition outlasts a completed run", func() {
+			if !grid.Settled {
+				return
+			}
+
+			So(grid.LongestPartitionRun, ShouldBeGreaterThan, 0)
+			So(grid.PartitionRun, ShouldBeGreaterThan, grid.LongestPartitionRun)
 		})
 	})
 }
@@ -111,7 +109,6 @@ func TestGridContinuousNoiseAdversarial(t *testing.T) {
 func TestGridSympatheticClusteringAdversarial(t *testing.T) {
 	Convey("Given sympathetically co-moving and consistently inverse metrics", t, func() {
 		grid := store.NewGrid()
-		grid.SetSettlementCriteria(150, 150)
 		base := 50000.0
 
 		for tick := 0; tick < 100; tick++ {
@@ -145,22 +142,12 @@ func TestGridSympatheticClusteringAdversarial(t *testing.T) {
 		}
 
 		Convey("Consistently related metrics cluster closer to each other than to noise", func() {
-			mLeader := grid.Metrics[0]
-			mFollower := grid.Metrics[1]
-			var mNoise *data.Metric[float64]
+			mLeader := metricNamed(grid, "", "market", "leader")
+			mFollower := metricNamed(grid, "", "market", "follower")
+			mNoise := metricNamed(grid, "", "market", "noise")
 
-			for _, m := range grid.Metrics {
-				if m.Label == "leader" {
-					mLeader = m
-				}
-				if m.Label == "follower" {
-					mFollower = m
-				}
-				if m.Label == "noise" {
-					mNoise = m
-				}
-			}
-
+			So(mLeader, ShouldNotBeNil)
+			So(mFollower, ShouldNotBeNil)
 			So(mNoise, ShouldNotBeNil)
 
 			// The direct sympathetic pair (leader/follower) must be closer
@@ -176,7 +163,6 @@ func TestGridSympatheticClusteringAdversarial(t *testing.T) {
 func TestGridScaleStress200Metrics(t *testing.T) {
 	Convey("Given scale stress with 200 distinct streaming metrics", t, func() {
 		grid := store.NewGrid()
-		grid.SetSettlementCriteria(150, 150)
 		const totalMetrics = 200
 		values := make([]float64, totalMetrics)
 		for i := range values {
@@ -257,7 +243,7 @@ func TestGridExtremeEdgeCases(t *testing.T) {
 		Convey("Nil measurement does not panic", func() {
 			So(func() { grid.Update(nil) }, ShouldNotPanic)
 			So(func() { grid.Observe(nil) }, ShouldNotPanic)
-			So(grid.LitRegions(nil, 3), ShouldBeNil)
+			So(grid.LitRegions(nil), ShouldBeNil)
 		})
 
 		Convey("Empty metrics map does not panic", func() {
@@ -302,6 +288,7 @@ func TestGridPostSettledFreezing(t *testing.T) {
 		for _, frame := range tape {
 			grid.Update(frame)
 		}
+		grid.Settle()
 		So(grid.Settled, ShouldBeTrue)
 
 		initialX := grid.Metrics[0].X
@@ -333,4 +320,117 @@ func TestGridPostSettledFreezing(t *testing.T) {
 	})
 }
 
+func TestGridSettlesWhenPartitionOutlastsCompleted(t *testing.T) {
+	Convey("Given one repeated metric", t, func() {
+		grid := store.NewGrid()
 
+		for tick := 0; tick < 12; tick++ {
+			meas := data.NewMeasurement[float64]("calm", nil)
+			meas.Label = "BTC/USD"
+			meas.SetMetric("mid", data.Metric[float64]{Label: "mid", Raw: 100 + float64(tick%2)})
+			grid.Update(meas)
+		}
+
+		So(grid.Settled, ShouldBeFalse)
+		So(grid.LongestPartitionRun, ShouldEqual, 0)
+		So(grid.PartitionRun, ShouldBeGreaterThan, 1)
+
+		Convey("A later partition settles only after it outlasts that completed run", func() {
+			completed := grid.PartitionRun
+
+			for tick := 0; tick < completed; tick++ {
+				meas := data.NewMeasurement[float64]("calm", nil)
+				meas.Label = "BTC/USD"
+				meas.SetMetric("mid", data.Metric[float64]{Label: "mid", Raw: 100})
+				meas.SetMetric("spread", data.Metric[float64]{Label: "spread", Raw: float64(tick + 1)})
+				grid.Update(meas)
+				So(grid.Settled, ShouldBeFalse)
+			}
+
+			meas := data.NewMeasurement[float64]("calm", nil)
+			meas.Label = "BTC/USD"
+			meas.SetMetric("mid", data.Metric[float64]{Label: "mid", Raw: 100})
+			meas.SetMetric("spread", data.Metric[float64]{Label: "spread", Raw: 1})
+			grid.Update(meas)
+
+			So(grid.LongestPartitionRun, ShouldEqual, completed)
+			So(grid.PartitionRun, ShouldBeGreaterThan, grid.LongestPartitionRun)
+			So(grid.Settled, ShouldBeTrue)
+		})
+	})
+}
+
+func TestGridCellIdentity(t *testing.T) {
+	Convey("Given the same metric name on two symbols", t, func() {
+		grid := store.NewGrid()
+		btc := data.NewMeasurement[float64]("websocket", nil)
+		btc.Label = "BTC/USD"
+		btc.SetMetric("mid", data.Metric[float64]{Label: "mid", Raw: 1})
+		eth := data.NewMeasurement[float64]("websocket", nil)
+		eth.Label = "ETH/USD"
+		eth.SetMetric("mid", data.Metric[float64]{Label: "mid", Raw: 2})
+		grid.Update(btc)
+		grid.Update(eth)
+
+		So(len(grid.Metrics), ShouldEqual, 2)
+		So(metricNamed(grid, "BTC/USD", "websocket", "mid"), ShouldNotBeNil)
+		So(metricNamed(grid, "ETH/USD", "websocket", "mid"), ShouldNotBeNil)
+	})
+}
+
+func TestGridLitRegionsIgnoresPeers(t *testing.T) {
+	Convey("Given a measurement and the same measurement with a peer", t, func() {
+		grid := store.NewGrid()
+
+		for tick := 0; tick < 4; tick++ {
+			meas := data.NewMeasurement[float64]("websocket", nil)
+			meas.Label = "BTC/USD"
+			meas.SetMetric("loud", data.Metric[float64]{Label: "loud", Raw: 10})
+			meas.SetMetric("quiet", data.Metric[float64]{Label: "quiet", Raw: 1})
+			grid.Update(meas)
+		}
+
+		parent := data.NewMeasurement[float64]("websocket", nil)
+		parent.Label = "BTC/USD"
+		parent.SetMetric("loud", data.Metric[float64]{Label: "loud", Raw: 10})
+		parent.SetMetric("quiet", data.Metric[float64]{Label: "quiet", Raw: 1})
+
+		withPeer := parent.Clone()
+		peer := data.NewMeasurement[float64]("websocket", nil)
+		peer.Label = "BTC/USD"
+		peer.SetMetric("quiet", data.Metric[float64]{Label: "quiet", Raw: 1000})
+		withPeer.Peers = []*data.Measurement[float64]{peer}
+
+		So(grid.LitRegions(withPeer), ShouldResemble, grid.LitRegions(parent))
+	})
+}
+
+func TestGridSnapshotRoundTrip(t *testing.T) {
+	Convey("Given a grid snapshot", t, func() {
+		grid := store.NewGrid()
+		meas := data.NewMeasurement[float64]("websocket", nil)
+		meas.Label = "BTC/USD"
+		meas.SetMetric("mid", data.Metric[float64]{Label: "mid", Raw: 3})
+		grid.Update(meas)
+
+		encoded, err := grid.Snapshot()
+		So(err, ShouldBeNil)
+
+		restored := store.NewGrid()
+		So(restored.RestoreSnapshot(encoded), ShouldBeNil)
+		So(len(restored.Metrics), ShouldEqual, len(grid.Metrics))
+		So(restored.RestoreSnapshot([]byte(`{"last":null}`)), ShouldNotBeNil)
+	})
+}
+
+func metricNamed(grid *store.Grid, symbol, source, name string) *data.Metric[float64] {
+	key := symbol + "\x00" + source + "\x00" + name
+
+	for _, metric := range grid.Metrics {
+		if metric != nil && metric.Label == key {
+			return metric
+		}
+	}
+
+	return nil
+}

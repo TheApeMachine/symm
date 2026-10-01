@@ -2,325 +2,1147 @@ package strategy
 
 import (
 	"context"
-	"fmt"
-	"time"
+	"errors"
+	"math"
+	"math/rand/v2"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/broker/position"
 	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/nomagique/cognition"
-	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/ui"
-	"github.com/theapemachine/symm/workbench"
+)
+
+const (
+	gridKey   = "model/grid.json"
+	engineKey = "model/cognition.gob"
 )
 
 var _ ui.CognitionSource = (*Training)(nil)
 
 /*
-Training is the learning orchestrator.
-Please refer to TRAINING.md for the complete overview of how training
-on pre-cursors is performed.
+Training develops one grid, checkpoints it with the trie, then grades resolved
+episodes. Paper entries wait for a positive skill lower bound.
 */
 type Training struct {
 	*runtime.System
-	grid      *store.Grid
-	engine    *cognition.Engine
-	trader    *Trader
-	catalog   *tables.Catalog
-	warehouse *workbench.Warehouse
-	tee       runtime.Tee
-	pipeline  core.Primitive
-	signature []byte
+	grid     *store.Grid
+	engine   *cognition.Engine
+	trader   *Trader
+	catalog  *tables.Catalog
+	price    *broker.Price
+	tee      runtime.Tee
+	epoch    int64
+	detector *Detector
+
+	mu               sync.Mutex
+	cond             *sync.Cond
+	frames           map[string][]*data.Measurement[float64]
+	signatures       map[string][]byte
+	entries          map[string][]byte
+	pending          []heldEpisode
+	episodes         []heldEpisode
+	queue            []heldEpisode
+	graded           map[string]bool
+	skill            statistic.Moments
+	paper            statistic.Moments
+	paperTrades      float64
+	paperPredictions float64
+	checkpointed     bool
+	checkpointFailed bool
+	restored         bool
+	blocked          bool
+	writing          bool
+	persistFailed    bool
+	persistErr       error
+	durable          chan struct{}
+	durableOnce      sync.Once
+	wake             chan struct{}
+	settleWake       chan struct{}
+	episodeReady     chan struct{}
+}
+
+type heldEpisode struct {
+	record tables.ExcursionRecord
+	frames []*data.Measurement[float64]
+}
+
+type marker struct {
+	action string
+	entry  int64
+	exit   int64
 }
 
 func NewTraining(
 	ctx context.Context,
+	epoch int64,
 	price *broker.Price,
 	trader *Trader,
 	catalog *tables.Catalog,
-	warehouse *workbench.Warehouse,
 	tee runtime.Tee,
 ) *Training {
-	grid := store.NewGrid()
-	engine := cognition.NewEngine(cognition.Config{})
-
 	training := &Training{
-		System:    runtime.NewSystem(ctx, "training", price),
-		grid:      grid,
-		engine:    engine,
-		trader:    trader,
-		catalog:   catalog,
-		warehouse: warehouse,
-		tee:       tee,
+		System:       runtime.NewSystem(ctx, "training", price),
+		grid:         store.NewGrid(),
+		engine:       cognition.NewEngine(cognition.Config{}),
+		trader:       trader,
+		catalog:      catalog,
+		price:        price,
+		tee:          tee,
+		epoch:        epoch,
+		detector:     NewDetector(price),
+		frames:       make(map[string][]*data.Measurement[float64]),
+		signatures:   make(map[string][]byte),
+		entries:      make(map[string][]byte),
+		graded:       make(map[string]bool),
+		durable:      make(chan struct{}),
+		wake:         make(chan struct{}, 1),
+		settleWake:   make(chan struct{}, 1),
+		episodeReady: make(chan struct{}, 1),
 	}
-
-	// The pipeline for training consists of just the Grid in the primary stage.
-	// The cognitive observations are handled manually using temporal signatures.
-	training.pipeline = grid
-
-	// Set the status to INIT to indicate we need to build the grid until it
-	// has formed stable regions, and is frozen and checkpointed.
+	training.cond = sync.NewCond(&training.mu)
 	training.Transition(runtime.INIT)
+
+	go training.persistLoop()
+	go training.checkpointLoop()
+
 	return training
 }
 
-/*
-Step is part of the LMAX Disruptor pipeline.
-This means it is actively plugged in to the real-time market tape, and as such we
-need to use it only for initial grid development, and later as the secondary training
-stage, which uses the paper trading mechanism to validate the model developed in Run.
-
-Also, since we have defined our peer-interest to "*" in our Register method, we
-will receive all measurements from all peers. We need to use the grid to develop
-stable regions over time, and when those regions are frozen, we can use them to
-train the trie, and validate the model.
-*/
-func (training *Training) Step(
-	measurement *data.Measurement[float64],
-) *data.Measurement[float64] {
+func (training *Training) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
 	if measurement == nil {
 		return nil
 	}
 
-	if !training.grid.Settled {
-		// During INIT, we feed real-time measurements to the pipeline to train the grid.
-		for out := range training.pipeline.Next(data.NewValue(measurement)) {
-			_ = out
-		}
-		// We still allow Transition(READY) to be called to notify anything waiting on the status.
-		if training.grid.Settled && training.Status() != runtime.READY {
-			training.Transition(runtime.READY)
-		}
-	} else {
-		// Secondary stage: live prediction and paper trading against live tape!
-		token := training.grid.LitRegions(measurement, 3)
-
-		if len(token) > 0 {
-			training.signature = append(training.signature, token...)
-			training.signature = append(training.signature, 0)
-			
-			// Prevent signature from growing infinitely
-			if len(training.signature) > 1024 {
-				training.signature = training.signature[len(training.signature)-512:]
-			}
-
-			// In fully matured state, we ask engine to Evaluate sequence and pass to trader
-			evalCmd := cognition.Command{
-				Evaluate: &cognition.Question{
-					Context: training.signature,
-				},
-			}
-
-			for out := range training.engine.Next(data.NewValue(evalCmd)) {
-				eval := (*cognition.Evaluation)(out)
-
-				if eval != nil {
-					measurement.EnsureMetadata()
-					if eval.WinnerClass != "" {
-						var prediction float64
-						if eval.WinnerClass == string(cognition.ActionEnter) {
-							prediction = 1
-						} else if eval.WinnerClass == string(cognition.ActionExit) {
-							prediction = 2
-						}
-						measurement.WriteMetric("frozen_prediction", prediction)
-						measurement.SetMetadata("predicted_action", eval.WinnerClass)
-						measurement.SetMetadata("predicted_confidence", fmt.Sprintf("%f", eval.Confidence))
-					}
-
-					if eval.WinnerClass == string(
-						cognition.ActionEnter,
-					) || eval.WinnerClass == string(
-						cognition.ActionExit,
-					) {
-						training.trader.OnAction(
-							measurement.Label,
-							cognition.Action(eval.WinnerClass),
-							eval.Confidence,
-						)
-					}
-				}
-			}
-		}
-		
-		// Pass through the frozen grid to decorate metrics for the UI visualization
-		for out := range training.pipeline.Next(data.NewValue(measurement)) {
-			_ = out
-		}
-	}
-
-	if training.tee != nil {
-		measurement.EnsureMetadata()
-		if !training.grid.Settled {
-			measurement.WriteMetric("stage_code", 0.0) // MODEL DEVELOPMENT
-		} else {
-			measurement.WriteMetric("stage_code", 2.0) // FORWARD PAPER LEARNING
-		}
-		// In Step, the source should be real-time
-		measurement.Source = "training:live"
-		training.tee.Push(measurement)
-	}
+	training.live(measurement)
 
 	return measurement
 }
 
-/*
-CognitionTree satisfies ui.CognitionSource to broadcast the cognitive topology
-and learning state to the dashboard.
-*/
 func (training *Training) CognitionTree() cognition.CognitionTreeExport {
-	if training.engine == nil {
+	if training == nil || training.engine == nil {
 		return cognition.CognitionTreeExport{}
 	}
 
 	return training.engine.TreeExport()
 }
 
-/*
-Run is used for training on stored data. This is done by retrieving a stream
-of data from the Iceberg Tables, and replaying the past. We then need to detect
-the best excursions, which will for tape fragments we can train on.
-*/
 func (training *Training) Run() {
 	go func() {
-		iteration := 1
-		for {
+		select {
+		case <-training.Context().Done():
+			return
+		case <-training.durable:
+		}
+
+		if err := training.replayHistory(); err != nil {
+			training.Error(err)
+
+			return
+		}
+
+		training.augment()
+	}()
+}
+
+func (training *Training) live(measurement *data.Measurement[float64]) {
+	training.grid.Update(measurement)
+	training.retain(measurement)
+	training.extendSignature(measurement)
+	reading := training.predict(measurement, false)
+	record, err := training.detector.Observe(measurement)
+
+	if err != nil {
+		training.Error(err)
+	}
+
+	if record != nil {
+		record.Epoch = training.epoch
+		training.resolve(measurement.Label, record)
+	}
+
+	training.publish(measurement, record, reading, false)
+	training.nudge()
+}
+
+func (training *Training) retain(measurement *data.Measurement[float64]) {
+	if measurement.Label == "" {
+		return
+	}
+
+	training.mu.Lock()
+	training.frames[measurement.Label] = append(training.frames[measurement.Label], measurement.Clone())
+	training.mu.Unlock()
+}
+
+func (training *Training) extendSignature(measurement *data.Measurement[float64]) {
+	if measurement.Label == "" || !training.ready() {
+		return
+	}
+
+	token := training.grid.LitRegions(measurement)
+
+	if len(token) == 0 {
+		return
+	}
+
+	training.mu.Lock()
+	signature := append(append([]byte{}, training.signatures[measurement.Label]...), token...)
+	training.signatures[measurement.Label] = append(signature, 0)
+	training.mu.Unlock()
+}
+
+func (training *Training) resolve(symbol string, record *tables.ExcursionRecord) {
+	training.mu.Lock()
+	frames := cloneFrames(framesBefore(training.frames[symbol], record.ExitTick))
+	training.frames[symbol] = framesFrom(training.frames[symbol], record.ExitTick)
+	training.signatures[symbol] = training.signatureOf(training.frames[symbol])
+	training.mu.Unlock()
+
+	episode := heldEpisode{record: *record, frames: frames}
+
+	if err := training.enqueue(episode); err != nil {
+		training.Error(err)
+	}
+}
+
+func (training *Training) predict(measurement *data.Measurement[float64], historical bool) marker {
+	if measurement == nil || measurement.Label == "" || !training.ready() {
+		return marker{}
+	}
+
+	training.mu.Lock()
+	signature := append([]byte{}, training.signatures[measurement.Label]...)
+	training.mu.Unlock()
+
+	return training.predictFrom(signature, measurement.Label, measurement.SeqIdx, historical)
+}
+
+func (training *Training) predictFrom(signature []byte, symbol string, seq int64, historical bool) marker {
+	if len(signature) == 0 {
+		return marker{}
+	}
+
+	result, err := training.engine.Evaluate(signature)
+
+	if err != nil {
+		training.Error(err)
+
+		return marker{}
+	}
+
+	action := cognition.Action(result.Evaluation.WinnerClass)
+	holding := training.holding(symbol)
+
+	if !admitted(holding, action) {
+		return marker{}
+	}
+
+	if action == cognition.ActionEnter && training.busy(symbol) {
+		return marker{}
+	}
+
+	if action == cognition.ActionEnter && historical {
+		return marker{action: string(action), entry: seq}
+	}
+
+	if action == cognition.ActionEnter && !training.paperOpen() {
+		training.mu.Lock()
+		training.paperPredictions++
+		training.mu.Unlock()
+
+		return marker{action: string(action), entry: seq}
+	}
+
+	if action == cognition.ActionEnter {
+		training.remember(symbol, signature)
+		training.mu.Lock()
+		training.paperPredictions++
+		training.mu.Unlock()
+
+		if training.trader != nil {
+			if err := training.trader.OnAction(symbol, action, result.Evaluation.Confidence); err != nil {
+				training.Error(err)
+
+				return marker{action: string(action), entry: seq}
+			}
+		}
+
+		training.mu.Lock()
+		training.paperTrades++
+		training.mu.Unlock()
+
+		return marker{action: string(action), entry: seq}
+	}
+
+	if historical {
+		return marker{action: string(action), exit: seq}
+	}
+
+	training.gradePaper(symbol)
+	training.forget(symbol)
+
+	if training.trader != nil {
+		if err := training.trader.OnAction(symbol, action, result.Evaluation.Confidence); err != nil {
+			training.Error(err)
+		}
+	}
+
+	return marker{action: string(action), exit: seq}
+}
+
+func (training *Training) gradePaper(symbol string) {
+	if training.price == nil || training.trader == nil {
+		return
+	}
+
+	regulator := training.trader.Position(symbol)
+	pnl := training.price.PnL(symbol, regulator)
+
+	if pnl == nil {
+		return
+	}
+
+	training.mu.Lock()
+	context := append([]byte{}, training.entries[symbol]...)
+	training.mu.Unlock()
+
+	feedback := 0.0
+
+	if pnl.Sign() > 0 {
+		feedback = 1
+	}
+
+	if pnl.Sign() < 0 {
+		feedback = -1
+	}
+
+	training.observe(context, string(cognition.ActionEnter), feedback, true)
+
+	if feedback == 0 {
+		return
+	}
+
+	training.mu.Lock()
+	training.paper.Update(feedback)
+	training.mu.Unlock()
+}
+
+func (training *Training) supervise(episode heldEpisode, score bool) {
+	training.mu.Lock()
+
+	if training.graded[episode.record.ID] {
+		score = false
+	}
+
+	if score {
+		training.graded[episode.record.ID] = true
+	}
+
+	training.mu.Unlock()
+
+	record := episode.record
+	enterCtx := training.signatureOf(framesBefore(episode.frames, record.AnchorTick))
+	exitCtx := training.signatureOf(framesBefore(episode.frames, record.ExitTick))
+	clears := record.Direction == "up" && record.ClearsFriction
+
+	if len(enterCtx) > 0 && clears {
+		training.observe(enterCtx, string(cognition.ActionEnter), 1, score)
+	}
+
+	if len(enterCtx) > 0 && !clears {
+		training.observe(enterCtx, string(cognition.ActionEnter), -1, score)
+	}
+
+	if clears && len(exitCtx) > 0 {
+		training.observe(exitCtx, string(cognition.ActionExit), 1, false)
+	}
+}
+
+func (training *Training) observe(context []byte, class string, feedback float64, score bool) {
+	if len(context) == 0 || class == "" || class == string(cognition.ActionWait) {
+		return
+	}
+
+	_, err := training.engine.Observe(cognition.Association{
+		Context:  append([]byte{}, context...),
+		Class:    []byte(class),
+		Feedback: feedback,
+		Graded:   true,
+	})
+
+	if err != nil {
+		training.Error(err)
+
+		return
+	}
+
+	if !score || feedback == 0 {
+		return
+	}
+
+	sample := -1.0
+
+	if feedback > 0 {
+		sample = 1
+	}
+
+	training.mu.Lock()
+	training.skill.Update(sample)
+	training.mu.Unlock()
+}
+
+func (training *Training) replayHistory() error {
+	if training.catalog == nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"training: catalog is required for historical replay",
+			nil,
+		))
+	}
+
+	rows, err := training.catalog.Collect(training.Context(), tables.Measurements, training.epoch)
+
+	if err != nil {
+		return err
+	}
+
+	session := &replay{
+		frames:     make(map[string][]*data.Measurement[float64]),
+		signatures: make(map[string][]byte),
+	}
+	detector := NewDetector(training.price)
+
+	for _, row := range preferRows(rows) {
+		select {
+		case <-training.Context().Done():
+			return training.Context().Err()
+		default:
+		}
+
+		training.replayOne(session, detector, row)
+	}
+
+	return training.waitDrained()
+}
+
+type replay struct {
+	frames     map[string][]*data.Measurement[float64]
+	signatures map[string][]byte
+}
+
+func (training *Training) replayOne(session *replay, detector *Detector, measurement *data.Measurement[float64]) {
+	if measurement == nil || measurement.Label == "" {
+		return
+	}
+
+	training.grid.Update(measurement)
+	session.frames[measurement.Label] = append(session.frames[measurement.Label], measurement.Clone())
+	token := training.grid.LitRegions(measurement)
+
+	if len(token) > 0 {
+		session.signatures[measurement.Label] = append(session.signatures[measurement.Label], token...)
+		session.signatures[measurement.Label] = append(session.signatures[measurement.Label], 0)
+	}
+
+	reading := training.predictFrom(session.signatures[measurement.Label], measurement.Label, measurement.SeqIdx, true)
+	record, err := detector.Observe(measurement)
+
+	if err != nil {
+		training.Error(err)
+	}
+
+	if record != nil {
+		record.Epoch = training.epoch
+		frames := cloneFrames(framesBefore(session.frames[measurement.Label], record.ExitTick))
+		session.frames[measurement.Label] = framesFrom(session.frames[measurement.Label], record.ExitTick)
+		session.signatures[measurement.Label] = training.signatureOf(session.frames[measurement.Label])
+
+		if err = training.enqueue(heldEpisode{record: *record, frames: frames}); err != nil {
+			training.Error(err)
+		}
+	}
+
+	training.publish(measurement, record, reading, true)
+}
+
+func (training *Training) augment() {
+	for {
+		training.mu.Lock()
+		episodes := append([]heldEpisode{}, training.episodes...)
+		training.mu.Unlock()
+
+		if len(episodes) == 0 {
+			select {
+			case <-training.Context().Done():
+				return
+			case <-training.episodeReady:
+			}
+
+			continue
+		}
+
+		for _, episode := range episodes {
 			select {
 			case <-training.Context().Done():
 				return
 			default:
 			}
 
-			if !training.grid.Settled {
-				// We wait for the Grid to settle before running historical training
-				time.Sleep(100 * time.Millisecond)
-				continue
-			}
-
-			if training.catalog == nil {
-				// No catalog available, can't train on historical tape.
-				time.Sleep(10 * time.Second)
-				continue
-			}
-
-			// Run market tape fragments from Iceberg Tables using catalog.Scan
-			// In symm, measurements are the sole source of truth in Iceberg.
-			// E.g. we fetch measurements for the last N epochs.
-			ctx := training.Context()
-
-			// We scan the single Measurements table for tape fragments.
-			// Pipeline execution:
-			// Remove unused seq
-
-			// Cycle through the 5 excursion types described in TRAINING.md
-			// 1: Upward Profitable,
-			// 2: Upward Unprofitable,
-			// 3: Downward,
-			// 4: Choppy,
-			// 5: Flat
-			extType := ((iteration - 1) % 5) + 1
-			iteration++
-
-			// Use the sophisticated DuckDB Excursions primitive to find a
-			// genuinely mature market excursion of the requested type
-			excursions := NewExcursions(ctx, training.warehouse, extType)
-
-			// Buffer the tape fragment? No! We process the tape as a pure stream!
-			// We stream directly from DuckDB to preserve the ground truth continuously.
-			var signature []byte
-			for ptr := range excursions.Next(nil) {
-				if ptr == nil {
-					continue
-				}
-
-				m := (*data.Measurement[float64])(ptr)
-
-				// Rewrite the source so the UI Tee allows it through to the dashboard
-				m.Source = "training:historical"
-
-				m.EnsureMetadata()
-
-				// Apply ground truth label based on objective tape bounds from DuckDB
-				var gt string
-				
-				switch extType {
-				case 1: // Upward Profitable (Enter and Exit)
-					if m.SeqIdx >= excursions.IgnitionTick-20 && m.SeqIdx <= excursions.IgnitionTick {
-						gt = string(cognition.ActionEnter)
-					} else if m.SeqIdx >= excursions.EndTick-20 && m.SeqIdx <= excursions.EndTick {
-						gt = string(cognition.ActionExit)
-					}
-				case 3: // Downward (Exit)
-					if m.SeqIdx >= excursions.IgnitionTick-20 && m.SeqIdx <= excursions.IgnitionTick {
-						gt = string(cognition.ActionExit)
-					}
-				}
-
-				if gt == "" {
-					gt = string(cognition.ActionWait)
-				}
-
-				m.SetMetadata("ground_truth", gt)
-				
-				// 1. Get the current evaluation (Pre-Outcome Prediction) BEFORE training on this frame
-				token := training.grid.LitRegions(m, 3)
-				if len(token) > 0 {
-					signature = append(signature, token...)
-					signature = append(signature, 0) // null byte delimiter
-					
-					// Keep sequence bounded to avoid infinite length arrays in engine
-					if len(signature) > 1024 {
-						signature = signature[len(signature)-512:]
-					}
-					
-					evalCmd := cognition.Command{
-						Evaluate: &cognition.Question{
-							Context: signature,
-						},
-					}
-					
-					for out := range training.engine.Next(data.NewValue(evalCmd)) {
-						eval := (*cognition.Evaluation)(out)
-						if eval != nil && eval.WinnerClass != "" {
-							m.SetMetadata("predicted_action", eval.WinnerClass)
-							m.SetMetadata("predicted_confidence", fmt.Sprintf("%f", eval.Confidence))
-						}
-					}
-				}
-
-				// 2. Train the model by passing it into the engine
-				if len(signature) > 0 {
-					training.engine.Train(signature, []byte(gt), 1.0)
-				}
-				
-				// 3. Pass through the frozen grid to decorate metrics for the UI visualization
-				for out := range training.pipeline.Next(data.NewValue(m)) {
-					_ = out
-				}
-
-				// Stream the trained historical fragment directly to the dashboard visualization
-				if training.tee != nil {
-					m.EnsureMetadata()
-
-					// Inject the ground truth bounds (discovered by DuckDB) strictly
-					// for the visualization AFTER the model evaluated it, preventing leakage.
-					m.SetMetadata("excursion_start", fmt.Sprintf("%d", excursions.StartTick))
-					m.SetMetadata("excursion_ignition", fmt.Sprintf("%d", excursions.IgnitionTick))
-					m.SetMetadata("excursion_extremum_tick", fmt.Sprintf("%d", excursions.EndTick))
-					m.WriteMetric("excursion_type", float64(extType))
-					m.WriteMetric("stage_code", 1.0) // HISTORICAL VALIDATION
-
-					training.tee.Push(m)
-				}
-			}
-
-			// Wait before scanning again to avoid busy-looping if no new excursions exist
-			time.Sleep(5 * time.Second)
-
-			// Sleep before pulling the next tape fragment.
-			time.Sleep(1 * time.Second)
+			training.replayVaried(episode)
 		}
-	}()
+	}
+}
+
+func (training *Training) replayVaried(episode heldEpisode) {
+	var eligible []int
+
+	for index, frame := range episode.frames {
+		if frame != nil && frame.SeqIdx < episode.record.AnchorTick {
+			eligible = append(eligible, index)
+		}
+	}
+
+	if len(eligible) == 0 {
+		return
+	}
+
+	pick := eligible[rand.IntN(len(eligible))]
+	enterCtx := training.signatureOf(episode.frames[:pick+1])
+	clears := episode.record.Direction == "up" && episode.record.ClearsFriction
+	feedback := -1.0
+
+	if clears {
+		feedback = 1
+	}
+
+	training.observe(enterCtx, string(cognition.ActionEnter), feedback, false)
+}
+
+func (training *Training) enqueue(episode heldEpisode) error {
+	if training.catalog == nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"training: catalog is required to store an episode",
+			nil,
+		))
+	}
+
+	training.mu.Lock()
+	training.queue = append(training.queue, episode)
+	training.blocked = true
+	training.persistErr = nil
+	training.mu.Unlock()
+
+	select {
+	case training.wake <- struct{}{}:
+	default:
+	}
+
+	return nil
+}
+
+func (training *Training) persistLoop() {
+	if training.catalog == nil {
+		training.failPersist(errnie.Error(errnie.Err(
+			errnie.Validation,
+			"training: catalog is required to store an episode",
+			nil,
+		)))
+
+		return
+	}
+
+	writer := tables.NewWriter(training.catalog, training.epoch)
+
+	for {
+		select {
+		case <-training.Context().Done():
+			training.mu.Lock()
+			training.cond.Broadcast()
+			training.mu.Unlock()
+
+			return
+		case <-training.wake:
+		}
+
+		training.mu.Lock()
+		batch := training.queue
+		training.queue = nil
+		training.writing = len(batch) > 0
+		training.blocked = training.writing
+		training.mu.Unlock()
+
+		if len(batch) == 0 {
+			continue
+		}
+
+		for _, episode := range batch {
+			writer.AddExcursion(episode.record)
+		}
+
+		err := writer.CommitReady(training.Context(), true)
+		training.finishWrite(batch, err)
+	}
+}
+
+func (training *Training) finishWrite(batch []heldEpisode, err error) {
+	if err != nil {
+		training.mu.Lock()
+		training.queue = append(batch, training.queue...)
+		training.writing = false
+		training.blocked = true
+		training.persistErr = err
+		training.cond.Broadcast()
+		training.mu.Unlock()
+		training.failPersist(err)
+
+		return
+	}
+
+	for _, episode := range batch {
+		training.noteDurable(episode)
+	}
+
+	training.mu.Lock()
+	training.writing = false
+	training.persistErr = nil
+	training.blocked = len(training.queue) > 0
+	training.persistFailed = false
+	training.cond.Broadcast()
+	training.mu.Unlock()
+}
+
+func (training *Training) noteDurable(episode heldEpisode) {
+	training.mu.Lock()
+	checkpointed := training.checkpointed
+
+	if !checkpointed {
+		training.pending = append(training.pending, episode)
+		training.mu.Unlock()
+
+		return
+	}
+
+	training.episodes = append(training.episodes, episode)
+	training.mu.Unlock()
+	training.supervise(episode, true)
+
+	select {
+	case training.episodeReady <- struct{}{}:
+	default:
+	}
+}
+
+func (training *Training) waitDrained() error {
+	training.mu.Lock()
+	defer training.mu.Unlock()
+
+	for len(training.queue) > 0 || training.writing {
+		if training.persistErr != nil && !training.writing {
+			return training.persistErr
+		}
+
+		training.cond.Wait()
+	}
+
+	return training.persistErr
+}
+
+func (training *Training) checkpointLoop() {
+	for {
+		if training.Context().Err() != nil {
+			return
+		}
+
+		training.mu.Lock()
+		restored := training.restored
+		checkpointed := training.checkpointed
+		training.mu.Unlock()
+
+		if !restored {
+			missing, err := training.restore()
+
+			if err != nil {
+				training.failCheckpoint(err)
+				training.waitSettle()
+
+				continue
+			}
+
+			training.mu.Lock()
+			training.restored = true
+			training.mu.Unlock()
+
+			if !missing && training.grid.Settled {
+				training.markDurable()
+
+				return
+			}
+		}
+
+		if training.grid.Settled && !checkpointed {
+			if err := training.save(); err != nil {
+				training.failCheckpoint(err)
+				training.waitSettle()
+
+				continue
+			}
+
+			training.markDurable()
+
+			return
+		}
+
+		training.waitSettle()
+	}
+}
+
+func (training *Training) waitSettle() {
+	select {
+	case <-training.Context().Done():
+	case <-training.settleWake:
+	}
+}
+
+func (training *Training) restore() (bool, error) {
+	if training.catalog == nil {
+		return true, nil
+	}
+
+	encoded, err := training.catalog.GetBlob(training.Context(), gridKey)
+
+	if errors.Is(err, tables.ErrBlobMissing) {
+		return true, nil
+	}
+
+	if err != nil {
+		return false, err
+	}
+
+	if err = training.grid.RestoreSnapshot(encoded); err != nil {
+		return false, err
+	}
+
+	model, err := training.catalog.GetBlob(training.Context(), engineKey)
+
+	if err != nil {
+		return false, err
+	}
+
+	if _, err = training.engine.Restore(model); err != nil {
+		return false, err
+	}
+
+	return false, nil
+}
+
+func (training *Training) save() error {
+	if training.catalog == nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"training: catalog is required to checkpoint",
+			nil,
+		))
+	}
+
+	encoded, err := training.grid.Snapshot()
+
+	if err != nil {
+		return err
+	}
+
+	model, err := training.engine.Snapshot()
+
+	if err != nil {
+		return err
+	}
+
+	if err = training.catalog.PutBlob(training.Context(), gridKey, encoded); err != nil {
+		return err
+	}
+
+	return training.catalog.PutBlob(training.Context(), engineKey, model.Model)
+}
+
+func (training *Training) markDurable() {
+	training.mu.Lock()
+	training.checkpointed = true
+	training.checkpointFailed = false
+	pending := training.pending
+	training.pending = nil
+	training.episodes = append(training.episodes, pending...)
+	training.rebuildLocked()
+	training.mu.Unlock()
+	training.durableOnce.Do(func() { close(training.durable) })
+
+	for _, episode := range pending {
+		training.supervise(episode, true)
+	}
+}
+
+func (training *Training) rebuildLocked() {
+	for symbol, frames := range training.frames {
+		training.signatures[symbol] = training.signatureOf(frames)
+	}
+}
+
+func (training *Training) nudge() {
+	if !training.grid.Settled || training.checkpointed {
+		return
+	}
+
+	select {
+	case training.settleWake <- struct{}{}:
+	default:
+	}
+}
+
+func (training *Training) ready() bool {
+	training.mu.Lock()
+	defer training.mu.Unlock()
+
+	return training.checkpointed
+}
+
+func (training *Training) paperOpen() bool {
+	training.mu.Lock()
+	moments := training.skill
+	blocked := training.blocked
+	checkpointed := training.checkpointed
+	training.mu.Unlock()
+
+	if blocked || !checkpointed || moments.Count <= 1 {
+		return false
+	}
+
+	dispersion := math.Sqrt(moments.M2 / (moments.Count - 1))
+	lower := moments.Mean - dispersion/math.Sqrt(moments.Count)
+
+	return lower > 0
+}
+
+func (training *Training) stage() (float64, string, string) {
+	training.mu.Lock()
+	checkpointed := training.checkpointed
+	blocked := training.blocked
+	moments := training.skill
+	training.mu.Unlock()
+
+	if !training.grid.Settled {
+		return 0, "MODEL DEVELOPMENT", "grid unsettled"
+	}
+
+	if !checkpointed {
+		return 0, "MODEL DEVELOPMENT", "checkpoint missing"
+	}
+
+	if blocked {
+		return 1, "HISTORICAL VALIDATION", "durability blocked"
+	}
+
+	if moments.Count <= 1 {
+		return 1, "HISTORICAL VALIDATION", "skill lower bound not positive"
+	}
+
+	dispersion := math.Sqrt(moments.M2 / (moments.Count - 1))
+	lower := moments.Mean - dispersion/math.Sqrt(moments.Count)
+
+	if lower <= 0 {
+		return 1, "HISTORICAL VALIDATION", "skill lower bound not positive"
+	}
+
+	return 2, "FORWARD PAPER LEARNING", ""
+}
+
+func (training *Training) publish(
+	measurement *data.Measurement[float64],
+	record *tables.ExcursionRecord,
+	reading marker,
+	historical bool,
+) {
+	if training.tee == nil || measurement == nil {
+		return
+	}
+
+	clone := measurement.Clone()
+	clone.Source = "training:live"
+
+	if historical {
+		clone.Source = "training:historical"
+	}
+
+	code, name, blocker := training.stage()
+
+	if historical {
+		code = 1
+		name = "HISTORICAL VALIDATION"
+		blocker = ""
+	}
+
+	clone.WriteMetric("stage_code", code)
+	clone.SetProvenance("stage", name)
+	clone.SetProvenance("stage_blocker", blocker)
+	training.writeSkill(clone)
+	training.writeQuote(clone, measurement)
+	training.writeMarker(clone, reading)
+	training.writeEpisode(clone, record)
+	training.tee.Push(clone)
+}
+
+func (training *Training) writeSkill(clone *data.Measurement[float64]) {
+	training.mu.Lock()
+	skill := training.skill
+	paper := training.paper
+	trades := training.paperTrades
+	predictions := training.paperPredictions
+	training.mu.Unlock()
+
+	if skill.Count > 1 {
+		dispersion := math.Sqrt(skill.M2 / (skill.Count - 1))
+		clone.WriteMetric("hist_opportunities", skill.Count)
+		clone.WriteMetric("hist_mean_return", skill.Mean)
+		clone.WriteMetric("hist_lower_bound", skill.Mean-dispersion/math.Sqrt(skill.Count))
+	}
+
+	if trades > 0 {
+		clone.WriteMetric("fwd_paper_trades", trades)
+		clone.WriteMetric("fwd_enter_predictions", predictions)
+	}
+
+	if paper.Count > 1 {
+		dispersion := math.Sqrt(paper.M2 / (paper.Count - 1))
+		clone.WriteMetric("fwd_paper_mean_return", paper.Mean)
+		clone.WriteMetric("fwd_paper_lower_bound", paper.Mean-dispersion/math.Sqrt(paper.Count))
+	}
+}
+
+func (training *Training) writeQuote(clone *data.Measurement[float64], measurement *data.Measurement[float64]) {
+	seen, ok := quoteFrom(measurement)
+
+	if !ok {
+		return
+	}
+
+	clone.WriteMetric("price", seen.mid)
+}
+
+func (training *Training) writeMarker(clone *data.Measurement[float64], reading marker) {
+	if reading.action == string(cognition.ActionEnter) {
+		clone.WriteMetric("frozen_prediction", 1)
+		clone.WriteMetric("action", 1)
+	}
+
+	if reading.action == string(cognition.ActionExit) {
+		clone.WriteMetric("frozen_prediction", 2)
+		clone.WriteMetric("action", 2)
+	}
+
+	if reading.entry > 0 {
+		clone.WriteMetric("agent_entry", float64(reading.entry))
+	}
+
+	if reading.exit > 0 {
+		clone.WriteMetric("agent_exit", float64(reading.exit))
+	}
+
+	token := training.grid.LitRegions(clone)
+
+	if len(token) == 0 {
+		return
+	}
+
+	parts := make([]string, len(token))
+
+	for index, value := range token {
+		parts[index] = strconv.Itoa(int(value))
+	}
+
+	clone.SetMetadata("precursor_tokens", strings.Join(parts, ","))
+	clone.SetProvenance("precursor_tokens", strings.Join(parts, ","))
+}
+
+func (training *Training) writeEpisode(clone *data.Measurement[float64], record *tables.ExcursionRecord) {
+	if record == nil {
+		return
+	}
+
+	clone.SetMetadata("excursion_direction", record.Direction)
+	clone.SetMetadata("excursion_clears", strconv.FormatBool(record.ClearsFriction))
+	clone.SetMetadata("excursion_start", strconv.FormatInt(record.PrecursorStartTick, 10))
+	clone.SetMetadata("excursion_ignition", strconv.FormatInt(record.AnchorTick, 10))
+	clone.SetMetadata("excursion_exit", strconv.FormatInt(record.ExitTick, 10))
+	clone.SetMetadata("excursion_event", "completed")
+	clone.WriteMetric("mark_a", float64(record.PrecursorStartTick))
+	clone.WriteMetric("mark_b", float64(record.AnchorTick))
+	clone.WriteMetric("mark_c", float64(record.ExitTick))
+	clone.WriteMetric("excursion_mag", record.ProfitFraction)
+}
+
+func (training *Training) signatureOf(frames []*data.Measurement[float64]) []byte {
+	var signature []byte
+
+	for _, frame := range frames {
+		token := training.grid.LitRegions(frame)
+
+		if len(token) == 0 {
+			continue
+		}
+
+		signature = append(signature, token...)
+		signature = append(signature, 0)
+	}
+
+	return signature
+}
+
+func (training *Training) holding(symbol string) bool {
+	regulator := training.position(symbol)
+
+	return regulator != nil && regulator.IsHolding()
+}
+
+func (training *Training) busy(symbol string) bool {
+	regulator := training.position(symbol)
+
+	return regulator != nil && !regulator.IsClosed()
+}
+
+func (training *Training) position(symbol string) *position.Regulator {
+	if training.trader == nil {
+		return nil
+	}
+
+	return training.trader.Position(symbol)
+}
+
+func (training *Training) remember(symbol string, signature []byte) {
+	training.mu.Lock()
+	training.entries[symbol] = append([]byte{}, signature...)
+	training.mu.Unlock()
+}
+
+func (training *Training) forget(symbol string) {
+	training.mu.Lock()
+	delete(training.entries, symbol)
+	training.mu.Unlock()
+}
+
+func (training *Training) failCheckpoint(err error) {
+	training.mu.Lock()
+	failed := training.checkpointFailed
+	training.checkpointFailed = true
+	training.mu.Unlock()
+
+	if !failed {
+		training.Error(err)
+	}
+}
+
+func (training *Training) failPersist(err error) {
+	training.mu.Lock()
+	failed := training.persistFailed
+	training.persistFailed = true
+	training.mu.Unlock()
+
+	if !failed {
+		training.Error(err)
+	}
+}
+
+func admitted(holding bool, action cognition.Action) bool {
+	if action != cognition.ActionEnter && action != cognition.ActionExit {
+		return false
+	}
+
+	for _, legal := range cognition.LegalActions(holding) {
+		if legal == action {
+			return true
+		}
+	}
+
+	return false
+}
+
+func framesBefore(frames []*data.Measurement[float64], tick int64) []*data.Measurement[float64] {
+	chosen := make([]*data.Measurement[float64], 0)
+
+	for _, frame := range frames {
+		if frame != nil && frame.SeqIdx < tick {
+			chosen = append(chosen, frame)
+		}
+	}
+
+	return chosen
+}
+
+func framesFrom(frames []*data.Measurement[float64], tick int64) []*data.Measurement[float64] {
+	chosen := make([]*data.Measurement[float64], 0)
+
+	for _, frame := range frames {
+		if frame != nil && frame.SeqIdx >= tick {
+			chosen = append(chosen, frame)
+		}
+	}
+
+	return chosen
+}
+
+func cloneFrames(frames []*data.Measurement[float64]) []*data.Measurement[float64] {
+	copied := make([]*data.Measurement[float64], 0, len(frames))
+
+	for _, frame := range frames {
+		if frame != nil {
+			copied = append(copied, frame.Clone())
+		}
+	}
+
+	return copied
+}
+
+func preferRows(rows []*data.Measurement[float64]) []*data.Measurement[float64] {
+	sort.Slice(rows, func(left, right int) bool {
+		if rows[left].Label != rows[right].Label {
+			return rows[left].Label < rows[right].Label
+		}
+
+		if rows[left].SeqIdx != rows[right].SeqIdx {
+			return rows[left].SeqIdx < rows[right].SeqIdx
+		}
+
+		return sourceRank(rows[left].Source) < sourceRank(rows[right].Source)
+	})
+
+	kept := make([]*data.Measurement[float64], 0, len(rows))
+
+	for _, row := range rows {
+		if len(kept) > 0 && kept[len(kept)-1].Label == row.Label && kept[len(kept)-1].SeqIdx == row.SeqIdx {
+			continue
+		}
+
+		kept = append(kept, row)
+	}
+
+	return kept
+}
+
+func sourceRank(source string) int {
+	if source == "training:live" {
+		return 0
+	}
+
+	if source == "websocket" {
+		return 1
+	}
+
+	return 2
 }

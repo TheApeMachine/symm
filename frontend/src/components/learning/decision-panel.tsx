@@ -43,7 +43,7 @@ export const CandidatePanel = () => (
 		/>
 		<Section.Body className="p-3">
 			<Typography.Mono>
-				Policy decision: <span data-metric="action" data-format="action">WAIT</span> · Conf <span data-metric="confidence" data-format="percent">0.0%</span> · Contrast <span data-metric="contrast" data-format="bits">0.00 bits</span> · Edge <span data-metric="edge" data-format="basis">0.0 bp</span>
+				Policy decision: <span data-metric="action" data-format="action">ABSTAIN</span> · Conf <span data-metric="confidence" data-format="percent">0.0%</span> · Contrast <span data-metric="contrast" data-format="bits">0.00 bits</span> · Edge <span data-metric="edge" data-format="basis">0.0 bp</span>
 			</Typography.Mono>
 		</Section.Body>
 	</Section>

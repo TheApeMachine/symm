@@ -44,7 +44,6 @@ import (
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
-	"github.com/theapemachine/symm/workbench"
 )
 
 /*
@@ -183,12 +182,7 @@ var (
 			storeTee := hindsight.NewStoreTee(ctx, "storeTee")
 			trader := strategy.NewTrader(ctx, privateTransport, price, balance)
 
-			wh := workbench.New()
-			defer wh.Close()
-
-
-
-			training := strategy.NewTraining(ctx, price, trader, catalog, wh, uiTee)
+			training := strategy.NewTraining(ctx, epoch, price, trader, catalog, uiTee)
 
 			uiTee.Transition(nmruntime.READY)
 			// Start historical training loop which will wait for grid to settle
@@ -321,8 +315,6 @@ var (
 
 			manifoldSolver.Start()
 
-
-
 			// Every processing and off-ramp owner is ready before ingress opens.
 
 			transports := []nmruntime.RuntimeSystem{public, futures}
@@ -417,7 +409,7 @@ var (
 							}
 						case "trade":
 							t := kraken.NewTrade(buf)
-							
+
 							if t != nil && t.IsSuccess() {
 								for _, td := range t.Data {
 									metrics := map[string]data.Metric[float64]{

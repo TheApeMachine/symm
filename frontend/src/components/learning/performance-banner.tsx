@@ -52,7 +52,7 @@ export const LearningPerformanceBanner = React.memo(() => {
 							data-l="stage-blocker"
 							className="text-[10px] text-(--f3) max-w-xs truncate"
 						>
-							collecting initial historical development samples
+							—
 						</Typography.Mono>
 						<Typography.Mono
 							size="s"

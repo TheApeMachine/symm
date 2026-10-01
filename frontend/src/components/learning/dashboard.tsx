@@ -17,7 +17,7 @@ import { cn, memoizedQuery, renderValue } from "#/lib/utils";
 import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
 import { CandidatePanel, ImpulsePanel, InfluencePanel } from "./decision-panel";
 import { Explain } from "./explain";
-import { action, basis, clock, percent } from "./format";
+import { action, basis, clock, outcome, percent, prediction } from "./format";
 import { ForwardLearningViz } from "./forward-learning-viz";
 import { ImpulseMapViz } from "./impulse-map-viz";
 import { KnowledgePanel } from "./knowledge-panel";
@@ -63,10 +63,8 @@ export const LearningDashboard = () => {
 
 	// Staged training state
 	const [stage, setStage] = useState("MODEL DEVELOPMENT");
-	const [stageBlocker, setStageBlocker] = useState(
-		"collecting initial historical development samples",
-	);
-	const [frozenPrediction, setFrozenPrediction] = useState("WAIT");
+	const [stageBlocker, setStageBlocker] = useState("—");
+	const [frozenPrediction, setFrozenPrediction] = useState("ABSTAIN");
 	const [delayedOutcome, setDelayedOutcome] = useState("RESOLVING");
 	const [precursorTokens, setPrecursorTokens] = useState<string[]>([
 		"unavailable",
@@ -224,7 +222,7 @@ export const LearningDashboard = () => {
 									setText(el, "EXIT");
 									break;
 								}
-								setText(el, "WAIT");
+								setText(el, "ABSTAIN");
 								break;
 							default:
 								renderValue(el, raw);
@@ -273,17 +271,10 @@ export const LearningDashboard = () => {
 					}
 				}
 
-				// Frozen pre-outcome prediction & delayed label (Section 38)
-				const actVal = metricMap.action ?? 0;
-				const actStr = actVal === 1 ? "ENTER" : actVal === 2 ? "EXIT" : "WAIT";
+				// Frozen pre-outcome prediction & delayed label
+				const actStr = prediction(metricMap.action);
 
 				const extVal = metricMap.excursion_type ?? 0;
-				let extStr = "RESOLVING";
-				if (extVal === 1) extStr = "UP";
-				if (extVal === 2) extStr = "DOWN";
-				if (extVal === 3) extStr = "CHOP";
-				if (extVal === 4) extStr = "FLAT";
-
 				const precLen = Math.floor(metricMap.precursor_length ?? 0);
 				const markA = Math.floor(metricMap.mark_a ?? 0);
 				const markB = Math.floor(metricMap.mark_b ?? 0);
@@ -291,30 +282,48 @@ export const LearningDashboard = () => {
 
 				let frozenPredStr = actStr;
 				const fwdRaw = metricMap.frozen_prediction;
-				if (fwdRaw !== undefined) {
-					frozenPredStr = fwdRaw === 1 ? "ENTER" : fwdRaw === 2 ? "EXIT" : "WAIT";
-				}
 
-				let delayedTargetStr = extStr;
-				const targetRaw = metricMap.delayed_target;
-				if (targetRaw !== undefined) {
-					delayedTargetStr = targetRaw === 1 ? "ENTER" : targetRaw === 2 ? "EXIT" : "WAIT";
+				if (fwdRaw !== undefined) {
+					frozenPredStr = prediction(fwdRaw);
 				}
 
 				let parsedTokens: string[] = [];
+				let direction = "";
 				if (measurement.provenance) {
 					for (const p of measurement.provenance) {
 						if (p?.name === "precursor_tokens" && p.value) {
 							parsedTokens = String(p.value).split(",").filter(Boolean);
 						}
-					}
-				}
-				if (parsedTokens.length === 0 && measurement.metadata) {
-					for (const m of measurement.metadata) {
-						if (m?.name === "precursor_tokens" && m.value) {
-							parsedTokens = String(m.value).split(",").filter(Boolean);
+						if (p?.name === "excursion_direction" && p.value) {
+							direction = String(p.value);
 						}
 					}
+				}
+				if (measurement.metadata) {
+					for (const m of measurement.metadata) {
+						if (parsedTokens.length === 0 && m?.name === "precursor_tokens" && m.value) {
+							parsedTokens = String(m.value).split(",").filter(Boolean);
+						}
+						if (m?.name === "excursion_direction" && m.value) {
+							direction = String(m.value);
+						}
+					}
+				}
+
+				const namedOutcome = outcome(direction, extVal);
+				let delayedTargetStr = namedOutcome || "RESOLVING";
+				const targetRaw = metricMap.delayed_target;
+
+				if (targetRaw === 1) {
+					delayedTargetStr = "ENTER";
+				}
+
+				if (targetRaw === 2) {
+					delayedTargetStr = "EXIT";
+				}
+
+				if (targetRaw !== undefined && targetRaw !== 1 && targetRaw !== 2) {
+					delayedTargetStr = "ABSTAIN";
 				}
 
 				let displayTokens: string[];
@@ -326,8 +335,9 @@ export const LearningDashboard = () => {
 					displayTokens = ["unavailable"];
 				}
 
+				const blockerText = blockerStr || "—";
 				setStage(stageStr);
-				setStageBlocker(blockerStr || "Gate criteria met");
+				setStageBlocker(blockerText);
 				setFrozenPrediction(frozenPredStr);
 				setDelayedOutcome(delayedTargetStr);
 				setPrecursorTokens(displayTokens);
@@ -340,7 +350,7 @@ export const LearningDashboard = () => {
 
 				const blockerEls = root.querySelectorAll('[data-l="stage-blocker"]');
 				blockerEls.forEach((el) => {
-					setText(el as HTMLElement, blockerStr || "Gate criteria met");
+					setText(el as HTMLElement, blockerText);
 				});
 
 				if (gateCountEl) {
@@ -425,18 +435,14 @@ export const LearningDashboard = () => {
 				if (activityListEl && !seen.has(measurement)) {
 					seen.add(measurement);
 
-					const actionVal = metricMap.action ?? 0;
+					const actionVal = metricMap.action;
 					const edgeVal = metricMap.edge ?? 0;
 					const atNs = measurement.at ?? 0n;
 					const timeStr =
 						atNs > 0n
 							? clock(new Date(Number(atNs / 1_000_000n)).toISOString())
 							: clock("");
-					const actStr = action(
-						actionVal === 1 ? "enter" : actionVal === 2 ? "exit" : "wait",
-						1,
-						false,
-					);
+					const actStr = actionVal === 1 ? action("enter", 1, false) : actionVal === 2 ? action("exit", 1, false) : "ABSTAIN";
 					const edgeStr = basis(edgeVal);
 
 					const rowDiv = document.createElement("div");

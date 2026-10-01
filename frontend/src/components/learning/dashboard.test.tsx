@@ -325,4 +325,40 @@ describe("LearningDashboard", () => {
 		const circles = container.querySelectorAll("svg circle");
 		expect(circles.length).toBeGreaterThan(0);
 	});
+
+	it("does not paint ignition as a predicted entry or an open gate", () => {
+		focusAtom.set("BTC/USD");
+		const measurement = new MeasurementT();
+		measurement.source = "training";
+		measurement.symbol = "BTC/USD";
+		measurement.provenance = [
+			new NamedStringT("stage", "HISTORICAL VALIDATION"),
+			new NamedStringT("excursion_direction", "down"),
+		];
+		measurement.metrics = [
+			new MetricT("stage_code", 1),
+			new MetricT("price", 50000),
+			new MetricT("mark_a", 10),
+			new MetricT("mark_b", 20),
+			new MetricT("mark_c", 30),
+			new MetricT("excursion_mag", -0.012),
+		];
+
+		const ring = new RingBuffer<MeasurementT>(4);
+		ring.add(measurement);
+		signals.training.setState(() => ({ "BTC/USD": ring }));
+
+		const { container } = render(<LearningDashboard />);
+
+		expect(container.querySelector('[data-l="frozen-prediction"]')?.textContent).toBe("ABSTAIN");
+		expect(container.querySelector('[data-l="delayed-label"]')?.textContent).toBe("DOWN");
+		expect(container.querySelector('[data-l="stage-blocker"]')?.textContent).toBe("—");
+
+		const text = container.textContent || "";
+		expect(text).not.toContain("PREDICTED ENTER");
+		expect(text).not.toContain("PAPER ENTER");
+		expect(text).not.toContain("UPWARD EXCURSION");
+		expect(text).not.toContain("Gate criteria met");
+		expect(text).toContain("No return distribution is drawn");
+	});
 });

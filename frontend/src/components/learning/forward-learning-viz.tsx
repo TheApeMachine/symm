@@ -11,7 +11,7 @@ import { RingCursor } from "#/collections/ring";
 import { hubBaseUrl } from "#/lib/hub";
 import { cn } from "#/lib/utils";
 import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
-import { action, basis, clock } from "./format";
+import { action, basis, clock, outcome, prediction } from "./format";
 import type {
 	CognitionTreeResponse,
 	LearningActivityEntry,
@@ -24,11 +24,40 @@ interface ForwardTapePoint {
 	seq?: number;
 }
 
+type ExcursionKind =
+	| "UPWARD EXCURSION"
+	| "DOWNWARD EXCURSION"
+	| "CHOPPY MARKET"
+	| "FLAT TAPE";
+
+function excursionKind(direction: string, typeCode: number): ExcursionKind | null {
+	const named = outcome(direction, typeCode);
+	if (named === "UP") return "UPWARD EXCURSION";
+	if (named === "DOWN") return "DOWNWARD EXCURSION";
+	if (named === "CHOP") return "CHOPPY MARKET";
+	if (named === "FLAT") return "FLAT TAPE";
+	return null;
+}
+
+function outcomeText(direction: string, typeCode: number, target: number | undefined): string {
+	const named = outcome(direction, typeCode);
+	if (named) return named;
+	if (target === 1) return "ENTER (CLEARS)";
+	if (target === 2) return "EXIT";
+	if (target !== undefined) return "ABSTAIN";
+	return "RESOLVING";
+}
+
+function signedPercent(fraction: number): string {
+	const pct = fraction * 100;
+	const body = pct.toFixed(2);
+	if (pct > 0) return `+${body}%`;
+	return `${body}%`;
+}
+
 export const ForwardLearningViz = () => {
 	const tapeRef = useRef<HTMLDivElement>(null);
-	const distRef = useRef<HTMLDivElement>(null);
 	const [tapeDim, setTapeDim] = useState({ width: 800, height: 300 });
-	const [distDim, setDistDim] = useState({ width: 380, height: 160 });
 	const [isPlaying, setIsPlaying] = useState(true);
 
 	// Real tape points accumulated from the live training measurements
@@ -44,7 +73,7 @@ export const ForwardLearningViz = () => {
 	// Precursor & prediction
 	const [precursorLength, setPrecursorLength] = useState(0);
 	const [rawPrecursorTokens, setRawPrecursorTokens] = useState<string[]>([]);
-	const [frozenAction, setFrozenAction] = useState("WAIT");
+	const [frozenAction, setFrozenAction] = useState("ABSTAIN");
 	const [delayedLabel, setDelayedLabel] = useState("RESOLVING");
 
 	// Historical held-out metrics
@@ -72,7 +101,7 @@ export const ForwardLearningViz = () => {
 
 	// Real excursion markers if active
 	const [excursionEvent, setExcursionEvent] = useState<{
-		type: "UPWARD EXCURSION" | "DOWNWARD EXCURSION" | "CHOPPY MARKET" | "FLAT TAPE";
+		type: ExcursionKind | null;
 		magnitude: number;
 		marks: { A: number; B: number; C: number };
 		entryIdx: number | null;
@@ -116,22 +145,6 @@ export const ForwardLearningViz = () => {
 			}
 		});
 		ro.observe(tapeTarget);
-		return () => ro.disconnect();
-	}, []);
-
-	useEffect(() => {
-		const distTarget = distRef.current;
-		if (!distTarget || typeof ResizeObserver === "undefined") return;
-
-		const ro = new ResizeObserver((entries) => {
-			if (entries[0]) {
-				const { width, height } = entries[0].contentRect;
-				if (width > 0 && height > 0) {
-					setDistDim({ width, height });
-				}
-			}
-		});
-		ro.observe(distTarget);
 		return () => ro.disconnect();
 	}, []);
 
@@ -275,7 +288,8 @@ export const ForwardLearningViz = () => {
 				}
 				let excStart: number | undefined;
 				let excIgnition: number | undefined;
-				let excExtremum: number | undefined;
+				let excExit: number | undefined;
+				let excDirection = "";
 
 				if (measurement.metadata) {
 					for (const m of measurement.metadata) {
@@ -288,17 +302,19 @@ export const ForwardLearningViz = () => {
 						if (m?.name === "excursion_ignition" && m.value) {
 							excIgnition = Number(m.value);
 						}
-						if (m?.name === "excursion_extremum_tick" && m.value) {
-							excExtremum = Number(m.value);
+						if (m?.name === "excursion_exit" && m.value) {
+							excExit = Number(m.value);
+						}
+						if (m?.name === "excursion_direction" && m.value) {
+							excDirection = String(m.value);
 						}
 					}
 				}
 				setRawPrecursorTokens(tokensList);
 
-				// Map the A, B, C markers from metadata to local scope for the excursion event later
-				const markA = excStart !== undefined ? Math.floor(excStart) : 0;
-				const markB = excIgnition !== undefined ? Math.floor(excIgnition) : 0;
-				const markC = excExtremum !== undefined ? Math.floor(excExtremum) : 0;
+				const markA = excStart !== undefined ? Math.floor(excStart) : Math.floor(metricMap.mark_a ?? 0);
+				const markB = excIgnition !== undefined ? Math.floor(excIgnition) : Math.floor(metricMap.mark_b ?? 0);
+				const markC = excExit !== undefined ? Math.floor(excExit) : Math.floor(metricMap.mark_c ?? 0);
 
 				if (excStart !== undefined && excStart !== lastSeenExcursionStartRef.current) {
 					// Finish the pending episode
@@ -313,17 +329,10 @@ export const ForwardLearningViz = () => {
 				const filledRaw = metricMap.paper_filled ?? 0;
 				setIsPaperFilled(filledRaw === 1);
 
-				const actRaw = metricMap.action ?? 0;
+				const actRaw = metricMap.action;
 				const frozenRaw = metricMap.frozen_prediction !== undefined ? metricMap.frozen_prediction : actRaw;
-				setFrozenAction(frozenRaw === 1 ? "ENTER" : frozenRaw === 2 ? "EXIT" : "WAIT");
-
-				const extRaw = metricMap.excursion_type ?? 0;
-				if (extRaw === 1) setDelayedLabel("UP");
-				else if (extRaw === 2) setDelayedLabel("DOWN");
-				else if (extRaw === 3) setDelayedLabel("CHOP");
-				else if (extRaw === 4) setDelayedLabel("FLAT");
-				else if (metricMap.delayed_target !== undefined) setDelayedLabel(metricMap.delayed_target === 1 ? "ENTER (CLEARS)" : "WAIT");
-				else setDelayedLabel("RESOLVING");
+				setFrozenAction(prediction(frozenRaw));
+				setDelayedLabel(outcomeText(excDirection, metricMap.excursion_type ?? 0, metricMap.delayed_target));
 
 				// Historical held-out
 				setHistOpportunities(Math.floor(metricMap.hist_opportunities ?? 0));
@@ -395,11 +404,7 @@ export const ForwardLearningViz = () => {
 					atNs > 0n
 						? clock(new Date(Number(atNs / 1_000_000n)).toISOString())
 						: clock("");
-				const actStr = action(
-					actRaw === 1 ? "enter" : actRaw === 2 ? "exit" : "wait",
-					1,
-					false,
-				);
+				const actStr = actRaw === 1 ? action("enter", 1, false) : actRaw === 2 ? action("exit", 1, false) : "ABSTAIN";
 
 				setActivityLogs((prev) => {
 					const entry: LearningActivityEntry = {
@@ -412,37 +417,21 @@ export const ForwardLearningViz = () => {
 					return [entry, ...prev].slice(0, 10);
 				});
 
-				// Extract predicted ENTER / EXIT points
 				const entryIdx =
 					metricMap.agent_entry !== undefined && metricMap.agent_entry > 0
 						? Math.floor(metricMap.agent_entry)
-						: markB > 0
-							? markB
-							: null;
+						: null;
 				const exitIdx =
 					metricMap.agent_exit !== undefined && metricMap.agent_exit > 0
 						? Math.floor(metricMap.agent_exit)
-						: markC > 0
-							? markC
-							: null;
+						: null;
+				const kind = excursionKind(excDirection, metricMap.excursion_type ?? 0);
+				const hasMarks = markA > 0 || markB > 0 || markC > 0;
 
-				if (metricMap.excursion_type !== undefined && metricMap.excursion_type > 0) {
-					let extType: "UPWARD EXCURSION" | "DOWNWARD EXCURSION" | "CHOPPY MARKET" | "FLAT TAPE" = "UPWARD EXCURSION";
-					if (metricMap.excursion_type === 2) extType = "DOWNWARD EXCURSION";
-					if (metricMap.excursion_type === 3) extType = "CHOPPY MARKET";
-					if (metricMap.excursion_type === 4) extType = "FLAT TAPE";
-
+				if (kind || hasMarks || entryIdx !== null || exitIdx !== null) {
 					setExcursionEvent({
-						type: extType,
+						type: kind,
 						magnitude: metricMap.excursion_mag ?? 0,
-						marks: { A: markA, B: markB, C: markC },
-						entryIdx,
-						exitIdx,
-					});
-				} else if (markA > 0 || markB > 0 || markC > 0) {
-					setExcursionEvent({
-						type: "UPWARD EXCURSION",
-						magnitude: 0,
 						marks: { A: markA, B: markB, C: markC },
 						entryIdx,
 						exitIdx,
@@ -540,56 +529,6 @@ export const ForwardLearningViz = () => {
 		};
 	}, [points, tapeDim.width, tapeDim.height]);
 
-	// Edge Distribution bell curve calculation from real measured model returns
-	const { curveData, meanEdgeBp } = useMemo(() => {
-		const evaluatedTrades = histOpportunities + fwdPaperTrades;
-		if (evaluatedTrades === 0 && histMeanReturn === 0 && fwdPaperMeanReturn === 0) {
-			return { curveData: [], meanEdgeBp: 0 };
-		}
-
-		const meanEdge = fwdPaperTrades > 0 ? fwdPaperMeanReturn * 10000 : histMeanReturn * 10000;
-		const lowerBound = fwdPaperTrades > 0 ? fwdPaperLowerBound * 10000 : histLowerBound * 10000;
-		const spread = Math.abs(meanEdge - lowerBound);
-		const sd = Math.max(1.0, spread > 0 ? spread / 1.645 : 4.0);
-
-		const distPdf = (x: number, m: number, s: number) =>
-			(1 / (s * Math.sqrt(2 * Math.PI))) * Math.exp(-0.5 * ((x - m) / s) ** 2);
-
-		const curvePoints: { x: number; y: number }[] = [];
-		const minX = -15;
-		const maxX = 15;
-		for (let x = minX; x <= maxX; x += 0.5) {
-			curvePoints.push({ x, y: distPdf(x, meanEdge, sd) });
-		}
-
-		return { curveData: curvePoints, meanEdgeBp: meanEdge };
-	}, [histOpportunities, fwdPaperTrades, histMeanReturn, fwdPaperMeanReturn, histLowerBound, fwdPaperLowerBound]);
-
-	// Distribution scales
-	const { distXScale, distAreaGen, distLineGen } = useMemo(() => {
-		const minX = -15;
-		const maxX = 15;
-		const distMaxY = Math.max(...curveData.map((d) => d.y), 0.1);
-
-		const xs = d3.scaleLinear().domain([minX, maxX]).range([20, distDim.width - 20]);
-		const ys = d3.scaleLinear().domain([0, distMaxY * 1.25]).range([distDim.height - 25, 20]);
-
-		const areaGen = d3
-			.area<{ x: number; y: number }>()
-			.x((d) => xs(d.x))
-			.y0(distDim.height - 25)
-			.y1((d) => ys(d.y))
-			.curve(d3.curveBasis);
-
-		const lineGen = d3
-			.line<{ x: number; y: number }>()
-			.x((d) => xs(d.x))
-			.y((d) => ys(d.y))
-			.curve(d3.curveBasis);
-
-		return { distXScale: xs, distYScale: ys, distAreaGen: areaGen, distLineGen: lineGen };
-	}, [curveData, distDim.width, distDim.height]);
-
 	const isForward = stageCode >= 2;
 	const precursorTokens = useMemo(() => {
 		if (rawPrecursorTokens.length > 0) {
@@ -665,7 +604,7 @@ export const ForwardLearningViz = () => {
 
 					{/* Confirmed Excursion Banner */}
 					<AnimatePresence>
-						{playbackPhase === "EVALUATING" && excursionEvent && (
+						{playbackPhase === "EVALUATING" && excursionEvent && excursionEvent.type && (
 							<motion.div
 								initial={{ height: 0, opacity: 0 }}
 								animate={{ height: 22, opacity: 1 }}
@@ -686,8 +625,7 @@ export const ForwardLearningViz = () => {
 									</span>
 								</span>
 								<span className="ml-auto">
-									{excursionEvent.type === "UPWARD EXCURSION" ? "+" : "-"}
-									{excursionEvent.magnitude.toFixed(2)}%
+									{signedPercent(excursionEvent.magnitude)}
 								</span>
 							</motion.div>
 						)}
@@ -923,9 +861,9 @@ export const ForwardLearningViz = () => {
 							<span className="text-(--f4)">Boundaries:</span>
 							<span>A: {excursionEvent?.marks.A ?? 0}</span>
 							<span>→</span>
-							<span className="text-(--up)">B (Entry): {excursionEvent?.marks.B ?? 0}</span>
+							<span>B: {excursionEvent?.marks.B ?? 0}</span>
 							<span>→</span>
-							<span className="text-(--down)">C (Exit): {excursionEvent?.marks.C ?? 0}</span>
+							<span>C: {excursionEvent?.marks.C ?? 0}</span>
 						</div>
 						<div className="flex items-center gap-2">
 							<span className="text-(--f4)">Pre-Outcome Prediction:</span>
@@ -1014,7 +952,7 @@ export const ForwardLearningViz = () => {
 							<div className="flex justify-between font-bold">
 								<span className="text-(--f4) uppercase">Gate Blocker:</span>
 								<span data-l="stage-blocker" className="text-(--down) truncate max-w-[130px]">
-									{stageBlocker || "None (Ready)"}
+									{stageBlocker || "—"}
 								</span>
 							</div>
 						</div>
@@ -1169,99 +1107,14 @@ export const ForwardLearningViz = () => {
 						</span>
 					</div>
 
-					<div ref={distRef} className="flex-1 relative overflow-hidden">
-						{curveData.length > 0 && distDim.width > 0 ? (
-							<svg width={distDim.width} height={distDim.height} className="absolute inset-0">
-								<title>Model Edge Distribution</title>
-								<defs>
-									<linearGradient id="distFill" x1="0" y1="0" x2="0" y2="1">
-										<stop offset="0%" stopColor="var(--info)" stopOpacity="0.3" />
-										<stop offset="100%" stopColor="var(--info)" stopOpacity="0.0" />
-									</linearGradient>
-								</defs>
-
-								{/* X Axis Base */}
-								<line
-									x1={20}
-									y1={distDim.height - 25}
-									x2={distDim.width - 20}
-									y2={distDim.height - 25}
-									stroke="var(--line)"
-									strokeWidth="1"
-								/>
-
-								{/* Breakeven Line (0.0 bp) */}
-								<line
-									x1={distXScale(0)}
-									y1={20}
-									x2={distXScale(0)}
-									y2={distDim.height - 25}
-									stroke="var(--f4)"
-									strokeWidth="1"
-									strokeDasharray="2 2"
-								/>
-								<text
-									x={distXScale(0)}
-									y={15}
-									fill="var(--f4)"
-									fontSize="9px"
-									textAnchor="middle"
-								>
-									0.0 bp
-								</text>
-
-								{/* Measured Mean Line */}
-								<line
-									x1={distXScale(meanEdgeBp)}
-									y1={20}
-									x2={distXScale(meanEdgeBp)}
-									y2={distDim.height - 25}
-									stroke={meanEdgeBp >= 0 ? "var(--up)" : "var(--down)"}
-									strokeWidth="1.5"
-								/>
-								<text
-									x={distXScale(meanEdgeBp)}
-									y={15}
-									fill={meanEdgeBp >= 0 ? "var(--up)" : "var(--down)"}
-									fontSize="9px"
-									fontWeight="bold"
-									textAnchor="middle"
-								>
-									μ {meanEdgeBp >= 0 ? "+" : ""}{meanEdgeBp.toFixed(1)} bp
-								</text>
-
-								{/* Curve Area & Line */}
-								<path d={distAreaGen(curveData) || undefined} fill="url(#distFill)" />
-								<path
-									d={distLineGen(curveData) || undefined}
-									fill="none"
-									stroke="var(--info)"
-									strokeWidth="1.5"
-								/>
-
-								{/* Boundary Labels */}
-								<text x={20} y={distDim.height - 10} fill="var(--f4)" fontSize="9px">
-									-15 bp
-								</text>
-								<text
-									x={distDim.width - 20}
-									y={distDim.height - 10}
-									fill="var(--f4)"
-									fontSize="9px"
-									textAnchor="end"
-								>
-									+15 bp
-								</text>
-							</svg>
-						) : (
-							<div className="absolute inset-0 flex items-center justify-center text-(--f4) text-[10px]">
-								No evaluated outcomes yet — distribution awaiting evidence
-							</div>
-						)}
+					<div className="flex-1 relative overflow-hidden">
+						<div className="absolute inset-0 flex items-center justify-center text-(--f4) text-[10px] px-4 text-center">
+							No return distribution is drawn. Mean and lower bound stay in the evidence panel.
+						</div>
 					</div>
 
 					<div className="p-2.5 border-t border-(--line) text-[10px] text-(--f4) leading-tight">
-						Authority-weighted empirical distribution of completed training excursion outcomes.
+						A curve is omitted until completed outcomes supply their own return sample.
 					</div>
 				</div>
 			</div>

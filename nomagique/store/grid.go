@@ -1,6 +1,7 @@
 package store
 
 import (
+	"encoding/json"
 	"iter"
 	"math"
 	"slices"
@@ -9,6 +10,7 @@ import (
 	"sync"
 	"unsafe"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 )
@@ -48,11 +50,9 @@ type Grid struct {
 
 	Partition string `json:"partition"`
 
-	Observations              int64 `json:"observations"`
-	MinSettlementObservations int64 `json:"min_settlement_observations"`
-	RequiredStableStreak      int   `json:"required_stable_streak"`
-	StablePartitionStreak     int   `json:"stable_partition_streak"`
-	NoNewMetricsStreak        int   `json:"no_new_metrics_streak"`
+	Observations        int64 `json:"observations"`
+	PartitionRun        int   `json:"partition_run"`
+	LongestPartitionRun int   `json:"longest_partition_run"`
 }
 
 /*
@@ -79,28 +79,20 @@ type GridRelation struct {
 
 func NewGrid() *Grid {
 	return &Grid{
-		PrimitiveError:            core.NewPrimitiveError(),
-		Metrics:                   make([]*data.Metric[float64], 0),
-		Last:                      make(map[string]float64),
-		Present:                   make(map[string]bool),
-		Relations:                 make(map[string]*GridRelation),
-		Regions:                   make(map[string]uint8),
-		Authority:                 make(map[string]float64),
-		Bound:                     make(map[string]string),
-		PosX:                      make(map[string]float64),
-		PosY:                      make(map[string]float64),
-		MinSettlementObservations: 100,
-		RequiredStableStreak:      25,
+		PrimitiveError: core.NewPrimitiveError(),
+		Metrics:        make([]*data.Metric[float64], 0),
+		Last:           make(map[string]float64),
+		Present:        make(map[string]bool),
+		Relations:      make(map[string]*GridRelation),
+		Regions:        make(map[string]uint8),
+		Authority:      make(map[string]float64),
+		Bound:          make(map[string]string),
+		PosX:           make(map[string]float64),
+		PosY:           make(map[string]float64),
 	}
 }
 
-// SetSettlementCriteria configures the warm-up period and stability streak required to settle.
-func (grid *Grid) SetSettlementCriteria(minObservations int64, requiredStableStreak int) {
-	grid.MinSettlementObservations = minObservations
-	grid.RequiredStableStreak = requiredStableStreak
-}
-
-// Settle manually locks the grid partition once training fragments have finished replaying.
+// Settle locks the current partition.
 func (grid *Grid) Settle() {
 	grid.Settled = true
 }
@@ -108,8 +100,8 @@ func (grid *Grid) Settle() {
 // ResetSettlement unlocks the grid if further training is required.
 func (grid *Grid) ResetSettlement() {
 	grid.Settled = false
-	grid.StablePartitionStreak = 0
-	grid.NoNewMetricsStreak = 0
+	grid.PartitionRun = 0
+	grid.LongestPartitionRun = 0
 }
 
 func (grid *Grid) Add(metric *data.Metric[float64]) {
@@ -205,15 +197,13 @@ func (grid *Grid) Region(label string) uint8 {
 }
 
 /*
-LitRegions generates the region token by identifying the N most "lit up"
-regions during reaction with the market tape. Each region's activity is the
-sum of absolute raw values of its constituent metrics in this measurement.
+LitRegions is the region token for this measurement alone. A region is lit
+when its activity is above the mean activity of the regions present here.
+Peers are not scored: they are not part of the stored measurement, so a token
+that included them could not be replayed.
 */
-func (grid *Grid) LitRegions(
-	measurement *data.Measurement[float64],
-	topN int,
-) []byte {
-	if measurement == nil || topN <= 0 {
+func (grid *Grid) LitRegions(measurement *data.Measurement[float64]) []byte {
+	if measurement == nil {
 		return nil
 	}
 
@@ -224,12 +214,14 @@ func (grid *Grid) LitRegions(
 	var present [256]bool
 
 	for key, metric := range measurement.Metrics {
-		label := metric.Label
-		if label == "" {
-			label = key
+		name := metric.Label
+
+		if name == "" {
+			name = key
 		}
 
-		region := grid.Regions[label]
+		region := grid.Regions[cellKey(measurement.Label, measurement.Source, name)]
+
 		if region == 0 {
 			continue
 		}
@@ -238,64 +230,66 @@ func (grid *Grid) LitRegions(
 		present[region] = true
 	}
 
-	for _, peer := range measurement.Peers {
-		if peer == nil {
-			continue
-		}
-
-		for key, metric := range peer.Metrics {
-			label := metric.Label
-			if label == "" {
-				label = key
-			}
-
-			region := grid.Regions[label]
-			if region == 0 {
-				continue
-			}
-
-			activity[region] += math.Abs(metric.Raw)
-			present[region] = true
-		}
-	}
-
 	type score struct {
 		region uint8
 		value  float64
 	}
 
 	scores := make([]score, 0, 256)
+	total := 0.0
 
 	for region := 1; region < 256; region++ {
-		if present[region] {
-			scores = append(scores, score{
-				region: uint8(region),
-				value:  activity[region],
-			})
+		if !present[region] {
+			continue
 		}
+
+		scores = append(scores, score{
+			region: uint8(region),
+			value:  activity[region],
+		})
+		total += activity[region]
 	}
 
-	slices.SortFunc(scores, func(a, b score) int {
-		switch {
-		case a.value > b.value:
+	if len(scores) == 0 {
+		return nil
+	}
+
+	slices.SortFunc(scores, func(left, right score) int {
+		if left.value > right.value {
 			return -1
-		case a.value < b.value:
-			return 1
-		default:
-			return int(a.region) - int(b.region)
 		}
+
+		if left.value < right.value {
+			return 1
+		}
+
+		return int(left.region) - int(right.region)
 	})
 
-	if len(scores) > topN {
-		scores = scores[:topN]
+	mean := total / float64(len(scores))
+	lit := make([]score, 0, len(scores))
+
+	for _, item := range scores {
+		if item.value > mean {
+			lit = append(lit, item)
+		}
 	}
 
-	token := make([]byte, len(scores))
-	for index := range scores {
-		token[index] = scores[index].region
+	if len(lit) == 0 {
+		lit = scores
+	}
+
+	token := make([]byte, len(lit))
+
+	for index := range lit {
+		token[index] = lit[index].region
 	}
 
 	return token
+}
+
+func cellKey(symbol, source, name string) string {
+	return symbol + "\x00" + source + "\x00" + name
 }
 
 func (grid *Grid) update(
@@ -330,31 +324,24 @@ func (grid *Grid) update(
 		baseAuthority = 1.0
 	}
 
-	encounteredNewMetric := false
-
 	for key, incoming := range measurement.Metrics {
-		label := incoming.Label
-		if label == "" {
-			label = key
+		name := incoming.Label
+
+		if name == "" {
+			name = key
 		}
 
+		label := cellKey(measurement.Label, measurement.Source, name)
 		current[label] = incoming.Raw
 		currentPresent[label] = true
 		grid.Authority[label] = baseAuthority
 
 		if grid.find(label) == nil {
-			encounteredNewMetric = true
 			metric := incoming
 			metric.Label = label
 			grid.Metrics = append(grid.Metrics, &metric)
 			grid.place(label)
 		}
-	}
-
-	if encounteredNewMetric {
-		grid.NoNewMetricsStreak = 0
-	} else {
-		grid.NoNewMetricsStreak++
 	}
 
 	labels := make([]string, 0, len(grid.Metrics))
@@ -563,19 +550,25 @@ func (grid *Grid) update(
 	grid.Observations++
 	nextPartition := grid.partitionKey()
 
-	if grid.Observations >= grid.MinSettlementObservations {
-		if nextPartition != "" && nextPartition == grid.Partition {
-			grid.StablePartitionStreak++
-		} else {
-			grid.StablePartitionStreak = 0
-			grid.Partition = nextPartition
+	if nextPartition == "" {
+		grid.PartitionRun = 0
+	}
+
+	if nextPartition != "" && nextPartition == grid.Partition {
+		grid.PartitionRun++
+	}
+
+	if nextPartition != "" && nextPartition != grid.Partition {
+		if grid.Partition != "" && grid.PartitionRun > grid.LongestPartitionRun {
+			grid.LongestPartitionRun = grid.PartitionRun
 		}
 
-		if grid.StablePartitionStreak >= grid.RequiredStableStreak || (len(grid.Regions) > 0 && int64(grid.NoNewMetricsStreak) >= grid.MinSettlementObservations) {
-			grid.Settled = true
-		}
-	} else {
 		grid.Partition = nextPartition
+		grid.PartitionRun = 1
+	}
+
+	if grid.LongestPartitionRun > 0 && grid.PartitionRun > grid.LongestPartitionRun {
+		grid.Settled = true
 	}
 
 	grid.writeCoordinates()
@@ -900,12 +893,13 @@ func (grid *Grid) decorate(
 	measurement *data.Measurement[float64],
 ) {
 	for key, incoming := range measurement.Metrics {
-		label := incoming.Label
-		if label == "" {
-			label = key
+		name := incoming.Label
+
+		if name == "" {
+			name = key
 		}
 
-		stored := grid.find(label)
+		stored := grid.find(cellKey(measurement.Label, measurement.Source, name))
 		if stored == nil {
 			continue
 		}
@@ -950,4 +944,96 @@ func pair(a, b string) string {
 		return a + "\x00" + b
 	}
 	return b + "\x00" + a
+}
+
+/*
+GridSnapshot is the frozen geometry and the per-series memory required to
+continue it. Cell keys are symbol, source, and metric name.
+*/
+type GridSnapshot struct {
+	Metrics             []*data.Metric[float64]  `json:"metrics"`
+	Settled             bool                     `json:"settled"`
+	Last                map[string]float64       `json:"last"`
+	Present             map[string]bool          `json:"present"`
+	Relations           map[string]*GridRelation `json:"relations"`
+	Regions             map[string]uint8         `json:"regions"`
+	Authority           map[string]float64       `json:"authority"`
+	Bound               map[string]string        `json:"bound"`
+	PosX                map[string]float64       `json:"pos_x"`
+	PosY                map[string]float64       `json:"pos_y"`
+	Partition           string                   `json:"partition"`
+	Observations        int64                    `json:"observations"`
+	PartitionRun        int                      `json:"partition_run"`
+	LongestPartitionRun int                      `json:"longest_partition_run"`
+}
+
+func (grid *Grid) Snapshot() ([]byte, error) {
+	grid.mu.RLock()
+	defer grid.mu.RUnlock()
+
+	encoded, err := json.Marshal(GridSnapshot{
+		Metrics:             grid.Metrics,
+		Settled:             grid.Settled,
+		Last:                grid.Last,
+		Present:             grid.Present,
+		Relations:           grid.Relations,
+		Regions:             grid.Regions,
+		Authority:           grid.Authority,
+		Bound:               grid.Bound,
+		PosX:                grid.PosX,
+		PosY:                grid.PosY,
+		Partition:           grid.Partition,
+		Observations:        grid.Observations,
+		PartitionRun:        grid.PartitionRun,
+		LongestPartitionRun: grid.LongestPartitionRun,
+	})
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"grid: encode snapshot",
+			err,
+		))
+	}
+
+	return encoded, nil
+}
+
+func (grid *Grid) RestoreSnapshot(encoded []byte) error {
+	var snapshot GridSnapshot
+
+	if err := json.Unmarshal(encoded, &snapshot); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"grid: decode snapshot",
+			err,
+		))
+	}
+
+	if snapshot.Last == nil || snapshot.Present == nil || snapshot.Relations == nil || snapshot.Regions == nil || snapshot.Authority == nil || snapshot.Bound == nil || snapshot.PosX == nil || snapshot.PosY == nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"grid: snapshot is missing a series map",
+			nil,
+		))
+	}
+
+	grid.mu.Lock()
+	defer grid.mu.Unlock()
+
+	grid.Metrics = snapshot.Metrics
+	grid.Settled = snapshot.Settled
+	grid.Last = snapshot.Last
+	grid.Present = snapshot.Present
+	grid.Relations = snapshot.Relations
+	grid.Regions = snapshot.Regions
+	grid.Authority = snapshot.Authority
+	grid.Bound = snapshot.Bound
+	grid.PosX = snapshot.PosX
+	grid.PosY = snapshot.PosY
+	grid.Partition = snapshot.Partition
+	grid.Observations = snapshot.Observations
+	grid.PartitionRun = snapshot.PartitionRun
+	grid.LongestPartitionRun = snapshot.LongestPartitionRun
+	return nil
 }

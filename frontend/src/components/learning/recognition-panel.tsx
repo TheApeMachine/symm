@@ -166,7 +166,7 @@ export const RecognitionPanel = React.memo(() => (
 									data-l="frozen-prediction"
 									className="px-2 py-0.5 rounded text-[10px] font-bold bg-(--surface) border border-(--line) text-(--acc)"
 								>
-									<span data-metric="action" data-format="action">WAIT</span>
+									<span data-metric="action" data-format="action">ABSTAIN</span>
 								</span>
 							</div>
 							<div className="flex justify-between items-center">

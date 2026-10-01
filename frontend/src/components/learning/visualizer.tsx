@@ -58,7 +58,7 @@ export const LearningVisualizer = ({
 						<span>
 							Policy choice:{" "}
 							<strong className="text-(--acc)" data-metric="action" data-format="action">
-								WAIT
+								ABSTAIN
 							</strong>
 						</span>
 						<span>

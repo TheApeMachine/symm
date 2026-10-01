@@ -109,6 +109,31 @@ func (catalog *Catalog) scan(
 	}
 }
 
+// Collect reads every measurement for one epoch. The scan predicate is the epoch.
+func (catalog *Catalog) Collect(ctx context.Context, tableName string, epoch int64) ([]*data.Measurement[float64], error) {
+	if catalog == nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"catalog: catalog is required",
+			nil,
+		))
+	}
+
+	rows := make([]*data.Measurement[float64], 0)
+
+	for measurement, err := range catalog.scan(ctx, tableName, epoch, nil, 0) {
+		if err != nil {
+			return nil, err
+		}
+
+		if measurement != nil {
+			rows = append(rows, measurement)
+		}
+	}
+
+	return rows, nil
+}
+
 // Scan exposes the existing display scan; replay uses scan directly to propagate failures.
 func (catalog *Catalog) Scan(ctx context.Context, tableName string, epoch int64,
 	filter iceberg.BooleanExpression, limit int, fields ...string,

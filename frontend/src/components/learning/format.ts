@@ -51,6 +51,26 @@ export const action = (kind: string, power: number, reduce: boolean) => {
 	return `${kind}${reduce ? " ↓" : ""} ·1/${2 ** power}`;
 };
 
+/* prediction names an issued action. A missing or zero reading is abstention. */
+export const prediction = (raw: number | undefined) => {
+	if (raw === 1) return "ENTER";
+	if (raw === 2) return "EXIT";
+	return "ABSTAIN";
+};
+
+/* outcome names a resolved excursion. Direction is the record; the type code is the same fact when only a metric arrived. */
+export const outcome = (direction: string, typeCode: number) => {
+	if (direction === "up") return "UP";
+	if (direction === "down") return "DOWN";
+	if (direction === "chop") return "CHOP";
+	if (direction === "flat") return "FLAT";
+	if (typeCode === 1) return "UP";
+	if (typeCode === 2) return "DOWN";
+	if (typeCode === 3) return "CHOP";
+	if (typeCode === 4) return "FLAT";
+	return "";
+};
+
 /* rational formats exact account strings for display; the journal retains exact fractions. */
 export const rational = (value: string | undefined) => {
 	if (!value) return "unavailable";
