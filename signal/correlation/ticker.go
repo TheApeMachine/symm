@@ -13,6 +13,7 @@ import (
 	nmcorrelation "github.com/theapemachine/symm/nomagique/correlation"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/nomagique/temporal"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
@@ -51,8 +52,62 @@ func (ticker *Ticker) pipelineFor(symbol string) core.Primitive {
 		nmcorrelation.NewFold(),
 		nmcorrelation.NewHistory(),
 		nmcorrelation.NewRelative(),
-		nmcorrelation.NewCorrelationVelocity(),
-		nmcorrelation.NewEnergyVelocity(),
+		transport.NewFan(
+			data.NewAdapter(
+				temporal.NewVelocity(),
+				func(m *data.Measurement[float64]) temporal.Observation {
+					if rate, ok := m.LookupMetric("cohort_signed_correlation"); ok {
+						return temporal.Observation{Value: rate.Raw, At: m.At.UnixNano()}
+					}
+					return temporal.Observation{Value: 0, At: m.At.UnixNano()}
+				},
+				func(m *data.Measurement[float64], out temporal.VelocityReading) {
+					if out.Defined {
+						m.WriteMetric("correlation_velocity", out.Rate)
+					}
+				},
+			),
+			data.NewAdapter(
+				temporal.NewVelocity(),
+				func(m *data.Measurement[float64]) temporal.Observation {
+					if rate, ok := m.LookupMetric("relative_return_energy"); ok {
+						return temporal.Observation{Value: rate.Raw, At: m.At.UnixNano()}
+					}
+					return temporal.Observation{Value: 0, At: m.At.UnixNano()}
+				},
+				func(m *data.Measurement[float64], out temporal.VelocityReading) {
+					if out.Defined {
+						m.WriteMetric("relative_return_energy_velocity", out.Rate)
+					}
+				},
+			),
+		),
+		data.NewAdapter(
+			transport.NewPass(),
+			func(m *data.Measurement[float64]) *data.Measurement[float64] {
+				if len(m.Peers) > 0 {
+					var minPeerFrom int64
+					var first bool
+					for _, p := range m.Peers {
+						if !first || p.From.UnixNano() < minPeerFrom {
+							minPeerFrom = p.From.UnixNano()
+							first = true
+						}
+					}
+					m.WriteMetric("PeerFrom", float64(minPeerFrom)*1e-9)
+				}
+				
+				if val, ok := m.LookupMetric("return_energy_rate:measured"); ok {
+					m.WriteMetric("focal_return_energy_rate", val.Raw)
+				}
+				if val, ok := m.LookupMetric("peer_return_energy_rate"); ok {
+					m.WriteMetric("relative_cohort_return_energy", val.Raw)
+				}
+				
+				return m
+			},
+			func(m *data.Measurement[float64], out *data.Measurement[float64]) {},
+		),
 		data.NewFinalizer[float64](),
 	)
 

@@ -84,7 +84,7 @@ func (op *Quantity) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 
 			m.WriteMetric("trade_count:buy", buyCount)
 			m.WriteMetric("trade_count:sell", sellCount)
-			m.WriteMetric("trade_count", buyCount + sellCount)
+			m.WriteMetric("trade_count", buyCount+sellCount)
 			m.WriteMetric("executed_quantity:buy", buyTotal)
 			m.WriteMetric("executed_quantity:sell", sellTotal)
 			m.WriteMetric("gross_executed_quantity", gross)
@@ -92,7 +92,7 @@ func (op *Quantity) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			m.WriteMetric("cumulative_volume_delta", net)
 
 			if gross > 0 {
-				m.WriteMetric("signed_count_fraction", (buyCount - sellCount) / (buyCount + sellCount))
+				m.WriteMetric("signed_count_fraction", (buyCount-sellCount)/(buyCount+sellCount))
 			}
 
 			if !yield(arriving) {
@@ -185,7 +185,7 @@ func (op *Notional) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			m.WriteMetric("cumulative_notional_delta", net)
 
 			if tradeCount := m.GetMetric("trade_count").Raw; tradeCount > 0 {
-				m.WriteMetric("mean_trade_notional", gross / tradeCount)
+				m.WriteMetric("mean_trade_notional", gross/tradeCount)
 			}
 
 			if gross > 0 {
@@ -257,7 +257,7 @@ func (op *Rates) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 
 			m.From = op.from
 
-			m.WriteMetric("cvd_epoch_from", float64(op.from.UnixNano()) / float64(time.Second))
+			m.WriteMetric("cvd_epoch_from", float64(op.from.UnixNano())/float64(time.Second))
 
 			elapsed := m.At.Sub(op.from).Seconds()
 
@@ -273,11 +273,11 @@ func (op *Rates) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			gross := m.GetMetric("gross_notional").Raw
 			net := m.GetMetric("net_notional").Raw
 
-			m.WriteMetric("trade_rate", tradeCount / elapsed)
-			m.WriteMetric("gross_notional_rate", gross / elapsed)
-			m.WriteMetric("net_notional_rate", net / elapsed)
-			m.WriteMetric("buy_notional_rate", m.GetMetric("aggressive_notional:buy").Raw / elapsed)
-			m.WriteMetric("sell_notional_rate", m.GetMetric("aggressive_notional:sell").Raw / elapsed)
+			m.WriteMetric("trade_rate", tradeCount/elapsed)
+			m.WriteMetric("gross_notional_rate", gross/elapsed)
+			m.WriteMetric("net_notional_rate", net/elapsed)
+			m.WriteMetric("buy_notional_rate", m.GetMetric("aggressive_notional:buy").Raw/elapsed)
+			m.WriteMetric("sell_notional_rate", m.GetMetric("aggressive_notional:sell").Raw/elapsed)
 
 			rate := net / elapsed
 			observation := temporal.Observation{Value: rate, At: m.At.UnixNano()}

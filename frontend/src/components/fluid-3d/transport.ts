@@ -4,6 +4,7 @@ import {
 	type FluidParticleFrame,
 	type FluidPhase,
 } from "./wire";
+import { hubBaseUrl } from "#/lib/hub";
 
 const manifoldChannel = "manifold";
 
@@ -19,11 +20,7 @@ const signalingURL = () => {
 	if (import.meta.env.VITE_SYMM_WEBRTC_URL?.trim()) {
 		return import.meta.env.VITE_SYMM_WEBRTC_URL.trim();
 	}
-	const host =
-		typeof window !== "undefined" && window.location.hostname
-			? window.location.hostname
-			: "127.0.0.1";
-	return `http://${host}:8765/webrtc/manifold`;
+	return `${hubBaseUrl()}/webrtc/manifold`;
 };
 
 const waitForIceGathering = (connection: RTCPeerConnection) => {

@@ -186,22 +186,15 @@ var (
 			wh := workbench.New()
 			defer wh.Close()
 
-			webrtcTee := ui.NewUITee(
-				ctx, "webrtcTee", 1,
-				func(measurement *data.Measurement[float64]) bool {
-					return types.Filters(measurement)
-				},
-			)
 
-			training := strategy.NewTraining(ctx, price, trader, catalog, wh, webrtcTee)
+
+			training := strategy.NewTraining(ctx, price, trader, catalog, wh, uiTee)
 
 			uiTee.Transition(nmruntime.READY)
 			// Start historical training loop which will wait for grid to settle
 			training.Run()
 
-			// webrtcTee was moved above
-
-			hub := ui.NewHub(ctx, catalog, uiTee, webrtcTee)
+			hub := ui.NewHub(ctx, catalog, uiTee)
 			hub.SetCognitionSource(training)
 
 			hub.Run()
@@ -268,7 +261,6 @@ var (
 				},
 				uiTee,
 				storeTee,
-				webrtcTee,
 			)
 
 			// Subscribe and seed while transports remain BUSY. Only a complete
@@ -294,7 +286,6 @@ var (
 			for _, runsys := range []nmruntime.RuntimeSystem{
 				uiTee,
 				storeTee,
-				webrtcTee,
 				hub,
 				training,
 				trader,
@@ -330,11 +321,7 @@ var (
 
 			manifoldSolver.Start()
 
-			transportErrors := make(chan error, 1)
 
-			go func() {
-				transportErrors <- hub.WebRTC.Run()
-			}()
 
 			// Every processing and off-ramp owner is ready before ingress opens.
 
@@ -474,8 +461,6 @@ var (
 				select {
 				case <-ctx.Done():
 					return ctx.Err()
-				case err := <-transportErrors:
-					return errnie.Error(errnie.Err(errnie.IO, "symm: WebRTC publisher stopped", err))
 				case err := <-drainErrors:
 					return errnie.Error(errnie.Err(
 						errnie.IO, "symm: catalog drain stopped", err,

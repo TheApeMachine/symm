@@ -1,6 +1,7 @@
 package tables
 
 import (
+	"fmt"
 	"errors"
 	"strconv"
 	"strings"
@@ -125,7 +126,7 @@ func fillMeasurements(
 			}
 			if measurement.Err != nil {
 				provenanceKey.Append("symm:error")
-				provenanceVal.Append(measurement.Err.Error())
+				provenanceVal.Append(fmt.Sprintf("%v", measurement.Err))
 			}
 			provenanceKey.Append("symm:estimated")
 			provenanceVal.Append(strconv.FormatBool(measurement.Estimated))
@@ -266,7 +267,7 @@ func ReadMeasurements(batch arrow.RecordBatch) ([]*data.Measurement[float64], er
 					continue
 				}
 
-				measurement.Provenance[key] = value
+				measurement.SetProvenance(key, value)
 			}
 		}
 

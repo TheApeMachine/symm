@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strconv"
 	"sync"
 	"time"
 	"unsafe"
@@ -12,9 +13,11 @@ import (
 
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/adaptive"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
@@ -142,6 +145,12 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 				m.WriteMetric("unfilled_residual_quantity:ask", askQty)
 
 				if state.hasPrev {
+					m.From = state.prevTime
+					m.WriteMetric("previous_touch_quantity:bid", state.prevBidQty)
+					m.WriteMetric("previous_touch_quantity:ask", state.prevAskQty)
+					m.EnsureMetadata()
+					m.SetMetadata("previous_level_disposition", "touch-only")
+
 					m.WriteMetric("previous_best_price:bid", state.prevBid)
 					m.WriteMetric("previous_best_price:ask", state.prevAsk)
 
@@ -171,11 +180,18 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 								m.WriteMetric("net_withdrawal_fraction:bid", withdrawn/state.prevBidQty)
 							}
 							if dt > 0 {
-								m.WriteMetric("retreat_rate:bid", withdrawn/dt)
+								m.WriteMetric("net_withdrawal_rate:bid", withdrawn/dt)
 							}
 						}
 						if bidQty > state.prevBidQty {
-							m.WriteMetric("net_replenished_quantity:bid", bidQty-state.prevBidQty)
+							replenished := bidQty - state.prevBidQty
+							m.WriteMetric("net_replenished_quantity:bid", replenished)
+							if state.prevBidQty > 0 {
+								m.WriteMetric("net_replenishment_fraction:bid", replenished/state.prevBidQty)
+							}
+							if dt > 0 {
+								m.WriteMetric("net_replenishment_rate:bid", replenished/dt)
+							}
 						}
 					}
 
@@ -195,11 +211,18 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 								m.WriteMetric("net_withdrawal_fraction:ask", withdrawn/state.prevAskQty)
 							}
 							if dt > 0 {
-								m.WriteMetric("retreat_rate:ask", withdrawn/dt)
+								m.WriteMetric("net_withdrawal_rate:ask", withdrawn/dt)
 							}
 						}
 						if askQty > state.prevAskQty {
-							m.WriteMetric("net_replenished_quantity:ask", askQty-state.prevAskQty)
+							replenished := askQty - state.prevAskQty
+							m.WriteMetric("net_replenished_quantity:ask", replenished)
+							if state.prevAskQty > 0 {
+								m.WriteMetric("net_replenishment_fraction:ask", replenished/state.prevAskQty)
+							}
+							if dt > 0 {
+								m.WriteMetric("net_replenishment_rate:ask", replenished/dt)
+							}
 						}
 					}
 				}
@@ -222,7 +245,110 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 			},
 			func(m *data.Measurement[float64], res *data.Measurement[float64]) {},
 		),
-		// 1. Finalize
+		// 1. Baselines
+		transport.NewFan(
+			data.NewAdapter(
+				adaptive.NewBaseline(adaptive.NewWindow()),
+				func(m *data.Measurement[float64]) float64 {
+					return m.GetMetric("net_withdrawal_fraction:bid").Raw
+				},
+				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
+					if out.HasPrior {
+						m.WriteMetric("withdrawal_fraction_baseline:bid", out.Baseline)
+						m.WriteMetric("withdrawal_fraction_divergence:bid", out.Residual)
+						m.WriteMetric("withdrawal_fraction_zscore:bid", out.ZScore)
+					}
+				},
+			),
+			data.NewAdapter(
+				adaptive.NewBaseline(adaptive.NewWindow()),
+				func(m *data.Measurement[float64]) float64 {
+					return m.GetMetric("net_withdrawal_fraction:ask").Raw
+				},
+				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
+					if out.HasPrior {
+						m.WriteMetric("withdrawal_fraction_baseline:ask", out.Baseline)
+						m.WriteMetric("withdrawal_fraction_divergence:ask", out.Residual)
+						m.WriteMetric("withdrawal_fraction_zscore:ask", out.ZScore)
+					}
+				},
+			),
+			data.NewAdapter(
+				adaptive.NewBaseline(adaptive.NewWindow()),
+				func(m *data.Measurement[float64]) float64 {
+					return m.GetMetric("retreat_fraction:bid").Raw
+				},
+				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
+					if out.HasPrior {
+						m.WriteMetric("retreat_fraction_baseline:bid", out.Baseline)
+						m.WriteMetric("retreat_fraction_zscore:bid", out.ZScore)
+					}
+				},
+			),
+			data.NewAdapter(
+				adaptive.NewBaseline(adaptive.NewWindow()),
+				func(m *data.Measurement[float64]) float64 {
+					return m.GetMetric("retreat_fraction:ask").Raw
+				},
+				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
+					if out.HasPrior {
+						m.WriteMetric("retreat_fraction_baseline:ask", out.Baseline)
+						m.WriteMetric("retreat_fraction_zscore:ask", out.ZScore)
+					}
+				},
+			),
+			data.NewAdapter(
+				adaptive.NewBaseline(adaptive.NewWindow()),
+				func(m *data.Measurement[float64]) float64 {
+					return m.GetMetric("net_replenishment_fraction:bid").Raw
+				},
+				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
+					if out.HasPrior {
+						m.WriteMetric("replenishment_fraction_baseline:bid", out.Baseline)
+					}
+				},
+			),
+			data.NewAdapter(
+				adaptive.NewBaseline(adaptive.NewWindow()),
+				func(m *data.Measurement[float64]) float64 {
+					return m.GetMetric("net_replenishment_fraction:ask").Raw
+				},
+				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
+					if out.HasPrior {
+						m.WriteMetric("replenishment_fraction_baseline:ask", out.Baseline)
+					}
+				},
+			),
+			data.NewAdapter(
+				statistic.NewJoint(4),
+				func(m *data.Measurement[float64]) statistic.JointInput {
+					wb := m.GetMetric("withdrawal_fraction_divergence:bid").Raw
+					wa := m.GetMetric("withdrawal_fraction_divergence:ask").Raw
+					rb := m.GetMetric("retreat_fraction_zscore:bid").Raw
+					ra := m.GetMetric("retreat_fraction_zscore:ask").Raw
+					if wb == 0 && wa == 0 && rb == 0 && ra == 0 {
+						return statistic.JointInput{Values: nil}
+					}
+					return statistic.JointInput{Values: []float64{wb, wa, rb, ra}}
+				},
+				func(m *data.Measurement[float64], out statistic.JointReading) {
+					if out.SNRDefined {
+						m.WriteMetric("SNR", out.SNR)
+						m.EnsureMetadata()
+						m.SetMetadata(data.MetadataMahalanobisSNR, strconv.FormatFloat(out.SNR, 'f', -1, 64))
+					}
+					if len(out.Channels) > 0 {
+						n := out.Channels[0].Count
+						maturity := 0.0
+						if n > 1 {
+							maturity = 1.0 - (1.0 / n)
+						}
+						m.WriteMetric("Maturity", maturity)
+					}
+				},
+			),
+		),
+		// 2. Finalize
 		data.NewFinalizer[float64](),
 	)
 

@@ -77,7 +77,7 @@ func (op *ChangeCounts) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointe
 						m.Provenance = make(map[string]string, 1)
 					}
 
-					m.Provenance["extreme_key"] = extremeKey
+					m.SetProvenance("extreme_key", extremeKey)
 				}
 			}
 

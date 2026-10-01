@@ -12,6 +12,8 @@ import (
 	"github.com/theapemachine/symm/nomagique/data"
 	nmderivatives "github.com/theapemachine/symm/nomagique/derivatives"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/nomagique/adaptive"
+	"github.com/theapemachine/symm/nomagique/temporal"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
@@ -48,6 +50,50 @@ func (ticker *Ticker) pipelineFor(symbol string) core.Primitive {
 	pipeline := nomagique.NewNumber(
 		nmderivatives.NewGate(),
 		nmderivatives.NewBasis(),
+		transport.NewFan(
+			data.NewAdapter(
+				adaptive.NewBaseline(adaptive.NewWindow()),
+				func(m *data.Measurement[float64]) float64 {
+					if v, ok := m.LookupMetric("open_interest_growth"); ok {
+						return v.Raw
+					}
+					return 0
+				},
+				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
+					if out.HasPrior {
+						m.WriteMetric("open_interest_growth_zscore", out.ZScore)
+					}
+				},
+			),
+			data.NewAdapter(
+				adaptive.NewBaseline(adaptive.NewWindow()),
+				func(m *data.Measurement[float64]) float64 {
+					if v, ok := m.LookupMetric("return_gap"); ok {
+						return v.Raw
+					}
+					return 0
+				},
+				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
+					if out.HasPrior {
+						m.WriteMetric("return_gap_zscore", out.ZScore)
+					}
+				},
+			),
+			data.NewAdapter(
+				temporal.NewVelocity(),
+				func(m *data.Measurement[float64]) temporal.Observation {
+					if rate, ok := m.LookupMetric("open_interest_growth"); ok {
+						return temporal.Observation{Value: rate.Raw, At: m.At.UnixNano()}
+					}
+					return temporal.Observation{Value: 0, At: m.At.UnixNano()}
+				},
+				func(m *data.Measurement[float64], out temporal.VelocityReading) {
+					if out.Defined {
+						m.WriteMetric("open_interest_growth_velocity", out.Rate)
+					}
+				},
+			),
+		),
 		data.NewFinalizer[float64](),
 	)
 

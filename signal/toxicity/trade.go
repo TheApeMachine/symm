@@ -15,6 +15,7 @@ import (
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
@@ -48,18 +49,11 @@ func (trade *Trade) pipelineFor(symbol string) core.Primitive {
 		matchedAskQty      float64
 		touchFillBidQty    float64
 		touchFillAskQty    float64
-		hasPrevTime        bool
-		prevTime           time.Time
-		bidBaseline        core.Primitive
-		askBaseline        core.Primitive
-		bidFractionSamples int
-		askFractionSamples int
+		hasPrevTime     bool
+		prevTime        time.Time
 	}
 
-	state := &tradeState{
-		bidBaseline: adaptive.NewBaseline(adaptive.NewWindow()),
-		askBaseline: adaptive.NewBaseline(adaptive.NewWindow()),
-	}
+	state := &tradeState{}
 
 	pipeline := nomagique.NewNumber(
 		data.NewAdapter(
@@ -205,22 +199,6 @@ func (trade *Trade) pipelineFor(symbol string) core.Primitive {
 				state.prevTime = input.At
 				state.hasPrevTime = true
 
-				var bidReading, askReading adaptive.BaselineReading
-
-				if bidFillFrac > 0 {
-					for rPtr := range state.bidBaseline.Next(transport.NewOne(unsafe.Pointer(&bidFillFrac)).Next(nil)) {
-						bidReading = *(*adaptive.BaselineReading)(rPtr)
-					}
-					state.bidFractionSamples++
-				}
-
-				if askFillFrac > 0 {
-					for rPtr := range state.askBaseline.Next(transport.NewOne(unsafe.Pointer(&askFillFrac)).Next(nil)) {
-						askReading = *(*adaptive.BaselineReading)(rPtr)
-					}
-					state.askFractionSamples++
-				}
-
 				m.WriteMetric("bracket_trade_quantity", state.bracketQty)
 				m.WriteMetric("matched_touch_trade_quantity:bid", state.matchedBidQty)
 				m.WriteMetric("matched_touch_trade_quantity:ask", state.matchedAskQty)
@@ -234,44 +212,78 @@ func (trade *Trade) pipelineFor(symbol string) core.Primitive {
 					m.WriteMetric("touch_fill_rate:ask", askRate)
 				}
 
-				if bidFillFrac > 0 && bidReading.HasPrior {
-					m.WriteMetric("fill_fraction_baseline:bid", bidReading.Baseline)
-					m.WriteMetric("fill_fraction_divergence:bid", bidReading.Residual)
-					m.WriteMetric("fill_fraction_zscore:bid", bidReading.ZScore)
-				}
-
-				if askFillFrac > 0 && askReading.HasPrior {
-					m.WriteMetric("fill_fraction_baseline:ask", askReading.Baseline)
-					m.WriteMetric("fill_fraction_divergence:ask", askReading.Residual)
-					m.WriteMetric("fill_fraction_zscore:ask", askReading.ZScore)
-				}
-
-				m.EnsureMetadata()
-
-				if state.bidFractionSamples >= 3 {
-					m.SetMetadata(data.MetadataSupport, strconv.FormatFloat(bidReading.Count, 'f', -1, 64))
-					m.SetMetadata(data.MetadataDivergence, strconv.FormatFloat(bidReading.Residual, 'f', -1, 64))
-
-					if bidReading.VarianceDefined {
-						m.SetMetadata(data.MetadataNoiseVariance, strconv.FormatFloat(bidReading.Variance, 'f', -1, 64))
-					}
-				}
-
-				if state.askFractionSamples >= 3 {
-					m.SetMetadata(data.MetadataSupport, strconv.FormatFloat(askReading.Count, 'f', -1, 64))
-					m.SetMetadata(data.MetadataDivergence, strconv.FormatFloat(askReading.Residual, 'f', -1, 64))
-
-					if askReading.VarianceDefined {
-						m.SetMetadata(data.MetadataNoiseVariance, strconv.FormatFloat(askReading.Variance, 'f', -1, 64))
-					}
-				}
-
 				m.Label = input.Label
 				m.At = input.At
 				return m
 			},
 			func(m *data.Measurement[float64], out *data.Measurement[float64]) {},
 		),
+		transport.NewFan(
+			data.NewAdapter(
+				adaptive.NewBaseline(adaptive.NewWindow()),
+				func(m *data.Measurement[float64]) float64 {
+					return m.GetMetric("touch_fill_fraction:bid").Raw
+				},
+				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
+					if out.HasPrior {
+						m.WriteMetric("fill_fraction_baseline:bid", out.Baseline)
+						m.WriteMetric("fill_fraction_divergence:bid", out.Residual)
+						m.WriteMetric("fill_fraction_zscore:bid", out.ZScore)
+					}
+					m.EnsureMetadata()
+					m.SetMetadata(data.MetadataSupport, strconv.FormatFloat(out.Count, 'f', -1, 64))
+					if out.VarianceDefined {
+						m.SetMetadata(data.MetadataNoiseVariance, strconv.FormatFloat(out.Variance, 'f', -1, 64))
+					}
+				},
+			),
+			data.NewAdapter(
+				adaptive.NewBaseline(adaptive.NewWindow()),
+				func(m *data.Measurement[float64]) float64 {
+					return m.GetMetric("touch_fill_fraction:ask").Raw
+				},
+				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
+					if out.HasPrior {
+						m.WriteMetric("fill_fraction_baseline:ask", out.Baseline)
+						m.WriteMetric("fill_fraction_divergence:ask", out.Residual)
+						m.WriteMetric("fill_fraction_zscore:ask", out.ZScore)
+					}
+				},
+			),
+			data.NewAdapter(
+				statistic.NewJoint(2),
+				func(m *data.Measurement[float64]) statistic.JointInput {
+					b := 0.0
+					if v, ok := m.LookupMetric("fill_fraction_divergence:bid"); ok {
+						b = v.Raw
+					}
+					a := 0.0
+					if v, ok := m.LookupMetric("fill_fraction_divergence:ask"); ok {
+						a = v.Raw
+					}
+					if b == 0 && a == 0 {
+						return statistic.JointInput{Values: nil}
+					}
+					return statistic.JointInput{Values: []float64{b, a}}
+				},
+				func(m *data.Measurement[float64], out statistic.JointReading) {
+					if out.SNRDefined {
+						m.WriteMetric("SNR", out.SNR)
+						m.EnsureMetadata()
+						m.SetMetadata(data.MetadataMahalanobisSNR, strconv.FormatFloat(out.SNR, 'f', -1, 64))
+					}
+					if len(out.Channels) > 0 {
+						n := out.Channels[0].Count
+						maturity := 0.0
+						if n > 1 {
+							maturity = 1.0 - (1.0 / n)
+						}
+						m.WriteMetric("Maturity", maturity)
+					}
+				},
+			),
+		),
+		data.NewFinalizer[float64](),
 	)
 
 	actual, _ := trade.pipelines.LoadOrStore(symbol, pipeline)

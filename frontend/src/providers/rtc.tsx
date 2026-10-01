@@ -12,6 +12,7 @@ import {
 import { Message } from "#/providers/telemetry/telemetry/message";
 import { MeasurementsFrame } from "#/providers/telemetry/telemetry/measurements-frame";
 import { dispatchMeasurements } from "#/providers/websocket";
+import { hubBaseUrl } from "#/lib/hub";
 
 const telemetryChannel = "telemetry";
 
@@ -32,11 +33,7 @@ const signalingURL = () => {
 	if (import.meta.env.VITE_SYMM_WEBRTC_URL?.trim()) {
 		return import.meta.env.VITE_SYMM_WEBRTC_URL.trim();
 	}
-	const host =
-		typeof window !== "undefined" && window.location.hostname
-			? window.location.hostname
-			: "127.0.0.1";
-	return `http://${host}:8765/webrtc/manifold`;
+	return `${hubBaseUrl()}/webrtc/manifold`;
 };
 
 const setTransport = (
@@ -145,9 +142,7 @@ export const RtcFeed = () => {
 
 			destroy();
 
-			const connection = new RTCPeerConnection({
-				iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
-			});
+			const connection = new RTCPeerConnection();
 			peer = connection;
 
 			// The transport is healthy only once both data channels reach OPEN.

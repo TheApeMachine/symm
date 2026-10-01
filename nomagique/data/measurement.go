@@ -168,6 +168,58 @@ func (m *Measurement[T]) RangeMetadata(f func(key, value string) bool) {
 	}
 }
 
+func (m *Measurement[T]) EnsureProvenance() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.Provenance == nil {
+		m.Provenance = make(map[string]string)
+	}
+}
+
+func (m *Measurement[T]) GetProvenance(key string) (string, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if m.Provenance == nil {
+		return "", false
+	}
+
+	val, ok := m.Provenance[key]
+	return val, ok
+}
+
+func (m *Measurement[T]) SetProvenance(key, value string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.Provenance == nil {
+		m.Provenance = make(map[string]string)
+	}
+
+	m.Provenance[key] = value
+}
+
+func (m *Measurement[T]) DeleteProvenance(key string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.Provenance != nil {
+		delete(m.Provenance, key)
+	}
+}
+
+func (m *Measurement[T]) RangeProvenance(f func(key, value string) bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	for k, v := range m.Provenance {
+		if !f(k, v) {
+			break
+		}
+	}
+}
+
 // Facts extracts QualityFacts from Metadata safely under RLock.
 func (m *Measurement[T]) Facts() QualityFacts {
 	if m == nil {
@@ -540,6 +592,7 @@ func (op *Finalizer[Value]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Po
 				})
 
 				for k, v := range updates {
+					v = v.Write(v.Raw)
 					measurement.SetMetric(k, v)
 				}
 

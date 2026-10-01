@@ -698,14 +698,14 @@ func (solver *Solver) publishReturns(
 		return
 	}
 
-	measurement.Provenance["calibrated"] = "false"
+	measurement.SetProvenance("calibrated", "false")
 	if out.Calibrated {
-		measurement.Provenance["calibrated"] = "true"
+		measurement.SetProvenance("calibrated", "true")
 	}
 
-	measurement.Provenance["supported_horizon"] = fmt.Sprintf("%d", out.SupportedHorizon)
-	measurement.Provenance["resolved_steps"] = fmt.Sprintf("%d", out.ResolvedSteps)
-	measurement.Provenance["confidence"] = fmt.Sprintf("%f", out.Confidence)
+	measurement.SetProvenance("supported_horizon", fmt.Sprintf("%d", out.SupportedHorizon))
+	measurement.SetProvenance("resolved_steps", fmt.Sprintf("%d", out.ResolvedSteps))
+	measurement.SetProvenance("confidence", fmt.Sprintf("%f", out.Confidence))
 
 	if out.Reading != nil {
 		measurement.SetMetric("energy", data.Metric[float64]{
@@ -729,36 +729,36 @@ func (solver *Solver) publishReturns(
 	// Add forward curve as indexed metrics
 	for i, val := range out.ForwardCurve {
 		label := fmt.Sprintf("forward_curve_%d", i)
-		measurement.Metrics[label] = data.Metric[float64]{
+		measurement.SetMetric(label, data.Metric[float64]{
 			Label: label,
 			Raw:   val,
-		}
+		})
 	}
 
 	// Add latent state as indexed metrics if needed
 	if out.Reading != nil {
 		for i, val := range out.Reading.Latent {
 			label := fmt.Sprintf("latent_%d", i)
-			measurement.Metrics[label] = data.Metric[float64]{
+			measurement.SetMetric(label, data.Metric[float64]{
 				Label: label,
 				Raw:   val,
-			}
+			})
 		}
 
 		for i, layer := range out.Reading.Layers {
 			for j, val := range layer.State {
 				label := fmt.Sprintf("layer_%d_state_%d", i, j)
-				measurement.Metrics[label] = data.Metric[float64]{
+				measurement.SetMetric(label, data.Metric[float64]{
 					Label: label,
 					Raw:   val,
-				}
+				})
 			}
 			for j, val := range layer.Prediction {
 				label := fmt.Sprintf("layer_%d_prediction_%d", i, j)
-				measurement.Metrics[label] = data.Metric[float64]{
+				measurement.SetMetric(label, data.Metric[float64]{
 					Label: label,
 					Raw:   val,
-				}
+				})
 			}
 		}
 	}

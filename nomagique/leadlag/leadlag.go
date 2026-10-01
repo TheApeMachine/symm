@@ -88,7 +88,7 @@ func (op *Gate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 					m.Provenance = make(map[string]string, 1)
 				}
 
-				m.Provenance["last_trade_price_state"] = "unobserved"
+				m.SetProvenance("last_trade_price_state", "unobserved")
 			}
 
 			if !yield(arriving) {
@@ -351,8 +351,8 @@ func (op *Cross) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			if m.Provenance == nil {
 				m.Provenance = make(map[string]string, 2)
 			}
-			m.Provenance["peer"] = selection
-			m.Provenance["pair_diagnostics_selection"] = "last_defined_peer_lexicographic"
+			m.SetProvenance("peer", selection)
+			m.SetProvenance("pair_diagnostics_selection", "last_defined_peer_lexicographic")
 
 			resolution := selectedPair.Spacing * 1e-9
 

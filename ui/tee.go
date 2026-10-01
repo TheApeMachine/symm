@@ -119,3 +119,70 @@ func (tee *UITee) Next() unsafe.Pointer {
 
 	return unsafe.Pointer(&measurements)
 }
+
+type ManifoldTee struct {
+	*runtime.System
+	queue     *lf.Queue[*data.Measurement[float64]]
+	filters   []func(measurement *data.Measurement[float64]) bool
+}
+
+func NewManifoldTee(
+	ctx context.Context,
+	label string,
+	filters ...func(measurement *data.Measurement[float64]) bool,
+) *ManifoldTee {
+	if len(filters) == 0 {
+		filters = []func(*data.Measurement[float64]) bool{types.Filters}
+	}
+
+	tee := &ManifoldTee{
+		queue:     lf.NewQueue[*data.Measurement[float64]](),
+		filters:   filters,
+	}
+
+	tee.System = runtime.NewSystem(ctx, label, tee)
+	return tee
+}
+
+func (tee *ManifoldTee) Push(measurement *data.Measurement[float64]) {
+	if tee.Status() != runtime.READY {
+		return
+	}
+
+	if measurement == nil {
+		return
+	}
+
+	for _, filter := range tee.filters {
+		if !filter(measurement) {
+			return
+		}
+	}
+
+	tee.queue.Enqueue(measurement.Clone())
+}
+
+func (tee *ManifoldTee) Next() unsafe.Pointer {
+	if tee.Status() != runtime.READY {
+		return nil
+	}
+
+	// We only process one measurement at a time, since each one yields one manifold frame
+	measurement, ok := tee.queue.Dequeue()
+	if !ok || measurement == nil {
+		return nil
+	}
+
+	if measurement.Result == nil {
+		return nil
+	}
+
+	if manifoldState, ok := measurement.Result.(*types.ManifoldState); ok {
+		payload, err := types.EncodeManifold(manifoldState)
+		if err == nil && payload != nil {
+			return unsafe.Pointer(&payload)
+		}
+	}
+
+	return nil
+}

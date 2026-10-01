@@ -76,7 +76,7 @@ func TestMeasurementClone(t *testing.T) {
 		})
 		measurement.Label = "BTC/USD"
 		measurement.SetMetadata("peer-interest", "*")
-		measurement.Provenance["channel"] = "ticker"
+		measurement.SetProvenance("channel", "ticker")
 		measurement.Peers = []*Measurement[float64]{peer}
 		measurement.WriteMetric("bid", 100)
 
@@ -105,7 +105,7 @@ func TestMeasurementPull(t *testing.T) {
 			"volume": NewMetric[float64]("volume", UnitCount, TimescaleInstantaneous, 0, 1),
 		})
 		feed.Label = "ETH/USD"
-		feed.Provenance["side"] = "buy"
+		feed.SetProvenance("side", "buy")
 		feed.WriteMetric("bid", 10)
 		feed.WriteMetric("ask", 11)
 		feed.WriteMetric("volume", 5)

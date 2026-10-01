@@ -76,9 +76,7 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 						nil,
 					)
 				} else if bid > 0 && ask > 0 {
-					if m.Metrics == nil {
-						m.Metrics = make(map[string]data.Metric[float64])
-					}
+
 					m.WriteMetric("best_bid", bid)
 					m.WriteMetric("best_ask", ask)
 				}

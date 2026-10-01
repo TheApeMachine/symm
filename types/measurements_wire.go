@@ -61,7 +61,7 @@ func MeasurementToWire(measurement *data.Measurement[float64], alloc data.Alloca
 			continue
 		}
 
-		if _, exists := measurement.Provenance[key]; !exists {
+		if _, exists := measurement.GetProvenance(key); !exists {
 			ns := data.New[wire.NamedStringT](alloc)
 			ns.Name = key
 			ns.Value = val

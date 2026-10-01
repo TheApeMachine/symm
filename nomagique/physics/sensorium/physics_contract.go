@@ -3,6 +3,7 @@ package sensorium
 import (
 	"errors"
 	"fmt"
+	"log"
 	"math"
 
 	"github.com/theapemachine/errnie"
@@ -295,6 +296,10 @@ func advanceCoupled(request float64, controls PhysicsControls, snapshot func() f
 			if err == nil {
 				break
 			}
+
+			importLog := "log"
+			_ = importLog // Ensure log is imported
+			log.Printf("[DEBUG] advanceCoupled: attempt failed retry=%d err=%v dt=%g", retry, err, dt)
 
 			rollbackAttempt()
 

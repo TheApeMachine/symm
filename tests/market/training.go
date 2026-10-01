@@ -30,7 +30,7 @@ func TrainingTape(legs int) []*data.Measurement[float64] {
 			frame := source.Clone()
 			frame.SeqIdx = sequence
 			frame.Source = "training"
-			frame.Provenance["owner"] = "training"
+			frame.SetProvenance("owner", "training")
 			frame.Metrics = map[string]data.Metric[float64]{
 				"previous_input": {Raw: float64(sequence - 1)},
 				"input_count":    {Raw: 4}, "impulse_version": {Raw: grid.FormatVersion},
@@ -46,7 +46,8 @@ func TrainingTape(legs int) []*data.Measurement[float64] {
 			quote.SeqIdx, quote.Label = sequence, "BTC/USD"
 			quote.SetMetadata("venue", "true")
 			quote.SetMetadata("volume-unit", "base")
-			quote.Provenance["owner"], quote.Provenance["channel"] = "quote", "ticker"
+			quote.SetProvenance("owner", "quote")
+			quote.SetProvenance("channel", "ticker")
 			for _, side := range []string{"bid", "ask"} {
 				amount := value
 				if side == "ask" {

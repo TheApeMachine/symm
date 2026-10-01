@@ -31,7 +31,7 @@ func (op *Gate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			m := *(**data.Measurement[float64])(arriving)
-			side, sided := m.Provenance["side"]
+			side, sided := m.GetProvenance("side")
 
 			if !sided || (side != "buy" && side != "sell") {
 				m.Err = fmt.Errorf(

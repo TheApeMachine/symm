@@ -25,7 +25,7 @@ func ImpulseTape(symbol string, legs int) []*data.Measurement[float64] {
 		for _, name := range []string{"public", "direct", "inverse"} {
 			observation := data.NewMeasurement[float64](name, nil)
 			observation.Label, observation.At, observation.SeqIdx = symbol, step.EventTime, frame.SeqIdx
-			observation.Provenance["owner"] = name
+			observation.SetProvenance("owner", name)
 			observation.Maturity = 1
 			value := step.ExecutableBid
 
@@ -39,7 +39,7 @@ func ImpulseTape(symbol string, legs int) []*data.Measurement[float64] {
 				quantity := decimal.NewFromInt64(int64(index%2 + 1))
 				observation.SetMetadata("venue", "true")
 				observation.SetMetadata("volume-unit", "base")
-				observation.Provenance["channel"] = "trade"
+				observation.SetProvenance("channel", "trade")
 				observation.SetMetric("qty", data.Metric[float64]{Label: "qty", Raw: quantity.Float64(), Exact: quantity})
 			}
 

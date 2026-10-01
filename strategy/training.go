@@ -7,7 +7,6 @@ import (
 
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/hindsight/tables"
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/cognition"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
@@ -31,8 +30,9 @@ type Training struct {
 	trader    *Trader
 	catalog   *tables.Catalog
 	warehouse *workbench.Warehouse
-	webrtc    runtime.Tee
+	tee       runtime.Tee
 	pipeline  core.Primitive
+	signature []byte
 }
 
 func NewTraining(
@@ -41,7 +41,7 @@ func NewTraining(
 	trader *Trader,
 	catalog *tables.Catalog,
 	warehouse *workbench.Warehouse,
-	webrtc runtime.Tee,
+	tee runtime.Tee,
 ) *Training {
 	grid := store.NewGrid()
 	engine := cognition.NewEngine(cognition.Config{})
@@ -53,46 +53,12 @@ func NewTraining(
 		trader:    trader,
 		catalog:   catalog,
 		warehouse: warehouse,
-		webrtc:    webrtc,
+		tee:       tee,
 	}
 
-	// The pipeline for training consists of the Grid and an Adapter that
-	// transforms the Grid's LitRegions into cognitive observations.
-	training.pipeline = nomagique.NewNumber(
-		grid,
-		data.NewAdapter(
-			engine,
-			func(m *data.Measurement[float64]) *cognition.Command {
-				if m == nil || !grid.Settled {
-					return nil
-				}
-
-				token := grid.LitRegions(m, 3)
-
-				if len(token) == 0 {
-					return nil
-				}
-
-				var classBytes []byte
-				var graded bool
-
-				if class, ok := m.GetMetadata("ground_truth"); ok && class != "" {
-					classBytes = []byte(class)
-					graded = true
-				}
-
-				return &cognition.Command{
-					Observe: &cognition.Association{
-						Context:  token,
-						Class:    classBytes,
-						Graded:   graded,
-						Feedback: 1.0,
-					},
-				}
-			},
-			func(m *data.Measurement[float64], res *cognition.Result) {},
-		),
-	)
+	// The pipeline for training consists of just the Grid in the primary stage.
+	// The cognitive observations are handled manually using temporal signatures.
+	training.pipeline = grid
 
 	// Set the status to INIT to indicate we need to build the grid until it
 	// has formed stable regions, and is frozen and checkpointed.
@@ -118,27 +84,32 @@ func (training *Training) Step(
 		return nil
 	}
 
-	if training.Status() == runtime.INIT {
+	if !training.grid.Settled {
 		// During INIT, we feed real-time measurements to the pipeline to train the grid.
 		for out := range training.pipeline.Next(data.NewValue(measurement)) {
 			_ = out
 		}
-
-		if training.grid.Settled {
-			// Grid has frozen! Checkpoint and transition to READY.
-			// The grid will no longer mutate on Update().
+		// We still allow Transition(READY) to be called to notify anything waiting on the status.
+		if training.grid.Settled && training.Status() != runtime.READY {
 			training.Transition(runtime.READY)
 		}
-	} else if training.Status() == runtime.READY {
+	} else {
 		// Secondary stage: live prediction and paper trading against live tape!
 		token := training.grid.LitRegions(measurement, 3)
 
 		if len(token) > 0 {
-			// In fully matured state, we ask engine to Evaluate token and pass to trader
-			// For now, we simulate sending the evaluate command:
-			evalCmd := &cognition.Command{
+			training.signature = append(training.signature, token...)
+			training.signature = append(training.signature, 0)
+			
+			// Prevent signature from growing infinitely
+			if len(training.signature) > 1024 {
+				training.signature = training.signature[len(training.signature)-512:]
+			}
+
+			// In fully matured state, we ask engine to Evaluate sequence and pass to trader
+			evalCmd := cognition.Command{
 				Evaluate: &cognition.Question{
-					Context: token,
+					Context: training.signature,
 				},
 			}
 
@@ -146,6 +117,19 @@ func (training *Training) Step(
 				eval := (*cognition.Evaluation)(out)
 
 				if eval != nil {
+					measurement.EnsureMetadata()
+					if eval.WinnerClass != "" {
+						var prediction float64
+						if eval.WinnerClass == string(cognition.ActionEnter) {
+							prediction = 1
+						} else if eval.WinnerClass == string(cognition.ActionExit) {
+							prediction = 2
+						}
+						measurement.WriteMetric("frozen_prediction", prediction)
+						measurement.SetMetadata("predicted_action", eval.WinnerClass)
+						measurement.SetMetadata("predicted_confidence", fmt.Sprintf("%f", eval.Confidence))
+					}
+
 					if eval.WinnerClass == string(
 						cognition.ActionEnter,
 					) || eval.WinnerClass == string(
@@ -160,6 +144,23 @@ func (training *Training) Step(
 				}
 			}
 		}
+		
+		// Pass through the frozen grid to decorate metrics for the UI visualization
+		for out := range training.pipeline.Next(data.NewValue(measurement)) {
+			_ = out
+		}
+	}
+
+	if training.tee != nil {
+		measurement.EnsureMetadata()
+		if !training.grid.Settled {
+			measurement.WriteMetric("stage_code", 0.0) // MODEL DEVELOPMENT
+		} else {
+			measurement.WriteMetric("stage_code", 2.0) // FORWARD PAPER LEARNING
+		}
+		// In Step, the source should be real-time
+		measurement.Source = "training:live"
+		training.tee.Push(measurement)
 	}
 
 	return measurement
@@ -192,7 +193,7 @@ func (training *Training) Run() {
 			default:
 			}
 
-			if training.Status() != runtime.READY {
+			if !training.grid.Settled {
 				// We wait for the Grid to settle before running historical training
 				time.Sleep(100 * time.Millisecond)
 				continue
@@ -228,6 +229,7 @@ func (training *Training) Run() {
 
 			// Buffer the tape fragment? No! We process the tape as a pure stream!
 			// We stream directly from DuckDB to preserve the ground truth continuously.
+			var signature []byte
 			for ptr := range excursions.Next(nil) {
 				if ptr == nil {
 					continue
@@ -265,29 +267,41 @@ func (training *Training) Run() {
 				// 1. Get the current evaluation (Pre-Outcome Prediction) BEFORE training on this frame
 				token := training.grid.LitRegions(m, 3)
 				if len(token) > 0 {
-					evalCmd := &cognition.Command{
+					signature = append(signature, token...)
+					signature = append(signature, 0) // null byte delimiter
+					
+					// Keep sequence bounded to avoid infinite length arrays in engine
+					if len(signature) > 1024 {
+						signature = signature[len(signature)-512:]
+					}
+					
+					evalCmd := cognition.Command{
 						Evaluate: &cognition.Question{
-							Context: token,
+							Context: signature,
 						},
 					}
 					
 					for out := range training.engine.Next(data.NewValue(evalCmd)) {
 						eval := (*cognition.Evaluation)(out)
-						if eval != nil {
+						if eval != nil && eval.WinnerClass != "" {
 							m.SetMetadata("predicted_action", eval.WinnerClass)
 							m.SetMetadata("predicted_confidence", fmt.Sprintf("%f", eval.Confidence))
 						}
 					}
 				}
 
-				// 2. Train the model by passing it into the pipeline (which sends Observe)
+				// 2. Train the model by passing it into the engine
+				if len(signature) > 0 {
+					training.engine.Train(signature, []byte(gt), 1.0)
+				}
+				
+				// 3. Pass through the frozen grid to decorate metrics for the UI visualization
 				for out := range training.pipeline.Next(data.NewValue(m)) {
-					// The Grid and Radix Trie observe the ground truth precursor here!
 					_ = out
 				}
 
 				// Stream the trained historical fragment directly to the dashboard visualization
-				if training.webrtc != nil {
+				if training.tee != nil {
 					m.EnsureMetadata()
 
 					// Inject the ground truth bounds (discovered by DuckDB) strictly
@@ -295,10 +309,10 @@ func (training *Training) Run() {
 					m.SetMetadata("excursion_start", fmt.Sprintf("%d", excursions.StartTick))
 					m.SetMetadata("excursion_ignition", fmt.Sprintf("%d", excursions.IgnitionTick))
 					m.SetMetadata("excursion_extremum_tick", fmt.Sprintf("%d", excursions.EndTick))
-					m.SetMetadata("excursion_type", fmt.Sprintf("%d", extType))
-					m.SetMetadata("stage_code", "1") // HISTORICAL VALIDATION
+					m.WriteMetric("excursion_type", float64(extType))
+					m.WriteMetric("stage_code", 1.0) // HISTORICAL VALIDATION
 
-					training.webrtc.Push(m)
+					training.tee.Push(m)
 				}
 			}
 

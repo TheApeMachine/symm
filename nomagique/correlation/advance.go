@@ -139,12 +139,12 @@ func (op *History) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				op.estimators[m.Label] = estimator
 			}
 
-			signed := m.Metrics["cohort_signed_correlation"].Raw
+			signed := m.GetMetric("cohort_signed_correlation").Raw
 			view := drive[float64, FisherView](estimator, &signed)
 
-			m.Metrics["correlation_baseline"] = m.Metrics["correlation_baseline"].Write(view.Baseline)
-			m.Metrics["correlation_divergence"] = m.Metrics["correlation_divergence"].Write(view.Divergence)
-			m.Metrics["correlation_zscore"] = m.Metrics["correlation_zscore"].Write(view.ZScore)
+			m.WriteMetric("correlation_baseline", view.Baseline)
+			m.WriteMetric("correlation_divergence", view.Divergence)
+			m.WriteMetric("correlation_zscore", view.ZScore)
 
 			if view.Defined {
 				m.EnsureMetadata()
@@ -206,12 +206,12 @@ func (op *Relative) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				op.baselines[m.Label] = baseline
 			}
 
-			relative := m.Metrics["relative_return_energy"].Raw
+			relative := m.GetMetric("relative_return_energy").Raw
 			reading := drive[float64, adaptive.BaselineReading](baseline, &relative)
 
-			m.Metrics["relative_return_energy_baseline"] = m.Metrics["relative_return_energy_baseline"].Write(reading.Baseline)
-			m.Metrics["relative_return_energy_divergence"] = m.Metrics["relative_return_energy_divergence"].Write(reading.Residual)
-			m.Metrics["relative_return_energy_zscore"] = m.Metrics["relative_return_energy_zscore"].Write(reading.ZScore)
+			m.WriteMetric("relative_return_energy_baseline", reading.Baseline)
+			m.WriteMetric("relative_return_energy_divergence", reading.Residual)
+			m.WriteMetric("relative_return_energy_zscore", reading.ZScore)
 
 			if !yield(arriving) {
 				return
@@ -262,14 +262,14 @@ func (op *CorrelationVelocity) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe
 			}
 
 			observation := temporal.Observation{
-				Value: m.Metrics["cohort_signed_correlation"].Raw,
+				Value: m.GetMetric("cohort_signed_correlation").Raw,
 				At:    m.At.UnixNano(),
 			}
 
 			reading := drive[temporal.Observation, temporal.VelocityReading](velocity, &observation)
 
 			if reading.Defined {
-				m.Metrics["correlation_velocity"] = m.Metrics["correlation_velocity"].Write(reading.Rate)
+				m.WriteMetric("correlation_velocity", reading.Rate)
 			}
 
 			if !yield(arriving) {
@@ -321,14 +321,14 @@ func (op *EnergyVelocity) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Poin
 			}
 
 			observation := temporal.Observation{
-				Value: m.Metrics["relative_return_energy"].Raw,
+				Value: m.GetMetric("relative_return_energy").Raw,
 				At:    m.At.UnixNano(),
 			}
 
 			reading := drive[temporal.Observation, temporal.VelocityReading](velocity, &observation)
 
 			if reading.Defined {
-				m.Metrics["relative_return_energy_velocity"] = m.Metrics["relative_return_energy_velocity"].Write(reading.Rate)
+				m.WriteMetric("relative_return_energy_velocity", reading.Rate)
 			}
 
 			if !yield(arriving) {

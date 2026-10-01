@@ -49,6 +49,32 @@ func (ticker *Ticker) pipelineFor(symbol string) core.Primitive {
 	pipeline := nomagique.NewNumber(
 		nmleadlag.NewGate(),
 		nmleadlag.NewCross(algo.NewHayashiYoshida()),
+		data.NewAdapter(
+			transport.NewPass(),
+			func(m *data.Measurement[float64]) *data.Measurement[float64] {
+				if len(m.Peers) > 0 {
+					var minPeerFrom int64
+					var first bool
+					for _, p := range m.Peers {
+						if !first || p.From.UnixNano() < minPeerFrom {
+							minPeerFrom = p.From.UnixNano()
+							first = true
+						}
+					}
+					m.WriteMetric("PeerFrom", float64(minPeerFrom)*1e-9)
+				}
+				
+				if val, ok := m.LookupMetric("return_energy_rate:measured"); ok {
+					m.WriteMetric("focal_return_energy_rate", val.Raw)
+				}
+				if val, ok := m.LookupMetric("peer_return_energy_rate"); ok {
+					m.WriteMetric("relative_cohort_return_energy", val.Raw)
+				}
+				
+				return m
+			},
+			func(m *data.Measurement[float64], out *data.Measurement[float64]) {},
+		),
 		data.NewFinalizer[float64](),
 	)
 
