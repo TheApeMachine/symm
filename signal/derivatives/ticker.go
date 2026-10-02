@@ -8,11 +8,11 @@ import (
 	"github.com/theapemachine/errnie"
 
 	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/adaptive"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	nmderivatives "github.com/theapemachine/symm/nomagique/derivatives"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	"github.com/theapemachine/symm/nomagique/adaptive"
 	"github.com/theapemachine/symm/nomagique/temporal"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
@@ -41,7 +41,7 @@ func NewTicker(ctx context.Context, arena *data.ArenaOwner) *Ticker {
 }
 
 func (ticker *Ticker) Source() string {
-	return "derivatives"
+	return "derivatives:ticker"
 }
 
 func (ticker *Ticker) Arena() *data.ArenaOwner {

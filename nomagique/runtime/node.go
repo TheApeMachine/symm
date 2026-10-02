@@ -75,8 +75,13 @@ func NewConsumer(
 	if aa, ok := node.(ArenaAware); ok {
 		consumer.arena = aa.Arena()
 	}
+
 	if consumer.arena == nil {
 		consumer.arena = data.NewArenaOwner(capacity)
+	}
+
+	if consumer.arena != nil {
+		consumer.arena.SetWindow(capacity)
 	}
 
 	return consumer
@@ -84,6 +89,7 @@ func NewConsumer(
 
 func (consumer *Consumer) Step(prior *data.Measurement[float64], seq int64) *data.Measurement[float64] {
 	slot := seq & consumer.mask
+
 	if consumer.arena != nil {
 		consumer.arena.Advance(seq)
 	}

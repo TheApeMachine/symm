@@ -21,69 +21,77 @@ type ArenaGeneration struct {
 }
 
 func NewArenaGeneration() *ArenaGeneration {
-	g := &ArenaGeneration{
+	generation := &ArenaGeneration{
 		allocator: NewAllocator(),
 	}
-	g.refs.Store(1)
-	return g
+	generation.refs.Store(1)
+	return generation
 }
 
-func (g *ArenaGeneration) Retain() {
-	if g == nil {
+func (generation *ArenaGeneration) Retain() {
+	if generation == nil {
 		return
 	}
-	g.refs.Add(1)
+
+	generation.refs.Add(1)
 }
 
-func (g *ArenaGeneration) Release() {
-	if g == nil {
+func (generation *ArenaGeneration) Release() {
+	if generation == nil {
 		return
 	}
-	if g.refs.Add(-1) == 0 {
-		if g.sealed.Load() {
-			g.free()
-		}
+
+	if generation.refs.Add(-1) == 0 && generation.sealed.Load() {
+		generation.free()
 	}
 }
 
-func (g *ArenaGeneration) Seal() {
-	if g == nil {
+func (generation *ArenaGeneration) Seal() {
+	if generation == nil {
 		return
 	}
-	g.sealed.Store(true)
-	if g.refs.Load() <= 0 {
-		g.free()
+
+	generation.sealed.Store(true)
+
+	if generation.refs.Load() <= 0 {
+		generation.free()
 	}
 }
 
-func (g *ArenaGeneration) free() {
-	if g.freed.CompareAndSwap(false, true) {
-		if g.allocator != nil {
-			Free(g.allocator)
-			g.allocator = nil
-		}
+func (generation *ArenaGeneration) free() {
+	if generation.freed.CompareAndSwap(false, true) && generation.allocator != nil {
+		Free(generation.allocator)
+		generation.allocator = nil
 	}
 }
 
-func (g *ArenaGeneration) IsFreed() bool {
-	if g == nil {
+func (generation *ArenaGeneration) IsFreed() bool {
+	if generation == nil {
 		return true
 	}
-	return g.freed.Load()
+
+	return generation.freed.Load()
 }
 
-func (g *ArenaGeneration) Allocator() Allocator {
-	if g == nil {
+func (generation *ArenaGeneration) Allocator() Allocator {
+	if generation == nil {
 		return nil
 	}
-	return g.allocator
+
+	return generation.allocator
 }
 
-func (g *ArenaGeneration) RefCount() int64 {
-	if g == nil {
+func (generation *ArenaGeneration) RefCount() int64 {
+	if generation == nil {
 		return 0
 	}
-	return g.refs.Load()
+
+	return generation.refs.Load()
+}
+
+type generationEntry struct {
+	gen    *ArenaGeneration
+	endSeq int64
 }
 
 /*
@@ -92,10 +100,14 @@ Each producer is sequential with respect to its own Step stream, so ArenaOwner
 does not require a mutex merely to allocate.
 */
 type ArenaOwner struct {
-	current  *ArenaGeneration
-	previous *ArenaGeneration
-	capacity int
-	count    int
+	current     *ArenaGeneration
+	previous    *ArenaGeneration
+	generations []generationEntry
+	capacity    int
+	window      int
+	count       int
+	currentGen  int64
+	seqMode     bool
 }
 
 func NewArenaOwner(capacity ...int) *ArenaOwner {
@@ -104,16 +116,34 @@ func NewArenaOwner(capacity ...int) *ArenaOwner {
 		capVal = capacity[0]
 	}
 
-	return &ArenaOwner{
-		current:  NewArenaGeneration(),
-		capacity: capVal,
+	windowVal := capVal
+	if len(capacity) > 1 && capacity[1] > 0 {
+		windowVal = capacity[1]
 	}
+
+	current := NewArenaGeneration()
+
+	return &ArenaOwner{
+		current:     current,
+		capacity:    capVal,
+		window:      windowVal,
+		generations: []generationEntry{{gen: current, endSeq: int64(capVal - 1)}},
+	}
+}
+
+func (owner *ArenaOwner) SetWindow(window int) {
+	if owner == nil || window <= 0 {
+		return
+	}
+
+	owner.window = window
 }
 
 func (owner *ArenaOwner) CurrentGeneration() *ArenaGeneration {
 	if owner == nil {
 		return nil
 	}
+
 	return owner.current
 }
 
@@ -134,17 +164,69 @@ func (owner *ArenaOwner) Rotate() {
 }
 
 func (owner *ArenaOwner) Advance(seq int64) {
-	if owner == nil {
+	if owner == nil || owner.capacity <= 0 {
 		return
 	}
 
-	if seq > 0 && owner.capacity > 0 && seq%int64(owner.capacity) == 0 {
-		owner.Rotate()
+	owner.seqMode = true
+
+	genIdx := seq / int64(owner.capacity)
+	if len(owner.generations) == 0 {
+		owner.currentGen = genIdx
+		owner.generations = append(owner.generations, generationEntry{
+			gen:    owner.current,
+			endSeq: (genIdx+1)*int64(owner.capacity) - 1,
+		})
+	}
+
+	if genIdx > owner.currentGen {
+		owner.currentGen = genIdx
+		owner.previous = owner.current
+		owner.current = NewArenaGeneration()
+		owner.generations = append(owner.generations, generationEntry{
+			gen:    owner.current,
+			endSeq: (genIdx+1)*int64(owner.capacity) - 1,
+		})
+	}
+
+	window := int64(owner.window)
+	if window < int64(owner.capacity) {
+		window = int64(owner.capacity)
+	}
+
+	safeMargin := window + int64(owner.capacity)
+
+	retained := owner.generations[:0]
+	for _, entry := range owner.generations {
+		if entry.endSeq < seq-safeMargin {
+			entry.gen.Seal()
+			entry.gen.Release()
+			continue
+		}
+
+		retained = append(retained, entry)
+	}
+
+	owner.generations = retained
+
+	if owner.previous != nil && owner.previous.IsFreed() {
+		owner.previous = nil
 	}
 }
 
 func (owner *ArenaOwner) Close() {
 	if owner == nil {
+		return
+	}
+
+	if owner.seqMode {
+		for _, entry := range owner.generations {
+			entry.gen.Seal()
+			entry.gen.Release()
+		}
+		owner.generations = nil
+		owner.current = nil
+		owner.previous = nil
 		return
 	}
 
@@ -174,20 +256,22 @@ func (owner *ArenaOwner) NewMeasurement(source string) *Measurement[float64] {
 	gen := owner.current
 	alloc := gen.Allocator()
 
-	m := New[Measurement[float64]](alloc)
-	m.ID = -1
-	m.Source = source
-	m.Metrics = MakeSlice[MetricEntry[float64]](alloc, 0, 16)
-	m.Metadata = MakeSlice[StringEntry](alloc, 0, 8)
-	m.Provenance = MakeSlice[StringEntry](alloc, 0, 8)
-	m.Peers = MakeSlice[*Measurement[float64]](alloc, 0, 4)
+	measurement := New[Measurement[float64]](alloc)
+	measurement.ID = -1
+	measurement.Source = source
+	measurement.Metrics = MakeSlice[MetricEntry[float64]](alloc, 0, 16)
+	measurement.Metadata = MakeSlice[StringEntry](alloc, 0, 8)
+	measurement.Provenance = MakeSlice[StringEntry](alloc, 0, 8)
+	measurement.Peers = MakeSlice[*Measurement[float64]](alloc, 0, 4)
 
-	owner.count++
-	if owner.capacity > 0 && owner.count >= owner.capacity {
-		owner.Rotate()
+	if !owner.seqMode {
+		owner.count++
+		if owner.capacity > 0 && owner.count >= owner.capacity {
+			owner.Rotate()
+		}
 	}
 
-	return m
+	return measurement
 }
 
 /*
@@ -199,22 +283,23 @@ type Publication struct {
 	Generation  *ArenaGeneration
 }
 
-func NewPublication(m *Measurement[float64], gen *ArenaGeneration) Publication {
+func NewPublication(measurement *Measurement[float64], gen *ArenaGeneration) Publication {
 	return Publication{
-		Measurement: m,
+		Measurement: measurement,
 		Generation:  gen,
 	}
 }
 
-func (p Publication) Retain() {
-	if p.Generation != nil {
-		p.Generation.Retain()
+func (pub Publication) Retain() {
+	if pub.Generation != nil {
+		pub.Generation.Retain()
 	}
 }
 
-func (p Publication) Release() {
-	if p.Generation != nil {
-		p.Generation.Release()
+func (pub Publication) Release() {
+	if pub.Generation != nil {
+		pub.Generation.Release()
 	}
 }
+
 

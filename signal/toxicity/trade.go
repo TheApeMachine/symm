@@ -1,8 +1,8 @@
 package toxicity
 
 import (
-	"math"
 	"context"
+	"math"
 	"sync"
 
 	"strconv"
@@ -43,7 +43,7 @@ func NewTrade(ctx context.Context, arena *data.ArenaOwner) *Trade {
 }
 
 func (trade *Trade) Source() string {
-	return "toxicity"
+	return "toxicity:trade"
 }
 
 func (trade *Trade) Arena() *data.ArenaOwner {
@@ -56,11 +56,11 @@ func (trade *Trade) pipelineFor(symbol string) core.Primitive {
 	}
 
 	type tradeState struct {
-		bracketQty         float64
-		matchedBidQty      float64
-		matchedAskQty      float64
-		touchFillBidQty    float64
-		touchFillAskQty    float64
+		bracketQty      float64
+		matchedBidQty   float64
+		matchedAskQty   float64
+		touchFillBidQty float64
+		touchFillAskQty float64
 		hasPrevTime     bool
 		prevTime        time.Time
 	}
@@ -155,7 +155,6 @@ func (trade *Trade) pipelineFor(symbol string) core.Primitive {
 					m.WriteMetric("touch_fill_rate:bid", bidRate)
 					m.WriteMetric("touch_fill_rate:ask", askRate)
 				}
-
 
 				return m
 			},

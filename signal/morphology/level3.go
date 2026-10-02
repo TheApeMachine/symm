@@ -45,7 +45,7 @@ func NewLevel3(ctx context.Context, arena *data.ArenaOwner, books broker.BookSou
 }
 
 func (level3 *Level3) Source() string {
-	return "morphology"
+	return "morphology:level3"
 }
 
 func (level3 *Level3) Arena() *data.ArenaOwner {

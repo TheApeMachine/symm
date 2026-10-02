@@ -42,7 +42,7 @@ func NewTicker(ctx context.Context, arena *data.ArenaOwner) *Ticker {
 }
 
 func (ticker *Ticker) Source() string {
-	return "sentiment"
+	return "sentiment:ticker"
 }
 
 func (ticker *Ticker) Arena() *data.ArenaOwner {

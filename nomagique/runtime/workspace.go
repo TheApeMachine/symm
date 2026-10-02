@@ -97,6 +97,7 @@ func NewWorkspace(
 	for joinIdx := 0; joinIdx < numJoins; joinIdx++ {
 		workspace.joins[joinIdx] = make([]*data.Measurement[float64], capacity)
 		workspace.joinArenas[joinIdx] = data.NewArenaOwner(capacity)
+		workspace.joinArenas[joinIdx].SetWindow(capacity)
 	}
 
 	opts := optionList(

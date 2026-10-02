@@ -8,9 +8,9 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
-	"github.com/krakenfx/api-go/v2/pkg/book"
 
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/adaptive"
@@ -47,7 +47,7 @@ func NewLevel3(ctx context.Context, arena *data.ArenaOwner, books broker.BookSou
 }
 
 func (level3 *Level3) Source() string {
-	return "depthflow"
+	return "depthflow:level3"
 }
 
 func (level3 *Level3) Arena() *data.ArenaOwner {
@@ -84,11 +84,11 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 				var obsBid, obsAsk float64
 				var addedBid, removedBid float64
 				var addedAsk, removedAsk float64
-				
+
 				level3.books.Book(m.Label, func(b *book.Book) {
 					currBids := make(map[string]float64)
 					currAsks := make(map[string]float64)
-					
+
 					cursor := b.BestBid()
 					for count := 0; count < 100 && cursor != nil; count++ {
 						price := cursor.Price.Float64()
@@ -96,7 +96,7 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 						obsBid += price * qty
 						pstr := cursor.Price.String()
 						currBids[pstr] = qty
-						
+
 						prevQty := state.prevBids[pstr]
 						if qty > prevQty {
 							addedBid += price * (qty - prevQty)
@@ -111,7 +111,7 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 							removedBid += price * prevQty
 						}
 					}
-					
+
 					cursor = b.BestAsk()
 					for count := 0; count < 100 && cursor != nil; count++ {
 						price := cursor.Price.Float64()
@@ -119,7 +119,7 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 						obsAsk += price * qty
 						pstr := cursor.Price.String()
 						currAsks[pstr] = qty
-						
+
 						prevQty := state.prevAsks[pstr]
 						if qty > prevQty {
 							addedAsk += price * (qty - prevQty)
@@ -134,7 +134,7 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 							removedAsk += price * prevQty
 						}
 					}
-					
+
 					state.prevBids = currBids
 					state.prevAsks = currAsks
 				})
@@ -148,33 +148,33 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 					m.WriteMetric("book_notional:ask", obsAsk)
 					m.WriteMetric("observed_notional:bid", obsBid)
 					m.WriteMetric("observed_notional:ask", obsAsk)
-					
+
 					m.WriteMetric("added_notional:bid", addedBid)
 					m.WriteMetric("removed_notional:bid", removedBid)
 					m.WriteMetric("net_displayed_flow:bid", addedBid-removedBid)
 					m.WriteMetric("added_notional:ask", addedAsk)
 					m.WriteMetric("removed_notional:ask", removedAsk)
 					m.WriteMetric("net_displayed_flow:ask", addedAsk-removedAsk)
-					
+
 					observed := obsBid + obsAsk
 					if observed > 0 {
 						m.WriteNormalized("book_imbalance", (obsBid-obsAsk)/observed)
 					}
-					
+
 					if !state.prevTime.IsZero() {
 						dt := m.At.Sub(state.prevTime).Seconds()
 						if dt > 0 {
 							effectiveDt := math.Max(dt, 1.0)
 							rate := observed / effectiveDt
 							m.WriteMetric("observed_notional_rate", rate)
-							
+
 							m.WriteMetric("added_notional_rate:bid", addedBid/dt)
 							m.WriteMetric("removed_notional_rate:bid", removedBid/dt)
 							m.WriteMetric("net_displayed_flow_rate:bid", (addedBid-removedBid)/dt)
 							m.WriteMetric("added_notional_rate:ask", addedAsk/dt)
 							m.WriteMetric("removed_notional_rate:ask", removedAsk/dt)
 							m.WriteMetric("net_displayed_flow_rate:ask", (addedAsk-removedAsk)/dt)
-							
+
 							ref := (state.prevNotional + observed) / 2
 							if ref > 0 {
 								m.WriteMetric("book_turnover_rate", (addedBid+removedBid+addedAsk+removedAsk)/(ref*dt))
@@ -185,7 +185,7 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 					}
 					state.prevNotional = observed
 					state.prevTime = m.At
-					
+
 					tb := m.GetMetric("touch_notional:bid").Raw
 					ta := m.GetMetric("touch_notional:ask").Raw
 					if tb > 0 || ta > 0 {
@@ -325,7 +325,7 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 					g := m.GetMetric("imbalance_resolution_gap").Raw // Wait, it asks for gap divergence, but it is not computed, just gap
 					f := m.GetMetric("net_displayed_flow_imbalance_zscore").Raw
 					c := m.GetMetric("book_turnover_rate_zscore").Raw
-					
+
 					return statistic.JointInput{Values: []float64{i, g, f, c}}
 				},
 				func(m *data.Measurement[float64], out statistic.JointReading) {

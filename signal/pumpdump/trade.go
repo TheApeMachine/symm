@@ -43,7 +43,7 @@ func NewTrade(ctx context.Context, arena *data.ArenaOwner) *Trade {
 }
 
 func (trade *Trade) Source() string {
-	return "pumpdump"
+	return "pumpdump:trade"
 }
 
 func (trade *Trade) Arena() *data.ArenaOwner {

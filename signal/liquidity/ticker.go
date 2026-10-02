@@ -36,7 +36,7 @@ func NewTicker(ctx context.Context, arena *data.ArenaOwner) *Ticker {
 }
 
 func (ticker *Ticker) Source() string {
-	return "liquidity"
+	return "liquidity:ticker"
 }
 
 func (ticker *Ticker) Arena() *data.ArenaOwner {
@@ -113,13 +113,13 @@ func (ticker *Ticker) pipelineFor(symbol string) core.Primitive {
 					if reading.SNRDefined {
 						m.SetMetadata(data.MetadataMahalanobisSNR, strconv.FormatFloat(reading.SNR, 'f', -1, 64))
 					}
-					
+
 					originals := []float64{
 						m.GetMetric("touch_notional:bid").Raw,
 						m.GetMetric("touch_notional:ask").Raw,
 						m.GetMetric("relative_spread").Raw,
 					}
-					
+
 					baselineLabels := []string{"touch_notional_baseline:bid", "touch_notional_baseline:ask", "relative_spread_baseline"}
 					ratioLabels := []string{"depth_ratio:bid", "depth_ratio:ask", "spread_ratio"}
 					divergenceLabels := []string{"depth_divergence:bid", "depth_divergence:ask", "spread_divergence"}

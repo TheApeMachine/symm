@@ -2,8 +2,8 @@ package correlation
 
 import (
 	"context"
-	"time"
 	"sync"
+	"time"
 	"unsafe"
 
 	"github.com/theapemachine/errnie"
@@ -41,7 +41,7 @@ func NewTicker(ctx context.Context, arena *data.ArenaOwner) *Ticker {
 }
 
 func (ticker *Ticker) Source() string {
-	return "correlation"
+	return "correlation:ticker"
 }
 
 func (ticker *Ticker) Arena() *data.ArenaOwner {
@@ -108,14 +108,14 @@ func (ticker *Ticker) pipelineFor(symbol string) core.Primitive {
 					}
 					m.WriteMetric("PeerFrom", float64(minPeerFrom)*1e-9)
 				}
-				
+
 				if val, ok := m.LookupMetric("return_energy_rate:measured"); ok {
 					m.WriteMetric("focal_return_energy_rate", val.Raw)
 				}
 				if val, ok := m.LookupMetric("peer_return_energy_rate"); ok {
 					m.WriteMetric("relative_cohort_return_energy", val.Raw)
 				}
-				
+
 				return m
 			},
 			func(m *data.Measurement[float64], out *data.Measurement[float64]) {},

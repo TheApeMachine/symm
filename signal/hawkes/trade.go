@@ -47,7 +47,7 @@ func NewTrade(ctx context.Context, arena *data.ArenaOwner) *Trade {
 }
 
 func (trade *Trade) Source() string {
-	return "hawkes"
+	return "hawkes:trade"
 }
 
 func (trade *Trade) Arena() *data.ArenaOwner {
