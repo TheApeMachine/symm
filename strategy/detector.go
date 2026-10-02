@@ -9,18 +9,46 @@ import (
 )
 
 /*
+Trajectory contains the aligned market observations for one detected excursion:
+its entry and exit prices, the aligned precursor and holding measurements from
+signals and logic stages, and the raw ticker slices for trajectory telemetry.
+*/
+type Trajectory struct {
+	Symbol    string
+	EntryAsk  *decimal.Decimal
+	ExitBid   *decimal.Decimal
+	Precursor []*data.Measurement[float64]
+	Holding   []*data.Measurement[float64]
+	Ticks     [2][]*data.Measurement[float64]
+}
+
+/*
 Detector scans epoch-length market tapes for a single symbol, identifies
-excursions, calculates their PnL, splits them into precursor (A->B) and
-holding (B->C) trajectories, and enqueues them for direct trie insertion.
+excursions, aligns signals and logic stages with ticker slices, and enqueues
+complete trajectories for model reinforcement.
 */
 type Detector struct {
-	queue *lf.Queue[[2][]*data.Measurement[float64]]
+	queue *lf.Queue[Trajectory]
 }
 
 func NewDetector() *Detector {
 	return &Detector{
-		queue: lf.NewQueue[[2][]*data.Measurement[float64]](),
+		queue: lf.NewQueue[Trajectory](),
 	}
+}
+
+func (detector *Detector) Next() (Trajectory, bool) {
+	if detector == nil || detector.queue == nil {
+		return Trajectory{}, false
+	}
+
+	trajectory, ok := detector.queue.Dequeue()
+
+	if !ok {
+		return Trajectory{}, false
+	}
+
+	return trajectory, true
 }
 
 /*
@@ -32,19 +60,20 @@ func (detector *Detector) Scan(measurements []*data.Measurement[float64]) {
 		return
 	}
 
-	lowIdx := -1
-	highIdx := -1
+	lowIndex := -1
+	highIndex := -1
 	var lowPrice, highPrice float64
 
-	for idx, measurement := range measurements {
+	for index, measurement := range measurements {
 		price, ok := quotePrice(measurement)
+
 		if !ok {
 			continue
 		}
 
-		if lowIdx == -1 {
-			lowIdx = idx
-			highIdx = idx
+		if lowIndex == -1 {
+			lowIndex = index
+			highIndex = index
 			lowPrice = price
 			highPrice = price
 			continue
@@ -52,99 +81,141 @@ func (detector *Detector) Scan(measurements []*data.Measurement[float64]) {
 
 		if price < lowPrice {
 			lowPrice = price
-			lowIdx = idx
+			lowIndex = index
 		}
 
 		if price > highPrice {
 			highPrice = price
-			highIdx = idx
+			highIndex = index
 		}
 
 		// Upward excursion: lowest point is before highest point
-		if lowIdx < highIdx && highPrice > lowPrice {
+		if lowIndex < highIndex && highPrice > lowPrice {
 			pullback := highPrice - price
 			move := highPrice - lowPrice
 
 			if pullback >= move*0.2 {
-				detector.emitTrajectory(measurements, lowIdx, highIdx, lowPrice, highPrice)
+				detector.emitTrajectory(measurements, lowIndex, highIndex, lowPrice, highPrice)
 
-				lowIdx = idx
-				highIdx = idx
+				lowIndex = index
+				highIndex = index
 				lowPrice = price
 				highPrice = price
 			}
 		}
 	}
 
-	if lowIdx >= 0 && highIdx > lowIdx && highPrice > lowPrice {
-		detector.emitTrajectory(measurements, lowIdx, highIdx, lowPrice, highPrice)
+	if lowIndex >= 0 && highIndex > lowIndex && highPrice > lowPrice {
+		detector.emitTrajectory(measurements, lowIndex, highIndex, lowPrice, highPrice)
 	}
-}
-
-func (detector *Detector) Next() [2][]*data.Measurement[float64] {
-	chunks, ok := detector.queue.Dequeue()
-
-	if !ok {
-		return [2][]*data.Measurement[float64]{}
-	}
-
-	return chunks
 }
 
 func (detector *Detector) emitTrajectory(
 	measurements []*data.Measurement[float64],
-	lowIdx, highIdx int,
+	lowIndex, highIndex int,
 	lowPrice, highPrice float64,
 ) {
 	move := highPrice - lowPrice
+
 	if move <= 0 || lowPrice <= 0 {
 		return
 	}
 
-	// Exhaustion: exit safely before C upon deceleration, stagnation, or micro-pullback.
-	exhaustIdx := highIdx
+	exhaustIndex := highIndex
 	prevPrice := lowPrice
 	maxVelocity := 0.0
 
-	for i := lowIdx + 1; i <= highIdx; i++ {
-		p, ok := quotePrice(measurements[i])
+	for index := lowIndex + 1; index <= highIndex; index++ {
+		price, ok := quotePrice(measurements[index])
+
 		if !ok {
 			continue
 		}
 
-		delta := p - prevPrice
+		delta := price - prevPrice
+
 		if delta > maxVelocity {
 			maxVelocity = delta
 		}
 
-		progress := (p - lowPrice) / move
+		progress := (price - lowPrice) / move
 
-		// The faster the momentum, the more paranoid: exit upon slowdown once profitable.
 		if progress >= 0.50 {
 			if delta <= 0 || (maxVelocity > 0 && delta < maxVelocity*0.5) {
-				exhaustIdx = i
+				exhaustIndex = index
 				break
 			}
 		}
 
-		prevPrice = p
+		prevPrice = price
 	}
 
-	// Randomized Point A before Point B
-	startA := 0
-	if lowIdx > 2 {
-		startA = rand.IntN(lowIdx - 1)
+	startPrecursor := 0
+
+	if lowIndex > 2 {
+		startPrecursor = rand.IntN(lowIndex - 1)
 	}
 
-	precursor := measurements[startA:lowIdx]
-	var holding []*data.Measurement[float64]
-	if exhaustIdx > lowIdx+1 {
-		holding = measurements[lowIdx+1 : exhaustIdx+1]
+	entryMeas := measurements[lowIndex]
+	exitMeas := measurements[exhaustIndex]
+
+	entryAsk := entryMeas.GetMetric("ask").Exact
+	exitBid := exitMeas.GetMetric("bid").Exact
+
+	if entryAsk == nil || exitBid == nil || entryAsk.Sign() <= 0 || exitBid.Sign() <= 0 {
+		return
 	}
 
-	detector.queue.Enqueue([2][]*data.Measurement[float64]{
-		precursor,
-		holding,
+	precursorTimeline := measurements[startPrecursor:lowIndex]
+	holdingTimeline := measurements[lowIndex+1 : exhaustIndex+1]
+
+	var precursorTicks []*data.Measurement[float64]
+	var precursorSignals []*data.Measurement[float64]
+
+	for _, measurement := range precursorTimeline {
+		if measurement == nil {
+			continue
+		}
+
+		if measurement.Source == "spot:ticker" {
+			precursorTicks = append(precursorTicks, measurement)
+			continue
+		}
+
+		precursorSignals = append(precursorSignals, measurement)
+	}
+
+	var holdingTicks []*data.Measurement[float64]
+	var holdingSignals []*data.Measurement[float64]
+
+	for _, measurement := range holdingTimeline {
+		if measurement == nil {
+			continue
+		}
+
+		if measurement.Source == "spot:ticker" {
+			holdingTicks = append(holdingTicks, measurement)
+			continue
+		}
+
+		holdingSignals = append(holdingSignals, measurement)
+	}
+
+	if len(precursorSignals) == 0 {
+		precursorSignals = precursorTimeline
+	}
+
+	if len(holdingSignals) == 0 {
+		holdingSignals = holdingTimeline
+	}
+
+	detector.queue.Enqueue(Trajectory{
+		Symbol:    entryMeas.Label,
+		EntryAsk:  entryAsk,
+		ExitBid:   exitBid,
+		Precursor: precursorSignals,
+		Holding:   holdingSignals,
+		Ticks:     [2][]*data.Measurement[float64]{precursorTicks, holdingTicks},
 	})
 }
 
@@ -153,8 +224,8 @@ func quotePrice(measurement *data.Measurement[float64]) (float64, bool) {
 		return 0, false
 	}
 
-	if p, ok := measurement.LookupMetric("price"); ok && p.Raw > 0 {
-		return p.Raw, true
+	if priceMetric, ok := measurement.LookupMetric("price"); ok && priceMetric.Raw > 0 {
+		return priceMetric.Raw, true
 	}
 
 	bid, hasBid := measurement.LookupMetric("bid")

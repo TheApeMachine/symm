@@ -2,12 +2,12 @@ package strategy
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"fmt"
 	"slices"
 	"time"
 
-	"github.com/samber/lo"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/broker/position"
@@ -81,9 +81,10 @@ func NewTraining(
 	return training
 }
 
-func (training *Training) onPositionClosed(symbol string, reg *position.Regulator) {
-	if training.price != nil && reg != nil {
-		training.skill.Record(training.price.ReturnPct(symbol, reg))
+func (training *Training) onPositionClosed(symbol string, regulator *position.Regulator) {
+	if training.price != nil && regulator != nil {
+		pnl := training.price.ReturnPct(symbol, regulator)
+		training.skill.RecordForward(pnl)
 	}
 }
 
@@ -104,9 +105,10 @@ func (training *Training) CognitionTree() cognition.CognitionTreeExport {
 }
 
 /*
-Step processes the live market signal across two stages:
+Step processes the live market signal across three operational stages:
  1. Grid development (Status: INIT): develops the grid until settled, then freezes and checkpoints it.
- 2. Live Paper Trading (Status: READY): matches live tokens against trained trie branches to trade paper positions.
+ 2. Historical Validation (Status: WAITING): reports validation state while historical training runs.
+ 3. Live Paper Trading (Status: READY): matches live tokens against trained trie branches to trade paper positions.
 */
 func (training *Training) Step(prior *data.Measurement[float64]) *data.Measurement[float64] {
 	if prior == nil {
@@ -127,19 +129,20 @@ func (training *Training) Step(prior *data.Measurement[float64]) *data.Measureme
 	if currentStatus == runtime.INIT {
 		training.grid.Update(prior)
 
-		training.reporter.Publish(ReportSnapshot{
-			Source:  "training:live",
+		snapshot := ReportSnapshot{
+			Source:  training.Source(),
 			Symbol:  prior.Label,
 			SeqIdx:  prior.SeqIdx,
 			At:      prior.At,
 			Stage:   StageModelDevelopment,
 			Blocker: "grid developing",
 			Price:   price,
-		}, training.skill)
+		}
+		training.reporter.Populate(out, snapshot, training.skill)
 
 		if training.grid.IsSettled() {
 			training.grid.Settle()
-			snapshot, err := training.grid.Snapshot()
+			snapshotData, err := training.grid.Snapshot()
 
 			if err != nil {
 				training.Error(errnie.Err(
@@ -157,7 +160,7 @@ func (training *Training) Step(prior *data.Measurement[float64]) *data.Measureme
 			training.catalog.PutBlob(
 				training.Context(),
 				fmt.Sprintf("grid/%d/%d", out.Epoch, out.SeqIdx),
-				snapshot,
+				snapshotData,
 			)
 
 			training.Transition(runtime.WAITING)
@@ -167,25 +170,47 @@ func (training *Training) Step(prior *data.Measurement[float64]) *data.Measureme
 	}
 
 	if currentStatus == runtime.WAITING {
+		snapshot := ReportSnapshot{
+			Source:  training.Source(),
+			Symbol:  prior.Label,
+			SeqIdx:  prior.SeqIdx,
+			At:      prior.At,
+			Stage:   StageHistoricalValidation,
+			Blocker: training.skill.HistBlocker(),
+			Price:   price,
+		}
+		training.reporter.Populate(out, snapshot, training.skill)
+
 		if !training.skill.HasEdge() {
 			return out
 		}
 
 		training.Transition(runtime.READY)
-
-		// Note: out is the Step method's return Measurement value, which will already
-		// be streamed to the frontend via the uiTee integrated in the LMAX Disruptor
-		// pipeline. So just make sure your out Measurement has the things set you
-		// need at each stage to make the UI show what it needs to show, and simply
-		// read out the Measurement at the frontend. No need to invent all kinds
-		// of new presentation types.
 		return out
 	}
 
-	if training.Status() == runtime.READY {
-		// The prior Measurement should always contain the prior sequence of
-		// region tokens, when applicable.
+	if currentStatus == runtime.READY {
 		tokens := training.grid.LitRegions(append(prior.Peers, prior)...)
+
+		stage := StageForwardPaperLearning
+		blocker := training.skill.FwdBlocker()
+
+		if training.skill.HasForwardEdge() {
+			stage = StageForwardSkillValidated
+			blocker = ""
+		}
+
+		snapshot := ReportSnapshot{
+			Source:       training.Source(),
+			Symbol:       prior.Label,
+			SeqIdx:       prior.SeqIdx,
+			At:           prior.At,
+			Stage:        stage,
+			Blocker:      blocker,
+			RegionTokens: tokens,
+			Price:        price,
+			Trading:      true,
+		}
 
 		if len(tokens) > 0 {
 			res, err := training.engine.Evaluate(bytes.Join(tokens, []byte("_")))
@@ -200,13 +225,18 @@ func (training *Training) Step(prior *data.Measurement[float64]) *data.Measureme
 					err,
 				))
 
+				training.reporter.Populate(out, snapshot, training.skill)
 				return out
 			}
 
+			action := cognition.Action(res.Evaluation.WinnerClass)
+			confidence := res.Evaluation.Confidence
+			contrast := res.Evaluation.Surprisal
+
 			err = training.trader.OnAction(
 				prior.Label,
-				cognition.Action(res.Evaluation.WinnerClass),
-				res.Evaluation.Confidence,
+				action,
+				confidence,
 			)
 
 			if err != nil {
@@ -219,13 +249,28 @@ func (training *Training) Step(prior *data.Measurement[float64]) *data.Measureme
 					err,
 				))
 
+				training.reporter.Populate(out, snapshot, training.skill)
 				return out
 			}
 
-			out.WriteMetric("confidence", res.Evaluation.Confidence)
-			out.WriteMetric("contrast", res.Evaluation.Surprisal)
-			return out
+			actionCode := 0
+
+			if action == cognition.ActionEnter {
+				actionCode = 1
+			}
+
+			if action == cognition.ActionExit {
+				actionCode = 2
+			}
+
+			snapshot.Action = actionCode
+			snapshot.Confidence = confidence
+			snapshot.Contrast = contrast
+			training.skill.RecordPrediction()
 		}
+
+		training.reporter.Populate(out, snapshot, training.skill)
+		return out
 	}
 
 	return out
@@ -246,25 +291,12 @@ func (training *Training) Run() {
 			}
 		}
 
-		// TODO: Need to actually query with partition awareness, which will
-		// increase retrieval performance.
-		measurements, err := training.catalog.Collect(
-			training.Context(), tables.Measurements, 0,
-		)
-
-		if err != nil {
-			training.Error(errnie.Err(
-				errnie.Internal,
-				"[training] failed to collect measurements from catalog",
-				err,
-			))
-
+		if training.catalog == nil {
 			return
 		}
 
-		if len(measurements) == 0 {
-			return
-		}
+		processedRuns := make(map[int64]bool)
+		lastSeqProcessed := make(map[int64]int64)
 
 		for {
 			select {
@@ -273,71 +305,35 @@ func (training *Training) Run() {
 			default:
 			}
 
-			// Group measurements by Source and Symbol.
-			grouped := lo.GroupBy(measurements, func(
-				m *data.Measurement[float64],
-			) struct{ Source, Symbol string } {
-				return struct{ Source, Symbol string }{
-					Source: m.Source,
-					Symbol: m.Label,
-				}
+			runs, err := training.catalog.Runs(training.Context())
+
+			if err != nil {
+				training.Error(errnie.Err(
+					errnie.BadGateway,
+					"[training] failed to query runs from catalog",
+					err,
+				))
+			}
+
+			slices.SortFunc(runs, func(left, right tables.Run) int {
+				return cmp.Compare(left.Epoch, right.Epoch)
 			})
 
-			for groupKey, groupValue := range grouped {
-				if groupKey.Source != "spot:ticker" {
+			for _, run := range runs {
+				if processedRuns[run.Epoch] {
 					continue
 				}
 
-				training.detector.Scan(groupValue)
+				maxSeq, hasEdge := training.processRun(run.Epoch, lastSeqProcessed[run.Epoch])
+				lastSeqProcessed[run.Epoch] = maxSeq
 
-				for {
-					chunks := training.detector.Next()
+				if run.Status != "running" && maxSeq > 0 {
+					processedRuns[run.Epoch] = true
+				}
 
-					if len(chunks[0]) == 0 {
-						break
-					}
-
-					precursor := slices.CompactFunc(
-						training.grid.LitRegions(chunks[0]...),
-						bytes.Equal,
-					)
-
-					holding := slices.CompactFunc(
-						training.grid.LitRegions(chunks[1]...),
-						bytes.Equal,
-					)
-
-					entryMeas := chunks[0][len(chunks[0])-1]
-					exitMeas := chunks[1][len(chunks[1])-1]
-
-					entryAsk := entryMeas.GetMetric("ask").Exact
-					exitBid := exitMeas.GetMetric("bid").Exact
-
-					if entryAsk == nil || exitBid == nil || entryAsk.Sign() <= 0 || exitBid.Sign() <= 0 {
-						continue
-					}
-
-					entryCost := training.price.WithFee(groupKey.Symbol, entryAsk, broker.BUY)
-					exitNet := training.price.WithFee(groupKey.Symbol, exitBid, broker.SELL)
-
-					if entryCost == nil || exitNet == nil || entryCost.Sign() <= 0 {
-						continue
-					}
-
-					pnl := exitNet.Sub(entryCost).Div(entryCost).Float64()
-
-					if len(precursor) > 0 {
-						training.evaluator.Train(bytes.Join(
-							precursor, []byte("_"),
-						), cognition.ActionEnter, pnl)
-					}
-					if len(holding) > 0 {
-						training.evaluator.Train(bytes.Join(
-							holding, []byte("_"),
-						), cognition.ActionExit, pnl)
-					}
-
-					training.skill.Record(pnl)
+				if hasEdge {
+					training.Transition(runtime.READY)
+					return
 				}
 			}
 
@@ -345,6 +341,108 @@ func (training *Training) Run() {
 				training.Transition(runtime.READY)
 				return
 			}
+
+			select {
+			case <-training.Context().Done():
+				return
+			case <-time.After(1 * time.Second):
+			}
 		}
 	}()
+}
+
+func (training *Training) processRun(epoch int64, lastSeq int64) (int64, bool) {
+	labels, err := training.catalog.Labels(training.Context(), epoch)
+
+	if err != nil {
+		return lastSeq, false
+	}
+
+	maxSeq := lastSeq
+
+	for _, symbol := range labels {
+		var timeline []*data.Measurement[float64]
+
+		for measurement := range training.catalog.Timeline(
+			training.Context(), epoch, symbol, lastSeq+1, 0,
+		) {
+			if measurement == nil {
+				continue
+			}
+
+			if measurement.SeqIdx > maxSeq {
+				maxSeq = measurement.SeqIdx
+			}
+
+			timeline = append(timeline, measurement)
+		}
+
+		training.detector.Scan(timeline)
+
+		for {
+			trajectory, ok := training.detector.Next()
+
+			if !ok {
+				break
+			}
+
+			training.trainTrajectory(trajectory)
+
+			if training.skill.HasEdge() {
+				return maxSeq, true
+			}
+		}
+	}
+
+	return maxSeq, training.skill.HasEdge()
+}
+
+func (training *Training) trainTrajectory(trajectory Trajectory) {
+	pnl, err := training.evaluator.EvaluatePnL(
+		trajectory.Symbol,
+		trajectory.EntryAsk,
+		trajectory.ExitBid,
+	)
+
+	if err != nil {
+		return
+	}
+
+	precursorTokens := slices.CompactFunc(
+		training.grid.LitRegions(trajectory.Precursor...),
+		bytes.Equal,
+	)
+
+	holdingTokens := slices.CompactFunc(
+		training.grid.LitRegions(trajectory.Holding...),
+		bytes.Equal,
+	)
+
+	if len(precursorTokens) > 0 {
+		training.evaluator.Train(
+			bytes.Join(precursorTokens, []byte("_")),
+			cognition.ActionEnter,
+			pnl,
+		)
+	}
+
+	if len(holdingTokens) > 0 {
+		training.evaluator.Train(
+			bytes.Join(holdingTokens, []byte("_")),
+			cognition.ActionExit,
+			pnl,
+		)
+	}
+
+	training.skill.RecordHistorical(pnl, pnl > 0)
+	training.skill.RecordFragment("up")
+
+	training.reporter.PublishExcursion(
+		trajectory.Symbol,
+		trajectory.Ticks[0],
+		trajectory.Ticks[1],
+		precursorTokens,
+		pnl,
+		training.skill,
+	)
 }
