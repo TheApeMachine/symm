@@ -2,20 +2,18 @@ package pumpdump
 
 import (
 	"context"
-	"fmt"
-	"sync"
-
 	"math"
 	"strconv"
+	"sync"
 	"unsafe"
 
 	"github.com/theapemachine/errnie"
 
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/adaptive"
-	"github.com/theapemachine/symm/nomagique/arithmetic"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
+	nmpumpdump "github.com/theapemachine/symm/nomagique/pumpdump"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/temporal"
 	"github.com/theapemachine/symm/nomagique/transport"
@@ -57,55 +55,10 @@ func (ticker *Ticker) pipelineFor(symbol string) core.Primitive {
 	}
 
 	pipeline := nomagique.NewNumber(
-		// 0. Extract source data
-		data.NewAdapter(
-			transport.NewPass(),
-			func(m *data.Measurement[float64]) *data.Measurement[float64] {
-				bid := m.GetMetric("best_bid").Raw
-				if bid == 0 {
-					bid = m.GetMetric("bid").Raw
-				}
-				ask := m.GetMetric("best_ask").Raw
-				if ask == 0 {
-					ask = m.GetMetric("ask").Raw
-				}
+		// 0. Extract and validate touch geometry
+		nmpumpdump.NewTouchGate(),
 
-				if bid > 0 && ask > 0 {
-					if bid >= ask {
-						m.Err = fmt.Errorf("pumpdump: crossed touch (%f >= %f)", bid, ask)
-					} else {
-						m.WriteMetric("best_bid", bid)
-						m.WriteMetric("best_ask", ask)
-					}
-				}
-				return m
-			},
-			func(m *data.Measurement[float64], out *data.Measurement[float64]) {},
-		),
-
-		// 1. Calculate structural metrics using pure equations
-		data.NewEquations(
-			data.Equation{
-				Output: "spread",
-				Op:     arithmetic.NewSubtract(),
-				Left:   "best_ask",
-				Right:  "best_bid",
-			},
-			data.Equation{
-				Output: "midpoint",
-				Op:     arithmetic.NewAdd(),
-				Left:   "best_bid",
-				Right:  "best_ask",
-			},
-			data.Equation{
-				Output: "relative_spread",
-				Op:     arithmetic.NewDivide(),
-				Left:   "spread",
-				Right:  "midpoint",
-			},
-		),
-
-		// 2. Compute advanced statistical baseline for relative_spread
+		// 1. Adaptive baseline and dynamics for relative spread
 		transport.NewFan(
 			data.NewAdapter(
 				adaptive.NewBaseline(adaptive.NewWindow()),
@@ -113,7 +66,7 @@ func (ticker *Ticker) pipelineFor(symbol string) core.Primitive {
 					return m.GetMetric("relative_spread").Raw
 				},
 				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
-					m.WriteMetric("spread_baseline", out.Baseline)
+					m.WriteMetric("relative_spread_baseline", out.Baseline)
 					m.EnsureMetadata()
 					m.SetMetadata(data.MetadataSupport, strconv.FormatFloat(out.Count, 'f', -1, 64))
 
@@ -142,7 +95,7 @@ func (ticker *Ticker) pipelineFor(symbol string) core.Primitive {
 					if div, ok := m.LookupMetric("spread_divergence"); ok {
 						return temporal.Observation{Value: div.Raw, At: m.At.UnixNano()}
 					}
-					return temporal.Observation{Value: math.NaN(), At: m.At.UnixNano()}
+					return temporal.Observation{Value: 0, At: m.At.UnixNano()}
 				},
 				func(m *data.Measurement[float64], out temporal.VelocityReading) {
 					if out.Defined {
@@ -151,6 +104,15 @@ func (ticker *Ticker) pipelineFor(symbol string) core.Primitive {
 				},
 			),
 		),
+
+		// 2. Recurrence on spread dynamics
+		data.NewRecurrence(
+			"spread",
+			"relative_spread",
+			"spread_divergence",
+		),
+
+		// 3. Finalize
 		data.NewFinalizer[float64](),
 	)
 

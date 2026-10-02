@@ -2,8 +2,6 @@ package liquidity
 
 import (
 	"context"
-	"fmt"
-	"math"
 	"strconv"
 	"sync"
 	"unsafe"
@@ -13,6 +11,7 @@ import (
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
+	nmliquidity "github.com/theapemachine/symm/nomagique/liquidity"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/temporal"
@@ -49,53 +48,8 @@ func (ticker *Ticker) pipelineFor(symbol string) core.Primitive {
 	}
 
 	pipeline := nomagique.NewNumber(
-		data.NewAdapter(
-			transport.NewPass(),
-			func(m *data.Measurement[float64]) *data.Measurement[float64] {
-				bidMetric, _ := m.LookupMetric("bid")
-				askMetric, _ := m.LookupMetric("ask")
-				bidQtyMetric, _ := m.LookupMetric("bid_qty")
-				askQtyMetric, _ := m.LookupMetric("ask_qty")
-				bid, ask := bidMetric.Raw, askMetric.Raw
-				bidQty, askQty := bidQtyMetric.Raw, askQtyMetric.Raw
-
-				m.SetMetadata(data.MetadataSupport, "0")
-
-				if bid <= 0 || ask <= 0 || bidQty <= 0 || askQty <= 0 || math.IsNaN(bid) || math.IsNaN(ask) || math.IsNaN(bidQty) || math.IsNaN(askQty) || math.IsInf(bid, 0) || math.IsInf(ask, 0) || math.IsInf(bidQty, 0) || math.IsInf(askQty, 0) {
-					m.Err = fmt.Errorf("%w: liquidity: finite positive prices and displayed quantities required", core.ErrDomain)
-					return m
-				}
-
-				if ask <= bid {
-					m.Err = fmt.Errorf("%w: liquidity: positive order violated (%f <= %f)", core.ErrDomain, ask, bid)
-					return m
-				}
-
-				bidNotional, askNotional := bid*bidQty, ask*askQty
-				midpoint := (bid + ask) / 2
-				spread := ask - bid
-				relative := spread / midpoint
-
-				m.WriteMetric("best_bid_price", bid)
-				m.WriteMetric("best_ask_price", ask)
-				m.WriteMetric("touch_quantity:bid", bidQty)
-				m.WriteMetric("touch_quantity:ask", askQty)
-				m.WriteMetric("touch_notional:bid", bidNotional)
-				m.WriteMetric("touch_notional:ask", askNotional)
-				m.WriteMetric("midpoint", midpoint)
-				m.WriteMetric("spread", spread)
-				m.WriteMetric("relative_spread", relative)
-				m.WriteMetric("two_sided_touch_notional", math.Min(bidNotional, askNotional))
-				m.WriteNormalized("touch_notional_imbalance", (bidNotional-askNotional)/(bidNotional+askNotional))
-
-				m.WriteMetric("_log_bid_notional", math.Log(bidNotional))
-				m.WriteMetric("_log_ask_notional", math.Log(askNotional))
-				m.WriteMetric("_log_relative_spread", math.Log(relative))
-
-				return m
-			},
-			func(m *data.Measurement[float64], out *data.Measurement[float64]) {},
-		),
+		nmliquidity.NewGate(),
+		nmliquidity.NewTouch(),
 		transport.NewFan(
 			data.NewAdapter(
 				statistic.NewJoint(3),
@@ -183,6 +137,11 @@ func (ticker *Ticker) pipelineFor(symbol string) core.Primitive {
 					}
 				},
 			),
+		),
+		data.NewRecurrence(
+			"depth_zscore:bid",
+			"depth_zscore:ask",
+			"spread_zscore",
 		),
 		data.NewFinalizer[float64](),
 	)

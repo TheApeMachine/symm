@@ -1,5 +1,5 @@
 import * as d3 from "d3";
-import { Grid2X2, RefreshCw, Waves } from "lucide-react";
+import { Grid2X2, Pause, Play, RefreshCw, Waves } from "lucide-react";
 import type React from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "#/lib/utils";
@@ -24,22 +24,24 @@ interface ImpulseMapVizProps {
 
 export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 	data = [],
-	regions = [],
+	regions: _regions = [],
 	activeEvents = [],
 	className,
 }) => {
 	const containerRef = useRef<HTMLDivElement>(null);
 	const svgRef = useRef<SVGSVGElement>(null);
 	const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
+	const [isPlaying, setIsPlaying] = useState(true);
 	const [layoutMode, setLayoutMode] = useState<"grid" | "regions">("grid");
+	const [subTab, setSubTab] = useState<"map" | "topography" | "sympathy">("map");
 
-	// Refs for D3 simulation to persist across renders without triggering React state updates
 	const simulationRef = useRef<d3.Simulation<ImpulseNode, undefined> | null>(null);
 	const nodesRef = useRef<ImpulseNode[]>([]);
 	const layoutModeRef = useRef<"grid" | "regions">(layoutMode);
 	layoutModeRef.current = layoutMode;
+	const isPlayingRef = useRef(true);
+	isPlayingRef.current = isPlaying;
 
-	// Keep track of previous bounds and node count to detect grid growth
 	const prevBoundsRef = useRef<{
 		minX: number;
 		maxX: number;
@@ -73,7 +75,7 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 			mode: "grid" | "regions",
 			currentWidth: number,
 			currentHeight: number,
-			scale: number,
+			_scale: number,
 		) => {
 			if (!svgRef.current || currentWidth === 0 || currentHeight === 0) return;
 
@@ -84,29 +86,24 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 			const nodeLayer = svg.select<SVGGElement>(".nodes");
 			const badgeLayer = svg.select<SVGGElement>(".region-badges");
 
-			const maxActivation = d3.max(nodes, (d) => d.activation || 0) || 1;
+			// Color Scale: panel stone -> sky blue -> emerald green -> radiant gold
 			const colorScale = d3
 				.scaleSequential<string>((t) =>
-					d3.interpolateRgbBasis([
-						"#1c1917", // Subtle dark warm stone for quiescent/inactive
-						"#0ea5e9", // Sky blue for low activity
-						"#22c55e", // Emerald green for medium activity
-						"#fbbf24", // Radiant amber for peak activation
-					])(t),
+					d3.interpolateRgbBasis(["#111113", "#0ea5e9", "#22c55e", "#fbbf24"])(t),
 				)
-				.domain([0, Math.max(1, maxActivation)]);
+				.domain([0, 1]);
 
 			// 1. Topographic Regions (Contours) in "regions" mode
-			if (mode === "regions" && nodes.length > 0) {
-				const bandwidth = Math.max(24, Math.min(scale * 0.7, 72));
+			const hasActiveEnergy = nodes.some((d) => (d.activation || 0) > 0.05);
+			if (mode === "regions" && nodes.length > 0 && hasActiveEnergy) {
 				const computeDensity = d3
 					.contourDensity<ImpulseNode>()
 					.x((d) => d.x || 0)
 					.y((d) => d.y || 0)
-					.weight((d) => Math.max(0.02, (d.activation || 0) * (d.snr || 1)))
+					.weight((d) => (d.activation || 0) * (d.snr || 1))
 					.size([currentWidth, currentHeight])
-					.bandwidth(bandwidth)
-					.thresholds(12);
+					.bandwidth(30)
+					.thresholds(15);
 
 				const contourData = computeDensity(nodes);
 				const paths = contourLayer.selectAll<SVGPathElement, d3.ContourMultiPolygon>("path").data(contourData);
@@ -117,16 +114,14 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 					.merge(paths)
 					.attr("d", d3.geoPath())
 					.attr("fill", (_, i) => {
-						const opacity = Math.min(0.015 + i * 0.025, 0.38);
-						return `rgba(251, 191, 36, ${opacity})`;
+						return d3.color("#fbbf24")?.copy({ opacity: i * 0.015 }).toString() || "none";
 					})
 					.attr("stroke", (_, i) => {
-						if (i >= 7) return "rgba(251, 191, 36, 0.85)";
-						if (i >= 3) return "rgba(34, 197, 94, 0.45)";
-						return "rgba(14, 165, 233, 0.25)";
+						if (i === 6) return "rgba(34, 197, 94, 0.4)"; // Green boundary
+						if (i === 10) return "rgba(251, 191, 36, 0.8)"; // Gold Otsu split boundary
+						return "none";
 					})
-					.attr("stroke-width", (_, i) => (i >= 7 ? 1.5 : 1))
-					.attr("stroke-dasharray", (_, i) => (i % 2 === 1 ? "4 3" : "none"))
+					.attr("stroke-width", (_, i) => (i === 10 ? 1.5 : i === 6 ? 1 : 0))
 					.style("opacity", 1);
 
 				paths.exit().remove();
@@ -137,7 +132,7 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 
 			// 2. Sympathy Links: Connect active nodes in the same region
 			const activeLinks: { source: ImpulseNode; target: ImpulseNode; strength: number }[] = [];
-			const linkThreshold = 0.3;
+			const linkThreshold = 0.5;
 
 			for (let i = 0; i < nodes.length; i++) {
 				const a = nodes[i];
@@ -150,9 +145,8 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 					const dx = (a.x || 0) - (b.x || 0);
 					const dy = (a.y || 0) - (b.y || 0);
 					const dist = Math.hypot(dx, dy);
-					const maxDist = Math.max(scale * 2.2, 160);
 
-					if (dist < maxDist) {
+					if (dist < 100) {
 						const strength = ((a.activation || 0) + (b.activation || 0)) / 2;
 						activeLinks.push({ source: a, target: b, strength });
 					}
@@ -170,14 +164,13 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 				.attr("x2", (d) => d.target.x || 0)
 				.attr("y2", (d) => d.target.y || 0)
 				.attr("stroke", "#fbbf24")
-				.attr("stroke-opacity", (d) => Math.min(d.strength * 0.9, 0.8))
-				.attr("stroke-width", (d) => 1 + d.strength * 1.5);
+				.attr("stroke-opacity", (d) => Math.min(d.strength * 0.8, 0.8))
+				.attr("stroke-width", 1.5);
 
 			links.exit().remove();
 
 			// 3. Halos for highly active nodes
 			const activeNodes = nodes.filter((d) => (d.activation || 0) >= 0.5);
-			const baseR = Math.max(4, Math.min(scale * 0.12, 12));
 			const halos = haloLayer.selectAll<SVGCircleElement, ImpulseNode>("circle").data(activeNodes, (d) => d.id);
 
 			halos
@@ -186,11 +179,11 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 				.merge(halos)
 				.attr("cx", (d) => d.x || 0)
 				.attr("cy", (d) => d.y || 0)
-				.attr("r", (d) => baseR * (1.6 + (d.activation || 0) * 0.8))
+				.attr("r", (d) => Math.max(3.5, Math.min((d.snr || 1) * 1.5 + 2, 14)) * 1.8)
 				.attr("fill", "none")
 				.attr("stroke", "#fbbf24")
 				.attr("stroke-width", 1.5)
-				.attr("stroke-opacity", (d) => Math.min((d.activation || 0) * 0.6, 0.75))
+				.attr("stroke-opacity", (d) => Math.min((d.activation || 0) * 0.7, 0.8))
 				.style("filter", "url(#impulse-glow)");
 
 			halos.exit().remove();
@@ -201,14 +194,15 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 			const nodeEnter = nodeElements
 				.enter()
 				.append("circle")
-				.attr("stroke", (d) => ((d.activation || 0) >= 0.5 ? "#fbbf24" : "#09090b"))
+				.attr("r", (d) => Math.max(3.5, Math.min((d.snr || 1) * 1.5 + 2, 14)))
+				.attr("stroke", (d) => ((d.activation || 0) >= 0.5 ? "#fbbf24" : "#050505"))
 				.attr("stroke-width", (d) => ((d.activation || 0) >= 0.5 ? 2 : 1.5))
 				.on("mouseover", function () {
-					d3.select(this).attr("stroke", "#fbbf24").attr("stroke-width", 2.5);
+					d3.select(this).attr("stroke", "#fbbf24").attr("stroke-width", 2);
 				})
 				.on("mouseout", function (_, d) {
 					d3.select(this)
-						.attr("stroke", (d.activation || 0) >= 0.5 ? "#fbbf24" : "#09090b")
+						.attr("stroke", (d.activation || 0) >= 0.5 ? "#fbbf24" : "#050505")
 						.attr("stroke-width", (d.activation || 0) >= 0.5 ? 2 : 1.5);
 				});
 
@@ -216,7 +210,7 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 				.append("title")
 				.text(
 					(d) =>
-						`${d.label}\nRegion: #${d.cluster}\nActivation: ${(d.activation || 0).toFixed(2)}\nSNR: ${(d.snr || 0).toFixed(2)}`,
+						`${d.label}\nCluster: #${d.cluster}\nActivation: ${(d.activation || 0).toFixed(2)}\nSNR: ${(d.snr || 0).toFixed(2)}`,
 				);
 
 			const nodeMerged = nodeEnter.merge(nodeElements);
@@ -224,19 +218,19 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 			nodeMerged
 				.attr("cx", (d) => d.x || 0)
 				.attr("cy", (d) => d.y || 0)
-				.attr("r", (d) => baseR * (1 + (d.activation || 0) * 0.5))
+				.attr("r", (d) => Math.max(3.5, Math.min((d.snr || 1) * 1.5 + 2, 14)))
 				.attr("fill", (d) => colorScale(d.activation || 0))
-				.attr("stroke", (d) => ((d.activation || 0) >= 0.5 ? "#fbbf24" : "#09090b"))
+				.attr("stroke", (d) => ((d.activation || 0) >= 0.5 ? "#fbbf24" : "#050505"))
 				.attr("stroke-width", (d) => ((d.activation || 0) >= 0.5 ? 2 : 1.5));
 
 			nodeMerged.select("title").text(
 				(d) =>
-					`${d.label}\nRegion: #${d.cluster}\nActivation: ${(d.activation || 0).toFixed(2)}\nSNR: ${(d.snr || 0).toFixed(2)}`,
+					`${d.label}\nCluster: #${d.cluster}\nActivation: ${(d.activation || 0).toFixed(2)}\nSNR: ${(d.snr || 0).toFixed(2)}`,
 			);
 
 			nodeElements.exit().remove();
 
-			// 5. Cluster / Region Centroid Badges in "regions" mode
+			// 5. Cluster Centroid Badges in "regions" mode
 			if (mode === "regions" && nodes.length > 0) {
 				const clusterMap = new Map<number, { sumX: number; sumY: number; count: number; maxAct: number }>();
 				for (const n of nodes) {
@@ -249,12 +243,12 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 					clusterMap.set(c, entry);
 				}
 
-				const badgeData = Array.from(clusterMap.entries()).map(([clusterId, data]) => ({
+				const badgeData = Array.from(clusterMap.entries()).map(([clusterId, bdata]) => ({
 					clusterId,
-					x: data.sumX / data.count,
-					y: data.sumY / data.count,
-					count: data.count,
-					maxAct: data.maxAct,
+					x: bdata.sumX / bdata.count,
+					y: bdata.sumY / bdata.count,
+					count: bdata.count,
+					maxAct: bdata.maxAct,
 				}));
 
 				const badges = badgeLayer.selectAll<SVGGElement, (typeof badgeData)[0]>("g").data(badgeData, (d) => d.clusterId);
@@ -269,7 +263,7 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 
 				const badgeMerged = badgeEnter.merge(badges);
 				badgeMerged
-					.attr("transform", (d) => `translate(${d.x}, ${d.y - baseR * 2 - 4})`)
+					.attr("transform", (d) => `translate(${d.x}, ${d.y - 18})`)
 					.select("text")
 					.attr("fill", (d) => (d.maxAct >= 0.5 ? "#fbbf24" : "#71717a"))
 					.text((d) => `R${d.clusterId} (${d.count}m)`);
@@ -319,11 +313,17 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 		simulation.on("tick", () => {
 			const width = dimensions.width || 800;
 			const height = dimensions.height || 600;
-			const pad = 0.08;
-			const usableW = Math.max(width * (1 - 2 * pad), 50);
-			const usableH = Math.max(height * (1 - 2 * pad), 50);
-			const scale = Math.min(usableW, usableH) / 10;
-			renderScene(nodesRef.current, layoutModeRef.current, width, height, scale);
+
+			// Decay activations naturally over time when feed is running
+			if (isPlayingRef.current) {
+				for (const n of nodesRef.current) {
+					if ((n.activation || 0) > 0) {
+						n.activation = Math.max(0, (n.activation || 0) - 0.002);
+					}
+				}
+			}
+
+			renderScene(nodesRef.current, layoutModeRef.current, width, height, 30);
 		});
 
 		simulationRef.current = simulation;
@@ -333,12 +333,17 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 		};
 	}, [dimensions.width, dimensions.height, renderScene]);
 
-	// Keep nodesRef in sync with incoming data, compute centered projection, and refit on growth
+	// Keep nodesRef in sync with incoming data, compute layout targets, and refit
 	useEffect(() => {
 		if (!data || data.length === 0) return;
 
 		const width = dimensions.width || 800;
 		const height = dimensions.height || 600;
+		const pad = 0.1;
+		const usableW = Math.max(width * (1 - 2 * pad), 50);
+		const usableH = Math.max(height * (1 - 2 * pad), 50);
+		const centerX = width / 2;
+		const centerY = height / 2;
 
 		let minX = Number.POSITIVE_INFINITY;
 		let maxX = Number.NEGATIVE_INFINITY;
@@ -346,40 +351,40 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 		let maxY = Number.NEGATIVE_INFINITY;
 
 		for (const d of data) {
-			const nx = d.x ?? 0;
-			const ny = d.y ?? 0;
-			if (nx < minX) minX = nx;
-			if (nx > maxX) maxX = nx;
-			if (ny < minY) minY = ny;
-			if (ny > maxY) maxY = ny;
+			const nx = d.x;
+			const ny = d.y;
+			if (nx !== undefined && ny !== undefined) {
+				if (nx < minX) minX = nx;
+				if (nx > maxX) maxX = nx;
+				if (ny < minY) minY = ny;
+				if (ny > maxY) maxY = ny;
+			}
 		}
 
-		if (minX === Number.POSITIVE_INFINITY) return;
-
+		const hasExplicitCoords = minX !== Number.POSITIVE_INFINITY && (maxX > minX || maxY > minY);
 		const spanX = maxX - minX;
 		const spanY = maxY - minY;
 
-		// Contain scale to fill all available space with uniform aspect ratio
-		const pad = 0.08;
-		const usableW = Math.max(width * (1 - 2 * pad), 50);
-		const usableH = Math.max(height * (1 - 2 * pad), 50);
-
 		let scale = 1;
-		if (spanX > 0 && spanY > 0) {
-			scale = Math.min(usableW / spanX, usableH / spanY);
-		} else if (spanX > 0) {
-			scale = usableW / spanX;
-		} else if (spanY > 0) {
-			scale = usableH / spanY;
-		} else {
-			scale = Math.min(usableW, usableH) / 2;
+		if (hasExplicitCoords) {
+			if (spanX > 0 && spanY > 0) {
+				scale = Math.min(usableW / spanX, usableH / spanY);
+			} else if (spanX > 0) {
+				scale = usableW / spanX;
+			} else {
+				scale = usableH / spanY;
+			}
 		}
 
-		// Centered projection: (midX, midY) maps exactly to container center (centerX, centerY)
-		const midX = (minX + maxX) / 2;
-		const midY = (minY + maxY) / 2;
-		const centerX = width / 2;
-		const centerY = height / 2;
+		const midX = hasExplicitCoords ? (minX + maxX) / 2 : 0;
+		const midY = hasExplicitCoords ? (minY + maxY) / 2 : 0;
+
+		const cols = Math.ceil(Math.sqrt(data.length * (usableW / usableH)));
+		const rows = Math.ceil(data.length / Math.max(1, cols));
+		const stepX = usableW / Math.max(1, cols - 1);
+		const stepY = usableH / Math.max(1, rows - 1);
+		const gridStartX = centerX - usableW / 2;
+		const gridStartY = centerY - usableH / 2;
 
 		const boundsChanged =
 			!prevBoundsRef.current ||
@@ -406,10 +411,18 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 			existingMap.set(n.id, n);
 		}
 
-		const updatedNodes: ImpulseNode[] = data.map((d) => {
+		const updatedNodes: ImpulseNode[] = data.map((d, i) => {
 			const existing = existingMap.get(d.id);
-			const targetGridX = centerX + (((d.x ?? 0) - midX) * scale);
-			const targetGridY = centerY + (((d.y ?? 0) - midY) * scale);
+			let targetGridX = 0;
+			let targetGridY = 0;
+
+			if (hasExplicitCoords && d.x !== undefined && d.y !== undefined) {
+				targetGridX = centerX + ((d.x - midX) * scale);
+				targetGridY = centerY + ((d.y - midY) * scale);
+			} else {
+				targetGridX = gridStartX + (i % cols) * stepX;
+				targetGridY = gridStartY + Math.floor(i / cols) * stepY;
+			}
 
 			if (existing) {
 				existing.activation = d.activation;
@@ -421,7 +434,6 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 				existing.gridX = targetGridX;
 				existing.gridY = targetGridY;
 
-				// In grid mode, or when bounds grew significantly, refit node positions
 				if (layoutModeRef.current === "grid" || boundsChanged) {
 					existing.x = targetGridX;
 					existing.y = targetGridY;
@@ -444,55 +456,14 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 
 		nodesRef.current = updatedNodes;
 
-		// If in regions mode and the grid grew, settle into regional foci
-		if (layoutModeRef.current === "regions" && boundsChanged && simulationRef.current) {
-			const clusterCentroids = new Map<number, { sumX: number; sumY: number; count: number }>();
-			for (const n of updatedNodes) {
-				const c = n.cluster || 0;
-				const entry = clusterCentroids.get(c) || { sumX: 0, sumY: 0, count: 0 };
-				entry.sumX += n.gridX ?? centerX;
-				entry.sumY += n.gridY ?? centerY;
-				entry.count++;
-				clusterCentroids.set(c, entry);
-			}
-
-			const foci = new Map<number, { x: number; y: number }>();
-			clusterCentroids.forEach((val, c) => {
-				foci.set(c, { x: val.sumX / val.count, y: val.sumY / val.count });
-			});
-
-			simulationRef.current
-				.nodes(updatedNodes)
-				.force(
-					"x",
-					d3.forceX<ImpulseNode>((d) => foci.get(d.cluster)?.x ?? d.gridX ?? centerX).strength(0.15),
-				)
-				.force(
-					"y",
-					d3.forceY<ImpulseNode>((d) => foci.get(d.cluster)?.y ?? d.gridY ?? centerY).strength(0.15),
-				)
-				.force(
-					"collide",
-					d3
-						.forceCollide<ImpulseNode>()
-						.radius((d) => Math.max(6, Math.min(scale * 0.15, 14)) * 1.5)
-						.iterations(2),
-				)
-				.force("charge", d3.forceManyBody().strength(-10))
-				.alpha(0.3)
-				.restart();
-
-			window.setTimeout(() => {
-				simulationRef.current?.alpha(0).stop();
-				renderScene(nodesRef.current, layoutModeRef.current, width, height, scale);
-			}, 500);
-		} else if (simulationRef.current) {
+		if (simulationRef.current) {
 			simulationRef.current.nodes(updatedNodes);
-			simulationRef.current.alpha(0).stop();
+			if (layoutModeRef.current === "grid") {
+				simulationRef.current.alpha(0).stop();
+			}
 		}
 
-		// Always render the latest activation states in real-time
-		renderScene(updatedNodes, layoutModeRef.current, width, height, scale);
+		renderScene(updatedNodes, layoutModeRef.current, width, height, 30);
 	}, [data, dimensions.width, dimensions.height, renderScene]);
 
 	// Handle Mode Transitions (Grid vs Regions)
@@ -503,76 +474,52 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 		const nodes = nodesRef.current;
 		if (!simulation || width === 0) return;
 
-		const pad = 0.08;
-		const usableW = Math.max(width * (1 - 2 * pad), 50);
-		const usableH = Math.max(height * (1 - 2 * pad), 50);
-		let minX = Number.POSITIVE_INFINITY;
-		let maxX = Number.NEGATIVE_INFINITY;
-		let minY = Number.POSITIVE_INFINITY;
-		let maxY = Number.NEGATIVE_INFINITY;
-		for (const d of nodes) {
-			const nx = d.x ?? 0;
-			const ny = d.y ?? 0;
-			if (nx < minX) minX = nx;
-			if (nx > maxX) maxX = nx;
-			if (ny < minY) minY = ny;
-			if (ny > maxY) maxY = ny;
-		}
-		const spanX = maxX - minX;
-		const spanY = maxY - minY;
-		const scale = spanX > 0 && spanY > 0 ? Math.min(usableW / spanX, usableH / spanY) : 30;
+		const centerX = width / 2;
+		const centerY = height / 2;
+
+		const foci = [
+			{ x: width * 0.28, y: height * 0.32 }, // Cluster 0
+			{ x: width * 0.72, y: height * 0.32 }, // Cluster 1
+			{ x: width * 0.28, y: height * 0.68 }, // Cluster 2
+			{ x: width * 0.72, y: height * 0.68 }, // Cluster 3
+			{ x: width * 0.50, y: height * 0.50 }, // Cluster 4
+		];
 
 		if (layoutMode === "grid") {
 			simulation.alpha(0).stop();
 			for (const n of nodes) {
-				n.x = n.gridX ?? width / 2;
-				n.y = n.gridY ?? height / 2;
+				n.x = n.gridX ?? centerX;
+				n.y = n.gridY ?? centerY;
 				n.vx = 0;
 				n.vy = 0;
 			}
-			renderScene(nodes, "grid", width, height, scale);
+			renderScene(nodes, "grid", width, height, 30);
 		} else {
-			// Compute focal points for each cluster
-			const clusterCentroids = new Map<number, { sumX: number; sumY: number; count: number }>();
-			for (const n of nodes) {
-				const c = n.cluster || 0;
-				const entry = clusterCentroids.get(c) || { sumX: 0, sumY: 0, count: 0 };
-				entry.sumX += n.gridX ?? width / 2;
-				entry.sumY += n.gridY ?? height / 2;
-				entry.count++;
-				clusterCentroids.set(c, entry);
-			}
-
-			const foci = new Map<number, { x: number; y: number }>();
-			clusterCentroids.forEach((val, c) => {
-				foci.set(c, { x: val.sumX / val.count, y: val.sumY / val.count });
-			});
-
 			simulation
 				.nodes(nodes)
 				.force(
 					"x",
-					d3.forceX<ImpulseNode>((d) => foci.get(d.cluster)?.x ?? d.gridX ?? width / 2).strength(0.15),
+					d3.forceX<ImpulseNode>((d) => foci[Math.abs(Number(d.cluster || 0)) % foci.length].x).strength(0.12),
 				)
 				.force(
 					"y",
-					d3.forceY<ImpulseNode>((d) => foci.get(d.cluster)?.y ?? d.gridY ?? height / 2).strength(0.15),
+					d3.forceY<ImpulseNode>((d) => foci[Math.abs(Number(d.cluster || 0)) % foci.length].y).strength(0.12),
 				)
 				.force(
 					"collide",
 					d3
 						.forceCollide<ImpulseNode>()
-						.radius((d) => Math.max(6, Math.min(scale * 0.15, 14)) * 1.5)
+						.radius((d) => Math.max(4, (d.snr || 1) * 1.5 + 4))
 						.iterations(2),
 				)
-				.force("charge", d3.forceManyBody().strength(-10))
-				.alpha(0.35)
+				.force("charge", d3.forceManyBody().strength(-15))
+				.alpha(0.6)
 				.restart();
 
 			window.setTimeout(() => {
 				simulationRef.current?.alpha(0).stop();
-				renderScene(nodesRef.current, "regions", width, height, scale);
-			}, 600);
+				renderScene(nodesRef.current, "regions", width, height, 30);
+			}, 500);
 		}
 	}, [layoutMode, dimensions.width, dimensions.height, renderScene]);
 
@@ -584,21 +531,84 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 			n.y = n.gridY ?? n.y;
 			n.vx = 0;
 			n.vy = 0;
+			n.activation = 0;
 		}
 		simulationRef.current?.alpha(0).stop();
 		renderScene(nodesRef.current, layoutModeRef.current, width, height, 30);
 	}, [dimensions.width, dimensions.height, renderScene]);
 
+	// Count metrics and formed regions
+	const metricCount = data.length > 0 ? data.length : nodesRef.current.length;
+	const uniqueClusters = new Set<number>();
+	for (const node of data) {
+		if (node.cluster != null && Number(node.cluster) > 0) {
+			uniqueClusters.add(Number(node.cluster));
+		}
+	}
+	for (const r of _regions) {
+		if (r.id != null && Number(r.id) > 0) {
+			uniqueClusters.add(Number(r.id));
+		}
+	}
+	const regionCount = _regions.length > 0 ? _regions.length : uniqueClusters.size;
+
 	return (
 		<div className={cn("flex flex-col w-full h-full", className)}>
 			{/* Top Bar matching mockup styling */}
 			<div className="h-8 border-b border-[#27272a] flex items-center justify-between px-4 text-xs bg-[#09090b] font-mono shrink-0">
-				<div className="flex gap-4">
-					<span className="text-[#fbbf24] border-b border-[#fbbf24] py-1.5 font-medium">
-						Map
-					</span>
-					<span className="text-[#52525b] py-1.5">Topography</span>
-					<span className="text-[#52525b] py-1.5">Sympathy Grid</span>
+				<div className="flex items-center gap-4">
+					<div className="flex gap-4">
+						<button
+							type="button"
+							onClick={() => setSubTab("map")}
+							className={cn(
+								"py-1.5 transition-colors cursor-pointer",
+								subTab === "map"
+									? "text-[#fbbf24] border-b border-[#fbbf24] font-medium"
+									: "text-[#52525b] hover:text-[#a1a1aa]",
+							)}
+						>
+							Map
+						</button>
+						<button
+							type="button"
+							onClick={() => setSubTab("topography")}
+							className={cn(
+								"py-1.5 transition-colors cursor-pointer",
+								subTab === "topography"
+									? "text-[#fbbf24] border-b border-[#fbbf24] font-medium"
+									: "text-[#52525b] hover:text-[#a1a1aa]",
+							)}
+						>
+							Topography
+						</button>
+						<button
+							type="button"
+							onClick={() => setSubTab("sympathy")}
+							className={cn(
+								"py-1.5 transition-colors cursor-pointer",
+								subTab === "sympathy"
+									? "text-[#fbbf24] border-b border-[#fbbf24] font-medium"
+									: "text-[#52525b] hover:text-[#a1a1aa]",
+							)}
+						>
+							Sympathy Grid
+						</button>
+					</div>
+
+					<div className="h-3 w-px bg-[#27272a]" />
+
+					{/* Metrics & Formed Regions telemetry counters */}
+					<div className="flex items-center gap-3 text-[11px]">
+						<div className="flex items-center gap-1.5 bg-[#111113] border border-[#27272a] px-2 py-0.5 rounded">
+							<span className="text-[#71717a] uppercase text-[10px]">Metrics</span>
+							<span data-l="grid-metric-count" className="text-white font-bold">{metricCount}</span>
+						</div>
+						<div className="flex items-center gap-1.5 bg-[#111113] border border-[#27272a] px-2 py-0.5 rounded">
+							<span className="text-[#71717a] uppercase text-[10px]">Regions Formed</span>
+							<span data-l="grid-region-count" className="text-[#fbbf24] font-bold">{regionCount}</span>
+						</div>
+					</div>
 				</div>
 				<div className="flex items-center gap-3">
 					{/* Phase Toggle Controls */}
@@ -629,7 +639,7 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 							)}
 						>
 							<Waves className="w-3.5 h-3.5" />
-							<span>Discovered Regions</span>
+							<span>Sympathy Clustering</span>
 						</button>
 					</div>
 
@@ -645,6 +655,14 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 						title="Reset Map"
 					>
 						<RefreshCw className="w-3.5 h-3.5" />
+					</button>
+					<button
+						type="button"
+						onClick={() => setIsPlaying(!isPlaying)}
+						className="text-[#fbbf24] hover:text-white transition-colors ml-1 p-0.5 cursor-pointer"
+						title={isPlaying ? "Pause Feed" : "Resume Feed"}
+					>
+						{isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
 					</button>
 				</div>
 			</div>
@@ -667,15 +685,30 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 					<title>Live SOM Impulse Map</title>
 				</svg>
 
-				{/* Active Regions Empirical Overlay */}
-				{activeEvents.length > 0 && (
-					<div className="absolute top-4 right-4 w-64 bg-[#09090b]/80 backdrop-blur border border-[#27272a] rounded p-3 pointer-events-none shadow-xl font-mono">
-						<div className="text-[10px] uppercase tracking-widest text-[#52525b] mb-2 flex items-center justify-between">
-							<span>Active Regions ({activeEvents.length})</span>
-							<span className="w-1.5 h-1.5 rounded-full bg-[#22c55e] animate-pulse" />
-						</div>
-						<div className="space-y-1.5 text-xs max-h-60 overflow-y-auto">
-							{activeEvents.map((evt, index) => (
+				{/* Canvas HUD Pill: Metrics & Regions Indicator */}
+				<div className="absolute bottom-3 left-4 flex items-center gap-3 font-mono text-[11px] text-[#71717a] pointer-events-none bg-[#09090b]/80 backdrop-blur px-2.5 py-1 rounded border border-[#27272a] shadow-lg">
+					<span className="flex items-center gap-1.5">
+						<span className="w-1.5 h-1.5 rounded-full bg-[#0ea5e9]" />
+						<span>Metrics:</span>
+						<span data-l="hud-metric-count" className="text-white font-bold">{metricCount}</span>
+					</span>
+					<span className="text-[#27272a]">·</span>
+					<span className="flex items-center gap-1.5">
+						<span className="w-1.5 h-1.5 rounded-full bg-[#fbbf24]" />
+						<span>Formed Regions:</span>
+						<span data-l="hud-region-count" className="text-[#fbbf24] font-bold">{regionCount}</span>
+					</span>
+				</div>
+
+				{/* Market Tape / Active Regions Overlay */}
+				<div className="absolute top-4 left-4 w-64 bg-[#09090b]/80 backdrop-blur border border-[#27272a] rounded p-3 pointer-events-none shadow-xl font-mono">
+					<div className="text-[10px] uppercase tracking-widest text-[#52525b] mb-2 flex items-center justify-between">
+						<span>{activeEvents.length > 0 ? `Active Regions (${activeEvents.length})` : "Market Tape Feed"}</span>
+						{isPlaying && <span className="w-1.5 h-1.5 rounded-full bg-[#22c55e] animate-pulse" />}
+					</div>
+					<div className="space-y-1.5 text-xs max-h-60 overflow-y-auto">
+						{activeEvents.length > 0 ? (
+							activeEvents.map((evt, index) => (
 								<div
 									key={`${(evt as { id?: number }).id ?? "r"}:${evt.label}:${index}`}
 									className="flex justify-between items-center text-[#d4d4d4]"
@@ -692,10 +725,14 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 										</span>
 									</div>
 								</div>
-							))}
-						</div>
+							))
+						) : (
+							<div className="text-[#71717a] text-[11px] italic">
+								Quiescent · Awaiting impulse
+							</div>
+						)}
 					</div>
-				)}
+				</div>
 			</div>
 		</div>
 	);

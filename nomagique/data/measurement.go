@@ -4,6 +4,7 @@ import (
 	"errors"
 	"iter"
 	"math"
+	"strings"
 	"time"
 	"unsafe"
 
@@ -155,14 +156,22 @@ func (m *Measurement[T]) WriteMetric(key string, val T) {
 		return
 	}
 
-	for i := range m.Metrics {
-		if m.Metrics[i].Key == key {
-			m.Metrics[i].Metric = m.Metrics[i].Metric.Write(val)
+	for index := range m.Metrics {
+		if m.Metrics[index].Key == key {
+			if m.Metrics[index].Metric.Label == "" {
+				m.Metrics[index].Metric.Label = key
+			}
+
+			m.Metrics[index].Metric = m.Metrics[index].Metric.Write(val)
 			return
 		}
 	}
 
 	metric, _ := m.LookupMetric(key)
+	if metric.Label == "" {
+		metric.Label = key
+	}
+
 	m.Metrics = append(m.Metrics, MetricEntry[T]{Key: key, Metric: metric.Write(val)})
 }
 
@@ -172,18 +181,26 @@ func (m *Measurement[T]) WriteStandardized(key string, val T) {
 		return
 	}
 
-	v := val
-	for i := range m.Metrics {
-		if m.Metrics[i].Key == key {
-			m.Metrics[i].Metric = m.Metrics[i].Metric.Write(val)
-			m.Metrics[i].Metric.Standardized = &v
+	stdVal := val
+	for index := range m.Metrics {
+		if m.Metrics[index].Key == key {
+			if m.Metrics[index].Metric.Label == "" {
+				m.Metrics[index].Metric.Label = key
+			}
+
+			m.Metrics[index].Metric = m.Metrics[index].Metric.Write(val)
+			m.Metrics[index].Metric.Standardized = &stdVal
 			return
 		}
 	}
 
 	metric, _ := m.LookupMetric(key)
+	if metric.Label == "" {
+		metric.Label = key
+	}
+
 	metric = metric.Write(val)
-	metric.Standardized = &v
+	metric.Standardized = &stdVal
 	m.Metrics = append(m.Metrics, MetricEntry[T]{Key: key, Metric: metric})
 }
 
@@ -193,19 +210,56 @@ func (m *Measurement[T]) WriteNormalized(key string, val T) {
 		return
 	}
 
-	v := val
-	for i := range m.Metrics {
-		if m.Metrics[i].Key == key {
-			m.Metrics[i].Metric = m.Metrics[i].Metric.Write(val)
-			m.Metrics[i].Metric.Normalized = &v
+	normVal := val
+	for index := range m.Metrics {
+		if m.Metrics[index].Key == key {
+			if m.Metrics[index].Metric.Label == "" {
+				m.Metrics[index].Metric.Label = key
+			}
+
+			m.Metrics[index].Metric = m.Metrics[index].Metric.Write(val)
+			m.Metrics[index].Metric.Normalized = &normVal
 			return
 		}
 	}
 
 	metric, _ := m.LookupMetric(key)
+	if metric.Label == "" {
+		metric.Label = key
+	}
+
 	metric = metric.Write(val)
-	metric.Normalized = &v
+	metric.Normalized = &normVal
 	m.Metrics = append(m.Metrics, MetricEntry[T]{Key: key, Metric: metric})
+}
+
+// SetCenterScale sets the center and scale on a metric and immediately re-evaluates its standardization.
+func (m *Measurement[T]) SetCenterScale(key string, center, scale float64) {
+	if m == nil {
+		return
+	}
+
+	for index := range m.Metrics {
+		if m.Metrics[index].Key == key {
+			if m.Metrics[index].Metric.Label == "" {
+				m.Metrics[index].Metric.Label = key
+			}
+
+			m.Metrics[index].Metric.Center = center
+			m.Metrics[index].Metric.Scale = scale
+			m.Metrics[index].Metric = m.Metrics[index].Metric.Write(m.Metrics[index].Metric.Raw)
+			return
+		}
+	}
+
+	metric, _ := m.LookupMetric(key)
+	if metric.Label == "" {
+		metric.Label = key
+	}
+
+	metric.Center = center
+	metric.Scale = scale
+	m.Metrics = append(m.Metrics, MetricEntry[T]{Key: key, Metric: metric.Write(metric.Raw)})
 }
 
 // RangeMetrics iterates over all local metrics.
@@ -486,8 +540,68 @@ func (op *Finalizer[Value]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Po
 			measurement := *(**Measurement[Value])(arriving)
 
 			if measurement != nil {
+				var midpoint, spread float64
+				var hasMid, hasSpread bool
+
+				if midMetric, ok := measurement.LookupMetric("midpoint"); ok {
+					if midVal, valid := any(midMetric.Raw).(float64); valid && midVal > 0 {
+						midpoint = midVal
+						hasMid = true
+					}
+				}
+
+				if spreadMetric, ok := measurement.LookupMetric("spread"); ok {
+					if spreadVal, valid := any(spreadMetric.Raw).(float64); valid && spreadVal > 0 {
+						spread = spreadVal
+						hasSpread = true
+					}
+				}
+
+				if !hasMid || !hasSpread {
+					var bid, ask float64
+					var hasBid, hasAsk bool
+
+					for _, bidKey := range []string{"best_bid", "bid", "best_bid_price", "bid_price"} {
+						if bidMetric, ok := measurement.LookupMetric(bidKey); ok {
+							if bidVal, valid := any(bidMetric.Raw).(float64); valid && bidVal > 0 {
+								bid = bidVal
+								hasBid = true
+								break
+							}
+						}
+					}
+
+					for _, askKey := range []string{"best_ask", "ask", "best_ask_price", "ask_price"} {
+						if askMetric, ok := measurement.LookupMetric(askKey); ok {
+							if askVal, valid := any(askMetric.Raw).(float64); valid && askVal > 0 {
+								ask = askVal
+								hasAsk = true
+								break
+							}
+						}
+					}
+
+					if hasBid && hasAsk && ask > bid {
+						if !hasMid {
+							midpoint = (bid + ask) / 2.0
+							hasMid = true
+						}
+
+						if !hasSpread {
+							spread = ask - bid
+							hasSpread = true
+						}
+					}
+				}
+
 				updates := make(map[string]Metric[Value])
+				var zScores []float64
+
 				measurement.RangeMetrics(func(key string, metric Metric[Value]) bool {
+					if metric.Label == "" {
+						metric.Label = key
+					}
+
 					val, valid := any(metric.Raw).(float64)
 					if !valid {
 						return true
@@ -495,21 +609,73 @@ func (op *Finalizer[Value]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Po
 
 					modified := false
 
-					if baseline, ok := measurement.LookupMetric(key + "_baseline"); ok && baseline.Label != "" {
+					if isPriceMetric(key) && hasMid && hasSpread && spread > 0 {
+						if metric.Center == 0 && metric.Scale == 0 {
+							metric.Center = midpoint
+							metric.Scale = spread
+							modified = true
+						}
+					}
+
+					if baseline, ok := measurement.LookupMetric(key + "_baseline"); ok {
 						if bVal, ok := any(baseline.Raw).(float64); ok {
 							metric.Center = bVal
 							modified = true
-							if zscore, ok := measurement.LookupMetric(key + "_zscore"); ok && zscore.Label != "" {
+
+							if zscore, ok := measurement.LookupMetric(key + "_zscore"); ok {
 								if zVal, ok := any(zscore.Raw).(float64); ok && zVal != 0 {
-									metric.Scale = math.Abs((val - bVal) / zVal)
+									metric.Scale = math.Abs(val-bVal) / math.Abs(zVal)
 								}
 							}
+
+							if metric.Scale == 0 {
+								if noiseScale, ok := measurement.LookupMetric(key + "_noise_scale"); ok {
+									if nVal, ok := any(noiseScale.Raw).(float64); ok && nVal > 0 {
+										metric.Scale = nVal
+									}
+								}
+							}
+
+							if metric.Scale == 0 {
+								if noiseVar, ok := measurement.LookupMetric(key + "_noise_variance"); ok {
+									if vVal, ok := any(noiseVar.Raw).(float64); ok && vVal > 0 {
+										metric.Scale = math.Sqrt(vVal)
+									}
+								}
+							}
+						}
+					}
+
+					if isBoundedMetric(key) {
+						if metric.Normalized == nil {
+							normVal := val
+							metric.Normalized = any(&normVal).(*Value)
+							modified = true
+						}
+
+						if metric.Center == 0 && metric.Scale == 0 {
+							metric.Center = 0
+							metric.Scale = 1
+							modified = true
+						}
+					}
+
+					if strings.HasSuffix(key, "_zscore") {
+						if !math.IsNaN(val) && !math.IsInf(val, 0) {
+							zScores = append(zScores, val)
+						}
+
+						if metric.Standardized == nil {
+							stdVal := val
+							metric.Standardized = any(&stdVal).(*Value)
+							modified = true
 						}
 					}
 
 					if modified {
 						updates[key] = metric
 					}
+
 					return true
 				})
 
@@ -531,8 +697,40 @@ func (op *Finalizer[Value]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Po
 					measurement.Err = err
 				}
 
+				snr := reading.SNR
+				snrDefined := reading.SNRDefined
+
+				if !snrDefined && len(zScores) > 0 {
+					var sumSquares float64
+					for _, zScoreVal := range zScores {
+						sumSquares += zScoreVal * zScoreVal
+					}
+					snr = sumSquares / float64(len(zScores))
+					snrDefined = true
+				}
+
+				if !snrDefined {
+					facts := measurement.Facts()
+					if facts.HasDivergence && facts.HasNoise && facts.NoiseVariance > 0 {
+						snr = (facts.Divergence * facts.Divergence) / facts.NoiseVariance
+						snrDefined = true
+					}
+				}
+
+				maturity := reading.Maturity
+				if maturity == 0 {
+					facts := measurement.Facts()
+					if facts.HasSupport && facts.Support > 1 {
+						maturity = 1.0 - (1.0 / facts.Support)
+					}
+
+					if maturity == 0 && !reading.Estimated {
+						maturity = 1.0
+					}
+				}
+
 				measurement.SetQuality(
-					reading.Maturity, reading.SNR, reading.SNRDefined, reading.Estimated,
+					maturity, snr, snrDefined, reading.Estimated,
 				)
 			}
 
@@ -541,6 +739,27 @@ func (op *Finalizer[Value]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Po
 			}
 		}
 	}
+}
+
+func isPriceMetric(key string) bool {
+	switch key {
+	case "price", "bid", "ask", "best_bid", "best_ask", "best_bid_price", "best_ask_price",
+		"bid_price", "ask_price", "last", "last_price", "derivative_price", "reference_price",
+		"response_midpoint:at", "response_midpoint:from", "midpoint":
+		return true
+	}
+
+	return false
+}
+
+func isBoundedMetric(key string) bool {
+	if strings.Contains(key, "imbalance") || strings.HasSuffix(key, "_fraction") ||
+		strings.Contains(key, "signed_correlation") || strings.Contains(key, "absolute_correlation") ||
+		strings.HasSuffix(key, "_ks") || strings.HasSuffix(key, "_percentile") {
+		return true
+	}
+
+	return false
 }
 
 func (op *Finalizer[Value]) Error(errs ...error) error {

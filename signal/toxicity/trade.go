@@ -2,11 +2,8 @@ package toxicity
 
 import (
 	"context"
-	"math"
-	"sync"
-
 	"strconv"
-	"time"
+	"sync"
 	"unsafe"
 
 	"github.com/theapemachine/errnie"
@@ -16,7 +13,8 @@ import (
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	"github.com/theapemachine/symm/nomagique/statistic"
+	"github.com/theapemachine/symm/nomagique/temporal"
+	nmtoxicity "github.com/theapemachine/symm/nomagique/toxicity"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
@@ -55,111 +53,8 @@ func (trade *Trade) pipelineFor(symbol string) core.Primitive {
 		return existing.(core.Primitive)
 	}
 
-	type tradeState struct {
-		bracketQty      float64
-		matchedBidQty   float64
-		matchedAskQty   float64
-		touchFillBidQty float64
-		touchFillAskQty float64
-		hasPrevTime     bool
-		prevTime        time.Time
-	}
-
-	state := &tradeState{}
-
 	pipeline := nomagique.NewNumber(
-		data.NewAdapter(
-			transport.NewPass(),
-			func(m *data.Measurement[float64]) *data.Measurement[float64] {
-				price := m.GetMetric("price").Raw
-				qty := m.GetMetric("qty").Raw
-
-				if price <= 0 || qty <= 0 {
-					return m
-				}
-
-				bidPrice := m.GetMetric("best_price:bid").Raw
-				if bidPrice == 0 {
-					bidPrice = m.GetMetric("best_bid").Raw
-				}
-				if bidPrice == 0 {
-					bidPrice = m.GetMetric("bid").Raw
-				}
-
-				askPrice := m.GetMetric("best_price:ask").Raw
-				if askPrice == 0 {
-					askPrice = m.GetMetric("best_ask").Raw
-				}
-				if askPrice == 0 {
-					askPrice = m.GetMetric("ask").Raw
-				}
-
-				bidQty := m.GetMetric("touch_quantity:bid").Raw
-				if bidQty == 0 {
-					bidQty = m.GetMetric("bid_qty").Raw
-				}
-
-				askQty := m.GetMetric("touch_quantity:ask").Raw
-				if askQty == 0 {
-					askQty = m.GetMetric("ask_qty").Raw
-				}
-
-				side, _ := m.GetProvenance("side")
-				inBracket := (price >= bidPrice && price <= askPrice)
-				if inBracket {
-					state.bracketQty += qty
-				}
-
-				var bidFillFrac, askFillFrac float64
-
-				if side == "sell" && price == bidPrice {
-					state.matchedBidQty += qty
-					state.touchFillBidQty += qty
-					if bidQty > 0 {
-						bidFillFrac = state.touchFillBidQty / bidQty
-					}
-				}
-
-				if side == "buy" && price == askPrice {
-					state.matchedAskQty += qty
-					state.touchFillAskQty += qty
-					if askQty > 0 {
-						askFillFrac = state.touchFillAskQty / askQty
-					}
-				}
-
-				var bidRate, askRate float64
-				var hasRate bool
-
-				if state.hasPrevTime {
-					dt := m.At.Sub(state.prevTime).Seconds()
-					if dt > 0 {
-						bidRate = state.touchFillBidQty / dt
-						askRate = state.touchFillAskQty / dt
-						hasRate = true
-					}
-				}
-
-				state.prevTime = m.At
-				state.hasPrevTime = true
-
-				m.WriteMetric("bracket_trade_quantity", state.bracketQty)
-				m.WriteMetric("matched_touch_trade_quantity:bid", state.matchedBidQty)
-				m.WriteMetric("matched_touch_trade_quantity:ask", state.matchedAskQty)
-				m.WriteMetric("touch_fill_quantity:bid", state.touchFillBidQty)
-				m.WriteMetric("touch_fill_quantity:ask", state.touchFillAskQty)
-				m.WriteNormalized("touch_fill_fraction:bid", bidFillFrac)
-				m.WriteNormalized("touch_fill_fraction:ask", askFillFrac)
-
-				if hasRate {
-					m.WriteMetric("touch_fill_rate:bid", bidRate)
-					m.WriteMetric("touch_fill_rate:ask", askRate)
-				}
-
-				return m
-			},
-			func(m *data.Measurement[float64], out *data.Measurement[float64]) {},
-		),
+		nmtoxicity.NewTradeMatching(),
 		transport.NewFan(
 			data.NewAdapter(
 				adaptive.NewBaseline(adaptive.NewWindow()),
@@ -193,37 +88,37 @@ func (trade *Trade) pipelineFor(symbol string) core.Primitive {
 				},
 			),
 			data.NewAdapter(
-				statistic.NewJoint(2),
-				func(m *data.Measurement[float64]) statistic.JointInput {
-					b := 0.0
-					if v, ok := m.LookupMetric("fill_fraction_divergence:bid"); ok {
-						b = v.Raw
+				temporal.NewVelocity(),
+				func(m *data.Measurement[float64]) temporal.Observation {
+					if v, ok := m.LookupMetric("touch_fill_fraction:bid"); ok {
+						return temporal.Observation{Value: v.Raw, At: m.At.UnixNano()}
 					}
-					a := 0.0
-					if v, ok := m.LookupMetric("fill_fraction_divergence:ask"); ok {
-						a = v.Raw
-					}
-					if b == 0 && a == 0 {
-						return statistic.JointInput{Values: nil}
-					}
-					return statistic.JointInput{Values: []float64{b, a}}
+					return temporal.Observation{Value: 0, At: m.At.UnixNano()}
 				},
-				func(m *data.Measurement[float64], out statistic.JointReading) {
-					if out.SNRDefined && out.SNR < 1/math.Sqrt(2.220446049250313e-16) {
-						m.WriteMetric("SNR", out.SNR)
-						m.EnsureMetadata()
-						m.SetMetadata(data.MetadataMahalanobisSNR, strconv.FormatFloat(out.SNR, 'f', -1, 64))
-					}
-					if len(out.Channels) > 0 {
-						n := out.Channels[0].Count
-						maturity := 0.0
-						if n > 1 {
-							maturity = 1.0 - (1.0 / n)
-						}
-						m.WriteNormalized("Maturity", maturity)
+				func(m *data.Measurement[float64], out temporal.VelocityReading) {
+					if out.Defined {
+						m.WriteMetric("fill_fraction_velocity:bid", out.Rate)
 					}
 				},
 			),
+			data.NewAdapter(
+				temporal.NewVelocity(),
+				func(m *data.Measurement[float64]) temporal.Observation {
+					if v, ok := m.LookupMetric("touch_fill_fraction:ask"); ok {
+						return temporal.Observation{Value: v.Raw, At: m.At.UnixNano()}
+					}
+					return temporal.Observation{Value: 0, At: m.At.UnixNano()}
+				},
+				func(m *data.Measurement[float64], out temporal.VelocityReading) {
+					if out.Defined {
+						m.WriteMetric("fill_fraction_velocity:ask", out.Rate)
+					}
+				},
+			),
+		),
+		data.NewRecurrence(
+			"touch_fill_fraction:bid",
+			"touch_fill_fraction:ask",
 		),
 		data.NewFinalizer[float64](),
 	)

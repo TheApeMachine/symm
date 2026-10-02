@@ -19,7 +19,7 @@ func init() {
 }
 
 /*
-SetRoute records the active dashboard page / surface route 
+SetRoute records the active dashboard page / surface route
 (e.g. "fluid", "dashboard", "learning").
 */
 func SetRoute(route string) {
@@ -95,7 +95,18 @@ func isFocus(measurement *data.Measurement[float64]) bool {
 func isSignal(measurement *data.Measurement[float64], signals ...string) bool {
 	if len(signals) == 0 {
 		switch kernelSource(measurement.Source) {
-		case "websocket", "correlation", "cvd", "depthflow", "derivatives", "hawkes", "leadlag", "liquidity", "morphology", "pumpdump", "sentiment", "toxicity":
+		case "websocket",
+			"correlation",
+			"cvd",
+			"depthflow",
+			"derivatives",
+			"hawkes",
+			"leadlag",
+			"liquidity",
+			"morphology",
+			"pumpdump",
+			"sentiment",
+			"toxicity":
 			return true
 		default:
 			return false

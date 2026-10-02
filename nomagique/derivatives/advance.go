@@ -123,7 +123,7 @@ func (op *Basis) observe(m *data.Measurement[float64], state *basisState) {
 	m.WriteMetric("basis_baseline", basisReading.Baseline)
 
 	if basisReading.HasPrior {
-		m.WriteMetric("basis_zscore", basisReading.ZScore)
+		m.WriteStandardized("basis_zscore", basisReading.ZScore)
 	}
 
 	if last > 0 && index > 0 {

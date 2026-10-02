@@ -139,12 +139,12 @@ func (op *Liquidation) observe(m *data.Measurement[float64], state *liquidationS
 	var currentShare float64
 
 	if grossLiq > 0 {
-		m.WriteMetric("liquidation_signed_fraction", netLiq / grossLiq)
+		m.WriteNormalized("liquidation_signed_fraction", netLiq/grossLiq)
 	}
 
 	if state.grossTradeTotal > 0 {
 		currentShare = grossLiq / state.grossTradeTotal
-		m.WriteMetric("liquidation_share", currentShare)
+		m.WriteNormalized("liquidation_share", currentShare)
 	}
 
 	if advanced {

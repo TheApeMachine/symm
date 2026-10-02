@@ -2,20 +2,19 @@ package pumpdump
 
 import (
 	"context"
-	"fmt"
+	"math"
+	"strconv"
 	"sync"
 	"unsafe"
 
-	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/nomagique"
-	"github.com/theapemachine/symm/nomagique/arithmetic"
+	"github.com/theapemachine/symm/nomagique/adaptive"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/probability"
+	nmpumpdump "github.com/theapemachine/symm/nomagique/pumpdump"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/temporal"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
@@ -62,112 +61,61 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 	}
 
 	pipeline := nomagique.NewNumber(
-		// 0. Extract Book Data via Adapter (intercepts measurement, queries book, yields measurement)
-		data.NewAdapter(
-			transport.NewPass(),
-			func(m *data.Measurement[float64]) *data.Measurement[float64] {
-				var bid, ask float64
-				level3.books.Book(m.Label, func(b *spotbook.Book) {
-					if b == nil {
-						return
-					}
-					if bestBid := b.BestBid(); bestBid != nil {
-						bid = bestBid.Price.Float64()
-					}
-					if bestAsk := b.BestAsk(); bestAsk != nil {
-						ask = bestAsk.Price.Float64()
-					}
-				})
+		// 0. Extract and validate book touch geometry
+		nmpumpdump.NewBookTouch(level3.books),
 
-				if bid > 0 && ask > 0 && bid >= ask {
-					m.Err = errnie.Err(
-						errnie.Internal,
-						fmt.Sprintf("pumpdump: crossed touch (%f >= %f)", bid, ask),
-						nil,
-					)
-				} else if bid > 0 && ask > 0 {
-
-					m.WriteMetric("best_bid", bid)
-					m.WriteMetric("best_ask", ask)
-				}
-				return m
-			},
-			func(m *data.Measurement[float64], out *data.Measurement[float64]) {},
-		),
-
-		// 1. Calculate structural metrics using pure equations
-		data.NewEquations(
-			data.Equation{
-				Output: "spread",
-				Op:     arithmetic.NewSubtract(),
-				Left:   "best_ask",
-				Right:  "best_bid",
-			},
-			data.Equation{
-				Output: "midpoint",
-				Op:     arithmetic.NewAdd(),
-				Left:   "best_bid",
-				Right:  "best_ask",
-			},
-			data.Equation{
-				Output: "relative_spread",
-				Op:     arithmetic.NewDivide(),
-				Left:   "spread",
-				Right:  "midpoint",
-			},
-		),
-
-		// 2. Compute advanced statistical and temporal features in parallel
+		// 1. Adaptive baseline and dynamics for relative spread
 		transport.NewFan(
 			data.NewAdapter(
-				temporal.NewVelocity(),
-				func(m *data.Measurement[float64]) temporal.Observation {
-					return temporal.Observation{
-						Value: m.GetMetric("midpoint").Raw,
-						At:    m.At.UnixNano(),
-					}
-				},
-				func(m *data.Measurement[float64], out temporal.VelocityReading) {
-					if out.Defined {
-						m.WriteMetric("midpoint_velocity", out.Rate)
-					}
-				},
-			),
-			data.NewAdapter(
-				statistic.NewEstimator(),
-				func(m *data.Measurement[float64]) float64 {
-					return m.GetMetric("spread").Raw
-				},
-				func(m *data.Measurement[float64], out statistic.MomentReading) {
-					if out.VarianceDefined {
-						m.WriteMetric("spread_variance", out.Variance)
-					}
-				},
-			),
-			data.NewAdapter(
-				statistic.NewCUSUM(),
-				func(m *data.Measurement[float64]) *statistic.CUSUMObservation {
-					return &statistic.CUSUMObservation{
-						Sequence:  m.SeqIdx,
-						Value:     m.GetMetric("midpoint").Raw,
-						Hurdle:    0.0001, // example hurdle
-						Threshold: 1.0,
-					}
-				},
-				func(m *data.Measurement[float64], out *statistic.CUSUMReading) {
-					m.WriteMetric("cusum_upper", out.UpperSum)
-					m.WriteMetric("cusum_lower", out.LowerSum)
-				},
-			),
-			data.NewAdapter(
-				probability.NewEntropy(),
+				adaptive.NewBaseline(adaptive.NewWindow()),
 				func(m *data.Measurement[float64]) float64 {
 					return m.GetMetric("relative_spread").Raw
 				},
-				func(m *data.Measurement[float64], out *float64) {
-					m.WriteMetric("spread_entropy", *out)
+				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
+					m.WriteMetric("relative_spread_baseline", out.Baseline)
+					m.EnsureMetadata()
+					m.SetMetadata(data.MetadataSupport, strconv.FormatFloat(out.Count, 'f', -1, 64))
+
+					if out.HasPrior {
+						if out.Baseline > 0 {
+							rs := m.GetMetric("relative_spread").Raw
+							spreadRatio := rs / out.Baseline
+							m.WriteMetric("spread_ratio", spreadRatio)
+							if rs > 0 {
+								divergence := math.Log(spreadRatio)
+								m.WriteMetric("spread_divergence", divergence)
+								m.SetMetadata(data.MetadataDivergence, strconv.FormatFloat(divergence, 'f', -1, 64))
+							}
+						}
+
+						m.WriteStandardized("spread_zscore", out.ZScore)
+						if out.VarianceDefined {
+							m.SetMetadata(data.MetadataNoiseVariance, strconv.FormatFloat(out.Variance, 'f', -1, 64))
+						}
+					}
 				},
 			),
+			data.NewAdapter(
+				temporal.NewVelocity(),
+				func(m *data.Measurement[float64]) temporal.Observation {
+					if div, ok := m.LookupMetric("spread_divergence"); ok {
+						return temporal.Observation{Value: div.Raw, At: m.At.UnixNano()}
+					}
+					return temporal.Observation{Value: 0, At: m.At.UnixNano()}
+				},
+				func(m *data.Measurement[float64], out temporal.VelocityReading) {
+					if out.Defined {
+						m.WriteMetric("spread_divergence_velocity", out.Rate)
+					}
+				},
+			),
+		),
+
+		// 2. Recurrence on spread dynamics
+		data.NewRecurrence(
+			"spread",
+			"relative_spread",
+			"spread_divergence",
 		),
 
 		// 3. Finalize

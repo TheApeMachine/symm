@@ -59,6 +59,10 @@ func (trade *Trade) pipelineFor(symbol string) core.Primitive {
 	pipeline := nomagique.NewNumber(
 		nmderivatives.NewTradeGate(),
 		nmderivatives.NewLiquidation(),
+		data.NewRecurrence(
+			"gross_liquidation_notional",
+			"liquidation_share",
+		),
 		data.NewFinalizer[float64](),
 	)
 

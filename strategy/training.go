@@ -19,12 +19,6 @@ import (
 	"github.com/theapemachine/symm/ui"
 )
 
-const (
-	gridKey   = "model/grid.json"
-	engineKey = "model/cognition.gob"
-	skillKey  = "model/skill.json"
-)
-
 var _ ui.CognitionSource = (*Training)(nil)
 
 /*
@@ -352,31 +346,24 @@ func (training *Training) Run() {
 }
 
 func (training *Training) processRun(epoch int64, lastSeq int64) (int64, bool) {
-	labels, err := training.catalog.Labels(training.Context(), epoch)
-
-	if err != nil {
-		return lastSeq, false
-	}
-
 	maxSeq := lastSeq
+	timelines := make(map[string][]*data.Measurement[float64])
 
-	for _, symbol := range labels {
-		var timeline []*data.Measurement[float64]
-
-		for measurement := range training.catalog.Timeline(
-			training.Context(), epoch, symbol, lastSeq+1, 0,
-		) {
-			if measurement == nil {
-				continue
-			}
-
-			if measurement.SeqIdx > maxSeq {
-				maxSeq = measurement.SeqIdx
-			}
-
-			timeline = append(timeline, measurement)
+	for measurement := range training.catalog.Timeline(
+		training.Context(), epoch, "", lastSeq+1, 0,
+	) {
+		if measurement == nil || measurement.Label == "" {
+			continue
 		}
 
+		if measurement.SeqIdx > maxSeq {
+			maxSeq = measurement.SeqIdx
+		}
+
+		timelines[measurement.Label] = append(timelines[measurement.Label], measurement)
+	}
+
+	for _, timeline := range timelines {
 		training.detector.Scan(timeline)
 
 		for {

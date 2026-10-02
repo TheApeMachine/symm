@@ -65,13 +65,14 @@ func (ticker *Ticker) pipelineFor(symbol string) core.Primitive {
 			data.NewAdapter(
 				adaptive.NewBaseline(adaptive.NewWindow()),
 				func(m *data.Measurement[float64]) float64 {
-					if v, ok := m.LookupMetric("open_interest_growth"); ok {
+					if v, ok := m.LookupMetric("open_interest_growth_rate"); ok {
 						return v.Raw
 					}
 					return 0
 				},
 				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
 					if out.HasPrior {
+						m.WriteMetric("open_interest_growth_baseline", out.Baseline)
 						m.WriteStandardized("open_interest_growth_zscore", out.ZScore)
 					}
 				},
@@ -86,6 +87,7 @@ func (ticker *Ticker) pipelineFor(symbol string) core.Primitive {
 				},
 				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
 					if out.HasPrior {
+						m.WriteMetric("return_gap_baseline", out.Baseline)
 						m.WriteStandardized("return_gap_zscore", out.ZScore)
 					}
 				},
@@ -93,7 +95,7 @@ func (ticker *Ticker) pipelineFor(symbol string) core.Primitive {
 			data.NewAdapter(
 				temporal.NewVelocity(),
 				func(m *data.Measurement[float64]) temporal.Observation {
-					if rate, ok := m.LookupMetric("open_interest_growth"); ok {
+					if rate, ok := m.LookupMetric("open_interest_growth_rate"); ok {
 						return temporal.Observation{Value: rate.Raw, At: m.At.UnixNano()}
 					}
 					return temporal.Observation{Value: 0, At: m.At.UnixNano()}
@@ -104,6 +106,11 @@ func (ticker *Ticker) pipelineFor(symbol string) core.Primitive {
 					}
 				},
 			),
+		),
+		data.NewRecurrence(
+			"basis",
+			"return_gap",
+			"open_interest_growth_rate",
 		),
 		data.NewFinalizer[float64](),
 	)

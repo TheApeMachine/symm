@@ -5,20 +5,18 @@ import (
 	"math"
 	"strconv"
 	"sync"
-	"time"
 	"unsafe"
 
-	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
-
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/adaptive"
-	"github.com/theapemachine/symm/nomagique/arithmetic"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
+	nmdepthflow "github.com/theapemachine/symm/nomagique/depthflow"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/statistic"
+	"github.com/theapemachine/symm/nomagique/temporal"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
@@ -64,200 +62,21 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 		return existing.(core.Primitive)
 	}
 
-	type level3State struct {
-		prevBids     map[string]float64
-		prevAsks     map[string]float64
-		prevNotional float64
-		prevTime     time.Time
-	}
-	state := &level3State{
-		prevBids: make(map[string]float64),
-		prevAsks: make(map[string]float64),
-	}
-
 	pipeline := nomagique.NewNumber(
-		// 0. Extract raw depth facts from peers or self
-		data.NewAdapter(
-			transport.NewPass(),
-			func(m *data.Measurement[float64]) *data.Measurement[float64] {
-
-				var obsBid, obsAsk float64
-				var addedBid, removedBid float64
-				var addedAsk, removedAsk float64
-
-				level3.books.Book(m.Label, func(b *book.Book) {
-					currBids := make(map[string]float64)
-					currAsks := make(map[string]float64)
-
-					cursor := b.BestBid()
-					for count := 0; count < 100 && cursor != nil; count++ {
-						price := cursor.Price.Float64()
-						qty := cursor.Quantity.Float64()
-						obsBid += price * qty
-						pstr := cursor.Price.String()
-						currBids[pstr] = qty
-
-						prevQty := state.prevBids[pstr]
-						if qty > prevQty {
-							addedBid += price * (qty - prevQty)
-						} else if qty < prevQty {
-							removedBid += price * (prevQty - qty)
-						}
-						cursor = cursor.Lower
-					}
-					for pstr, prevQty := range state.prevBids {
-						if _, ok := currBids[pstr]; !ok {
-							price, _ := strconv.ParseFloat(pstr, 64)
-							removedBid += price * prevQty
-						}
-					}
-
-					cursor = b.BestAsk()
-					for count := 0; count < 100 && cursor != nil; count++ {
-						price := cursor.Price.Float64()
-						qty := cursor.Quantity.Float64()
-						obsAsk += price * qty
-						pstr := cursor.Price.String()
-						currAsks[pstr] = qty
-
-						prevQty := state.prevAsks[pstr]
-						if qty > prevQty {
-							addedAsk += price * (qty - prevQty)
-						} else if qty < prevQty {
-							removedAsk += price * (prevQty - qty)
-						}
-						cursor = cursor.Higher
-					}
-					for pstr, prevQty := range state.prevAsks {
-						if _, ok := currAsks[pstr]; !ok {
-							price, _ := strconv.ParseFloat(pstr, 64)
-							removedAsk += price * prevQty
-						}
-					}
-
-					state.prevBids = currBids
-					state.prevAsks = currAsks
-				})
-
-				if obsBid > 0 || obsAsk > 0 {
-
-					if !state.prevTime.IsZero() && !state.prevTime.After(m.At) {
-						m.From = state.prevTime
-					}
-					m.WriteMetric("book_notional:bid", obsBid)
-					m.WriteMetric("book_notional:ask", obsAsk)
-					m.WriteMetric("observed_notional:bid", obsBid)
-					m.WriteMetric("observed_notional:ask", obsAsk)
-
-					m.WriteMetric("added_notional:bid", addedBid)
-					m.WriteMetric("removed_notional:bid", removedBid)
-					m.WriteMetric("net_displayed_flow:bid", addedBid-removedBid)
-					m.WriteMetric("added_notional:ask", addedAsk)
-					m.WriteMetric("removed_notional:ask", removedAsk)
-					m.WriteMetric("net_displayed_flow:ask", addedAsk-removedAsk)
-
-					observed := obsBid + obsAsk
-					if observed > 0 {
-						m.WriteNormalized("book_imbalance", (obsBid-obsAsk)/observed)
-					}
-
-					if !state.prevTime.IsZero() {
-						dt := m.At.Sub(state.prevTime).Seconds()
-						if dt > 0 {
-							effectiveDt := math.Max(dt, 1.0)
-							rate := observed / effectiveDt
-							m.WriteMetric("observed_notional_rate", rate)
-
-							m.WriteMetric("added_notional_rate:bid", addedBid/dt)
-							m.WriteMetric("removed_notional_rate:bid", removedBid/dt)
-							m.WriteMetric("net_displayed_flow_rate:bid", (addedBid-removedBid)/dt)
-							m.WriteMetric("added_notional_rate:ask", addedAsk/dt)
-							m.WriteMetric("removed_notional_rate:ask", removedAsk/dt)
-							m.WriteMetric("net_displayed_flow_rate:ask", (addedAsk-removedAsk)/dt)
-
-							ref := (state.prevNotional + observed) / 2
-							if ref > 0 {
-								m.WriteMetric("book_turnover_rate", (addedBid+removedBid+addedAsk+removedAsk)/(ref*dt))
-								m.WriteMetric("net_book_change_rate", (observed-state.prevNotional)/(ref*dt))
-								m.WriteMetric("signed_net_displayed_flow_rate", ((addedBid-removedBid)-(addedAsk-removedAsk))/(ref*dt))
-							}
-						}
-					}
-					state.prevNotional = observed
-					state.prevTime = m.At
-
-					tb := m.GetMetric("touch_notional:bid").Raw
-					ta := m.GetMetric("touch_notional:ask").Raw
-					if tb > 0 || ta > 0 {
-						touchImb := (tb - ta) / (tb + ta)
-						m.WriteNormalized("touch_imbalance", touchImb)
-						if observed > 0 {
-							bookImb := (obsBid - obsAsk) / observed
-							m.WriteMetric("imbalance_resolution_gap", touchImb-bookImb)
-							m.WriteMetric("imbalance_resolution_distance", math.Abs(touchImb-bookImb))
-						}
-					}
-				}
-
-				m.EnsureMetadata()
-
-				return m
-			},
-			func(m *data.Measurement[float64], res *data.Measurement[float64]) {},
-		),
-		// 1. Calculate structural metrics using pure equations
-		data.NewEquations(
-			data.Equation{
-				Output: "observed_notional",
-				Op:     arithmetic.NewAdd(),
-				Left:   "observed_notional:bid",
-				Right:  "observed_notional:ask",
-			},
-			data.Equation{
-				Output: "observed_notional_diff",
-				Op:     arithmetic.NewSubtract(),
-				Left:   "observed_notional:bid",
-				Right:  "observed_notional:ask",
-			},
-			data.Equation{
-				Output: "mutation_count",
-				Op:     arithmetic.NewAdd(),
-				Left:   "mutation_count:bid",
-				Right:  "mutation_count:ask",
-			},
-			data.Equation{
-				Output: "mutation_count_diff",
-				Op:     arithmetic.NewSubtract(),
-				Left:   "mutation_count:bid",
-				Right:  "mutation_count:ask",
-			},
-			data.Equation{
-				Output: "observed_notional_imbalance",
-				Op:     arithmetic.NewDivide(),
-				Left:   "observed_notional_diff",
-				Right:  "observed_notional",
-			},
-			data.Equation{
-				Output: "mutation_activity_imbalance",
-				Op:     arithmetic.NewDivide(),
-				Left:   "mutation_count_diff",
-				Right:  "mutation_count",
-			},
-		),
-		// 2. Baselines
+		nmdepthflow.NewBookFlow(level3.books),
 		transport.NewFan(
 			data.NewAdapter(
 				adaptive.NewBaseline(adaptive.NewWindow()),
 				func(m *data.Measurement[float64]) float64 {
-					return m.GetMetric("observed_notional_imbalance").Raw
+					return m.GetMetric("book_imbalance").Raw
 				},
 				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
 					m.SetMetadata(data.MetadataSupport, strconv.FormatFloat(out.Count, 'f', -1, 64))
 
 					if out.HasPrior {
-						m.WriteMetric("observed_notional_imbalance_baseline", out.Baseline)
-						m.WriteMetric("observed_notional_imbalance_divergence", out.Residual)
-						m.WriteStandardized("observed_notional_imbalance_zscore", out.ZScore)
+						m.WriteMetric("book_imbalance_baseline", out.Baseline)
+						m.WriteMetric("book_imbalance_divergence", out.Residual)
+						m.WriteStandardized("book_imbalance_zscore", out.ZScore)
 						m.SetMetadata(data.MetadataDivergence, strconv.FormatFloat(out.Residual, 'f', -1, 64))
 
 						if out.VarianceDefined {
@@ -269,13 +88,13 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 			data.NewAdapter(
 				adaptive.NewBaseline(adaptive.NewWindow()),
 				func(m *data.Measurement[float64]) float64 {
-					return m.GetMetric("observed_notional_rate").Raw
+					return m.GetMetric("imbalance_resolution_gap").Raw
 				},
 				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
 					if out.HasPrior {
-						m.WriteMetric("observed_notional_rate_baseline", out.Baseline)
-						m.WriteMetric("observed_notional_rate_divergence", out.Residual)
-						m.WriteStandardized("observed_notional_rate_zscore", out.ZScore)
+						m.WriteMetric("resolution_gap_baseline", out.Baseline)
+						m.WriteMetric("resolution_gap_divergence", out.Residual)
+						m.WriteStandardized("resolution_gap_zscore", out.ZScore)
 					}
 				},
 			),
@@ -286,9 +105,12 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 				},
 				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
 					if out.HasPrior {
-						m.WriteMetric("book_turnover_rate_baseline", out.Baseline)
-						m.WriteMetric("book_turnover_rate_divergence", out.Residual)
-						m.WriteStandardized("book_turnover_rate_zscore", out.ZScore)
+						m.WriteMetric("turnover_baseline", out.Baseline)
+						if out.Baseline > 0 {
+							turnover := m.GetMetric("book_turnover_rate").Raw
+							m.WriteMetric("turnover_ratio", turnover/out.Baseline)
+						}
+						m.WriteStandardized("turnover_zscore", out.ZScore)
 					}
 				},
 			),
@@ -312,21 +134,49 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 				},
 				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
 					if out.HasPrior {
-						m.WriteMetric("net_displayed_flow_imbalance_baseline", out.Baseline)
-						m.WriteMetric("net_displayed_flow_imbalance_divergence", out.Residual)
-						m.WriteStandardized("net_displayed_flow_imbalance_zscore", out.ZScore)
+						m.WriteMetric("signed_net_displayed_flow_rate_baseline", out.Baseline)
+						m.WriteMetric("signed_net_displayed_flow_rate_divergence", out.Residual)
+						m.WriteStandardized("signed_net_displayed_flow_rate_zscore", out.ZScore)
+					}
+				},
+			),
+			data.NewAdapter(
+				temporal.NewVelocity(),
+				func(m *data.Measurement[float64]) temporal.Observation {
+					if imb, ok := m.LookupMetric("book_imbalance"); ok {
+						return temporal.Observation{Value: imb.Raw, At: m.At.UnixNano()}
+					}
+					return temporal.Observation{Value: math.NaN(), At: m.At.UnixNano()}
+				},
+				func(m *data.Measurement[float64], out temporal.VelocityReading) {
+					if out.Defined {
+						m.WriteMetric("book_imbalance_velocity", out.Rate)
+					}
+				},
+			),
+			data.NewAdapter(
+				temporal.NewVelocity(),
+				func(m *data.Measurement[float64]) temporal.Observation {
+					if gap, ok := m.LookupMetric("imbalance_resolution_gap"); ok {
+						return temporal.Observation{Value: gap.Raw, At: m.At.UnixNano()}
+					}
+					return temporal.Observation{Value: math.NaN(), At: m.At.UnixNano()}
+				},
+				func(m *data.Measurement[float64], out temporal.VelocityReading) {
+					if out.Defined {
+						m.WriteMetric("resolution_gap_velocity", out.Rate)
 					}
 				},
 			),
 			data.NewAdapter(
 				statistic.NewJoint(4),
 				func(m *data.Measurement[float64]) statistic.JointInput {
-					i := m.GetMetric("observed_notional_imbalance_divergence").Raw
-					g := m.GetMetric("imbalance_resolution_gap").Raw // Wait, it asks for gap divergence, but it is not computed, just gap
-					f := m.GetMetric("net_displayed_flow_imbalance_zscore").Raw
-					c := m.GetMetric("book_turnover_rate_zscore").Raw
+					imb := m.GetMetric("book_imbalance_divergence").Raw
+					gap := m.GetMetric("resolution_gap_divergence").Raw
+					turn := m.GetMetric("turnover_zscore").Raw
+					flow := m.GetMetric("signed_net_displayed_flow_rate_zscore").Raw
 
-					return statistic.JointInput{Values: []float64{i, g, f, c}}
+					return statistic.JointInput{Values: []float64{imb, gap, turn, flow}}
 				},
 				func(m *data.Measurement[float64], out statistic.JointReading) {
 					if out.SNRDefined && out.SNR < 1/math.Sqrt(2.220446049250313e-16) {
@@ -345,7 +195,11 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 				},
 			),
 		),
-		// 3. Finalize
+		data.NewRecurrence(
+			"book_imbalance_zscore",
+			"resolution_gap_zscore",
+			"turnover_zscore",
+		),
 		data.NewFinalizer[float64](),
 	)
 

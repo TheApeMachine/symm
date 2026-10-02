@@ -72,6 +72,11 @@ func (trade *Trade) pipelineFor(symbol string) core.Primitive {
 		nmhawkes.NewCounts(history),
 		nmhawkes.NewExcitation(history),
 		nmhawkes.NewRefit(history),
+		data.NewRecurrence(
+			"conditional_intensity",
+			"branching_spectral_radius",
+			"arrival_rate",
+		),
 		data.NewFinalizer[float64](),
 	)
 

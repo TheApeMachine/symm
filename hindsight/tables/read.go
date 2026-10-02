@@ -7,6 +7,7 @@ import (
 
 	"github.com/apache/iceberg-go"
 	icetable "github.com/apache/iceberg-go/table"
+	"github.com/apache/iceberg-go/utils"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/data"
 )
@@ -24,6 +25,10 @@ func (catalog *Catalog) scan(
 	fields ...string,
 ) iter.Seq2[*data.Measurement[float64], error] {
 	return func(yield func(*data.Measurement[float64], error) bool) {
+		if catalog != nil && catalog.awsConfig != nil {
+			ctx = utils.WithAwsConfig(ctx, catalog.awsConfig)
+		}
+
 		tbl, err := catalog.Load(ctx, tableName)
 
 		if err != nil {

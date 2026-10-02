@@ -2,11 +2,9 @@ package pumpdump
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"strconv"
 	"sync"
-	"time"
 	"unsafe"
 
 	"github.com/theapemachine/errnie"
@@ -15,6 +13,7 @@ import (
 	"github.com/theapemachine/symm/nomagique/adaptive"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
+	nmpumpdump "github.com/theapemachine/symm/nomagique/pumpdump"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/temporal"
 	"github.com/theapemachine/symm/nomagique/transport"
@@ -55,151 +54,11 @@ func (trade *Trade) pipelineFor(symbol string) core.Primitive {
 		return existing.(core.Primitive)
 	}
 
-	type tradeEntityState struct {
-		hasTrade        bool
-		prevTradeTime   time.Time
-		barStartTime    time.Time
-		targetQty       float64
-		tradeCount      float64
-		barQty          float64
-		barNotional     float64
-		barTradeCount   float64
-		completedBars   float64
-		barFromMidpoint float64
-	}
-
-	state := &tradeEntityState{}
-
 	pipeline := nomagique.NewNumber(
-		// 0. Extract source data and manage volume bar state
-		data.NewAdapter(
-			transport.NewPass(),
-			func(m *data.Measurement[float64]) *data.Measurement[float64] {
-				priceMetric, hasPrice := m.LookupMetric("price")
-				qtyMetric, hasQty := m.LookupMetric("qty")
+		// 0. Volume clock
+		nmpumpdump.NewVolumeClock(),
 
-				if !hasPrice || !hasQty || priceMetric.Raw <= 0 || qtyMetric.Raw <= 0 {
-					m.Err = fmt.Errorf("pumpdump: non-positive price or quantity")
-					return m
-				}
-
-				price := priceMetric.Raw
-				qty := qtyMetric.Raw
-				notional := price * qty
-
-				var bid, ask float64
-				if metric, ok := m.LookupMetric("best_bid"); ok {
-					bid = metric.Raw
-				}
-
-				if bid == 0 {
-					if metric, ok := m.LookupMetric("bid"); ok {
-						bid = metric.Raw
-					}
-				}
-
-				if metric, ok := m.LookupMetric("best_ask"); ok {
-					ask = metric.Raw
-				}
-
-				if ask == 0 {
-					if metric, ok := m.LookupMetric("ask"); ok {
-						ask = metric.Raw
-					}
-				}
-
-				mid := 0.0
-				if bid > 0 && ask > bid {
-					mid = (bid + ask) / 2.0
-				}
-
-				if !state.hasTrade {
-					state.targetQty = qty
-					state.barStartTime = m.At
-					if mid > 0 {
-						state.barFromMidpoint = mid
-					}
-				} else {
-					state.targetQty = (state.targetQty*state.tradeCount + qty) / (state.tradeCount + 1)
-				}
-				state.tradeCount++
-
-				var interval float64
-				var hasInterval bool
-
-				if state.hasTrade {
-					interval = m.At.Sub(state.prevTradeTime).Seconds()
-					hasInterval = true
-				}
-
-				state.prevTradeTime = m.At
-				state.hasTrade = true
-
-				state.barQty += qty
-				state.barNotional += notional
-				state.barTradeCount++
-
-				duration := m.At.Sub(state.barStartTime).Seconds()
-
-				m.WriteMetric("trade_price", price)
-				m.WriteMetric("trade_quantity", qty)
-				m.WriteMetric("trade_notional", notional)
-
-				if hasInterval {
-					m.WriteMetric("trade_interval_seconds", interval)
-				}
-
-				if hasInterval && duration > 0 && state.barQty >= state.targetQty {
-					m.WriteMetric("volume_bar_target_quantity", state.targetQty)
-					m.WriteMetric("volume_bar_quantity", state.barQty)
-					m.WriteMetric("volume_bar_notional", state.barNotional)
-					m.WriteMetric("volume_bar_trade_count", state.barTradeCount)
-					m.WriteMetric("volume_bar_duration", duration)
-
-					m.WriteMetric("volume_rate", state.barQty/duration)
-					m.WriteMetric("notional_rate", state.barNotional/duration)
-					m.WriteMetric("trade_rate", state.barTradeCount/duration)
-
-					if state.barFromMidpoint > 0 && mid > 0 {
-						m.WriteMetric("response_midpoint:from", state.barFromMidpoint)
-						m.WriteMetric("response_midpoint:at", mid)
-					}
-
-					state.completedBars++
-					m.WriteMetric("completed_bars", state.completedBars)
-
-					// Reset the bar
-					state.barQty = 0
-					state.barNotional = 0
-					state.barTradeCount = 0
-					state.barStartTime = m.At
-					state.barFromMidpoint = mid
-				}
-
-				return m
-			},
-			func(m *data.Measurement[float64], out *data.Measurement[float64]) {},
-		),
-
-		// 1. Adapter for log return (pure math, no state)
-		data.NewAdapter(
-			transport.NewPass(),
-			func(m *data.Measurement[float64]) *data.Measurement[float64] {
-				from, hasFrom := m.LookupMetric("response_midpoint:from")
-				at, hasAt := m.LookupMetric("response_midpoint:at")
-				if hasFrom && hasAt && from.Raw > 0 && at.Raw > 0 {
-					logReturn := math.Log(at.Raw / from.Raw)
-					m.WriteMetric("midpoint_log_return", logReturn)
-					if duration, ok := m.LookupMetric("volume_bar_duration"); ok && duration.Raw > 0 {
-						m.WriteMetric("midpoint_return_rate", logReturn/duration.Raw)
-					}
-				}
-				return m
-			},
-			func(m *data.Measurement[float64], out *data.Measurement[float64]) {},
-		),
-
-		// 2. Compute advanced statistical baselines and velocities in parallel
+		// 1. Adaptive baselines and temporal dynamics
 		transport.NewFan(
 			data.NewAdapter(
 				adaptive.NewBaseline(adaptive.NewWindow()),
@@ -231,7 +90,7 @@ func (trade *Trade) pipelineFor(symbol string) core.Primitive {
 					if rate, ok := m.LookupMetric("notional_rate"); ok {
 						return temporal.Observation{Value: rate.Raw, At: m.At.UnixNano()}
 					}
-					return temporal.Observation{Value: math.NaN(), At: m.At.UnixNano()}
+					return temporal.Observation{Value: 0, At: m.At.UnixNano()}
 				},
 				func(m *data.Measurement[float64], out temporal.VelocityReading) {
 					if out.Defined {
@@ -256,7 +115,7 @@ func (trade *Trade) pipelineFor(symbol string) core.Primitive {
 					if rate, ok := m.LookupMetric("midpoint_return_rate"); ok {
 						return temporal.Observation{Value: rate.Raw, At: m.At.UnixNano()}
 					}
-					return temporal.Observation{Value: math.NaN(), At: m.At.UnixNano()}
+					return temporal.Observation{Value: 0, At: m.At.UnixNano()}
 				},
 				func(m *data.Measurement[float64], out temporal.VelocityReading) {
 					if out.Defined {
@@ -264,6 +123,13 @@ func (trade *Trade) pipelineFor(symbol string) core.Primitive {
 					}
 				},
 			),
+		),
+
+		// 2. Recurrence on volume-clock dynamics
+		data.NewRecurrence(
+			"notional_rate",
+			"volume_rate",
+			"midpoint_return_rate",
 		),
 
 		// 3. Finalize

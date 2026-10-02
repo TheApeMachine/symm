@@ -583,6 +583,10 @@ func (catalog *Catalog) RecordRun(ctx context.Context, run Run) error {
 Runs reads all runs from the runs metadata table, ordered newest first.
 */
 func (catalog *Catalog) Runs(ctx context.Context) ([]Run, error) {
+	if catalog != nil && catalog.awsConfig != nil {
+		ctx = utils.WithAwsConfig(ctx, catalog.awsConfig)
+	}
+
 	tbl, err := catalog.Load(ctx, Runs)
 
 	if err != nil {

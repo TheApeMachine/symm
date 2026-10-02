@@ -45,13 +45,11 @@ func MeasurementSchema() *iceberg.Schema {
 }
 
 /*
-MeasurementPartitioning isolates runs physically by identity partitioning on epoch, source, and label.
+MeasurementPartitioning isolates runs physically by identity partitioning on epoch.
 */
 func MeasurementPartitioning() iceberg.PartitionSpec {
 	return iceberg.NewPartitionSpec(
 		iceberg.PartitionField{SourceIDs: []int{1}, FieldID: 1000, Name: "epoch", Transform: iceberg.IdentityTransform{}},
-		iceberg.PartitionField{SourceIDs: []int{3}, FieldID: 1001, Name: "source", Transform: iceberg.IdentityTransform{}},
-		iceberg.PartitionField{SourceIDs: []int{4}, FieldID: 1002, Name: "label", Transform: iceberg.IdentityTransform{}},
 	)
 }
 

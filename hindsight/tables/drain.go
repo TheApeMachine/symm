@@ -48,6 +48,7 @@ func (catalog *Catalog) Drain(
 
 			measurement := pub.Measurement
 
+
 			if measurement.SeqIdx <= 0 {
 				pub.Release()
 

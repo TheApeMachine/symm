@@ -54,74 +54,12 @@ func (trade *Trade) pipelineFor(symbol string) core.Primitive {
 		return existing.(core.Primitive)
 	}
 
-	type cvdState struct {
-		hasFrom      bool
-		fromMidpoint float64
-	}
-
-	state := &cvdState{}
-
 	pipeline := nomagique.NewNumber(
 		nmcvd.NewGate(),
 		nmcvd.NewQuantity(),
 		nmcvd.NewNotional(),
 		nmcvd.NewRates(),
-		data.NewAdapter(
-			transport.NewPass(),
-			func(m *data.Measurement[float64]) *data.Measurement[float64] {
-				var bid, ask float64
-				if metric, ok := m.LookupMetric("best_bid"); ok {
-					bid = metric.Raw
-				}
-
-				if bid == 0 {
-					if metric, ok := m.LookupMetric("bid"); ok {
-						bid = metric.Raw
-					}
-				}
-
-				if metric, ok := m.LookupMetric("best_ask"); ok {
-					ask = metric.Raw
-				}
-
-				if ask == 0 {
-					if metric, ok := m.LookupMetric("ask"); ok {
-						ask = metric.Raw
-					}
-				}
-
-				if bid > 0 && ask > bid {
-					mid := (bid + ask) / 2.0
-					if !state.hasFrom {
-						state.fromMidpoint = mid
-						state.hasFrom = true
-					}
-
-					m.WriteMetric("response_midpoint:from", state.fromMidpoint)
-					m.WriteMetric("response_midpoint:at", mid)
-
-					logReturn := math.Log(mid / state.fromMidpoint)
-					m.WriteMetric("midpoint_log_return", logReturn)
-
-					if elapsed := m.At.Sub(m.From).Seconds(); elapsed > 0 {
-						returnRate := logReturn / elapsed
-						m.WriteMetric("midpoint_return_rate", returnRate)
-
-						netNotional := m.GetMetric("net_notional").Raw
-						if netNotional != 0 {
-							sign := 1.0
-							if netNotional < 0 {
-								sign = -1.0
-							}
-							m.WriteMetric("flow_aligned_midpoint_return", sign*logReturn)
-							m.WriteMetric("midpoint_response_per_net_notional", logReturn/netNotional)
-						}
-					}
-				}
-				return m
-			},
-			func(m *data.Measurement[float64], out *data.Measurement[float64]) {},
-		),
+		nmcvd.NewResponse(),
 		transport.NewFan(
 			data.NewAdapter(
 				adaptive.NewBaseline(adaptive.NewWindow()),
@@ -144,8 +82,8 @@ func (trade *Trade) pipelineFor(symbol string) core.Primitive {
 			data.NewAdapter(
 				temporal.NewVelocity(),
 				func(m *data.Measurement[float64]) temporal.Observation {
-					if rate, ok := m.LookupMetric("gross_notional_rate"); ok {
-						return temporal.Observation{Value: rate.Raw, At: m.At.UnixNano()}
+					if rate, ok := m.LookupMetric("gross_notional_rate"); ok && rate.Raw > 0 {
+						return temporal.Observation{Value: math.Log(rate.Raw), At: m.At.UnixNano()}
 					}
 					return temporal.Observation{Value: math.NaN(), At: m.At.UnixNano()}
 				},
@@ -173,7 +111,7 @@ func (trade *Trade) pipelineFor(symbol string) core.Primitive {
 					f := m.GetMetric("signed_net_fraction_divergence").Raw
 					r := m.GetMetric("midpoint_return_rate_divergence").Raw
 					if g == 0 && f == 0 && r == 0 {
-						return statistic.JointInput{Values: nil} // empty / invalid
+						return statistic.JointInput{Values: nil}
 					}
 					return statistic.JointInput{Values: []float64{g, f, r}}
 				},
@@ -216,6 +154,11 @@ func (trade *Trade) pipelineFor(symbol string) core.Primitive {
 					}
 				},
 			),
+		),
+		data.NewRecurrence(
+			"gross_notional_rate_zscore",
+			"signed_net_fraction_zscore",
+			"midpoint_return_rate_zscore",
 		),
 		data.NewFinalizer[float64](),
 	)

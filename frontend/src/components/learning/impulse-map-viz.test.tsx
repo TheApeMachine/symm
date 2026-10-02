@@ -177,4 +177,30 @@ describe("ImpulseMapViz", () => {
 		const paths = container.querySelectorAll(".contours path");
 		expect(paths.length).toBe(0);
 	});
+
+	it("indicates how many metrics the grid has and how many regions it formed", () => {
+		const data: ImpulseNode[] = [
+			{ id: "n1", label: "A", cluster: 1, snr: 1, activation: 0.1, x: 0, y: 0 },
+			{ id: "n2", label: "B", cluster: 1, snr: 1, activation: 0.2, x: 1, y: 1 },
+			{ id: "n3", label: "C", cluster: 2, snr: 1, activation: 0.3, x: 2, y: 2 },
+			{ id: "n4", label: "D", cluster: 2, snr: 1, activation: 0.4, x: 3, y: 3 },
+			{ id: "n5", label: "E", cluster: 3, snr: 1, activation: 0.5, x: 4, y: 4 },
+		];
+
+		const { container } = render(
+			<div style={{ width: "800px", height: "600px" }}>
+				<ImpulseMapViz data={data} />
+			</div>,
+		);
+
+		const metricCountEl = container.querySelector('[data-l="grid-metric-count"]');
+		const regionCountEl = container.querySelector('[data-l="grid-region-count"]');
+		const hudMetricEl = container.querySelector('[data-l="hud-metric-count"]');
+		const hudRegionEl = container.querySelector('[data-l="hud-region-count"]');
+
+		expect(metricCountEl?.textContent).toBe("5");
+		expect(regionCountEl?.textContent).toBe("3");
+		expect(hudMetricEl?.textContent).toBe("5");
+		expect(hudRegionEl?.textContent).toBe("3");
+	});
 });
