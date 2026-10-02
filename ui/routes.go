@@ -143,14 +143,13 @@ func (routes *Routes) Register() {
 		}
 
 		epoch := parseInt64Query(run)
-		symbols, err := routes.hub.store.Symbols(routes.hub.Context(), epoch)
-
-		if err != nil {
-			return err
-		}
-
-		if symbols == nil {
-			symbols = []string{}
+		symbols := []string{}
+		seen := make(map[string]bool)
+		for measurement := range routes.hub.store.Scan(routes.hub.Context(), tables.Measurements, epoch, nil, 0) {
+			if measurement != nil && measurement.Label != "" && !seen[measurement.Label] {
+				seen[measurement.Label] = true
+				symbols = append(symbols, measurement.Label)
+			}
 		}
 
 		return ctx.JSON(symbols)
@@ -168,14 +167,11 @@ func (routes *Routes) Register() {
 		}
 
 		epoch := parseInt64Query(run)
-		excursions, err := routes.hub.store.Excursions(routes.hub.Context(), epoch, nil)
-
-		if err != nil {
-			return err
-		}
-
-		if excursions == nil {
-			excursions = []tables.ExcursionRecord{}
+		excursions := []*data.Measurement[float64]{}
+		for measurement := range routes.hub.store.Scan(routes.hub.Context(), tables.Measurements, epoch, nil, 0) {
+			if status, ok := measurement.GetMetadata("status"); ok && status == "resolved" {
+				excursions = append(excursions, measurement)
+			}
 		}
 
 		return ctx.JSON(excursions)
@@ -190,7 +186,7 @@ func (routes *Routes) Register() {
 		tableName := ctx.Query("table")
 
 		if tableName == "" {
-			tableName = tables.SpotTicker
+			tableName = tables.Measurements
 		}
 
 		limit := int(parseUintQuery(ctx.Query("limit")))
@@ -239,7 +235,7 @@ func (routes *Routes) Register() {
 			filter = expression
 		}
 
-		for measurement := range routes.hub.store.Scan(routes.hub.Context(), tables.SpotTicker, epoch, filter, maxCaptures) {
+		for measurement := range routes.hub.store.Scan(routes.hub.Context(), tables.Measurements, epoch, filter, maxCaptures) {
 			if measurement == nil || measurement.SeqIdx < after {
 				continue
 			}

@@ -27,8 +27,10 @@ func TestLitRegionsCommensurateActivity(t *testing.T) {
 		frame.SetMetric("contrast", data.Metric[float64]{Label: "contrast", Raw: 0.9, Normalized: &nContrast})
 		frame.SetMetric("flow", data.Metric[float64]{Label: "flow", Raw: 0.7, Normalized: &nFlow})
 
-		token := grid.LitRegions(frame)
-		So(token, ShouldNotBeNil)
+		tokens := grid.LitRegions(frame)
+		So(tokens, ShouldNotBeNil)
+		So(len(tokens), ShouldEqual, 1)
+		token := tokens[0]
 		So(len(token), ShouldEqual, litRegionTokenSize)
 
 		seen := map[byte]bool{}
@@ -67,7 +69,7 @@ func TestLitRegionsCanonicalOrder(t *testing.T) {
 		right.SetMetric("c", data.Metric[float64]{Label: "c", Raw: 1, Normalized: &eq})
 
 		So(grid.LitRegions(left), ShouldResemble, grid.LitRegions(right))
-		So(grid.LitRegions(left), ShouldResemble, []byte{2, 5, 9})
+		So(grid.LitRegions(left), ShouldResemble, [][]byte{{2, 5, 9}})
 	})
 }
 
@@ -88,7 +90,8 @@ func TestLitRegionsTopNNotMean(t *testing.T) {
 			frame.SetMetric(name, data.Metric[float64]{Label: name, Raw: 1, Normalized: &eq})
 		}
 
-		token := grid.LitRegions(frame)
-		So(len(token), ShouldEqual, litRegionTokenSize)
+		tokens := grid.LitRegions(frame)
+		So(len(tokens), ShouldEqual, 1)
+		So(len(tokens[0]), ShouldEqual, litRegionTokenSize)
 	})
 }

@@ -207,7 +207,7 @@ var (
 			trader := strategy.NewTrader(ctx, privateTransport, price, balance)
 
 			training := strategy.NewTraining(
-				ctx, data.NewArenaOwner(4096), epoch, price, trader, catalog, uiTee,
+				ctx, data.NewArenaOwner(4096), price, trader, catalog, uiTee,
 			)
 
 			uiTee.Transition(nmruntime.READY)
@@ -286,52 +286,6 @@ var (
 				storeTee,
 			)
 
-			// Level3 previously only updated the book — depthflow/morphology/toxicity
-			// level3 nodes never received a workspace event. Feed verified touches
-			// (real top-of-book from checksum-matched frames, not invented).
-			book.SetTouch(func(touches []kraken.Level3Touch) {
-				for _, touch := range touches {
-					metrics := map[string]data.Metric[float64]{}
-
-					if touch.Bid != nil {
-						metrics["bid"] = data.Metric[float64]{
-							Raw: touch.Bid.Float64(), Exact: touch.Bid,
-						}
-					}
-
-					if touch.Ask != nil {
-						metrics["ask"] = data.Metric[float64]{
-							Raw: touch.Ask.Float64(), Exact: touch.Ask,
-						}
-					}
-
-					if touch.BidQty != nil {
-						metrics["bid_qty"] = data.Metric[float64]{
-							Raw: touch.BidQty.Float64(), Exact: touch.BidQty,
-						}
-					}
-
-					if touch.AskQty != nil {
-						metrics["ask_qty"] = data.Metric[float64]{
-							Raw: touch.AskQty.Float64(), Exact: touch.AskQty,
-						}
-					}
-
-					if len(metrics) == 0 || touch.Symbol == "" {
-						continue
-					}
-
-					m := data.NewMeasurement("spot:level3", metrics)
-					m.Epoch = epoch
-					m.Label = touch.Symbol
-					m.At = touch.Timestamp
-					m.SetMetadata("type", "level3_touch")
-					m.SetProvenance("ingress_channel", "level3_touch")
-					m.SetProvenance("channel", "level3_touch")
-					workspace.Step(m)
-				}
-			})
-
 			// Map spot symbols onto Futures perpetuals before subscribe so the
 			// futures socket receives product_ids (not spot names). Soft-fail:
 			// a missing catalog leaves spot-only running; derivatives stay dark.
@@ -388,9 +342,11 @@ var (
 					}
 					return nil
 				}
+
 				if err := subscribePrivate(token); err != nil {
 					return err
 				}
+
 				privateWS.OnReconnect(func() error {
 					tok, err := auth.Token()
 					if err != nil {

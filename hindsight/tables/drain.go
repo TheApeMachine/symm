@@ -16,7 +16,6 @@ func (catalog *Catalog) Drain(
 	ctx context.Context,
 	epoch int64,
 	tee *hindsight.StoreTee,
-	learn ...func(*data.Measurement[float64]) ([]ExcursionRecord, error),
 ) error {
 	if catalog == nil || tee == nil {
 		return nil
@@ -35,10 +34,16 @@ func (catalog *Catalog) Drain(
 		// Bound each batch by the observations already waiting, so continuous
 		// ingress cannot postpone commits indefinitely.
 		for remaining := tee.Pending(); remaining > 0; remaining-- {
-			pub := data.To[*data.Publication](tee.Next())
+			ptr := tee.Next()
 
-			if pub == nil || pub.Measurement == nil {
-				return nil
+			if ptr == nil {
+				continue
+			}
+
+			pub := data.To[data.Publication](ptr)
+
+			if pub.Measurement == nil {
+				continue
 			}
 
 			measurement := pub.Measurement
@@ -55,27 +60,7 @@ func (catalog *Catalog) Drain(
 				continue
 			}
 
-			if val, ok := measurement.GetMetadata("excursion"); ok && val != "" && len(learn) > 0 {
-				records, err := learn[0](measurement)
-
-				if err != nil {
-					pub.Release()
-
-					errnie.Error(errnie.Err(
-						errnie.Validation,
-						fmt.Sprintf("[catalog] observation (source=%s, label=%s, id=%d, seq=%d, at=%v) has no workspace sequence", measurement.Source, measurement.Label, measurement.ID, measurement.SeqIdx, measurement.At),
-						nil,
-					))
-
-					continue
-				}
-
-				for _, record := range records {
-					writer.AddExcursion(record)
-				}
-			}
-
-			writer.Add(deriveChannel(measurement), *pub)
+			writer.Add(Measurements, pub)
 		}
 
 		return nil
@@ -103,59 +88,4 @@ func (catalog *Catalog) Drain(
 			}
 		}
 	}
-}
-
-/*
-deriveChannel routes a measurement into its Iceberg family.
-
-Venue tape tables (SpotTicker/Trade/Level3, futures) accept ONLY raw ingress
-snapshots whose Source is still "websocket". Signal producers Fork the ingress,
-SetSource to e.g. liquidity:ticker, and keep provenance channel=ticker — without
-an immutable ingress identity those snapshots polluted SpotTicker.
-
-Prefer provenance ingress_channel (set once at websocket ingress and never
-rewritten by stage consumers). Fall back to channel/type only for raw sources.
-*/
-func deriveChannel(measurement *data.Measurement[float64]) string {
-	if measurement == nil {
-		return "measurements"
-	}
-
-	source := measurement.GetSource()
-	// Signal / solver publications always land in Measurements.
-	if source != "" && source != "websocket" {
-		return "measurements"
-	}
-
-	channel := ""
-	if value, ok := measurement.GetProvenance("ingress_channel"); ok {
-		channel = value
-	}
-	if channel == "" {
-		if value, ok := measurement.GetProvenance("channel"); ok {
-			channel = value
-		}
-	}
-	if channel == "" {
-		if value, ok := measurement.GetMetadata("type"); ok {
-			channel = value
-		}
-	}
-
-	switch channel {
-	case "ticker", "trade", "level3", "futures_ticker", "futures_trade":
-		return channel
-	}
-
-	// Legacy publishers that only set venue=true + provenance channel.
-	if val, ok := measurement.GetMetadata("venue"); ok && val == "true" {
-		if value, ok := measurement.GetProvenance("channel"); ok {
-			switch value {
-			case "ticker", "trade", "level3":
-				return value
-			}
-		}
-	}
-
-	return "measurements"
 }

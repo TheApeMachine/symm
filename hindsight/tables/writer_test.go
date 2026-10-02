@@ -114,29 +114,4 @@ func TestWriter_CommitReady(t *testing.T) {
 	})
 }
 
-func TestWriterCommitReady(t *testing.T) {
-	Convey("Outcome references wait for all tape families to commit", t, func() {
-		catalog := tablestest.New(t)
-		writer := tables.NewWriter(catalog, 1)
-		measurement := data.NewMeasurement[float64]("trade", nil)
-		measurement.SeqIdx = 1
-		writer.Add("trade", data.Publication{Measurement: measurement})
-		// Exceed the retired excursion-only batch threshold while the tape is small.
-		for index := 0; index < 12; index++ {
-			writer.AddExcursion(tables.ExcursionRecord{ID: fmt.Sprint(index), AnchorTick: 1, ExitTick: 2})
-		}
-		So(writer.CommitReady(t.Context(), false), ShouldBeNil)
-		records, err := catalog.Excursions(t.Context(), 1, nil)
-		So(err, ShouldBeNil)
-		So(records, ShouldBeEmpty)
-		So(writer.CommitReady(t.Context(), true), ShouldBeNil)
-		records, err = catalog.Excursions(t.Context(), 1, nil)
-		So(err, ShouldBeNil)
-		So(len(records), ShouldEqual, 12)
-		var count int
-		for range catalog.Scan(t.Context(), tables.SpotTrade, 1, nil, 0) {
-			count++
-		}
-		So(count, ShouldEqual, 1)
-	})
-}
+

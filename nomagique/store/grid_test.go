@@ -53,9 +53,9 @@ func TestGridMarketTapeReplay(t *testing.T) {
 			// replay; Settled is no longer required to stay false here.
 
 			Convey("LitRegions produces valid non-zero region tokens", func() {
-				token := grid.LitRegions(tape[len(tape)-1])
-				So(len(token), ShouldBeGreaterThan, 0)
-				for _, r := range token {
+				tokens := grid.LitRegions(tape[len(tape)-1])
+				So(len(tokens), ShouldBeGreaterThan, 0)
+				for _, r := range tokens[0] {
 					So(r, ShouldBeGreaterThan, 0)
 				}
 			})
@@ -440,7 +440,9 @@ func TestGridLitRegionsScoresSourceKeyedPeers(t *testing.T) {
 		ingress.Label = "BTC/USD"
 		std := 0.1
 		ingress.SetMetric("mid", data.Metric[float64]{Label: "mid", Raw: 100, Standardized: &std})
-		bare := grid.LitRegions(ingress)
+		bareTokens := grid.LitRegions(ingress)
+		So(len(bareTokens), ShouldBeGreaterThan, 0)
+		bare := bareTokens[0]
 
 		peer := data.NewMeasurement[float64]("resonance", nil)
 		peer.Label = "BTC/USD"
@@ -448,7 +450,9 @@ func TestGridLitRegionsScoresSourceKeyedPeers(t *testing.T) {
 		peer.SetMetric("energy", data.Metric[float64]{Label: "energy", Raw: 1, Standardized: &energyStd})
 		withPeer := market.CloneTestMeasurement(ingress)
 		withPeer.Peers = append(withPeer.Peers, peer)
-		lit := grid.LitRegions(withPeer)
+		litTokens := grid.LitRegions(withPeer)
+		So(len(litTokens), ShouldBeGreaterThan, 0)
+		lit := litTokens[0]
 
 		So(len(lit), ShouldBeGreaterThan, 0)
 		// Energy region must appear when the peer is present.
@@ -628,7 +632,9 @@ func TestGridRegionalizationAndDiagnostics(t *testing.T) {
 		std := 1.0
 		evalMeas.SetMetric("c1_0", data.Metric[float64]{Label: "c1_0", Raw: 10, Standardized: &std})
 		evalMeas.SetMetric("c2_0", data.Metric[float64]{Label: "c2_0", Raw: -10, Standardized: &std})
-		token := grid.LitRegions(evalMeas)
+		tokens := grid.LitRegions(evalMeas)
+		So(len(tokens), ShouldBeGreaterThan, 0)
+		token := tokens[0]
 		So(token, ShouldNotBeNil)
 
 		// Verify top-region frequency

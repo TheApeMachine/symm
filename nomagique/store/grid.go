@@ -244,7 +244,7 @@ order so identical sets share radix prefixes.
 Scores the canonical observation: parent Metrics plus Source-keyed Peers,
 matching Grid.Update inventory folds (parent key wins on collision).
 */
-func (grid *Grid) LitRegions(measurements ...*data.Measurement[float64]) []byte {
+func (grid *Grid) LitRegions(measurements ...*data.Measurement[float64]) [][]byte {
 	if len(measurements) == 0 {
 		return nil
 	}
@@ -252,6 +252,21 @@ func (grid *Grid) LitRegions(measurements ...*data.Measurement[float64]) []byte 
 	grid.mu.RLock()
 	defer grid.mu.RUnlock()
 
+	var tokens [][]byte
+	for _, measurement := range measurements {
+		if measurement == nil {
+			continue
+		}
+
+		if token := grid.litRegionLocked(measurement); len(token) > 0 {
+			tokens = append(tokens, token)
+		}
+	}
+
+	return tokens
+}
+
+func (grid *Grid) litRegionLocked(measurement *data.Measurement[float64]) []byte {
 	var activity [256]float64
 	var count [256]int
 	var present [256]bool
@@ -264,30 +279,22 @@ func (grid *Grid) LitRegions(measurements ...*data.Measurement[float64]) []byte 
 
 	var allMetrics []incomingMetric
 
-	label := ""
-	for _, measurement := range measurements {
-		if measurement == nil {
+	label := measurement.Label
+	source := measurement.GetSource()
+	measurement.RangeMetrics(func(key string, metric data.Metric[float64]) bool {
+		allMetrics = append(allMetrics, incomingMetric{source, key, metric})
+		return true
+	})
+
+	for _, peer := range measurement.Peers {
+		if peer == nil {
 			continue
 		}
-		if label == "" {
-			label = measurement.Label
-		}
-		source := measurement.GetSource()
-		measurement.RangeMetrics(func(key string, metric data.Metric[float64]) bool {
-			allMetrics = append(allMetrics, incomingMetric{source, key, metric})
+		peerSource := peer.GetSource()
+		peer.RangeMetrics(func(key string, metric data.Metric[float64]) bool {
+			allMetrics = append(allMetrics, incomingMetric{peerSource, key, metric})
 			return true
 		})
-
-		for _, peer := range measurement.Peers {
-			if peer == nil {
-				continue
-			}
-			peerSource := peer.GetSource()
-			peer.RangeMetrics(func(key string, metric data.Metric[float64]) bool {
-				allMetrics = append(allMetrics, incomingMetric{peerSource, key, metric})
-				return true
-			})
-		}
 	}
 
 	for _, item := range allMetrics {

@@ -237,14 +237,8 @@ func (catalog *Catalog) Ensure(ctx context.Context) error {
 		schema       *iceberg.Schema
 		partitioning iceberg.PartitionSpec
 	}{
-		{SpotTicker, MeasurementSchema(), MeasurementPartitioning()},
-		{SpotTrade, MeasurementSchema(), MeasurementPartitioning()},
-		{SpotLevel3, MeasurementSchema(), MeasurementPartitioning()},
-		{FuturesTicker, MeasurementSchema(), MeasurementPartitioning()},
-		{FuturesTrade, MeasurementSchema(), MeasurementPartitioning()},
 		{Measurements, MeasurementSchema(), MeasurementPartitioning()},
 		{Runs, RunsSchema(), RunsPartitioning()},
-		{Excursions, ExcursionsSchema(), ExcursionsPartitioning()},
 	}
 
 	for _, family := range families {
@@ -651,84 +645,3 @@ func (catalog *Catalog) Runs(ctx context.Context) ([]Run, error) {
 	return runs, nil
 }
 
-/*
-Excursions reads all excursions for a given epoch matching an optional filter expression.
-*/
-func (catalog *Catalog) Excursions(
-	ctx context.Context,
-	epoch int64,
-	filter iceberg.BooleanExpression,
-) ([]ExcursionRecord, error) {
-	tbl, err := catalog.Load(ctx, Excursions)
-
-	if err != nil {
-		return nil, err
-	}
-
-	expression := filter
-
-	if epoch > 0 {
-		epochExpr := iceberg.EqualTo(iceberg.Reference("epoch"), epoch)
-
-		if expression != nil {
-			expression = iceberg.NewAnd(epochExpr, expression)
-		}
-
-		if expression == nil {
-			expression = epochExpr
-		}
-	}
-
-	var options []table.ScanOption
-
-	if expression != nil {
-		options = append(options, table.WithRowFilter(expression))
-	}
-
-	tasks, err := tbl.Scan(options...).PlanFiles(ctx)
-
-	if err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.BadGateway,
-			"[iceberg] failed to plan excursions scan",
-			err,
-		))
-	}
-
-	_, batches, err := tbl.Scan(options...).ReadTasks(ctx, tasks)
-
-	if err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.BadGateway,
-			"[iceberg] failed to read excursions tasks",
-			err,
-		))
-	}
-
-	var allExcursions []ExcursionRecord
-
-	for batch, batchErr := range batches {
-		if batchErr != nil {
-			return nil, errnie.Error(errnie.Err(
-				errnie.BadGateway,
-				"[iceberg] excursions batch decode failure",
-				batchErr,
-			))
-		}
-
-		if batch != nil {
-			for _, rec := range readExcursions(batch) {
-				if epoch <= 0 || rec.Epoch == epoch {
-					allExcursions = append(allExcursions, rec)
-				}
-			}
-			batch.Release()
-		}
-	}
-
-	sort.Slice(allExcursions, func(leftIndex, rightIndex int) bool {
-		return allExcursions[leftIndex].AnchorTick < allExcursions[rightIndex].AnchorTick
-	})
-
-	return allExcursions, nil
-}
