@@ -125,7 +125,7 @@ func (op *History) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 		for arriving := range in {
 			m := *(**data.Measurement[float64])(arriving)
 
-			if m.Err != nil || len(m.Peers) == 0 || m.Metrics["cohort_peer_count"].Raw == 0 {
+			if m.Err != nil || len(m.Peers) == 0 || m.GetMetric("cohort_peer_count").Raw == 0 {
 				if !yield(arriving) {
 					return
 				}
@@ -192,7 +192,7 @@ func (op *Relative) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 		for arriving := range in {
 			m := *(**data.Measurement[float64])(arriving)
 
-			if m.Err != nil || len(m.Peers) == 0 || m.Metrics["cohort_peer_count"].Raw == 0 {
+			if m.Err != nil || len(m.Peers) == 0 || m.GetMetric("cohort_peer_count").Raw == 0 {
 				if !yield(arriving) {
 					return
 				}
@@ -247,7 +247,7 @@ func (op *CorrelationVelocity) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe
 		for arriving := range in {
 			m := *(**data.Measurement[float64])(arriving)
 
-			if m.Err != nil || len(m.Peers) == 0 || m.Metrics["cohort_peer_count"].Raw == 0 {
+			if m.Err != nil || len(m.Peers) == 0 || m.GetMetric("cohort_peer_count").Raw == 0 {
 				if !yield(arriving) {
 					return
 				}
@@ -306,7 +306,7 @@ func (op *EnergyVelocity) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Poin
 		for arriving := range in {
 			m := *(**data.Measurement[float64])(arriving)
 
-			if m.Err != nil || len(m.Peers) == 0 || m.Metrics["cohort_peer_count"].Raw == 0 {
+			if m.Err != nil || len(m.Peers) == 0 || m.GetMetric("cohort_peer_count").Raw == 0 {
 				if !yield(arriving) {
 					return
 				}

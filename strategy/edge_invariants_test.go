@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	. "github.com/smartystreets/goconvey/convey"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/broker/position"
 	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/nomagique/cognition"
@@ -17,7 +17,7 @@ func TestFrozenPolicyEdgeAbstainIsZero(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		training := NewTraining(ctx, 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
+		training := NewTraining(ctx, data.NewArenaOwner(32), 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
 		frameA := regionFrame("BTC/USD", 1, 10)
 		frameB := regionFrame("BTC/USD", 2, 11)
 		training.grid.Update(frameA)
@@ -30,7 +30,7 @@ func TestFrozenPolicyEdgeAbstainIsZero(t *testing.T) {
 				PrecursorStartTick: 1, AnchorTick: 2, ExitTick: 4,
 				EntryPrice: 100, ExitPrice: 102, ProfitFraction: 0.02,
 			},
-			frames: []*data.Measurement[float64]{frameA, frameB},
+			frames: training.LitFrames([]*data.Measurement[float64]{frameA, frameB}),
 		}, true)
 
 		So(training.returns.Count, ShouldEqual, 1)
@@ -44,7 +44,7 @@ func TestFrozenPolicyEdgeEnterWithoutExitIsIncomplete(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		training := NewTraining(ctx, 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
+		training := NewTraining(ctx, data.NewArenaOwner(32), 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
 		// Peer-enriched B→C keeps exitCtx distinct; only ENTER is seeded (no EXIT).
 		frames := []*data.Measurement[float64]{
 			regionFrame("BTC/USD", 1, 2),
@@ -78,7 +78,7 @@ func TestFrozenPolicyEdgeEnterWithoutExitIsIncomplete(t *testing.T) {
 				PrecursorStartTick: 1, AnchorTick: 4, ExitTick: 8, PostEndTick: 10,
 				EntryPrice: 100, ExitPrice: 101.5, PostEndPrice: 97.0, Fee: 0.001,
 			},
-			frames: frames,
+			frames: training.LitFrames(frames),
 		}, true)
 
 		So(training.returns.Count, ShouldEqual, 1)
@@ -95,7 +95,7 @@ func TestFrozenPolicyEdgeEnterExitUsesExecutableReturn(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		training := NewTraining(ctx, 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
+		training := NewTraining(ctx, data.NewArenaOwner(32), 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
 		// Bare mid on A→B; peer-enriched B→C so Enter/Exit associations do not collide.
 		frames := []*data.Measurement[float64]{
 			regionFrame("BTC/USD", 1, 2),
@@ -136,7 +136,7 @@ func TestFrozenPolicyEdgeEnterExitUsesExecutableReturn(t *testing.T) {
 				PrecursorStartTick: 1, AnchorTick: 4, ExitTick: 8,
 				EntryPrice: 100, ExitPrice: 101.5, ProfitFraction: 0.999, // decoy
 			},
-			frames: frames,
+			frames: training.LitFrames(frames),
 		}, true)
 
 		So(training.returns.Count, ShouldEqual, 1)
@@ -151,7 +151,7 @@ func TestSuperviseTeachesOncePerEpisodeID(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		training := NewTraining(ctx, 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
+		training := NewTraining(ctx, data.NewArenaOwner(32), 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
 		frames := []*data.Measurement[float64]{regionFrame("BTC/USD", 1, 2), regionFrame("BTC/USD", 2, 3)}
 		for _, f := range frames {
 			training.grid.Update(f)
@@ -164,7 +164,7 @@ func TestSuperviseTeachesOncePerEpisodeID(t *testing.T) {
 				PrecursorStartTick: 1, AnchorTick: 2, ExitTick: 3,
 				EntryPrice: 100, ExitPrice: 99,
 			},
-			frames: frames,
+			frames: training.LitFrames(frames),
 		}
 		training.supervise(ep, true)
 		firstSkill := training.skill.Count
@@ -180,7 +180,7 @@ func TestReplayIsolationDefersLiveLearn(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		training := NewTraining(ctx, 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
+		training := NewTraining(ctx, data.NewArenaOwner(32), 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
 		frame := regionFrame("BTC/USD", 1, 2)
 		training.grid.Update(frame)
 		training.grid.Settle()
@@ -195,7 +195,7 @@ func TestReplayIsolationDefersLiveLearn(t *testing.T) {
 				PrecursorStartTick: 1, AnchorTick: 2, ExitTick: 3,
 				EntryPrice: 100, ExitPrice: 101,
 			},
-			frames: []*data.Measurement[float64]{frame},
+			frames: training.LitFrames([]*data.Measurement[float64]{frame}),
 		}
 		training.noteDurable(ep)
 		So(training.skill.Count, ShouldEqual, 0)
@@ -219,11 +219,11 @@ func TestPaperCloseOwnsFeedbackFraction(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		training := NewTraining(ctx, 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
+		training := NewTraining(ctx, data.NewArenaOwner(32), 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
 		frame := regionFrame("BTC/USD", 1, 2)
-		training.grid.Update([]*data.Measurement[float64]{frame})
+		training.grid.Update(frame)
 		training.grid.Settle()
-		token := training.grid.LitRegions([]*data.Measurement[float64]{frame})
+		token := training.grid.LitRegions(frame)
 		entryCtx := append(append([]byte{}, token...), 0)
 
 		reg := position.NewRegulator("BTC/USD")
@@ -251,4 +251,3 @@ func TestExecutableEnterReturnFromBidAskFees(t *testing.T) {
 		So(executableEnterReturn(tables.ExcursionRecord{EntryPrice: 100, ExitPrice: 99}), ShouldAlmostEqual, -0.01, 1e-12)
 	})
 }
-

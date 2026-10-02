@@ -22,7 +22,7 @@ func TestStoreTeeBackpressureDoesNotSilentDrop(t *testing.T) {
 			m := data.NewMeasurement[float64]("websocket", nil)
 			m.Label = "BTC/USD"
 			m.SeqIdx = int64(i + 1)
-			tee.Push(m)
+			tee.Push(data.Publication{Measurement: m})
 		}
 		So(tee.Pending(), ShouldEqual, 8192)
 		So(tee.Error(), ShouldBeNil)
@@ -33,7 +33,7 @@ func TestStoreTeeBackpressureDoesNotSilentDrop(t *testing.T) {
 			m := data.NewMeasurement[float64]("websocket", nil)
 			m.Label = "BTC/USD"
 			m.SeqIdx = 99999
-			tee.Push(m)
+			tee.Push(data.Publication{Measurement: m})
 			close(done)
 		}()
 
@@ -55,7 +55,7 @@ func TestStoreTeePushNotReadyFailsExplicitly(t *testing.T) {
 		tee := hindsight.NewStoreTee(context.Background(), "not-ready")
 		m := data.NewMeasurement[float64]("websocket", nil)
 		m.Label = "BTC/USD"
-		tee.Push(m)
+		tee.Push(data.Publication{Measurement: m})
 		So(tee.Error(), ShouldNotBeNil)
 		So(tee.Pending(), ShouldEqual, 0)
 	})

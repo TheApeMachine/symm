@@ -35,7 +35,7 @@ func TestSuperviseExitUsesBToCNotFullPath(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		training := NewTraining(ctx, 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
+		training := NewTraining(ctx, data.NewArenaOwner(32), 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
 
 		frames := []*data.Measurement[float64]{
 			regionFrame("BTC/USD", 1, 2),
@@ -74,7 +74,7 @@ func TestSuperviseExitUsesBToCNotFullPath(t *testing.T) {
 				EntryPrice:         100,
 				ExitPrice:          101,
 			},
-			frames: frames,
+			frames: training.LitFrames(frames),
 		}
 		training.supervise(episode, true)
 
@@ -94,7 +94,7 @@ func TestWriteEpisodeStampsMarksBeforeExitTick(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		training := NewTraining(ctx, 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
+		training := NewTraining(ctx, data.NewArenaOwner(32), 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
 		clone := regionFrame("BTC/USD", 5, 2)
 		record := &tables.ExcursionRecord{
 			PrecursorStartTick: 1,
@@ -106,14 +106,19 @@ func TestWriteEpisodeStampsMarksBeforeExitTick(t *testing.T) {
 		}
 
 		training.writeEpisode(clone, record)
-		So(clone.Metadata["excursion_event"], ShouldEqual, "developing")
-		So(clone.GetMetric("mark_a").Raw, ShouldEqual, 1)
-		So(clone.GetMetric("mark_b").Raw, ShouldEqual, 4)
-		So(clone.GetMetric("mark_c").Raw, ShouldEqual, 8)
+		event, _ := clone.GetMetadata("excursion_event")
+		So(event, ShouldEqual, "developing")
+		markA := clone.GetMetric("mark_a")
+		So(markA.Raw, ShouldEqual, 1)
+		markB := clone.GetMetric("mark_b")
+		So(markB.Raw, ShouldEqual, 4)
+		markC := clone.GetMetric("mark_c")
+		So(markC.Raw, ShouldEqual, 8)
 
 		done := regionFrame("BTC/USD", 8, 2)
 		training.writeEpisode(done, record)
-		So(done.Metadata["excursion_event"], ShouldEqual, "completed")
+		doneEvent, _ := done.GetMetadata("excursion_event")
+		So(doneEvent, ShouldEqual, "completed")
 	})
 }
 
@@ -122,7 +127,7 @@ func TestStageBlocksPaperDuringHistoricalReplay(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		training := NewTraining(ctx, 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
+		training := NewTraining(ctx, data.NewArenaOwner(32), 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
 		frame := regionFrame("BTC/USD", 1, 2)
 		training.grid.Update(frame)
 		training.grid.Settle()

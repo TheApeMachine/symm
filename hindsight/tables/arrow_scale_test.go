@@ -14,7 +14,7 @@ func TestMeasurementRoundTripRestoresScales(t *testing.T) {
 	Convey("Standardized/Normalized survive Iceberg arrow provenance", t, func() {
 		stdMid, stdSpread := 0.1, 2.5
 		normFlow := 0.7
-		src := data.NewMeasurement[float64]("websocket", map[string]data.Metric[float64]{
+		src := data.NewMeasurement("websocket", map[string]data.Metric[float64]{
 			"mid": {
 				Label: "mid", Raw: 100000,
 				Standardized: &stdMid,
@@ -56,10 +56,9 @@ func TestMeasurementRoundTripRestoresScales(t *testing.T) {
 		So(*flow.Normalized, ShouldEqual, normFlow)
 
 		grid := store.NewGrid()
-		live := src.Clone()
-		grid.Update(live)
+		grid.Update(src)
 		grid.Settle()
-		liveToken := grid.LitRegions(live)
+		liveToken := grid.LitRegions(src)
 
 		grid2 := store.NewGrid()
 		grid2.Update(restored[0])

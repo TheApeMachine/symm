@@ -34,8 +34,9 @@ never lets signal publication cadence count as extra evidence.
 */
 type Solver struct {
 	*runtime.System
-	categories []types.CategoryType
-	states     sync.Map
+	arena         *data.ArenaOwner
+	categories    []types.CategoryType
+	states        sync.Map
 	// version is the monotonic committed-classification revision. It is local
 	// Category state, distinct from transport identity and venue event time.
 	version       atomic.Uint64
@@ -106,15 +107,24 @@ NewSolver creates the category solver. The declared vocabulary is the distinct
 set of categories appearing in types.CategorySchemas, in deterministic
 types.CategoryOrder order.
 */
-func NewSolver(ctx context.Context) *Solver {
+func NewSolver(ctx context.Context, arena *data.ArenaOwner) *Solver {
 	categories := distinctCategories(types.CategorySchemas)
 
 	solver := &Solver{
 		System:     runtime.NewSystem(ctx, "category"),
+		arena:      arena,
 		categories: categories,
 	}
 
 	return solver
+}
+
+func (solver *Solver) Source() string {
+	return "category"
+}
+
+func (solver *Solver) Arena() *data.ArenaOwner {
+	return solver.arena
 }
 
 /*
@@ -122,34 +132,31 @@ Step reads all completed prior-stage signal outputs from the StageInput,
 groups them by symbol, folds them into per-symbol evidence snapshots, and
 writes the resulting category metrics onto the owned output measurement.
 */
-func (solver *Solver) Step(input *runtime.StageInput, output *data.Measurement[float64]) *data.Measurement[float64] {
+func (solver *Solver) Step(prior *data.Measurement[float64]) *data.Measurement[float64] {
 	if solver.Status() != runtime.READY {
 		errnie.Warn(solver.Name() + ": Step called before READY; dropping event")
 		return nil
 	}
 
-	if solver.Error() != nil {
+	if solver.Error() != nil || prior == nil {
 		return nil
 	}
 
-	if input == nil {
-		return nil
-	}
-
-	// Collect all prior-stage producer outputs (Stage 0 signal results).
-	priorOutputs := input.AllPriorOutputs()
-
-	// Also include the ingress measurement itself as a fallback for live slots
-	// where signals wrote metrics directly onto the shared measurement.
-	ingress := input.Ingress()
-	sources := make([]*data.Measurement[float64], 0, len(priorOutputs)+1)
-	if ingress != nil && ingress.Label != "" && ingress.Err == nil {
-		sources = append(sources, ingress)
-	}
-
-	for _, prior := range priorOutputs {
-		if prior != nil && prior.Label != "" && prior.Err == nil {
+	var sources []*data.Measurement[float64]
+	if prior.Source == "runtime:join" {
+		for _, peer := range prior.Peers {
+			if peer != nil && peer.Label != "" && peer.Err == nil {
+				sources = append(sources, peer)
+			}
+		}
+	} else {
+		if prior.Label != "" && prior.Err == nil {
 			sources = append(sources, prior)
+		}
+		for _, peer := range prior.Peers {
+			if peer != nil && peer.Label != "" && peer.Err == nil {
+				sources = append(sources, peer)
+			}
 		}
 	}
 
@@ -162,6 +169,13 @@ func (solver *Solver) Step(input *runtime.StageInput, output *data.Measurement[f
 	for _, src := range sources {
 		bySymbol[src.Label] = append(bySymbol[src.Label], src)
 	}
+
+	out := solver.arena.NewMeasurement(solver.Source())
+	out.Label = prior.Label
+	out.SeqIdx = prior.SeqIdx
+	out.At = prior.At
+	out.From = prior.From
+	out.Peers = []*data.Measurement[float64]{prior}
 
 	results := make([][]types.Category, 0, len(bySymbol))
 
@@ -177,8 +191,8 @@ func (solver *Solver) Step(input *runtime.StageInput, output *data.Measurement[f
 		}
 
 		results = append(results, categories)
-		output.Label = symbol
-		output.At = categories[0].At
+		out.Label = symbol
+		out.At = categories[0].At
 		maturity := categories[0].Maturity
 		snr, snrDefined, estimated := 0.0, false, false
 		if categories[0].Uncertainty > 0 {
@@ -186,11 +200,11 @@ func (solver *Solver) Step(input *runtime.StageInput, output *data.Measurement[f
 			snrDefined = true
 			estimated = true
 		}
-		output.SetQuality(maturity, snr, snrDefined, estimated)
+		out.SetQuality(maturity, snr, snrDefined, estimated)
 
 		for _, cat := range categories {
 			if cat.Type != "" {
-				output.WriteMetric(string(cat.Type), cat.Confidence)
+				out.WriteMetric(string(cat.Type), cat.Confidence)
 			}
 		}
 	}
@@ -199,9 +213,10 @@ func (solver *Solver) Step(input *runtime.StageInput, output *data.Measurement[f
 		return nil
 	}
 
-	output.Result = results
+	out.Result = results
+	out.Finalize()
 
-	return output
+	return out
 }
 
 func (solver *Solver) Register() *data.Measurement[float64] {

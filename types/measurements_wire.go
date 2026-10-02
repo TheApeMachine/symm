@@ -34,12 +34,8 @@ func measurementToWire(
 		return nil
 	}
 
-	snapMetrics := measurement.MetricsSnapshot()
-	snapProvenance := measurement.ProvenanceSnapshot()
-	snapMeta := measurement.MetadataSnapshot()
-
-	metrics := data.MakeSlice[*wire.MetricT](alloc, 0, len(snapMetrics))
-	for key, metric := range snapMetrics {
+	metrics := data.MakeSlice[*wire.MetricT](alloc, 0, len(measurement.Metrics))
+	measurement.RangeMetrics(func(key string, metric data.Metric[float64]) bool {
 		wireMetric := data.New[wire.MetricT](alloc)
 		name := metric.Label
 		if name == "" {
@@ -58,34 +54,39 @@ func measurementToWire(
 		}
 
 		metrics = data.AppendA(metrics, wireMetric, alloc)
-	}
+		return true
+	})
 
-	provenance := data.MakeSlice[*wire.NamedStringT](alloc, 0, len(snapProvenance)+len(snapMeta))
-	for key, val := range snapProvenance {
+	provenance := data.MakeSlice[*wire.NamedStringT](alloc, 0, len(measurement.Provenance)+len(measurement.Metadata))
+	seenProvenance := make(map[string]struct{}, len(measurement.Provenance))
+	measurement.RangeProvenance(func(key, val string) bool {
 		ns := data.New[wire.NamedStringT](alloc)
 		ns.Name = key
 		ns.Value = val
 		provenance = data.AppendA(provenance, ns, alloc)
-	}
+		seenProvenance[key] = struct{}{}
+		return true
+	})
 
-	metadata := data.MakeSlice[*wire.NamedNumberT](alloc, 0, len(snapMeta))
-	for key, val := range snapMeta {
+	metadata := data.MakeSlice[*wire.NamedNumberT](alloc, 0, len(measurement.Metadata))
+	measurement.RangeMetadata(func(key, val string) bool {
 		floatVal, err := strconv.ParseFloat(val, 64)
 		if err == nil {
 			nn := data.New[wire.NamedNumberT](alloc)
 			nn.Name = key
 			nn.Value = floatVal
 			metadata = data.AppendA(metadata, nn, alloc)
-			continue
+			return true
 		}
 
-		if _, exists := snapProvenance[key]; !exists {
+		if _, exists := seenProvenance[key]; !exists {
 			ns := data.New[wire.NamedStringT](alloc)
 			ns.Name = key
 			ns.Value = val
 			provenance = data.AppendA(provenance, ns, alloc)
 		}
-	}
+		return true
+	})
 
 	var peers []*wire.MeasurementT
 	if includePeers && len(measurement.Peers) > 0 {

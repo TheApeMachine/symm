@@ -28,15 +28,26 @@ workload's register owns the measurement's lifetime.
 */
 type Trade struct {
 	*runtime.System
+	arena     *data.ArenaOwner
 	pipelines sync.Map
 	ID        int
 }
 
-func NewTrade(ctx context.Context) *Trade {
-	trade := &Trade{}
+func NewTrade(ctx context.Context, arena *data.ArenaOwner) *Trade {
+	trade := &Trade{
+		arena: arena,
+	}
 
 	trade.System = runtime.NewSystem(ctx, "pumpdump:trade", trade)
 	return trade
+}
+
+func (trade *Trade) Source() string {
+	return "pumpdump"
+}
+
+func (trade *Trade) Arena() *data.ArenaOwner {
+	return trade.arena
 }
 
 func (trade *Trade) pipelineFor(symbol string) core.Primitive {
@@ -263,53 +274,39 @@ func (trade *Trade) pipelineFor(symbol string) core.Primitive {
 	return actual.(core.Primitive)
 }
 
-func (trade *Trade) Step(input *runtime.StageInput, output *data.Measurement[float64]) *data.Measurement[float64] {
+func (trade *Trade) Step(prior *data.Measurement[float64]) *data.Measurement[float64] {
 	if trade.Status() != runtime.READY {
 		errnie.Warn(trade.Name() + ": Step called before READY; dropping event")
 		return nil
 	}
 
-	if input == nil || input.Ingress() == nil || input.Symbol() == "" {
+	if prior == nil || prior.Label == "" {
 		return nil
 	}
 
-	scratch := data.NewMeasurement[float64]("pumpdump:scratch", nil)
-	scratch.Label = output.Label
+	out := trade.arena.NewMeasurement(trade.Source())
+	out.Label = prior.Label
+	out.SeqIdx = prior.SeqIdx
+	out.At = prior.At
+	out.From = prior.From
+	out.Peers = []*data.Measurement[float64]{prior}
 
-	if price, hasPrice := input.IngressMetric("price"); hasPrice {
-		scratch.SetMetric("price", price)
+	if side, hasSide := prior.GetProvenance("side"); hasSide {
+		out.SetProvenance("side", side)
 	}
 
-	if qty, hasQty := input.IngressMetric("qty"); hasQty {
-		scratch.SetMetric("qty", qty)
+	if channel, hasCh := prior.GetProvenance("channel"); hasCh {
+		out.SetProvenance("channel", channel)
 	}
 
-	if bid, hasBid := input.IngressMetric("bid"); hasBid {
-		scratch.SetMetric("best_bid", bid)
-	}
-
-	if ask, hasAsk := input.IngressMetric("ask"); hasAsk {
-		scratch.SetMetric("best_ask", ask)
-	}
-
-	if side, hasSide := input.IngressProvenance("side"); hasSide {
-		scratch.SetProvenance("side", side)
-	}
-
-	if channel, hasCh := input.IngressProvenance("channel"); hasCh {
-		scratch.SetProvenance("channel", channel)
-	}
-
-	data.StampInterval(scratch, input.At(), input.From())
-
-	res := data.Read[*data.Measurement[float64]](trade.pipelineFor(output.Label).Next(
-		transport.NewOne(unsafe.Pointer(&scratch)).Next(nil),
+	res := data.Read[*data.Measurement[float64]](trade.pipelineFor(out.Label).Next(
+		transport.NewOne(unsafe.Pointer(&out)).Next(nil),
 	))
 
-	if res != nil {
-		res.Finalize()
-		data.CopyProducedFacts(res, output, "price", "qty", "best_bid", "best_ask")
+	if res == nil {
+		return out
 	}
 
-	return output
+	res.Finalize()
+	return res
 }

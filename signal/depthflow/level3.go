@@ -30,18 +30,28 @@ workload's register owns the measurement's lifetime.
 */
 type Level3 struct {
 	*runtime.System
+	arena     *data.ArenaOwner
 	pipelines sync.Map
 	ID        int
 	books     broker.BookSource
 }
 
-func NewLevel3(ctx context.Context, books broker.BookSource) *Level3 {
+func NewLevel3(ctx context.Context, arena *data.ArenaOwner, books broker.BookSource) *Level3 {
 	level3 := &Level3{
+		arena: arena,
 		books: books,
 	}
 
 	level3.System = runtime.NewSystem(ctx, "depthflow:level3", level3)
 	return level3
+}
+
+func (level3 *Level3) Source() string {
+	return "depthflow"
+}
+
+func (level3 *Level3) Arena() *data.ArenaOwner {
+	return level3.arena
 }
 
 /*
@@ -343,43 +353,34 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 	return actual.(core.Primitive)
 }
 
-func (level3 *Level3) Step(input *runtime.StageInput, output *data.Measurement[float64]) *data.Measurement[float64] {
+func (level3 *Level3) Step(prior *data.Measurement[float64]) *data.Measurement[float64] {
 	if level3.Status() != runtime.READY {
 		errnie.Warn(level3.Name() + ": Step called before READY; dropping event")
 		return nil
 	}
 
-	if input == nil || input.Ingress() == nil || input.Symbol() == "" {
+	if prior == nil || prior.Label == "" {
 		return nil
 	}
 
-	ingress := input.Ingress()
-	scratch := data.NewMeasurement[float64]("depthflow:scratch", nil)
-	scratch.Label = output.Label
+	out := level3.arena.NewMeasurement(level3.Source())
+	out.Label = prior.Label
+	out.SeqIdx = prior.SeqIdx
+	out.At = prior.At
+	out.From = prior.From
+	out.Peers = []*data.Measurement[float64]{prior}
 
-	if ingress.Metrics != nil {
-		for key, metric := range ingress.Metrics {
-			scratch.SetMetric(key, metric)
-		}
+	if channel, hasCh := prior.GetProvenance("channel"); hasCh {
+		out.SetProvenance("channel", channel)
 	}
 
-	if channel, hasCh := input.IngressProvenance("channel"); hasCh {
-		scratch.SetProvenance("channel", channel)
-	}
-
-	data.StampInterval(scratch, input.At(), input.From())
-
-	res := data.Read[*data.Measurement[float64]](level3.pipelineFor(output.Label).Next(
-		transport.NewOne(unsafe.Pointer(&scratch)).Next(nil),
+	res := data.Read[*data.Measurement[float64]](level3.pipelineFor(out.Label).Next(
+		transport.NewOne(unsafe.Pointer(&out)).Next(nil),
 	))
 
-	if res != nil {
-		exclude := make([]string, 0, len(ingress.Metrics))
-		for k := range ingress.Metrics {
-			exclude = append(exclude, k)
-		}
-		data.CopyProducedFacts(res, output, exclude...)
+	if res == nil {
+		return out
 	}
 
-	return output
+	return res
 }

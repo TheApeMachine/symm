@@ -6,6 +6,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/hindsight/tables"
+	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/statistic"
 )
 
@@ -14,7 +15,7 @@ func TestSkillCheckpointRoundTrip(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		training := NewTraining(ctx, 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
+		training := NewTraining(ctx, data.NewArenaOwner(32), 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
 		training.recordSkill(true)
 		training.recordSkill(true)
 		training.recordSkill(false)
@@ -24,7 +25,7 @@ func TestSkillCheckpointRoundTrip(t *testing.T) {
 		So(len(encoded), ShouldBeGreaterThan, 0)
 
 		// Fresh training must not invent skill — empty until apply.
-		restored := NewTraining(ctx, 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
+		restored := NewTraining(ctx, data.NewArenaOwner(32), 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
 		So(restored.skill.Count, ShouldEqual, 0)
 
 		So(restored.applySkillCheckpoint(encoded), ShouldBeNil)
@@ -39,9 +40,9 @@ func TestSkillCheckpointRestoresPaperOpenGate(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		training := NewTraining(ctx, 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
+		training := NewTraining(ctx, data.NewArenaOwner(32), 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
 		frame := regionFrame("BTC/USD", 1, 2)
-		training.grid.Update([]*data.Measurement[float64]{frame})
+		training.grid.Update(frame)
 		training.grid.Settle()
 
 		// Two +1 samples → mean 1, lower bound > 0 (same as live grading path).
@@ -51,8 +52,8 @@ func TestSkillCheckpointRestoresPaperOpenGate(t *testing.T) {
 		encoded, err := training.skillCheckpoint()
 		So(err, ShouldBeNil)
 
-		again := NewTraining(ctx, 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
-		again.grid.Update([]*data.Measurement[float64]{frame})
+		again := NewTraining(ctx, data.NewArenaOwner(32), 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
+		again.grid.Update(frame)
 		again.grid.Settle()
 		again.mu.Lock()
 		again.checkpointed = true
@@ -73,7 +74,7 @@ func TestSkillCheckpointRejectsNaN(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		training := NewTraining(ctx, 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
+		training := NewTraining(ctx, data.NewArenaOwner(32), 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
 		err := training.applySkillCheckpoint([]byte(`{"version":2,"skill":{"Count":2,"Mean":"NaN","M2":1}}`))
 		So(err, ShouldNotBeNil)
 		So(training.skill, ShouldResemble, statistic.Moments{})
@@ -85,7 +86,7 @@ func TestSkillCheckpointRejectsOldSupervisionVersion(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		training := NewTraining(ctx, 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
+		training := NewTraining(ctx, data.NewArenaOwner(32), 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
 		err := training.applySkillCheckpoint([]byte(`{"version":1,"skill":{"Count":2,"Mean":1,"M2":0},"returns":{"Count":1,"Mean":0.01,"M2":0}}`))
 		So(err, ShouldNotBeNil)
 		So(training.skill.Count, ShouldEqual, 0)
@@ -102,7 +103,7 @@ func TestSkillCheckpointLegacyMissingIsZero(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		training := NewTraining(ctx, 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
+		training := NewTraining(ctx, data.NewArenaOwner(32), 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
 		frame := regionFrame("BTC/USD", 1, 2)
 		training.grid.Update(frame)
 		training.grid.Settle()
@@ -121,7 +122,7 @@ func TestRecordSkillMarksModelDirty(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		training := NewTraining(ctx, 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
+		training := NewTraining(ctx, data.NewArenaOwner(32), 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
 		training.mu.Lock()
 		So(training.modelRevision, ShouldEqual, 0)
 		training.mu.Unlock()
@@ -135,13 +136,12 @@ func TestRecordSkillMarksModelDirty(t *testing.T) {
 	})
 }
 
-
 func TestSkillCheckpointRestoresHistGrades(t *testing.T) {
 	Convey("hist enter/exit/wait counters and return samples survive skill checkpoint", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		training := NewTraining(ctx, 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
+		training := NewTraining(ctx, data.NewArenaOwner(32), 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
 		training.recordSkill(true)
 		training.recordSkill(false)
 		training.noteEnterGrade(true, false)  // missed
@@ -156,7 +156,7 @@ func TestSkillCheckpointRestoresHistGrades(t *testing.T) {
 		encoded, err := training.skillCheckpoint()
 		So(err, ShouldBeNil)
 
-		again := NewTraining(ctx, 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
+		again := NewTraining(ctx, data.NewArenaOwner(32), 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
 		So(again.applySkillCheckpoint(encoded), ShouldBeNil)
 		So(again.histMissedEnter, ShouldEqual, 1)
 		So(again.histCorrectWait, ShouldEqual, 1)

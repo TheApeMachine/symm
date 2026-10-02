@@ -154,5 +154,3 @@ func TestReplayDensityAndFragmentationRobustness(t *testing.T) {
 		})
 	})
 }
-
-

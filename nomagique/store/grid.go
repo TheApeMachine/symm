@@ -180,7 +180,7 @@ func (grid *Grid) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 
 			measurement := *(**data.Measurement[float64])(arriving)
 			if measurement != nil {
-				grid.Update([]*data.Measurement[float64]{measurement})
+				grid.Update(measurement)
 			}
 
 			if !yield(arriving) {
@@ -190,7 +190,7 @@ func (grid *Grid) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	}
 }
 
-func (grid *Grid) Update(measurements []*data.Measurement[float64]) {
+func (grid *Grid) Update(measurements ...*data.Measurement[float64]) {
 	grid.update(measurements, true)
 }
 
@@ -247,7 +247,7 @@ order so identical sets share radix prefixes.
 Scores the canonical observation: parent Metrics plus Source-keyed Peers,
 matching Grid.Update inventory folds (parent key wins on collision).
 */
-func (grid *Grid) LitRegions(measurements []*data.Measurement[float64]) []byte {
+func (grid *Grid) LitRegions(measurements ...*data.Measurement[float64]) []byte {
 	if len(measurements) == 0 {
 		return nil
 	}
@@ -276,8 +276,20 @@ func (grid *Grid) LitRegions(measurements []*data.Measurement[float64]) []byte {
 			label = measurement.Label
 		}
 		source := measurement.GetSource()
-		for key, metric := range measurement.MetricsSnapshot() {
+		measurement.RangeMetrics(func(key string, metric data.Metric[float64]) bool {
 			allMetrics = append(allMetrics, incomingMetric{source, key, metric})
+			return true
+		})
+
+		for _, peer := range measurement.Peers {
+			if peer == nil {
+				continue
+			}
+			peerSource := peer.GetSource()
+			peer.RangeMetrics(func(key string, metric data.Metric[float64]) bool {
+				allMetrics = append(allMetrics, incomingMetric{peerSource, key, metric})
+				return true
+			})
 		}
 	}
 
@@ -418,7 +430,7 @@ func (grid *Grid) update(
 			label = measurement.Label
 		}
 		source := measurement.GetSource()
-		for key, metric := range measurement.MetricsSnapshot() {
+		measurement.RangeMetrics(func(key string, metric data.Metric[float64]) bool {
 			name := metric.Label
 			if name == "" {
 				name = key
@@ -427,6 +439,26 @@ func (grid *Grid) update(
 				source: source,
 				label:  cellKey(measurement.Label, source, name),
 				metric: metric,
+			})
+			return true
+		})
+
+		for _, peer := range measurement.Peers {
+			if peer == nil {
+				continue
+			}
+			peerSource := peer.GetSource()
+			peer.RangeMetrics(func(key string, metric data.Metric[float64]) bool {
+				name := metric.Label
+				if name == "" {
+					name = key
+				}
+				arrivals = append(arrivals, arrival{
+					source: peerSource,
+					label:  cellKey(measurement.Label, peerSource, name),
+					metric: metric,
+				})
+				return true
 			})
 		}
 	}
@@ -469,6 +501,7 @@ func (grid *Grid) update(
 	// deterministic.
 
 	var newArrivals []arrival
+	seenNew := make(map[string]bool)
 	for i := range arrivals {
 		a := &arrivals[i]
 		label := a.label
@@ -478,7 +511,8 @@ func (grid *Grid) update(
 		currentPresent[label] = true
 		grid.Authority[label] = baseAuthority
 
-		if grid.find(label) == nil {
+		if grid.find(label) == nil && !seenNew[label] {
+			seenNew[label] = true
 			metric := incoming
 			metric.Label = label
 			a.metric = metric
@@ -492,6 +526,14 @@ func (grid *Grid) update(
 
 	for index := range newArrivals {
 		metric := newArrivals[index].metric
+		if metric.Normalized != nil {
+			v := *metric.Normalized
+			metric.Normalized = &v
+		}
+		if metric.Standardized != nil {
+			v := *metric.Standardized
+			metric.Standardized = &v
+		}
 		grid.Metrics = append(grid.Metrics, &metric)
 		grid.place(newArrivals[index].label)
 	}
@@ -1166,18 +1208,20 @@ func (grid *Grid) ContributionBreakdown(
 	var allMetrics []incomingMetric
 
 	source := measurement.GetSource()
-	for key, metric := range measurement.MetricsSnapshot() {
+	measurement.RangeMetrics(func(key string, metric data.Metric[float64]) bool {
 		allMetrics = append(allMetrics, incomingMetric{source, key, metric})
-	}
+		return true
+	})
 
 	for _, peer := range measurement.Peers {
 		if peer == nil {
 			continue
 		}
 		peerSource := peer.GetSource()
-		for key, metric := range peer.MetricsSnapshot() {
+		peer.RangeMetrics(func(key string, metric data.Metric[float64]) bool {
 			allMetrics = append(allMetrics, incomingMetric{peerSource, key, metric})
-		}
+			return true
+		})
 	}
 
 	breakdown := make(map[uint8]map[string]float64)
@@ -1253,7 +1297,7 @@ func (grid *Grid) decorate(
 		}
 
 		source := measurement.GetSource()
-		for key, incoming := range measurement.MetricsSnapshot() {
+		measurement.RangeMetrics(func(key string, incoming data.Metric[float64]) bool {
 			name := incoming.Label
 
 			if name == "" {
@@ -1262,7 +1306,7 @@ func (grid *Grid) decorate(
 
 			stored := grid.find(cellKey(measurement.Label, source, name))
 			if stored == nil {
-				continue
+				return true
 			}
 
 			incoming.X = stored.X
@@ -1270,7 +1314,8 @@ func (grid *Grid) decorate(
 			incoming.Region = stored.Region
 
 			measurement.SetMetric(key, incoming)
-		}
+			return true
+		})
 	}
 }
 

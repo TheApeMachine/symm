@@ -77,11 +77,11 @@ func TestWriter_CommitReady(t *testing.T) {
 		writer := tables.NewWriter(tables.Wrap(adapter), 100)
 		peer := tables.NewWriter(peerCatalog, 100)
 		add := func(target *tables.Writer, sequence int64) {
-			measurement := data.NewMeasurement[float64]("hawkes", map[string]data.Metric[float64]{"intensity": {Raw: float64(sequence)}})
+			measurement := data.NewMeasurement("hawkes", map[string]data.Metric[float64]{"intensity": {Raw: float64(sequence)}})
 			measurement.Label = "BTC/USD"
 			measurement.At = time.Unix(sequence, 0)
 			measurement.SeqIdx = sequence
-			target.Add("hawkes", measurement)
+			target.Add("hawkes", data.Publication{Measurement: measurement})
 		}
 		add(peer, 1)
 		So(peer.CommitReady(t.Context(), true), ShouldBeNil)
@@ -120,7 +120,7 @@ func TestWriterCommitReady(t *testing.T) {
 		writer := tables.NewWriter(catalog, 1)
 		measurement := data.NewMeasurement[float64]("trade", nil)
 		measurement.SeqIdx = 1
-		writer.Add("trade", measurement)
+		writer.Add("trade", data.Publication{Measurement: measurement})
 		// Exceed the retired excursion-only batch threshold while the tape is small.
 		for index := 0; index < 12; index++ {
 			writer.AddExcursion(tables.ExcursionRecord{ID: fmt.Sprint(index), AnchorTick: 1, ExitTick: 2})

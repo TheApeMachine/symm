@@ -22,10 +22,8 @@ func TestGrid(t *testing.T) {
 
 		Convey("When measurements are streamed into Next", func() {
 			meas := data.NewMeasurement[float64]("test", nil)
-			meas.Metrics = map[string]data.Metric[float64]{
-				"alpha": {Label: "alpha", Raw: 1.0},
-				"beta":  {Label: "beta", Raw: 1.5},
-			}
+			meas.SetMetric("alpha", data.Metric[float64]{Label: "alpha", Raw: 1.0})
+			meas.SetMetric("beta", data.Metric[float64]{Label: "beta", Raw: 1.5})
 
 			in := transport.NewOne(unsafe.Pointer(&meas)).Next(nil)
 
@@ -424,7 +422,7 @@ func TestGridLitRegionsIgnoresPeers(t *testing.T) {
 		parent.SetMetric("loud", data.Metric[float64]{Label: "loud", Raw: 10})
 		parent.SetMetric("quiet", data.Metric[float64]{Label: "quiet", Raw: 1})
 
-		withPeer := parent.Clone()
+		withPeer := market.CloneTestMeasurement(parent)
 		peer := data.NewMeasurement[float64]("websocket", nil)
 		peer.Label = "BTC/USD"
 		peer.SetMetric("quiet", data.Metric[float64]{Label: "quiet", Raw: 1000})
@@ -449,7 +447,7 @@ func TestGridLitRegionsScoresSourceKeyedPeers(t *testing.T) {
 			peer.Label = "BTC/USD"
 			energyStd := 5.0 + float64(tick)
 			peer.SetMetric("energy", data.Metric[float64]{Label: "energy", Raw: 1, Standardized: &energyStd})
-			ingress.Contribute(peer)
+			ingress.Peers = append(ingress.Peers, peer)
 			grid.Update(ingress)
 		}
 		grid.ForceSettle()
@@ -470,8 +468,8 @@ func TestGridLitRegionsScoresSourceKeyedPeers(t *testing.T) {
 		peer.Label = "BTC/USD"
 		energyStd := 50.0
 		peer.SetMetric("energy", data.Metric[float64]{Label: "energy", Raw: 1, Standardized: &energyStd})
-		withPeer := ingress.Clone()
-		withPeer.Contribute(peer)
+		withPeer := market.CloneTestMeasurement(ingress)
+		withPeer.Peers = append(withPeer.Peers, peer)
 		lit := grid.LitRegions(withPeer)
 
 		So(len(lit), ShouldBeGreaterThan, 0)
@@ -542,36 +540,38 @@ func TestGridObservationOwnershipIntegration(t *testing.T) {
 		ingress.SetMetric("bid", data.Metric[float64]{Label: "bid", Raw: bid})
 		ingress.SetMetric("ask", data.Metric[float64]{Label: "ask", Raw: ask})
 
-		// Producer 1: Liquidity consumes ingress, reads bid/ask, produces midpoint
-		p1 := ingress.Fork()
-		p1.SetSource("liquidity")
-		b := p1.GetMetric("bid").Raw
-		a := p1.GetMetric("ask").Raw
+		// Producer 1: Liquidity consumes ingress, reads bid/ask via Peer, produces midpoint
+		p1 := data.NewMeasurement[float64]("liquidity", nil)
+		p1.Label = ingress.Label
+		p1.Peers = []*data.Measurement[float64]{ingress}
+		bMetric, _ := p1.LookupMetric("bid")
+		aMetric, _ := p1.LookupMetric("ask")
+		b := bMetric.Raw
+		a := aMetric.Raw
 		So(b, ShouldEqual, 50000.0)
 		So(a, ShouldEqual, 50001.0)
 		p1.WriteMetric("midpoint", (b+a)/2.0)
 
-		// Producer 2: CVD consumes ingress, reads bid/ask, produces cvd_flow
-		p2 := ingress.Fork()
-		p2.SetSource("cvd")
-		b2 := p2.GetMetric("bid").Raw
+		// Producer 2: CVD consumes ingress, reads bid via Peer, produces cvd_flow
+		p2 := data.NewMeasurement[float64]("cvd", nil)
+		p2.Label = ingress.Label
+		p2.Peers = []*data.Measurement[float64]{ingress}
+		b2Metric, _ := p2.LookupMetric("bid")
+		b2 := b2Metric.Raw
 		So(b2, ShouldEqual, 50000.0)
 		p2.WriteMetric("cvd_flow", 15.5)
 
-		// Producer 3: Toxicity consumes ingress, reads bid/ask, produces toxicity_score
-		p3 := ingress.Fork()
-		p3.SetSource("toxicity")
-		a3 := p3.GetMetric("ask").Raw
+		// Producer 3: Toxicity consumes ingress, reads ask via Peer, produces toxicity_score
+		p3 := data.NewMeasurement[float64]("toxicity", nil)
+		p3.Label = ingress.Label
+		p3.Peers = []*data.Measurement[float64]{ingress}
+		a3Metric, _ := p3.LookupMetric("ask")
+		a3 := a3Metric.Raw
 		So(a3, ShouldEqual, 50001.0)
 		p3.WriteMetric("toxicity_score", 0.8)
 
-		// Producers contribute their outputs
-		ingress.Contribute(p1)
-		ingress.Contribute(p2)
-		ingress.Contribute(p3)
-
-		// Grid updates with observation
-		grid.Update(ingress)
+		// Grid updates with observation (ingress plus sibling producers)
+		grid.Update(ingress, p1, p2, p3)
 
 		// Grid must see exactly one ingress bid and one ingress ask
 		So(metricNamed(grid, "BTC/USD", "websocket", "bid"), ShouldNotBeNil)

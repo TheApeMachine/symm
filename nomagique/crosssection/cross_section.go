@@ -132,7 +132,7 @@ func (op *StampPeers) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
 			peers := make([]*data.Measurement[float64], 0, len(snapshot))
 
 			for _, member := range snapshot {
-				peer := data.NewMeasurement[float64]("cross-section", map[string]data.Metric[float64]{
+				peer := data.NewMeasurement("cross-section", map[string]data.Metric[float64]{
 					"change": {Label: "change", Raw: member.Change},
 				})
 				peer.Label, peer.At, peer.From = member.Label, member.At, member.From

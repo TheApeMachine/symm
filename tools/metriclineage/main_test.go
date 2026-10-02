@@ -176,9 +176,9 @@ func BenchmarkScanFineConsumers(b *testing.B) {
 	}
 
 	b.ReportAllocs()
-	b.ResetTimer()
+	
 
-	for iteration := 0; iteration < b.N; iteration++ {
+	for b.Loop() {
 		count := 0
 
 		for _, file := range loaded[0].Syntax {

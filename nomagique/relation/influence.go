@@ -11,23 +11,7 @@ import (
 
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/statistic"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
-
-/*
-viewRing drives the store's ring command and returns the read-locked view and
-whether the coordinate is registered.
-*/
-func viewRing(store core.Primitive, coordinate Coordinate) (RingView, bool) {
-	command := StoreCommand{Ring: &RingRequest{Coordinate: coordinate}}
-	var result StoreResult
-
-	for out := range store.Next(transport.NewOne(unsafe.Pointer(&command)).Next(nil)) {
-		result = *(*StoreResult)(out)
-	}
-
-	return result.Ring, result.Found
-}
 
 /*
 FitStatus is the explicit state of one Relation estimate. Invalid is not

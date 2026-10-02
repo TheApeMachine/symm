@@ -21,15 +21,26 @@ import (
 
 type Ticker struct {
 	*runtime.System
+	arena     *data.ArenaOwner
 	pipelines sync.Map
 	ID        int
 }
 
-func NewTicker(ctx context.Context) *Ticker {
-	ticker := &Ticker{}
+func NewTicker(ctx context.Context, arena *data.ArenaOwner) *Ticker {
+	ticker := &Ticker{
+		arena: arena,
+	}
 
 	ticker.System = runtime.NewSystem(ctx, "liquidity:ticker", ticker)
 	return ticker
+}
+
+func (ticker *Ticker) Source() string {
+	return "liquidity"
+}
+
+func (ticker *Ticker) Arena() *data.ArenaOwner {
+	return ticker.arena
 }
 
 func (ticker *Ticker) pipelineFor(symbol string) core.Primitive {
@@ -41,10 +52,13 @@ func (ticker *Ticker) pipelineFor(symbol string) core.Primitive {
 		data.NewAdapter(
 			transport.NewPass(),
 			func(m *data.Measurement[float64]) *data.Measurement[float64] {
-				bid, ask := m.GetMetric("bid").Raw, m.GetMetric("ask").Raw
-				bidQty, askQty := m.GetMetric("bid_qty").Raw, m.GetMetric("ask_qty").Raw
+				bidMetric, _ := m.LookupMetric("bid")
+				askMetric, _ := m.LookupMetric("ask")
+				bidQtyMetric, _ := m.LookupMetric("bid_qty")
+				askQtyMetric, _ := m.LookupMetric("ask_qty")
+				bid, ask := bidMetric.Raw, askMetric.Raw
+				bidQty, askQty := bidQtyMetric.Raw, askQtyMetric.Raw
 
-				m.EnsureMetadata()
 				m.SetMetadata(data.MetadataSupport, "0")
 
 				if bid <= 0 || ask <= 0 || bidQty <= 0 || askQty <= 0 || math.IsNaN(bid) || math.IsNaN(ask) || math.IsNaN(bidQty) || math.IsNaN(askQty) || math.IsInf(bid, 0) || math.IsInf(ask, 0) || math.IsInf(bidQty, 0) || math.IsInf(askQty, 0) {
@@ -93,7 +107,6 @@ func (ticker *Ticker) pipelineFor(symbol string) core.Primitive {
 					}}
 				},
 				func(m *data.Measurement[float64], reading statistic.JointReading) {
-					m.EnsureMetadata()
 					if len(reading.Channels) > 0 {
 						m.SetMetadata(data.MetadataSupport, strconv.FormatFloat(reading.Channels[0].Count, 'f', -1, 64))
 					}
@@ -178,42 +191,42 @@ func (ticker *Ticker) pipelineFor(symbol string) core.Primitive {
 	return actual.(core.Primitive)
 }
 
-func (ticker *Ticker) Step(input *runtime.StageInput, output *data.Measurement[float64]) *data.Measurement[float64] {
+func (ticker *Ticker) Step(prior *data.Measurement[float64]) *data.Measurement[float64] {
 	if ticker.Status() != runtime.READY {
 		errnie.Warn(ticker.Name() + ": Step called before READY; dropping event")
 		return nil
 	}
 
-	if input == nil || input.Ingress() == nil || input.Symbol() == "" {
+	if prior == nil || prior.Label == "" {
 		return nil
 	}
 
-	bidMetric, hasBid := input.IngressMetric("bid")
-	askMetric, hasAsk := input.IngressMetric("ask")
-	bidQtyMetric, hasBidQty := input.IngressMetric("bid_qty")
-	askQtyMetric, hasAskQty := input.IngressMetric("ask_qty")
+	_, hasBid := prior.LookupMetric("bid")
+	_, hasAsk := prior.LookupMetric("ask")
+	_, hasBidQty := prior.LookupMetric("bid_qty")
+	_, hasAskQty := prior.LookupMetric("ask_qty")
 
 	if !hasBid || !hasAsk || !hasBidQty || !hasAskQty {
 		return nil
 	}
 
-	output.SetMetric("bid", bidMetric)
-	output.SetMetric("ask", askMetric)
-	output.SetMetric("bid_qty", bidQtyMetric)
-	output.SetMetric("ask_qty", askQtyMetric)
+	out := ticker.arena.NewMeasurement(ticker.Source())
+	out.Label = prior.Label
+	out.SeqIdx = prior.SeqIdx
+	out.At = prior.At
+	out.From = prior.From
+	out.Peers = []*data.Measurement[float64]{prior}
 
-	if channel, hasCh := input.IngressProvenance("channel"); hasCh {
-		output.SetProvenance("channel", channel)
+	if channel, hasCh := prior.GetProvenance("channel"); hasCh {
+		out.SetProvenance("channel", channel)
 	}
 
-	data.StampInterval(output, input.At(), input.From())
-
-	res := data.Read[*data.Measurement[float64]](ticker.pipelineFor(output.Label).Next(
-		transport.NewOne(unsafe.Pointer(&output)).Next(nil),
+	res := data.Read[*data.Measurement[float64]](ticker.pipelineFor(out.Label).Next(
+		transport.NewOne(unsafe.Pointer(&out)).Next(nil),
 	))
 
 	if res == nil {
-		return output
+		return out
 	}
 
 	return res

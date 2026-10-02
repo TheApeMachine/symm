@@ -16,7 +16,7 @@ import (
 
 func TestSolverStep(t *testing.T) {
 	Convey("Registered category batches preserve strength, symbols and timestamps", t, func() {
-		solver := NewSolver(t.Context())
+		solver := NewSolver(t.Context(), data.NewArenaOwner(32))
 		solver.Transition(runtime.READY)
 		category := data.NewMeasurement[float64]("category", nil)
 		category.Result = [][]types.Category{
@@ -26,12 +26,9 @@ func TestSolverStep(t *testing.T) {
 			},
 			{{Symbol: "ETH/USD", At: time.Unix(11, 0), Type: types.Turbulent, Confidence: 1, Strength: 1}},
 		}
-		measurement := solver.Register()
+		measurement := data.NewMeasurement[float64]("runtime:join", nil)
 		measurement.Peers = []*data.Measurement[float64]{category}
-		result := solver.Step(
-			runtime.TestStageInputFromPeers(measurement),
-			data.NewMeasurement[float64]("cognition", nil),
-		)
+		result := solver.Step(measurement)
 		readings, ok := result.Result.([]types.Cognition)
 		So(ok, ShouldBeTrue)
 		So(len(readings), ShouldEqual, 2)
@@ -47,7 +44,7 @@ func TestSolverStep(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		solver := NewSolver(ctx)
+		solver := NewSolver(ctx, data.NewArenaOwner(32))
 		solver.Transition(runtime.READY)
 		So(solver, ShouldNotBeNil)
 
@@ -69,7 +66,7 @@ func TestSolverStep(t *testing.T) {
 							categoryType = types.CategoryOrganicTrend
 						}
 
-						m := data.NewMeasurement[float64]("cognition", nil)
+						m := data.NewMeasurement[float64]("runtime:join", nil)
 						m.Label = sym
 						cat := data.NewMeasurement[float64]("category", nil)
 						cat.Label = sym
@@ -79,10 +76,7 @@ func TestSolverStep(t *testing.T) {
 						}}}
 						m.Peers = []*data.Measurement[float64]{cat}
 
-						result := solver.Step(
-							runtime.TestStageInputFromPeers(m),
-							data.NewMeasurement[float64]("cognition", nil),
-						)
+						result := solver.Step(m)
 						if result == nil {
 							t.Errorf("step returned nil")
 						}
@@ -103,7 +97,7 @@ func TestSolverStep(t *testing.T) {
 
 func TestSolverProcessBatch(t *testing.T) {
 	Convey("Given category transitions committed out of event-time order", t, func() {
-		solver := NewSolver(t.Context())
+		solver := NewSolver(t.Context(), data.NewArenaOwner(32))
 		solver.maxSeqLen = 1
 		newer := []types.Category{{
 			At: time.Unix(2, 0), Symbol: "TEST/USD",
@@ -141,7 +135,7 @@ func TestSolverProcessBatch(t *testing.T) {
 
 func TestSolverREMConsolidationAndCategoryCoverage(t *testing.T) {
 	Convey("Given a Cognition Solver", t, func() {
-		solver := NewSolver(t.Context())
+		solver := NewSolver(t.Context(), data.NewArenaOwner(32))
 		solver.maxSeqLen = 2
 
 		Convey("When 128 transitions occur across non-legacy categories", func() {
@@ -178,14 +172,14 @@ func TestSolverREMConsolidationAndCategoryCoverage(t *testing.T) {
 
 func TestSolverStepReadiness(t *testing.T) {
 	Convey("An inactive pipeline node drops input before touching processing state", t, func() {
-		node := &Solver{System: runtime.NewSystem(t.Context(), "readiness-test")}
+		node := &Solver{
+			System: runtime.NewSystem(t.Context(), "readiness-test"),
+			arena:  data.NewArenaOwner(32),
+		}
 		measurement := &data.Measurement[float64]{Label: "BTC/USD", SeqIdx: 7}
 		for _, stage := range []runtime.Stage{runtime.INIT, runtime.WAITING, runtime.ERROR, runtime.FATAL} {
 			node.Transition(stage)
-			So(node.Step(
-				runtime.TestStageInputFromPeers(measurement),
-				data.NewMeasurement[float64]("cognition", nil),
-			), ShouldBeNil)
+			So(node.Step(measurement), ShouldBeNil)
 			So(node.Status(), ShouldEqual, stage)
 			So(measurement.SeqIdx, ShouldEqual, 7)
 		}
@@ -193,9 +187,9 @@ func TestSolverStepReadiness(t *testing.T) {
 }
 
 func BenchmarkSolverStep(b *testing.B) {
-	solver := NewSolver(b.Context())
+	solver := NewSolver(b.Context(), data.NewArenaOwner(32))
 	solver.Transition(runtime.READY)
-	measurement := solver.Register()
+	measurement := data.NewMeasurement[float64]("runtime:join", nil)
 	category := data.NewMeasurement[float64]("category", nil)
 	measurement.Peers = []*data.Measurement[float64]{category}
 	categories := [][]types.Category{{{
@@ -209,10 +203,7 @@ func BenchmarkSolverStep(b *testing.B) {
 		sequence++
 		categories[0][0].At = time.Unix(sequence, 0)
 		categories[0][0].Type = []types.CategoryType{types.OrganicTrend, types.Turbulent}[sequence%2]
-		solver.Step(
-			runtime.TestStageInputFromPeers(measurement),
-			data.NewMeasurement[float64]("cognition", nil),
-		)
+		solver.Step(measurement)
 
 		if err := solver.Error(); err != nil {
 			b.Fatal(err)
@@ -222,26 +213,23 @@ func BenchmarkSolverStep(b *testing.B) {
 
 func TestSolverStepEmptyBatch(t *testing.T) {
 	Convey("An empty category publication produces no cognition observation", t, func() {
-		solver := NewSolver(t.Context())
+		solver := NewSolver(t.Context(), data.NewArenaOwner(32))
 		solver.Transition(runtime.READY)
 		category := data.NewMeasurement[float64]("category", nil)
 		category.Result = [][]types.Category{}
-		measurement := solver.Register()
+		measurement := data.NewMeasurement[float64]("runtime:join", nil)
 		measurement.Peers = []*data.Measurement[float64]{category}
-		So(solver.Step(
-			runtime.TestStageInputFromPeers(measurement),
-			data.NewMeasurement[float64]("cognition", nil),
-		), ShouldBeNil)
+		So(solver.Step(measurement), ShouldBeNil)
 		So(solver.Error(), ShouldBeNil)
 	})
 }
 
 func TestStepWritesMetricsWithoutRegister(t *testing.T) {
 	Convey("Given a live measurement without Register templates", t, func() {
-		solver := NewSolver(t.Context())
+		solver := NewSolver(t.Context(), data.NewArenaOwner(32))
 		solver.Transition(runtime.READY)
 
-		measurement := data.NewMeasurement[float64]("websocket", nil)
+		measurement := data.NewMeasurement[float64]("runtime:join", nil)
 		category := data.NewMeasurement[float64]("category", nil)
 		category.Result = [][]types.Category{{
 			{
@@ -254,10 +242,7 @@ func TestStepWritesMetricsWithoutRegister(t *testing.T) {
 		}}
 		measurement.Peers = []*data.Measurement[float64]{category}
 
-		out := solver.Step(
-			runtime.TestStageInputFromPeers(measurement),
-			data.NewMeasurement[float64]("cognition", nil),
-		)
+		out := solver.Step(measurement)
 		So(out, ShouldNotBeNil)
 		_, ok := out.LookupMetric("contrast")
 		So(ok, ShouldBeTrue)

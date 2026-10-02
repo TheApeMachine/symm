@@ -4,8 +4,6 @@ import (
 	"context"
 	"embed"
 	"fmt"
-	"net/http"
-	"net/http/pprof"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -209,7 +207,7 @@ var (
 			storeTee := hindsight.NewStoreTee(ctx, "storeTee")
 			trader := strategy.NewTrader(ctx, privateTransport, price, balance)
 
-			training := strategy.NewTraining(ctx, epoch, price, trader, catalog, uiTee)
+			training := strategy.NewTraining(ctx, data.NewArenaOwner(4096), epoch, price, trader, catalog, uiTee)
 
 			uiTee.Transition(nmruntime.READY)
 			// Start historical training loop which will wait for grid to settle
@@ -222,32 +220,32 @@ var (
 			hub.Run()
 			hub.Transition(nmruntime.READY)
 
-			manifoldSolver := manifold.NewSolver(ctx, book)
+			manifoldSolver := manifold.NewSolver(ctx, data.NewArenaOwner(4096), book)
 			hub.SetManifoldSource(manifoldSolver)
 			book.SetNotify(func(symbol string, _ time.Time) {
 				manifoldSolver.Wake(symbol)
 			})
-			correlationTicker := correlation.NewTicker(ctx)
-			leadlagTicker := leadlag.NewTicker(ctx)
-			liquidityTicker := liquidity.NewTicker(ctx)
-			sentimentTicker := sentiment.NewTicker(ctx)
-			pumpdumpTicker := pumpdump.NewTicker(ctx)
-			cvdTrade := cvd.NewTrade(ctx)
-			hawkesTrade := hawkes.NewTrade(ctx)
-			toxicityTrade := toxicity.NewTrade(ctx)
-			pumpdumpTrade := pumpdump.NewTrade(ctx)
-			depthflowLevel3 := depthflow.NewLevel3(ctx, book)
-			morphologyLevel3 := morphology.NewLevel3(ctx, book)
-			toxicityLevel3 := toxicity.NewLevel3(ctx, book)
-			pumpdumpLevel3 := pumpdump.NewLevel3(ctx, book)
-			derivativesTicker := derivatives.NewTicker(ctx)
-			derivativesTrade := derivatives.NewTrade(ctx)
-			categorySolver := category.NewSolver(ctx)
+			correlationTicker := correlation.NewTicker(ctx, data.NewArenaOwner(4096))
+			leadlagTicker := leadlag.NewTicker(ctx, data.NewArenaOwner(4096))
+			liquidityTicker := liquidity.NewTicker(ctx, data.NewArenaOwner(4096))
+			sentimentTicker := sentiment.NewTicker(ctx, data.NewArenaOwner(4096))
+			pumpdumpTicker := pumpdump.NewTicker(ctx, data.NewArenaOwner(4096))
+			cvdTrade := cvd.NewTrade(ctx, data.NewArenaOwner(4096))
+			hawkesTrade := hawkes.NewTrade(ctx, data.NewArenaOwner(4096))
+			toxicityTrade := toxicity.NewTrade(ctx, data.NewArenaOwner(4096))
+			pumpdumpTrade := pumpdump.NewTrade(ctx, data.NewArenaOwner(4096))
+			depthflowLevel3 := depthflow.NewLevel3(ctx, data.NewArenaOwner(4096), book)
+			morphologyLevel3 := morphology.NewLevel3(ctx, data.NewArenaOwner(4096), book)
+			toxicityLevel3 := toxicity.NewLevel3(ctx, data.NewArenaOwner(4096), book)
+			pumpdumpLevel3 := pumpdump.NewLevel3(ctx, data.NewArenaOwner(4096), book)
+			derivativesTicker := derivatives.NewTicker(ctx, data.NewArenaOwner(4096))
+			derivativesTrade := derivatives.NewTrade(ctx, data.NewArenaOwner(4096))
+			categorySolver := category.NewSolver(ctx, data.NewArenaOwner(4096))
 			resonanceSolver := resonance.NewSolver(
-				ctx, system.Cfg.Resonance.LearningRate,
+				ctx, data.NewArenaOwner(4096), system.Cfg.Resonance.LearningRate,
 			)
 
-			cognitionSolver := cognition.NewSolver(ctx)
+			cognitionSolver := cognition.NewSolver(ctx, data.NewArenaOwner(4096))
 			workspace := nmruntime.NewWorkspace(
 				ctx,
 				2,
@@ -748,27 +746,6 @@ func Execute() {
 	if err != nil {
 		os.Exit(1)
 	}
-}
-
-func startPprof() {
-	if !viper.GetBool("system.pprof.enabled") && os.Getenv("SYMM_PPROF") == "" {
-		return
-	}
-
-	addr := viper.GetString("system.pprof.addr")
-
-	if addr == "" {
-		addr = "127.0.0.1:6060"
-	}
-
-	mux := http.NewServeMux()
-	mux.Handle("/debug/pprof/", http.DefaultServeMux)
-	// Pyroscope owns CPU sampling; its handler coordinates a foreground capture.
-	mux.HandleFunc("/debug/pprof/cpu", pprof.Profile)
-
-	go func() {
-		errnie.Error(http.ListenAndServe(addr, mux))
-	}()
 }
 
 func init() {

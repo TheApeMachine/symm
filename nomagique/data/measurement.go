@@ -3,10 +3,7 @@ package data
 import (
 	"errors"
 	"iter"
-	"maps"
 	"math"
-	"sort"
-	"sync"
 	"time"
 	"unsafe"
 
@@ -15,235 +12,235 @@ import (
 )
 
 /*
-Measurement is the native data type in nomagique, and in most cases should be
-leveraged to build a system that is easy to work with, because of a mostly
-mono-typed architecture.
+MetricEntry stores a single metric by its producer key.
+*/
+type MetricEntry[T any] struct {
+	Key    string    `json:"key"`
+	Metric Metric[T] `json:"metric"`
+}
 
-It implements Identifiable, so it can work with nomagique stores that use index
-addressable storage slots for O(1) reads. The register yields a working copy of
-a slot; published snapshots that appear as peers are not written.
+/*
+StringEntry stores a key-value pair for metadata and provenance.
+*/
+type StringEntry struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
 
-Label is often used as a named canonical group that makes sense in a given
-project, while SeqIdx is the workspace observation index used as a
-synchronization anchor. Zero means the observation has not been stamped.
-
-At should generally always be set to the timestamp of the event that fills
-the Measurement, while From is optional, but has value beyond just defining
-a window of time for the measurement. It can also be used to derive rudimentary
-performance and latency diagnostics.
-
-Quality is not caller-supplied. Maturity and SNR are derived by the Finalizer
-primitive from the measurement's own estimator facts, these values represent
-the amount of trust to put in the overal Measurement, and the Metrics it contains.
+/*
+Measurement is the native data type in nomagique.
+Under the WORM model:
+  - Before publication: exactly one writer (the producer), zero readers.
+  - After publication: zero writers, arbitrary concurrent readers.
+No mutexes or synchronization primitives are used inside Measurement.
+Hot data is stored in compact arena-backed slices instead of GC heap maps.
 */
 type Measurement[T any] struct {
-	ID         int                  `json:"id"`
-	Label      string               `json:"label"`
-	Source     string               `json:"source"`
-	SeqIdx     int64                `json:"seqIdx"`
-	Timestamp  int64                `json:"timestamp"`
-	At         time.Time            `json:"at"`
-	From       time.Time            `json:"from,omitempty"`
-	Maturity   float64              `json:"maturity"`
-	SNR        float64              `json:"snr"`
-	SNRDefined bool                 `json:"snrDefined"`
-	Estimated  bool                 `json:"estimated"`
-	Err        error                `json:"-"`
-	Metrics    map[string]Metric[T] `json:"metrics,omitempty"`
-	inputs     map[string]Metric[T]
-	mu         sync.RWMutex
-	Metadata   map[string]string `json:"metadata,omitempty"`
-	Provenance map[string]string `json:"provenance,omitempty"`
-	Peers      []*Measurement[T] `json:"peers"`
-	// Result is the completed, immutable structured output of this observation.
-	// The register and tees share it; numeric persistence uses Metrics.
-	Result any `json:"-"`
+	ID         int               `json:"id"`
+	Label      string            `json:"label"`
+	Source     string            `json:"source"`
+	SeqIdx     int64             `json:"seqIdx"`
+	Timestamp  int64             `json:"timestamp"`
+	At         time.Time         `json:"at"`
+	From       time.Time         `json:"from,omitempty"`
+	Maturity   float64           `json:"maturity"`
+	SNR        float64           `json:"snr"`
+	SNRDefined bool              `json:"snrDefined"`
+	Estimated  bool              `json:"estimated"`
+	Err        error             `json:"-"`
+	Metrics    []MetricEntry[T]  `json:"metrics,omitempty"`
+	Metadata   []StringEntry     `json:"metadata,omitempty"`
+	Provenance []StringEntry     `json:"provenance,omitempty"`
+	Peers      []*Measurement[T] `json:"peers,omitempty"`
+	Result     any               `json:"-"`
 }
 
-// GetMetric safely retrieves a metric, checking producer-owned Metrics first then inherited inputs.
-func (m *Measurement[T]) GetMetric(key string) Metric[T] {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	if m.Metrics != nil {
-		if val, ok := m.Metrics[key]; ok {
-			return val
-		}
-	}
-	if m.inputs != nil {
-		if val, ok := m.inputs[key]; ok {
-			return val
-		}
-	}
-	return Metric[T]{}
-}
-
-// LookupMetric safely retrieves a metric and a boolean indicating if it was found.
-func (m *Measurement[T]) LookupMetric(key string) (Metric[T], bool) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	if m.Metrics != nil {
-		if val, ok := m.Metrics[key]; ok {
-			return val, true
-		}
-	}
-	if m.inputs != nil {
-		if val, ok := m.inputs[key]; ok {
-			return val, true
+func (m *Measurement[T]) localMetric(key string) (Metric[T], bool) {
+	for i := range m.Metrics {
+		if m.Metrics[i].Key == key {
+			return m.Metrics[i].Metric, true
 		}
 	}
 	return Metric[T]{}, false
 }
 
-// SetMetric safely sets a metric owned by this producer.
+// GetMetric retrieves a metric, checking local Metrics first, then direct Peers.
+func (m *Measurement[T]) GetMetric(key string) Metric[T] {
+	val, _ := m.LookupMetric(key)
+	return val
+}
+
+// LookupMetric searches for a metric in local storage and direct Peers deterministically.
+func (m *Measurement[T]) LookupMetric(key string) (Metric[T], bool) {
+	if m == nil {
+		return Metric[T]{}, false
+	}
+
+	if val, ok := m.localMetric(key); ok {
+		return val, true
+	}
+
+	for _, peer := range m.Peers {
+		if peer == nil {
+			continue
+		}
+
+		if val, ok := peer.localMetric(key); ok {
+			return val, true
+		}
+
+		for _, sub := range peer.Peers {
+			if sub == nil {
+				continue
+			}
+
+			if val, ok := sub.localMetric(key); ok {
+				return val, true
+			}
+		}
+	}
+
+	return Metric[T]{}, false
+}
+
+// LookupPeerMetric searches for a metric originating from a specific source among Peers.
+func (m *Measurement[T]) LookupPeerMetric(source, key string) (Metric[T], bool) {
+	if m == nil {
+		return Metric[T]{}, false
+	}
+
+	for _, peer := range m.Peers {
+		if peer == nil {
+			continue
+		}
+
+		if peer.Source == source {
+			if val, ok := peer.localMetric(key); ok {
+				return val, true
+			}
+		}
+
+		for _, sub := range peer.Peers {
+			if sub != nil && sub.Source == source {
+				if val, ok := sub.localMetric(key); ok {
+					return val, true
+				}
+			}
+		}
+	}
+
+	return Metric[T]{}, false
+}
+
+// SetMetric sets a metric owned locally by this producer.
 func (m *Measurement[T]) SetMetric(key string, val Metric[T]) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.Metrics == nil {
-		m.Metrics = make(map[string]Metric[T])
+	if m == nil {
+		return
 	}
-	m.Metrics[key] = val
+
+	for i := range m.Metrics {
+		if m.Metrics[i].Key == key {
+			m.Metrics[i].Metric = val
+			return
+		}
+	}
+
+	m.Metrics = append(m.Metrics, MetricEntry[T]{Key: key, Metric: val})
 }
 
-// WriteMetric safely writes a value to a metric and updates it in the owned Metrics map.
+// WriteMetric safely writes a raw value to a local metric.
 func (m *Measurement[T]) WriteMetric(key string, val T) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.Metrics == nil {
-		m.Metrics = make(map[string]Metric[T])
+	if m == nil {
+		return
 	}
-	metric, ok := m.Metrics[key]
-	if !ok && m.inputs != nil {
-		metric = m.inputs[key]
+
+	for i := range m.Metrics {
+		if m.Metrics[i].Key == key {
+			m.Metrics[i].Metric = m.Metrics[i].Metric.Write(val)
+			return
+		}
 	}
-	m.Metrics[key] = metric.Write(val)
+
+	metric, _ := m.LookupMetric(key)
+	m.Metrics = append(m.Metrics, MetricEntry[T]{Key: key, Metric: metric.Write(val)})
 }
 
-// WriteStandardized sets the raw value and marks the metric as standardized.
+// WriteStandardized sets the raw value and standardized form on a local metric.
 func (m *Measurement[T]) WriteStandardized(key string, val T) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.Metrics == nil {
-		m.Metrics = make(map[string]Metric[T])
+	if m == nil {
+		return
 	}
-	metric, ok := m.Metrics[key]
-	if !ok && m.inputs != nil {
-		metric = m.inputs[key]
-	}
-	metric = metric.Write(val)
+
 	v := val
+	for i := range m.Metrics {
+		if m.Metrics[i].Key == key {
+			m.Metrics[i].Metric = m.Metrics[i].Metric.Write(val)
+			m.Metrics[i].Metric.Standardized = &v
+			return
+		}
+	}
+
+	metric, _ := m.LookupMetric(key)
+	metric = metric.Write(val)
 	metric.Standardized = &v
-	m.Metrics[key] = metric
+	m.Metrics = append(m.Metrics, MetricEntry[T]{Key: key, Metric: metric})
 }
 
-// WriteNormalized sets the raw value and marks the metric as normalized.
+// WriteNormalized sets the raw value and normalized form on a local metric.
 func (m *Measurement[T]) WriteNormalized(key string, val T) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.Metrics == nil {
-		m.Metrics = make(map[string]Metric[T])
+	if m == nil {
+		return
 	}
-	metric, ok := m.Metrics[key]
-	if !ok && m.inputs != nil {
-		metric = m.inputs[key]
-	}
-	metric = metric.Write(val)
+
 	v := val
+	for i := range m.Metrics {
+		if m.Metrics[i].Key == key {
+			m.Metrics[i].Metric = m.Metrics[i].Metric.Write(val)
+			m.Metrics[i].Metric.Normalized = &v
+			return
+		}
+	}
+
+	metric, _ := m.LookupMetric(key)
+	metric = metric.Write(val)
 	metric.Normalized = &v
-	m.Metrics[key] = metric
+	m.Metrics = append(m.Metrics, MetricEntry[T]{Key: key, Metric: metric})
 }
 
-// RangeMetrics safely iterates over all visible metrics (owned and inherited inputs).
+// RangeMetrics iterates over all local metrics.
 func (m *Measurement[T]) RangeMetrics(f func(key string, metric Metric[T]) bool) {
-	m.mu.RLock()
-	all := make(map[string]Metric[T], len(m.Metrics)+len(m.inputs))
-	if m.inputs != nil {
-		maps.Copy(all, m.inputs)
+	if m == nil {
+		return
 	}
-	if m.Metrics != nil {
-		maps.Copy(all, m.Metrics)
-	}
-	m.mu.RUnlock()
 
-	for k, v := range all {
-		if !f(k, v) {
+	for _, entry := range m.Metrics {
+		if !f(entry.Key, entry.Metric) {
 			return
 		}
 	}
 }
 
-// MetricsSnapshot returns a shallow copy of owned Metrics under the read lock.
-// It contains only facts this producer actually created or changed.
-func (m *Measurement[T]) MetricsSnapshot() map[string]Metric[T] {
-	if m == nil {
-		return nil
-	}
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	if m.Metrics == nil {
-		return nil
-	}
-	out := make(map[string]Metric[T], len(m.Metrics))
-	maps.Copy(out, m.Metrics)
-	return out
-}
-
-// ProvenanceSnapshot returns a copy of Provenance under the read lock.
-func (m *Measurement[T]) ProvenanceSnapshot() map[string]string {
-	if m == nil {
-		return nil
-	}
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	if m.Provenance == nil {
-		return nil
-	}
-	return maps.Clone(m.Provenance)
-}
-
-// MetadataSnapshot returns a copy of Metadata under the read lock.
-func (m *Measurement[T]) MetadataSnapshot() map[string]string {
-	if m == nil {
-		return nil
-	}
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	if m.Metadata == nil {
-		return nil
-	}
-	return maps.Clone(m.Metadata)
-}
-
-// GetSource returns Source under the read lock.
+// GetSource returns Source directly without synchronization.
 func (m *Measurement[T]) GetSource() string {
 	if m == nil {
 		return ""
 	}
-	m.mu.RLock()
-	defer m.mu.RUnlock()
 	return m.Source
 }
 
-// SetSource sets Source under the write lock.
+// SetSource sets Source directly without synchronization.
 func (m *Measurement[T]) SetSource(source string) {
 	if m == nil {
 		return
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.Source = source
 }
 
-/*
-SetQuality publishes Finalizer/interpreter quality fields under the write lock.
-Bare field stores race when a shared workspace slot is still reachable.
-*/
+// SetQuality sets quality indicators on the measurement.
 func (m *Measurement[T]) SetQuality(maturity, snr float64, snrDefined, estimated bool) {
 	if m == nil {
 		return
 	}
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	m.Maturity = maturity
 	m.SNR = snr
@@ -251,368 +248,159 @@ func (m *Measurement[T]) SetQuality(maturity, snr float64, snrDefined, estimated
 	m.Estimated = estimated
 }
 
-/*
-Fork returns a working copy for one concurrent stage consumer.
-Inputs from the shared measurement are inherited in inputs (readable via GetMetric/LookupMetric),
-while Metrics starts empty so the consumer only owns facts it actually creates or changes.
-*/
-func (measurement *Measurement[T]) Fork() *Measurement[T] {
-	if measurement == nil {
-		return nil
-	}
-
-	measurement.mu.RLock()
-	defer measurement.mu.RUnlock()
-
-	forkInputs := make(map[string]Metric[T], len(measurement.inputs)+len(measurement.Metrics))
-	if len(measurement.inputs) > 0 {
-		maps.Copy(forkInputs, measurement.inputs)
-	}
-	if len(measurement.Metrics) > 0 {
-		maps.Copy(forkInputs, measurement.Metrics)
-	}
-
-	var metadata map[string]string
-	if len(measurement.Metadata) > 0 {
-		metadata = maps.Clone(measurement.Metadata)
-	}
-
-	var provenance map[string]string
-	if len(measurement.Provenance) > 0 {
-		provenance = maps.Clone(measurement.Provenance)
-	}
-
-	var peers []*Measurement[T]
-	if len(measurement.Peers) > 0 {
-		peers = make([]*Measurement[T], len(measurement.Peers))
-		copy(peers, measurement.Peers)
-	}
-
-	return &Measurement[T]{
-		ID:         measurement.ID,
-		Label:      measurement.Label,
-		Source:     measurement.Source,
-		SeqIdx:     measurement.SeqIdx,
-		Timestamp:  measurement.Timestamp,
-		At:         measurement.At,
-		From:       measurement.From,
-		Maturity:   measurement.Maturity,
-		SNR:        measurement.SNR,
-		SNRDefined: measurement.SNRDefined,
-		Estimated:  measurement.Estimated,
-		Err:        measurement.Err,
-		Metrics:    make(map[string]Metric[T]),
-		inputs:     forkInputs,
-		Metadata:   metadata,
-		Provenance: provenance,
-		Peers:      peers,
-		Result:     measurement.Result,
-	}
-}
-
-/*
-PersistClone is a queue/off-ramp snapshot: maps copied, Peers and inputs stripped so
-StoreTee/UITee cannot retain the disruptor peer forest across drain lag.
-*/
-func (measurement *Measurement[T]) PersistClone() *Measurement[T] {
-	if measurement == nil {
-		return nil
-	}
-	out := measurement.Clone()
-	if out != nil {
-		out.Peers = nil
-		out.inputs = nil
-		out.Result = nil
-	}
-	return out
-}
-
-/*
-Contribute attaches one independently owned producer fragment as a Peer on the
-shared observation. Concurrent stage nodes Fork → Step → Contribute.
-
-Ownership rules (memory-critical):
-  - replace any existing peer with the same Source (bounded peer set)
-  - never dump producer metrics onto the shared Metrics map (that exploded
-    Grid cellKey and Iceberg map columns with source-qualified duplicates)
-  - quality merge stays order-invariant mins
-  - Result stays on the owned peer
-  - producer contribution contains only facts that producer actually created or changed
-*/
-func (measurement *Measurement[T]) Contribute(owned *Measurement[T]) {
-	if measurement == nil || owned == nil || measurement == owned {
-		return
-	}
-
-	owned.mu.RLock()
-	source := owned.Source
-	maturity := owned.Maturity
-	snr := owned.SNR
-	snrDefined := owned.SNRDefined
-	estimated := owned.Estimated
-	owned.mu.RUnlock()
-
-	// Producer fragments must not retain the shared peer forest or input references.
-	owned.mu.Lock()
-	owned.Peers = nil
-	owned.inputs = nil
-	owned.mu.Unlock()
-
-	measurement.mu.Lock()
-	defer measurement.mu.Unlock()
-
-	replaced := false
-	if source != "" {
-		for index, peer := range measurement.Peers {
-			if peer != nil && peer.Source == source {
-				measurement.Peers[index] = owned
-				replaced = true
-				break
-			}
-		}
-	}
-	if !replaced {
-		measurement.Peers = append(measurement.Peers, owned)
-	}
-
-	sort.SliceStable(measurement.Peers, func(i, j int) bool {
-		left, right := measurement.Peers[i], measurement.Peers[j]
-		if left == nil {
-			return false
-		}
-		if right == nil {
-			return true
-		}
-		if left.Source != right.Source {
-			return left.Source < right.Source
-		}
-		return left.SeqIdx < right.SeqIdx
-	})
-
-	mergeQualityLocked(measurement, maturity, snr, snrDefined, estimated)
-}
-
-// mergeQualityLocked folds producer quality into the shared slot. Caller holds mu.
-// Min maturity and min defined SNR are commutative — contribute order does not matter.
-func mergeQualityLocked[T any](
-	measurement *Measurement[T], maturity, snr float64, snrDefined, estimated bool,
-) {
-	if maturity == 0 && !snrDefined && !estimated {
-		return
-	}
-
-	if measurement.Maturity == 0 && !measurement.SNRDefined && !measurement.Estimated {
-		measurement.Maturity = maturity
-		measurement.SNR = snr
-		measurement.SNRDefined = snrDefined
-		measurement.Estimated = estimated
-		return
-	}
-
-	if maturity > 0 {
-		if measurement.Maturity == 0 || maturity < measurement.Maturity {
-			measurement.Maturity = maturity
-		}
-	}
-
-	if snrDefined {
-		if !measurement.SNRDefined {
-			measurement.SNR = snr
-			measurement.SNRDefined = true
-		} else if snr < measurement.SNR {
-			measurement.SNR = snr
-		}
-	}
-
-	measurement.Estimated = measurement.Estimated || estimated
-}
-
-// EnsureMetadata safely initializes the metadata map if it is nil.
 func (m *Measurement[T]) EnsureMetadata() {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.Metadata == nil {
-		m.Metadata = make(map[string]string)
+	if m != nil && m.Metadata == nil {
+		m.Metadata = make([]StringEntry, 0, 8)
 	}
 }
 
-// GetMetadata safely retrieves a metadata value.
 func (m *Measurement[T]) GetMetadata(key string) (string, bool) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	if m.Metadata == nil {
+	if m == nil {
 		return "", false
 	}
-	val, ok := m.Metadata[key]
-	return val, ok
+
+	for _, entry := range m.Metadata {
+		if entry.Key == key {
+			return entry.Value, true
+		}
+	}
+
+	return "", false
 }
 
-// SetMetadata safely sets a metadata value.
 func (m *Measurement[T]) SetMetadata(key, value string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.Metadata == nil {
-		m.Metadata = make(map[string]string)
-	}
-	m.Metadata[key] = value
-}
-
-// DeleteMetadata safely deletes a metadata value.
-func (m *Measurement[T]) DeleteMetadata(key string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.Metadata != nil {
-		delete(m.Metadata, key)
-	}
-}
-
-// RangeMetadata safely iterates over metadata.
-func (m *Measurement[T]) RangeMetadata(f func(key, value string) bool) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	if m.Metadata == nil {
+	if m == nil {
 		return
 	}
-	for k, v := range m.Metadata {
-		if !f(k, v) {
-			break
+
+	for i := range m.Metadata {
+		if m.Metadata[i].Key == key {
+			m.Metadata[i].Value = value
+			return
+		}
+	}
+
+	m.Metadata = append(m.Metadata, StringEntry{Key: key, Value: value})
+}
+
+func (m *Measurement[T]) DeleteMetadata(key string) {
+	if m == nil {
+		return
+	}
+
+	for i := range m.Metadata {
+		if m.Metadata[i].Key == key {
+			m.Metadata = append(m.Metadata[:i], m.Metadata[i+1:]...)
+			return
+		}
+	}
+}
+
+func (m *Measurement[T]) RangeMetadata(f func(key, value string) bool) {
+	if m == nil {
+		return
+	}
+
+	for _, entry := range m.Metadata {
+		if !f(entry.Key, entry.Value) {
+			return
 		}
 	}
 }
 
 func (m *Measurement[T]) EnsureProvenance() {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if m.Provenance == nil {
-		m.Provenance = make(map[string]string)
+	if m != nil && m.Provenance == nil {
+		m.Provenance = make([]StringEntry, 0, 8)
 	}
 }
 
 func (m *Measurement[T]) GetProvenance(key string) (string, bool) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	if m.Provenance == nil {
+	if m == nil {
 		return "", false
 	}
 
-	val, ok := m.Provenance[key]
-	return val, ok
+	for _, entry := range m.Provenance {
+		if entry.Key == key {
+			return entry.Value, true
+		}
+	}
+
+	return "", false
 }
 
 func (m *Measurement[T]) SetProvenance(key, value string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if m.Provenance == nil {
-		m.Provenance = make(map[string]string)
+	if m == nil {
+		return
 	}
 
-	m.Provenance[key] = value
+	for i := range m.Provenance {
+		if m.Provenance[i].Key == key {
+			m.Provenance[i].Value = value
+			return
+		}
+	}
+
+	m.Provenance = append(m.Provenance, StringEntry{Key: key, Value: value})
 }
 
 func (m *Measurement[T]) DeleteProvenance(key string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if m.Provenance != nil {
-		delete(m.Provenance, key)
+	if m == nil {
+		return
 	}
-}
 
-func (m *Measurement[T]) RangeProvenance(f func(key, value string) bool) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	for k, v := range m.Provenance {
-		if !f(k, v) {
-			break
+	for i := range m.Provenance {
+		if m.Provenance[i].Key == key {
+			m.Provenance = append(m.Provenance[:i], m.Provenance[i+1:]...)
+			return
 		}
 	}
 }
 
-// Facts extracts QualityFacts from a Metadata snapshot. Never hand the live
-// map to factsFromMetadata — concurrent SetMetadata/DeleteMetadata would
-// fatal on concurrent map read/write even under RLock if any writer bypasses
-// mu, and snapshot keeps the parse off the critical section.
+func (m *Measurement[T]) RangeProvenance(f func(key, value string) bool) {
+	if m == nil {
+		return
+	}
+
+	for _, entry := range m.Provenance {
+		if !f(entry.Key, entry.Value) {
+			return
+		}
+	}
+}
+
 func (m *Measurement[T]) Facts() QualityFacts {
 	if m == nil {
 		return QualityFacts{}
 	}
 
-	m.mu.RLock()
-	snap := maps.Clone(m.Metadata)
-	m.mu.RUnlock()
+	snap := make(map[string]string, len(m.Metadata))
+	for _, entry := range m.Metadata {
+		snap[entry.Key] = entry.Value
+	}
 
 	return factsFromMetadata(snap)
 }
 
-/*
-NewMeasurement creates one identified observation with empty metric storage.
-Its identity is unstamped: the register slot that owns it is assigned when a
-workload registers it, and the node stamps the slot back via SetID.
-*/
-
-/*
-StampInterval sets At and an optional From window start. From is only stored when
-it is not after At — out-of-order venue clocks must not flood Category with
-inverted intervals.
-*/
-func StampInterval[T any](measurement *Measurement[T], at, from time.Time) {
-	if measurement == nil {
-		return
-	}
-	if !at.IsZero() {
-		measurement.At = at
-	}
-	if from.IsZero() || (!measurement.At.IsZero() && from.After(measurement.At)) {
-		return
-	}
-	measurement.From = from
-}
-
-func NewMeasurement[T any](
-	source string, metrics map[string]Metric[T],
-) *Measurement[T] {
-	if metrics == nil {
-		metrics = make(map[string]Metric[T])
-	}
-
-	return &Measurement[T]{
-		ID:         -1,
-		Source:     source,
-		Metrics:    metrics,
-		Metadata:   make(map[string]string),
-		Provenance: make(map[string]string),
-	}
-}
-
-// SetSeqIdx implements runtime.Sequencer for the measurement.
 func (measurement *Measurement[T]) SetSeqIdx(seq int64) {
 	if measurement != nil {
 		measurement.SeqIdx = seq
 	}
 }
 
-/*
-Identity names the register slot this measurement's consumer node owns.
-*/
 func (measurement *Measurement[T]) Identity() int {
+	if measurement == nil {
+		return -1
+	}
 	return measurement.ID
 }
 
-/*
-Identify names the register slot this measurement's consumer node owns.
-*/
 func (measurement *Measurement[T]) Identify(id int) Identifiable[T] {
-	measurement.ID = id
+	if measurement != nil {
+		measurement.ID = id
+	}
 	return measurement
 }
 
-/*
-FindPeer returns the first peer matching the given predicate, or nil if none match.
-*/
 func (measurement *Measurement[T]) FindPeer(predicate func(*Measurement[T]) bool) *Measurement[T] {
 	if measurement == nil || predicate == nil {
 		return nil
@@ -627,314 +415,44 @@ func (measurement *Measurement[T]) FindPeer(predicate func(*Measurement[T]) bool
 	return nil
 }
 
-/*
-Clone returns an independent copy of the measurement and its mappings. Peer
-pointers are copied, not cloned: the register attaches live published snapshots.
-*/
-func (measurement *Measurement[T]) Clone() *Measurement[T] {
+func StampInterval[T any](measurement *Measurement[T], at, from time.Time) {
 	if measurement == nil {
-		return nil
-	}
-
-	measurement.mu.RLock()
-	defer measurement.mu.RUnlock()
-
-	var metrics map[string]Metric[T]
-	if len(measurement.Metrics) > 0 {
-		metrics = make(map[string]Metric[T], len(measurement.Metrics))
-		maps.Copy(metrics, measurement.Metrics)
-	}
-
-	var inputs map[string]Metric[T]
-	if len(measurement.inputs) > 0 {
-		inputs = make(map[string]Metric[T], len(measurement.inputs))
-		maps.Copy(inputs, measurement.inputs)
-	}
-
-	var metadata map[string]string
-
-	if measurement.Metadata != nil {
-		metadata = make(map[string]string, len(measurement.Metadata))
-		maps.Copy(metadata, measurement.Metadata)
-	}
-
-	var provenance map[string]string
-
-	if measurement.Provenance != nil {
-		provenance = make(map[string]string, len(measurement.Provenance))
-		maps.Copy(provenance, measurement.Provenance)
-	}
-
-	var peers []*Measurement[T]
-
-	if len(measurement.Peers) != 0 {
-		peers = make([]*Measurement[T], len(measurement.Peers))
-		copy(peers, measurement.Peers)
-	}
-
-	return &Measurement[T]{
-		ID:         measurement.ID,
-		Label:      measurement.Label,
-		Source:     measurement.Source,
-		SeqIdx:     measurement.SeqIdx,
-		Timestamp:  measurement.Timestamp,
-		At:         measurement.At,
-		From:       measurement.From,
-		Maturity:   measurement.Maturity,
-		SNR:        measurement.SNR,
-		SNRDefined: measurement.SNRDefined,
-		Estimated:  measurement.Estimated,
-		Err:        measurement.Err,
-		Metrics:    metrics,
-		inputs:     inputs,
-		Metadata:   metadata,
-		Provenance: provenance,
-		Peers:      peers,
-		Result:     measurement.Result,
-	}
-}
-
-/*
-Pull copies event identity, provenance, and the named metrics from other onto
-this measurement. The source is not mutated. Identity, source, and metadata
-stay with this measurement.
-*/
-func (measurement *Measurement[T]) Pull(other *Measurement[T], keys ...string) {
-	if measurement == nil || other == nil {
 		return
 	}
 
-	// Snapshot other under its read lock, then apply under this measurement's
-	// write lock. Never touch Provenance/Metrics maps without mu — disruptor
-	// HandlerGroups share one slot across concurrent consumers.
-	other.mu.RLock()
-	label := other.Label
-	at := other.At
-	from := other.From
-	seq := other.SeqIdx
-	timestamp := other.Timestamp
-	var provenance map[string]string
-	if len(other.Provenance) > 0 {
-		provenance = maps.Clone(other.Provenance)
+	if !at.IsZero() {
+		measurement.At = at
 	}
-	pulled := make(map[string]Metric[T], len(keys))
-	for _, key := range keys {
-		if metric, ok := other.Metrics[key]; ok {
-			pulled[key] = metric
-		}
-	}
-	other.mu.RUnlock()
 
-	measurement.mu.Lock()
-	measurement.Label = label
-	measurement.At = at
+	if from.IsZero() || (!measurement.At.IsZero() && from.After(measurement.At)) {
+		return
+	}
+
 	measurement.From = from
-	measurement.SeqIdx = seq
-	measurement.Timestamp = timestamp
-	if provenance != nil {
-		if measurement.Provenance == nil {
-			measurement.Provenance = make(map[string]string, len(provenance))
-		}
-		maps.Copy(measurement.Provenance, provenance)
-	}
-	if len(pulled) > 0 {
-		if measurement.Metrics == nil {
-			measurement.Metrics = make(map[string]Metric[T], len(pulled))
-		}
-		for key, metric := range pulled {
-			measurement.Metrics[key] = metric
-		}
-	}
-	measurement.mu.Unlock()
 }
 
-/*
-Standardize walks the measurement's metrics as pointers, so a standardization
-stage can fill each metric's normalized and standardized forms in place.
-*/
-func (measurement *Measurement[T]) Standardize() iter.Seq[unsafe.Pointer] {
-	return func(yield func(unsafe.Pointer) bool) {
-		var keys []string
-		measurement.mu.RLock()
-		for key := range measurement.Metrics {
-			keys = append(keys, key)
+func NewMeasurement[T any](
+	source string, initialMetrics ...map[string]Metric[T],
+) *Measurement[T] {
+	var metrics []MetricEntry[T]
+	if len(initialMetrics) > 0 && initialMetrics[0] != nil {
+		metrics = make([]MetricEntry[T], 0, len(initialMetrics[0]))
+		for k, v := range initialMetrics[0] {
+			metrics = append(metrics, MetricEntry[T]{Key: k, Metric: v})
 		}
-		measurement.mu.RUnlock()
-
-		for _, key := range keys {
-			metric := measurement.GetMetric(key)
-
-			if !yield(unsafe.Pointer(&metric)) {
-				return
-			}
-
-			measurement.SetMetric(key, metric)
-		}
-	}
-}
-
-/*
-Reset zeroes every metric's values in place, so a pre-allocated measurement
-can flow through again without being reallocated. The declared schema never
-moves.
-*/
-func (measurement *Measurement[T]) Reset() {
-	var keys []string
-	measurement.mu.RLock()
-	for key := range measurement.Metrics {
-		keys = append(keys, key)
-	}
-	measurement.mu.RUnlock()
-
-	for _, key := range keys {
-		metric := measurement.GetMetric(key)
-		metric.Raw = zero[T]()
-		metric.Normalized = nil
-		metric.Standardized = nil
-		measurement.SetMetric(key, metric)
-	}
-}
-
-/*
-ResetSlot prepares a preallocated producer ring slot for reuse. It preserves
-the declared metric schema and map capacity while clearing all observation
-values, quality, provenance, metadata, and transient fields.
-
-This is the hot-path reset for the WORM producer ring: O(schema keys) work,
-zero allocation when map capacity is retained.
-*/
-func (measurement *Measurement[T]) ResetSlot() {
-	if measurement == nil {
-		return
-	}
-
-	measurement.mu.Lock()
-	defer measurement.mu.Unlock()
-
-	measurement.Label = ""
-	measurement.SeqIdx = 0
-	measurement.Timestamp = 0
-	measurement.At = time.Time{}
-	measurement.From = time.Time{}
-	measurement.Maturity = 0
-	measurement.SNR = 0
-	measurement.SNRDefined = false
-	measurement.Estimated = false
-	measurement.Err = nil
-	measurement.Result = nil
-	measurement.Peers = measurement.Peers[:0]
-	measurement.inputs = nil
-
-	clear(measurement.Metrics)
-
-	clear(measurement.Metadata)
-	clear(measurement.Provenance)
-}
-
-/*
-DetachedSnapshot creates an independent immutable heap copy for async off-ramp
-queues (StoreTee, UITee). It contains ONLY this producer's published state:
-
-  - No Peers forest
-  - No inherited inputs
-  - No Result reference
-  - No arena-backed pointers
-  - No references to reusable ring storage
-
-One DetachedSnapshot is shared by all Tees for the same producer output. Go GC
-manages its lifetime.
-*/
-func (measurement *Measurement[T]) DetachedSnapshot() *Measurement[T] {
-	if measurement == nil {
-		return nil
-	}
-
-	measurement.mu.RLock()
-	defer measurement.mu.RUnlock()
-
-	var metrics map[string]Metric[T]
-	if len(measurement.Metrics) > 0 {
-		metrics = make(map[string]Metric[T], len(measurement.Metrics))
-		maps.Copy(metrics, measurement.Metrics)
-	}
-
-	var metadata map[string]string
-	if len(measurement.Metadata) > 0 {
-		metadata = make(map[string]string, len(measurement.Metadata))
-		maps.Copy(metadata, measurement.Metadata)
-	}
-
-	var provenance map[string]string
-	if len(measurement.Provenance) > 0 {
-		provenance = make(map[string]string, len(measurement.Provenance))
-		maps.Copy(provenance, measurement.Provenance)
 	}
 
 	return &Measurement[T]{
-		ID:         measurement.ID,
-		Label:      measurement.Label,
-		Source:     measurement.Source,
-		SeqIdx:     measurement.SeqIdx,
-		Timestamp:  measurement.Timestamp,
-		At:         measurement.At,
-		From:       measurement.From,
-		Maturity:   measurement.Maturity,
-		SNR:        measurement.SNR,
-		SNRDefined: measurement.SNRDefined,
-		Estimated:  measurement.Estimated,
-		Err:        measurement.Err,
+		ID:         -1,
+		Source:     source,
 		Metrics:    metrics,
-		Metadata:   metadata,
-		Provenance: provenance,
-		// Explicitly nil: Peers, inputs, Result — these must not escape into
-		// async queues or retain ring/arena references.
+		Metadata:   make([]StringEntry, 0, 8),
+		Provenance: make([]StringEntry, 0, 8),
+		Peers:      make([]*Measurement[T], 0, 4),
 	}
 }
 
-/*
-zero is the type's zero value, for clearing a metric's observation.
-*/
-func zero[T any]() T {
-	var value T
 
-	return value
-}
-
-/*
-CopyProducedFacts copies all metrics, metadata, error, and quality fields from the
-transient scratch measurement to the published output, omitting the inputs provided
-in the exclude list. This ensures the output measurement only contains facts actually produced.
-*/
-func CopyProducedFacts[T any](scratch, output *Measurement[T], exclude ...string) {
-	if scratch == nil || output == nil {
-		return
-	}
-
-	excludeMap := make(map[string]bool, len(exclude))
-	for _, key := range exclude {
-		excludeMap[key] = true
-	}
-
-	scratch.mu.RLock()
-	defer scratch.mu.RUnlock()
-
-	for key, metric := range scratch.Metrics {
-		if !excludeMap[key] {
-			output.SetMetric(key, metric)
-		}
-	}
-
-	for key, val := range scratch.Metadata {
-		output.EnsureMetadata()
-		output.SetMetadata(key, val)
-	}
-
-	output.Err = scratch.Err
-
-	if scratch.SNRDefined {
-		output.SetQuality(scratch.Maturity, scratch.SNR, scratch.SNRDefined, scratch.Estimated)
-	}
-}
 
 const (
 	MetadataSupport        = "support"
@@ -944,29 +462,6 @@ const (
 	MetadataMahalanobisSNR = "mahalanobis_snr"
 )
 
-/*
-qualityOf reads the measurement's own quality facts as one reading.
-*/
-func qualityOf[T any](measurement *Measurement[T]) QualityReading {
-	if measurement == nil {
-		return QualityReading{}
-	}
-
-	measurement.mu.RLock()
-	defer measurement.mu.RUnlock()
-
-	return QualityReading{
-		SNR:        measurement.SNR,
-		SNRDefined: measurement.SNRDefined,
-		Estimated:  measurement.Estimated,
-		Maturity:   measurement.Maturity,
-	}
-}
-
-/*
-Finalize derives the measurement's quality facts from its own estimator
-metadata, mutating the measurement in place.
-*/
 func (measurement *Measurement[Value]) Finalize() {
 	finalizer := NewFinalizer[Value]()
 	held := measurement
@@ -975,18 +470,11 @@ func (measurement *Measurement[Value]) Finalize() {
 	}
 }
 
-/*
-Finalizer derives Maturity and SNR from each arriving measurement's own
-estimator facts, mutating the measurement in place.
-*/
 type Finalizer[Value any] struct {
 	err     error
 	quality core.Primitive
 }
 
-/*
-NewFinalizer creates the measurement quality derivation primitive.
-*/
 func NewFinalizer[Value any]() core.Primitive {
 	return &Finalizer[Value]{quality: NewQuality()}
 }
@@ -1006,7 +494,6 @@ func (op *Finalizer[Value]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Po
 
 					modified := false
 
-					// Extract baseline as Center and stddev as Scale from estimator evidence
 					if baseline, ok := measurement.LookupMetric(key + "_baseline"); ok && baseline.Label != "" {
 						if bVal, ok := any(baseline.Raw).(float64); ok {
 							metric.Center = bVal
@@ -1055,9 +542,6 @@ func (op *Finalizer[Value]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Po
 	}
 }
 
-/*
-Error records the first error it sees and joins any subsequent errors to it.
-*/
 func (op *Finalizer[Value]) Error(errs ...error) error {
 	for _, err := range errs {
 		if err != nil {

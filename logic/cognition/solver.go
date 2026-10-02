@@ -38,6 +38,7 @@ classify macro regimes via attractor basins, and predict future category paths u
 */
 type Solver struct {
 	*runtime.System
+	arena          *data.ArenaOwner
 	treeGate       atomic.Int64
 	tree           *dmt.Tree
 	states         sync.Map // string (symbol) -> *symbolCognitionState
@@ -130,11 +131,13 @@ NewSolver returns a new cognition solver bound to a radix tree.
 */
 func NewSolver(
 	ctx context.Context,
+	arena *data.ArenaOwner,
 ) *Solver {
 	tree, _ := dmt.NewTree("")
 
 	solver := &Solver{
 		System:         runtime.NewSystem(ctx, "cognition"),
+		arena:          arena,
 		tree:           tree,
 		maxSeqLen:      6,   // Max 6 category transitions per sequence window
 		surprisalLimit: 3.5, // > 3.5 bits surprisal (P < 8.8%) indicates a regime break
@@ -148,21 +151,25 @@ func NewSolver(
 	return solver
 }
 
+func (solver *Solver) Source() string {
+	return "cognition"
+}
+
+func (solver *Solver) Arena() *data.ArenaOwner {
+	return solver.arena
+}
+
 /*
 Step folds the category observations in Peers into the symbol's cognition
 state machine and writes the freshest reading back onto the measurement.
 */
-func (solver *Solver) Step(input *runtime.StageInput, output *data.Measurement[float64]) *data.Measurement[float64] {
+func (solver *Solver) Step(prior *data.Measurement[float64]) *data.Measurement[float64] {
 	if solver.Status() != runtime.READY {
 		errnie.Warn(solver.Name() + ": Step called before READY; dropping event")
 		return nil
 	}
 
-	if solver.Error() != nil {
-		return nil
-	}
-
-	if input == nil {
+	if solver.Error() != nil || prior == nil {
 		return nil
 	}
 
@@ -171,23 +178,34 @@ func (solver *Solver) Step(input *runtime.StageInput, output *data.Measurement[f
 		hasBatches bool
 	)
 
-	// Find category result from prior-stage producer outputs.
-	categoryOutput := input.ProducerOutput("category")
-	if categoryOutput != nil {
-		if b, ok := categoryOutput.Result.([][]types.Category); ok {
-			batches = b
-			hasBatches = true
+	var priors []*data.Measurement[float64]
+	if prior.Source == "runtime:join" {
+		priors = prior.Peers
+	} else {
+		priors = append([]*data.Measurement[float64]{prior}, prior.Peers...)
+	}
+
+	for _, p := range priors {
+		if p == nil {
+			continue
+		}
+
+		if p.Source == "category" && p.Result != nil {
+			if b, ok := p.Result.([][]types.Category); ok {
+				batches = b
+				hasBatches = true
+				break
+			}
 		}
 	}
 
-	// Fall back: search all prior outputs for category results.
 	if !hasBatches {
-		for _, prior := range input.AllPriorOutputs() {
-			if prior == nil {
+		for _, p := range priors {
+			if p == nil || p.Result == nil {
 				continue
 			}
 
-			if b, ok := prior.Result.([][]types.Category); ok {
+			if b, ok := p.Result.([][]types.Category); ok {
 				batches = b
 				hasBatches = true
 				break
@@ -198,6 +216,13 @@ func (solver *Solver) Step(input *runtime.StageInput, output *data.Measurement[f
 	if !hasBatches {
 		return nil
 	}
+
+	out := solver.arena.NewMeasurement(solver.Source())
+	out.Label = prior.Label
+	out.SeqIdx = prior.SeqIdx
+	out.At = prior.At
+	out.From = prior.From
+	out.Peers = []*data.Measurement[float64]{prior}
 
 	results := make([]types.Cognition, 0, len(batches))
 
@@ -213,21 +238,21 @@ func (solver *Solver) Step(input *runtime.StageInput, output *data.Measurement[f
 		}
 
 		results = append(results, reading.Clone())
-		output.Label = reading.Symbol
-		output.At = reading.At
+		out.Label = reading.Symbol
+		out.At = reading.At
 
 		if reading.NodeCount > 1 {
-			output.SetQuality(
+			out.SetQuality(
 				1.0-1.0/float64(reading.NodeCount),
-				output.SNR,
-				output.SNRDefined,
-				output.Estimated,
+				out.SNR,
+				out.SNRDefined,
+				out.Estimated,
 			)
 		}
 
-		output.WriteMetric("contrast", reading.Contrast)
-		output.WriteMetric("surprisal", reading.InterpolatedSurprisal)
-		output.WriteMetric("stability", reading.Confidence)
+		out.WriteMetric("contrast", reading.Contrast)
+		out.WriteMetric("surprisal", reading.InterpolatedSurprisal)
+		out.WriteMetric("stability", reading.Confidence)
 
 		ambiguityVal := 0.0
 		if reading.Ambiguous {
@@ -236,36 +261,17 @@ func (solver *Solver) Step(input *runtime.StageInput, output *data.Measurement[f
 		if reading.EntropyBits != nil {
 			ambiguityVal = *reading.EntropyBits
 		}
-		output.WriteMetric("ambiguity", ambiguityVal)
+		out.WriteMetric("ambiguity", ambiguityVal)
 	}
 
 	if len(results) == 0 {
 		return nil
 	}
 
-	output.Result = results
+	out.Result = results
+	out.Finalize()
 
-	return output
-}
-
-func (solver *Solver) Register() *data.Measurement[float64] {
-	measurement := data.NewMeasurement("cognition", map[string]data.Metric[float64]{
-		"contrast": data.NewMetric[float64](
-			"contrast", data.UnitNat, data.TimescaleInstantaneous, 0, 1,
-		),
-		"surprisal": data.NewMetric[float64](
-			"surprisal", data.UnitNat, data.TimescaleInstantaneous, 0, 1,
-		),
-		"stability": data.NewMetric[float64](
-			"stability", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"ambiguity": data.NewMetric[float64](
-			"ambiguity", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-	})
-
-	measurement.SetMetadata("peer-interest", "category")
-	return measurement
+	return out
 }
 
 // StepCategories folds one category batch into the symbol's cognition state

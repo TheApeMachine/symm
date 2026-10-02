@@ -22,7 +22,7 @@ func TestUITeeNext(t *testing.T) {
 		defer func() { So(tee.Close(), ShouldBeNil) }()
 		measurement := data.NewMeasurement[float64]("hawkes:trade", nil)
 		measurement.Label = "BTC/USD"
-		tee.Push(measurement)
+		tee.Push(data.Publication{Measurement: measurement})
 
 		Convey("Changing route drops queued packets before encoding", func() {
 			types.SetRoute("journal")
@@ -60,7 +60,7 @@ func BenchmarkUITeeNext(b *testing.B) {
 	measurement.SetMetric("background_rate", data.Metric[float64]{Label: "background_rate", Raw: 0.5})
 
 	for b.Loop() {
-		tee.Push(measurement)
+		tee.Push(data.Publication{Measurement: measurement})
 
 	}
 }
@@ -81,7 +81,7 @@ func TestUITeePush(t *testing.T) {
 
 		Convey("A rejected route drops the measurement immediately", func() {
 			types.SetRoute("journal")
-			tee.Push(measurement)
+			tee.Push(data.Publication{Measurement: measurement})
 
 			// Next returns a batch of up to tee.batchSize. If empty, it returns nil.
 			payload := tee.Next()
@@ -90,7 +90,7 @@ func TestUITeePush(t *testing.T) {
 
 		Convey("An accepted route queues the cloned measurement for serialization", func() {
 			types.SetRoute("learning")
-			tee.Push(measurement)
+			tee.Push(data.Publication{Measurement: measurement})
 
 			payload := tee.Next()
 			So(payload != nil, ShouldBeTrue)

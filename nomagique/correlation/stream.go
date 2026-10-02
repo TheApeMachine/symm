@@ -78,7 +78,7 @@ func (op *Gate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			m.SetMetric("last_price", metric.Write(last))
 
 			if last == 0 {
-				m.Provenance = map[string]string{"last_trade_price_state": "unobserved"}
+				m.SetProvenance("last_trade_price_state", "unobserved")
 			}
 
 			if !yield(arriving) {

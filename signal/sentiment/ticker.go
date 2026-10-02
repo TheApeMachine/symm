@@ -23,20 +23,30 @@ import (
 
 type Ticker struct {
 	*runtime.System
+	arena     *data.ArenaOwner
 	pipelines sync.Map
 	prices    *store.Latest[string, float64]
 	changes   *store.Latest[string, data.CrossMember]
 	ID        int
 }
 
-func NewTicker(ctx context.Context) *Ticker {
+func NewTicker(ctx context.Context, arena *data.ArenaOwner) *Ticker {
 	ticker := &Ticker{
+		arena:   arena,
 		prices:  store.NewLatest[string, float64](),
 		changes: store.NewLatest[string, data.CrossMember](),
 	}
 
 	ticker.System = runtime.NewSystem(ctx, "sentiment:ticker", ticker)
 	return ticker
+}
+
+func (ticker *Ticker) Source() string {
+	return "sentiment"
+}
+
+func (ticker *Ticker) Arena() *data.ArenaOwner {
+	return ticker.arena
 }
 
 func (ticker *Ticker) pipelineFor(symbol string) core.Primitive {
@@ -317,42 +327,40 @@ func (ticker *Ticker) pipelineFor(symbol string) core.Primitive {
 	return actual.(core.Primitive)
 }
 
-func (ticker *Ticker) Step(input *runtime.StageInput, output *data.Measurement[float64]) *data.Measurement[float64] {
+func (ticker *Ticker) Step(prior *data.Measurement[float64]) *data.Measurement[float64] {
 	if ticker.Status() != runtime.READY {
 		errnie.Warn(ticker.Name() + ": Step called before READY; dropping event")
 		return nil
 	}
 
-	if input == nil || input.Ingress() == nil || input.Symbol() == "" {
+	if prior == nil || prior.Label == "" {
 		return nil
 	}
 
-	ingress := input.Ingress()
-	price := quotedPrice(ingress)
-
+	price := quotedPrice(prior)
 	if price <= 0 {
 		return nil
 	}
 
-	output.WriteMetric("last", price)
+	out := ticker.arena.NewMeasurement(ticker.Source())
+	out.Label = prior.Label
+	out.SeqIdx = prior.SeqIdx
+	out.At = prior.At
+	out.From = prior.From
+	out.Peers = []*data.Measurement[float64]{prior}
 
-	// Forward volume if available.
-	if vol, hasVol := input.IngressMetric("volume"); hasVol {
-		output.SetMetric("volume", vol)
+	out.WriteMetric("last", price)
+
+	if channel, hasCh := prior.GetProvenance("channel"); hasCh {
+		out.SetProvenance("channel", channel)
 	}
 
-	if channel, hasCh := input.IngressProvenance("channel"); hasCh {
-		output.SetProvenance("channel", channel)
-	}
-
-	data.StampInterval(output, ingress.At, ingress.From)
-
-	res := data.Read[*data.Measurement[float64]](ticker.pipelineFor(output.Label).Next(
-		transport.NewOne(unsafe.Pointer(&output)).Next(nil),
+	res := data.Read[*data.Measurement[float64]](ticker.pipelineFor(out.Label).Next(
+		transport.NewOne(unsafe.Pointer(&out)).Next(nil),
 	))
 
 	if res == nil {
-		return output
+		return out
 	}
 
 	return res

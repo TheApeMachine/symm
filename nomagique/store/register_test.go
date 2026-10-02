@@ -157,7 +157,7 @@ func TestRegisterPeers(t *testing.T) {
 
 			reread := store.NewQuery(slots[0], data.ActionRead, nil)
 			updated := data.Read[*data.Measurement[float64]](register.Next(data.NewValue(*reread)))
-			So(updated.Peers[0].Metrics["price"].Center, ShouldEqual, 999)
+			So(updated.Peers[0].GetMetric("price").Center, ShouldEqual, 999)
 		})
 
 		Convey("sequential read-write cycles update the slot value", func() {

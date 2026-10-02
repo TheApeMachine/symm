@@ -8,7 +8,6 @@ import (
 	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/nomagique/cognition"
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
 func TestTrainingSupervision(t *testing.T) {
@@ -16,7 +15,7 @@ func TestTrainingSupervision(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		training := NewTraining(ctx, 1, priced(t, "BTC/USD", 0.1), NewTrader(ctx, nil, nil, nil), nil, nil)
+		training := NewTraining(ctx, data.NewArenaOwner(32), 1, priced(t, "BTC/USD", 0.1), NewTrader(ctx, nil, nil, nil), nil, nil)
 		btc := regionFrame("BTC/USD", 1, 2)
 		eth := regionFrame("ETH/USD", 1, 4)
 		training.grid.Update(btc)
@@ -36,7 +35,7 @@ func TestTrainingSupervision(t *testing.T) {
 				AnchorTick:         4,
 				ExitTick:           8,
 			},
-			frames: btcFrames,
+			frames: training.LitFrames(btcFrames),
 		}
 		training.supervise(episode, true)
 
@@ -56,7 +55,7 @@ func TestTrainingPaperWaitsForSkill(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		training := NewTraining(ctx, 1, priced(t, "BTC/USD", 0.1), NewTrader(ctx, nil, nil, nil), nil, nil)
+		training := NewTraining(ctx, data.NewArenaOwner(32), 1, priced(t, "BTC/USD", 0.1), NewTrader(ctx, nil, nil, nil), nil, nil)
 		frame := regionFrame("BTC/USD", 1, 3)
 		training.grid.Update(frame)
 		training.grid.Settle()
@@ -72,10 +71,7 @@ func TestTrainingPaperWaitsForSkill(t *testing.T) {
 		training.mu.Lock()
 		training.checkpointed = true
 		training.mu.Unlock()
-		training.Step(
-			runtime.TestStageInputFromPeers(frame),
-			data.NewMeasurement[float64]("training", nil),
-		)
+		training.Step(frame)
 
 		So(training.entries["BTC/USD"], ShouldBeNil)
 		So(training.paperTrades, ShouldEqual, 0)
@@ -86,10 +82,7 @@ func TestTrainingPaperWaitsForSkill(t *testing.T) {
 		training.signatures["BTC/USD"] = nil
 		training.mu.Unlock()
 		frame.SeqIdx = 2
-		training.Step(
-			runtime.TestStageInputFromPeers(frame),
-			data.NewMeasurement[float64]("training", nil),
-		)
+		training.Step(frame)
 
 		So(len(training.entries["BTC/USD"]), ShouldBeGreaterThan, 0)
 	})
@@ -100,10 +93,10 @@ func TestTrainingCheckpointBlocksSupervision(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		training := NewTraining(ctx, 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
+		training := NewTraining(ctx, data.NewArenaOwner(32), 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
 		frame := regionFrame("BTC/USD", 2, 1)
 		training.grid.Update(frame)
-		training.frames["BTC/USD"] = []*data.Measurement[float64]{frame}
+		training.frames["BTC/USD"] = training.LitFrames([]*data.Measurement[float64]{frame})
 		record := &tables.ExcursionRecord{
 			ID:                 "BTC/USD:1:2",
 			Symbol:             "BTC/USD",
@@ -133,7 +126,7 @@ func regionFrame(symbol string, seq int64, raw float64) *data.Measurement[float6
 // regionFrameWithPeer adds a source-keyed peer metric so LitRegions differs from a bare mid frame.
 func regionFrameWithPeer(symbol string, seq int64, mid, peerRaw float64, peerMetric string) *data.Measurement[float64] {
 	measurement := regionFrame(symbol, seq, mid)
-	peer := data.NewMeasurement[float64]("resonance", map[string]data.Metric[float64]{
+	peer := data.NewMeasurement("resonance", map[string]data.Metric[float64]{
 		peerMetric: {Label: peerMetric, Raw: peerRaw, Standardized: &peerRaw},
 	})
 	peer.Label = symbol
@@ -148,14 +141,14 @@ func classCount(training *Training, class string) int32 {
 
 func TestCanonicalObservationsIngressPlusSourceKeyedPeers(t *testing.T) {
 	Convey("Given ingress + producer + training overlay at one seq", t, func() {
-		raw := data.NewMeasurement[float64]("websocket", map[string]data.Metric[float64]{
+		raw := data.NewMeasurement("websocket", map[string]data.Metric[float64]{
 			"bid": {Raw: 1},
 			"ask": {Raw: 2},
 		})
 		raw.Label = "BTC/USD"
 		raw.SeqIdx = 7
 
-		rich := data.NewMeasurement[float64]("resonance", map[string]data.Metric[float64]{
+		rich := data.NewMeasurement("resonance", map[string]data.Metric[float64]{
 			"energy":   {Raw: 3},
 			"surprise": {Raw: 4},
 			"contrast": {Raw: 5},
@@ -163,14 +156,15 @@ func TestCanonicalObservationsIngressPlusSourceKeyedPeers(t *testing.T) {
 		rich.Label = "BTC/USD"
 		rich.SeqIdx = 7
 
-		hawkes := data.NewMeasurement[float64]("hawkes:trade", map[string]data.Metric[float64]{
+		hawkes := data.NewMeasurement("hawkes:trade", map[string]data.Metric[float64]{
 			"intensity": {Raw: 9},
 		})
 		hawkes.Label = "BTC/USD"
 		hawkes.SeqIdx = 7
 
-		overlay := rich.Clone()
-		overlay.Source = "training:live"
+		overlay := data.NewMeasurement[float64]("training:live", nil)
+		overlay.Label = "BTC/USD"
+		overlay.SeqIdx = 7
 		overlay.WriteMetric("stage_code", 1)
 
 		kept := canonicalObservations([]*data.Measurement[float64]{raw, overlay, rich, hawkes})
@@ -188,7 +182,7 @@ func TestSuperviseScoresFrozenPrediction(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		training := NewTraining(ctx, 1, priced(t, "BTC/USD", 0.1), NewTrader(ctx, nil, nil, nil), nil, nil)
+		training := NewTraining(ctx, data.NewArenaOwner(32), 1, priced(t, "BTC/USD", 0.1), NewTrader(ctx, nil, nil, nil), nil, nil)
 
 		// Bare mid on A→B; peer-enriched B→C so signatures do not collide/dedupe.
 		frames := []*data.Measurement[float64]{
@@ -239,7 +233,7 @@ func TestSuperviseScoresFrozenPrediction(t *testing.T) {
 				EntryPrice:         100.1,
 				ExitPrice:          99.0,
 			},
-			frames: frames,
+			frames: training.LitFrames(frames),
 		}
 		training.supervise(episode, true)
 
@@ -256,7 +250,7 @@ func TestAugmentRetainsEpisodeIdentity(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		training := NewTraining(ctx, 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
+		training := NewTraining(ctx, data.NewArenaOwner(32), 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
 		frame := regionFrame("BTC/USD", 1, 2)
 		training.grid.Update(frame)
 		training.grid.Settle()
@@ -271,11 +265,11 @@ func TestAugmentRetainsEpisodeIdentity(t *testing.T) {
 				AnchorTick:         4,
 				ExitTick:           8,
 			},
-			frames: []*data.Measurement[float64]{
+			frames: training.LitFrames([]*data.Measurement[float64]{
 				regionFrame("BTC/USD", 1, 2),
 				regionFrame("BTC/USD", 2, 2),
 				regionFrame("BTC/USD", 3, 3),
-			},
+			}),
 		}
 
 		before, err := training.engine.Snapshot()
@@ -297,20 +291,19 @@ func TestGradePaperClosedRequiresReconciledExit(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		training := NewTraining(ctx, 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
+		training := NewTraining(ctx, data.NewArenaOwner(32), 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
 		training.gradePaperClosed("BTC/USD", []byte{1, 2, 3}, nil)
 		So(training.paper.Count, ShouldEqual, 0)
 		So(training.skill.Count, ShouldEqual, 0)
 	})
 }
 
-
 func TestTeachMarksModelDirty(t *testing.T) {
 	Convey("Given a graded teach after the grid is durable", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		training := NewTraining(ctx, 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
+		training := NewTraining(ctx, data.NewArenaOwner(32), 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
 		frame := regionFrame("BTC/USD", 1, 2)
 		training.grid.Update(frame)
 		training.grid.Settle()
@@ -335,7 +328,7 @@ func TestSuperviseCausalEdge(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		price := priced(t, "BTC/USD", 0.1)
-		training := NewTraining(ctx, 1, price, nil, nil, nil)
+		training := NewTraining(ctx, data.NewArenaOwner(32), 1, price, nil, nil, nil)
 
 		enterFrame := data.NewMeasurement[float64]("source", nil)
 		enterFrame.Label = "BTC/USD"
@@ -372,10 +365,10 @@ func TestSuperviseCausalEdge(t *testing.T) {
 				ExitTick:           2,
 				PostEndTick:        3,
 			},
-			frames: []*data.Measurement[float64]{
+			frames: training.LitFrames([]*data.Measurement[float64]{
 				enterFrame,
 				exitFrame,
-			},
+			}),
 		}
 
 		training.supervise(episode, true)

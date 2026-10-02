@@ -29,15 +29,26 @@ workload's register owns the measurement's lifetime.
 */
 type Ticker struct {
 	*runtime.System
+	arena     *data.ArenaOwner
 	pipelines sync.Map
 	ID        int
 }
 
-func NewTicker(ctx context.Context) *Ticker {
-	ticker := &Ticker{}
+func NewTicker(ctx context.Context, arena *data.ArenaOwner) *Ticker {
+	ticker := &Ticker{
+		arena: arena,
+	}
 
 	ticker.System = runtime.NewSystem(ctx, "pumpdump:ticker", ticker)
 	return ticker
+}
+
+func (ticker *Ticker) Source() string {
+	return "pumpdump"
+}
+
+func (ticker *Ticker) Arena() *data.ArenaOwner {
+	return ticker.arena
 }
 
 func (ticker *Ticker) pipelineFor(symbol string) core.Primitive {
@@ -152,48 +163,35 @@ Step reads bid/ask from the ingress via StageInput and writes pumpdump metrics
 into the owned output measurement. The pipeline's internal closure reads from
 the output measurement.
 */
-func (ticker *Ticker) Step(input *runtime.StageInput, output *data.Measurement[float64]) *data.Measurement[float64] {
+func (ticker *Ticker) Step(prior *data.Measurement[float64]) *data.Measurement[float64] {
 	if ticker.Status() != runtime.READY {
 		errnie.Warn(ticker.Name() + ": Step called before READY; dropping event")
 		return nil
 	}
 
-	if input == nil || input.Ingress() == nil || input.Symbol() == "" {
+	if prior == nil || prior.Label == "" {
 		return nil
 	}
 
-	// Seed bid/ask from ingress so pipeline closure can read them.
-	scratch := data.NewMeasurement[float64]("pumpdump:scratch", nil)
-	scratch.Label = output.Label
+	out := ticker.arena.NewMeasurement(ticker.Source())
+	out.Label = prior.Label
+	out.SeqIdx = prior.SeqIdx
+	out.At = prior.At
+	out.From = prior.From
+	out.Peers = []*data.Measurement[float64]{prior}
 
-	if bid, hasBid := input.IngressMetric("bid"); hasBid {
-		scratch.SetMetric("best_bid", bid)
-		scratch.SetMetric("bid", bid)
+	if channel, hasCh := prior.GetProvenance("channel"); hasCh {
+		out.SetProvenance("channel", channel)
 	}
 
-	if ask, hasAsk := input.IngressMetric("ask"); hasAsk {
-		scratch.SetMetric("best_ask", ask)
-		scratch.SetMetric("ask", ask)
-	}
-
-	if vol, hasVol := input.IngressMetric("volume"); hasVol {
-		scratch.SetMetric("volume", vol)
-	}
-
-	if channel, hasCh := input.IngressProvenance("channel"); hasCh {
-		scratch.SetProvenance("channel", channel)
-	}
-
-	data.StampInterval(scratch, input.At(), input.From())
-
-	res := data.Read[*data.Measurement[float64]](ticker.pipelineFor(output.Label).Next(
-		transport.NewOne(unsafe.Pointer(&scratch)).Next(nil),
+	res := data.Read[*data.Measurement[float64]](ticker.pipelineFor(out.Label).Next(
+		transport.NewOne(unsafe.Pointer(&out)).Next(nil),
 	))
 
-	if res != nil {
-		res.Finalize()
-		data.CopyProducedFacts(res, output, "best_bid", "bid", "best_ask", "ask", "volume")
+	if res == nil {
+		return out
 	}
 
-	return output
+	res.Finalize()
+	return res
 }

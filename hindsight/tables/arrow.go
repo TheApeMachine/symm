@@ -87,43 +87,43 @@ func fillMeasurements(
 
 		snrDefinedBuilder.Append(measurement.SNRDefined)
 
-		snapMetrics := measurement.MetricsSnapshot()
-		if len(snapMetrics) == 0 {
-			metricsBuilder.AppendNull()
-		}
+		hasMetrics := false
+		measurement.RangeMetrics(func(metricKey string, metricVal data.Metric[float64]) bool {
+			hasMetrics = true
+			return false
+		})
 
-		if len(snapMetrics) > 0 {
+		if !hasMetrics {
+			metricsBuilder.AppendNull()
+		} else {
 			metricsBuilder.Append(true)
 
-			for metricKey, metricVal := range snapMetrics {
+			measurement.RangeMetrics(func(metricKey string, metricVal data.Metric[float64]) bool {
 				metricsKey.Append(metricKey)
 				metricsVal.Append(metricVal.Raw)
-			}
+				return true
+			})
 		}
 
 		if len(measurement.Metadata) == 0 {
 			metadataBuilder.AppendNull()
-		}
-
-		if len(measurement.Metadata) > 0 {
+		} else {
 			metadataBuilder.Append(true)
 
-			for metaKey, metaVal := range measurement.Metadata {
-				metadataKey.Append(metaKey)
-				metadataVal.Append(metaVal)
+			for _, entry := range measurement.Metadata {
+				metadataKey.Append(entry.Key)
+				metadataVal.Append(entry.Value)
 			}
 		}
 
-		if len(measurement.Provenance) == 0 && len(snapMetrics) == 0 && measurement.Err == nil && !measurement.Estimated {
+		if len(measurement.Provenance) == 0 && !hasMetrics && measurement.Err == nil && !measurement.Estimated {
 			provenanceBuilder.AppendNull()
-		}
-
-		if len(measurement.Provenance) > 0 || len(snapMetrics) > 0 || measurement.Err != nil || measurement.Estimated {
+		} else {
 			provenanceBuilder.Append(true)
 
-			for provKey, provVal := range measurement.Provenance {
-				provenanceKey.Append(provKey)
-				provenanceVal.Append(provVal)
+			for _, entry := range measurement.Provenance {
+				provenanceKey.Append(entry.Key)
+				provenanceVal.Append(entry.Value)
 			}
 			if measurement.Err != nil {
 				provenanceKey.Append("symm:error")
@@ -131,7 +131,7 @@ func fillMeasurements(
 			}
 			provenanceKey.Append("symm:estimated")
 			provenanceVal.Append(strconv.FormatBool(measurement.Estimated))
-			for key, metric := range snapMetrics {
+			measurement.RangeMetrics(func(key string, metric data.Metric[float64]) bool {
 				if metric.Exact != nil {
 					provenanceKey.Append("symm:exact:" + key)
 					provenanceVal.Append(metric.Exact.String())
@@ -146,8 +146,8 @@ func fillMeasurements(
 					provenanceKey.Append("symm:normalized:" + key)
 					provenanceVal.Append(strconv.FormatFloat(*metric.Normalized, 'g', -1, 64))
 				}
-			}
-
+				return true
+			})
 		}
 	}
 }
@@ -207,10 +207,6 @@ func ReadMeasurements(batch arrow.RecordBatch) ([]*data.Measurement[float64], er
 		}
 
 		if metricsCol != nil && !metricsCol.IsNull(rowIdx) {
-			if measurement.Metrics == nil {
-				measurement.Metrics = make(map[string]data.Metric[float64])
-			}
-
 			keyArray := metricsCol.Keys().(*array.String)
 			valArray := metricsCol.Items().(*array.Float64)
 			offsets := metricsCol.Offsets()
@@ -228,8 +224,6 @@ func ReadMeasurements(batch arrow.RecordBatch) ([]*data.Measurement[float64], er
 		}
 
 		if metadataCol != nil && !metadataCol.IsNull(rowIdx) {
-			measurement.EnsureMetadata()
-
 			keyArray := metadataCol.Keys().(*array.String)
 			valArray := metadataCol.Items().(*array.String)
 			offsets := metadataCol.Offsets()
@@ -242,10 +236,6 @@ func ReadMeasurements(batch arrow.RecordBatch) ([]*data.Measurement[float64], er
 		}
 
 		if provenanceCol != nil && !provenanceCol.IsNull(rowIdx) {
-			if measurement.Provenance == nil {
-				measurement.Provenance = make(map[string]string)
-			}
-
 			keyArray := provenanceCol.Keys().(*array.String)
 			valArray := provenanceCol.Items().(*array.String)
 			offsets := provenanceCol.Offsets()

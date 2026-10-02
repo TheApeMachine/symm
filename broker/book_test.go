@@ -77,7 +77,7 @@ func TestBook_SetMutationsAndApplyMeasurement(t *testing.T) {
 			bidPrice := decimal.NewFromFloat64(45000.0)
 			bidQty := decimal.NewFromFloat64(3.0)
 
-			bidMeasurement := data.NewMeasurement[float64]("websocket", map[string]data.Metric[float64]{
+			bidMeasurement := data.NewMeasurement("websocket", map[string]data.Metric[float64]{
 				"limit_price": {Raw: bidPrice.Float64(), Exact: bidPrice},
 				"order_qty":   {Raw: bidQty.Float64(), Exact: bidQty},
 			})
@@ -95,7 +95,7 @@ func TestBook_SetMutationsAndApplyMeasurement(t *testing.T) {
 			askPrice := decimal.NewFromFloat64(45010.0)
 			askQty := decimal.NewFromFloat64(1.0)
 
-			askMeasurement := data.NewMeasurement[float64]("websocket", map[string]data.Metric[float64]{
+			askMeasurement := data.NewMeasurement("websocket", map[string]data.Metric[float64]{
 				"limit_price": {Raw: askPrice.Float64(), Exact: askPrice},
 				"order_qty":   {Raw: askQty.Float64(), Exact: askQty},
 			})

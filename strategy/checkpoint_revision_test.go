@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique/data"
 )
 
 func TestCheckpointRevisionIsMonotonic(t *testing.T) {
@@ -12,7 +13,7 @@ func TestCheckpointRevisionIsMonotonic(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		training := NewTraining(ctx, 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
+		training := NewTraining(ctx, data.NewArenaOwner(32), 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
 		training.mu.Lock()
 		So(training.modelRevision, ShouldEqual, 0)
 		So(training.snapshotRevision, ShouldEqual, 0)

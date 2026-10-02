@@ -23,6 +23,7 @@ func (catalog *Catalog) Drain(
 	}
 
 	writer := NewWriter(catalog, epoch)
+	defer writer.ReleaseRemaining()
 
 	// These are storage batching cadences, not market observation horizons.
 	flushTicker := time.NewTicker(50 * time.Millisecond)
@@ -34,13 +35,16 @@ func (catalog *Catalog) Drain(
 		// Bound each batch by the observations already waiting, so continuous
 		// ingress cannot postpone commits indefinitely.
 		for remaining := tee.Pending(); remaining > 0; remaining-- {
-			measurement := (*data.Measurement[float64])(tee.Next())
+			pub, ok := tee.Dequeue()
 
-			if measurement == nil {
+			if !ok || pub.Measurement == nil {
 				return nil
 			}
 
+			measurement := pub.Measurement
+
 			if measurement.SeqIdx <= 0 {
+				pub.Release()
 				errnie.Error(errnie.Err(
 					errnie.Validation,
 					fmt.Sprintf("[catalog] observation (source=%s, label=%s, id=%d, seq=%d, at=%v) has no workspace sequence", measurement.Source, measurement.Label, measurement.ID, measurement.SeqIdx, measurement.At),
@@ -54,6 +58,7 @@ func (catalog *Catalog) Drain(
 				records, err := learn[0](measurement)
 
 				if err != nil {
+					pub.Release()
 					errnie.Error(errnie.Err(
 						errnie.Validation,
 						fmt.Sprintf("[catalog] observation (source=%s, label=%s, id=%d, seq=%d, at=%v) has no workspace sequence", measurement.Source, measurement.Label, measurement.ID, measurement.SeqIdx, measurement.At),
@@ -68,7 +73,7 @@ func (catalog *Catalog) Drain(
 				}
 			}
 
-			writer.Add(deriveChannel(measurement), measurement)
+			writer.Add(deriveChannel(measurement), pub)
 		}
 
 		return nil

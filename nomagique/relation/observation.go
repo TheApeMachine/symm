@@ -58,8 +58,8 @@ func splitMeasurement(
 
 	observations := make([]Observation, 0, len(measurement.Metrics))
 
-	for label, metric := range measurement.Metrics {
-		metricName, side := parseMetricSide(label)
+	for _, entry := range measurement.Metrics {
+		metricName, side := parseMetricSide(entry.Key)
 
 		var snr *float64
 
@@ -75,11 +75,11 @@ func splitMeasurement(
 				Source:    measurement.Source,
 				Metric:    metricName,
 				Side:      side,
-				Unit:      metric.Unit,
-				Timescale: metric.Timescale,
+				Unit:      entry.Metric.Unit,
+				Timescale: entry.Metric.Timescale,
 				Epoch:     epoch,
 			},
-			Raw:           metric.Raw,
+			Raw:           entry.Metric.Raw,
 			From:          measurement.From,
 			At:            measurement.At,
 			Maturity:      measurement.Maturity,

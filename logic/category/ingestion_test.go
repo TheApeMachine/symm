@@ -15,14 +15,13 @@ import (
 singleMetric builds one measurement peer for the category Step test.
 */
 func singleMetric(source, symbol, metric string, at time.Time, value float64) *data.Measurement[float64] {
-	return &data.Measurement[float64]{
+	m := &data.Measurement[float64]{
 		Label:  symbol,
 		Source: source,
 		At:     at,
-		Metrics: map[string]data.Metric[float64]{
-			metric: {Raw: value},
-		},
 	}
+	m.WriteMetric(metric, value)
+	return m
 }
 
 /*
@@ -33,7 +32,8 @@ its per-symbol evidence and drive that family's declared category verdict.
 */
 func TestStepIngestsStrandedFamilies(t *testing.T) {
 	Convey("Given a category solver over the declared vocabulary", t, func() {
-		solver := NewSolver(context.Background())
+		arena := data.NewArenaOwner(32)
+		solver := NewSolver(context.Background(), arena)
 		solver.Transition(runtime.READY)
 		at := time.Unix(100, 0)
 
@@ -66,19 +66,12 @@ func TestStepIngestsStrandedFamilies(t *testing.T) {
 
 		for _, testCase := range cases {
 			Convey(testCase.name, func() {
-				m := solver.Register()
-				m.Label = "TEST/USD"
-				m.At = at
-				m.Peers = []*data.Measurement[float64]{testCase.peer}
-
-				out := solver.Step(
-					runtime.TestStageInputFromPeers(m),
-					data.NewMeasurement[float64]("category", nil),
-				)
+				out := solver.Step(testCase.peer)
 
 				So(out, ShouldNotBeNil)
-				So(out.GetMetric(string(testCase.expected)), ShouldNotBeNil)
-				So(out.GetMetric(string(testCase.expected)).Raw, ShouldBeGreaterThan, 0)
+				m, ok := out.LookupMetric(string(testCase.expected))
+				So(ok, ShouldBeTrue)
+				So(m.Raw, ShouldBeGreaterThan, 0)
 			})
 		}
 	})

@@ -9,10 +9,10 @@ import (
 
 func TestMeasurementToWirePeerDepthOne(t *testing.T) {
 	Convey("Peers encode one level; nested peer.Peers stay off the wire", t, func() {
-		grandchild := data.NewMeasurement[float64]("nested", map[string]data.Metric[float64]{
+		grandchild := data.NewMeasurement("nested", map[string]data.Metric[float64]{
 			"deep": {Raw: 99, Label: "deep"},
 		})
-		child := data.NewMeasurement[float64]("hawkes:trade", map[string]data.Metric[float64]{
+		child := data.NewMeasurement("hawkes:trade", map[string]data.Metric[float64]{
 			"arrival_rate": {Raw: 1, Label: "arrival_rate"},
 		})
 		child.Peers = []*data.Measurement[float64]{grandchild}

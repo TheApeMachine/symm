@@ -11,7 +11,7 @@ TestFactsMetadataConcurrentReadWrite proves Facts never races Set/DeleteMetadata
  morphologylevel3 Finalizer → Facts was the fatal concurrent map path.
 */
 func TestFactsMetadataConcurrentReadWrite(t *testing.T) {
-	m := NewMeasurement[float64]("morphology:level3", map[string]Metric[float64]{
+	m := NewMeasurement("morphology:level3", map[string]Metric[float64]{
 		"morphology_change": {Raw: 0.1},
 	})
 
@@ -37,7 +37,7 @@ func TestFactsMetadataConcurrentReadWrite(t *testing.T) {
 					_ = m.Facts()
 					m.Finalize()
 				default:
-					_ = m.MetadataSnapshot()
+					m.RangeMetadata(func(k, v string) bool { return true })
 					m.EnsureMetadata()
 					_, _ = m.GetMetadata(MetadataSupport)
 				}

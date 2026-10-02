@@ -9,7 +9,7 @@ import (
 
 func TestMeasurementFinalize(t *testing.T) {
 	Convey("Given a measurement without historical support", t, func() {
-		measurement := NewMeasurement("source", map[string]Metric[float64]{})
+		measurement := NewMeasurement[float64]("source")
 		measurement.Label, measurement.At, measurement.From = "label", time.Now(), time.Now()
 		measurement.Finalize()
 
@@ -20,13 +20,11 @@ func TestMeasurementFinalize(t *testing.T) {
 	})
 
 	Convey("Given a measurement with scalar divergence and noise variance", t, func() {
-		measurement := NewMeasurement("source", map[string]Metric[float64]{})
+		measurement := NewMeasurement[float64]("source")
 		measurement.Label, measurement.At, measurement.From = "label", time.Now(), time.Now()
-		measurement.Metadata = map[string]string{
-			MetadataSupport:       "10",
-			MetadataDivergence:    "4.0",
-			MetadataNoiseVariance: "2.0",
-		}
+		measurement.SetMetadata(MetadataSupport, "10")
+		measurement.SetMetadata(MetadataDivergence, "4.0")
+		measurement.SetMetadata(MetadataNoiseVariance, "2.0")
 		measurement.Finalize()
 
 		Convey("It should derive maturity 1 - 1/N and scalar SNR d^2 / sigma^2", func() {
@@ -35,7 +33,7 @@ func TestMeasurementFinalize(t *testing.T) {
 		})
 
 		Convey("Reusing the measurement with missing noise clears its old SNR", func() {
-			delete(measurement.Metadata, MetadataNoiseVariance)
+			measurement.DeleteMetadata(MetadataNoiseVariance)
 			measurement.Finalize()
 			So(measurement.Estimated, ShouldBeTrue)
 			So(measurement.SNRDefined, ShouldBeFalse)
@@ -51,12 +49,10 @@ func TestMeasurementFinalize(t *testing.T) {
 	})
 
 	Convey("Given a measurement with multivariate Mahalanobis SNR metadata", t, func() {
-		measurement := NewMeasurement("source", map[string]Metric[float64]{})
+		measurement := NewMeasurement[float64]("source")
 		measurement.Label, measurement.At, measurement.From = "label", time.Now(), time.Now()
-		measurement.Metadata = map[string]string{
-			MetadataSupport:        "20",
-			MetadataMahalanobisSNR: "5.5",
-		}
+		measurement.SetMetadata(MetadataSupport, "20")
+		measurement.SetMetadata(MetadataMahalanobisSNR, "5.5")
 		measurement.Finalize()
 
 		Convey("It should derive maturity 1 - 1/N and prioritize Mahalanobis SNR", func() {
@@ -66,80 +62,82 @@ func TestMeasurementFinalize(t *testing.T) {
 	})
 }
 
-func TestMeasurementClone(t *testing.T) {
-	Convey("Given a measurement with metrics, metadata, and a peer", t, func() {
-		peer := NewMeasurement("public", map[string]Metric[float64]{
-			"bid": NewMetric[float64]("bid", UnitRate, TimescaleInstantaneous, 0, 1),
+func TestMeasurementPeersLookup(t *testing.T) {
+	Convey("Given a producer measurement with an immutable prior peer", t, func() {
+		prior := NewMeasurement[float64]("websocket")
+		prior.Label = "BTC/USD"
+		prior.WriteMetric("bid", 65000.50)
+		prior.WriteMetric("ask", 65001.00)
+
+		out := NewMeasurement[float64]("liquidity")
+		out.Label = prior.Label
+		out.Peers = []*Measurement[float64]{prior}
+		out.WriteMetric("relative_spread", 0.0001)
+
+		Convey("LookupMetric reads local metrics first, then direct peers", func() {
+			spread, hasSpread := out.LookupMetric("relative_spread")
+			So(hasSpread, ShouldBeTrue)
+			So(spread.Raw, ShouldEqual, 0.0001)
+
+			bid, hasBid := out.LookupMetric("bid")
+			So(hasBid, ShouldBeTrue)
+			So(bid.Raw, ShouldEqual, 65000.50)
+
+			ask, hasAsk := out.LookupMetric("ask")
+			So(hasAsk, ShouldBeTrue)
+			So(ask.Raw, ShouldEqual, 65001.00)
+
+			_, hasMissing := out.LookupMetric("nonexistent")
+			So(hasMissing, ShouldBeFalse)
 		})
-		measurement := NewMeasurement("liquidity", map[string]Metric[float64]{
-			"bid": NewMetric[float64]("bid", UnitRate, TimescaleInstantaneous, 0, 1),
+
+		Convey("LookupPeerMetric disambiguates source correctly", func() {
+			bid, found := out.LookupPeerMetric("websocket", "bid")
+			So(found, ShouldBeTrue)
+			So(bid.Raw, ShouldEqual, 65000.50)
+
+			_, notFound := out.LookupPeerMetric("hawkes", "bid")
+			So(notFound, ShouldBeFalse)
 		})
-		measurement.Label = "BTC/USD"
-		measurement.SetMetadata("peer-interest", "*")
-		measurement.SetProvenance("channel", "ticker")
-		measurement.Peers = []*Measurement[float64]{peer}
-		measurement.WriteMetric("bid", 100)
 
-		clone := measurement.Clone()
-
-		Convey("the clone is independent of later writes", func() {
-			So(clone == measurement, ShouldBeFalse)
-			So(clone.Label, ShouldEqual, "BTC/USD")
-			So(clone.Metadata["peer-interest"], ShouldEqual, "*")
-			So(clone.Provenance["channel"], ShouldEqual, "ticker")
-			So(clone.Peers[0], ShouldEqual, peer)
-
-			measurement.WriteMetric("bid", 200)
-			measurement.SetMetadata("peer-interest", "hawkes")
-			So(clone.GetMetric("bid").Raw, ShouldEqual, 100)
-			So(clone.Metadata["peer-interest"], ShouldEqual, "*")
+		Convey("Writes always target local storage without mutating peers", func() {
+			out.WriteMetric("bid", 99999.00)
+			So(out.GetMetric("bid").Raw, ShouldEqual, 99999.00)
+			So(prior.GetMetric("bid").Raw, ShouldEqual, 65000.50)
 		})
 	})
 }
 
-func TestMeasurementPull(t *testing.T) {
-	Convey("Given a feed measurement and an instrument measurement", t, func() {
-		feed := NewMeasurement("public", map[string]Metric[float64]{
-			"bid":    NewMetric[float64]("bid", UnitRate, TimescaleInstantaneous, 0, 1),
-			"ask":    NewMetric[float64]("ask", UnitRate, TimescaleInstantaneous, 0, 1),
-			"volume": NewMetric[float64]("volume", UnitCount, TimescaleInstantaneous, 0, 1),
-		})
-		feed.Label = "ETH/USD"
-		feed.SetProvenance("side", "buy")
-		feed.WriteMetric("bid", 10)
-		feed.WriteMetric("ask", 11)
-		feed.WriteMetric("volume", 5)
+func TestArenaOwnerGenerations(t *testing.T) {
+	Convey("Given an ArenaOwner with capacity 4", t, func() {
+		owner := NewArenaOwner(4)
+		gen0 := owner.CurrentGeneration()
+		So(gen0, ShouldNotBeNil)
+		So(gen0.RefCount(), ShouldEqual, 1)
 
-		owned := NewMeasurement("liquidity", map[string]Metric[float64]{
-			"bid": NewMetric[float64]("bid", UnitRate, TimescaleInstantaneous, 0, 1),
-			"ask": NewMetric[float64]("ask", UnitRate, TimescaleInstantaneous, 0, 1),
-		})
-		owned.SetMetadata("peer-interest", "*")
-		owned.Pull(feed, "bid", "ask")
+		m0 := owner.NewMeasurement("test")
+		So(m0.Source, ShouldEqual, "test")
 
-		Convey("named feed facts move without sharing the source map", func() {
-			So(owned.Source, ShouldEqual, "liquidity")
-			So(owned.Label, ShouldEqual, "ETH/USD")
-			So(owned.Provenance["side"], ShouldEqual, "buy")
-			So(owned.Metadata["peer-interest"], ShouldEqual, "*")
-			So(owned.GetMetric("bid").Raw, ShouldEqual, 10)
-			So(owned.GetMetric("ask").Raw, ShouldEqual, 11)
-			_, hasVolume := owned.LookupMetric("volume")
-			So(hasVolume, ShouldBeFalse)
+		// 3 more allocations reach capacity threshold
+		owner.NewMeasurement("test")
+		owner.NewMeasurement("test")
+		owner.NewMeasurement("test")
 
-			owned.WriteMetric("bid", 99)
-			So(feed.GetMetric("bid").Raw, ShouldEqual, 10)
-		})
+		gen1 := owner.CurrentGeneration()
+		So(gen1 != gen0, ShouldBeTrue)
+		// gen0 is now previous generation; when rotating to gen2, gen0 is sealed and released
+		owner.Rotate()
+		So(gen0.IsFreed(), ShouldBeTrue)
+
+		owner.Close()
 	})
 }
 
 func BenchmarkMeasurementFinalize(b *testing.B) {
-	measurement := NewMeasurement("source", map[string]Metric[float64]{})
+	measurement := NewMeasurement[float64]("source")
 	measurement.Label, measurement.At, measurement.From = "label", time.Now(), time.Now()
-	measurement.Metadata = map[string]string{
-		MetadataSupport:        "25",
-		MetadataMahalanobisSNR: "3.8",
-	}
+	measurement.SetMetadata(MetadataSupport, "25")
+	measurement.SetMetadata(MetadataMahalanobisSNR, "3.8")
 
 	b.ReportAllocs()
 

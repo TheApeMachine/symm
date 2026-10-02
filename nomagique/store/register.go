@@ -136,7 +136,7 @@ func (op *Register[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 			meas, ok := any(slotVal).(*data.Measurement[float64])
 
 			if ok && meas != nil {
-				working := meas.PersistClone()
+				working := cloneMeas(meas)
 				interest := ""
 
 				if v, ok := working.GetMetadata("peer-interest"); ok {
@@ -164,7 +164,7 @@ func (op *Register[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 								continue
 							}
 
-							working.Peers = append(working.Peers, peer)
+							working.Peers = append(working.Peers, cloneMeas(peer))
 						}
 					}
 
@@ -188,7 +188,7 @@ func (op *Register[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 							}
 
 							if matchPeer(peer, interests) {
-								working.Peers = append(working.Peers, peer)
+								working.Peers = append(working.Peers, cloneMeas(peer))
 							}
 						}
 					}
@@ -234,3 +234,20 @@ func (op *Register[T]) published(identity int, sequence int64) T {
 
 	return op.slots[identity]
 }
+
+func cloneMeas(src *data.Measurement[float64]) *data.Measurement[float64] {
+	if src == nil {
+		return nil
+	}
+	cp := *src
+	cp.Metrics = make([]data.MetricEntry[float64], len(src.Metrics))
+	copy(cp.Metrics, src.Metrics)
+	cp.Metadata = make([]data.StringEntry, len(src.Metadata))
+	copy(cp.Metadata, src.Metadata)
+	cp.Provenance = make([]data.StringEntry, len(src.Provenance))
+	copy(cp.Provenance, src.Provenance)
+	cp.Peers = make([]*data.Measurement[float64], len(src.Peers))
+	copy(cp.Peers, src.Peers)
+	return &cp
+}
+

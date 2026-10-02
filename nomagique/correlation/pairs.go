@@ -160,7 +160,7 @@ func (op *Pairs) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			m.WriteMetric("observation_count", focal.Count)
 
 			if !focal.Accepted {
-				m.Provenance = map[string]string{"event_time_state": "regressed"}
+				m.SetProvenance("event_time_state", "regressed")
 
 				if !yield(arriving) {
 					return
@@ -222,28 +222,19 @@ func (op *Pairs) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 					continue
 				}
 
-				m.Peers = append(m.Peers, &data.Measurement[float64]{
-					Label: symbol,
-					Metrics: map[string]data.Metric[float64]{
-						"signed_correlation": {
-							Label: "signed_correlation",
-							Raw:   dependence.Correlation,
-						},
-					},
-					Metadata: map[string]string{
-						"support":          strconv.FormatFloat(dependence.Support, 'f', -1, 64),
-						"peer_energy_rate": strconv.FormatFloat(dependence.RightEnergyRate, 'f', -1, 64),
-					},
-				})
+				peerMeas := data.NewMeasurement[float64]("correlation")
+				peerMeas.Label = symbol
+				peerMeas.WriteMetric("signed_correlation", dependence.Correlation)
+				peerMeas.SetMetadata("support", strconv.FormatFloat(dependence.Support, 'f', -1, 64))
+				peerMeas.SetMetadata("peer_energy_rate", strconv.FormatFloat(dependence.RightEnergyRate, 'f', -1, 64))
+				m.Peers = append(m.Peers, peerMeas)
 
 				selected, significance, selection = dependence, significanceOfPair, symbol
 			}
 
 			if len(m.Peers) > 0 {
-				m.Provenance = map[string]string{
-					"peer":                       selection,
-					"pair_diagnostics_selection": "last_defined_peer_lexicographic",
-				}
+				m.SetProvenance("peer", selection)
+				m.SetProvenance("pair_diagnostics_selection", "last_defined_peer_lexicographic")
 
 				m.WriteMetric("signed_correlation", selected.Correlation)
 				m.WriteMetric("absolute_correlation", math.Abs(selected.Correlation))

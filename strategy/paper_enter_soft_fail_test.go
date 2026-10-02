@@ -12,6 +12,7 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/cognition"
+	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
@@ -44,9 +45,9 @@ func TestPaperEnterSoftFailKeepsTrainingReady(t *testing.T) {
 			trader.desk.Execution.Transition(runtime.READY)
 		}
 
-		training := NewTraining(ctx, 1, price, trader, nil, nil)
+		training := NewTraining(ctx, data.NewArenaOwner(32), 1, price, trader, nil, nil)
 		frame := regionFrame("ETH/USD", 1, 2)
-		training.grid.Update([]*data.Measurement[float64]{frame})
+		training.grid.Update(frame)
 		training.grid.Settle()
 
 		training.mu.Lock()

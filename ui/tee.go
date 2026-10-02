@@ -21,7 +21,7 @@ const uiTeeQueueCap = 4096
 
 type UITee struct {
 	*runtime.System
-	queue     *lf.Queue[*data.Measurement[float64]]
+	queue     *lf.Queue[data.Publication]
 	batchSize int
 	filters   []func(
 		measurement *data.Measurement[float64],
@@ -48,7 +48,7 @@ func NewUITee(
 	}
 
 	tee := &UITee{
-		queue:     lf.NewQueue[*data.Measurement[float64]](),
+		queue:     lf.NewQueue[data.Publication](),
 		batchSize: batchSize,
 		filters:   filters,
 	}
@@ -62,27 +62,30 @@ Push receives measurements from the workspace. Raw venue feeds stay off the
 dashboard websocket; the page route still selects which analytical sources
 are on the wire.
 */
-func (tee *UITee) Push(measurement *data.Measurement[float64]) {
+func (tee *UITee) Push(pub data.Publication) {
 	if tee.Status() != runtime.READY {
 		errnie.Warn("pushing to a non-ready system may have unintended consequences")
 		return
 	}
 
-	if measurement == nil {
+	if pub.Measurement == nil {
 		return
 	}
 
 	for _, filter := range tee.filters {
-		if !filter(measurement) {
+		if !filter(pub.Measurement) {
 			return
 		}
 	}
 
+	pub.Retain()
+
 	if tee.queue.Length() >= uiTeeQueueCap {
+		pub.Release()
 		return
 	}
 
-	tee.queue.Enqueue(measurement)
+	tee.queue.Enqueue(pub)
 }
 
 /*
@@ -96,14 +99,16 @@ func (tee *UITee) Next() unsafe.Pointer {
 	}
 
 	batch := make([]*data.Measurement[float64], 0, tee.batchSize)
+	batchPubs := make([]data.Publication, 0, tee.batchSize)
 
 	for len(batch) < tee.batchSize {
-		measurement, ok := tee.queue.Dequeue()
+		pub, ok := tee.queue.Dequeue()
 
 		if !ok {
 			break
 		}
 
+		measurement := pub.Measurement
 		dropped := false
 
 		for _, filter := range tee.filters {
@@ -114,11 +119,18 @@ func (tee *UITee) Next() unsafe.Pointer {
 		}
 
 		if dropped {
+			pub.Release()
 			continue
 		}
 
 		if manifoldState, ok := measurement.Result.(*types.ManifoldState); ok {
+			if len(batch) > 0 {
+				tee.queue.Enqueue(pub)
+				break
+			}
+
 			payload, err := types.EncodeManifold(manifoldState)
+			pub.Release()
 
 			if err != nil {
 				errnie.Error(errnie.Err(
@@ -133,15 +145,11 @@ func (tee *UITee) Next() unsafe.Pointer {
 				continue
 			}
 
-			if len(batch) > 0 {
-				tee.queue.Enqueue(measurement)
-				break
-			}
-
 			return unsafe.Pointer(&payload)
 		}
 
 		batch = append(batch, measurement)
+		batchPubs = append(batchPubs, pub)
 	}
 
 	if len(batch) == 0 {
@@ -149,6 +157,9 @@ func (tee *UITee) Next() unsafe.Pointer {
 	}
 
 	measurements, err := types.EncodeMeasurements(batch)
+	for _, pub := range batchPubs {
+		pub.Release()
+	}
 
 	if err != nil {
 		errnie.Error(errnie.Err(

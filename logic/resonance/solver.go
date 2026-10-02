@@ -69,6 +69,7 @@ empirical z-scores without static windows, hardcoded sigmas, or arbitrary magic 
 */
 type Solver struct {
 	*runtime.System
+	arena         *data.ArenaOwner
 	detectors     *sync.Map
 	standardizers *sync.Map
 	references    *sync.Map
@@ -116,10 +117,12 @@ NewSolver returns a feature detection solver using the configured pace.
 */
 func NewSolver(
 	ctx context.Context,
+	arena *data.ArenaOwner,
 	pace float64,
 ) *Solver {
 	solver := &Solver{
 		System:        runtime.NewSystem(ctx, "resonance"),
+		arena:         arena,
 		detectors:     &sync.Map{},
 		standardizers: &sync.Map{},
 		references:    &sync.Map{},
@@ -128,7 +131,16 @@ func NewSolver(
 		pace:          pace,
 	}
 
+	solver.Transition(runtime.READY)
 	return solver
+}
+
+func (solver *Solver) Source() string {
+	return "resonance"
+}
+
+func (solver *Solver) Arena() *data.ArenaOwner {
+	return solver.arena
 }
 
 /*
@@ -136,98 +148,50 @@ Step advances the symbol's predictive coder over the canonical microstructure
 sensory features from completed prior-stage signal outputs and writes the
 resulting resonance metrics onto the owned output measurement.
 */
-func (solver *Solver) Step(input *runtime.StageInput, output *data.Measurement[float64]) *data.Measurement[float64] {
+func (solver *Solver) Step(prior *data.Measurement[float64]) *data.Measurement[float64] {
 	if solver.Status() != runtime.READY {
 		errnie.Warn(solver.Name() + ": Step called before READY; dropping event")
 		return nil
 	}
 
-	if solver.Error() != nil {
+	if solver.Error() != nil || prior == nil {
 		return nil
 	}
 
-	if input == nil {
-		return nil
-	}
-
-	symbol := input.Symbol()
-
+	symbol := prior.Label
 	if symbol == "" {
 		return nil
 	}
 
-	at := input.At()
-
-	if at.IsZero() {
-		// Fall back to prior-stage outputs for event time.
-		for _, prior := range input.AllPriorOutputs() {
-			if prior != nil && !prior.At.IsZero() {
-				at = prior.At
-				break
-			}
-		}
-	}
-
+	at := prior.At
 	if at.IsZero() {
 		at = time.Now()
 	}
 
 	midpoint := 0.0
-
-	// Read midpoint from ingress first.
-	ingress := input.Ingress()
-	if ingress != nil && ingress.Label == symbol && ingress.Metrics != nil {
-		if metric, found := ingress.Metrics["midpoint"]; found && metric.Raw > 0 {
-			midpoint = metric.Raw
-		}
-
-		if midpoint == 0.0 {
-			if metric, found := ingress.Metrics["last_price"]; found && metric.Raw > 0 {
-				midpoint = metric.Raw
-			}
-		}
-
-		if midpoint == 0.0 {
-			if metric, found := ingress.Metrics["price"]; found && metric.Raw > 0 {
-				midpoint = metric.Raw
-			}
-		}
+	if m, ok := prior.LookupMetric("midpoint"); ok && m.Raw > 0 {
+		midpoint = m.Raw
+	} else if m, ok := prior.LookupMetric("last_price"); ok && m.Raw > 0 {
+		midpoint = m.Raw
+	} else if m, ok := prior.LookupMetric("price"); ok && m.Raw > 0 {
+		midpoint = m.Raw
 	}
 
-	// Search prior-stage outputs for midpoint if not found in ingress.
-	if midpoint == 0.0 {
-		for _, prior := range input.AllPriorOutputs() {
-			if prior == nil || prior.Label != symbol || prior.Metrics == nil {
-				continue
-			}
-
-			if metric, found := prior.Metrics["midpoint"]; found && metric.Raw > 0 {
-				midpoint = metric.Raw
-				break
-			}
-
-			if metric, found := prior.Metrics["last_price"]; found && metric.Raw > 0 {
-				midpoint = metric.Raw
-				break
-			}
-
-			if metric, found := prior.Metrics["price"]; found && metric.Raw > 0 {
-				midpoint = metric.Raw
-				break
-			}
-		}
+	var priors []*data.Measurement[float64]
+	if prior.Source == "runtime:join" {
+		priors = prior.Peers
+	} else {
+		priors = append([]*data.Measurement[float64]{prior}, prior.Peers...)
 	}
 
 	var signals [11]*data.Measurement[float64]
-
-	// Index prior-stage producer outputs by source name.
-	for _, prior := range input.AllPriorOutputs() {
-		if prior == nil || prior.Label != symbol {
+	for _, p := range priors {
+		if p == nil || p.Label != symbol {
 			continue
 		}
 
-		if idx := signalIndex(prior.Source); idx >= 0 {
-			signals[idx] = prior
+		if idx := signalIndex(p.Source); idx >= 0 {
+			signals[idx] = p
 			continue
 		}
 
@@ -236,25 +200,8 @@ func (solver *Solver) Step(input *runtime.StageInput, output *data.Measurement[f
 				continue
 			}
 
-			if _, ok := extractHeadlineMetric(index, prior); ok {
-				signals[index] = prior
-			}
-		}
-	}
-
-	// Also check ingress for metrics.
-	if ingress != nil && ingress.Label == symbol {
-		if idx := signalIndex(ingress.Source); idx >= 0 && signals[idx] == nil {
-			signals[idx] = ingress
-		}
-
-		for index := 0; index < len(signals); index++ {
-			if signals[index] != nil {
-				continue
-			}
-
-			if _, ok := extractHeadlineMetric(index, ingress); ok {
-				signals[index] = ingress
+			if _, ok := extractHeadlineMetric(index, p); ok {
+				signals[index] = p
 			}
 		}
 	}
@@ -262,28 +209,33 @@ func (solver *Solver) Step(input *runtime.StageInput, output *data.Measurement[f
 	scorer := solver.scorer(symbol)
 	features := scorer.Step(signals)
 
-	solver.Update(output, symbol, at, features, midpoint)
+	out := solver.arena.NewMeasurement(solver.Source())
+	out.Label = symbol
+	out.SeqIdx = prior.SeqIdx
+	out.At = at
+	out.From = prior.From
+	out.Peers = []*data.Measurement[float64]{prior}
 
-	output.Label = symbol
-	output.At = at
+	solver.Update(out, symbol, at, features, midpoint)
 
-	maturity, snr, snrDefined, estimated := output.Maturity, output.SNR, output.SNRDefined, output.Estimated
+	maturity, snr, snrDefined, estimated := out.Maturity, out.SNR, out.SNRDefined, out.Estimated
 	if loadedStep, found := solver.steps.Load(symbol); found {
 		if stepCount := loadedStep.(*atomic.Int64).Load(); stepCount > 1 {
 			maturity = 1.0 - 1.0/float64(stepCount)
 		}
 	}
 
-	if energyMetric, ok := output.LookupMetric("energy"); ok && energyMetric.Raw > 0 {
-		if surpriseMetric, ok := output.LookupMetric("surprise"); ok && surpriseMetric.Raw > 0 {
+	if energyMetric, ok := out.LookupMetric("energy"); ok && energyMetric.Raw > 0 {
+		if surpriseMetric, ok := out.LookupMetric("surprise"); ok && surpriseMetric.Raw > 0 {
 			snr = energyMetric.Raw / surpriseMetric.Raw
 			snrDefined = true
 			estimated = true
 		}
 	}
-	output.SetQuality(maturity, snr, snrDefined, estimated)
+	out.SetQuality(maturity, snr, snrDefined, estimated)
+	out.Finalize()
 
-	return output
+	return out
 }
 
 /*
@@ -482,7 +434,7 @@ func extractHeadlineMetric(index int, measurement *data.Measurement[float64]) (f
 	}
 
 	for _, label := range candidates {
-		if metric, found := measurement.Metrics[label]; found {
+		if metric, found := measurement.LookupMetric(label); found {
 			if metric.Standardized != nil || metric.Raw != 0 {
 				return metric.Raw, true
 			}
@@ -490,7 +442,7 @@ func extractHeadlineMetric(index int, measurement *data.Measurement[float64]) (f
 	}
 
 	for _, label := range candidates {
-		if metric, found := measurement.Metrics[label]; found {
+		if metric, found := measurement.LookupMetric(label); found {
 			return metric.Raw, true
 		}
 	}

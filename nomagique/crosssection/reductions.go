@@ -73,10 +73,6 @@ func (op *ChangeCounts) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointe
 				m.WriteMetric("signed_fraction", (positive - negative) / valid)
 
 				if extremeKey != "" {
-					if m.Provenance == nil {
-						m.Provenance = make(map[string]string, 1)
-					}
-
 					m.SetProvenance("extreme_key", extremeKey)
 				}
 			}

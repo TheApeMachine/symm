@@ -28,84 +28,60 @@ func TestCatalog_Timeline(t *testing.T) {
 
 		writer := tables.NewWriter(catalog, epoch)
 
-		ticker1 := &data.Measurement[float64]{
-			Source:   "spot_ticker",
-			Label:    "BTC/USD",
-			SeqIdx:   10,
-			At:       at,
-			Maturity: 1.0,
-			Metrics: map[string]data.Metric[float64]{
-				"bid":  {Label: "bid", Raw: 50000},
-				"ask":  {Label: "ask", Raw: 50001},
-				"last": {Label: "last", Raw: 50000.5},
-			},
-		}
-		writer.Add("ticker", ticker1)
+		ticker1 := data.NewMeasurement[float64]("spot_ticker", nil)
+		ticker1.Label = "BTC/USD"
+		ticker1.SeqIdx = 10
+		ticker1.At = at
+		ticker1.Maturity = 1.0
+		ticker1.WriteMetric("bid", 50000)
+		ticker1.WriteMetric("ask", 50001)
+		ticker1.WriteMetric("last", 50000.5)
+		writer.Add("ticker", data.Publication{Measurement: ticker1})
 
-		trade1 := &data.Measurement[float64]{
-			Source:   "spot_trade",
-			Label:    "BTC/USD",
-			SeqIdx:   8,
-			At:       at,
-			Maturity: 1.0,
-			Metrics: map[string]data.Metric[float64]{
-				"price": {Label: "price", Raw: 50000.5},
-				"qty":   {Label: "qty", Raw: 0.5},
-			},
-		}
-		writer.Add("trade", trade1)
+		trade1 := data.NewMeasurement[float64]("spot_trade", nil)
+		trade1.Label = "BTC/USD"
+		trade1.SeqIdx = 8
+		trade1.At = at
+		trade1.Maturity = 1.0
+		trade1.WriteMetric("price", 50000.5)
+		trade1.WriteMetric("qty", 0.5)
+		writer.Add("trade", data.Publication{Measurement: trade1})
 
-		l31 := &data.Measurement[float64]{
-			Source:   "spot_level3",
-			Label:    "BTC/USD",
-			SeqIdx:   9,
-			At:       at,
-			Maturity: 1.0,
-			Metrics: map[string]data.Metric[float64]{
-				"limit_price": {Label: "limit_price", Raw: 50000},
-				"order_qty":   {Label: "order_qty", Raw: 1.0},
-			},
-		}
-		writer.Add("level3", l31)
+		l31 := data.NewMeasurement[float64]("spot_level3", nil)
+		l31.Label = "BTC/USD"
+		l31.SeqIdx = 9
+		l31.At = at
+		l31.Maturity = 1.0
+		l31.WriteMetric("limit_price", 50000)
+		l31.WriteMetric("order_qty", 1.0)
+		writer.Add("level3", data.Publication{Measurement: l31})
 
-		sig1 := &data.Measurement[float64]{
-			Source:   "cvd",
-			Label:    "BTC/USD",
-			SeqIdx:   10,
-			At:       at,
-			Maturity: 1.0,
-			Metrics: map[string]data.Metric[float64]{
-				"delta": {Label: "delta", Raw: 100.0},
-			},
-		}
-		writer.Add("measurements", sig1)
+		sig1 := data.NewMeasurement[float64]("cvd", nil)
+		sig1.Label = "BTC/USD"
+		sig1.SeqIdx = 10
+		sig1.At = at
+		sig1.Maturity = 1.0
+		sig1.WriteMetric("delta", 100.0)
+		writer.Add("measurements", data.Publication{Measurement: sig1})
 
-		ticker2 := &data.Measurement[float64]{
-			Source:   "spot_ticker",
-			Label:    "BTC/USD",
-			SeqIdx:   20,
-			At:       at.Add(time.Second),
-			Maturity: 1.0,
-			Metrics: map[string]data.Metric[float64]{
-				"bid":  {Label: "bid", Raw: 50002},
-				"ask":  {Label: "ask", Raw: 50003},
-				"last": {Label: "last", Raw: 50002.5},
-			},
-		}
-		writer.Add("ticker", ticker2)
+		ticker2 := data.NewMeasurement[float64]("spot_ticker", nil)
+		ticker2.Label = "BTC/USD"
+		ticker2.SeqIdx = 20
+		ticker2.At = at.Add(time.Second)
+		ticker2.Maturity = 1.0
+		ticker2.WriteMetric("bid", 50002)
+		ticker2.WriteMetric("ask", 50003)
+		ticker2.WriteMetric("last", 50002.5)
+		writer.Add("ticker", data.Publication{Measurement: ticker2})
 
-		trade2 := &data.Measurement[float64]{
-			Source:   "spot_trade",
-			Label:    "BTC/USD",
-			SeqIdx:   15,
-			At:       at.Add(time.Second),
-			Maturity: 1.0,
-			Metrics: map[string]data.Metric[float64]{
-				"price": {Label: "price", Raw: 50002.0},
-				"qty":   {Label: "qty", Raw: 2.0},
-			},
-		}
-		writer.Add("trade", trade2)
+		trade2 := data.NewMeasurement[float64]("spot_trade", nil)
+		trade2.Label = "BTC/USD"
+		trade2.SeqIdx = 15
+		trade2.At = at.Add(time.Second)
+		trade2.Maturity = 1.0
+		trade2.WriteMetric("price", 50002.0)
+		trade2.WriteMetric("qty", 2.0)
+		writer.Add("trade", data.Publication{Measurement: trade2})
 
 		So(writer.CommitReady(ctx, true), ShouldBeNil)
 

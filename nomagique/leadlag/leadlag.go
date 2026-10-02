@@ -84,10 +84,6 @@ func (op *Gate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			m.WriteMetric("last_price", last)
 
 			if last == 0 {
-				if m.Provenance == nil {
-					m.Provenance = make(map[string]string, 1)
-				}
-
 				m.SetProvenance("last_trade_price_state", "unobserved")
 			}
 
@@ -244,7 +240,7 @@ func (op *Cross) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			m.WriteMetric("observation_count", focal.Count)
 
 			if !focal.Accepted {
-				m.Provenance = map[string]string{"event_time_state": "regressed"}
+				m.SetProvenance("event_time_state", "regressed")
 
 				if !yield(arriving) {
 					return
@@ -351,9 +347,6 @@ func (op *Cross) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				}
 			}
 
-			if m.Provenance == nil {
-				m.Provenance = make(map[string]string, 2)
-			}
 			m.SetProvenance("peer", selection)
 			m.SetProvenance("pair_diagnostics_selection", "last_defined_peer_lexicographic")
 

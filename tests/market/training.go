@@ -27,16 +27,15 @@ func TrainingTape(legs int) []*data.Measurement[float64] {
 	for _, source := range base {
 		for repeat := 0; repeat < 32; repeat++ {
 			sequence := int64(len(frames) + 1)
-			frame := source.Clone()
+			frame := CloneTestMeasurement(source)
 			frame.SeqIdx = sequence
 			frame.Source = "training"
 			frame.SetProvenance("owner", "training")
-			frame.Metrics = map[string]data.Metric[float64]{
-				"previous_input": {Raw: float64(sequence - 1)},
-				"input_count":    {Raw: 4}, "impulse_version": {Raw: grid.FormatVersion},
-			}
+			frame.SetMetric("previous_input", data.Metric[float64]{Raw: float64(sequence - 1)})
+			frame.SetMetric("input_count", data.Metric[float64]{Raw: 4})
+			frame.SetMetric("impulse_version", data.Metric[float64]{Raw: grid.FormatVersion})
 			for index, peer := range frame.Peers {
-				frame.Peers[index] = peer.Clone()
+				frame.Peers[index] = CloneTestMeasurement(peer)
 				frame.Peers[index].SeqIdx = sequence
 			}
 			trade := frame.Peers[0]

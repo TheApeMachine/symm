@@ -25,15 +25,26 @@ lifetime.
 */
 type Ticker struct {
 	*runtime.System
+	arena     *data.ArenaOwner
 	pipelines sync.Map
 	ID        int
 }
 
-func NewTicker(ctx context.Context) *Ticker {
-	ticker := &Ticker{}
+func NewTicker(ctx context.Context, arena *data.ArenaOwner) *Ticker {
+	ticker := &Ticker{
+		arena: arena,
+	}
 
 	ticker.System = runtime.NewSystem(ctx, "leadlag:ticker", ticker)
 	return ticker
+}
+
+func (ticker *Ticker) Source() string {
+	return "leadlag"
+}
+
+func (ticker *Ticker) Arena() *data.ArenaOwner {
+	return ticker.arena
 }
 
 /*
@@ -82,38 +93,41 @@ func (ticker *Ticker) pipelineFor(symbol string) core.Primitive {
 	return actual.(core.Primitive)
 }
 
-func (ticker *Ticker) Step(input *runtime.StageInput, output *data.Measurement[float64]) *data.Measurement[float64] {
+func (ticker *Ticker) Step(prior *data.Measurement[float64]) *data.Measurement[float64] {
 	if ticker.Status() != runtime.READY {
 		errnie.Warn(ticker.Name() + ": Step called before READY; dropping event")
 		return nil
 	}
 
-	if input == nil || input.Ingress() == nil || input.Symbol() == "" {
+	if prior == nil || prior.Label == "" {
 		return nil
 	}
 
-	ingress := input.Ingress()
-	price := quotedPrice(ingress)
-
+	price := quotedPrice(prior)
 	if price <= 0 {
 		return nil
 	}
 
-	output.WriteMetric("last", price)
-	output.WriteMetric("last_price", price)
+	out := ticker.arena.NewMeasurement(ticker.Source())
+	out.Label = prior.Label
+	out.SeqIdx = prior.SeqIdx
+	out.At = prior.At
+	out.From = prior.From
+	out.Peers = []*data.Measurement[float64]{prior}
 
-	if channel, hasCh := input.IngressProvenance("channel"); hasCh {
-		output.SetProvenance("channel", channel)
+	out.WriteMetric("last", price)
+	out.WriteMetric("last_price", price)
+
+	if channel, hasCh := prior.GetProvenance("channel"); hasCh {
+		out.SetProvenance("channel", channel)
 	}
 
-	data.StampInterval(output, ingress.At, ingress.From)
-
-	res := data.Read[*data.Measurement[float64]](ticker.pipelineFor(output.Label).Next(
-		transport.NewOne(unsafe.Pointer(&output)).Next(nil),
+	res := data.Read[*data.Measurement[float64]](ticker.pipelineFor(out.Label).Next(
+		transport.NewOne(unsafe.Pointer(&out)).Next(nil),
 	))
 
 	if res == nil {
-		return output
+		return out
 	}
 
 	return res

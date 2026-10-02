@@ -8,6 +8,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/hindsight/tables"
+	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/tests/tablestest"
 )
 
@@ -16,7 +17,7 @@ func TestStageSurfacesPersistError(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		training := NewTraining(ctx, 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
+		training := NewTraining(ctx, data.NewArenaOwner(32), 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
 		frame := regionFrame("BTC/USD", 1, 2)
 		training.grid.Update(frame)
 		training.grid.Settle()
@@ -39,7 +40,7 @@ func TestFinishWriteRequeuesWithoutClearingBlocked(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		training := NewTraining(ctx, 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
+		training := NewTraining(ctx, data.NewArenaOwner(32), 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
 		batch := []heldEpisode{{
 			record: tables.ExcursionRecord{
 				ID:         "BTC/USD:1:2",
@@ -71,7 +72,7 @@ func TestPersistLoopDrainsWithCatalog(t *testing.T) {
 		defer cancel()
 
 		catalog := tablestest.New(t)
-		training := NewTraining(ctx, 7, priced(t, "BTC/USD", 0.1), nil, catalog, nil)
+		training := NewTraining(ctx, data.NewArenaOwner(32), 7, priced(t, "BTC/USD", 0.1), nil, catalog, nil)
 		frame := regionFrame("BTC/USD", 1, 2)
 		training.grid.Update(frame)
 		training.grid.Settle()
@@ -127,7 +128,7 @@ func TestWaitDrainedDoesNotBailOnTransientPersistErr(t *testing.T) {
 		defer cancel()
 
 		catalog := tablestest.New(t)
-		training := NewTraining(ctx, 9, priced(t, "BTC/USD", 0.1), nil, catalog, nil)
+		training := NewTraining(ctx, data.NewArenaOwner(32), 9, priced(t, "BTC/USD", 0.1), nil, catalog, nil)
 
 		batch := []heldEpisode{{
 			record: tables.ExcursionRecord{
@@ -183,7 +184,7 @@ func TestCommitExcursionsTimesOutWhenGateHeld(t *testing.T) {
 		}()
 		<-held
 
-		training := NewTraining(ctx, 11, priced(t, "BTC/USD", 0.1), nil, catalog, nil)
+		training := NewTraining(ctx, data.NewArenaOwner(32), 11, priced(t, "BTC/USD", 0.1), nil, catalog, nil)
 		frame := regionFrame("BTC/USD", 1, 2)
 		training.grid.Update(frame)
 		training.grid.Settle()
@@ -223,7 +224,6 @@ func TestCommitExcursionsTimesOutWhenGateHeld(t *testing.T) {
 	})
 }
 
-
 func TestCommitExcursionsBoundedSurfacesTimeout(t *testing.T) {
 	Convey("Given a held commit gate, bounded commit sets persistErr before Append returns", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())
@@ -242,7 +242,7 @@ func TestCommitExcursionsBoundedSurfacesTimeout(t *testing.T) {
 		}()
 		<-held
 
-		training := NewTraining(ctx, 13, priced(t, "BTC/USD", 0.1), nil, catalog, nil)
+		training := NewTraining(ctx, data.NewArenaOwner(32), 13, priced(t, "BTC/USD", 0.1), nil, catalog, nil)
 		frame := regionFrame("BTC/USD", 1, 2)
 		training.grid.Update(frame)
 		training.grid.Settle()
@@ -287,14 +287,13 @@ func TestCommitExcursionsBoundedSurfacesTimeout(t *testing.T) {
 	})
 }
 
-
 func TestEnqueuePreservesPersistErrWhileWriting(t *testing.T) {
 	Convey("enqueue must not clear persistErr while orphan Append still writing", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
 		catalog := tablestest.New(t)
-		training := NewTraining(ctx, 17, priced(t, "BTC/USD", 0.1), nil, catalog, nil)
+		training := NewTraining(ctx, data.NewArenaOwner(32), 17, priced(t, "BTC/USD", 0.1), nil, catalog, nil)
 		frame := regionFrame("BTC/USD", 1, 2)
 		training.grid.Update(frame)
 		training.grid.Settle()

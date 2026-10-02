@@ -33,21 +33,20 @@ func categoryMeasurement(symbol string, normalized bool, value float64) *data.Me
 		Normalized: normalizedVal,
 	}
 
-	return &data.Measurement[float64]{
+	m := &data.Measurement[float64]{
 		ID:       1,
 		Source:   "cvd",
 		Label:    symbol,
 		At:       time.Unix(0, 1),
 		Maturity: 0.9,
-		Metrics: map[string]data.Metric[float64]{
-			"signed_net_fraction_zscore": metric,
-		},
 	}
+	m.SetMetric("signed_net_fraction_zscore", metric)
+	return m
 }
 
 func TestCategorySolverSingleSource(t *testing.T) {
 	Convey("Given one eligible metric supporting aggressive_drive", t, func() {
-		solver := NewSolver(context.Background())
+		solver := NewSolver(context.Background(), data.NewArenaOwner(32))
 		state := solver.symbolState("BTC/USD")
 		measurement := categoryMeasurement("BTC/USD", true, 0.8)
 		So(solver.accumulate(state, measurement), ShouldBeNil)
@@ -66,7 +65,7 @@ func TestCategorySolverSingleSource(t *testing.T) {
 
 func TestCategorySolverVersionMonotonic(t *testing.T) {
 	Convey("Given a category solver committing several measured classifications", t, func() {
-		solver := NewSolver(context.Background())
+		solver := NewSolver(context.Background(), data.NewArenaOwner(32))
 
 		Convey("the committed version is monotonic across transitions", func() {
 			firstMeasurement := categoryMeasurement("BTC/USD", true, 0.8)
@@ -109,7 +108,7 @@ func TestCategorySolverVersionMonotonic(t *testing.T) {
 
 func TestCategorySolverLatestStateReplacement(t *testing.T) {
 	Convey("Given the same coordinate published many times", t, func() {
-		solver := NewSolver(context.Background())
+		solver := NewSolver(context.Background(), data.NewArenaOwner(32))
 		state := solver.symbolState("BTC/USD")
 
 		for index := 0; index < 100; index++ {
@@ -130,27 +129,26 @@ func TestCategorySolverLatestStateReplacement(t *testing.T) {
 
 func TestCategorySolverCorroboration(t *testing.T) {
 	Convey("Given two distinct coordinates supporting aggressive_drive", t, func() {
-		solver := NewSolver(context.Background())
+		solver := NewSolver(context.Background(), data.NewArenaOwner(32))
 		state := solver.symbolState("BTC/USD")
 		So(solver.accumulate(
 			state, categoryMeasurement("BTC/USD", true, 0.64),
 		), ShouldBeNil)
 		// signed_net_fraction_divergence also maps to aggressive_drive.
 		divergenceVal := 0.16
-		So(solver.accumulate(state, &data.Measurement[float64]{
+		m2 := &data.Measurement[float64]{
 			ID:       2,
 			Source:   "cvd",
 			Label:    "BTC/USD",
 			At:       time.Unix(0, 1),
 			Maturity: 0.8,
-			Metrics: map[string]data.Metric[float64]{
-				"signed_net_fraction_divergence": {
-					Label:      "signed_net_fraction_divergence",
-					Raw:        divergenceVal,
-					Normalized: &divergenceVal,
-				},
-			},
-		}), ShouldBeNil)
+		}
+		m2.SetMetric("signed_net_fraction_divergence", data.Metric[float64]{
+			Label:      "signed_net_fraction_divergence",
+			Raw:        divergenceVal,
+			Normalized: &divergenceVal,
+		})
+		So(solver.accumulate(state, m2), ShouldBeNil)
 
 		Convey("strength is the geometric mean of the affinities", func() {
 			byCategory, _ := solver.aggregate(state)
@@ -164,7 +162,7 @@ func TestCategorySolverCorroboration(t *testing.T) {
 
 func TestCategorySolverPerSymbolIsolation(t *testing.T) {
 	Convey("Given interleaved measurements for two symbols", t, func() {
-		solver := NewSolver(context.Background())
+		solver := NewSolver(context.Background(), data.NewArenaOwner(32))
 		stateA := solver.symbolState("A/USD")
 		stateB := solver.symbolState("B/USD")
 
@@ -191,7 +189,7 @@ func TestCategorySolverPerSymbolIsolation(t *testing.T) {
 
 func TestCategorySolverMissingEvidence(t *testing.T) {
 	Convey("Given a symbol with no eligible evidence", t, func() {
-		solver := NewSolver(context.Background())
+		solver := NewSolver(context.Background(), data.NewArenaOwner(32))
 		state := solver.symbolState("BTC/USD")
 
 		Convey("classification is not measured", func() {
@@ -203,7 +201,7 @@ func TestCategorySolverMissingEvidence(t *testing.T) {
 
 func TestCategorySolverDeterministicTie(t *testing.T) {
 	Convey("Given equal evidence across categories", t, func() {
-		solver := NewSolver(context.Background())
+		solver := NewSolver(context.Background(), data.NewArenaOwner(32))
 
 		Convey("batch ordering is stable across repeated builds", func() {
 			at := time.Unix(1, 0)
@@ -231,7 +229,7 @@ func TestCategorySolverDeterministicTie(t *testing.T) {
 
 func TestCategorySolverUncertaintyIsDistributionLevel(t *testing.T) {
 	Convey("Given a supported category", t, func() {
-		solver := NewSolver(context.Background())
+		solver := NewSolver(context.Background(), data.NewArenaOwner(32))
 		state := solver.symbolState("BTC/USD")
 		measurement := categoryMeasurement("BTC/USD", true, 0.8)
 		So(solver.accumulate(state, measurement), ShouldBeNil)
@@ -259,7 +257,7 @@ func TestCategorySolverUncertaintyIsDistributionLevel(t *testing.T) {
 
 func TestSolverStepMeasurement(t *testing.T) {
 	Convey("Given one coordinate updated in committed observation order", t, func() {
-		solver := NewSolver(t.Context())
+		solver := NewSolver(t.Context(), data.NewArenaOwner(32))
 		first := categoryMeasurement("BTC/USD", true, 0.8)
 		first.At = time.Unix(3, 0)
 		second := categoryMeasurement("BTC/USD", true, 0.4)
@@ -287,7 +285,7 @@ func TestSolverStepMeasurement(t *testing.T) {
 		Convey("wall-clock distance does not invent a generic expiry", func() {
 			trigger := &data.Measurement[float64]{
 				ID: 3, Source: "unmapped", Label: "BTC/USD",
-				At: time.Unix(86_400, 0), Metrics: map[string]data.Metric[float64]{},
+				At: time.Unix(86_400, 0),
 			}
 			categories := solver.StepMeasurement(trigger)
 
@@ -299,7 +297,7 @@ func TestSolverStepMeasurement(t *testing.T) {
 	})
 
 	Convey("Given a failed signal measurement", t, func() {
-		solver := NewSolver(t.Context())
+		solver := NewSolver(t.Context(), data.NewArenaOwner(32))
 		measurement := categoryMeasurement("BTC/USD", true, 0.8)
 		measurement.Err = context.Canceled
 
@@ -309,7 +307,7 @@ func TestSolverStepMeasurement(t *testing.T) {
 	})
 
 	Convey("Given multiple measurements where one failed but another succeeded", t, func() {
-		solver := NewSolver(t.Context())
+		solver := NewSolver(t.Context(), data.NewArenaOwner(32))
 		failed := categoryMeasurement("BTC/USD", true, 0.8)
 		failed.Err = context.Canceled
 
@@ -320,14 +318,12 @@ func TestSolverStepMeasurement(t *testing.T) {
 			Label:    "BTC/USD",
 			At:       time.Unix(0, 1),
 			Maturity: 0.9,
-			Metrics: map[string]data.Metric[float64]{
-				"signed_net_fraction_divergence": {
-					Label:      "signed_net_fraction_divergence",
-					Raw:        divergenceVal,
-					Normalized: &divergenceVal,
-				},
-			},
 		}
+		valid.SetMetric("signed_net_fraction_divergence", data.Metric[float64]{
+			Label:      "signed_net_fraction_divergence",
+			Raw:        divergenceVal,
+			Normalized: &divergenceVal,
+		})
 
 		categories := solver.stepMeasurements([]*data.Measurement[float64]{failed, valid})
 		So(solver.Error(), ShouldBeNil)
@@ -335,7 +331,7 @@ func TestSolverStepMeasurement(t *testing.T) {
 	})
 
 	Convey("Given the delayed MLN ticker observed in Hindsight", t, func() {
-		solver := NewSolver(t.Context())
+		solver := NewSolver(t.Context(), data.NewArenaOwner(32))
 		newerTradeAt := time.Date(
 			2026, time.September, 1, 22, 27, 48, 118_096_000, time.UTC,
 		)
@@ -344,16 +340,14 @@ func TestSolverStepMeasurement(t *testing.T) {
 		)
 		trade := &data.Measurement[float64]{
 			ID: 5, Source: "hawkes", Label: "MLN/USD", At: newerTradeAt,
-			Metrics: map[string]data.Metric[float64]{
-				"arrival_rate": {
-					Label: "arrival_rate",
-					Raw:   9_208_790.233371342,
-				},
-			},
 		}
+		trade.SetMetric("arrival_rate", data.Metric[float64]{
+			Label: "arrival_rate",
+			Raw:   9_208_790.233371342,
+		})
 		delayedTicker := &data.Measurement[float64]{
 			ID: 6, Source: "correlation", Label: "MLN/USD",
-			At: olderTickerAt, Metrics: map[string]data.Metric[float64]{},
+			At: olderTickerAt,
 		}
 
 		So(solver.StepMeasurement(trade), ShouldNotBeNil)
@@ -368,7 +362,7 @@ func TestSolverStepMeasurement(t *testing.T) {
 	})
 
 	Convey("Given a peer whose From is after At (inverted interval)", t, func() {
-		solver := NewSolver(t.Context())
+		solver := NewSolver(t.Context(), data.NewArenaOwner(32))
 		solver.Transition(runtime.READY)
 		at := time.Unix(10, 0)
 		good := categoryMeasurement("BTC/USD", true, 0.8)
@@ -381,10 +375,8 @@ func TestSolverStepMeasurement(t *testing.T) {
 			Label:  "BTC/USD",
 			At:     at,
 			From:   at.Add(time.Second), // inverted: interval begins after event
-			Metrics: map[string]data.Metric[float64]{
-				"cohort_signed_correlation": {Raw: 0.5},
-			},
 		}
+		bad.SetMetric("cohort_signed_correlation", data.Metric[float64]{Raw: 0.5})
 
 		So(solver.StepMeasurement(good), ShouldNotBeNil)
 		categories := solver.stepMeasurements([]*data.Measurement[float64]{bad, good})
@@ -406,17 +398,14 @@ func TestSolverStepMeasurement(t *testing.T) {
 
 func TestSolverStep(t *testing.T) {
 	Convey("Complete categories survive a multi-symbol registered observation", t, func() {
-		solver := NewSolver(t.Context())
+		solver := NewSolver(t.Context(), data.NewArenaOwner(32))
 		solver.Transition(runtime.READY)
 		measurement := solver.Register()
 		measurement.Peers = []*data.Measurement[float64]{
 			categoryMeasurement("ETH/USD", true, 0.4),
 			categoryMeasurement("BTC/USD", true, 0.8),
 		}
-		result := solver.Step(
-			runtime.TestStageInputFromPeers(measurement),
-			data.NewMeasurement[float64]("category", nil),
-		)
+		result := solver.Step(measurement)
 		batches, ok := result.Result.([][]types.Category)
 		So(ok, ShouldBeTrue)
 		So(len(batches), ShouldEqual, 2)
@@ -429,7 +418,7 @@ func TestSolverStep(t *testing.T) {
 	})
 
 	Convey("Given one measurement carrying multiple signal peers", t, func() {
-		solver := NewSolver(t.Context())
+		solver := NewSolver(t.Context(), data.NewArenaOwner(32))
 		solver.Transition(runtime.READY)
 		at := time.Unix(1, 0)
 		m := solver.Register()
@@ -447,10 +436,7 @@ func TestSolverStep(t *testing.T) {
 
 		m.Peers = []*data.Measurement[float64]{cvd, hawkes}
 
-		result := solver.Step(
-			runtime.TestStageInputFromPeers(m),
-			data.NewMeasurement[float64]("category", nil),
-		)
+		result := solver.Step(m)
 
 		Convey("the observation commits one classification revision", func() {
 			So(result, ShouldNotBeNil)
@@ -460,7 +446,7 @@ func TestSolverStep(t *testing.T) {
 	})
 
 	Convey("Given measurements with sub-100ms clock differences and negative z-scores", t, func() {
-		solver := NewSolver(t.Context())
+		solver := NewSolver(t.Context(), data.NewArenaOwner(32))
 		solver.Transition(runtime.READY)
 		at1 := time.Unix(10, 0)
 		at2 := at1.Add(5 * time.Millisecond)
@@ -480,10 +466,7 @@ func TestSolverStep(t *testing.T) {
 
 		m.Peers = []*data.Measurement[float64]{cvd, hawkes}
 
-		result := solver.Step(
-			runtime.TestStageInputFromPeers(m),
-			data.NewMeasurement[float64]("category", nil),
-		)
+		result := solver.Step(m)
 
 		Convey("timestamp skew within tolerance is accepted and negative z-scores are retained", func() {
 			So(solver.Error(), ShouldBeNil)
@@ -496,7 +479,7 @@ func TestSolverStep(t *testing.T) {
 func BenchmarkSolverStepMeasurement(b *testing.B) {
 	for _, affinity := range []float64{0, 0.8} {
 		b.Run(fmt.Sprint(affinity), func(b *testing.B) {
-			solver := NewSolver(b.Context())
+		solver := NewSolver(b.Context(), data.NewArenaOwner(32))
 			defer func() {
 				if err := solver.Close(); err != nil {
 					b.Fatal(err)
@@ -514,7 +497,7 @@ func BenchmarkSolverStepMeasurement(b *testing.B) {
 
 func TestSolverBuildBatch(t *testing.T) {
 	Convey("Category competition includes the symmetric one-pseudocount prior from specification section 20", t, func() {
-		solver := NewSolver(t.Context())
+		solver := NewSolver(t.Context(), data.NewArenaOwner(32))
 		count := len(solver.categories)
 		for _, strength := range []float64{0, 0.25, 1} {
 			strengths := make([]float64, count)
@@ -547,14 +530,14 @@ func TestSolverBuildBatch(t *testing.T) {
 
 func TestSolverStepReadiness(t *testing.T) {
 	Convey("An inactive pipeline node drops input before touching processing state", t, func() {
-		node := &Solver{System: runtime.NewSystem(t.Context(), "readiness-test")}
+		node := &Solver{
+			System: runtime.NewSystem(t.Context(), "readiness-test"),
+			arena:  data.NewArenaOwner(32),
+		}
 		measurement := &data.Measurement[float64]{Label: "BTC/USD", SeqIdx: 7}
 		for _, stage := range []runtime.Stage{runtime.INIT, runtime.WAITING, runtime.ERROR, runtime.FATAL} {
 			node.Transition(stage)
-			So(node.Step(
-				runtime.TestStageInputFromPeers(measurement),
-				data.NewMeasurement[float64]("category", nil),
-			), ShouldBeNil)
+			So(node.Step(measurement), ShouldBeNil)
 			So(node.Status(), ShouldEqual, stage)
 			So(measurement.SeqIdx, ShouldEqual, 7)
 		}
@@ -562,7 +545,7 @@ func TestSolverStepReadiness(t *testing.T) {
 }
 
 func BenchmarkSolverStep(b *testing.B) {
-	solver := NewSolver(b.Context())
+	solver := NewSolver(b.Context(), data.NewArenaOwner(32))
 	solver.Transition(runtime.READY)
 	measurement := solver.Register()
 	measurement.Peers = []*data.Measurement[float64]{
@@ -572,10 +555,7 @@ func BenchmarkSolverStep(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		solver.Step(
-			runtime.TestStageInputFromPeers(measurement),
-			data.NewMeasurement[float64]("category", nil),
-		)
+		solver.Step(measurement)
 
 		if err := solver.Error(); err != nil {
 			b.Fatal(err)
@@ -585,24 +565,21 @@ func BenchmarkSolverStep(b *testing.B) {
 
 func TestSolverStepUnmeasured(t *testing.T) {
 	Convey("Inputs without a category coordinate do not publish a registration as evidence", t, func() {
-		solver := NewSolver(t.Context())
+		solver := NewSolver(t.Context(), data.NewArenaOwner(32))
 		solver.Transition(runtime.READY)
 		measurement := solver.Register()
 		peer := data.NewMeasurement[float64]("public", nil)
 		peer.Label = "BTC/USD"
 		peer.At = time.Unix(1, 0)
 		measurement.Peers = []*data.Measurement[float64]{peer}
-		So(solver.Step(
-			runtime.TestStageInputFromPeers(measurement),
-			data.NewMeasurement[float64]("category", nil),
-		), ShouldBeNil)
+		So(solver.Step(measurement), ShouldBeNil)
 		So(solver.Error(), ShouldBeNil)
 	})
 }
 
 func TestStepWritesCategoryMetricsWithoutRegister(t *testing.T) {
 	Convey("Given a live measurement without Register templates", t, func() {
-		solver := NewSolver(t.Context())
+		solver := NewSolver(t.Context(), data.NewArenaOwner(32))
 		solver.Transition(runtime.READY)
 		at := time.Unix(1, 0)
 		m := data.NewMeasurement[float64]("websocket", nil)
@@ -619,10 +596,7 @@ func TestStepWritesCategoryMetricsWithoutRegister(t *testing.T) {
 		hawkes.SetMetric("arrival_rate", data.Metric[float64]{Label: "arrival_rate", Raw: 0.6})
 
 		m.Peers = []*data.Measurement[float64]{cvd, hawkes}
-		result := solver.Step(
-			runtime.TestStageInputFromPeers(m),
-			data.NewMeasurement[float64]("category", nil),
-		)
+		result := solver.Step(m)
 		So(result, ShouldNotBeNil)
 		So(solver.Error(), ShouldBeNil)
 

@@ -28,14 +28,25 @@ it computes them, and the workload's register owns the measurement's lifetime.
 */
 type Trade struct {
 	*runtime.System
+	arena     *data.ArenaOwner
 	pipelines sync.Map
 	ID        int
 }
 
-func NewTrade(ctx context.Context) *Trade {
-	trade := &Trade{}
+func NewTrade(ctx context.Context, arena *data.ArenaOwner) *Trade {
+	trade := &Trade{
+		arena: arena,
+	}
 	trade.System = runtime.NewSystem(ctx, "cvd:trade", trade)
 	return trade
+}
+
+func (trade *Trade) Source() string {
+	return "cvd"
+}
+
+func (trade *Trade) Arena() *data.ArenaOwner {
+	return trade.arena
 }
 
 func (trade *Trade) pipelineFor(symbol string) core.Primitive {
@@ -214,63 +225,52 @@ func (trade *Trade) pipelineFor(symbol string) core.Primitive {
 }
 
 /*
-Step reads trade data (price, qty, side) from the ingress via StageInput and
-writes CVD metrics into the owned output measurement. The nomagique pipeline
-operates on the output measurement. No Pull, no Fork, no Peers mutation.
+Step reads trade data from the prior measurement and writes CVD metrics
+into a fresh measurement allocated from its own arena.
 */
-func (trade *Trade) Step(input *runtime.StageInput, output *data.Measurement[float64]) *data.Measurement[float64] {
+func (trade *Trade) Step(prior *data.Measurement[float64]) *data.Measurement[float64] {
 	if trade.Status() != runtime.READY {
 		errnie.Warn(trade.Name() + ": Step called before READY; dropping event")
 		return nil
 	}
 
-	if input == nil || input.Ingress() == nil {
+	if prior == nil || prior.Label == "" {
 		return nil
 	}
 
-	ingress := input.Ingress()
+	_, hasPrice := prior.LookupMetric("price")
+	_, hasQty := prior.LookupMetric("qty")
 
-	priceMetric, hasPrice := input.IngressMetric("price")
-	qtyMetric, hasQty := input.IngressMetric("qty")
-
-	if !hasPrice || !hasQty || input.Symbol() == "" {
+	if !hasPrice || !hasQty {
 		return nil
 	}
 
-	scratch := data.NewMeasurement[float64]("cvd:scratch", nil)
-	scratch.Label = output.Label
-	scratch.SetMetric("price", priceMetric)
-	scratch.SetMetric("qty", qtyMetric)
+	out := trade.arena.NewMeasurement(trade.Source())
+	out.Label = prior.Label
+	out.SeqIdx = prior.SeqIdx
+	out.At = prior.At
+	out.From = prior.From
+	out.Peers = []*data.Measurement[float64]{prior}
 
-	if bidMetric, hasBid := input.IngressMetric("bid"); hasBid {
-		scratch.SetMetric("best_bid", bidMetric)
+	if side, hasSide := prior.GetProvenance("side"); hasSide {
+		out.SetProvenance("side", side)
 	}
 
-	if askMetric, hasAsk := input.IngressMetric("ask"); hasAsk {
-		scratch.SetMetric("best_ask", askMetric)
+	if channel, hasCh := prior.GetProvenance("channel"); hasCh {
+		out.SetProvenance("channel", channel)
 	}
 
-	if side, hasSide := input.IngressProvenance("side"); hasSide {
-		scratch.SetProvenance("side", side)
+	if out.From.IsZero() {
+		out.From = out.At
 	}
 
-	if channel, hasCh := input.IngressProvenance("channel"); hasCh {
-		scratch.SetProvenance("channel", channel)
-	}
-
-	if ingress.From.IsZero() {
-		data.StampInterval(scratch, ingress.At, ingress.At)
-	} else {
-		data.StampInterval(scratch, ingress.At, ingress.From)
-	}
-
-	res := data.Read[*data.Measurement[float64]](trade.pipelineFor(output.Label).Next(
-		transport.NewOne(unsafe.Pointer(&scratch)).Next(nil),
+	res := data.Read[*data.Measurement[float64]](trade.pipelineFor(out.Label).Next(
+		transport.NewOne(unsafe.Pointer(&out)).Next(nil),
 	))
 
-	if res != nil {
-		data.CopyProducedFacts(res, output, "price", "qty", "best_bid", "best_ask", "bid", "ask")
+	if res == nil {
+		return out
 	}
 
-	return output
+	return res
 }

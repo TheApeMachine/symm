@@ -11,7 +11,7 @@ import (
 Tee unites an off-ramp pusher with a consumer receiver.
 */
 type Tee interface {
-	Push(*data.Measurement[float64])
+	Push(data.Publication)
 	Next() unsafe.Pointer
 	io.Closer
 }

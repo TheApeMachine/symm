@@ -28,15 +28,26 @@ where it computes them, and the workload's register owns the measurement's lifet
 */
 type Trade struct {
 	*runtime.System
+	arena     *data.ArenaOwner
 	pipelines sync.Map
 	ID        int
 }
 
-func NewTrade(ctx context.Context) *Trade {
-	trade := &Trade{}
+func NewTrade(ctx context.Context, arena *data.ArenaOwner) *Trade {
+	trade := &Trade{
+		arena: arena,
+	}
 
 	trade.System = runtime.NewSystem(ctx, "toxicity:trade", trade)
 	return trade
+}
+
+func (trade *Trade) Source() string {
+	return "toxicity"
+}
+
+func (trade *Trade) Arena() *data.ArenaOwner {
+	return trade.arena
 }
 
 func (trade *Trade) pipelineFor(symbol string) core.Primitive {
@@ -223,51 +234,52 @@ func (trade *Trade) pipelineFor(symbol string) core.Primitive {
 }
 
 /*
-Step supplies the arriving measurement to the pipeline and returns it: the
-measurement is the pipeline's state, enriched in place.
+Step reads trade data from the prior measurement and writes toxicity metrics
+into a fresh measurement allocated from its own arena.
 */
-func (trade *Trade) Step(input *runtime.StageInput, output *data.Measurement[float64]) *data.Measurement[float64] {
+func (trade *Trade) Step(prior *data.Measurement[float64]) *data.Measurement[float64] {
 	if trade.Status() != runtime.READY {
 		errnie.Warn(trade.Name() + ": Step called before READY; dropping event")
 		return nil
 	}
 
-	if input == nil || input.Ingress() == nil || input.Symbol() == "" {
+	if prior == nil || prior.Label == "" {
 		return nil
 	}
 
-	ingress := input.Ingress()
-	scratch := data.NewMeasurement[float64]("toxicity:scratch", nil)
-	scratch.Label = output.Label
-	
-	if ingress.Metrics != nil {
-		for key, metric := range ingress.Metrics {
-			scratch.SetMetric(key, metric)
-		}
+	_, hasPrice := prior.LookupMetric("price")
+	_, hasQty := prior.LookupMetric("qty")
+
+	if !hasPrice || !hasQty {
+		return nil
 	}
 
-	if side, hasSide := input.IngressProvenance("side"); hasSide {
-		scratch.SetProvenance("side", side)
+	out := trade.arena.NewMeasurement(trade.Source())
+	out.Label = prior.Label
+	out.SeqIdx = prior.SeqIdx
+	out.At = prior.At
+	out.From = prior.From
+	out.Peers = []*data.Measurement[float64]{prior}
+
+	if side, hasSide := prior.GetProvenance("side"); hasSide {
+		out.SetProvenance("side", side)
 	}
 
-	if channel, hasCh := input.IngressProvenance("channel"); hasCh {
-		scratch.SetProvenance("channel", channel)
+	if channel, hasCh := prior.GetProvenance("channel"); hasCh {
+		out.SetProvenance("channel", channel)
 	}
 
-	data.StampInterval(scratch, input.At(), input.From())
+	if out.From.IsZero() {
+		out.From = out.At
+	}
 
-	res := data.Read[*data.Measurement[float64]](trade.pipelineFor(output.Label).Next(
-		transport.NewOne(unsafe.Pointer(&scratch)).Next(nil),
+	res := data.Read[*data.Measurement[float64]](trade.pipelineFor(out.Label).Next(
+		transport.NewOne(unsafe.Pointer(&out)).Next(nil),
 	))
 
-	if res != nil {
-		res.Finalize()
-		exclude := make([]string, 0, len(ingress.Metrics))
-		for k := range ingress.Metrics {
-			exclude = append(exclude, k)
-		}
-		data.CopyProducedFacts(res, output, exclude...)
+	if res == nil {
+		return out
 	}
 
-	return output
+	return res
 }

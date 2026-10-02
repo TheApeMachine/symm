@@ -46,7 +46,7 @@ func TestCatalog_Drain(t *testing.T) {
 			measurement.Label = "BTC/USD"
 			measurement.At = time.Unix(sequence, 0)
 			measurement.SeqIdx = sequence
-			tee.Push(measurement)
+			tee.Push(data.Publication{Measurement: measurement})
 		}
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
@@ -76,11 +76,12 @@ func BenchmarkCatalog_Drain(b *testing.B) {
 
 	for batch := 0; b.Loop(); batch++ {
 		for sequence := int64(1); sequence <= 2048; sequence++ {
-			measurement := data.NewMeasurement[float64]("signal", map[string]data.Metric[float64]{"value": {Raw: float64(sequence)}})
+			measurement := data.NewMeasurement[float64]("signal", nil)
+			measurement.WriteMetric("value", float64(sequence))
 			measurement.Label = "BTC/USD"
 			measurement.At = time.Unix(sequence, 0)
 			measurement.SeqIdx = sequence
-			tee.Push(measurement)
+			tee.Push(data.Publication{Measurement: measurement})
 		}
 		if err := catalog.Drain(ctx, int64(batch+1), tee); err != nil {
 			b.Fatal(err)
@@ -95,35 +96,32 @@ func TestDeriveChannelRoutesVenueTape(t *testing.T) {
 		tee.Transition(runtime.READY)
 		defer func() { So(tee.Close(), ShouldBeNil) }()
 
-		ticker := data.NewMeasurement[float64]("websocket", map[string]data.Metric[float64]{
-			"bid": {Raw: 100},
-			"ask": {Raw: 101},
-		})
+		ticker := data.NewMeasurement[float64]("websocket", nil)
+		ticker.WriteMetric("bid", 100)
+		ticker.WriteMetric("ask", 101)
 		ticker.Label = "BTC/USD"
 		ticker.SeqIdx = 1
 		ticker.At = time.Unix(1, 0)
 		ticker.SetProvenance("channel", "ticker")
 		ticker.SetMetadata("type", "ticker")
-		tee.Push(ticker)
+		tee.Push(data.Publication{Measurement: ticker})
 
-		trade := data.NewMeasurement[float64]("websocket", map[string]data.Metric[float64]{
-			"price": {Raw: 100.5},
-			"qty":   {Raw: 0.2},
-		})
+		trade := data.NewMeasurement[float64]("websocket", nil)
+		trade.WriteMetric("price", 100.5)
+		trade.WriteMetric("qty", 0.2)
 		trade.Label = "BTC/USD"
 		trade.SeqIdx = 1
 		trade.At = time.Unix(1, 0)
 		trade.SetProvenance("channel", "trade")
 		trade.SetMetadata("type", "trade")
-		tee.Push(trade)
+		tee.Push(data.Publication{Measurement: trade})
 
-		signal := data.NewMeasurement[float64]("cvd", map[string]data.Metric[float64]{
-			"cvd": {Raw: 1.5},
-		})
+		signal := data.NewMeasurement[float64]("cvd", nil)
+		signal.WriteMetric("cvd", 1.5)
 		signal.Label = "BTC/USD"
 		signal.SeqIdx = 1
 		signal.At = time.Unix(1, 0)
-		tee.Push(signal)
+		tee.Push(data.Publication{Measurement: signal})
 
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
@@ -155,7 +153,6 @@ func TestDeriveChannelRoutesVenueTape(t *testing.T) {
 	})
 }
 
-
 func TestDrainDoesNotPolluteVenueTapeWithSignals(t *testing.T) {
 	Convey("Workspace-style signal publications with inherited channel go to Measurements", t, func() {
 		catalog := tablestest.New(t)
@@ -163,30 +160,35 @@ func TestDrainDoesNotPolluteVenueTapeWithSignals(t *testing.T) {
 		tee.Transition(runtime.READY)
 		defer func() { So(tee.Close(), ShouldBeNil) }()
 
-		raw := data.NewMeasurement[float64]("websocket", map[string]data.Metric[float64]{
-			"bid": {Raw: 100},
-			"ask": {Raw: 101},
-		})
+		raw := data.NewMeasurement[float64]("websocket", nil)
+		raw.WriteMetric("bid", 100)
+		raw.WriteMetric("ask", 101)
 		raw.Label = "BTC/USD"
 		raw.SeqIdx = 1
 		raw.At = time.Unix(1, 0)
 		raw.SetProvenance("ingress_channel", "ticker")
 		raw.SetProvenance("channel", "ticker")
 		raw.SetMetadata("type", "ticker")
-		tee.Push(raw)
+		tee.Push(data.Publication{Measurement: raw})
 
-		// Mimic liquidity:ticker after Fork+SetSource while retaining channel=ticker.
-		signal := raw.Fork()
-		signal.SetSource("liquidity:ticker")
-		signal.WriteMetric("relative_spread", 0.01)
+		// Mimic liquidity:ticker producing fresh WORM measurement while referencing raw as peer
+		signal := data.NewMeasurement[float64]("liquidity:ticker", nil)
+		signal.Label = raw.Label
+		signal.At = raw.At
 		signal.SeqIdx = 1
-		tee.Push(signal)
+		signal.SetProvenance("channel", "ticker")
+		signal.WriteMetric("relative_spread", 0.01)
+		signal.Peers = []*data.Measurement[float64]{raw}
+		tee.Push(data.Publication{Measurement: signal})
 
-		toxicity := raw.Fork()
-		toxicity.SetSource("toxicity:level3")
-		toxicity.WriteMetric("retreat_fraction:bid", 0.2)
+		toxicity := data.NewMeasurement[float64]("toxicity:level3", nil)
+		toxicity.Label = raw.Label
+		toxicity.At = raw.At
 		toxicity.SeqIdx = 1
-		tee.Push(toxicity)
+		toxicity.SetProvenance("channel", "ticker")
+		toxicity.WriteMetric("retreat_fraction:bid", 0.2)
+		toxicity.Peers = []*data.Measurement[float64]{raw}
+		tee.Push(data.Publication{Measurement: toxicity})
 
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()

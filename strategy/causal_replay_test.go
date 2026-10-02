@@ -14,7 +14,7 @@ func TestReplayCausalSupervisesInExitOrder(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		training := NewTraining(ctx, 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
+		training := NewTraining(ctx, data.NewArenaOwner(32), 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
 		training.grid.Settle()
 		training.mu.Lock()
 		training.checkpointed = true
@@ -52,7 +52,7 @@ func TestReplayDurableDoesNotEnqueue(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		training := NewTraining(ctx, 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
+		training := NewTraining(ctx, data.NewArenaOwner(32), 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
 		training.grid.Settle()
 		training.mu.Lock()
 		training.checkpointed = true
@@ -81,7 +81,7 @@ func TestGradePaperClosedDoesNotForgetOpen(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		training := NewTraining(ctx, 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
+		training := NewTraining(ctx, data.NewArenaOwner(32), 1, priced(t, "BTC/USD", 0.1), nil, nil, nil)
 		training.remember("BTC/USD", []byte{1, 2, 3})
 
 		training.gradePaperClosed("BTC/USD", []byte{1, 2, 3}, nil)

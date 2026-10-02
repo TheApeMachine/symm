@@ -4,7 +4,6 @@ import (
 	"math"
 	"time"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/symm/nomagique/data"
 )
 
@@ -47,12 +46,10 @@ func (profile ExcursionProfile) GenerateTape(startSeq int64) []*data.Measurement
 		halfSpread := profile.Spread / 2
 		bid := p - halfSpread
 		ask := p + halfSpread
-		m.Metrics = map[string]data.Metric[float64]{
-			"price":  {Label: "price", Raw: p, Standardized: &p},
-			"spread": {Label: "spread", Raw: profile.Spread, Standardized: &profile.Spread},
-			"bid":    {Label: "bid", Raw: bid, Standardized: &bid, Exact: decimal.NewFromFloat64(bid)},
-			"ask":    {Label: "ask", Raw: ask, Standardized: &ask, Exact: decimal.NewFromFloat64(ask)},
-		}
+		m.WriteStandardized("price", p)
+		m.WriteStandardized("spread", profile.Spread)
+		m.WriteStandardized("bid", bid)
+		m.WriteStandardized("ask", ask)
 		frames = append(frames, m)
 		currentSeq++
 		eventTime = eventTime.Add(100 * time.Millisecond)
@@ -185,10 +182,8 @@ func NewChopWhipsawTape(symbol string, basePrice, spread float64, ticks int) []*
 		m.SeqIdx = int64(i + 1)
 		m.Label = symbol
 		m.At = eventTime
-		m.Metrics = map[string]data.Metric[float64]{
-			"price":  {Label: "price", Raw: p, Standardized: &p},
-			"spread": {Label: "spread", Raw: spread, Standardized: &spread},
-		}
+		m.WriteStandardized("price", p)
+		m.WriteStandardized("spread", spread)
 		frames[i] = m
 		eventTime = eventTime.Add(50 * time.Millisecond)
 	}
@@ -208,10 +203,8 @@ func NewFlatQuiescentTape(symbol string, basePrice, spread float64, ticks int) [
 		m.SeqIdx = int64(i + 1)
 		m.Label = symbol
 		m.At = eventTime
-		m.Metrics = map[string]data.Metric[float64]{
-			"price":  {Label: "price", Raw: basePrice, Standardized: &basePrice},
-			"spread": {Label: "spread", Raw: spread, Standardized: &spread},
-		}
+		m.WriteStandardized("price", basePrice)
+		m.WriteStandardized("spread", spread)
 		frames[i] = m
 		eventTime = eventTime.Add(100 * time.Millisecond)
 	}
@@ -258,7 +251,7 @@ func NewInterleavedMultiAssetTape() []*data.Measurement[float64] {
 	copy(btcTape, btcBase)
 	lastBTC := btcBase[len(btcBase)-1]
 	for i := len(btcBase); i < targetLen; i++ {
-		m := lastBTC.Clone()
+		m := CloneTestMeasurement(lastBTC)
 		m.SeqIdx = int64(i + 1)
 		btcTape[i] = m
 	}
@@ -267,7 +260,7 @@ func NewInterleavedMultiAssetTape() []*data.Measurement[float64] {
 	copy(solTape, solBase)
 	lastSOL := solBase[len(solBase)-1]
 	for i := len(solBase); i < targetLen; i++ {
-		m := lastSOL.Clone()
+		m := CloneTestMeasurement(lastSOL)
 		m.SeqIdx = int64(i + 1)
 		solTape[i] = m
 	}
@@ -275,15 +268,15 @@ func NewInterleavedMultiAssetTape() []*data.Measurement[float64] {
 	interleaved := make([]*data.Measurement[float64], 0, targetLen*3)
 	var globalSeq int64 = 1
 	for i := range targetLen {
-		fBTC := btcTape[i].Clone()
+		fBTC := CloneTestMeasurement(btcTape[i])
 		fBTC.SeqIdx = globalSeq
 		globalSeq++
 
-		fETH := ethTape[i].Clone()
+		fETH := CloneTestMeasurement(ethTape[i])
 		fETH.SeqIdx = globalSeq
 		globalSeq++
 
-		fSOL := solTape[i].Clone()
+		fSOL := CloneTestMeasurement(solTape[i])
 		fSOL.SeqIdx = globalSeq
 		globalSeq++
 
@@ -291,6 +284,36 @@ func NewInterleavedMultiAssetTape() []*data.Measurement[float64] {
 	}
 
 	return interleaved
+}
+
+func CloneTestMeasurement(src *data.Measurement[float64]) *data.Measurement[float64] {
+	if src == nil {
+		return nil
+	}
+	out := &data.Measurement[float64]{
+		ID:         src.ID,
+		Label:      src.Label,
+		Source:     src.Source,
+		SeqIdx:     src.SeqIdx,
+		Timestamp:  src.Timestamp,
+		At:         src.At,
+		From:       src.From,
+		Maturity:   src.Maturity,
+		SNR:        src.SNR,
+		SNRDefined: src.SNRDefined,
+		Estimated:  src.Estimated,
+		Err:        src.Err,
+		Metrics:    make([]data.MetricEntry[float64], len(src.Metrics)),
+		Metadata:   make([]data.StringEntry, len(src.Metadata)),
+		Provenance: make([]data.StringEntry, len(src.Provenance)),
+		Peers:      make([]*data.Measurement[float64], len(src.Peers)),
+		Result:     src.Result,
+	}
+	copy(out.Metrics, src.Metrics)
+	copy(out.Metadata, src.Metadata)
+	copy(out.Provenance, src.Provenance)
+	copy(out.Peers, src.Peers)
+	return out
 }
 
 /*

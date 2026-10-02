@@ -46,6 +46,7 @@ episodes. Paper entries wait for a positive skill lower bound.
 */
 type Training struct {
 	*runtime.System
+	arena    *data.ArenaOwner
 	grid     *store.Grid
 	engine   *cognition.Engine
 	trader   *Trader
@@ -57,7 +58,7 @@ type Training struct {
 
 	mu         sync.Mutex
 	cond       *sync.Cond
-	frames     map[string][]*data.Measurement[float64]
+	frames     map[string][]litFrame
 	signatures map[string][]byte
 	entries    map[string][]byte
 	pending    []heldEpisode
@@ -103,12 +104,12 @@ type Training struct {
 	deferredLearn []heldEpisode
 	// deferredPaper holds reconciled paper grades arriving during replay.
 	deferredPaper []paperGrade
-	paperGraded          map[string]bool
-	durable              chan struct{}
-	durableOnce          sync.Once
-	wake                 chan struct{}
-	settleWake           chan struct{}
-	episodeReady         chan struct{}
+	paperGraded   map[string]bool
+	durable       chan struct{}
+	durableOnce   sync.Once
+	wake          chan struct{}
+	settleWake    chan struct{}
+	episodeReady  chan struct{}
 }
 
 type paperGrade struct {
@@ -117,9 +118,14 @@ type paperGrade struct {
 	feedback float64
 }
 
+type litFrame struct {
+	SeqIdx int64
+	Token  []byte
+}
+
 type heldEpisode struct {
 	record tables.ExcursionRecord
-	frames []*data.Measurement[float64]
+	frames []litFrame
 }
 
 type marker struct {
@@ -130,6 +136,7 @@ type marker struct {
 
 func NewTraining(
 	ctx context.Context,
+	arena *data.ArenaOwner,
 	epoch int64,
 	price *broker.Price,
 	trader *Trader,
@@ -138,6 +145,7 @@ func NewTraining(
 ) *Training {
 	training := &Training{
 		System:       runtime.NewSystem(ctx, "training", price),
+		arena:        arena,
 		grid:         store.NewGrid(),
 		engine:       cognition.NewEngine(cognition.Config{}),
 		trader:       trader,
@@ -146,7 +154,7 @@ func NewTraining(
 		tee:          tee,
 		epoch:        epoch,
 		detector:     NewDetector(price),
-		frames:       make(map[string][]*data.Measurement[float64]),
+		frames:       make(map[string][]litFrame),
 		signatures:   make(map[string][]byte),
 		entries:      make(map[string][]byte),
 		graded:       make(map[string]bool),
@@ -170,44 +178,29 @@ func NewTraining(
 	return training
 }
 
-func (training *Training) Step(input *runtime.StageInput, output *data.Measurement[float64]) *data.Measurement[float64] {
-	if input == nil {
+func (training *Training) Source() string {
+	return "training"
+}
+
+func (training *Training) Arena() *data.ArenaOwner {
+	return training.arena
+}
+
+func (training *Training) Step(prior *data.Measurement[float64]) *data.Measurement[float64] {
+	if prior == nil {
 		return nil
 	}
 
-	scratch := data.NewMeasurement[float64]("training:scratch", nil)
-	scratch.Label = output.Label
-	data.StampInterval(scratch, input.At(), input.From())
+	out := training.arena.NewMeasurement(training.Source())
+	out.Label = prior.Label
+	out.SeqIdx = prior.SeqIdx
+	out.At = prior.At
+	out.From = prior.From
+	out.Peers = []*data.Measurement[float64]{prior}
 
-	// Merge all prior-stage output metrics onto the SCRATCH measurement so
-	// training's internal methods (predict, detector) can read them from a single place.
-	for _, prior := range input.AllPriorOutputs() {
-		if prior == nil || prior.Metrics == nil {
-			continue
-		}
+	training.live(prior, out)
 
-		for key, metric := range prior.Metrics {
-			scratch.SetMetric(key, metric)
-		}
-
-		// Carry Result from cognition if available.
-		if prior.Result != nil && scratch.Result == nil {
-			scratch.Result = prior.Result
-		}
-	}
-
-	// Also merge ingress metrics.
-	if ingress := input.Ingress(); ingress != nil && ingress.Metrics != nil {
-		for key, metric := range ingress.Metrics {
-			if _, exists := scratch.LookupMetric(key); !exists {
-				scratch.SetMetric(key, metric)
-			}
-		}
-	}
-
-	training.live(input, scratch, output)
-
-	return output
+	return out
 }
 
 func (training *Training) CognitionTree() cognition.CognitionTreeExport {
@@ -257,18 +250,15 @@ func (training *Training) Run() {
 	}()
 }
 
-func (training *Training) live(input *runtime.StageInput, scratch, output *data.Measurement[float64]) {
-	var gridInventory []*data.Measurement[float64]
-	if input.Ingress() != nil {
-		gridInventory = append(gridInventory, input.Ingress())
-	}
-	gridInventory = append(gridInventory, input.AllPriorOutputs()...)
+func (training *Training) live(prior, output *data.Measurement[float64]) {
+	gridInventory := collectMeasurements(prior)
 
-	training.grid.Update(gridInventory)
-	training.retain(gridInventory)
-	training.extendSignature(gridInventory)
-	reading := training.predict(scratch, false)
-	record, err := training.detector.Observe(scratch)
+	training.grid.Update(gridInventory...)
+	token := training.grid.LitRegions(gridInventory...)
+	training.retain(prior.Label, prior.SeqIdx, token)
+	training.extendSignature(prior.Label, token)
+	reading := training.predict(prior, false)
+	record, err := training.detector.Observe(prior)
 
 	if err != nil {
 		training.Error(err)
@@ -276,51 +266,58 @@ func (training *Training) live(input *runtime.StageInput, scratch, output *data.
 
 	if record != nil {
 		record.Epoch = training.epoch
-		training.resolve(scratch.Label, record)
+		training.resolve(prior.Label, record)
 	}
 
-	training.publish(gridInventory, scratch, output, record, reading, false)
+	training.publish(gridInventory, prior, output, record, reading, false)
 	training.nudge()
 }
 
-func (training *Training) retain(measurements []*data.Measurement[float64]) {
-	if len(measurements) == 0 {
-		return
+func collectMeasurements(root *data.Measurement[float64]) []*data.Measurement[float64] {
+	if root == nil {
+		return nil
 	}
 
-	label := measurements[0].Label
-	if label == "" {
+	all := make([]*data.Measurement[float64], 0, 16)
+	visited := make(map[*data.Measurement[float64]]bool)
+	var walk func(m *data.Measurement[float64])
+	walk = func(m *data.Measurement[float64]) {
+		if m == nil || visited[m] {
+			return
+		}
+		visited[m] = true
+		if !strings.HasPrefix(m.Source, "runtime:") && !strings.HasPrefix(m.Source, "training:") {
+			all = append(all, m)
+		}
+		for _, p := range m.Peers {
+			walk(p)
+		}
+	}
+	walk(root)
+	return all
+}
+
+func (training *Training) retain(symbol string, seqIdx int64, token []byte) {
+	if symbol == "" {
 		return
 	}
 
 	training.mu.Lock()
-	for _, m := range measurements {
-		if m != nil {
-			training.frames[label] = append(training.frames[label], m.Clone())
-		}
-	}
+	training.frames[symbol] = append(training.frames[symbol], litFrame{
+		SeqIdx: seqIdx,
+		Token:  append([]byte(nil), token...),
+	})
 	training.mu.Unlock()
 }
 
-func (training *Training) extendSignature(measurements []*data.Measurement[float64]) {
-	if len(measurements) == 0 {
-		return
-	}
-
-	label := measurements[0].Label
-	if label == "" || !training.ready() {
-		return
-	}
-
-	token := training.grid.LitRegions(measurements)
-
-	if len(token) == 0 {
+func (training *Training) extendSignature(symbol string, token []byte) {
+	if symbol == "" || !training.ready() || len(token) == 0 {
 		return
 	}
 
 	training.mu.Lock()
-	training.signatures[label] = appendLitFrame(
-		append([]byte{}, training.signatures[label]...),
+	training.signatures[symbol] = appendLitFrame(
+		append([]byte{}, training.signatures[symbol]...),
 		token,
 	)
 	training.mu.Unlock()
@@ -519,7 +516,7 @@ func (training *Training) gradePaperClosed(
 	training.applyPaperGrade(symbol, entryCtx, feedback)
 }
 
-func (training *Training) applyPaperGrade(symbol string, entryCtx []byte, feedback float64) {
+func (training *Training) applyPaperGrade(_ string, entryCtx []byte, feedback float64) {
 	if len(entryCtx) == 0 || !finiteFloat(feedback) {
 		return
 	}
@@ -531,7 +528,6 @@ func (training *Training) applyPaperGrade(symbol string, entryCtx []byte, feedba
 	training.mu.Unlock()
 }
 
-
 /*
 supervise freezes model decisions BEFORE outcomes are used, then scores the
 economic result of THAT causal policy with executable bid/ask + fees.
@@ -540,6 +536,7 @@ Causal policy edge (historical):
   - A→B freeze ENTER? open hypo at executable ask+fee
   - B→C freeze EXIT? close at executable bid+fee at that decision
   - ENTER but never EXIT before C → incomplete policy return 0 (NOT oracle C)
+
 C's liquidation (execReturn) is delayed supervision for teach only.
 
 Abstain (non-Enter) = zero policy return. edge / historical returns come only
@@ -914,7 +911,7 @@ func (training *Training) replayCausal(
 
 	type openState struct {
 		signature []byte
-		frames    []*data.Measurement[float64]
+		frames    []litFrame
 	}
 
 	states := make([]openState, len(excursions))
@@ -933,18 +930,26 @@ func (training *Training) replayCausal(
 				continue
 			}
 
-			clone := event.frame.Clone()
-			inventory := []*data.Measurement[float64]{clone}
-			training.grid.Update(inventory)
+			inventory := []*data.Measurement[float64]{event.frame}
+			training.grid.Update(inventory...)
+			token := training.grid.LitRegions(inventory...)
 
-			if clone.SeqIdx < record.ExitTick {
-				states[event.idx].frames = append(states[event.idx].frames, clone)
+			if event.frame.SeqIdx < record.ExitTick {
+				states[event.idx].frames = append(states[event.idx].frames, litFrame{
+					SeqIdx: event.frame.SeqIdx,
+					Token:  token,
+				})
 			}
 
-			token := training.grid.LitRegions(inventory)
 			states[event.idx].signature = appendLitFrame(states[event.idx].signature, token)
-			reading := training.predictFrom(states[event.idx].signature, clone.Label, clone.SeqIdx, true)
-			training.publish(inventory, clone, clone, record, reading, true)
+			reading := training.predictFrom(states[event.idx].signature, event.frame.Label, event.frame.SeqIdx, true)
+
+			histOut := data.NewMeasurement[float64]("training:historical", nil)
+			histOut.Label = event.frame.Label
+			histOut.SeqIdx = event.frame.SeqIdx
+			histOut.At = event.frame.At
+			histOut.From = event.frame.From
+			training.publish(inventory, event.frame, histOut, record, reading, true)
 
 			continue
 		}
@@ -1100,7 +1105,7 @@ func (training *Training) replayVaried(episode heldEpisode) {
 	var eligible []int
 
 	for index, frame := range episode.frames {
-		if frame != nil && frame.SeqIdx < episode.record.AnchorTick {
+		if frame.SeqIdx < episode.record.AnchorTick {
 			eligible = append(eligible, index)
 		}
 	}
@@ -1814,20 +1819,20 @@ func (training *Training) stage() (float64, string, string) {
 
 func (training *Training) publish(
 	gridInventory []*data.Measurement[float64],
-	scratch *data.Measurement[float64],
+	prior *data.Measurement[float64],
 	output *data.Measurement[float64],
 	record *tables.ExcursionRecord,
 	reading marker,
 	historical bool,
 ) {
-	if training.tee == nil || output == nil {
+	if output == nil {
 		return
 	}
 
-	output.SetSource("training:live")
-
 	if historical {
 		output.SetSource("training:historical")
+	} else {
+		output.SetSource("training")
 	}
 
 	code, name, blocker := training.stage()
@@ -1846,7 +1851,7 @@ func (training *Training) publish(
 	output.SetProvenance("stage", name)
 	output.SetProvenance("stage_blocker", blocker)
 	training.writeSkill(output)
-	training.writeQuote(output, scratch)
+	training.writeQuote(output, prior)
 	training.writeMarker(output, reading, gridInventory)
 	training.writeEpisode(output, record)
 
@@ -1861,10 +1866,12 @@ func (training *Training) publish(
 		}
 	}
 
-	training.tee.Push(output)
+	if historical && training.tee != nil {
+		training.tee.Push(data.NewPublication(output, nil))
+	}
 }
 
-func (training *Training) writeSkill(clone *data.Measurement[float64]) {
+func (training *Training) writeSkill(output *data.Measurement[float64]) {
 	training.mu.Lock()
 	skill := training.skill
 	returns := training.returns
@@ -1891,25 +1898,25 @@ func (training *Training) writeSkill(clone *data.Measurement[float64]) {
 	// hist_mean_return / edge are frozen model-policy return means (abstain=0).
 	// skill.Mean is ±1 correctness — never publish it as bp.
 	if returns.Count > 0 {
-		clone.WriteMetric("hist_opportunities", returns.Count)
-		clone.WriteMetric("hist_mean_return", returns.Mean)
+		output.WriteMetric("hist_opportunities", returns.Count)
+		output.WriteMetric("hist_mean_return", returns.Mean)
 		if returns.Count > 1 {
 			dispersion := math.Sqrt(returns.M2 / (returns.Count - 1))
-			clone.WriteMetric("hist_lower_bound", returns.Mean-dispersion/math.Sqrt(returns.Count))
+			output.WriteMetric("hist_lower_bound", returns.Mean-dispersion/math.Sqrt(returns.Count))
 		}
-		clone.WriteMetric("edge", returns.Mean)
+		output.WriteMetric("edge", returns.Mean)
 	}
 
-	clone.WriteMetric("hist_correct_enter", correctEnter)
-	clone.WriteMetric("hist_missed_enter", missedEnter)
-	clone.WriteMetric("hist_false_enter", falseEnter)
-	clone.WriteMetric("hist_correct_exit", correctExit)
-	clone.WriteMetric("hist_missed_exit", missedExit)
-	clone.WriteMetric("hist_correct_wait", correctWait)
-	clone.WriteMetric("fragments_clears", clears)
-	clone.WriteMetric("fragments_fee_fail_up", feeFail)
+	output.WriteMetric("hist_correct_enter", correctEnter)
+	output.WriteMetric("hist_missed_enter", missedEnter)
+	output.WriteMetric("hist_false_enter", falseEnter)
+	output.WriteMetric("hist_correct_exit", correctExit)
+	output.WriteMetric("hist_missed_exit", missedExit)
+	output.WriteMetric("hist_correct_wait", correctWait)
+	output.WriteMetric("fragments_clears", clears)
+	output.WriteMetric("fragments_fee_fail_up", feeFail)
 	if returns.Count > 0 && spanSum > 0 {
-		clone.WriteMetric("fragment_mean_ticks", spanSum/returns.Count)
+		output.WriteMetric("fragment_mean_ticks", spanSum/returns.Count)
 	}
 
 	if len(samples) > 0 {
@@ -1917,38 +1924,38 @@ func (training *Training) writeSkill(clone *data.Measurement[float64]) {
 		for index, value := range samples {
 			parts[index] = strconv.FormatFloat(value, 'f', -1, 64)
 		}
-		clone.SetMetadata("edge_samples", strings.Join(parts, ","))
-		clone.WriteMetric("edge_sample_count", float64(len(samples)))
+		output.SetMetadata("edge_samples", strings.Join(parts, ","))
+		output.WriteMetric("edge_sample_count", float64(len(samples)))
 	}
 
-	clone.WriteMetric("fragments_up", up)
-	clone.WriteMetric("fragments_down", down)
-	clone.WriteMetric("fragments_chop", chop)
-	clone.WriteMetric("fragments_flat", flat)
-	clone.WriteMetric("fragments_unsupported", unsup)
+	output.WriteMetric("fragments_up", up)
+	output.WriteMetric("fragments_down", down)
+	output.WriteMetric("fragments_chop", chop)
+	output.WriteMetric("fragments_flat", flat)
+	output.WriteMetric("fragments_unsupported", unsup)
 
 	if trades > 0 {
-		clone.WriteMetric("fwd_paper_trades", trades)
-		clone.WriteMetric("fwd_enter_predictions", predictions)
+		output.WriteMetric("fwd_paper_trades", trades)
+		output.WriteMetric("fwd_enter_predictions", predictions)
 	}
 
 	if paper.Count > 1 {
 		dispersion := math.Sqrt(paper.M2 / (paper.Count - 1))
-		clone.WriteMetric("fwd_paper_mean_return", paper.Mean)
-		clone.WriteMetric("fwd_paper_lower_bound", paper.Mean-dispersion/math.Sqrt(paper.Count))
+		output.WriteMetric("fwd_paper_mean_return", paper.Mean)
+		output.WriteMetric("fwd_paper_lower_bound", paper.Mean-dispersion/math.Sqrt(paper.Count))
 	}
 
 	// win_rate / accuracy = skill accuracy from ±1 grades. edge (above) is
 	// economic mean policy return so UI basis (×10000) is honest bp.
-	clone.WriteMetric("resolved", skill.Count)
+	output.WriteMetric("resolved", skill.Count)
 	if training.engine != nil {
-		clone.WriteMetric("steps", float64(training.engine.Step()))
-		clone.WriteMetric("decisions", float64(training.engine.Len()))
+		output.WriteMetric("steps", float64(training.engine.Step()))
+		output.WriteMetric("decisions", float64(training.engine.Len()))
 	}
 	if skill.Count > 0 {
 		winRate := (skill.Mean + 1) / 2
-		clone.WriteMetric("win_rate", winRate)
-		clone.WriteMetric("accuracy", winRate)
+		output.WriteMetric("win_rate", winRate)
+		output.WriteMetric("accuracy", winRate)
 	}
 }
 
@@ -2070,36 +2077,33 @@ func (training *Training) noteExitGrade(correct bool) {
 }
 
 func (training *Training) writeMarker(
-	clone *data.Measurement[float64],
+	output *data.Measurement[float64],
 	reading marker,
 	measurements []*data.Measurement[float64],
 ) {
 	if reading.action == string(cognition.ActionEnter) {
-		clone.WriteMetric("frozen_prediction", 1)
-		clone.WriteMetric("action", 1)
+		output.WriteMetric("frozen_prediction", 1)
+		output.WriteMetric("action", 1)
 	}
 
 	if reading.action == string(cognition.ActionExit) {
-		clone.WriteMetric("frozen_prediction", 2)
-		clone.WriteMetric("action", 2)
+		output.WriteMetric("frozen_prediction", 2)
+		output.WriteMetric("action", 2)
 	}
 
 	if reading.entry > 0 {
-		clone.WriteMetric("agent_entry", float64(reading.entry))
+		output.WriteMetric("agent_entry", float64(reading.entry))
 	}
 
 	if reading.exit > 0 {
-		clone.WriteMetric("agent_exit", float64(reading.exit))
+		output.WriteMetric("agent_exit", float64(reading.exit))
 	}
 
-	// LitRegions must use the observed measurement (pre Source rewrite). The
-	// published clone is stamped training:* for UI routing; that Source never
-	// matched grid cells when Source was part of the key, and even after the
-	// cellKey fix the clone may carry overlay-only metrics.
-	token := training.grid.LitRegions(measurements)
+	// LitRegions must use the observed measurement (pre Source rewrite).
+	token := training.grid.LitRegions(measurements...)
 
 	if len(token) == 0 {
-		clone.WriteMetric("precursor_length", 0)
+		output.WriteMetric("precursor_length", 0)
 		return
 	}
 
@@ -2109,42 +2113,69 @@ func (training *Training) writeMarker(
 		parts[index] = strconv.Itoa(int(value))
 	}
 
-	clone.WriteMetric("precursor_length", float64(len(token)))
-	clone.SetMetadata("precursor_tokens", strings.Join(parts, ","))
-	clone.SetProvenance("precursor_tokens", strings.Join(parts, ","))
+	output.WriteMetric("precursor_length", float64(len(token)))
+	output.SetMetadata("precursor_tokens", strings.Join(parts, ","))
+	output.SetProvenance("precursor_tokens", strings.Join(parts, ","))
 }
 
-func (training *Training) writeEpisode(clone *data.Measurement[float64], record *tables.ExcursionRecord) {
+func (training *Training) writeEpisode(output *data.Measurement[float64], record *tables.ExcursionRecord) {
 	if record == nil {
 		return
 	}
 
-	clone.SetMetadata("excursion_direction", record.Direction)
-	clone.SetMetadata("excursion_clears", strconv.FormatBool(record.ClearsFriction))
-	clone.SetMetadata("excursion_start", strconv.FormatInt(record.PrecursorStartTick, 10))
-	clone.SetMetadata("excursion_ignition", strconv.FormatInt(record.AnchorTick, 10))
-	clone.SetMetadata("excursion_exit", strconv.FormatInt(record.ExitTick, 10))
+	output.SetMetadata("excursion_direction", record.Direction)
+	output.SetMetadata("excursion_clears", strconv.FormatBool(record.ClearsFriction))
+	output.SetMetadata("excursion_start", strconv.FormatInt(record.PrecursorStartTick, 10))
+	output.SetMetadata("excursion_ignition", strconv.FormatInt(record.AnchorTick, 10))
+	output.SetMetadata("excursion_exit", strconv.FormatInt(record.ExitTick, 10))
 
 	event := "developing"
-	if clone.SeqIdx >= record.ExitTick {
+	if output.SeqIdx >= record.ExitTick {
 		event = "completed"
 	}
-	clone.SetMetadata("excursion_event", event)
+	output.SetMetadata("excursion_event", event)
 
-	clone.WriteMetric("mark_a", float64(record.PrecursorStartTick))
-	clone.WriteMetric("mark_b", float64(record.AnchorTick))
-	clone.WriteMetric("mark_c", float64(record.ExitTick))
-	clone.WriteMetric("excursion_mag", record.ProfitFraction)
+	output.WriteMetric("mark_a", float64(record.PrecursorStartTick))
+	output.WriteMetric("mark_b", float64(record.AnchorTick))
+	output.WriteMetric("mark_c", float64(record.ExitTick))
+	output.WriteMetric("excursion_mag", record.ProfitFraction)
 }
 
-func (training *Training) signatureOf(frames []*data.Measurement[float64]) []byte {
-	var signature []byte
+func (training *Training) signatureOf(frames any) []byte {
+	switch f := frames.(type) {
+	case []litFrame:
+		var signature []byte
+		for _, frame := range f {
+			signature = appendLitFrame(signature, frame.Token)
+		}
+		return signature
+	case []*data.Measurement[float64]:
+		var signature []byte
+		for _, m := range f {
+			if m != nil {
+				signature = appendLitFrame(signature, training.grid.LitRegions(m))
+			}
+		}
+		return signature
+	default:
+		return nil
+	}
+}
 
-	for _, frame := range frames {
-		signature = appendLitFrame(signature, training.grid.LitRegions([]*data.Measurement[float64]{frame}))
+func (training *Training) LitFrames(measurements []*data.Measurement[float64]) []litFrame {
+	frames := make([]litFrame, 0, len(measurements))
+
+	for _, m := range measurements {
+		if m != nil {
+			token := training.grid.LitRegions(m)
+			frames = append(frames, litFrame{
+				SeqIdx: m.SeqIdx,
+				Token:  token,
+			})
+		}
 	}
 
-	return signature
+	return frames
 }
 
 func (training *Training) holding(symbol string) bool {
@@ -2215,11 +2246,30 @@ func admitted(holding bool, action cognition.Action) bool {
 	return false
 }
 
-func framesBefore(frames []*data.Measurement[float64], tick int64) []*data.Measurement[float64] {
-	chosen := make([]*data.Measurement[float64], 0)
+type FrameConstraint interface {
+	*data.Measurement[float64] | litFrame
+}
+
+func getSeqIdx[T FrameConstraint](frame T) int64 {
+	switch f := any(frame).(type) {
+	case *data.Measurement[float64]:
+		if f != nil {
+			return f.SeqIdx
+		}
+		return -1
+	case litFrame:
+		return f.SeqIdx
+	default:
+		return -1
+	}
+}
+
+func framesBefore[T FrameConstraint](frames []T, tick int64) []T {
+	chosen := make([]T, 0, len(frames))
 
 	for _, frame := range frames {
-		if frame != nil && frame.SeqIdx < tick {
+		seq := getSeqIdx(frame)
+		if seq >= 0 && seq < tick {
 			chosen = append(chosen, frame)
 		}
 	}
@@ -2231,15 +2281,12 @@ func framesBefore(frames []*data.Measurement[float64], tick int64) []*data.Measu
 framesRange keeps [start, end) by SeqIdx — B→C exit learning uses
 AnchorTick inclusive through ExitTick exclusive.
 */
-func framesRange(frames []*data.Measurement[float64], start, end int64) []*data.Measurement[float64] {
-	chosen := make([]*data.Measurement[float64], 0)
+func framesRange[T FrameConstraint](frames []T, start, end int64) []T {
+	chosen := make([]T, 0, len(frames))
 
 	for _, frame := range frames {
-		if frame == nil {
-			continue
-		}
-
-		if frame.SeqIdx >= start && frame.SeqIdx < end {
+		seq := getSeqIdx(frame)
+		if seq >= start && seq < end {
 			chosen = append(chosen, frame)
 		}
 	}
@@ -2247,11 +2294,12 @@ func framesRange(frames []*data.Measurement[float64], start, end int64) []*data.
 	return chosen
 }
 
-func framesFrom(frames []*data.Measurement[float64], tick int64) []*data.Measurement[float64] {
-	chosen := make([]*data.Measurement[float64], 0)
+func framesFrom[T FrameConstraint](frames []T, tick int64) []T {
+	chosen := make([]T, 0, len(frames))
 
 	for _, frame := range frames {
-		if frame != nil && frame.SeqIdx >= tick {
+		seq := getSeqIdx(frame)
+		if seq >= tick {
 			chosen = append(chosen, frame)
 		}
 	}
@@ -2259,12 +2307,13 @@ func framesFrom(frames []*data.Measurement[float64], tick int64) []*data.Measure
 	return chosen
 }
 
-func cloneFrames(frames []*data.Measurement[float64]) []*data.Measurement[float64] {
-	copied := make([]*data.Measurement[float64], 0, len(frames))
+func cloneFrames(frames []litFrame) []litFrame {
+	copied := make([]litFrame, len(frames))
 
-	for _, frame := range frames {
-		if frame != nil {
-			copied = append(copied, frame.Clone())
+	for i, frame := range frames {
+		copied[i] = litFrame{
+			SeqIdx: frame.SeqIdx,
+			Token:  append([]byte(nil), frame.Token...),
 		}
 	}
 
@@ -2331,7 +2380,7 @@ func assembleCanonical(rows []*data.Measurement[float64]) *data.Measurement[floa
 		}
 		if isIngressSource(row) {
 			if ingress == nil {
-				ingress = row.Clone()
+				ingress = row
 				ingress.Peers = nil
 			}
 			continue
@@ -2364,7 +2413,7 @@ func assembleCanonical(rows []*data.Measurement[float64]) *data.Measurement[floa
 		}
 	}
 
-	// Deterministic Contribute order by Source then SeqIdx (Contribute also sorts).
+	// Deterministic order by Source then SeqIdx.
 	sort.SliceStable(peers, func(i, j int) bool {
 		if peers[i].Source != peers[j].Source {
 			return peers[i].Source < peers[j].Source
@@ -2373,9 +2422,8 @@ func assembleCanonical(rows []*data.Measurement[float64]) *data.Measurement[floa
 	})
 
 	for _, peer := range peers {
-		owned := peer.Clone()
-		owned.Peers = nil
-		ingress.Contribute(owned)
+		peer.Peers = nil
+		ingress.Peers = append(ingress.Peers, peer)
 	}
 
 	return ingress

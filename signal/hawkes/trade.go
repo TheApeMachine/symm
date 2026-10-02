@@ -25,6 +25,7 @@ pipeline's shared stage registry.
 */
 type Trade struct {
 	*runtime.System
+	arena     *data.ArenaOwner
 	pipelines sync.Map
 	ID        int
 }
@@ -36,12 +37,21 @@ observation window, the excitation stage measures the arrival against the
 model fitted before it, and the refit stage folds the arrival into the
 history and re-estimates for the next one.
 */
-func NewTrade(ctx context.Context) *Trade {
-
-	trade := &Trade{}
+func NewTrade(ctx context.Context, arena *data.ArenaOwner) *Trade {
+	trade := &Trade{
+		arena: arena,
+	}
 
 	trade.System = runtime.NewSystem(ctx, "hawkes:trade", trade)
 	return trade
+}
+
+func (trade *Trade) Source() string {
+	return "hawkes"
+}
+
+func (trade *Trade) Arena() *data.ArenaOwner {
+	return trade.arena
 }
 
 /*
@@ -69,44 +79,47 @@ func (trade *Trade) pipelineFor(symbol string) core.Primitive {
 	return actual.(core.Primitive)
 }
 
-func (trade *Trade) Step(input *runtime.StageInput, output *data.Measurement[float64]) *data.Measurement[float64] {
+func (trade *Trade) Step(prior *data.Measurement[float64]) *data.Measurement[float64] {
 	if trade.Status() != runtime.READY {
 		errnie.Warn(trade.Name() + ": Step called before READY; dropping event")
 		return nil
 	}
 
-	if input == nil || input.Ingress() == nil {
+	if prior == nil || prior.Label == "" {
 		return nil
 	}
 
-	channel, _ := input.IngressProvenance("channel")
+	channel, _ := prior.GetProvenance("channel")
 	if channel != "trade" {
 		return nil
 	}
 
-	priceMetric, hasPrice := input.IngressMetric("price")
-	qtyMetric, hasQty := input.IngressMetric("qty")
+	_, hasPrice := prior.LookupMetric("price")
+	_, hasQty := prior.LookupMetric("qty")
 
-	if !hasPrice || !hasQty || input.Symbol() == "" {
+	if !hasPrice || !hasQty {
 		return nil
 	}
 
-	output.SetMetric("price", priceMetric)
-	output.SetMetric("qty", qtyMetric)
+	out := trade.arena.NewMeasurement(trade.Source())
+	out.Label = prior.Label
+	out.SeqIdx = prior.SeqIdx
+	out.At = prior.At
+	out.From = prior.From
+	out.Peers = []*data.Measurement[float64]{prior}
 
-	if side, hasSide := input.IngressProvenance("side"); hasSide {
-		output.SetProvenance("side", side)
+	if side, hasSide := prior.GetProvenance("side"); hasSide {
+		out.SetProvenance("side", side)
 	}
 
-	output.SetProvenance("channel", channel)
-	data.StampInterval(output, input.At(), input.From())
+	out.SetProvenance("channel", channel)
 
-	res := data.Read[*data.Measurement[float64]](trade.pipelineFor(output.Label).Next(
-		transport.NewOne(unsafe.Pointer(&output)).Next(nil),
+	res := data.Read[*data.Measurement[float64]](trade.pipelineFor(out.Label).Next(
+		transport.NewOne(unsafe.Pointer(&out)).Next(nil),
 	))
 
 	if res == nil {
-		return output
+		return out
 	}
 
 	return res

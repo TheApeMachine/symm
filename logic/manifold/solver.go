@@ -49,6 +49,7 @@ number of live orders rather than by the message rate.
 */
 type Solver struct {
 	*runtime.System
+	arena       *data.ArenaOwner
 	isAdvancing atomic.Bool
 	book        *broker.Book
 	dataset     *Dataset
@@ -97,8 +98,9 @@ var (
 	sellExcitationMetric = forcingInputs.Sell.Metric + ":" + forcingInputs.Sell.Side
 )
 
-func NewSolver(ctx context.Context, book *broker.Book) *Solver {
+func NewSolver(ctx context.Context, arena *data.ArenaOwner, book *broker.Book) *Solver {
 	solver := &Solver{
+		arena:   arena,
 		book:    book,
 		dataset: NewDataset(),
 		loaded:  make(map[int64]struct{}),
@@ -113,6 +115,14 @@ func NewSolver(ctx context.Context, book *broker.Book) *Solver {
 	solver.System = runtime.NewSystem(ctx, "manifold", solver.physics)
 	solver.Transition(runtime.READY)
 	return solver
+}
+
+func (solver *Solver) Source() string {
+	return "manifold"
+}
+
+func (solver *Solver) Arena() *data.ArenaOwner {
+	return solver.arena
 }
 
 /*
@@ -206,46 +216,43 @@ func (solver *Solver) run() {
 /*
 Step dispatches on the envelope kind:
 */
-func (solver *Solver) Step(input *runtime.StageInput, output *data.Measurement[float64]) *data.Measurement[float64] {
+func (solver *Solver) Step(prior *data.Measurement[float64]) *data.Measurement[float64] {
 	if solver.Status() != runtime.READY {
 		return nil
 	}
 
-	if input == nil {
-		solver.Error(errnie.Err(
-			errnie.NotFound,
-			"[manifold] Step must be invoked with a non-nil StageInput",
-			nil,
-		))
-
+	if prior == nil {
 		return nil
 	}
 
-	symbol := input.Symbol()
+	symbol := prior.Label
 
-	// Process hawkes forcing from prior-stage outputs.
-	for _, prior := range input.AllPriorOutputs() {
-		if prior == nil {
-			continue
-		}
-
-		if prior.Source == "hawkes:trade" || prior.Source == "hawkes" {
-			solver.recordForcing(prior.Label, prior)
-		}
-
-		if prior.Label == "" {
-			continue
-		}
-
-		solver.markDirty(prior.Label)
-
-		if symbol == "" {
-			symbol = prior.Label
-		}
+	var priors []*data.Measurement[float64]
+	if prior.Source == "runtime:join" {
+		priors = prior.Peers
+	} else {
+		priors = append([]*data.Measurement[float64]{prior}, prior.Peers...)
 	}
 
-	if symbol != "" {
-		output.Label = symbol
+	// Process hawkes forcing from prior-stage outputs.
+	for _, p := range priors {
+		if p == nil {
+			continue
+		}
+
+		if p.Source == "hawkes:trade" || p.Source == "hawkes" {
+			solver.recordForcing(p.Label, p)
+		}
+
+		if p.Label == "" {
+			continue
+		}
+
+		solver.markDirty(p.Label)
+
+		if symbol == "" {
+			symbol = p.Label
+		}
 	}
 
 	select {
@@ -253,48 +260,43 @@ func (solver *Solver) Step(input *runtime.StageInput, output *data.Measurement[f
 	default:
 	}
 
+	out := solver.arena.NewMeasurement(solver.Source())
+	out.Label = symbol
+	out.SeqIdx = prior.SeqIdx
+	out.At = prior.At
+	out.From = prior.From
+	out.Peers = []*data.Measurement[float64]{prior}
+
 	reading := solver.Reading()
-	output.Result = reading
+	out.Result = reading
 
 	if reading == nil {
-		return output
+		out.Finalize()
+		return out
 	}
 
-	output.WriteMetric("divergence", reading.Reading.Divergence)
-
-	output.WriteMetric("guidance_speed", reading.Reading.GuidanceSpeed)
-
-	output.WriteMetric("coherence_mag2", reading.Reading.CoherenceMag2)
-
-	output.WriteMetric("pressure_grad_norm", reading.Reading.PressureGradNorm)
-
-	output.WriteMetric("viscosity_proxy", reading.Reading.ViscosityProxy)
-
-	output.WriteMetric("kuramoto_r", reading.Reading.KuramotoR)
-
-	output.WriteMetric("kuramoto_psi", reading.Reading.KuramotoPsi)
-
-	output.WriteMetric("gas_kinetic", reading.Reading.Health.Gas.Kinetic)
-
-	output.WriteMetric("gas_internal", reading.Reading.Health.Gas.Internal)
-
-	output.WriteMetric("wave_norm", reading.Reading.Health.Wave.Norm)
-
-	output.WriteMetric("vorticity_rms", reading.Reading.Health.Gas.VorticityRMS)
-
-	output.WriteMetric("strain_rms", reading.Reading.Health.Gas.StrainRMS)
-
-	output.WriteMetric("max_mach", reading.Reading.Health.Gas.MaxMach)
+	out.WriteMetric("divergence", reading.Reading.Divergence)
+	out.WriteMetric("guidance_speed", reading.Reading.GuidanceSpeed)
+	out.WriteMetric("coherence_mag2", reading.Reading.CoherenceMag2)
+	out.WriteMetric("pressure_grad_norm", reading.Reading.PressureGradNorm)
+	out.WriteMetric("viscosity_proxy", reading.Reading.ViscosityProxy)
+	out.WriteMetric("kuramoto_r", reading.Reading.KuramotoR)
+	out.WriteMetric("kuramoto_psi", reading.Reading.KuramotoPsi)
+	out.WriteMetric("gas_kinetic", reading.Reading.Health.Gas.Kinetic)
+	out.WriteMetric("gas_internal", reading.Reading.Health.Gas.Internal)
+	out.WriteMetric("wave_norm", reading.Reading.Health.Wave.Norm)
+	out.WriteMetric("vorticity_rms", reading.Reading.Health.Gas.VorticityRMS)
+	out.WriteMetric("strain_rms", reading.Reading.Health.Gas.StrainRMS)
+	out.WriteMetric("max_mach", reading.Reading.Health.Gas.MaxMach)
 
 	if reading.State != nil {
-		output.WriteMetric("particle_count", float64(reading.State.N))
+		out.WriteMetric("particle_count", float64(reading.State.N))
 	}
 
-	output.WriteMetric("particle_thermal", reading.Reading.Health.ParticleThermal)
+	out.WriteMetric("particle_thermal", reading.Reading.Health.ParticleThermal)
+	out.WriteMetric("particle_kinetic", reading.Reading.Health.ParticleKinetic)
 
-	output.WriteMetric("particle_kinetic", reading.Reading.Health.ParticleKinetic)
-
-	maturity, snr, snrDefined, estimated := output.Maturity, output.SNR, output.SNRDefined, output.Estimated
+	maturity, snr, snrDefined, estimated := out.Maturity, out.SNR, out.SNRDefined, out.Estimated
 	if reading.State != nil && reading.State.N > 1 {
 		maturity = 1.0 - 1.0/float64(reading.State.N)
 	}
@@ -309,9 +311,10 @@ func (solver *Solver) Step(input *runtime.StageInput, output *data.Measurement[f
 			estimated = true
 		}
 	}
-	output.SetQuality(maturity, snr, snrDefined, estimated)
+	out.SetQuality(maturity, snr, snrDefined, estimated)
+	out.Finalize()
 
-	return output
+	return out
 }
 
 /*
