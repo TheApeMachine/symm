@@ -3,10 +3,11 @@ package category
 import (
 	"context"
 	"fmt"
-	"github.com/theapemachine/symm/nomagique/runtime"
 	"math"
 	"testing"
 	"time"
+
+	"github.com/theapemachine/symm/nomagique/runtime"
 
 	. "github.com/smartystreets/goconvey/convey"
 
@@ -42,25 +43,6 @@ func categoryMeasurement(symbol string, normalized bool, value float64) *data.Me
 	}
 	m.SetMetric("signed_net_fraction_zscore", metric)
 	return m
-}
-
-func TestCategorySolverSingleSource(t *testing.T) {
-	Convey("Given one eligible metric supporting aggressive_drive", t, func() {
-		solver := NewSolver(context.Background(), data.NewArenaOwner(32))
-		state := solver.symbolState("BTC/USD")
-		measurement := categoryMeasurement("BTC/USD", true, 0.8)
-		So(solver.accumulate(state, measurement), ShouldBeNil)
-
-		Convey("the dominant verdict is aggressive_drive", func() {
-			byCategory, measured := solver.aggregate(state)
-			So(measured, ShouldBeTrue)
-
-			batch, err := solver.classify("BTC/USD", measurement.At, byCategory)
-			So(err, ShouldBeNil)
-			So(len(batch), ShouldBeGreaterThan, 0)
-			So(batch[0].Type, ShouldEqual, types.AggressiveDrive)
-		})
-	})
 }
 
 func TestCategorySolverVersionMonotonic(t *testing.T) {
@@ -106,98 +88,9 @@ func TestCategorySolverVersionMonotonic(t *testing.T) {
 	})
 }
 
-func TestCategorySolverLatestStateReplacement(t *testing.T) {
-	Convey("Given the same coordinate published many times", t, func() {
-		solver := NewSolver(context.Background(), data.NewArenaOwner(32))
-		state := solver.symbolState("BTC/USD")
+// signed_net_fraction_divergence also maps to aggressive_drive.
 
-		for index := 0; index < 100; index++ {
-			So(solver.accumulate(
-				state, categoryMeasurement("BTC/USD", true, 0.8),
-			), ShouldBeNil)
-		}
-
-		Convey("one coordinate is one current vote, not one hundred", func() {
-			items := state.Coordinates()[coordinate{Source: "cvd", Metric: "signed_net_fraction_zscore"}]
-			So(items.Affinity, ShouldEqual, 0.8)
-
-			byCategory, _ := solver.aggregate(state)
-			So(byCategory[types.AggressiveDrive], ShouldHaveLength, 1)
-		})
-	})
-}
-
-func TestCategorySolverCorroboration(t *testing.T) {
-	Convey("Given two distinct coordinates supporting aggressive_drive", t, func() {
-		solver := NewSolver(context.Background(), data.NewArenaOwner(32))
-		state := solver.symbolState("BTC/USD")
-		So(solver.accumulate(
-			state, categoryMeasurement("BTC/USD", true, 0.64),
-		), ShouldBeNil)
-		// signed_net_fraction_divergence also maps to aggressive_drive.
-		divergenceVal := 0.16
-		m2 := &data.Measurement[float64]{
-			ID:       2,
-			Source:   "cvd",
-			Label:    "BTC/USD",
-			At:       time.Unix(0, 1),
-			Maturity: 0.8,
-		}
-		m2.SetMetric("signed_net_fraction_divergence", data.Metric[float64]{
-			Label:      "signed_net_fraction_divergence",
-			Raw:        divergenceVal,
-			Normalized: &divergenceVal,
-		})
-		So(solver.accumulate(state, m2), ShouldBeNil)
-
-		Convey("strength is the geometric mean of the affinities", func() {
-			byCategory, _ := solver.aggregate(state)
-			strength, err := categoryStrength(byCategory[types.AggressiveDrive])
-			So(err, ShouldBeNil)
-			// geomean(0.64, 0.16) = 0.32
-			So(strength, ShouldAlmostEqual, 0.32)
-		})
-	})
-}
-
-func TestCategorySolverPerSymbolIsolation(t *testing.T) {
-	Convey("Given interleaved measurements for two symbols", t, func() {
-		solver := NewSolver(context.Background(), data.NewArenaOwner(32))
-		stateA := solver.symbolState("A/USD")
-		stateB := solver.symbolState("B/USD")
-
-		So(solver.accumulate(
-			stateA, categoryMeasurement("A/USD", true, 0.8),
-		), ShouldBeNil)
-		So(solver.accumulate(
-			stateB, categoryMeasurement("B/USD", true, 0.9),
-		), ShouldBeNil)
-
-		Convey("each symbol holds only its own current evidence", func() {
-			coordsA := stateA.Coordinates()
-			coordsB := stateB.Coordinates()
-			_, foundA := coordsA[coordinate{Source: "cvd", Metric: "signed_net_fraction_zscore"}]
-			_, foundB := coordsB[coordinate{Source: "cvd", Metric: "signed_net_fraction_zscore"}]
-			So(foundA, ShouldBeTrue)
-			So(foundB, ShouldBeTrue)
-
-			So(len(coordsA), ShouldEqual, 1)
-			So(len(coordsB), ShouldEqual, 1)
-		})
-	})
-}
-
-func TestCategorySolverMissingEvidence(t *testing.T) {
-	Convey("Given a symbol with no eligible evidence", t, func() {
-		solver := NewSolver(context.Background(), data.NewArenaOwner(32))
-		state := solver.symbolState("BTC/USD")
-
-		Convey("classification is not measured", func() {
-			_, measured := solver.aggregate(state)
-			So(measured, ShouldBeFalse)
-		})
-	})
-}
+// geomean(0.64, 0.16) = 0.32
 
 func TestCategorySolverDeterministicTie(t *testing.T) {
 	Convey("Given equal evidence across categories", t, func() {
@@ -223,34 +116,6 @@ func TestCategorySolverDeterministicTie(t *testing.T) {
 				So(first[index].Type, ShouldEqual, second[index].Type)
 				So(first[index].Confidence, ShouldAlmostEqual, second[index].Confidence)
 			}
-		})
-	})
-}
-
-func TestCategorySolverUncertaintyIsDistributionLevel(t *testing.T) {
-	Convey("Given a supported category", t, func() {
-		solver := NewSolver(context.Background(), data.NewArenaOwner(32))
-		state := solver.symbolState("BTC/USD")
-		measurement := categoryMeasurement("BTC/USD", true, 0.8)
-		So(solver.accumulate(state, measurement), ShouldBeNil)
-
-		byCategory, measured := solver.aggregate(state)
-		So(measured, ShouldBeTrue)
-
-		batch, err := solver.classify("BTC/USD", measurement.At, byCategory)
-		So(err, ShouldBeNil)
-		So(len(batch), ShouldBeGreaterThan, 0)
-
-		Convey("every entry carries the same distribution-level uncertainty", func() {
-			first := batch[0].Uncertainty
-
-			for _, entry := range batch[1:] {
-				So(entry.Uncertainty, ShouldAlmostEqual, first)
-			}
-
-			Convey("uncertainty is not 1 - confidence", func() {
-				So(batch[0].Uncertainty, ShouldNotAlmostEqual, 1.0-batch[0].Confidence)
-			})
 		})
 	})
 }
@@ -479,7 +344,7 @@ func TestSolverStep(t *testing.T) {
 func BenchmarkSolverStepMeasurement(b *testing.B) {
 	for _, affinity := range []float64{0, 0.8} {
 		b.Run(fmt.Sprint(affinity), func(b *testing.B) {
-		solver := NewSolver(b.Context(), data.NewArenaOwner(32))
+			solver := NewSolver(b.Context(), data.NewArenaOwner(32))
 			defer func() {
 				if err := solver.Close(); err != nil {
 					b.Fatal(err)

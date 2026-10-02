@@ -415,29 +415,6 @@ func (solver *Solver) symbolState(symbol string) *categoryState {
 	return loaded.(*categoryState)
 }
 
-func (solver *Solver) accumulate(
-	state *categoryState,
-	measurement *data.Measurement[float64],
-) error {
-	for {
-		oldPtr := state.coordinates.Load()
-		newCoords := make(map[coordinate]evidenceItem)
-
-		if oldPtr != nil {
-			for key, val := range *oldPtr {
-				newCoords[key] = val
-			}
-		}
-
-		if err := solver.accumulateCoords(newCoords, measurement); err != nil {
-			return err
-		}
-
-		if state.coordinates.CompareAndSwap(oldPtr, &newCoords) {
-			return nil
-		}
-	}
-}
 
 func (solver *Solver) accumulateCoords(
 	coords map[coordinate]evidenceItem,
@@ -571,18 +548,6 @@ fold over, so they reduce it without knowing category identity.
 */
 func lift(strengths []float64) []float64 {
 	return append([]float64(nil), strengths...)
-}
-
-func (solver *Solver) aggregate(
-	state *categoryState,
-) (map[types.CategoryType][]evidenceItem, bool) {
-	coordsPtr := state.coordinates.Load()
-
-	if coordsPtr == nil {
-		return nil, false
-	}
-
-	return solver.aggregateCoords(*coordsPtr)
 }
 
 func (solver *Solver) aggregateCoords(

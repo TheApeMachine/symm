@@ -332,18 +332,6 @@ func sanitizeStatement(statement string) string {
 	return selectWithoutSelection.ReplaceAllString(statement, "SELECT NULL FROM")
 }
 
-/*
-Query runs a scalar or regular result set query using the standard sql interface,
-bypassing Arrow IPC. This is useful for fetching bounds or simple counts.
-*/
-func (warehouse *Warehouse) Query(ctx context.Context, statement string) (*sql.Rows, error) {
-	conn, err := warehouse.session(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	return conn.QueryContext(ctx, statement)
-}
 
 /*
 Execute runs one statement and returns its result as an Apache Arrow IPC

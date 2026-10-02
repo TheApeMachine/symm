@@ -39,7 +39,7 @@ func TestWeightedMomentsMerge(t *testing.T) {
 func BenchmarkWeightedMomentsUpdate(b *testing.B) {
 	var moments statistic.WeightedMoments
 	b.ReportAllocs()
-	for index := 0; index < b.N; index++ {
+	for index := 0; b.Loop(); index++ {
 		moments.Update(float64(index%100), float64(index%3+1))
 	}
 }

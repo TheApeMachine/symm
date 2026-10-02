@@ -327,65 +327,43 @@ func TestGridPostSettledFreezing(t *testing.T) {
 	})
 }
 
-func TestGridSettlesWhenPartitionOutlastsCompleted(t *testing.T) {
-	Convey("Given co-moving metrics forming coherent regions", t, func() {
+func TestGridSettlesWithoutPartitionChange(t *testing.T) {
+	Convey("Given a complete multi-metric observation on the first update preserving a valid multi-cell partition", t, func() {
 		grid := store.NewGrid()
+		std := 1.0
 
-		// Initial phase: 1 repeated metric (constant partition, never changes)
-		for tick := 0; tick < 12; tick++ {
+		// Complete multi-metric observation on the FIRST Grid update
+		for tick := 0; tick < 10; tick++ {
 			meas := data.NewMeasurement[float64]("calm", nil)
 			meas.Label = "BTC/USD"
-			meas.SetMetric("mid", data.Metric[float64]{Label: "mid", Raw: 100 + float64(tick%2)})
-			grid.Update(meas)
-		}
-
-		So(grid.Settled, ShouldBeFalse)
-		So(grid.LongestPartitionRun, ShouldEqual, 0)
-		So(grid.PartitionRun, ShouldBeGreaterThan, 1)
-
-		Convey("A later partition settles only after it outlasts that completed run and achieves dimensional compression", func() {
-			// Step to transition from "mid" to the 4-metric co-moving clusters
-			setup := data.NewMeasurement[float64]("calm", nil)
-			setup.Label = "BTC/USD"
-			std := 1.0
-			setup.SetMetric("a1", data.Metric[float64]{Label: "a1", Raw: 0.5, Standardized: &std})
-			setup.SetMetric("a2", data.Metric[float64]{Label: "a2", Raw: 0.5, Standardized: &std})
-			setup.SetMetric("b1", data.Metric[float64]{Label: "b1", Raw: -0.5, Standardized: &std})
-			setup.SetMetric("b2", data.Metric[float64]{Label: "b2", Raw: -0.5, Standardized: &std})
-			grid.Update(setup)
-
-			targetRun := grid.LongestPartitionRun
-
-			for tick := 0; tick < targetRun; tick++ {
-				meas := data.NewMeasurement[float64]("calm", nil)
-				meas.Label = "BTC/USD"
-				vUp := float64(tick + 1)
-				vDown := -float64(tick + 1)
-				meas.SetMetric("a1", data.Metric[float64]{Label: "a1", Raw: vUp, Standardized: &std})
-				meas.SetMetric("a2", data.Metric[float64]{Label: "a2", Raw: vUp, Standardized: &std})
-				meas.SetMetric("b1", data.Metric[float64]{Label: "b1", Raw: vDown, Standardized: &std})
-				meas.SetMetric("b2", data.Metric[float64]{Label: "b2", Raw: vDown, Standardized: &std})
-				grid.Update(meas)
-				So(grid.Settled, ShouldBeFalse)
-			}
-
-			// Run one more step to outlast the completed run
-			meas := data.NewMeasurement[float64]("calm", nil)
-			meas.Label = "BTC/USD"
-			vUp := float64(targetRun + 2)
-			vDown := -float64(targetRun + 2)
+			vUp := float64(tick + 1)
+			vDown := -float64(tick + 1)
 			meas.SetMetric("a1", data.Metric[float64]{Label: "a1", Raw: vUp, Standardized: &std})
 			meas.SetMetric("a2", data.Metric[float64]{Label: "a2", Raw: vUp, Standardized: &std})
 			meas.SetMetric("b1", data.Metric[float64]{Label: "b1", Raw: vDown, Standardized: &std})
 			meas.SetMetric("b2", data.Metric[float64]{Label: "b2", Raw: vDown, Standardized: &std})
 			grid.Update(meas)
 
-			So(grid.LongestPartitionRun, ShouldEqual, targetRun)
-			So(grid.PartitionRun, ShouldBeGreaterThan, grid.LongestPartitionRun)
-			So(grid.Settled, ShouldBeTrue)
-		})
+			if grid.Settled {
+				break
+			}
+		}
+
+		So(grid.Settled, ShouldBeTrue)
+		So(grid.LongestPartitionRun, ShouldEqual, 0)
+		So(grid.PartitionRun, ShouldBeGreaterThan, 1)
+		So(grid.TotalCells(), ShouldEqual, 4)
+		So(grid.BoundCells(), ShouldEqual, 4)
+		So(grid.UnboundCells(), ShouldEqual, 0)
+		So(grid.TotalRegions(), ShouldEqual, 2)
+
+		within, between := grid.WithinVsBetweenCoherence()
+		So(within, ShouldBeGreaterThan, 0)
+		So(within, ShouldBeGreaterThan, between)
+		So(grid.SettlementCandidateReason(), ShouldEqual, "structurally stable regional partition")
 	})
 }
+
 
 func TestGridCellIdentity(t *testing.T) {
 	Convey("Given the same metric name on two symbols", t, func() {

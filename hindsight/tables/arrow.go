@@ -62,93 +62,57 @@ func fillMeasurements(
 	provenanceVal := provenanceBuilder.ItemBuilder().(*array.StringBuilder)
 
 	for _, measurement := range measurements {
-		epochBuilder.Append(epoch)
+		epochBuilder.Append(measurement.Epoch)
 		tickBuilder.Append(measurement.SeqIdx)
 		sourceBuilder.Append(measurement.Source)
 		symbolBuilder.Append(measurement.Label)
-
-		if measurement.At.IsZero() {
-			venueAtBuilder.Append(arrow.Timestamp(time.Now().UTC().UnixMicro()))
-		}
-
-		if !measurement.At.IsZero() {
-			venueAtBuilder.Append(arrow.Timestamp(measurement.At.UTC().UnixMicro()))
-		}
-
+		venueAtBuilder.Append(arrow.Timestamp(measurement.At.UTC().UnixNano()))
 		maturityBuilder.Append(measurement.Maturity)
-
-		if measurement.SNRDefined {
-			snrBuilder.Append(measurement.SNR)
-		}
-
-		if !measurement.SNRDefined {
-			snrBuilder.AppendNull()
-		}
-
+		snrBuilder.Append(measurement.SNR)
 		snrDefinedBuilder.Append(measurement.SNRDefined)
 
-		hasMetrics := false
+		metricsBuilder.Append(true)
 		measurement.RangeMetrics(func(metricKey string, metricVal data.Metric[float64]) bool {
-			hasMetrics = true
-			return false
+			metricsKey.Append(metricKey)
+			metricsVal.Append(metricVal.Raw)
+			return true
 		})
 
-		if !hasMetrics {
-			metricsBuilder.AppendNull()
-		} else {
-			metricsBuilder.Append(true)
-
-			measurement.RangeMetrics(func(metricKey string, metricVal data.Metric[float64]) bool {
-				metricsKey.Append(metricKey)
-				metricsVal.Append(metricVal.Raw)
-				return true
-			})
+		metadataBuilder.Append(true)
+		for _, entry := range measurement.Metadata {
+			metadataKey.Append(entry.Key)
+			metadataVal.Append(entry.Value)
 		}
 
-		if len(measurement.Metadata) == 0 {
-			metadataBuilder.AppendNull()
-		} else {
-			metadataBuilder.Append(true)
-
-			for _, entry := range measurement.Metadata {
-				metadataKey.Append(entry.Key)
-				metadataVal.Append(entry.Value)
-			}
+		provenanceBuilder.Append(true)
+		for _, entry := range measurement.Provenance {
+			provenanceKey.Append(entry.Key)
+			provenanceVal.Append(entry.Value)
 		}
 
-		if len(measurement.Provenance) == 0 && !hasMetrics && measurement.Err == nil && !measurement.Estimated {
-			provenanceBuilder.AppendNull()
-		} else {
-			provenanceBuilder.Append(true)
-
-			for _, entry := range measurement.Provenance {
-				provenanceKey.Append(entry.Key)
-				provenanceVal.Append(entry.Value)
-			}
-			if measurement.Err != nil {
-				provenanceKey.Append("symm:error")
-				provenanceVal.Append(fmt.Sprintf("%v", measurement.Err))
-			}
-			provenanceKey.Append("symm:estimated")
-			provenanceVal.Append(strconv.FormatBool(measurement.Estimated))
-			measurement.RangeMetrics(func(key string, metric data.Metric[float64]) bool {
-				if metric.Exact != nil {
-					provenanceKey.Append("symm:exact:" + key)
-					provenanceVal.Append(metric.Exact.String())
-				}
-
-				if metric.Standardized != nil {
-					provenanceKey.Append("symm:standardized:" + key)
-					provenanceVal.Append(strconv.FormatFloat(*metric.Standardized, 'g', -1, 64))
-				}
-
-				if metric.Normalized != nil {
-					provenanceKey.Append("symm:normalized:" + key)
-					provenanceVal.Append(strconv.FormatFloat(*metric.Normalized, 'g', -1, 64))
-				}
-				return true
-			})
+		if measurement.Err != nil {
+			provenanceKey.Append("symm:error")
+			provenanceVal.Append(fmt.Sprintf("%v", measurement.Err))
 		}
+		provenanceKey.Append("symm:estimated")
+		provenanceVal.Append(strconv.FormatBool(measurement.Estimated))
+		measurement.RangeMetrics(func(key string, metric data.Metric[float64]) bool {
+			if metric.Exact != nil {
+				provenanceKey.Append("symm:exact:" + key)
+				provenanceVal.Append(metric.Exact.String())
+			}
+
+			if metric.Standardized != nil {
+				provenanceKey.Append("symm:standardized:" + key)
+				provenanceVal.Append(strconv.FormatFloat(*metric.Standardized, 'g', -1, 64))
+			}
+
+			if metric.Normalized != nil {
+				provenanceKey.Append("symm:normalized:" + key)
+				provenanceVal.Append(strconv.FormatFloat(*metric.Normalized, 'g', -1, 64))
+			}
+			return true
+		})
 	}
 }
 
@@ -162,7 +126,8 @@ func ReadMeasurements(batch arrow.RecordBatch) ([]*data.Measurement[float64], er
 		cols[batch.ColumnName(colIdx)] = batch.Column(colIdx)
 	}
 
-	tickCol, _ := cols["tick"].(*array.Int64)
+	epochCol, _ := cols["epoch"].(*array.Int64)
+	seqIdxCol, _ := cols["seqIdx"].(*array.Int64)
 	sourceCol, _ := cols["source"].(*array.String)
 	symbolCol, _ := cols["symbol"].(*array.String)
 	venueAtCol, _ := cols["venue_at"].(*array.Timestamp)
@@ -182,8 +147,12 @@ func ReadMeasurements(batch arrow.RecordBatch) ([]*data.Measurement[float64], er
 
 		measurement := data.NewMeasurement[float64](source, nil)
 
-		if tickCol != nil && !tickCol.IsNull(rowIdx) {
-			measurement.SeqIdx = tickCol.Value(rowIdx)
+		if epochCol != nil && !epochCol.IsNull(rowIdx) {
+			measurement.Epoch = epochCol.Value(rowIdx)
+		}
+
+		if seqIdxCol != nil && !seqIdxCol.IsNull(rowIdx) {
+			measurement.SeqIdx = seqIdxCol.Value(rowIdx)
 		}
 
 		if symbolCol != nil && !symbolCol.IsNull(rowIdx) {
@@ -254,8 +223,8 @@ func ReadMeasurements(batch arrow.RecordBatch) ([]*data.Measurement[float64], er
 					continue
 				}
 
-				if strings.HasPrefix(key, "symm:exact:") {
-					metricKey := strings.TrimPrefix(key, "symm:exact:")
+				if after, ok :=strings.CutPrefix(key, "symm:exact:"); ok  {
+					metricKey := after
 					exact, err := decimal.NewFromString(value)
 
 					if err != nil {
@@ -268,8 +237,8 @@ func ReadMeasurements(batch arrow.RecordBatch) ([]*data.Measurement[float64], er
 					continue
 				}
 
-				if strings.HasPrefix(key, "symm:standardized:") {
-					metricKey := strings.TrimPrefix(key, "symm:standardized:")
+				if after, ok :=strings.CutPrefix(key, "symm:standardized:"); ok  {
+					metricKey := after
 					parsed, err := strconv.ParseFloat(value, 64)
 
 					if err != nil {
@@ -282,8 +251,8 @@ func ReadMeasurements(batch arrow.RecordBatch) ([]*data.Measurement[float64], er
 					continue
 				}
 
-				if strings.HasPrefix(key, "symm:normalized:") {
-					metricKey := strings.TrimPrefix(key, "symm:normalized:")
+				if after, ok :=strings.CutPrefix(key, "symm:normalized:"); ok  {
+					metricKey := after
 					parsed, err := strconv.ParseFloat(value, 64)
 
 					if err != nil {
@@ -398,7 +367,7 @@ func measurementRecords(
 
 	recordBuilder.Reserve(len(measurements))
 	fillMeasurements(recordBuilder, measurements, epoch)
-	batch := recordBuilder.NewRecord()
+	batch := recordBuilder.NewRecordBatch()
 	defer batch.Release()
 
 	reader, err := array.NewRecordReader(converted, []arrow.RecordBatch{batch})
@@ -426,7 +395,7 @@ func runRecords(schema *iceberg.Schema, runs []Run) (array.RecordReader, error) 
 
 	recordBuilder.Reserve(len(runs))
 	fillRuns(recordBuilder, runs)
-	batch := recordBuilder.NewRecord()
+	batch := recordBuilder.NewRecordBatch()
 	defer batch.Release()
 
 	reader, err := array.NewRecordReader(converted, []arrow.RecordBatch{batch})
@@ -666,7 +635,7 @@ func excursionRecords(
 
 	recordBuilder.Reserve(len(excursions))
 	fillExcursions(recordBuilder, excursions, epoch)
-	batch := recordBuilder.NewRecord()
+	batch := recordBuilder.NewRecordBatch()
 	defer batch.Release()
 
 	reader, err := array.NewRecordReader(converted, []arrow.RecordBatch{batch})

@@ -325,16 +325,6 @@ func NewLevel3Subscription(symbols []string, token string) Level3Subscription {
 	}
 }
 
-func NewLevel3Unsubscription(symbols []string) Level3Subscription {
-	return Level3Subscription{
-		Method: "unsubscribe",
-		Params: Level3SubscriptionParams{
-			Channel: "level3",
-			Symbol:  symbols,
-		},
-	}
-}
-
 func (subscription Level3Subscription) MarshalJSON() ([]byte, error) {
 	type alias Level3Subscription
 	return sonic.Marshal((*alias)(&subscription))

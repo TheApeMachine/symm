@@ -35,9 +35,9 @@ func (catalog *Catalog) Drain(
 		// Bound each batch by the observations already waiting, so continuous
 		// ingress cannot postpone commits indefinitely.
 		for remaining := tee.Pending(); remaining > 0; remaining-- {
-			pub, ok := tee.Dequeue()
+			pub := data.To[*data.Publication](tee.Next())
 
-			if !ok || pub.Measurement == nil {
+			if pub == nil || pub.Measurement == nil {
 				return nil
 			}
 
@@ -45,6 +45,7 @@ func (catalog *Catalog) Drain(
 
 			if measurement.SeqIdx <= 0 {
 				pub.Release()
+
 				errnie.Error(errnie.Err(
 					errnie.Validation,
 					fmt.Sprintf("[catalog] observation (source=%s, label=%s, id=%d, seq=%d, at=%v) has no workspace sequence", measurement.Source, measurement.Label, measurement.ID, measurement.SeqIdx, measurement.At),
@@ -59,6 +60,7 @@ func (catalog *Catalog) Drain(
 
 				if err != nil {
 					pub.Release()
+
 					errnie.Error(errnie.Err(
 						errnie.Validation,
 						fmt.Sprintf("[catalog] observation (source=%s, label=%s, id=%d, seq=%d, at=%v) has no workspace sequence", measurement.Source, measurement.Label, measurement.ID, measurement.SeqIdx, measurement.At),
@@ -73,7 +75,7 @@ func (catalog *Catalog) Drain(
 				}
 			}
 
-			writer.Add(deriveChannel(measurement), pub)
+			writer.Add(deriveChannel(measurement), *pub)
 		}
 
 		return nil

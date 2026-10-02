@@ -66,14 +66,6 @@ func (nonce *AuthNonce) Next() string {
 	return strconv.FormatInt(next, 10)
 }
 
-/*
-Bump jumps the high-water by one second of nanoseconds after an Invalid nonce
-rejection so the retry clears anything Kraken still holds, then persists.
-*/
-func (nonce *AuthNonce) Bump() {
-	next := nonce.highWater.Add(int64(time.Second))
-	nonce.persistValue(next, true)
-}
 
 /*
 processAuthNonce returns the process-wide generator shared by authenticated

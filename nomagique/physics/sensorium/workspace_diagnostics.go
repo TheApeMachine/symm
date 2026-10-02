@@ -5,19 +5,7 @@ import (
 	"math"
 )
 
-func (fluid *workspace) sampleWaveDensity(x []float32) (float64, error) {
-	pos := [3]float64{float64(x[0]), float64(x[1]), float64(x[2])}
-	dims := [3]int{fluid.domain.GridX, fluid.domain.GridY, fluid.domain.GridZ}
-	re, _, err := samplePeriodicTrilinear(fluid.psiRe.Float32Slice(), pos, dims, fluid.domain.GridSpacing())
-	if err != nil {
-		return 0, err
-	}
-	im, _, err := samplePeriodicTrilinear(fluid.psiIm.Float32Slice(), pos, dims, fluid.domain.GridSpacing())
-	if err != nil {
-		return 0, err
-	}
-	return re*re + im*im, nil
-}
+
 
 func (fluid *workspace) accountWaveHead(head int, oldRe, oldIm []float32) error {
 	n := int(fluid.domain.MaxModes)

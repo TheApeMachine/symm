@@ -37,12 +37,13 @@ Hot data is stored in compact arena-backed slices instead of GC heap maps.
 */
 type Measurement[T any] struct {
 	ID         int               `json:"id"`
+	Epoch      int64             `json:"epoch"`
 	Label      string            `json:"label"`
 	Source     string            `json:"source"`
 	SeqIdx     int64             `json:"seqIdx"`
 	Timestamp  int64             `json:"timestamp"`
 	At         time.Time         `json:"at"`
-	From       time.Time         `json:"from,omitempty"`
+	From       time.Time         `json:"from"`
 	Maturity   float64           `json:"maturity"`
 	SNR        float64           `json:"snr"`
 	SNRDefined bool              `json:"snrDefined"`

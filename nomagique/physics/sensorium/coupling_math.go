@@ -18,52 +18,9 @@ func debitHeadBudget(initial float32, spent float64) (float32, error) {
 	return remaining, nil
 }
 
-type pilotReplacement struct {
-	Position, Velocity [3]float32
-	Work, Speed, Cells float64
-}
 
-// Gas has already transported x by v*dt. Only the change in prescribed pilot
-// drift is an additional displacement/impulse. Both native backends use this
-// shared host coupling operator; there is no backend-selecting CPU fallback.
-func replacePilotDrift(x, v, oldGuide, newGuide [3]float32, mass, dt, dx, cellLimit float64, extent [3]float64) (pilotReplacement, error) {
-	out := pilotReplacement{}
-	if !isPositiveFinite(mass) || !finite(dt) || dt < 0 || !isPositiveFinite(dx) || !isPositiveFinite(cellLimit) {
-		return out, fmt.Errorf("invalid pilot coupling parameters")
-	}
-	var speed2, displacement2 float64
-	for a := 0; a < 3; a++ {
-		if !finite(float64(x[a])) || !finite(float64(v[a])) || !finite(float64(oldGuide[a])) || !finite(float64(newGuide[a])) || !isPositiveFinite(extent[a]) {
-			return out, fmt.Errorf("invalid pilot coupling state on axis %d", a)
-		}
-		delta := float64(newGuide[a]) - float64(oldGuide[a])
-		vi := float64(v[a])
-		vn := float32(vi + delta)
-		// Use the stored float32 velocity to ledger actual round-off too.
-		out.Work += .5 * mass * (float64(vn) - vi) * (float64(vn) + vi)
-		out.Velocity[a] = vn
-		position := math.Mod(float64(x[a])+dt*delta, extent[a])
-		if position < 0 {
-			position += extent[a]
-		}
-		out.Position[a] = float32(position)
-		if float64(out.Position[a]) == extent[a] {
-			out.Position[a] = 0
-		} // rounded periodic endpoint
-		if !finite(float64(vn)) || !finite(float64(out.Position[a])) {
-			return out, fmt.Errorf("pilot state overflow")
-		}
-		speed2 += float64(newGuide[a]) * float64(newGuide[a])
-		// Sum of operator path lengths, not their cancelling net displacement.
-		displacement2 += math.Pow(dt*(math.Abs(vi)+math.Abs(delta))/dx, 2)
-	}
-	out.Speed = math.Sqrt(speed2)
-	out.Cells = math.Sqrt(displacement2)
-	if !finite(out.Work) || out.Cells > cellLimit {
-		return out, fmt.Errorf("pilot path %.9g cells exceeds %.9g", out.Cells, cellLimit)
-	}
-	return out, nil
-}
+
+
 
 // samplePeriodicTrilinear returns value and exact gradient of the z-fast
 // periodic trilinear interpolant. This independent host expression is used for
@@ -126,11 +83,7 @@ type waveEnergy struct{ Norm, Kinetic, Potential, Nonlinear, Chemical float64 }
 
 func (w waveEnergy) total() float64 { return w.Kinetic + w.Potential + w.Nonlinear + w.Chemical }
 
-// Same discrete Hamiltonian as the FFT kinetic eigenvalue. dw=1 for the
-// degenerate single-site lattice is an explicit quadrature convention.
-func spectralEnergy(real, imag, potential []float32, dw, hbar, inertia, g, mu float64) (waveEnergy, error) {
-	return spectralGeometryEnergy(real, imag, potential, nil, dw, hbar, inertia, g, mu)
-}
+
 
 func spectralGeometryEnergy(real, imag, potential, metric []float32, dw, hbar, inertia, g, mu float64) (waveEnergy, error) {
 	h := waveEnergy{}

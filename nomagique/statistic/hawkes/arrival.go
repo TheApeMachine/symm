@@ -55,17 +55,7 @@ func newArrivalStream(buyTimesSec, sellTimesSec []float64) arrivalStream {
 	return stream
 }
 
-/*
-newArrivalStreamFrom constructs a stream with an explicit observation origin.
-Events at or before origin are retained as excitation prehistory but are not
-counted observations.
-*/
-func newArrivalStreamFrom(originSec float64, buyTimesSec, sellTimesSec []float64) arrivalStream {
-	stream := newArrivalStream(buyTimesSec, sellTimesSec)
-	stream.originSec = originSec
 
-	return stream
-}
 
 func sortedCopy(times []float64) []float64 {
 	if len(times) < 2 {

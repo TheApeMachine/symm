@@ -1032,30 +1032,6 @@ func (training *Training) loadQuoteTape() ([]*data.Measurement[float64], error) 
 	return append(append(ticker, measured...), level3...), nil
 }
 
-/*
-replayExcursion walks one fragment for tests and offline tooling. persist=false
-accepts durable Iceberg records without re-writing them; persist=true enqueues
-new offline detections only.
-*/
-func (training *Training) replayExcursion(
-	record *tables.ExcursionRecord,
-	tape []*data.Measurement[float64],
-	persist bool,
-) error {
-	if record == nil || record.ID == "" || record.Symbol == "" {
-		return nil
-	}
-
-	persistIDs := map[string]bool{}
-
-	if persist {
-		persistIDs[record.ID] = true
-	}
-
-	return training.replayCausal([]tables.ExcursionRecord{*record}, map[string][]*data.Measurement[float64]{
-		record.Symbol: tape,
-	}, persistIDs)
-}
 
 /*
 tapeBySymbol groups canonical observations by label for excursion windows.

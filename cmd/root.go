@@ -322,6 +322,7 @@ var (
 					}
 
 					m := data.NewMeasurement("spot:level3", metrics)
+					m.Epoch = epoch
 					m.Label = touch.Symbol
 					m.At = touch.Timestamp
 					m.SetMetadata("type", "level3_touch")
@@ -486,6 +487,55 @@ var (
 							if l3 != nil && book != nil {
 								book.Update(l3)
 							}
+
+							if l3 != nil {
+								for _, ld := range l3.Data {
+									for sideIdx, orders := range [][]kraken.Level3Order{ld.Bids, ld.Asks} {
+										side := "bid"
+										if sideIdx == 1 {
+											side = "ask"
+										}
+
+										for _, order := range orders {
+											metrics := map[string]data.Metric[float64]{
+												"checksum": {Raw: float64(ld.Checksum)},
+											}
+
+											if order.LimitPrice != nil {
+												metrics["limit_price"] = data.Metric[float64]{
+													Raw:   order.LimitPrice.Float64(),
+													Exact: order.LimitPrice,
+												}
+											}
+
+											if order.OrderQty != nil {
+												metrics["order_qty"] = data.Metric[float64]{
+													Raw:   order.OrderQty.Float64(),
+													Exact: order.OrderQty,
+												}
+											}
+
+											m := data.NewMeasurement("spot:level3", metrics)
+											m.Epoch = epoch
+											m.Label = ld.Symbol
+											m.At = order.Timestamp
+											if m.At.IsZero() {
+												m.At = ld.Timestamp
+											}
+											m.SeqIdx = workspace.Sequence()
+											m.SetMetadata("type", ld.Type)
+											m.SetMetadata("order_id", order.OrderID)
+											m.SetMetadata("side", side)
+											m.SetMetadata("event", order.Event)
+											m.SetMetadata("checksum", fmt.Sprintf("%d", ld.Checksum))
+											m.SetProvenance("ingress_channel", "level3")
+											m.SetProvenance("channel", "level3")
+
+											storeTee.Push(data.NewPublication(m, nil))
+										}
+									}
+								}
+							}
 						case "ticker":
 							t := kraken.NewTicker(buf)
 
@@ -521,6 +571,7 @@ var (
 									}
 
 									m := data.NewMeasurement("spot:ticker", metrics)
+									m.Epoch = epoch
 									m.Label = td.Symbol
 									m.At = td.Timestamp
 									m.SetMetadata("type", "ticker")
@@ -546,6 +597,7 @@ var (
 									}
 
 									m := data.NewMeasurement("spot:trade", metrics)
+									m.Epoch = epoch
 									m.Label = td.Symbol
 									m.At = td.Timestamp
 									m.SetMetadata("type", "trade")
@@ -624,6 +676,7 @@ var (
 						}
 
 						m := data.NewMeasurement("futures:ticker", metrics)
+						m.Epoch = epoch
 						m.Label = spot
 						m.At = ft.Data.Timestamp
 						m.SetMetadata("type", "futures_ticker")
@@ -648,6 +701,7 @@ var (
 								"qty":   {Raw: td.Qty},
 							}
 							m := data.NewMeasurement("futures:trade", metrics)
+							m.Epoch = epoch
 							m.Label = spot
 							m.At = td.Timestamp
 							m.SetMetadata("type", "futures_trade")

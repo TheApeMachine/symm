@@ -97,6 +97,9 @@ func (consumer *Consumer) Step(prior *data.Measurement[float64], seq int64) *dat
 	result := consumer.node.Step(prior)
 
 	if result != nil {
+		if result.Epoch == 0 && prior != nil {
+			result.Epoch = prior.Epoch
+		}
 		if result.Source == "" {
 			panic("source identity missing: node returned measurement with empty Source")
 		}

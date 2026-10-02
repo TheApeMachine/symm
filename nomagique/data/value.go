@@ -19,6 +19,10 @@ func NewValue[T any](value ...T) iter.Seq[unsafe.Pointer] {
 	}
 }
 
+func To[T any](value unsafe.Pointer) T {
+	return *(*T)(value)
+}
+
 /*
 Read takes the first value of a run out of the wire.
 */

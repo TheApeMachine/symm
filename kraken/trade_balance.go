@@ -1,11 +1,7 @@
 package kraken
 
 import (
-	"strings"
-
-	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/theapemachine/errnie"
 )
 
 /*
@@ -34,53 +30,3 @@ type TradeBalance struct {
 	Result TradeBalanceResult `json:"result"`
 }
 
-/*
-TradeBalanceRequest requests Kraken trade balance in one base asset.
-*/
-type TradeBalanceRequest struct {
-	Asset string `json:"asset,omitempty"`
-}
-
-/*
-NewTradeBalance parses one Kraken trade balance response.
-*/
-func NewTradeBalance(buf []byte) *TradeBalanceResult {
-	balance := TradeBalance{}
-
-	if err := sonic.Unmarshal(buf, &balance); err != nil {
-		errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"invalid trade balance",
-			err,
-		))
-
-		return nil
-	}
-
-	if len(balance.Error) > 0 {
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"trade balance response contains errors: "+strings.Join(balance.Error, "; "),
-			nil,
-		))
-
-		return nil
-	}
-
-	return &balance.Result
-}
-
-/*
-NewTradeBalanceRequest binds the asset basis for Kraken trade balance.
-*/
-func NewTradeBalanceRequest(asset string) *TradeBalanceRequest {
-	return &TradeBalanceRequest{Asset: asset}
-}
-
-/*
-MarshalJSON serializes the trade-balance request payload for Kraken REST.
-*/
-func (request *TradeBalanceRequest) MarshalJSON() ([]byte, error) {
-	type alias TradeBalanceRequest
-	return sonic.Marshal((*alias)(request))
-}

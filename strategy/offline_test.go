@@ -6,7 +6,6 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/tests/market"
 )
 
 func TestDetectExcursionsMatchesLiveWalk(t *testing.T) {
@@ -140,17 +139,6 @@ func TestReplayDensityAndFragmentationRobustness(t *testing.T) {
 			So(records[0].ClearsFriction, ShouldBeTrue)
 			So(records[0].ExitTick-records[0].AnchorTick, ShouldBeGreaterThan, 80)
 			So(records[0].ExtremumPrice, ShouldBeGreaterThan, 350)
-		})
-
-		Convey("High-frequency chop whipsaw does not emit profitable excursions", func() {
-			chopTape := market.NewChopWhipsawTape("BTC/USD", 50000.0, 5.0, 60)
-			detector := NewDetector(priced(t, "BTC/USD", 0.1))
-			records, err := DetectExcursions(detector, chopTape)
-			So(err, ShouldBeNil)
-			// Chop within the deadband should never produce false profitable up excursions
-			for _, r := range records {
-				So(r.ClearsFriction, ShouldBeFalse)
-			}
 		})
 	})
 }

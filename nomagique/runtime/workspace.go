@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"sync/atomic"
 
 	"github.com/smarty/go-disruptor"
 	"github.com/theapemachine/errnie"
@@ -62,6 +63,7 @@ type Workspace struct {
 	buffer     []*data.Measurement[float64]
 	mask       int64
 	capacity   int
+	sequence   atomic.Int64
 	stages     [][]*Consumer
 	joins      [][]*data.Measurement[float64] // [stageIdx][slot]
 	joinArenas []*data.ArenaOwner
@@ -176,12 +178,24 @@ func (workspace *Workspace) Step(payload *data.Measurement[float64]) *data.Measu
 	seq := workspace.channel.Reserve(1)
 
 	if payload != nil {
-		payload.SetSeqIdx(seq + 1)
+		payload.SetSeqIdx(workspace.sequence.Add(1))
 	}
 
 	workspace.buffer[seq&workspace.mask] = payload
 	workspace.channel.Commit(seq, seq)
 	return payload
+}
+
+/*
+Sequence allocates and returns the next strictly monotone sequence index for
+observations that bypass the LMAX Disruptor stage pipeline (e.g. raw Level-3 orders).
+*/
+func (workspace *Workspace) Sequence() int64 {
+	if workspace == nil {
+		return 1
+	}
+
+	return workspace.sequence.Add(1)
 }
 
 func (workspace *Workspace) Stages() [][]*Consumer {
@@ -228,6 +242,7 @@ func (jh *joinHandler) Handle(lower, upper int64) {
 
 		join := joinArena.NewMeasurement("runtime:join")
 		if ingress != nil {
+			join.Epoch = ingress.Epoch
 			join.Label = ingress.Label
 			join.SeqIdx = ingress.SeqIdx
 			join.At = ingress.At

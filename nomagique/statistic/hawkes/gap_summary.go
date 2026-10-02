@@ -23,23 +23,7 @@ func newGapSummaryFromGaps(gaps []float64) gapSummary {
 	return gapSummary{sorted: sorted}
 }
 
-/*
-reset rebuilds the summary from marked events into the caller-owned backing
-array, avoiding an allocation on every workspace reuse.
-*/
-func (summary *gapSummary) reset(marked []markedEvent) {
-	summary.sorted = summary.sorted[:0]
 
-	for index := 1; index < len(marked); index++ {
-		gap := marked[index].atSec - marked[index-1].atSec
-
-		if gap > 0 {
-			summary.sorted = append(summary.sorted, gap)
-		}
-	}
-
-	sort.Float64s(summary.sorted)
-}
 
 /*
 median returns the middle inter-arrival gap.

@@ -8,7 +8,6 @@ import (
 const (
 	spectralHeads = 8
 	modeAnchors   = 8
-	gInteraction  = 0.0
 	metabolicRate = 0.5
 	hbarEff       = 1.0
 	massEff       = 1.0

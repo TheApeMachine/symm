@@ -53,9 +53,10 @@ type Grid struct {
 
 	Partition string `json:"partition"`
 
-	Observations        int64 `json:"observations"`
-	PartitionRun        int   `json:"partition_run"`
-	LongestPartitionRun int   `json:"longest_partition_run"`
+	Observations        int64  `json:"observations"`
+	PartitionRun        int    `json:"partition_run"`
+	LongestPartitionRun int    `json:"longest_partition_run"`
+	SettlementReason    string `json:"settlement_reason"`
 
 	statsMu        sync.Mutex
 	RegionLitCount [256]int       `json:"region_lit_count"`
@@ -115,6 +116,7 @@ func (grid *Grid) ResetSettlement() {
 	grid.Settled = false
 	grid.PartitionRun = 0
 	grid.LongestPartitionRun = 0
+	grid.SettlementReason = ""
 }
 
 // IsSettled reports whether the partition is frozen (RLock — never read Settled racy).
@@ -230,12 +232,7 @@ regions (example [A, B, C]). Petal trained with the same N.
 */
 const litRegionTokenSize = 3
 
-/*
-latticeSpacing is the initial step place() uses between adjacent cells.
-Binding and watershed neighborhoods are measured against this lattice, not an
-invented absolute.
-*/
-const latticeSpacing = 1.0
+
 
 /*
 LitRegions is the region token for this measurement alone: the N most-lit
@@ -742,7 +739,11 @@ func (grid *Grid) update(
 	grid.formRegions(labels)
 
 	grid.Observations++
-	nextPartition := grid.partitionKey()
+	nextPartition := ""
+
+	if grid.hasRelationEvidenceLocked() {
+		nextPartition = grid.partitionKey()
+	}
 
 	if nextPartition == "" {
 		grid.PartitionRun = 0
@@ -761,10 +762,11 @@ func (grid *Grid) update(
 		grid.PartitionRun = 1
 	}
 
-	if grid.LongestPartitionRun > 0 && grid.PartitionRun > grid.LongestPartitionRun {
-		if grid.isSettlementCandidate(labels) {
-			grid.Settled = true
-		}
+	candidate, reason := grid.evaluateSettlementCandidate(labels)
+	grid.SettlementReason = reason
+
+	if candidate {
+		grid.Settled = true
 	}
 
 	grid.writeCoordinates()
@@ -1030,35 +1032,183 @@ func (grid *Grid) formRegions(labels []string) {
 	}
 }
 
-func (grid *Grid) isSettlementCandidate(labels []string) bool {
+func (grid *Grid) hasRelationEvidenceLocked() bool {
+	for _, relation := range grid.Relations {
+		if relation == nil {
+			continue
+		}
+
+		if relation.PositivePositive > 0 ||
+			relation.PositiveNegative > 0 ||
+			relation.NegativePositive > 0 ||
+			relation.NegativeNegative > 0 ||
+			relation.AZeroBPositive > 0 ||
+			relation.AZeroBNegative > 0 ||
+			relation.APositiveBZero > 0 ||
+			relation.ANegativeBZero > 0 {
+			return true
+		}
+	}
+
+	return false
+}
+
+
+
+func (grid *Grid) evaluateSettlementCandidate(labels []string) (bool, string) {
 	totalCells := len(labels)
+
 	if totalCells <= 1 {
-		return false
+		return false, "total cells <= 1"
+	}
+
+	if grid.PartitionRun <= 1 {
+		return false, "partition has not survived additional observations"
 	}
 
 	totalRegions := grid.totalRegionsLocked()
-	// Hard requirement: N metrics becoming N-1 regions MUST fail
+
+	if totalRegions < 2 {
+		return false, "fewer than 2 regions (degenerate clustering)"
+	}
+
 	if totalRegions >= totalCells-1 {
-		return false
+		return false, "no dimensional compression: total regions >= total cells - 1"
 	}
 
-	// Real dimensional compression required (at least 25% dimensional reduction)
-	if float64(totalRegions)/float64(totalCells) > 0.75 {
-		return false
+	regionMembers := make(map[uint8][]string)
+
+	for _, label := range labels {
+		region := grid.Regions[label]
+
+		if region > 0 {
+			regionMembers[region] = append(regionMembers[region], label)
+		}
 	}
 
-	// A stable near-singleton partition is NOT settled
-	if grid.singletonFractionLocked() >= 0.5 {
-		return false
+	for _, label := range labels {
+		region := grid.Regions[label]
+
+		if region == 0 {
+			return false, fmt.Sprintf("cell %s has no assigned region", label)
+		}
+
+		members := regionMembers[region]
+
+		if len(members) <= 1 {
+			return false, fmt.Sprintf("cell %s has no positive within-region binding (unbound singleton)", label)
+		}
+
+		var withinSum float64
+		withinCount := 0
+
+		for _, peer := range members {
+			if peer == label {
+				continue
+			}
+
+			rel := grid.Relations[pair(label, peer)]
+
+			if rel != nil {
+				withinSum += rel.sympathy()
+				withinCount++
+			}
+		}
+
+		if withinCount == 0 {
+			return false, fmt.Sprintf("cell %s has no relations within region %d", label, region)
+		}
+
+		withinAffinity := withinSum / float64(withinCount)
+
+		if withinAffinity <= 0 {
+			return false, fmt.Sprintf("cell %s has non-positive within-region binding (%f)", label, withinAffinity)
+		}
+
+		for otherRegion, otherMembers := range regionMembers {
+			if otherRegion == region || len(otherMembers) == 0 {
+				continue
+			}
+
+			var otherSum float64
+			otherCount := 0
+
+			for _, otherPeer := range otherMembers {
+				rel := grid.Relations[pair(label, otherPeer)]
+
+				if rel != nil {
+					otherSum += rel.sympathy()
+					otherCount++
+				}
+			}
+
+			if otherCount > 0 {
+				otherAffinity := otherSum / float64(otherCount)
+
+				if otherAffinity > withinAffinity {
+					return false, fmt.Sprintf("cell %s has stronger relationship to region %d (%f) than assigned region %d (%f)", label, otherRegion, otherAffinity, region, withinAffinity)
+				}
+			}
+		}
 	}
 
-	// Stronger within-region coherence than between-region coherence
 	within, between := grid.withinVsBetweenCoherenceLocked()
-	if within <= between || within <= 0 {
-		return false
+
+	if within <= 0 {
+		return false, fmt.Sprintf("within coherence (%f) <= 0", within)
 	}
 
-	return true
+	if within <= between {
+		return false, fmt.Sprintf("within coherence (%f) <= between coherence (%f)", within, between)
+	}
+
+	return true, "structurally stable regional partition"
+}
+
+func (grid *Grid) boundCellsLocked() int {
+	regionMembers := make(map[uint8][]string)
+
+	for label, region := range grid.Regions {
+		if region > 0 {
+			regionMembers[region] = append(regionMembers[region], label)
+		}
+	}
+
+	bound := 0
+
+	for label, region := range grid.Regions {
+		if region == 0 {
+			continue
+		}
+
+		members := regionMembers[region]
+
+		if len(members) <= 1 {
+			continue
+		}
+
+		var withinSum float64
+		withinCount := 0
+
+		for _, peer := range members {
+			if peer == label {
+				continue
+			}
+
+			rel := grid.Relations[pair(label, peer)]
+
+			if rel != nil {
+				withinSum += rel.sympathy()
+				withinCount++
+			}
+		}
+
+		if withinCount > 0 && (withinSum/float64(withinCount)) > 0 {
+			bound++
+		}
+	}
+
+	return bound
 }
 
 func (grid *Grid) totalRegionsLocked() int {
@@ -1170,6 +1320,30 @@ func (grid *Grid) WithinVsBetweenCoherence() (within, between float64) {
 	grid.mu.RLock()
 	defer grid.mu.RUnlock()
 	return grid.withinVsBetweenCoherenceLocked()
+}
+
+// BoundCells returns the count of cells with positive within-region binding.
+func (grid *Grid) BoundCells() int {
+	grid.mu.RLock()
+	defer grid.mu.RUnlock()
+
+	return grid.boundCellsLocked()
+}
+
+// UnboundCells returns the count of cells lacking positive within-region binding.
+func (grid *Grid) UnboundCells() int {
+	grid.mu.RLock()
+	defer grid.mu.RUnlock()
+
+	return len(grid.Regions) - grid.boundCellsLocked()
+}
+
+// SettlementCandidateReason returns the reason from the latest settlement candidate check.
+func (grid *Grid) SettlementCandidateReason() string {
+	grid.mu.RLock()
+	defer grid.mu.RUnlock()
+
+	return grid.SettlementReason
 }
 
 // TopRegionFrequency returns the frequency with which each region appears in emitted tokens.

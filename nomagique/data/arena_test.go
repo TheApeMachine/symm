@@ -33,7 +33,7 @@ func TestArenaOwnerSequenceAdvancement(t *testing.T) {
 		Convey("Advancing past generation 0 boundary rotates to gen1 without freeing gen0", func() {
 			owner.Advance(256)
 			gen1 := owner.CurrentGeneration()
-			So(gen1, ShouldNotEqual, gen0)
+			So(gen1 != gen0, ShouldBeTrue)
 			So(gen0.IsFreed(), ShouldBeFalse)
 
 			// Even at sequence 500 (still within safe margin of window + capacity), gen0 remains alive

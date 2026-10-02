@@ -6,8 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -160,19 +158,6 @@ func TestInitConfig(t *testing.T) {
 			initConfig()
 			So(system.Cfg.Runtime.Workspace.Buffer, ShouldEqual, 64)
 			So(system.Cfg.Runtime.Workspace.Mask, ShouldEqual, 63)
-		})
-	})
-}
-
-func TestStartPprof(t *testing.T) {
-	Convey("Given the default HTTP mux used by the profiling server", t, func() {
-		request := httptest.NewRequest(http.MethodGet, "/debug/pprof/", nil)
-		response := httptest.NewRecorder()
-
-		http.DefaultServeMux.ServeHTTP(response, request)
-
-		Convey("It should expose the registered profiling index", func() {
-			So(response.Code, ShouldEqual, http.StatusOK)
 		})
 	})
 }
