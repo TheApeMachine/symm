@@ -19,7 +19,7 @@ storage:
     # A table bucket is an ordinary bucket carrying an s3tables.metadata
     # attribute, so it cannot be the same bucket as storage.s3.bucket above.
     uri: http://iceberg.seaweed.home.arpa
-    warehouse: s3://symmtables/
+    warehouse: s3://symmwarehouse/
     # Operational retry budget for rejected concurrent catalog commits.
     # Iceberg refreshes and rebases the append; unknown commit outcomes fail.
     commit_retries: 4

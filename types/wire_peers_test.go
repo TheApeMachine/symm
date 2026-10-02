@@ -25,7 +25,7 @@ func TestMeasurementToWirePeerDepthOne(t *testing.T) {
 		alloc := data.NewAllocator()
 		defer data.Free(alloc)
 
-		wire := MeasurementToWire(root, alloc)
+		wire := MeasurementToWire(root, alloc, true)
 		So(wire, ShouldNotBeNil)
 		So(len(wire.Peers), ShouldEqual, 1)
 		So(wire.Peers[0].Source, ShouldEqual, "hawkes:trade")

@@ -68,7 +68,15 @@ func Filters(measurement *data.Measurement[float64]) bool {
 
 		return isSignal(measurement) || isLogic(measurement, "resonance", "category", "cognition")
 	case "learning":
-		return isStrategy(measurement, "training")
+		if isStrategy(measurement, "training") {
+			return true
+		}
+
+		if !isFocus(measurement) {
+			return false
+		}
+
+		return isSignal(measurement) || isLogic(measurement, "resonance", "category", "cognition")
 	case "xray":
 		if !isFocus(measurement) {
 			return false

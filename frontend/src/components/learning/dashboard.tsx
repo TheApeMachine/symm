@@ -550,18 +550,18 @@ export const LearningDashboard = () => {
 						present: cell.present ?? true,
 					}));
 				} else {
-					const allPeers = [
-						...(measurement.metrics && measurement.metrics.length > 0
-							? [{ symbol: measurement.symbol, metrics: measurement.metrics }]
-							: []),
-						...(measurement.peers ?? []),
-					];
+					const allPeers =
+						measurement.peers && measurement.peers.length > 0
+							? measurement.peers
+							: measurement.metrics && measurement.metrics.length > 0
+								? [{ symbol: measurement.symbol, metrics: measurement.metrics }]
+								: [];
 
 					if (allPeers.length > 0) {
 						const regionActivity: Record<number, { activity: number; members: number }> = {};
 						for (const peer of allPeers) {
 							if (!peer) continue;
-							const peerSymbol = String(peer.symbol || measurement.symbol || "");
+							const peerSource = String(peer.source || "");
 							for (const metric of peer.metrics ?? []) {
 								if (!metric || !metric.name) continue;
 								const nameStr = String(metric.name);
@@ -573,7 +573,7 @@ export const LearningDashboard = () => {
 									metric.hasNormalized === true
 										? Math.abs(metric.normalized || 0)
 										: Math.abs(raw);
-								const nodeId = peerSymbol ? `${peerSymbol}:${nameStr}` : nameStr;
+								const nodeId = peerSource ? `${peerSource}:${nameStr}` : nameStr;
 								mappedNodes.push({
 									id: nodeId,
 									label: nameStr,

@@ -107,19 +107,14 @@ func Open(ctx context.Context) *Catalog {
 		return nil
 	}
 
-	accessKey := s3Config.AccessKeyID
-	secretKey := s3Config.SecretAccessKey
-
-	if s3Config.Anonymous {
-		accessKey = anonymousCredential
-		secretKey = anonymousCredential
+	properties := iceberg.Properties{
+		icebergio.S3EndpointURL: s3Config.Endpoint,
+		icebergio.S3Region:      s3Config.Region,
 	}
 
-	properties := iceberg.Properties{
-		icebergio.S3EndpointURL:     s3Config.Endpoint,
-		icebergio.S3Region:          s3Config.Region,
-		icebergio.S3AccessKeyID:     accessKey,
-		icebergio.S3SecretAccessKey: secretKey,
+	if !s3Config.Anonymous && s3Config.AccessKeyID != "" {
+		properties[icebergio.S3AccessKeyID] = s3Config.AccessKeyID
+		properties[icebergio.S3SecretAccessKey] = s3Config.SecretAccessKey
 	}
 
 	transport := &http.Transport{
@@ -154,9 +149,11 @@ func Open(ctx context.Context) *Catalog {
 		awsOpts = append(awsOpts, config.WithRegion(s3Config.Region))
 	}
 
-	if accessKey != "" || secretKey != "" {
+	if s3Config.Anonymous {
+		awsOpts = append(awsOpts, config.WithCredentialsProvider(aws.AnonymousCredentials{}))
+	} else if s3Config.AccessKeyID != "" || s3Config.SecretAccessKey != "" {
 		awsOpts = append(awsOpts, config.WithCredentialsProvider(
-			credentials.NewStaticCredentialsProvider(accessKey, secretKey, ""),
+			credentials.NewStaticCredentialsProvider(s3Config.AccessKeyID, s3Config.SecretAccessKey, ""),
 		))
 	}
 
@@ -176,7 +173,7 @@ func Open(ctx context.Context) *Catalog {
 		rest.WithCustomTransport(transport),
 	}
 
-	if err == nil && !s3Config.Anonymous {
+	if err == nil {
 		restOpts = append(restOpts, rest.WithAwsConfig(awsCfg))
 	}
 
@@ -210,7 +207,11 @@ func (catalog *Catalog) Ensure(ctx context.Context) error {
 		return err
 	}
 
-	properties := iceberg.Properties{}
+	properties := iceberg.Properties{
+		table.MetadataDeleteAfterCommitEnabledKey: "true",
+		table.MetadataPreviousVersionsMaxKey:     "5",
+		table.ManifestMergeEnabledKey:             "true",
+	}
 
 	if system.Cfg.Storage != nil && system.Cfg.Storage.Iceberg != nil {
 		retries := system.Cfg.Storage.Iceberg.CommitRetries

@@ -232,8 +232,6 @@ regions (example [A, B, C]). Petal trained with the same N.
 */
 const litRegionTokenSize = 3
 
-
-
 /*
 LitRegions is the region token for this measurement alone: the N most-lit
 regions (TRAINING.md), not a mean-threshold or argmax. Activity prefers
@@ -266,54 +264,51 @@ func (grid *Grid) LitRegions(measurements ...*data.Measurement[float64]) [][]byt
 	return tokens
 }
 
+func cellKeyBuf(buf []byte, symbol, source, name string) []byte {
+	b := buf[:0]
+	b = append(b, symbol...)
+	b = append(b, 0)
+	b = append(b, source...)
+	b = append(b, 0)
+	b = append(b, name...)
+	return b
+}
+
 func (grid *Grid) litRegionLocked(measurement *data.Measurement[float64]) []byte {
 	var activity [256]float64
 	var count [256]int
 	var present [256]bool
-
-	type incomingMetric struct {
-		source string
-		key    string
-		metric data.Metric[float64]
-	}
-
-	var allMetrics []incomingMetric
+	var scratch [128]byte
 
 	label := measurement.Label
-	source := measurement.GetSource()
-	measurement.RangeMetrics(func(key string, metric data.Metric[float64]) bool {
-		allMetrics = append(allMetrics, incomingMetric{source, key, metric})
-		return true
-	})
 
-	for _, peer := range measurement.Peers {
-		if peer == nil {
-			continue
+	processEntries := func(source string, entries []data.MetricEntry[float64]) {
+		for index := range entries {
+			name := entries[index].Metric.Label
+			if name == "" {
+				name = entries[index].Key
+			}
+
+			keyBytes := cellKeyBuf(scratch[:], label, source, name)
+			region := grid.Regions[string(keyBytes)]
+			if region == 0 {
+				continue
+			}
+
+			act := regionActivity(entries[index].Metric)
+			if act > 0 {
+				activity[region] += act
+				count[region]++
+				present[region] = true
+			}
 		}
-		peerSource := peer.GetSource()
-		peer.RangeMetrics(func(key string, metric data.Metric[float64]) bool {
-			allMetrics = append(allMetrics, incomingMetric{peerSource, key, metric})
-			return true
-		})
 	}
 
-	for _, item := range allMetrics {
-		name := item.metric.Label
-		if name == "" {
-			name = item.key
-		}
+	processEntries(measurement.GetSource(), measurement.Metrics)
 
-		region := grid.Regions[cellKey(label, item.source, name)]
-
-		if region == 0 {
-			continue
-		}
-
-		act := regionActivity(item.metric)
-		if act > 0 {
-			activity[region] += act
-			count[region]++
-			present[region] = true
+	for _, peer := range measurement.Peers {
+		if peer != nil {
+			processEntries(peer.GetSource(), peer.Metrics)
 		}
 	}
 
@@ -322,45 +317,45 @@ func (grid *Grid) litRegionLocked(measurement *data.Measurement[float64]) []byte
 		value  float64
 	}
 
-	scores := make([]score, 0, 256)
+	var scores [256]score
+	var numScores int
 
 	for region := 1; region < 256; region++ {
 		if !present[region] || count[region] == 0 {
 			continue
 		}
 
-		scores = append(scores, score{
+		scores[numScores] = score{
 			region: uint8(region),
 			value:  activity[region] / float64(count[region]),
-		})
+		}
+		numScores++
 	}
 
-	if len(scores) == 0 {
+	if numScores == 0 {
 		return nil
 	}
 
-	slices.SortFunc(scores, func(left, right score) int {
+	activeScores := scores[:numScores]
+
+	slices.SortFunc(activeScores, func(left, right score) int {
 		if left.value > right.value {
 			return -1
 		}
-
 		if left.value < right.value {
 			return 1
 		}
-
 		return int(left.region) - int(right.region)
 	})
 
-	limit := min(litRegionTokenSize, len(scores))
-	lit := scores[:limit]
+	limit := min(litRegionTokenSize, numScores)
+	lit := activeScores[:limit]
 
-	// Canonical ascending IDs after top-N selection so the same set is stable.
 	slices.SortFunc(lit, func(left, right score) int {
 		return int(left.region) - int(right.region)
 	})
 
 	token := make([]byte, limit)
-
 	for index := range lit {
 		token[index] = lit[index].region
 	}
@@ -373,7 +368,7 @@ func (grid *Grid) litRegionLocked(measurement *data.Measurement[float64]) []byte
 	if grid.TokenCounts == nil {
 		grid.TokenCounts = make(map[string]int)
 	}
-	grid.TokenCounts[fmt.Sprintf("%v", token)]++
+	grid.TokenCounts[string(token)]++
 	grid.statsMu.Unlock()
 
 	return token
@@ -933,9 +928,18 @@ func (relation *GridRelation) sympathy() float64 {
 		magnitudeScore = relation.MagnitudeSimilarity / float64(relation.MagnitudeSamples)
 	}
 
-	// Multiply directional score by magnitude similarity so uncorrelated items
-	// do not attract simply because they have similar magnitudes.
-	return directionalScore * magnitudeScore
+	if total == 0 {
+		return magnitudeScore
+	}
+
+	if relation.MagnitudeSamples == 0 {
+		return directionalScore
+	}
+
+	// Priorities are additive when they co-occur, and each holds true standalone.
+	// Sign does not play a part in magnitude similarity, as long as movement is
+	// symmetrical both sides of the sign.
+	return 0.5*directionalScore + 0.5*magnitudeScore
 }
 
 /*
@@ -1009,9 +1013,23 @@ func (grid *Grid) formRegions(labels []string) {
 	}
 
 	basins := make([]int, 0, len(groups))
-	for b := range groups {
-		basins = append(basins, b)
+	for basin := range groups {
+		basins = append(basins, basin)
 	}
+
+	sort.Slice(basins, func(leftIdx, rightIdx int) bool {
+		leftSize := len(groups[basins[leftIdx]])
+		rightSize := len(groups[basins[rightIdx]])
+		if leftSize != rightSize {
+			return leftSize > rightSize
+		}
+
+		leftGroup := append([]string(nil), groups[basins[leftIdx]]...)
+		rightGroup := append([]string(nil), groups[basins[rightIdx]]...)
+		sort.Strings(leftGroup)
+		sort.Strings(rightGroup)
+		return strings.Join(leftGroup, "\x00") < strings.Join(rightGroup, "\x00")
+	})
 
 	if len(basins) > 254 {
 		grid.Error(errnie.Err(
@@ -1019,21 +1037,16 @@ func (grid *Grid) formRegions(labels []string) {
 			fmt.Sprintf("hard experiment error: grid generated %d regions (> 254 limit)", len(basins)),
 			nil,
 		))
-		return
 	}
 
-	sort.Slice(basins, func(i, j int) bool {
-		a := append([]string(nil), groups[basins[i]]...)
-		b := append([]string(nil), groups[basins[j]]...)
-		sort.Strings(a)
-		sort.Strings(b)
-		return strings.Join(a, "\x00") < strings.Join(b, "\x00")
-	})
-
 	grid.Regions = make(map[string]uint8, len(labels))
-	for index, b := range basins {
+	for index, basin := range basins {
+		if index >= 254 {
+			break
+		}
+
 		region := uint8(index + 1)
-		for _, label := range groups[b] {
+		for _, label := range groups[basin] {
 			grid.Regions[label] = region
 		}
 	}
@@ -1059,8 +1072,6 @@ func (grid *Grid) hasRelationEvidenceLocked() bool {
 
 	return false
 }
-
-
 
 func (grid *Grid) evaluateSettlementCandidate(labels []string) (bool, string) {
 	totalCells := len(labels)
@@ -1468,7 +1479,6 @@ func (grid *Grid) writeCoordinates() {
 	}
 }
 
-
 func (grid *Grid) decorate(
 	measurements []*data.Measurement[float64],
 ) {
@@ -1477,27 +1487,53 @@ func (grid *Grid) decorate(
 			continue
 		}
 
-		source := measurement.GetSource()
-		measurement.RangeMetrics(func(key string, incoming data.Metric[float64]) bool {
-			name := incoming.Label
+		grid.decorateMeasurement(measurement, measurement.Label)
 
-			if name == "" {
-				name = key
+		for _, peer := range measurement.Peers {
+			if peer == nil {
+				continue
 			}
 
-			stored := grid.find(cellKey(measurement.Label, source, name))
-			if stored == nil {
-				return true
+			symbol := peer.Label
+
+			if symbol == "" {
+				symbol = measurement.Label
 			}
 
-			incoming.X = stored.X
-			incoming.Y = stored.Y
-			incoming.Region = stored.Region
-
-			measurement.SetMetric(key, incoming)
-			return true
-		})
+			grid.decorateMeasurement(peer, symbol)
+		}
 	}
+}
+
+func (grid *Grid) decorateMeasurement(
+	measurement *data.Measurement[float64],
+	symbol string,
+) {
+	if measurement == nil {
+		return
+	}
+
+	source := measurement.GetSource()
+	measurement.RangeMetrics(func(key string, incoming data.Metric[float64]) bool {
+		name := incoming.Label
+
+		if name == "" {
+			name = key
+		}
+
+		stored := grid.find(cellKey(symbol, source, name))
+
+		if stored == nil {
+			return true
+		}
+
+		incoming.X = stored.X
+		incoming.Y = stored.Y
+		incoming.Region = stored.Region
+
+		measurement.SetMetric(key, incoming)
+		return true
+	})
 }
 
 func (grid *Grid) partitionKey() string {

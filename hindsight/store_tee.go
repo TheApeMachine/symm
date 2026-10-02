@@ -12,9 +12,6 @@ import (
 
 /*
 StoreTee queues measurements for the catalog drain.
-Training tape must not silently drop: a full queue applies backpressure, and
-if the consumer cannot catch up before context cancellation the push fails
-explicitly so the tape never contains invisible gaps.
 */
 type StoreTee struct {
 	*runtime.System

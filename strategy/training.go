@@ -114,15 +114,18 @@ func (training *Training) Step(prior *data.Measurement[float64]) *data.Measureme
 	out.SeqIdx = prior.SeqIdx
 	out.Label = prior.Label
 	out.At = prior.At
-	out.From = prior.From
-	out.Peers = []*data.Measurement[float64]{prior}
+	peers := prior.Peers
+
+	if prior.Source != "runtime:join" {
+		peers = []*data.Measurement[float64]{prior}
+	}
 
 	price, _ := quotePrice(prior)
 	currentStatus := training.Status()
 
-	if currentStatus == runtime.INIT {
-		training.grid.Update(prior)
+	training.grid.Update(prior)
 
+	if currentStatus == runtime.INIT {
 		snapshot := ReportSnapshot{
 			Source:  training.Source(),
 			Symbol:  prior.Label,
@@ -184,7 +187,7 @@ func (training *Training) Step(prior *data.Measurement[float64]) *data.Measureme
 	}
 
 	if currentStatus == runtime.READY {
-		tokens := training.grid.LitRegions(append(prior.Peers, prior)...)
+		tokens := training.grid.LitRegions(append(peers, prior)...)
 
 		stage := StageForwardPaperLearning
 		blocker := training.skill.FwdBlocker()
@@ -318,10 +321,14 @@ func (training *Training) Run() {
 					continue
 				}
 
+				if run.Status == "running" {
+					continue
+				}
+
 				maxSeq, hasEdge := training.processRun(run.Epoch, lastSeqProcessed[run.Epoch])
 				lastSeqProcessed[run.Epoch] = maxSeq
 
-				if run.Status != "running" && maxSeq > 0 {
+				if maxSeq > 0 {
 					processedRuns[run.Epoch] = true
 				}
 
@@ -353,6 +360,10 @@ func (training *Training) processRun(epoch int64, lastSeq int64) (int64, bool) {
 		training.Context(), epoch, "", lastSeq+1, 0,
 	) {
 		if measurement == nil || measurement.Label == "" {
+			continue
+		}
+
+		if measurement.SeqIdx <= lastSeq {
 			continue
 		}
 

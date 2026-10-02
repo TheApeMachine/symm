@@ -250,7 +250,21 @@ func (jh *joinHandler) Handle(lower, upper int64) {
 		}
 
 		producers := jh.workspace.stages[jh.stageIdx]
-		peers := make([]*data.Measurement[float64], 0, len(producers))
+		var peers []*data.Measurement[float64]
+
+		if jh.stageIdx > 0 {
+			prevJoin := jh.workspace.joins[jh.stageIdx-1][slot]
+
+			if prevJoin != nil && len(prevJoin.Peers) > 0 {
+				peers = make([]*data.Measurement[float64], 0, len(prevJoin.Peers)+len(producers))
+				peers = append(peers, prevJoin.Peers...)
+			}
+		}
+
+		if peers == nil {
+			peers = make([]*data.Measurement[float64], 0, len(producers))
+		}
+
 		for _, consumer := range producers {
 			if pub := consumer.Published(seq); pub != nil {
 				peers = append(peers, pub)

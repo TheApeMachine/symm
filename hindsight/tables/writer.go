@@ -5,12 +5,13 @@ import (
 	"runtime"
 	"sync/atomic"
 
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/data"
 )
 
 const (
-	measurementBatchThreshold = 2000
+	measurementBatchThreshold = 20000
 	writerMask                = 1 << 30
 )
 
@@ -79,7 +80,13 @@ func (writer *Writer) Pending() int {
 CommitReady commits any family whose buffer meets its volume threshold, or all families if forceAll is true.
 */
 func (writer *Writer) CommitReady(ctx context.Context, forceAll bool) error {
-	if err := writer.commitFamily(ctx, Measurements, measurementBatchThreshold, forceAll, func() []data.Publication {
+	threshold := measurementBatchThreshold
+
+	if viper.GetInt("hindsight.capture.commit_rows") > 0 {
+		threshold = viper.GetInt("hindsight.capture.commit_rows")
+	}
+
+	if err := writer.commitFamily(ctx, Measurements, threshold, forceAll, func() []data.Publication {
 		rows := writer.measurements
 		writer.measurements = nil
 

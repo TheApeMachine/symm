@@ -25,7 +25,7 @@ type S3 struct {
 
 func NewStorage() *Storage {
 	viper.SetDefault("storage.iceberg.uri", "http://iceberg.seaweed.home.arpa")
-	viper.SetDefault("storage.iceberg.warehouse", "s3://symmtables/")
+	viper.SetDefault("storage.iceberg.warehouse", "s3://symmwarehouse/")
 	viper.SetDefault("storage.iceberg.commit_retries", 3)
 	viper.SetDefault("storage.iceberg.append_bytes", 8388608)
 	viper.SetDefault("storage.s3.bucket", "symm")

@@ -23,7 +23,7 @@ func main() {
 	viper.SetDefault("storage.s3.region", "us-east-1")
 	viper.SetDefault("storage.s3.anonymous", true)
 	viper.SetDefault("storage.iceberg.uri", "http://iceberg.seaweed.home.arpa")
-	viper.SetDefault("storage.iceberg.warehouse", "s3://symmtables/")
+	viper.SetDefault("storage.iceberg.warehouse", "s3://symmwarehouse/")
 	viper.SetDefault("workbench.memory_limit", "16GB")
 	viper.SetDefault("workbench.max_temp_directory_size", "10GB")
 	viper.SetDefault("workbench.threads", 4)

@@ -21,8 +21,16 @@ metrics, metadata, and provenance. Peers are encoded one level deep only —
 recursive MeasurementToWire on peer.Peers exploded FlatBuffer alloc when the
 disruptor Contribute forest was still attached.
 */
-func MeasurementToWire(measurement *data.Measurement[float64], alloc data.Allocator) *wire.MeasurementT {
-	return measurementToWire(measurement, alloc, true)
+func MeasurementToWire(
+	measurement *data.Measurement[float64],
+	alloc data.Allocator,
+	includePeers ...bool,
+) *wire.MeasurementT {
+	withPeers := false
+	if len(includePeers) > 0 {
+		withPeers = includePeers[0]
+	}
+	return measurementToWire(measurement, alloc, withPeers)
 }
 
 func measurementToWire(
@@ -133,7 +141,7 @@ func EncodeMeasurements(
 	rows := data.MakeSlice[*wire.MeasurementT](alloc, 0, len(measurements))
 
 	for _, measurement := range measurements {
-		if wireMeasurement := MeasurementToWire(measurement, alloc); wireMeasurement != nil {
+		if wireMeasurement := MeasurementToWire(measurement, alloc, true); wireMeasurement != nil {
 			rows = data.AppendA(rows, wireMeasurement, alloc)
 		}
 	}
