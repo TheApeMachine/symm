@@ -3,9 +3,9 @@ package cognition
 import (
 	"bytes"
 	"cmp"
+	"encoding/binary"
 	"fmt"
 	"slices"
-	"strconv"
 	"strings"
 )
 
@@ -176,8 +176,7 @@ func (op *Engine) TreeExport() CognitionTreeExport {
 	var collectedBranches []scoredBranch
 
 	for _, cand := range topCandidates {
-		// Training signatures are null-separated LitRegions frames (raw region
-		// ID bytes). Reading them as packed uint64 tokens invented private spines.
+		// Training signatures are structural timesteps of LitRegions tokens.
 		regionTokens := regionFrames(cand.context)
 
 		actionName := strings.ToUpper(cand.className)
@@ -297,80 +296,40 @@ func (op *Engine) TreeExport() CognitionTreeExport {
 }
 
 /*
-regionFrames splits a training signature into null-separated LitRegions frames
-and formats each as [id,id,...] for the trie viz. Consecutive identical frames
-collapse (change-point only). ENTER/EXIT stay on the leaf action node — they
-are never emitted as region tokens.
+regionFrames decodes a training signature of structural timesteps
+([count uint32][count × 8-byte right-aligned token]) into one "[R3,R17]"
+label per frame for the trie viz. Consecutive identical frames collapse
+(change-point only). A context that is not a complete framed signature
+yields no frames. ENTER/EXIT stay on the leaf action node.
 */
-const litRegionsFrameCap = 3 // matches store.litRegionTokenSize (TRAINING.md N)
-
 func regionFrames(context []byte) []string {
-	if len(context) == 0 {
-		return nil
-	}
-
-	if bytes.IndexByte(context, 'R') >= 0 || bytes.IndexByte(context, 'r') >= 0 {
-		str := string(context)
-		delims := func(r rune) bool {
-			return r == '_' || r == '/' || r == 0 || r == ','
-		}
-		rawParts := strings.FieldsFunc(str, delims)
-		var frames []string
-		for _, part := range rawParts {
-			part = strings.TrimSpace(part)
-			if part == "" {
-				continue
-			}
-			idStr := strings.TrimPrefix(strings.TrimPrefix(part, "R"), "r")
-			num, err := strconv.Atoi(idStr)
-			var frame string
-			if err == nil && num > 0 {
-				frame = fmt.Sprintf("[%d]", num)
-			} else {
-				frame = fmt.Sprintf("[%s]", part)
-			}
-			if len(frames) == 0 || frames[len(frames)-1] != frame {
-				frames = append(frames, frame)
-			}
-		}
-		return frames
-	}
-
 	var frames []string
-	start := 0
 
-	for index := 0; index <= len(context); index++ {
-		if index < len(context) && context[index] != 0 {
-			continue
+	for offset := 0; offset < len(context); {
+		if offset+4 > len(context) {
+			return nil
 		}
 
-		if index > start {
-			parts := make([]string, 0, index-start)
+		count := int(binary.BigEndian.Uint32(context[offset:]))
+		end := offset + 4 + count*8
 
-			for _, region := range context[start:index] {
-				if region == 0 {
-					continue
-				}
-
-				parts = append(parts, strconv.Itoa(int(region)))
-			}
-
-			// Cap to designed LitRegions N. Longer frames are legacy/corrupt
-			// signatures (pre-null-separator or pre-top-N) — keep first N IDs.
-			if len(parts) > litRegionsFrameCap {
-				parts = parts[:litRegionsFrameCap]
-			}
-
-			if len(parts) > 0 {
-				frame := "[" + strings.Join(parts, ",") + "]"
-				// Collapse consecutive identical frames (change-point only).
-				if len(frames) == 0 || frames[len(frames)-1] != frame {
-					frames = append(frames, frame)
-				}
-			}
+		if count == 0 || end > len(context) {
+			return nil
 		}
 
-		start = index + 1
+		parts := make([]string, 0, count)
+
+		for token := offset + 4; token < end; token += 8 {
+			parts = append(parts, string(bytes.TrimLeft(context[token:token+8], "\x00")))
+		}
+
+		frame := "[" + strings.Join(parts, ",") + "]"
+
+		if len(frames) == 0 || frames[len(frames)-1] != frame {
+			frames = append(frames, frame)
+		}
+
+		offset = end
 	}
 
 	return frames

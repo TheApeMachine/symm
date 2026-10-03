@@ -2,7 +2,6 @@ package liquidity
 
 import (
 	"context"
-	"math"
 	"strconv"
 	"sync"
 	"unsafe"
@@ -118,7 +117,7 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 								baselineUnits[index],
 								data.TimescaleInstantaneous,
 								0.0,
-								channel.ScoreScale,
+								0.0,
 							).Write(channel.ScoreScale))
 							m.WriteStandardized(zscoreLabels[index], channel.ZScore)
 						}
@@ -137,7 +136,7 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 							data.UnitVelocity,
 							data.TimescaleInstantaneous,
 							0.0,
-							math.Abs(out.Slope),
+							0.0,
 						).Write(out.Slope))
 					}
 					if out.SNRDefined {
@@ -146,7 +145,7 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 							data.UnitSNR,
 							data.TimescaleInstantaneous,
 							0.0,
-							1.0,
+							0.0,
 						).Write(out.SNR))
 					}
 				},
@@ -163,7 +162,7 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 							data.UnitVelocity,
 							data.TimescaleInstantaneous,
 							0.0,
-							math.Abs(out.Slope),
+							0.0,
 						).Write(out.Slope))
 					}
 					if out.SNRDefined {
@@ -172,7 +171,7 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 							data.UnitSNR,
 							data.TimescaleInstantaneous,
 							0.0,
-							1.0,
+							0.0,
 						).Write(out.SNR))
 					}
 				},
@@ -189,7 +188,7 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 							data.UnitVelocity,
 							data.TimescaleInstantaneous,
 							0.0,
-							math.Abs(out.Slope),
+							0.0,
 						).Write(out.Slope))
 					}
 					if out.SNRDefined {
@@ -198,7 +197,7 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 							data.UnitSNR,
 							data.TimescaleInstantaneous,
 							0.0,
-							1.0,
+							0.0,
 						).Write(out.SNR))
 					}
 				},

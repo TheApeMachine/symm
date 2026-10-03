@@ -66,25 +66,21 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 					return m.GetMetric("relative_spread").Raw
 				},
 				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
-					scale := out.Baseline
-					if out.VarianceDefined && out.Variance > 0 {
-						scale = math.Sqrt(out.Variance)
-					}
-					scale = math.Max(scale, 1e-6)
-
-					m.SetMetric("relative_spread_baseline", data.NewMetric[float64](
-						"relative_spread_baseline",
-						data.UnitRelativeSpread,
-						data.TimescaleRollingWindow,
-						out.Baseline,
-						scale,
-					).Write(out.Baseline))
-
 					m.EnsureMetadata()
 					m.SetMetadata(data.MetadataSupport, strconv.FormatFloat(out.Count, 'f', -1, 64))
 
 					if out.HasPrior {
+						m.SetMetric("relative_spread_baseline", data.NewMetric[float64](
+							"relative_spread_baseline",
+							data.UnitRelativeSpread,
+							data.TimescaleRollingWindow,
+							out.Baseline,
+							out.ScoreScale,
+						).Write(out.Baseline))
+
 						if out.Baseline > 0 {
+							// Relative dispersion: the baseline's measured spread in units of the baseline.
+							relative := out.ScoreScale / out.Baseline
 							rs := m.GetMetric("relative_spread").Raw
 							spreadRatio := rs / out.Baseline
 							m.SetMetric("spread_ratio", data.NewMetric[float64](
@@ -92,7 +88,7 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 								data.UnitRatio,
 								data.TimescaleRollingWindow,
 								1.0,
-								1.0,
+								relative,
 							).Write(spreadRatio))
 
 							if rs > 0 {
@@ -102,7 +98,7 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 									data.UnitRelativeSpread,
 									data.TimescaleRollingWindow,
 									0.0,
-									scale,
+									relative,
 								).Write(divergence))
 								m.SetMetadata(data.MetadataDivergence, strconv.FormatFloat(divergence, 'f', -1, 64))
 							}
@@ -138,7 +134,7 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 							data.UnitVelocity,
 							data.TimescalePerSecond,
 							0.0,
-							math.Max(math.Abs(out.Rate), 1e-6),
+							0.0,
 						).Write(out.Rate))
 					}
 				},
@@ -148,29 +144,25 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 				adaptive.NewBaseline(adaptive.NewWindow()),
 				func(m *data.Measurement[float64]) float64 { return m.GetMetric("notional_rate").Raw },
 				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
-					scale := out.Baseline
-					if out.VarianceDefined && out.Variance > 0 {
-						scale = math.Sqrt(out.Variance)
-					}
-					scale = math.Max(scale, 1e-6)
-
 					if out.HasPrior {
 						m.SetMetric("notional_rate_baseline", data.NewMetric[float64](
 							"notional_rate_baseline",
 							data.UnitNotionalRate,
 							data.TimescaleRollingWindow,
 							out.Baseline,
-							scale,
+							out.ScoreScale,
 						).Write(out.Baseline))
 
 						if out.Baseline > 0 {
+							// Relative dispersion: the baseline's measured spread in units of the baseline.
+							relative := out.ScoreScale / out.Baseline
 							ratio := m.GetMetric("notional_rate").Raw / out.Baseline
 							m.SetMetric("notional_rate_ratio", data.NewMetric[float64](
 								"notional_rate_ratio",
 								data.UnitRatio,
 								data.TimescaleRollingWindow,
 								1.0,
-								1.0,
+								relative,
 							).Write(ratio))
 
 							if ratio > 0 {
@@ -180,7 +172,7 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 									data.UnitNotionalRate,
 									data.TimescaleRollingWindow,
 									0.0,
-									scale,
+									relative,
 								).Write(div))
 								m.SetMetadata(data.MetadataDivergence, strconv.FormatFloat(div, 'f', -1, 64))
 							}
@@ -219,7 +211,7 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 							data.UnitVelocity,
 							data.TimescalePerSecond,
 							0.0,
-							math.Max(math.Abs(out.Rate), 1e-6),
+							0.0,
 						).Write(out.Rate))
 					}
 				},
@@ -229,18 +221,13 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 				adaptive.NewBaseline(adaptive.NewWindow()),
 				func(m *data.Measurement[float64]) float64 { return m.GetMetric("midpoint_return_rate").Raw },
 				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
-					scale := math.Max(math.Abs(out.Baseline), 1e-6)
-					if out.VarianceDefined && out.Variance > 0 {
-						scale = math.Max(math.Sqrt(out.Variance), 1e-6)
-					}
-
 					if out.HasPrior {
 						m.SetMetric("midpoint_return_baseline", data.NewMetric[float64](
 							"midpoint_return_baseline",
 							data.UnitVelocity,
 							data.TimescaleRollingWindow,
 							out.Baseline,
-							scale,
+							out.ScoreScale,
 						).Write(out.Baseline))
 
 						m.SetMetric("midpoint_return_divergence", data.NewMetric[float64](
@@ -248,7 +235,7 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 							data.UnitVelocity,
 							data.TimescaleRollingWindow,
 							0.0,
-							scale,
+							out.ScoreScale,
 						).Write(out.Residual))
 
 						m.SetMetric("midpoint_return_zscore", data.NewMetric[float64](
@@ -277,7 +264,7 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 							data.UnitAcceleration,
 							data.TimescalePerSecond,
 							0.0,
-							math.Max(math.Abs(out.Rate), 1e-6),
+							0.0,
 						).Write(out.Rate))
 					}
 				},

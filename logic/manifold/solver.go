@@ -242,14 +242,14 @@ func (solver *Solver) Step(prior *data.Measurement[float64]) *data.Measurement[f
 		data.UnitRate,
 		data.TimescaleInstantaneous,
 		0.0,
-		1.0,
+		0.0,
 	).Write(reading.Reading.Divergence))
 	out.SetMetric("guidance_speed", data.NewMetric[float64](
 		"guidance_speed",
 		data.UnitVelocity,
 		data.TimescaleInstantaneous,
 		0.0,
-		1.0,
+		0.0,
 	).Write(reading.Reading.GuidanceSpeed))
 	out.SetMetric("coherence_mag2", data.NewMetric[float64](
 		"coherence_mag2",
@@ -263,14 +263,14 @@ func (solver *Solver) Step(prior *data.Measurement[float64]) *data.Measurement[f
 		data.UnitAcceleration,
 		data.TimescaleInstantaneous,
 		0.0,
-		1.0,
+		0.0,
 	).Write(reading.Reading.PressureGradNorm))
 	out.SetMetric("viscosity_proxy", data.NewMetric[float64](
 		"viscosity_proxy",
 		data.UnitDimensionless,
 		data.TimescaleInstantaneous,
 		0.0,
-		1.0,
+		0.0,
 	).Write(reading.Reading.ViscosityProxy))
 	out.SetMetric("kuramoto_r", data.NewMetric[float64](
 		"kuramoto_r",
@@ -291,42 +291,42 @@ func (solver *Solver) Step(prior *data.Measurement[float64]) *data.Measurement[f
 		data.UnitDimensionless,
 		data.TimescaleInstantaneous,
 		0.0,
-		1.0,
+		0.0,
 	).Write(reading.Reading.Health.Gas.Kinetic))
 	out.SetMetric("gas_internal", data.NewMetric[float64](
 		"gas_internal",
 		data.UnitDimensionless,
 		data.TimescaleInstantaneous,
 		0.0,
-		1.0,
+		0.0,
 	).Write(reading.Reading.Health.Gas.Internal))
 	out.SetMetric("wave_norm", data.NewMetric[float64](
 		"wave_norm",
 		data.UnitDimensionless,
 		data.TimescaleInstantaneous,
-		1.0,
-		1.0,
+		0.0,
+		0.0,
 	).Write(reading.Reading.Health.Wave.Norm))
 	out.SetMetric("vorticity_rms", data.NewMetric[float64](
 		"vorticity_rms",
 		data.UnitRate,
 		data.TimescaleInstantaneous,
 		0.0,
-		1.0,
+		0.0,
 	).Write(reading.Reading.Health.Gas.VorticityRMS))
 	out.SetMetric("strain_rms", data.NewMetric[float64](
 		"strain_rms",
 		data.UnitRate,
 		data.TimescaleInstantaneous,
 		0.0,
-		1.0,
+		0.0,
 	).Write(reading.Reading.Health.Gas.StrainRMS))
 	out.SetMetric("max_mach", data.NewMetric[float64](
 		"max_mach",
 		data.UnitDimensionless,
 		data.TimescaleInstantaneous,
 		0.0,
-		1.0,
+		0.0,
 	).Write(reading.Reading.Health.Gas.MaxMach))
 
 	if reading.State != nil {
@@ -335,8 +335,8 @@ func (solver *Solver) Step(prior *data.Measurement[float64]) *data.Measurement[f
 			"particle_count",
 			data.UnitCount,
 			data.TimescaleInstantaneous,
-			n,
-			math.Sqrt(n),
+			0.0,
+			0.0,
 		).Write(n))
 	}
 
@@ -345,14 +345,14 @@ func (solver *Solver) Step(prior *data.Measurement[float64]) *data.Measurement[f
 		data.UnitDimensionless,
 		data.TimescaleInstantaneous,
 		0.0,
-		1.0,
+		0.0,
 	).Write(reading.Reading.Health.ParticleThermal))
 	out.SetMetric("particle_kinetic", data.NewMetric[float64](
 		"particle_kinetic",
 		data.UnitDimensionless,
 		data.TimescaleInstantaneous,
 		0.0,
-		1.0,
+		0.0,
 	).Write(reading.Reading.Health.ParticleKinetic))
 
 	maturity, snr, snrDefined, estimated := out.Maturity, out.SNR, out.SNRDefined, out.Estimated

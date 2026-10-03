@@ -2,7 +2,6 @@ package leadlag
 
 import (
 	"context"
-	"math"
 	"sync"
 	"unsafe"
 
@@ -94,7 +93,7 @@ func (signal *Signal) Step(prior *data.Measurement[float64]) *data.Measurement[f
 	out.From = prior.From
 	out.Peers = []*data.Measurement[float64]{prior}
 
-	midpoint := price
+	midpoint := 0.0
 	spread := 0.0
 
 	bid := prior.GetMetric("best_bid").Raw
@@ -114,10 +113,6 @@ func (signal *Signal) Step(prior *data.Measurement[float64]) *data.Measurement[f
 		if spreadMetric, ok := prior.LookupMetric("spread"); ok && spreadMetric.Raw > 0 {
 			spread = spreadMetric.Raw
 		}
-	}
-
-	if spread <= 0 {
-		spread = math.Max(price*0.0001, 1e-6)
 	}
 
 	out.SetMetric("last", data.NewMetric[float64](

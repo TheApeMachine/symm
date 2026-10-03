@@ -244,9 +244,6 @@ func (op *VolumeClock) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 			if bid > 0 && ask > bid {
 				mid = (bid + ask) / 2.0
 				spread = ask - bid
-			} else {
-				mid = price
-				spread = math.Max(price*0.0001, 1e-6)
 			}
 
 			if !state.hasTrade {
@@ -278,9 +275,7 @@ func (op *VolumeClock) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 
 			duration := m.At.Sub(state.barStartTime).Seconds()
 
-			targetQty := math.Max(state.targetQty, 1e-6)
-			expectedNotional := targetQty * mid
-
+			// Center and scale exist only against a valid book: the touch midpoint and spread are measured.
 			m.SetMetric("trade_price", data.NewMetric[float64](
 				"trade_price",
 				data.UnitPrice,
@@ -293,103 +288,98 @@ func (op *VolumeClock) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 				"trade_quantity",
 				data.UnitQuantity,
 				data.TimescaleTick,
-				targetQty,
-				targetQty,
+				0.0,
+				0.0,
 			).Write(qty))
 
 			m.SetMetric("trade_notional", data.NewMetric[float64](
 				"trade_notional",
 				data.UnitNotional,
 				data.TimescaleTick,
-				expectedNotional,
-				expectedNotional,
+				0.0,
+				0.0,
 			).Write(notional))
 
 			if hasInterval {
-				intervalScale := math.Max(interval, 0.001)
 				m.SetMetric("trade_interval_seconds", data.NewMetric[float64](
 					"trade_interval_seconds",
 					data.UnitSecond,
 					data.TimescaleTick,
-					interval,
-					intervalScale,
+					0.0,
+					0.0,
 				).Write(interval))
 			}
 
 			if hasInterval && duration > 0 && state.barQty >= state.targetQty {
-				barDurationScale := math.Max(duration, 0.001)
-				expectedVolRate := targetQty / barDurationScale
-				expectedNotionalRate := expectedNotional / barDurationScale
-				expectedTradeRate := state.barTradeCount / barDurationScale
-
 				m.SetMetric("volume_bar_target_quantity", data.NewMetric[float64](
 					"volume_bar_target_quantity",
 					data.UnitQuantity,
 					data.TimescaleVolumeBar,
-					targetQty,
-					targetQty,
+					0.0,
+					0.0,
 				).Write(state.targetQty))
 
 				m.SetMetric("volume_bar_quantity", data.NewMetric[float64](
 					"volume_bar_quantity",
 					data.UnitQuantity,
 					data.TimescaleVolumeBar,
-					targetQty,
-					targetQty,
+					0.0,
+					0.0,
 				).Write(state.barQty))
 
 				m.SetMetric("volume_bar_notional", data.NewMetric[float64](
 					"volume_bar_notional",
 					data.UnitNotional,
 					data.TimescaleVolumeBar,
-					expectedNotional,
-					expectedNotional,
+					0.0,
+					0.0,
 				).Write(state.barNotional))
 
 				m.SetMetric("volume_bar_trade_count", data.NewMetric[float64](
 					"volume_bar_trade_count",
 					data.UnitCount,
 					data.TimescaleVolumeBar,
-					state.barTradeCount,
-					math.Max(state.barTradeCount, 1),
+					0.0,
+					0.0,
 				).Write(state.barTradeCount))
 
 				m.SetMetric("volume_bar_duration", data.NewMetric[float64](
 					"volume_bar_duration",
 					data.UnitDuration,
 					data.TimescaleVolumeBar,
-					duration,
-					barDurationScale,
+					0.0,
+					0.0,
 				).Write(duration))
 
 				m.SetMetric("volume_rate", data.NewMetric[float64](
 					"volume_rate",
 					data.UnitVolumeRate,
 					data.TimescalePerSecond,
-					expectedVolRate,
-					math.Max(expectedVolRate, 1e-6),
+					0.0,
+					0.0,
 				).Write(state.barQty/duration))
 
 				m.SetMetric("notional_rate", data.NewMetric[float64](
 					"notional_rate",
 					data.UnitNotionalRate,
 					data.TimescalePerSecond,
-					expectedNotionalRate,
-					math.Max(expectedNotionalRate, 1e-6),
+					0.0,
+					0.0,
 				).Write(state.barNotional/duration))
 
 				m.SetMetric("trade_rate", data.NewMetric[float64](
 					"trade_rate",
 					data.UnitTradeRate,
 					data.TimescalePerSecond,
-					expectedTradeRate,
-					math.Max(expectedTradeRate, 1e-6),
+					0.0,
+					0.0,
 				).Write(state.barTradeCount/duration))
 
 				if state.barFromMidpoint > 0 && mid > 0 {
-					relSpread := math.Max(spread/mid, 1e-6)
+					// Return resolution is the measured touch width relative to the midpoint.
+					relSpread := spread / mid
 					logReturn := math.Log(mid / state.barFromMidpoint)
-					returnRateScale := math.Max(relSpread/barDurationScale, 1e-9)
+					returnRateScale := relSpread / duration
 
 					m.SetMetric("midpoint_log_return", data.NewMetric[float64](
 						"midpoint_log_return",
@@ -438,8 +428,8 @@ func (op *VolumeClock) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 					"completed_bars",
 					data.UnitCount,
 					data.TimescaleSession,
-					state.completedBars,
-					math.Max(state.completedBars, 1),
+					0.0,
+					0.0,
 				).Write(state.completedBars))
 
 				// Reset the bar

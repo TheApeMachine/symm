@@ -565,18 +565,10 @@ func (price *Price) EntryCost(symbol string, quantity *decimal.Decimal) (*EntryC
 }
 
 /*
-AllocateEntry prices an executable entry frozen at 20% of reference cash.
-It walks ask depth to derive the maximum executable quantity such that
-gross notional plus taker entry fee does not exceed the 20% virtual budget.
+budget is the 20% virtual position allocation of reference cash. It is the
+single owner of the allocation rule for live entries and historical pricing.
 */
-func (price *Price) AllocateEntry(
-	symbol string,
-	referenceCash ...*decimal.Decimal,
-) (*EntryCost, error) {
-	if price == nil {
-		return nil, errnie.Error(errnie.Err(errnie.Validation, "[price] price system required", nil))
-	}
-
+func (price *Price) budget(referenceCash ...*decimal.Decimal) (*decimal.Decimal, error) {
 	var cash *decimal.Decimal
 
 	if len(referenceCash) > 0 && referenceCash[0] != nil && referenceCash[0].Sign() > 0 {
@@ -595,8 +587,72 @@ func (price *Price) AllocateEntry(
 		))
 	}
 
-	// 20% virtual position allocation frozen at entry.
-	budget := cash.SetScale(decimal.DefaultScale).Div(decimal.NewFromInt64(5))
+	return cash.SetScale(decimal.DefaultScale).Div(decimal.NewFromInt64(5)), nil
+}
+
+/*
+RoundTrip prices one complete long at the allocation budget: the quantity the
+budget affords at entry, bought at entry and sold at exit, both legs paying the
+taker fee. It returns the net PnL in quote currency and the total entry cost.
+*/
+func (price *Price) RoundTrip(
+	symbol string, entry, exit *decimal.Decimal,
+) (*decimal.Decimal, *decimal.Decimal, error) {
+	if entry == nil || exit == nil || entry.Sign() <= 0 || exit.Sign() <= 0 {
+		return nil, nil, errnie.Error(errnie.Err(
+			errnie.Validation, "[price] positive entry and exit prices required for "+symbol, nil,
+		))
+	}
+
+	if price.Fee(symbol) == nil {
+		return nil, nil, errnie.Error(errnie.Err(
+			errnie.NotFound, "[price] fee unavailable for "+symbol, nil,
+		))
+	}
+
+	budget, err := price.budget()
+
+	if err != nil {
+		return nil, nil, errnie.Error(err)
+	}
+
+	quantity, err := price.Affordable(symbol, budget, entry)
+
+	if err != nil {
+		return nil, nil, errnie.Error(err)
+	}
+
+	if quantity.Sign() <= 0 {
+		return nil, nil, errnie.Error(errnie.Err(
+			errnie.Validation, "[price] budget affords no quantity of "+symbol, nil,
+		))
+	}
+
+	total := price.WithFee(symbol, notional(entry, quantity), BUY)
+	net := price.WithFee(symbol, notional(exit, quantity), SELL)
+
+	return net.Sub(total), total, nil
+}
+
+/*
+AllocateEntry prices an executable entry frozen at the allocation budget.
+It walks ask depth to derive the maximum executable quantity such that
+gross notional plus taker entry fee does not exceed the budget.
+*/
+func (price *Price) AllocateEntry(
+	symbol string,
+	referenceCash ...*decimal.Decimal,
+) (*EntryCost, error) {
+	if price == nil {
+		return nil, errnie.Error(errnie.Err(errnie.Validation, "[price] price system required", nil))
+	}
+
+	budget, err := price.budget(referenceCash...)
+
+	if err != nil {
+		return nil, err
+	}
+
 	fee := price.Fee(symbol)
 
 	if fee == nil || fee.Fee == nil {
@@ -609,7 +665,6 @@ func (price *Price) AllocateEntry(
 	maxGross := budget.Div(decimalOne.Add(feeRate))
 
 	var cost *EntryCost
-	var err error
 
 	if price.Books != nil {
 		price.Books.Book(symbol, func(book *spotbook.Book) {

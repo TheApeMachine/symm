@@ -306,6 +306,11 @@ func (op *Engine) Step() uint64 {
 	return state.step
 }
 
+// Order returns the longest n-gram of frames the engine stores and matches.
+func (op *Engine) Order() int {
+	return op.cfg.MaxBackoffOrder
+}
+
 // Evaluate classifies a context sequence against the radix trie.
 func (op *Engine) Evaluate(context []byte) (Result, error) {
 	return op.evaluate(context)

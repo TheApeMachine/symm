@@ -273,6 +273,10 @@ func (catalog *Catalog) ensureTable(
 	}
 
 	if exists {
+		if err := catalog.evolveSchema(ctx, name, schema); err != nil {
+			return err
+		}
+
 		return catalog.ensureProperties(ctx, name, properties)
 	}
 
@@ -288,6 +292,75 @@ func (catalog *Catalog) ensureTable(
 			errnie.BadGateway,
 			"[iceberg] failed to create table "+name,
 			err,
+		))
+	}
+
+	return nil
+}
+
+/*
+evolveSchema brings an existing table up to the canonical schema. Columns the
+table lacks are added when they are optional, since old rows read them as null;
+any other divergence (a required column the table lacks, or a column whose type
+differs) cannot be reconciled without rewriting data and fails explicitly.
+*/
+func (catalog *Catalog) evolveSchema(
+	ctx context.Context, name string, canonical *iceberg.Schema,
+) error {
+	loaded, err := catalog.Load(ctx, name)
+
+	if err != nil {
+		return err
+	}
+
+	existing := loaded.Schema()
+	var missing []iceberg.NestedField
+
+	for _, field := range canonical.Fields() {
+		found, ok := existing.FindFieldByName(field.Name)
+
+		if !ok {
+			missing = append(missing, field)
+			continue
+		}
+
+		if found.Type.String() != field.Type.String() {
+			return errnie.Error(errnie.Err(
+				errnie.Conflict,
+				fmt.Sprintf("[iceberg] table %s column %s has type %s, want %s", name, field.Name, found.Type, field.Type),
+				nil,
+			))
+		}
+	}
+
+	if len(missing) == 0 {
+		return nil
+	}
+
+	transaction := loaded.NewTransaction()
+	update := transaction.UpdateSchema(true, false)
+
+	for _, field := range missing {
+		if field.Required {
+			return errnie.Error(errnie.Err(
+				errnie.Conflict,
+				fmt.Sprintf("[iceberg] table %s lacks required column %s and cannot be evolved", name, field.Name),
+				nil,
+			))
+		}
+
+		update.AddColumn([]string{field.Name}, field.Type, field.Doc, false, nil)
+	}
+
+	if err := update.Commit(); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.BadGateway, "[iceberg] failed to evolve schema of "+name, err,
+		))
+	}
+
+	if _, err := transaction.Commit(ctx); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.BadGateway, "[iceberg] failed to commit schema of "+name, err,
 		))
 	}
 

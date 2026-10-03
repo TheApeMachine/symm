@@ -2,7 +2,6 @@ package morphology
 
 import (
 	"context"
-	"math"
 	"strconv"
 	"sync"
 	"unsafe"
@@ -71,18 +70,12 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 					m.SetMetadata(data.MetadataSupport, strconv.FormatFloat(out.Count, 'f', -1, 64))
 
 					if out.HasPrior {
-						scale := out.Baseline
-						if out.VarianceDefined && out.Variance > 0 {
-							scale = math.Sqrt(out.Variance)
-						}
-						scale = math.Max(scale, 1e-6)
-
 						m.SetMetric("morphology_change_baseline", data.NewMetric[float64](
 							"morphology_change_baseline",
 							data.UnitRatio,
 							data.TimescaleRollingWindow,
 							out.Baseline,
-							scale,
+							out.ScoreScale,
 						).Write(out.Baseline))
 
 						m.SetMetric("morphology_change_zscore", data.NewMetric[float64](

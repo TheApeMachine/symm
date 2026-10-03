@@ -2,7 +2,6 @@ package toxicity
 
 import (
 	"context"
-	"math"
 	"strconv"
 	"sync"
 	"unsafe"
@@ -198,7 +197,7 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 							data.UnitVelocity,
 							data.TimescaleInstantaneous,
 							0.0,
-							math.Abs(out.Rate),
+							0.0,
 						).Write(out.Rate))
 					}
 				},
@@ -218,7 +217,7 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 							data.UnitVelocity,
 							data.TimescaleInstantaneous,
 							0.0,
-							math.Abs(out.Rate),
+							0.0,
 						).Write(out.Rate))
 					}
 				},
@@ -293,7 +292,7 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 							data.UnitVelocity,
 							data.TimescaleInstantaneous,
 							0.0,
-							math.Abs(out.Rate),
+							0.0,
 						).Write(out.Rate))
 					}
 				},
@@ -313,7 +312,7 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 							data.UnitVelocity,
 							data.TimescaleInstantaneous,
 							0.0,
-							math.Abs(out.Rate),
+							0.0,
 						).Write(out.Rate))
 					}
 				},

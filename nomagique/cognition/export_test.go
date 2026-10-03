@@ -1,29 +1,42 @@
 package cognition
 
 import (
+	"encoding/binary"
 	"strings"
 	"testing"
 )
 
-func TestRegionFramesCapsToDesignedN(t *testing.T) {
-	// Legacy/corrupt: one frame with >3 region IDs and no null separators mixed
-	// with a proper null-separated pair.
-	long := []byte{1, 2, 3, 4, 5, 0, 10, 20, 30}
-	frames := regionFrames(long)
-	if len(frames) != 2 {
+func frameOf(tokens ...string) []byte {
+	frame := make([]byte, 4+8*len(tokens))
+	binary.BigEndian.PutUint32(frame, uint32(len(tokens)))
+
+	for index, token := range tokens {
+		copy(frame[4+index*8+8-len(token):], token)
+	}
+
+	return frame
+}
+
+func TestRegionFramesDecodesTimesteps(t *testing.T) {
+	ctx := append(frameOf("R1", "R2", "R3"), frameOf("R10", "R20")...)
+	frames := regionFrames(ctx)
+
+	if len(frames) != 2 || frames[0] != "[R1,R2,R3]" || frames[1] != "[R10,R20]" {
 		t.Fatalf("frames=%v", frames)
 	}
-	if frames[0] != "[1,2,3]" {
-		t.Fatalf("capped first frame: %q", frames[0])
-	}
-	if frames[1] != "[10,20,30]" {
-		t.Fatalf("second frame: %q", frames[1])
+}
+
+func TestRegionFramesRejectsTruncated(t *testing.T) {
+	ctx := frameOf("R1", "R2")
+
+	if frames := regionFrames(ctx[:len(ctx)-1]); frames != nil {
+		t.Fatalf("truncated signature decoded: %v", frames)
 	}
 }
 
 func TestTreeExportActionIsLeafOnly(t *testing.T) {
 	engine := NewEngine(Config{})
-	ctx := []byte{3, 8, 19, 0, 1, 2, 5, 0}
+	ctx := append(frameOf("R3", "R8", "R19"), frameOf("R1", "R2", "R5")...)
 	if _, err := engine.Observe(Association{
 		Context:  ctx,
 		Class:    []byte(ActionEnter),
@@ -68,21 +81,25 @@ func TestTreeExportActionIsLeafOnly(t *testing.T) {
 }
 
 func TestRegionFramesCollapsesAAA(t *testing.T) {
-	// A A A with null separators → single frame
-	ctx := []byte{4, 5, 215, 0, 4, 5, 215, 0, 4, 5, 215, 0}
+	frame := frameOf("R4", "R5", "R15")
+	ctx := append(append(append([]byte{}, frame...), frame...), frame...)
 	got := regionFrames(ctx)
-	if len(got) != 1 || got[0] != "[4,5,215]" {
+
+	if len(got) != 1 || got[0] != "[R4,R5,R15]" {
 		t.Fatalf("AAA→A frames: got %#v", got)
 	}
 }
 
 func TestRegionFramesCollapsesABBA(t *testing.T) {
-	ctx := []byte{1, 2, 3, 0, 7, 8, 9, 0, 7, 8, 9, 0, 1, 2, 3, 0}
+	first, second := frameOf("R1", "R2", "R3"), frameOf("R7", "R8", "R9")
+	ctx := append(append(append(append([]byte{}, first...), second...), second...), first...)
 	got := regionFrames(ctx)
-	want := []string{"[1,2,3]", "[7,8,9]", "[1,2,3]"}
+	want := []string{"[R1,R2,R3]", "[R7,R8,R9]", "[R1,R2,R3]"}
+
 	if len(got) != len(want) {
 		t.Fatalf("ABBA→ABA len: got %#v want %#v", got, want)
 	}
+
 	for i := range want {
 		if got[i] != want[i] {
 			t.Fatalf("ABBA→ABA: got %#v want %#v", got, want)

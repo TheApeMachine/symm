@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/hindsight/tables"
@@ -16,7 +17,7 @@ import (
 )
 
 func TestTraining_Train(t *testing.T) {
-	Convey("Given a Training component with stored excursions in Iceberg", t, func() {
+	Convey("Given a Training component with a stored excursion in Iceberg", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
@@ -30,92 +31,107 @@ func TestTraining_Train(t *testing.T) {
 		})
 		So(err, ShouldBeNil)
 
-		price := broker.NewPrice(ctx, nil, nil, nil, nil)
+		normalizer := spot.NewNormalizer()
+		normalizer.Update(&spot.AssetsManagerUpdate{
+			NewAssets: map[string]spot.AssetInfo{
+				"BTC": {AltName: "XBT"},
+				"USD": {AltName: "USD"},
+			},
+			NewPairs: map[string]spot.AssetPair{
+				"BTC/USD": {
+					WSName:        "BTC/USD",
+					Base:          "BTC",
+					Quote:         "USD",
+					LotDecimals:   8,
+					LotMultiplier: 1,
+				},
+			},
+		})
+
+		price := broker.NewPrice(ctx, nil, nil, nil, normalizer)
 		price.SetFee("BTC/USD", kraken.TradeVolumeFee{
 			Fee: decimal.NewFromFloat64(0.26),
 		})
-		price.SetReferenceCash(decimal.NewFromFloat64(10000))
+		price.SetReferenceCash(decimal.NewFromFloat64(200))
 
 		writer := tables.NewWriter(catalog, epoch)
 
-		// 1. Write a detector measurement representing an excursion
-		det := data.NewMeasurement[float64]("detector", nil)
-		det.Epoch = epoch
-		det.Label = "BTC/USD"
-		det.Tick = 15
-		det.SeqIdx = 150
+		detection := data.NewMeasurement[float64]("detector", nil)
+		detection.Epoch = epoch
+		detection.Label = "BTC/USD"
+		detection.Tick = 15
+		detection.SeqIdx = 150
+		detection.SetMetric("LowTick", data.Metric[float64]{Raw: 10})
+		detection.SetMetric("HighTick", data.Metric[float64]{Raw: 15})
+		detection.SetMetric("LowPrice", data.Metric[float64]{
+			Raw: 60000.0, Exact: decimal.NewFromFloat64(60000.0),
+		})
+		detection.SetMetric("HighPrice", data.Metric[float64]{
+			Raw: 63000.0, Exact: decimal.NewFromFloat64(63000.0),
+		})
+		writer.Add("measurements", data.Publication{Measurement: detection})
 
-		lowestPrice := decimal.NewFromFloat64(60000.0)
-		highestPrice := decimal.NewFromFloat64(63000.0)
-
-		det.SetMetric("LowTick", data.Metric[float64]{Raw: 10})
-		det.SetMetric("HighTick", data.Metric[float64]{Raw: 15})
-		det.SetMetric("LowSeqIdx", data.Metric[float64]{Raw: 100})
-		det.SetMetric("HighSeqIdx", data.Metric[float64]{Raw: 150})
-
-		lowPriceMetric := data.Metric[float64]{Raw: 60000.0, Exact: lowestPrice}
-		highPriceMetric := data.Metric[float64]{Raw: 63000.0, Exact: highestPrice}
-		det.SetMetric("LowPrice", lowPriceMetric)
-		det.SetMetric("HighPrice", highPriceMetric)
-
-		writer.Add("measurements", data.Publication{Measurement: det})
-
-		// 2. Write signal and logic measurements within tick window [10, 15]
-		addMeas := func(source string, tick int64, seqIdx int64) {
-			meas := data.NewMeasurement[float64](source, nil)
-			meas.Epoch = epoch
-			meas.Label = "BTC/USD"
-			meas.Tick = tick
-			meas.SeqIdx = seqIdx
-			meas.Maturity = 1.0
-			meas.SNR = 2.0
-			meas.SNRDefined = true
-			meas.SetMetric("value", data.Metric[float64]{
-				Label:  "value",
-				Raw:    1.5,
-				Center: 0,
-				Scale:  1,
-				Region: 1,
-			})
-			writer.Add("measurements", data.Publication{Measurement: meas})
+		signal := func(source string, tick int64, seqIdx int64) {
+			measurement := data.NewMeasurement[float64](source, nil)
+			measurement.Epoch = epoch
+			measurement.Label = "BTC/USD"
+			measurement.Tick = tick
+			measurement.SeqIdx = seqIdx
+			measurement.SetMetric("value", data.Metric[float64]{Label: "value", Raw: 1.5})
+			writer.Add("measurements", data.Publication{Measurement: measurement})
 		}
 
-		addMeas("cvd", 10, 101)
-		addMeas("hawkes", 10, 102)
-		addMeas("resonance", 11, 103)
-		addMeas("liquidity", 12, 104)
-		addMeas("manifold", 15, 105)
+		// Precursor A..B-1, ignition B=10, holding B+1..C-1, peak C=15.
+		signal("cvd", 7, 70)
+		signal("hawkes", 8, 80)
+		signal("cvd", 10, 101)
+		signal("resonance", 11, 103)
+		signal("liquidity", 12, 104)
+		signal("manifold", 15, 105)
 
 		So(writer.CommitReady(ctx, true), ShouldBeNil)
 
-		arena := data.NewArenaOwner(4096)
-		training := NewTraining(ctx, arena, price, catalog, nil, nil)
+		desk := broker.NewDesk(ctx, nil, price)
+		training := NewTraining(ctx, data.NewArenaOwner(4096), price, desk, catalog, nil)
 		training.Transition(runtime.WAITING)
-
 		training.Train()
 
-		// Wait for historical training to process the detection
-		timeout := time.After(2 * time.Second)
-		processed := false
+		deadline := time.After(2 * time.Second)
 
-		for !processed {
+		for training.Status() != runtime.READY {
 			select {
-			case <-timeout:
-				t.Fatal("timed out waiting for historical training to process excursion")
+			case <-deadline:
+				t.Fatal("timed out waiting for the trie to load")
 			case <-time.After(20 * time.Millisecond):
-				if training.skill.HistOpportunities() > 0 {
-					processed = true
-				}
 			}
 		}
 
-		Convey("Historical training trains trie and records opportunity", func() {
-			So(training.skill.HistOpportunities(), ShouldBeGreaterThanOrEqualTo, 1)
-
-			upFragments, _, _, _, _ := training.skill.Fragments()
-			So(upFragments, ShouldBeGreaterThanOrEqualTo, 1)
-
+		Convey("It loads enter and exit associations into the trie and opens trading", func() {
 			So(training.engine.Len(), ShouldBeGreaterThan, 0)
+
+			census := training.engine.Census()
+			So(census[string("enter")], ShouldBeGreaterThan, 0)
+			So(census[string("exit")], ShouldBeGreaterThan, 0)
+		})
+	})
+}
+
+func TestEncodeFrame(t *testing.T) {
+	Convey("Given region tokens for one tick", t, func() {
+		frame, err := encodeFrame([][]byte{[]byte("R3"), []byte("R17")})
+
+		Convey("It packs them into the engine's structural timestep", func() {
+			So(err, ShouldBeNil)
+			So(frame, ShouldResemble, []byte{
+				0, 0, 0, 2,
+				0, 0, 0, 0, 0, 0, 'R', '3',
+				0, 0, 0, 0, 0, 'R', '1', '7',
+			})
+		})
+
+		Convey("It rejects tokens wider than one engine token", func() {
+			_, err := encodeFrame([][]byte{[]byte("R123456789")})
+			So(err, ShouldNotBeNil)
 		})
 	})
 }

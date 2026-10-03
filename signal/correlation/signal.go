@@ -2,7 +2,6 @@ package correlation
 
 import (
 	"context"
-	"math"
 	"sync"
 	"time"
 	"unsafe"
@@ -76,7 +75,7 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 							data.UnitVelocity,
 							data.TimescalePerSecond,
 							0.0,
-							math.Max(math.Abs(out.Rate), 1e-6),
+							0.0,
 						).Write(out.Rate))
 					}
 				},
@@ -96,7 +95,7 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 							data.UnitVelocity,
 							data.TimescalePerSecond,
 							0.0,
-							math.Max(math.Abs(out.Rate), 1e-6),
+							0.0,
 						).Write(out.Rate))
 					}
 				},
@@ -130,7 +129,7 @@ func (signal *Signal) Step(prior *data.Measurement[float64]) *data.Measurement[f
 		return nil
 	}
 
-	midpoint := price
+	midpoint := 0.0
 	spread := 0.0
 
 	bid := prior.GetMetric("best_bid").Raw
@@ -150,10 +149,6 @@ func (signal *Signal) Step(prior *data.Measurement[float64]) *data.Measurement[f
 		if spreadMetric, ok := prior.LookupMetric("spread"); ok && spreadMetric.Raw > 0 {
 			spread = spreadMetric.Raw
 		}
-	}
-
-	if spread <= 0 {
-		spread = math.Max(price*0.0001, 1e-6)
 	}
 
 	out := signal.arena.NewMeasurement(signal.Name())

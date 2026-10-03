@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"encoding/binary"
 	"fmt"
+	"math/rand/v2"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/theapemachine/errnie"
@@ -21,47 +24,61 @@ import (
 var _ ui.CognitionSource = (*Training)(nil)
 
 /*
-Training develops one grid, checkpoints it with the trie, trains on historical
-excursion trajectories, and starts paper trading once statistical edge is proven.
+Training develops one grid, loads the trie from historical excursions, then
+paper trades the live market with it. Realized round trips refine the trie.
 */
 type Training struct {
 	*runtime.System
-	arena     *data.ArenaOwner
-	grid      *store.Grid
-	engine    *cognition.Engine
-	detector  *Detector
-	evaluator *Evaluator
-	reporter  *Reporter
-	catalog   *tables.Catalog
-	price     *broker.Price
-	tee       runtime.Tee
-	storeTee  runtime.Tee
+	arena    *data.ArenaOwner
+	grid     *store.Grid
+	engine   *cognition.Engine
+	detector *Detector
+	reporter *Reporter
+	catalog  *tables.Catalog
+	price    *broker.Price
+	desk     *broker.Desk
+	mu       sync.Mutex
+	episodes map[string]*episode
+	resolved int64
+	wins     int64
+	returns  float64
+}
+
+/*
+episode is one symbol's live state: the rolling frame window the engine is
+asked about, the contexts that triggered the open position's entry and exit,
+and the position's current unrealized return.
+*/
+type episode struct {
+	window [][]byte
+	entry  []byte
+	exit   []byte
+	mark   float64
+	marked bool
 }
 
 func NewTraining(
 	ctx context.Context,
 	arena *data.ArenaOwner,
 	price *broker.Price,
+	desk *broker.Desk,
 	catalog *tables.Catalog,
-	tee runtime.Tee,
 	storeTee runtime.Tee,
 ) *Training {
-	engine := cognition.NewEngine(cognition.Config{})
-	evaluator := NewEvaluator(price, engine)
-
 	training := &Training{
-		System:    runtime.NewSystem(ctx, "training", price),
-		arena:     arena,
-		grid:      store.NewGrid(),
-		engine:    engine,
-		evaluator: evaluator,
-		detector:  NewDetector(ctx, storeTee),
-		reporter:  NewReporter(data.NewArenaOwner(4096), tee),
-		catalog:   catalog,
-		price:     price,
-		tee:       tee,
+		System:   runtime.NewSystem(ctx, "training", price),
+		arena:    arena,
+		grid:     store.NewGrid(),
+		engine:   cognition.NewEngine(cognition.Config{}),
+		detector: NewDetector(ctx, storeTee),
+		reporter: NewReporter(),
+		catalog:  catalog,
+		price:    price,
+		desk:     desk,
+		episodes: make(map[string]*episode),
 	}
 
+	desk.OnClose(training.settle)
 	training.Transition(runtime.INIT)
 	return training
 }
@@ -71,18 +88,14 @@ func (training *Training) Arena() *data.ArenaOwner {
 }
 
 func (training *Training) CognitionTree() cognition.CognitionTreeExport {
-	if training == nil || training.engine == nil {
-		return cognition.CognitionTreeExport{}
-	}
-
 	return training.engine.TreeExport()
 }
 
 /*
 Step processes the live market signal across three operational stages:
- 1. Grid development (Status: INIT): develops the grid until settled, then freezes and checkpoints it.
- 2. Historical Validation (Status: WAITING): reports validation state while historical training runs.
- 3. Live Paper Trading (Status: READY): matches live tokens against trained trie branches to trade paper positions.
+ 1. Grid development (INIT): develops the grid until settled, then checkpoints it.
+ 2. Trie loading (WAITING): Train loads historical excursions into the trie.
+ 3. Paper trading (READY): live frames are classified and traded through the Desk.
 */
 func (training *Training) Step(prior *data.Measurement[float64]) *data.Measurement[float64] {
 	if prior == nil {
@@ -95,334 +108,481 @@ func (training *Training) Step(prior *data.Measurement[float64]) *data.Measureme
 	out.SeqIdx = prior.SeqIdx
 	out.Label = prior.Label
 	out.At = prior.At
-	peers := prior.Peers
+	out.Peers = prior.Peers
 
 	if prior.Source != "runtime:join" {
-		peers = []*data.Measurement[float64]{prior}
-	}
-	out.Peers = peers
-
-	price := prior.GetMetric("price").Raw
-
-	if price == 0 {
-		for _, peer := range peers {
-			if peerPrice := peer.GetMetric("price").Raw; peerPrice > 0 {
-				price = peerPrice
-				break
-			}
-		}
+		out.Peers = []*data.Measurement[float64]{prior}
 	}
 
-	currentStatus := training.Status()
-
-	if currentStatus == runtime.INIT {
-		training.grid.Update(prior)
-
-		snapshot := ReportSnapshot{
-			Source:  training.Name(),
-			Symbol:  prior.Label,
-			SeqIdx:  prior.SeqIdx,
-			At:      prior.At,
-			Stage:   StageModelDevelopment,
-			Blocker: "grid developing",
-			Price:   price,
-		}
-		training.reporter.Populate(out, snapshot, training.skill)
-
-		if training.grid.IsSettled() {
-			training.grid.Settle()
-			snapshotData, err := training.grid.Snapshot()
-
-			if err != nil {
-				training.Error(errnie.Err(
-					errnie.UnprocessableContent,
-					fmt.Sprintf(
-						"[training] unable to create snapshot of: grid/%d/%d",
-						out.Epoch, out.SeqIdx,
-					),
-					err,
-				))
-
-				return out
-			}
-
-			training.catalog.PutBlob(
-				training.Context(),
-				fmt.Sprintf("grid/%d/%d", out.Epoch, out.SeqIdx),
-				snapshotData,
-			)
-
-			training.Transition(runtime.WAITING)
-		}
-
-		return out
+	snapshot := ReportSnapshot{
+		Source: training.Name(),
+		Symbol: prior.Label,
+		SeqIdx: prior.SeqIdx,
+		At:     prior.At,
+		Price:  prior.GetMetric("price").Raw,
 	}
 
-	if currentStatus == runtime.WAITING {
-		snapshot := ReportSnapshot{
-			Source:  training.Name(),
-			Symbol:  prior.Label,
-			SeqIdx:  prior.SeqIdx,
-			At:      prior.At,
-			Stage:   StageHistoricalValidation,
-			Blocker: training.skill.HistBlocker(),
-			Price:   price,
-		}
-		training.reporter.Populate(out, snapshot, training.skill)
+	status := training.Status()
 
-		if !training.skill.HasEdge() {
-			return out
-		}
-
-		training.Transition(runtime.READY)
-		return out
+	if status == runtime.INIT {
+		training.develop(prior, out, &snapshot)
 	}
 
-	if currentStatus == runtime.READY {
-		tokens := training.grid.LitRegions(append(peers, prior)...)
-
-		stage := StageForwardPaperLearning
-		blocker := training.skill.FwdBlocker()
-
-		if training.skill.HasForwardEdge() {
-			stage = StageForwardSkillValidated
-			blocker = ""
-		}
-
-		snapshot := ReportSnapshot{
-			Source:       training.Name(),
-			Symbol:       prior.Label,
-			SeqIdx:       prior.SeqIdx,
-			At:           prior.At,
-			Stage:        stage,
-			Blocker:      blocker,
-			RegionTokens: tokens,
-			Price:        price,
-			Trading:      true,
-		}
-
-		if len(tokens) > 0 {
-			res, err := training.engine.Evaluate(bytes.Join(tokens, []byte("_")))
-
-			if err != nil {
-				training.Error(errnie.Err(
-					errnie.Validation,
-					fmt.Sprintf(
-						"[training] unable to evaluate: grid/%d/%d",
-						out.Epoch, out.SeqIdx,
-					),
-					err,
-				))
-
-				training.reporter.Populate(out, snapshot, training.skill)
-				return out
-			}
-
-			action := cognition.Action(res.Evaluation.WinnerClass)
-			confidence := res.Evaluation.Confidence
-			contrast := res.Evaluation.Surprisal
-
-			actionCode := 0
-
-			if action == cognition.ActionEnter {
-				actionCode = 1
-			}
-
-			if action == cognition.ActionExit {
-				actionCode = 2
-			}
-
-			snapshot.Action = actionCode
-			snapshot.Confidence = confidence
-			snapshot.Contrast = contrast
-		}
-
-		training.reporter.Populate(out, snapshot, nil)
-		return out
+	if status == runtime.WAITING {
+		snapshot.Stage = StageHistoricalValidation
+		snapshot.Blocker = "loading trie from historical excursions"
 	}
 
+	if status == runtime.READY {
+		training.trade(prior, &snapshot)
+	}
+
+	snapshot.Resolved, snapshot.WinRate, snapshot.Edge = training.score()
+	training.reporter.Populate(out, snapshot)
 	return out
 }
 
 /*
-Train drives Stage 1 historical training: scanning epoch market tape per symbol,
-retrieving pre-split trajectories from Detector, and inserting them into the Radix trie.
+develop grows the grid and checkpoints it once it settles.
+*/
+func (training *Training) develop(
+	prior, out *data.Measurement[float64], snapshot *ReportSnapshot,
+) {
+	snapshot.Stage = StageModelDevelopment
+	snapshot.Blocker = "grid developing"
+	training.grid.Update(prior)
+
+	if !training.grid.IsSettled() {
+		return
+	}
+
+	training.grid.Settle()
+	encoded, err := training.grid.Snapshot()
+
+	if err == nil {
+		err = training.catalog.PutBlob(
+			training.Context(),
+			fmt.Sprintf("grid/%d/%d", out.Epoch, out.SeqIdx),
+			encoded,
+		)
+	}
+
+	if err != nil {
+		errnie.Error(errnie.Err(
+			errnie.IO,
+			fmt.Sprintf("[training] unable to checkpoint grid/%d/%d", out.Epoch, out.SeqIdx),
+			err,
+		))
+	}
+
+	training.Transition(runtime.WAITING)
+}
+
+/*
+trade classifies the symbol's rolling frame window and acts on the winner
+when the Desk allows that action: enter when flat, exit when holding.
+*/
+func (training *Training) trade(prior *data.Measurement[float64], snapshot *ReportSnapshot) {
+	snapshot.Stage = StageForwardPaperLearning
+	snapshot.Trading = true
+
+	symbol := prior.Label
+	tokens := training.grid.LitRegions(prior)
+	snapshot.RegionTokens = tokens
+
+	if len(tokens) == 0 {
+		return
+	}
+
+	frame, err := encodeFrame(tokens)
+
+	if err != nil {
+		errnie.Error(err)
+		return
+	}
+
+	training.mu.Lock()
+	current := training.episode(symbol)
+	current.window = append(current.window, frame)
+
+	if overflow := len(current.window) - training.engine.Order(); overflow > 0 {
+		current.window = current.window[overflow:]
+	}
+
+	question := bytes.Join(current.window, nil)
+	training.mu.Unlock()
+
+	result, err := training.engine.Evaluate(question)
+
+	if err != nil {
+		errnie.Error(errnie.Err(errnie.Validation, "[training] unable to evaluate "+symbol, err))
+		return
+	}
+
+	snapshot.Confidence = result.Evaluation.Confidence
+	snapshot.Contrast = result.Evaluation.Contrast
+
+	action := cognition.Action(result.Evaluation.WinnerClass)
+	state := training.desk.State(symbol)
+
+	if state == broker.HOLDING {
+		training.mark(symbol)
+	}
+
+	if state == broker.FLAT && action == cognition.ActionEnter {
+		training.act(symbol, training.desk.Enter, func(held *episode, context []byte) { held.entry = context }, question)
+		snapshot.Action = 1
+	}
+
+	if state == broker.HOLDING && action == cognition.ActionExit {
+		training.act(symbol, training.desk.Exit, func(held *episode, context []byte) { held.exit = context }, question)
+		snapshot.Action = 2
+	}
+}
+
+/*
+act records the context that triggers a Desk operation before submitting it,
+because the resulting fill may settle before the operation returns. A
+rejected operation withdraws the context.
+*/
+func (training *Training) act(
+	symbol string, operation func(string) error, record func(*episode, []byte), question []byte,
+) {
+	training.mu.Lock()
+	record(training.episode(symbol), question)
+	training.mu.Unlock()
+
+	err := operation(symbol)
+
+	if err == nil {
+		return
+	}
+
+	errnie.Error(err)
+
+	training.mu.Lock()
+	defer training.mu.Unlock()
+
+	record(training.episode(symbol), nil)
+}
+
+/*
+mark records the open position's unrealized return for the UI score.
+Choppy marks never train the trie; only realized closures do.
+*/
+func (training *Training) mark(symbol string) {
+	pnl, basis, err := training.desk.Unrealized(symbol)
+
+	if err != nil {
+		errnie.Error(err)
+		return
+	}
+
+	training.mu.Lock()
+	defer training.mu.Unlock()
+
+	held := training.episode(symbol)
+	held.mark = pnl.Div(basis).Float64()
+	held.marked = true
+}
+
+/*
+settle consumes one realized round trip from the Desk and refines the trie
+with its return on the contexts that entered and exited it.
+*/
+func (training *Training) settle(closure broker.Closure) {
+	feedback := closure.Realized.Div(closure.Cost).Float64()
+
+	training.mu.Lock()
+	held := training.episode(closure.Symbol)
+	entry, exit := held.entry, held.exit
+	held.entry, held.exit, held.marked = nil, nil, false
+	training.resolved++
+	training.returns += feedback
+
+	if feedback > 0 {
+		training.wins++
+	}
+
+	training.mu.Unlock()
+
+	if entry == nil {
+		errnie.Error(errnie.Err(
+			errnie.Conflict, "[training] closed position has no entry context: "+closure.Symbol, nil,
+		))
+
+		return
+	}
+
+	if _, err := training.engine.Train(entry, []byte(cognition.ActionEnter), feedback); err != nil {
+		errnie.Error(err)
+	}
+
+	if exit == nil {
+		return
+	}
+
+	if _, err := training.engine.Train(exit, []byte(cognition.ActionExit), feedback); err != nil {
+		errnie.Error(err)
+	}
+}
+
+/*
+score reports win rate and edge over realized round trips plus the current
+marks of open positions. It is display state, not training feedback.
+*/
+func (training *Training) score() (int64, float64, float64) {
+	training.mu.Lock()
+	defer training.mu.Unlock()
+
+	count, wins, returns := training.resolved, training.wins, training.returns
+
+	for _, held := range training.episodes {
+		if !held.marked {
+			continue
+		}
+
+		count++
+		returns += held.mark
+
+		if held.mark > 0 {
+			wins++
+		}
+	}
+
+	if count == 0 {
+		return 0, 0, 0
+	}
+
+	return count, float64(wins) / float64(count), returns / float64(count)
+}
+
+/*
+episode returns the symbol's live state. The caller holds training.mu.
+*/
+func (training *Training) episode(symbol string) *episode {
+	held, ok := training.episodes[symbol]
+
+	if !ok {
+		held = &episode{}
+		training.episodes[symbol] = held
+	}
+
+	return held
+}
+
+/*
+Train loads the trie once from every stored excursion, checkpoints it, and
+opens paper trading. It waits for the grid to settle first, because region
+tokens are only comparable once the grid is frozen.
 */
 func (training *Training) Train() {
 	go func() {
-		if training == nil || training.catalog == nil {
-			return
-		}
-
 		for training.Status() == runtime.INIT {
 			select {
 			case <-training.Context().Done():
 				return
-			default:
-				time.Sleep(10 * time.Millisecond)
+			case <-time.After(10 * time.Millisecond):
 			}
 		}
 
-		for {
-			select {
-			case <-training.Context().Done():
-				return
-			default:
-			}
+		runs, err := training.catalog.Runs(training.Context())
 
-			runs, err := training.catalog.Runs(training.Context())
+		if err != nil {
+			training.Error(errnie.Err(errnie.BadGateway, "[training] failed to query runs", err))
+			return
+		}
 
-			if err != nil {
-				training.Error(errnie.Err(
-					errnie.BadGateway,
-					"[training] failed to query runs from catalog",
-					err,
-				))
+		slices.SortFunc(runs, func(left, right tables.Run) int {
+			return cmp.Compare(left.Epoch, right.Epoch)
+		})
 
-				select {
-				case <-training.Context().Done():
+		seen := make(map[string]struct{})
+		var latest int64
+
+		for _, run := range runs {
+			for detection := range training.catalog.Detections(training.Context(), run.Epoch) {
+				if training.Context().Err() != nil {
 					return
-				case <-time.After(1 * time.Second):
 				}
 
-				continue
-			}
+				key := fmt.Sprintf("%d/%s", detection.Epoch, detection.Label)
 
-			slices.SortFunc(runs, func(left, right tables.Run) int {
-				return cmp.Compare(left.Epoch, right.Epoch)
-			})
-
-			for _, run := range runs {
-				select {
-				case <-training.Context().Done():
-					return
-				default:
+				if _, done := seen[key]; done {
+					continue
 				}
 
-				for detection := range training.catalog.Detections(training.Context(), run.Epoch) {
-					select {
-					case <-training.Context().Done():
-						return
-					default:
-					}
+				seen[key] = struct{}{}
+				latest = run.Epoch
 
-					if detection == nil {
-						continue
-					}
-
-					lowTick, highTick, tickErr := tables.DetectionTicks(detection)
-
-					if tickErr != nil {
-						training.Error(tickErr)
-						continue
-					}
-
-					var (
-						currentTick      int64 = -1
-						tickMeasurements []*data.Measurement[float64]
-						sequenceTokens   [][]byte
-					)
-
-					for measurement := range training.catalog.SignalLogic(
-						training.Context(),
-						detection.Epoch,
-						detection.Label,
-						lowTick,
-						highTick,
-					) {
-						if measurement == nil {
-							continue
-						}
-
-						if currentTick != -1 && measurement.Tick != currentTick {
-							if len(tickMeasurements) > 0 {
-								tokens := training.grid.LitRegions(tickMeasurements...)
-
-								if len(tokens) > 0 {
-									sequenceTokens = append(sequenceTokens, bytes.Join(tokens, []byte("_")))
-								}
-
-								tickMeasurements = tickMeasurements[:0]
-							}
-						}
-
-						currentTick = measurement.Tick
-						tickMeasurements = append(tickMeasurements, measurement)
-					}
-
-					if len(tickMeasurements) > 0 {
-						tokens := training.grid.LitRegions(tickMeasurements...)
-
-						if len(tokens) > 0 {
-							sequenceTokens = append(sequenceTokens, bytes.Join(tokens, []byte("_")))
-						}
-					}
-
-					if len(sequenceTokens) == 0 {
-						continue
-					}
-
-					entryAsk, exitBid, priceErr := tables.DetectionPrices(detection)
-
-					if priceErr != nil && training.price != nil {
-						bid, ask := training.price.Touch(detection.Label)
-						entryAsk = ask
-						exitBid = bid
-					}
-
-					if entryAsk == nil || exitBid == nil || entryAsk.Sign() <= 0 || exitBid.Sign() <= 0 {
-						continue
-					}
-
-					pnl, evalErr := training.evaluator.EvaluatePnL(detection.Label, entryAsk, exitBid)
-
-					if evalErr != nil {
-						training.Error(evalErr)
-						continue
-					}
-
-					if len(sequenceTokens) > 2 {
-						midPoint := len(sequenceTokens) / 2
-						earlyPrefix := bytes.Join(sequenceTokens[:midPoint], []byte("/"))
-						training.evaluator.ObserveWait(earlyPrefix)
-
-						enterPrefix := bytes.Join(sequenceTokens[:midPoint+1], []byte("/"))
-						training.evaluator.Train(enterPrefix, cognition.ActionEnter, pnl)
-
-						exitPrefix := bytes.Join(sequenceTokens, []byte("/"))
-						training.evaluator.Train(exitPrefix, cognition.ActionExit, pnl)
-					}
-
-					if len(sequenceTokens) <= 2 {
-						fullSequence := bytes.Join(sequenceTokens, []byte("/"))
-						training.evaluator.Train(fullSequence, cognition.ActionEnter, pnl)
-					}
+				if err := training.learn(detection); err != nil {
+					errnie.Error(err)
 				}
-
-				snap, snapErr := training.engine.Snapshot()
-
-				if snapErr == nil && len(snap.Model) > 0 {
-					training.catalog.PutBlob(
-						training.Context(),
-						fmt.Sprintf("trie/%d", run.Epoch),
-						snap.Model,
-					)
-				}
-			}
-
-			select {
-			case <-training.Context().Done():
-				return
-			case <-time.After(1 * time.Second):
 			}
 		}
+
+		snapshot, err := training.engine.Snapshot()
+
+		if err == nil {
+			err = training.catalog.PutBlob(
+				training.Context(), fmt.Sprintf("trie/%d", latest), snapshot.Model,
+			)
+		}
+
+		if err != nil {
+			errnie.Error(errnie.Err(errnie.IO, "[training] unable to checkpoint trie", err))
+		}
+
+		errnie.Info(fmt.Sprintf(
+			"[training] trie loaded from %d excursions (%d records)", len(seen), training.engine.Len(),
+		))
+
+		training.Transition(runtime.READY)
 	}()
 }
 
 /*
-Detect finds stored trade tape from the measurements table that has not been scanned
-for excursions yet. It should return only measurements with source = spot:trade,
-group them by label, and sort them by epoch and tick.
+learn cuts one excursion into its two trainable pieces and trains each with
+the round trip's return as priced by Price:
+  - enter: a random start A up to the last frame before ignition B, leaving
+    the ignition tick itself for the market fill;
+  - exit: one frame after B up to the last frame before the peak C, leaving
+    the peak tick for the exit fill.
+*/
+func (training *Training) learn(detection *data.Measurement[float64]) error {
+	lowTick, highTick, err := tables.DetectionTicks(detection)
+
+	if err != nil {
+		return errnie.Error(err)
+	}
+
+	entry, exit, err := tables.DetectionPrices(detection)
+
+	if err != nil {
+		return errnie.Error(err)
+	}
+
+	pnl, total, err := training.price.RoundTrip(detection.Label, entry, exit)
+
+	if err != nil {
+		return errnie.Error(err)
+	}
+
+	feedback := pnl.Div(total).Float64()
+	ticks, frames, err := training.frames(detection, highTick)
+
+	if err != nil {
+		return errnie.Error(err)
+	}
+
+	ignition, _ := slices.BinarySearch(ticks, lowTick)
+	peak, _ := slices.BinarySearch(ticks, highTick)
+
+	if ignition < 1 || ignition+1 >= peak {
+		return errnie.Error(errnie.Err(
+			errnie.NotFound,
+			fmt.Sprintf("[training] excursion %d/%s lacks frames around ignition", detection.Epoch, detection.Label),
+			nil,
+		))
+	}
+
+	start := rand.IntN(ignition)
+	enter := bytes.Join(frames[start:ignition], nil)
+	hold := bytes.Join(frames[ignition+1:peak], nil)
+
+	if _, err := training.engine.Train(enter, []byte(cognition.ActionEnter), feedback); err != nil {
+		return errnie.Error(err)
+	}
+
+	if _, err := training.engine.Train(hold, []byte(cognition.ActionExit), feedback); err != nil {
+		return errnie.Error(err)
+	}
+
+	return nil
+}
+
+/*
+frames reads the excursion's signal and logic tape from the epoch start up to
+the peak and encodes one region frame per tick that lit any region.
+*/
+func (training *Training) frames(
+	detection *data.Measurement[float64], highTick int64,
+) ([]int64, [][]byte, error) {
+	var (
+		ticks   []int64
+		frames  [][]byte
+		group   []*data.Measurement[float64]
+		current int64 = -1
+	)
+
+	flush := func() error {
+		if len(group) == 0 {
+			return nil
+		}
+
+		tokens := training.grid.LitRegions(group...)
+		group = group[:0]
+
+		if len(tokens) == 0 {
+			return nil
+		}
+
+		frame, err := encodeFrame(tokens)
+
+		if err != nil {
+			return err
+		}
+
+		ticks = append(ticks, current)
+		frames = append(frames, frame)
+		return nil
+	}
+
+	for measurement := range training.catalog.SignalLogic(
+		training.Context(), detection.Epoch, detection.Label, 0, highTick,
+	) {
+		if measurement.Tick != current {
+			if err := flush(); err != nil {
+				return nil, nil, err
+			}
+
+			current = measurement.Tick
+		}
+
+		group = append(group, measurement)
+	}
+
+	if err := flush(); err != nil {
+		return nil, nil, err
+	}
+
+	return ticks, frames, nil
+}
+
+/*
+encodeFrame packs one tick's region tokens into the engine's structural
+timestep: [count uint32][count × 8-byte token], each token right-aligned.
+*/
+func encodeFrame(tokens [][]byte) ([]byte, error) {
+	frame := make([]byte, 4+8*len(tokens))
+	binary.BigEndian.PutUint32(frame, uint32(len(tokens)))
+
+	for index, token := range tokens {
+		if len(token) > 8 {
+			return nil, errnie.Error(errnie.Err(
+				errnie.Validation, fmt.Sprintf("[training] region token %q exceeds 8 bytes", token), nil,
+			))
+		}
+
+		offset := 4 + index*8 + 8 - len(token)
+		copy(frame[offset:], token)
+	}
+
+	return frame, nil
+}
+
+/*
+Detect scans stored trade tape for excursions and stores each detection.
 */
 func (training *Training) Detect() {
 	go func() {

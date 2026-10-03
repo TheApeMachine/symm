@@ -199,11 +199,17 @@ var (
 			errnie.Info("symm: initializing training and UI hub...")
 			storeTee := hindsight.NewStoreTee(ctx, "storeTee")
 
+			desk := broker.NewDesk(ctx, privateTransport, price)
+
+			if paper, ok := privateTransport.(*broker.Paper); ok {
+				paper.OnExecution(desk.Apply)
+			}
+
 			training := strategy.NewTraining(
 				ctx, data.NewArenaOwner(4096),
 				price,
+				desk,
 				catalog,
-				uiTee,
 				storeTee,
 			)
 
@@ -211,6 +217,7 @@ var (
 
 			// Start historical detector loop which scans trade tape from catalog
 			training.Detect()
+			training.Train()
 
 			hub := ui.NewHub(ctx, catalog, uiTee)
 			hub.SetCognitionSource(training)
