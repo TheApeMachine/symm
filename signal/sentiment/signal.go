@@ -2,6 +2,7 @@ package sentiment
 
 import (
 	"context"
+	"math"
 	"sync"
 	"unsafe"
 
@@ -35,7 +36,7 @@ func NewSignal(ctx context.Context, arena *data.ArenaOwner) *Signal {
 		changes: store.NewLatest[string, data.CrossMember](),
 	}
 
-	signal.System = runtime.NewSystem(ctx, "sentiment:signal", signal)
+	signal.System = runtime.NewSystem(ctx, "sentiment", signal)
 	return signal
 }
 
@@ -61,8 +62,20 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 				},
 				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
 					if out.HasPrior {
-						m.WriteMetric("median_return_baseline", out.Baseline)
-						m.WriteMetric("median_return_divergence", out.Residual)
+						m.SetMetric("median_return_baseline", data.NewMetric[float64](
+							"median_return_baseline",
+							data.UnitLogReturn,
+							data.TimescaleInstantaneous,
+							out.Baseline,
+							out.ScoreScale,
+						).Write(out.Baseline))
+						m.SetMetric("median_return_divergence", data.NewMetric[float64](
+							"median_return_divergence",
+							data.UnitLogReturn,
+							data.TimescaleInstantaneous,
+							0.0,
+							out.ScoreScale,
+						).Write(out.Residual))
 						m.WriteStandardized("median_return_zscore", out.ZScore)
 					}
 				},
@@ -74,8 +87,20 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 				},
 				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
 					if out.HasPrior {
-						m.WriteMetric("breadth_baseline", out.Baseline)
-						m.WriteMetric("breadth_divergence", out.Residual)
+						m.SetMetric("breadth_baseline", data.NewMetric[float64](
+							"breadth_baseline",
+							data.UnitDimensionless,
+							data.TimescaleInstantaneous,
+							out.Baseline,
+							out.ScoreScale,
+						).Write(out.Baseline))
+						m.SetMetric("breadth_divergence", data.NewMetric[float64](
+							"breadth_divergence",
+							data.UnitDimensionless,
+							data.TimescaleInstantaneous,
+							0.0,
+							out.ScoreScale,
+						).Write(out.Residual))
 						m.WriteStandardized("breadth_zscore", out.ZScore)
 					}
 				},
@@ -87,12 +112,21 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 				},
 				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
 					if out.HasPrior {
-						m.WriteMetric("median_absolute_return_baseline", out.Baseline)
+						m.SetMetric("median_absolute_return_baseline", data.NewMetric[float64](
+							"median_absolute_return_baseline",
+							data.UnitLogReturn,
+							data.TimescaleInstantaneous,
+							out.Baseline,
+							out.ScoreScale,
+						).Write(out.Baseline))
 						if out.Baseline > 0 {
-							m.WriteMetric(
+							m.SetMetric("median_absolute_return_ratio", data.NewMetric[float64](
 								"median_absolute_return_ratio",
-								m.GetMetric("median_absolute_return").Raw/out.Baseline,
-							)
+								data.UnitRatio,
+								data.TimescaleInstantaneous,
+								1.0,
+								out.ScoreScale/out.Baseline,
+							).Write(m.GetMetric("median_absolute_return").Raw/out.Baseline))
 						}
 						m.WriteStandardized("median_absolute_return_zscore", out.ZScore)
 					}
@@ -105,9 +139,21 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 				},
 				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
 					if out.HasPrior {
-						m.WriteMetric("return_dispersion_baseline", out.Baseline)
+						m.SetMetric("return_dispersion_baseline", data.NewMetric[float64](
+							"return_dispersion_baseline",
+							data.UnitLogReturn,
+							data.TimescaleInstantaneous,
+							out.Baseline,
+							out.ScoreScale,
+						).Write(out.Baseline))
 						if out.Baseline > 0 {
-							m.WriteMetric("return_dispersion_ratio", m.GetMetric("return_mad").Raw/out.Baseline)
+							m.SetMetric("return_dispersion_ratio", data.NewMetric[float64](
+								"return_dispersion_ratio",
+								data.UnitRatio,
+								data.TimescaleInstantaneous,
+								1.0,
+								out.ScoreScale/out.Baseline,
+							).Write(m.GetMetric("return_mad").Raw/out.Baseline))
 						}
 						m.WriteStandardized("return_dispersion_zscore", out.ZScore)
 					}
@@ -123,7 +169,13 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 				},
 				func(m *data.Measurement[float64], out temporal.VelocityReading) {
 					if out.Defined {
-						m.WriteMetric("median_return_velocity", out.Rate)
+						m.SetMetric("median_return_velocity", data.NewMetric[float64](
+							"median_return_velocity",
+							data.UnitVelocity,
+							data.TimescaleInstantaneous,
+							0.0,
+							math.Abs(out.Rate),
+						).Write(out.Rate))
 					}
 				},
 			),
@@ -137,7 +189,13 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 				},
 				func(m *data.Measurement[float64], out temporal.VelocityReading) {
 					if out.Defined {
-						m.WriteMetric("breadth_velocity", out.Rate)
+						m.SetMetric("breadth_velocity", data.NewMetric[float64](
+							"breadth_velocity",
+							data.UnitVelocity,
+							data.TimescaleInstantaneous,
+							0.0,
+							math.Abs(out.Rate),
+						).Write(out.Rate))
 					}
 				},
 			),
@@ -164,19 +222,21 @@ func (signal *Signal) Step(prior *data.Measurement[float64]) *data.Measurement[f
 		return nil
 	}
 
-	price := quotedPrice(prior)
-	if price <= 0 {
+	priceMetric, hasPrice := quotedPriceMetric(prior)
+	if !hasPrice || priceMetric.Raw <= 0 {
 		return nil
 	}
 
 	out := signal.arena.NewMeasurement(signal.Name())
+	out.Epoch = prior.Epoch
+	out.Tick = prior.Tick
 	out.Label = prior.Label
 	out.SeqIdx = prior.SeqIdx
 	out.At = prior.At
 	out.From = prior.From
 	out.Peers = []*data.Measurement[float64]{prior}
 
-	out.WriteMetric("last", price)
+	out.SetMetric("last", priceMetric)
 
 	if channel, hasCh := prior.GetProvenance("channel"); hasCh {
 		out.SetProvenance("channel", channel)
@@ -193,12 +253,12 @@ func (signal *Signal) Step(prior *data.Measurement[float64]) *data.Measurement[f
 	return res
 }
 
-func quotedPrice(measurement *data.Measurement[float64]) float64 {
+func quotedPriceMetric(measurement *data.Measurement[float64]) (data.Metric[float64], bool) {
 	for _, key := range []string{"last", "last_price", "price"} {
 		if metric, ok := measurement.LookupMetric(key); ok && metric.Raw > 0 {
-			return metric.Raw
+			return metric, true
 		}
 	}
 
-	return 0
+	return data.Metric[float64]{}, false
 }

@@ -13,127 +13,109 @@ import (
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/tests/tablestest"
-	"github.com/theapemachine/symm/ui"
 )
 
-func TestTraining(t *testing.T) {
-	Convey("Training system lifecycle and execution", t, func() {
+func TestTraining_Train(t *testing.T) {
+	Convey("Given a Training component with stored excursions in Iceberg", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		arena := data.NewArenaOwner(4096)
+		catalog := tablestest.New(t)
+		epoch := int64(100)
+
+		err := catalog.RecordRun(ctx, tables.Run{
+			Epoch:     epoch,
+			StartedAt: time.Now().UTC(),
+			Status:    "ACTIVE",
+		})
+		So(err, ShouldBeNil)
+
 		price := broker.NewPrice(ctx, nil, nil, nil, nil)
 		price.SetFee("BTC/USD", kraken.TradeVolumeFee{
 			Fee: decimal.NewFromFloat64(0.26),
 		})
 		price.SetReferenceCash(decimal.NewFromFloat64(10000))
 
-		uiTee := ui.NewUITee(ctx, "ui-test", 1, func(_ *data.Measurement[float64]) bool { return true })
-		uiTee.Transition(runtime.READY)
+		writer := tables.NewWriter(catalog, epoch)
 
-		catalog := tablestest.New(t)
-		training := NewTraining(ctx, arena, price, nil, catalog, uiTee, nil)
+		// 1. Write a detector measurement representing an excursion
+		det := data.NewMeasurement[float64]("detector", nil)
+		det.Epoch = epoch
+		det.Label = "BTC/USD"
+		det.Tick = 15
+		det.SeqIdx = 150
 
-		Convey("Initial state is INIT and cognition tree is queryable", func() {
-			So(training.Status(), ShouldEqual, runtime.INIT)
-			So(training.Name(), ShouldEqual, "strategy:training")
-			So(training.Arena(), ShouldNotBeNil)
+		lowestPrice := decimal.NewFromFloat64(60000.0)
+		highestPrice := decimal.NewFromFloat64(63000.0)
 
-			treeExport := training.CognitionTree()
-			So(treeExport.Root, ShouldNotBeNil)
-		})
+		det.SetMetric("LowTick", data.Metric[float64]{Raw: 10})
+		det.SetMetric("HighTick", data.Metric[float64]{Raw: 15})
+		det.SetMetric("LowSeqIdx", data.Metric[float64]{Raw: 100})
+		det.SetMetric("HighSeqIdx", data.Metric[float64]{Raw: 150})
 
-		Convey("Step during INIT develops grid and transitions to WAITING upon settlement", func() {
-			for sequence := int64(1); sequence <= 10; sequence++ {
-				measurement := arena.NewMeasurement("spot:ticker")
-				measurement.Label = "BTC/USD"
-				measurement.Epoch = 100
-				measurement.SeqIdx = sequence
-				measurement.At = time.Unix(sequence, 0)
-				measurement.SetMetric("price", data.Metric[float64]{Raw: 60000.0 + float64(sequence)})
+		lowPriceMetric := data.Metric[float64]{Raw: 60000.0, Exact: lowestPrice}
+		highPriceMetric := data.Metric[float64]{Raw: 63000.0, Exact: highestPrice}
+		det.SetMetric("LowPrice", lowPriceMetric)
+		det.SetMetric("HighPrice", highPriceMetric)
 
-				out := training.Step(measurement)
-				So(out, ShouldNotBeNil)
-			}
+		writer.Add("measurements", data.Publication{Measurement: det})
 
-			// Force settlement of grid to verify WAITING transition
-			training.grid.Settle()
-			nextMeasurement := arena.NewMeasurement("spot:ticker")
-			nextMeasurement.Label = "BTC/USD"
-			nextMeasurement.Epoch = 100
-			nextMeasurement.SeqIdx = 11
-			nextMeasurement.At = time.Unix(11, 0)
-			nextMeasurement.SetMetric("price", data.Metric[float64]{Raw: 60020.0})
-
-			out := training.Step(nextMeasurement)
-			So(out, ShouldNotBeNil)
-			So(training.Status(), ShouldEqual, runtime.WAITING)
-		})
-
-		Convey("Historical tape in catalog trains evaluator and updates skill", func() {
-			epoch := int64(200)
-
-			err := catalog.RecordRun(ctx, tables.Run{
-				Epoch:     epoch,
-				StartedAt: time.Now(),
-				Status:    "COMPLETED",
+		// 2. Write signal and logic measurements within tick window [10, 15]
+		addMeas := func(source string, tick int64, seqIdx int64) {
+			meas := data.NewMeasurement[float64](source, nil)
+			meas.Epoch = epoch
+			meas.Label = "BTC/USD"
+			meas.Tick = tick
+			meas.SeqIdx = seqIdx
+			meas.Maturity = 1.0
+			meas.SNR = 2.0
+			meas.SNRDefined = true
+			meas.SetMetric("value", data.Metric[float64]{
+				Label:  "value",
+				Raw:    1.5,
+				Center: 0,
+				Scale:  1,
+				Region: 1,
 			})
-			So(err, ShouldBeNil)
+			writer.Add("measurements", data.Publication{Measurement: meas})
+		}
 
-			writer := tables.NewWriter(catalog, epoch)
+		addMeas("cvd", 10, 101)
+		addMeas("hawkes", 10, 102)
+		addMeas("resonance", 11, 103)
+		addMeas("liquidity", 12, 104)
+		addMeas("manifold", 15, 105)
 
-			// Generate tape: precursor ticks around 100, drop to low 95, rise to high 120, pullback to 114 (>= 20% of 25 move)
-			prices := []float64{
-				100, 100, 100, 99, 98, 97, 96, 95.5, 95, 95,
-				97, 100, 105, 110, 115, 118, 120,
-				117, 115, 114,
+		So(writer.CommitReady(ctx, true), ShouldBeNil)
+
+		arena := data.NewArenaOwner(4096)
+		training := NewTraining(ctx, arena, price, catalog, nil, nil)
+		training.Transition(runtime.WAITING)
+
+		training.Train()
+
+		// Wait for historical training to process the detection
+		timeout := time.After(2 * time.Second)
+		processed := false
+
+		for !processed {
+			select {
+			case <-timeout:
+				t.Fatal("timed out waiting for historical training to process excursion")
+			case <-time.After(20 * time.Millisecond):
+				if training.skill.HistOpportunities() > 0 {
+					processed = true
+				}
 			}
+		}
 
-			for sequence, priceValue := range prices {
-				seqIdx := int64(sequence + 1)
-				measurement := data.NewMeasurement("spot:ticker", map[string]data.Metric[float64]{
-					"ask": {
-						Raw:   priceValue + 0.1,
-						Exact: decimal.NewFromFloat64(priceValue + 0.1),
-					},
-					"bid": {
-						Raw:   priceValue - 0.1,
-						Exact: decimal.NewFromFloat64(priceValue - 0.1),
-					},
-					"price": {
-						Raw:   priceValue,
-						Exact: decimal.NewFromFloat64(priceValue),
-					},
-				})
-				measurement.Epoch = epoch
-				measurement.Label = "BTC/USD"
-				measurement.SeqIdx = seqIdx
-				measurement.At = time.Unix(seqIdx, 0)
-
-				writer.Add(tables.Measurements, data.NewPublication(measurement, nil))
-
-				signal := data.NewMeasurement("cvd", map[string]data.Metric[float64]{
-					"cumulative_volume_delta": {Raw: float64(sequence) * 5.0},
-				})
-				signal.Epoch = epoch
-				signal.Label = "BTC/USD"
-				signal.SeqIdx = seqIdx
-				signal.At = time.Unix(seqIdx, 0)
-				writer.Add(tables.Measurements, data.NewPublication(signal, nil))
-			}
-
-			err = writer.CommitReady(ctx, true)
-			So(err, ShouldBeNil)
-
-			maxSeq, hasEdge := training.processRun(epoch, 0)
-			So(maxSeq, ShouldEqual, int64(len(prices)))
-
-			// Check that detector extracted the excursion and skill recorded historical outcomes
+		Convey("Historical training trains trie and records opportunity", func() {
 			So(training.skill.HistOpportunities(), ShouldBeGreaterThanOrEqualTo, 1)
-			So(training.skill.HistCorrectEnter(), ShouldBeGreaterThanOrEqualTo, 1)
-			So(training.skill.HistMeanReturn(), ShouldBeGreaterThan, 0)
 
-			_ = hasEdge
+			upFragments, _, _, _, _ := training.skill.Fragments()
+			So(upFragments, ShouldBeGreaterThanOrEqualTo, 1)
+
+			So(training.engine.Len(), ShouldBeGreaterThan, 0)
 		})
 	})
 }

@@ -28,7 +28,7 @@ func TestToxicitySignal(t *testing.T) {
 		instrument.Transition(nmruntime.READY)
 
 		Convey("Publishes unified touch dispositions and trade fill metrics per tick", func() {
-			for step := 0; step < 10; step++ {
+			for step := range 10 {
 				books.Update(&kraken.Level3{
 					Channel: "level3",
 					Type:    "snapshot",
@@ -63,8 +63,20 @@ func TestToxicitySignal(t *testing.T) {
 				prior.At = now.Add(time.Duration(step) * 100 * time.Millisecond)
 				prior.From = prior.At
 
-				prior.WriteMetric("price", 50002.0)
-				prior.WriteMetric("qty", 1.5)
+				prior.SetMetric("price", data.NewMetric[float64](
+					"price",
+					data.UnitPrice,
+					data.TimescaleInstantaneous,
+					50002.0,
+					2.0,
+				).Write(50002.0))
+				prior.SetMetric("qty", data.NewMetric[float64](
+					"qty",
+					data.UnitQuantity,
+					data.TimescaleInstantaneous,
+					0.0,
+					1.5,
+				).Write(1.5))
 				prior.SetProvenance("side", "buy")
 				prior.SetProvenance("channel", "trade")
 

@@ -39,7 +39,7 @@ func NewSignal(ctx context.Context, arena *data.ArenaOwner, books broker.BookSou
 		books: books,
 	}
 
-	signal.System = runtime.NewSystem(ctx, "morphology:signal", signal)
+	signal.System = runtime.NewSystem(ctx, "morphology", signal)
 	return signal
 }
 
@@ -133,6 +133,8 @@ func (signal *Signal) Step(prior *data.Measurement[float64]) *data.Measurement[f
 	}
 
 	out := signal.arena.NewMeasurement(signal.Name())
+	out.Epoch = prior.Epoch
+	out.Tick = prior.Tick
 	out.Label = prior.Label
 	out.SeqIdx = prior.SeqIdx
 	out.At = prior.At

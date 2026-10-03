@@ -51,6 +51,7 @@ func fillMeasurements(
 	metricsBuilder := recordBuilder.Field(8).(*array.MapBuilder)
 	metadataBuilder := recordBuilder.Field(9).(*array.MapBuilder)
 	provenanceBuilder := recordBuilder.Field(10).(*array.MapBuilder)
+	tickBuilder := recordBuilder.Field(11).(*array.Int64Builder)
 
 	metricsKey := metricsBuilder.KeyBuilder().(*array.StringBuilder)
 	metricsVal := metricsBuilder.ItemBuilder().(*array.Float64Builder)
@@ -74,6 +75,7 @@ func fillMeasurements(
 		maturityBuilder.Append(measurement.Maturity)
 		snrBuilder.Append(measurement.SNR)
 		snrDefinedBuilder.Append(measurement.SNRDefined)
+		tickBuilder.Append(measurement.Tick)
 
 		metricsBuilder.Append(true)
 		measurement.RangeMetrics(func(metricKey string, metricVal data.Metric[float64]) bool {
@@ -141,6 +143,7 @@ func ReadMeasurements(batch arrow.RecordBatch) ([]*data.Measurement[float64], er
 	metricsCol, _ := cols["metrics"].(*array.Map)
 	metadataCol, _ := cols["metadata"].(*array.Map)
 	provenanceCol, _ := cols["provenance"].(*array.Map)
+	tickCol, _ := cols["tick"].(*array.Int64)
 
 	for rowIdx := range totalRows {
 		source := ""
@@ -157,6 +160,10 @@ func ReadMeasurements(batch arrow.RecordBatch) ([]*data.Measurement[float64], er
 
 		if seqIdxCol != nil && !seqIdxCol.IsNull(rowIdx) {
 			measurement.SeqIdx = seqIdxCol.Value(rowIdx)
+		}
+
+		if tickCol != nil && !tickCol.IsNull(rowIdx) {
+			measurement.Tick = tickCol.Value(rowIdx)
 		}
 
 		if labelCol != nil && !labelCol.IsNull(rowIdx) {

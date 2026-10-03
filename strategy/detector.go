@@ -34,7 +34,7 @@ func NewDetector(
 	ctx context.Context, storeTee runtime.Tee,
 ) *Detector {
 	return &Detector{
-		System:   runtime.NewSystem(ctx, "strategy:detector"),
+		System:   runtime.NewSystem(ctx, "detector"),
 		storeTee: storeTee,
 	}
 }
@@ -45,7 +45,7 @@ and the highest point where the lowest is first and the highest is second.
 Since we store all data the system produces in its "native" format,
 meaning *data.Measurement[float64], we have to realize that there is only
 one Iceberg table (measurements), and we must rely on the measurement.Source
-field (which is the stage that produced the measurement, like spot:ticker,
+field (which is the stage that produced the measurement, like spot:trade,
 correlation:trade, resonance, etc.), and the measurement.Label, which is
 the symbol (meaning "ETH", "BTC", etc), to make sure we are not doing something
 degenerate like mixing ticker, trade, and level3 accidentally as the tape.
@@ -62,18 +62,20 @@ func (detector *Detector) Scan(
 	measurements iter.Seq[*data.Measurement[float64]],
 ) {
 	var (
-		epoch   int64
-		symbol  string
-		lowest  *decimal.Decimal
-		highest *decimal.Decimal
-		lowIdx  int64
-		highIdx int64
-		lowAt   time.Time
-		highAt  time.Time
+		epoch    int64
+		symbol   string
+		lowest   *decimal.Decimal
+		highest  *decimal.Decimal
+		lowIdx   int64
+		highIdx  int64
+		lowTick  int64
+		highTick int64
+		lowAt    time.Time
+		highAt   time.Time
 	)
 
 	for measurement := range measurements {
-		if measurement.Source != "spot:ticker" {
+		if measurement.Source != "spot:trade" {
 			errnie.Error(errnie.Err(
 				errnie.NotAcceptable,
 				"",
@@ -84,25 +86,29 @@ func (detector *Detector) Scan(
 		}
 
 		if epoch == 0 || epoch != measurement.Epoch || symbol != measurement.Label {
-			detector.Flush(symbol, epoch, lowIdx, highIdx, lowAt, highAt)
+			detector.Flush(symbol, epoch, lowIdx, highIdx, lowTick, highTick, lowAt, highAt, lowest, highest)
 			epoch = measurement.Epoch
 			symbol = measurement.Label
 			lowest = nil
 			highest = nil
 			lowIdx = 0
 			highIdx = 0
+			lowTick = 0
+			highTick = 0
 			lowAt = time.Time{}
 			highAt = time.Time{}
 		}
 
-		price := measurement.GetMetric("last").Exact
+		price := measurement.GetMetric("price").Exact
 
 		if lowest == nil || price.Cmp(lowest) < 0 {
 			lowest = price
 			lowIdx = measurement.SeqIdx
+			lowTick = measurement.Tick
 			lowAt = measurement.At
 			highest = nil
 			highIdx = 0
+			highTick = 0
 			highAt = time.Time{}
 			continue
 		}
@@ -110,11 +116,12 @@ func (detector *Detector) Scan(
 		if highest == nil || price.Cmp(highest) > 0 {
 			highest = price
 			highIdx = measurement.SeqIdx
+			highTick = measurement.Tick
 			highAt = measurement.At
 		}
 	}
 
-	detector.Flush(symbol, epoch, lowIdx, highIdx, lowAt, highAt)
+	detector.Flush(symbol, epoch, lowIdx, highIdx, lowTick, highTick, lowAt, highAt, lowest, highest)
 }
 
 /*
@@ -126,33 +133,79 @@ func (detector *Detector) Flush(
 	epoch int64,
 	lowIdx int64,
 	highIdx int64,
+	lowTick int64,
+	highTick int64,
 	lowAt time.Time,
 	highAt time.Time,
+	lowest *decimal.Decimal,
+	highest *decimal.Decimal,
 ) {
 	if epoch == 0 || lowIdx == 0 || highIdx == 0 {
 		return
 	}
 
-	measurement := data.NewMeasurement[float64](
-		detector.Name(), map[string]data.Metric[float64]{
-			"LowSeqIdx": data.NewMetric[float64](
-				"low_seq_idx",
-				data.UnitCount,
-				data.TimescaleInstantaneous,
-				0,
-				1,
-			).Write(float64(lowIdx)),
-			"HighSeqIdx": data.NewMetric[float64](
-				"high_seq_idx",
-				data.UnitCount,
-				data.TimescaleInstantaneous,
-				0,
-				1,
-			).Write(float64(highIdx)),
-		},
+	metrics := map[string]data.Metric[float64]{
+		"LowSeqIdx": data.NewMetric[float64](
+			"low_seq_idx",
+			data.UnitCount,
+			data.TimescaleInstantaneous,
+			0,
+			1,
+		).Write(float64(lowIdx)),
+		"HighSeqIdx": data.NewMetric[float64](
+			"high_seq_idx",
+			data.UnitCount,
+			data.TimescaleInstantaneous,
+			0,
+			1,
+		).Write(float64(highIdx)),
+		"LowTick": data.NewMetric[float64](
+			"low_tick",
+			data.UnitCount,
+			data.TimescaleInstantaneous,
+			0,
+			1,
+		).Write(float64(lowTick)),
+		"HighTick": data.NewMetric[float64](
+			"high_tick",
+			data.UnitCount,
+			data.TimescaleInstantaneous,
+			0,
+			1,
+		).Write(float64(highTick)),
+	}
+
+	if lowest != nil {
+		metric := data.NewMetric[float64](
+			"low_price",
+			data.UnitCurrency,
+			data.TimescaleInstantaneous,
+			0,
+			1,
+		).Write(lowest.Float64())
+		metric.Exact = lowest
+		metrics["LowPrice"] = metric
+	}
+
+	if highest != nil {
+		metric := data.NewMetric[float64](
+			"high_price",
+			data.UnitCurrency,
+			data.TimescaleInstantaneous,
+			0,
+			1,
+		).Write(highest.Float64())
+		metric.Exact = highest
+		metrics["HighPrice"] = metric
+	}
+
+	measurement := data.NewMeasurement(
+		detector.Name(),
+		metrics,
 	)
 
 	measurement.Epoch = epoch
+	measurement.Tick = highTick
 	measurement.Label = symbol
 	measurement.At = highAt
 	measurement.From = lowAt

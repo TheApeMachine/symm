@@ -198,12 +198,12 @@ func TestPrice_AllocateEntryAndLiquidate(t *testing.T) {
 		feeRate := 0.002 // 0.2%
 		price.SetFee(symbol, kraken.TradeVolumeFee{Fee: decimal.NewFromFloat64(feeRate * 100)})
 
-		// Update ticker quote
-		price.Update(&kraken.TickerData{
-			Symbol: symbol,
-			Ask:    decimal.NewFromFloat64(2500.0),
-			Bid:    decimal.NewFromFloat64(2495.0),
-		})
+		// Set quote
+		price.SetQuote(
+			symbol,
+			decimal.NewFromFloat64(2495.0),
+			decimal.NewFromFloat64(2500.0),
+		)
 
 		referenceCash := decimal.NewFromFloat64(1000.0) // 20% budget = 200
 		budget := referenceCash.SetScale(decimal.DefaultScale).Div(decimal.NewFromInt64(5))

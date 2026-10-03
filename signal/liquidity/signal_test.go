@@ -32,10 +32,38 @@ func TestLiquidityTickerMetrics(t *testing.T) {
 			bidQty := 5.0
 			askQty := 4.0
 
-			prior.WriteMetric("bid", bid)
-			prior.WriteMetric("ask", ask)
-			prior.WriteMetric("bid_qty", bidQty)
-			prior.WriteMetric("ask_qty", askQty)
+			midpoint := (bid + ask) / 2.0
+			spread := ask - bid
+			totalQty := bidQty + askQty
+
+			prior.SetMetric("bid", data.NewMetric[float64](
+				"bid",
+				data.UnitPrice,
+				data.TimescaleInstantaneous,
+				midpoint,
+				spread,
+			).Write(bid))
+			prior.SetMetric("ask", data.NewMetric[float64](
+				"ask",
+				data.UnitPrice,
+				data.TimescaleInstantaneous,
+				midpoint,
+				spread,
+			).Write(ask))
+			prior.SetMetric("bid_qty", data.NewMetric[float64](
+				"bid_qty",
+				data.UnitQuantity,
+				data.TimescaleInstantaneous,
+				0.0,
+				totalQty,
+			).Write(bidQty))
+			prior.SetMetric("ask_qty", data.NewMetric[float64](
+				"ask_qty",
+				data.UnitQuantity,
+				data.TimescaleInstantaneous,
+				0.0,
+				totalQty,
+			).Write(askQty))
 
 			res := instrument.Step(prior)
 			So(res, ShouldNotBeNil)

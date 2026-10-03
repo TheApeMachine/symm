@@ -77,7 +77,13 @@ func BenchmarkCatalog_Drain(b *testing.B) {
 	for batch := 0; b.Loop(); batch++ {
 		for sequence := int64(1); sequence <= 2048; sequence++ {
 			measurement := data.NewMeasurement[float64]("signal", nil)
-			measurement.WriteMetric("value", float64(sequence))
+			measurement.SetMetric("value", data.NewMetric[float64](
+				"value",
+				data.UnitDimensionless,
+				data.TimescaleInstantaneous,
+				float64(sequence),
+				float64(sequence),
+			).Write(float64(sequence)))
 			measurement.Label = "BTC/USD"
 			measurement.At = time.Unix(sequence, 0)
 			measurement.SeqIdx = sequence

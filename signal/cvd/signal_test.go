@@ -34,10 +34,34 @@ func TestCVDSignalMetrics(t *testing.T) {
 				side = "sell"
 			}
 
-			prior.WriteMetric("price", price)
-			prior.WriteMetric("qty", qty)
-			prior.WriteMetric("best_bid", price-5.0)
-			prior.WriteMetric("best_ask", price+5.0)
+			prior.SetMetric("price", data.NewMetric[float64](
+				"price",
+				data.UnitPrice,
+				data.TimescaleInstantaneous,
+				price,
+				10.0,
+			).Write(price))
+			prior.SetMetric("qty", data.NewMetric[float64](
+				"qty",
+				data.UnitQuantity,
+				data.TimescaleInstantaneous,
+				0.0,
+				qty,
+			).Write(qty))
+			prior.SetMetric("best_bid", data.NewMetric[float64](
+				"best_bid",
+				data.UnitPrice,
+				data.TimescaleInstantaneous,
+				price,
+				10.0,
+			).Write(price-5.0))
+			prior.SetMetric("best_ask", data.NewMetric[float64](
+				"best_ask",
+				data.UnitPrice,
+				data.TimescaleInstantaneous,
+				price,
+				10.0,
+			).Write(price+5.0))
 			prior.SetProvenance("side", side)
 
 			res := instrument.Step(prior)

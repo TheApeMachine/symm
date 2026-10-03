@@ -37,7 +37,7 @@ func NewSignal(ctx context.Context, arena *data.ArenaOwner, books broker.BookSou
 		books: books,
 	}
 
-	signal.System = runtime.NewSystem(ctx, "pumpdump:signal", signal)
+	signal.System = runtime.NewSystem(ctx, "pumpdump", signal)
 	return signal
 }
 
@@ -313,6 +313,8 @@ func (signal *Signal) Step(prior *data.Measurement[float64]) *data.Measurement[f
 	}
 
 	out := signal.arena.NewMeasurement(signal.Name())
+	out.Epoch = prior.Epoch
+	out.Tick = prior.Tick
 	out.Label = prior.Label
 	out.SeqIdx = prior.SeqIdx
 	out.At = prior.At
@@ -328,16 +330,16 @@ func (signal *Signal) Step(prior *data.Measurement[float64]) *data.Measurement[f
 
 	// Copy trade metrics from prior
 	if price, ok := prior.LookupMetric("price"); ok {
-		out.WriteMetric("price", price.Raw)
+		out.SetMetric("price", price)
 	}
 	if qty, ok := prior.LookupMetric("qty"); ok {
-		out.WriteMetric("qty", qty.Raw)
+		out.SetMetric("qty", qty)
 	}
 	if bestBid, ok := prior.LookupMetric("best_bid"); ok {
-		out.WriteMetric("best_bid", bestBid.Raw)
+		out.SetMetric("best_bid", bestBid)
 	}
 	if bestAsk, ok := prior.LookupMetric("best_ask"); ok {
-		out.WriteMetric("best_ask", bestAsk.Raw)
+		out.SetMetric("best_ask", bestAsk)
 	}
 
 	res := data.Read[*data.Measurement[float64]](signal.pipelineFor(out.Label).Next(

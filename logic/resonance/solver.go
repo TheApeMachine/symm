@@ -206,6 +206,8 @@ func (solver *Solver) Step(prior *data.Measurement[float64]) *data.Measurement[f
 	features := scorer.Step(signals)
 
 	out := solver.arena.NewMeasurement(solver.Name())
+	out.Epoch = prior.Epoch
+	out.Tick = prior.Tick
 	out.Label = symbol
 	out.SeqIdx = prior.SeqIdx
 	out.At = at

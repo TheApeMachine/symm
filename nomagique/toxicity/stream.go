@@ -499,8 +499,9 @@ func (op *TradeMatching) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Point
 			var bidRate, askRate float64
 			var hasRate bool
 
+			var dt float64
 			if state.hasPrevTime {
-				dt := m.At.Sub(state.prevTime).Seconds()
+				dt = m.At.Sub(state.prevTime).Seconds()
 				if dt > 0 {
 					bidRate = state.touchFillBidQty / dt
 					askRate = state.touchFillAskQty / dt
@@ -511,17 +512,71 @@ func (op *TradeMatching) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Point
 			state.prevTime = m.At
 			state.hasPrevTime = true
 
-			m.WriteMetric("bracket_trade_quantity", state.bracketQty)
-			m.WriteMetric("matched_touch_trade_quantity:bid", state.matchedBidQty)
-			m.WriteMetric("matched_touch_trade_quantity:ask", state.matchedAskQty)
-			m.WriteMetric("touch_fill_quantity:bid", state.touchFillBidQty)
-			m.WriteMetric("touch_fill_quantity:ask", state.touchFillAskQty)
-			m.WriteNormalized("touch_fill_fraction:bid", bidFillFrac)
-			m.WriteNormalized("touch_fill_fraction:ask", askFillFrac)
+			m.SetMetric("bracket_trade_quantity", data.NewMetric[float64](
+				"bracket_trade_quantity",
+				data.UnitQuantity,
+				data.TimescaleInstantaneous,
+				0.0,
+				state.bracketQty,
+			).Write(state.bracketQty))
+			m.SetMetric("matched_touch_trade_quantity:bid", data.NewMetric[float64](
+				"matched_touch_trade_quantity:bid",
+				data.UnitQuantity,
+				data.TimescaleInstantaneous,
+				0.0,
+				state.bracketQty,
+			).Write(state.matchedBidQty))
+			m.SetMetric("matched_touch_trade_quantity:ask", data.NewMetric[float64](
+				"matched_touch_trade_quantity:ask",
+				data.UnitQuantity,
+				data.TimescaleInstantaneous,
+				0.0,
+				state.bracketQty,
+			).Write(state.matchedAskQty))
+			m.SetMetric("touch_fill_quantity:bid", data.NewMetric[float64](
+				"touch_fill_quantity:bid",
+				data.UnitQuantity,
+				data.TimescaleInstantaneous,
+				0.0,
+				bidQty,
+			).Write(state.touchFillBidQty))
+			m.SetMetric("touch_fill_quantity:ask", data.NewMetric[float64](
+				"touch_fill_quantity:ask",
+				data.UnitQuantity,
+				data.TimescaleInstantaneous,
+				0.0,
+				askQty,
+			).Write(state.touchFillAskQty))
+			m.SetMetric("touch_fill_fraction:bid", data.NewMetric[float64](
+				"touch_fill_fraction:bid",
+				data.UnitDimensionless,
+				data.TimescaleInstantaneous,
+				0.5,
+				0.5,
+			).Write(bidFillFrac))
+			m.SetMetric("touch_fill_fraction:ask", data.NewMetric[float64](
+				"touch_fill_fraction:ask",
+				data.UnitDimensionless,
+				data.TimescaleInstantaneous,
+				0.5,
+				0.5,
+			).Write(askFillFrac))
 
-			if hasRate {
-				m.WriteMetric("touch_fill_rate:bid", bidRate)
-				m.WriteMetric("touch_fill_rate:ask", askRate)
+			if hasRate && dt > 0 {
+				m.SetMetric("touch_fill_rate:bid", data.NewMetric[float64](
+					"touch_fill_rate:bid",
+					data.UnitRate,
+					data.TimescaleInstantaneous,
+					0.0,
+					bidQty/dt,
+				).Write(bidRate))
+				m.SetMetric("touch_fill_rate:ask", data.NewMetric[float64](
+					"touch_fill_rate:ask",
+					data.UnitRate,
+					data.TimescaleInstantaneous,
+					0.0,
+					askQty/dt,
+				).Write(askRate))
 			}
 
 			if !yield(arriving) {

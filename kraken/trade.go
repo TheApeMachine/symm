@@ -89,7 +89,7 @@ type TradeVolumeResult struct {
 }
 
 type TradeVolume struct {
-	Error  []interface{}     `json:"error"`
+	Error  []any     `json:"error"`
 	Result TradeVolumeResult `json:"result"`
 }
 

@@ -43,6 +43,7 @@ type Measurement[T any] struct {
 	Label      string            `json:"label"`
 	Source     string            `json:"source"`
 	SeqIdx     int64             `json:"seqIdx"`
+	Tick       int64             `json:"tick"`
 	Timestamp  int64             `json:"timestamp"`
 	At         time.Time         `json:"at"`
 	From       time.Time         `json:"from"`

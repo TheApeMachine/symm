@@ -69,7 +69,7 @@ func TestCatalog_Ensure(t *testing.T) {
 			return rec.Result(), nil
 		})
 
-		catalog := tablestest.New(t)
+		catalog := tables.Wrap(tablestest.Underlying(t))
 		ctx := context.Background()
 
 		system.Cfg = &system.Config{
@@ -90,10 +90,8 @@ func TestCatalog_Ensure(t *testing.T) {
 			So(tableBucketCreated.Load(), ShouldEqual, 1)
 			So(s3BucketCreated.Load(), ShouldEqual, 1)
 
-			Convey("Subsequent Ensure calls handle existing buckets gracefully", func() {
-				err := catalog.Ensure(ctx)
-				So(err, ShouldBeNil)
-			})
+			err = catalog.Ensure(ctx)
+			So(err, ShouldBeNil)
 		})
 	})
 }

@@ -41,15 +41,27 @@ func MeasurementSchema() *iceberg.Schema {
 				ValueID: 302, ValueType: iceberg.PrimitiveTypes.String, ValueRequired: false,
 			},
 		},
+		iceberg.NestedField{ID: 12, Name: "tick", Type: iceberg.PrimitiveTypes.Int64, Required: false},
 	)
 }
 
 /*
-MeasurementPartitioning isolates runs physically by identity partitioning on epoch.
+MeasurementPartitioning isolates runs physically by identity partitioning on epoch and source.
 */
 func MeasurementPartitioning() iceberg.PartitionSpec {
 	return iceberg.NewPartitionSpec(
-		iceberg.PartitionField{SourceIDs: []int{1}, FieldID: 1000, Name: "epoch", Transform: iceberg.IdentityTransform{}},
+		iceberg.PartitionField{
+			SourceIDs: []int{1},
+			FieldID:   1000,
+			Name:      "epoch",
+			Transform: iceberg.IdentityTransform{},
+		},
+		iceberg.PartitionField{
+			SourceIDs: []int{3},
+			FieldID:   1001,
+			Name:      "source",
+			Transform: iceberg.IdentityTransform{},
+		},
 	)
 }
 

@@ -10,7 +10,6 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/broker/position"
 	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/nomagique/cognition"
 	"github.com/theapemachine/symm/nomagique/data"
@@ -32,9 +31,7 @@ type Training struct {
 	engine    *cognition.Engine
 	detector  *Detector
 	evaluator *Evaluator
-	skill     *Skill
 	reporter  *Reporter
-	trader    *Trader
 	catalog   *tables.Catalog
 	price     *broker.Price
 	tee       runtime.Tee
@@ -45,7 +42,6 @@ func NewTraining(
 	ctx context.Context,
 	arena *data.ArenaOwner,
 	price *broker.Price,
-	trader *Trader,
 	catalog *tables.Catalog,
 	tee runtime.Tee,
 	storeTee runtime.Tee,
@@ -54,34 +50,20 @@ func NewTraining(
 	evaluator := NewEvaluator(price, engine)
 
 	training := &Training{
-		System:    runtime.NewSystem(ctx, "strategy:training", price),
+		System:    runtime.NewSystem(ctx, "training", price),
 		arena:     arena,
 		grid:      store.NewGrid(),
 		engine:    engine,
 		evaluator: evaluator,
 		detector:  NewDetector(ctx, storeTee),
-		skill:     NewSkill(),
 		reporter:  NewReporter(data.NewArenaOwner(4096), tee),
-		trader:    trader,
 		catalog:   catalog,
 		price:     price,
 		tee:       tee,
 	}
 
 	training.Transition(runtime.INIT)
-
-	if trader != nil {
-		trader.OnPositionClosed(training.onPositionClosed)
-	}
-
 	return training
-}
-
-func (training *Training) onPositionClosed(symbol string, regulator *position.Regulator) {
-	if training.price != nil && regulator != nil {
-		pnl := training.price.ReturnPct(symbol, regulator)
-		training.skill.RecordForward(pnl)
-	}
 }
 
 func (training *Training) Arena() *data.ArenaOwner {
@@ -109,6 +91,7 @@ func (training *Training) Step(prior *data.Measurement[float64]) *data.Measureme
 
 	out := training.arena.NewMeasurement(training.Name())
 	out.Epoch = prior.Epoch
+	out.Tick = prior.Tick
 	out.SeqIdx = prior.SeqIdx
 	out.Label = prior.Label
 	out.At = prior.At
@@ -119,13 +102,22 @@ func (training *Training) Step(prior *data.Measurement[float64]) *data.Measureme
 	}
 	out.Peers = peers
 
-	price, _ := quotePrice(prior)
+	price := prior.GetMetric("price").Raw
+
+	if price == 0 {
+		for _, peer := range peers {
+			if peerPrice := peer.GetMetric("price").Raw; peerPrice > 0 {
+				price = peerPrice
+				break
+			}
+		}
+	}
+
 	currentStatus := training.Status()
 
-	training.grid.Update(prior)
-	defer training.grid.Update(out)
-
 	if currentStatus == runtime.INIT {
+		training.grid.Update(prior)
+
 		snapshot := ReportSnapshot{
 			Source:  training.Name(),
 			Symbol:  prior.Label,
@@ -230,32 +222,6 @@ func (training *Training) Step(prior *data.Measurement[float64]) *data.Measureme
 			confidence := res.Evaluation.Confidence
 			contrast := res.Evaluation.Surprisal
 
-			err = training.trader.OnAction(
-				prior.Label,
-				action,
-				confidence,
-			)
-
-			if err != nil {
-				if broker.IsEnterSoftFail(err) {
-					errnie.Error(err)
-					training.reporter.Populate(out, snapshot, training.skill)
-					return out
-				}
-
-				training.Error(errnie.Err(
-					errnie.Validation,
-					fmt.Sprintf(
-						"[training] failed to execute trader action: %d/%d",
-						out.Epoch, out.SeqIdx,
-					),
-					err,
-				))
-
-				training.reporter.Populate(out, snapshot, training.skill)
-				return out
-			}
-
 			actionCode := 0
 
 			if action == cognition.ActionEnter {
@@ -269,10 +235,9 @@ func (training *Training) Step(prior *data.Measurement[float64]) *data.Measureme
 			snapshot.Action = actionCode
 			snapshot.Confidence = confidence
 			snapshot.Contrast = contrast
-			training.skill.RecordPrediction()
 		}
 
-		training.reporter.Populate(out, snapshot, training.skill)
+		training.reporter.Populate(out, snapshot, nil)
 		return out
 	}
 
@@ -280,11 +245,15 @@ func (training *Training) Step(prior *data.Measurement[float64]) *data.Measureme
 }
 
 /*
-Run drives Stage 1 historical training: scanning epoch market tape per symbol,
+Train drives Stage 1 historical training: scanning epoch market tape per symbol,
 retrieving pre-split trajectories from Detector, and inserting them into the Radix trie.
 */
-func (training *Training) Run() {
+func (training *Training) Train() {
 	go func() {
+		if training == nil || training.catalog == nil {
+			return
+		}
+
 		for training.Status() == runtime.INIT {
 			select {
 			case <-training.Context().Done():
@@ -293,13 +262,6 @@ func (training *Training) Run() {
 				time.Sleep(10 * time.Millisecond)
 			}
 		}
-
-		if training.catalog == nil {
-			return
-		}
-
-		processedRuns := make(map[int64]bool)
-		lastSeqProcessed := make(map[int64]int64)
 
 		for {
 			select {
@@ -316,41 +278,136 @@ func (training *Training) Run() {
 					"[training] failed to query runs from catalog",
 					err,
 				))
+
+				select {
+				case <-training.Context().Done():
+					return
+				case <-time.After(1 * time.Second):
+				}
+
+				continue
 			}
 
 			slices.SortFunc(runs, func(left, right tables.Run) int {
 				return cmp.Compare(left.Epoch, right.Epoch)
 			})
 
-			allRunsProcessed := len(runs) > 0
-
 			for _, run := range runs {
-				if processedRuns[run.Epoch] {
-					continue
-				}
-
-				allRunsProcessed = false
-				maxSeq, hasEdge := training.processRun(run.Epoch, lastSeqProcessed[run.Epoch])
-				lastSeqProcessed[run.Epoch] = maxSeq
-
-				if maxSeq > 0 {
-					processedRuns[run.Epoch] = true
-				}
-
-				if hasEdge {
-					training.Transition(runtime.READY)
+				select {
+				case <-training.Context().Done():
 					return
+				default:
 				}
-			}
 
-			if training.skill.HasEdge() {
-				training.Transition(runtime.READY)
-				return
-			}
+				for detection := range training.catalog.Detections(training.Context(), run.Epoch) {
+					select {
+					case <-training.Context().Done():
+						return
+					default:
+					}
 
-			if allRunsProcessed && !training.skill.HasEdge() {
-				processedRuns = make(map[int64]bool)
-				lastSeqProcessed = make(map[int64]int64)
+					if detection == nil {
+						continue
+					}
+
+					lowTick, highTick, tickErr := tables.DetectionTicks(detection)
+
+					if tickErr != nil {
+						training.Error(tickErr)
+						continue
+					}
+
+					var (
+						currentTick      int64 = -1
+						tickMeasurements []*data.Measurement[float64]
+						sequenceTokens   [][]byte
+					)
+
+					for measurement := range training.catalog.SignalLogic(
+						training.Context(),
+						detection.Epoch,
+						detection.Label,
+						lowTick,
+						highTick,
+					) {
+						if measurement == nil {
+							continue
+						}
+
+						if currentTick != -1 && measurement.Tick != currentTick {
+							if len(tickMeasurements) > 0 {
+								tokens := training.grid.LitRegions(tickMeasurements...)
+
+								if len(tokens) > 0 {
+									sequenceTokens = append(sequenceTokens, bytes.Join(tokens, []byte("_")))
+								}
+
+								tickMeasurements = tickMeasurements[:0]
+							}
+						}
+
+						currentTick = measurement.Tick
+						tickMeasurements = append(tickMeasurements, measurement)
+					}
+
+					if len(tickMeasurements) > 0 {
+						tokens := training.grid.LitRegions(tickMeasurements...)
+
+						if len(tokens) > 0 {
+							sequenceTokens = append(sequenceTokens, bytes.Join(tokens, []byte("_")))
+						}
+					}
+
+					if len(sequenceTokens) == 0 {
+						continue
+					}
+
+					entryAsk, exitBid, priceErr := tables.DetectionPrices(detection)
+
+					if priceErr != nil && training.price != nil {
+						bid, ask := training.price.Touch(detection.Label)
+						entryAsk = ask
+						exitBid = bid
+					}
+
+					if entryAsk == nil || exitBid == nil || entryAsk.Sign() <= 0 || exitBid.Sign() <= 0 {
+						continue
+					}
+
+					pnl, evalErr := training.evaluator.EvaluatePnL(detection.Label, entryAsk, exitBid)
+
+					if evalErr != nil {
+						training.Error(evalErr)
+						continue
+					}
+
+					if len(sequenceTokens) > 2 {
+						midPoint := len(sequenceTokens) / 2
+						earlyPrefix := bytes.Join(sequenceTokens[:midPoint], []byte("/"))
+						training.evaluator.ObserveWait(earlyPrefix)
+
+						enterPrefix := bytes.Join(sequenceTokens[:midPoint+1], []byte("/"))
+						training.evaluator.Train(enterPrefix, cognition.ActionEnter, pnl)
+
+						exitPrefix := bytes.Join(sequenceTokens, []byte("/"))
+						training.evaluator.Train(exitPrefix, cognition.ActionExit, pnl)
+					}
+
+					if len(sequenceTokens) <= 2 {
+						fullSequence := bytes.Join(sequenceTokens, []byte("/"))
+						training.evaluator.Train(fullSequence, cognition.ActionEnter, pnl)
+					}
+				}
+
+				snap, snapErr := training.engine.Snapshot()
+
+				if snapErr == nil && len(snap.Model) > 0 {
+					training.catalog.PutBlob(
+						training.Context(),
+						fmt.Sprintf("trie/%d", run.Epoch),
+						snap.Model,
+					)
+				}
 			}
 
 			select {
@@ -362,106 +419,15 @@ func (training *Training) Run() {
 	}()
 }
 
-func (training *Training) processRun(epoch int64, lastSeq int64) (int64, bool) {
-	currentLast := lastSeq
-
-	labels, err := training.catalog.Labels(training.Context(), epoch)
-	if err != nil || len(labels) == 0 {
-		labels = []string{""}
-	}
-
-	maxSeq := currentLast
-
-	for _, label := range labels {
-		var timeline []*data.Measurement[float64]
-
-		for measurement := range training.catalog.Timeline(
-			training.Context(), epoch, label, currentLast+1, 0,
-		) {
-			if measurement == nil {
-				continue
-			}
-
-			if measurement.SeqIdx <= currentLast {
-				continue
-			}
-
-			if measurement.SeqIdx > maxSeq {
-				maxSeq = measurement.SeqIdx
-			}
-
-			timeline = append(timeline, measurement)
-		}
-
-		if len(timeline) < 5 {
-			continue
-		}
-
-		training.detector.Scan(timeline)
-
-		for {
-			trajectory, ok := training.detector.Next()
-			if !ok {
-				break
-			}
-
-			training.trainTrajectory(trajectory)
-
-			if training.skill.HasEdge() {
-				return maxSeq, true
-			}
-		}
-	}
-
-	return maxSeq, training.skill.HasEdge()
-}
-
-func (training *Training) trainTrajectory(trajectory Trajectory) {
-	pnl, err := training.evaluator.EvaluatePnL(
-		trajectory.Symbol,
-		trajectory.EntryAsk,
-		trajectory.ExitBid,
-	)
-
-	if err != nil {
-		return
-	}
-
-	precursorTokens := slices.CompactFunc(
-		training.grid.LitRegions(trajectory.Precursor...),
-		bytes.Equal,
-	)
-
-	holdingTokens := slices.CompactFunc(
-		training.grid.LitRegions(trajectory.Holding...),
-		bytes.Equal,
-	)
-
-	if len(precursorTokens) > 0 {
-		training.evaluator.Train(
-			bytes.Join(precursorTokens, []byte("_")),
-			cognition.ActionEnter,
-			pnl,
+/*
+Detect finds stored trade tape from the measurements table that has not been scanned
+for excursions yet. It should return only measurements with source = spot:trade,
+group them by label, and sort them by epoch and tick.
+*/
+func (training *Training) Detect() {
+	go func() {
+		training.detector.Scan(
+			training.catalog.Trades(training.Context()),
 		)
-	}
-
-	if len(holdingTokens) > 0 {
-		training.evaluator.Train(
-			bytes.Join(holdingTokens, []byte("_")),
-			cognition.ActionExit,
-			pnl,
-		)
-	}
-
-	training.skill.RecordHistorical(pnl, pnl > 0)
-	training.skill.RecordFragment("up")
-
-	training.reporter.PublishExcursion(
-		trajectory.Symbol,
-		trajectory.Ticks[0],
-		trajectory.Ticks[1],
-		precursorTokens,
-		pnl,
-		training.skill,
-	)
+	}()
 }

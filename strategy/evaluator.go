@@ -4,7 +4,6 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/cognition"
 )
 
@@ -30,34 +29,45 @@ func (evaluator *Evaluator) EvaluatePnL(
 	exitBid *decimal.Decimal,
 ) (float64, error) {
 	if evaluator == nil || evaluator.price == nil {
-		return 0, errnie.Error(errnie.Err(errnie.Validation, "evaluator: price required", nil))
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation, "evaluator: price required", nil,
+		))
 	}
 
 	if symbol == "" || entryAsk == nil || exitBid == nil || entryAsk.Sign() <= 0 || exitBid.Sign() <= 0 {
-		return 0, errnie.Error(errnie.Err(errnie.Validation, "evaluator: valid symbol, ask, and bid required", nil))
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation, "evaluator: valid symbol, ask, and bid required", nil,
+		))
 	}
 
-	evaluator.price.Update(&kraken.TickerData{
-		Symbol: symbol,
-		Ask:    entryAsk,
-		Bid:    exitBid,
-	})
+	evaluator.price.SetQuote(symbol, exitBid, entryAsk)
 
 	cost, err := evaluator.price.AllocateEntry(symbol, evaluator.price.ReferenceCash())
 
-	if err != nil || cost == nil || cost.Total == nil || cost.Total.Sign() <= 0 {
-		if entryAsk != nil && entryAsk.Sign() > 0 && exitBid != nil {
-			profit := exitBid.Sub(entryAsk)
-			return profit.Div(entryAsk).Float64(), nil
-		}
+	if err != nil {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation, "evaluator: allocate entry failed for "+symbol, err,
+		))
+	}
 
-		return 0, err
+	if cost == nil || cost.Total == nil || cost.Total.Sign() <= 0 {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation, "evaluator: non-positive entry cost for "+symbol, nil,
+		))
 	}
 
 	netProceeds, _, err := evaluator.price.Liquidate(symbol, cost.Quantity, exitBid)
 
-	if err != nil || netProceeds == nil {
-		return 0, err
+	if err != nil {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation, "evaluator: liquidate failed for "+symbol, err,
+		))
+	}
+
+	if netProceeds == nil {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation, "evaluator: net proceeds missing for "+symbol, nil,
+		))
 	}
 
 	profit := netProceeds.Sub(cost.Total)
@@ -74,11 +84,18 @@ func (evaluator *Evaluator) Train(context []byte, action cognition.Action, pnl f
 	}
 
 	feedback := pnl
+
 	if pnl <= 0 {
 		feedback = -1.0
 	}
 
-	_, _ = evaluator.engine.Train(context, []byte(action), feedback)
+	_, err := evaluator.engine.Train(context, []byte(action), feedback)
+
+	if err != nil {
+		errnie.Error(errnie.Err(
+			errnie.Internal, "evaluator: train failed", err,
+		))
+	}
 }
 
 /*
@@ -89,10 +106,16 @@ func (evaluator *Evaluator) ObserveWait(context []byte) {
 		return
 	}
 
-	_, _ = evaluator.engine.Observe(cognition.Association{
+	_, err := evaluator.engine.Observe(cognition.Association{
 		Context:  context,
 		Class:    []byte(cognition.ActionWait),
 		Feedback: 1.0,
 		Graded:   true,
 	})
+
+	if err != nil {
+		errnie.Error(errnie.Err(
+			errnie.Internal, "evaluator: observe wait failed", err,
+		))
+	}
 }

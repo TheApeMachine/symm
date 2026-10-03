@@ -221,6 +221,8 @@ func (solver *Solver) Step(prior *data.Measurement[float64]) *data.Measurement[f
 	}
 
 	out := solver.arena.NewMeasurement(solver.Name())
+	out.Epoch = prior.Epoch
+	out.Tick = prior.Tick
 	out.Label = symbol
 	out.SeqIdx = prior.SeqIdx
 	out.At = prior.At
@@ -235,26 +237,123 @@ func (solver *Solver) Step(prior *data.Measurement[float64]) *data.Measurement[f
 		return out
 	}
 
-	out.WriteMetric("divergence", reading.Reading.Divergence)
-	out.WriteMetric("guidance_speed", reading.Reading.GuidanceSpeed)
-	out.WriteMetric("coherence_mag2", reading.Reading.CoherenceMag2)
-	out.WriteMetric("pressure_grad_norm", reading.Reading.PressureGradNorm)
-	out.WriteMetric("viscosity_proxy", reading.Reading.ViscosityProxy)
-	out.WriteMetric("kuramoto_r", reading.Reading.KuramotoR)
-	out.WriteMetric("kuramoto_psi", reading.Reading.KuramotoPsi)
-	out.WriteMetric("gas_kinetic", reading.Reading.Health.Gas.Kinetic)
-	out.WriteMetric("gas_internal", reading.Reading.Health.Gas.Internal)
-	out.WriteMetric("wave_norm", reading.Reading.Health.Wave.Norm)
-	out.WriteMetric("vorticity_rms", reading.Reading.Health.Gas.VorticityRMS)
-	out.WriteMetric("strain_rms", reading.Reading.Health.Gas.StrainRMS)
-	out.WriteMetric("max_mach", reading.Reading.Health.Gas.MaxMach)
+	out.SetMetric("divergence", data.NewMetric[float64](
+		"divergence",
+		data.UnitRate,
+		data.TimescaleInstantaneous,
+		0.0,
+		1.0,
+	).Write(reading.Reading.Divergence))
+	out.SetMetric("guidance_speed", data.NewMetric[float64](
+		"guidance_speed",
+		data.UnitVelocity,
+		data.TimescaleInstantaneous,
+		0.0,
+		1.0,
+	).Write(reading.Reading.GuidanceSpeed))
+	out.SetMetric("coherence_mag2", data.NewMetric[float64](
+		"coherence_mag2",
+		data.UnitDimensionless,
+		data.TimescaleInstantaneous,
+		0.5,
+		0.5,
+	).Write(reading.Reading.CoherenceMag2))
+	out.SetMetric("pressure_grad_norm", data.NewMetric[float64](
+		"pressure_grad_norm",
+		data.UnitAcceleration,
+		data.TimescaleInstantaneous,
+		0.0,
+		1.0,
+	).Write(reading.Reading.PressureGradNorm))
+	out.SetMetric("viscosity_proxy", data.NewMetric[float64](
+		"viscosity_proxy",
+		data.UnitDimensionless,
+		data.TimescaleInstantaneous,
+		0.0,
+		1.0,
+	).Write(reading.Reading.ViscosityProxy))
+	out.SetMetric("kuramoto_r", data.NewMetric[float64](
+		"kuramoto_r",
+		data.UnitDimensionless,
+		data.TimescaleInstantaneous,
+		0.5,
+		0.5,
+	).Write(reading.Reading.KuramotoR))
+	out.SetMetric("kuramoto_psi", data.NewMetric[float64](
+		"kuramoto_psi",
+		data.UnitDimensionless,
+		data.TimescaleInstantaneous,
+		0.0,
+		math.Pi,
+	).Write(reading.Reading.KuramotoPsi))
+	out.SetMetric("gas_kinetic", data.NewMetric[float64](
+		"gas_kinetic",
+		data.UnitDimensionless,
+		data.TimescaleInstantaneous,
+		0.0,
+		1.0,
+	).Write(reading.Reading.Health.Gas.Kinetic))
+	out.SetMetric("gas_internal", data.NewMetric[float64](
+		"gas_internal",
+		data.UnitDimensionless,
+		data.TimescaleInstantaneous,
+		0.0,
+		1.0,
+	).Write(reading.Reading.Health.Gas.Internal))
+	out.SetMetric("wave_norm", data.NewMetric[float64](
+		"wave_norm",
+		data.UnitDimensionless,
+		data.TimescaleInstantaneous,
+		1.0,
+		1.0,
+	).Write(reading.Reading.Health.Wave.Norm))
+	out.SetMetric("vorticity_rms", data.NewMetric[float64](
+		"vorticity_rms",
+		data.UnitRate,
+		data.TimescaleInstantaneous,
+		0.0,
+		1.0,
+	).Write(reading.Reading.Health.Gas.VorticityRMS))
+	out.SetMetric("strain_rms", data.NewMetric[float64](
+		"strain_rms",
+		data.UnitRate,
+		data.TimescaleInstantaneous,
+		0.0,
+		1.0,
+	).Write(reading.Reading.Health.Gas.StrainRMS))
+	out.SetMetric("max_mach", data.NewMetric[float64](
+		"max_mach",
+		data.UnitDimensionless,
+		data.TimescaleInstantaneous,
+		0.0,
+		1.0,
+	).Write(reading.Reading.Health.Gas.MaxMach))
 
 	if reading.State != nil {
-		out.WriteMetric("particle_count", float64(reading.State.N))
+		n := float64(reading.State.N)
+		out.SetMetric("particle_count", data.NewMetric[float64](
+			"particle_count",
+			data.UnitCount,
+			data.TimescaleInstantaneous,
+			n,
+			math.Sqrt(n),
+		).Write(n))
 	}
 
-	out.WriteMetric("particle_thermal", reading.Reading.Health.ParticleThermal)
-	out.WriteMetric("particle_kinetic", reading.Reading.Health.ParticleKinetic)
+	out.SetMetric("particle_thermal", data.NewMetric[float64](
+		"particle_thermal",
+		data.UnitDimensionless,
+		data.TimescaleInstantaneous,
+		0.0,
+		1.0,
+	).Write(reading.Reading.Health.ParticleThermal))
+	out.SetMetric("particle_kinetic", data.NewMetric[float64](
+		"particle_kinetic",
+		data.UnitDimensionless,
+		data.TimescaleInstantaneous,
+		0.0,
+		1.0,
+	).Write(reading.Reading.Health.ParticleKinetic))
 
 	maturity, snr, snrDefined, estimated := out.Maturity, out.SNR, out.SNRDefined, out.Estimated
 	if reading.State != nil && reading.State.N > 1 {

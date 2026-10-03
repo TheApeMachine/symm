@@ -2,14 +2,15 @@ package liquidity
 
 import (
 	"context"
+	"math"
 	"strconv"
 	"sync"
 	"unsafe"
 
 	"github.com/theapemachine/errnie"
 
-	"github.com/theapemachine/symm/broker"
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
@@ -36,7 +37,7 @@ func NewSignal(ctx context.Context, arena *data.ArenaOwner, books ...broker.Book
 		signal.books = books[0]
 	}
 
-	signal.System = runtime.NewSystem(ctx, "liquidity:signal", signal)
+	signal.System = runtime.NewSystem(ctx, "liquidity", signal)
 	return signal
 }
 
@@ -82,16 +83,43 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 					noiseLabels := []string{"depth_noise_scale:bid", "depth_noise_scale:ask", "spread_noise_scale"}
 					zscoreLabels := []string{"depth_zscore:bid", "depth_zscore:ask", "spread_zscore"}
 
+					baselineUnits := []data.Unit{data.UnitNotional, data.UnitNotional, data.UnitRelativeSpread}
 					for index, channel := range reading.Channels {
 						if !channel.HasPrior {
 							continue
 						}
-						m.WriteMetric(baselineLabels[index], channel.Baseline)
-						m.WriteMetric(ratioLabels[index], originals[index]/channel.Baseline)
-						m.WriteMetric(divergenceLabels[index], channel.Residual)
+						m.SetMetric(baselineLabels[index], data.NewMetric[float64](
+							baselineLabels[index],
+							baselineUnits[index],
+							data.TimescaleInstantaneous,
+							channel.Baseline,
+							channel.ScoreScale,
+						).Write(channel.Baseline))
+						if channel.Baseline > 0 {
+							m.SetMetric(ratioLabels[index], data.NewMetric[float64](
+								ratioLabels[index],
+								data.UnitRatio,
+								data.TimescaleInstantaneous,
+								1.0,
+								channel.ScoreScale/channel.Baseline,
+							).Write(originals[index]/channel.Baseline))
+						}
+						m.SetMetric(divergenceLabels[index], data.NewMetric[float64](
+							divergenceLabels[index],
+							baselineUnits[index],
+							data.TimescaleInstantaneous,
+							0.0,
+							channel.ScoreScale,
+						).Write(channel.Residual))
 
 						if channel.ScoreScale > 0 {
-							m.WriteMetric(noiseLabels[index], channel.ScoreScale)
+							m.SetMetric(noiseLabels[index], data.NewMetric[float64](
+								noiseLabels[index],
+								baselineUnits[index],
+								data.TimescaleInstantaneous,
+								0.0,
+								channel.ScoreScale,
+							).Write(channel.ScoreScale))
 							m.WriteStandardized(zscoreLabels[index], channel.ZScore)
 						}
 					}
@@ -104,10 +132,22 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 				},
 				func(m *data.Measurement[float64], out statistic.LocalRegressionReading) {
 					if out.SlopeDefined {
-						m.WriteMetric("divergence_velocity:bid", out.Slope)
+						m.SetMetric("divergence_velocity:bid", data.NewMetric[float64](
+							"divergence_velocity:bid",
+							data.UnitVelocity,
+							data.TimescaleInstantaneous,
+							0.0,
+							math.Abs(out.Slope),
+						).Write(out.Slope))
 					}
 					if out.SNRDefined {
-						m.WriteMetric("divergence_velocity_snr:bid", out.SNR)
+						m.SetMetric("divergence_velocity_snr:bid", data.NewMetric[float64](
+							"divergence_velocity_snr:bid",
+							data.UnitSNR,
+							data.TimescaleInstantaneous,
+							0.0,
+							1.0,
+						).Write(out.SNR))
 					}
 				},
 			),
@@ -118,10 +158,22 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 				},
 				func(m *data.Measurement[float64], out statistic.LocalRegressionReading) {
 					if out.SlopeDefined {
-						m.WriteMetric("divergence_velocity:ask", out.Slope)
+						m.SetMetric("divergence_velocity:ask", data.NewMetric[float64](
+							"divergence_velocity:ask",
+							data.UnitVelocity,
+							data.TimescaleInstantaneous,
+							0.0,
+							math.Abs(out.Slope),
+						).Write(out.Slope))
 					}
 					if out.SNRDefined {
-						m.WriteMetric("divergence_velocity_snr:ask", out.SNR)
+						m.SetMetric("divergence_velocity_snr:ask", data.NewMetric[float64](
+							"divergence_velocity_snr:ask",
+							data.UnitSNR,
+							data.TimescaleInstantaneous,
+							0.0,
+							1.0,
+						).Write(out.SNR))
 					}
 				},
 			),
@@ -132,10 +184,22 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 				},
 				func(m *data.Measurement[float64], out statistic.LocalRegressionReading) {
 					if out.SlopeDefined {
-						m.WriteMetric("spread_divergence_velocity", out.Slope)
+						m.SetMetric("spread_divergence_velocity", data.NewMetric[float64](
+							"spread_divergence_velocity",
+							data.UnitVelocity,
+							data.TimescaleInstantaneous,
+							0.0,
+							math.Abs(out.Slope),
+						).Write(out.Slope))
 					}
 					if out.SNRDefined {
-						m.WriteMetric("spread_divergence_velocity_snr", out.SNR)
+						m.SetMetric("spread_divergence_velocity_snr", data.NewMetric[float64](
+							"spread_divergence_velocity_snr",
+							data.UnitSNR,
+							data.TimescaleInstantaneous,
+							0.0,
+							1.0,
+						).Write(out.SNR))
 					}
 				},
 			),
@@ -197,16 +261,46 @@ func (signal *Signal) Step(prior *data.Measurement[float64]) *data.Measurement[f
 	}
 
 	out := signal.arena.NewMeasurement(signal.Name())
+	out.Epoch = prior.Epoch
+	out.Tick = prior.Tick
 	out.Label = prior.Label
 	out.SeqIdx = prior.SeqIdx
 	out.At = prior.At
 	out.From = prior.From
 	out.Peers = []*data.Measurement[float64]{prior}
 
-	out.WriteMetric("bid", bid)
-	out.WriteMetric("ask", ask)
-	out.WriteMetric("bid_qty", bidQty)
-	out.WriteMetric("ask_qty", askQty)
+	midpoint := (bid + ask) / 2.0
+	spread := ask - bid
+	totalQty := bidQty + askQty
+
+	out.SetMetric("bid", data.NewMetric[float64](
+		"bid",
+		data.UnitPrice,
+		data.TimescaleInstantaneous,
+		midpoint,
+		spread,
+	).Write(bid))
+	out.SetMetric("ask", data.NewMetric[float64](
+		"ask",
+		data.UnitPrice,
+		data.TimescaleInstantaneous,
+		midpoint,
+		spread,
+	).Write(ask))
+	out.SetMetric("bid_qty", data.NewMetric[float64](
+		"bid_qty",
+		data.UnitQuantity,
+		data.TimescaleInstantaneous,
+		0.0,
+		totalQty,
+	).Write(bidQty))
+	out.SetMetric("ask_qty", data.NewMetric[float64](
+		"ask_qty",
+		data.UnitQuantity,
+		data.TimescaleInstantaneous,
+		0.0,
+		totalQty,
+	).Write(askQty))
 
 	if channel, hasCh := prior.GetProvenance("channel"); hasCh {
 		out.SetProvenance("channel", channel)

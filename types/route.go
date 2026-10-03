@@ -62,11 +62,7 @@ func Filters(measurement *data.Measurement[float64]) bool {
 
 	switch Route() {
 	case "dashboard":
-		if !isFocus(measurement) {
-			return false
-		}
-
-		return isSignal(measurement) || isLogic(measurement, "resonance")
+		return isFocus(measurement) && (isSignal(measurement) || isLogic(measurement, "resonance"))
 	case "learning":
 		return isStrategy(measurement, "training")
 	case "xray":

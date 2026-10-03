@@ -37,7 +37,7 @@ func NewSignal(ctx context.Context, arena *data.ArenaOwner) *Signal {
 	signal := &Signal{
 		arena: arena,
 	}
-	signal.System = runtime.NewSystem(ctx, "cvd:signal", signal)
+	signal.System = runtime.NewSystem(ctx, "cvd", signal)
 	return signal
 }
 
@@ -284,6 +284,8 @@ func (signal *Signal) Step(prior *data.Measurement[float64]) *data.Measurement[f
 	}
 
 	out := signal.arena.NewMeasurement(signal.Name())
+	out.Epoch = prior.Epoch
+	out.Tick = prior.Tick
 	out.Label = prior.Label
 	out.SeqIdx = prior.SeqIdx
 	out.At = prior.At

@@ -12,7 +12,6 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/broker/position"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/system"
@@ -67,9 +66,9 @@ type Price struct {
 	Books         BookSource
 	private       Transport
 	fees          *sync.Map
-	tickers       *sync.Map
+	trades        *sync.Map
+	quotes        *sync.Map
 	normalizer    *spot.Normalizer
-	anomalies     *AnomalyMonitor
 	referenceCash atomic.Pointer[decimal.Decimal]
 }
 
@@ -96,19 +95,11 @@ func NewPrice(
 		Books:      books,
 		normalizer: normalizer,
 		fees:       &sync.Map{},
-		tickers:    &sync.Map{},
-		anomalies:  NewAnomalyMonitor(ctx, 0),
+		trades:     &sync.Map{},
+		quotes:     &sync.Map{},
 	}
 
-	price.anomalies.SetOnFault(func(symbol string) {
-		price.Transition(runtime.ERROR)
-	})
-
-	price.anomalies.SetOnRecover(func(symbol string) {
-		if !price.anomalies.HasAnySevereFault() {
-			price.Transition(runtime.READY)
-		}
-	})
+	price.Transition(runtime.READY)
 
 	if err := errnie.Require(map[string]any{
 		"private":    private,
@@ -180,7 +171,7 @@ func SeedNormalizer(n *spot.Normalizer) error {
 	if n == nil {
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
-			"price: normalizer required for asset pair seeding",
+			"[price] normalizer required for asset pair seeding",
 			nil,
 		))
 	}
@@ -188,7 +179,7 @@ func SeedNormalizer(n *spot.Normalizer) error {
 	if err := n.Use(spot.NewREST()); err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.IO,
-			"price: failed to load asset pair normalizer from public REST",
+			"[price] failed to load asset pair normalizer from public REST",
 			err,
 		))
 	}
@@ -196,47 +187,101 @@ func SeedNormalizer(n *spot.Normalizer) error {
 	return nil
 }
 
-func (price *Price) Update(ticker *kraken.TickerData) {
-	if ticker == nil {
+type Quote struct {
+	Bid *decimal.Decimal
+	Ask *decimal.Decimal
+}
+
+func (price *Price) Update(trade *kraken.TradeData) {
+	if trade == nil {
 		return
 	}
 
-	normalized := price.normalize(ticker.Symbol)
-	price.tickers.Store(normalized, ticker)
-
-	if ticker.Bid != nil && ticker.Ask != nil {
-		if ticker.Bid.Cmp(ticker.Ask) >= 0 {
-			price.recordAnomaly(normalized, AnomalyCrossedBook)
-			return
-		}
-
-		price.recordClean(normalized)
-	}
+	normalized := price.normalize(trade.Symbol)
+	price.trades.Store(normalized, &trade.Price)
 }
 
-func (price *Price) Tick(symbol string) *kraken.TickerData {
-	value, found := price.tickers.Load(price.normalize(symbol))
-
-	if !found {
-		return nil
+func (price *Price) SetQuote(symbol string, bid, ask *decimal.Decimal) {
+	if price == nil {
+		return
 	}
 
-	return value.(*kraken.TickerData)
+	normalized := price.normalize(symbol)
+	price.quotes.Store(normalized, Quote{Bid: bid, Ask: ask})
+}
+
+func (price *Price) Touch(symbol string) (*decimal.Decimal, *decimal.Decimal) {
+	if price == nil {
+		return nil, nil
+	}
+
+	normalized := price.normalize(symbol)
+	var bid, ask *decimal.Decimal
+
+	if price.Books != nil {
+		price.Books.Book(symbol, func(book *spotbook.Book) {
+			if book == nil {
+				return
+			}
+
+			if bestBid := book.BestBid(); bestBid != nil {
+				bid = bestBid.Price
+			}
+
+			if bestAsk := book.BestAsk(); bestAsk != nil {
+				ask = bestAsk.Price
+			}
+		})
+	}
+
+	if (bid == nil || ask == nil) && price.quotes != nil {
+		if val, ok := price.quotes.Load(normalized); ok {
+			q := val.(Quote)
+
+			if bid == nil {
+				bid = q.Bid
+			}
+
+			if ask == nil {
+				ask = q.Ask
+			}
+		}
+	}
+
+	if (bid == nil || ask == nil) && price.trades != nil {
+		if val, ok := price.trades.Load(normalized); ok {
+			last := val.(*decimal.Decimal)
+
+			if bid == nil {
+				bid = last
+			}
+
+			if ask == nil {
+				ask = last
+			}
+		}
+	}
+
+	return bid, ask
 }
 
 /* Mark returns the current unit price including the taker fee. */
 func (price *Price) Mark(symbol string, side Direction) *decimal.Decimal {
-	tick := price.Tick(symbol)
+	bid, ask := price.Touch(symbol)
 
-	if tick == nil {
+	if side == BUY {
+		if ask == nil {
+			return nil
+		}
+
+		return price.WithFee(symbol, ask, side)
+	}
+
+	if bid == nil {
 		return nil
 	}
 
-	if side == BUY {
-		return price.WithFee(symbol, tick.Ask, side)
-	}
-
-	return price.WithFee(symbol, tick.Bid, side)
+	return price.WithFee(symbol, bid, side)
 }
 
 /*
@@ -247,100 +292,48 @@ func notional(unit, quantity *decimal.Decimal) *decimal.Decimal {
 	return unit.SetScale(decimal.DefaultScale).Mul(quantity)
 }
 
-/* PnL values the remaining inventory, including its retained entry fee. */
-func (price *Price) PnL(symbol string, reg *position.Regulator) *decimal.Decimal {
-	if price == nil || reg == nil || !reg.IsHolding() {
-		return nil
-	}
-
-	exit := price.ExitValue(symbol, reg)
-
-	if exit == nil || reg.Basis == nil {
-		return nil
-	}
-
-	return exit.Sub(reg.Basis)
-}
-
 /* CurrentMark returns the best observable reference price for a symbol. */
 func (price *Price) CurrentMark(symbol string) *decimal.Decimal {
 	if price == nil {
 		return nil
 	}
 
-	tick := price.Tick(symbol)
+	bid, ask := price.Touch(symbol)
 
-	if tick != nil && tick.Bid != nil {
-		return tick.Bid
+	if bid != nil {
+		return bid
 	}
 
-	if tick != nil && tick.Ask != nil {
-		return tick.Ask
-	}
-
-	var bookMark *decimal.Decimal
-
-	if price.Books != nil {
-		price.Books.Book(symbol, func(managedBook *spotbook.Book) {
-			if managedBook == nil {
-				return
-			}
-
-			if bestBid := managedBook.BestBid(); bestBid != nil {
-				bookMark = bestBid.Price
-				return
-			}
-
-			if bestAsk := managedBook.BestAsk(); bestAsk != nil {
-				bookMark = bestAsk.Price
-			}
-		})
-	}
-
-	return bookMark
+	return ask
 }
 
-/* Value reports the net liquidation value of a position. */
-func (price *Price) Value(symbol string, reg *position.Regulator) *decimal.Decimal {
-	return price.ExitValue(symbol, reg)
-}
-
-func (price *Price) ExitValue(symbol string, reg *position.Regulator) *decimal.Decimal {
-	if price == nil || reg == nil || !reg.IsHolding() {
-		return nil
-	}
-
-	volume := reg.Volume()
-
-	if volume == nil || volume.Sign() <= 0 {
-		return nil
-	}
-
-	mark := price.CurrentMark(symbol)
-
-	if mark == nil {
-		return nil
-	}
-
-	return price.WithFee(
-		symbol, notional(mark, volume), SELL,
-	)
-}
-
-func (price *Price) ReturnPct(symbol string, reg *position.Regulator) float64 {
-	pnl := price.PnL(symbol, reg)
-
-	if pnl == nil || reg == nil || reg.Basis == nil || reg.Basis.Sign() <= 0 {
+func (price *Price) RealizedReturn(
+	entryCost, entryFee, exitCost, exitFee *decimal.Decimal,
+) float64 {
+	if entryCost == nil || entryCost.Sign() <= 0 || exitCost == nil {
 		return 0
 	}
 
-	return pnl.Div(reg.Basis).Mul(decimalHundred).Float64()
+	totalEntry := entryCost
+	if entryFee != nil && entryFee.Sign() > 0 {
+		totalEntry = entryCost.Add(entryFee)
+	}
+
+	netExit := exitCost
+	if exitFee != nil && exitFee.Sign() > 0 {
+		netExit = exitCost.Sub(exitFee)
+	}
+
+	profit := netExit.Sub(totalEntry)
+	return profit.Div(totalEntry).Mul(decimalHundred).Float64()
 }
 
 /* Quantity sizes a buy against visible asks and available cash. */
 func (price *Price) Quantity(symbol string, cash *decimal.Decimal) (*decimal.Decimal, error) {
 	if cash == nil || cash.Sign() <= 0 {
-		return nil, errnie.Error(errnie.Err(errnie.Validation, "price: positive cash required", nil))
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation, "[price] positive cash required", nil,
+		))
 	}
 
 	var quantity *decimal.Decimal
@@ -357,14 +350,18 @@ func (price *Price) Quantity(symbol string, cash *decimal.Decimal) (*decimal.Dec
 	}
 
 	if quantity == nil {
-		if tick := price.Tick(symbol); tick != nil && tick.Ask != nil {
-			unit = tick.Ask
+		_, ask := price.Touch(symbol)
+
+		if ask != nil {
+			unit = ask
 			quantity, err = price.Affordable(symbol, cash, unit)
 		}
 	}
 
 	if quantity == nil && err == nil {
-		err = errnie.Err(errnie.NotFound, "price: book unavailable for "+symbol, nil)
+		err = errnie.Error(errnie.Err(
+			errnie.NotFound, "[price] book unavailable for "+symbol, nil,
+		))
 	}
 
 	// Cash too small for QtyMin/CostMin → abstain, do not round up into an
@@ -373,7 +370,7 @@ func (price *Price) Quantity(symbol string, cash *decimal.Decimal) (*decimal.Dec
 		if !price.Tradable(symbol, quantity, unit) {
 			err = errnie.Err(
 				errnie.Validation,
-				"price: available cash below minimum order for "+symbol,
+				"[price] available cash below minimum order for "+symbol,
 				nil,
 			)
 			quantity = nil
@@ -391,7 +388,7 @@ func (price *Price) Affordable(
 
 	if cost == nil {
 		return nil, errnie.Error(errnie.Err(
-			errnie.NotFound, "price: entry fee unavailable for "+symbol, nil,
+			errnie.NotFound, "[price] entry fee unavailable for "+symbol, nil,
 		))
 	}
 
@@ -401,7 +398,7 @@ func (price *Price) Affordable(
 	if err != nil {
 		return nil, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"price: cannot normalize quantity for "+symbol,
+			"[price] cannot normalize quantity for "+symbol,
 			err,
 		))
 	}
@@ -421,7 +418,7 @@ func (price *Price) Walk(
 ) (*decimal.Decimal, *decimal.Decimal, error) {
 	if book == nil || requested == nil || requested.Sign() <= 0 {
 		return nil, nil, errnie.Error(errnie.Err(
-			errnie.Validation, "price: valid book and positive quantity required", nil,
+			errnie.Validation, "[price] valid book and positive quantity required", nil,
 		))
 	}
 
@@ -466,9 +463,9 @@ func (price *Price) Walk(
 		the faults that do matter.
 	*/
 	if quantity.Cmp(requested) < 0 {
-		return quantity, gross, errnie.Err(
-			errnie.UnprocessableContent, "price: insufficient book depth", nil,
-		)
+		return quantity, gross, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent, "[price] insufficient book depth", nil,
+		))
 	}
 
 	return quantity, gross, nil
@@ -477,19 +474,25 @@ func (price *Price) Walk(
 /* EntryCost prices a complete entry from the resident book and current fee. */
 func (price *Price) EntryCost(symbol string, quantity *decimal.Decimal) (*EntryCost, error) {
 	if quantity == nil || quantity.Sign() <= 0 {
-		return nil, errnie.Error(errnie.Err(errnie.Validation, "entry cost: positive quantity required", nil))
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation, "entry cost: positive quantity required", nil,
+		))
 	}
 
 	var cost *EntryCost
 	var err error
 
 	if price.Books == nil {
-		return nil, errnie.Error(errnie.Err(errnie.NotFound, "entry cost: books unavailable", nil))
+		return nil, errnie.Error(errnie.Err(
+			errnie.NotFound, "entry cost: books unavailable", nil,
+		))
 	}
 
 	price.Books.Book(symbol, func(book *spotbook.Book) {
 		if book == nil || book.BestAsk() == nil || book.BestBid() == nil {
-			err = errnie.Err(errnie.NotFound, "entry cost: book unavailable for "+symbol, nil)
+			err = errnie.Error(errnie.Err(
+				errnie.NotFound, "entry cost: book unavailable for "+symbol, nil,
+			))
 			return
 		}
 
@@ -502,21 +505,18 @@ func (price *Price) EntryCost(symbol string, quantity *decimal.Decimal) (*EntryC
 			around insufficient depth.
 		*/
 		if book.BestBid().Price.Cmp(book.BestAsk().Price) >= 0 {
-			price.recordAnomaly(symbol, AnomalyCrossedBook)
-			err = errnie.Err(errnie.UnprocessableContent, "entry cost: crossed book for "+symbol, nil)
+			err = errnie.Error(errnie.Err(
+				errnie.UnprocessableContent, "entry cost: crossed book for "+symbol, nil,
+			))
 			return
 		}
 
-		price.recordClean(symbol)
+		filled, gross, err := price.Walk(book, quantity, BUY)
 
-		filled, gross, walkErr := price.Walk(book, quantity, BUY)
-
-		if walkErr != nil {
-			if errnie.IsUnprocessableContent(walkErr) {
-				price.recordAnomaly(symbol, AnomalyInsufficientDepth)
-			}
-
-			err = walkErr
+		if err != nil {
+			err = errnie.Error(errnie.Err(
+				errnie.IO, "[price] get entry cost failed for "+symbol, err,
+			))
 			return
 		}
 
@@ -524,7 +524,9 @@ func (price *Price) EntryCost(symbol string, quantity *decimal.Decimal) (*EntryC
 		exitFactor := price.WithFee(symbol, decimalOne, SELL)
 
 		if total == nil || exitFactor == nil {
-			err = errnie.Err(errnie.NotFound, "entry cost: fee unavailable for "+symbol, nil)
+			err = errnie.Error(errnie.Err(
+				errnie.NotFound, "entry cost: fee unavailable for "+symbol, nil,
+			))
 			return
 		}
 
@@ -552,16 +554,14 @@ func (price *Price) EntryCost(symbol string, quantity *decimal.Decimal) (*EntryC
 	})
 
 	if cost == nil && err == nil {
-		price.recordAnomaly(symbol, AnomalyIncompleteBook)
-
-		err = errnie.Err(
+		err = errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			"entry cost: complete executable book required for "+symbol,
 			nil,
-		)
+		))
 	}
 
-	return cost, reported(err)
+	return cost, err
 }
 
 /*
@@ -574,7 +574,7 @@ func (price *Price) AllocateEntry(
 	referenceCash ...*decimal.Decimal,
 ) (*EntryCost, error) {
 	if price == nil {
-		return nil, errnie.Error(errnie.Err(errnie.Validation, "price: price system required", nil))
+		return nil, errnie.Error(errnie.Err(errnie.Validation, "[price] price system required", nil))
 	}
 
 	var cash *decimal.Decimal
@@ -590,7 +590,7 @@ func (price *Price) AllocateEntry(
 	if cash == nil || cash.Sign() <= 0 {
 		return nil, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"price: positive reference cash required to allocate entry",
+			"[price] positive reference cash required to allocate entry",
 			nil,
 		))
 	}
@@ -600,7 +600,9 @@ func (price *Price) AllocateEntry(
 	fee := price.Fee(symbol)
 
 	if fee == nil || fee.Fee == nil {
-		return nil, errnie.Error(errnie.Err(errnie.NotFound, "price: fee unavailable for "+symbol, nil))
+		return nil, errnie.Error(errnie.Err(
+			errnie.NotFound, "[price] fee unavailable for "+symbol, nil,
+		))
 	}
 
 	feeRate := decimalPercent.Mul(fee.Fee)
@@ -612,17 +614,18 @@ func (price *Price) AllocateEntry(
 	if price.Books != nil {
 		price.Books.Book(symbol, func(book *spotbook.Book) {
 			if book == nil || book.BestAsk() == nil || book.BestBid() == nil {
-				err = errnie.Err(errnie.NotFound, "price: book unavailable for "+symbol, nil)
+				err = errnie.Error(errnie.Err(
+					errnie.NotFound, "[price] book unavailable for "+symbol, nil,
+				))
 				return
 			}
 
 			if book.BestBid().Price.Cmp(book.BestAsk().Price) >= 0 {
-				price.recordAnomaly(symbol, AnomalyCrossedBook)
-				err = errnie.Err(errnie.UnprocessableContent, "price: crossed book for "+symbol, nil)
+				err = errnie.Error(errnie.Err(
+					errnie.UnprocessableContent, "[price] crossed book for "+symbol, nil,
+				))
 				return
 			}
-
-			price.recordClean(symbol)
 
 			qAccum := decimalZero
 			remainingGross := maxGross
@@ -644,7 +647,9 @@ func (price *Price) AllocateEntry(
 			}
 
 			if qAccum.Sign() <= 0 {
-				err = errnie.Err(errnie.Validation, "price: budget insufficient to fill any ask depth for "+symbol, nil)
+				err = errnie.Error(errnie.Err(
+					errnie.Validation, "[price] budget insufficient to fill any ask depth for "+symbol, nil,
+				))
 				return
 			}
 
@@ -671,7 +676,11 @@ func (price *Price) AllocateEntry(
 				}
 
 				if qNorm.Cmp(step) <= 0 {
-					err = errnie.Err(errnie.Validation, "price: budget insufficient for minimum tradable quantity for "+symbol, nil)
+					err = errnie.Error(errnie.Err(
+						errnie.Validation,
+						"[price] budget insufficient for minimum tradable quantity for "+symbol,
+						nil,
+					))
 					return
 				}
 
@@ -687,12 +696,20 @@ func (price *Price) AllocateEntry(
 			}
 
 			if filled == nil || filled.Sign() <= 0 || gross == nil || gross.Sign() <= 0 || total == nil {
-				err = errnie.Err(errnie.Validation, "price: executable depth walk failed for "+symbol, nil)
+				err = errnie.Error(errnie.Err(
+					errnie.Validation,
+					"[price] executable depth walk failed for "+symbol,
+					nil,
+				))
 				return
 			}
 
 			if price.Instrument != nil && !price.Tradable(symbol, qNorm, book.BestAsk().Price) {
-				err = errnie.Err(errnie.Validation, "price: allocated quantity below instrument minimum for "+symbol, nil)
+				err = errnie.Error(errnie.Err(
+					errnie.Validation,
+					"[price] allocated quantity below instrument minimum for "+symbol,
+					nil,
+				))
 				return
 			}
 
@@ -701,7 +718,9 @@ func (price *Price) AllocateEntry(
 			exitFactor := price.WithFee(symbol, decimalOne, SELL)
 
 			if exitFactor == nil {
-				err = errnie.Err(errnie.NotFound, "price: exit factor unavailable for "+symbol, nil)
+				err = errnie.Error(errnie.Err(
+					errnie.NotFound, "[price] exit factor unavailable for "+symbol, nil,
+				))
 				return
 			}
 
@@ -732,18 +751,17 @@ func (price *Price) AllocateEntry(
 	}
 
 	if err != nil && !errnie.IsNotFound(err) {
-		return nil, reported(err)
+		return nil, errnie.Error(errnie.Err(
+			errnie.IO, "[price] get entry cost failed for "+symbol, err,
+		))
 	}
 
-	tick := price.Tick(symbol)
-	var askPrice *decimal.Decimal
-
-	if tick != nil && tick.Ask != nil && tick.Ask.Sign() > 0 {
-		askPrice = tick.Ask
-	}
+	_, askPrice := price.Touch(symbol)
 
 	if askPrice == nil {
-		return nil, errnie.Error(errnie.Err(errnie.NotFound, "price: no book or quote available for "+symbol, nil))
+		return nil, errnie.Error(errnie.Err(
+			errnie.NotFound, "[price] no book or quote available for "+symbol, nil,
+		))
 	}
 
 	qRaw := maxGross.Div(askPrice)
@@ -764,7 +782,9 @@ func (price *Price) AllocateEntry(
 		}
 
 		if qNorm.Cmp(step) <= 0 {
-			return nil, errnie.Error(errnie.Err(errnie.Validation, "price: budget insufficient for minimum quote order", nil))
+			return nil, errnie.Error(errnie.Err(
+				errnie.Validation, "[price] budget insufficient for minimum quote order", nil,
+			))
 		}
 
 		qNorm = qNorm.Sub(step)
@@ -773,14 +793,18 @@ func (price *Price) AllocateEntry(
 	}
 
 	if total == nil || gross == nil {
-		return nil, errnie.Error(errnie.Err(errnie.Validation, "price: fee calculation failed for "+symbol, nil))
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation, "[price] fee calculation failed for "+symbol, nil,
+		))
 	}
 
 	entryFee := total.Sub(gross)
 	exitFactor := price.WithFee(symbol, decimalOne, SELL)
 
 	if exitFactor == nil {
-		return nil, errnie.Error(errnie.Err(errnie.NotFound, "price: exit factor unavailable for "+symbol, nil))
+		return nil, errnie.Error(errnie.Err(
+			errnie.NotFound, "[price] exit factor unavailable for "+symbol, nil,
+		))
 	}
 
 	breakEvenGross := total.Div(exitFactor)
@@ -811,11 +835,15 @@ func (price *Price) Liquidate(
 	fallbackBid ...*decimal.Decimal,
 ) (*decimal.Decimal, *decimal.Decimal, error) {
 	if price == nil {
-		return nil, nil, errnie.Error(errnie.Err(errnie.Validation, "price: price system required", nil))
+		return nil, nil, errnie.Error(errnie.Err(
+			errnie.Validation, "[price] price system required", nil,
+		))
 	}
 
 	if quantity == nil || quantity.Sign() <= 0 {
-		return nil, nil, errnie.Error(errnie.Err(errnie.Validation, "price: positive quantity required to liquidate", nil))
+		return nil, nil, errnie.Error(errnie.Err(
+			errnie.Validation, "[price] positive quantity required to liquidate", nil,
+		))
 	}
 
 	var net *decimal.Decimal
@@ -825,31 +853,33 @@ func (price *Price) Liquidate(
 	if price.Books != nil {
 		price.Books.Book(symbol, func(book *spotbook.Book) {
 			if book == nil || book.BestBid() == nil || book.BestAsk() == nil {
-				err = errnie.Err(errnie.NotFound, "price: book unavailable for "+symbol, nil)
+				err = errnie.Error(errnie.Err(
+					errnie.NotFound, "[price] book unavailable for "+symbol, nil,
+				))
 				return
 			}
 
 			if book.BestBid().Price.Cmp(book.BestAsk().Price) >= 0 {
-				price.recordAnomaly(symbol, AnomalyCrossedBook)
-				err = errnie.Err(errnie.UnprocessableContent, "price: crossed book for "+symbol, nil)
+				err = errnie.Error(errnie.Err(
+					errnie.UnprocessableContent, "[price] crossed book for "+symbol, nil,
+				))
 				return
 			}
 
-			price.recordClean(symbol)
+			filled, g, err := price.Walk(book, quantity, SELL)
 
-			filled, g, walkErr := price.Walk(book, quantity, SELL)
-
-			if walkErr != nil {
-				if errnie.IsUnprocessableContent(walkErr) {
-					price.recordAnomaly(symbol, AnomalyInsufficientDepth)
-				}
-
-				err = walkErr
+			if err != nil {
+				errnie.Error(errnie.Err(
+					errnie.IO, "[price] liquidate failed for "+symbol, err,
+				))
 				return
 			}
 
 			if filled == nil || filled.Sign() <= 0 {
-				err = errnie.Err(errnie.Validation, "price: zero fill during liquidation for "+symbol, nil)
+				err = errnie.Error(errnie.Err(
+					errnie.Validation, "[price] zero fill during liquidation for "+symbol, nil,
+				))
+
 				return
 			}
 
@@ -863,7 +893,7 @@ func (price *Price) Liquidate(
 	}
 
 	if err != nil && !errnie.IsNotFound(err) {
-		return nil, nil, reported(err)
+		return nil, nil, errnie.Error(errnie.Err(errnie.IO, "[price] liquidate failed for "+symbol, err))
 	}
 
 	var bidPrice *decimal.Decimal
@@ -873,52 +903,34 @@ func (price *Price) Liquidate(
 	}
 
 	if bidPrice == nil {
-		if tick := price.Tick(symbol); tick != nil && tick.Bid != nil && tick.Bid.Sign() > 0 {
-			bidPrice = tick.Bid
-		}
+		bidPrice, _ = price.Touch(symbol)
 	}
 
 	if bidPrice == nil {
-		return nil, nil, errnie.Error(errnie.Err(errnie.NotFound, "price: no book or bid price available for "+symbol, nil))
+		return nil, nil, errnie.Error(errnie.Err(errnie.NotFound, "[price] no book or bid price available for "+symbol, nil))
 	}
 
 	gross = notional(bidPrice, quantity)
 	net = price.WithFee(symbol, gross, SELL)
 
 	if net == nil {
-		return nil, nil, errnie.Error(errnie.Err(errnie.NotFound, "price: exit fee unavailable for "+symbol, nil))
+		return nil, nil, errnie.Error(errnie.Err(errnie.NotFound, "[price] exit fee unavailable for "+symbol, nil))
 	}
 
 	return net, gross, nil
 }
 
 /*
-reported logs a genuine fault and stays silent about a reading. A book that is
-too thin, crossed or incomplete for a requested size is ordinary market shape
-and is returned to the caller either way; at the rate the instrument universe
-produces those, logging them buries the faults that do matter.
+SellQuote prices a complete liquidation from visible bids and current fee.
 */
-func reported(err error) error {
-	if err == nil || errnie.IsUnprocessableContent(err) {
-		return err
-	}
-
-	return errnie.Error(err)
-}
-
-/* SellQuote prices a complete liquidation from visible bids and current fee. */
 func (price *Price) SellQuote(
 	symbol string, quantity *decimal.Decimal,
 ) (*types.ExecutionSurface, error) {
-	return price.Surface(symbol, quantity, time.Now().UTC())
-}
-
-/* Surface prices a complete liquidation; incomplete depth stays explicit. */
-func (price *Price) Surface(
-	symbol string, quantity *decimal.Decimal, at time.Time,
-) (*types.ExecutionSurface, error) {
-	surface := &types.ExecutionSurface{Symbol: symbol, At: at, SellableQty: quantity}
-	var err error
+	surface := &types.ExecutionSurface{
+		Symbol:      symbol,
+		At:          time.Now().UTC(),
+		SellableQty: quantity,
+	}
 
 	if price.Books == nil {
 		return nil, errnie.Error(
@@ -932,11 +944,11 @@ func (price *Price) Surface(
 
 	price.Books.Book(symbol, func(book *spotbook.Book) {
 		if book == nil || book.BestBid() == nil || book.BestAsk() == nil {
-			err = errnie.Err(
+			errnie.Error(errnie.Err(
 				errnie.NotFound,
 				"[price] book unavailable for "+symbol,
 				nil,
-			)
+			))
 
 			return
 		}
@@ -944,18 +956,14 @@ func (price *Price) Surface(
 		// A crossed or touching book prices no liquidation; it reads as
 		// book shape, not as a fault. See EntryCost above.
 		if book.BestBid().Price.Cmp(book.BestAsk().Price) >= 0 {
-			price.recordAnomaly(symbol, AnomalyCrossedBook)
-
-			err = errnie.Err(
+			errnie.Error(errnie.Err(
 				errnie.UnprocessableContent,
 				"[price] crossed book for "+symbol,
 				nil,
-			)
+			))
 
 			return
 		}
-
-		price.recordClean(symbol)
 
 		surface.BookComplete = true
 		surface.BestBid = book.BestBid().Price
@@ -965,14 +973,15 @@ func (price *Price) Surface(
 			surface.ExecutableQty = surface.ExecutableQty.Add(bid.Quantity)
 		}
 
-		filled, gross, walkErr := price.Walk(book, quantity, SELL)
+		filled, gross, err := price.Walk(book, quantity, SELL)
 
-		if walkErr != nil {
-			if errnie.IsUnprocessableContent(walkErr) {
-				price.recordAnomaly(symbol, AnomalyInsufficientDepth)
-			}
+		if err != nil {
+			errnie.Error(errnie.Err(
+				errnie.IO,
+				"symm: walk failed for "+symbol,
+				err,
+			))
 
-			err = walkErr
 			return
 		}
 
@@ -982,15 +991,13 @@ func (price *Price) Surface(
 		surface.ExecutableValue = price.WithFee(symbol, gross, SELL)
 	})
 
-	return surface, reported(err)
+	return surface, nil
 }
 
-/* Tradable checks the instrument's actual quantity and notional minimums. */
+/*
+Tradable checks the instrument's actual quantity and notional minimums.
+*/
 func (price *Price) Tradable(symbol string, quantity, unit *decimal.Decimal) bool {
-	if quantity == nil || unit == nil || price.Instrument == nil {
-		return false
-	}
-
 	pair := price.Instrument.Pair(symbol)
 
 	if pair.QtyMin == nil || pair.CostMin == nil {
@@ -1000,20 +1007,10 @@ func (price *Price) Tradable(symbol string, quantity, unit *decimal.Decimal) boo
 	return quantity.Cmp(pair.QtyMin) >= 0 && notional(unit, quantity).Cmp(pair.CostMin) >= 0
 }
 
-/* Fee returns the taker fee for a symbol. */
-func (price *Price) Fee(symbol string) *kraken.TradeVolumeFee {
-	return price.FeeIfAvailable(symbol)
-}
-
 /*
-FeeIfAvailable returns the taker fee for a symbol, or nil when the fee
-surface has not loaded it yet.
+Fee returns the taker fee for a symbol.
 */
-func (price *Price) FeeIfAvailable(symbol string) *kraken.TradeVolumeFee {
-	if price == nil {
-		return nil
-	}
-
+func (price *Price) Fee(symbol string) *kraken.TradeVolumeFee {
 	found, ok := price.fees.Load(price.normalizer.Name(symbol))
 
 	if !ok {
@@ -1040,7 +1037,7 @@ func (price *Price) GetFees(symbols []string) error {
 	if result == nil {
 		return errnie.Error(errnie.Err(
 			errnie.Internal,
-			"price: trade volume result is required",
+			"[price] trade volume result is required",
 			nil,
 		))
 	}
@@ -1052,7 +1049,7 @@ func (price *Price) GetFees(symbols []string) error {
 	missing := make([]string, 0)
 
 	for _, symbol := range symbols {
-		if price.FeeIfAvailable(symbol) == nil {
+		if price.Fee(symbol) == nil {
 			missing = append(missing, symbol)
 		}
 	}
@@ -1060,7 +1057,7 @@ func (price *Price) GetFees(symbols []string) error {
 	if len(missing) > 0 {
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
-			"price: fees missing for "+strings.Join(missing, ","),
+			"[price] fees missing for "+strings.Join(missing, ","),
 			nil,
 		))
 	}
@@ -1121,64 +1118,11 @@ func (price *Price) WithFee(
 	direction Direction,
 ) *decimal.Decimal {
 	fee := price.Fee(symbol)
-
-	if fee == nil || fee.Fee == nil || amount == nil {
-		return nil
-	}
-
-	if direction != BUY && direction != SELL {
-		return nil
-	}
-
 	rate := decimalPercent.Mul(fee.Fee)
 
 	if direction == SELL {
 		rate = rate.Mul(decimalNegativeOne)
 	}
 
-	scale := max(amount.GetScale(), decimal.DefaultScale)
-	return amount.SetScale(scale).OffsetPercent(rate)
-}
-
-func (price *Price) recordAnomaly(symbol string, kind AnomalyKind) {
-	if price == nil || price.anomalies == nil {
-		return
-	}
-
-	price.anomalies.Record(price.normalize(symbol), kind)
-}
-
-func (price *Price) recordClean(symbol string) {
-	if price == nil || price.anomalies == nil {
-		return
-	}
-
-	price.anomalies.RecordClean(price.normalize(symbol))
-}
-
-/* Anomalies returns the anomaly monitor recording degraded market shapes. */
-func (price *Price) Anomalies() *AnomalyMonitor {
-	if price == nil {
-		return nil
-	}
-
-	return price.anomalies
-}
-
-/* MarketHealth returns the continuous health score in [0.0, 1.0] for a symbol. */
-func (price *Price) MarketHealth(symbol string) float64 {
-	if price == nil || price.anomalies == nil {
-		return 0.0
-	}
-
-	return price.anomalies.Health(price.normalize(symbol))
-}
-
-/* Close releases any resources owned by Price, including its anomaly monitor. */
-func (price *Price) Close() error {
-	if price == nil || price.anomalies == nil {
-		return nil
-	}
-
-	return price.anomalies.Close()
+	return amount.OffsetPercent(rate)
 }

@@ -41,13 +41,25 @@ func (catalog *Catalog) scan(
 			return
 		}
 
-		predicate := iceberg.BooleanExpression(iceberg.EqualTo(iceberg.Reference("epoch"), epoch))
+		var predicate iceberg.BooleanExpression
 
-		if filter != nil {
+		if epoch > 0 {
+			predicate = iceberg.EqualTo(iceberg.Reference("epoch"), epoch)
+		}
+
+		if filter != nil && predicate != nil {
 			predicate = iceberg.NewAnd(predicate, filter)
 		}
 
-		options := []icetable.ScanOption{icetable.WithRowFilter(predicate)}
+		if filter != nil && predicate == nil {
+			predicate = filter
+		}
+
+		var options []icetable.ScanOption
+
+		if predicate != nil {
+			options = append(options, icetable.WithRowFilter(predicate))
+		}
 
 		if len(fields) > 0 {
 			options = append(options, icetable.WithSelectedFields(fields...))

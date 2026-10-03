@@ -11,6 +11,7 @@ import (
 )
 
 const (
+	defaultTargetCommitBytes  = 16 * 1024 * 1024 // 16 MB on-disk batch target
 	measurementBatchThreshold = 20000
 	writerMask                = 1 << 30
 )
@@ -22,8 +23,9 @@ type Writer struct {
 	catalog *Catalog
 	epoch   int64
 
-	gate         atomic.Int64
-	measurements []data.Publication
+	gate          atomic.Int64
+	measurements  []data.Publication
+	bufferedBytes int64
 }
 
 func (writer *Writer) lock() {
@@ -60,10 +62,13 @@ func (writer *Writer) Add(channel string, pub data.Publication) {
 		return
 	}
 
+	size := measurementSize(pub.Measurement)
+
 	writer.lock()
 	defer writer.unlock()
 
 	writer.measurements = append(writer.measurements, pub)
+	writer.bufferedBytes += size
 }
 
 /*
@@ -77,22 +82,42 @@ func (writer *Writer) Pending() int {
 }
 
 /*
-CommitReady commits any family whose buffer meets its volume threshold, or all families if forceAll is true.
+BufferedBytes returns total estimated bytes of buffered measurements.
+*/
+func (writer *Writer) BufferedBytes() int64 {
+	writer.lock()
+	defer writer.unlock()
+
+	return writer.bufferedBytes
+}
+
+/*
+CommitReady commits any family whose buffer meets its volume or size threshold, or all families if forceAll is true.
 */
 func (writer *Writer) CommitReady(ctx context.Context, forceAll bool) error {
+	targetBytes := int64(defaultTargetCommitBytes)
+
+	if configured := viper.GetInt64("hindsight.capture.commit_bytes"); configured > 0 {
+		targetBytes = configured
+	}
+
 	threshold := measurementBatchThreshold
 
 	if viper.GetInt("hindsight.capture.commit_rows") > 0 {
 		threshold = viper.GetInt("hindsight.capture.commit_rows")
 	}
 
-	if err := writer.commitFamily(ctx, Measurements, threshold, forceAll, func() []data.Publication {
+	if err := writer.commitFamily(ctx, Measurements, targetBytes, threshold, forceAll, func() []data.Publication {
 		rows := writer.measurements
 		writer.measurements = nil
+		writer.bufferedBytes = 0
 
 		return rows
 	}, func(remaining []data.Publication) {
 		writer.measurements = append(remaining, writer.measurements...)
+		for _, pub := range remaining {
+			writer.bufferedBytes += measurementSize(pub.Measurement)
+		}
 	}); err != nil {
 		return err
 	}
@@ -103,7 +128,8 @@ func (writer *Writer) CommitReady(ctx context.Context, forceAll bool) error {
 func (writer *Writer) commitFamily(
 	ctx context.Context,
 	tableName string,
-	threshold int,
+	targetBytes int64,
+	thresholdRows int,
 	forceAll bool,
 	takeRows func() []data.Publication,
 	putRows func([]data.Publication),
@@ -118,7 +144,12 @@ func (writer *Writer) commitFamily(
 		return nil
 	}
 
-	if !forceAll && len(rowsToCommit) < threshold {
+	totalBytes := int64(0)
+	for _, pub := range rowsToCommit {
+		totalBytes += measurementSize(pub.Measurement)
+	}
+
+	if !forceAll && totalBytes < targetBytes && len(rowsToCommit) < thresholdRows {
 		putRows(rowsToCommit)
 		writer.unlock()
 
@@ -185,4 +216,28 @@ func (writer *Writer) ReleaseRemaining() {
 		p.Release()
 	}
 	writer.measurements = nil
+	writer.bufferedBytes = 0
 }
+
+func measurementSize(measurement *data.Measurement[float64]) int64 {
+	if measurement == nil {
+		return 0
+	}
+
+	size := int64(128 + len(measurement.Label) + len(measurement.Source))
+
+	for index := range measurement.Metrics {
+		size += int64(32 + len(measurement.Metrics[index].Key))
+	}
+
+	for index := range measurement.Metadata {
+		size += int64(16 + len(measurement.Metadata[index].Key) + len(measurement.Metadata[index].Value))
+	}
+
+	for index := range measurement.Provenance {
+		size += int64(16 + len(measurement.Provenance[index].Key) + len(measurement.Provenance[index].Value))
+	}
+
+	return size
+}
+

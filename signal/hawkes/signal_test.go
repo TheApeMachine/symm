@@ -28,8 +28,20 @@ func TestHawkesTradeMetrics(t *testing.T) {
 			prior.At = now.Add(time.Duration(step) * 50 * time.Millisecond)
 			prior.From = prior.At
 
-			prior.WriteMetric("price", 50000.0)
-			prior.WriteMetric("qty", 1.0)
+			prior.SetMetric("price", data.NewMetric[float64](
+				"price",
+				data.UnitPrice,
+				data.TimescaleInstantaneous,
+				50000.0,
+				1.0,
+			).Write(50000.0))
+			prior.SetMetric("qty", data.NewMetric[float64](
+				"qty",
+				data.UnitQuantity,
+				data.TimescaleInstantaneous,
+				0.0,
+				1.0,
+			).Write(1.0))
 			prior.SetProvenance("channel", "trade")
 			if step%2 == 0 {
 				prior.SetProvenance("side", "buy")

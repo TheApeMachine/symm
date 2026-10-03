@@ -38,7 +38,7 @@ to the metrics in measurement and all associated peers, so the Learning Dashboar
 Impulse Map has rich, active spatial topography.
 */
 func (sg *Grid) Update(measurement *data.Measurement[float64]) {
-	if measurement == nil {
+	if measurement == nil || sg.settled {
 		return
 	}
 
@@ -115,8 +115,7 @@ func (sg *Grid) LitRegions(measurements ...*data.Measurement[float64]) [][]byte 
 			continue
 		}
 
-		// Ensure regions are assigned even on historical precursor scans
-		sg.Update(m)
+		assignMetricRegions(m, 0)
 		collectRegionActivity(m, activity, 0)
 	}
 

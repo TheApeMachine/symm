@@ -243,6 +243,7 @@ func (jh *joinHandler) Handle(lower, upper int64) {
 		join := joinArena.NewMeasurement("runtime:join")
 		if ingress != nil {
 			join.Epoch = ingress.Epoch
+			join.Tick = ingress.Tick
 			join.Label = ingress.Label
 			join.SeqIdx = ingress.SeqIdx
 			join.At = ingress.At

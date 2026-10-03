@@ -32,7 +32,13 @@ func TestSentimentTickerMetrics(t *testing.T) {
 
 				// prices changing
 				price := 100.0 * float64(idx+1) * (1.0 + float64(step)*0.01*float64(idx-2))
-				prior.WriteMetric("last", price)
+				prior.SetMetric("last", data.NewMetric[float64](
+					"last",
+					data.UnitPrice,
+					data.TimescaleInstantaneous,
+					price,
+					1.0,
+				).Write(price))
 
 				res := instrument.Step(prior)
 				So(res, ShouldNotBeNil)

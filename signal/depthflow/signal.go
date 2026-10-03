@@ -40,7 +40,7 @@ func NewSignal(ctx context.Context, arena *data.ArenaOwner, books broker.BookSou
 		books: books,
 	}
 
-	signal.System = runtime.NewSystem(ctx, "depthflow:signal", signal)
+	signal.System = runtime.NewSystem(ctx, "depthflow", signal)
 	return signal
 }
 
@@ -69,8 +69,20 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 					m.SetMetadata(data.MetadataSupport, strconv.FormatFloat(out.Count, 'f', -1, 64))
 
 					if out.HasPrior {
-						m.WriteMetric("book_imbalance_baseline", out.Baseline)
-						m.WriteMetric("book_imbalance_divergence", out.Residual)
+						m.SetMetric("book_imbalance_baseline", data.NewMetric[float64](
+							"book_imbalance_baseline",
+							data.UnitDimensionless,
+							data.TimescaleInstantaneous,
+							out.Baseline,
+							out.ScoreScale,
+						).Write(out.Baseline))
+						m.SetMetric("book_imbalance_divergence", data.NewMetric[float64](
+							"book_imbalance_divergence",
+							data.UnitDimensionless,
+							data.TimescaleInstantaneous,
+							0.0,
+							out.ScoreScale,
+						).Write(out.Residual))
 						m.WriteStandardized("book_imbalance_zscore", out.ZScore)
 						m.SetMetadata(data.MetadataDivergence, strconv.FormatFloat(out.Residual, 'f', -1, 64))
 
@@ -87,8 +99,20 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 				},
 				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
 					if out.HasPrior {
-						m.WriteMetric("resolution_gap_baseline", out.Baseline)
-						m.WriteMetric("resolution_gap_divergence", out.Residual)
+						m.SetMetric("resolution_gap_baseline", data.NewMetric[float64](
+							"resolution_gap_baseline",
+							data.UnitDimensionless,
+							data.TimescaleInstantaneous,
+							out.Baseline,
+							out.ScoreScale,
+						).Write(out.Baseline))
+						m.SetMetric("resolution_gap_divergence", data.NewMetric[float64](
+							"resolution_gap_divergence",
+							data.UnitDimensionless,
+							data.TimescaleInstantaneous,
+							0.0,
+							out.ScoreScale,
+						).Write(out.Residual))
 						m.WriteStandardized("resolution_gap_zscore", out.ZScore)
 					}
 				},
@@ -100,10 +124,22 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 				},
 				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
 					if out.HasPrior {
-						m.WriteMetric("turnover_baseline", out.Baseline)
+						m.SetMetric("turnover_baseline", data.NewMetric[float64](
+							"turnover_baseline",
+							data.UnitRate,
+							data.TimescaleInstantaneous,
+							out.Baseline,
+							out.ScoreScale,
+						).Write(out.Baseline))
 						if out.Baseline > 0 {
 							turnover := m.GetMetric("book_turnover_rate").Raw
-							m.WriteMetric("turnover_ratio", turnover/out.Baseline)
+							m.SetMetric("turnover_ratio", data.NewMetric[float64](
+								"turnover_ratio",
+								data.UnitRatio,
+								data.TimescaleInstantaneous,
+								1.0,
+								out.ScoreScale/out.Baseline,
+							).Write(turnover/out.Baseline))
 						}
 						m.WriteStandardized("turnover_zscore", out.ZScore)
 					}
@@ -116,8 +152,20 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 				},
 				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
 					if out.HasPrior {
-						m.WriteMetric("net_book_change_rate_baseline", out.Baseline)
-						m.WriteMetric("net_book_change_rate_divergence", out.Residual)
+						m.SetMetric("net_book_change_rate_baseline", data.NewMetric[float64](
+							"net_book_change_rate_baseline",
+							data.UnitRate,
+							data.TimescaleInstantaneous,
+							out.Baseline,
+							out.ScoreScale,
+						).Write(out.Baseline))
+						m.SetMetric("net_book_change_rate_divergence", data.NewMetric[float64](
+							"net_book_change_rate_divergence",
+							data.UnitRate,
+							data.TimescaleInstantaneous,
+							0.0,
+							out.ScoreScale,
+						).Write(out.Residual))
 						m.WriteStandardized("net_book_change_rate_zscore", out.ZScore)
 					}
 				},
@@ -129,8 +177,20 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 				},
 				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
 					if out.HasPrior {
-						m.WriteMetric("signed_net_displayed_flow_rate_baseline", out.Baseline)
-						m.WriteMetric("signed_net_displayed_flow_rate_divergence", out.Residual)
+						m.SetMetric("signed_net_displayed_flow_rate_baseline", data.NewMetric[float64](
+							"signed_net_displayed_flow_rate_baseline",
+							data.UnitRate,
+							data.TimescaleInstantaneous,
+							out.Baseline,
+							out.ScoreScale,
+						).Write(out.Baseline))
+						m.SetMetric("signed_net_displayed_flow_rate_divergence", data.NewMetric[float64](
+							"signed_net_displayed_flow_rate_divergence",
+							data.UnitRate,
+							data.TimescaleInstantaneous,
+							0.0,
+							out.ScoreScale,
+						).Write(out.Residual))
 						m.WriteStandardized("signed_net_displayed_flow_rate_zscore", out.ZScore)
 					}
 				},
@@ -145,7 +205,13 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 				},
 				func(m *data.Measurement[float64], out temporal.VelocityReading) {
 					if out.Defined {
-						m.WriteMetric("book_imbalance_velocity", out.Rate)
+						m.SetMetric("book_imbalance_velocity", data.NewMetric[float64](
+							"book_imbalance_velocity",
+							data.UnitVelocity,
+							data.TimescaleInstantaneous,
+							0.0,
+							math.Abs(out.Rate),
+						).Write(out.Rate))
 					}
 				},
 			),
@@ -159,7 +225,13 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 				},
 				func(m *data.Measurement[float64], out temporal.VelocityReading) {
 					if out.Defined {
-						m.WriteMetric("resolution_gap_velocity", out.Rate)
+						m.SetMetric("resolution_gap_velocity", data.NewMetric[float64](
+							"resolution_gap_velocity",
+							data.UnitVelocity,
+							data.TimescaleInstantaneous,
+							0.0,
+							math.Abs(out.Rate),
+						).Write(out.Rate))
 					}
 				},
 			),
@@ -175,7 +247,13 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 				},
 				func(m *data.Measurement[float64], out statistic.JointReading) {
 					if out.SNRDefined && out.SNR < 1/math.Sqrt(2.220446049250313e-16) {
-						m.WriteMetric("SNR", out.SNR)
+						m.SetMetric("SNR", data.NewMetric[float64](
+							"SNR",
+							data.UnitSNR,
+							data.TimescaleInstantaneous,
+							0.0,
+							1.0,
+						).Write(out.SNR))
 						m.EnsureMetadata()
 						m.SetMetadata(data.MetadataMahalanobisSNR, strconv.FormatFloat(out.SNR, 'f', -1, 64))
 					}
@@ -213,6 +291,8 @@ func (signal *Signal) Step(prior *data.Measurement[float64]) *data.Measurement[f
 	}
 
 	out := signal.arena.NewMeasurement(signal.Name())
+	out.Epoch = prior.Epoch
+	out.Tick = prior.Tick
 	out.Label = prior.Label
 	out.SeqIdx = prior.SeqIdx
 	out.At = prior.At

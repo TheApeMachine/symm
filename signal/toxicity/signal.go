@@ -2,6 +2,7 @@ package toxicity
 
 import (
 	"context"
+	"math"
 	"strconv"
 	"sync"
 	"unsafe"
@@ -40,7 +41,7 @@ func NewSignal(ctx context.Context, arena *data.ArenaOwner, books ...broker.Book
 		signal.books = books[0]
 	}
 
-	signal.System = runtime.NewSystem(ctx, "toxicity:signal", signal)
+	signal.System = runtime.NewSystem(ctx, "toxicity", signal)
 	return signal
 }
 
@@ -69,8 +70,20 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 				},
 				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
 					if out.HasPrior {
-						m.WriteMetric("withdrawal_fraction_baseline:bid", out.Baseline)
-						m.WriteMetric("withdrawal_fraction_divergence:bid", out.Residual)
+						m.SetMetric("withdrawal_fraction_baseline:bid", data.NewMetric[float64](
+							"withdrawal_fraction_baseline:bid",
+							data.UnitDimensionless,
+							data.TimescaleInstantaneous,
+							out.Baseline,
+							out.ScoreScale,
+						).Write(out.Baseline))
+						m.SetMetric("withdrawal_fraction_divergence:bid", data.NewMetric[float64](
+							"withdrawal_fraction_divergence:bid",
+							data.UnitDimensionless,
+							data.TimescaleInstantaneous,
+							0.0,
+							out.ScoreScale,
+						).Write(out.Residual))
 						m.WriteStandardized("withdrawal_fraction_zscore:bid", out.ZScore)
 					}
 				},
@@ -82,8 +95,20 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 				},
 				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
 					if out.HasPrior {
-						m.WriteMetric("withdrawal_fraction_baseline:ask", out.Baseline)
-						m.WriteMetric("withdrawal_fraction_divergence:ask", out.Residual)
+						m.SetMetric("withdrawal_fraction_baseline:ask", data.NewMetric[float64](
+							"withdrawal_fraction_baseline:ask",
+							data.UnitDimensionless,
+							data.TimescaleInstantaneous,
+							out.Baseline,
+							out.ScoreScale,
+						).Write(out.Baseline))
+						m.SetMetric("withdrawal_fraction_divergence:ask", data.NewMetric[float64](
+							"withdrawal_fraction_divergence:ask",
+							data.UnitDimensionless,
+							data.TimescaleInstantaneous,
+							0.0,
+							out.ScoreScale,
+						).Write(out.Residual))
 						m.WriteStandardized("withdrawal_fraction_zscore:ask", out.ZScore)
 					}
 				},
@@ -95,7 +120,13 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 				},
 				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
 					if out.HasPrior {
-						m.WriteMetric("retreat_fraction_baseline:bid", out.Baseline)
+						m.SetMetric("retreat_fraction_baseline:bid", data.NewMetric[float64](
+							"retreat_fraction_baseline:bid",
+							data.UnitDimensionless,
+							data.TimescaleInstantaneous,
+							out.Baseline,
+							out.ScoreScale,
+						).Write(out.Baseline))
 						m.WriteStandardized("retreat_fraction_zscore:bid", out.ZScore)
 					}
 				},
@@ -107,7 +138,13 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 				},
 				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
 					if out.HasPrior {
-						m.WriteMetric("retreat_fraction_baseline:ask", out.Baseline)
+						m.SetMetric("retreat_fraction_baseline:ask", data.NewMetric[float64](
+							"retreat_fraction_baseline:ask",
+							data.UnitDimensionless,
+							data.TimescaleInstantaneous,
+							out.Baseline,
+							out.ScoreScale,
+						).Write(out.Baseline))
 						m.WriteStandardized("retreat_fraction_zscore:ask", out.ZScore)
 					}
 				},
@@ -119,7 +156,13 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 				},
 				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
 					if out.HasPrior {
-						m.WriteMetric("replenishment_fraction_baseline:bid", out.Baseline)
+						m.SetMetric("replenishment_fraction_baseline:bid", data.NewMetric[float64](
+							"replenishment_fraction_baseline:bid",
+							data.UnitDimensionless,
+							data.TimescaleInstantaneous,
+							out.Baseline,
+							out.ScoreScale,
+						).Write(out.Baseline))
 					}
 				},
 			),
@@ -130,7 +173,13 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 				},
 				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
 					if out.HasPrior {
-						m.WriteMetric("replenishment_fraction_baseline:ask", out.Baseline)
+						m.SetMetric("replenishment_fraction_baseline:ask", data.NewMetric[float64](
+							"replenishment_fraction_baseline:ask",
+							data.UnitDimensionless,
+							data.TimescaleInstantaneous,
+							out.Baseline,
+							out.ScoreScale,
+						).Write(out.Baseline))
 					}
 				},
 			),
@@ -144,7 +193,13 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 				},
 				func(m *data.Measurement[float64], out temporal.VelocityReading) {
 					if out.Defined {
-						m.WriteMetric("withdrawal_fraction_velocity:bid", out.Rate)
+						m.SetMetric("withdrawal_fraction_velocity:bid", data.NewMetric[float64](
+							"withdrawal_fraction_velocity:bid",
+							data.UnitVelocity,
+							data.TimescaleInstantaneous,
+							0.0,
+							math.Abs(out.Rate),
+						).Write(out.Rate))
 					}
 				},
 			),
@@ -158,7 +213,13 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 				},
 				func(m *data.Measurement[float64], out temporal.VelocityReading) {
 					if out.Defined {
-						m.WriteMetric("withdrawal_fraction_velocity:ask", out.Rate)
+						m.SetMetric("withdrawal_fraction_velocity:ask", data.NewMetric[float64](
+							"withdrawal_fraction_velocity:ask",
+							data.UnitVelocity,
+							data.TimescaleInstantaneous,
+							0.0,
+							math.Abs(out.Rate),
+						).Write(out.Rate))
 					}
 				},
 			),
@@ -169,8 +230,20 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 				},
 				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
 					if out.HasPrior {
-						m.WriteMetric("fill_fraction_baseline:bid", out.Baseline)
-						m.WriteMetric("fill_fraction_divergence:bid", out.Residual)
+						m.SetMetric("fill_fraction_baseline:bid", data.NewMetric[float64](
+							"fill_fraction_baseline:bid",
+							data.UnitDimensionless,
+							data.TimescaleInstantaneous,
+							out.Baseline,
+							out.ScoreScale,
+						).Write(out.Baseline))
+						m.SetMetric("fill_fraction_divergence:bid", data.NewMetric[float64](
+							"fill_fraction_divergence:bid",
+							data.UnitDimensionless,
+							data.TimescaleInstantaneous,
+							0.0,
+							out.ScoreScale,
+						).Write(out.Residual))
 						m.WriteStandardized("fill_fraction_zscore:bid", out.ZScore)
 					}
 					m.EnsureMetadata()
@@ -187,8 +260,20 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 				},
 				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
 					if out.HasPrior {
-						m.WriteMetric("fill_fraction_baseline:ask", out.Baseline)
-						m.WriteMetric("fill_fraction_divergence:ask", out.Residual)
+						m.SetMetric("fill_fraction_baseline:ask", data.NewMetric[float64](
+							"fill_fraction_baseline:ask",
+							data.UnitDimensionless,
+							data.TimescaleInstantaneous,
+							out.Baseline,
+							out.ScoreScale,
+						).Write(out.Baseline))
+						m.SetMetric("fill_fraction_divergence:ask", data.NewMetric[float64](
+							"fill_fraction_divergence:ask",
+							data.UnitDimensionless,
+							data.TimescaleInstantaneous,
+							0.0,
+							out.ScoreScale,
+						).Write(out.Residual))
 						m.WriteStandardized("fill_fraction_zscore:ask", out.ZScore)
 					}
 				},
@@ -203,7 +288,13 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 				},
 				func(m *data.Measurement[float64], out temporal.VelocityReading) {
 					if out.Defined {
-						m.WriteMetric("fill_fraction_velocity:bid", out.Rate)
+						m.SetMetric("fill_fraction_velocity:bid", data.NewMetric[float64](
+							"fill_fraction_velocity:bid",
+							data.UnitVelocity,
+							data.TimescaleInstantaneous,
+							0.0,
+							math.Abs(out.Rate),
+						).Write(out.Rate))
 					}
 				},
 			),
@@ -217,7 +308,13 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 				},
 				func(m *data.Measurement[float64], out temporal.VelocityReading) {
 					if out.Defined {
-						m.WriteMetric("fill_fraction_velocity:ask", out.Rate)
+						m.SetMetric("fill_fraction_velocity:ask", data.NewMetric[float64](
+							"fill_fraction_velocity:ask",
+							data.UnitVelocity,
+							data.TimescaleInstantaneous,
+							0.0,
+							math.Abs(out.Rate),
+						).Write(out.Rate))
 					}
 				},
 			),
@@ -252,6 +349,8 @@ func (signal *Signal) Step(prior *data.Measurement[float64]) *data.Measurement[f
 	}
 
 	out := signal.arena.NewMeasurement(signal.Name())
+	out.Epoch = prior.Epoch
+	out.Tick = prior.Tick
 	out.Label = prior.Label
 	out.SeqIdx = prior.SeqIdx
 	out.At = prior.At
@@ -267,24 +366,24 @@ func (signal *Signal) Step(prior *data.Measurement[float64]) *data.Measurement[f
 
 	// Copy trade metrics from prior
 	if price, ok := prior.LookupMetric("price"); ok {
-		out.WriteMetric("price", price.Raw)
+		out.SetMetric("price", price)
 	}
 	if qty, ok := prior.LookupMetric("qty"); ok {
-		out.WriteMetric("qty", qty.Raw)
+		out.SetMetric("qty", qty)
 	}
 
 	// Copy book metrics from prior if present
 	if bestBid, ok := prior.LookupMetric("best_bid"); ok {
-		out.WriteMetric("best_bid", bestBid.Raw)
+		out.SetMetric("best_bid", bestBid)
 	}
 	if bestAsk, ok := prior.LookupMetric("best_ask"); ok {
-		out.WriteMetric("best_ask", bestAsk.Raw)
+		out.SetMetric("best_ask", bestAsk)
 	}
 	if touchQtyBid, ok := prior.LookupMetric("touch_quantity:bid"); ok {
-		out.WriteMetric("touch_quantity:bid", touchQtyBid.Raw)
+		out.SetMetric("touch_quantity:bid", touchQtyBid)
 	}
 	if touchQtyAsk, ok := prior.LookupMetric("touch_quantity:ask"); ok {
-		out.WriteMetric("touch_quantity:ask", touchQtyAsk.Raw)
+		out.SetMetric("touch_quantity:ask", touchQtyAsk)
 	}
 
 	// If book touch not in prior, query books directly
@@ -293,20 +392,53 @@ func (signal *Signal) Step(prior *data.Measurement[float64]) *data.Measurement[f
 			if b == nil {
 				return
 			}
-			if bestBid := b.BestBid(); bestBid != nil && bestBid.Price != nil && bestBid.Quantity != nil {
+			bestBid := b.BestBid()
+			bestAsk := b.BestAsk()
+			if bestBid != nil && bestBid.Price != nil && bestBid.Quantity != nil &&
+				bestAsk != nil && bestAsk.Price != nil && bestAsk.Quantity != nil {
+				bidPrice := bestBid.Price.Float64()
+				askPrice := bestAsk.Price.Float64()
+				bidQty := bestBid.Quantity.Float64()
+				askQty := bestAsk.Quantity.Float64()
+				midpoint := (bidPrice + askPrice) / 2.0
+				spread := askPrice - bidPrice
+				totalQty := bidQty + askQty
+
 				if _, ok := out.LookupMetric("best_bid"); !ok {
-					out.WriteMetric("best_bid", bestBid.Price.Float64())
+					out.SetMetric("best_bid", data.NewMetric[float64](
+						"best_bid",
+						data.UnitPrice,
+						data.TimescaleInstantaneous,
+						midpoint,
+						spread,
+					).Write(bidPrice))
 				}
 				if _, ok := out.LookupMetric("touch_quantity:bid"); !ok {
-					out.WriteMetric("touch_quantity:bid", bestBid.Quantity.Float64())
+					out.SetMetric("touch_quantity:bid", data.NewMetric[float64](
+						"touch_quantity:bid",
+						data.UnitQuantity,
+						data.TimescaleInstantaneous,
+						0.0,
+						totalQty,
+					).Write(bidQty))
 				}
-			}
-			if bestAsk := b.BestAsk(); bestAsk != nil && bestAsk.Price != nil && bestAsk.Quantity != nil {
 				if _, ok := out.LookupMetric("best_ask"); !ok {
-					out.WriteMetric("best_ask", bestAsk.Price.Float64())
+					out.SetMetric("best_ask", data.NewMetric[float64](
+						"best_ask",
+						data.UnitPrice,
+						data.TimescaleInstantaneous,
+						midpoint,
+						spread,
+					).Write(askPrice))
 				}
 				if _, ok := out.LookupMetric("touch_quantity:ask"); !ok {
-					out.WriteMetric("touch_quantity:ask", bestAsk.Quantity.Float64())
+					out.SetMetric("touch_quantity:ask", data.NewMetric[float64](
+						"touch_quantity:ask",
+						data.UnitQuantity,
+						data.TimescaleInstantaneous,
+						0.0,
+						totalQty,
+					).Write(askQty))
 				}
 			}
 		})

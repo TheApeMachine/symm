@@ -28,7 +28,14 @@ func TestCorrelationSignalMetrics(t *testing.T) {
 			btc.SeqIdx = int64(step*2 + 1)
 			btc.At = now.Add(time.Duration(step*100) * time.Millisecond)
 			btc.From = btc.At
-			btc.WriteMetric("last", 50000.0+float64(step)*10.0)
+			btcPrice := 50000.0 + float64(step)*10.0
+			btc.SetMetric("last", data.NewMetric[float64](
+				"last",
+				data.UnitPrice,
+				data.TimescaleInstantaneous,
+				btcPrice,
+				1.0,
+			).Write(btcPrice))
 
 			resBTC := instrument.Step(btc)
 			So(resBTC, ShouldNotBeNil)
@@ -39,7 +46,14 @@ func TestCorrelationSignalMetrics(t *testing.T) {
 			eth.SeqIdx = int64(step*2 + 2)
 			eth.At = now.Add(time.Duration(step*100+20) * time.Millisecond)
 			eth.From = eth.At
-			eth.WriteMetric("last", 3000.0+float64(step)*2.0)
+			ethPrice := 3000.0 + float64(step)*2.0
+			eth.SetMetric("last", data.NewMetric[float64](
+				"last",
+				data.UnitPrice,
+				data.TimescaleInstantaneous,
+				ethPrice,
+				1.0,
+			).Write(ethPrice))
 
 			resETH := instrument.Step(eth)
 			So(resETH, ShouldNotBeNil)

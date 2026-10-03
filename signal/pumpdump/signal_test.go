@@ -63,8 +63,22 @@ func TestPumpDumpSignal(t *testing.T) {
 				prior.At = now.Add(time.Duration(step) * 100 * time.Millisecond)
 				prior.From = prior.At
 
-				prior.WriteMetric("price", 50001.0+float64(step)*0.1)
-				prior.WriteMetric("qty", 1.0+float64(step)*0.05)
+				tradePrice := 50001.0 + float64(step)*0.1
+				tradeQty := 1.0 + float64(step)*0.05
+				prior.SetMetric("price", data.NewMetric[float64](
+					"price",
+					data.UnitPrice,
+					data.TimescaleInstantaneous,
+					tradePrice,
+					2.0,
+				).Write(tradePrice))
+				prior.SetMetric("qty", data.NewMetric[float64](
+					"qty",
+					data.UnitQuantity,
+					data.TimescaleInstantaneous,
+					0.0,
+					tradeQty,
+				).Write(tradeQty))
 				prior.SetProvenance("channel", "trade")
 				prior.SetProvenance("side", "buy")
 

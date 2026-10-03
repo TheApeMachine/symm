@@ -2,7 +2,13 @@ package broker
 
 import (
 	"context"
+	"sync"
 
+	"github.com/bytedance/sonic"
+	"github.com/google/uuid"
+	"github.com/krakenfx/api-go/v2/pkg/spot"
+	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/network"
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
@@ -11,7 +17,8 @@ type Desk struct {
 	transport Transport
 	price     *Price
 	balance   *Balance
-	Execution *Execution
+	rest      *network.RestClient
+	positions *sync.Map
 }
 
 func NewDesk(
@@ -24,22 +31,81 @@ func NewDesk(
 		transport: transport,
 		price:     price,
 		balance:   balance,
-		Execution: NewExecution(ctx, transport, price, balance),
+		positions: &sync.Map{},
+		rest:      network.NewRestClient(),
 	}
 
 	desk.System = runtime.NewSystem(ctx, "desk", desk)
+	desk.Transition(runtime.READY)
+	return desk
+}
 
-	if price != nil && price.Anomalies() != nil {
-		price.Anomalies().SetOnFault(func(symbol string) {
-			desk.Transition(runtime.ERROR)
-		})
+func (desk *Desk) Enter(symbol string, size string) error {
+	_, ok := desk.positions.Load(symbol)
 
-		price.Anomalies().SetOnRecover(func(symbol string) {
-			if !price.Anomalies().HasAnySevereFault() {
-				desk.Transition(runtime.READY)
-			}
-		})
+	if ok {
+		return desk.Error(errnie.Err(
+			errnie.NotAcceptable,
+			"position already exists",
+			nil,
+		))
 	}
 
-	return desk
+	order := spot.AddOrderRequest{
+		ClOrdId:   uuid.NewString(),
+		OrderType: "limit",
+		Type:      "buy",
+		Volume:    size,
+	}
+
+	payload, err := sonic.Marshal(order)
+
+	if err != nil {
+		return desk.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"[desk] failed to marshal add order request",
+			err,
+		))
+	}
+
+	desk.positions.Store(symbol, size)
+	desk.rest.Post("/rest/AddOrder", payload)
+
+	return nil
+}
+
+func (desk *Desk) Exit(symbol string) error {
+	sizeVal, ok := desk.positions.Load(symbol)
+
+	if !ok {
+		return desk.Error(errnie.Err(
+			errnie.NotFound,
+			"position not found",
+			nil,
+		))
+	}
+
+	size, _ := sizeVal.(string)
+
+	order := spot.AddOrderRequest{
+		ClOrdId:   uuid.NewString(),
+		OrderType: "limit",
+		Type:      "sell",
+		Volume:    size,
+	}
+
+	payload, err := sonic.Marshal(order)
+
+	if err != nil {
+		return desk.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"[desk] failed to marshal exit order request",
+			err,
+		))
+	}
+
+	desk.positions.Delete(symbol)
+	desk.rest.Post("/rest/AddOrder", payload)
+
+	return nil
 }

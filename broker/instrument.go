@@ -26,7 +26,6 @@ are shared as immutable SDK values; arithmetic returns a new Decimal.
 type Instrument struct {
 	*runtime.System
 	public  *network.WebsocketClient
-	futures *network.WebsocketClient
 	Level3  *sync.Map
 	cache   *sync.Map
 	quote   string
@@ -46,11 +45,9 @@ used by subscriptions and order validation.
 */
 func NewInstrument(
 	public *network.WebsocketClient,
-	futures *network.WebsocketClient,
 ) *Instrument {
 	instrument := &Instrument{
 		public:           public,
-		futures:          futures,
 		Level3:           &sync.Map{},
 		cache:            &sync.Map{},
 		symbols:          []string{},
@@ -287,8 +284,7 @@ func (instrument *Instrument) Subscribe() error {
 	}
 
 	var (
-		spotSubs    [][]byte
-		futuresSubs [][]byte
+		spotSubs [][]byte
 	)
 
 	for batch := range slices.Chunk(
@@ -313,7 +309,6 @@ func (instrument *Instrument) Subscribe() error {
 				))
 			}
 		}
-
 
 		l3Client := network.NewWebsocketClient(instrument.System.Context())
 		l3Msg, l3Err := sonic.Marshal(kraken.NewLevel3Subscription(batch, wsToken))
@@ -343,35 +338,6 @@ func (instrument *Instrument) Subscribe() error {
 		time.Sleep(100 * time.Millisecond)
 	}
 
-	productIDs := instrument.FuturesProductIDs()
-	if instrument.futures != nil && len(productIDs) > 0 {
-		for batch := range slices.Chunk(productIDs, system.Cfg.Market.Subscribe.Batch) {
-			for _, sub := range []json.Marshaler{
-				kraken.NewFuturesSubscription("ticker", batch),
-				kraken.NewFuturesSubscription("trade", batch),
-			} {
-				msg, err := sonic.Marshal(sub)
-				if err != nil {
-					return instrument.Error(errnie.Err(
-						errnie.IO, "[instrument] futures subscribe marshal failed", err,
-					))
-				}
-				futuresSubs = append(futuresSubs, msg)
-				if err := instrument.futures.Write(msg); err != nil {
-					return instrument.Error(errnie.Err(
-						errnie.IO,
-						"[instrument] required futures subscription failed",
-						err,
-					))
-				}
-			}
-		}
-	}
-
-	if instrument.futures != nil && len(productIDs) == 0 {
-		errnie.Warn("[instrument] no futures perpetuals mapped; skipping futures subscribe")
-	}
-
 	instrument.public.OnReconnect(func() error {
 		errnie.Info("[instrument] public resubscribe after reconnect")
 		for _, msg := range spotSubs {
@@ -381,18 +347,6 @@ func (instrument *Instrument) Subscribe() error {
 		}
 		return nil
 	})
-
-	if instrument.futures != nil {
-		instrument.futures.OnReconnect(func() error {
-			errnie.Info("[instrument] futures resubscribe after reconnect")
-			for _, msg := range futuresSubs {
-				if err := instrument.futures.Write(msg); err != nil {
-					return err
-				}
-			}
-			return nil
-		})
-	}
 
 	instrument.Transition(runtime.READY)
 	return nil
@@ -430,31 +384,6 @@ func (instrument *Instrument) Unsubscribe() error {
 			}
 		}
 
-	}
-
-	productIDs := instrument.FuturesProductIDs()
-	if instrument.futures != nil && len(productIDs) > 0 {
-		for batch := range slices.Chunk(productIDs, system.Cfg.Market.Subscribe.Batch) {
-			for _, sub := range []json.Marshaler{
-				kraken.NewFuturesUnsubscription("ticker", batch),
-				kraken.NewFuturesUnsubscription("trade", batch),
-			} {
-				msg, err := sonic.Marshal(sub)
-				if err != nil {
-					return instrument.Error(errnie.Err(
-						errnie.IO, "[instrument] futures unsubscribe marshal failed", err,
-					))
-				}
-
-				if err := instrument.futures.Write(msg); err != nil {
-					return instrument.Error(errnie.Err(
-						errnie.IO,
-						"[instrument] required futures unsubscription failed",
-						err,
-					))
-				}
-			}
-		}
 	}
 
 	instrument.Transition(runtime.WAITING)

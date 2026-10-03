@@ -584,7 +584,8 @@ func (reporter *Reporter) PublishExcursion(
 	markC := holding[len(holding)-1].SeqIdx
 
 	for _, measurement := range precursor {
-		quote, hasQuote := quotePrice(measurement)
+		priceMetric, hasQuote := measurement.LookupMetric("price")
+		quote := priceMetric.Raw
 
 		if hasQuote {
 			seqSpan := math.Max(float64(markC-markA), 1.0)
@@ -663,7 +664,8 @@ func (reporter *Reporter) PublishExcursion(
 			continue
 		}
 
-		quote, hasQuote := quotePrice(measurement)
+		priceMetric, hasQuote := measurement.LookupMetric("price")
+		quote := priceMetric.Raw
 
 		if hasQuote {
 			seqSpan := math.Max(float64(markC-markA), 1.0)
@@ -738,7 +740,7 @@ func (reporter *Reporter) PublishExcursion(
 	}
 
 	exitMeasurement := holding[len(holding)-1]
-	exitPrice, _ := quotePrice(exitMeasurement)
+	exitPrice := exitMeasurement.GetMetric("price").Raw
 
 	blockerMessage := ""
 
@@ -764,4 +766,3 @@ func (reporter *Reporter) PublishExcursion(
 		Clears:       pnl > 0,
 	}, skill)
 }
-

@@ -36,7 +36,7 @@ func NewSignal(ctx context.Context, arena *data.ArenaOwner) *Signal {
 		arena: arena,
 	}
 
-	signal.System = runtime.NewSystem(ctx, "leadlag:signal", signal)
+	signal.System = runtime.NewSystem(ctx, "leadlag", signal)
 	return signal
 }
 
@@ -86,6 +86,8 @@ func (signal *Signal) Step(prior *data.Measurement[float64]) *data.Measurement[f
 	}
 
 	out := signal.arena.NewMeasurement(signal.Name())
+	out.Epoch = prior.Epoch
+	out.Tick = prior.Tick
 	out.Label = prior.Label
 	out.SeqIdx = prior.SeqIdx
 	out.At = prior.At
