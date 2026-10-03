@@ -1,6 +1,7 @@
 package cognition
 
 import (
+	"bytes"
 	"cmp"
 	"fmt"
 	"slices"
@@ -306,6 +307,33 @@ const litRegionsFrameCap = 3 // matches store.litRegionTokenSize (TRAINING.md N)
 func regionFrames(context []byte) []string {
 	if len(context) == 0 {
 		return nil
+	}
+
+	if bytes.IndexByte(context, 'R') >= 0 || bytes.IndexByte(context, 'r') >= 0 {
+		str := string(context)
+		delims := func(r rune) bool {
+			return r == '_' || r == '/' || r == 0 || r == ','
+		}
+		rawParts := strings.FieldsFunc(str, delims)
+		var frames []string
+		for _, part := range rawParts {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			idStr := strings.TrimPrefix(strings.TrimPrefix(part, "R"), "r")
+			num, err := strconv.Atoi(idStr)
+			var frame string
+			if err == nil && num > 0 {
+				frame = fmt.Sprintf("[%d]", num)
+			} else {
+				frame = fmt.Sprintf("[%s]", part)
+			}
+			if len(frames) == 0 || frames[len(frames)-1] != frame {
+				frames = append(frames, frame)
+			}
+		}
+		return frames
 	}
 
 	var frames []string

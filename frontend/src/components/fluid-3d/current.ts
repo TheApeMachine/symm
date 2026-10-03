@@ -2,48 +2,126 @@ import { currentShader } from "./field-shaders";
 import { createVertexBuffer, type FluidGPU } from "./gpu";
 import type { FluidFields } from "./wire";
 
-/*
-PhaseCurrent visualizes the pilot-wave guidance current — the phase gradient
-field j = ψRe·∇ψIm − ψIm·∇ψRe — as a stream of short bright streaks that are
-advected along it each frame. The field is derived once per fields update from
-the real and imaginary wave arrays the kernel already publishes, so the stream
-is a faithful picture of the actual current, not a decorative animation. The
-streaks ride where |ψ|² is present; in empty regions a marker reseeds so the
-stream never degenerates into frozen noise.
-*/
+// Display resource budget: at most 16³ spatial glyphs, independent of RAF rate.
+const MAX_CURRENT_AXIS_SAMPLES = 16;
+
+/* Sample Im(conj(Ψ) ∇Ψ) at cell midpoints, using the same periodic trilinear
+complex interpolation as the pilot solver. This is phase flux; a particle's
+velocity additionally needs hbar / (mass * |Ψ|²). No speed or time is invented.
+The Z-fastest wire layout is x*ny*nz + y*nz + z. */
+export const phaseCurrentGlyphs = (fields: FluidFields) => {
+	const dimensions = [fields.grid.x, fields.grid.y, fields.grid.z];
+	const samples = dimensions.map((size) =>
+		Math.min(size, MAX_CURRENT_AXIS_SAMPLES),
+	);
+	const count = samples[0] * samples[1] * samples[2];
+	const vectors = new Float64Array(count * 3);
+	const positions = new Float64Array(count * 3);
+	let peak = 0;
+	for (let sample = 0; sample < count; sample++) {
+		const tile = [
+			Math.floor(sample / (samples[1] * samples[2])),
+			Math.floor(sample / samples[2]) % samples[1],
+			sample % samples[2],
+		];
+		const base = tile.map((value, axis) =>
+			Math.floor(((value + 0.5) * dimensions[axis]) / samples[axis]),
+		);
+		let real = 0;
+		let imaginary = 0;
+		const realGradient = [0, 0, 0];
+		const imaginaryGradient = [0, 0, 0];
+		const cornerValues: Array<[number, number]> = [];
+		for (let corner = 0; corner < 8; corner++) {
+			const offset = [corner >> 2, (corner >> 1) & 1, corner & 1];
+			const cell =
+				((base[0] + offset[0]) % dimensions[0]) *
+					dimensions[1] *
+					dimensions[2] +
+				((base[1] + offset[1]) % dimensions[1]) * dimensions[2] +
+				((base[2] + offset[2]) % dimensions[2]);
+			const cornerReal = fields.waveReal[cell];
+			const cornerImaginary = fields.waveImaginary[cell];
+			real += cornerReal / 8;
+			imaginary += cornerImaginary / 8;
+			cornerValues.push([cornerReal, cornerImaginary]);
+		}
+		for (let axis = 0; axis < 3; axis++) {
+			const mask = 1 << (2 - axis);
+			for (let pair = 0; pair < 4; pair++) {
+				const lower = (pair % mask) + Math.floor(pair / mask) * mask * 2;
+				const upper = lower + mask;
+				// Subtract opposing corners first so constant directions cancel exactly.
+				realGradient[axis] +=
+					(cornerValues[upper][0] - cornerValues[lower][0]) /
+					(4 * fields.grid.spacing);
+				imaginaryGradient[axis] +=
+					(cornerValues[upper][1] - cornerValues[lower][1]) /
+					(4 * fields.grid.spacing);
+			}
+			positions[sample * 3 + axis] = (base[axis] + 0.5) / dimensions[axis];
+			vectors[sample * 3 + axis] =
+				real * imaginaryGradient[axis] - imaginary * realGradient[axis];
+		}
+		peak = Math.max(
+			peak,
+			Math.hypot(...vectors.subarray(sample * 3, sample * 3 + 3)),
+		);
+	}
+
+	if (peak === 0) return { vertices: new Float32Array(0), peak };
+
+	// Half a sampling interval leaves room for the half-cell center offset.
+	// Relative arrow lengths encode flux magnitude, never a time step.
+	const lengthScale = 0.5 / Math.max(...samples) / peak;
+	const vertices: number[] = [];
+	for (let sample = 0; sample < count; sample++) {
+		const delta = Array.from(
+			vectors.subarray(sample * 3, sample * 3 + 3),
+			(value) => value * lengthScale,
+		);
+		const length = Math.hypot(...delta);
+		if (length === 0) continue;
+
+		const center = positions.subarray(sample * 3, sample * 3 + 3);
+		const head = delta.map((value, axis) => center[axis] + value / 2);
+		const tail = delta.map((value, axis) => center[axis] - value / 2);
+		// Cross with the least-aligned coordinate axis to form an arrowhead plane.
+		const reference = delta
+			.map(Math.abs)
+			.indexOf(Math.min(...delta.map(Math.abs)));
+		const side = [0, 0, 0];
+		side[(reference + 1) % 3] = delta[(reference + 2) % 3];
+		side[(reference + 2) % 3] = -delta[(reference + 1) % 3];
+		const sideLength = Math.hypot(...side);
+		const strength =
+			Math.hypot(...vectors.subarray(sample * 3, sample * 3 + 3)) / peak;
+		vertices.push(...tail, 0, strength, ...head, 1, strength);
+		for (const sign of [-1, 1]) {
+			const wing = delta.map(
+				(value, axis) =>
+					head[axis] -
+					value / 4 +
+					(((sign * side[axis]) / sideLength) * length) / 4,
+			);
+			vertices.push(...wing, 1, strength, ...head, 1, strength);
+		}
+	}
+	return { vertices: new Float32Array(vertices), peak };
+};
+
+// Owns one snapshot of spatial current glyphs. Camera redraws do not advect it.
 export class PhaseCurrent {
 	visible = true;
-
-	private readonly markerCount = 1600;
-	private readonly maxSpeed = 0.012;
-	private readonly streakLength = 0.014;
-	private readonly jFloor = 1e-7;
-
-	private markers: Float32Array;
-	private vertices: Float32Array;
-	private currentX: Float32Array | null = null;
-	private currentY: Float32Array | null = null;
-	private currentZ: Float32Array | null = null;
-	private grid: { x: number; y: number; z: number; spacing: number } | null =
-		null;
-	private jPeak = 0;
+	private vertexCount = 0;
 	private vertexBuffer: GPUBuffer | null = null;
-	private pipeline: GPURenderPipeline | null = null;
-	private bindGroup: GPUBindGroup | null = null;
+	private readonly pipeline: GPURenderPipeline;
+	private readonly bindGroup: GPUBindGroup;
 
 	constructor(
 		private readonly gpu: FluidGPU,
 		fieldsUniformBuffer: GPUBuffer,
 	) {
-		this.markers = new Float32Array(this.markerCount * 3);
-		this.vertices = new Float32Array(this.markerCount * 2 * 5);
-
-		for (let index = 0; index < this.markerCount; index++) {
-			this.markers[index * 3 + 0] = Math.random();
-			this.markers[index * 3 + 1] = Math.random();
-			this.markers[index * 3 + 2] = Math.random();
-		}
-
 		const layout = this.gpu.device.createBindGroupLayout({
 			entries: [
 				{
@@ -108,204 +186,24 @@ export class PhaseCurrent {
 		});
 	}
 
-	/*
-	update recomputes j(x) = ψRe·∇ψIm − ψIm·∇ψRe on the current wave field with
-	periodic central differences.
-	*/
 	update(fields: FluidFields) {
-		const { x: gx, y: gy, z: gz, spacing } = fields.grid;
-		const cells = gx * gy * gz;
-		const waveReal = fields.waveReal;
-		const waveImaginary = fields.waveImaginary;
+		const { vertices, peak } = phaseCurrentGlyphs(fields);
+		this.vertexCount = vertices.length / 5;
+		this.vertexBuffer?.destroy();
+		this.vertexBuffer = null;
+		if (this.vertexCount === 0) return peak;
 
-		if (
-			this.currentX === null ||
-			this.currentY === null ||
-			this.currentZ === null ||
-			this.currentX.length !== cells
-		) {
-			this.currentX = new Float32Array(cells);
-			this.currentY = new Float32Array(cells);
-			this.currentZ = new Float32Array(cells);
-		}
-
-		const currentX = this.currentX;
-		const currentY = this.currentY;
-		const currentZ = this.currentZ;
-		const halfSpacing = 0.5 / spacing;
-
-		let peak = 0;
-
-		for (let z = 0; z < gz; z++) {
-			const zMinus = (z - 1 + gz) % gz;
-			const zPlus = (z + 1) % gz;
-
-			for (let y = 0; y < gy; y++) {
-				const yMinus = (y - 1 + gy) % gy;
-				const yPlus = (y + 1) % gy;
-
-				for (let x = 0; x < gx; x++) {
-					const xMinus = (x - 1 + gx) % gx;
-					const xPlus = (x + 1) % gx;
-					const cell = x + gx * (y + gy * z);
-
-					const realCenter = waveReal[cell];
-					const imagCenter = waveImaginary[cell];
-
-					const dRealX =
-						(waveReal[xPlus + gx * (y + gy * z)] -
-							waveReal[xMinus + gx * (y + gy * z)]) *
-						halfSpacing;
-					const dImagX =
-						(waveImaginary[xPlus + gx * (y + gy * z)] -
-							waveImaginary[xMinus + gx * (y + gy * z)]) *
-						halfSpacing;
-					const dRealY =
-						(waveReal[x + gx * (yPlus + gy * z)] -
-							waveReal[x + gx * (yMinus + gy * z)]) *
-						halfSpacing;
-					const dImagY =
-						(waveImaginary[x + gx * (yPlus + gy * z)] -
-							waveImaginary[x + gx * (yMinus + gy * z)]) *
-						halfSpacing;
-					const dRealZ =
-						(waveReal[x + gx * (y + gy * zPlus)] -
-							waveReal[x + gx * (y + gy * zMinus)]) *
-						halfSpacing;
-					const dImagZ =
-						(waveImaginary[x + gx * (y + gy * zPlus)] -
-							waveImaginary[x + gx * (y + gy * zMinus)]) *
-						halfSpacing;
-
-					const jx = realCenter * dImagX - imagCenter * dRealX;
-					const jy = realCenter * dImagY - imagCenter * dRealY;
-					const jz = realCenter * dImagZ - imagCenter * dRealZ;
-
-					currentX[cell] = jx;
-					currentY[cell] = jy;
-					currentZ[cell] = jz;
-
-					const magnitude = Math.hypot(jx, jy, jz);
-
-					if (magnitude > peak) {
-						peak = magnitude;
-					}
-				}
-			}
-		}
-
-		this.grid = { x: gx, y: gy, z: gz, spacing };
-		this.jPeak = peak;
+		this.vertexBuffer = createVertexBuffer(this.gpu.device, vertices);
+		return peak;
 	}
 
-	/*
-	stepAndEncode advects the markers along the current field, builds the streak
-	vertex buffer, and draws it additively.
-	*/
-	stepAndEncode(pass: GPURenderPassEncoder) {
-		if (
-			!this.visible ||
-			this.currentX === null ||
-			this.currentY === null ||
-			this.currentZ === null ||
-			this.grid === null ||
-			this.pipeline === null ||
-			this.bindGroup === null ||
-			this.jPeak <= 0
-		) {
-			return;
-		}
-
-		const gx = this.grid.x;
-		const gy = this.grid.y;
-		const gz = this.grid.z;
-		const currentX = this.currentX;
-		const currentY = this.currentY;
-		const currentZ = this.currentZ;
-		const markers = this.markers;
-		const vertices = this.vertices;
-		const speedScale = this.maxSpeed / this.jPeak;
-		const lengthScale = this.streakLength / this.jPeak;
-
-		for (let index = 0; index < this.markerCount; index++) {
-			const px = markers[index * 3 + 0];
-			const py = markers[index * 3 + 1];
-			const pz = markers[index * 3 + 2];
-			const ix = Math.min(gx - 1, Math.max(0, Math.floor(px * gx)));
-			const iy = Math.min(gy - 1, Math.max(0, Math.floor(py * gy)));
-			const iz = Math.min(gz - 1, Math.max(0, Math.floor(pz * gz)));
-			const cell = ix + gx * (iy + gy * iz);
-			const jx = currentX[cell];
-			const jy = currentY[cell];
-			const jz = currentZ[cell];
-			const magnitude = Math.hypot(jx, jy, jz);
-
-			if (magnitude <= this.jFloor) {
-				markers[index * 3 + 0] = Math.random();
-				markers[index * 3 + 1] = Math.random();
-				markers[index * 3 + 2] = Math.random();
-
-				// Zero-length streak at the new seed so no stale segment
-				// lingers where the current has died.
-				const reseedVertex = index * 10;
-				vertices[reseedVertex + 0] = markers[index * 3 + 0];
-				vertices[reseedVertex + 1] = markers[index * 3 + 1];
-				vertices[reseedVertex + 2] = markers[index * 3 + 2];
-				vertices[reseedVertex + 3] = 0;
-				vertices[reseedVertex + 4] = 0;
-				vertices[reseedVertex + 5] = markers[index * 3 + 0];
-				vertices[reseedVertex + 6] = markers[index * 3 + 1];
-				vertices[reseedVertex + 7] = markers[index * 3 + 2];
-				vertices[reseedVertex + 8] = 0;
-				vertices[reseedVertex + 9] = 0;
-				continue;
-			}
-
-			const stepX = jx * speedScale;
-			const stepY = jy * speedScale;
-			const stepZ = jz * speedScale;
-			const nextX = px + stepX;
-			const nextY = py + stepY;
-			const nextZ = pz + stepZ;
-
-			markers[index * 3 + 0] = nextX - Math.floor(nextX);
-			markers[index * 3 + 1] = nextY - Math.floor(nextY);
-			markers[index * 3 + 2] = nextZ - Math.floor(nextZ);
-
-			const directionX = jx / magnitude;
-			const directionY = jy / magnitude;
-			const directionZ = jz / magnitude;
-			const tailX = px - directionX * magnitude * lengthScale;
-			const tailY = py - directionY * magnitude * lengthScale;
-			const tailZ = pz - directionZ * magnitude * lengthScale;
-			const normSpeed = magnitude / (this.jPeak + 1e-6);
-			const vertex = index * 10;
-
-			// Head vertex: position, tail = 1.0, normalized speed.
-			vertices[vertex + 0] = px;
-			vertices[vertex + 1] = py;
-			vertices[vertex + 2] = pz;
-			vertices[vertex + 3] = 1;
-			vertices[vertex + 4] = normSpeed;
-
-			// Tail vertex: position, tail = 0.0, normalized speed.
-			vertices[vertex + 5] = tailX;
-			vertices[vertex + 6] = tailY;
-			vertices[vertex + 7] = tailZ;
-			vertices[vertex + 8] = 0;
-			vertices[vertex + 9] = normSpeed;
-		}
-
-		if (this.vertexBuffer === null) {
-			this.vertexBuffer = createVertexBuffer(this.gpu.device, this.vertices);
-		} else {
-			this.gpu.device.queue.writeBuffer(this.vertexBuffer, 0, this.vertices);
-		}
+	encode(pass: GPURenderPassEncoder) {
+		if (!this.visible || this.vertexBuffer === null) return;
 
 		pass.setPipeline(this.pipeline);
 		pass.setBindGroup(0, this.bindGroup);
 		pass.setVertexBuffer(0, this.vertexBuffer);
-		pass.draw(this.markerCount * 2);
+		pass.draw(this.vertexCount);
 	}
 
 	dispose() {

@@ -29,6 +29,9 @@ func NewStorage() *Storage {
 	viper.SetDefault("storage.iceberg.commit_retries", 3)
 	viper.SetDefault("storage.iceberg.append_bytes", 8388608)
 	viper.SetDefault("storage.s3.bucket", "symm")
+	viper.SetDefault("storage.s3.region", "us-east-1")
+	viper.SetDefault("storage.s3.endpoint", "http://s3.seaweed.home.arpa")
+	viper.SetDefault("storage.s3.anonymous", true)
 
 	return &Storage{
 		Iceberg: &Iceberg{

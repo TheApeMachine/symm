@@ -1,5 +1,3 @@
-import { useSelector } from "@tanstack/react-store";
-import { useEffect, useRef, useState } from "react";
 import {
 	DEFAULT_FOCUS_SYMBOL,
 	focusAtom,
@@ -15,6 +13,8 @@ import { Typography } from "#/components/ui/typography";
 import { hubBaseUrl } from "#/lib/hub";
 import { cn, memoizedQuery, renderValue } from "#/lib/utils";
 import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
+import { useSelector } from "@tanstack/react-store";
+import { useEffect, useRef, useState } from "react";
 import { CandidatePanel, ImpulsePanel, InfluencePanel } from "./decision-panel";
 import { Explain } from "./explain";
 import { action, basis, clock, outcome, percent, prediction } from "./format";
@@ -29,7 +29,13 @@ import { SkillPanel } from "./skill-panel";
 import type { CognitionTreeResponse, ImpulseNode } from "./types";
 import { LearningVisualizer } from "./visualizer";
 
-export type Tab = "forward" | "cognitive" | "impulse" | "recognition" | "decision" | "influence";
+export type Tab =
+	| "forward"
+	| "cognitive"
+	| "impulse"
+	| "recognition"
+	| "decision"
+	| "influence";
 
 const TABS: Array<{ key: Tab; label: string }> = [
 	{ key: "forward", label: "Model training" },
@@ -56,14 +62,9 @@ export const LearningDashboard = () => {
 	const [tab, setTab] = useState<Tab>("forward");
 	const containerRef = useRef<HTMLDivElement>(null);
 
-	// Real data states
-	const [skillPct, setSkillPct] = useState(0);
-	const [edgeBp, setEdgeBp] = useState(Number.NaN);
 	const [openPositionsCount, setOpenPositionsCount] = useState(0);
 
 	// Staged training state
-	const [stage, setStage] = useState("MODEL DEVELOPMENT");
-	const [stageBlocker, setStageBlocker] = useState("—");
 	const [frozenPrediction, setFrozenPrediction] = useState("ABSTAIN");
 	const [delayedOutcome, setDelayedOutcome] = useState("RESOLVING");
 	const [precursorTokens, setPrecursorTokens] = useState<string[]>([
@@ -176,11 +177,14 @@ export const LearningDashboard = () => {
 
 			cursor.read(ring, (measurement) => {
 				const metricMap: Record<string, number> = {};
+				for (const metric of measurement.metrics ?? []) {
+					if (metric?.name) metricMap[String(metric.name)] = metric.raw ?? 0;
+				}
+
 				for (const m of measurement.metrics ?? []) {
 					if (!m?.name) continue;
 					const name = String(m.name);
 					const raw = m.raw ?? 0;
-					metricMap[name] = raw;
 
 					const els = root.querySelectorAll(`[data-metric="${name}"]`);
 					for (let j = 0; j < els.length; j++) {
@@ -207,16 +211,18 @@ export const LearningDashboard = () => {
 								setText(el, `Surprisal ${raw.toFixed(2)} nat`);
 								break;
 							case "insufficient_if_zero": {
-								// 0 is a valid mean (all abstains → policy return 0). Gate on
-								// sample counts, not raw===0 — otherwise held-out mean shows "—"
-								// while edge_samples / resolved are already non-zero.
+								// Missed opportunities are not predicted returns. A measured
+								// zero is valid only when actual predictions were resolved.
 								let ready = false;
 								if (
 									name === "hist_mean_return" ||
 									name === "hist_lower_bound" ||
 									name === "hist_return_se"
 								) {
-									ready = (metricMap.hist_opportunities ?? 0) > 0;
+									const resolved =
+										(metricMap.hist_correct_enter ?? 0) +
+										(metricMap.hist_false_enter ?? 0);
+									ready = resolved > (name === "hist_mean_return" ? 0 : 1);
 								} else if (
 									name === "fwd_paper_mean_return" ||
 									name === "fwd_paper_lower_bound"
@@ -255,29 +261,22 @@ export const LearningDashboard = () => {
 				const edgeReady = (metricMap.edge_sample_count ?? 0) > 0;
 				const evaluated = metricMap.evaluated ?? 0;
 				const tradingActive = (metricMap.trading ?? 0) > 0;
-				const skill = (metricMap.win_rate ?? metricMap.accuracy ?? 0) * 100;
 
 				// win_rate = skill accuracy %; edge = ProfitFraction mean → bp.
 				// Never format skill±1 as bp; never pretend 0 when absent.
 				if (resolved <= 0) {
-					setSkillPct(0);
 					for (const name of ["win_rate", "accuracy"] as const) {
 						const els = root.querySelectorAll(`[data-metric="${name}"]`);
 						for (let j = 0; j < els.length; j++) {
 							setText(els[j] as HTMLElement, "—");
 						}
 					}
-				} else {
-					setSkillPct(skill);
 				}
 				if (!edgeReady) {
-					setEdgeBp(Number.NaN);
 					const els = root.querySelectorAll('[data-metric="edge"]');
 					for (let j = 0; j < els.length; j++) {
 						setText(els[j] as HTMLElement, "—");
 					}
-				} else {
-					setEdgeBp(edge * 10000);
 				}
 
 				if (metaEl) {
@@ -340,7 +339,11 @@ export const LearningDashboard = () => {
 				}
 				if (measurement.metadata) {
 					for (const m of measurement.metadata) {
-						if (parsedTokens.length === 0 && m?.name === "precursor_tokens" && m.value) {
+						if (
+							parsedTokens.length === 0 &&
+							m?.name === "precursor_tokens" &&
+							m.value
+						) {
 							parsedTokens = String(m.value).split(",").filter(Boolean);
 						}
 						if (m?.name === "excursion_direction" && m.value) {
@@ -375,8 +378,6 @@ export const LearningDashboard = () => {
 				}
 
 				const blockerText = blockerStr || "—";
-				setStage(stageStr);
-				setStageBlocker(blockerText);
 				setFrozenPrediction(frozenPredStr);
 				setDelayedOutcome(delayedTargetStr);
 				setPrecursorTokens(displayTokens);
@@ -435,9 +436,10 @@ export const LearningDashboard = () => {
 				}
 
 				if (statusMetaEl) {
-					const edgeLabel = (metricMap.edge_sample_count ?? 0) > 0
-						? `edge: ${(edge * 10000).toFixed(1)} bp`
-						: "edge: —";
+					const edgeLabel =
+						(metricMap.edge_sample_count ?? 0) > 0
+							? `edge: ${(edge * 10000).toFixed(1)} bp`
+							: "edge: —";
 					setText(
 						statusMetaEl,
 						`conf: ${(confidence * 100).toFixed(1)}% · contrast: ${contrast.toFixed(2)} bits · ${edgeLabel}`,
@@ -484,7 +486,12 @@ export const LearningDashboard = () => {
 						atNs > 0n
 							? clock(new Date(Number(atNs / 1_000_000n)).toISOString())
 							: clock("");
-					const actStr = actionVal === 1 ? action("enter", 1, false) : actionVal === 2 ? action("exit", 1, false) : "ABSTAIN";
+					const actStr =
+						actionVal === 1
+							? action("enter", 1, false)
+							: actionVal === 2
+								? action("exit", 1, false)
+								: "ABSTAIN";
 					const edgeStr =
 						(metricMap.edge_sample_count ?? 0) > 0 ? basis(edgeVal) : "—";
 
@@ -521,20 +528,21 @@ export const LearningDashboard = () => {
 					grid.symbol === focusSymbol ||
 					grid.symbol === "learner" ||
 					focusSymbol === "";
-				const quantities = isGridSymbolMatch ? grid?.quantities ?? [] : [];
+				const quantities = isGridSymbolMatch ? (grid?.quantities ?? []) : [];
 				let normalizedRegions: Array<{
 					id: number;
 					strength: number;
 					authority: number;
 					members: number;
-				}> = isGridSymbolMatch && grid?.regions
-					? grid.regions.map((r) => ({
-							id: Number(r.id),
-							strength: r.strength ?? 0,
-							authority: r.authority ?? 1.0,
-							members: r.members ?? 0,
-					  }))
-					: [];
+				}> =
+					isGridSymbolMatch && grid?.regions
+						? grid.regions.map((r) => ({
+								id: Number(r.id),
+								strength: r.strength ?? 0,
+								authority: r.authority ?? 1.0,
+								members: r.members ?? 0,
+							}))
+						: [];
 
 				let mappedNodes: ImpulseNode[] = [];
 				if (quantities.length > 0) {
@@ -550,15 +558,18 @@ export const LearningDashboard = () => {
 						present: cell.present ?? true,
 					}));
 				} else {
-					const allPeers =
-						measurement.peers && measurement.peers.length > 0
-							? measurement.peers
-							: measurement.metrics && measurement.metrics.length > 0
-								? [{ symbol: measurement.symbol, metrics: measurement.metrics }]
-								: [];
+					const allPeers = [
+						...(measurement.metrics && measurement.metrics.length > 0
+							? [measurement]
+							: []),
+						...(measurement.peers ?? []),
+					];
 
 					if (allPeers.length > 0) {
-						const regionActivity: Record<number, { activity: number; members: number }> = {};
+						const regionActivity: Record<
+							number,
+							{ activity: number; members: number }
+						> = {};
 						for (const peer of allPeers) {
 							if (!peer) continue;
 							const peerSource = String(peer.source || "");
@@ -569,11 +580,15 @@ export const LearningDashboard = () => {
 								const y = Number(metric.y || 0n);
 								const regionId = metric.region || 0;
 								const raw = metric.raw || 0;
-								const activity =
-									metric.hasNormalized === true
-										? Math.abs(metric.normalized || 0)
-										: Math.abs(raw);
-								const nodeId = peerSource ? `${peerSource}:${nameStr}` : nameStr;
+								let activity = 0;
+								if (metric.hasNormalized === true) {
+									activity = Math.min(1, Math.abs(metric.normalized || 0));
+								} else if (raw !== 0) {
+									activity = Math.abs(raw) < 1 ? Math.abs(raw) : 1.0;
+								}
+								const nodeId = peerSource
+									? `${peerSource}:${nameStr}`
+									: nameStr;
 								mappedNodes.push({
 									id: nodeId,
 									label: nameStr,
@@ -595,12 +610,14 @@ export const LearningDashboard = () => {
 							}
 						}
 						if (normalizedRegions.length === 0) {
-							normalizedRegions = Object.entries(regionActivity).map(([idStr, data]) => ({
-								id: Number(idStr),
-								strength: data.activity,
-								authority: 1.0,
-								members: data.members,
-							}));
+							normalizedRegions = Object.entries(regionActivity).map(
+								([idStr, data]) => ({
+									id: Number(idStr),
+									strength: data.members > 0 ? data.activity / data.members : 0,
+									authority: 1.0,
+									members: data.members,
+								}),
+							);
 						}
 					}
 				}
@@ -612,7 +629,10 @@ export const LearningDashboard = () => {
 					const currentNodes = Array.from(knownNodesRef.current.values());
 
 					if (normalizedRegions.length === 0) {
-						const regionActivity: Record<number, { activity: number; members: number }> = {};
+						const regionActivity: Record<
+							number,
+							{ activity: number; members: number }
+						> = {};
 						for (const node of currentNodes) {
 							if (node.cluster > 0) {
 								if (!regionActivity[node.cluster]) {
@@ -622,12 +642,14 @@ export const LearningDashboard = () => {
 								regionActivity[node.cluster].members += 1;
 							}
 						}
-						normalizedRegions = Object.entries(regionActivity).map(([idStr, data]) => ({
-							id: Number(idStr),
-							strength: data.activity,
-							authority: 1.0,
-							members: data.members,
-						}));
+						normalizedRegions = Object.entries(regionActivity).map(
+							([idStr, data]) => ({
+								id: Number(idStr),
+								strength: data.members > 0 ? data.activity / data.members : 0,
+								authority: 1.0,
+								members: data.members,
+							}),
+						);
 					}
 
 					setImpulseRegions(normalizedRegions);
@@ -635,7 +657,7 @@ export const LearningDashboard = () => {
 					// LitRegions publishes precursor_tokens — authoritative lit set.
 					const litFromTokens = new Set<number>();
 					for (const tok of parsedTokens) {
-						const n = Number(tok);
+						const n = Number(tok.replace(/^R/i, ""));
 						if (Number.isFinite(n) && n > 0) litFromTokens.add(n);
 					}
 
@@ -656,7 +678,7 @@ export const LearningDashboard = () => {
 											currentNodes.filter((c) => Number(c.cluster) === id)
 												.length,
 									};
-							  })
+								})
 							: [...normalizedRegions].filter((r) => (r.strength || 0) > 0);
 
 					litRegions = litRegions.sort(
@@ -775,31 +797,32 @@ export const LearningDashboard = () => {
 				) as HTMLElement;
 
 				if (mapPointsEl) {
-					const points: Array<Point & { basin?: number }> = quantities.length > 0
-						? quantities.map((cell, index) => ({
-								id: `${String(cell.id)}:${index}`,
-								source: String(cell.source ?? ""),
-								label: String(cell.label ?? ""),
-								x: cell.x,
-								y: cell.y,
-								value: cell.value,
-								energy: cell.activity,
-								authority: cell.quality,
-								present: cell.present,
-								basin: Number(cell.basin || 0),
-						  }))
-						: mappedNodes.map((cell, index) => ({
-								id: `${cell.id}:${index}`,
-								source: String(cell.label),
-								label: String(cell.label),
-								x: cell.x || 0,
-								y: cell.y || 0,
-								value: cell.value || 0,
-								energy: cell.activation,
-								authority: cell.snr,
-								present: cell.present || false,
-								basin: Number(cell.cluster || 0),
-						  }));
+					const points: Array<Point & { basin?: number }> =
+						quantities.length > 0
+							? quantities.map((cell, index) => ({
+									id: `${String(cell.id)}:${index}`,
+									source: String(cell.source ?? ""),
+									label: String(cell.label ?? ""),
+									x: cell.x,
+									y: cell.y,
+									value: cell.value,
+									energy: cell.activity,
+									authority: cell.quality,
+									present: cell.present,
+									basin: Number(cell.basin || 0),
+								}))
+							: mappedNodes.map((cell, index) => ({
+									id: `${cell.id}:${index}`,
+									source: String(cell.label),
+									label: String(cell.label),
+									x: cell.x || 0,
+									y: cell.y || 0,
+									value: cell.value || 0,
+									energy: cell.activation,
+									authority: cell.snr,
+									present: cell.present || false,
+									basin: Number(cell.cluster || 0),
+								}));
 					const regions: Region[] = normalizedRegions.map((region) => ({
 						id: Number(region.id),
 						strength: region.strength,
@@ -901,79 +924,6 @@ export const LearningDashboard = () => {
 			ref={containerRef}
 			className="h-full min-h-0 w-full bg-(--bg) text-(--f2) font-mono"
 		>
-			{/* Top Header matching Mockup Aesthetics */}
-			<header className="h-10 border-(--line) border-b bg-(--surface) flex items-center px-4 justify-between shrink-0 font-mono text-xs">
-				<div className="flex items-center gap-3">
-					<div className="flex items-center gap-2 font-bold text-(--f1) tracking-wider">
-						<div className="w-3.5 h-3.5 rounded-full border border-(--acc) flex items-center justify-center">
-							<div className="w-1.5 h-1.5 rounded-full bg-(--acc)" />
-						</div>
-						<span>SYMM</span>
-					</div>
-
-					<div className="h-3 w-px bg-(--line)" />
-
-					<div className="flex items-center gap-1.5 text-[10px] border border-(--line) bg-(--sunken) px-2 py-0.5 rounded text-(--f2)">
-						<div className="w-1.5 h-1.5 rounded-full bg-(--up)" />
-						<span>RTC LIVE · CONNECTED</span>
-					</div>
-
-					<div className="flex items-center gap-1.5 text-[10px] px-2 py-0.5 rounded font-bold border border-(--acc)/30 bg-(--acc)/10 text-(--acc)">
-						<div className="w-1.5 h-1.5 rounded-full bg-(--acc)" />
-						<span data-l="training-stage">{stage}</span>
-					</div>
-
-					<div className="flex items-center gap-1 text-[10px] text-(--f4) max-w-xs truncate max-md:hidden">
-						<span>BLOCKER:</span>
-						<span data-l="stage-blocker" className="text-(--f2) truncate">
-							{stageBlocker}
-						</span>
-					</div>
-					<span data-l="gate-count" className="hidden">
-						{stage}
-					</span>
-				</div>
-
-				<div className="flex items-center gap-4 text-[11px] text-(--f3)">
-					<div className="flex items-center gap-1.5">
-						<span>WIN RATE</span>
-						<span className="text-(--f1) font-bold">
-							{Number.isFinite(edgeBp) ? `${skillPct.toFixed(1)}%` : "—"}
-						</span>
-					</div>
-					<div className="flex items-center gap-1.5">
-						<span>EDGE</span>
-						<span
-							className={cn(
-								"font-bold",
-								!Number.isFinite(edgeBp)
-									? "text-(--f3)"
-									: edgeBp >= 0
-										? "text-(--up)"
-										: "text-(--down)",
-							)}
-						>
-							{Number.isFinite(edgeBp)
-								? `${edgeBp >= 0 ? "+" : ""}${edgeBp.toFixed(1)} bp`
-								: "—"}
-						</span>
-					</div>
-					<div className="flex items-center gap-1.5">
-						<span className="text-(--f1) font-bold" data-l="paper-position">
-							{openPositionsCount}
-						</span>
-						<span>open positions</span>
-					</div>
-
-					<div className="h-3 w-px bg-(--line)" />
-
-					<div className="px-2 py-0.5 border border-(--acc)/30 text-(--acc) bg-(--acc)/5 rounded font-bold text-[11px]">
-						{focusSymbol || DEFAULT_FOCUS_SYMBOL}
-					</div>
-				</div>
-			</header>
-
-			{/* Tab Selector Bar */}
 			<div className="border-(--line) border-b bg-(--surface) px-3 py-1 flex items-center justify-between shrink-0">
 				<Tabs size="m" className="flex-wrap">
 					{TABS.map((entry) => (
@@ -1030,7 +980,7 @@ export const LearningDashboard = () => {
 			{/* View Panels */}
 			{tab === "forward" && (
 				<div className="flex-1 min-h-0 flex flex-col">
-					<ForwardLearningViz />
+					<ForwardLearningViz symbol={focusSymbol} />
 				</div>
 			)}
 

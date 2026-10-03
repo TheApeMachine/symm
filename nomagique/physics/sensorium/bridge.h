@@ -178,7 +178,7 @@ extern "C"
         uint32_t grid_y;
         uint32_t grid_z;
         float grid_spacing;
-        float inv_grid_spacing;
+        float sigma; // thermal coherence length; zero is the uniform limit
     } ModeProjectParams;
 
     typedef struct
@@ -326,7 +326,7 @@ extern "C"
         ManifoldBuffer *psi_im_field,
         int64_t anchors_per_mode,
         int64_t gx, int64_t gy, int64_t gz,
-        float grid_spacing);
+        float grid_spacing, float sigma);
 
     void manifold_pic_gather_pilot_wave(
         ManifoldContext *ctx,

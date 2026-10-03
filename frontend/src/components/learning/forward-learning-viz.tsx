@@ -1,16 +1,16 @@
+import { useSelector } from "@tanstack/react-store";
 import * as d3 from "d3";
 import { ChevronRight, Pause, Play } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { positionCountAtom, type RingBuffer, signals } from "#/collections/app";
+import { focusAtom, positionCountAtom, type RingBuffer, signals } from "#/collections/app";
 import { RingCursor } from "#/collections/ring";
 import { hubBaseUrl } from "#/lib/hub";
 import { cn } from "#/lib/utils";
 import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
-import { action, basis, clock, outcome, prediction } from "./format";
+import { basis, outcome, prediction } from "./format";
 import type {
 	CognitionTreeResponse,
-	LearningActivityEntry,
 	TrieBranch,
 } from "./types";
 
@@ -58,7 +58,47 @@ function signedPercent(fraction: number): string {
 	return `${body}%`;
 }
 
-export const ForwardLearningViz = () => {
+const getTargetRing = (
+	records: Record<string, RingBuffer<MeasurementT>> | undefined,
+	target: string,
+): { ring: RingBuffer<MeasurementT>; symbol: string } | null => {
+	if (!records) return null;
+	if (target && records[target] && !records[target].isEmpty()) {
+		return { ring: records[target], symbol: target };
+	}
+	if (records.learner && !records.learner.isEmpty()) {
+		return { ring: records.learner, symbol: "learner" };
+	}
+	let bestRing: RingBuffer<MeasurementT> | null = null;
+	let bestSym = "";
+	let latestTick = -1n;
+
+	for (const [sym, ring] of Object.entries(records)) {
+		if (!ring || ring.isEmpty()) continue;
+		const len = ring.getBufferLength();
+		const last = len > 0 ? ring.get(len - 1) : undefined;
+		const tick = last?.tick ?? 0n;
+		if (tick >= latestTick || bestRing === null) {
+			latestTick = tick;
+			bestRing = ring;
+			bestSym = sym;
+		}
+	}
+	if (bestRing) {
+		return { ring: bestRing, symbol: bestSym };
+	}
+	return null;
+};
+
+export interface ForwardLearningVizProps {
+	symbol?: string;
+}
+
+export const ForwardLearningViz = ({
+	symbol: propSymbol,
+}: ForwardLearningVizProps = {}) => {
+	const globalFocus = useSelector(focusAtom, (state) => state);
+	const targetSymbol = propSymbol || globalFocus;
 	const tapeRef = useRef<HTMLDivElement>(null);
 	const [tapeDim, setTapeDim] = useState({ width: 800, height: 300 });
 	const [isPlaying, setIsPlaying] = useState(true);
@@ -100,9 +140,6 @@ export const ForwardLearningViz = () => {
 
 	// Real Radix Trie branches fetched from backend engine
 	const [trieBranches, setTrieBranches] = useState<TrieBranch[]>([]);
-
-	// Real activity entries
-	const [activityLogs, setActivityLogs] = useState<LearningActivityEntry[]>([]);
 
 	// Real excursion markers if active
 	const [excursionEvent, setExcursionEvent] = useState<{
@@ -185,6 +222,14 @@ export const ForwardLearningViz = () => {
 		};
 	}, []);
 
+	// A newly completed episode must wake playback even when the queue was empty.
+	useEffect(() => {
+		if (!isPlaying || currentEpisode || episodeQueue.length === 0) return;
+		setCurrentEpisode(episodeQueue[0]);
+		setPlaybackTick(0);
+		setEpisodeQueue((queue) => queue.slice(1));
+	}, [isPlaying, currentEpisode, episodeQueue]);
+
 	// Playback Animation Loop
 	useEffect(() => {
 		if (!isPlaying) return;
@@ -192,15 +237,6 @@ export const ForwardLearningViz = () => {
 		let timer: number;
 		if (playbackPhase === "PLAYING") {
 			if (!currentEpisode) {
-				// Try to pull next episode from queue
-				setEpisodeQueue((prev) => {
-					if (prev.length > 0) {
-						setCurrentEpisode(prev[0]);
-						setPlaybackTick(0);
-						return prev.slice(1);
-					}
-					return prev;
-				});
 				return;
 			}
 
@@ -236,11 +272,15 @@ export const ForwardLearningViz = () => {
 		}
 	}, [currentEpisode, playbackTick]);
 
-	// Subscribe to real live training measurements stream across all symbols
-	// Unfiltered by user focus symbol: always tracks the active training subject
+	// Subscribe to real live training measurements stream filtered by target symbol
 	useEffect(() => {
 		const cursor = new RingCursor<MeasurementT>();
-		let nextLogId = 1;
+		pendingEpisodeRef.current = [];
+		currentEpisodeRef.current = null;
+		setEpisodeQueue([]);
+		setPoints([]);
+		setExcursionEvent(null);
+		lastSeenExcursionStartRef.current = undefined;
 
 		const handleRing = (ring: RingBuffer<MeasurementT>) => {
 			if (!ring || ring.isEmpty()) return;
@@ -252,9 +292,13 @@ export const ForwardLearningViz = () => {
 					lastSeenSymbolRef.current !== "" &&
 					activeSym !== lastSeenSymbolRef.current
 				) {
-					// Symbol switched (e.g. replay moved to another stored excursion fragment)
+					// Symbol switched: purge any pending fragment so prices from different coins never mix
+					pendingEpisodeRef.current = [];
+					currentEpisodeRef.current = null;
+					setEpisodeQueue([]);
 					setPoints([]);
 					setExcursionEvent(null);
+					lastSeenExcursionStartRef.current = undefined;
 				}
 				lastSeenSymbolRef.current = activeSym;
 				setCurrentSymbol(activeSym);
@@ -293,17 +337,18 @@ export const ForwardLearningViz = () => {
 				setPrecursorLength(pLen);
 
 				let tokensList: string[] = [];
+				let excDirection = "";
 				if (measurement.provenance) {
 					for (const p of measurement.provenance) {
 						if (p?.name === "precursor_tokens" && p.value) {
 							tokensList = String(p.value).split(",").filter(Boolean);
 						}
+						if (p?.name === "excursion_direction") excDirection = String(p.value);
 					}
 				}
 				let excStart: number | undefined;
 				let excIgnition: number | undefined;
 				let excExit: number | undefined;
-				let excDirection = "";
 
 				if (measurement.metadata) {
 					for (const m of measurement.metadata) {
@@ -377,8 +422,8 @@ export const ForwardLearningViz = () => {
 				setHistMeanReturn(metricMap.hist_mean_return ?? 0);
 				setHistLowerBound(metricMap.hist_lower_bound ?? 0);
 
-				if (measurement.metadata) {
-					for (const m of measurement.metadata) {
+				if (measurement.provenance) {
+					for (const m of measurement.provenance) {
 						if (m?.name === "edge_samples" && m.value) {
 							const parsed = String(m.value)
 								.split(",")
@@ -479,32 +524,6 @@ export const ForwardLearningViz = () => {
 					}
 				}
 
-				// Record real activity log entry
-				const atNs = measurement.at ?? 0n;
-				const timeStr =
-					atNs > 0n
-						? clock(new Date(Number(atNs / 1_000_000n)).toISOString())
-						: clock("");
-				const actStr =
-					actRaw === 1
-						? action("enter", 1, false)
-						: actRaw === 2
-							? action("exit", 1, false)
-							: "ABSTAIN";
-
-				setActivityLogs((prev) => {
-					const edgeReady = (metricMap.edge_sample_count ?? 0) > 0;
-					const edgeVal = metricMap.edge ?? 0;
-					const entry: LearningActivityEntry = {
-						id: nextLogId++,
-						time: timeStr,
-						message: `${actStr} · edge ${edgeReady ? basis(edgeVal) : "—"}`,
-						pnl: edgeReady ? edgeVal : 0,
-						action: actStr,
-					};
-					return [entry, ...prev].slice(0, 10);
-				});
-
 				const entryIdx =
 					metricMap.agent_entry !== undefined && metricMap.agent_entry > 0
 						? Math.floor(metricMap.agent_entry)
@@ -526,9 +545,9 @@ export const ForwardLearningViz = () => {
 					});
 				}
 
-				// Complete fragment detection via metadata tag
-				if (measurement.metadata) {
-					for (const m of measurement.metadata) {
+				// String event tags are carried by the wire's provenance vector.
+				if (measurement.provenance) {
+					for (const m of measurement.provenance) {
 						if (
 							m?.name === "excursion_event" &&
 							String(m.value) === "completed"
@@ -544,39 +563,26 @@ export const ForwardLearningViz = () => {
 			});
 		};
 
-		const checkAllTrainingRings = (
+		const updateFromState = (
 			state: Record<string, RingBuffer<MeasurementT>> | undefined,
 		) => {
 			if (!state) return;
-			let bestRing: RingBuffer<MeasurementT> | null = null;
-			let latestTick = -1n;
-
-			for (const ring of Object.values(state)) {
-				if (!ring || ring.isEmpty()) continue;
-				const len = ring.getBufferLength();
-				const last = len > 0 ? ring.get(len - 1) : undefined;
-				const tick = last?.tick ?? 0n;
-				if (tick >= latestTick || bestRing === null) {
-					latestTick = tick;
-					bestRing = ring;
-				}
-			}
-
-			if (bestRing) {
-				handleRing(bestRing);
+			const target = getTargetRing(state, targetSymbol);
+			if (target) {
+				handleRing(target.ring);
 			}
 		};
 
-		checkAllTrainingRings(signals.training?.state);
+		updateFromState(signals.training?.state);
 
 		const unsub = signals.training.subscribe((state) => {
-			checkAllTrainingRings(state);
+			updateFromState(state);
 		});
 
 		return () => {
 			unsub?.unsubscribe?.();
 		};
-	}, []);
+	}, [targetSymbol]);
 
 	// Scales for real tape rendering
 	const { xScale, yScale, currentPoints, lineGenerator } = useMemo(() => {
@@ -1034,27 +1040,27 @@ export const ForwardLearningViz = () => {
 						{/* Historical Held-Out Evidence Card */}
 						<div className="border border-(--line) p-2.5 rounded bg-(--bg) flex flex-col gap-1.5">
 							<div className="uppercase tracking-widest text-(--f4) text-[9px] font-bold flex justify-between">
-								<span>Historical Held-Out Evidence</span>
+								<span>Historical Prediction Outcomes</span>
 								<span className="text-(--f2)">{histOpportunities} opps</span>
 							</div>
 							<div className="flex justify-between items-baseline text-[11px]">
-								<span className="text-(--f4)">Mean Return:</span>
+								<span className="text-(--f4)">Mean Quote Return:</span>
 								<span
 									className="text-(--f1) font-bold"
 									data-metric="hist_mean_return"
 									data-format="insufficient_if_zero"
 								>
-									{histOpportunities > 0 ? basis(histMeanReturn) : "—"}
+									{histCorrectEnter + histFalseEnter > 0 ? basis(histMeanReturn) : "—"}
 								</span>
 							</div>
 							<div className="flex justify-between items-baseline text-[10px]">
-								<span className="text-(--f4)">Lower Bound (L95):</span>
+								<span className="text-(--f4)">Mean − Standard Error:</span>
 								<span
 									className="text-(--acc) font-bold"
 									data-metric="hist_lower_bound"
 									data-format="insufficient_if_zero"
 								>
-									{histOpportunities > 0 ? basis(histLowerBound) : "—"}
+									{histCorrectEnter + histFalseEnter > 1 ? basis(histLowerBound) : "—"}
 								</span>
 							</div>
 							<div className="flex justify-between items-baseline text-[10px] text-(--f3)">

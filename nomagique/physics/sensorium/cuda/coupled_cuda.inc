@@ -158,6 +158,17 @@ for(unsigned k=0;k<8;++k)for(unsigned a=0;a<6;++a)MC_NATIVE_ADD(&out[6*sh.index[
 
 }
 
+__device__ inline MCLogSum mc_group_logsum(MCLogSum s){
+MCReal maximum=s.count?s.maximum:MCReal{-3.402823466e38f,0};
+for(unsigned offset=warpSize/2;offset;offset/=2){
+ MCReal other={__shfl_xor_sync(0xffffffffu,maximum.hi,offset),__shfl_xor_sync(0xffffffffu,maximum.lo,offset)};
+ if(mc_real_greater(other,maximum))maximum=other;
+}
+float total=s.count?s.sum*MR_EXP(mc_real_value(mc_real_sub(s.maximum,maximum))):0.f;
+for(unsigned offset=warpSize/2;offset;offset/=2)total+=__shfl_xor_sync(0xffffffffu,total,offset);
+return {maximum,total,0,1};
+}
+
 __global__ void mc_remap_rows(
  const MFHydroStateV2* state,
  const float* pos,
@@ -168,13 +179,18 @@ __global__ void mc_remap_rows(
  MFHydroParamsV2 p,
  float width,
  float mass_scale) {
-unsigned gid=blockIdx.x*blockDim.x+threadIdx.x;
+unsigned gid=(blockIdx.x*blockDim.x+threadIdx.x)/warpSize;
+unsigned lane=threadIdx.x%warpSize,lanes=warpSize;
 if(gid>=p.n)return;
-status[gid]=0;if(state[gid].q[0]==0){rows[gid]=0;return;}
-MCLogSum s={};for(unsigned i=0;i<particles;++i)mc_log_add(s,columns[i]-mc_transport_cost(gid,pos,i,p,width));
+if(lane==0)status[gid]=0;
+if(state[gid].q[0]==0){if(lane==0){rows[2*gid]=0;rows[2*gid+1]=0;}return;}
+MCLogSum s={};for(unsigned i=lane;i<particles;i+=lanes)mc_log_add(s,mc_real_add(mc_real_load(columns,i),{-mc_transport_cost(gid,pos,i,p,width),0}));
+s=mc_group_logsum(s);
+if(lane!=0)return;
 float target=mc_row_mass(state[gid],p,mass_scale);
-rows[gid]=MC_LOG(target)-mc_log_total(s);
-if(!(target>0)||!MF_FINITE(rows[gid]))status[gid]=MF_PHYSICS_BAD_STATE;
+MCReal scale=mc_real_sub({MC_LOG(target),0},mc_log_total(s));
+rows[2*gid]=scale.hi;rows[2*gid+1]=scale.lo;
+if(!(target>0)||!MF_FINITE(scale.hi))status[gid]=MF_PHYSICS_BAD_STATE;
 
 }
 
@@ -187,12 +203,20 @@ __global__ void mc_remap_columns(
  unsigned* status,
  unsigned particles,
  MFHydroParamsV2 p,
- float width) {
-unsigned gid=blockIdx.x*blockDim.x+threadIdx.x;
+ float width,
+ const unsigned* active, unsigned active_count) {
+unsigned gid=(blockIdx.x*blockDim.x+threadIdx.x)/warpSize;
+unsigned lane=threadIdx.x%warpSize;
 if(gid>=particles)return;
-MCLogSum s={};for(unsigned c=0;c<p.n;++c)if(state[c].q[0]>0)mc_log_add(s,rows[c]-mc_transport_cost(c,pos,gid,p,width));
-columns[gid]=MC_LOG(mass[gid])-mc_log_total(s);
-status[gid]=(!s.count||!(mass[gid]>0)||!MF_FINITE(columns[gid]))?MF_PHYSICS_BAD_STATE:0;
+MCLogSum s={};
+for(unsigned entry=lane;entry<active_count;entry+=warpSize){unsigned c=active[entry];mc_log_add(s,mc_remap_logweight(c,pos,gid,p,width,rows));}
+s=mc_group_logsum(s);
+MCReal maximum=s.maximum;float total=s.sum;
+if(lane==0){
+ MCReal scale=mc_real_sub({MC_LOG(mass[gid])-MC_LOG(total),0},maximum);
+ columns[2*gid]=scale.hi;columns[2*gid+1]=scale.lo;
+ status[gid]=(!(total>0)||!(mass[gid]>0)||!MF_FINITE(scale.hi))?MF_PHYSICS_BAD_STATE:0;
+}
 
 }
 
@@ -207,11 +231,15 @@ __global__ void mc_remap_residual(
  MFHydroParamsV2 p,
  float width,
  float mass_scale) {
-unsigned gid=blockIdx.x*blockDim.x+threadIdx.x;
+unsigned gid=(blockIdx.x*blockDim.x+threadIdx.x)/warpSize;
+unsigned lane=threadIdx.x%warpSize,lanes=warpSize;
 if(gid>=p.n)return;
-status[gid]=0;residual[gid]=0;if(state[gid].q[0]==0)return;
-MCLogSum s={};for(unsigned i=0;i<particles;++i)mc_log_add(s,columns[i]-mc_transport_cost(gid,pos,i,p,width));
-float ratio=MR_EXP(rows[gid]+mc_log_total(s)-MC_LOG(mc_row_mass(state[gid],p,mass_scale)));
+if(lane==0){status[gid]=0;residual[gid]=0;}
+if(state[gid].q[0]==0)return;
+MCLogSum s={};for(unsigned i=lane;i<particles;i+=lanes)mc_log_add(s,mc_real_add(mc_real_load(columns,i),mc_remap_logweight(gid,pos,i,p,width,rows)));
+s=mc_group_logsum(s);
+if(lane!=0)return;
+float ratio=MR_EXP(mc_real_value(mc_real_sub(mc_log_total(s),{MC_LOG(mc_row_mass(state[gid],p,mass_scale)),0})));
 residual[gid]=mf_abs(ratio-1);if(!MF_FINITE(ratio))status[gid]=MF_PHYSICS_BAD_STATE;
 
 }
@@ -229,16 +257,17 @@ __global__ void mc_remap_gather(
  unsigned particles,
  MFHydroParamsV2 p,
  float width,
- float mass_scale) {
+ float mass_scale,
+ const unsigned* active, unsigned active_count) {
 unsigned gid=blockIdx.x*blockDim.x+threadIdx.x;
 if(gid>=particles)return;
-status[gid]=0;MCLogSum ls={};unsigned reference=0;float peak=-3.402823466e38f;
-for(unsigned c=0;c<p.n;++c)if(state[c].q[0]>0){float z=rows[c]-mc_transport_cost(c,pos,gid,p,width);mc_log_add(ls,z);if(z>peak){peak=z;reference=c;}}
+status[gid]=0;MCLogSum ls={};unsigned reference=0;MCReal peak={-3.402823466e38f,0};
+for(unsigned entry=0;entry<active_count;++entry){unsigned c=active[entry];MCReal z=mc_remap_logweight(c,pos,gid,p,width,rows);mc_log_add(ls,z);if(mc_real_greater(z,peak)){peak=z;reference=c;}}
 if(!ls.count){status[gid]=MF_PHYSICS_BAD_STATE;return;}
 float ref[3];for(unsigned a=0;a<3;++a)ref[a]=state[reference].q[a+1]/(state[reference].q[0]*mass_scale);
 MCTransportMoments m={};
-for(unsigned c=0;c<p.n;++c)if(state[c].q[0]>0){
- float fraction=MR_EXP(rows[c]-mc_transport_cost(c,pos,gid,p,width)-ls.maximum)/ls.sum;
+for(unsigned entry=0;entry<active_count;++entry){unsigned c=active[entry];
+ float fraction=MR_EXP(mc_real_value(mc_real_sub(mc_remap_logweight(c,pos,gid,p,width,rows),ls.maximum)))/ls.sum;
  if(fraction==0)continue;
  MFPrimitive v=mf_primitive(state[c],p);if(v.status){status[gid]=v.status;return;}
  float r=state[c].q[0]*mass_scale;
@@ -247,8 +276,8 @@ for(unsigned c=0;c<p.n;++c)if(state[c].q[0]>0){
  mc_compensated_add(m.total,m.correction[4],fraction*(state[c].q[4]/r));
 }
 float out[3];for(unsigned a=0;a<3;++a)out[a]=ref[a]+m.delta[a];
-for(unsigned c=0;c<p.n;++c)if(state[c].q[0]>0){
- float fraction=MR_EXP(rows[c]-mc_transport_cost(c,pos,gid,p,width)-ls.maximum)/ls.sum;
+for(unsigned entry=0;entry<active_count;++entry){unsigned c=active[entry];
+ float fraction=MR_EXP(mc_real_value(mc_real_sub(mc_remap_logweight(c,pos,gid,p,width,rows),ls.maximum)))/ls.sum;
  if(fraction==0)continue;
  float v2=0;for(unsigned a=0;a<3;++a){float dv=(state[c].q[a+1]/(state[c].q[0]*mass_scale)-ref[a])-m.delta[a];v2+=dv*dv;}
  mc_compensated_add(m.variance,m.correction[5],.5f*fraction*v2);

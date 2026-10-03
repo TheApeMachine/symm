@@ -57,4 +57,18 @@ describe("hawkesTrace", () => {
 		expect(plot.points.every((point) => point.at >= plot.from)).toBe(true);
 		expect(plot.points.at(-1)?.intensity).toBeCloseTo(0.4 + 0.3 * Math.exp(-2));
 	});
+
+	it("scrolls events off-screen when viewportSpan is supplied", () => {
+		const samples = [
+			arrival(0n),
+			arrival(5_000_000_000n),
+			arrival(20_000_000_000n),
+		];
+		const viewportSpan = 15_000_000_000n;
+		const plot = hawkesTrace(samples, 100, 20_000_000_000n, viewportSpan);
+		expect(plot.through).toBe(20_000_000_000n);
+		expect(plot.from).toBe(5_000_000_000n);
+		expect(plot.through - plot.from).toBe(viewportSpan);
+		expect(plot.points.every((point) => point.at >= plot.from)).toBe(true);
+	});
 });

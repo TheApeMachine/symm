@@ -1,10 +1,4 @@
-import { useSelector } from "@tanstack/react-store";
-import { useEffect, useRef } from "react";
-import {
-	DEFAULT_KERNELS,
-	focusAtom,
-	symbolsAtom,
-} from "#/collections/app";
+import { DEFAULT_KERNELS, focusAtom, symbolsAtom } from "#/collections/app";
 import { type TerminalSurface, terminalStore } from "#/collections/terminal";
 import { paletteGroupVariant } from "#/components/terminal/badge-tone";
 import { Badge } from "@/components/ui/badge";
@@ -13,6 +7,8 @@ import { Input } from "@/components/ui/input";
 import { List } from "@/components/ui/list";
 import { Modal } from "@/components/ui/modal";
 import { Typography } from "@/components/ui/typography";
+import { useSelector } from "@tanstack/react-store";
+import { useEffect, useRef } from "react";
 
 const SURFACES: Array<{ id: TerminalSurface; label: string; hint: string }> = [
 	{
@@ -49,7 +45,6 @@ const SURFACES: Array<{ id: TerminalSurface; label: string; hint: string }> = [
 	},
 	{ id: "xray", label: "Latent x-ray", hint: "State-space cross-section" },
 	{ id: "cortex", label: "Cognitive tree", hint: "Reasoning graph" },
-	{ id: "allocation", label: "Allocation", hint: "Capital & exposure" },
 	{
 		id: "hindsight",
 		label: "Hindsight",

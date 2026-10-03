@@ -89,7 +89,15 @@ func (e *Engine) DepositMaterial(x, v, m, q, total, u, flags *Buffer, n int, p h
 func (e *Engine) RemapConservative(u, x, m, vo, qo, eo, report, flags *Buffer, n int, p hydroParameters, width, tolerance float32, iterations int, gravityG float32) error {
 	c := cHydro(p)
 	ok := C.manifold_pic_remap_conservative(e.ctx, u.cBuf, x.cBuf, m.cBuf, vo.cBuf, qo.cBuf, eo.cBuf, report.cBuf, flags.cBuf, C.uint(n), &c, C.float(width), C.float(tolerance), C.uint(iterations), C.float(gravityG))
-	return e.coupledResult("conservative PIC remap", ok, flags, n)
+	err := e.coupledResult("conservative PIC remap", ok, flags, n)
+
+	if err != nil {
+		diagnostic := report.Float32Slice()
+		return fmt.Errorf("%w: particles=%d cells=%d residual=%g iterations=%g mass_scale=%g energy_residual=%g momentum_residual=%v", err,
+			n, p.N, diagnostic[0], diagnostic[1], diagnostic[2], diagnostic[4], diagnostic[5:8])
+	}
+
+	return nil
 }
 
 func (e *Engine) PilotChecked(x, m, prior, re, im, xo, guide, report, flags *Buffer, n int, p hydroParameters, hbar, tolerance, maxcells float32) error {

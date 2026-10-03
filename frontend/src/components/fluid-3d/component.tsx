@@ -29,9 +29,7 @@ const initialOptions: FluidSceneOptions = {
 	exposure: 1.5,
 };
 
-// Range compression (see field-shaders.ts `compress`) already lifts faint
-// structure into visibility, so exposure only needs a modest ceiling to
-// avoid blowing out dense regions.
+// Display exposure scales optical depth; it does not alter resident fields.
 const maximumVisualExposure = 4;
 
 const Toggle = ({
@@ -134,8 +132,10 @@ export const FluidInspector = () => {
 		current: { divergence: 0, pressureGradNorm: 0 },
 	});
 
-	const [hydro, setHydro] = useState<Record<string, number> | null>(null);
-	const [phaseReading, setPhaseReading] = useState<FluidPhaseReading | null>(null);
+	const [phaseReading, setPhaseReading] = useState<FluidPhaseReading | null>(
+		null,
+	);
+	const [currentPeak, setCurrentPeak] = useState<number | null>(null);
 	const [showDiagnostics, setShowDiagnostics] = useState(true);
 
 	const connect = () => {
@@ -151,8 +151,11 @@ export const FluidInspector = () => {
 		let scene: FluidScene;
 
 		try {
-			scene = new FluidScene(viewportRef.current, setSelected, (cause) =>
-				setError(cause.message),
+			scene = new FluidScene(
+				viewportRef.current,
+				setSelected,
+				(cause) => setError(cause.message),
+				setCurrentPeak,
 			);
 		} catch (cause) {
 			setError(cause instanceof Error ? cause.message : String(cause));
@@ -171,13 +174,6 @@ export const FluidInspector = () => {
 			onPhase: (phase) => {
 				const { reading, oscillators, modes } = phase;
 				setPhaseReading(reading);
-
-				// Hydrodynamic panel: the live scalar reading from the kernel.
-				setHydro({
-					viscosityProxy: reading.viscosityProxy,
-					guidanceSpeed: reading.guidanceSpeed,
-					coherenceMag2: reading.coherenceMag2,
-				});
 
 				// Kuramoto ring: using Kuramoto order parameter R and Psi directly from the physics kernel.
 				setKuramotoProps({
@@ -264,15 +260,22 @@ export const FluidInspector = () => {
 								? "waiting for WebSocket manifold fields"
 								: `${grid.x}×${grid.y}×${grid.z} · ${particleCount} orders/particles`}
 						</Typography.Mono>
-						{hydro !== null ? (
+						{phaseReading !== null ? (
 							<Flex.Row
 								align="center"
 								gap={2}
 								className="text-[11px] text-(--f4)"
 							>
-								<span>η: {hydro.viscosityProxy?.toFixed(3) ?? "0"}</span>
-								<span>v_B: {hydro.guidanceSpeed?.toFixed(3) ?? "0"}</span>
-								<span>⟨|Ψ|²⟩: {hydro.coherenceMag2?.toFixed(3) ?? "0"}</span>
+								<span>η: {phaseReading.viscosityProxy.toPrecision(3)}</span>
+								<span>
+									v_B RMS:{" "}
+									{phaseReading.health?.pilot?.speedRms.toExponential(2) ?? "—"}
+								</span>
+								<span>
+									∫|Ψ|²:{" "}
+									{phaseReading.health?.wave?.projectedNorm.toExponential(2) ??
+										"—"}
+								</span>
 							</Flex.Row>
 						) : null}
 					</Flex.Row>
@@ -346,6 +349,18 @@ export const FluidInspector = () => {
 			) : null}
 
 			<Typography.Pre className="absolute bottom-3 left-3 z-10 m-0 whitespace-pre rounded border border-(--line) bg-[color-mix(in_srgb,var(--bg)_91%,transparent)] p-2 text-[10px] leading-4 text-(--f3)">
+				{options.gas
+					? "gas · opacity: ρ / mean ρ · amber tint: internal energy density\n"
+					: ""}
+				{options.wave
+					? "wave · hue: local phase θ · opacity: |Ψ| / peak component\n"
+					: ""}
+				{options.current
+					? "current · sampled Im(Ψ*∇Ψ) · arrow length / frame sample peak\n"
+					: ""}
+				{options.current
+					? `sampled flux peak: ${currentPeak === null ? "waiting" : currentPeak.toExponential(2)}${currentPeak === 0 ? " · no phase flux at sampled cells" : ""}\n`
+					: ""}
 				{particleReadout(selected)}
 			</Typography.Pre>
 

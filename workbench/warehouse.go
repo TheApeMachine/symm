@@ -65,7 +65,7 @@ New constructs the engine without connecting.
 */
 func New() *Warehouse {
 	viper.SetDefault("workbench.memory_limit", "4GB")
-	viper.SetDefault("workbench.max_temp_directory_size", "10GB")
+	viper.SetDefault("workbench.max_temp_directory_size", "64GB")
 	viper.SetDefault("workbench.threads", 4)
 
 	warehouse := &Warehouse{
@@ -322,16 +322,22 @@ func (warehouse *Warehouse) session(ctx context.Context) (*sql.Conn, error) {
 	return conn, nil
 }
 
-var selectWithoutSelection = regexp.MustCompile(`(?i)\bSELECT\s+FROM\b`)
+var (
+	selectWithoutSelection = regexp.MustCompile(`(?i)\bSELECT\s+FROM\b`)
+	createTableAsPattern   = regexp.MustCompile(`(?i)\bCREATE\s+(?:OR\s+REPLACE\s+)?TABLE\s+([^\s]+)\s+AS\b`)
+	dropTablePattern       = regexp.MustCompile(`(?i)\bDROP\s+TABLE\b`)
+)
 
 /*
 sanitizeStatement repairs common client template anomalies such as a SELECT clause
 emitted without a selection list (e.g. `SELECT FROM ...`), replacing with `SELECT NULL FROM ...`.
+It also converts large temporary table materializations into virtual views (`CREATE OR REPLACE VIEW ... AS`)
+so analytical queries execute with zero disk footprint and Parquet filter pushdown.
 */
 func sanitizeStatement(statement string) string {
-	return selectWithoutSelection.ReplaceAllString(statement, "SELECT NULL FROM")
+	statement = selectWithoutSelection.ReplaceAllString(statement, "SELECT NULL FROM")
+	return createTableAsPattern.ReplaceAllString(statement, "CREATE OR REPLACE VIEW $1 AS")
 }
-
 
 /*
 Execute runs one statement and returns its result as an Apache Arrow IPC
@@ -366,25 +372,35 @@ func (warehouse *Warehouse) Execute(ctx context.Context, statement string) ([]by
 		return nil, err
 	}
 
-	if !rows {
-		if _, err := conn.ExecContext(ctx, statement); err != nil {
-			return nil, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"workbench: execute statement: "+statement,
-				err,
-			))
+	if rows {
+		projected, err := warehouse.project(ctx, conn, statement)
+
+		if err != nil {
+			return nil, err
 		}
 
+		return warehouse.stream(ctx, conn, projected)
+	}
+
+	_, execErr := conn.ExecContext(ctx, statement)
+
+	if execErr == nil {
 		return []byte{}, nil
 	}
 
-	projected, err := warehouse.project(ctx, conn, statement)
+	if strings.Contains(execErr.Error(), "is of type View") {
+		dropViewStatement := dropTablePattern.ReplaceAllString(statement, "DROP VIEW")
 
-	if err != nil {
-		return nil, err
+		if _, dropViewErr := conn.ExecContext(ctx, dropViewStatement); dropViewErr == nil {
+			return []byte{}, nil
+		}
 	}
 
-	return warehouse.stream(ctx, conn, projected)
+	return nil, errnie.Error(errnie.Err(
+		errnie.Validation,
+		"workbench: execute statement: "+statement,
+		execErr,
+	))
 }
 
 /*

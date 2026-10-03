@@ -83,7 +83,7 @@ func (engine *Engine) PICGatherUpdate(
 func (engine *Engine) ProjectModesToSpatial(
 	modePsiReal, modePsiImag, modeAnchorIdx, modeAnchorWeight, particlePos *Buffer,
 	psiReField, psiImField *Buffer,
-	anchorsPerMode int,
+	anchorsPerMode int, sigma float32,
 ) {
 	errnie.Error(errnie.Err(errnie.Internal, "sensorium: ProjectModesToSpatial requires an initialized Darwin Metal engine", nil))
 }

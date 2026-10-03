@@ -1,6 +1,8 @@
 import type { Measurement, ResonanceFrame } from "#/collections/types";
+import { parseResonanceData } from "#/components/charts/prediction";
 import { semanticLayerName } from "#/components/terminal/xray-layers";
 import { requirePositiveLength } from "#/lib/domain";
+import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
 
 export type HawkesMetrics = {
 	intensity: number | null;
@@ -73,7 +75,7 @@ const measurementRaw = (
 const layerError = (
 	state: number[],
 	prediction: number[],
-	surprise: number | undefined,
+	_surprise?: number,
 ): number | null => {
 	if (state.length > 0 && prediction.length === state.length) {
 		requirePositiveLength(state.length, "xray mean absolute error");
@@ -100,8 +102,22 @@ published before errorNorm existed.
 export const xrayLayersFromResonance = (
 	frame: ResonanceFrame | Record<string, unknown> | null | undefined,
 ): XrayLayer[] => {
-	const layers =
-		(frame?.layers as Array<Record<string, unknown>> | undefined) ?? [];
+	if (!frame) return [];
+	let layers =
+		(frame.layers as Array<Record<string, unknown>> | undefined) ?? [];
+	let surprise = frame.surprise as number | undefined;
+
+	if (
+		layers.length === 0 &&
+		"metrics" in frame &&
+		Array.isArray((frame as { metrics?: unknown }).metrics)
+	) {
+		const parsed = parseResonanceData(frame as unknown as MeasurementT);
+		if (parsed?.layers && parsed.layers.length > 0) {
+			layers = parsed.layers as unknown as Array<Record<string, unknown>>;
+			surprise = parsed.surprise;
+		}
+	}
 
 	return layers.map((layer, index) => {
 		const state = numberArray(layer.state);
@@ -113,9 +129,7 @@ export const xrayLayersFromResonance = (
 			label: `L${index} · ${semanticLayerName(index, layers.length)}`,
 			state,
 			prediction,
-			error_norm:
-				reported ??
-				layerError(state, prediction, frame?.surprise as number | undefined),
+			error_norm: reported ?? layerError(state, prediction, surprise),
 		};
 	});
 };
@@ -246,8 +260,19 @@ export const latentPointsFromFrames = (
 			field plotting.
 		*/
 		const embedding = numberArray(frame.embedding);
-		const position =
+		let position =
 			embedding.length >= 2 ? embedding : numberArray(frame.latent);
+
+		if (
+			position.length < 2 &&
+			"metrics" in frame &&
+			Array.isArray((frame as { metrics?: unknown }).metrics)
+		) {
+			const parsed = parseResonanceData(frame as unknown as MeasurementT);
+			if (parsed?.latent && parsed.latent.length >= 2) {
+				position = parsed.latent.slice(0, 2);
+			}
+		}
 
 		if (position.length < 2) {
 			return [];
@@ -325,11 +350,51 @@ const retainedHawkes = new Map<string, Record<string, number>>();
 
 export const retainResonanceRow = (
 	symbol: string,
-	row: Record<string, unknown>,
+	row: Record<string, unknown> | MeasurementT,
 ) => {
 	if (!symbol) return;
 	const existing = retainedResonance.get(symbol) ?? {};
-	retainedResonance.set(symbol, { ...existing, ...row, symbol });
+	let parsedData: Record<string, unknown> = {};
+
+	if (
+		"metrics" in row &&
+		Array.isArray((row as { metrics?: unknown }).metrics)
+	) {
+		const parsed = parseResonanceData(row as unknown as MeasurementT);
+		if (parsed) {
+			parsedData = {
+				latent: parsed.latent,
+				embedding: parsed.latent?.slice(0, 2) ?? [],
+				layers: parsed.layers,
+				surprise: parsed.surprise,
+				energy: parsed.energy,
+				confidence: parsed.confidence,
+				forwardCurve: parsed.forwardCurve,
+				dynamics: parsed.dynamics,
+				supportedHorizon: parsed.supportedHorizon,
+				resolvedSteps: parsed.resolvedSteps,
+				taskSkill: parsed.taskSkill,
+				taskRelativePrecision: parsed.taskRelativePrecision,
+			};
+		}
+	}
+
+	const rowEmbedding = (row as { embedding?: unknown }).embedding;
+	const embedding =
+		Array.isArray(rowEmbedding) && rowEmbedding.length >= 2
+			? rowEmbedding
+			: Array.isArray(parsedData.embedding) &&
+					(parsedData.embedding as number[]).length >= 2
+				? parsedData.embedding
+				: (existing.embedding ?? existing.latent ?? []);
+
+	retainedResonance.set(symbol, {
+		...existing,
+		...row,
+		...parsedData,
+		embedding,
+		symbol,
+	});
 };
 
 export const getRetainedResonance = (

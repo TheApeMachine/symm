@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -63,6 +64,7 @@ Reporter publishes real-time telemetry frames through the UI tee off-ramp,
 feeding the Learning Dashboard, ForwardLearningViz, and AgentSkill components.
 */
 type Reporter struct {
+	mu        sync.Mutex
 	arena     *data.ArenaOwner
 	tee       runtime.Tee
 	steps     atomic.Int64
@@ -74,6 +76,13 @@ func NewReporter(arena *data.ArenaOwner, tee runtime.Tee) *Reporter {
 		arena: arena,
 		tee:   tee,
 	}
+}
+
+func (reporter *Reporter) newMeasurement(source string) *data.Measurement[float64] {
+	reporter.mu.Lock()
+	defer reporter.mu.Unlock()
+
+	return reporter.arena.NewMeasurement(source)
 }
 
 /*
@@ -219,7 +228,11 @@ func (reporter *Reporter) Populate(
 			}
 
 			if len(tokenBytes) > 1 {
-				tokenParts = append(tokenParts, fmt.Sprintf("0x%x", tokenBytes))
+				if tokenBytes[0] == 'R' {
+					tokenParts = append(tokenParts, string(tokenBytes))
+				} else {
+					tokenParts = append(tokenParts, fmt.Sprintf("0x%x", tokenBytes))
+				}
 			}
 		}
 	}
@@ -266,7 +279,7 @@ func (reporter *Reporter) Publish(snapshot ReportSnapshot, skill *Skill) {
 		return
 	}
 
-	out := reporter.arena.NewMeasurement(snapshot.Source)
+	out := reporter.newMeasurement(snapshot.Source)
 	reporter.Populate(out, snapshot, skill)
 
 	publication := data.NewPublication(out, nil)
@@ -301,7 +314,7 @@ func (reporter *Reporter) PublishExcursion(
 		quote, hasQuote := quotePrice(measurement)
 
 		if hasQuote {
-			point := reporter.arena.NewMeasurement("training")
+			point := reporter.newMeasurement("training")
 			point.Label = symbol
 			point.SeqIdx = measurement.SeqIdx
 			point.At = measurement.At
@@ -320,7 +333,7 @@ func (reporter *Reporter) PublishExcursion(
 		quote, hasQuote := quotePrice(measurement)
 
 		if hasQuote {
-			point := reporter.arena.NewMeasurement("training")
+			point := reporter.newMeasurement("training")
 			point.Label = symbol
 			point.SeqIdx = measurement.SeqIdx
 			point.At = measurement.At

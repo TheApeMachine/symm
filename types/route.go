@@ -66,23 +66,15 @@ func Filters(measurement *data.Measurement[float64]) bool {
 			return false
 		}
 
-		return isSignal(measurement) || isLogic(measurement, "resonance", "category", "cognition")
+		return isSignal(measurement) || isLogic(measurement, "resonance")
 	case "learning":
-		if isStrategy(measurement, "training") {
-			return true
-		}
-
-		if !isFocus(measurement) {
-			return false
-		}
-
-		return isSignal(measurement) || isLogic(measurement, "resonance", "category", "cognition")
+		return isStrategy(measurement, "training")
 	case "xray":
-		if !isFocus(measurement) {
-			return false
+		if isSignal(measurement, "hawkes") || isLogic(measurement, "cognition") {
+			return isFocus(measurement)
 		}
 
-		return isSignal(measurement, "hawkes") || isLogic(measurement, "resonance")
+		return isLogic(measurement, "resonance")
 	case "fluid":
 		// ManifoldFrame is owned by Hub.ManifoldSource (solver.Reading → EncodeManifold).
 		// Measurement hitchhike of Result.(*ManifoldState) is not the fluid stream.
@@ -103,8 +95,7 @@ func isFocus(measurement *data.Measurement[float64]) bool {
 func isSignal(measurement *data.Measurement[float64], signals ...string) bool {
 	if len(signals) == 0 {
 		switch kernelSource(measurement.Source) {
-		case "websocket",
-			"correlation",
+		case "correlation",
 			"cvd",
 			"depthflow",
 			"derivatives",
@@ -120,9 +111,7 @@ func isSignal(measurement *data.Measurement[float64], signals ...string) bool {
 			return false
 		}
 	}
-	if kernelSource(measurement.Source) == "websocket" {
-		return true
-	}
+
 	return slices.Contains(signals, kernelSource(measurement.Source))
 }
 
@@ -134,10 +123,15 @@ func isLogic(measurement *data.Measurement[float64], solverNames ...string) bool
 }
 
 func isStrategy(measurement *data.Measurement[float64], strategies ...string) bool {
-	if kernelSource(measurement.Source) == "websocket" {
-		return true
-	}
 	return slices.Contains(strategies, kernelSource(measurement.Source))
+}
+
+func isSpot(measurement *data.Measurement[float64]) bool {
+	return kernelSource(measurement.Source) == "spot"
+}
+
+func isFutures(measurement *data.Measurement[float64]) bool {
+	return kernelSource(measurement.Source) == "futures"
 }
 
 func kernelSource(source string) string {

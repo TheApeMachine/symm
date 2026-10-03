@@ -159,8 +159,8 @@ func (detector *Detector) emitTrajectory(
 	entryMeas := measurements[lowIndex]
 	exitMeas := measurements[exhaustIndex]
 
-	entryAsk := entryMeas.GetMetric("ask").Exact
-	exitBid := exitMeas.GetMetric("bid").Exact
+	entryAsk := quoteDecimal(entryMeas, true)
+	exitBid := quoteDecimal(exitMeas, false)
 
 	if entryAsk == nil || exitBid == nil || entryAsk.Sign() <= 0 || exitBid.Sign() <= 0 {
 		return
@@ -177,12 +177,11 @@ func (detector *Detector) emitTrajectory(
 			continue
 		}
 
-		if measurement.Source == "spot:ticker" {
+		if _, hasQuote := quotePrice(measurement); hasQuote {
 			precursorTicks = append(precursorTicks, measurement)
-			continue
+		} else {
+			precursorSignals = append(precursorSignals, measurement)
 		}
-
-		precursorSignals = append(precursorSignals, measurement)
 	}
 
 	var holdingTicks []*data.Measurement[float64]
@@ -193,12 +192,11 @@ func (detector *Detector) emitTrajectory(
 			continue
 		}
 
-		if measurement.Source == "spot:ticker" {
+		if _, hasQuote := quotePrice(measurement); hasQuote {
 			holdingTicks = append(holdingTicks, measurement)
-			continue
+		} else {
+			holdingSignals = append(holdingSignals, measurement)
 		}
-
-		holdingSignals = append(holdingSignals, measurement)
 	}
 
 	if len(precursorSignals) == 0 {
@@ -207,6 +205,14 @@ func (detector *Detector) emitTrajectory(
 
 	if len(holdingSignals) == 0 {
 		holdingSignals = holdingTimeline
+	}
+
+	if len(precursorTicks) == 0 {
+		precursorTicks = precursorTimeline
+	}
+
+	if len(holdingTicks) == 0 {
+		holdingTicks = holdingTimeline
 	}
 
 	detector.queue.Enqueue(Trajectory{
@@ -228,6 +234,14 @@ func quotePrice(measurement *data.Measurement[float64]) (float64, bool) {
 		return priceMetric.Raw, true
 	}
 
+	if limitMetric, ok := measurement.LookupMetric("limit_price"); ok && limitMetric.Raw > 0 {
+		return limitMetric.Raw, true
+	}
+
+	if lastMetric, ok := measurement.LookupMetric("last"); ok && lastMetric.Raw > 0 {
+		return lastMetric.Raw, true
+	}
+
 	bid, hasBid := measurement.LookupMetric("bid")
 	ask, hasAsk := measurement.LookupMetric("ask")
 
@@ -235,5 +249,47 @@ func quotePrice(measurement *data.Measurement[float64]) (float64, bool) {
 		return bid.Exact.Add(ask.Exact).Div(decimal.NewFromInt64(2)).Float64(), true
 	}
 
+	if hasBid && bid.Raw > 0 {
+		return bid.Raw, true
+	}
+
+	if hasAsk && ask.Raw > 0 {
+		return ask.Raw, true
+	}
+
 	return 0, false
+}
+
+func quoteDecimal(measurement *data.Measurement[float64], isAsk bool) *decimal.Decimal {
+	if measurement == nil {
+		return nil
+	}
+
+	if isAsk {
+		if ask, ok := measurement.LookupMetric("ask"); ok && ask.Exact != nil && ask.Exact.Sign() > 0 {
+			return ask.Exact
+		}
+	} else {
+		if bid, ok := measurement.LookupMetric("bid"); ok && bid.Exact != nil && bid.Exact.Sign() > 0 {
+			return bid.Exact
+		}
+	}
+
+	if price, ok := measurement.LookupMetric("price"); ok && price.Exact != nil && price.Exact.Sign() > 0 {
+		return price.Exact
+	}
+
+	if limit, ok := measurement.LookupMetric("limit_price"); ok && limit.Exact != nil && limit.Exact.Sign() > 0 {
+		return limit.Exact
+	}
+
+	if last, ok := measurement.LookupMetric("last"); ok && last.Exact != nil && last.Exact.Sign() > 0 {
+		return last.Exact
+	}
+
+	if rawPrice, ok := quotePrice(measurement); ok && rawPrice > 0 {
+		return decimal.NewFromFloat64(rawPrice)
+	}
+
+	return nil
 }

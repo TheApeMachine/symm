@@ -124,7 +124,7 @@ MF_FN MFCouplingBudget mc_coupling_budget(float heat,float amp,float rate,float 
 #else
 #define MC_ATAN2 std::atan2
 #endif
-struct MFPhaseFlow {float phase,u0,u1,u2,u3,rate;unsigned status;};
+struct MFPhaseFlow {float phase,u0,u1,u2,u3,rate,amplitude;unsigned status;};
 MF_FN float mc_phase_potential(float theta,float real,float imag){return -real*MF_COS(theta)-imag*MF_SIN(theta);}
 // theta_dot=omega-dU/dtheta with unit mobility in declared model units,
 // U=-Re(B exp(-i theta)). Natural rotation is an external drive. The gradient
@@ -133,7 +133,7 @@ MF_FN MFPhaseFlow mc_phase_flow(float theta,float omega,float real,float imag,fl
     MFPhaseFlow out={};
     if(!MF_FINITE(theta)||!MF_FINITE(omega)||!MF_FINITE(real)||!MF_FINITE(imag)||!mf_finite_nonnegative(dt)){out.status=MF_PHYSICS_BAD_STATE;return out;}
     float scale=mf_max(mf_abs(real),mf_abs(imag));
-    float amplitude=scale>0 ? scale*MF_SQRT((real/scale)*(real/scale)+(imag/scale)*(imag/scale)):0;out.rate=mf_abs(omega)+amplitude;
+    float amplitude=scale>0 ? scale*MF_SQRT((real/scale)*(real/scale)+(imag/scale)*(imag/scale)):0;out.rate=mf_abs(omega)+amplitude;out.amplitude=amplitude;
     if(!MF_FINITE(out.rate)){out.status=MF_PHYSICS_BAD_STATE;return out;}
     out.u0=mc_phase_potential(theta,real,imag);
     float mid_theta=mc_wrap(theta+.5f*dt*omega,6.2831853071795864769f);

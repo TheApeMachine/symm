@@ -33,6 +33,12 @@ func TestSanitizeStatement(t *testing.T) {
 	if sanitizeStatement(unchanged) != unchanged {
 		t.Fatalf("sanitizeStatement mutated a valid select")
 	}
+
+	tableAs := "CREATE TABLE memory.view_1 AS (SELECT * FROM tape)"
+	wantView := "CREATE OR REPLACE VIEW memory.view_1 AS (SELECT * FROM tape)"
+	if got := sanitizeStatement(tableAs); got != wantView {
+		t.Fatalf("sanitizeStatement = %q, want %q", got, wantView)
+	}
 }
 
 func TestNested(t *testing.T) {

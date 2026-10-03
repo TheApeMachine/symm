@@ -120,6 +120,7 @@ export class FluidScene {
 		private readonly container: HTMLElement,
 		private readonly onSelect: (particle: FluidParticle | null) => void,
 		private readonly onError?: (error: Error) => void,
+		private readonly onCurrentPeak?: (peak: number) => void,
 	) {
 		if (navigator.gpu === undefined) {
 			throw new Error("WebGPU is required for the fluid manifold inspector");
@@ -140,7 +141,10 @@ export class FluidScene {
 		this.queuedFields = fields;
 		this.fields?.update(fields);
 		this.particles?.setGridSpacing(fields.grid.spacing);
-		this.current?.update(fields);
+		if (this.current !== null) {
+			const peak = this.current.update(fields);
+			this.onCurrentPeak?.(peak);
+		}
 		this.invalidate();
 	}
 
@@ -212,7 +216,8 @@ export class FluidScene {
 			if (this.queuedFields !== null) {
 				this.fields.update(this.queuedFields);
 				this.particles.setGridSpacing(this.queuedFields.grid.spacing);
-				this.current.update(this.queuedFields);
+				const peak = this.current.update(this.queuedFields);
+				this.onCurrentPeak?.(peak);
 			}
 
 			if (this.queuedParticles !== null) {
@@ -394,7 +399,7 @@ export class FluidScene {
 		});
 		fields.encode(pass);
 		particles.encode(pass);
-		this.current?.stepAndEncode(pass);
+		this.current?.encode(pass);
 
 		if (
 			this.boundaryPipeline !== null &&

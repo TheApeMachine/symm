@@ -2,19 +2,16 @@ package manifold
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"math"
 	goruntime "runtime"
 	"slices"
 	"sort"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/physics/sensorium"
@@ -57,7 +54,7 @@ type Solver struct {
 	forcing     sync.Map
 	wake        chan struct{}
 	dirty       sync.Map
-	loaded      map[int64]struct{}
+	loaded      map[int64]string
 	reading     atomic.Pointer[State]
 	version     atomic.Uint64
 }
@@ -103,7 +100,7 @@ func NewSolver(ctx context.Context, arena *data.ArenaOwner, book *broker.Book) *
 		arena:   arena,
 		book:    book,
 		dataset: NewDataset(),
-		loaded:  make(map[int64]struct{}),
+		loaded:  make(map[int64]string),
 		wake:    make(chan struct{}, 1),
 		physics: sensorium.NewManifold(
 			system.Cfg.Manifold.Grid.X,
@@ -163,13 +160,6 @@ costs resolution — more messages fold into one advance — never latency on th
 market pipeline and never an unbounded backlog.
 */
 func (solver *Solver) run() {
-	pause := time.NewTimer(0)
-
-	if !pause.Stop() {
-		<-pause.C
-	}
-	defer pause.Stop()
-
 	ticker := time.NewTicker(33 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -181,35 +171,9 @@ func (solver *Solver) run() {
 		case <-ticker.C:
 		}
 
-		started := time.Now()
+		// Advance is synchronous. Once it returns the GPU work is complete;
+		// a wake received during that work remains queued for the next pass.
 		solver.Advance()
-		spent := time.Since(started)
-
-		// A wake that arrived during the step is work still pending. Put it
-		// back and wait the duration the GPU actually occupied so the next
-		// field step cannot start before the previous one finished. An empty
-		// step already saw the books — dropping the extra wake avoids a
-		// tight loop. An idle stream waits on the next semaphore.
-		select {
-		case <-solver.wake:
-			if spent <= 0 {
-				continue
-			}
-
-			select {
-			case solver.wake <- struct{}{}:
-			default:
-			}
-
-			pause.Reset(spent)
-
-			select {
-			case <-solver.Context().Done():
-				return
-			case <-pause.C:
-			}
-		default:
-		}
 	}
 }
 
@@ -381,7 +345,10 @@ func (solver *Solver) project() (departures []int64, batch *sensorium.State) {
 		return nil, nil
 	}
 
-	seen := make(map[int64]struct{}, len(solver.loaded))
+	seen := make(map[int64]string, len(solver.loaded))
+	for contentID, symbol := range solver.loaded {
+		seen[contentID] = symbol
+	}
 	states := make([]*sensorium.State, 0, len(solver.loaded))
 
 	dirtySymbols := make([]string, 0)
@@ -408,6 +375,11 @@ func (solver *Solver) project() (departures []int64, batch *sensorium.State) {
 	}
 
 	for _, symbol := range dirtySymbols {
+		for contentID, residentSymbol := range seen {
+			if residentSymbol == symbol {
+				delete(seen, contentID)
+			}
+		}
 		var forcingVal forcingState
 		if f, ok := solver.forcing.Load(symbol); ok {
 			forcingVal, _ = f.(forcingState)
@@ -424,7 +396,7 @@ func (solver *Solver) project() (departures []int64, batch *sensorium.State) {
 				}
 
 				if len(state.ContentIDs) > 0 {
-					seen[state.ContentIDs[0]] = struct{}{}
+					seen[state.ContentIDs[0]] = symbol
 				}
 				states = append(states, state)
 			}
@@ -517,17 +489,17 @@ covers. It is the run loop's body, exported so a test can drive the advance
 deterministically instead of waiting on the goroutine.
 */
 func (solver *Solver) Advance() {
+	if !solver.isAdvancing.CompareAndSwap(false, true) {
+		return
+	}
+	defer solver.isAdvancing.Store(false)
+
 	departures, batch := solver.project()
 
 	if err := solver.dataset.Error(); err != nil {
 		solver.Error(err)
 		return
 	}
-
-	if !solver.isAdvancing.CompareAndSwap(false, true) {
-		return
-	}
-	defer solver.isAdvancing.Store(false)
 
 	_, err := solver.physics.Remove(departures)
 
@@ -544,21 +516,6 @@ func (solver *Solver) Advance() {
 	state, err := solver.physics.Step(batch)
 
 	if err != nil {
-		// RemapConservative status=2 (and other numerical PIC retries) must not
-		// take manifold READY→ERROR and kill training at boot. Soft-fail: keep
-		// READY, skip this advance, try again on the next wake.
-		var numerical *sensorium.CoupledStepError
-		if errors.As(err, &numerical) && numerical.Retry {
-			errnie.Warn("[manifold] numerical physics step skipped: " + err.Error())
-			return
-		}
-		msg := err.Error()
-		if strings.Contains(msg, "physics status=2") ||
-			strings.Contains(msg, "RemapConservative") ||
-			strings.Contains(msg, "PIC gather") {
-			errnie.Warn("[manifold] soft-failing PIC remap: " + msg)
-			return
-		}
 		solver.Error(err)
 		return
 	}

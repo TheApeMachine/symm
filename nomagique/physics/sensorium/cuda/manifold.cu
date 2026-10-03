@@ -2229,11 +2229,9 @@ __device__ __forceinline__ float resonance_from_freq(float omega_i, float omega_
 // Kernel: Project ω-modes into a spatial complex field Ψ(x)
 // -----------------------------------------------------------------------------
 //
-// For each mode k, we splat its complex coefficient Ψ_k into position space at
-// its spatial anchors. This gives us a coarse Ψ(x) that can guide particle motion.
-//
-// NOTE: This intentionally ignores any separate "carrier" notion — it is a direct
-// position-space reconstruction from anchored coefficients.
+// Reconstruct each cell from anchored mode coefficients using the same
+// periodic thermal overlap as the oscillator coupling. The cold limit is
+// uniform; destructive interference remains a genuine wave node.
 
 __global__ void project_modes_to_spatial_psi(
     const float* mode_psi_real,
@@ -2245,115 +2243,8 @@ __global__ void project_modes_to_spatial_psi(
     float* psi_im_field,
     ModeProjectParams  p
 ) {
-    const uint gid = blockIdx.x * blockDim.x + threadIdx.x;
-
-    uint total = p.num_modes * p.anchors_per_mode;
-    if (gid >= total) return;
-
-    uint mode = gid / p.anchors_per_mode;
-    uint a    = gid - mode * p.anchors_per_mode;
-
-    uint anchor = mode_anchor_idx[mode * p.anchors_per_mode + a];
-    if (anchor == 0xFFFFFFFFu || anchor >= p.num_particles) return;
-
-    float w = mode_anchor_weight[mode * p.anchors_per_mode + a];
-    if (!(w > 0.0f)) return;
-
-    float re = mode_psi_real[mode] * w;
-    float im = mode_psi_imag[mode] * w;
-
-    float3 pos = make_float3(
-        particle_pos[anchor * 3 + 0],
-        particle_pos[anchor * 3 + 1],
-        particle_pos[anchor * 3 + 2]
-    );
-
-    // CIC splat onto the spatial grid (periodic).
-    float3 g = pos * p.inv_grid_spacing;
-
-    int ix0 = (int)floor_value(g.x);
-    int iy0 = (int)floor_value(g.y);
-    int iz0 = (int)floor_value(g.z);
-
-    float fx = g.x - (float)ix0;
-    float fy = g.y - (float)iy0;
-    float fz = g.z - (float)iz0;
-
-    int ix1 = ix0 + 1;
-    int iy1 = iy0 + 1;
-    int iz1 = iz0 + 1;
-
-    ix0 = wrap_i32(ix0, (int)p.grid_x);
-    iy0 = wrap_i32(iy0, (int)p.grid_y);
-    iz0 = wrap_i32(iz0, (int)p.grid_z);
-
-    ix1 = wrap_i32(ix1, (int)p.grid_x);
-    iy1 = wrap_i32(iy1, (int)p.grid_y);
-    iz1 = wrap_i32(iz1, (int)p.grid_z);
-
-    float wx0 = 1.0f - fx;
-    float wy0 = 1.0f - fy;
-    float wz0 = 1.0f - fz;
-
-    float wx1 = fx;
-    float wy1 = fy;
-    float wz1 = fz;
-
-    // IMPORTANT: use the same z-fastest / x-major flattening convention used by
-    // sample_field_trilinear(): idx = x*(gy*gz) + y*gz + z. A different flattening
-    // convention here writes Ψ into a permuted field and corrupts pilot-wave guidance.
-    uint gy = p.grid_y;
-    uint gz = p.grid_z;
-    uint stride_z = 1u;
-    uint stride_y = gz;
-    uint stride_x = gy * gz;
-
-    auto idx3 = [&](uint x, uint y, uint z) -> uint {
-        return x * stride_x + y * stride_y + z * stride_z;
-    };
-
-    uint i000 = idx3((uint)ix0, (uint)iy0, (uint)iz0);
-    uint i100 = idx3((uint)ix1, (uint)iy0, (uint)iz0);
-    uint i010 = idx3((uint)ix0, (uint)iy1, (uint)iz0);
-    uint i110 = idx3((uint)ix1, (uint)iy1, (uint)iz0);
-    uint i001 = idx3((uint)ix0, (uint)iy0, (uint)iz1);
-    uint i101 = idx3((uint)ix1, (uint)iy0, (uint)iz1);
-    uint i011 = idx3((uint)ix0, (uint)iy1, (uint)iz1);
-    uint i111 = idx3((uint)ix1, (uint)iy1, (uint)iz1);
-
-    float w000 = wx0 * wy0 * wz0;
-    float w100 = wx1 * wy0 * wz0;
-    float w010 = wx0 * wy1 * wz0;
-    float w110 = wx1 * wy1 * wz0;
-    float w001 = wx0 * wy0 * wz1;
-    float w101 = wx1 * wy0 * wz1;
-    float w011 = wx0 * wy1 * wz1;
-    float w111 = wx1 * wy1 * wz1;
-
-    atomicAdd(&psi_re_field[i000], re * w000);
-    atomicAdd(&psi_im_field[i000], im * w000);
-
-    atomicAdd(&psi_re_field[i100], re * w100);
-    atomicAdd(&psi_im_field[i100], im * w100);
-
-    atomicAdd(&psi_re_field[i010], re * w010);
-    atomicAdd(&psi_im_field[i010], im * w010);
-
-    atomicAdd(&psi_re_field[i110], re * w110);
-    atomicAdd(&psi_im_field[i110], im * w110);
-
-    atomicAdd(&psi_re_field[i001], re * w001);
-    atomicAdd(&psi_im_field[i001], im * w001);
-
-    atomicAdd(&psi_re_field[i101], re * w101);
-    atomicAdd(&psi_im_field[i101], im * w101);
-
-    atomicAdd(&psi_re_field[i011], re * w011);
-    atomicAdd(&psi_im_field[i011], im * w011);
-
-    atomicAdd(&psi_re_field[i111], re * w111);
-    atomicAdd(&psi_im_field[i111], im * w111);
-
+unsigned gid=blockIdx.x*blockDim.x+threadIdx.x;
+#include "../shared/mode_projection.inc"
 }
 
 // -----------------------------------------------------------------------------
@@ -2713,7 +2604,7 @@ __global__ void coherence_update_oscillator_phases(
 
     MFPhaseFlow flow=mc_phase_flow(phi,omega_i,p.coupling_scale*field_real,p.coupling_scale*field_imag,p.dt);
     particle_phase[gid]=flow.status?qnan_f():flow.phase;
-    float values[6]={flow.u0,flow.u1,flow.u2,flow.u3,flow.rate,flow.phase};
+    float values[6]={flow.u0,flow.u1,flow.u2,flow.u3,flow.rate,flow.amplitude};
     for(uint j=0;j<6;++j)phase_ledger[6*gid+j]=flow.status?qnan_f():values[j];
 }
 

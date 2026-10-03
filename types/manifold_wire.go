@@ -2,231 +2,146 @@ package types
 
 import (
 	flatbuffers "github.com/google/flatbuffers/go"
+	"github.com/theapemachine/symm/nomagique/physics/sensorium"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 )
 
+/* EncodeManifold serializes one immutable published state, including its physics diagnostics. */
 func EncodeManifold(manifold *ManifoldState) ([]byte, error) {
 	if manifold == nil || manifold.State == nil {
 		return nil, nil
 	}
-
 	builder := measurementsBuilderPool.Get().(*flatbuffers.Builder)
 	builder.Reset()
 	defer measurementsBuilderPool.Put(builder)
-
 	state := manifold.State
-
-	// Create vectors
-	var bytesOffset, seqsOffset, tokenIdsOffset, contentIdsOffset flatbuffers.UOffsetT
-	var phaseOffset, omegaOffset, energyOffset, massOffset, heatOffset, ampOffset flatbuffers.UOffsetT
-	var posOffset, velOffset flatbuffers.UOffsetT
-	var clampedOffset, darkOffset flatbuffers.UOffsetT
-
-	// Float32 vectors
-	if len(state.Phase) > 0 {
-		wire.ManifoldFrameStartPhaseVector(builder, len(state.Phase))
-		for i := len(state.Phase) - 1; i >= 0; i-- {
-			builder.PrependFloat32(state.Phase[i])
-		}
-		phaseOffset = builder.EndVector(len(state.Phase))
+	reading := manifold.Reading
+	frame := &wire.ManifoldFrameT{
+		Sequence:      manifold.Version,
+		At:            manifold.At.UnixNano(),
+		Version:       manifold.Version,
+		N:             int64(state.N),
+		Bytes:         state.Bytes,
+		Seqs:          state.Seqs,
+		TokenIds:      state.TokenIDs,
+		ContentIds:    state.ContentIDs,
+		Phase:         state.Phase,
+		Omega:         state.Omega,
+		Energy:        state.Energy,
+		Mass:          state.Mass,
+		Heat:          state.Heat,
+		Amp:           state.Amp,
+		Pos:           state.Pos,
+		Vel:           state.Vel,
+		Clamped:       state.Clamped,
+		Dark:          state.Dark,
+		GridX:         int32(manifold.GridX),
+		GridY:         int32(manifold.GridY),
+		GridZ:         int32(manifold.GridZ),
+		GridSpacing:   manifold.GridSpacing,
+		MomRho:        manifold.MomRho,
+		FieldEnergy:   manifold.FieldEnergy,
+		WaveReal:      manifold.WaveReal,
+		WaveImag:      manifold.WaveImag,
+		DensityScale:  manifold.DensityScale,
+		MomentumScale: manifold.MomentumScale,
+		EnergyScale:   manifold.EnergyScale,
+		WaveScale:     manifold.WaveScale,
+		Reading: &wire.ManifoldReadingT{
+			Divergence:       reading.Divergence,
+			GuidanceSpeed:    reading.GuidanceSpeed,
+			CoherenceMag2:    reading.CoherenceMag2,
+			PressureGradNorm: reading.PressureGradNorm,
+			ViscosityProxy:   reading.ViscosityProxy,
+			KuramotoR:        reading.KuramotoR,
+			KuramotoPsi:      reading.KuramotoPsi,
+			Health:           encodePhysicsHealth(reading.Health),
+		},
+		Modes:      make([]*wire.WaveModeT, len(manifold.Modes)),
+		Resultants: make([]*wire.PhaseResultantT, len(manifold.Resultants)),
 	}
-
-	if len(state.Omega) > 0 {
-		wire.ManifoldFrameStartOmegaVector(builder, len(state.Omega))
-		for i := len(state.Omega) - 1; i >= 0; i-- {
-			builder.PrependFloat32(state.Omega[i])
-		}
-		omegaOffset = builder.EndVector(len(state.Omega))
+	for index, mode := range manifold.Modes {
+		frame.Modes[index] = &wire.WaveModeT{Omega: mode.Omega, Real: mode.Real, Imaginary: mode.Imag, Linewidth: mode.Linewidth}
 	}
-
-	if len(state.Energy) > 0 {
-		wire.ManifoldFrameStartEnergyVector(builder, len(state.Energy))
-		for i := len(state.Energy) - 1; i >= 0; i-- {
-			builder.PrependFloat32(state.Energy[i])
-		}
-		energyOffset = builder.EndVector(len(state.Energy))
+	for index, resultant := range manifold.Resultants {
+		frame.Resultants[index] = &wire.PhaseResultantT{Side: resultant.Side, Count: int32(resultant.Count), TotalAmplitude: resultant.TotalAmplitude, Coherence: resultant.Coherence, Phase: resultant.Phase}
 	}
-
-	if len(state.Mass) > 0 {
-		wire.ManifoldFrameStartMassVector(builder, len(state.Mass))
-		for i := len(state.Mass) - 1; i >= 0; i-- {
-			builder.PrependFloat32(state.Mass[i])
-		}
-		massOffset = builder.EndVector(len(state.Mass))
-	}
-
-	if len(state.Heat) > 0 {
-		wire.ManifoldFrameStartHeatVector(builder, len(state.Heat))
-		for i := len(state.Heat) - 1; i >= 0; i-- {
-			builder.PrependFloat32(state.Heat[i])
-		}
-		heatOffset = builder.EndVector(len(state.Heat))
-	}
-
-	if len(state.Amp) > 0 {
-		wire.ManifoldFrameStartAmpVector(builder, len(state.Amp))
-		for i := len(state.Amp) - 1; i >= 0; i-- {
-			builder.PrependFloat32(state.Amp[i])
-		}
-		ampOffset = builder.EndVector(len(state.Amp))
-	}
-
-	if len(state.Pos) > 0 {
-		wire.ManifoldFrameStartPosVector(builder, len(state.Pos))
-		for i := len(state.Pos) - 1; i >= 0; i-- {
-			builder.PrependFloat32(state.Pos[i])
-		}
-		posOffset = builder.EndVector(len(state.Pos))
-	}
-
-	if len(state.Vel) > 0 {
-		wire.ManifoldFrameStartVelVector(builder, len(state.Vel))
-		for i := len(state.Vel) - 1; i >= 0; i-- {
-			builder.PrependFloat32(state.Vel[i])
-		}
-		velOffset = builder.EndVector(len(state.Vel))
-	}
-
-	// Int64 vectors
-	if len(state.Bytes) > 0 {
-		wire.ManifoldFrameStartBytesVector(builder, len(state.Bytes))
-		for i := len(state.Bytes) - 1; i >= 0; i-- {
-			builder.PrependInt64(state.Bytes[i])
-		}
-		bytesOffset = builder.EndVector(len(state.Bytes))
-	}
-
-	if len(state.Seqs) > 0 {
-		wire.ManifoldFrameStartSeqsVector(builder, len(state.Seqs))
-		for i := len(state.Seqs) - 1; i >= 0; i-- {
-			builder.PrependInt64(state.Seqs[i])
-		}
-		seqsOffset = builder.EndVector(len(state.Seqs))
-	}
-
-	if len(state.TokenIDs) > 0 {
-		wire.ManifoldFrameStartTokenIdsVector(builder, len(state.TokenIDs))
-		for i := len(state.TokenIDs) - 1; i >= 0; i-- {
-			builder.PrependInt64(state.TokenIDs[i])
-		}
-		tokenIdsOffset = builder.EndVector(len(state.TokenIDs))
-	}
-
-	if len(state.ContentIDs) > 0 {
-		wire.ManifoldFrameStartContentIdsVector(builder, len(state.ContentIDs))
-		for i := len(state.ContentIDs) - 1; i >= 0; i-- {
-			builder.PrependInt64(state.ContentIDs[i])
-		}
-		contentIdsOffset = builder.EndVector(len(state.ContentIDs))
-	}
-
-	// Bool vectors
-	if len(state.Clamped) > 0 {
-		wire.ManifoldFrameStartClampedVector(builder, len(state.Clamped))
-		for i := len(state.Clamped) - 1; i >= 0; i-- {
-			builder.PrependBool(state.Clamped[i])
-		}
-		clampedOffset = builder.EndVector(len(state.Clamped))
-	}
-
-	if len(state.Dark) > 0 {
-		wire.ManifoldFrameStartDarkVector(builder, len(state.Dark))
-		for i := len(state.Dark) - 1; i >= 0; i-- {
-			builder.PrependBool(state.Dark[i])
-		}
-		darkOffset = builder.EndVector(len(state.Dark))
-	}
-	
-	// Create ManifoldReading
-	wire.ManifoldReadingStart(builder)
-	wire.ManifoldReadingAddDivergence(builder, manifold.Reading.Divergence)
-	wire.ManifoldReadingAddGuidanceSpeed(builder, manifold.Reading.GuidanceSpeed)
-	wire.ManifoldReadingAddCoherenceMag2(builder, manifold.Reading.CoherenceMag2)
-	wire.ManifoldReadingAddPressureGradNorm(builder, manifold.Reading.PressureGradNorm)
-	wire.ManifoldReadingAddViscosityProxy(builder, manifold.Reading.ViscosityProxy)
-	wire.ManifoldReadingAddKuramotoR(builder, manifold.Reading.KuramotoR)
-	wire.ManifoldReadingAddKuramotoPsi(builder, manifold.Reading.KuramotoPsi)
-	readingOffset := wire.ManifoldReadingEnd(builder)
-
-	// Fields
-	var momRhoOffset, fieldEnergyOffset, waveRealOffset, waveImagOffset flatbuffers.UOffsetT
-
-	if len(manifold.MomRho) > 0 {
-		wire.ManifoldFrameStartMomRhoVector(builder, len(manifold.MomRho))
-		for i := len(manifold.MomRho) - 1; i >= 0; i-- {
-			builder.PrependFloat32(manifold.MomRho[i])
-		}
-		momRhoOffset = builder.EndVector(len(manifold.MomRho))
-	}
-
-	if len(manifold.FieldEnergy) > 0 {
-		wire.ManifoldFrameStartFieldEnergyVector(builder, len(manifold.FieldEnergy))
-		for i := len(manifold.FieldEnergy) - 1; i >= 0; i-- {
-			builder.PrependFloat32(manifold.FieldEnergy[i])
-		}
-		fieldEnergyOffset = builder.EndVector(len(manifold.FieldEnergy))
-	}
-
-	if len(manifold.WaveReal) > 0 {
-		wire.ManifoldFrameStartWaveRealVector(builder, len(manifold.WaveReal))
-		for i := len(manifold.WaveReal) - 1; i >= 0; i-- {
-			builder.PrependFloat32(manifold.WaveReal[i])
-		}
-		waveRealOffset = builder.EndVector(len(manifold.WaveReal))
-	}
-
-	if len(manifold.WaveImag) > 0 {
-		wire.ManifoldFrameStartWaveImagVector(builder, len(manifold.WaveImag))
-		for i := len(manifold.WaveImag) - 1; i >= 0; i-- {
-			builder.PrependFloat32(manifold.WaveImag[i])
-		}
-		waveImagOffset = builder.EndVector(len(manifold.WaveImag))
-	}
-	
-	wire.ManifoldFrameStart(builder)
-	wire.ManifoldFrameAddAt(builder, manifold.At.UnixNano())
-	wire.ManifoldFrameAddVersion(builder, manifold.Version)
-	wire.ManifoldFrameAddN(builder, int64(state.N))
-	
-	wire.ManifoldFrameAddBytes(builder, bytesOffset)
-	wire.ManifoldFrameAddSeqs(builder, seqsOffset)
-	wire.ManifoldFrameAddTokenIds(builder, tokenIdsOffset)
-	wire.ManifoldFrameAddContentIds(builder, contentIdsOffset)
-	wire.ManifoldFrameAddPhase(builder, phaseOffset)
-	wire.ManifoldFrameAddOmega(builder, omegaOffset)
-	wire.ManifoldFrameAddEnergy(builder, energyOffset)
-	wire.ManifoldFrameAddMass(builder, massOffset)
-	wire.ManifoldFrameAddHeat(builder, heatOffset)
-	wire.ManifoldFrameAddAmp(builder, ampOffset)
-	wire.ManifoldFrameAddPos(builder, posOffset)
-	wire.ManifoldFrameAddVel(builder, velOffset)
-	wire.ManifoldFrameAddClamped(builder, clampedOffset)
-	wire.ManifoldFrameAddDark(builder, darkOffset)
-	wire.ManifoldFrameAddReading(builder, readingOffset)
-	
-	wire.ManifoldFrameAddGridX(builder, int32(manifold.GridX))
-	wire.ManifoldFrameAddGridY(builder, int32(manifold.GridY))
-	wire.ManifoldFrameAddGridZ(builder, int32(manifold.GridZ))
-	wire.ManifoldFrameAddGridSpacing(builder, manifold.GridSpacing)
-	
-	wire.ManifoldFrameAddMomRho(builder, momRhoOffset)
-	wire.ManifoldFrameAddFieldEnergy(builder, fieldEnergyOffset)
-	wire.ManifoldFrameAddWaveReal(builder, waveRealOffset)
-	wire.ManifoldFrameAddWaveImag(builder, waveImagOffset)
-	
-	wire.ManifoldFrameAddDensityScale(builder, manifold.DensityScale)
-	wire.ManifoldFrameAddMomentumScale(builder, manifold.MomentumScale)
-	wire.ManifoldFrameAddEnergyScale(builder, manifold.EnergyScale)
-	wire.ManifoldFrameAddWaveScale(builder, manifold.WaveScale)
-
-	manifoldOffset := wire.ManifoldFrameEnd(builder)
-	
+	offset := frame.Pack(builder)
 	wire.MessageStart(builder)
 	wire.MessageAddFrameType(builder, wire.FrameManifoldFrame)
-	wire.MessageAddFrame(builder, manifoldOffset)
-	msgOffset := wire.MessageEnd(builder)
-	
-	builder.FinishWithFileIdentifier(msgOffset, []byte("SYMM"))
+	wire.MessageAddFrame(builder, offset)
+	message := wire.MessageEnd(builder)
+	builder.FinishWithFileIdentifier(message, []byte("SYMM"))
+	return append([]byte(nil), builder.FinishedBytes()...), nil
+}
 
-	return append([]byte{}, builder.FinishedBytes()...), nil
+func encodePhysicsHealth(health sensorium.PhysicsHealth) *wire.PhysicsHealthT {
+	return &wire.PhysicsHealthT{
+		Integrator: &wire.IntegratorHealthT{
+			ContactDt:    health.Integrator.ContactDT,
+			RequestedDt:  health.Integrator.RequestedDT,
+			TargetDt:     health.Integrator.TargetDT,
+			AcceptedDt:   health.Integrator.AcceptedDT,
+			LastDt:       health.Integrator.LastDT,
+			MinDt:        health.Integrator.MinDT,
+			Time:         health.Integrator.Time,
+			HyperbolicDt: health.Integrator.HyperbolicDT,
+			ViscousDt:    health.Integrator.ViscousDT,
+			ThermalDt:    health.Integrator.ThermalDT,
+			ParticleDt:   health.Integrator.ParticleDT,
+			PhaseDt:      health.Integrator.PhaseDT,
+			CombinedDt:   health.Integrator.CombinedDT,
+			Substeps:     int32(health.Integrator.Substeps),
+			Rejections:   int32(health.Integrator.Rejections),
+		},
+		Gas: &wire.GasHealthT{
+			Mass:           health.Gas.Mass,
+			Internal:       health.Gas.Internal,
+			Kinetic:        health.Gas.Kinetic,
+			Total:          health.Gas.Total,
+			Momentum:       health.Gas.Momentum[:],
+			MinDensity:     health.Gas.MinDensity,
+			MinPressure:    health.Gas.MinPressure,
+			MinTemperature: health.Gas.MinTemperature,
+			MaxSpeed:       health.Gas.MaxSpeed,
+			MaxSound:       health.Gas.MaxSound,
+			MaxMach:        health.Gas.MaxMach,
+			VorticityRms:   health.Gas.VorticityRMS,
+			VorticityMax:   health.Gas.VorticityMax,
+			StrainRms:      health.Gas.StrainRMS,
+			StrainMax:      health.Gas.StrainMax,
+			ViscousPower:   health.Gas.ViscousPower,
+		},
+		Wave: &wire.WaveHealthT{
+			Norm:           health.Wave.Norm,
+			Kinetic:        health.Wave.Kinetic,
+			Potential:      health.Wave.Potential,
+			Nonlinear:      health.Wave.Nonlinear,
+			Chemical:       health.Wave.Chemical,
+			ProjectedNorm:  health.Wave.ProjectedNorm,
+			PhasePotential: health.Wave.PhasePotential,
+		},
+		Pilot: &wire.PilotHealthT{
+			DensityP01:          health.Pilot.DensityP01,
+			DensityP10:          health.Pilot.DensityP10,
+			DensityMedian:       health.Pilot.DensityMedian,
+			IntegrationErrorMax: health.Pilot.IntegrationErrorMax,
+			SpeedRms:            health.Pilot.SpeedRMS,
+			SpeedMax:            health.Pilot.SpeedMax,
+			DisplacementRms:     health.Pilot.DisplacementRMS,
+			DisplacementMax:     health.Pilot.DisplacementMax,
+			MinDensity:          health.Pilot.MinDensity,
+		},
+		Sources: &wire.SourceLedgerT{
+			GasEnergyResidual:        health.Sources.GasEnergyResidual,
+			ConservativeWaveError:    health.Sources.ConservativeWaveError,
+			PicDepositEnergyResidual: health.Sources.PICDepositEnergyResidual,
+			ParticleBalanceResidual:  health.Sources.ParticleBalanceResidual,
+			GravityBalanceResidual:   health.Sources.GravityBalanceResidual,
+		},
+		ParticleThermal:       health.ParticleThermal,
+		ParticleOscillator:    health.ParticleOscillator,
+		ParticleKinetic:       health.ParticleKinetic,
+		ParticleMaterialTotal: health.ParticleMaterialTotal,
+	}
 }

@@ -127,10 +127,10 @@ static bool mc_launch_mc_remap_rows(ManifoldContext* ctx, ManifoldBuffer* state,
     k.set_bytes(p,6);
     k.set_bytes(width,7);
     k.set_bytes(mass_scale,8);
-    k.dispatch_1d(p.n);
+    k.dispatch_1d(int64_t(p.n)*k.pso.threadExecutionWidth);
     k.buffer_barrier();return true;
 }
-static bool mc_launch_mc_remap_columns(ManifoldContext* ctx, ManifoldBuffer* state, ManifoldBuffer* pos, ManifoldBuffer* mass, ManifoldBuffer* rows, ManifoldBuffer* columns, ManifoldBuffer* status, unsigned particles, MFHydroParamsV2 p, float width) {
+static bool mc_launch_mc_remap_columns(ManifoldContext* ctx, ManifoldBuffer* state, ManifoldBuffer* pos, ManifoldBuffer* mass, ManifoldBuffer* rows, ManifoldBuffer* columns, ManifoldBuffer* status, unsigned particles, MFHydroParamsV2 p, float width, ManifoldBuffer* active, unsigned active_count) {
     KernelDispatch k(ctx,"mc_remap_columns");if(!k.pso)return false;k.buffer_barrier();
     k.set_buffer(state,0);
     k.set_buffer(pos,1);
@@ -141,7 +141,9 @@ static bool mc_launch_mc_remap_columns(ManifoldContext* ctx, ManifoldBuffer* sta
     k.set_bytes(particles,6);
     k.set_bytes(p,7);
     k.set_bytes(width,8);
-    k.dispatch_1d(particles);
+    k.set_buffer(active,9);
+    k.set_bytes(active_count,10);
+    k.dispatch_1d(int64_t(particles)*k.pso.threadExecutionWidth);
     k.buffer_barrier();return true;
 }
 static bool mc_launch_mc_remap_residual(ManifoldContext* ctx, ManifoldBuffer* state, ManifoldBuffer* pos, ManifoldBuffer* rows, ManifoldBuffer* columns, ManifoldBuffer* residual, ManifoldBuffer* status, unsigned particles, MFHydroParamsV2 p, float width, float mass_scale) {
@@ -156,10 +158,10 @@ static bool mc_launch_mc_remap_residual(ManifoldContext* ctx, ManifoldBuffer* st
     k.set_bytes(p,7);
     k.set_bytes(width,8);
     k.set_bytes(mass_scale,9);
-    k.dispatch_1d(p.n);
+    k.dispatch_1d(int64_t(p.n)*k.pso.threadExecutionWidth);
     k.buffer_barrier();return true;
 }
-static bool mc_launch_mc_remap_gather(ManifoldContext* ctx, ManifoldBuffer* state, ManifoldBuffer* pos, ManifoldBuffer* mass, ManifoldBuffer* rows, ManifoldBuffer* velocity, ManifoldBuffer* heat, ManifoldBuffer* total, ManifoldBuffer* mixing, ManifoldBuffer* status, unsigned particles, MFHydroParamsV2 p, float width, float mass_scale) {
+static bool mc_launch_mc_remap_gather(ManifoldContext* ctx, ManifoldBuffer* state, ManifoldBuffer* pos, ManifoldBuffer* mass, ManifoldBuffer* rows, ManifoldBuffer* velocity, ManifoldBuffer* heat, ManifoldBuffer* total, ManifoldBuffer* mixing, ManifoldBuffer* status, unsigned particles, MFHydroParamsV2 p, float width, float mass_scale, ManifoldBuffer* active, unsigned active_count) {
     KernelDispatch k(ctx,"mc_remap_gather");if(!k.pso)return false;k.buffer_barrier();
     k.set_buffer(state,0);
     k.set_buffer(pos,1);
@@ -174,6 +176,8 @@ static bool mc_launch_mc_remap_gather(ManifoldContext* ctx, ManifoldBuffer* stat
     k.set_bytes(p,10);
     k.set_bytes(width,11);
     k.set_bytes(mass_scale,12);
+    k.set_buffer(active,13);
+    k.set_bytes(active_count,14);
     k.dispatch_1d(particles);
     k.buffer_barrier();return true;
 }

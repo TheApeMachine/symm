@@ -14,8 +14,6 @@ const (
 	airGamma      = 1.4
 	gridViscosity = 1e-4
 	airPrandtl    = 0.71
-	floorDensity  = 1e-3
-	floorPressure = 1e-3
 	dtMax         = 0.015
 
 	// dbgWordsPerEvent mirrors DBG_WORDS_PER_EVENT in manifold.metal: each
@@ -31,13 +29,13 @@ const (
 )
 
 type workspaceGrid struct {
-	GridX, GridY, GridZ        int
-	DomainX, DomainY, DomainZ  float64
-	DeltaT                     float64
-	MaxModes                   int
-	Gamma, CV, RSpecific       float64
-	RhoMin, PMin, Mu, KThermal float64
-	OmegaMin, OmegaMax         float64
+	GridX, GridY, GridZ       int
+	DomainX, DomainY, DomainZ float64
+	DeltaT                    float64
+	MaxModes                  int
+	Gamma, CV, RSpecific      float64
+	Mu, KThermal              float64
+	OmegaMin, OmegaMax        float64
 }
 
 func derivedModes(maximumAxis int) int {
@@ -79,8 +77,6 @@ func newWorkspaceGrid(gx, gy, gz int) workspaceGrid {
 		Gamma:     gamma,
 		CV:        1,
 		RSpecific: rSpecific,
-		RhoMin:    floorDensity,
-		PMin:      floorPressure,
 		Mu:        gridViscosity,
 		KThermal:  gridViscosity * gamma / airPrandtl,
 		OmegaMin:  -4,

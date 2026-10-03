@@ -166,7 +166,7 @@ const fieldBindGroupLayout = (gpu: FluidGPU) =>
 		],
 	});
 
-const pipeline = (gpu: FluidGPU, layout: GPUBindGroupLayout, code: string) =>
+const pipeline = (gpu: FluidGPU, layout: GPUBindGroupLayout, code: string, cullMode: GPUCullMode) =>
 	gpu.device.createRenderPipeline({
 		layout: gpu.device.createPipelineLayout({ bindGroupLayouts: [layout] }),
 		vertex: {
@@ -187,7 +187,7 @@ const pipeline = (gpu: FluidGPU, layout: GPUBindGroupLayout, code: string) =>
 					format: gpu.format,
 					blend: {
 						color: {
-							srcFactor: "src-alpha",
+							srcFactor: "one",
 							dstFactor: "one-minus-src-alpha",
 							operation: "add",
 						},
@@ -200,7 +200,7 @@ const pipeline = (gpu: FluidGPU, layout: GPUBindGroupLayout, code: string) =>
 				},
 			],
 		},
-		primitive: { topology: "triangle-list", cullMode: "none" },
+		primitive: { topology: "triangle-list", cullMode },
 		depthStencil: {
 			format: "depth24plus",
 			depthWriteEnabled: false,
@@ -243,14 +243,14 @@ export class FluidFieldView {
 
 	constructor(private readonly gpu: FluidGPU) {
 		this.bindLayout = fieldBindGroupLayout(gpu);
-		this.volumePipeline = pipeline(gpu, this.bindLayout, volumeShader);
-		this.slicePipeline = pipeline(gpu, this.bindLayout, sliceShader);
+		this.volumePipeline = pipeline(gpu, this.bindLayout, volumeShader, "front");
+		this.slicePipeline = pipeline(gpu, this.bindLayout, sliceShader, "none");
 		this.sampler = gpu.device.createSampler({
 			magFilter: gpu.sampleFilter,
 			minFilter: gpu.sampleFilter,
-			addressModeU: "clamp-to-edge",
-			addressModeV: "clamp-to-edge",
-			addressModeW: "clamp-to-edge",
+			addressModeU: "repeat",
+			addressModeV: "repeat",
+			addressModeW: "repeat",
 		});
 		this.cubeBuffer = createVertexBuffer(gpu.device, cubeTriangles());
 		this.sliceBuffer = createVertexBuffer(

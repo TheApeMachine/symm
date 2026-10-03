@@ -3,7 +3,6 @@ package sensorium
 import (
 	"fmt"
 	"math"
-	"log"
 
 	"github.com/theapemachine/errnie"
 )
@@ -132,12 +131,7 @@ func (fluid *workspace) validateInputs() error {
 func checkFlags(label string, b *Buffer, n int) error {
 	for i, s := range b.UInt32Slice()[:n] {
 		if s != 0 {
-			retry := s == 2 || s == 3 || s == 4
-			if retry {
-				log.Printf("WARN PHYSICS STATUS: label=%s i=%d s=%d (numerical retry)", label, i, s)
-			} else {
-				log.Printf("FATAL PHYSICS ERROR: label=%s i=%d s=%d", label, i, s)
-			}
+			retry := s == 3 || s == 4
 			return &CoupledStepError{label, i, retry, fmt.Sprintf("physics status=%d", s)}
 		}
 	}
@@ -158,40 +152,9 @@ func (fluid *workspace) depositDual() error {
 		}
 	}
 
-	fluid.applyBackgroundFloors()
-
 	fluid.health.Sources.PICDepositEnergyResidual += sumHydroEnergy(fluid.hydro.Float32Slice(), fluid.domain.GridSpacing()) - fluid.materialTotal()
 
 	return fluid.exportDual()
-}
-
-// applyBackgroundFloors enforces density and internal energy floors to avoid
-// infinite-rejection loops in gas RK2 caused by Eulerian diffusion scaling as
-// 1/rho, and spurious negative heating in true vacuum cells.
-func (fluid *workspace) applyBackgroundFloors() {
-	h := fluid.hydro.Float32Slice()
-	rhoMin := float32(fluid.domain.RhoMin)
-	
-	// Thermal energy = Pressure / (gamma - 1)
-	thermalMin := float32(fluid.domain.PMin / (fluid.domain.Gamma - 1))
-	
-	cells := fluid.domain.CellCount()
-
-	for i := 0; i < cells; i++ {
-		if h[6*i] < rhoMin {
-			h[6*i] = rhoMin
-		}
-		
-		// q[4] is total conservative energy E
-		if h[6*i+4] < thermalMin {
-			h[6*i+4] = thermalMin
-		}
-		
-		// q[5] is auxiliary heat reservoir
-		if h[6*i+5] < thermalMin {
-			h[6*i+5] = thermalMin
-		}
-	}
 }
 
 func (fluid *workspace) exportDual() error {
@@ -286,8 +249,7 @@ func (fluid *workspace) stabilityLimit() (float64, error) {
 	h.ParticleDT = diagnosticBound(speed, p.ParticleCells*dx)
 	h.PhaseDT = diagnosticBound(phaseRate, p.PhaseRadians)
 	h.CombinedDT = diagnosticBound(maxRate, p.CFL)
-	
-	log.Printf("[DEBUG] stabilityLimit: maxRate=%g, bound=%g, p.CFL=%g, cells=%d", maxRate, p.CFL/maxRate, p.CFL, d.CellCount())
+
 	bound := p.MaxStep
 
 	if phaseRate > 0 {

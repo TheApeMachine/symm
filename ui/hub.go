@@ -72,13 +72,14 @@ type Hub struct {
 	listenAddr       string
 	frontend         atomic.Pointer[websocket.Conn]
 	store            *tables.Catalog
-	positionSource   PositionSource
-	cognitionSource  CognitionSource
-	manifoldSource   ManifoldSource
-	exitHandler      func(symbol string)
-	routes           *Routes
-	learningInterval time.Duration
-	lastLearning     time.Time
+	positionSource      PositionSource
+	cognitionSource     CognitionSource
+	manifoldSource      ManifoldSource
+	exitHandler         func(symbol string)
+	routes              *Routes
+	learningInterval    time.Duration
+	lastLearning        time.Time
+	workbenchSupervisor *WorkbenchSupervisor
 }
 
 /*
@@ -93,10 +94,19 @@ func NewHub(
 	viper.SetDefault("ui.addr", "127.0.0.1:8765")
 	viper.SetDefault("ui.websocket.max_message_bytes", 4*1024*1024)
 
+	workbenchURL := viper.GetString("workbench.url")
+
+	if workbenchURL == "" {
+		workbenchURL = "http://127.0.0.1:8081/workbench/query"
+	}
+
+	workbenchSupervisor := NewWorkbenchSupervisor(workbenchURL)
+
 	hub := &Hub{
-		learningInterval: viper.GetDuration("ui.websocket.learning_interval"),
-		uiTee:            uiTee,
-		listenAddr:       viper.GetString("ui.addr"),
+		learningInterval:    viper.GetDuration("ui.websocket.learning_interval"),
+		uiTee:               uiTee,
+		listenAddr:          viper.GetString("ui.addr"),
+		workbenchSupervisor: workbenchSupervisor,
 		app: fiber.New(fiber.Config{
 			JSONEncoder:     sonic.Marshal,
 			JSONDecoder:     sonic.Unmarshal,
@@ -113,6 +123,10 @@ func NewHub(
 
 	if uiTee != nil {
 		closers = append(closers, uiTee)
+	}
+
+	if workbenchSupervisor != nil {
+		closers = append(closers, workbenchSupervisor)
 	}
 
 	hub.System = runtime.NewSystem(ctx, "hub", closers...)

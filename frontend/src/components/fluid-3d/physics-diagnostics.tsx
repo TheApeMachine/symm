@@ -13,6 +13,10 @@ const formatSci = (num: number | undefined | null, prec = 3): string => {
 	return num.toFixed(prec);
 };
 
+// Zero is the wire contract for a rate with no active timestep constraint.
+const formatBound = (value: number | undefined) =>
+    value === 0 ? "unbounded" : formatSci(value, 5);
+
 export const PhysicsDiagnosticsHUD = ({
 	isOpen,
 	onClose,
@@ -62,8 +66,8 @@ export const PhysicsDiagnosticsHUD = ({
 					</Typography.Label>
 					<Badge
 						size="xs"
-						variant={rejections > 0 ? "error" : "success"}
-						label={rejections > 0 ? `${rejections} REJECTIONS` : "STABLE"}
+						variant={!integrator ? "disabled" : rejections > 0 ? "warning" : "success"}
+						label={!integrator ? "WAITING" : rejections > 0 ? `${rejections} REJECTIONS` : "ACCEPTED"}
 						dot
 					/>
 					{version !== undefined && version > 0n ? (
@@ -165,47 +169,51 @@ export const PhysicsDiagnosticsHUD = ({
 
 						<div className="rounded border border-(--line) bg-(--surface) p-2.5">
 							<div className="mb-1.5 text-[10px] font-medium uppercase tracking-wider text-(--f3)">
-								Adaptive Time-Step Limiters (CFL)
+								Step limits & transport estimates
 							</div>
 							<div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
 								<div className="flex justify-between">
 									<span className="text-(--f4)">Hyperbolic Δt:</span>
 									<span className="text-(--f2)">
-										{formatSci(integrator?.hyperbolicDt, 5)}
+										{formatBound(integrator?.hyperbolicDt)}
 									</span>
 								</div>
 								<div className="flex justify-between">
-									<span className="text-(--f4)">Viscous Δt:</span>
+									<span className="text-(--f4)">Viscous nominal:</span>
 									<span className="text-(--f2)">
-										{formatSci(integrator?.viscousDt, 5)}
+										{formatBound(integrator?.viscousDt)}
 									</span>
 								</div>
 								<div className="flex justify-between">
 									<span className="text-(--f4)">Particle Δt:</span>
 									<span className="text-(--f2)">
-										{formatSci(integrator?.particleDt, 5)}
+										{formatBound(integrator?.particleDt)}
 									</span>
 								</div>
 								<div className="flex justify-between">
 									<span className="text-(--f4)">Phase Δt:</span>
 									<span className="text-(--f2)">
-										{formatSci(integrator?.phaseDt, 5)}
+										{formatBound(integrator?.phaseDt)}
 									</span>
 								</div>
 								<div className="flex justify-between">
-									<span className="text-(--f4)">Thermal Δt:</span>
+									<span className="text-(--f4)">Thermal nominal:</span>
 									<span className="text-(--f2)">
-										{formatSci(integrator?.thermalDt, 5)}
+										{formatBound(integrator?.thermalDt)}
 									</span>
 								</div>
 								<div className="flex justify-between">
-									<span className="text-(--f4)">Combined Δt:</span>
+									<span className="text-(--f4)">Hydro bound:</span>
 									<span className="text-accent font-semibold">
-										{formatSci(integrator?.combinedDt, 5)}
+										{formatBound(integrator?.combinedDt)}
 									</span>
 								</div>
 							</div>
 						</div>
+
+						<Typography.Mono size="xxs" tone="f4">
+							Nominal diffusion estimates use uncapped coefficients. The hydro bound uses the solver’s grid-limited transport.
+						</Typography.Mono>
 
 						<div className="flex justify-between rounded border border-(--line) bg-(--surface) p-2 text-[11px]">
 							<span className="text-(--f4)">Integrated Sim Time:</span>

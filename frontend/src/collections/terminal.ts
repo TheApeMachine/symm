@@ -11,7 +11,6 @@ export type TerminalSurface =
 	| "journal"
 	| "xray"
 	| "cortex"
-	| "allocation"
 	| "diagnostics"
 	| "hindsight"
 	| "workbench"

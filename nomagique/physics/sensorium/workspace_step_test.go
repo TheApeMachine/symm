@@ -3,11 +3,75 @@
 package sensorium
 
 import (
+	"encoding/json"
 	"math"
+	"os"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
+
+func TestStep(t *testing.T) {
+	Convey("The captured 2026-10-02 live boot population advances repeatedly", t, func() {
+		state := capturedBootState(t)
+		fluid, err := newWorkspace(64, 64, 64)
+		So(err, ShouldBeNil)
+		Reset(fluid.Close)
+		fluid.loadState(state)
+
+		for range 3 {
+			reading, err := fluid.step()
+			So(err, ShouldBeNil)
+			So(reading.Health.Integrator.AcceptedDT, ShouldBeGreaterThan, 0)
+			if reading.Health.Integrator.Rejections == 0 {
+				So(reading.Health.Integrator.Substeps, ShouldEqual, 1)
+			}
+			So(reading.Health.Remap.MaxMarginalResidual, ShouldBeLessThanOrEqualTo, fluid.physics.RemapTolerance)
+			fluid.storeState(state)
+		}
+	})
+
+	Convey("A sparse resident population advances coupled physics repeatedly", t, func() {
+		fluid := remapWorkspace(t, 64, 16)
+		state := newState(16)
+		copy(state.Pos, fluid.pos.Float32Slice())
+		copy(state.Mass, fluid.mass.Float32Slice())
+		copy(state.Heat, fluid.heat.Float32Slice())
+
+		for particle := range state.N {
+			state.ContentIDs[particle] = int64(particle + 1)
+			state.Energy[particle] = 1
+			state.Phase[particle] = float32(particle) * 2 * math.Pi / float32(state.N)
+			state.Omega[particle] = float32(particle)/float32(state.N) - 0.5
+		}
+		fluid.loadState(state)
+
+		for range 3 {
+			reading, err := fluid.step()
+			So(err, ShouldBeNil)
+			So(reading.Health.Integrator.AcceptedDT, ShouldBeGreaterThan, 0)
+			if reading.Health.Integrator.Rejections == 0 {
+				So(reading.Health.Integrator.Substeps, ShouldEqual, 1)
+			}
+			fluid.storeState(state)
+		}
+	})
+}
+
+// capturedBootState is the actual projector output captured before a failed
+// live 64^3 advance on 2026-10-02. No particle values have been synthesized.
+func capturedBootState(t testing.TB) *State {
+	t.Helper()
+	payload, err := os.ReadFile("testdata/market_boot.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := &State{}
+	if err := json.Unmarshal(payload, state); err != nil {
+		t.Fatal(err)
+	}
+	return state
+}
 
 func TestSeedModeAnchors(t *testing.T) {
 	Convey("Given two particles in the lowest ω bin", t, func() {
@@ -38,91 +102,41 @@ func TestSeedModeAnchors(t *testing.T) {
 }
 
 func TestProjectSpatialWave(t *testing.T) {
-	Convey("Given one unit mode amplitude anchored to a particle at a cell centre", t, func() {
-		fluid, err := newWorkspace(8, 8, 8)
-		So(err, ShouldBeNil)
-		Reset(func() {
-			fluid.Close()
-		})
-		fluid.allocateParticles(1)
-		fluid.particles = 1
-		pos := fluid.pos.Float32Slice()
-		pos[0] = 0.5
-		pos[1] = 0.5
-		pos[2] = 0.5
-
-		// projectSpatialWave carries MODE coefficients onto the grid through
-		// their spatial anchors -- it does not deposit particle mass. The mode
-		// amplitude and the anchor binding it to a particle are what this
-		// function reads, and what the pipeline's earlier seedModeAnchors and
-		// waveStep stages would otherwise have written.
+	Convey("Spatial projection uses the periodic thermal overlap at every cell", t, func() {
+		fluid := remapWorkspace(t, 8, 1)
+		fluid.pos.Float32Slice()[0] = 0.5
+		fluid.pos.Float32Slice()[1] = 0.5
+		fluid.pos.Float32Slice()[2] = 0.5
 		fluid.psiModeReal.Float32Slice()[0] = 1
-		fluid.psiModeImag.Float32Slice()[0] = 0
+		fluid.psiModeImag.Float32Slice()[0] = 2
 		fluid.anchorIdx.Int32Slice()[0] = 0
 		fluid.anchorWeight.Float32Slice()[0] = 1
 
-		fluid.projectSpatialWave()
-		psiRe := fluid.psiRe.Float32Slice()
-		var total float32
-		var peak float32
-		var peakCell int
-
-		for cell, value := range psiRe {
-			total += value
-
-			if value > peak {
-				peak = value
-				peakCell = cell
+		Convey("The zero-temperature limit has uniform support", func() {
+			fluid.heat.Float32Slice()[0] = 0
+			So(fluid.projectSpatialWave(), ShouldBeNil)
+			for cell := range fluid.domain.CellCount() {
+				So(fluid.psiRe.Float32Slice()[cell], ShouldAlmostEqual, 1)
+				So(fluid.psiIm.Float32Slice()[cell], ShouldAlmostEqual, 2)
 			}
-		}
-
-		Convey("CIC should deposit the mode phasor on the spatial grid", func() {
-			So(float64(total), ShouldAlmostEqual, 1.0, 1e-5)
-			So(peak, ShouldEqual, float32(1))
-			So(peakCell, ShouldEqual, 4+8*(4+8*4))
 		})
-	})
-}
 
-func TestSplatParticleWave(t *testing.T) {
-	Convey("Given a real-valued mode phasor anchored at a cell centre", t, func() {
-		fluid, err := newWorkspace(8, 8, 8)
-		So(err, ShouldBeNil)
-		Reset(func() {
-			fluid.Close()
-		})
-		fluid.allocateParticles(1)
-		fluid.particles = 1
-		pos := fluid.pos.Float32Slice()
-		pos[0] = 0.5
-		pos[1] = 0.5
-		pos[2] = 0.5
-		fluid.psiModeReal.Float32Slice()[0] = 1
-		fluid.psiModeImag.Float32Slice()[0] = 0
-		fluid.anchorIdx.Int32Slice()[0] = 0
-		fluid.anchorWeight.Float32Slice()[0] = 1
-		fluid.psiRe.Zero()
-		fluid.psiIm.Zero()
-		fluid.projectSpatialWave()
-		psiRe := fluid.psiRe.Float32Slice()
-		var total float32
-		var peak float32
-		var peakCell int
-
-		for cell, value := range psiRe {
-			total += value
-
-			if value > peak {
-				peak = value
-				peakCell = cell
+		Convey("Finite temperature resolves locality without leaving holes between anchors", func() {
+			fluid.heat.Float32Slice()[0] = 32 // sigma = hbar / sqrt(2 m kB T) = 1/8.
+			So(fluid.projectSpatialWave(), ShouldBeNil)
+			center := 4*8*8 + 4*8 + 4
+			So(fluid.psiRe.Float32Slice()[center], ShouldAlmostEqual, 1)
+			// Independent image-sum value at distance L/2 in all three dimensions.
+			numerator, denominator := 0.0, 0.0
+			for image := -8; image <= 8; image++ {
+				numerator += math.Exp(-math.Pow((0.5+float64(image))/0.25, 2))
+				denominator += math.Exp(-math.Pow(float64(image)/0.25, 2))
 			}
-		}
-
-		Convey("CIC should deposit the phasor and leave the imaginary part zero", func() {
-			So(float64(total), ShouldAlmostEqual, 1.0, 1e-5)
-			So(peak, ShouldEqual, float32(1))
-			So(peakCell, ShouldEqual, 4+8*(4+8*4))
-			So(fluid.psiIm.Float32Slice()[peakCell], ShouldEqual, float32(0))
+			So(float64(fluid.psiRe.Float32Slice()[0]), ShouldAlmostEqual, math.Pow(numerator/denominator, 3), 1e-9)
+			for cell := range fluid.domain.CellCount() {
+				So(fluid.psiRe.Float32Slice()[cell], ShouldBeGreaterThan, 0)
+				So(fluid.psiIm.Float32Slice()[cell], ShouldAlmostEqual, 2*fluid.psiRe.Float32Slice()[cell])
+			}
 		})
 	})
 }
@@ -410,5 +424,22 @@ func BenchmarkPlanckExchange(b *testing.B) {
 		if err := fluid.planckExchange(); err != nil {
 			b.Fatal(err)
 		}
+	}
+}
+
+func BenchmarkStep(b *testing.B) {
+	state := capturedBootState(b)
+	fluid, err := newWorkspace(64, 64, 64)
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.Cleanup(fluid.Close)
+	fluid.loadState(state)
+	b.ResetTimer()
+	for b.Loop() {
+		if _, err := fluid.step(); err != nil {
+			b.Fatal(err)
+		}
+		fluid.storeState(state)
 	}
 }

@@ -3,7 +3,7 @@ import {
 	alignedBytesPerRow,
 	fluidTextureExtent,
 	packTexture3D,
- packFluidFieldTextures,
+	packFluidFieldTextures,
 	TEXTURE_BYTES_PER_ROW_ALIGNMENT,
 } from "./field-textures";
 import type { FluidFields } from "./wire";
@@ -60,24 +60,35 @@ describe("packTexture3D", () => {
 });
 
 describe("packFluidFieldTextures", () => {
- it("normalizes small and large field peaks to the same displayed magnitude", () => {
-  for (const peak of [0.000001, 0.25, 1, 1000]) {
-   const frame = fields();
-   frame.densityScale = peak;
-   frame.momentumScale = peak;
-   frame.energyScale = peak;
-   frame.waveScale = peak;
-   const packed = packFluidFieldTextures(frame);
-   expect(peak * packed.densityScale).toBeCloseTo(1);
-   expect(peak * packed.momentumScale).toBeCloseTo(1);
-   expect(peak * packed.energyScale).toBeCloseTo(1);
-   expect(Math.hypot(peak, peak) * packed.waveScale).toBeCloseTo(Math.SQRT2);
-   expect(frame.waveScale).toBe(peak);
-  }
- });
- it("keeps genuinely empty fields empty", () => {
-  const frame = fields();
-  frame.waveScale = 0;
-  expect(packFluidFieldTextures(frame).waveScale).toBe(0);
- });
+	it("normalizes small and large field peaks to the same displayed magnitude", () => {
+		for (const peak of [0.000001, 0.25, 1, 1000]) {
+			const frame = fields();
+			frame.densityScale = peak;
+			for (let offset = 3; offset < frame.momRho.length; offset += 4)
+				frame.momRho[offset] = peak;
+			frame.momentumScale = peak;
+			frame.energyScale = peak;
+			frame.waveScale = peak;
+			const packed = packFluidFieldTextures(frame);
+			expect(peak * packed.densityScale).toBeCloseTo(1);
+			expect(peak * packed.momentumScale).toBeCloseTo(1);
+			expect(peak * packed.energyScale).toBeCloseTo(1);
+			expect(Math.hypot(peak, peak) * packed.waveScale).toBeCloseTo(Math.SQRT2);
+			expect(frame.waveScale).toBe(peak);
+		}
+	});
+	it("keeps genuinely empty fields empty", () => {
+		const frame = fields();
+		frame.waveScale = 0;
+		expect(packFluidFieldTextures(frame).waveScale).toBe(0);
+		expect(packFluidFieldTextures(frame).densityScale).toBe(0);
+	});
+	it("preserves relative gas density without letting a sparse peak set exposure", () => {
+		const frame = fields();
+		frame.momRho[3] = 800;
+		frame.densityScale = 800;
+		const packed = packFluidFieldTextures(frame);
+		expect(packed.densityScale).toBe(1 / 100);
+		expect(packed.momRho.data[3]).toBe(800);
+	});
 });

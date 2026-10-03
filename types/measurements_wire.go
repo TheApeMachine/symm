@@ -59,6 +59,9 @@ func measurementToWire(
 		if metric.Normalized != nil {
 			wireMetric.Normalized = *metric.Normalized
 			wireMetric.HasNormalized = true
+		} else if metric.Standardized != nil {
+			wireMetric.Normalized = *metric.Standardized
+			wireMetric.HasNormalized = true
 		}
 
 		metrics = data.AppendA(metrics, wireMetric, alloc)

@@ -224,7 +224,10 @@ func (fluid *workspace) accountPhase() error {
 		}
 		u0, u1, u2, u3 := float64(v[0]), float64(v[1]), float64(v[2]), float64(v[3])
 		dissipation := u1 - u2
-		tol := 32 * math.Ldexp(1, -23) * (math.Abs(u1) + math.Abs(u2))
+		// U is a dot product with the complex forcing. Near quadrature its
+		// terms cancel: |U| is not the rounding-error scale. The ledger carries
+		// the forcing amplitude in slot 5, bounding error in both evaluations.
+		tol := 32 * math.Ldexp(1, -23) * float64(v[5])
 		if dissipation < -tol {
 			return &CoupledStepError{"phase gradient flow", i, true, fmt.Sprintf("potential increased by %g", -dissipation)}
 		}

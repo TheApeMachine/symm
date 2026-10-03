@@ -169,6 +169,9 @@ var (
 			book := broker.NewBook(ctx, normalizer)
 			price := broker.NewPrice(ctx, book, privateTransport, instrument, normalizer)
 			balance := broker.NewBalance(ctx, privateTransport)
+			if balance.Cash() != nil {
+				price.SetReferenceCash(balance.Cash())
+			}
 
 			if err := instrument.Error(); err != nil {
 				return errnie.Error(errnie.Err(
@@ -362,7 +365,6 @@ var (
 				uiTee,
 				storeTee,
 				hub,
-				training,
 				trader,
 				manifoldSolver,
 				categorySolver,

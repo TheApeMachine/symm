@@ -1,11 +1,11 @@
-import { Link } from "@tanstack/react-router";
-import { useSelector } from "@tanstack/react-store";
 import { type TerminalSurface, terminalStore } from "#/collections/terminal";
 import { Clock } from "@/components/clock";
 import { Engine } from "@/components/engine";
 import { Button } from "@/components/ui/button";
 import { Icon, type IconName } from "@/components/ui/icon";
 import { Nav } from "@/components/ui/nav";
+import { Link } from "@tanstack/react-router";
+import { useSelector } from "@tanstack/react-store";
 
 type TerminalRoutePath =
 	| "/"
@@ -17,7 +17,6 @@ type TerminalRoutePath =
 	| "/journal"
 	| "/xray"
 	| "/cortex"
-	| "/allocation"
 	| "/diagnostics"
 	| "/hindsight"
 	| "/workbench"
@@ -54,7 +53,6 @@ export const SURFACE_ITEMS: Array<{
 	{ key: "journal", label: "Trade journal", icon: "journal", to: "/journal" },
 	{ key: "xray", label: "Latent x-ray", icon: "scan", to: "/xray" },
 	{ key: "cortex", label: "Cognitive tree", icon: "cortex", to: "/cortex" },
-	{ key: "allocation", label: "Allocation", icon: "bars", to: "/allocation" },
 	{ key: "hindsight", label: "Hindsight", icon: "lanes", to: "/hindsight" },
 	{
 		key: "workbench",

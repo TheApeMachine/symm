@@ -477,10 +477,10 @@ void manifold_project_modes_to_spatial_psi(
     ManifoldBuffer *mode_anchor_weight, ManifoldBuffer *particle_pos,
     ManifoldBuffer *psi_re_field, ManifoldBuffer *psi_im_field,
     int64_t anchors_per_mode, int64_t gx, int64_t gy, int64_t gz,
-    float grid_spacing) {
+    float grid_spacing, float sigma) {
   int64_t num_modes = mode_psi_real->size_bytes / sizeof(float);
   int64_t num_particles = particle_pos->size_bytes / (3 * sizeof(float));
-  int64_t total = num_modes * anchors_per_mode;
+  int64_t total = gx * gy * gz;
   if (total <= 0)
     return;
 
@@ -491,7 +491,7 @@ void manifold_project_modes_to_spatial_psi(
                          (uint32_t)gy,
                          (uint32_t)gz,
                          grid_spacing,
-                         1.0f / grid_spacing};
+                         sigma};
   KernelDispatch k(ctx, "project_modes_to_spatial_psi");
   k.set_buffer(mode_psi_real, 0);
   k.set_buffer(mode_psi_imag, 1);

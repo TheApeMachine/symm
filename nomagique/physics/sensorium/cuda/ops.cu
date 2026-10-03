@@ -465,20 +465,20 @@ void manifold_project_modes_to_spatial_psi(
     ManifoldBuffer* psi_im_field,
     int64_t anchors_per_mode,
     int64_t gx, int64_t gy, int64_t gz,
-    float grid_spacing
+    float grid_spacing, float sigma
 ) {
     if (ctx && (anchors_per_mode < 0 || uint64_t(anchors_per_mode) > UINT32_MAX)) { ctx->fail("count outside source uint32 range"); return; }
     if (!ready(ctx, {mode_psi_real, mode_psi_imag, mode_anchor_idx, mode_anchor_weight, particle_pos, psi_re_field, psi_im_field})) return;
     if (!valid_grid(ctx, gx, gy, gz, grid_spacing)) return;
     int64_t num_modes = mode_psi_real->size_bytes / sizeof(float);
     int64_t num_particles = particle_pos->size_bytes / (3 * sizeof(float));
-    int64_t total = num_modes * anchors_per_mode;
+    int64_t total = gx * gy * gz;
     if (total <= 0) return;
 
     ModeProjectParams p = {
         (uint32_t)num_modes, (uint32_t)num_particles, (uint32_t)anchors_per_mode,
         (uint32_t)gx, (uint32_t)gy, (uint32_t)gz,
-        grid_spacing, 1.0f / grid_spacing
+        grid_spacing, sigma
     };
     kernels::project_modes_to_spatial_psi<<<blocks(total), kBlockSize, 0, ctx->stream>>>(
         ptr<const float>(mode_psi_real),

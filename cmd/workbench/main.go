@@ -25,7 +25,7 @@ func main() {
 	viper.SetDefault("storage.iceberg.uri", "http://iceberg.seaweed.home.arpa")
 	viper.SetDefault("storage.iceberg.warehouse", "s3://symmwarehouse/")
 	viper.SetDefault("workbench.memory_limit", "16GB")
-	viper.SetDefault("workbench.max_temp_directory_size", "10GB")
+	viper.SetDefault("workbench.max_temp_directory_size", "64GB")
 	viper.SetDefault("workbench.threads", 4)
 
 	viper.SetConfigName("config")

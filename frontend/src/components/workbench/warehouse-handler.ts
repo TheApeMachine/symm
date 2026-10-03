@@ -57,7 +57,13 @@ reads the result, so the empty answer has to be shaped like a result.
 const rowless = { toArray: () => [], schema: { fields: [] } };
 
 const sanitizeSql = (sql: string): string =>
-	sql.replace(/\bSELECT\s+FROM\b/gi, "SELECT NULL FROM");
+	sql
+		.replace(/\bSELECT\s+FROM\b/gi, "SELECT NULL FROM")
+		.replace(
+			/\bCREATE\s+(?:OR\s+REPLACE\s+)?TABLE\s+([^\s]+)\s+AS\b/gi,
+			"CREATE OR REPLACE VIEW $1 AS",
+		)
+		.replace(/\bDROP\s+TABLE\b/gi, "DROP VIEW");
 
 /*
 warehouse is the connection the handler is given. `query` is used for the

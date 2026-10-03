@@ -48,19 +48,19 @@ static bool mc_launch_mc_pic_deposit_material(ManifoldContext* ctx, ManifoldBuff
     ctx->launch_status(cudaGetLastError(),"mc_pic_deposit_material");return !ctx->error[0];
 }
 static bool mc_launch_mc_remap_rows(ManifoldContext* ctx, ManifoldBuffer* state, ManifoldBuffer* pos, ManifoldBuffer* columns, ManifoldBuffer* rows, ManifoldBuffer* status, unsigned particles, MFHydroParamsV2 p, float width, float mass_scale) {
-    kernels::mc_remap_rows<<<(p.n+255)/256,256,0,ctx->stream>>>(ptr<const MFHydroStateV2>(state), ptr<const float>(pos), ptr<const float>(columns), ptr<float>(rows), ptr<unsigned>(status), particles, p, width, mass_scale);
+    kernels::mc_remap_rows<<<(uint64_t(p.n)*32+255)/256,256,0,ctx->stream>>>(ptr<const MFHydroStateV2>(state), ptr<const float>(pos), ptr<const float>(columns), ptr<float>(rows), ptr<unsigned>(status), particles, p, width, mass_scale);
     ctx->launch_status(cudaGetLastError(),"mc_remap_rows");return !ctx->error[0];
 }
-static bool mc_launch_mc_remap_columns(ManifoldContext* ctx, ManifoldBuffer* state, ManifoldBuffer* pos, ManifoldBuffer* mass, ManifoldBuffer* rows, ManifoldBuffer* columns, ManifoldBuffer* status, unsigned particles, MFHydroParamsV2 p, float width) {
-    kernels::mc_remap_columns<<<(particles+255)/256,256,0,ctx->stream>>>(ptr<const MFHydroStateV2>(state), ptr<const float>(pos), ptr<const float>(mass), ptr<const float>(rows), ptr<float>(columns), ptr<unsigned>(status), particles, p, width);
+static bool mc_launch_mc_remap_columns(ManifoldContext* ctx, ManifoldBuffer* state, ManifoldBuffer* pos, ManifoldBuffer* mass, ManifoldBuffer* rows, ManifoldBuffer* columns, ManifoldBuffer* status, unsigned particles, MFHydroParamsV2 p, float width, ManifoldBuffer* active, unsigned active_count) {
+    kernels::mc_remap_columns<<<(uint64_t(particles)*32+255)/256,256,0,ctx->stream>>>(ptr<const MFHydroStateV2>(state), ptr<const float>(pos), ptr<const float>(mass), ptr<const float>(rows), ptr<float>(columns), ptr<unsigned>(status), particles, p, width, ptr<const unsigned>(active), active_count);
     ctx->launch_status(cudaGetLastError(),"mc_remap_columns");return !ctx->error[0];
 }
 static bool mc_launch_mc_remap_residual(ManifoldContext* ctx, ManifoldBuffer* state, ManifoldBuffer* pos, ManifoldBuffer* rows, ManifoldBuffer* columns, ManifoldBuffer* residual, ManifoldBuffer* status, unsigned particles, MFHydroParamsV2 p, float width, float mass_scale) {
-    kernels::mc_remap_residual<<<(p.n+255)/256,256,0,ctx->stream>>>(ptr<const MFHydroStateV2>(state), ptr<const float>(pos), ptr<const float>(rows), ptr<const float>(columns), ptr<float>(residual), ptr<unsigned>(status), particles, p, width, mass_scale);
+    kernels::mc_remap_residual<<<(uint64_t(p.n)*32+255)/256,256,0,ctx->stream>>>(ptr<const MFHydroStateV2>(state), ptr<const float>(pos), ptr<const float>(rows), ptr<const float>(columns), ptr<float>(residual), ptr<unsigned>(status), particles, p, width, mass_scale);
     ctx->launch_status(cudaGetLastError(),"mc_remap_residual");return !ctx->error[0];
 }
-static bool mc_launch_mc_remap_gather(ManifoldContext* ctx, ManifoldBuffer* state, ManifoldBuffer* pos, ManifoldBuffer* mass, ManifoldBuffer* rows, ManifoldBuffer* velocity, ManifoldBuffer* heat, ManifoldBuffer* total, ManifoldBuffer* mixing, ManifoldBuffer* status, unsigned particles, MFHydroParamsV2 p, float width, float mass_scale) {
-    kernels::mc_remap_gather<<<(particles+255)/256,256,0,ctx->stream>>>(ptr<const MFHydroStateV2>(state), ptr<const float>(pos), ptr<const float>(mass), ptr<const float>(rows), ptr<float>(velocity), ptr<float>(heat), ptr<float>(total), ptr<float>(mixing), ptr<unsigned>(status), particles, p, width, mass_scale);
+static bool mc_launch_mc_remap_gather(ManifoldContext* ctx, ManifoldBuffer* state, ManifoldBuffer* pos, ManifoldBuffer* mass, ManifoldBuffer* rows, ManifoldBuffer* velocity, ManifoldBuffer* heat, ManifoldBuffer* total, ManifoldBuffer* mixing, ManifoldBuffer* status, unsigned particles, MFHydroParamsV2 p, float width, float mass_scale, ManifoldBuffer* active, unsigned active_count) {
+    kernels::mc_remap_gather<<<(particles+255)/256,256,0,ctx->stream>>>(ptr<const MFHydroStateV2>(state), ptr<const float>(pos), ptr<const float>(mass), ptr<const float>(rows), ptr<float>(velocity), ptr<float>(heat), ptr<float>(total), ptr<float>(mixing), ptr<unsigned>(status), particles, p, width, mass_scale, ptr<const unsigned>(active), active_count);
     ctx->launch_status(cudaGetLastError(),"mc_remap_gather");return !ctx->error[0];
 }
 static bool mc_launch_mc_pilot_checked_step(ManifoldContext* ctx, ManifoldBuffer* pos, ManifoldBuffer* mass, ManifoldBuffer* prior, ManifoldBuffer* re, ManifoldBuffer* im, ManifoldBuffer* position, ManifoldBuffer* guide, ManifoldBuffer* report, ManifoldBuffer* status, unsigned particles, MFHydroParamsV2 p, float hbar, float tolerance, float maxcells) {

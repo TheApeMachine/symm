@@ -36,6 +36,7 @@ workbench:
   addr: ":8081"
   url: "http://127.0.0.1:8081/workbench/query"
   memory_limit: 16GB
+  max_temp_directory_size: 64GB
 
 experimental:
   # Presentation and diagnostic experiments are opt-in and paper-only.

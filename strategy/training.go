@@ -59,7 +59,7 @@ func NewTraining(
 		evaluator: evaluator,
 		detector:  NewDetector(),
 		skill:     NewSkill(),
-		reporter:  NewReporter(arena, tee),
+		reporter:  NewReporter(data.NewArenaOwner(4096), tee),
 		trader:    trader,
 		catalog:   catalog,
 		price:     price,
@@ -119,11 +119,13 @@ func (training *Training) Step(prior *data.Measurement[float64]) *data.Measureme
 	if prior.Source != "runtime:join" {
 		peers = []*data.Measurement[float64]{prior}
 	}
+	out.Peers = peers
 
 	price, _ := quotePrice(prior)
 	currentStatus := training.Status()
 
 	training.grid.Update(prior)
+	defer training.grid.Update(out)
 
 	if currentStatus == runtime.INIT {
 		snapshot := ReportSnapshot{
@@ -237,6 +239,12 @@ func (training *Training) Step(prior *data.Measurement[float64]) *data.Measureme
 			)
 
 			if err != nil {
+				if broker.IsEnterSoftFail(err) {
+					errnie.Error(err)
+					training.reporter.Populate(out, snapshot, training.skill)
+					return out
+				}
+
 				training.Error(errnie.Err(
 					errnie.Validation,
 					fmt.Sprintf(
@@ -316,15 +324,14 @@ func (training *Training) Run() {
 				return cmp.Compare(left.Epoch, right.Epoch)
 			})
 
+			allRunsProcessed := len(runs) > 0
+
 			for _, run := range runs {
 				if processedRuns[run.Epoch] {
 					continue
 				}
 
-				if run.Status == "running" {
-					continue
-				}
-
+				allRunsProcessed = false
 				maxSeq, hasEdge := training.processRun(run.Epoch, lastSeqProcessed[run.Epoch])
 				lastSeqProcessed[run.Epoch] = maxSeq
 
@@ -343,6 +350,11 @@ func (training *Training) Run() {
 				return
 			}
 
+			if allRunsProcessed && !training.skill.HasEdge() {
+				processedRuns = make(map[int64]bool)
+				lastSeqProcessed = make(map[int64]int64)
+			}
+
 			select {
 			case <-training.Context().Done():
 				return
@@ -353,46 +365,57 @@ func (training *Training) Run() {
 }
 
 func (training *Training) processRun(epoch int64, lastSeq int64) (int64, bool) {
-	maxSeq := lastSeq
-	timelines := make(map[string][]*data.Measurement[float64])
+	currentLast := lastSeq
+	const batchSize = int64(500)
 
-	for measurement := range training.catalog.Timeline(
-		training.Context(), epoch, "", lastSeq+1, 0,
-	) {
-		if measurement == nil || measurement.Label == "" {
-			continue
-		}
+	for {
+		maxSeq := currentLast
+		timelines := make(map[string][]*data.Measurement[float64])
 
-		if measurement.SeqIdx <= lastSeq {
-			continue
-		}
-
-		if measurement.SeqIdx > maxSeq {
-			maxSeq = measurement.SeqIdx
-		}
-
-		timelines[measurement.Label] = append(timelines[measurement.Label], measurement)
-	}
-
-	for _, timeline := range timelines {
-		training.detector.Scan(timeline)
-
-		for {
-			trajectory, ok := training.detector.Next()
-
-			if !ok {
-				break
+		for measurement := range training.catalog.Timeline(
+			training.Context(), epoch, "", currentLast+1, currentLast+batchSize,
+		) {
+			if measurement == nil || measurement.Label == "" {
+				continue
 			}
 
-			training.trainTrajectory(trajectory)
+			if measurement.SeqIdx <= currentLast {
+				continue
+			}
 
-			if training.skill.HasEdge() {
-				return maxSeq, true
+			if measurement.SeqIdx > maxSeq {
+				maxSeq = measurement.SeqIdx
+			}
+
+			timelines[measurement.Label] = append(timelines[measurement.Label], measurement)
+		}
+
+		if maxSeq == currentLast {
+			break
+		}
+
+		for _, timeline := range timelines {
+			training.detector.Scan(timeline)
+
+			for {
+				trajectory, ok := training.detector.Next()
+
+				if !ok {
+					break
+				}
+
+				training.trainTrajectory(trajectory)
+
+				if training.skill.HasEdge() {
+					return maxSeq, true
+				}
 			}
 		}
+
+		currentLast = maxSeq
 	}
 
-	return maxSeq, training.skill.HasEdge()
+	return currentLast, training.skill.HasEdge()
 }
 
 func (training *Training) trainTrajectory(trajectory Trajectory) {

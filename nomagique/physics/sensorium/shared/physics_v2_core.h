@@ -71,11 +71,8 @@ MF_FN unsigned mf_hneighbor(unsigned i, unsigned a, int d, MFHydroParamsV2 p) {
 MF_FN float mf_kinetic(MFHydroStateV2 s) {
     if (s.q[0]==0) return 0;
     float k=0;
-    float rho_safe = s.q[0] < 1e-7f ? 1e-7f : s.q[0];
     for (unsigned a=0;a<3;++a) {
-        float u = s.q[1+a]/rho_safe;
-        if (u > 1000.0f) u = 1000.0f;
-        if (u < -1000.0f) u = -1000.0f;
+        float u = s.q[1+a]/s.q[0];
         k += 0.5f*s.q[0]*u*u;
     }
     return k;
@@ -115,16 +112,13 @@ MF_FN MFPrimitive mf_primitive(MFHydroStateV2 s, MFHydroParamsV2 p) {
     r.thermal=reliable ? ec : s.q[5];
     if (!reliable && r.thermal>s.q[4]+8*eps*mf_max(s.q[4],r.kinetic)) return r;
     if (!(r.thermal>=0) || !MF_FINITE(r.thermal)) return r;
-    float rho_safe = r.rho < 1e-7f ? 1e-7f : r.rho;
     for (unsigned a=0;a<3;++a) {
-        r.u[a]=s.q[1+a]/rho_safe;
-        if (r.u[a] > 1000.0f) r.u[a] = 1000.0f;
-        if (r.u[a] < -1000.0f) r.u[a] = -1000.0f;
+        r.u[a]=s.q[1+a]/r.rho;
         if (!MF_FINITE(r.u[a])) return r;
     }
     r.pressure=(p.gamma-1)*r.thermal;
-    r.temperature=(r.thermal/rho_safe)/p.cv;
-    r.sound=MF_SQRT(p.gamma*(r.pressure/rho_safe));
+    r.temperature=(r.thermal/r.rho)/p.cv;
+    r.sound=MF_SQRT(p.gamma*(r.pressure/r.rho));
     if (!MF_FINITE(r.pressure) || !MF_FINITE(r.temperature) || !MF_FINITE(r.sound)) return r;
     r.status=MF_PHYSICS_OK;
     return r;

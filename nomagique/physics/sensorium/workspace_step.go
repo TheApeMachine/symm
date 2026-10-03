@@ -29,7 +29,29 @@ func (fluid *workspace) step() (Reading, error) {
 	fluid.health = PhysicsHealth{UnresolvedCoupling: true}
 	fluid.health.Sources.GravityFieldEnergy = priorGravity
 	fluid.health.Sources.ExogenousParticleEnergy = injected
-	h, err := advanceCoupled(request, fluid.physics, fluid.snapshotPhysics, fluid.stabilityLimit, func(dt float32) error {
+	// No external elapsed-time interval is being integrated here. Return a
+	// visible state after one stability-limited numerical interval, instead of
+	// withholding it until a grid-derived macro request has consumed many steps.
+	bound, err := fluid.stabilityLimit()
+	if err != nil {
+		rollback()
+		return Reading{}, err
+	}
+	firstLimit := true
+	limit := func() (float64, error) {
+		if firstLimit {
+			firstLimit = false
+			return bound, nil
+		}
+		return fluid.stabilityLimit()
+	}
+	// The controller integrates an exact float32 interval. Round the chosen
+	// interval down here too, so conversion cannot create a tiny second step.
+	interval := float32(math.Min(request, bound))
+	if float64(interval) > math.Min(request, bound) {
+		interval = math.Nextafter32(interval, 0)
+	}
+	h, err := advanceCoupled(float64(interval), fluid.physics, fluid.snapshotPhysics, limit, func(dt float32) error {
 		fluid.rates.deltaT = float64(dt)
 		if fluid.physics.Contacts.Enabled {
 			if err := fluid.contactKick(.5 * dt); err != nil {
@@ -56,7 +78,9 @@ func (fluid *workspace) step() (Reading, error) {
 		if err := fluid.waveStep(); err != nil {
 			return err
 		}
-		fluid.projectSpatialWave()
+		if err := fluid.projectSpatialWave(); err != nil {
+			return err
+		}
 		if err := fluid.gatherPilotWave(); err != nil {
 			return err
 		}
@@ -168,11 +192,16 @@ func sampleQuantile(sorted []float64, q float64) float64 {
 projectSpatialWave projects the resonant mode coefficients Ψ_k into the 3D
 spatial complex field Ψ(x) via their spatial anchors on the GPU.
 */
-func (fluid *workspace) projectSpatialWave() {
+func (fluid *workspace) projectSpatialWave() error {
 	if fluid.particles == 0 {
 		fluid.psiRe.Zero()
 		fluid.psiIm.Zero()
-		return
+		return nil
+	}
+
+	sigma, err := fluid.spatialSigma()
+	if err != nil {
+		return err
 	}
 
 	if fluid.waveProjectionReady {
@@ -190,7 +219,7 @@ func (fluid *workspace) projectSpatialWave() {
 		fluid.pos,
 		fluid.psiRe,
 		fluid.psiIm,
-		modeAnchors,
+		modeAnchors, float32(sigma),
 	)
 	fluid.engine.Synchronize()
 	if !fluid.waveProjectionReady {
@@ -200,6 +229,7 @@ func (fluid *workspace) projectSpatialWave() {
 		copy(fluid.psiStartIm.UInt32Slice(), fluid.psiIm.UInt32Slice())
 		fluid.waveProjectionReady = true
 	}
+	return nil
 }
 
 func wrapIndex(index, extent int) int {

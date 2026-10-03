@@ -1,5 +1,7 @@
 #include <cfloat>
+#include "remap_acceleration.h"
 #include <limits>
+#include <vector>
 /* Shared host contract. Kernels are generated from the same bodies for both GPUs. */
 static bool mc_buffers(ManifoldContext* c,std::initializer_list<ManifoldBuffer*> bs) {
     return mf_v2_ready(c,bs) && mf_v2_distinct(bs);
@@ -86,6 +88,9 @@ extern "C" bool manifold_pic_remap_conservative(ManifoldContext* c,ManifoldBuffe
     auto fs=static_cast<unsigned*>(manifold_get_buffer_pointer(flags));
     if(!state||!mass||!pos||!diag||!fs)return false;
     double cells_mass=0,particles_mass=0,grid_e=0,grid_p[3]={},abs_p[3]={};
+    // Exact support compaction: vacuum rows have zero transport mass. Keep
+    // EVERY positive row, including subnormal densities; no spatial cutoff.
+    std::vector<unsigned> active_cells;
     double vol=double(p.dx)*p.dx*p.dx;
     for(unsigned i=0;i<np;++i){
         if(!MF_FINITE(mass[i])||mass[i]<=0){fs[i]=MF_PHYSICS_BAD_STATE;return false;}
@@ -93,6 +98,7 @@ extern "C" bool manifold_pic_remap_conservative(ManifoldContext* c,ManifoldBuffe
         particles_mass+=mass[i];fs[i]=0;
     }
     for(unsigned j=0;j<p.n;++j){if(mf_primitive(state[j],p).status){fs[0]=MF_PHYSICS_BAD_STATE;return false;}
+        if(state[j].q[0]>0)active_cells.push_back(j);
         cells_mass+=double(state[j].q[0])*vol;grid_e+=double(state[j].q[4])*vol;
         for(unsigned a=0;a<3;++a){double value=double(state[j].q[a+1])*vol;grid_p[a]+=value;abs_p[a]+=std::abs(value);}}
     for(unsigned i=0;i<12;++i)diag[i]=0;
@@ -100,16 +106,23 @@ extern "C" bool manifold_pic_remap_conservative(ManifoldContext* c,ManifoldBuffe
     // conservation. A physically different total mass is a fatal input error.
     if(!(cells_mass>0)||std::abs(cells_mass-particles_mass)>double(tolerance)*particles_mass){fs[0]=MF_PHYSICS_BAD_STATE;return false;}
     float scale=float(particles_mass/cells_mass);diag[2]=scale-1;
-    ManifoldBuffer* rows=manifold_create_buffer(c,uint64_t(p.n)*4,nullptr);
-    ManifoldBuffer* cols=manifold_create_buffer(c,n*4,nullptr);
+    ManifoldBuffer* rows=manifold_create_buffer(c,uint64_t(p.n)*8,nullptr);
+    ManifoldBuffer* cols=manifold_create_buffer(c,n*8,nullptr);
     ManifoldBuffer* errors=manifold_create_buffer(c,uint64_t(p.n)*4,nullptr);
     ManifoldBuffer* cellflags=manifold_create_buffer(c,uint64_t(p.n)*4,nullptr);
     ManifoldBuffer* mix=manifold_create_buffer(c,n*4,nullptr);
-    bool ok=rows&&cols&&errors&&cellflags&&mix,converged=false;
+    ManifoldBuffer* active=manifold_create_buffer(c,active_cells.size()*sizeof(unsigned),active_cells.data());
+    unsigned active_count=unsigned(active_cells.size());
+    bool ok=rows&&cols&&errors&&cellflags&&mix&&active,converged=false;
     if(ok){manifold_clear_field(c,cols);manifold_clear_field(c,cellflags);}
+    std::vector<double> start(np);
+    MCRemapAcceleration accelerator;
+    std::vector<double> safe_columns(np);
+    bool history=false, accelerated=false;
+    float safe_residual=0;
     for(unsigned it=0;it<iterations&&ok;++it){
         ok=mc_launch_mc_remap_rows(c,u,x,cols,rows,cellflags,np,p,width,scale)&&
-           mc_launch_mc_remap_columns(c,u,x,m,rows,cols,flags,np,p,width);
+           mc_launch_mc_remap_columns(c,u,x,m,rows,cols,flags,np,p,width,active,active_count);
         if((it+1)%8==0||it+1==iterations){
             ok=ok&&mc_launch_mc_remap_residual(c,u,x,rows,cols,errors,cellflags,np,p,width,scale)&&
                mf_v2_status_ok(c,cellflags,p.n)&&mf_v2_status_ok(c,flags,np);
@@ -119,9 +132,29 @@ extern "C" bool manifold_pic_remap_conservative(ManifoldContext* c,ManifoldBuffe
             for(unsigned j=0;j<p.n;++j)worst=std::max(worst,er[j]);
             diag[0]=worst;diag[1]=float(it+1);
             if(worst<=tolerance){converged=true;break;}
+            auto values=static_cast<float*>(manifold_get_buffer_pointer(cols));
+            if(accelerated&&worst>=safe_residual){
+                for(unsigned i=0;i<np;++i){values[2*i]=float(safe_columns[i]);values[2*i+1]=float(safe_columns[i]-values[2*i]);start[i]=safe_columns[i];}
+                accelerated=false;history=false;accelerator.clear();continue;
+            }
+            // Gauge removal leaves the transport matrix invariant.
+            double mean=0;for(unsigned i=0;i<np;++i)mean+=double(values[2*i])+values[2*i+1];mean/=np;
+            std::vector<double> output(np),delta(np);
+            for(unsigned i=0;i<np;++i){
+                output[i]=(double(values[2*i])+values[2*i+1])-mean;
+                delta[i]=output[i]-start[i];safe_columns[i]=output[i];
+            }
+            auto proposal=accelerator.propose(output,delta);
+            bool propose=history;
+            for(double value:proposal)if(!std::isfinite(value)||std::abs(value)>FLT_MAX)propose=false;
+            for(unsigned i=0;i<np;++i){
+                start[i]=propose?proposal[i]:safe_columns[i];
+                values[2*i]=float(start[i]);values[2*i+1]=float(start[i]-values[2*i]);
+            }
+            history=true;accelerated=propose;safe_residual=worst;
         }
     }
-    if(ok&&converged)ok=mc_launch_mc_remap_gather(c,u,x,m,rows,vo,qo,eo,mix,flags,np,p,width,scale)&&mf_v2_status_ok(c,flags,np);
+    if(ok&&converged)ok=mc_launch_mc_remap_gather(c,u,x,m,rows,vo,qo,eo,mix,flags,np,p,width,scale,active,active_count)&&mf_v2_status_ok(c,flags,np);
     double gravity_work=0;
     if(ok&&converged&&gravity_G>0){
         ManifoldBuffer* remapped=manifold_create_buffer(c,uint64_t(p.n)*24,nullptr);
@@ -170,10 +203,11 @@ extern "C" bool manifold_pic_remap_conservative(ManifoldContext* c,ManifoldBuffe
             auto cf=static_cast<const unsigned*>(manifold_get_buffer_pointer(cellflags));
             if(cf)for(unsigned j=0;j<p.n;++j)if(cf[j]){failure=cf[j];break;}
         }
-        if((!ok||!converged)&&failure==MF_PHYSICS_OK)failure=MF_PHYSICS_CFL;
+        if((!ok||!converged)&&failure==MF_PHYSICS_OK)
+            failure=converged?MF_PHYSICS_REMAP_CONSERVATION:MF_PHYSICS_REMAP_NONCONVERGENCE;
         if(failure)fs[0]=failure;
     }
-    for(auto b:{rows,cols,errors,cellflags,mix})if(b)manifold_destroy_buffer(b);
+    for(auto b:{rows,cols,errors,cellflags,mix,active})if(b)manifold_destroy_buffer(b);
     return synchronized&&ok&&converged&&failure==MF_PHYSICS_OK;
 }
 

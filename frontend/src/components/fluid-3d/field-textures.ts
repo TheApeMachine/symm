@@ -107,14 +107,26 @@ export const packTexture3D = (
 	};
 };
 
-/* The wire carries component peaks; the shader multiplies by their reciprocals.
-An exactly empty field has zero normalization and remains empty. */
+/* Gas optical depth uses density / domain mean density. Thus a uniform gas
+has unit optical depth across the unit box at exposure=1, regardless of grid
+resolution. A rare dense cell cannot dim the entire rest of the field. This
+is a relative-density display, not a physical absorption coefficient.
+Energy and wave still use the component peaks carried by the wire. */
+const inverseMeanDensity = (fields: FluidFields) => {
+	let total = 0;
+	for (let offset = 3; offset < fields.momRho.length; offset += 4) {
+		total += fields.momRho[offset];
+	}
+
+	return total === 0 ? 0 : fields.momRho.length / 4 / total;
+};
+
 export const packFluidFieldTextures = (fields: FluidFields) => ({
 	momRho: packTexture3D(fields.momRho, fields.grid, 4),
 	internalEnergy: packTexture3D(fields.internalEnergy, fields.grid, 1),
 	waveReal: packTexture3D(fields.waveReal, fields.grid, 1),
 	waveImaginary: packTexture3D(fields.waveImaginary, fields.grid, 1),
-	densityScale: fields.densityScale === 0 ? 0 : 1 / fields.densityScale,
+	densityScale: inverseMeanDensity(fields),
 	momentumScale: fields.momentumScale === 0 ? 0 : 1 / fields.momentumScale,
 	energyScale: fields.energyScale === 0 ? 0 : 1 / fields.energyScale,
 	waveScale: fields.waveScale === 0 ? 0 : 1 / fields.waveScale,

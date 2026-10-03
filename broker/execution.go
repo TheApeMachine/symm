@@ -320,5 +320,6 @@ func IsEnterSoftFail(err error) bool {
 		strings.Contains(msg, "cannot determine valid entry volume") ||
 		strings.Contains(msg, "positive cash required") ||
 		strings.Contains(msg, "order rejected") ||
-		strings.Contains(msg, "enter skipped")
+		strings.Contains(msg, "enter skipped") ||
+		strings.Contains(msg, "book unavailable")
 }

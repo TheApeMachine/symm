@@ -46,6 +46,11 @@ func (evaluator *Evaluator) EvaluatePnL(
 	cost, err := evaluator.price.AllocateEntry(symbol, evaluator.price.ReferenceCash())
 
 	if err != nil || cost == nil || cost.Total == nil || cost.Total.Sign() <= 0 {
+		if entryAsk != nil && entryAsk.Sign() > 0 && exitBid != nil {
+			profit := exitBid.Sub(entryAsk)
+			return profit.Div(entryAsk).Float64(), nil
+		}
+
 		return 0, err
 	}
 

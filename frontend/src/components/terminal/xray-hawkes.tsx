@@ -78,19 +78,24 @@ export const XrayHawkesPanel = () => {
 			canvas.width = width * ratio;
 			canvas.height = height * ratio;
 			context.scale(ratio, ratio);
-			const plot = hawkesTrace(samples, width, marketAt);
+			const HAWKES_VIEWPORT_SPAN = 15_000_000_000n;
+			const plot = hawkesTrace(samples, width, marketAt, HAWKES_VIEWPORT_SPAN);
 
 			if (plot.points.length === 0) return;
 
 			const pad = 14;
 			const base = height - 26;
 			const top = 30;
-			// Keep the scale tied to retained arrivals while a quiet interval scrolls.
-			// Rescaling baseline-only pixels would turn rest into a full-height block.
+			// Scale using visible samples and points so off-screen spikes don't lock the scale
+			const visibleSamples = samples.filter((sample) => sample.at >= plot.from);
+			const samplesToScale =
+				visibleSamples.length > 0 ? visibleSamples : samples;
 			const peak = Math.max(
-				...samples.map((sample) =>
+				1.0,
+				...samplesToScale.map((sample) =>
 					Math.max(sample.intensity, sample.postArrival),
 				),
+				...plot.points.map((p) => p.intensity),
 			);
 			const toX = (at: bigint) =>
 				pad +

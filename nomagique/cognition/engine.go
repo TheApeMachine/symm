@@ -1052,6 +1052,31 @@ func (op *Engine) evaluate(context []byte, exact ...bool) (Result, error) {
 		acc.add(class, mass, state.Count, op.cfg.MaxBackoffOrder)
 	}
 
+	// Fallback: if no exact match, use prefix and suffix backoff via direct SeekPrefix
+	if acc.count == 0 && (len(exact) == 0 || !exact[0]) {
+		maxSteps := max(op.cfg.MaxBackoffOrder, len(context)/8)
+		prefixes, suffixes := backoffCandidates(context, maxSteps)
+
+		// Check prefixes first (salience hierarchy: keeping scope and dominant regions)
+		for _, sub := range prefixes {
+			order := max(1, len(sub)/8)
+			maxOrder := max(op.cfg.MaxBackoffOrder, len(context)/8)
+
+			if searchSubPrefix(root, sub, step, op.decayFactor, order, maxOrder, &acc) {
+				break
+			}
+		}
+
+		// Fallback to suffixes if no prefix matched
+		if acc.count == 0 {
+			for _, sub := range suffixes {
+				if searchSubPrefix(root, sub, step, op.decayFactor, 1, op.cfg.MaxBackoffOrder, &acc) {
+					break
+				}
+			}
+		}
+	}
+
 	eval := Evaluation{Context: context, Step: step}
 
 	if acc.count > 0 {
@@ -1549,6 +1574,49 @@ func (acc *classAccumulator) add(name []byte, mass float64, count uint64, order 
 	acc.counts = append(acc.counts, count)
 	acc.orders = append(acc.orders, order)
 	acc.count++
+}
+
+/*
+searchSubPrefix gathers basin candidates under one backoff prefix.
+*/
+func searchSubPrefix(
+	root *iradix.Tree[[]byte], sub []byte, step uint64, decayFactor float64, order int, maxOrder int, acc *classAccumulator,
+) bool {
+	if len(sub) == 0 {
+		return false
+	}
+
+	prefixBuf := make([]byte, 2+len(sub)+1)
+	prefixBuf[0] = 'b'
+	prefixBuf[1] = '/'
+	copy(prefixBuf[2:], sub)
+	prefixBuf[2+len(sub)] = '/'
+
+	it := root.Root().Iterator()
+	it.SeekPrefix(prefixBuf)
+	found := false
+
+	for k, v, ok := it.Next(); ok; k, v, ok = it.Next() {
+		if !bytes.HasPrefix(k, prefixBuf) {
+			break
+		}
+
+		class, _, valid := parseBasinKey(k)
+
+		if !valid {
+			continue
+		}
+
+		state := decodeWeight(v).effective(step, decayFactor)
+		mass := float64(state.Count) * state.Probability
+		if maxOrder > 0 {
+			mass *= float64(order) / float64(maxOrder)
+		}
+		acc.add(class, mass, state.Count, order)
+		found = true
+	}
+
+	return found
 }
 
 /*

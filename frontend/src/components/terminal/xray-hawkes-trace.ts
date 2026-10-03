@@ -18,6 +18,7 @@ export const hawkesTrace = (
 	samples: HawkesTraceSample[],
 	horizontalPixels: number,
 	marketAt: bigint = samples.at(-1)?.at ?? 0n,
+	viewportSpan?: bigint,
 ) => {
 	const first = samples[0];
 	const last = samples.at(-1);
@@ -28,7 +29,7 @@ export const hawkesTrace = (
 	const through = marketAt > last.at ? marketAt : last.at;
 	const eventSpan = last.at - first.at;
 	const decaySpan = BigInt(Math.ceil(1e9 / last.decay));
-	const span = eventSpan > decaySpan ? eventSpan : decaySpan;
+	const span = viewportSpan ?? (eventSpan > decaySpan ? eventSpan : decaySpan);
 	const from = through - span;
 
 	for (let index = 0; index < samples.length; index++) {

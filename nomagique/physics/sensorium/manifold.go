@@ -195,7 +195,7 @@ func (e *Engine) PICGatherUpdate(
 func (e *Engine) ProjectModesToSpatial(
 	modePsiReal, modePsiImag, modeAnchorIdx, modeAnchorWeight, particlePos *Buffer,
 	psiReField, psiImField *Buffer,
-	anchorsPerMode int,
+	anchorsPerMode int, sigma float32,
 ) {
 	C.manifold_project_modes_to_spatial_psi(
 		e.ctx,
@@ -205,7 +205,7 @@ func (e *Engine) ProjectModesToSpatial(
 		psiReField.cBuf, psiImField.cBuf,
 		C.int64_t(anchorsPerMode),
 		C.int64_t(e.GridSize[0]), C.int64_t(e.GridSize[1]), C.int64_t(e.GridSize[2]),
-		C.float(e.Spacing),
+		C.float(e.Spacing), C.float(sigma),
 	)
 }
 

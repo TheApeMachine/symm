@@ -401,9 +401,10 @@ Regenerate both sides together — never run bare `flatc`:
 make generate-telemetry
 ```
 
-FlatBuffers keeps frame serialization allocation-free on the hot path. WebRTC data
-channels carry binary manifold and particle frames; the WebSocket carries JSON for
-lower-frequency state.
+The WebSocket carries binary FlatBuffers telemetry and manifold frames. The hub
+encodes the solver’s immutable published state, including wave modes, phase
+resultants, and accepted-step physics health. A connected socket alone does not
+mean the solver has published a state.
 
 ## Dashboard
 
@@ -411,8 +412,7 @@ lower-frequency state.
 
 | Endpoint                 | Purpose                                                                                   |
 |--------------------------|-------------------------------------------------------------------------------------------|
-| `ws://…/ws`              | JSON state and telemetry stream, plus focus-symbol commands.                              |
-| `POST …/webrtc/manifold` | Non-trickle WebRTC signaling for binary manifold frames.                                  |
+| `ws://…/ws`              | Binary state and telemetry stream, plus focus-symbol commands.                            |
 | `GET …/learning`         | Coherent on-demand agent state for the selected symbol.                                   |
 | `GET …/learning/skill`   | Current skill reading and mode.                                                           |
 | `GET …/learning/events`  | The run's durable decision journal.                                                       |
@@ -426,7 +426,7 @@ The frontend is a React 19 / TanStack Start terminal on port 3000.
 | `/` Dashboard            | Equity, balances, positions, queue depths, system telemetry.                                                 |
 | `/learning`              | The learning coordinator: impulse map, regions, cognition predictions, training metrics, and live decisions. |
 | `/hindsight`             | Run browser + DuckDB-bucketed research timeline (needs `make workbench`); envelope/excursions stay typed.   |
-| `/fluid`                 | Live L3 manifold: particle fields and pressure maps over WebRTC.                                             |
+| `/fluid`                 | Live L3 manifold: particle fields, phase modes, and physics health over WebSocket.                                             |
 | `/signals`               | Per-signal metric timeseries and estimator state.                                                            |
 | `/xray`                  | Resonance hidden state and prequential skill history.                                                        |
 | `/cortex`                | DMT prefix-tree activations and episodic paths.                                                              |
@@ -568,7 +568,7 @@ pnpm bench            # Vitest benchmarks
 | `store/`            | SQLite engine, ordered capture writer, async witness writer, learning journal, repositories.                                                                                                                                        |
 | `nomagique/`        | Embedded numeric library (composed primitives, learning grid, physics, estimators).                                                                                                                                                 |
 | `telemetry/`        | FlatBuffers schema and generated Go bindings.                                                                                                                                                                                       |
-| `ui/`               | Dashboard WebSocket, HTTP inspection routes, WebRTC manifold transport.                                                                                                                                                             |
+| `ui/`               | Dashboard WebSocket, HTTP inspection routes, binary manifold transport.                                                                                                                                                             |
 | `frontend/`         | React/TanStack terminal and its stores.                                                                                                                                                                                             |
 | `tests/`            | Deterministic Level 3 market model and fixtures.                                                                                                                                                                                    |
 | `system/`           | Runtime configuration and pipeline diagnostics.                                                                                                                                                                                     |
