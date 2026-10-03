@@ -54,6 +54,7 @@ type Solver struct {
 	forcing     sync.Map
 	wake        chan struct{}
 	dirty       sync.Map
+	finalizers  sync.Map
 	loaded      map[int64]string
 	reading     atomic.Pointer[State]
 	version     atomic.Uint64
@@ -116,6 +117,16 @@ func NewSolver(ctx context.Context, arena *data.ArenaOwner, book *broker.Book) *
 
 func (solver *Solver) Arena() *data.ArenaOwner {
 	return solver.arena
+}
+
+func (solver *Solver) finalizer(symbol string) *data.Finalizer[float64] {
+	if loaded, found := solver.finalizers.Load(symbol); found {
+		return loaded.(*data.Finalizer[float64])
+	}
+
+	created := data.NewFinalizer[float64]()
+	actual, _ := solver.finalizers.LoadOrStore(symbol, created)
+	return actual.(*data.Finalizer[float64])
 }
 
 /*
@@ -233,7 +244,7 @@ func (solver *Solver) Step(prior *data.Measurement[float64]) *data.Measurement[f
 	out.Result = reading
 
 	if reading == nil {
-		out.Finalize()
+		solver.finalizer(symbol).Complete(out)
 		return out
 	}
 
@@ -371,7 +382,7 @@ func (solver *Solver) Step(prior *data.Measurement[float64]) *data.Measurement[f
 		}
 	}
 	out.SetQuality(maturity, snr, snrDefined, estimated)
-	out.Finalize()
+	solver.finalizer(symbol).Complete(out)
 
 	return out
 }

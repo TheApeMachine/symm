@@ -59,12 +59,6 @@ const ObservationCounter = () => {
 
 		return null;
 	});
-	const ticks = useSelector(tickCountAtom, (s) => s);
-
-	let count = steps;
-	if (count === null && ticks > 0) {
-		count = ticks;
-	}
 
 	return (
 		<Flex.Row align="center" gap={6}>
@@ -72,8 +66,25 @@ const ObservationCounter = () => {
 				<Typography.Label size="s" tone="f4" weight="normal">
 					Observations
 				</Typography.Label>
+				<Typography.Mono size="lg" tone="f1" data-observations="true">
+					{steps !== null ? steps.toLocaleString() : "—"}
+				</Typography.Mono>
+			</Flex.Column>
+		</Flex.Row>
+	);
+};
+
+const TickCounter = () => {
+	const ticks = useSelector(tickCountAtom, (s) => s);
+
+	return (
+		<Flex.Row align="center" gap={6}>
+			<Flex.Column className="items-end gap-px">
+				<Typography.Label size="s" tone="f4" weight="normal">
+					Ticks
+				</Typography.Label>
 				<Typography.Mono size="lg" tone="f1" data-tick="true">
-					{count !== null ? count.toLocaleString() : "—"}
+					{ticks > 0 ? ticks.toLocaleString() : "—"}
 				</Typography.Mono>
 			</Flex.Column>
 		</Flex.Row>
@@ -189,8 +200,10 @@ export const TerminalTopBar = () => {
 
 			<Rule />
 
-			<Toolbar.Group>
+			<Toolbar.Group className="gap-3.5">
 				<ObservationCounter />
+				<Rule />
+				<TickCounter />
 			</Toolbar.Group>
 		</Toolbar>
 	);

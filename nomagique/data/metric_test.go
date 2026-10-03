@@ -7,35 +7,36 @@ import (
 )
 
 func TestDeformation(t *testing.T) {
-	Convey("Given a metric pushing on its container", t, func() {
-		Convey("No change is rest, including all-zero", func() {
-			So(Deformation(75000, 75000), ShouldEqual, 0)
+	Convey("Given metric deformation calculation", t, func() {
+		Convey("Direct required transitions", func() {
 			So(Deformation(0, 0), ShouldEqual, 0)
-		})
-
-		Convey("Direction is kept and a rise mirrors a fall", func() {
-			So(Deformation(75000, 76000), ShouldAlmostEqual, 1000.0/151000.0, 1e-15)
-			So(Deformation(76000, 75000), ShouldAlmostEqual, -1000.0/151000.0, 1e-15)
-		})
-
-		Convey("Units drop out: equal relative moves deform alike", func() {
+			So(Deformation(0, 10), ShouldEqual, 1)
+			So(Deformation(0, -10), ShouldEqual, -1)
+			So(Deformation(10, 10), ShouldEqual, 0)
+			So(Deformation(1, 2), ShouldAlmostEqual, Deformation(100, 200), 1e-15)
 			So(Deformation(1, 2), ShouldAlmostEqual, 1.0/3.0, 1e-15)
-			So(Deformation(100000, 200000), ShouldAlmostEqual, 1.0/3.0, 1e-15)
-			So(Deformation(0.000003, 0.000006), ShouldAlmostEqual, 1.0/3.0, 1e-15)
+			So(Deformation(2, 1), ShouldBeLessThan, 0)
+			So(Deformation(2, 1), ShouldAlmostEqual, -1.0/3.0, 1e-15)
+			So(Deformation(-2, -1), ShouldBeGreaterThan, 0)
+			So(Deformation(-2, -1), ShouldAlmostEqual, 1.0/3.0, 1e-15)
+			So(Deformation(-1, -2), ShouldBeLessThan, 0)
+			So(Deformation(-1, -2), ShouldAlmostEqual, -1.0/3.0, 1e-15)
+			So(Deformation(1, -1), ShouldEqual, 0)
+			So(Deformation(-1, 1), ShouldEqual, 0)
 		})
 
-		Convey("A first value pushes a container at rest to a full swing", func() {
-			So(Deformation(0, 75000), ShouldEqual, 1)
-			So(Deformation(0, -0.5), ShouldEqual, -1)
-		})
+		Convey("Results are strictly bounded to [-1, 1]", func() {
+			testPairs := [][2]float64{
+				{0, 0}, {0, 10}, {0, -10}, {10, 10}, {1, 2}, {100, 200},
+				{2, 1}, {-2, -1}, {-1, -2}, {1, -1}, {-1, 1},
+				{1e9, 0}, {0, -1e9}, {-100, 50}, {50, -100},
+			}
 
-		Convey("A flip of equal magnitude is a full swing", func() {
-			So(Deformation(0.5, -0.5), ShouldEqual, -1)
-			So(Deformation(-0.5, 0.5), ShouldEqual, 1)
-		})
-
-		Convey("Moving toward zero is a push toward the metric's own sign change", func() {
-			So(Deformation(-0.002, -0.001), ShouldAlmostEqual, 1.0/3.0, 1e-15)
+			for _, pair := range testPairs {
+				result := Deformation(pair[0], pair[1])
+				So(result, ShouldBeGreaterThanOrEqualTo, -1.0)
+				So(result, ShouldBeLessThanOrEqualTo, 1.0)
+			}
 		})
 	})
 }

@@ -71,13 +71,15 @@ func TestTraining_Train(t *testing.T) {
 		})
 		writer.Add("measurements", data.Publication{Measurement: detection})
 
+		defVal := 0.5
 		signal := func(source string, tick int64, seqIdx int64) {
 			measurement := data.NewMeasurement[float64](source, nil)
 			measurement.Epoch = epoch
 			measurement.Label = "BTC/USD"
 			measurement.Tick = tick
 			measurement.SeqIdx = seqIdx
-			measurement.SetMetric("value", data.Metric[float64]{Label: "value", Raw: 1.5})
+			measurement.Maturity = 1.0
+			measurement.SetMetric("value", data.Metric[float64]{Label: "value", Raw: 1.5, Deformation: &defVal})
 			writer.Add("measurements", data.Publication{Measurement: measurement})
 		}
 

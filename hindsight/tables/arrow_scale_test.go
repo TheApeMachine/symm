@@ -11,9 +11,10 @@ import (
 )
 
 func TestMeasurementRoundTripRestoresScales(t *testing.T) {
-	Convey("Standardized/Normalized survive Iceberg arrow provenance", t, func() {
+	Convey("Standardized/Normalized/Deformation survive Iceberg arrow provenance", t, func() {
 		stdMid, stdSpread := 0.1, 2.5
 		normFlow := 0.7
+		defSpeed := 0.3333333333333333
 		src := data.NewMeasurement("websocket", map[string]data.Metric[float64]{
 			"mid": {
 				Label: "mid", Raw: 100000,
@@ -27,9 +28,14 @@ func TestMeasurementRoundTripRestoresScales(t *testing.T) {
 				Label: "flow", Raw: 0.7,
 				Normalized: &normFlow,
 			},
+			"speed": {
+				Label: "speed", Raw: 42.0,
+				Deformation: &defSpeed,
+			},
 		})
 		src.Label = "BTC/USD"
 		src.SeqIdx = 42
+		src.Maturity = 1.0
 
 		converted, err := arrowSchemaFor(MeasurementSchema())
 		So(err, ShouldBeNil)
@@ -54,6 +60,9 @@ func TestMeasurementRoundTripRestoresScales(t *testing.T) {
 		flow := restored[0].GetMetric("flow")
 		So(flow.Normalized, ShouldNotBeNil)
 		So(*flow.Normalized, ShouldEqual, normFlow)
+		speed := restored[0].GetMetric("speed")
+		So(speed.Deformation, ShouldNotBeNil)
+		So(*speed.Deformation, ShouldEqual, defSpeed)
 
 		grid := store.NewGrid()
 		grid.Update(src)

@@ -9,9 +9,10 @@ import (
 
 func TestMeasurementFinalize(t *testing.T) {
 	Convey("Given a measurement without historical support", t, func() {
+		finalizer := NewFinalizer[float64]()
 		measurement := NewMeasurement[float64]("source")
 		measurement.Label, measurement.At, measurement.From = "label", time.Now(), time.Now()
-		measurement.Finalize()
+		finalizer.Complete(measurement)
 
 		Convey("It should be whole with Maturity 1 and undefined SNR 0", func() {
 			So(measurement.Maturity, ShouldEqual, 1.0)
@@ -20,12 +21,13 @@ func TestMeasurementFinalize(t *testing.T) {
 	})
 
 	Convey("Given a measurement with scalar divergence and noise variance", t, func() {
+		finalizer := NewFinalizer[float64]()
 		measurement := NewMeasurement[float64]("source")
 		measurement.Label, measurement.At, measurement.From = "label", time.Now(), time.Now()
 		measurement.SetMetadata(MetadataSupport, "10")
 		measurement.SetMetadata(MetadataDivergence, "4.0")
 		measurement.SetMetadata(MetadataNoiseVariance, "2.0")
-		measurement.Finalize()
+		finalizer.Complete(measurement)
 
 		Convey("It should derive maturity 1 - 1/N and scalar SNR d^2 / sigma^2", func() {
 			So(measurement.Maturity, ShouldAlmostEqual, 0.9, 1e-6)
@@ -34,14 +36,14 @@ func TestMeasurementFinalize(t *testing.T) {
 
 		Convey("Reusing the measurement with missing noise clears its old SNR", func() {
 			measurement.DeleteMetadata(MetadataNoiseVariance)
-			measurement.Finalize()
+			finalizer.Complete(measurement)
 			So(measurement.Estimated, ShouldBeTrue)
 			So(measurement.SNRDefined, ShouldBeFalse)
 			So(measurement.SNR, ShouldEqual, 0)
 
 			Convey("Fresh noise evidence restores a newly calculated ratio", func() {
 				measurement.SetMetadata(MetadataNoiseVariance, "4")
-				measurement.Finalize()
+				finalizer.Complete(measurement)
 				So(measurement.SNRDefined, ShouldBeTrue)
 				So(measurement.SNR, ShouldEqual, 4)
 			})
@@ -49,15 +51,63 @@ func TestMeasurementFinalize(t *testing.T) {
 	})
 
 	Convey("Given a measurement with multivariate Mahalanobis SNR metadata", t, func() {
+		finalizer := NewFinalizer[float64]()
 		measurement := NewMeasurement[float64]("source")
 		measurement.Label, measurement.At, measurement.From = "label", time.Now(), time.Now()
 		measurement.SetMetadata(MetadataSupport, "20")
 		measurement.SetMetadata(MetadataMahalanobisSNR, "5.5")
-		measurement.Finalize()
+		finalizer.Complete(measurement)
 
 		Convey("It should derive maturity 1 - 1/N and prioritize Mahalanobis SNR", func() {
 			So(measurement.Maturity, ShouldAlmostEqual, 0.95, 1e-6)
 			So(measurement.SNR, ShouldAlmostEqual, 5.5, 1e-6)
+		})
+	})
+}
+
+func TestFinalizerDeformation(t *testing.T) {
+	Convey("Given a persistent Finalizer tracking metric deformation", t, func() {
+		finalizerA := NewFinalizer[float64]()
+		finalizerB := NewFinalizer[float64]()
+
+		Convey("First occurrence compares against wrapper rest 0", func() {
+			measurement1 := NewMeasurement[float64]("source")
+			measurement1.SetMetric("price", Metric[float64]{Raw: 100.0, Label: "price"})
+			finalizerA.Complete(measurement1)
+
+			priceMetric1 := measurement1.GetMetric("price")
+			So(priceMetric1.Deformation, ShouldNotBeNil)
+			So(*priceMetric1.Deformation, ShouldEqual, 1.0)
+
+			Convey("Second identical value has deformation 0", func() {
+				measurement2 := NewMeasurement[float64]("source")
+				measurement2.SetMetric("price", Metric[float64]{Raw: 100.0, Label: "price"})
+				finalizerA.Complete(measurement2)
+
+				priceMetric2 := measurement2.GetMetric("price")
+				So(priceMetric2.Deformation, ShouldNotBeNil)
+				So(*priceMetric2.Deformation, ShouldEqual, 0.0)
+
+				Convey("Changed value has nonzero deformation", func() {
+					measurement3 := NewMeasurement[float64]("source")
+					measurement3.SetMetric("price", Metric[float64]{Raw: 200.0, Label: "price"})
+					finalizerA.Complete(measurement3)
+
+					priceMetric3 := measurement3.GetMetric("price")
+					So(priceMetric3.Deformation, ShouldNotBeNil)
+					So(*priceMetric3.Deformation, ShouldAlmostEqual, 1.0/3.0, 1e-6)
+				})
+			})
+
+			Convey("Two different Finalizer instances do not share previous values", func() {
+				measurementB := NewMeasurement[float64]("source")
+				measurementB.SetMetric("price", Metric[float64]{Raw: 100.0, Label: "price"})
+				finalizerB.Complete(measurementB)
+
+				priceMetricB := measurementB.GetMetric("price")
+				So(priceMetricB.Deformation, ShouldNotBeNil)
+				So(*priceMetricB.Deformation, ShouldEqual, 1.0)
+			})
 		})
 	})
 }
@@ -134,6 +184,7 @@ func TestArenaOwnerGenerations(t *testing.T) {
 }
 
 func BenchmarkMeasurementFinalize(b *testing.B) {
+	finalizer := NewFinalizer[float64]()
 	measurement := NewMeasurement[float64]("source")
 	measurement.Label, measurement.At, measurement.From = "label", time.Now(), time.Now()
 	measurement.SetMetadata(MetadataSupport, "25")
@@ -142,6 +193,6 @@ func BenchmarkMeasurementFinalize(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		measurement.Finalize()
+		finalizer.Complete(measurement)
 	}
 }

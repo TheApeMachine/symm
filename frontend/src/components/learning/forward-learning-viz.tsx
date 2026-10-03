@@ -1,10 +1,11 @@
 import { useSelector } from "@tanstack/react-store";
 import * as d3 from "d3";
-import { ChevronRight, Pause, Play } from "lucide-react";
+import { ChevronRight, Clock, Pause, Play } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { focusAtom, positionCountAtom, type RingBuffer, signals } from "#/collections/app";
 import { RingCursor } from "#/collections/ring";
+import { Scanlines } from "#/components/ui/scanlines";
 import { hubBaseUrl } from "#/lib/hub";
 import { cn } from "#/lib/utils";
 import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
@@ -18,6 +19,47 @@ interface ForwardTapePoint {
 	x: number;
 	y: number;
 	seq?: number;
+	time?: number;
+}
+
+function parseTimestamp(
+	atNs: bigint | number | undefined | null,
+	obsNs?: bigint | number | null,
+): number {
+	const val = atNs && atNs > 0n ? atNs : obsNs && obsNs > 0n ? obsNs : null;
+	if (val) {
+		const num = typeof val === "bigint" ? Number(val) : val;
+		if (num > 1e16) return Math.floor(num / 1e6); // nanoseconds
+		if (num > 1e13) return Math.floor(num / 1e3); // microseconds
+		if (num > 1e10) return Math.floor(num); // milliseconds
+		if (num > 1e6) return Math.floor(num * 1000); // seconds
+	}
+	return Date.now();
+}
+
+function formatDurationSpan(ms: number): string {
+	if (!Number.isFinite(ms) || ms <= 0) return "";
+	const totalSec = Math.round(ms / 1000);
+	if (totalSec < 60) return `${totalSec}s`;
+	const mins = Math.floor(totalSec / 60);
+	const secs = totalSec % 60;
+	if (mins < 60) {
+		return secs > 0 ? `${mins}m ${secs}s` : `${mins}m`;
+	}
+	const hrs = Math.floor(mins / 60);
+	const remMins = mins % 60;
+	return remMins > 0 ? `${hrs}h ${remMins}m` : `${hrs}h`;
+}
+
+function formatClockTime(ms: number, withSeconds: boolean): string {
+	const d = new Date(ms);
+	if (Number.isNaN(d.getTime())) return "—";
+	return d.toLocaleTimeString([], {
+		hour: "2-digit",
+		minute: "2-digit",
+		second: withSeconds ? "2-digit" : undefined,
+		hour12: false,
+	});
 }
 
 type ExcursionKind =
@@ -280,7 +322,7 @@ export const ForwardLearningViz = ({
 		setEpisodeQueue([]);
 		setPoints([]);
 		setExcursionEvent(null);
-		lastSeenExcursionStartRef.current = undefined;
+		lastSeenExcursionStartRef.current = -1;
 
 		const handleRing = (ring: RingBuffer<MeasurementT>) => {
 			if (!ring || ring.isEmpty()) return;
@@ -298,7 +340,7 @@ export const ForwardLearningViz = ({
 					setEpisodeQueue([]);
 					setPoints([]);
 					setExcursionEvent(null);
-					lastSeenExcursionStartRef.current = undefined;
+					lastSeenExcursionStartRef.current = -1;
 				}
 				lastSeenSymbolRef.current = activeSym;
 				setCurrentSymbol(activeSym);
@@ -496,10 +538,15 @@ export const ForwardLearningViz = ({
 				if (rawPrice !== undefined) {
 					const seqVal = Number(measurement.tick ?? 0n);
 					const pointPrice = rawPrice;
+					const ptTime = parseTimestamp(
+						measurement.at,
+						measurement.observedFrom,
+					);
 					pendingEpisodeRef.current.push({
 						x: pendingEpisodeRef.current.length,
 						y: pointPrice,
 						seq: seqVal,
+						time: ptTime,
 					});
 
 					// Forward: rolling live tape. Historical: stream the developing
@@ -509,18 +556,30 @@ export const ForwardLearningViz = ({
 						setPoints((prev) => {
 							const next = [
 								...prev,
-								{ x: prev.length, y: pointPrice, seq: seqVal },
+								{ x: prev.length, y: pointPrice, seq: seqVal, time: ptTime },
 							];
 							if (next.length > 250) {
 								return next
 									.slice(next.length - 250)
-									.map((pt, i) => ({ x: i, y: pt.y, seq: pt.seq }));
+									.map((pt, i) => ({
+										x: i,
+										y: pt.y,
+										seq: pt.seq,
+										time: pt.time,
+									}));
 							}
 							return next;
 						});
 					} else if (sCode === 1 && currentEpisodeRef.current === null) {
 						const pending = pendingEpisodeRef.current;
-						setPoints(pending.map((pt, i) => ({ x: i, y: pt.y, seq: pt.seq })));
+						setPoints(
+							pending.map((pt, i) => ({
+								x: i,
+								y: pt.y,
+								seq: pt.seq,
+								time: pt.time,
+							})),
+						);
 					}
 				}
 
@@ -585,7 +644,18 @@ export const ForwardLearningViz = ({
 	}, [targetSymbol]);
 
 	// Scales for real tape rendering
-	const { xScale, yScale, currentPoints, lineGenerator } = useMemo(() => {
+	const {
+		xScale,
+		yScale,
+		minPrice,
+		maxPrice,
+		midPrice,
+		currentPoints,
+		lineGenerator,
+		areaGenerator,
+		timeTicks,
+		timeSpanLabel,
+	} = useMemo(() => {
 		const count = Math.max(points.length, 50);
 		const xs = d3.scaleLinear().domain([0, count]).range([0, tapeDim.width]);
 
@@ -620,6 +690,56 @@ export const ForwardLearningViz = ({
 			.y((d) => ys(d.y))
 			.curve(d3.curveMonotoneX);
 
+		const ag = d3
+			.area<ForwardTapePoint>()
+			.x((d) => xs(d.x))
+			.y0(tapeDim.height - 20)
+			.y1((d) => ys(d.y))
+			.curve(d3.curveMonotoneX);
+
+		// Calculate time ticks and span across evaluated tape fragment
+		const validTimes = points
+			.map((p) => p.time)
+			.filter((t): t is number => typeof t === "number" && t > 0);
+
+		let timeSpanLabel = "";
+		const timeTicks: Array<{ x: number; label: string }> = [];
+
+		if (validTimes.length >= 2 && tapeDim.width > 0 && points.length > 0) {
+			const tStart = validTimes[0];
+			const tEnd = validTimes[validTimes.length - 1];
+			const spanMs = Math.max(0, tEnd - tStart);
+			timeSpanLabel = formatDurationSpan(spanMs);
+
+			const activeWidth = xs(points.length - 1);
+			const numTicks = Math.max(2, Math.min(6, Math.floor(activeWidth / 130)));
+
+			const tickIndices = Array.from({ length: numTicks }, (_, i) =>
+				Math.min(
+					points.length - 1,
+					Math.round((i / Math.max(1, numTicks - 1)) * (points.length - 1)),
+				),
+			);
+
+			const times = tickIndices.map((idx) => {
+				const ptTime = points[idx]?.time;
+				if (ptTime && ptTime > 0) return ptTime;
+				const fraction = idx / Math.max(1, points.length - 1);
+				return tStart + fraction * spanMs;
+			});
+
+			const testLabels = times.map((t) => formatClockTime(t, false));
+			const needsSeconds =
+				spanMs < 120_000 || new Set(testLabels).size < testLabels.length;
+
+			for (let i = 0; i < numTicks; i++) {
+				const ptIdx = tickIndices[i];
+				const px = xs(points[ptIdx].x);
+				const label = formatClockTime(times[i], needsSeconds);
+				timeTicks.push({ x: px, label });
+			}
+		}
+
 		return {
 			xScale: xs,
 			yScale: ys,
@@ -628,6 +748,9 @@ export const ForwardLearningViz = ({
 			midPrice: (minY + maxY) / 2,
 			currentPoints: points,
 			lineGenerator: lg,
+			areaGenerator: ag,
+			timeTicks,
+			timeSpanLabel,
 		};
 	}, [points, tapeDim.width, tapeDim.height]);
 
@@ -647,7 +770,7 @@ export const ForwardLearningViz = ({
 			{/* TOP ROW: Real Tape + Right Sidebar */}
 			<div className="flex h-3/5 gap-2 min-h-0">
 				{/* Main Episodic Tape */}
-				<div className="flex-1 bg-(--surface) border-(--line) border rounded flex flex-col relative min-w-0">
+				<div className="flex-1 bg-(--sunken) border-(--line) border rounded flex flex-col relative min-w-0 shadow-[inset_0_0_24px_rgba(0,0,0,0.85)]">
 					{/* Tape Header */}
 					<div className="h-8 border-(--line) border-b bg-(--sunken) flex items-center px-3 justify-between text-(--f3) shrink-0">
 						<div className="flex items-center gap-2">
@@ -671,6 +794,18 @@ export const ForwardLearningViz = ({
 							<span className="text-(--f1)">
 								{points.length} frames evaluated
 							</span>
+							{timeSpanLabel && (
+								<>
+									<ChevronRight className="w-3 h-3 text-(--f4)" />
+									<span
+										className="text-(--acc) flex items-center gap-1 font-mono text-[10px] font-bold bg-(--acc)/10 px-1.5 py-0.5 rounded border border-(--acc)/20"
+										title="Time-scale span of this tape fragment"
+									>
+										<Clock className="w-3 h-3 text-(--acc)" />
+										<span>{timeSpanLabel}</span>
+									</span>
+								</>
+							)}
 						</div>
 						<div className="flex items-center gap-3">
 							{currentPoints.length > 0 && (
@@ -739,9 +874,11 @@ export const ForwardLearningViz = ({
 					</AnimatePresence>
 
 					{/* SVG Tape Canvas */}
-					<div ref={tapeRef} className="flex-1 relative overflow-hidden">
+					<div ref={tapeRef} className="flex-1 relative overflow-hidden bg-(--sunken)">
+						<Scanlines variant="plate" className="pointer-events-none z-10" />
+
 						{points.length === 0 && (
-							<div className="absolute inset-0 flex items-center justify-center text-(--f4) text-xs tracking-wider">
+							<div className="absolute inset-0 flex items-center justify-center text-(--f4) text-xs tracking-wider z-5">
 								Awaiting{" "}
 								{isForward ? "live market forward" : "historical replay"} tape
 								stream for {currentSymbol}...
@@ -752,9 +889,29 @@ export const ForwardLearningViz = ({
 							<svg
 								width={tapeDim.width}
 								height={tapeDim.height}
-								className="absolute inset-0"
+								className="absolute inset-0 z-5"
+								aria-label={`Tape of ${currentSymbol}`}
 							>
-								<title>Tape of {currentSymbol}</title>
+								<defs>
+									<linearGradient
+										id="tapeScreenAreaGradient"
+										x1="0"
+										y1="0"
+										x2="0"
+										y2="1"
+									>
+										<stop
+											offset="0%"
+											stopColor="var(--acc)"
+											stopOpacity="0.14"
+										/>
+										<stop
+											offset="100%"
+											stopColor="var(--acc)"
+											stopOpacity="0.0"
+										/>
+									</linearGradient>
+								</defs>
 								{/* Y-Axis Price Scale Ticks and Grid */}
 								<g className="text-[9px] font-mono text-(--f4) select-none pointer-events-none">
 									<line
@@ -797,12 +954,20 @@ export const ForwardLearningViz = ({
 									</text>
 								</g>
 
+								{/* Phosphor Area Fill */}
+								{currentPoints.length > 1 && (
+									<path
+										d={areaGenerator(currentPoints) || undefined}
+										fill="url(#tapeScreenAreaGradient)"
+									/>
+								)}
+
 								{/* Price Trajectory Path */}
 								<path
 									d={lineGenerator(currentPoints) || undefined}
 									fill="none"
 									stroke="var(--acc)"
-									strokeWidth="1.5"
+									strokeWidth="1.8"
 								/>
 
 								{/* Leading Point & Real Price Badge */}
@@ -810,9 +975,10 @@ export const ForwardLearningViz = ({
 									<g
 										transform={`translate(${xScale(currentPoints[currentPoints.length - 1].x)}, ${yScale(currentPoints[currentPoints.length - 1].y)})`}
 									>
+										<circle r={7} fill="none" stroke="var(--acc)" strokeWidth="0.8" opacity="0.4" />
 										<circle r={3.5} fill="var(--acc)" />
 										<text
-											x={-6}
+											x={-8}
 											y={-8}
 											fill="var(--acc)"
 											fontSize="9px"
@@ -1029,6 +1195,57 @@ export const ForwardLearningViz = ({
 											</g>
 										);
 									})()}
+
+								{/* X-Axis Time Scale Ticks and Grid */}
+								{timeTicks.length > 0 && (
+									<g className="text-[9px] font-mono select-none pointer-events-none">
+										<line
+											x1="0"
+											y1={tapeDim.height - 20}
+											x2={tapeDim.width}
+											y2={tapeDim.height - 20}
+											stroke="var(--line)"
+											opacity="0.6"
+										/>
+										{timeTicks.map((tick, idx) => (
+											<g key={`time-tick-${tick.x}-${idx}`}>
+												<line
+													x1={tick.x}
+													y1={24}
+													x2={tick.x}
+													y2={tapeDim.height - 20}
+													stroke="var(--line)"
+													strokeDasharray="2 4"
+													opacity="0.25"
+												/>
+												<line
+													x1={tick.x}
+													y1={tapeDim.height - 20}
+													x2={tick.x}
+													y2={tapeDim.height - 15}
+													stroke="var(--f4)"
+													opacity="0.8"
+												/>
+												<text
+													x={tick.x}
+													y={tapeDim.height - 5}
+													fill="var(--f3)"
+													fontSize="9px"
+													textAnchor={
+														idx === 0
+															? "start"
+															: idx === timeTicks.length - 1
+																? "end"
+																: "middle"
+													}
+													dx={idx === 0 ? 4 : idx === timeTicks.length - 1 ? -4 : 0}
+												>
+													{tick.label}
+												</text>
+											</g>
+										))}
+									</g>
+								)}
 							</svg>
 						)}
 					</div>

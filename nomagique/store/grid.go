@@ -163,23 +163,24 @@ func collectRegionActivity(measurement *data.Measurement[float64], activity map[
 		return
 	}
 
-	quality := 1.0
-	if measurement.Maturity > 0 {
-		quality *= math.Min(1.0, measurement.Maturity)
-	}
+	quality := math.Max(0.0, math.Min(1.0, measurement.Maturity))
+
 	if measurement.SNRDefined {
 		if measurement.SNR > 0 {
 			quality *= measurement.SNR / (1.0 + measurement.SNR)
-		} else {
+		}
+
+		if measurement.SNR <= 0 {
 			quality *= 0.1
 		}
 	}
 
 	for _, entry := range measurement.Metrics {
 		if entry.Metric.Region > 0 {
-			act := regionActivity(entry.Metric) * quality
-			if act > 0 {
-				activity[entry.Metric.Region] += act
+			activityScore := regionActivity(entry.Metric) * quality
+
+			if activityScore > 0 {
+				activity[entry.Metric.Region] += activityScore
 			}
 		}
 	}
@@ -190,19 +191,11 @@ func collectRegionActivity(measurement *data.Measurement[float64], activity map[
 }
 
 func regionActivity(metric data.Metric[float64]) float64 {
-	if metric.Standardized != nil {
-		return math.Abs(*metric.Standardized)
-	}
-
-	if metric.Normalized != nil {
-		return math.Abs(*metric.Normalized)
-	}
-
-	if metric.Raw == 0 {
+	if metric.Deformation == nil {
 		return 0
 	}
 
-	return 1.0
+	return math.Abs(*metric.Deformation)
 }
 
 func (sg *Grid) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {

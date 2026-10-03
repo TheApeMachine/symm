@@ -69,6 +69,12 @@ export const buttonVariants = cva(
 				icon: "aspect-square p-0",
 				block: "w-full",
 			},
+			fullHeight: {
+				true: "h-full",
+			},
+			fullWidth: {
+				true: "w-full",
+			},
 		},
 		/*
 			`bare` means "no chrome", and padding is chrome. Letting size through
@@ -108,6 +114,8 @@ export const Button = ({
 	size,
 	shape,
 	type = "button",
+	fullHeight,
+	fullWidth,
 	className,
 	children,
 	...props
@@ -115,7 +123,7 @@ export const Button = ({
 	<button
 		ref={ref}
 		type={type}
-		className={cn(buttonVariants({ variant, tone, size, shape }), className)}
+		className={cn(buttonVariants({ variant, tone, size, shape, fullHeight, fullWidth }), className)}
 		{...props}
 	>
 		{children}

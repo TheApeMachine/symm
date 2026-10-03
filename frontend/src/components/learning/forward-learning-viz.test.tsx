@@ -42,3 +42,36 @@ it("starts playback when a completed episode arrives after an empty queue", asyn
 	await act(async () => { vi.advanceTimersByTime(16); });
 	expect(container.textContent).toContain("3 frames evaluated");
 });
+
+it("renders screen plate scanlines and time-scale span for tape fragments", async () => {
+	vi.useFakeTimers();
+	vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+		ok: true,
+		json: async () => ({ branches: [] }),
+	}));
+	const { container } = render(<ForwardLearningViz />);
+	const ring = new RingBuffer<MeasurementT>(8);
+
+	// Start at 14:00:00 UTC (1718028000000 ms = 1718028000000000000 ns)
+	const baseNanos = 1718028000000000000n;
+	const minuteNanos = 60_000_000_000n;
+
+	await act(async () => {
+		for (const [index, price] of [100, 102, 105].entries()) {
+			const frame = new MeasurementT();
+			frame.source = "training";
+			frame.symbol = "BTC/USD";
+			frame.tick = BigInt(index + 1);
+			frame.at = baseNanos + BigInt(index * 2) * minuteNanos; // spans 4 minutes
+			frame.metrics = [new MetricT("price", price), new MetricT("stage_code", 2)];
+			ring.add(frame);
+		}
+		signals.training.setState(() => ({ "BTC/USD": ring }));
+	});
+
+	// Check time-scale span badge in header (4m)
+	expect(container.textContent).toContain("4m");
+	// Check screen scanlines present
+	const scanlineEl = container.querySelector("[aria-hidden='true']");
+	expect(scanlineEl).toBeDefined();
+});

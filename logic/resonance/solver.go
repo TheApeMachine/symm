@@ -72,6 +72,7 @@ type Solver struct {
 	arena         *data.ArenaOwner
 	detectors     *sync.Map
 	standardizers *sync.Map
+	finalizers    *sync.Map
 	references    *sync.Map
 	returnNoise   *sync.Map
 	steps         *sync.Map
@@ -125,6 +126,7 @@ func NewSolver(
 		arena:         arena,
 		detectors:     &sync.Map{},
 		standardizers: &sync.Map{},
+		finalizers:    &sync.Map{},
 		references:    &sync.Map{},
 		returnNoise:   &sync.Map{},
 		steps:         &sync.Map{},
@@ -137,6 +139,20 @@ func NewSolver(
 
 func (solver *Solver) Arena() *data.ArenaOwner {
 	return solver.arena
+}
+
+func (solver *Solver) finalizer(symbol string) *data.Finalizer[float64] {
+	if solver.finalizers == nil {
+		solver.finalizers = &sync.Map{}
+	}
+
+	if loaded, found := solver.finalizers.Load(symbol); found {
+		return loaded.(*data.Finalizer[float64])
+	}
+
+	created := data.NewFinalizer[float64]()
+	actual, _ := solver.finalizers.LoadOrStore(symbol, created)
+	return actual.(*data.Finalizer[float64])
 }
 
 /*
@@ -231,7 +247,7 @@ func (solver *Solver) Step(prior *data.Measurement[float64]) *data.Measurement[f
 		}
 	}
 	out.SetQuality(maturity, snr, snrDefined, estimated)
-	out.Finalize()
+	solver.finalizer(symbol).Complete(out)
 
 	return out
 }
@@ -633,13 +649,6 @@ the measurement carries no derived quality yet. A failed derivation inhibits
 the observation entirely, matching the old zero-authority behavior.
 */
 func authorityOf(measurement *data.Measurement[float64]) float64 {
-	if !measurement.SNRDefined && measurement.Maturity == 0 {
-		held := measurement
-
-		for range data.NewFinalizer[float64]().Next(transport.NewOne(unsafe.Pointer(&held)).Next(nil)) {
-		}
-	}
-
 	quality := data.QualityReading{
 		SNR:        measurement.SNR,
 		SNRDefined: measurement.SNRDefined,

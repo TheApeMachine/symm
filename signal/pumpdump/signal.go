@@ -337,6 +337,5 @@ func (signal *Signal) Step(prior *data.Measurement[float64]) *data.Measurement[f
 		return out
 	}
 
-	res.Finalize()
 	return res
 }

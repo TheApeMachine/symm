@@ -20,6 +20,7 @@ type Metric[Value any] struct {
 	Raw          Value            `json:"raw"`
 	Normalized   *Value           `json:"normalized,omitempty"`
 	Standardized *Value           `json:"standardized,omitempty"`
+	Deformation  *Value           `json:"deformation,omitempty"`
 	Exact        *decimal.Decimal `json:"exact,omitempty"`
 	Center       float64          `json:"center,omitempty"`
 	Scale        float64          `json:"scale,omitempty"`
@@ -65,19 +66,34 @@ func (metric Metric[T]) Write(value T) Metric[T] {
 }
 
 /*
-Deformation is how far a metric just pushed on its container: the signed
-displacement between the previous and current value, relative to the combined
-magnitude of both. Rest is 0, a full swing is ±1, and units drop out: 1 → 2 and
-100000 → 200000 deform alike. When both values are zero nothing moved, so the
-displacement is rest. A container with no previous value starts at rest, so the
-caller passes 0 for it.
+Deformation is the dimensionless, signed amount by which a metric has changed
+relative to its immediately previous observation. It is derived from the
+relative change in absolute magnitude, with the direction taken from the actual
+movement. Proportional moves are scale-free, unchanged values produce 0, and
+reversals of equal magnitude produce 0.
 */
 func Deformation(previous, current float64) float64 {
-	span := math.Abs(previous) + math.Abs(current)
-
-	if span == 0 {
+	if current == previous {
 		return 0
 	}
 
-	return (current - previous) / span
+	previousMagnitude := math.Abs(previous)
+	currentMagnitude := math.Abs(current)
+	extent := previousMagnitude + currentMagnitude
+
+	if extent == 0 {
+		return 0
+	}
+
+	magnitudeMovement := math.Abs(currentMagnitude-previousMagnitude) / extent
+
+	if magnitudeMovement == 0 {
+		return 0
+	}
+
+	if current > previous {
+		return magnitudeMovement
+	}
+
+	return -magnitudeMovement
 }

@@ -261,3 +261,41 @@ func TestSolverStepReadiness(t *testing.T) {
 		}
 	})
 }
+
+func TestSolverDeformationAcrossTicks(t *testing.T) {
+	Convey("Given a resonance solver receiving two ticks for the same symbol", t, func() {
+		solver := NewSolver(context.Background(), data.NewArenaOwner(32), 0.05)
+		defer solver.Close()
+
+		createMeasurement := func(sec int64, val float64) *data.Measurement[float64] {
+			m := data.NewMeasurement[float64]("resonance", nil)
+			m.Label = "BTC/USD"
+			m.At = time.Unix(sec, 0)
+
+			mSignal := data.NewMeasurement[float64]("cvd", nil)
+			mSignal.Label = "BTC/USD"
+			mSignal.At = time.Unix(sec, 0)
+			mSignal.SetMetric("signed_net_fraction", data.Metric[float64]{Label: "signed_net_fraction", Raw: val})
+			mSignal.SetMetadata(data.MetadataSupport, "1")
+			data.NewFinalizer[float64]().Complete(mSignal)
+
+			m.Peers = []*data.Measurement[float64]{mSignal}
+			return m
+		}
+
+		first := solver.Step(createMeasurement(1, 0.1))
+		So(first, ShouldNotBeNil)
+
+		firstSurprise := first.GetMetric("surprise")
+		So(firstSurprise.Deformation, ShouldNotBeNil)
+
+		second := solver.Step(createMeasurement(2, 0.9))
+		So(second, ShouldNotBeNil)
+
+		secondSurprise := second.GetMetric("surprise")
+		So(secondSurprise.Deformation, ShouldNotBeNil)
+
+		expectedDef := data.Deformation(firstSurprise.Raw, secondSurprise.Raw)
+		So(*secondSurprise.Deformation, ShouldAlmostEqual, expectedDef, 1e-6)
+	})
+}

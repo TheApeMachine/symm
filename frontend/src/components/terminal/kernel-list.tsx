@@ -113,6 +113,7 @@ const KernelRow = ({
 				focusMetricAtom.set(() => source);
 				terminalStore.actions.inspectSource(source);
 			}}
+			fullHeight
 		>
 			<Flex.Row align="center" justify="between" gap={2} padding={2} fullWidth>
 				<Typography.Span

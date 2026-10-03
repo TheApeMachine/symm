@@ -492,21 +492,17 @@ const (
 	MetadataMahalanobisSNR = "mahalanobis_snr"
 )
 
-func (measurement *Measurement[Value]) Finalize() {
-	finalizer := NewFinalizer[Value]()
-	held := measurement
-
-	for range finalizer.Next(transport.NewOne(unsafe.Pointer(&held)).Next(nil)) {
-	}
-}
-
 type Finalizer[Value any] struct {
-	err     error
-	quality core.Primitive
+	err      error
+	quality  core.Primitive
+	previous map[string]float64
 }
 
-func NewFinalizer[Value any]() core.Primitive {
-	return &Finalizer[Value]{quality: NewQuality()}
+func NewFinalizer[Value any]() *Finalizer[Value] {
+	return &Finalizer[Value]{
+		quality:  NewQuality(),
+		previous: make(map[string]float64),
+	}
 }
 
 func (op *Finalizer[Value]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
@@ -515,204 +511,250 @@ func (op *Finalizer[Value]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Po
 			measurement := *(**Measurement[Value])(arriving)
 
 			if measurement != nil {
-				var midpoint, spread float64
-				var hasMid, hasSpread bool
-
-				if midMetric, ok := measurement.LookupMetric("midpoint"); ok {
-					if midVal, valid := any(midMetric.Raw).(float64); valid && midVal > 0 {
-						midpoint = midVal
-						hasMid = true
-					}
-				}
-
-				if spreadMetric, ok := measurement.LookupMetric("spread"); ok {
-					if spreadVal, valid := any(spreadMetric.Raw).(float64); valid && spreadVal > 0 {
-						spread = spreadVal
-						hasSpread = true
-					}
-				}
-
-				if !hasMid || !hasSpread {
-					var bid, ask float64
-					var hasBid, hasAsk bool
-
-					for _, bidKey := range []string{"best_bid", "bid", "best_bid_price", "bid_price"} {
-						if bidMetric, ok := measurement.LookupMetric(bidKey); ok {
-							if bidVal, valid := any(bidMetric.Raw).(float64); valid && bidVal > 0 {
-								bid = bidVal
-								hasBid = true
-								break
-							}
-						}
-					}
-
-					for _, askKey := range []string{"best_ask", "ask", "best_ask_price", "ask_price"} {
-						if askMetric, ok := measurement.LookupMetric(askKey); ok {
-							if askVal, valid := any(askMetric.Raw).(float64); valid && askVal > 0 {
-								ask = askVal
-								hasAsk = true
-								break
-							}
-						}
-					}
-
-					if hasBid && hasAsk && ask > bid {
-						if !hasMid {
-							midpoint = (bid + ask) / 2.0
-							hasMid = true
-						}
-
-						if !hasSpread {
-							spread = ask - bid
-							hasSpread = true
-						}
-					}
-				}
-
-				updates := make(map[string]Metric[Value])
-				var zScores []float64
-
-				measurement.RangeMetrics(func(key string, metric Metric[Value]) bool {
-					if metric.Label == "" {
-						metric.Label = key
-					}
-
-					val, valid := any(metric.Raw).(float64)
-					if !valid {
-						return true
-					}
-
-					modified := false
-
-					if isPriceMetric(key) && hasMid && hasSpread && spread > 0 {
-						if metric.Center == 0 && metric.Scale == 0 {
-							metric.Center = midpoint
-							metric.Scale = spread
-							modified = true
-						}
-					}
-
-					if baseline, ok := measurement.LookupMetric(key + "_baseline"); ok {
-						if bVal, ok := any(baseline.Raw).(float64); ok {
-							metric.Center = bVal
-							modified = true
-
-							if zscore, ok := measurement.LookupMetric(key + "_zscore"); ok {
-								if zVal, ok := any(zscore.Raw).(float64); ok && zVal != 0 {
-									metric.Scale = math.Abs(val-bVal) / math.Abs(zVal)
-								}
-							}
-
-							if metric.Scale == 0 {
-								if noiseScale, ok := measurement.LookupMetric(key + "_noise_scale"); ok {
-									if nVal, ok := any(noiseScale.Raw).(float64); ok && nVal > 0 {
-										metric.Scale = nVal
-									}
-								}
-							}
-
-							if metric.Scale == 0 {
-								if noiseVar, ok := measurement.LookupMetric(key + "_noise_variance"); ok {
-									if vVal, ok := any(noiseVar.Raw).(float64); ok && vVal > 0 {
-										metric.Scale = math.Sqrt(vVal)
-									}
-								}
-							}
-						}
-					}
-
-					if isBoundedMetric(key) {
-						if metric.Normalized == nil {
-							normVal := val
-							metric.Normalized = any(&normVal).(*Value)
-							modified = true
-						}
-
-						if metric.Center == 0 && metric.Scale == 0 {
-							metric.Center = 0
-							metric.Scale = 1
-							modified = true
-						}
-					}
-
-					if strings.HasSuffix(key, "_zscore") {
-						if !math.IsNaN(val) && !math.IsInf(val, 0) {
-							zScores = append(zScores, val)
-						}
-
-						if metric.Standardized == nil {
-							stdVal := val
-							metric.Standardized = any(&stdVal).(*Value)
-							modified = true
-						}
-					}
-
-					if modified {
-						updates[key] = metric
-					}
-
-					return true
-				})
-
-				for k, v := range updates {
-					v = v.Write(v.Raw)
-					measurement.SetMetric(k, v)
-				}
-
-				readingEval := transport.NewEvaluate(op.quality)
-				var reading QualityReading
-
-				for out := range readingEval.Next(transport.NewValues(measurement.Facts()).Next(nil)) {
-					reading = *(*QualityReading)(out)
-				}
-
-				err := readingEval.Error()
-
-				if err != nil && measurement.Err == nil {
-					measurement.Err = err
-				}
-
-				snr := reading.SNR
-				snrDefined := reading.SNRDefined
-
-				if !snrDefined && len(zScores) > 0 {
-					var sumSquares float64
-					for _, zScoreVal := range zScores {
-						sumSquares += zScoreVal * zScoreVal
-					}
-					snr = sumSquares / float64(len(zScores))
-					snrDefined = true
-				}
-
-				if !snrDefined {
-					facts := measurement.Facts()
-					if facts.HasDivergence && facts.HasNoise && facts.NoiseVariance > 0 {
-						snr = (facts.Divergence * facts.Divergence) / facts.NoiseVariance
-						snrDefined = true
-					}
-				}
-
-				maturity := reading.Maturity
-				if maturity == 0 {
-					facts := measurement.Facts()
-					if facts.HasSupport && facts.Support > 1 {
-						maturity = 1.0 - (1.0 / facts.Support)
-					}
-
-					if maturity == 0 && !reading.Estimated {
-						maturity = 1.0
-					}
-				}
-
-				measurement.SetQuality(
-					maturity, snr, snrDefined, reading.Estimated,
-				)
+				op.Complete(measurement)
 			}
 
 			if !yield(arriving) {
 				return
 			}
 		}
+	}
+}
+
+func (op *Finalizer[Value]) Complete(measurement *Measurement[Value]) {
+	if measurement == nil {
+		return
+	}
+
+	var midpoint, spread float64
+	var hasMid, hasSpread bool
+
+	if midMetric, ok := measurement.LookupMetric("midpoint"); ok {
+		if midVal, valid := any(midMetric.Raw).(float64); valid && midVal > 0 {
+			midpoint = midVal
+			hasMid = true
+		}
+	}
+
+	if spreadMetric, ok := measurement.LookupMetric("spread"); ok {
+		if spreadVal, valid := any(spreadMetric.Raw).(float64); valid && spreadVal > 0 {
+			spread = spreadVal
+			hasSpread = true
+		}
+	}
+
+	if !hasMid || !hasSpread {
+		var bid, ask float64
+		var hasBid, hasAsk bool
+
+		for _, bidKey := range []string{"best_bid", "bid", "best_bid_price", "bid_price"} {
+			if bidMetric, ok := measurement.LookupMetric(bidKey); ok {
+				if bidVal, valid := any(bidMetric.Raw).(float64); valid && bidVal > 0 {
+					bid = bidVal
+					hasBid = true
+					break
+				}
+			}
+		}
+
+		for _, askKey := range []string{"best_ask", "ask", "best_ask_price", "ask_price"} {
+			if askMetric, ok := measurement.LookupMetric(askKey); ok {
+				if askVal, valid := any(askMetric.Raw).(float64); valid && askVal > 0 {
+					ask = askVal
+					hasAsk = true
+					break
+				}
+			}
+		}
+
+		if hasBid && hasAsk && ask > bid {
+			if !hasMid {
+				midpoint = (bid + ask) / 2.0
+				hasMid = true
+			}
+
+			if !hasSpread {
+				spread = ask - bid
+				hasSpread = true
+			}
+		}
+	}
+
+	updates := make(map[string]Metric[Value])
+	var zScores []float64
+
+	measurement.RangeMetrics(func(key string, metric Metric[Value]) bool {
+		if metric.Label == "" {
+			metric.Label = key
+		}
+
+		val, valid := any(metric.Raw).(float64)
+
+		if !valid {
+			return true
+		}
+
+		modified := false
+
+		if isPriceMetric(key) && hasMid && hasSpread && spread > 0 {
+			if metric.Center == 0 && metric.Scale == 0 {
+				metric.Center = midpoint
+				metric.Scale = spread
+				modified = true
+			}
+		}
+
+		baseline, hasBaseline := measurement.LookupMetric(key + "_baseline")
+		bVal, isFloat := any(baseline.Raw).(float64)
+
+		if hasBaseline && isFloat {
+			metric.Center = bVal
+			modified = true
+
+			if zscore, hasZscore := measurement.LookupMetric(key + "_zscore"); hasZscore {
+				zVal, ok := any(zscore.Raw).(float64)
+
+				if ok && zVal != 0 {
+					metric.Scale = math.Abs(val-bVal) / math.Abs(zVal)
+				}
+			}
+
+			if metric.Scale == 0 {
+				noiseScale, hasNoiseScale := measurement.LookupMetric(key + "_noise_scale")
+				nVal, ok := any(noiseScale.Raw).(float64)
+
+				if hasNoiseScale && ok && nVal > 0 {
+					metric.Scale = nVal
+				}
+			}
+
+			if metric.Scale == 0 {
+				noiseVar, hasNoiseVar := measurement.LookupMetric(key + "_noise_variance")
+				vVal, ok := any(noiseVar.Raw).(float64)
+
+				if hasNoiseVar && ok && vVal > 0 {
+					metric.Scale = math.Sqrt(vVal)
+				}
+			}
+		}
+
+		if isBoundedMetric(key) {
+			if metric.Normalized == nil {
+				normVal := val
+				metric.Normalized = any(&normVal).(*Value)
+				modified = true
+			}
+
+			if metric.Center == 0 && metric.Scale == 0 {
+				metric.Center = 0
+				metric.Scale = 1
+				modified = true
+			}
+		}
+
+		if strings.HasSuffix(key, "_zscore") {
+			if !math.IsNaN(val) && !math.IsInf(val, 0) {
+				zScores = append(zScores, val)
+			}
+
+			if metric.Standardized == nil {
+				stdVal := val
+				metric.Standardized = any(&stdVal).(*Value)
+				modified = true
+			}
+		}
+
+		if modified {
+			updates[key] = metric
+		}
+
+		return true
+	})
+
+	for updateKey, updateMetric := range updates {
+		updateMetric = updateMetric.Write(updateMetric.Raw)
+		measurement.SetMetric(updateKey, updateMetric)
+	}
+
+	readingEval := transport.NewEvaluate(op.quality)
+	var reading QualityReading
+
+	for out := range readingEval.Next(transport.NewValues(measurement.Facts()).Next(nil)) {
+		reading = *(*QualityReading)(out)
+	}
+
+	err := readingEval.Error()
+
+	if err != nil && measurement.Err == nil {
+		measurement.Err = err
+	}
+
+	snr := reading.SNR
+	snrDefined := reading.SNRDefined
+
+	if !snrDefined && len(zScores) > 0 {
+		var sumSquares float64
+		for _, zScoreVal := range zScores {
+			sumSquares += zScoreVal * zScoreVal
+		}
+		snr = sumSquares / float64(len(zScores))
+		snrDefined = true
+	}
+
+	if !snrDefined {
+		facts := measurement.Facts()
+		if facts.HasDivergence && facts.HasNoise && facts.NoiseVariance > 0 {
+			snr = (facts.Divergence * facts.Divergence) / facts.NoiseVariance
+			snrDefined = true
+		}
+	}
+
+	maturity := reading.Maturity
+	if maturity == 0 {
+		facts := measurement.Facts()
+		if facts.HasSupport && facts.Support > 1 {
+			maturity = 1.0 - (1.0 / facts.Support)
+		}
+
+		if maturity == 0 && !reading.Estimated {
+			maturity = 1.0
+		}
+	}
+
+	measurement.SetQuality(
+		maturity, snr, snrDefined, reading.Estimated,
+	)
+
+	if op.previous == nil {
+		op.previous = make(map[string]float64)
+	}
+
+	for index := range measurement.Metrics {
+		rawNumber, isFloat := any(measurement.Metrics[index].Metric.Raw).(float64)
+
+		if !isFloat {
+			continue
+		}
+
+		metricKey := measurement.Metrics[index].Key
+
+		if metricKey == "" {
+			metricKey = measurement.Metrics[index].Metric.Label
+		}
+
+		previousValue, seen := op.previous[metricKey]
+
+		if !seen {
+			previousValue = 0
+		}
+
+		deformationValue := Deformation(previousValue, rawNumber)
+
+		if defPtr, castOk := any(&deformationValue).(*Value); castOk {
+			measurement.Metrics[index].Metric.Deformation = defPtr
+		}
+
+		op.previous[metricKey] = rawNumber
 	}
 }
 

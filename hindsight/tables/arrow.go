@@ -117,6 +117,12 @@ func fillMeasurements(
 				provenanceKey.Append("symm:normalized:" + key)
 				provenanceVal.Append(strconv.FormatFloat(*metric.Normalized, 'g', -1, 64))
 			}
+
+			if metric.Deformation != nil {
+				provenanceKey.Append("symm:deformation:" + key)
+				provenanceVal.Append(strconv.FormatFloat(*metric.Deformation, 'g', -1, 64))
+			}
+
 			return true
 		})
 	}
@@ -272,6 +278,20 @@ func ReadMeasurements(batch arrow.RecordBatch) ([]*data.Measurement[float64], er
 
 					metric := measurement.GetMetric(metricKey)
 					metric.Normalized = &parsed
+					measurement.SetMetric(metricKey, metric)
+					continue
+				}
+
+				if after, ok := strings.CutPrefix(key, "symm:deformation:"); ok {
+					metricKey := after
+					parsed, err := strconv.ParseFloat(value, 64)
+
+					if err != nil {
+						return nil, errnie.Error(errnie.Err(errnie.Validation, "iceberg: invalid deformation metric", err))
+					}
+
+					metric := measurement.GetMetric(metricKey)
+					metric.Deformation = &parsed
 					measurement.SetMetric(metricKey, metric)
 					continue
 				}
