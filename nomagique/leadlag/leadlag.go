@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"math"
 	"sort"
 	"strconv"
 	"time"
@@ -13,7 +14,6 @@ import (
 	"github.com/theapemachine/symm/nomagique/core"
 	nmcorrelation "github.com/theapemachine/symm/nomagique/correlation"
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/logic"
 	"github.com/theapemachine/symm/nomagique/temporal"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
@@ -34,28 +34,20 @@ func drive[From, To any](op core.Primitive, payload *From) To {
 
 /*
 Gate classifies the arrival: it reads the last trade price the feed wrote,
-validates it, and stamps the measurement's support baseline. Anything invalid
-fails the measurement here and never reaches the paths. The metadata baseline
-is rewritten on every arrival, so the measurement carries this arrival's
-facts, never the prior one's.
+validates it. Anything invalid fails the measurement here and never reaches the paths.
 */
 type Gate struct {
-	err    error
-	finite core.Primitive
+	err error
 }
 
 func NewGate() core.Primitive {
-	return &Gate{finite: logic.NewFinite()}
+	return &Gate{}
 }
 
 func (op *Gate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			m := *(**data.Measurement[float64])(arriving)
-
-			m.EnsureMetadata()
-
-			m.SetMetadata(data.MetadataSupport, "0")
 
 			metric, traded := m.LookupMetric("last")
 
@@ -71,8 +63,8 @@ func (op *Gate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 
 			last := metric.Raw
 
-			if holds := drive[float64, bool](op.finite, &last); !holds || last < 0 {
-				m.Err = fmt.Errorf("%w: leadlag: finite non-negative last price required", core.ErrDomain)
+			if last < 0 {
+				m.Err = fmt.Errorf("%w: leadlag: non-negative last price required", core.ErrDomain)
 
 				if !yield(arriving) {
 					return
@@ -81,7 +73,19 @@ func (op *Gate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				continue
 			}
 
-			m.WriteMetric("last_price", last)
+			center := metric.Center
+			scale := metric.Scale
+			if scale == 0 {
+				scale = math.Max(last, 1.0)
+			}
+
+			m.SetMetric("last_price", data.NewMetric[float64](
+				"last_price",
+				data.UnitCurrency,
+				data.TimescaleInstantaneous,
+				center,
+				scale,
+			).Write(last))
 
 			if last == 0 {
 				m.SetProvenance("last_trade_price_state", "unobserved")
@@ -237,7 +241,13 @@ func (op *Cross) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				continue
 			}
 
-			m.WriteMetric("observation_count", focal.Count)
+			m.SetMetric("observation_count", data.NewMetric[float64](
+				"observation_count",
+				data.UnitCount,
+				data.TimescaleRollingWindow,
+				0,
+				math.Max(focal.Count, 1),
+			).Write(focal.Count))
 
 			if !focal.Accepted {
 				m.SetProvenance("event_time_state", "regressed")
@@ -351,52 +361,235 @@ func (op *Cross) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			m.SetProvenance("pair_diagnostics_selection", "last_defined_peer_lexicographic")
 
 			resolution := selectedPair.Spacing * 1e-9
+			spanScale := math.Max(selectedPair.Span*resolution, 1e-6)
 
-			m.WriteMetric("contemporaneous_correlation", selectedPair.Contemporaneous)
-			m.WriteMetric("best_lag_correlation", selectedPair.Correlation)
-			m.WriteMetric("absolute_correlation_gain", selectedPair.AbsoluteGain)
-			m.WriteMetric("lag_fraction", selectedPair.LagFraction)
-			m.WriteMetric("best_lag_index", selectedPair.LagIndex)
-			m.WriteMetric("reference_return_count", selectedPair.Observations)
-			m.WriteMetric("measured_return_count", selectedPair.Observations)
-			m.WriteMetric("overlap_pair_count", selectedPair.Support)
-			m.WriteMetric("effective_sample_count", selectedPair.Support)
-			m.WriteMetric("search_count", selectedPair.SearchCount)
-			m.WriteMetric("best_lag_seconds", selectedPair.X)
-			m.WriteMetric("lag_search_resolution_seconds", resolution)
-			m.WriteMetric("lag_search_span", selectedPair.Span * resolution)
+			m.SetMetric("contemporaneous_correlation", data.NewMetric[float64](
+				"contemporaneous_correlation",
+				data.UnitCorrelation,
+				data.TimescaleInstantaneous,
+				0,
+				1,
+			).Write(selectedPair.Contemporaneous))
+
+			m.SetMetric("best_lag_correlation", data.NewMetric[float64](
+				"best_lag_correlation",
+				data.UnitCorrelation,
+				data.TimescaleInstantaneous,
+				0,
+				1,
+			).Write(selectedPair.Correlation))
+
+			m.SetMetric("absolute_correlation_gain", data.NewMetric[float64](
+				"absolute_correlation_gain",
+				data.UnitCorrelation,
+				data.TimescaleInstantaneous,
+				0,
+				1,
+			).Write(selectedPair.AbsoluteGain))
+
+			m.SetMetric("lag_fraction", data.NewMetric[float64](
+				"lag_fraction",
+				data.UnitRatio,
+				data.TimescaleRollingWindow,
+				0,
+				1,
+			).Write(selectedPair.LagFraction))
+
+			m.SetMetric("best_lag_index", data.NewMetric[float64](
+				"best_lag_index",
+				data.UnitCount,
+				data.TimescaleInstantaneous,
+				0,
+				math.Max(float64(selectedPair.SearchCount), 1),
+			).Write(selectedPair.LagIndex))
+
+			m.SetMetric("reference_return_count", data.NewMetric[float64](
+				"reference_return_count",
+				data.UnitCount,
+				data.TimescaleRollingWindow,
+				0,
+				math.Max(float64(selectedPair.Observations), 1),
+			).Write(selectedPair.Observations))
+
+			m.SetMetric("measured_return_count", data.NewMetric[float64](
+				"measured_return_count",
+				data.UnitCount,
+				data.TimescaleRollingWindow,
+				0,
+				math.Max(float64(selectedPair.Observations), 1),
+			).Write(selectedPair.Observations))
+
+			m.SetMetric("overlap_pair_count", data.NewMetric[float64](
+				"overlap_pair_count",
+				data.UnitCount,
+				data.TimescaleRollingWindow,
+				0,
+				math.Max(float64(selectedPair.Support), 1),
+			).Write(selectedPair.Support))
+
+			m.SetMetric("effective_sample_count", data.NewMetric[float64](
+				"effective_sample_count",
+				data.UnitCount,
+				data.TimescaleRollingWindow,
+				0,
+				math.Max(float64(selectedPair.Support), 1),
+			).Write(selectedPair.Support))
+
+			m.SetMetric("search_count", data.NewMetric[float64](
+				"search_count",
+				data.UnitCount,
+				data.TimescaleRollingWindow,
+				0,
+				math.Max(float64(selectedPair.SearchCount), 1),
+			).Write(selectedPair.SearchCount))
+
+			m.SetMetric("best_lag_seconds", data.NewMetric[float64](
+				"best_lag_seconds",
+				data.UnitDuration,
+				data.TimescaleInstantaneous,
+				0,
+				spanScale,
+			).Write(selectedPair.X))
+
+			m.SetMetric("lag_search_resolution_seconds", data.NewMetric[float64](
+				"lag_search_resolution_seconds",
+				data.UnitDuration,
+				data.TimescaleRollingWindow,
+				resolution,
+				resolution,
+			).Write(resolution))
+
+			m.SetMetric("lag_search_span", data.NewMetric[float64](
+				"lag_search_span",
+				data.UnitDuration,
+				data.TimescaleRollingWindow,
+				0,
+				spanScale,
+			).Write(selectedPair.Span*resolution))
 
 			if selectedPair.ShapeDefined {
-				m.WriteMetric("lag_peak_prominence", selectedPair.Prominence)
-				m.WriteMetric("lag_peak_curvature", selectedPair.Curvature)
+				m.SetMetric("lag_peak_prominence", data.NewMetric[float64](
+					"lag_peak_prominence",
+					data.UnitCorrelation,
+					data.TimescaleInstantaneous,
+					0,
+					1,
+				).Write(selectedPair.Prominence))
+
+				m.SetMetric("lag_peak_curvature", data.NewMetric[float64](
+					"lag_peak_curvature",
+					data.UnitDimensionless,
+					data.TimescaleInstantaneous,
+					0,
+					1,
+				).Write(selectedPair.Curvature))
 			}
 
 			if significance.Defined {
-				m.WriteMetric("correlation_p_value", significance.PValue)
-				m.WriteMetric("search_adjusted_p_value", significance.SearchAdjustedPValue)
+				m.SetMetric("correlation_p_value", data.NewMetric[float64](
+					"correlation_p_value",
+					data.UnitProbability,
+					data.TimescaleRollingWindow,
+					0.5,
+					0.5,
+				).Write(significance.PValue))
+
+				m.SetMetric("search_adjusted_p_value", data.NewMetric[float64](
+					"search_adjusted_p_value",
+					data.UnitProbability,
+					data.TimescaleRollingWindow,
+					0.5,
+					0.5,
+				).Write(significance.SearchAdjustedPValue))
 			}
 
-			m.WriteMetric("lag_baseline_seconds", selected.lag.Baseline)
-			m.WriteMetric("lag_divergence_seconds", selected.lag.Residual)
-			m.WriteMetric("lag_zscore", selected.lag.ZScore)
+			lagNoiseScale := math.Max(selected.lag.Dispersion, 1e-6)
+
+			m.SetMetric("lag_baseline_seconds", data.NewMetric[float64](
+				"lag_baseline_seconds",
+				data.UnitDuration,
+				data.TimescaleRollingWindow,
+				0,
+				lagNoiseScale,
+			).Write(selected.lag.Baseline))
+
+			m.SetMetric("lag_divergence_seconds", data.NewMetric[float64](
+				"lag_divergence_seconds",
+				data.UnitDuration,
+				data.TimescaleInstantaneous,
+				0,
+				lagNoiseScale,
+			).Write(selected.lag.Residual))
+
+			m.SetMetric("lag_zscore", data.NewMetric[float64](
+				"lag_zscore",
+				data.UnitZScore,
+				data.TimescaleRollingWindow,
+				0,
+				1,
+			).Write(selected.lag.ZScore))
 
 			if selected.lag.VarianceDefined {
-				m.WriteMetric("lag_noise_scale_seconds", selected.lag.Dispersion)
+				m.SetMetric("lag_noise_scale_seconds", data.NewMetric[float64](
+					"lag_noise_scale_seconds",
+					data.UnitDuration,
+					data.TimescaleRollingWindow,
+					0,
+					lagNoiseScale,
+				).Write(selected.lag.Dispersion))
 			}
 
 			if selected.lagVel.Defined {
-				m.WriteMetric("lag_velocity", selected.lagVel.Rate)
+				m.SetMetric("lag_velocity", data.NewMetric[float64](
+					"lag_velocity",
+					data.UnitVelocity,
+					data.TimescalePerSecond,
+					0,
+					math.Max(math.Abs(selected.lagVel.Rate), 1e-6),
+				).Write(selected.lagVel.Rate))
 			}
 
-			m.WriteMetric("correlation_gain_baseline", selected.gain.Baseline)
-			m.WriteMetric("correlation_gain_zscore", selected.gain.ZScore)
+			m.SetMetric("correlation_gain_baseline", data.NewMetric[float64](
+				"correlation_gain_baseline",
+				data.UnitCorrelation,
+				data.TimescaleRollingWindow,
+				0,
+				1,
+			).Write(selected.gain.Baseline))
+
+			m.SetMetric("correlation_gain_zscore", data.NewMetric[float64](
+				"correlation_gain_zscore",
+				data.UnitZScore,
+				data.TimescaleRollingWindow,
+				0,
+				1,
+			).Write(selected.gain.ZScore))
 
 			if selected.gainVel.Defined {
-				m.WriteMetric("correlation_gain_velocity", selected.gainVel.Rate)
+				m.SetMetric("correlation_gain_velocity", data.NewMetric[float64](
+					"correlation_gain_velocity",
+					data.UnitVelocity,
+					data.TimescalePerSecond,
+					0,
+					math.Max(math.Abs(selected.gainVel.Rate), 1e-6),
+				).Write(selected.gainVel.Rate))
 			}
 
-			m.WriteMetric("best_lag_correlation_baseline", selected.corr.Baseline)
-			m.WriteMetric("best_lag_correlation_zscore", selected.corr.ZScore)
+			m.SetMetric("best_lag_correlation_baseline", data.NewMetric[float64](
+				"best_lag_correlation_baseline",
+				data.UnitCorrelation,
+				data.TimescaleRollingWindow,
+				0,
+				1,
+			).Write(selected.corr.Baseline))
+
+			m.SetMetric("best_lag_correlation_zscore", data.NewMetric[float64](
+				"best_lag_correlation_zscore",
+				data.UnitZScore,
+				data.TimescaleRollingWindow,
+				0,
+				1,
+			).Write(selected.corr.ZScore))
 
 			m.EnsureMetadata()
 

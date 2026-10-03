@@ -164,9 +164,21 @@ func collectRegionActivity(measurement *data.Measurement[float64], activity map[
 		return
 	}
 
+	quality := 1.0
+	if measurement.Maturity > 0 {
+		quality *= math.Min(1.0, measurement.Maturity)
+	}
+	if measurement.SNRDefined {
+		if measurement.SNR > 0 {
+			quality *= measurement.SNR / (1.0 + measurement.SNR)
+		} else {
+			quality *= 0.1
+		}
+	}
+
 	for _, entry := range measurement.Metrics {
 		if entry.Metric.Region > 0 {
-			act := regionActivity(entry.Metric)
+			act := regionActivity(entry.Metric) * quality
 			if act > 0 {
 				activity[entry.Metric.Region] += act
 			}

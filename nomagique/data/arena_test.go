@@ -16,14 +16,14 @@ func TestArenaOwnerSequenceAdvancement(t *testing.T) {
 		So(gen0.RefCount(), ShouldEqual, 1)
 
 		m0 := owner.NewMeasurement("test")
-		m0.WriteMetric("price", 100.0)
+		m0.SetMetric("price", NewMetric[float64]("price", UnitPrice, TimescaleInstantaneous, 100.0, 1.0).Write(100.0))
 		So(m0.Source, ShouldEqual, "test")
 
 		Convey("Advancing within generation 0 keeps gen0 active and unsealed", func() {
 			for seq := int64(1); seq < 256; seq++ {
 				owner.Advance(seq)
 				measurement := owner.NewMeasurement("test")
-				measurement.WriteMetric("price", float64(seq))
+				measurement.SetMetric("price", NewMetric[float64]("price", UnitPrice, TimescaleInstantaneous, float64(seq), 1.0).Write(float64(seq)))
 			}
 
 			So(owner.CurrentGeneration(), ShouldEqual, gen0)

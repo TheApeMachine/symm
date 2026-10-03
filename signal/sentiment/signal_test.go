@@ -16,7 +16,7 @@ func TestSentimentTickerMetrics(t *testing.T) {
 		ctx := context.Background()
 		arena := data.NewArenaOwner(4096)
 
-		instrument := sentiment.NewTicker(ctx, arena)
+		instrument := sentiment.NewSignal(ctx, arena)
 		instrument.Transition(nmruntime.READY)
 
 		now := time.Now()

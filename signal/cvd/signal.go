@@ -21,36 +21,32 @@ import (
 )
 
 /*
-Trade is the CVD executed-flow measuring instrument. It holds no state and no
+Signal is the CVD executed-flow measuring instrument. It holds no state and no
 logic of its own: its entire behavior is composed nomagique pipelines per symbol
 over the measurements — every stage writes its facts into the measurement where
 it computes them, and the workload's register owns the measurement's lifetime.
 */
-type Trade struct {
+type Signal struct {
 	*runtime.System
 	arena     *data.ArenaOwner
 	pipelines sync.Map
 	ID        int
 }
 
-func NewTrade(ctx context.Context, arena *data.ArenaOwner) *Trade {
-	trade := &Trade{
+func NewSignal(ctx context.Context, arena *data.ArenaOwner) *Signal {
+	signal := &Signal{
 		arena: arena,
 	}
-	trade.System = runtime.NewSystem(ctx, "cvd:trade", trade)
-	return trade
+	signal.System = runtime.NewSystem(ctx, "cvd:signal", signal)
+	return signal
 }
 
-func (trade *Trade) Source() string {
-	return "cvd:trade"
+func (signal *Signal) Arena() *data.ArenaOwner {
+	return signal.arena
 }
 
-func (trade *Trade) Arena() *data.ArenaOwner {
-	return trade.arena
-}
-
-func (trade *Trade) pipelineFor(symbol string) core.Primitive {
-	if existing, ok := trade.pipelines.Load(symbol); ok {
+func (signal *Signal) pipelineFor(symbol string) core.Primitive {
+	if existing, ok := signal.pipelines.Load(symbol); ok {
 		return existing.(core.Primitive)
 	}
 
@@ -66,16 +62,50 @@ func (trade *Trade) pipelineFor(symbol string) core.Primitive {
 				func(m *data.Measurement[float64]) float64 { return m.GetMetric("gross_notional_rate").Raw },
 				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
 					if out.HasPrior {
-						m.WriteMetric("gross_notional_rate_baseline", out.Baseline)
+						scale := out.Baseline
+						if out.VarianceDefined && out.Variance > 0 {
+							scale = math.Sqrt(out.Variance)
+						}
+						scale = math.Max(scale, 1e-6)
+
+						m.SetMetric("gross_notional_rate_baseline", data.NewMetric[float64](
+							"gross_notional_rate_baseline",
+							data.UnitNotionalRate,
+							data.TimescaleRollingWindow,
+							out.Baseline,
+							scale,
+						).Write(out.Baseline))
+
 						if out.Baseline > 0 {
 							gross := m.GetMetric("gross_notional_rate").Raw
 							ratio := gross / out.Baseline
-							m.WriteMetric("gross_notional_rate_ratio", ratio)
+							m.SetMetric("gross_notional_rate_ratio", data.NewMetric[float64](
+								"gross_notional_rate_ratio",
+								data.UnitRatio,
+								data.TimescaleRollingWindow,
+								1.0,
+								1.0,
+							).Write(ratio))
+
 							if ratio > 0 {
-								m.WriteMetric("gross_notional_rate_divergence", math.Log(ratio))
+								div := math.Log(ratio)
+								m.SetMetric("gross_notional_rate_divergence", data.NewMetric[float64](
+									"gross_notional_rate_divergence",
+									data.UnitPercent,
+									data.TimescaleRollingWindow,
+									0.0,
+									scale,
+								).Write(div))
 							}
 						}
-						m.WriteStandardized("gross_notional_rate_zscore", out.ZScore)
+
+						m.SetMetric("gross_notional_rate_zscore", data.NewMetric[float64](
+							"gross_notional_rate_zscore",
+							data.UnitStandardDeviation,
+							data.TimescaleRollingWindow,
+							0.0,
+							1.0,
+						).Write(out.ZScore))
 					}
 				},
 			),
@@ -89,7 +119,13 @@ func (trade *Trade) pipelineFor(symbol string) core.Primitive {
 				},
 				func(m *data.Measurement[float64], out temporal.VelocityReading) {
 					if out.Defined {
-						m.WriteMetric("gross_notional_rate_velocity", out.Rate)
+						m.SetMetric("gross_notional_rate_velocity", data.NewMetric[float64](
+							"gross_notional_rate_velocity",
+							data.UnitVelocity,
+							data.TimescalePerSecond,
+							0.0,
+							math.Max(math.Abs(out.Rate), 1e-6),
+						).Write(out.Rate))
 					}
 				},
 			),
@@ -98,9 +134,34 @@ func (trade *Trade) pipelineFor(symbol string) core.Primitive {
 				func(m *data.Measurement[float64]) float64 { return m.GetMetric("midpoint_return_rate").Raw },
 				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
 					if out.HasPrior {
-						m.WriteMetric("midpoint_return_rate_baseline", out.Baseline)
-						m.WriteMetric("midpoint_return_rate_divergence", out.Residual)
-						m.WriteStandardized("midpoint_return_rate_zscore", out.ZScore)
+						scale := math.Max(math.Abs(out.Baseline), 1e-6)
+						if out.VarianceDefined && out.Variance > 0 {
+							scale = math.Max(math.Sqrt(out.Variance), 1e-6)
+						}
+
+						m.SetMetric("midpoint_return_rate_baseline", data.NewMetric[float64](
+							"midpoint_return_rate_baseline",
+							data.UnitVelocity,
+							data.TimescaleRollingWindow,
+							out.Baseline,
+							scale,
+						).Write(out.Baseline))
+
+						m.SetMetric("midpoint_return_rate_divergence", data.NewMetric[float64](
+							"midpoint_return_rate_divergence",
+							data.UnitVelocity,
+							data.TimescaleRollingWindow,
+							0.0,
+							scale,
+						).Write(out.Residual))
+
+						m.SetMetric("midpoint_return_rate_zscore", data.NewMetric[float64](
+							"midpoint_return_rate_zscore",
+							data.UnitStandardDeviation,
+							data.TimescaleRollingWindow,
+							0.0,
+							1.0,
+						).Write(out.ZScore))
 					}
 				},
 			),
@@ -117,7 +178,13 @@ func (trade *Trade) pipelineFor(symbol string) core.Primitive {
 				},
 				func(m *data.Measurement[float64], out statistic.JointReading) {
 					if out.SNRDefined && out.SNR < 1/math.Sqrt(2.220446049250313e-16) {
-						m.WriteMetric("SNR", out.SNR)
+						m.SetMetric("SNR", data.NewMetric[float64](
+							"SNR",
+							data.UnitSNR,
+							data.TimescaleRollingWindow,
+							1.0,
+							math.Max(out.SNR, 1.0),
+						).Write(out.SNR))
 						m.EnsureMetadata()
 						m.SetMetadata(data.MetadataMahalanobisSNR, strconv.FormatFloat(out.SNR, 'f', -1, 64))
 					}
@@ -143,12 +210,40 @@ func (trade *Trade) pipelineFor(symbol string) core.Primitive {
 				},
 				func(m *data.Measurement[float64], out statistic.RegressionReading) {
 					if out.Fit.Observations > 2 && len(out.Fit.Coefficients) >= 2 {
-						m.WriteMetric("flow_response_intercept", out.Fit.Coefficients[0])
-						m.WriteMetric("flow_response_coefficient", out.Fit.Coefficients[1])
+						m.SetMetric("flow_response_intercept", data.NewMetric[float64](
+							"flow_response_intercept",
+							data.UnitVelocity,
+							data.TimescaleRollingWindow,
+							0.0,
+							math.Max(math.Abs(out.Fit.Coefficients[0]), 1e-6),
+						).Write(out.Fit.Coefficients[0]))
+
+						m.SetMetric("flow_response_coefficient", data.NewMetric[float64](
+							"flow_response_coefficient",
+							data.UnitRatio,
+							data.TimescaleRollingWindow,
+							0.0,
+							math.Max(math.Abs(out.Fit.Coefficients[1]), 1e-6),
+						).Write(out.Fit.Coefficients[1]))
+
 						if out.PredictionDefined {
-							m.WriteMetric("expected_midpoint_return_rate", out.Prediction)
+							m.SetMetric("expected_midpoint_return_rate", data.NewMetric[float64](
+								"expected_midpoint_return_rate",
+								data.UnitVelocity,
+								data.TimescaleTick,
+								0.0,
+								math.Max(math.Abs(out.Prediction), 1e-6),
+							).Write(out.Prediction))
+
 							if y, ok := m.LookupMetric("midpoint_return_rate"); ok {
-								m.WriteMetric("flow_response_residual", y.Raw-out.Prediction)
+								residual := y.Raw - out.Prediction
+								m.SetMetric("flow_response_residual", data.NewMetric[float64](
+									"flow_response_residual",
+									data.UnitVelocity,
+									data.TimescaleTick,
+									0.0,
+									math.Max(math.Abs(residual), 1e-6),
+								).Write(residual))
 							}
 						}
 					}
@@ -163,7 +258,7 @@ func (trade *Trade) pipelineFor(symbol string) core.Primitive {
 		data.NewFinalizer[float64](),
 	)
 
-	actual, _ := trade.pipelines.LoadOrStore(symbol, pipeline)
+	actual, _ := signal.pipelines.LoadOrStore(symbol, pipeline)
 	return actual.(core.Primitive)
 }
 
@@ -171,9 +266,9 @@ func (trade *Trade) pipelineFor(symbol string) core.Primitive {
 Step reads trade data from the prior measurement and writes CVD metrics
 into a fresh measurement allocated from its own arena.
 */
-func (trade *Trade) Step(prior *data.Measurement[float64]) *data.Measurement[float64] {
-	if trade.Status() != runtime.READY {
-		errnie.Warn(trade.Name() + ": Step called before READY; dropping event")
+func (signal *Signal) Step(prior *data.Measurement[float64]) *data.Measurement[float64] {
+	if signal.Status() != runtime.READY {
+		errnie.Warn(signal.Name() + ": Step called before READY; dropping event")
 		return nil
 	}
 
@@ -188,7 +283,7 @@ func (trade *Trade) Step(prior *data.Measurement[float64]) *data.Measurement[flo
 		return nil
 	}
 
-	out := trade.arena.NewMeasurement(trade.Source())
+	out := signal.arena.NewMeasurement(signal.Name())
 	out.Label = prior.Label
 	out.SeqIdx = prior.SeqIdx
 	out.At = prior.At
@@ -207,7 +302,7 @@ func (trade *Trade) Step(prior *data.Measurement[float64]) *data.Measurement[flo
 		out.From = out.At
 	}
 
-	res := data.Read[*data.Measurement[float64]](trade.pipelineFor(out.Label).Next(
+	res := data.Read[*data.Measurement[float64]](signal.pipelineFor(out.Label).Next(
 		transport.NewOne(unsafe.Pointer(&out)).Next(nil),
 	))
 

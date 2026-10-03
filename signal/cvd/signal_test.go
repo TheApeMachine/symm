@@ -11,16 +11,16 @@ import (
 	"github.com/theapemachine/symm/signal/cvd"
 )
 
-func TestCVDTradeMetrics(t *testing.T) {
-	Convey("CVD trade instrument publishes complete honest metrics", t, func() {
+func TestCVDSignalMetrics(t *testing.T) {
+	Convey("CVD signal instrument publishes complete honest metrics", t, func() {
 		ctx := context.Background()
 		arena := data.NewArenaOwner(4096)
-		instrument := cvd.NewTrade(ctx, arena)
+		instrument := cvd.NewSignal(ctx, arena)
 		instrument.Transition(nmruntime.READY)
 
 		now := time.Now()
 
-		for step := 0; step < 10; step++ {
+		for step := range 10 {
 			prior := arena.NewMeasurement("ingress")
 			prior.Label = "BTC/USD"
 			prior.SeqIdx = int64(step + 1)

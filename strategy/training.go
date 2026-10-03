@@ -38,6 +38,7 @@ type Training struct {
 	catalog   *tables.Catalog
 	price     *broker.Price
 	tee       runtime.Tee
+	storeTee  runtime.Tee
 }
 
 func NewTraining(
@@ -47,17 +48,18 @@ func NewTraining(
 	trader *Trader,
 	catalog *tables.Catalog,
 	tee runtime.Tee,
+	storeTee runtime.Tee,
 ) *Training {
 	engine := cognition.NewEngine(cognition.Config{})
 	evaluator := NewEvaluator(price, engine)
 
 	training := &Training{
-		System:    runtime.NewSystem(ctx, "training", price),
+		System:    runtime.NewSystem(ctx, "strategy:training", price),
 		arena:     arena,
 		grid:      store.NewGrid(),
 		engine:    engine,
 		evaluator: evaluator,
-		detector:  NewDetector(),
+		detector:  NewDetector(ctx, storeTee),
 		skill:     NewSkill(),
 		reporter:  NewReporter(data.NewArenaOwner(4096), tee),
 		trader:    trader,
@@ -80,10 +82,6 @@ func (training *Training) onPositionClosed(symbol string, regulator *position.Re
 		pnl := training.price.ReturnPct(symbol, regulator)
 		training.skill.RecordForward(pnl)
 	}
-}
-
-func (training *Training) Source() string {
-	return "training"
 }
 
 func (training *Training) Arena() *data.ArenaOwner {
@@ -109,7 +107,7 @@ func (training *Training) Step(prior *data.Measurement[float64]) *data.Measureme
 		return nil
 	}
 
-	out := training.arena.NewMeasurement(training.Source())
+	out := training.arena.NewMeasurement(training.Name())
 	out.Epoch = prior.Epoch
 	out.SeqIdx = prior.SeqIdx
 	out.Label = prior.Label
@@ -129,7 +127,7 @@ func (training *Training) Step(prior *data.Measurement[float64]) *data.Measureme
 
 	if currentStatus == runtime.INIT {
 		snapshot := ReportSnapshot{
-			Source:  training.Source(),
+			Source:  training.Name(),
 			Symbol:  prior.Label,
 			SeqIdx:  prior.SeqIdx,
 			At:      prior.At,
@@ -170,7 +168,7 @@ func (training *Training) Step(prior *data.Measurement[float64]) *data.Measureme
 
 	if currentStatus == runtime.WAITING {
 		snapshot := ReportSnapshot{
-			Source:  training.Source(),
+			Source:  training.Name(),
 			Symbol:  prior.Label,
 			SeqIdx:  prior.SeqIdx,
 			At:      prior.At,
@@ -200,7 +198,7 @@ func (training *Training) Step(prior *data.Measurement[float64]) *data.Measureme
 		}
 
 		snapshot := ReportSnapshot{
-			Source:       training.Source(),
+			Source:       training.Name(),
 			Symbol:       prior.Label,
 			SeqIdx:       prior.SeqIdx,
 			At:           prior.At,
@@ -366,16 +364,21 @@ func (training *Training) Run() {
 
 func (training *Training) processRun(epoch int64, lastSeq int64) (int64, bool) {
 	currentLast := lastSeq
-	const batchSize = int64(500)
 
-	for {
-		maxSeq := currentLast
-		timelines := make(map[string][]*data.Measurement[float64])
+	labels, err := training.catalog.Labels(training.Context(), epoch)
+	if err != nil || len(labels) == 0 {
+		labels = []string{""}
+	}
+
+	maxSeq := currentLast
+
+	for _, label := range labels {
+		var timeline []*data.Measurement[float64]
 
 		for measurement := range training.catalog.Timeline(
-			training.Context(), epoch, "", currentLast+1, currentLast+batchSize,
+			training.Context(), epoch, label, currentLast+1, 0,
 		) {
-			if measurement == nil || measurement.Label == "" {
+			if measurement == nil {
 				continue
 			}
 
@@ -387,35 +390,30 @@ func (training *Training) processRun(epoch int64, lastSeq int64) (int64, bool) {
 				maxSeq = measurement.SeqIdx
 			}
 
-			timelines[measurement.Label] = append(timelines[measurement.Label], measurement)
+			timeline = append(timeline, measurement)
 		}
 
-		if maxSeq == currentLast {
-			break
+		if len(timeline) < 5 {
+			continue
 		}
 
-		for _, timeline := range timelines {
-			training.detector.Scan(timeline)
+		training.detector.Scan(timeline)
 
-			for {
-				trajectory, ok := training.detector.Next()
+		for {
+			trajectory, ok := training.detector.Next()
+			if !ok {
+				break
+			}
 
-				if !ok {
-					break
-				}
+			training.trainTrajectory(trajectory)
 
-				training.trainTrajectory(trajectory)
-
-				if training.skill.HasEdge() {
-					return maxSeq, true
-				}
+			if training.skill.HasEdge() {
+				return maxSeq, true
 			}
 		}
-
-		currentLast = maxSeq
 	}
 
-	return currentLast, training.skill.HasEdge()
+	return maxSeq, training.skill.HasEdge()
 }
 
 func (training *Training) trainTrajectory(trajectory Trajectory) {

@@ -48,7 +48,7 @@ func TestSignalPurposesTest(t *testing.T) {
 		declared := SignalPurposes()
 
 		Convey("Every signal family that ships a specification declares its purpose", func() {
-			So(len(declared), ShouldBeGreaterThan, 10)
+			So(len(declared), ShouldEqual, 10)
 
 			for source, entry := range declared {
 				So(entry.Source, ShouldEqual, source)

@@ -54,22 +54,48 @@ func (op *Response) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 
 			if bid > 0 && ask > bid {
 				mid := (bid + ask) / 2.0
+				spread := ask - bid
 
 				if !op.hasFrom {
 					op.fromMidpoint = mid
 					op.hasFrom = true
 				}
 
-				m.WriteMetric("response_midpoint:from", op.fromMidpoint)
-				m.WriteMetric("response_midpoint:at", mid)
+				m.SetMetric("response_midpoint:from", data.NewMetric[float64](
+					"response_midpoint:from",
+					data.UnitPrice,
+					data.TimescaleEpoch,
+					op.fromMidpoint,
+					spread,
+				).Write(op.fromMidpoint))
+				m.SetMetric("response_midpoint:at", data.NewMetric[float64](
+					"response_midpoint:at",
+					data.UnitPrice,
+					data.TimescaleInstantaneous,
+					mid,
+					spread,
+				).Write(mid))
 
 				logReturn := math.Log(mid / op.fromMidpoint)
-				m.WriteMetric("midpoint_log_return", logReturn)
+				returnScale := math.Max(spread/mid, 1e-6)
+				m.SetMetric("midpoint_log_return", data.NewMetric[float64](
+					"midpoint_log_return",
+					data.UnitLogReturn,
+					data.TimescaleRollingWindow,
+					0.0,
+					returnScale,
+				).Write(logReturn))
 
 				elapsed := m.At.Sub(m.From).Seconds()
 				if elapsed > 0 {
 					returnRate := logReturn / elapsed
-					m.WriteMetric("midpoint_return_rate", returnRate)
+					m.SetMetric("midpoint_return_rate", data.NewMetric[float64](
+						"midpoint_return_rate",
+						data.UnitRate,
+						data.TimescalePerSecond,
+						0.0,
+						math.Max(math.Abs(returnRate), 1e-6),
+					).Write(returnRate))
 
 					netNotional := m.GetMetric("net_notional").Raw
 					if netNotional != 0 {
@@ -78,8 +104,20 @@ func (op *Response) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 							sign = -1.0
 						}
 
-						m.WriteMetric("flow_aligned_midpoint_return", sign*logReturn)
-						m.WriteMetric("midpoint_response_per_net_notional", logReturn/netNotional)
+						m.SetMetric("flow_aligned_midpoint_return", data.NewMetric[float64](
+							"flow_aligned_midpoint_return",
+							data.UnitLogReturn,
+							data.TimescaleRollingWindow,
+							0.0,
+							returnScale,
+						).Write(sign*logReturn))
+						m.SetMetric("midpoint_response_per_net_notional", data.NewMetric[float64](
+							"midpoint_response_per_net_notional",
+							data.UnitRatio,
+							data.TimescaleRollingWindow,
+							0.0,
+							math.Max(math.Abs(logReturn/netNotional), 1e-9),
+						).Write(logReturn/netNotional))
 					}
 				}
 			}

@@ -14,8 +14,8 @@ func TestRecurrence(t *testing.T) {
 		node := data.NewRecurrence("z1", "z2")
 
 		meas1 := data.NewMeasurement[float64]("test")
-		meas1.WriteMetric("z1", 1.0)
-		meas1.WriteMetric("z2", 1.0)
+		meas1.SetMetric("z1", data.NewMetric[float64]("z1", data.UnitZScore, data.TimescaleRollingWindow, 0, 1).Write(1.0))
+		meas1.SetMetric("z2", data.NewMetric[float64]("z2", data.UnitZScore, data.TimescaleRollingWindow, 0, 1).Write(1.0))
 
 		for range node.Next(transport.NewOne(unsafe.Pointer(&meas1)).Next(nil)) {
 		}
@@ -24,8 +24,8 @@ func TestRecurrence(t *testing.T) {
 		So(hasDist1, ShouldBeFalse)
 
 		meas2 := data.NewMeasurement[float64]("test")
-		meas2.WriteMetric("z1", 1.1)
-		meas2.WriteMetric("z2", 1.1)
+		meas2.SetMetric("z1", data.NewMetric[float64]("z1", data.UnitZScore, data.TimescaleRollingWindow, 0, 1).Write(1.1))
+		meas2.SetMetric("z2", data.NewMetric[float64]("z2", data.UnitZScore, data.TimescaleRollingWindow, 0, 1).Write(1.1))
 
 		for range node.Next(transport.NewOne(unsafe.Pointer(&meas2)).Next(nil)) {
 		}

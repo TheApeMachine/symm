@@ -19,11 +19,14 @@ counts, the valid member count, and the signed fraction equation
 (positive - negative) / valid.
 */
 type ChangeCounts struct {
-	err error
+	err      error
+	baseline core.Primitive
 }
 
 func NewChangeCounts() core.Primitive {
-	return &ChangeCounts{}
+	return &ChangeCounts{
+		baseline: adaptive.NewBaseline(adaptive.NewWindow()),
+	}
 }
 
 func (op *ChangeCounts) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
@@ -64,13 +67,58 @@ func (op *ChangeCounts) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointe
 
 			valid := positive + negative + zero
 
-			m.WriteMetric("valid_member_count", valid)
-			m.WriteMetric("positive_count", positive)
-			m.WriteMetric("negative_count", negative)
-			m.WriteMetric("zero_count", zero)
+			reading := drive[float64, adaptive.BaselineReading](op.baseline, &valid)
+
+			validCenter := valid
+			validScale := 1.0
+			if reading.HasPrior {
+				validCenter = reading.Baseline
+				validScale = math.Max(reading.Dispersion, 1.0)
+			}
+
+			m.SetMetric("valid_member_count", data.NewMetric[float64](
+				"valid_member_count",
+				data.UnitCount,
+				data.TimescaleInstantaneous,
+				validCenter,
+				validScale,
+			).Write(valid))
+
+			// Binomial null hypothesis: unbiased market has p = 0.5 up vs down.
+			// Expected mean = valid * 0.5, Standard deviation = sqrt(valid * 0.25) = 0.5 * sqrt(valid)
+			binomialCenter := valid * 0.5
+			binomialScale := math.Max(0.5*math.Sqrt(valid), 0.5)
+
+			m.SetMetric("positive_count", data.NewMetric[float64](
+				"positive_count",
+				data.UnitCount,
+				data.TimescaleInstantaneous,
+				binomialCenter,
+				binomialScale,
+			).Write(positive))
+			m.SetMetric("negative_count", data.NewMetric[float64](
+				"negative_count",
+				data.UnitCount,
+				data.TimescaleInstantaneous,
+				binomialCenter,
+				binomialScale,
+			).Write(negative))
+			m.SetMetric("zero_count", data.NewMetric[float64](
+				"zero_count",
+				data.UnitCount,
+				data.TimescaleInstantaneous,
+				0,
+				math.Max(math.Sqrt(valid), 1.0),
+			).Write(zero))
 
 			if valid > 0 {
-				m.WriteMetric("signed_fraction", (positive - negative) / valid)
+				m.SetMetric("signed_fraction", data.NewMetric[float64](
+					"signed_fraction",
+					data.UnitRatio,
+					data.TimescaleInstantaneous,
+					0.0,
+					1.0,
+				).Write((positive - negative) / valid))
 
 				if extremeKey != "" {
 					m.SetProvenance("extreme_key", extremeKey)
@@ -120,9 +168,28 @@ func (op *ChangeBaseline) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Poin
 				reading := drive[float64, adaptive.BaselineReading](op.baseline, &fraction)
 
 				if reading.HasPrior {
-					m.WriteMetric("signed_fraction_baseline", reading.Baseline)
-					m.WriteMetric("signed_fraction_divergence", reading.Residual)
-					m.WriteMetric("signed_fraction_zscore", reading.ZScore)
+					dispersion := math.Max(reading.Dispersion, 1e-6)
+					m.SetMetric("signed_fraction_baseline", data.NewMetric[float64](
+						"signed_fraction_baseline",
+						data.UnitRatio,
+						data.TimescaleRollingWindow,
+						0.0,
+						1.0,
+					).Write(reading.Baseline))
+					m.SetMetric("signed_fraction_divergence", data.NewMetric[float64](
+						"signed_fraction_divergence",
+						data.UnitRatio,
+						data.TimescaleInstantaneous,
+						0.0,
+						dispersion,
+					).Write(reading.Residual))
+					m.SetMetric("signed_fraction_zscore", data.NewMetric[float64](
+						"signed_fraction_zscore",
+						data.UnitZScore,
+						data.TimescaleRollingWindow,
+						0.0,
+						1.0,
+					).Write(reading.ZScore))
 					m.EnsureMetadata()
 
 					m.SetMetadata(data.MetadataDivergence, strconv.FormatFloat(reading.Residual, 'f', -1, 64))
@@ -212,7 +279,13 @@ func (op *ChangeMedian) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointe
 				continue
 			}
 
-			m.WriteMetric("signed_median", median)
+			m.SetMetric("signed_median", data.NewMetric[float64](
+				"signed_median",
+				data.UnitRatio,
+				data.TimescaleInstantaneous,
+				0.0,
+				math.Max(math.Abs(median), 1e-6),
+			).Write(median))
 
 			if !yield(arriving) {
 				return

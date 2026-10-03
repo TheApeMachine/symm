@@ -130,32 +130,91 @@ func (op *Liquidation) observe(m *data.Measurement[float64], state *liquidationS
 	m.From = state.startTime
 	m.At = state.lastAdvancedTime
 
-	m.WriteMetric("liquidation_notional:buy", state.liqBuyTotal)
-	m.WriteMetric("liquidation_notional:sell", state.liqSellTotal)
-	m.WriteMetric("gross_liquidation_notional", grossLiq)
-	m.WriteMetric("net_liquidation_notional", netLiq)
-	m.WriteMetric("gross_derivative_trade_notional", state.grossTradeTotal)
+	tradeScale := state.grossTradeTotal
+
+	m.SetMetric("liquidation_notional:buy", data.NewMetric[float64](
+		"liquidation_notional:buy",
+		data.UnitNotional,
+		data.TimescaleRollingWindow,
+		0.0,
+		tradeScale,
+	).Write(state.liqBuyTotal))
+	m.SetMetric("liquidation_notional:sell", data.NewMetric[float64](
+		"liquidation_notional:sell",
+		data.UnitNotional,
+		data.TimescaleRollingWindow,
+		0.0,
+		tradeScale,
+	).Write(state.liqSellTotal))
+	m.SetMetric("gross_liquidation_notional", data.NewMetric[float64](
+		"gross_liquidation_notional",
+		data.UnitNotional,
+		data.TimescaleRollingWindow,
+		0.0,
+		tradeScale,
+	).Write(grossLiq))
+	m.SetMetric("net_liquidation_notional", data.NewMetric[float64](
+		"net_liquidation_notional",
+		data.UnitNotional,
+		data.TimescaleRollingWindow,
+		0.0,
+		tradeScale,
+	).Write(netLiq))
+	m.SetMetric("gross_derivative_trade_notional", data.NewMetric[float64](
+		"gross_derivative_trade_notional",
+		data.UnitNotional,
+		data.TimescaleRollingWindow,
+		0.0,
+		tradeScale,
+	).Write(state.grossTradeTotal))
 
 	var currentShare float64
 
 	if grossLiq > 0 {
-		m.WriteNormalized("liquidation_signed_fraction", netLiq/grossLiq)
+		m.SetMetric("liquidation_signed_fraction", data.NewMetric[float64](
+			"liquidation_signed_fraction",
+			data.UnitRatio,
+			data.TimescaleRollingWindow,
+			0.0,
+			1.0,
+		).Write(netLiq/grossLiq))
 	}
 
 	if state.grossTradeTotal > 0 {
 		currentShare = grossLiq / state.grossTradeTotal
-		m.WriteNormalized("liquidation_share", currentShare)
+		m.SetMetric("liquidation_share", data.NewMetric[float64](
+			"liquidation_share",
+			data.UnitRatio,
+			data.TimescaleRollingWindow,
+			0.0,
+			1.0,
+		).Write(currentShare))
 	}
 
 	if advanced {
 		duration := state.lastAdvancedTime.Sub(state.startTime).Seconds()
 
 		if duration > 0 {
-			m.WriteMetric("liquidation_notional_rate", grossLiq / duration)
+			rate := grossLiq / duration
+			tradeRate := state.grossTradeTotal / duration
+			m.SetMetric("liquidation_notional_rate", data.NewMetric[float64](
+				"liquidation_notional_rate",
+				data.UnitNotionalRate,
+				data.TimescalePerSecond,
+				0.0,
+				tradeRate,
+			).Write(rate))
 		}
 
 		if state.hasPrevLiqShare {
-			m.WriteMetric("liquidation_share_velocity", currentShare - state.prevLiqShare)
+			shareVel := currentShare - state.prevLiqShare
+			m.SetMetric("liquidation_share_velocity", data.NewMetric[float64](
+				"liquidation_share_velocity",
+				data.UnitVelocity,
+				data.TimescalePerSecond,
+				0.0,
+				1.0,
+			).Write(shareVel))
 		}
 
 		state.prevLiqShare = currentShare

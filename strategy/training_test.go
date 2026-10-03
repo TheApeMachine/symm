@@ -32,11 +32,11 @@ func TestTraining(t *testing.T) {
 		uiTee.Transition(runtime.READY)
 
 		catalog := tablestest.New(t)
-		training := NewTraining(ctx, arena, price, nil, catalog, uiTee)
+		training := NewTraining(ctx, arena, price, nil, catalog, uiTee, nil)
 
 		Convey("Initial state is INIT and cognition tree is queryable", func() {
 			So(training.Status(), ShouldEqual, runtime.INIT)
-			So(training.Source(), ShouldEqual, "training")
+			So(training.Name(), ShouldEqual, "strategy:training")
 			So(training.Arena(), ShouldNotBeNil)
 
 			treeExport := training.CognitionTree()

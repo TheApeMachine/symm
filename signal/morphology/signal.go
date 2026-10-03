@@ -2,6 +2,7 @@ package morphology
 
 import (
 	"context"
+	"math"
 	"strconv"
 	"sync"
 	"unsafe"
@@ -24,7 +25,7 @@ its own: its entire behavior is one nomagique pipeline over the measurement itse
 every stage writes its facts into the measurement where it computes them, and the
 workload's register owns the measurement's lifetime.
 */
-type Level3 struct {
+type Signal struct {
 	*runtime.System
 	arena     *data.ArenaOwner
 	pipelines sync.Map
@@ -32,22 +33,18 @@ type Level3 struct {
 	books     broker.BookSource
 }
 
-func NewLevel3(ctx context.Context, arena *data.ArenaOwner, books broker.BookSource) *Level3 {
-	level3 := &Level3{
+func NewSignal(ctx context.Context, arena *data.ArenaOwner, books broker.BookSource) *Signal {
+	signal := &Signal{
 		arena: arena,
 		books: books,
 	}
 
-	level3.System = runtime.NewSystem(ctx, "morphology:level3", level3)
-	return level3
+	signal.System = runtime.NewSystem(ctx, "morphology:signal", signal)
+	return signal
 }
 
-func (level3 *Level3) Source() string {
-	return "morphology:level3"
-}
-
-func (level3 *Level3) Arena() *data.ArenaOwner {
-	return level3.arena
+func (signal *Signal) Arena() *data.ArenaOwner {
+	return signal.arena
 }
 
 /*
@@ -55,14 +52,14 @@ Step supplies the arriving measurement to the pipeline and returns it: the
 measurement is the pipeline's state, enriched in place.
 */
 
-func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
-	if existing, ok := level3.pipelines.Load(symbol); ok {
+func (signal *Signal) pipelineFor(symbol string) core.Primitive {
+	if existing, ok := signal.pipelines.Load(symbol); ok {
 		return existing.(core.Primitive)
 	}
 
 	pipeline := nomagique.NewNumber(
 		// 0. Extract raw morphology facts from order book
-		nmmorphology.NewShapeFlow(level3.books),
+		nmmorphology.NewShapeFlow(signal.books),
 		// 1. Adaptive baseline for morphology change
 		transport.NewFan(
 			data.NewAdapter(
@@ -74,12 +71,38 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 					m.SetMetadata(data.MetadataSupport, strconv.FormatFloat(out.Count, 'f', -1, 64))
 
 					if out.HasPrior {
-						m.WriteMetric("morphology_change_baseline", out.Baseline)
-						m.WriteStandardized("morphology_change_zscore", out.ZScore)
-						m.SetMetadata(data.MetadataDivergence, strconv.FormatFloat(out.Residual, 'f', -1, 64))
+						scale := out.Baseline
+						if out.VarianceDefined && out.Variance > 0 {
+							scale = math.Sqrt(out.Variance)
+						}
+						scale = math.Max(scale, 1e-6)
+
+						m.SetMetric("morphology_change_baseline", data.NewMetric[float64](
+							"morphology_change_baseline",
+							data.UnitRatio,
+							data.TimescaleRollingWindow,
+							out.Baseline,
+							scale,
+						).Write(out.Baseline))
+
+						m.SetMetric("morphology_change_zscore", data.NewMetric[float64](
+							"morphology_change_zscore",
+							data.UnitStandardDeviation,
+							data.TimescaleRollingWindow,
+							0.0,
+							1.0,
+						).Write(out.ZScore))
+
+						m.SetMetadata(
+							data.MetadataDivergence,
+							strconv.FormatFloat(out.Residual, 'f', -1, 64),
+						)
 
 						if out.VarianceDefined {
-							m.SetMetadata(data.MetadataNoiseVariance, strconv.FormatFloat(out.Variance, 'f', -1, 64))
+							m.SetMetadata(
+								data.MetadataNoiseVariance,
+								strconv.FormatFloat(out.Variance, 'f', -1, 64),
+							)
 						}
 					}
 				},
@@ -95,13 +118,13 @@ func (level3 *Level3) pipelineFor(symbol string) core.Primitive {
 		data.NewFinalizer[float64](),
 	)
 
-	actual, _ := level3.pipelines.LoadOrStore(symbol, pipeline)
+	actual, _ := signal.pipelines.LoadOrStore(symbol, pipeline)
 	return actual.(core.Primitive)
 }
 
-func (level3 *Level3) Step(prior *data.Measurement[float64]) *data.Measurement[float64] {
-	if level3.Status() != runtime.READY {
-		errnie.Warn(level3.Name() + ": Step called before READY; dropping event")
+func (signal *Signal) Step(prior *data.Measurement[float64]) *data.Measurement[float64] {
+	if signal.Status() != runtime.READY {
+		errnie.Warn(signal.Name() + ": Step called before READY; dropping event")
 		return nil
 	}
 
@@ -109,7 +132,7 @@ func (level3 *Level3) Step(prior *data.Measurement[float64]) *data.Measurement[f
 		return nil
 	}
 
-	out := level3.arena.NewMeasurement(level3.Source())
+	out := signal.arena.NewMeasurement(signal.Name())
 	out.Label = prior.Label
 	out.SeqIdx = prior.SeqIdx
 	out.At = prior.At
@@ -120,7 +143,7 @@ func (level3 *Level3) Step(prior *data.Measurement[float64]) *data.Measurement[f
 		out.SetProvenance("channel", channel)
 	}
 
-	res := data.Read[*data.Measurement[float64]](level3.pipelineFor(out.Label).Next(
+	res := data.Read[*data.Measurement[float64]](signal.pipelineFor(out.Label).Next(
 		transport.NewOne(unsafe.Pointer(&out)).Next(nil),
 	))
 

@@ -47,10 +47,14 @@ the binary ([2]float64) wire shape; a single input name feeds the value
 directly. The binding owns no mathematics and no state.
 */
 type Equation struct {
-	Output string
-	Op     core.Primitive
-	Left   string
-	Right  string
+	Output    string
+	Unit      Unit
+	Timescale Timescale
+	Center    float64
+	Scale     float64
+	Op        core.Primitive
+	Left      string
+	Right     string
 }
 
 /*
@@ -112,12 +116,39 @@ func (op *Equations) apply(m *Measurement[float64], binding Equation) bool {
 		return false
 	}
 
+	unit := binding.Unit
+	if unit == "" {
+		unit = left.Unit
+	}
+
+	timescale := binding.Timescale
+	if timescale == "" {
+		timescale = left.Timescale
+	}
+
+	center := binding.Center
+	scale := binding.Scale
+	if scale == 0 {
+		center = left.Center
+		scale = left.Scale
+	}
+
+	if scale == 0 {
+		scale = 1.0
+	}
+
 	if binding.Right == "" {
 		value := left.Raw
 		answer, answered := driveAll[float64, float64](binding.Op, &value)
 
 		if answered {
-			m.WriteMetric(binding.Output, answer)
+			m.SetMetric(binding.Output, NewMetric[float64](
+				binding.Output,
+				unit,
+				timescale,
+				center,
+				scale,
+			).Write(answer))
 		}
 
 		return true
@@ -135,7 +166,13 @@ func (op *Equations) apply(m *Measurement[float64], binding Equation) bool {
 	answer, answered := driveAll[[2]float64, float64](binding.Op, &pair)
 
 	if answered {
-		m.WriteMetric(binding.Output, answer)
+		m.SetMetric(binding.Output, NewMetric[float64](
+			binding.Output,
+			unit,
+			timescale,
+			center,
+			scale,
+		).Write(answer))
 	}
 
 	return true

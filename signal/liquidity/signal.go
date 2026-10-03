@@ -8,6 +8,8 @@ import (
 
 	"github.com/theapemachine/errnie"
 
+	"github.com/theapemachine/symm/broker"
+	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
@@ -18,32 +20,32 @@ import (
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-type Ticker struct {
+type Signal struct {
 	*runtime.System
 	arena     *data.ArenaOwner
 	pipelines sync.Map
 	ID        int
+	books     broker.BookSource
 }
 
-func NewTicker(ctx context.Context, arena *data.ArenaOwner) *Ticker {
-	ticker := &Ticker{
+func NewSignal(ctx context.Context, arena *data.ArenaOwner, books ...broker.BookSource) *Signal {
+	signal := &Signal{
 		arena: arena,
 	}
+	if len(books) > 0 {
+		signal.books = books[0]
+	}
 
-	ticker.System = runtime.NewSystem(ctx, "liquidity:ticker", ticker)
-	return ticker
+	signal.System = runtime.NewSystem(ctx, "liquidity:signal", signal)
+	return signal
 }
 
-func (ticker *Ticker) Source() string {
-	return "liquidity:ticker"
+func (signal *Signal) Arena() *data.ArenaOwner {
+	return signal.arena
 }
 
-func (ticker *Ticker) Arena() *data.ArenaOwner {
-	return ticker.arena
-}
-
-func (ticker *Ticker) pipelineFor(symbol string) core.Primitive {
-	if existing, ok := ticker.pipelines.Load(symbol); ok {
+func (signal *Signal) pipelineFor(symbol string) core.Primitive {
+	if existing, ok := signal.pipelines.Load(symbol); ok {
 		return existing.(core.Primitive)
 	}
 
@@ -146,13 +148,13 @@ func (ticker *Ticker) pipelineFor(symbol string) core.Primitive {
 		data.NewFinalizer[float64](),
 	)
 
-	actual, _ := ticker.pipelines.LoadOrStore(symbol, pipeline)
+	actual, _ := signal.pipelines.LoadOrStore(symbol, pipeline)
 	return actual.(core.Primitive)
 }
 
-func (ticker *Ticker) Step(prior *data.Measurement[float64]) *data.Measurement[float64] {
-	if ticker.Status() != runtime.READY {
-		errnie.Warn(ticker.Name() + ": Step called before READY; dropping event")
+func (signal *Signal) Step(prior *data.Measurement[float64]) *data.Measurement[float64] {
+	if signal.Status() != runtime.READY {
+		errnie.Warn(signal.Name() + ": Step called before READY; dropping event")
 		return nil
 	}
 
@@ -160,27 +162,57 @@ func (ticker *Ticker) Step(prior *data.Measurement[float64]) *data.Measurement[f
 		return nil
 	}
 
-	_, hasBid := prior.LookupMetric("bid")
-	_, hasAsk := prior.LookupMetric("ask")
-	_, hasBidQty := prior.LookupMetric("bid_qty")
-	_, hasAskQty := prior.LookupMetric("ask_qty")
+	var bid, ask, bidQty, askQty float64
+	if bMetric, ok := prior.LookupMetric("bid"); ok && bMetric.Raw > 0 {
+		bid = bMetric.Raw
+	}
+	if aMetric, ok := prior.LookupMetric("ask"); ok && aMetric.Raw > 0 {
+		ask = aMetric.Raw
+	}
+	if bqMetric, ok := prior.LookupMetric("bid_qty"); ok && bqMetric.Raw > 0 {
+		bidQty = bqMetric.Raw
+	}
+	if aqMetric, ok := prior.LookupMetric("ask_qty"); ok && aqMetric.Raw > 0 {
+		askQty = aqMetric.Raw
+	}
 
-	if !hasBid || !hasAsk || !hasBidQty || !hasAskQty {
+	if (bid <= 0 || ask <= 0 || bidQty <= 0 || askQty <= 0) && signal.books != nil {
+		signal.books.Book(prior.Label, func(b *spotbook.Book) {
+			if b == nil {
+				return
+			}
+			if bestBid := b.BestBid(); bestBid != nil && bestBid.Price != nil && bestBid.Quantity != nil {
+				bid = bestBid.Price.Float64()
+				bidQty = bestBid.Quantity.Float64()
+			}
+			if bestAsk := b.BestAsk(); bestAsk != nil && bestAsk.Price != nil && bestAsk.Quantity != nil {
+				ask = bestAsk.Price.Float64()
+				askQty = bestAsk.Quantity.Float64()
+			}
+		})
+	}
+
+	if bid <= 0 || ask <= 0 || bidQty <= 0 || askQty <= 0 {
 		return nil
 	}
 
-	out := ticker.arena.NewMeasurement(ticker.Source())
+	out := signal.arena.NewMeasurement(signal.Name())
 	out.Label = prior.Label
 	out.SeqIdx = prior.SeqIdx
 	out.At = prior.At
 	out.From = prior.From
 	out.Peers = []*data.Measurement[float64]{prior}
 
+	out.WriteMetric("bid", bid)
+	out.WriteMetric("ask", ask)
+	out.WriteMetric("bid_qty", bidQty)
+	out.WriteMetric("ask_qty", askQty)
+
 	if channel, hasCh := prior.GetProvenance("channel"); hasCh {
 		out.SetProvenance("channel", channel)
 	}
 
-	res := data.Read[*data.Measurement[float64]](ticker.pipelineFor(out.Label).Next(
+	res := data.Read[*data.Measurement[float64]](signal.pipelineFor(out.Label).Next(
 		transport.NewOne(unsafe.Pointer(&out)).Next(nil),
 	))
 

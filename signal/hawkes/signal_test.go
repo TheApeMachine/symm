@@ -16,7 +16,7 @@ func TestHawkesTradeMetrics(t *testing.T) {
 		ctx := context.Background()
 		arena := data.NewArenaOwner(4096)
 
-		instrument := hawkes.NewTrade(ctx, arena)
+		instrument := hawkes.NewSignal(ctx, arena)
 		instrument.Transition(nmruntime.READY)
 
 		now := time.Now()

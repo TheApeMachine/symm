@@ -1,4 +1,4 @@
-package correlation_test
+package leadlag_test
 
 import (
 	"context"
@@ -8,15 +8,15 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/data"
 	nmruntime "github.com/theapemachine/symm/nomagique/runtime"
-	"github.com/theapemachine/symm/signal/correlation"
+	"github.com/theapemachine/symm/signal/leadlag"
 )
 
-func TestCorrelationTickerMetrics(t *testing.T) {
-	Convey("Correlation ticker instrument measures asynchronous price-path correlation", t, func() {
+func TestLeadLagTickerMetrics(t *testing.T) {
+	Convey("Leadlag ticker instrument computes asynchronous cross lead-lag", t, func() {
 		ctx := context.Background()
 		arena := data.NewArenaOwner(4096)
 
-		instrument := correlation.NewTicker(ctx, arena)
+		instrument := leadlag.NewSignal(ctx, arena)
 		instrument.Transition(nmruntime.READY)
 
 		now := time.Now()
@@ -33,13 +33,13 @@ func TestCorrelationTickerMetrics(t *testing.T) {
 			resBTC := instrument.Step(btc)
 			So(resBTC, ShouldNotBeNil)
 
-			// Feed ETH
+			// Feed ETH with lag
 			eth := arena.NewMeasurement("ingress")
 			eth.Label = "ETH/USD"
 			eth.SeqIdx = int64(step*2 + 2)
-			eth.At = now.Add(time.Duration(step*100+20) * time.Millisecond)
+			eth.At = now.Add(time.Duration(step*100+30) * time.Millisecond)
 			eth.From = eth.At
-			eth.WriteMetric("last", 3000.0+float64(step)*2.0)
+			eth.WriteMetric("last", 3000.0+float64(step)*5.0)
 
 			resETH := instrument.Step(eth)
 			So(resETH, ShouldNotBeNil)

@@ -2,12 +2,11 @@ package leadlag
 
 import (
 	"iter"
+	"math"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/logic"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
@@ -21,13 +20,11 @@ cross-pair's focal price.
 */
 type ExtractPrice struct {
 	*core.PrimitiveError
-	finite core.Primitive
 }
 
 func NewExtractPrice() core.Primitive {
 	return &ExtractPrice{
 		PrimitiveError: core.NewPrimitiveError(),
-		finite:         logic.NewFinite(),
 	}
 }
 
@@ -36,23 +33,26 @@ func (op *ExtractPrice) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointe
 		for arriving := range in {
 			m := *(**data.Measurement[float64])(arriving)
 
-			price, found := op.resolve(m)
+			metric, found := op.resolve(m)
 
-			if !found {
+			if !found || metric.Raw < 0 {
 				continue
 			}
 
-			valid := false
-
-			for out := range op.finite.Next(transport.NewOne(unsafe.Pointer(&price)).Next(nil)) {
-				valid = *(*bool)(out)
+			center := metric.Center
+			scale := metric.Scale
+			if scale == 0 {
+				center = metric.Raw
+				scale = math.Max(metric.Raw*0.001, 1.0)
 			}
 
-			if !valid || price < 0 {
-				continue
-			}
-
-			m.WriteMetric("last_price", price)
+			m.SetMetric("last_price", data.NewMetric[float64](
+				"last_price",
+				data.UnitPrice,
+				data.TimescaleInstantaneous,
+				center,
+				scale,
+			).Write(metric.Raw))
 
 			if !yield(arriving) {
 				return
@@ -65,7 +65,7 @@ func (op *ExtractPrice) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointe
 resolve finds the best available last trade price: from a peer if peers
 exist, otherwise from the measurement's own "last" metric.
 */
-func (op *ExtractPrice) resolve(m *data.Measurement[float64]) (float64, bool) {
+func (op *ExtractPrice) resolve(m *data.Measurement[float64]) (data.Metric[float64], bool) {
 	if len(m.Peers) > 0 {
 		for _, peer := range m.Peers {
 			if peer == nil || peer.Label == "" {
@@ -75,30 +75,30 @@ func (op *ExtractPrice) resolve(m *data.Measurement[float64]) (float64, bool) {
 			if metric, ok := peer.LookupMetric("last_price"); ok && metric.Raw > 0 {
 				m.Label = peer.Label
 				m.At = peer.At
-				return metric.Raw, true
+				return metric, true
 			}
 
 			if metric, ok := peer.LookupMetric("last"); ok && metric.Raw > 0 {
 				m.Label = peer.Label
 				m.At = peer.At
-				return metric.Raw, true
+				return metric, true
 			}
 
 			if metric, ok := peer.LookupMetric("price"); ok && metric.Raw > 0 {
 				m.Label = peer.Label
 				m.At = peer.At
-				return metric.Raw, true
+				return metric, true
 			}
 		}
 
-		return 0, false
+		return data.Metric[float64]{}, false
 	}
 
 	metric, ok := m.LookupMetric("last")
 
 	if !ok || metric.Raw <= 0 {
-		return 0, false
+		return data.Metric[float64]{}, false
 	}
 
-	return metric.Raw, true
+	return metric, true
 }

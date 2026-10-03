@@ -3,6 +3,7 @@ package correlation
 import (
 	"errors"
 	"iter"
+	"math"
 	"strconv"
 	"unsafe"
 
@@ -75,19 +76,66 @@ func (op *Fold) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			}
 
 			if summary.Defined {
-				m.WriteMetric("cohort_signed_correlation", summary.SignedCorrelation)
-				m.WriteMetric("cohort_absolute_correlation", summary.AbsoluteCorrelation)
-				m.WriteMetric("cohort_effective_peer_count", summary.EffectivePeers)
+				m.SetMetric("cohort_signed_correlation", data.NewMetric[float64](
+					"cohort_signed_correlation",
+					data.UnitCorrelation,
+					data.TimescaleRollingWindow,
+					0.0,
+					1.0,
+				).Write(summary.SignedCorrelation))
+
+				m.SetMetric("cohort_absolute_correlation", data.NewMetric[float64](
+					"cohort_absolute_correlation",
+					data.UnitCorrelation,
+					data.TimescaleRollingWindow,
+					0.0,
+					1.0,
+				).Write(summary.AbsoluteCorrelation))
+
+				m.SetMetric("cohort_effective_peer_count", data.NewMetric[float64](
+					"cohort_effective_peer_count",
+					data.UnitCount,
+					data.TimescaleRollingWindow,
+					0.0,
+					math.Max(summary.Peers, 1.0),
+				).Write(summary.EffectivePeers))
 			}
-			m.WriteMetric("cohort_peer_count", summary.Peers)
+			m.SetMetric("cohort_peer_count", data.NewMetric[float64](
+				"cohort_peer_count",
+				data.UnitCount,
+				data.TimescaleRollingWindow,
+				0.0,
+				math.Max(summary.Peers, 1.0),
+			).Write(summary.Peers))
 
 			if summary.FisherDefined {
-				m.WriteMetric("cohort_correlation_dispersion", summary.Dispersion)
+				m.SetMetric("cohort_correlation_dispersion", data.NewMetric[float64](
+					"cohort_correlation_dispersion",
+					data.UnitVariance,
+					data.TimescaleRollingWindow,
+					0.0,
+					1.0,
+				).Write(summary.Dispersion))
 			}
 
 			if summary.PeerEnergyRate > 0 {
-				m.WriteMetric("peer_return_energy_rate", summary.PeerEnergyRate)
-				m.WriteMetric("relative_return_energy", m.GetMetric("return_energy_rate:measured").Raw / summary.PeerEnergyRate)
+				m.SetMetric("peer_return_energy_rate", data.NewMetric[float64](
+					"peer_return_energy_rate",
+					data.UnitRate,
+					data.TimescalePerSecond,
+					0.0,
+					math.Max(summary.PeerEnergyRate, 1e-6),
+				).Write(summary.PeerEnergyRate))
+
+				measuredEnergy := m.GetMetric("return_energy_rate:measured").Raw
+				relEnergy := measuredEnergy / summary.PeerEnergyRate
+				m.SetMetric("relative_return_energy", data.NewMetric[float64](
+					"relative_return_energy",
+					data.UnitRatio,
+					data.TimescalePerSecond,
+					1.0,
+					1.0,
+				).Write(relEnergy))
 			}
 
 			if !yield(arriving) {
@@ -142,9 +190,34 @@ func (op *History) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			signed := m.GetMetric("cohort_signed_correlation").Raw
 			view := drive[float64, FisherView](estimator, &signed)
 
-			m.WriteMetric("correlation_baseline", view.Baseline)
-			m.WriteMetric("correlation_divergence", view.Divergence)
-			m.WriteMetric("correlation_zscore", view.ZScore)
+			var divergenceScale float64 = 1.0
+			if view.VarianceDefined && view.Variance > 0 {
+				divergenceScale = math.Sqrt(view.Variance)
+			}
+
+			m.SetMetric("correlation_baseline", data.NewMetric[float64](
+				"correlation_baseline",
+				data.UnitCorrelation,
+				data.TimescaleRollingWindow,
+				0.0,
+				1.0,
+			).Write(view.Baseline))
+
+			m.SetMetric("correlation_divergence", data.NewMetric[float64](
+				"correlation_divergence",
+				data.UnitCorrelation,
+				data.TimescaleRollingWindow,
+				0.0,
+				divergenceScale,
+			).Write(view.Divergence))
+
+			m.SetMetric("correlation_zscore", data.NewMetric[float64](
+				"correlation_zscore",
+				data.UnitZScore,
+				data.TimescaleRollingWindow,
+				0.0,
+				1.0,
+			).Write(view.ZScore))
 
 			if view.Defined {
 				m.EnsureMetadata()
@@ -209,9 +282,28 @@ func (op *Relative) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			relative := m.GetMetric("relative_return_energy").Raw
 			reading := drive[float64, adaptive.BaselineReading](baseline, &relative)
 
-			m.WriteMetric("relative_return_energy_baseline", reading.Baseline)
-			m.WriteMetric("relative_return_energy_divergence", reading.Residual)
-			m.WriteMetric("relative_return_energy_zscore", reading.ZScore)
+			energyDispersion := math.Max(reading.Dispersion, 1e-6)
+			m.SetMetric("relative_return_energy_baseline", data.NewMetric[float64](
+				"relative_return_energy_baseline",
+				data.UnitRatio,
+				data.TimescaleRollingWindow,
+				1.0,
+				energyDispersion,
+			).Write(reading.Baseline))
+			m.SetMetric("relative_return_energy_divergence", data.NewMetric[float64](
+				"relative_return_energy_divergence",
+				data.UnitRatio,
+				data.TimescaleInstantaneous,
+				0.0,
+				energyDispersion,
+			).Write(reading.Residual))
+			m.SetMetric("relative_return_energy_zscore", data.NewMetric[float64](
+				"relative_return_energy_zscore",
+				data.UnitZScore,
+				data.TimescaleRollingWindow,
+				0.0,
+				1.0,
+			).Write(reading.ZScore))
 
 			if !yield(arriving) {
 				return
@@ -269,7 +361,13 @@ func (op *CorrelationVelocity) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe
 			reading := drive[temporal.Observation, temporal.VelocityReading](velocity, &observation)
 
 			if reading.Defined {
-				m.WriteMetric("correlation_velocity", reading.Rate)
+				m.SetMetric("correlation_velocity", data.NewMetric[float64](
+					"correlation_velocity",
+					data.UnitVelocity,
+					data.TimescalePerSecond,
+					0.0,
+					math.Max(math.Abs(reading.Rate), 1e-6),
+				).Write(reading.Rate))
 			}
 
 			if !yield(arriving) {
@@ -328,7 +426,13 @@ func (op *EnergyVelocity) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Poin
 			reading := drive[temporal.Observation, temporal.VelocityReading](velocity, &observation)
 
 			if reading.Defined {
-				m.WriteMetric("relative_return_energy_velocity", reading.Rate)
+				m.SetMetric("relative_return_energy_velocity", data.NewMetric[float64](
+					"relative_return_energy_velocity",
+					data.UnitVelocity,
+					data.TimescalePerSecond,
+					0.0,
+					math.Max(math.Abs(reading.Rate), 1e-6),
+				).Write(reading.Rate))
 			}
 
 			if !yield(arriving) {

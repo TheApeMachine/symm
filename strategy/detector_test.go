@@ -34,7 +34,9 @@ func TestDetector(t *testing.T) {
 				measurement.Label = "XXBTZUSD"
 				measurement.SeqIdx = seqIdx
 				measurement.At = now.Add(time.Duration(index) * time.Second)
-				measurement.WriteMetric("price", priceValue)
+				spread := 1.0
+				midpoint := priceValue
+				measurement.SetMetric("price", data.NewMetric[float64]("price", data.UnitCurrency, data.TimescaleInstantaneous, midpoint, spread).Write(priceValue))
 				measurement.SetMetric("bid", data.Metric[float64]{Raw: priceValue - 0.5, Exact: decimal.NewFromFloat64(priceValue - 0.5)})
 				measurement.SetMetric("ask", data.Metric[float64]{Raw: priceValue + 0.5, Exact: decimal.NewFromFloat64(priceValue + 0.5)})
 				measurements = append(measurements, measurement)
@@ -44,7 +46,7 @@ func TestDetector(t *testing.T) {
 				signal.Label = "XXBTZUSD"
 				signal.SeqIdx = seqIdx
 				signal.At = now.Add(time.Duration(index) * time.Second)
-				signal.WriteMetric("cumulative_volume_delta", float64(index)*10.0)
+				signal.SetMetric("cumulative_volume_delta", data.NewMetric[float64]("cumulative_volume_delta", data.UnitVolume, data.TimescaleRollingWindow, 0, 100.0).Write(float64(index)*10.0))
 				measurements = append(measurements, signal)
 			}
 

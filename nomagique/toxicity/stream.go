@@ -109,26 +109,88 @@ func (op *TouchDisposition) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Po
 
 			spread := askPrice - bidPrice
 			midpoint := (bidPrice + askPrice) / 2.0
+			totalTouchQty := bidQty + askQty
 
-			m.WriteMetric("best_price:bid", bidPrice)
-			m.WriteMetric("best_price:ask", askPrice)
-			m.WriteMetric("touch_quantity:bid", bidQty)
-			m.WriteMetric("touch_quantity:ask", askQty)
-			m.WriteMetric("unfilled_residual_quantity:bid", bidQty)
-			m.WriteMetric("unfilled_residual_quantity:ask", askQty)
-
-			m.SetCenterScale("best_price:bid", midpoint, spread)
-			m.SetCenterScale("best_price:ask", midpoint, spread)
+			m.SetMetric("best_price:bid", data.NewMetric[float64](
+				"best_price:bid",
+				data.UnitPrice,
+				data.TimescaleInstantaneous,
+				midpoint,
+				spread,
+			).Write(bidPrice))
+			m.SetMetric("best_price:ask", data.NewMetric[float64](
+				"best_price:ask",
+				data.UnitPrice,
+				data.TimescaleInstantaneous,
+				midpoint,
+				spread,
+			).Write(askPrice))
+			m.SetMetric("touch_quantity:bid", data.NewMetric[float64](
+				"touch_quantity:bid",
+				data.UnitQuantity,
+				data.TimescaleInstantaneous,
+				0.0,
+				totalTouchQty,
+			).Write(bidQty))
+			m.SetMetric("touch_quantity:ask", data.NewMetric[float64](
+				"touch_quantity:ask",
+				data.UnitQuantity,
+				data.TimescaleInstantaneous,
+				0.0,
+				totalTouchQty,
+			).Write(askQty))
+			m.SetMetric("unfilled_residual_quantity:bid", data.NewMetric[float64](
+				"unfilled_residual_quantity:bid",
+				data.UnitQuantity,
+				data.TimescaleInstantaneous,
+				0.0,
+				bidQty,
+			).Write(bidQty))
+			m.SetMetric("unfilled_residual_quantity:ask", data.NewMetric[float64](
+				"unfilled_residual_quantity:ask",
+				data.UnitQuantity,
+				data.TimescaleInstantaneous,
+				0.0,
+				askQty,
+			).Write(askQty))
 
 			if state.hasPrev {
 				if !state.prevTime.IsZero() && !state.prevTime.After(m.At) {
 					m.From = state.prevTime
 				}
 
-				m.WriteMetric("previous_touch_quantity:bid", state.prevBidQty)
-				m.WriteMetric("previous_touch_quantity:ask", state.prevAskQty)
-				m.WriteMetric("previous_best_price:bid", state.prevBid)
-				m.WriteMetric("previous_best_price:ask", state.prevAsk)
+				prevMid := (state.prevBid + state.prevAsk) / 2.0
+				prevSpread := state.prevAsk - state.prevBid
+				prevTotalTouchQty := state.prevBidQty + state.prevAskQty
+
+				m.SetMetric("previous_touch_quantity:bid", data.NewMetric[float64](
+					"previous_touch_quantity:bid",
+					data.UnitQuantity,
+					data.TimescaleInstantaneous,
+					0.0,
+					prevTotalTouchQty,
+				).Write(state.prevBidQty))
+				m.SetMetric("previous_touch_quantity:ask", data.NewMetric[float64](
+					"previous_touch_quantity:ask",
+					data.UnitQuantity,
+					data.TimescaleInstantaneous,
+					0.0,
+					prevTotalTouchQty,
+				).Write(state.prevAskQty))
+				m.SetMetric("previous_best_price:bid", data.NewMetric[float64](
+					"previous_best_price:bid",
+					data.UnitPrice,
+					data.TimescaleInstantaneous,
+					prevMid,
+					prevSpread,
+				).Write(state.prevBid))
+				m.SetMetric("previous_best_price:ask", data.NewMetric[float64](
+					"previous_best_price:ask",
+					data.UnitPrice,
+					data.TimescaleInstantaneous,
+					prevMid,
+					prevSpread,
+				).Write(state.prevAsk))
 
 				m.EnsureMetadata()
 				m.SetMetadata("previous_level_disposition", "touch-only")
@@ -139,73 +201,165 @@ func (op *TouchDisposition) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Po
 				}
 
 				if state.prevBid > 0 && bidPrice > 0 {
-					m.WriteMetric("touch_price_log_change:bid", math.Log(bidPrice/state.prevBid))
+					relSpreadBid := prevSpread / state.prevBid
+					m.SetMetric("touch_price_log_change:bid", data.NewMetric[float64](
+						"touch_price_log_change:bid",
+						data.UnitDimensionless,
+						data.TimescaleInstantaneous,
+						0.0,
+						relSpreadBid,
+					).Write(math.Log(bidPrice/state.prevBid)))
 				}
 
 				if state.prevAsk > 0 && askPrice > 0 {
-					m.WriteMetric("touch_price_log_change:ask", math.Log(askPrice/state.prevAsk))
+					relSpreadAsk := prevSpread / state.prevAsk
+					m.SetMetric("touch_price_log_change:ask", data.NewMetric[float64](
+						"touch_price_log_change:ask",
+						data.UnitDimensionless,
+						data.TimescaleInstantaneous,
+						0.0,
+						relSpreadAsk,
+					).Write(math.Log(askPrice/state.prevAsk)))
 				}
 
 				if bidPrice < state.prevBid {
-					m.WriteMetric("retreated_quantity:bid", state.prevBidQty)
+					m.SetMetric("retreated_quantity:bid", data.NewMetric[float64](
+						"retreated_quantity:bid",
+						data.UnitQuantity,
+						data.TimescaleInstantaneous,
+						0.0,
+						state.prevBidQty,
+					).Write(state.prevBidQty))
 					m.WriteNormalized("retreat_fraction:bid", 1.0)
 					if dt > 0 {
-						m.WriteMetric("retreat_rate:bid", state.prevBidQty/dt)
+						retreatRateScale := state.prevBidQty / dt
+						m.SetMetric("retreat_rate:bid", data.NewMetric[float64](
+							"retreat_rate:bid",
+							data.UnitRate,
+							data.TimescaleInstantaneous,
+							0.0,
+							retreatRateScale,
+						).Write(retreatRateScale))
 					}
 				}
 
 				if bidPrice == state.prevBid {
 					if bidQty < state.prevBidQty {
 						withdrawn := state.prevBidQty - bidQty
-						m.WriteMetric("net_withdrawn_quantity:bid", withdrawn)
+						m.SetMetric("net_withdrawn_quantity:bid", data.NewMetric[float64](
+							"net_withdrawn_quantity:bid",
+							data.UnitQuantity,
+							data.TimescaleInstantaneous,
+							0.0,
+							state.prevBidQty,
+						).Write(withdrawn))
 						if state.prevBidQty > 0 {
 							m.WriteNormalized("net_withdrawal_fraction:bid", withdrawn/state.prevBidQty)
 						}
 						if dt > 0 {
-							m.WriteMetric("net_withdrawal_rate:bid", withdrawn/dt)
+							withdrawnRateScale := state.prevBidQty / dt
+							m.SetMetric("net_withdrawal_rate:bid", data.NewMetric[float64](
+								"net_withdrawal_rate:bid",
+								data.UnitRate,
+								data.TimescaleInstantaneous,
+								0.0,
+								withdrawnRateScale,
+							).Write(withdrawn/dt))
 						}
 					}
 
 					if bidQty > state.prevBidQty {
 						replenished := bidQty - state.prevBidQty
-						m.WriteMetric("net_replenished_quantity:bid", replenished)
+						m.SetMetric("net_replenished_quantity:bid", data.NewMetric[float64](
+							"net_replenished_quantity:bid",
+							data.UnitQuantity,
+							data.TimescaleInstantaneous,
+							0.0,
+							state.prevBidQty,
+						).Write(replenished))
 						if state.prevBidQty > 0 {
 							m.WriteNormalized("net_replenishment_fraction:bid", replenished/state.prevBidQty)
 						}
 						if dt > 0 {
-							m.WriteMetric("net_replenishment_rate:bid", replenished/dt)
+							replenishRateScale := state.prevBidQty / dt
+							m.SetMetric("net_replenishment_rate:bid", data.NewMetric[float64](
+								"net_replenishment_rate:bid",
+								data.UnitRate,
+								data.TimescaleInstantaneous,
+								0.0,
+								replenishRateScale,
+							).Write(replenished/dt))
 						}
 					}
 				}
 
 				if askPrice > state.prevAsk {
-					m.WriteMetric("retreated_quantity:ask", state.prevAskQty)
+					m.SetMetric("retreated_quantity:ask", data.NewMetric[float64](
+						"retreated_quantity:ask",
+						data.UnitQuantity,
+						data.TimescaleInstantaneous,
+						0.0,
+						state.prevAskQty,
+					).Write(state.prevAskQty))
 					m.WriteNormalized("retreat_fraction:ask", 1.0)
 					if dt > 0 {
-						m.WriteMetric("retreat_rate:ask", state.prevAskQty/dt)
+						retreatRateScale := state.prevAskQty / dt
+						m.SetMetric("retreat_rate:ask", data.NewMetric[float64](
+							"retreat_rate:ask",
+							data.UnitRate,
+							data.TimescaleInstantaneous,
+							0.0,
+							retreatRateScale,
+						).Write(retreatRateScale))
 					}
 				}
 
 				if askPrice == state.prevAsk {
 					if askQty < state.prevAskQty {
 						withdrawn := state.prevAskQty - askQty
-						m.WriteMetric("net_withdrawn_quantity:ask", withdrawn)
+						m.SetMetric("net_withdrawn_quantity:ask", data.NewMetric[float64](
+							"net_withdrawn_quantity:ask",
+							data.UnitQuantity,
+							data.TimescaleInstantaneous,
+							0.0,
+							state.prevAskQty,
+						).Write(withdrawn))
 						if state.prevAskQty > 0 {
 							m.WriteNormalized("net_withdrawal_fraction:ask", withdrawn/state.prevAskQty)
 						}
 						if dt > 0 {
-							m.WriteMetric("net_withdrawal_rate:ask", withdrawn/dt)
+							withdrawnRateScale := state.prevAskQty / dt
+							m.SetMetric("net_withdrawal_rate:ask", data.NewMetric[float64](
+								"net_withdrawal_rate:ask",
+								data.UnitRate,
+								data.TimescaleInstantaneous,
+								0.0,
+								withdrawnRateScale,
+							).Write(withdrawn/dt))
 						}
 					}
 
 					if askQty > state.prevAskQty {
 						replenished := askQty - state.prevAskQty
-						m.WriteMetric("net_replenished_quantity:ask", replenished)
+						m.SetMetric("net_replenished_quantity:ask", data.NewMetric[float64](
+							"net_replenished_quantity:ask",
+							data.UnitQuantity,
+							data.TimescaleInstantaneous,
+							0.0,
+							state.prevAskQty,
+						).Write(replenished))
 						if state.prevAskQty > 0 {
 							m.WriteNormalized("net_replenishment_fraction:ask", replenished/state.prevAskQty)
 						}
 						if dt > 0 {
-							m.WriteMetric("net_replenishment_rate:ask", replenished/dt)
+							replenishRateScale := state.prevAskQty / dt
+							m.SetMetric("net_replenishment_rate:ask", data.NewMetric[float64](
+								"net_replenishment_rate:ask",
+								data.UnitRate,
+								data.TimescaleInstantaneous,
+								0.0,
+								replenishRateScale,
+							).Write(replenished/dt))
 						}
 					}
 				}

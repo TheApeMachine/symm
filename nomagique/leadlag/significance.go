@@ -56,8 +56,20 @@ func (op *Significance) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointe
 			}
 
 			if op.reading.Defined {
-				m.WriteMetric("correlation_p_value", op.reading.PValue)
-				m.WriteMetric("search_adjusted_p_value", op.reading.SearchAdjustedPValue)
+				m.SetMetric("correlation_p_value", data.NewMetric[float64](
+					"correlation_p_value",
+					data.UnitProbability,
+					data.TimescaleRollingWindow,
+					0.5,
+					0.5,
+				).Write(op.reading.PValue))
+				m.SetMetric("search_adjusted_p_value", data.NewMetric[float64](
+					"search_adjusted_p_value",
+					data.UnitProbability,
+					data.TimescaleRollingWindow,
+					0.5,
+					0.5,
+				).Write(op.reading.SearchAdjustedPValue))
 			}
 
 			if !yield(arriving) {

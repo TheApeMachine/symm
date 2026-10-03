@@ -66,13 +66,13 @@ func TestMeasurementPeersLookup(t *testing.T) {
 	Convey("Given a producer measurement with an immutable prior peer", t, func() {
 		prior := NewMeasurement[float64]("websocket")
 		prior.Label = "BTC/USD"
-		prior.WriteMetric("bid", 65000.50)
-		prior.WriteMetric("ask", 65001.00)
+		prior.SetMetric("bid", NewMetric[float64]("bid", UnitPrice, TimescaleInstantaneous, 65000.75, 0.50).Write(65000.50))
+		prior.SetMetric("ask", NewMetric[float64]("ask", UnitPrice, TimescaleInstantaneous, 65000.75, 0.50).Write(65001.00))
 
 		out := NewMeasurement[float64]("liquidity")
 		out.Label = prior.Label
 		out.Peers = []*Measurement[float64]{prior}
-		out.WriteMetric("relative_spread", 0.0001)
+		out.SetMetric("relative_spread", NewMetric[float64]("relative_spread", UnitRelativeSpread, TimescaleInstantaneous, 0.0001, 0.0001).Write(0.0001))
 
 		Convey("LookupMetric reads local metrics first, then direct peers", func() {
 			spread, hasSpread := out.LookupMetric("relative_spread")
@@ -101,7 +101,7 @@ func TestMeasurementPeersLookup(t *testing.T) {
 		})
 
 		Convey("Writes always target local storage without mutating peers", func() {
-			out.WriteMetric("bid", 99999.00)
+			out.SetMetric("bid", NewMetric[float64]("bid", UnitPrice, TimescaleInstantaneous, 99999.00, 1.0).Write(99999.00))
 			So(out.GetMetric("bid").Raw, ShouldEqual, 99999.00)
 			So(prior.GetMetric("bid").Raw, ShouldEqual, 65000.50)
 		})

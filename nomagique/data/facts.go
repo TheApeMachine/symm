@@ -7,7 +7,6 @@ import (
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/logic"
 )
 
 /*
@@ -22,19 +21,16 @@ type CrossMember struct {
 
 /*
 MetricGate classifies the arrival against one declared metric: the metric must
-exist and hold a finite, non-negative value. It rewrites the validated metric
-and stamps the support baseline on every arrival, so the measurement carries
-this arrival's fact, never the prior one's. A failed classification sets the
-measurement's error and still yields.
+exist and hold a non-negative value. It rewrites the validated metric on every arrival.
+A failed classification sets the measurement's error and still yields.
 */
 type MetricGate struct {
-	err    error
-	label  string
-	finite core.Primitive
+	err   error
+	label string
 }
 
 func NewMetricGate(label string) core.Primitive {
-	return &MetricGate{label: label, finite: logic.NewFinite()}
+	return &MetricGate{label: label}
 }
 
 func (op *MetricGate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
@@ -56,25 +52,9 @@ func (op *MetricGate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
 
 			value := metric.Raw
 
-			m.EnsureMetadata()
-
-			m.SetMetadata(MetadataSupport, "0")
-
-			finite := drive[float64, bool](op.finite, &value)
-
-			if err := op.finite.Error(); err != nil {
-				m.Err = err
-
-				if !yield(arriving) {
-					return
-				}
-
-				continue
-			}
-
-			if !finite || value < 0 {
+			if value < 0 {
 				m.Err = fmt.Errorf(
-					"%w: metric gate requires a finite non-negative %s",
+					"%w: metric gate requires a non-negative %s",
 					core.ErrDomain, op.label,
 				)
 

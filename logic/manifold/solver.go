@@ -114,10 +114,6 @@ func NewSolver(ctx context.Context, arena *data.ArenaOwner, book *broker.Book) *
 	return solver
 }
 
-func (solver *Solver) Source() string {
-	return "manifold"
-}
-
 func (solver *Solver) Arena() *data.ArenaOwner {
 	return solver.arena
 }
@@ -224,7 +220,7 @@ func (solver *Solver) Step(prior *data.Measurement[float64]) *data.Measurement[f
 	default:
 	}
 
-	out := solver.arena.NewMeasurement(solver.Source())
+	out := solver.arena.NewMeasurement(solver.Name())
 	out.Label = symbol
 	out.SeqIdx = prior.SeqIdx
 	out.At = prior.At

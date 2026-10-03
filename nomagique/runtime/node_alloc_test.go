@@ -13,7 +13,6 @@ type discardNode struct {
 
 func (discardNode) Start(ctx context.Context) error { return nil }
 func (discardNode) Name() string                     { return "discard" }
-func (discardNode) Source() string                   { return "discard" }
 func (d discardNode) Arena() *data.ArenaOwner        { return d.arena }
 
 func (d discardNode) Step(prior *data.Measurement[float64]) *data.Measurement[float64] {

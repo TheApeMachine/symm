@@ -2,6 +2,7 @@ package leadlag
 
 import (
 	"context"
+	"math"
 	"sync"
 	"unsafe"
 
@@ -23,28 +24,24 @@ the measurement itself — every stage writes its facts into the measurement
 where it computes them, and the workload's register owns the measurement's
 lifetime.
 */
-type Ticker struct {
+type Signal struct {
 	*runtime.System
 	arena     *data.ArenaOwner
 	pipelines sync.Map
 	ID        int
 }
 
-func NewTicker(ctx context.Context, arena *data.ArenaOwner) *Ticker {
-	ticker := &Ticker{
+func NewSignal(ctx context.Context, arena *data.ArenaOwner) *Signal {
+	signal := &Signal{
 		arena: arena,
 	}
 
-	ticker.System = runtime.NewSystem(ctx, "leadlag:ticker", ticker)
-	return ticker
+	signal.System = runtime.NewSystem(ctx, "leadlag:signal", signal)
+	return signal
 }
 
-func (ticker *Ticker) Source() string {
-	return "leadlag:ticker"
-}
-
-func (ticker *Ticker) Arena() *data.ArenaOwner {
-	return ticker.arena
+func (signal *Signal) Arena() *data.ArenaOwner {
+	return signal.arena
 }
 
 /*
@@ -52,8 +49,8 @@ Step supplies the arriving measurement to the pipeline and returns it: the
 measurement is the pipeline's state, enriched in place.
 */
 
-func (ticker *Ticker) pipelineFor(symbol string) core.Primitive {
-	if existing, ok := ticker.pipelines.Load(symbol); ok {
+func (signal *Signal) pipelineFor(symbol string) core.Primitive {
+	if existing, ok := signal.pipelines.Load(symbol); ok {
 		return existing.(core.Primitive)
 	}
 
@@ -69,13 +66,13 @@ func (ticker *Ticker) pipelineFor(symbol string) core.Primitive {
 		data.NewFinalizer[float64](),
 	)
 
-	actual, _ := ticker.pipelines.LoadOrStore(symbol, pipeline)
+	actual, _ := signal.pipelines.LoadOrStore(symbol, pipeline)
 	return actual.(core.Primitive)
 }
 
-func (ticker *Ticker) Step(prior *data.Measurement[float64]) *data.Measurement[float64] {
-	if ticker.Status() != runtime.READY {
-		errnie.Warn(ticker.Name() + ": Step called before READY; dropping event")
+func (signal *Signal) Step(prior *data.Measurement[float64]) *data.Measurement[float64] {
+	if signal.Status() != runtime.READY {
+		errnie.Warn(signal.Name() + ": Step called before READY; dropping event")
 		return nil
 	}
 
@@ -88,21 +85,60 @@ func (ticker *Ticker) Step(prior *data.Measurement[float64]) *data.Measurement[f
 		return nil
 	}
 
-	out := ticker.arena.NewMeasurement(ticker.Source())
+	out := signal.arena.NewMeasurement(signal.Name())
 	out.Label = prior.Label
 	out.SeqIdx = prior.SeqIdx
 	out.At = prior.At
 	out.From = prior.From
 	out.Peers = []*data.Measurement[float64]{prior}
 
-	out.WriteMetric("last", price)
-	out.WriteMetric("last_price", price)
+	midpoint := price
+	spread := 0.0
+
+	bid := prior.GetMetric("best_bid").Raw
+	if bid == 0 {
+		bid = prior.GetMetric("bid").Raw
+	}
+	ask := prior.GetMetric("best_ask").Raw
+	if ask == 0 {
+		ask = prior.GetMetric("ask").Raw
+	}
+
+	if bid > 0 && ask > bid {
+		midpoint = (bid + ask) / 2.0
+		spread = ask - bid
+	} else if midMetric, ok := prior.LookupMetric("midpoint"); ok && midMetric.Raw > 0 {
+		midpoint = midMetric.Raw
+		if spreadMetric, ok := prior.LookupMetric("spread"); ok && spreadMetric.Raw > 0 {
+			spread = spreadMetric.Raw
+		}
+	}
+
+	if spread <= 0 {
+		spread = math.Max(price*0.0001, 1e-6)
+	}
+
+	out.SetMetric("last", data.NewMetric[float64](
+		"last",
+		data.UnitPrice,
+		data.TimescaleTick,
+		midpoint,
+		spread,
+	).Write(price))
+
+	out.SetMetric("last_price", data.NewMetric[float64](
+		"last_price",
+		data.UnitPrice,
+		data.TimescaleTick,
+		midpoint,
+		spread,
+	).Write(price))
 
 	if channel, hasCh := prior.GetProvenance("channel"); hasCh {
 		out.SetProvenance("channel", channel)
 	}
 
-	res := data.Read[*data.Measurement[float64]](ticker.pipelineFor(out.Label).Next(
+	res := data.Read[*data.Measurement[float64]](signal.pipelineFor(out.Label).Next(
 		transport.NewOne(unsafe.Pointer(&out)).Next(nil),
 	))
 

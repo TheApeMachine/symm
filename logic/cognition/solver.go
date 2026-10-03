@@ -151,10 +151,6 @@ func NewSolver(
 	return solver
 }
 
-func (solver *Solver) Source() string {
-	return "cognition"
-}
-
 func (solver *Solver) Arena() *data.ArenaOwner {
 	return solver.arena
 }
@@ -217,7 +213,7 @@ func (solver *Solver) Step(prior *data.Measurement[float64]) *data.Measurement[f
 		return nil
 	}
 
-	out := solver.arena.NewMeasurement(solver.Source())
+	out := solver.arena.NewMeasurement(solver.Name())
 	out.Label = prior.Label
 	out.SeqIdx = prior.SeqIdx
 	out.At = prior.At

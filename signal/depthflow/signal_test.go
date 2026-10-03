@@ -1,4 +1,4 @@
-package morphology_test
+package depthflow_test
 
 import (
 	"context"
@@ -12,17 +12,17 @@ import (
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/data"
 	nmruntime "github.com/theapemachine/symm/nomagique/runtime"
-	"github.com/theapemachine/symm/signal/morphology"
+	"github.com/theapemachine/symm/signal/depthflow"
 )
 
-func TestMorphologyLevel3Metrics(t *testing.T) {
-	Convey("Morphology level3 instrument computes and publishes geometric shape metrics", t, func() {
+func TestDepthflowSignalMetrics(t *testing.T) {
+	Convey("Depthflow signal instrument publishes complete honest metrics", t, func() {
 		ctx := context.Background()
 		arena := data.NewArenaOwner(4096)
 		normalizer := spot.NewNormalizer()
 		books := broker.NewBook(ctx, normalizer)
 
-		instrument := morphology.NewLevel3(ctx, arena, books)
+		instrument := depthflow.NewSignal(ctx, arena, books)
 		instrument.Transition(nmruntime.READY)
 
 		now := time.Now()
@@ -69,31 +69,18 @@ func TestMorphologyLevel3Metrics(t *testing.T) {
 			res := instrument.Step(prior)
 			So(res, ShouldNotBeNil)
 
-			_, hasDist := res.LookupMetric("book_shape_distance")
-			So(hasDist, ShouldBeTrue)
+			_, hasNotional := res.LookupMetric("book_notional")
+			So(hasNotional, ShouldBeTrue)
 
-			_, hasKs := res.LookupMetric("book_shape_ks")
-			So(hasKs, ShouldBeTrue)
+			_, hasImb := res.LookupMetric("book_imbalance")
+			So(hasImb, ShouldBeTrue)
 
-			_, hasConcBid := res.LookupMetric("concentration:bid")
-			So(hasConcBid, ShouldBeTrue)
-
-			_, hasConcAsk := res.LookupMetric("concentration:ask")
-			So(hasConcAsk, ShouldBeTrue)
-
-			_, hasEntBid := res.LookupMetric("entropy:bid")
-			So(hasEntBid, ShouldBeTrue)
-
-			_, hasEntAsk := res.LookupMetric("entropy:ask")
-			So(hasEntAsk, ShouldBeTrue)
-
-			if step > 0 {
-				_, hasChange := res.LookupMetric("morphology_change")
-				So(hasChange, ShouldBeTrue)
-			}
+			_, hasGap := res.LookupMetric("imbalance_resolution_gap")
+			So(hasGap, ShouldBeTrue)
 
 			if step > 2 {
 				So(res.Maturity, ShouldBeGreaterThan, 0)
+				So(res.SNRDefined, ShouldBeTrue)
 			}
 		}
 	})

@@ -2,6 +2,7 @@ package strategy
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"sync"
@@ -114,35 +115,201 @@ func (reporter *Reporter) Populate(
 		out.At = snapshot.At
 	}
 
-	out.WriteMetric("steps", float64(stepCount))
-	out.WriteMetric("decisions", float64(reporter.decisions.Load()))
+	stepFloat := float64(stepCount)
+	decisionFloat := float64(reporter.decisions.Load())
+
+	out.SetMetric("steps", data.NewMetric[float64](
+		"steps",
+		data.UnitCount,
+		data.TimescaleSession,
+		stepFloat,
+		math.Max(stepFloat, 1.0),
+	).Write(stepFloat))
+
+	out.SetMetric("decisions", data.NewMetric[float64](
+		"decisions",
+		data.UnitCount,
+		data.TimescaleSession,
+		decisionFloat,
+		math.Max(decisionFloat, 1.0),
+	).Write(decisionFloat))
 
 	if skill != nil {
-		resolvedCount := skill.Resolved()
-		out.WriteMetric("resolved", float64(resolvedCount))
-		out.WriteMetric("edge_sample_count", float64(resolvedCount))
-		out.WriteMetric("win_rate", skill.WinRate())
-		out.WriteMetric("accuracy", skill.WinRate())
-		out.WriteMetric("edge", skill.Edge())
+		resolvedCount := float64(skill.Resolved())
+		resolvedScale := math.Max(resolvedCount, 1.0)
 
-		out.WriteMetric("hist_opportunities", float64(skill.HistOpportunities()))
-		out.WriteMetric("hist_correct_enter", float64(skill.HistCorrectEnter()))
-		out.WriteMetric("hist_missed_enter", float64(skill.HistMissedEnter()))
-		out.WriteMetric("hist_false_enter", float64(skill.HistFalseEnter()))
-		out.WriteMetric("hist_mean_return", skill.HistMeanReturn())
-		out.WriteMetric("hist_lower_bound", skill.HistLowerBound())
+		out.SetMetric("resolved", data.NewMetric[float64](
+			"resolved",
+			data.UnitCount,
+			data.TimescaleSession,
+			resolvedCount,
+			resolvedScale,
+		).Write(resolvedCount))
 
-		out.WriteMetric("fwd_enter_predictions", float64(skill.FwdPredictions()))
-		out.WriteMetric("fwd_paper_trades", float64(skill.FwdPaperTrades()))
-		out.WriteMetric("fwd_paper_mean_return", skill.FwdMeanReturn())
-		out.WriteMetric("fwd_paper_lower_bound", skill.FwdLowerBound())
+		out.SetMetric("edge_sample_count", data.NewMetric[float64](
+			"edge_sample_count",
+			data.UnitCount,
+			data.TimescaleSession,
+			resolvedCount,
+			resolvedScale,
+		).Write(resolvedCount))
+
+		winRate := skill.WinRate()
+		out.SetMetric("win_rate", data.NewMetric[float64](
+			"win_rate",
+			data.UnitProbability,
+			data.TimescaleRollingWindow,
+			0.5,
+			0.5,
+		).Write(winRate))
+
+		out.SetMetric("accuracy", data.NewMetric[float64](
+			"accuracy",
+			data.UnitProbability,
+			data.TimescaleRollingWindow,
+			0.5,
+			0.5,
+		).Write(winRate))
+
+		edge := skill.Edge()
+		out.SetMetric("edge", data.NewMetric[float64](
+			"edge",
+			data.UnitPercent,
+			data.TimescaleRollingWindow,
+			0.0,
+			0.01,
+		).Write(edge))
+
+		opps := float64(skill.HistOpportunities())
+		oppsScale := math.Max(opps, 1.0)
+
+		out.SetMetric("hist_opportunities", data.NewMetric[float64](
+			"hist_opportunities",
+			data.UnitCount,
+			data.TimescaleRollingWindow,
+			opps,
+			oppsScale,
+		).Write(opps))
+
+		out.SetMetric("hist_correct_enter", data.NewMetric[float64](
+			"hist_correct_enter",
+			data.UnitCount,
+			data.TimescaleRollingWindow,
+			opps*0.5,
+			oppsScale,
+		).Write(float64(skill.HistCorrectEnter())))
+
+		out.SetMetric("hist_missed_enter", data.NewMetric[float64](
+			"hist_missed_enter",
+			data.UnitCount,
+			data.TimescaleRollingWindow,
+			opps*0.5,
+			oppsScale,
+		).Write(float64(skill.HistMissedEnter())))
+
+		out.SetMetric("hist_false_enter", data.NewMetric[float64](
+			"hist_false_enter",
+			data.UnitCount,
+			data.TimescaleRollingWindow,
+			opps*0.5,
+			oppsScale,
+		).Write(float64(skill.HistFalseEnter())))
+
+		out.SetMetric("hist_mean_return", data.NewMetric[float64](
+			"hist_mean_return",
+			data.UnitPercent,
+			data.TimescaleRollingWindow,
+			0.0,
+			0.01,
+		).Write(skill.HistMeanReturn()))
+
+		out.SetMetric("hist_lower_bound", data.NewMetric[float64](
+			"hist_lower_bound",
+			data.UnitPercent,
+			data.TimescaleRollingWindow,
+			0.0,
+			0.01,
+		).Write(skill.HistLowerBound()))
+
+		fwdPreds := float64(skill.FwdPredictions())
+		fwdScale := math.Max(fwdPreds, 1.0)
+
+		out.SetMetric("fwd_enter_predictions", data.NewMetric[float64](
+			"fwd_enter_predictions",
+			data.UnitCount,
+			data.TimescaleSession,
+			fwdPreds,
+			fwdScale,
+		).Write(fwdPreds))
+
+		out.SetMetric("fwd_paper_trades", data.NewMetric[float64](
+			"fwd_paper_trades",
+			data.UnitCount,
+			data.TimescaleSession,
+			fwdPreds,
+			fwdScale,
+		).Write(float64(skill.FwdPaperTrades())))
+
+		out.SetMetric("fwd_paper_mean_return", data.NewMetric[float64](
+			"fwd_paper_mean_return",
+			data.UnitPercent,
+			data.TimescaleRollingWindow,
+			0.0,
+			0.01,
+		).Write(skill.FwdMeanReturn()))
+
+		out.SetMetric("fwd_paper_lower_bound", data.NewMetric[float64](
+			"fwd_paper_lower_bound",
+			data.UnitPercent,
+			data.TimescaleRollingWindow,
+			0.0,
+			0.01,
+		).Write(skill.FwdLowerBound()))
 
 		upCount, downCount, chopCount, flatCount, unsupCount := skill.Fragments()
-		out.WriteMetric("fragments_up", float64(upCount))
-		out.WriteMetric("fragments_down", float64(downCount))
-		out.WriteMetric("fragments_chop", float64(chopCount))
-		out.WriteMetric("fragments_flat", float64(flatCount))
-		out.WriteMetric("fragments_unsupported", float64(unsupCount))
+		totalFrags := float64(upCount + downCount + chopCount + flatCount + unsupCount)
+		fragScale := math.Max(totalFrags, 1.0)
+		fragCenter := totalFrags / 5.0
+
+		out.SetMetric("fragments_up", data.NewMetric[float64](
+			"fragments_up",
+			data.UnitCount,
+			data.TimescaleSession,
+			fragCenter,
+			fragScale,
+		).Write(float64(upCount)))
+
+		out.SetMetric("fragments_down", data.NewMetric[float64](
+			"fragments_down",
+			data.UnitCount,
+			data.TimescaleSession,
+			fragCenter,
+			fragScale,
+		).Write(float64(downCount)))
+
+		out.SetMetric("fragments_chop", data.NewMetric[float64](
+			"fragments_chop",
+			data.UnitCount,
+			data.TimescaleSession,
+			fragCenter,
+			fragScale,
+		).Write(float64(chopCount)))
+
+		out.SetMetric("fragments_flat", data.NewMetric[float64](
+			"fragments_flat",
+			data.UnitCount,
+			data.TimescaleSession,
+			fragCenter,
+			fragScale,
+		).Write(float64(flatCount)))
+
+		out.SetMetric("fragments_unsupported", data.NewMetric[float64](
+			"fragments_unsupported",
+			data.UnitCount,
+			data.TimescaleSession,
+			fragCenter,
+			fragScale,
+		).Write(float64(unsupCount)))
 
 		samples := skill.RecentSamples()
 
@@ -157,9 +324,29 @@ func (reporter *Reporter) Populate(
 		}
 	}
 
-	out.WriteMetric("confidence", snapshot.Confidence)
-	out.WriteMetric("contrast", snapshot.Contrast)
-	out.WriteMetric("stage_code", float64(snapshot.Stage))
+	out.SetMetric("confidence", data.NewMetric[float64](
+		"confidence",
+		data.UnitConfidence,
+		data.TimescaleRollingWindow,
+		0.5,
+		0.5,
+	).Write(snapshot.Confidence))
+
+	out.SetMetric("contrast", data.NewMetric[float64](
+		"contrast",
+		data.UnitRatio,
+		data.TimescaleRollingWindow,
+		0.0,
+		1.0,
+	).Write(snapshot.Contrast))
+
+	out.SetMetric("stage_code", data.NewMetric[float64](
+		"stage_code",
+		data.UnitCount,
+		data.TimescaleSession,
+		0.0,
+		1.0,
+	).Write(float64(snapshot.Stage)))
 
 	tradingValue := 0.0
 
@@ -167,33 +354,100 @@ func (reporter *Reporter) Populate(
 		tradingValue = 1.0
 	}
 
-	out.WriteMetric("trading", tradingValue)
-	out.WriteMetric("action", float64(snapshot.Action))
-	out.WriteMetric("frozen_prediction", float64(snapshot.Action))
+	out.SetMetric("trading", data.NewMetric[float64](
+		"trading",
+		data.UnitProbability,
+		data.TimescaleInstantaneous,
+		0.5,
+		0.5,
+	).Write(tradingValue))
+
+	out.SetMetric("action", data.NewMetric[float64](
+		"action",
+		data.UnitRatio,
+		data.TimescaleTick,
+		0.0,
+		1.0,
+	).Write(float64(snapshot.Action)))
+
+	out.SetMetric("frozen_prediction", data.NewMetric[float64](
+		"frozen_prediction",
+		data.UnitRatio,
+		data.TimescaleTick,
+		0.0,
+		1.0,
+	).Write(float64(snapshot.Action)))
 
 	if snapshot.Clears {
-		out.WriteMetric("delayed_target", 1.0)
+		out.SetMetric("delayed_target", data.NewMetric[float64](
+			"delayed_target",
+			data.UnitRatio,
+			data.TimescaleTick,
+			0.0,
+			1.0,
+		).Write(1.0))
 	}
 
 	if !snapshot.Clears && snapshot.Action != 0 {
-		out.WriteMetric("delayed_target", float64(snapshot.Action))
+		out.SetMetric("delayed_target", data.NewMetric[float64](
+			"delayed_target",
+			data.UnitRatio,
+			data.TimescaleTick,
+			0.0,
+			1.0,
+		).Write(float64(snapshot.Action)))
 	}
 
 	if snapshot.Direction == "up" {
-		out.WriteMetric("excursion_type", 1.0)
+		out.SetMetric("excursion_type", data.NewMetric[float64](
+			"excursion_type",
+			data.UnitCount,
+			data.TimescaleEvent,
+			1.5,
+			0.5,
+		).Write(1.0))
 		out.SetProvenance("excursion_direction", "up")
 		out.SetMetadata("excursion_direction", "up")
 	}
 
 	if snapshot.Direction == "down" {
-		out.WriteMetric("excursion_type", 2.0)
+		out.SetMetric("excursion_type", data.NewMetric[float64](
+			"excursion_type",
+			data.UnitCount,
+			data.TimescaleEvent,
+			1.5,
+			0.5,
+		).Write(2.0))
 		out.SetProvenance("excursion_direction", "down")
 		out.SetMetadata("excursion_direction", "down")
 	}
 
-	out.WriteMetric("mark_a", float64(snapshot.MarkA))
-	out.WriteMetric("mark_b", float64(snapshot.MarkB))
-	out.WriteMetric("mark_c", float64(snapshot.MarkC))
+	seqSpan := math.Max(float64(snapshot.MarkC-snapshot.MarkA), 1.0)
+	seqCenter := float64(snapshot.MarkB)
+
+	out.SetMetric("mark_a", data.NewMetric[float64](
+		"mark_a",
+		data.UnitCount,
+		data.TimescaleEvent,
+		seqCenter,
+		seqSpan,
+	).Write(float64(snapshot.MarkA)))
+
+	out.SetMetric("mark_b", data.NewMetric[float64](
+		"mark_b",
+		data.UnitCount,
+		data.TimescaleEvent,
+		seqCenter,
+		seqSpan,
+	).Write(float64(snapshot.MarkB)))
+
+	out.SetMetric("mark_c", data.NewMetric[float64](
+		"mark_c",
+		data.UnitCount,
+		data.TimescaleEvent,
+		seqCenter,
+		seqSpan,
+	).Write(float64(snapshot.MarkC)))
 
 	tokenLength := len(snapshot.RegionTokens)
 
@@ -201,13 +455,32 @@ func (reporter *Reporter) Populate(
 		tokenLength = len(snapshot.Tokens)
 	}
 
-	out.WriteMetric("precursor_length", float64(tokenLength))
+	out.SetMetric("precursor_length", data.NewMetric[float64](
+		"precursor_length",
+		data.UnitCount,
+		data.TimescaleEvent,
+		3.0,
+		3.0,
+	).Write(float64(tokenLength)))
 
 	if snapshot.Price > 0 {
-		out.WriteMetric("price", snapshot.Price)
+		out.SetMetric("price", data.NewMetric[float64](
+			"price",
+			data.UnitPrice,
+			data.TimescaleTick,
+			snapshot.Price,
+			math.Max(snapshot.Price*0.001, 1e-6),
+		).Write(snapshot.Price))
 	}
 
-	out.WriteMetric("excursion_mag", snapshot.ExcursionMag)
+	excursionMag := snapshot.ExcursionMag
+	out.SetMetric("excursion_mag", data.NewMetric[float64](
+		"excursion_mag",
+		data.UnitSpread,
+		data.TimescaleEvent,
+		excursionMag,
+		math.Max(excursionMag, 1e-6),
+	).Write(excursionMag))
 
 	out.SetProvenance("stage", snapshot.Stage.String())
 
@@ -314,13 +587,73 @@ func (reporter *Reporter) PublishExcursion(
 		quote, hasQuote := quotePrice(measurement)
 
 		if hasQuote {
+			seqSpan := math.Max(float64(markC-markA), 1.0)
+			seqCenter := float64(markB)
+
 			point := reporter.newMeasurement("training")
 			point.Label = symbol
 			point.SeqIdx = measurement.SeqIdx
 			point.At = measurement.At
-			point.WriteMetric("price", quote)
-			point.WriteMetric("stage_code", float64(StageHistoricalValidation))
+
+			point.SetMetric("price", data.NewMetric[float64](
+				"price",
+				data.UnitPrice,
+				data.TimescaleTick,
+				quote,
+				math.Max(quote*0.001, 1e-6),
+			).Write(quote))
+
+			point.SetMetric("stage_code", data.NewMetric[float64](
+				"stage_code",
+				data.UnitCount,
+				data.TimescaleSession,
+				0.0,
+				1.0,
+			).Write(float64(StageHistoricalValidation)))
+
+			point.SetMetric("mark_a", data.NewMetric[float64](
+				"mark_a",
+				data.UnitCount,
+				data.TimescaleEvent,
+				seqCenter,
+				seqSpan,
+			).Write(float64(markA)))
+
+			point.SetMetric("mark_b", data.NewMetric[float64](
+				"mark_b",
+				data.UnitCount,
+				data.TimescaleEvent,
+				seqCenter,
+				seqSpan,
+			).Write(float64(markB)))
+
+			point.SetMetric("mark_c", data.NewMetric[float64](
+				"mark_c",
+				data.UnitCount,
+				data.TimescaleEvent,
+				seqCenter,
+				seqSpan,
+			).Write(float64(markC)))
+
+			point.SetMetric("agent_entry", data.NewMetric[float64](
+				"agent_entry",
+				data.UnitCount,
+				data.TimescaleEvent,
+				seqCenter,
+				seqSpan,
+			).Write(float64(markB)))
+
+			point.SetMetric("agent_exit", data.NewMetric[float64](
+				"agent_exit",
+				data.UnitCount,
+				data.TimescaleEvent,
+				seqCenter,
+				seqSpan,
+			).Write(float64(markC)))
+
 			point.SetMetadata("excursion_start", strconv.FormatInt(markA, 10))
+			point.SetMetadata("excursion_ignition", strconv.FormatInt(markB, 10))
+			point.SetMetadata("excursion_exit", strconv.FormatInt(markC, 10))
 			reporter.tee.Push(data.NewPublication(point, nil))
 		}
 	}
@@ -333,13 +666,73 @@ func (reporter *Reporter) PublishExcursion(
 		quote, hasQuote := quotePrice(measurement)
 
 		if hasQuote {
+			seqSpan := math.Max(float64(markC-markA), 1.0)
+			seqCenter := float64(markB)
+
 			point := reporter.newMeasurement("training")
 			point.Label = symbol
 			point.SeqIdx = measurement.SeqIdx
 			point.At = measurement.At
-			point.WriteMetric("price", quote)
-			point.WriteMetric("stage_code", float64(StageHistoricalValidation))
+
+			point.SetMetric("price", data.NewMetric[float64](
+				"price",
+				data.UnitPrice,
+				data.TimescaleTick,
+				quote,
+				math.Max(quote*0.001, 1e-6),
+			).Write(quote))
+
+			point.SetMetric("stage_code", data.NewMetric[float64](
+				"stage_code",
+				data.UnitCount,
+				data.TimescaleSession,
+				0.0,
+				1.0,
+			).Write(float64(StageHistoricalValidation)))
+
+			point.SetMetric("mark_a", data.NewMetric[float64](
+				"mark_a",
+				data.UnitCount,
+				data.TimescaleEvent,
+				seqCenter,
+				seqSpan,
+			).Write(float64(markA)))
+
+			point.SetMetric("mark_b", data.NewMetric[float64](
+				"mark_b",
+				data.UnitCount,
+				data.TimescaleEvent,
+				seqCenter,
+				seqSpan,
+			).Write(float64(markB)))
+
+			point.SetMetric("mark_c", data.NewMetric[float64](
+				"mark_c",
+				data.UnitCount,
+				data.TimescaleEvent,
+				seqCenter,
+				seqSpan,
+			).Write(float64(markC)))
+
+			point.SetMetric("agent_entry", data.NewMetric[float64](
+				"agent_entry",
+				data.UnitCount,
+				data.TimescaleEvent,
+				seqCenter,
+				seqSpan,
+			).Write(float64(markB)))
+
+			point.SetMetric("agent_exit", data.NewMetric[float64](
+				"agent_exit",
+				data.UnitCount,
+				data.TimescaleEvent,
+				seqCenter,
+				seqSpan,
+			).Write(float64(markC)))
+
 			point.SetMetadata("excursion_start", strconv.FormatInt(markA, 10))
+			point.SetMetadata("excursion_ignition", strconv.FormatInt(markB, 10))
+			point.SetMetadata("excursion_exit", strconv.FormatInt(markC, 10))
 			reporter.tee.Push(data.NewPublication(point, nil))
 		}
 	}

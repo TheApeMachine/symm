@@ -218,7 +218,6 @@ require (
 	github.com/gofiber/contrib/v3/websocket v1.2.0
 	github.com/gofiber/fiber/v3 v3.3.0
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
-	github.com/samber/lo v1.53.0
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/spf13/viper v1.21.0
 	github.com/theapemachine/datura v1.2.11

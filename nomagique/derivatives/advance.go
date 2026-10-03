@@ -115,25 +115,127 @@ func (op *Basis) observe(m *data.Measurement[float64], state *basisState) {
 
 	m.From = stamped
 
-	m.WriteMetric("derivative_price", last)
-	m.WriteMetric("reference_price", index)
-	m.WriteMetric("spot_price", mark)
-	m.WriteMetric("open_interest", oi)
-	m.WriteMetric("basis", basis)
-	m.WriteMetric("basis_baseline", basisReading.Baseline)
+	lastMetric, _ := m.LookupMetric("last")
+	indexMetric, _ := m.LookupMetric("index_price")
+	markMetric, _ := m.LookupMetric("mark_price")
+	oiMetric, _ := m.LookupMetric("open_interest")
+
+	priceSpread := math.Max(math.Abs(last-index), 1e-4)
+
+	derivCenter, derivScale := lastMetric.Center, lastMetric.Scale
+	if derivScale == 0 {
+		derivCenter, derivScale = last, priceSpread
+	}
+	refCenter, refScale := indexMetric.Center, indexMetric.Scale
+	if refScale == 0 {
+		refCenter, refScale = index, priceSpread
+	}
+	spotCenter, spotScale := markMetric.Center, markMetric.Scale
+	if spotScale == 0 {
+		spotCenter, spotScale = mark, priceSpread
+	}
+
+	m.SetMetric("derivative_price", data.NewMetric[float64](
+		"derivative_price",
+		data.UnitPrice,
+		data.TimescaleInstantaneous,
+		derivCenter,
+		derivScale,
+	).Write(last))
+	m.SetMetric("reference_price", data.NewMetric[float64](
+		"reference_price",
+		data.UnitPrice,
+		data.TimescaleInstantaneous,
+		refCenter,
+		refScale,
+	).Write(index))
+	m.SetMetric("spot_price", data.NewMetric[float64](
+		"spot_price",
+		data.UnitPrice,
+		data.TimescaleInstantaneous,
+		spotCenter,
+		spotScale,
+	).Write(mark))
+
+	oiCenter := oiMetric.Center
+	oiScale := oiMetric.Scale
+	if oiScale == 0 {
+		oiCenter = oi
+		oiScale = math.Max(oi, 1.0)
+	}
+	m.SetMetric("open_interest", data.NewMetric[float64](
+		"open_interest",
+		data.UnitQuantity,
+		data.TimescaleInstantaneous,
+		oiCenter,
+		oiScale,
+	).Write(oi))
+
+	basisDispersion := math.Max(basisReading.Dispersion, 1e-4)
+	m.SetMetric("basis", data.NewMetric[float64](
+		"basis",
+		data.UnitRatio,
+		data.TimescaleInstantaneous,
+		0.0,
+		basisDispersion,
+	).Write(basis))
+	m.SetMetric("basis_baseline", data.NewMetric[float64](
+		"basis_baseline",
+		data.UnitRatio,
+		data.TimescaleRollingWindow,
+		0.0,
+		basisDispersion,
+	).Write(basisReading.Baseline))
 
 	if basisReading.HasPrior {
-		m.WriteStandardized("basis_zscore", basisReading.ZScore)
+		m.SetMetric("basis_zscore", data.NewMetric[float64](
+			"basis_zscore",
+			data.UnitZScore,
+			data.TimescaleRollingWindow,
+			0.0,
+			1.0,
+		).Write(basisReading.ZScore))
 	}
 
 	if last > 0 && index > 0 {
-		m.WriteMetric("log_basis", math.Log(last / index))
+		logBasis := math.Log(last / index)
+		m.SetMetric("log_basis", data.NewMetric[float64](
+			"log_basis",
+			data.UnitLogReturn,
+			data.TimescaleInstantaneous,
+			0.0,
+			basisDispersion,
+		).Write(logBasis))
 
 		if mark > 0 {
-			m.WriteMetric("derivative_index_log_basis", math.Log(last / index))
-			m.WriteMetric("index_spot_log_basis", math.Log(index / mark))
-			m.WriteMetric("derivative_spot_log_basis", math.Log(last / mark))
-			m.WriteMetric("basis_closure_error", 0.0)
+			m.SetMetric("derivative_index_log_basis", data.NewMetric[float64](
+				"derivative_index_log_basis",
+				data.UnitLogReturn,
+				data.TimescaleInstantaneous,
+				0.0,
+				basisDispersion,
+			).Write(math.Log(last/index)))
+			m.SetMetric("index_spot_log_basis", data.NewMetric[float64](
+				"index_spot_log_basis",
+				data.UnitLogReturn,
+				data.TimescaleInstantaneous,
+				0.0,
+				basisDispersion,
+			).Write(math.Log(index/mark)))
+			m.SetMetric("derivative_spot_log_basis", data.NewMetric[float64](
+				"derivative_spot_log_basis",
+				data.UnitLogReturn,
+				data.TimescaleInstantaneous,
+				0.0,
+				basisDispersion,
+			).Write(math.Log(last/mark)))
+			m.SetMetric("basis_closure_error", data.NewMetric[float64](
+				"basis_closure_error",
+				data.UnitRatio,
+				data.TimescaleInstantaneous,
+				0.0,
+				1.0,
+			).Write(0.0))
 		}
 	}
 
@@ -180,32 +282,72 @@ func (op *Basis) differences(
 	dt := stamped.Sub(state.prevTime).Seconds()
 
 	oiChange := oi - state.prevOI
-	m.WriteMetric("open_interest_change", oiChange)
+	m.SetMetric("open_interest_change", data.NewMetric[float64](
+		"open_interest_change",
+		data.UnitQuantity,
+		data.TimescaleInstantaneous,
+		0.0,
+		math.Max(math.Abs(oiChange), 1.0),
+	).Write(oiChange))
 
 	if state.prevOI > 0 && oi > 0 {
 		oiLogChange := math.Log(oi / state.prevOI)
-		m.WriteMetric("open_interest_log_change", oiLogChange)
+		m.SetMetric("open_interest_log_change", data.NewMetric[float64](
+			"open_interest_log_change",
+			data.UnitLogReturn,
+			data.TimescaleInstantaneous,
+			0.0,
+			math.Max(math.Abs(oiLogChange), 1e-4),
+		).Write(oiLogChange))
 
 		if dt > 0 {
 			oiGrowthRate := oiLogChange / dt
-			m.WriteMetric("open_interest_growth_rate", oiGrowthRate)
+			m.SetMetric("open_interest_growth_rate", data.NewMetric[float64](
+				"open_interest_growth_rate",
+				data.UnitRate,
+				data.TimescalePerSecond,
+				0.0,
+				math.Max(math.Abs(oiGrowthRate), 1e-4),
+			).Write(oiGrowthRate))
 
 			growth := drive[float64, adaptive.BaselineReading](state.growth, &oiGrowthRate)
-			m.WriteMetric("open_interest_growth_baseline", growth.Baseline)
+			m.SetMetric("open_interest_growth_baseline", data.NewMetric[float64](
+				"open_interest_growth_baseline",
+				data.UnitRate,
+				data.TimescaleRollingWindow,
+				0.0,
+				math.Max(growth.Dispersion, 1e-4),
+			).Write(growth.Baseline))
 		}
 	}
 
 	if dt > 0 {
 		basisChange := basis - state.prevBasis
 		basisRate := basisChange / dt
-		m.WriteMetric("basis_change", basisChange)
-		m.WriteMetric("basis_rate", basisRate)
+		m.SetMetric("basis_change", data.NewMetric[float64](
+			"basis_change",
+			data.UnitRatio,
+			data.TimescaleInstantaneous,
+			0.0,
+			math.Max(math.Abs(basisChange), 1e-4),
+		).Write(basisChange))
+		m.SetMetric("basis_rate", data.NewMetric[float64](
+			"basis_rate",
+			data.UnitRate,
+			data.TimescalePerSecond,
+			0.0,
+			math.Max(math.Abs(basisRate), 1e-4),
+		).Write(basisRate))
 
-		// Velocity is the change in the RATE between consecutive
-		// observations: basis_rate says how fast the basis is moving,
-		// basis_velocity says whether that movement is accelerating.
 		if state.hasPrevBasisRate {
-			m.WriteMetric("basis_velocity", basisRate - state.prevBasisRate)
+			basisVel := basisRate - state.prevBasisRate
+			m.SetMetric("basis_velocity", data.NewMetric[float64](
+				"basis_velocity",
+				data.UnitVelocity,
+				data.TimescalePerSecond,
+				0.0,
+				math.Max(math.Abs(basisVel), 1e-4),
+			).Write(basisVel))
 		}
 
 		state.prevBasisRate = basisRate
@@ -224,22 +366,47 @@ func (op *Basis) returns(m *data.Measurement[float64], state *basisState, last, 
 
 	if state.prevLast > 0 && last > 0 {
 		derivLogReturn = math.Log(last / state.prevLast)
-		m.WriteMetric("derivative_log_return", derivLogReturn)
+		m.SetMetric("derivative_log_return", data.NewMetric[float64](
+			"derivative_log_return",
+			data.UnitLogReturn,
+			data.TimescaleInstantaneous,
+			0.0,
+			math.Max(math.Abs(derivLogReturn), 1e-4),
+		).Write(derivLogReturn))
 		hasDerivReturn = true
 	}
 
 	if state.prevIndex > 0 && index > 0 {
 		refLogReturn = math.Log(index / state.prevIndex)
-		m.WriteMetric("reference_log_return", refLogReturn)
+		m.SetMetric("reference_log_return", data.NewMetric[float64](
+			"reference_log_return",
+			data.UnitLogReturn,
+			data.TimescaleInstantaneous,
+			0.0,
+			math.Max(math.Abs(refLogReturn), 1e-4),
+		).Write(refLogReturn))
 		hasRefReturn = true
 	}
 
 	if hasDerivReturn && hasRefReturn {
 		returnGap := derivLogReturn - refLogReturn
-		m.WriteMetric("return_gap", returnGap)
+		m.SetMetric("return_gap", data.NewMetric[float64](
+			"return_gap",
+			data.UnitLogReturn,
+			data.TimescaleInstantaneous,
+			0.0,
+			math.Max(math.Abs(returnGap), 1e-4),
+		).Write(returnGap))
 
 		if state.hasPrevReturnGap {
-			m.WriteMetric("return_gap_velocity", returnGap - state.prevReturnGap)
+			gapVel := returnGap - state.prevReturnGap
+			m.SetMetric("return_gap_velocity", data.NewMetric[float64](
+				"return_gap_velocity",
+				data.UnitVelocity,
+				data.TimescalePerSecond,
+				0.0,
+				math.Max(math.Abs(gapVel), 1e-4),
+			).Write(gapVel))
 		}
 
 		state.prevReturnGap = returnGap

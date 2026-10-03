@@ -17,13 +17,6 @@ type Node interface {
 }
 
 /*
-Sourcer is implemented by nodes to report their canonical source identity.
-*/
-type Sourcer interface {
-	Source() string
-}
-
-/*
 ArenaAware is implemented by nodes that own an ArenaOwner.
 */
 type ArenaAware interface {
@@ -66,9 +59,7 @@ func NewConsumer(
 		tees:      tees,
 	}
 
-	if src, ok := node.(Sourcer); ok {
-		consumer.source = src.Source()
-	} else if sys, ok := node.(interface{ Name() string }); ok {
+	if sys, ok := node.(interface{ Name() string }); ok {
 		consumer.source = sys.Name()
 	}
 
@@ -137,8 +128,8 @@ func (consumer *Consumer) Published(sequence int64) *data.Measurement[float64] {
 	return consumer.published[sequence&consumer.mask]
 }
 
-// Source returns this consumer's producer identity.
-func (consumer *Consumer) Source() string {
+// Name returns this consumer's producer identity.
+func (consumer *Consumer) Name() string {
 	return consumer.source
 }
 

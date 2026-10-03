@@ -35,14 +35,33 @@ func (op *PeerEnergy) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
 						first = true
 					}
 				}
-				m.WriteMetric("PeerFrom", float64(minPeerFrom)*1e-9)
+				fromSec := float64(minPeerFrom) * 1e-9
+				m.SetMetric("PeerFrom", data.NewMetric[float64](
+					"PeerFrom",
+					data.UnitSecond,
+					data.TimescaleInstantaneous,
+					fromSec,
+					1.0,
+				).Write(fromSec))
 			}
 
 			if val, ok := m.LookupMetric("return_energy_rate:measured"); ok {
-				m.WriteMetric("focal_return_energy_rate", val.Raw)
+				m.SetMetric("focal_return_energy_rate", data.NewMetric[float64](
+					"focal_return_energy_rate",
+					val.Unit,
+					val.Timescale,
+					val.Center,
+					val.Scale,
+				).Write(val.Raw))
 			}
 			if val, ok := m.LookupMetric("peer_return_energy_rate"); ok {
-				m.WriteMetric("relative_cohort_return_energy", val.Raw)
+				m.SetMetric("relative_cohort_return_energy", data.NewMetric[float64](
+					"relative_cohort_return_energy",
+					val.Unit,
+					val.Timescale,
+					val.Center,
+					val.Scale,
+				).Write(val.Raw))
 			}
 
 			if !yield(arriving) {

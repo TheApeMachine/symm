@@ -51,11 +51,27 @@ func (op *VelocityStep) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointe
 			}
 
 			if lagReading.Defined {
-				m.WriteMetric("lag_velocity", lagReading.Rate)
+				spanScale := m.GetMetric("lag_search_span").Raw
+				if spanScale == 0 {
+					spanScale = 1.0
+				}
+				m.SetMetric("lag_velocity", data.NewMetric[float64](
+					"lag_velocity",
+					data.UnitVelocity,
+					data.TimescalePerSecond,
+					0.0,
+					spanScale,
+				).Write(lagReading.Rate))
 			}
 
 			if gainReading.Defined {
-				m.WriteMetric("correlation_gain_velocity", gainReading.Rate)
+				m.SetMetric("correlation_gain_velocity", data.NewMetric[float64](
+					"correlation_gain_velocity",
+					data.UnitVelocity,
+					data.TimescalePerSecond,
+					0.0,
+					1.0,
+				).Write(gainReading.Rate))
 			}
 
 			if !yield(arriving) {

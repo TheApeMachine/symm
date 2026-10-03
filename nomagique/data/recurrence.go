@@ -67,8 +67,21 @@ func (op *Recurrence) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
 
 							percentile := lessCount / float64(len(op.distances))
 
-							measurement.WriteMetric("historical_path_distance", minDistance)
-							measurement.WriteNormalized("historical_path_percentile", percentile)
+							distanceScale := math.Max(math.Sqrt(float64(len(vector))), 1.0)
+							measurement.SetMetric("historical_path_distance", NewMetric[float64](
+								"historical_path_distance",
+								UnitDistance,
+								TimescaleRollingWindow,
+								0,
+								distanceScale,
+							).Write(minDistance))
+							measurement.SetMetric("historical_path_percentile", NewMetric[float64](
+								"historical_path_percentile",
+								UnitRatio,
+								TimescaleRollingWindow,
+								0.5,
+								0.5,
+							).Write(percentile))
 
 							if len(op.distances) > op.capacity {
 								op.distances = op.distances[1:]

@@ -15,7 +15,7 @@ func TestLiquidityTickerMetrics(t *testing.T) {
 	Convey("Liquidity ticker instrument publishes complete honest metrics", t, func() {
 		ctx := context.Background()
 		arena := data.NewArenaOwner(4096)
-		instrument := liquidity.NewTicker(ctx, arena)
+		instrument := liquidity.NewSignal(ctx, arena)
 		instrument.Transition(nmruntime.READY)
 
 		now := time.Now()

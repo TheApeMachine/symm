@@ -23,7 +23,7 @@ it computes them, and the workload's register owns the measurement's
 lifetime. The per-symbol arrival paths and fitted models live inside the
 pipeline's shared stage registry.
 */
-type Trade struct {
+type Signal struct {
 	*runtime.System
 	arena     *data.ArenaOwner
 	pipelines sync.Map
@@ -31,27 +31,23 @@ type Trade struct {
 }
 
 /*
-NewTrade composes the arrival-dynamics pipeline: the gate classifies the
+NewSignal composes the arrival-dynamics pipeline: the gate classifies the
 trade's side, the counts stage admits the arrival into the symbol's
 observation window, the excitation stage measures the arrival against the
 model fitted before it, and the refit stage folds the arrival into the
 history and re-estimates for the next one.
 */
-func NewTrade(ctx context.Context, arena *data.ArenaOwner) *Trade {
-	trade := &Trade{
+func NewSignal(ctx context.Context, arena *data.ArenaOwner) *Signal {
+	signal := &Signal{
 		arena: arena,
 	}
 
-	trade.System = runtime.NewSystem(ctx, "hawkes:trade", trade)
-	return trade
+	signal.System = runtime.NewSystem(ctx, "hawkes:signal", signal)
+	return signal
 }
 
-func (trade *Trade) Source() string {
-	return "hawkes:trade"
-}
-
-func (trade *Trade) Arena() *data.ArenaOwner {
-	return trade.arena
+func (signal *Signal) Arena() *data.ArenaOwner {
+	return signal.arena
 }
 
 /*
@@ -60,8 +56,8 @@ futures arrivals are different point processes, even when they share a symbol
 and carry price and quantity fields.
 */
 
-func (trade *Trade) pipelineFor(symbol string) core.Primitive {
-	if existing, ok := trade.pipelines.Load(symbol); ok {
+func (signal *Signal) pipelineFor(symbol string) core.Primitive {
+	if existing, ok := signal.pipelines.Load(symbol); ok {
 		return existing.(core.Primitive)
 	}
 
@@ -80,13 +76,13 @@ func (trade *Trade) pipelineFor(symbol string) core.Primitive {
 		data.NewFinalizer[float64](),
 	)
 
-	actual, _ := trade.pipelines.LoadOrStore(symbol, pipeline)
+	actual, _ := signal.pipelines.LoadOrStore(symbol, pipeline)
 	return actual.(core.Primitive)
 }
 
-func (trade *Trade) Step(prior *data.Measurement[float64]) *data.Measurement[float64] {
-	if trade.Status() != runtime.READY {
-		errnie.Warn(trade.Name() + ": Step called before READY; dropping event")
+func (signal *Signal) Step(prior *data.Measurement[float64]) *data.Measurement[float64] {
+	if signal.Status() != runtime.READY {
+		errnie.Warn(signal.Name() + ": Step called before READY; dropping event")
 		return nil
 	}
 
@@ -106,7 +102,7 @@ func (trade *Trade) Step(prior *data.Measurement[float64]) *data.Measurement[flo
 		return nil
 	}
 
-	out := trade.arena.NewMeasurement(trade.Source())
+	out := signal.arena.NewMeasurement(signal.Name())
 	out.Label = prior.Label
 	out.SeqIdx = prior.SeqIdx
 	out.At = prior.At
@@ -119,7 +115,7 @@ func (trade *Trade) Step(prior *data.Measurement[float64]) *data.Measurement[flo
 
 	out.SetProvenance("channel", channel)
 
-	res := data.Read[*data.Measurement[float64]](trade.pipelineFor(out.Label).Next(
+	res := data.Read[*data.Measurement[float64]](signal.pipelineFor(out.Label).Next(
 		transport.NewOne(unsafe.Pointer(&out)).Next(nil),
 	))
 

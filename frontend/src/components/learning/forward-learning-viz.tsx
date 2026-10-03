@@ -623,6 +623,9 @@ export const ForwardLearningViz = ({
 		return {
 			xScale: xs,
 			yScale: ys,
+			minPrice: minY,
+			maxPrice: maxY,
+			midPrice: (minY + maxY) / 2,
 			currentPoints: points,
 			lineGenerator: lg,
 		};
@@ -752,18 +755,46 @@ export const ForwardLearningViz = ({
 								className="absolute inset-0"
 							>
 								<title>Tape of {currentSymbol}</title>
-								{/* Midpoint Guideline */}
-								<g
-									className="text-(--line) stroke-current"
-									strokeWidth="1"
-									strokeDasharray="2 4"
-								>
+								{/* Y-Axis Price Scale Ticks and Grid */}
+								<g className="text-[9px] font-mono text-(--f4) select-none pointer-events-none">
 									<line
 										x1="0"
-										y1={tapeDim.height / 2}
+										y1={yScale(maxPrice)}
 										x2={tapeDim.width}
-										y2={tapeDim.height / 2}
+										y2={yScale(maxPrice)}
+										stroke="var(--line)"
+										strokeDasharray="2 4"
+										opacity="0.35"
 									/>
+									<text x={8} y={yScale(maxPrice) - 4} fill="var(--f3)">
+										{maxPrice.toLocaleString(undefined, { minimumFractionDigits: 5, maximumFractionDigits: 5 })}
+									</text>
+
+									<line
+										x1="0"
+										y1={yScale(midPrice)}
+										x2={tapeDim.width}
+										y2={yScale(midPrice)}
+										stroke="var(--line)"
+										strokeDasharray="2 4"
+										opacity="0.35"
+									/>
+									<text x={8} y={yScale(midPrice) - 4} fill="var(--f4)">
+										{midPrice.toLocaleString(undefined, { minimumFractionDigits: 5, maximumFractionDigits: 5 })}
+									</text>
+
+									<line
+										x1="0"
+										y1={yScale(minPrice)}
+										x2={tapeDim.width}
+										y2={yScale(minPrice)}
+										stroke="var(--line)"
+										strokeDasharray="2 4"
+										opacity="0.35"
+									/>
+									<text x={8} y={yScale(minPrice) - 4} fill="var(--f4)">
+										{minPrice.toLocaleString(undefined, { minimumFractionDigits: 5, maximumFractionDigits: 5 })}
+									</text>
 								</g>
 
 								{/* Price Trajectory Path */}
@@ -812,15 +843,29 @@ export const ForwardLearningViz = ({
 										const resolveIdx = (val: number | null): number | null => {
 											if (val === null || val <= 0 || points.length === 0)
 												return null;
-											// Absolute tape seq → index inside the visible window only.
-											// Nearest-seq matching misplaced A/B/C and ENTER/EXIT when the
-											// forward ring had already rolled the marked ticks off (max 250).
+											// 1. Exact sequence index match
 											for (let i = 0; i < points.length; i++) {
 												const seq = points[i].seq;
 												if (seq !== undefined && seq >= 0 && seq === val)
 													return i;
 											}
-											// Playback episodes may store marks as window-local indices.
+											// 2. Nearest sequence index match
+											let nearestIdx: number | null = null;
+											let nearestDist = Number.POSITIVE_INFINITY;
+											for (let i = 0; i < points.length; i++) {
+												const seq = points[i].seq;
+												if (seq !== undefined && seq >= 0) {
+													const dist = Math.abs(seq - val);
+													if (dist < nearestDist) {
+														nearestDist = dist;
+														nearestIdx = i;
+													}
+												}
+											}
+											if (nearestIdx !== null && nearestDist < 500) {
+												return nearestIdx;
+											}
+											// 3. Window-local relative index
 											if (
 												val < points.length &&
 												points[val] &&

@@ -2,10 +2,8 @@ package tables
 
 import (
 	"context"
-	"fmt"
 	"time"
 
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/nomagique/data"
 )
@@ -43,21 +41,6 @@ func (catalog *Catalog) Drain(
 			pub := data.To[data.Publication](ptr)
 
 			if pub.Measurement == nil {
-				continue
-			}
-
-			measurement := pub.Measurement
-
-
-			if measurement.SeqIdx <= 0 {
-				pub.Release()
-
-				errnie.Error(errnie.Err(
-					errnie.Validation,
-					fmt.Sprintf("[catalog] observation (source=%s, label=%s, id=%d, seq=%d, at=%v) has no workspace sequence", measurement.Source, measurement.Label, measurement.ID, measurement.SeqIdx, measurement.At),
-					nil,
-				))
-
 				continue
 			}
 

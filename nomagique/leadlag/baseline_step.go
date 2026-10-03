@@ -2,6 +2,7 @@ package leadlag
 
 import (
 	"iter"
+	"math"
 	"strconv"
 	"unsafe"
 
@@ -46,19 +47,69 @@ func (op *BaselineStep) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointe
 			gainReading := op.drive(op.gain, gainVal)
 			corrReading := op.drive(op.corr, corrVal)
 
-			m.WriteMetric("lag_baseline_seconds", lagReading.Baseline)
-			m.WriteMetric("lag_divergence_seconds", lagReading.Residual)
-			m.WriteMetric("lag_zscore", lagReading.ZScore)
+			lagScale := math.Max(lagReading.Dispersion, 1e-6)
+
+			m.SetMetric("lag_baseline_seconds", data.NewMetric[float64](
+				"lag_baseline_seconds",
+				data.UnitDuration,
+				data.TimescaleRollingWindow,
+				0.0,
+				lagScale,
+			).Write(lagReading.Baseline))
+			m.SetMetric("lag_divergence_seconds", data.NewMetric[float64](
+				"lag_divergence_seconds",
+				data.UnitDuration,
+				data.TimescaleInstantaneous,
+				0.0,
+				lagScale,
+			).Write(lagReading.Residual))
+			m.SetMetric("lag_zscore", data.NewMetric[float64](
+				"lag_zscore",
+				data.UnitZScore,
+				data.TimescaleRollingWindow,
+				0.0,
+				1.0,
+			).Write(lagReading.ZScore))
 
 			if lagReading.VarianceDefined {
-				m.WriteMetric("lag_noise_scale_seconds", lagReading.Dispersion)
+				m.SetMetric("lag_noise_scale_seconds", data.NewMetric[float64](
+					"lag_noise_scale_seconds",
+					data.UnitDuration,
+					data.TimescaleRollingWindow,
+					0.0,
+					lagScale,
+				).Write(lagReading.Dispersion))
 			}
 
-			m.WriteMetric("correlation_gain_baseline", gainReading.Baseline)
-			m.WriteMetric("correlation_gain_zscore", gainReading.ZScore)
+			m.SetMetric("correlation_gain_baseline", data.NewMetric[float64](
+				"correlation_gain_baseline",
+				data.UnitCorrelation,
+				data.TimescaleRollingWindow,
+				0.0,
+				1.0,
+			).Write(gainReading.Baseline))
+			m.SetMetric("correlation_gain_zscore", data.NewMetric[float64](
+				"correlation_gain_zscore",
+				data.UnitZScore,
+				data.TimescaleRollingWindow,
+				0.0,
+				1.0,
+			).Write(gainReading.ZScore))
 
-			m.WriteMetric("best_lag_correlation_baseline", corrReading.Baseline)
-			m.WriteMetric("best_lag_correlation_zscore", corrReading.ZScore)
+			m.SetMetric("best_lag_correlation_baseline", data.NewMetric[float64](
+				"best_lag_correlation_baseline",
+				data.UnitCorrelation,
+				data.TimescaleRollingWindow,
+				0.0,
+				1.0,
+			).Write(corrReading.Baseline))
+			m.SetMetric("best_lag_correlation_zscore", data.NewMetric[float64](
+				"best_lag_correlation_zscore",
+				data.UnitZScore,
+				data.TimescaleRollingWindow,
+				0.0,
+				1.0,
+			).Write(corrReading.ZScore))
 
 			m.EnsureMetadata()
 

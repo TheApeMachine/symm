@@ -19,7 +19,7 @@ import (
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-type Ticker struct {
+type Signal struct {
 	*runtime.System
 	arena     *data.ArenaOwner
 	pipelines sync.Map
@@ -28,34 +28,30 @@ type Ticker struct {
 	ID        int
 }
 
-func NewTicker(ctx context.Context, arena *data.ArenaOwner) *Ticker {
-	ticker := &Ticker{
+func NewSignal(ctx context.Context, arena *data.ArenaOwner) *Signal {
+	signal := &Signal{
 		arena:   arena,
 		prices:  store.NewLatest[string, float64](),
 		changes: store.NewLatest[string, data.CrossMember](),
 	}
 
-	ticker.System = runtime.NewSystem(ctx, "sentiment:ticker", ticker)
-	return ticker
+	signal.System = runtime.NewSystem(ctx, "sentiment:signal", signal)
+	return signal
 }
 
-func (ticker *Ticker) Source() string {
-	return "sentiment:ticker"
+func (signal *Signal) Arena() *data.ArenaOwner {
+	return signal.arena
 }
 
-func (ticker *Ticker) Arena() *data.ArenaOwner {
-	return ticker.arena
-}
-
-func (ticker *Ticker) pipelineFor(symbol string) core.Primitive {
-	if existing, ok := ticker.pipelines.Load(symbol); ok {
+func (signal *Signal) pipelineFor(symbol string) core.Primitive {
+	if existing, ok := signal.pipelines.Load(symbol); ok {
 		return existing.(core.Primitive)
 	}
 
 	pipeline := nomagique.NewNumber(
 		data.NewMetricGate("last"),
-		crosssection.NewUpdateMember("last", ticker.prices, ticker.changes),
-		crosssection.NewStampPeers(ticker.changes),
+		crosssection.NewUpdateMember("last", signal.prices, signal.changes),
+		crosssection.NewStampPeers(signal.changes),
 		nmsentiment.NewCrossSentiment(),
 		transport.NewFan(
 			data.NewAdapter(
@@ -93,7 +89,10 @@ func (ticker *Ticker) pipelineFor(symbol string) core.Primitive {
 					if out.HasPrior {
 						m.WriteMetric("median_absolute_return_baseline", out.Baseline)
 						if out.Baseline > 0 {
-							m.WriteMetric("median_absolute_return_ratio", m.GetMetric("median_absolute_return").Raw/out.Baseline)
+							m.WriteMetric(
+								"median_absolute_return_ratio",
+								m.GetMetric("median_absolute_return").Raw/out.Baseline,
+							)
 						}
 						m.WriteStandardized("median_absolute_return_zscore", out.ZScore)
 					}
@@ -151,13 +150,13 @@ func (ticker *Ticker) pipelineFor(symbol string) core.Primitive {
 		data.NewFinalizer[float64](),
 	)
 
-	actual, _ := ticker.pipelines.LoadOrStore(symbol, pipeline)
+	actual, _ := signal.pipelines.LoadOrStore(symbol, pipeline)
 	return actual.(core.Primitive)
 }
 
-func (ticker *Ticker) Step(prior *data.Measurement[float64]) *data.Measurement[float64] {
-	if ticker.Status() != runtime.READY {
-		errnie.Warn(ticker.Name() + ": Step called before READY; dropping event")
+func (signal *Signal) Step(prior *data.Measurement[float64]) *data.Measurement[float64] {
+	if signal.Status() != runtime.READY {
+		errnie.Warn(signal.Name() + ": Step called before READY; dropping event")
 		return nil
 	}
 
@@ -170,7 +169,7 @@ func (ticker *Ticker) Step(prior *data.Measurement[float64]) *data.Measurement[f
 		return nil
 	}
 
-	out := ticker.arena.NewMeasurement(ticker.Source())
+	out := signal.arena.NewMeasurement(signal.Name())
 	out.Label = prior.Label
 	out.SeqIdx = prior.SeqIdx
 	out.At = prior.At
@@ -183,7 +182,7 @@ func (ticker *Ticker) Step(prior *data.Measurement[float64]) *data.Measurement[f
 		out.SetProvenance("channel", channel)
 	}
 
-	res := data.Read[*data.Measurement[float64]](ticker.pipelineFor(out.Label).Next(
+	res := data.Read[*data.Measurement[float64]](signal.pipelineFor(out.Label).Next(
 		transport.NewOne(unsafe.Pointer(&out)).Next(nil),
 	))
 

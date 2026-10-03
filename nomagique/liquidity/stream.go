@@ -119,30 +119,117 @@ func (op *Touch) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			spread := ask - bid
 			relative := spread / midpoint
 
-			measurement.WriteMetric("best_bid_price", bid)
-			measurement.WriteMetric("best_ask_price", ask)
-			measurement.WriteMetric("touch_quantity:bid", bidQty)
-			measurement.WriteMetric("touch_quantity:ask", askQty)
-			measurement.WriteMetric("touch_notional:bid", bidNotional)
-			measurement.WriteMetric("touch_notional:ask", askNotional)
-			measurement.WriteMetric("midpoint", midpoint)
-			measurement.WriteMetric("spread", spread)
-			measurement.WriteMetric("relative_spread", relative)
-			measurement.WriteMetric("two_sided_touch_notional", math.Min(bidNotional, askNotional))
+			totalTouchQty := bidQty + askQty
+			totalTouchNotional := bidNotional + askNotional
 
-			if bidNotional+askNotional > 0 {
-				imbalance := (bidNotional - askNotional) / (bidNotional + askNotional)
-				measurement.WriteNormalized("touch_notional_imbalance", imbalance)
+			measurement.SetMetric("best_bid_price", data.NewMetric[float64](
+				"best_bid_price",
+				data.UnitPrice,
+				data.TimescaleInstantaneous,
+				midpoint,
+				spread,
+			).Write(bid))
+			measurement.SetMetric("best_ask_price", data.NewMetric[float64](
+				"best_ask_price",
+				data.UnitPrice,
+				data.TimescaleInstantaneous,
+				midpoint,
+				spread,
+			).Write(ask))
+			measurement.SetMetric("touch_quantity:bid", data.NewMetric[float64](
+				"touch_quantity:bid",
+				data.UnitQuantity,
+				data.TimescaleInstantaneous,
+				0.0,
+				totalTouchQty,
+			).Write(bidQty))
+			measurement.SetMetric("touch_quantity:ask", data.NewMetric[float64](
+				"touch_quantity:ask",
+				data.UnitQuantity,
+				data.TimescaleInstantaneous,
+				0.0,
+				totalTouchQty,
+			).Write(askQty))
+			measurement.SetMetric("touch_notional:bid", data.NewMetric[float64](
+				"touch_notional:bid",
+				data.UnitNotional,
+				data.TimescaleInstantaneous,
+				0.0,
+				totalTouchNotional,
+			).Write(bidNotional))
+			measurement.SetMetric("touch_notional:ask", data.NewMetric[float64](
+				"touch_notional:ask",
+				data.UnitNotional,
+				data.TimescaleInstantaneous,
+				0.0,
+				totalTouchNotional,
+			).Write(askNotional))
+			measurement.SetMetric("midpoint", data.NewMetric[float64](
+				"midpoint",
+				data.UnitPrice,
+				data.TimescaleInstantaneous,
+				midpoint,
+				spread,
+			).Write(midpoint))
+			measurement.SetMetric("spread", data.NewMetric[float64](
+				"spread",
+				data.UnitSpread,
+				data.TimescaleInstantaneous,
+				0.0,
+				spread,
+			).Write(spread))
+			measurement.SetMetric("relative_spread", data.NewMetric[float64](
+				"relative_spread",
+				data.UnitRelativeSpread,
+				data.TimescaleInstantaneous,
+				0.0,
+				relative,
+			).Write(relative))
+			measurement.SetMetric("two_sided_touch_notional", data.NewMetric[float64](
+				"two_sided_touch_notional",
+				data.UnitNotional,
+				data.TimescaleInstantaneous,
+				0.0,
+				totalTouchNotional,
+			).Write(math.Min(bidNotional, askNotional)))
+
+			if totalTouchNotional > 0 {
+				imbalance := (bidNotional - askNotional) / totalTouchNotional
+				measurement.SetMetric("touch_notional_imbalance", data.NewMetric[float64](
+					"touch_notional_imbalance",
+					data.UnitRatio,
+					data.TimescaleInstantaneous,
+					0.0,
+					1.0,
+				).Write(imbalance))
 			}
 
 			if bidNotional > 0 {
-				measurement.WriteMetric("_log_bid_notional", math.Log(bidNotional))
+				measurement.SetMetric("_log_bid_notional", data.NewMetric[float64](
+					"_log_bid_notional",
+					data.UnitDimensionless,
+					data.TimescaleInstantaneous,
+					math.Log(totalTouchNotional),
+					1.0,
+				).Write(math.Log(bidNotional)))
 			}
 			if askNotional > 0 {
-				measurement.WriteMetric("_log_ask_notional", math.Log(askNotional))
+				measurement.SetMetric("_log_ask_notional", data.NewMetric[float64](
+					"_log_ask_notional",
+					data.UnitDimensionless,
+					data.TimescaleInstantaneous,
+					math.Log(totalTouchNotional),
+					1.0,
+				).Write(math.Log(askNotional)))
 			}
 			if relative > 0 {
-				measurement.WriteMetric("_log_relative_spread", math.Log(relative))
+				measurement.SetMetric("_log_relative_spread", data.NewMetric[float64](
+					"_log_relative_spread",
+					data.UnitDimensionless,
+					data.TimescaleInstantaneous,
+					math.Log(relative),
+					1.0,
+				).Write(math.Log(relative)))
 			}
 
 			measurement.EnsureMetadata()

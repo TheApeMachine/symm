@@ -2,6 +2,7 @@ package leadlag
 
 import (
 	"iter"
+	"math"
 	"time"
 	"unsafe"
 
@@ -60,7 +61,13 @@ func (op *PathStep) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				continue
 			}
 
-			m.WriteMetric("observation_count", focal.Count)
+			m.SetMetric("observation_count", data.NewMetric[float64](
+				"observation_count",
+				data.UnitCount,
+				data.TimescaleRollingWindow,
+				focal.PriorCount,
+				math.Sqrt(focal.PriorCount),
+			).Write(focal.Count))
 
 			if !focal.Accepted {
 				continue

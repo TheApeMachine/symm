@@ -33,6 +33,7 @@ Measurement is the native data type in nomagique.
 Under the WORM model:
   - Before publication: exactly one writer (the producer), zero readers.
   - After publication: zero writers, arbitrary concurrent readers.
+
 No mutexes or synchronization primitives are used inside Measurement.
 Hot data is stored in compact arena-backed slices instead of GC heap maps.
 */
@@ -148,31 +149,6 @@ func (m *Measurement[T]) SetMetric(key string, val Metric[T]) {
 	}
 
 	m.Metrics = append(m.Metrics, MetricEntry[T]{Key: key, Metric: val})
-}
-
-// WriteMetric safely writes a raw value to a local metric.
-func (m *Measurement[T]) WriteMetric(key string, val T) {
-	if m == nil {
-		return
-	}
-
-	for index := range m.Metrics {
-		if m.Metrics[index].Key == key {
-			if m.Metrics[index].Metric.Label == "" {
-				m.Metrics[index].Metric.Label = key
-			}
-
-			m.Metrics[index].Metric = m.Metrics[index].Metric.Write(val)
-			return
-		}
-	}
-
-	metric, _ := m.LookupMetric(key)
-	if metric.Label == "" {
-		metric.Label = key
-	}
-
-	m.Metrics = append(m.Metrics, MetricEntry[T]{Key: key, Metric: metric.Write(val)})
 }
 
 // WriteStandardized sets the raw value and standardized form on a local metric.
@@ -506,8 +482,6 @@ func NewMeasurement[T any](
 		Peers:      make([]*Measurement[T], 0, 4),
 	}
 }
-
-
 
 const (
 	MetadataSupport        = "support"

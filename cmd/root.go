@@ -30,7 +30,6 @@ import (
 	"github.com/theapemachine/symm/signal/correlation"
 	"github.com/theapemachine/symm/signal/cvd"
 	"github.com/theapemachine/symm/signal/depthflow"
-	"github.com/theapemachine/symm/signal/derivatives"
 	"github.com/theapemachine/symm/signal/hawkes"
 	"github.com/theapemachine/symm/signal/leadlag"
 	"github.com/theapemachine/symm/signal/liquidity"
@@ -210,7 +209,12 @@ var (
 			trader := strategy.NewTrader(ctx, privateTransport, price, balance)
 
 			training := strategy.NewTraining(
-				ctx, data.NewArenaOwner(4096), price, trader, catalog, uiTee,
+				ctx, data.NewArenaOwner(4096),
+				price,
+				trader,
+				catalog,
+				uiTee,
+				storeTee,
 			)
 
 			uiTee.Transition(nmruntime.READY)
@@ -230,21 +234,16 @@ var (
 			book.SetNotify(func(symbol string, _ time.Time) {
 				manifoldSolver.Wake(symbol)
 			})
-			correlationTicker := correlation.NewTicker(ctx, data.NewArenaOwner(4096))
-			leadlagTicker := leadlag.NewTicker(ctx, data.NewArenaOwner(4096))
-			liquidityTicker := liquidity.NewTicker(ctx, data.NewArenaOwner(4096))
-			sentimentTicker := sentiment.NewTicker(ctx, data.NewArenaOwner(4096))
-			pumpdumpTicker := pumpdump.NewTicker(ctx, data.NewArenaOwner(4096))
-			cvdTrade := cvd.NewTrade(ctx, data.NewArenaOwner(4096))
-			hawkesTrade := hawkes.NewTrade(ctx, data.NewArenaOwner(4096))
-			toxicityTrade := toxicity.NewTrade(ctx, data.NewArenaOwner(4096))
-			pumpdumpTrade := pumpdump.NewTrade(ctx, data.NewArenaOwner(4096))
-			depthflowLevel3 := depthflow.NewLevel3(ctx, data.NewArenaOwner(4096), book)
-			morphologyLevel3 := morphology.NewLevel3(ctx, data.NewArenaOwner(4096), book)
-			toxicityLevel3 := toxicity.NewLevel3(ctx, data.NewArenaOwner(4096), book)
-			pumpdumpLevel3 := pumpdump.NewLevel3(ctx, data.NewArenaOwner(4096), book)
-			derivativesTicker := derivatives.NewTicker(ctx, data.NewArenaOwner(4096))
-			derivativesTrade := derivatives.NewTrade(ctx, data.NewArenaOwner(4096))
+			correlationSignal := correlation.NewSignal(ctx, data.NewArenaOwner(4096))
+			cvdSignal := cvd.NewSignal(ctx, data.NewArenaOwner(4096))
+			depthflowSignal := depthflow.NewSignal(ctx, data.NewArenaOwner(4096), book)
+			hawkesSignal := hawkes.NewSignal(ctx, data.NewArenaOwner(4096))
+			leadlagSignal := leadlag.NewSignal(ctx, data.NewArenaOwner(4096))
+			liquiditySignal := liquidity.NewSignal(ctx, data.NewArenaOwner(4096), book)
+			morphologySignal := morphology.NewSignal(ctx, data.NewArenaOwner(4096), book)
+			pumpdumpSignal := pumpdump.NewSignal(ctx, data.NewArenaOwner(4096), book)
+			sentimentSignal := sentiment.NewSignal(ctx, data.NewArenaOwner(4096))
+			toxicitySignal := toxicity.NewSignal(ctx, data.NewArenaOwner(4096), book)
 			categorySolver := category.NewSolver(ctx, data.NewArenaOwner(4096))
 			resonanceSolver := resonance.NewSolver(
 				ctx, data.NewArenaOwner(4096), system.Cfg.Resonance.LearningRate,
@@ -257,21 +256,16 @@ var (
 				"workspace",
 				[][]nmruntime.Node{
 					{
-						correlationTicker,
-						leadlagTicker,
-						liquidityTicker,
-						sentimentTicker,
-						pumpdumpTicker,
-						cvdTrade,
-						hawkesTrade,
-						toxicityTrade,
-						pumpdumpTrade,
-						depthflowLevel3,
-						morphologyLevel3,
-						toxicityLevel3,
-						pumpdumpLevel3,
-						derivativesTicker,
-						derivativesTrade,
+						correlationSignal,
+						cvdSignal,
+						depthflowSignal,
+						hawkesSignal,
+						leadlagSignal,
+						liquiditySignal,
+						morphologySignal,
+						pumpdumpSignal,
+						sentimentSignal,
+						toxicitySignal,
 					},
 					{
 						categorySolver,
@@ -370,21 +364,16 @@ var (
 				categorySolver,
 				resonanceSolver,
 				cognitionSolver,
-				correlationTicker,
-				leadlagTicker,
-				liquidityTicker,
-				sentimentTicker,
-				pumpdumpTicker,
-				cvdTrade,
-				hawkesTrade,
-				toxicityTrade,
-				pumpdumpTrade,
-				depthflowLevel3,
-				morphologyLevel3,
-				toxicityLevel3,
-				pumpdumpLevel3,
-				derivativesTicker,
-				derivativesTrade,
+				correlationSignal,
+				cvdSignal,
+				depthflowSignal,
+				hawkesSignal,
+				leadlagSignal,
+				liquiditySignal,
+				morphologySignal,
+				pumpdumpSignal,
+				sentimentSignal,
+				toxicitySignal,
 				workspace,
 			} {
 				runsys.Transition(nmruntime.READY)

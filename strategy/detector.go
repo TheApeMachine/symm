@@ -1,295 +1,165 @@
 package strategy
 
 import (
-	"math/rand/v2"
+	"context"
+	"iter"
+	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/data"
-	"golang.design/x/lockfree/lf"
+	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
 /*
-Trajectory contains the aligned market observations for one detected excursion:
-its entry and exit prices, the aligned precursor and holding measurements from
-signals and logic stages, and the raw ticker slices for trajectory telemetry.
-*/
-type Trajectory struct {
-	Symbol    string
-	EntryAsk  *decimal.Decimal
-	ExitBid   *decimal.Decimal
-	Precursor []*data.Measurement[float64]
-	Holding   []*data.Measurement[float64]
-	Ticks     [2][]*data.Measurement[float64]
-}
-
-/*
-Detector scans epoch-length market tapes for a single symbol, identifies
-excursions, aligns signals and logic stages with ticker slices, and enqueues
-complete trajectories for model reinforcement.
+Detector scans market tape from beginning to end.
+Given that we have the raw market data, directly from the spot
+WebSocket, stored as *data.Measurement[float64] frames, we do
+not need to do much complex math or actual "detection".
+All we need to do is find the lowest and highest points on a
+length of tape, provided that lowest point is before that highest
+point, and pull that sub-slice out as the excursion (with a little)
+extra on each side of course.
 */
 type Detector struct {
-	queue *lf.Queue[Trajectory]
-}
-
-func NewDetector() *Detector {
-	return &Detector{
-		queue: lf.NewQueue[Trajectory](),
-	}
-}
-
-func (detector *Detector) Next() (Trajectory, bool) {
-	if detector == nil || detector.queue == nil {
-		return Trajectory{}, false
-	}
-
-	trajectory, ok := detector.queue.Dequeue()
-
-	if !ok {
-		return Trajectory{}, false
-	}
-
-	return trajectory, true
+	*runtime.System
+	storeTee runtime.Tee
 }
 
 /*
-Scan performs a single-pass scan across an ordered slice of measurements for one symbol.
-Measurements are WORM once written, so all emitted segments are sub-slices.
+NewDetector creates a new detector, and instantiates a queue we will
+use to store our detected excursions.
 */
-func (detector *Detector) Scan(measurements []*data.Measurement[float64]) {
-	if detector == nil || len(measurements) < 5 {
-		return
-	}
-
-	lowIndex := -1
-	highIndex := -1
-	var lowPrice, highPrice float64
-
-	for index, measurement := range measurements {
-		price, ok := quotePrice(measurement)
-
-		if !ok {
-			continue
-		}
-
-		if lowIndex == -1 {
-			lowIndex = index
-			highIndex = index
-			lowPrice = price
-			highPrice = price
-			continue
-		}
-
-		if price < lowPrice {
-			lowPrice = price
-			lowIndex = index
-		}
-
-		if price > highPrice {
-			highPrice = price
-			highIndex = index
-		}
-
-		// Upward excursion: lowest point is before highest point
-		if lowIndex < highIndex && highPrice > lowPrice {
-			pullback := highPrice - price
-			move := highPrice - lowPrice
-
-			if pullback >= move*0.2 {
-				detector.emitTrajectory(measurements, lowIndex, highIndex, lowPrice, highPrice)
-
-				lowIndex = index
-				highIndex = index
-				lowPrice = price
-				highPrice = price
-			}
-		}
-	}
-
-	if lowIndex >= 0 && highIndex > lowIndex && highPrice > lowPrice {
-		detector.emitTrajectory(measurements, lowIndex, highIndex, lowPrice, highPrice)
+func NewDetector(
+	ctx context.Context, storeTee runtime.Tee,
+) *Detector {
+	return &Detector{
+		System:   runtime.NewSystem(ctx, "strategy:detector"),
+		storeTee: storeTee,
 	}
 }
 
-func (detector *Detector) emitTrajectory(
-	measurements []*data.Measurement[float64],
-	lowIndex, highIndex int,
-	lowPrice, highPrice float64,
+/*
+Scan scans the tape once from beginning to end, tracking the lowest point
+and the highest point where the lowest is first and the highest is second.
+Since we store all data the system produces in its "native" format,
+meaning *data.Measurement[float64], we have to realize that there is only
+one Iceberg table (measurements), and we must rely on the measurement.Source
+field (which is the stage that produced the measurement, like spot:ticker,
+correlation:trade, resonance, etc.), and the measurement.Label, which is
+the symbol (meaning "ETH", "BTC", etc), to make sure we are not doing something
+degenerate like mixing ticker, trade, and level3 accidentally as the tape.
+
+NOTE: While I was here, I went ahead and moved to using an iterator, which will
+greatly reduce the memory consumption of this part of the system.
+
+NOTE: I just realized we can make this even simpler, and just get the Epoch and
+SeqIdx, then store that in an Iceberg table. That basically gives us a way to
+query the exact excursion, directly from the catalog, which also gives us a
+clean way to do the scan for each historical tape fragment only once.
+*/
+func (detector *Detector) Scan(
+	measurements iter.Seq[*data.Measurement[float64]],
 ) {
-	move := highPrice - lowPrice
+	var (
+		epoch   int64
+		symbol  string
+		lowest  *decimal.Decimal
+		highest *decimal.Decimal
+		lowIdx  int64
+		highIdx int64
+		lowAt   time.Time
+		highAt  time.Time
+	)
 
-	if move <= 0 || lowPrice <= 0 {
+	for measurement := range measurements {
+		if measurement.Source != "spot:ticker" {
+			errnie.Error(errnie.Err(
+				errnie.NotAcceptable,
+				"",
+				nil,
+			))
+
+			continue
+		}
+
+		if epoch == 0 || epoch != measurement.Epoch || symbol != measurement.Label {
+			detector.Flush(symbol, epoch, lowIdx, highIdx, lowAt, highAt)
+			epoch = measurement.Epoch
+			symbol = measurement.Label
+			lowest = nil
+			highest = nil
+			lowIdx = 0
+			highIdx = 0
+			lowAt = time.Time{}
+			highAt = time.Time{}
+		}
+
+		price := measurement.GetMetric("last").Exact
+
+		if lowest == nil || price.Cmp(lowest) < 0 {
+			lowest = price
+			lowIdx = measurement.SeqIdx
+			lowAt = measurement.At
+			highest = nil
+			highIdx = 0
+			highAt = time.Time{}
+			continue
+		}
+
+		if highest == nil || price.Cmp(highest) > 0 {
+			highest = price
+			highIdx = measurement.SeqIdx
+			highAt = measurement.At
+		}
+	}
+
+	detector.Flush(symbol, epoch, lowIdx, highIdx, lowAt, highAt)
+}
+
+/*
+Flush the detection to the storeTee to queue it up for shipping to the
+Iceberg tables as a *data.Measurement[float64] shape.
+*/
+func (detector *Detector) Flush(
+	symbol string,
+	epoch int64,
+	lowIdx int64,
+	highIdx int64,
+	lowAt time.Time,
+	highAt time.Time,
+) {
+	if epoch == 0 || lowIdx == 0 || highIdx == 0 {
 		return
 	}
 
-	exhaustIndex := highIndex
-	prevPrice := lowPrice
-	maxVelocity := 0.0
+	measurement := data.NewMeasurement[float64](
+		detector.Name(), map[string]data.Metric[float64]{
+			"LowSeqIdx": data.NewMetric[float64](
+				"low_seq_idx",
+				data.UnitCount,
+				data.TimescaleInstantaneous,
+				0,
+				1,
+			).Write(float64(lowIdx)),
+			"HighSeqIdx": data.NewMetric[float64](
+				"high_seq_idx",
+				data.UnitCount,
+				data.TimescaleInstantaneous,
+				0,
+				1,
+			).Write(float64(highIdx)),
+		},
+	)
 
-	for index := lowIndex + 1; index <= highIndex; index++ {
-		price, ok := quotePrice(measurements[index])
+	measurement.Epoch = epoch
+	measurement.Label = symbol
+	measurement.At = highAt
+	measurement.From = lowAt
+	measurement.Timestamp = time.Now().UnixNano()
 
-		if !ok {
-			continue
-		}
-
-		delta := price - prevPrice
-
-		if delta > maxVelocity {
-			maxVelocity = delta
-		}
-
-		progress := (price - lowPrice) / move
-
-		if progress >= 0.50 {
-			if delta <= 0 || (maxVelocity > 0 && delta < maxVelocity*0.5) {
-				exhaustIndex = index
-				break
-			}
-		}
-
-		prevPrice = price
-	}
-
-	startPrecursor := 0
-
-	if lowIndex > 2 {
-		startPrecursor = rand.IntN(lowIndex - 1)
-	}
-
-	entryMeas := measurements[lowIndex]
-	exitMeas := measurements[exhaustIndex]
-
-	entryAsk := quoteDecimal(entryMeas, true)
-	exitBid := quoteDecimal(exitMeas, false)
-
-	if entryAsk == nil || exitBid == nil || entryAsk.Sign() <= 0 || exitBid.Sign() <= 0 {
-		return
-	}
-
-	precursorTimeline := measurements[startPrecursor:lowIndex]
-	holdingTimeline := measurements[lowIndex+1 : exhaustIndex+1]
-
-	var precursorTicks []*data.Measurement[float64]
-	var precursorSignals []*data.Measurement[float64]
-
-	for _, measurement := range precursorTimeline {
-		if measurement == nil {
-			continue
-		}
-
-		if _, hasQuote := quotePrice(measurement); hasQuote {
-			precursorTicks = append(precursorTicks, measurement)
-		} else {
-			precursorSignals = append(precursorSignals, measurement)
-		}
-	}
-
-	var holdingTicks []*data.Measurement[float64]
-	var holdingSignals []*data.Measurement[float64]
-
-	for _, measurement := range holdingTimeline {
-		if measurement == nil {
-			continue
-		}
-
-		if _, hasQuote := quotePrice(measurement); hasQuote {
-			holdingTicks = append(holdingTicks, measurement)
-		} else {
-			holdingSignals = append(holdingSignals, measurement)
-		}
-	}
-
-	if len(precursorSignals) == 0 {
-		precursorSignals = precursorTimeline
-	}
-
-	if len(holdingSignals) == 0 {
-		holdingSignals = holdingTimeline
-	}
-
-	if len(precursorTicks) == 0 {
-		precursorTicks = precursorTimeline
-	}
-
-	if len(holdingTicks) == 0 {
-		holdingTicks = holdingTimeline
-	}
-
-	detector.queue.Enqueue(Trajectory{
-		Symbol:    entryMeas.Label,
-		EntryAsk:  entryAsk,
-		ExitBid:   exitBid,
-		Precursor: precursorSignals,
-		Holding:   holdingSignals,
-		Ticks:     [2][]*data.Measurement[float64]{precursorTicks, holdingTicks},
-	})
-}
-
-func quotePrice(measurement *data.Measurement[float64]) (float64, bool) {
-	if measurement == nil {
-		return 0, false
-	}
-
-	if priceMetric, ok := measurement.LookupMetric("price"); ok && priceMetric.Raw > 0 {
-		return priceMetric.Raw, true
-	}
-
-	if limitMetric, ok := measurement.LookupMetric("limit_price"); ok && limitMetric.Raw > 0 {
-		return limitMetric.Raw, true
-	}
-
-	if lastMetric, ok := measurement.LookupMetric("last"); ok && lastMetric.Raw > 0 {
-		return lastMetric.Raw, true
-	}
-
-	bid, hasBid := measurement.LookupMetric("bid")
-	ask, hasAsk := measurement.LookupMetric("ask")
-
-	if hasBid && hasAsk && bid.Raw > 0 && ask.Raw > 0 {
-		return bid.Exact.Add(ask.Exact).Div(decimal.NewFromInt64(2)).Float64(), true
-	}
-
-	if hasBid && bid.Raw > 0 {
-		return bid.Raw, true
-	}
-
-	if hasAsk && ask.Raw > 0 {
-		return ask.Raw, true
-	}
-
-	return 0, false
-}
-
-func quoteDecimal(measurement *data.Measurement[float64], isAsk bool) *decimal.Decimal {
-	if measurement == nil {
-		return nil
-	}
-
-	if isAsk {
-		if ask, ok := measurement.LookupMetric("ask"); ok && ask.Exact != nil && ask.Exact.Sign() > 0 {
-			return ask.Exact
-		}
-	} else {
-		if bid, ok := measurement.LookupMetric("bid"); ok && bid.Exact != nil && bid.Exact.Sign() > 0 {
-			return bid.Exact
-		}
-	}
-
-	if price, ok := measurement.LookupMetric("price"); ok && price.Exact != nil && price.Exact.Sign() > 0 {
-		return price.Exact
-	}
-
-	if limit, ok := measurement.LookupMetric("limit_price"); ok && limit.Exact != nil && limit.Exact.Sign() > 0 {
-		return limit.Exact
-	}
-
-	if last, ok := measurement.LookupMetric("last"); ok && last.Exact != nil && last.Exact.Sign() > 0 {
-		return last.Exact
-	}
-
-	if rawPrice, ok := quotePrice(measurement); ok && rawPrice > 0 {
-		return decimal.NewFromFloat64(rawPrice)
-	}
-
-	return nil
+	detector.storeTee.Push(data.NewPublication(
+		measurement,
+		nil,
+	))
 }

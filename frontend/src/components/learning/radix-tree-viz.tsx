@@ -280,11 +280,11 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 	};
 
 	const edgeTokenLabel = (target: TrieNodeData) => {
-		if (isActionPrefix(target.prefix)) {
-			return null;
-		}
 		const tokens = target.tokens ?? [];
 		if (tokens.length === 0) {
+			if (target.prefix && !isRootNode(target)) {
+				return target.prefix;
+			}
 			return null;
 		}
 		// Frames arrive already as [id,...]; do not wrap again.
