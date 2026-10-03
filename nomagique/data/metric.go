@@ -1,6 +1,8 @@
 package data
 
 import (
+	"math"
+
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 )
 
@@ -60,4 +62,22 @@ func (metric Metric[T]) Write(value T) Metric[T] {
 	}
 
 	return metric
+}
+
+/*
+Deformation is how far a metric just pushed on its container: the signed
+displacement between the previous and current value, relative to the combined
+magnitude of both. Rest is 0, a full swing is ±1, and units drop out: 1 → 2 and
+100000 → 200000 deform alike. When both values are zero nothing moved, so the
+displacement is rest. A container with no previous value starts at rest, so the
+caller passes 0 for it.
+*/
+func Deformation(previous, current float64) float64 {
+	span := math.Abs(previous) + math.Abs(current)
+
+	if span == 0 {
+		return 0
+	}
+
+	return (current - previous) / span
 }
