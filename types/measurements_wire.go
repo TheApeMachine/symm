@@ -52,9 +52,9 @@ func measurementToWire(
 		wireMetric.Name = name
 		wireMetric.Raw = metric.Raw
 		wireMetric.Unit = string(metric.Unit)
+		wireMetric.Region = metric.Region
 		wireMetric.X = metric.X
 		wireMetric.Y = metric.Y
-		wireMetric.Region = metric.Region
 
 		if metric.Normalized != nil {
 			wireMetric.Normalized = *metric.Normalized
@@ -166,4 +166,13 @@ func EncodeMeasurements(
 	res := append([]byte{}, builder.FinishedBytes()...)
 
 	return res, nil
+}
+
+func fnv1a32(key string) uint32 {
+	var hash uint32 = 2166136261
+	for index := 0; index < len(key); index++ {
+		hash ^= uint32(key[index])
+		hash *= 16777619
+	}
+	return hash
 }

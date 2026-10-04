@@ -83,22 +83,6 @@ type FragmentPoint struct {
 	Time int64   `json:"time"`
 }
 
-/*
-ManifoldSource supplies the latest physics ManifoldState for the fluid route.
-Published by the hub on version change — not hitchhiked on measurement Result —
-so FluidManifoldFeed receives frames whenever Advance has produced a reading.
-*/
-type ManifoldSource interface {
-	Reading() *types.ManifoldState
-}
-
-/*
-Hub owns the dashboard websocket and broadcasts schema-tagged binary frames.
-It is an ordinary Workspace stage: it registers to ChannelUI through NewHub,
-and the Workspace drives every outbound write through Step. Inbound commands
-arrive over the same socket and are handled directly by the connection's
-handler goroutine, so there are no per-client writer or reader goroutines.
-*/
 type Hub struct {
 	*runtime.System
 	uiTee               runtime.Tee
@@ -111,7 +95,6 @@ type Hub struct {
 	equitySource        EquitySource
 	cognitionSource     CognitionSource
 	fragmentsSource     FragmentsSource
-	manifoldSource      ManifoldSource
 	exitHandler         func(symbol string)
 	routes              *Routes
 	learningInterval    time.Duration
@@ -346,42 +329,6 @@ func NewHub(
 			return conn.Conn.WriteMessage(websocket.BinaryMessage, payload)
 		}
 
-		var lastManifoldVersion uint64
-
-		sendManifold := func() error {
-			if hub.manifoldSource == nil || types.Route() != "fluid" {
-				return nil
-			}
-
-			reading := hub.manifoldSource.Reading()
-
-			if reading == nil {
-				return nil
-			}
-
-			if reading.Version != 0 && reading.Version == lastManifoldVersion {
-				return nil
-			}
-
-			payload, err := types.EncodeManifold(reading)
-
-			if err != nil {
-				errnie.Error(errnie.Err(
-					errnie.UnprocessableContent,
-					"[hub] Failed to encode manifold",
-					err,
-				))
-				return nil
-			}
-
-			if len(payload) == 0 {
-				return nil
-			}
-
-			lastManifoldVersion = reading.Version
-			return conn.Conn.WriteMessage(websocket.BinaryMessage, payload)
-		}
-
 		if err := sendPositions(); err != nil {
 			return
 		}
@@ -394,17 +341,19 @@ func NewHub(
 			return
 		}
 
-		if err := sendManifold(); err != nil {
-			return
-		}
-
 		frameTicker := time.NewTicker(16666 * time.Microsecond)
 		defer frameTicker.Stop()
+
+		var teeAvailable <-chan struct{}
+		if streamer, ok := hub.uiTee.(interface{ Available() <-chan struct{} }); ok {
+			teeAvailable = streamer.Available()
+		}
 
 		for {
 			select {
 			case <-ctx.Done():
 				return
+			case <-teeAvailable:
 			case <-frameTicker.C:
 			}
 
@@ -424,10 +373,6 @@ func NewHub(
 				if err := sendEquity(); err != nil {
 					return
 				}
-			}
-
-			if err := sendManifold(); err != nil {
-				return
 			}
 
 			if hub.Status() != runtime.READY || hub.uiTee == nil {
@@ -481,17 +426,6 @@ func (hub *Hub) SetEquitySource(source EquitySource) {
 	hub.equitySource = source
 }
 
-/*
-SetManifoldSource attaches the physics reading source for fluid ManifoldFrame
-streaming. Call after the manifold solver exists.
-*/
-func (hub *Hub) SetManifoldSource(source ManifoldSource) {
-	if hub == nil {
-		return
-	}
-
-	hub.manifoldSource = source
-}
 
 /*
 SetCognitionSource attaches the source for active cognitive memory and trie topology.

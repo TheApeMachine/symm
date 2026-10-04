@@ -179,9 +179,9 @@ func (catalog *Catalog) Excursions(
 }
 
 /*
-SignalLogicSources enumerates the canonical signal and logic producer sources.
+SensorySources enumerates the canonical Stage 0 signal producer sources.
 */
-var SignalLogicSources = []string{
+var SensorySources = []string{
 	"correlation",
 	"cvd",
 	"depthflow",
@@ -192,9 +192,20 @@ var SignalLogicSources = []string{
 	"pumpdump",
 	"sentiment",
 	"toxicity",
+}
+
+/*
+LogicSources enumerates the canonical Stage 1 cognitive and physical solver sources.
+*/
+var LogicSources = []string{
 	"resonance",
 	"manifold",
 }
+
+/*
+SignalLogicSources enumerates the canonical signal and logic producer sources.
+*/
+var SignalLogicSources = append(slices.Clone(SensorySources), LogicSources...)
 
 /*
 DetectionTicks extracts the lowTick and highTick recorded in a detector measurement.
@@ -527,7 +538,8 @@ func (catalog *Catalog) Timeline(
 	}
 
 	if fromTick > 0 {
-		expression := iceberg.BooleanExpression(
+		expression := iceberg.NewOr(
+			iceberg.GreaterThanEqual(iceberg.Reference("tick"), fromTick),
 			iceberg.GreaterThanEqual(iceberg.Reference("seqIdx"), fromTick),
 		)
 
@@ -539,7 +551,10 @@ func (catalog *Catalog) Timeline(
 	}
 
 	if toTick > 0 && toTick >= fromTick {
-		expression := iceberg.BooleanExpression(iceberg.LessThanEqual(iceberg.Reference("seqIdx"), toTick))
+		expression := iceberg.NewOr(
+			iceberg.LessThanEqual(iceberg.Reference("tick"), toTick),
+			iceberg.LessThanEqual(iceberg.Reference("seqIdx"), toTick),
+		)
 
 		if filter != nil {
 			expression = iceberg.NewAnd(filter, expression)

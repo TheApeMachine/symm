@@ -20,7 +20,7 @@ func TestLiquidityTickerMetrics(t *testing.T) {
 
 		now := time.Now()
 
-		for step := 0; step < 10; step++ {
+		for step := range 10 {
 			prior := arena.NewMeasurement("ingress")
 			prior.Label = "ETH/USD"
 			prior.SeqIdx = int64(step + 1)

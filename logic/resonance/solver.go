@@ -2,10 +2,7 @@ package resonance
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"iter"
-	"math"
 	goruntime "runtime"
 	"strings"
 	"sync"
@@ -74,7 +71,6 @@ type Solver struct {
 	standardizers *sync.Map
 	finalizers    *sync.Map
 	references    *sync.Map
-	returnNoise   *sync.Map
 	steps         *sync.Map
 	pace          float64
 
@@ -82,35 +78,6 @@ type Solver struct {
 	// duration so the wiring diagram can profile the resonance stage like
 	// every other pipeline node.
 	ObserveModule func(string, time.Duration)
-}
-
-/*
-returnNoiseTracker maintains Welford moments over a symbol's per-step log
-returns so the ledger's directional target can require a move larger than the
-symbol's own typical step noise before calling a direction. The scale is
-estimated per symbol, which keeps the target honest across symbols whose price
-levels differ by orders of magnitude.
-*/
-type returnNoiseTracker struct {
-	mean  float64
-	m2    float64
-	count float64
-}
-
-func (tracker *returnNoiseTracker) observe(sample float64) {
-	tracker.count++
-	delta := sample - tracker.mean
-	tracker.mean += delta / tracker.count
-	delta2 := sample - tracker.mean
-	tracker.m2 += delta * delta2
-}
-
-func (tracker *returnNoiseTracker) scale() (float64, bool) {
-	if tracker.count < 2 {
-		return 0, false
-	}
-
-	return math.Sqrt(tracker.m2 / (tracker.count - 1)), true
 }
 
 /*
@@ -128,7 +95,6 @@ func NewSolver(
 		standardizers: &sync.Map{},
 		finalizers:    &sync.Map{},
 		references:    &sync.Map{},
-		returnNoise:   &sync.Map{},
 		steps:         &sync.Map{},
 		pace:          pace,
 	}
@@ -273,30 +239,11 @@ func (solver *Solver) Update(
 	features []float64,
 	midpoint float64,
 ) {
-	priorMidpoint := 0.0
-
-	if prior, found := solver.references.Load(symbolName); found {
-		priorMidpoint, _ = prior.(float64)
-	}
-
-	if midpoint <= 0 && priorMidpoint > 0 {
-		midpoint = priorMidpoint
-	}
-
-	// Observe this step's log return so the directional target can require a
-	// move beyond the symbol's own recent step noise before calling a direction.
-	if midpoint > 0 && priorMidpoint > 0 {
-		trackerLoader, _ := solver.returnNoise.LoadOrStore(symbolName, &returnNoiseTracker{})
-		trackerLoader.(*returnNoiseTracker).observe(math.Log(midpoint / priorMidpoint))
-	}
-
 	detector, found := solver.detectors.Load(symbolName)
 
 	if !found {
 		detector = learning.NewPredictiveCoder(learning.PredictiveCoderConfig{
 			CustomArch:   []int{len(features), len(features) * 4, len(features) * 2, len(features)}, // Overcomplete dictionary with latent space
-			MaxHorizon:   10,                                                                        // Forward rollouts to t+10: a next-tick call is not actionable
-			Target:       solver.directionalTarget(symbolName),                                      // Noise-scaled directional call
 			InitialAlpha: solver.pace,                                                               // Adaptive learning pace
 			Learn:        true,
 		})
@@ -314,18 +261,15 @@ func (solver *Solver) Update(
 		return
 	}
 
-	hasReference := priorMidpoint > 0 && midpoint > 0
 	loadedStep, _ := solver.steps.LoadOrStore(symbolName, &atomic.Int64{})
 	step := loadedStep.(*atomic.Int64).Add(1)
 
 	stepStarted := time.Now()
 
 	out, err := stepCoder(coder, learning.PredictiveInput{
-		Features:     features,
-		Reference:    midpoint,
-		HasReference: hasReference,
-		Step:         step,
-		Time:         float64(at.UnixNano()) / 1e9,
+		Features: features,
+		Step:     step,
+		Time:     float64(at.UnixNano()) / 1e9,
 	})
 
 	if solver.ObserveModule != nil {
@@ -339,10 +283,6 @@ func (solver *Solver) Update(
 			err,
 		))
 		return
-	}
-
-	if midpoint > 0 {
-		solver.references.Store(symbolName, midpoint)
 	}
 
 	solver.publishReturns(measurement, coder, out)
@@ -462,93 +402,6 @@ func extractHeadlineMetric(index int, measurement *data.Measurement[float64]) (f
 	}
 
 	return 0, false
-}
-
-/*
-directionalTarget returns the ledger target transform for one symbol: a
-directional call on the log return over the resolved horizon, deadbanded by one
-typical per-step log-return move. A call therefore requires the cumulative move
-to exceed the symbol's own recent noise, which keeps the same target honest for
-symbols priced orders of magnitude apart. Before the noise estimate firms up the
-deadband is zero and the head learns raw direction, which recursive least
-squares averages out.
-*/
-func (solver *Solver) directionalTarget(symbolName string) core.Primitive {
-	return &directionalTarget{
-		scale: func() float64 {
-			loader, found := solver.returnNoise.Load(symbolName)
-
-			if !found {
-				return 0
-			}
-
-			tracker, valid := loader.(*returnNoiseTracker)
-
-			if !valid {
-				return 0
-			}
-
-			if scale, ready := tracker.scale(); ready {
-				return scale
-			}
-
-			return 0
-		},
-	}
-}
-
-/*
-directionalTarget measures directional log return deadbanded by empirical step noise.
-*/
-type directionalTarget struct {
-	err   error
-	scale func() float64
-	out   float64
-}
-
-func (op *directionalTarget) Next(
-	in iter.Seq[unsafe.Pointer],
-) iter.Seq[unsafe.Pointer] {
-	return func(yield func(unsafe.Pointer) bool) {
-		for arriving := range in {
-			sample := (*learning.Observation)(arriving)
-
-			if sample.Current <= 0 || sample.Past <= 0 {
-				op.Error(fmt.Errorf(
-					"%w: resonance: directional target references must be positive",
-					core.ErrDomain,
-				))
-				return
-			}
-
-			logReturn := math.Log(sample.Current / sample.Past)
-			deadband := op.scale()
-			op.out = 0.0
-
-			if math.Abs(logReturn) > deadband {
-				if logReturn > 0 {
-					op.out = 1.0
-				}
-				if logReturn < 0 {
-					op.out = -1.0
-				}
-			}
-
-			if !yield(unsafe.Pointer(&op.out)) {
-				return
-			}
-		}
-	}
-}
-
-func (op *directionalTarget) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }
 
 /*
@@ -696,23 +549,6 @@ func (solver *Solver) publishReturns(
 		measurement.SetMetric("surprise", data.Metric[float64]{
 			Label: "surprise",
 			Raw:   out.Reading.Surprise,
-		})
-		measurement.SetMetric("task_skill", data.Metric[float64]{
-			Label: "task_skill",
-			Raw:   out.Reading.SkillAverage,
-		})
-		measurement.SetMetric("task_relative_precision", data.Metric[float64]{
-			Label: "task_relative_precision",
-			Raw:   out.Reading.PrecisionAverage,
-		})
-	}
-
-	// Add forward curve as indexed metrics
-	for i, val := range out.ForwardCurve {
-		label := fmt.Sprintf("forward_curve_%d", i)
-		measurement.SetMetric(label, data.Metric[float64]{
-			Label: label,
-			Raw:   val,
 		})
 	}
 

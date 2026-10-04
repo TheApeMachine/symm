@@ -95,7 +95,6 @@ var (
 
 			uiTee := ui.NewUITee(
 				ctx, "uiTee",
-				1,
 				func(measurement *data.Measurement[float64]) bool {
 					return types.Filters(measurement)
 				},
@@ -231,7 +230,6 @@ var (
 			hub.Transition(nmruntime.READY)
 
 			manifoldSolver := manifold.NewSolver(ctx, data.NewArenaOwner(4096), book)
-			hub.SetManifoldSource(manifoldSolver)
 			book.SetNotify(func(symbol string, _ time.Time) {
 				manifoldSolver.Wake(symbol)
 			})
@@ -444,6 +442,7 @@ var (
 
 									tick++
 									measurement.Tick = tick
+									measurement.SeqIdx = tick
 
 									measurement.Label = tradeItem.Symbol
 									measurement.At = tradeItem.Timestamp

@@ -78,9 +78,9 @@ func trainingFixture(
 	signal("cvd", 7, 70)
 	signal("hawkes", 8, 80)
 	signal("cvd", 10, 101)
-	signal("resonance", 11, 103)
+	signal("depthflow", 11, 103)
 	signal("liquidity", 12, 104)
-	signal("manifold", 15, 105)
+	signal("cvd", 15, 105)
 
 	So(writer.CommitReady(ctx, true), ShouldBeNil)
 
@@ -145,11 +145,27 @@ func TestTraining_Train(t *testing.T) {
 		})
 	})
 
-	Convey("Given a past run with a stored excursion that does not clear friction", t, func() {
+	Convey("Given a past run with a trade tape that does not clear friction", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		training := trainingFixture(t, ctx, detection(60000, 60010))
+		training := trainingFixture(t, ctx, func(writer *tables.Writer, epoch int64) {
+			for tick, price := range map[int64]string{
+				10: "60000", 11: "60005", 15: "60010", 16: "60008",
+			} {
+				exact, err := decimal.NewFromString(price)
+				So(err, ShouldBeNil)
+
+				trade := data.NewMeasurement("spot:trade", map[string]data.Metric[float64]{
+					"price": {Raw: exact.Float64(), Exact: exact},
+				})
+				trade.Epoch = epoch
+				trade.Label = "BTC/USD"
+				trade.Tick = tick
+				trade.SeqIdx = tick
+				writer.Add("measurements", data.Publication{Measurement: trade})
+			}
+		})
 
 		Convey("It remains in WAITING without training on the losing excursion", func() {
 			So(training.Status(), ShouldEqual, runtime.WAITING)
@@ -198,5 +214,97 @@ func TestRegionToken(t *testing.T) {
 
 		tok := training.token()
 		So(tok, ShouldBeNil)
+	})
+}
+
+func TestTraining_Step(t *testing.T) {
+	Convey("Given a Training instance with an off-ramp worker", t, func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		catalog := tablestest.New(t)
+		normalizer := spot.NewNormalizer()
+		price := broker.NewPrice(ctx, nil, nil, nil, normalizer)
+		desk := broker.NewDesk(ctx, nil, price)
+		storeTee := hindsight.NewStoreTee(ctx, "storeTee")
+		storeTee.Transition(runtime.READY)
+
+		training := NewTraining(
+			ctx, data.NewArenaOwner(4096), price, desk, catalog, storeTee, 1000,
+		)
+
+		testUITee := hindsight.NewStoreTee(ctx, "uiTee")
+		testUITee.Transition(runtime.READY)
+		training.SetUITee(testUITee)
+
+		Convey("Step enqueues without back-pressure and the off-ramp worker processes it", func() {
+			val := 1.23
+			measurement := data.NewMeasurement[float64]("cvd", map[string]data.Metric[float64]{
+				"price": {Raw: 60000, Deformation: &val},
+			})
+			measurement.Epoch = 1000
+			measurement.Label = "BTC/USD"
+			measurement.Tick = 1
+			measurement.SeqIdx = 1
+
+			result := training.Step(measurement)
+			So(result, ShouldBeNil)
+
+			deadline := time.After(2 * time.Second)
+
+			for testUITee.Pending() == 0 {
+				select {
+				case <-deadline:
+					t.Fatal("timed out waiting for off-ramp worker to process measurement")
+				case <-time.After(10 * time.Millisecond):
+				}
+			}
+
+			out := popMeasurement(testUITee)
+			So(out, ShouldNotBeNil)
+			So(out.Source, ShouldEqual, "training")
+			So(out.Label, ShouldEqual, "BTC/USD")
+		})
+	})
+}
+
+func TestTraining_TriadGate(t *testing.T) {
+	Convey("Given a Training component with triad gating", t, func() {
+		training := &Training{}
+
+		Convey("When resonance surprise is positive and manifold impedance is clear", func() {
+			resonanceM := data.NewMeasurement[float64]("resonance", map[string]data.Metric[float64]{
+				"surprise": {Raw: 1.5},
+			})
+			manifoldM := data.NewMeasurement[float64]("manifold", map[string]data.Metric[float64]{
+				"kuramoto_r":         {Raw: 0.4},
+				"pressure_grad_norm": {Raw: 0.1},
+			})
+
+			So(training.authorized(resonanceM, manifoldM), ShouldBeTrue)
+		})
+
+		Convey("When resonance surprise is zero (equilibrium churn), entry is vetoed", func() {
+			resonanceM := data.NewMeasurement[float64]("resonance", map[string]data.Metric[float64]{
+				"surprise": {Raw: 0.0},
+			})
+			manifoldM := data.NewMeasurement[float64]("manifold", map[string]data.Metric[float64]{
+				"kuramoto_r": {Raw: 0.4},
+			})
+
+			So(training.authorized(resonanceM, manifoldM), ShouldBeFalse)
+		})
+
+		Convey("When manifold has complete locked synchronization and opposing pressure, entry is vetoed", func() {
+			resonanceM := data.NewMeasurement[float64]("resonance", map[string]data.Metric[float64]{
+				"surprise": {Raw: 2.0},
+			})
+			manifoldM := data.NewMeasurement[float64]("manifold", map[string]data.Metric[float64]{
+				"kuramoto_r":         {Raw: 1.0},
+				"pressure_grad_norm": {Raw: 5.0},
+			})
+
+			So(training.authorized(resonanceM, manifoldM), ShouldBeFalse)
+		})
 	})
 }

@@ -2,233 +2,309 @@ package strategy
 
 import (
 	"context"
-	"fmt"
 	"iter"
+	"math/big"
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
 /*
 Detector scans market tape from beginning to end.
-Given that we have the raw market data, directly from the spot
-WebSocket, stored as *data.Measurement[float64] frames, we do
-not need to do much complex math or actual "detection".
-All we need to do is find the lowest and highest points on a
-length of tape, provided that lowest point is before that highest
-point, and pull that sub-slice out as the excursion (with a little)
-extra on each side of course.
+Given raw spot trade measurements, the detector finds the single best
+causal low -> high excursion for each symbol and epoch.
+The scan is streaming and O(1). It keeps:
+
+- the running trough, which is the best possible low for future highs;
+- the best completed excursion observed anywhere in the tape so far.
+
+These are separate pieces of state. A later lower wick may replace the
+running trough without destroying an earlier, larger completed excursion.
 */
 type Detector struct {
 	*runtime.System
 	storeTee runtime.Tee
+	price    *broker.Price
 }
 
 /*
-NewDetector creates a new detector, and instantiates a queue we will
-use to store our detected excursions.
+NewDetector creates a new detector and stores the tee used to publish
+detected excursions.
 */
 func NewDetector(
-	ctx context.Context, storeTee runtime.Tee,
+	ctx context.Context,
+	storeTee runtime.Tee,
+	price *broker.Price,
 ) *Detector {
 	return &Detector{
 		System:   runtime.NewSystem(ctx, "detector"),
 		storeTee: storeTee,
+		price:    price,
 	}
 }
 
 /*
-Scan scans the tape once from beginning to end and keeps, per epoch and
-symbol, the low/high pair with the largest relative gain where the low comes
-before the high. The running trough is the only candidate low: any later high
-is measured against the lowest price seen before it.
-Since we store all data the system produces in its "native" format,
-meaning *data.Measurement[float64], we have to realize that there is only
-one Iceberg table (measurements), and we must rely on the measurement.Source
-field (which is the stage that produced the measurement, like spot:trade,
-correlation:trade, resonance, etc.), and the measurement.Label, which is
-the symbol (meaning "ETH", "BTC", etc), to make sure we are not doing something
-degenerate like mixing ticker, trade, and level3 accidentally as the tape.
+Scan scans the tape once from beginning to end.
+For each contiguous symbol/epoch tape, the detector finds the causal
+low/high pair having the largest gross price multiplier:
 
-NOTE: While I was here, I went ahead and moved to using an iterator, which will
-greatly reduce the memory consumption of this part of the system.
+highPrice / lowPrice
 
-NOTE: I just realized we can make this even simpler, and just get the Epoch and
-SeqIdx, then store that in an Iceberg table. That basically gives us a way to
-query the exact excursion, directly from the catalog, which also gives us a
-clean way to do the scan for each historical tape fragment only once.
+subject to:
+
+lowTick < highTick
+
+The running trough is the minimum price observed before the current trade.
+Every valid future high is evaluated against that trough.
+Once a completed excursion becomes the best excursion seen so far, it is
+retained independently of subsequent trough changes. This prevents a late
+stop-loss wick from destroying an earlier macro move.
+If two excursions have exactly the same gain, the wider excursion wins.
+Only the winning low/high coordinates are retained. The complete native
+tape fragment can later be recovered from storage using its epoch and
+sequence coordinates.
 */
 func (detector *Detector) Scan(
 	measurements iter.Seq[*data.Measurement[float64]],
-) ([]*data.Measurement[float64], error) {
+) {
 	var (
-		detections    []*data.Measurement[float64]
-		currentEpoch  int64
-		currentSymbol string
-		symbolTrades  []*data.Measurement[float64]
+		active bool
+
+		// Active tape.
+		epoch     int64
+		symbol    string
+		startIdx  int64
+		startTick int64
+
+		// Running trough.
+		troughPrice *decimal.Decimal
+		troughIdx   int64
+		troughTick  int64
+		troughAt    time.Time
+
+		// Best completed excursion.
+		bestGain      *big.Rat
+		bestLowPrice  *decimal.Decimal
+		bestLowIdx    int64
+		bestLowTick   int64
+		bestLowAt     time.Time
+		bestHighPrice *decimal.Decimal
+		bestHighIdx   int64
+		bestHighTick  int64
+		bestHighAt    time.Time
 	)
 
-	flushSymbol := func() {
-		if len(symbolTrades) < 3 {
+	reset := func(measurement *data.Measurement[float64]) {
+		active = true
+
+		epoch = measurement.Epoch
+		symbol = measurement.Label
+		startIdx = measurement.SeqIdx
+		startTick = measurement.Tick
+
+		troughPrice = nil
+		troughIdx = 0
+		troughTick = 0
+		troughAt = time.Time{}
+
+		bestGain = nil
+
+		bestLowPrice = nil
+		bestLowIdx = 0
+		bestLowTick = 0
+		bestLowAt = time.Time{}
+
+		bestHighPrice = nil
+		bestHighIdx = 0
+		bestHighTick = 0
+		bestHighAt = time.Time{}
+	}
+
+	flush := func() {
+		if !active {
 			return
 		}
 
-		bestLowIdx := -1
-		bestHighIdx := -1
-		var (
-			bestPLow  *decimal.Decimal
-			bestPHigh *decimal.Decimal
-		)
-
-		// Start candidate low at index 1 so that trade 0 provides precursor tape.
-		runningLowIdx := 1
-
-		for j := 2; j < len(symbolTrades); j++ {
-			pLow := symbolTrades[runningLowIdx].GetMetric("price").Exact
-			pHigh := symbolTrades[j].GetMetric("price").Exact
-
-			if pLow == nil || pHigh == nil || pLow.Sign() <= 0 || pHigh.Sign() <= 0 {
-				continue
-			}
-
-			if pHigh.Cmp(pLow) > 0 {
-				isBetter := false
-
-				if bestPLow == nil {
-					isBetter = true
-				}
-
-				if bestPLow != nil {
-					crossNew := exactProduct(pHigh, bestPLow)
-					crossBest := exactProduct(bestPHigh, pLow)
-					cmpVal := crossNew.Cmp(crossBest)
-
-					if cmpVal > 0 {
-						isBetter = true
-					}
-
-					if cmpVal == 0 && (j-runningLowIdx) > (bestHighIdx-bestLowIdx) {
-						isBetter = true
-					}
-				}
-
-				if isBetter {
-					bestLowIdx = runningLowIdx
-					bestHighIdx = j
-					bestPLow = pLow
-					bestPHigh = pHigh
-				}
-			}
-
-			if pHigh.Cmp(pLow) < 0 {
-				runningLowIdx = j
-			}
-		}
-
-		if bestLowIdx < 1 || bestHighIdx <= bestLowIdx {
+		if bestLowPrice == nil || bestHighPrice == nil {
 			return
 		}
 
-		low := symbolTrades[bestLowIdx]
-		high := symbolTrades[bestHighIdx]
-		spanTrades := bestHighIdx - bestLowIdx
-
-		// Point A: additional tape to the start for precursor detection
-		startTradeIdx := max(0, bestLowIdx-spanTrades)
-		startTrade := symbolTrades[startTradeIdx]
-
-		startTick := startTrade.Tick
-		startSeqIdx := startTrade.SeqIdx
-
-		if startSeqIdx <= 0 {
-			startSeqIdx = 1
+		if bestLowTick >= bestHighTick {
+			return
 		}
 
-		detection := detector.Flush(
-			currentSymbol,
-			currentEpoch,
-			startSeqIdx,
-			low.SeqIdx,
-			high.SeqIdx,
+		if !detector.clearFriction(
+			bestLowPrice,
+			bestHighPrice,
+			symbol,
+		) {
+			return
+		}
+
+		detector.Flush(
+			symbol,
+			epoch,
+			startIdx,
 			startTick,
-			low.Tick,
-			high.Tick,
-			low.At,
-			high.At,
-			low.GetMetric("price").Exact,
-			high.GetMetric("price").Exact,
+			bestLowIdx,
+			bestHighIdx,
+			bestLowTick,
+			bestHighTick,
+			bestLowAt,
+			bestHighAt,
+			bestLowPrice,
+			bestHighPrice,
 		)
-
-		if detection != nil {
-			detections = append(detections, detection)
-		}
 	}
 
 	for measurement := range measurements {
+		if measurement == nil {
+			continue
+		}
+
 		if measurement.Source != "spot:trade" {
 			continue
 		}
 
+		// Start a new tape, or flush the completed tape when its
+		// symbol/epoch boundary is crossed.
+		if !active {
+			reset(measurement)
+		}
+
+		if measurement.Label != symbol || measurement.Epoch != epoch {
+			flush()
+			reset(measurement)
+		}
+
 		price := measurement.GetMetric("price").Exact
-
-		if price == nil {
-			return detections, errnie.Error(errnie.Err(
-				errnie.Validation,
-				fmt.Sprintf(
-					"[detector] trade %d/%s/%d has no exact price",
-					measurement.Epoch, measurement.Label, measurement.Tick,
-				),
-				nil,
-			))
+		if price == nil || price.Sign() <= 0 {
+			continue
 		}
 
-		if currentEpoch == 0 || currentEpoch != measurement.Epoch || currentSymbol != measurement.Label {
-			flushSymbol()
-			currentEpoch = measurement.Epoch
-			currentSymbol = measurement.Label
-			symbolTrades = symbolTrades[:0]
+		// Maintain the running minimum.
+		// Equal prices deliberately do not replace the existing trough.
+		// Keeping the earliest occurrence gives the widest interval when
+		// the same low price occurs multiple times.
+		if troughPrice == nil || price.Cmp(troughPrice) < 0 {
+			troughPrice = price
+			troughIdx = measurement.SeqIdx
+			troughTick = measurement.Tick
+			troughAt = measurement.At
+			continue
 		}
 
-		symbolTrades = append(symbolTrades, measurement)
+		// A valid excursion must be causal and must actually rise from
+		// the current trough.
+		if measurement.Tick <= troughTick {
+			continue
+		}
+
+		if price.Cmp(troughPrice) <= 0 {
+			continue
+		}
+
+		// Gross return ratio for the candidate excursion.
+		// Rational representation preserves exact arithmetic precision
+		// without truncation or scale artifacts.
+		gain := new(big.Rat).Quo(price.Rat(), troughPrice.Rat())
+
+		if bestGain != nil {
+			cmp := gain.Cmp(bestGain)
+
+			// Strictly worse than the best completed excursion.
+			if cmp < 0 {
+				continue
+			}
+
+			// For identical gains, retain the widest tape fragment.
+			if cmp == 0 {
+				candidateSpan := measurement.Tick - troughTick
+				bestSpan := bestHighTick - bestLowTick
+
+				if candidateSpan <= bestSpan {
+					continue
+				}
+			}
+		}
+
+		// This trough -> current price pair is now the globally best
+		// completed excursion observed in this symbol/epoch.
+		// Crucially, these values are independent from the running
+		// trough after being recorded. A later lower wick cannot erase
+		// this excursion unless a subsequent rally actually beats it.
+		bestGain = gain
+
+		bestLowPrice = troughPrice
+		bestLowIdx = troughIdx
+		bestLowTick = troughTick
+		bestLowAt = troughAt
+
+		bestHighPrice = price
+		bestHighIdx = measurement.SeqIdx
+		bestHighTick = measurement.Tick
+		bestHighAt = measurement.At
 	}
 
-	flushSymbol()
-	return detections, nil
+	// Flush the final active tape after the iterator is exhausted.
+	flush()
 }
 
 /*
-exactProduct multiplies two decimals without rounding. The SDK rounds a
-product to the left operand's scale, so the left operand carries both scales.
+clearFriction verifies that the selected excursion remains profitable after
+round-trip taker friction.
 */
-func exactProduct(left, right *decimal.Decimal) *decimal.Decimal {
-	return left.SetScale(left.GetScale() + right.GetScale()).Mul(right)
+func (detector *Detector) clearFriction(
+	lowPrice *decimal.Decimal,
+	highPrice *decimal.Decimal,
+	symbol string,
+) bool {
+	if lowPrice == nil ||
+		highPrice == nil ||
+		lowPrice.Sign() <= 0 ||
+		highPrice.Sign() <= 0 {
+		return false
+	}
+
+	if detector.price == nil {
+		return highPrice.Cmp(lowPrice) > 0
+	}
+
+	pnl, _, err := detector.price.RoundTrip(
+		symbol,
+		lowPrice,
+		highPrice,
+	)
+
+	if err != nil || pnl == nil {
+		return false
+	}
+
+	return pnl.Sign() > 0
 }
 
 /*
-Flush the detection to the storeTee to queue it up for shipping to the
-Iceberg tables as a *data.Measurement[float64] shape, and return it.
+Flush writes the detected excursion to storeTee.
+The stored epoch and sequence coordinates identify the exact contiguous
+historical tape fragment from the winning low through the winning high.
 */
 func (detector *Detector) Flush(
 	symbol string,
 	epoch int64,
 	startIdx int64,
+	startTick int64,
 	lowIdx int64,
 	highIdx int64,
-	startTick int64,
 	lowTick int64,
 	highTick int64,
 	lowAt time.Time,
 	highAt time.Time,
-	lowest *decimal.Decimal,
-	highest *decimal.Decimal,
+	lowPrice *decimal.Decimal,
+	highPrice *decimal.Decimal,
 ) *data.Measurement[float64] {
-	if epoch == 0 || lowIdx == 0 || highIdx == 0 {
-		return nil
-	}
-
 	metrics := map[string]data.Metric[float64]{
 		"StartSeqIdx": data.NewMetric[float64](
 			"start_seq_idx",
@@ -237,6 +313,7 @@ func (detector *Detector) Flush(
 			0,
 			1,
 		).Write(float64(startIdx)),
+
 		"LowSeqIdx": data.NewMetric[float64](
 			"low_seq_idx",
 			data.UnitCount,
@@ -244,6 +321,7 @@ func (detector *Detector) Flush(
 			0,
 			1,
 		).Write(float64(lowIdx)),
+
 		"HighSeqIdx": data.NewMetric[float64](
 			"high_seq_idx",
 			data.UnitCount,
@@ -251,6 +329,7 @@ func (detector *Detector) Flush(
 			0,
 			1,
 		).Write(float64(highIdx)),
+
 		"StartTick": data.NewMetric[float64](
 			"start_tick",
 			data.UnitCount,
@@ -258,6 +337,7 @@ func (detector *Detector) Flush(
 			0,
 			1,
 		).Write(float64(startTick)),
+
 		"LowTick": data.NewMetric[float64](
 			"low_tick",
 			data.UnitCount,
@@ -265,6 +345,7 @@ func (detector *Detector) Flush(
 			0,
 			1,
 		).Write(float64(lowTick)),
+
 		"HighTick": data.NewMetric[float64](
 			"high_tick",
 			data.UnitCount,
@@ -272,30 +353,22 @@ func (detector *Detector) Flush(
 			0,
 			1,
 		).Write(float64(highTick)),
-	}
 
-	if lowest != nil {
-		metric := data.NewMetric[float64](
+		"LowPrice": data.NewMetric[float64](
 			"low_price",
 			data.UnitCurrency,
 			data.TimescaleInstantaneous,
 			0,
 			1,
-		).Write(lowest.Float64())
-		metric.Exact = lowest
-		metrics["LowPrice"] = metric
-	}
+		).Write(lowPrice.Float64()),
 
-	if highest != nil {
-		metric := data.NewMetric[float64](
+		"HighPrice": data.NewMetric[float64](
 			"high_price",
 			data.UnitCurrency,
 			data.TimescaleInstantaneous,
 			0,
 			1,
-		).Write(highest.Float64())
-		metric.Exact = highest
-		metrics["HighPrice"] = metric
+		).Write(highPrice.Float64()),
 	}
 
 	measurement := data.NewMeasurement(
@@ -310,10 +383,12 @@ func (detector *Detector) Flush(
 	measurement.From = lowAt
 	measurement.Timestamp = time.Now().UnixNano()
 
-	detector.storeTee.Push(data.NewPublication(
-		measurement,
-		nil,
-	))
+	detector.storeTee.Push(
+		data.NewPublication(
+			measurement,
+			nil,
+		),
+	)
 
 	return measurement
 }

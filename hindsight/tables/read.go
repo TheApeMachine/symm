@@ -167,7 +167,10 @@ func (catalog *Catalog) Scan(ctx context.Context, tableName string, epoch int64,
 			rows = append(rows, measurement)
 		}
 		sort.SliceStable(rows, func(i, j int) bool {
-			return rows[i].SeqIdx < rows[j].SeqIdx
+			if rows[i].SeqIdx != rows[j].SeqIdx {
+				return rows[i].SeqIdx < rows[j].SeqIdx
+			}
+			return rows[i].Tick < rows[j].Tick
 		})
 		for _, measurement := range rows {
 			if !yield(measurement) {

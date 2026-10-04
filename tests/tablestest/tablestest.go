@@ -12,6 +12,7 @@ package tablestest
 import (
 	"context"
 	"database/sql"
+	"path/filepath"
 	"testing"
 
 	"github.com/apache/iceberg-go/catalog"
@@ -43,7 +44,7 @@ func Underlying(t testing.TB) catalog.Catalog {
 	t.Helper()
 
 	warehouse := t.TempDir()
-	db, err := sql.Open("sqlite", ":memory:")
+	db, err := sql.Open("sqlite", filepath.Join(warehouse, "catalog.db"))
 
 	if err != nil {
 		t.Fatalf("tablestest: open sqlite: %v", err)

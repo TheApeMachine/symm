@@ -72,9 +72,7 @@ func Filters(measurement *data.Measurement[float64]) bool {
 
 		return isLogic(measurement, "resonance")
 	case "fluid":
-		// ManifoldFrame is owned by Hub.ManifoldSource (solver.Reading → EncodeManifold).
-		// Measurement hitchhike of Result.(*ManifoldState) is not the fluid stream.
-		return false
+		return isLogic(measurement, "manifold")
 	default:
 		return false
 	}

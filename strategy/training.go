@@ -6,9 +6,7 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"math/rand/v2"
 	"slices"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -35,23 +33,27 @@ paper trades the live market with it. Realized round trips refine the trie.
 */
 type Training struct {
 	*runtime.System
-	arena     *data.ArenaOwner
-	grid      *store.Grid
-	engine    *cognition.Engine
-	detector  *Detector
-	reporter  *Reporter
-	catalog   *tables.Catalog
-	price     *broker.Price
-	desk      *broker.Desk
-	uiTee     runtime.Tee
-	epoch     int64
-	mu        sync.Mutex
-	episodes  map[string]*episode
-	fragments []ui.TrainedFragment
-	resolved  int64
-	wins      int64
-	returns   float64
-	passes    atomic.Int64
+	arena        *data.ArenaOwner
+	grid         *store.Grid
+	engine       *cognition.Engine
+	detector     *Detector
+	reporter     *Reporter
+	catalog      *tables.Catalog
+	price        *broker.Price
+	desk         *broker.Desk
+	storeTee     runtime.Tee
+	uiTee        runtime.Tee
+	epoch        int64
+	detectorDone chan struct{}
+	scanOnce     sync.Once
+	ingress      chan *data.Measurement[float64]
+	mu           sync.Mutex
+	episodes     map[string]*episode
+	fragments    []ui.TrainedFragment
+	resolved     int64
+	wins         int64
+	returns      float64
+	passes       atomic.Int64
 }
 
 /*
@@ -77,21 +79,25 @@ func NewTraining(
 	epoch int64,
 ) *Training {
 	training := &Training{
-		System:   runtime.NewSystem(ctx, "training", price),
-		arena:    arena,
-		grid:     store.NewGrid(),
-		engine:   cognition.NewEngine(cognition.Config{}),
-		detector: NewDetector(ctx, storeTee),
-		reporter: NewReporter(),
-		catalog:  catalog,
-		price:    price,
-		desk:     desk,
-		epoch:    epoch,
-		episodes: make(map[string]*episode),
+		System:       runtime.NewSystem(ctx, "training", price),
+		arena:        arena,
+		grid:         store.NewGrid(),
+		engine:       cognition.NewEngine(cognition.Config{MemoryScale: 1.0}),
+		detector:     NewDetector(ctx, storeTee, price),
+		reporter:     NewReporter(),
+		catalog:      catalog,
+		price:        price,
+		desk:         desk,
+		storeTee:     storeTee,
+		epoch:        epoch,
+		detectorDone: make(chan struct{}),
+		ingress:      make(chan *data.Measurement[float64], 65536),
+		episodes:     make(map[string]*episode),
 	}
 
 	desk.OnClose(training.settle)
 	training.Transition(runtime.INIT)
+	go training.offRampLoop()
 	return training
 }
 
@@ -125,17 +131,58 @@ func (training *Training) CognitionTree() cognition.CognitionTreeExport {
 }
 
 /*
-Step processes the live market signal across three operational stages:
- 1. Grid development (INIT): develops the grid until settled, then checkpoints it.
- 2. Trie loading (WAITING): Train loads historical excursions into the trie.
- 3. Paper trading (READY): live frames are classified and traded through the Desk.
+Step enqueues the live market measurement onto the internal off-ramp worker
+channel and returns immediately, decoupling the Disruptor ring buffer from
+training, classification, and reporting latency.
 */
 func (training *Training) Step(prior *data.Measurement[float64]) *data.Measurement[float64] {
 	if prior == nil {
 		return nil
 	}
 
-	out := training.arena.NewMeasurement(training.Name())
+	select {
+	case <-training.Context().Done():
+		return nil
+	case training.ingress <- prior:
+	default:
+		errnie.Error(errnie.Err(
+			errnie.Internal,
+			"[training] ingress buffer saturated; dropping measurement to protect pipeline throughput",
+			nil,
+		))
+	}
+
+	return nil
+}
+
+/*
+offRampLoop continuously drains the ingress channel sequentially in causal order,
+executing grid updates, paper trading, and UI reporting.
+*/
+func (training *Training) offRampLoop() {
+	for {
+		select {
+		case <-training.Context().Done():
+			return
+		case prior, ok := <-training.ingress:
+			if !ok {
+				return
+			}
+
+			training.process(prior)
+		}
+	}
+}
+
+/*
+process executes the sequential training, paper trading, and reporting steps for one measurement.
+*/
+func (training *Training) process(prior *data.Measurement[float64]) {
+	if prior == nil {
+		return
+	}
+
+	out := data.NewMeasurement[float64](training.Name())
 	out.Epoch = prior.Epoch
 	out.Tick = prior.Tick
 	out.SeqIdx = prior.SeqIdx
@@ -156,9 +203,14 @@ func (training *Training) Step(prior *data.Measurement[float64]) *data.Measureme
 	}
 
 	status := training.Status()
+	sensory := sensoryMeasurements(prior)
+
+	if len(sensory) > 0 {
+		training.grid.Update(sensory...)
+	}
 
 	if status == runtime.INIT {
-		training.develop(prior, out, &snapshot)
+		training.develop(out, &snapshot)
 	}
 
 	if status == runtime.WAITING {
@@ -172,18 +224,20 @@ func (training *Training) Step(prior *data.Measurement[float64]) *data.Measureme
 
 	snapshot.Resolved, snapshot.WinRate, snapshot.Edge = training.score()
 	training.reporter.Populate(out, snapshot)
-	return out
+
+	if training.uiTee != nil {
+		training.uiTee.Push(data.NewPublication(out, nil))
+	}
 }
 
 /*
 develop grows the grid and checkpoints it once it settles.
 */
 func (training *Training) develop(
-	prior, out *data.Measurement[float64], snapshot *ReportSnapshot,
+	out *data.Measurement[float64], snapshot *ReportSnapshot,
 ) {
 	snapshot.Stage = StageModelDevelopment
 	snapshot.Blocker = "grid developing"
-	training.grid.Update(prior)
 
 	if !training.grid.IsSettled() {
 		return
@@ -228,10 +282,11 @@ func (training *Training) trade(prior *data.Measurement[float64], snapshot *Repo
 	snapshot.Trading = true
 
 	symbol := prior.Label
-	tokens := training.grid.LitRegions(prior)
+	sensory := sensoryMeasurements(prior)
+	tokens := training.grid.LitRegions(sensory...)
 	snapshot.RegionTokens = tokens
 
-	tok := training.token(prior)
+	tok := training.token(sensory...)
 
 	if len(tok) == 0 {
 		return
@@ -269,13 +324,18 @@ func (training *Training) trade(prior *data.Measurement[float64], snapshot *Repo
 	}
 
 	if state == broker.FLAT && action == cognition.ActionEnter {
-		training.act(
-			symbol,
-			training.desk.Enter,
-			func(held *episode, context []byte) { held.entry = context },
-			question,
-		)
-		snapshot.Action = 1
+		resonanceM := solverMeasurement(prior, "resonance")
+		manifoldM := solverMeasurement(prior, "manifold")
+
+		if training.authorized(resonanceM, manifoldM) {
+			training.act(
+				symbol,
+				training.desk.Enter,
+				func(held *episode, context []byte) { held.entry = context },
+				question,
+			)
+			snapshot.Action = 1
+		}
 	}
 
 	if state == broker.HOLDING && action == cognition.ActionExit {
@@ -287,6 +347,92 @@ func (training *Training) trade(prior *data.Measurement[float64], snapshot *Repo
 		)
 		snapshot.Action = 2
 	}
+}
+
+/*
+sensoryMeasurements filters a measurement and its peers to retain only Stage 0
+sensory signal producers, excluding higher-order cognitive and physical solvers.
+*/
+func sensoryMeasurements(prior *data.Measurement[float64]) []*data.Measurement[float64] {
+	if prior == nil {
+		return nil
+	}
+
+	if prior.Source != "runtime:join" {
+		if prior.Source != "resonance" && prior.Source != "manifold" {
+			return []*data.Measurement[float64]{prior}
+		}
+
+		return nil
+	}
+
+	var sensory []*data.Measurement[float64]
+
+	for _, peer := range prior.Peers {
+		if peer == nil {
+			continue
+		}
+
+		if peer.Source == "resonance" || peer.Source == "manifold" {
+			continue
+		}
+
+		sensory = append(sensory, peer)
+	}
+
+	return sensory
+}
+
+/*
+solverMeasurement locates a specific solver producer measurement from prior or its peers.
+*/
+func solverMeasurement(prior *data.Measurement[float64], source string) *data.Measurement[float64] {
+	if prior == nil {
+		return nil
+	}
+
+	if prior.Source == source {
+		return prior
+	}
+
+	for _, peer := range prior.Peers {
+		if peer != nil && peer.Source == source {
+			return peer
+		}
+	}
+
+	return nil
+}
+
+/*
+authorized applies the execution triad gate:
+ 1. Resonance: Verifies presence of structural shock / dislocation (Surprise > 0),
+    vetoing entries during predictable equilibrium churn.
+ 2. Manifold: Verifies the order book medium permits wave propagation, vetoing
+    entries if resting orders exhibit locked synchronization opposing the move.
+*/
+func (training *Training) authorized(
+	resonanceM, manifoldM *data.Measurement[float64],
+) bool {
+	if resonanceM != nil {
+		if surpriseMetric, ok := resonanceM.LookupMetric("surprise"); ok {
+			if surpriseMetric.Raw <= 0 {
+				return false
+			}
+		}
+	}
+
+	if manifoldM != nil {
+		if rMetric, ok := manifoldM.LookupMetric("kuramoto_r"); ok {
+			if rMetric.Raw >= 1.0 {
+				if pressMetric, ok := manifoldM.LookupMetric("pressure_grad_norm"); ok && pressMetric.Raw > 0 {
+					return false
+				}
+			}
+		}
+	}
+
+	return true
 }
 
 /*
@@ -461,6 +607,8 @@ func (training *Training) Passes() int64 {
 
 func (training *Training) Train() {
 	go func() {
+		go training.runDetectorScan()
+
 		for training.Status() == runtime.INIT {
 			select {
 			case <-training.Context().Done():
@@ -469,103 +617,180 @@ func (training *Training) Train() {
 			}
 		}
 
-		for training.Status() == runtime.WAITING {
-			trained, latest, seenCount, err := training.trainPass()
-			training.passes.Add(1)
+		select {
+		case <-training.Context().Done():
+			return
+		case <-training.detectorDone:
+		}
+
+		if training.Status() != runtime.WAITING {
+			return
+		}
+
+		trained, latest, seenCount, err := training.trainPass()
+		training.passes.Add(1)
+
+		if err != nil {
+			training.Error(errnie.Err(errnie.BadGateway, "[training] failed during training pass", err))
+			return
+		}
+
+		if trained > 0 && training.engine.Len() > 0 {
+			snapshot, err := training.engine.Snapshot()
+
+			if err == nil {
+				err = training.catalog.PutBlob(
+					training.Context(), fmt.Sprintf("trie/%d", latest), snapshot.Model,
+				)
+			}
 
 			if err != nil {
-				training.Error(errnie.Err(errnie.BadGateway, "[training] failed during training pass", err))
-				return
+				errnie.Error(errnie.Err(errnie.IO, "[training] unable to checkpoint trie", err))
 			}
 
-			if trained > 0 && training.engine.Len() > 0 {
-				snapshot, err := training.engine.Snapshot()
+			errnie.Info(fmt.Sprintf(
+				"[training] trie loaded from %d of %d excursions (%d records)",
+				trained, seenCount, training.engine.Len(),
+			))
 
-				if err == nil {
-					err = training.catalog.PutBlob(
-						training.Context(), fmt.Sprintf("trie/%d", latest), snapshot.Model,
-					)
-				}
-
-				if err != nil {
-					errnie.Error(errnie.Err(errnie.IO, "[training] unable to checkpoint trie", err))
-				}
-
-				errnie.Info(fmt.Sprintf(
-					"[training] trie loaded from %d of %d excursions (%d records)",
-					trained, seenCount, training.engine.Len(),
-				))
-
-				training.Transition(runtime.READY)
-				return
-			}
-
-			select {
-			case <-training.Context().Done():
-				return
-			case <-time.After(time.Second):
-			}
+			training.Transition(runtime.READY)
 		}
 	}()
 }
 
-func (training *Training) trainPass() (int, int64, int, error) {
-	runs, err := training.catalog.Runs(training.Context())
+/*
+runDetectorScan runs as its own background process.
+It finds the latest measurement where source = detector, and scans any new
+trade tape collected for epochs strictly before the current run's epoch
+(epoch < training.epoch). Once all prior tape before the current epoch is
+exhausted, the process exits.
+*/
+func (training *Training) runDetectorScan() {
+	defer training.scanOnce.Do(func() {
+		close(training.detectorDone)
+	})
 
+	if training.catalog == nil {
+		return
+	}
+
+	ctx := training.Context()
+
+	var (
+		latestEpoch int64
+		latestTick  int64
+	)
+
+	for det := range training.catalog.Detections(ctx) {
+		if det == nil || det.Epoch >= training.epoch {
+			continue
+		}
+
+		if det.Epoch > latestEpoch || (det.Epoch == latestEpoch && det.Tick > latestTick) {
+			latestEpoch = det.Epoch
+			latestTick = det.Tick
+		}
+	}
+
+	runs, err := training.catalog.Runs(ctx)
 	if err != nil {
-		return 0, 0, 0, err
+		errnie.Error(err)
+		return
 	}
 
 	slices.SortFunc(runs, func(left, right tables.Run) int {
 		return cmp.Compare(left.Epoch, right.Epoch)
 	})
 
+	for _, run := range runs {
+		if run.Epoch >= training.epoch {
+			continue
+		}
+
+		if latestEpoch > 0 && run.Epoch < latestEpoch {
+			continue
+		}
+
+		existingCount := 0
+		for range training.catalog.Detections(ctx, run.Epoch) {
+			existingCount++
+			break
+		}
+
+		if existingCount > 0 {
+			continue
+		}
+
+		trades := training.catalog.Trades(ctx, run.Epoch)
+		training.detector.Scan(trades)
+
+		if training.storeTee != nil {
+			writer := tables.NewWriter(training.catalog, run.Epoch)
+			drained := 0
+
+			for {
+				ptr := training.storeTee.Next()
+				if ptr == nil {
+					break
+				}
+
+				pub := data.To[data.Publication](ptr)
+				if pub.Measurement == nil {
+					continue
+				}
+
+				writer.Add(tables.Measurements, pub)
+				drained++
+			}
+
+			if drained > 0 {
+				if commitErr := writer.CommitReady(ctx, true); commitErr != nil {
+					errnie.Error(commitErr)
+				}
+			}
+		}
+	}
+}
+
+func (training *Training) trainPass() (int, int64, int, error) {
+	if training.catalog == nil {
+		return 0, 0, 0, nil
+	}
+
+	ctx := training.Context()
 	seen := make(map[string]struct{})
 	var (
 		latest  int64
 		trained int
 	)
 
-	for _, run := range runs {
-		if run.Epoch >= training.epoch {
+	for detection := range training.catalog.Detections(ctx) {
+		if ctx.Err() != nil {
+			return 0, 0, 0, ctx.Err()
+		}
+
+		if detection == nil || detection.Epoch >= training.epoch {
 			continue
 		}
 
-		detections := slices.Collect(training.catalog.Detections(training.Context(), run.Epoch))
-
-		if len(detections) == 0 {
-			detections, err = training.detector.Scan(
-				training.catalog.Trades(training.Context(), run.Epoch),
-			)
-
-			if err != nil {
-				return 0, 0, 0, err
-			}
+		key := fmt.Sprintf("%d/%s/%d", detection.Epoch, detection.Label, detection.Tick)
+		if _, done := seen[key]; done {
+			continue
 		}
 
-		for _, detection := range detections {
-			if training.Context().Err() != nil {
-				return 0, 0, 0, training.Context().Err()
-			}
+		seen[key] = struct{}{}
+		if detection.Epoch > latest {
+			latest = detection.Epoch
+		}
 
-			key := fmt.Sprintf("%d/%s/%d", detection.Epoch, detection.Label, detection.Tick)
+		learned, err := training.learn(detection)
+		if err != nil {
+			errnie.Error(err)
+			continue
+		}
 
-			if _, done := seen[key]; done {
-				continue
-			}
-
-			seen[key] = struct{}{}
-			latest = run.Epoch
-			learned, err := training.learn(detection)
-
-			if err != nil {
-				errnie.Error(err)
-				continue
-			}
-
-			if learned {
-				trained++
-			}
+		if learned {
+			trained++
 		}
 	}
 
@@ -574,49 +799,40 @@ func (training *Training) trainPass() (int, int64, int, error) {
 
 /*
 learn cuts one excursion into its two trainable pieces and trains each with
-the round trip's return as priced by Price:
-  - enter: a random start A up to the last frame before ignition B, leaving
+the return multiplier from entry to exit:
+  - enter: precursor frames up to the frame before ignition B, leaving
     the ignition tick itself for the market fill;
-  - exit: one frame after B up to the last frame before the peak C, leaving
+  - exit: frames from ignition B+1 up to the frame before the peak C, leaving
     the peak tick for the exit fill.
-
-An excursion whose round trip does not clear friction is not trained, and
-learn reports false.
 */
 func (training *Training) learn(detection *data.Measurement[float64]) (bool, error) {
-	lowTick, highTick, err := tables.DetectionTicks(detection)
+	if detection == nil {
+		return false, nil
+	}
 
+	lowTick, highTick, err := tables.DetectionTicks(detection)
 	if err != nil {
 		return false, errnie.Error(err)
 	}
 
 	startTick := int64(0)
-
 	if metric, ok := detection.LookupMetric("StartTick"); ok {
 		startTick = int64(metric.Raw)
-	} else if metric, ok := detection.LookupMetric("start_tick"); ok {
-		startTick = int64(metric.Raw)
+	}
+
+	if startTick == 0 {
+		if metric, ok := detection.LookupMetric("start_tick"); ok {
+			startTick = int64(metric.Raw)
+		}
 	}
 
 	entry, exit, err := tables.DetectionPrices(detection)
-
 	if err != nil {
 		return false, errnie.Error(err)
 	}
 
-	pnl, total, err := training.price.RoundTrip(detection.Label, entry, exit)
-
-	if err != nil {
-		return false, errnie.Error(err)
-	}
-
-	if pnl.Sign() <= 0 {
-		return false, nil
-	}
-
-	feedback := pnl.SetScale(decimal.DefaultScale).Div(total).Float64()
+	feedback := exit.Sub(entry).SetScale(decimal.DefaultScale).Div(entry).Float64()
 	ticks, tokens, err := training.frames(detection, startTick, highTick)
-
 	if err != nil {
 		return false, errnie.Error(err)
 	}
@@ -624,24 +840,14 @@ func (training *Training) learn(detection *data.Measurement[float64]) (bool, err
 	ignition, _ := slices.BinarySearch(ticks, lowTick)
 	peak, _ := slices.BinarySearch(ticks, highTick)
 
-	if ignition < 1 || ignition+1 >= peak {
-		return false, errnie.Error(errnie.Err(
-			errnie.NotFound,
-			fmt.Sprintf(
-				"[training] excursion %d/%s lacks frames around ignition",
-				detection.Epoch, detection.Label,
-			),
-			nil,
-		))
+	if ignition < 1 || ignition >= peak {
+		return false, nil
 	}
 
+	// Pull back context before ignition and peak to account for order fill latencies.
 	startA := 0
-	if jitter := ignition / 4; jitter > 0 {
-		startA = rand.IntN(jitter)
-	}
-
 	endB := ignition
-	if ignition-startA > 2 {
+	if ignition > 1 {
 		endB = ignition - 1
 	}
 
@@ -650,27 +856,27 @@ func (training *Training) learn(detection *data.Measurement[float64]) (bool, err
 
 	startHolding := ignition + 1
 	endC := peak
-	if peak-startHolding > 1 {
+	if peak > startHolding+1 {
 		endC = peak - 1
 	}
 
 	holdingTokens := deduplicateTokens(tokens[startHolding:endC])
 	hold := bytes.Join(holdingTokens, []byte("/"))
 
-	if len(enter) > 0 {
-		if _, err := training.engine.Train(
-			enter, []byte(cognition.ActionEnter), feedback,
-		); err != nil {
-			return false, errnie.Error(err)
-		}
+	if len(enter) == 0 || len(hold) == 0 {
+		return false, nil
 	}
 
-	if len(hold) > 0 {
-		if _, err := training.engine.Train(
-			hold, []byte(cognition.ActionExit), feedback,
-		); err != nil {
-			return false, errnie.Error(err)
-		}
+	if _, err := training.engine.Train(
+		enter, []byte(cognition.ActionEnter), feedback,
+	); err != nil {
+		return false, errnie.Error(err)
+	}
+
+	if _, err := training.engine.Train(
+		hold, []byte(cognition.ActionExit), feedback,
+	); err != nil {
+		return false, errnie.Error(err)
 	}
 
 	points := training.priceTape(detection, startTick, highTick, entry, exit, ticks)
@@ -690,6 +896,16 @@ func (training *Training) learn(detection *data.Measurement[float64]) (bool, err
 
 		if pt.Seq == highTick {
 			exitPointIdx = pt.X
+		}
+	}
+
+	if len(points) > 0 {
+		if entryPointIdx >= len(points) {
+			entryPointIdx = len(points) - 1
+		}
+
+		if exitPointIdx <= entryPointIdx {
+			exitPointIdx = min(entryPointIdx+1, len(points)-1)
 		}
 	}
 
@@ -743,6 +959,20 @@ the peak and encodes one region token per tick from all signal and logic steps.
 func (training *Training) frames(
 	detection *data.Measurement[float64], startTick, highTick int64,
 ) ([]int64, [][]byte, error) {
+	if !training.grid.IsSettled() {
+		for measurement := range training.catalog.SignalLogic(
+			training.Context(), detection.Epoch, detection.Label, startTick, highTick,
+		) {
+			if measurement.Source == "resonance" || measurement.Source == "manifold" {
+				continue
+			}
+
+			training.grid.Update(measurement)
+		}
+
+		training.grid.Settle()
+	}
+
 	var (
 		ticks   []int64
 		tokens  [][]byte
@@ -772,6 +1002,10 @@ func (training *Training) frames(
 		if measurement.Tick != current {
 			flush()
 			current = measurement.Tick
+		}
+
+		if measurement.Source == "resonance" || measurement.Source == "manifold" {
+			continue
 		}
 
 		group = append(group, measurement)
@@ -853,46 +1087,8 @@ func (training *Training) streamFragment(
 	detection *data.Measurement[float64],
 	fragment ui.TrainedFragment,
 ) {
-	if training == nil || training.uiTee == nil || len(fragment.Points) == 0 {
+	if training == nil || training.uiTee == nil {
 		return
-	}
-
-	points := fragment.Points
-	if len(points) > 128 {
-		step := float64(len(points)-1) / 127.0
-		decimated := make([]ui.FragmentPoint, 128)
-		for index := 0; index < 127; index++ {
-			decimated[index] = points[int(float64(index)*step)]
-		}
-		decimated[127] = points[len(points)-1]
-		points = decimated
-	}
-
-	for _, pt := range points {
-		point := data.NewMeasurement[float64](training.Name())
-		point.Label = detection.Label
-		point.SeqIdx = pt.Seq
-		point.Tick = pt.Seq
-		point.At = time.UnixMilli(pt.Time)
-
-		point.SetMetric("price", data.NewMetric[float64](
-			"price",
-			data.UnitPrice,
-			data.TimescaleTick,
-			pt.Y,
-			math.Max(pt.Y*0.001, 1e-6),
-		).Write(pt.Y))
-
-		point.SetMetric("stage_code", data.NewMetric[float64](
-			"stage_code",
-			data.UnitCount,
-			data.TimescaleSession,
-			0.0,
-			1.0,
-		).Write(float64(StageHistoricalValidation)))
-
-		point.SetMetadata("excursion_start", strconv.FormatInt(fragment.MarkA, 10))
-		training.uiTee.Push(data.NewPublication(point, nil))
 	}
 
 	out := data.NewMeasurement[float64](training.Name())
