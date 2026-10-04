@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
@@ -74,50 +73,37 @@ func (detector *Detector) Scan(
 		highAt   time.Time
 	)
 
+	flush := func() {
+		if lowest != nil && highest != nil && highest.Cmp(lowest) > 0 && highTick > lowTick {
+			span := highTick - lowTick
+			idxSpan := highIdx - lowIdx
+			startTick := max(lowTick-span, 0)
+			startIdx := lowIdx - idxSpan
+
+			if startIdx <= 0 {
+				startIdx = 1
+			}
+
+			detector.Flush(
+				symbol,
+				epoch,
+				startIdx,
+				lowIdx,
+				highIdx,
+				startTick,
+				lowTick,
+				highTick,
+				lowAt,
+				highAt,
+				lowest,
+				highest,
+			)
+		}
+	}
+
 	for measurement := range measurements {
 		if measurement.Source != "spot:trade" {
-			errnie.Error(errnie.Err(
-				errnie.NotAcceptable,
-				"",
-				nil,
-			))
-
 			continue
-		}
-
-		flush := func() {
-			if lowest != nil && highest != nil && highest.Cmp(lowest) > 0 && highTick > lowTick {
-				span := highTick - lowTick
-				idxSpan := highIdx - lowIdx
-
-				pulledLowTick := lowTick - span
-
-				if pulledLowTick < 0 {
-					pulledLowTick = 0
-				}
-
-				pulledLowIdx := lowIdx - idxSpan
-
-				if pulledLowIdx <= 0 {
-					pulledLowIdx = 1
-				}
-
-				extendedHighTick := highTick + span
-				extendedHighIdx := highIdx + idxSpan
-
-				detector.Flush(
-					symbol,
-					epoch,
-					pulledLowIdx,
-					extendedHighIdx,
-					pulledLowTick,
-					extendedHighTick,
-					lowAt,
-					highAt,
-					lowest,
-					highest,
-				)
-			}
 		}
 
 		if epoch == 0 || epoch != measurement.Epoch || symbol != measurement.Label {
@@ -151,34 +137,7 @@ func (detector *Detector) Scan(
 		}
 	}
 
-	if lowest != nil && highest != nil && highest.Cmp(lowest) > 0 && highTick > lowTick {
-		span := highTick - lowTick
-		idxSpan := highIdx - lowIdx
-
-		pulledLowTick := lowTick - span
-		if pulledLowTick < 0 {
-			pulledLowTick = 0
-		}
-		pulledLowIdx := lowIdx - idxSpan
-		if pulledLowIdx <= 0 {
-			pulledLowIdx = 1
-		}
-		extendedHighTick := highTick + span
-		extendedHighIdx := highIdx + idxSpan
-
-		detector.Flush(
-			symbol,
-			epoch,
-			pulledLowIdx,
-			extendedHighIdx,
-			pulledLowTick,
-			extendedHighTick,
-			lowAt,
-			highAt,
-			lowest,
-			highest,
-		)
-	}
+	flush()
 }
 
 /*
@@ -188,8 +147,10 @@ Iceberg tables as a *data.Measurement[float64] shape.
 func (detector *Detector) Flush(
 	symbol string,
 	epoch int64,
+	startIdx int64,
 	lowIdx int64,
 	highIdx int64,
+	startTick int64,
 	lowTick int64,
 	highTick int64,
 	lowAt time.Time,
@@ -202,6 +163,13 @@ func (detector *Detector) Flush(
 	}
 
 	metrics := map[string]data.Metric[float64]{
+		"StartSeqIdx": data.NewMetric[float64](
+			"start_seq_idx",
+			data.UnitCount,
+			data.TimescaleInstantaneous,
+			0,
+			1,
+		).Write(float64(startIdx)),
 		"LowSeqIdx": data.NewMetric[float64](
 			"low_seq_idx",
 			data.UnitCount,
@@ -216,6 +184,13 @@ func (detector *Detector) Flush(
 			0,
 			1,
 		).Write(float64(highIdx)),
+		"StartTick": data.NewMetric[float64](
+			"start_tick",
+			data.UnitCount,
+			data.TimescaleInstantaneous,
+			0,
+			1,
+		).Write(float64(startTick)),
 		"LowTick": data.NewMetric[float64](
 			"low_tick",
 			data.UnitCount,

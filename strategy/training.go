@@ -224,12 +224,22 @@ func (training *Training) trade(prior *data.Measurement[float64], snapshot *Repo
 	}
 
 	if state == broker.FLAT && action == cognition.ActionEnter {
-		training.act(symbol, training.desk.Enter, func(held *episode, context []byte) { held.entry = context }, question)
+		training.act(
+			symbol,
+			training.desk.Enter,
+			func(held *episode, context []byte) { held.entry = context },
+			question,
+		)
 		snapshot.Action = 1
 	}
 
 	if state == broker.HOLDING && action == cognition.ActionExit {
-		training.act(symbol, training.desk.Exit, func(held *episode, context []byte) { held.exit = context }, question)
+		training.act(
+			symbol,
+			training.desk.Exit,
+			func(held *episode, context []byte) { held.exit = context },
+			question,
+		)
 		snapshot.Action = 2
 	}
 }
@@ -302,13 +312,17 @@ func (training *Training) settle(closure broker.Closure) {
 
 	if entry == nil {
 		errnie.Error(errnie.Err(
-			errnie.Conflict, "[training] closed position has no entry context: "+closure.Symbol, nil,
+			errnie.Conflict,
+			"[training] closed position has no entry context: "+closure.Symbol,
+			nil,
 		))
 
 		return
 	}
 
-	if _, err := training.engine.Train(entry, []byte(cognition.ActionEnter), feedback); err != nil {
+	if _, err := training.engine.Train(
+		entry, []byte(cognition.ActionEnter), feedback,
+	); err != nil {
 		errnie.Error(err)
 	}
 
@@ -316,7 +330,9 @@ func (training *Training) settle(closure broker.Closure) {
 		return
 	}
 
-	if _, err := training.engine.Train(exit, []byte(cognition.ActionExit), feedback); err != nil {
+	if _, err := training.engine.Train(
+		exit, []byte(cognition.ActionExit), feedback,
+	); err != nil {
 		errnie.Error(err)
 	}
 }
@@ -400,7 +416,7 @@ func (training *Training) Train() {
 					return
 				}
 
-				key := fmt.Sprintf("%d/%s", detection.Epoch, detection.Label)
+				key := fmt.Sprintf("%d/%s/%d", detection.Epoch, detection.Label, detection.Tick)
 
 				if _, done := seen[key]; done {
 					continue
@@ -450,6 +466,14 @@ func (training *Training) learn(detection *data.Measurement[float64]) error {
 		return errnie.Error(err)
 	}
 
+	startTick := int64(0)
+
+	if metric, ok := detection.LookupMetric("StartTick"); ok {
+		startTick = int64(metric.Raw)
+	} else if metric, ok := detection.LookupMetric("start_tick"); ok {
+		startTick = int64(metric.Raw)
+	}
+
 	entry, exit, err := tables.DetectionPrices(detection)
 
 	if err != nil {
@@ -463,7 +487,7 @@ func (training *Training) learn(detection *data.Measurement[float64]) error {
 	}
 
 	feedback := pnl.Div(total).Float64()
-	ticks, tokens, err := training.frames(detection, highTick)
+	ticks, tokens, err := training.frames(detection, startTick, highTick)
 
 	if err != nil {
 		return errnie.Error(err)
@@ -475,7 +499,10 @@ func (training *Training) learn(detection *data.Measurement[float64]) error {
 	if ignition < 1 || ignition+1 >= peak {
 		return errnie.Error(errnie.Err(
 			errnie.NotFound,
-			fmt.Sprintf("[training] excursion %d/%s lacks frames around ignition", detection.Epoch, detection.Label),
+			fmt.Sprintf(
+				"[training] excursion %d/%s lacks frames around ignition",
+				detection.Epoch, detection.Label,
+			),
 			nil,
 		))
 	}
@@ -485,13 +512,17 @@ func (training *Training) learn(detection *data.Measurement[float64]) error {
 	hold := bytes.Join(tokens[ignition+1:peak], []byte("/"))
 
 	if len(enter) > 0 {
-		if _, err := training.engine.Train(enter, []byte(cognition.ActionEnter), feedback); err != nil {
+		if _, err := training.engine.Train(
+			enter, []byte(cognition.ActionEnter), feedback,
+		); err != nil {
 			return errnie.Error(err)
 		}
 	}
 
 	if len(hold) > 0 {
-		if _, err := training.engine.Train(hold, []byte(cognition.ActionExit), feedback); err != nil {
+		if _, err := training.engine.Train(
+			hold, []byte(cognition.ActionExit), feedback,
+		); err != nil {
 			return errnie.Error(err)
 		}
 	}
@@ -500,11 +531,11 @@ func (training *Training) learn(detection *data.Measurement[float64]) error {
 }
 
 /*
-frames reads the excursion's signal and logic tape from the epoch start up to
+frames reads the excursion's signal and logic tape from the excursion start up to
 the peak and encodes one region token per tick from all signal and logic steps.
 */
 func (training *Training) frames(
-	detection *data.Measurement[float64], highTick int64,
+	detection *data.Measurement[float64], startTick, highTick int64,
 ) ([]int64, [][]byte, error) {
 	var (
 		ticks   []int64
@@ -530,7 +561,7 @@ func (training *Training) frames(
 	}
 
 	for measurement := range training.catalog.SignalLogic(
-		training.Context(), detection.Epoch, detection.Label, 0, highTick,
+		training.Context(), detection.Epoch, detection.Label, startTick, highTick,
 	) {
 		if measurement.Tick != current {
 			flush()
