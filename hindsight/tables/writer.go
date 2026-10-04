@@ -2,8 +2,7 @@ package tables
 
 import (
 	"context"
-	"runtime"
-	"sync/atomic"
+	"sync"
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
@@ -13,7 +12,6 @@ import (
 const (
 	defaultTargetCommitBytes  = 16 * 1024 * 1024 // 16 MB on-disk batch target
 	measurementBatchThreshold = 20000
-	writerMask                = 1 << 30
 )
 
 /*
@@ -23,25 +21,17 @@ type Writer struct {
 	catalog *Catalog
 	epoch   int64
 
-	gate          atomic.Int64
+	mu            sync.Mutex
 	measurements  []data.Publication
 	bufferedBytes int64
 }
 
 func (writer *Writer) lock() {
-	for {
-		value := writer.gate.Load()
-
-		if value == 0 && writer.gate.CompareAndSwap(0, -writerMask) {
-			return
-		}
-
-		runtime.Gosched()
-	}
+	writer.mu.Lock()
 }
 
 func (writer *Writer) unlock() {
-	writer.gate.Add(writerMask)
+	writer.mu.Unlock()
 }
 
 /*
@@ -107,17 +97,16 @@ func (writer *Writer) CommitReady(ctx context.Context, forceAll bool) error {
 		threshold = viper.GetInt("hindsight.capture.commit_rows")
 	}
 
-	if err := writer.commitFamily(ctx, Measurements, targetBytes, threshold, forceAll, func() []data.Publication {
+	if err := writer.commitFamily(ctx, Measurements, targetBytes, threshold, forceAll, func() ([]data.Publication, int64) {
 		rows := writer.measurements
+		bytes := writer.bufferedBytes
 		writer.measurements = nil
 		writer.bufferedBytes = 0
 
-		return rows
-	}, func(remaining []data.Publication) {
+		return rows, bytes
+	}, func(remaining []data.Publication, remainingBytes int64) {
 		writer.measurements = append(remaining, writer.measurements...)
-		for _, pub := range remaining {
-			writer.bufferedBytes += measurementSize(pub.Measurement)
-		}
+		writer.bufferedBytes += remainingBytes
 	}); err != nil {
 		return err
 	}
@@ -131,12 +120,12 @@ func (writer *Writer) commitFamily(
 	targetBytes int64,
 	thresholdRows int,
 	forceAll bool,
-	takeRows func() []data.Publication,
-	putRows func([]data.Publication),
+	takeRows func() ([]data.Publication, int64),
+	putRows func([]data.Publication, int64),
 ) error {
 	writer.lock()
 
-	rowsToCommit := takeRows()
+	rowsToCommit, totalBytes := takeRows()
 
 	if len(rowsToCommit) == 0 {
 		writer.unlock()
@@ -144,13 +133,8 @@ func (writer *Writer) commitFamily(
 		return nil
 	}
 
-	totalBytes := int64(0)
-	for _, pub := range rowsToCommit {
-		totalBytes += measurementSize(pub.Measurement)
-	}
-
 	if !forceAll && totalBytes < targetBytes && len(rowsToCommit) < thresholdRows {
-		putRows(rowsToCommit)
+		putRows(rowsToCommit, totalBytes)
 		writer.unlock()
 
 		return nil
@@ -162,7 +146,7 @@ func (writer *Writer) commitFamily(
 
 	if err != nil {
 		writer.lock()
-		putRows(rowsToCommit)
+		putRows(rowsToCommit, totalBytes)
 		writer.unlock()
 
 		return err
@@ -176,7 +160,7 @@ func (writer *Writer) commitFamily(
 	reader, err := measurementRecords(tbl.Schema(), measList, writer.epoch)
 	if err != nil {
 		writer.lock()
-		putRows(rowsToCommit)
+		putRows(rowsToCommit, totalBytes)
 		writer.unlock()
 
 		return err
@@ -190,7 +174,7 @@ func (writer *Writer) commitFamily(
 		return appendErr
 	}); err != nil {
 		writer.lock()
-		putRows(rowsToCommit)
+		putRows(rowsToCommit, totalBytes)
 		writer.unlock()
 
 		return errnie.Error(errnie.Err(

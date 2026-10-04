@@ -1,5 +1,5 @@
 import { OrbitCamera } from "./camera";
-import { PhaseCurrent } from "./current";
+import { PilotCurrent } from "./current";
 import { lineShader } from "./field-shaders";
 import { type FluidFieldOptions, FluidFieldView } from "./fields";
 import {
@@ -92,7 +92,7 @@ export class FluidScene {
 	private gpu: FluidGPU | null = null;
 	private fields: FluidFieldView | null = null;
 	private particles: FluidParticles | null = null;
-	private current: PhaseCurrent | null = null;
+	private current: PilotCurrent | null = null;
 	private boundaryBuffer: GPUBuffer | null = null;
 	private boundaryPipeline: GPURenderPipeline | null = null;
 	private boundaryBindGroup: GPUBindGroup | null = null;
@@ -120,7 +120,7 @@ export class FluidScene {
 		private readonly container: HTMLElement,
 		private readonly onSelect: (particle: FluidParticle | null) => void,
 		private readonly onError?: (error: Error) => void,
-		private readonly onCurrentPeak?: (peak: number) => void,
+		private readonly onCurrentPeak?: (peak: number | null) => void,
 	) {
 		if (navigator.gpu === undefined) {
 			throw new Error("WebGPU is required for the fluid manifold inspector");
@@ -141,16 +141,19 @@ export class FluidScene {
 		this.queuedFields = fields;
 		this.fields?.update(fields);
 		this.particles?.setGridSpacing(fields.grid.spacing);
-		if (this.current !== null) {
-			const peak = this.current.update(fields);
-			this.onCurrentPeak?.(peak);
-		}
 		this.invalidate();
 	}
 
 	updateParticles(particles: FluidParticleFrame) {
 		this.queuedParticles = particles;
 		this.particles?.update(particles);
+		if (this.current !== null && this.queuedFields !== null) {
+			const peak = this.current.update(
+				particles,
+				this.queuedFields.grid.spacing,
+			);
+			this.onCurrentPeak?.(peak);
+		}
 		this.invalidate();
 	}
 
@@ -207,7 +210,7 @@ export class FluidScene {
 			this.canvasHeight = 0;
 			this.fields = new FluidFieldView(gpu);
 			this.particles = new FluidParticles(gpu);
-			this.current = new PhaseCurrent(gpu, this.fields.uniformBuffer);
+			this.current = new PilotCurrent(gpu, this.fields.uniformBuffer);
 			this.fields.setOptions(this.options);
 			this.particles.visible = this.options.particles;
 			this.current.visible = this.options.current;
@@ -216,12 +219,10 @@ export class FluidScene {
 			if (this.queuedFields !== null) {
 				this.fields.update(this.queuedFields);
 				this.particles.setGridSpacing(this.queuedFields.grid.spacing);
-				const peak = this.current.update(this.queuedFields);
-				this.onCurrentPeak?.(peak);
 			}
 
 			if (this.queuedParticles !== null) {
-				this.particles.update(this.queuedParticles);
+				this.updateParticles(this.queuedParticles);
 			}
 
 			this.resize();

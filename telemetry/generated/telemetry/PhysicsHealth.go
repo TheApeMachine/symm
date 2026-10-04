@@ -16,6 +16,9 @@ type PhysicsHealthT struct {
 	ParticleOscillator float64 `json:"particleOscillator"`
 	ParticleKinetic float64 `json:"particleKinetic"`
 	ParticleMaterialTotal float64 `json:"particleMaterialTotal"`
+	SpatialSigmaRaw float64 `json:"spatialSigmaRaw"`
+	SpatialSigmaUsed float64 `json:"spatialSigmaUsed"`
+	SigmaUniformLimit bool `json:"sigmaUniformLimit"`
 }
 
 func (t *PhysicsHealthT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
@@ -37,6 +40,9 @@ func (t *PhysicsHealthT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT
 	PhysicsHealthAddParticleOscillator(builder, t.ParticleOscillator)
 	PhysicsHealthAddParticleKinetic(builder, t.ParticleKinetic)
 	PhysicsHealthAddParticleMaterialTotal(builder, t.ParticleMaterialTotal)
+	PhysicsHealthAddSpatialSigmaRaw(builder, t.SpatialSigmaRaw)
+	PhysicsHealthAddSpatialSigmaUsed(builder, t.SpatialSigmaUsed)
+	PhysicsHealthAddSigmaUniformLimit(builder, t.SigmaUniformLimit)
 	return PhysicsHealthEnd(builder)
 }
 
@@ -50,6 +56,9 @@ func (rcv *PhysicsHealth) UnPackTo(t *PhysicsHealthT) {
 	t.ParticleOscillator = rcv.ParticleOscillator()
 	t.ParticleKinetic = rcv.ParticleKinetic()
 	t.ParticleMaterialTotal = rcv.ParticleMaterialTotal()
+	t.SpatialSigmaRaw = rcv.SpatialSigmaRaw()
+	t.SpatialSigmaUsed = rcv.SpatialSigmaUsed()
+	t.SigmaUniformLimit = rcv.SigmaUniformLimit()
 }
 
 func (rcv *PhysicsHealth) UnPack() *PhysicsHealthT {
@@ -209,8 +218,44 @@ func (rcv *PhysicsHealth) MutateParticleMaterialTotal(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(20, n)
 }
 
+func (rcv *PhysicsHealth) SpatialSigmaRaw() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *PhysicsHealth) MutateSpatialSigmaRaw(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(22, n)
+}
+
+func (rcv *PhysicsHealth) SpatialSigmaUsed() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *PhysicsHealth) MutateSpatialSigmaUsed(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(24, n)
+}
+
+func (rcv *PhysicsHealth) SigmaUniformLimit() bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
+	if o != 0 {
+		return rcv._tab.GetBool(o + rcv._tab.Pos)
+	}
+	return false
+}
+
+func (rcv *PhysicsHealth) MutateSigmaUniformLimit(n bool) bool {
+	return rcv._tab.MutateBoolSlot(26, n)
+}
+
 func PhysicsHealthStart(builder *flatbuffers.Builder) {
-	builder.StartObject(9)
+	builder.StartObject(12)
 }
 func PhysicsHealthAddIntegrator(builder *flatbuffers.Builder, integrator flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(integrator), 0)
@@ -238,6 +283,15 @@ func PhysicsHealthAddParticleKinetic(builder *flatbuffers.Builder, particleKinet
 }
 func PhysicsHealthAddParticleMaterialTotal(builder *flatbuffers.Builder, particleMaterialTotal float64) {
 	builder.PrependFloat64Slot(8, particleMaterialTotal, 0.0)
+}
+func PhysicsHealthAddSpatialSigmaRaw(builder *flatbuffers.Builder, spatialSigmaRaw float64) {
+	builder.PrependFloat64Slot(9, spatialSigmaRaw, 0.0)
+}
+func PhysicsHealthAddSpatialSigmaUsed(builder *flatbuffers.Builder, spatialSigmaUsed float64) {
+	builder.PrependFloat64Slot(10, spatialSigmaUsed, 0.0)
+}
+func PhysicsHealthAddSigmaUniformLimit(builder *flatbuffers.Builder, sigmaUniformLimit bool) {
+	builder.PrependBoolSlot(11, sigmaUniformLimit, false)
 }
 func PhysicsHealthEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

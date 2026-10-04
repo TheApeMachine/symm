@@ -160,7 +160,7 @@ func NewExecutionFromMap(model datura.Map[any]) *Execution {
 
 /*
 ExecutionSubscription requests the authenticated executions stream on the
-private websocket — the live counterpart to Paper.OnExecution.
+private transport, live websocket or Paper alike.
 */
 type ExecutionSubscription struct {
 	Token string

@@ -59,6 +59,7 @@ export class FluidParticleFrame {
 		readonly phase: Float32Array,
 		readonly omega: Float32Array,
 		readonly amp: Float32Array,
+		readonly pilotVel: Float32Array | null,
 	) {}
 
 	particle(index: number): FluidParticle | null {
@@ -205,6 +206,7 @@ export const decodeManifold = (bytes: Uint8Array): FluidManifoldFrame => {
 		frame.phaseArray() ?? new Float32Array(0),
 		frame.omegaArray() ?? new Float32Array(0),
 		frame.ampArray() ?? new Float32Array(0),
+		frame.pilotVelArray(),
 	);
 
 	const oscillators: FluidOscillator[] = [];

@@ -21,18 +21,19 @@ import (
 )
 
 /*
-Paper is the simulated spot websocket and REST transport. It shells out to the
-native `kraken paper` CLI so balances, fills, and history stay owned by the
-venue ledger under Application Support — not an in-process invented matcher.
-Private frames publish onto explicit typed subscriptions so Desk and tests use
-the same direct wiring as the live transport.
+Paper is the simulated private spot websocket. It shells out to the native
+`kraken paper` CLI so balances, fills, and history stay owned by the venue
+ledger under Application Support, not an in-process invented matcher. Every
+frame the live private websocket would push (order acks, executions,
+balances) is queued for Read, so the private ingress consumes Paper exactly
+as it consumes the live transport.
 */
 type Paper struct {
 	*runtime.System
 	commandGate atomic.Pointer[chan struct{}]
-	executions  func(*kraken.Execution)
+	frames      chan []byte
 	// watching tracks limit orders that acknowledged open so a later CLI fill
-	// can be published as kraken.Execution → ApplyExecution.
+	// can be published as an execution frame.
 	watching sync.Map // orderID -> paperWatch
 }
 
@@ -44,12 +45,12 @@ type paperWatch struct {
 }
 
 /*
-NewPaper opens the paper spot transport with explicit private subscriptions.
+NewPaper opens the paper private transport.
 */
 func NewPaper(
 	ctx context.Context,
 ) *Paper {
-	paper := &Paper{}
+	paper := &Paper{frames: make(chan []byte)}
 	paper.System = runtime.NewSystem(ctx, "paper", paper)
 
 	gate := make(chan struct{}, 1)
@@ -66,8 +67,16 @@ func (paper *Paper) Initialize() error {
 	return nil
 }
 
-func (paper *Paper) OnExecution(handler func(*kraken.Execution)) {
-	paper.executions = handler
+/*
+Read returns the next private frame, as the live websocket client does.
+*/
+func (paper *Paper) Read() ([]byte, error) {
+	select {
+	case frame := <-paper.frames:
+		return frame, nil
+	case <-paper.Context().Done():
+		return nil, errnie.Error(paper.Context().Err())
+	}
 }
 
 /*
@@ -149,30 +158,8 @@ func (paper *Paper) Write(
 	case "balances":
 		return paper.publishBalance("snapshot")
 	case "executions":
-		history, err := paper.TradesHistory()
-
-		if err != nil {
-			return err
-		}
-
-		trades := make([]any, 0, len(history.Trades))
-
-		for tradeID, trade := range history.Trades {
-			trades = append(trades, map[string]any{
-				"id":       tradeID,
-				"order_id": trade.OrderID,
-				"pair":     trade.Pair,
-				"side":     trade.Type,
-				"price":    trade.Price.Float64(),
-				"cost":     trade.Cost.Float64(),
-				"fee":      trade.Fee.Float64(),
-				"volume":   trade.Volume.Float64(),
-				"time":     trade.Time.String(),
-				"status":   "filled",
-			})
-		}
-
-		return paper.Replay(trades)
+		// Kraken's executions subscription sends no trade snapshot by default.
+		return nil
 	default:
 		return errnie.Error(errnie.Err(
 			errnie.Internal,
@@ -631,46 +618,26 @@ func (paper *Paper) publishBalance(frameType string) error {
 	}
 
 	balance.Type = frameType
-	paper.publish("balances", balance)
-	return nil
+	return paper.publish(balance)
 }
 
 /*
-Replay emits historical paper fills as execution frames.
-*/
-func (paper *Paper) Replay(trades []any) error {
-	for tradeIndex, tradeRaw := range trades {
-		trade, ok := tradeRaw.(map[string]any)
-
-		if !ok {
-			continue
-		}
-
-		execution := kraken.NewExecutionFromMap(datura.Map[any](trade))
-
-		if tradeIndex == 0 {
-			execution.Type = "snapshot"
-		}
-
-		paper.publish("executions", execution)
-	}
-
-	return nil
-}
-
-/*
-publishPlace emits order ack + execution, then soft-fails balance refresh.
-Open limit acks are tracked so a later CLI fill becomes a real Execution.
+publishPlace emits the order ack and its execution, then refreshes the wallet.
+Open limit acks are tracked so a later CLI fill becomes a real execution.
 */
 func (paper *Paper) publishPlace(
 	model datura.Map[any],
 	reqID int64,
 ) error {
-	orderAck := kraken.NewOrderResponseFromMap(model, reqID)
-	paper.publish("add_order", orderAck)
+	if err := paper.publish(kraken.NewOrderResponseFromMap(model, reqID)); err != nil {
+		return errnie.Error(err)
+	}
 
 	execution := kraken.NewExecutionFromMap(model)
-	paper.publish("executions", execution)
+
+	if err := paper.publish(execution); err != nil {
+		return errnie.Error(err)
+	}
 
 	if paperExecutionStillOpen(execution) {
 		paper.watchOpenExecution(execution)
@@ -722,8 +689,8 @@ func (paper *Paper) watchOpenExecution(execution *kraken.Execution) {
 }
 
 /*
-pollOpenFill converts a later CLI fill/cancel into an Execution for ApplyExecution.
-Paper has no private WS; OpenOrders + TradesHistory is the venue ledger.
+pollOpenFill converts a later CLI fill or cancel into an execution frame.
+The paper CLI pushes nothing; OpenOrders + TradesHistory is the venue ledger.
 */
 func (paper *Paper) pollOpenFill(watch paperWatch) {
 	ticker := time.NewTicker(250 * time.Millisecond)
@@ -783,11 +750,17 @@ func (paper *Paper) pollOpenFill(watch paperWatch) {
 			if watch.side != "" {
 				fill["side"] = watch.side
 			}
-			paper.publish("executions", kraken.NewExecutionFromMap(fill))
+			paper.watching.Delete(watch.orderID)
+
+			if err := paper.publish(kraken.NewExecutionFromMap(fill)); err != nil {
+				errnie.Error(err)
+				return
+			}
+
 			if err := paper.publishBalance("snapshot"); err != nil {
 				errnie.Warn("[paper] balance refresh after fill failed: " + err.Error())
 			}
-			paper.watching.Delete(watch.orderID)
+
 			return
 		}
 
@@ -802,8 +775,12 @@ func (paper *Paper) pollOpenFill(watch paperWatch) {
 			"exec_type":    "canceled",
 			"action":       "order_cancelled",
 		}
-		paper.publish("executions", kraken.NewExecutionFromMap(cancel))
 		paper.watching.Delete(watch.orderID)
+
+		if err := paper.publish(kraken.NewExecutionFromMap(cancel)); err != nil {
+			errnie.Error(err)
+		}
+
 		return
 	}
 }
@@ -850,8 +827,21 @@ func (paper *Paper) placeOrder(
 	return model, nil
 }
 
-func (paper *Paper) publish(channel string, payload any) {
-	if channel == "executions" && paper.executions != nil {
-		paper.executions(payload.(*kraken.Execution))
+/*
+publish queues one frame for Read. It blocks until the private ingress takes
+the frame, so no venue fact is ever dropped.
+*/
+func (paper *Paper) publish(payload any) error {
+	frame, err := sonic.Marshal(payload)
+
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.Internal, "[paper] unable to encode frame", err))
+	}
+
+	select {
+	case paper.frames <- frame:
+		return nil
+	case <-paper.Context().Done():
+		return errnie.Error(paper.Context().Err())
 	}
 }

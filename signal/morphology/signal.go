@@ -60,8 +60,7 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 		// 0. Extract raw morphology facts from order book
 		nmmorphology.NewShapeFlow(signal.books),
 		// 1. Adaptive baseline for morphology change
-		transport.NewFan(
-			data.NewAdapter(
+		data.NewAdapter(
 				adaptive.NewBaseline(adaptive.NewWindow()),
 				func(m *data.Measurement[float64]) float64 {
 					return m.GetMetric("morphology_change").Raw
@@ -100,7 +99,6 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 					}
 				},
 			),
-		),
 		// 2. Recurrence on morphology geometry
 		data.NewRecurrence(
 			"book_shape_distance",

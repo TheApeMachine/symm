@@ -5,11 +5,15 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"math"
 	"math/rand/v2"
 	"slices"
+	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/hindsight/tables"
@@ -20,7 +24,10 @@ import (
 	"github.com/theapemachine/symm/ui"
 )
 
-var _ ui.CognitionSource = (*Training)(nil)
+var (
+	_ ui.CognitionSource = (*Training)(nil)
+	_ ui.FragmentsSource = (*Training)(nil)
+)
 
 /*
 Training develops one grid, loads the trie from historical excursions, then
@@ -28,19 +35,23 @@ paper trades the live market with it. Realized round trips refine the trie.
 */
 type Training struct {
 	*runtime.System
-	arena    *data.ArenaOwner
-	grid     *store.Grid
-	engine   *cognition.Engine
-	detector *Detector
-	reporter *Reporter
-	catalog  *tables.Catalog
-	price    *broker.Price
-	desk     *broker.Desk
-	mu       sync.Mutex
-	episodes map[string]*episode
-	resolved int64
-	wins     int64
-	returns  float64
+	arena     *data.ArenaOwner
+	grid      *store.Grid
+	engine    *cognition.Engine
+	detector  *Detector
+	reporter  *Reporter
+	catalog   *tables.Catalog
+	price     *broker.Price
+	desk      *broker.Desk
+	uiTee     runtime.Tee
+	epoch     int64
+	mu        sync.Mutex
+	episodes  map[string]*episode
+	fragments []ui.TrainedFragment
+	resolved  int64
+	wins      int64
+	returns   float64
+	passes    atomic.Int64
 }
 
 /*
@@ -63,6 +74,7 @@ func NewTraining(
 	desk *broker.Desk,
 	catalog *tables.Catalog,
 	storeTee runtime.Tee,
+	epoch int64,
 ) *Training {
 	training := &Training{
 		System:   runtime.NewSystem(ctx, "training", price),
@@ -74,6 +86,7 @@ func NewTraining(
 		catalog:  catalog,
 		price:    price,
 		desk:     desk,
+		epoch:    epoch,
 		episodes: make(map[string]*episode),
 	}
 
@@ -84,6 +97,27 @@ func NewTraining(
 
 func (training *Training) Arena() *data.ArenaOwner {
 	return training.arena
+}
+
+func (training *Training) SetUITee(tee runtime.Tee) {
+	if training == nil {
+		return
+	}
+
+	training.uiTee = tee
+}
+
+func (training *Training) Fragments() []ui.TrainedFragment {
+	if training == nil {
+		return nil
+	}
+
+	training.mu.Lock()
+	defer training.mu.Unlock()
+
+	out := make([]ui.TrainedFragment, len(training.fragments))
+	copy(out, training.fragments)
+	return out
 }
 
 func (training *Training) CognitionTree() cognition.CognitionTreeExport {
@@ -158,20 +192,28 @@ func (training *Training) develop(
 	training.grid.Settle()
 	encoded, err := training.grid.Snapshot()
 
-	if err == nil {
-		err = training.catalog.PutBlob(
-			training.Context(),
-			fmt.Sprintf("grid/%d/%d", out.Epoch, out.SeqIdx),
-			encoded,
-		)
-	}
-
 	if err != nil {
 		errnie.Error(errnie.Err(
 			errnie.IO,
-			fmt.Sprintf("[training] unable to checkpoint grid/%d/%d", out.Epoch, out.SeqIdx),
+			fmt.Sprintf("[training] unable to snapshot grid/%d/%d", out.Epoch, out.SeqIdx),
 			err,
 		))
+	}
+
+	if err == nil {
+		go func(ctx context.Context, epoch, seqIdx int64, blob []byte) {
+			if putErr := training.catalog.PutBlob(
+				ctx,
+				fmt.Sprintf("grid/%d/%d", epoch, seqIdx),
+				blob,
+			); putErr != nil {
+				errnie.Error(errnie.Err(
+					errnie.IO,
+					fmt.Sprintf("[training] unable to checkpoint grid/%d/%d", epoch, seqIdx),
+					putErr,
+				))
+			}
+		}(training.Context(), out.Epoch, out.SeqIdx, encoded)
 	}
 
 	training.Transition(runtime.WAITING)
@@ -197,10 +239,13 @@ func (training *Training) trade(prior *data.Measurement[float64], snapshot *Repo
 
 	training.mu.Lock()
 	current := training.episode(symbol)
-	current.window = append(current.window, tok)
 
-	if overflow := len(current.window) - training.engine.Order(); overflow > 0 {
-		current.window = current.window[overflow:]
+	if len(current.window) == 0 || !bytes.Equal(current.window[len(current.window)-1], tok) {
+		current.window = append(current.window, tok)
+
+		if overflow := len(current.window) - training.engine.Order(); overflow > 0 {
+			current.window = current.window[overflow:]
+		}
 	}
 
 	question := bytes.Join(current.window, []byte("/"))
@@ -286,7 +331,7 @@ func (training *Training) mark(symbol string) {
 	defer training.mu.Unlock()
 
 	held := training.episode(symbol)
-	held.mark = pnl.Div(basis).Float64()
+	held.mark = pnl.SetScale(decimal.DefaultScale).Div(basis).Float64()
 	held.marked = true
 }
 
@@ -295,7 +340,7 @@ settle consumes one realized round trip from the Desk and refines the trie
 with its return on the contexts that entered and exited it.
 */
 func (training *Training) settle(closure broker.Closure) {
-	feedback := closure.Realized.Div(closure.Cost).Float64()
+	feedback := closure.Realized.SetScale(decimal.DefaultScale).Div(closure.Cost).Float64()
 
 	training.mu.Lock()
 	held := training.episode(closure.Symbol)
@@ -360,11 +405,32 @@ func (training *Training) score() (int64, float64, float64) {
 		}
 	}
 
-	if count == 0 {
-		return 0, 0, 0
+	if count > 0 {
+		return count, float64(wins) / float64(count), returns / float64(count)
 	}
 
-	return count, float64(wins) / float64(count), returns / float64(count)
+	if training.desk != nil && training.desk.Balance != nil {
+		snap := training.desk.Balance.Snapshot()
+
+		if snap != nil && snap.Unrealized != nil && snap.Equity != nil {
+			unrealized := snap.Unrealized
+			equity := snap.Equity
+			base := equity.Sub(unrealized)
+
+			if base.Sign() > 0 && unrealized.Sign() != 0 {
+				ret := unrealized.SetScale(decimal.DefaultScale).Div(base).Float64()
+				win := int64(0)
+
+				if ret > 0 {
+					win = 1
+				}
+
+				return 1, float64(win), ret
+			}
+		}
+	}
+
+	return 0, 0, 0
 }
 
 /*
@@ -382,10 +448,17 @@ func (training *Training) episode(symbol string) *episode {
 }
 
 /*
-Train loads the trie once from every stored excursion, checkpoints it, and
-opens paper trading. It waits for the grid to settle first, because region
-tokens are only comparable once the grid is frozen.
+Train loads the trie once from the excursions of every past run, checkpoints
+it, and opens paper trading. It waits for the grid to settle first, because
+region tokens are only comparable once the grid is frozen. A past run without
+stored detections has its trade tape scanned here, and its detections are
+learned directly, so learning never waits on the asynchronous store. The
+current run's tape is still being written and is never scanned.
 */
+func (training *Training) Passes() int64 {
+	return training.passes.Load()
+}
+
 func (training *Training) Train() {
 	go func() {
 		for training.Status() == runtime.INIT {
@@ -396,59 +469,107 @@ func (training *Training) Train() {
 			}
 		}
 
-		runs, err := training.catalog.Runs(training.Context())
+		for training.Status() == runtime.WAITING {
+			trained, latest, seenCount, err := training.trainPass()
+			training.passes.Add(1)
 
-		if err != nil {
-			training.Error(errnie.Err(errnie.BadGateway, "[training] failed to query runs", err))
-			return
+			if err != nil {
+				training.Error(errnie.Err(errnie.BadGateway, "[training] failed during training pass", err))
+				return
+			}
+
+			if trained > 0 && training.engine.Len() > 0 {
+				snapshot, err := training.engine.Snapshot()
+
+				if err == nil {
+					err = training.catalog.PutBlob(
+						training.Context(), fmt.Sprintf("trie/%d", latest), snapshot.Model,
+					)
+				}
+
+				if err != nil {
+					errnie.Error(errnie.Err(errnie.IO, "[training] unable to checkpoint trie", err))
+				}
+
+				errnie.Info(fmt.Sprintf(
+					"[training] trie loaded from %d of %d excursions (%d records)",
+					trained, seenCount, training.engine.Len(),
+				))
+
+				training.Transition(runtime.READY)
+				return
+			}
+
+			select {
+			case <-training.Context().Done():
+				return
+			case <-time.After(time.Second):
+			}
+		}
+	}()
+}
+
+func (training *Training) trainPass() (int, int64, int, error) {
+	runs, err := training.catalog.Runs(training.Context())
+
+	if err != nil {
+		return 0, 0, 0, err
+	}
+
+	slices.SortFunc(runs, func(left, right tables.Run) int {
+		return cmp.Compare(left.Epoch, right.Epoch)
+	})
+
+	seen := make(map[string]struct{})
+	var (
+		latest  int64
+		trained int
+	)
+
+	for _, run := range runs {
+		if run.Epoch >= training.epoch {
+			continue
 		}
 
-		slices.SortFunc(runs, func(left, right tables.Run) int {
-			return cmp.Compare(left.Epoch, right.Epoch)
-		})
+		detections := slices.Collect(training.catalog.Detections(training.Context(), run.Epoch))
 
-		seen := make(map[string]struct{})
-		var latest int64
+		if len(detections) == 0 {
+			detections, err = training.detector.Scan(
+				training.catalog.Trades(training.Context(), run.Epoch),
+			)
 
-		for _, run := range runs {
-			for detection := range training.catalog.Detections(training.Context(), run.Epoch) {
-				if training.Context().Err() != nil {
-					return
-				}
-
-				key := fmt.Sprintf("%d/%s/%d", detection.Epoch, detection.Label, detection.Tick)
-
-				if _, done := seen[key]; done {
-					continue
-				}
-
-				seen[key] = struct{}{}
-				latest = run.Epoch
-
-				if err := training.learn(detection); err != nil {
-					errnie.Error(err)
-				}
+			if err != nil {
+				return 0, 0, 0, err
 			}
 		}
 
-		snapshot, err := training.engine.Snapshot()
+		for _, detection := range detections {
+			if training.Context().Err() != nil {
+				return 0, 0, 0, training.Context().Err()
+			}
 
-		if err == nil {
-			err = training.catalog.PutBlob(
-				training.Context(), fmt.Sprintf("trie/%d", latest), snapshot.Model,
-			)
+			key := fmt.Sprintf("%d/%s/%d", detection.Epoch, detection.Label, detection.Tick)
+
+			if _, done := seen[key]; done {
+				continue
+			}
+
+			seen[key] = struct{}{}
+			latest = run.Epoch
+			learned, err := training.learn(detection)
+
+			if err != nil {
+				errnie.Error(err)
+				continue
+			}
+
+			if learned {
+				trained++
+			}
 		}
+	}
 
-		if err != nil {
-			errnie.Error(errnie.Err(errnie.IO, "[training] unable to checkpoint trie", err))
-		}
-
-		errnie.Info(fmt.Sprintf(
-			"[training] trie loaded from %d excursions (%d records)", len(seen), training.engine.Len(),
-		))
-
-		training.Transition(runtime.READY)
-	}()
+	return trained, latest, len(seen), nil
 }
 
 /*
@@ -458,12 +579,15 @@ the round trip's return as priced by Price:
     the ignition tick itself for the market fill;
   - exit: one frame after B up to the last frame before the peak C, leaving
     the peak tick for the exit fill.
+
+An excursion whose round trip does not clear friction is not trained, and
+learn reports false.
 */
-func (training *Training) learn(detection *data.Measurement[float64]) error {
+func (training *Training) learn(detection *data.Measurement[float64]) (bool, error) {
 	lowTick, highTick, err := tables.DetectionTicks(detection)
 
 	if err != nil {
-		return errnie.Error(err)
+		return false, errnie.Error(err)
 	}
 
 	startTick := int64(0)
@@ -477,27 +601,31 @@ func (training *Training) learn(detection *data.Measurement[float64]) error {
 	entry, exit, err := tables.DetectionPrices(detection)
 
 	if err != nil {
-		return errnie.Error(err)
+		return false, errnie.Error(err)
 	}
 
 	pnl, total, err := training.price.RoundTrip(detection.Label, entry, exit)
 
 	if err != nil {
-		return errnie.Error(err)
+		return false, errnie.Error(err)
 	}
 
-	feedback := pnl.Div(total).Float64()
+	if pnl.Sign() <= 0 {
+		return false, nil
+	}
+
+	feedback := pnl.SetScale(decimal.DefaultScale).Div(total).Float64()
 	ticks, tokens, err := training.frames(detection, startTick, highTick)
 
 	if err != nil {
-		return errnie.Error(err)
+		return false, errnie.Error(err)
 	}
 
 	ignition, _ := slices.BinarySearch(ticks, lowTick)
 	peak, _ := slices.BinarySearch(ticks, highTick)
 
 	if ignition < 1 || ignition+1 >= peak {
-		return errnie.Error(errnie.Err(
+		return false, errnie.Error(errnie.Err(
 			errnie.NotFound,
 			fmt.Sprintf(
 				"[training] excursion %d/%s lacks frames around ignition",
@@ -507,15 +635,33 @@ func (training *Training) learn(detection *data.Measurement[float64]) error {
 		))
 	}
 
-	start := rand.IntN(ignition)
-	enter := bytes.Join(tokens[start:ignition], []byte("/"))
-	hold := bytes.Join(tokens[ignition+1:peak], []byte("/"))
+	startA := 0
+	if jitter := ignition / 4; jitter > 0 {
+		startA = rand.IntN(jitter)
+	}
+
+	endB := ignition
+	if ignition-startA > 2 {
+		endB = ignition - 1
+	}
+
+	precursorTokens := deduplicateTokens(tokens[startA:endB])
+	enter := bytes.Join(precursorTokens, []byte("/"))
+
+	startHolding := ignition + 1
+	endC := peak
+	if peak-startHolding > 1 {
+		endC = peak - 1
+	}
+
+	holdingTokens := deduplicateTokens(tokens[startHolding:endC])
+	hold := bytes.Join(holdingTokens, []byte("/"))
 
 	if len(enter) > 0 {
 		if _, err := training.engine.Train(
 			enter, []byte(cognition.ActionEnter), feedback,
 		); err != nil {
-			return errnie.Error(err)
+			return false, errnie.Error(err)
 		}
 	}
 
@@ -523,11 +669,71 @@ func (training *Training) learn(detection *data.Measurement[float64]) error {
 		if _, err := training.engine.Train(
 			hold, []byte(cognition.ActionExit), feedback,
 		); err != nil {
-			return errnie.Error(err)
+			return false, errnie.Error(err)
 		}
 	}
 
-	return nil
+	points := training.priceTape(detection, startTick, highTick, entry, exit, ticks)
+	tokenStrings := make([]string, len(tokens))
+
+	for index, tok := range tokens {
+		tokenStrings[index] = string(tok)
+	}
+
+	entryPointIdx := ignition
+	exitPointIdx := peak
+
+	for _, pt := range points {
+		if pt.Seq == lowTick {
+			entryPointIdx = pt.X
+		}
+
+		if pt.Seq == highTick {
+			exitPointIdx = pt.X
+		}
+	}
+
+	fragment := ui.TrainedFragment{
+		ID:         len(training.fragments) + 1,
+		Symbol:     detection.Label,
+		Epoch:      detection.Epoch,
+		MarkA:      startTick,
+		MarkB:      lowTick,
+		MarkC:      highTick,
+		EntryPrice: entry.Float64(),
+		ExitPrice:  exit.Float64(),
+		Magnitude:  feedback,
+		Direction:  "up",
+		Tokens:     tokenStrings,
+		Points:     points,
+		EntryIdx:   entryPointIdx,
+		ExitIdx:    exitPointIdx,
+		LearnedAt:  time.Now(),
+	}
+
+	training.mu.Lock()
+	training.fragments = append(training.fragments, fragment)
+	training.mu.Unlock()
+
+	training.streamFragment(detection, fragment)
+
+	return true, nil
+}
+
+func deduplicateTokens(tokens [][]byte) [][]byte {
+	var deduped [][]byte
+
+	for _, tok := range tokens {
+		if len(tok) == 0 {
+			continue
+		}
+
+		if len(deduped) == 0 || !bytes.Equal(deduped[len(deduped)-1], tok) {
+			deduped = append(deduped, tok)
+		}
+	}
+
+	return deduped
 }
 
 /*
@@ -585,13 +791,158 @@ func (training *Training) token(measurements ...*data.Measurement[float64]) []by
 	return bytes.Join(lit, []byte("_"))
 }
 
-/*
-Detect scans stored trade tape for excursions and stores each detection.
-*/
-func (training *Training) Detect() {
-	go func() {
-		training.detector.Scan(
-			training.catalog.Trades(training.Context()),
-		)
-	}()
+func (training *Training) priceTape(
+	detection *data.Measurement[float64],
+	startTick, highTick int64,
+	entry, exit *decimal.Decimal,
+	ticks []int64,
+) []ui.FragmentPoint {
+	var points []ui.FragmentPoint
+
+	if training.catalog != nil {
+		for measurement := range training.catalog.Timeline(
+			training.Context(), detection.Epoch, detection.Label, startTick, highTick,
+		) {
+			if measurement == nil {
+				continue
+			}
+
+			priceMetric := measurement.GetMetric("price")
+
+			if priceMetric.Raw <= 0 {
+				continue
+			}
+
+			timeMs := measurement.At.UnixMilli()
+
+			if timeMs <= 0 {
+				timeMs = time.Now().UnixMilli()
+			}
+
+			points = append(points, ui.FragmentPoint{
+				X:    len(points),
+				Y:    priceMetric.Raw,
+				Seq:  measurement.Tick,
+				Time: timeMs,
+			})
+		}
+	}
+
+	if len(points) == 0 && len(ticks) > 0 {
+		entryVal := entry.Float64()
+		exitVal := exit.Float64()
+		span := float64(len(ticks))
+
+		for idx, tick := range ticks {
+			frac := float64(idx) / math.Max(span-1, 1.0)
+			val := entryVal + (exitVal-entryVal)*frac
+
+			points = append(points, ui.FragmentPoint{
+				X:    idx,
+				Y:    val,
+				Seq:  tick,
+				Time: time.Now().UnixMilli(),
+			})
+		}
+	}
+
+	return points
+}
+
+func (training *Training) streamFragment(
+	detection *data.Measurement[float64],
+	fragment ui.TrainedFragment,
+) {
+	if training == nil || training.uiTee == nil || len(fragment.Points) == 0 {
+		return
+	}
+
+	points := fragment.Points
+	if len(points) > 128 {
+		step := float64(len(points)-1) / 127.0
+		decimated := make([]ui.FragmentPoint, 128)
+		for index := 0; index < 127; index++ {
+			decimated[index] = points[int(float64(index)*step)]
+		}
+		decimated[127] = points[len(points)-1]
+		points = decimated
+	}
+
+	for _, pt := range points {
+		point := data.NewMeasurement[float64](training.Name())
+		point.Label = detection.Label
+		point.SeqIdx = pt.Seq
+		point.Tick = pt.Seq
+		point.At = time.UnixMilli(pt.Time)
+
+		point.SetMetric("price", data.NewMetric[float64](
+			"price",
+			data.UnitPrice,
+			data.TimescaleTick,
+			pt.Y,
+			math.Max(pt.Y*0.001, 1e-6),
+		).Write(pt.Y))
+
+		point.SetMetric("stage_code", data.NewMetric[float64](
+			"stage_code",
+			data.UnitCount,
+			data.TimescaleSession,
+			0.0,
+			1.0,
+		).Write(float64(StageHistoricalValidation)))
+
+		point.SetMetadata("excursion_start", strconv.FormatInt(fragment.MarkA, 10))
+		training.uiTee.Push(data.NewPublication(point, nil))
+	}
+
+	out := data.NewMeasurement[float64](training.Name())
+	out.Label = detection.Label
+	out.SeqIdx = fragment.MarkC
+	out.Tick = fragment.MarkC
+
+	var regionTokens [][]byte
+
+	for _, tok := range fragment.Tokens {
+		regionTokens = append(regionTokens, []byte(tok))
+	}
+
+	snapshot := ReportSnapshot{
+		Source:       training.Name(),
+		Symbol:       detection.Label,
+		SeqIdx:       fragment.MarkC,
+		At:           time.Now(),
+		Stage:        StageHistoricalValidation,
+		Blocker:      "historical validation",
+		Action:       1,
+		Confidence:   1.0,
+		RegionTokens: regionTokens,
+		MarkA:        fragment.MarkA,
+		MarkB:        fragment.MarkB,
+		MarkC:        fragment.MarkC,
+		Price:        fragment.ExitPrice,
+		ExcursionMag: fragment.Magnitude,
+		Direction:    fragment.Direction,
+		Clears:       true,
+		Event:        "completed",
+	}
+
+	training.reporter.Populate(out, snapshot)
+
+	out.SetMetric("agent_entry", data.NewMetric[float64](
+		"agent_entry",
+		data.UnitCount,
+		data.TimescaleInstantaneous,
+		0,
+		1,
+	).Write(float64(fragment.MarkB)))
+
+	out.SetMetric("agent_exit", data.NewMetric[float64](
+		"agent_exit",
+		data.UnitCount,
+		data.TimescaleInstantaneous,
+		0,
+		1,
+	).Write(float64(fragment.MarkC)))
+
+	training.uiTee.Push(data.NewPublication(out, nil))
 }

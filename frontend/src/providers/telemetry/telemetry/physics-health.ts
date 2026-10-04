@@ -74,8 +74,23 @@ particleMaterialTotal():number {
   return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
 }
 
+spatialSigmaRaw():number {
+  const offset = this.bb!.__offset(this.bb_pos, 22);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+spatialSigmaUsed():number {
+  const offset = this.bb!.__offset(this.bb_pos, 24);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+sigmaUniformLimit():boolean {
+  const offset = this.bb!.__offset(this.bb_pos, 26);
+  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+}
+
 static startPhysicsHealth(builder:flatbuffers.Builder) {
-  builder.startObject(9);
+  builder.startObject(12);
 }
 
 static addIntegrator(builder:flatbuffers.Builder, integratorOffset:flatbuffers.Offset) {
@@ -114,6 +129,18 @@ static addParticleMaterialTotal(builder:flatbuffers.Builder, particleMaterialTot
   builder.addFieldFloat64(8, particleMaterialTotal, 0.0);
 }
 
+static addSpatialSigmaRaw(builder:flatbuffers.Builder, spatialSigmaRaw:number) {
+  builder.addFieldFloat64(9, spatialSigmaRaw, 0.0);
+}
+
+static addSpatialSigmaUsed(builder:flatbuffers.Builder, spatialSigmaUsed:number) {
+  builder.addFieldFloat64(10, spatialSigmaUsed, 0.0);
+}
+
+static addSigmaUniformLimit(builder:flatbuffers.Builder, sigmaUniformLimit:boolean) {
+  builder.addFieldInt8(11, +sigmaUniformLimit, +false);
+}
+
 static endPhysicsHealth(builder:flatbuffers.Builder):flatbuffers.Offset {
   const offset = builder.endObject();
   return offset;
@@ -130,7 +157,10 @@ unpack(): PhysicsHealthT {
     this.particleThermal(),
     this.particleOscillator(),
     this.particleKinetic(),
-    this.particleMaterialTotal()
+    this.particleMaterialTotal(),
+    this.spatialSigmaRaw(),
+    this.spatialSigmaUsed(),
+    this.sigmaUniformLimit()
   );
 }
 
@@ -145,6 +175,9 @@ unpackTo(_o: PhysicsHealthT): void {
   _o.particleOscillator = this.particleOscillator();
   _o.particleKinetic = this.particleKinetic();
   _o.particleMaterialTotal = this.particleMaterialTotal();
+  _o.spatialSigmaRaw = this.spatialSigmaRaw();
+  _o.spatialSigmaUsed = this.spatialSigmaUsed();
+  _o.sigmaUniformLimit = this.sigmaUniformLimit();
 }
 }
 
@@ -158,7 +191,10 @@ constructor(
   public particleThermal: number = 0.0,
   public particleOscillator: number = 0.0,
   public particleKinetic: number = 0.0,
-  public particleMaterialTotal: number = 0.0
+  public particleMaterialTotal: number = 0.0,
+  public spatialSigmaRaw: number = 0.0,
+  public spatialSigmaUsed: number = 0.0,
+  public sigmaUniformLimit: boolean = false
 ){}
 
 
@@ -179,6 +215,9 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   PhysicsHealth.addParticleOscillator(builder, this.particleOscillator);
   PhysicsHealth.addParticleKinetic(builder, this.particleKinetic);
   PhysicsHealth.addParticleMaterialTotal(builder, this.particleMaterialTotal);
+  PhysicsHealth.addSpatialSigmaRaw(builder, this.spatialSigmaRaw);
+  PhysicsHealth.addSpatialSigmaUsed(builder, this.spatialSigmaUsed);
+  PhysicsHealth.addSigmaUniformLimit(builder, this.sigmaUniformLimit);
 
   return PhysicsHealth.endPhysicsHealth(builder);
 }

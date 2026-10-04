@@ -10,6 +10,7 @@ import (
 
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
@@ -52,8 +53,7 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 	pipeline := nomagique.NewNumber(
 		nmliquidity.NewGate(),
 		nmliquidity.NewTouch(),
-		transport.NewFan(
-			data.NewAdapter(
+		data.NewAdapter(
 				statistic.NewJoint(3),
 				func(m *data.Measurement[float64]) statistic.JointInput {
 					return statistic.JointInput{Values: []float64{
@@ -202,7 +202,6 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 					}
 				},
 			),
-		),
 		data.NewRecurrence(
 			"depth_zscore:bid",
 			"depth_zscore:ask",
@@ -245,12 +244,12 @@ func (signal *Signal) Step(prior *data.Measurement[float64]) *data.Measurement[f
 				return
 			}
 			if bestBid := b.BestBid(); bestBid != nil && bestBid.Price != nil && bestBid.Quantity != nil {
-				bid = bestBid.Price.Float64()
-				bidQty = bestBid.Quantity.Float64()
+				bid = kraken.Float64(bestBid.Price)
+				bidQty = kraken.Float64(bestBid.Quantity)
 			}
 			if bestAsk := b.BestAsk(); bestAsk != nil && bestAsk.Price != nil && bestAsk.Quantity != nil {
-				ask = bestAsk.Price.Float64()
-				askQty = bestAsk.Quantity.Float64()
+				ask = kraken.Float64(bestAsk.Price)
+				askQty = kraken.Float64(bestAsk.Quantity)
 			}
 		})
 	}

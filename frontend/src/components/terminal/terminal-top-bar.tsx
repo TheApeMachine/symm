@@ -39,8 +39,25 @@ const SymmLogo = () => (
 );
 
 const ObservationCounter = () => {
+	const observations = useSelector(tickCountAtom, (s) => s);
+
+	return (
+		<Flex.Row align="center" gap={6}>
+			<Flex.Column className="items-end gap-px">
+				<Typography.Label size="s" tone="f4" weight="normal">
+					Observations
+				</Typography.Label>
+				<Typography.Mono size="lg" tone="f1" data-observations="true">
+					{observations > 0 ? observations.toLocaleString() : "—"}
+				</Typography.Mono>
+			</Flex.Column>
+		</Flex.Row>
+	);
+};
+
+const TickCounter = () => {
 	const symbol = useSelector(focusAtom, (s) => s);
-	const steps = useSelector(signals.training, (state) => {
+	const ticks = useSelector(signals.training, (state) => {
 		const ring =
 			state[symbol] ??
 			state.learner ??
@@ -64,27 +81,10 @@ const ObservationCounter = () => {
 		<Flex.Row align="center" gap={6}>
 			<Flex.Column className="items-end gap-px">
 				<Typography.Label size="s" tone="f4" weight="normal">
-					Observations
-				</Typography.Label>
-				<Typography.Mono size="lg" tone="f1" data-observations="true">
-					{steps !== null ? steps.toLocaleString() : "—"}
-				</Typography.Mono>
-			</Flex.Column>
-		</Flex.Row>
-	);
-};
-
-const TickCounter = () => {
-	const ticks = useSelector(tickCountAtom, (s) => s);
-
-	return (
-		<Flex.Row align="center" gap={6}>
-			<Flex.Column className="items-end gap-px">
-				<Typography.Label size="s" tone="f4" weight="normal">
 					Ticks
 				</Typography.Label>
 				<Typography.Mono size="lg" tone="f1" data-tick="true">
-					{ticks > 0 ? ticks.toLocaleString() : "—"}
+					{ticks !== null ? ticks.toLocaleString() : "—"}
 				</Typography.Mono>
 			</Flex.Column>
 		</Flex.Row>

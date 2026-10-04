@@ -4,12 +4,12 @@ import (
 	"errors"
 	"iter"
 	"math"
-	"strconv"
 	"time"
 	"unsafe"
 
 	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 )
@@ -21,8 +21,8 @@ additions, removals, turnover, net displayed flow, and resolution gaps.
 type BookFlow struct {
 	err          error
 	books        broker.BookSource
-	prevBids     map[string]float64
-	prevAsks     map[string]float64
+	prevBids     map[float64]float64
+	prevAsks     map[float64]float64
 	prevNotional float64
 	prevTime     time.Time
 }
@@ -30,8 +30,8 @@ type BookFlow struct {
 func NewBookFlow(books broker.BookSource) core.Primitive {
 	return &BookFlow{
 		books:    books,
-		prevBids: make(map[string]float64),
-		prevAsks: make(map[string]float64),
+		prevBids: make(map[float64]float64),
+		prevAsks: make(map[float64]float64),
 	}
 }
 
@@ -55,13 +55,13 @@ func (op *BookFlow) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 
 			if op.books != nil {
 				op.books.Book(measurement.Label, func(b *book.Book) {
-					currBids := make(map[string]float64)
-					currAsks := make(map[string]float64)
+					currBids := make(map[float64]float64)
+					currAsks := make(map[float64]float64)
 
 					cursor := b.BestBid()
 					for count := 0; count < 100 && cursor != nil; count++ {
-						price := cursor.Price.Float64()
-						qty := cursor.Quantity.Float64()
+						price := kraken.Float64(cursor.Price)
+						qty := kraken.Float64(cursor.Quantity)
 						levelNotional := price * qty
 						obsBid += levelNotional
 
@@ -69,10 +69,9 @@ func (op *BookFlow) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 							touchBidNotional = levelNotional
 						}
 
-						priceStr := cursor.Price.String()
-						currBids[priceStr] = qty
+						currBids[price] = qty
 
-						prevQty := op.prevBids[priceStr]
+						prevQty := op.prevBids[price]
 						if qty > prevQty {
 							addedBid += price * (qty - prevQty)
 						}
@@ -84,17 +83,16 @@ func (op *BookFlow) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 						cursor = cursor.Lower
 					}
 
-					for priceStr, prevQty := range op.prevBids {
-						if _, exists := currBids[priceStr]; !exists {
-							price, _ := strconv.ParseFloat(priceStr, 64)
+					for price, prevQty := range op.prevBids {
+						if _, exists := currBids[price]; !exists {
 							removedBid += price * prevQty
 						}
 					}
 
 					cursor = b.BestAsk()
 					for count := 0; count < 100 && cursor != nil; count++ {
-						price := cursor.Price.Float64()
-						qty := cursor.Quantity.Float64()
+						price := kraken.Float64(cursor.Price)
+						qty := kraken.Float64(cursor.Quantity)
 						levelNotional := price * qty
 						obsAsk += levelNotional
 
@@ -102,10 +100,9 @@ func (op *BookFlow) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 							touchAskNotional = levelNotional
 						}
 
-						priceStr := cursor.Price.String()
-						currAsks[priceStr] = qty
+						currAsks[price] = qty
 
-						prevQty := op.prevAsks[priceStr]
+						prevQty := op.prevAsks[price]
 						if qty > prevQty {
 							addedAsk += price * (qty - prevQty)
 						}
@@ -117,9 +114,8 @@ func (op *BookFlow) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 						cursor = cursor.Higher
 					}
 
-					for priceStr, prevQty := range op.prevAsks {
-						if _, exists := currAsks[priceStr]; !exists {
-							price, _ := strconv.ParseFloat(priceStr, 64)
+					for price, prevQty := range op.prevAsks {
+						if _, exists := currAsks[price]; !exists {
 							removedAsk += price * prevQty
 						}
 					}

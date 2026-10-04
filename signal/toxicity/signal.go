@@ -9,6 +9,7 @@ import (
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/adaptive"
 	"github.com/theapemachine/symm/nomagique/core"
@@ -61,8 +62,7 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 		nmtoxicity.NewTradeMatching(),
 
 		// 2. Baselines and dynamics
-		transport.NewFan(
-			data.NewAdapter(
+		data.NewAdapter(
 				adaptive.NewBaseline(adaptive.NewWindow()),
 				func(m *data.Measurement[float64]) float64 {
 					return m.GetMetric("net_withdrawal_fraction:bid").Raw
@@ -317,7 +317,6 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 					}
 				},
 			),
-		),
 
 		// 3. Recurrence
 		data.NewRecurrence(
@@ -395,10 +394,10 @@ func (signal *Signal) Step(prior *data.Measurement[float64]) *data.Measurement[f
 			bestAsk := b.BestAsk()
 			if bestBid != nil && bestBid.Price != nil && bestBid.Quantity != nil &&
 				bestAsk != nil && bestAsk.Price != nil && bestAsk.Quantity != nil {
-				bidPrice := bestBid.Price.Float64()
-				askPrice := bestAsk.Price.Float64()
-				bidQty := bestBid.Quantity.Float64()
-				askQty := bestAsk.Quantity.Float64()
+				bidPrice := kraken.Float64(bestBid.Price)
+				askPrice := kraken.Float64(bestAsk.Price)
+				bidQty := kraken.Float64(bestBid.Quantity)
+				askQty := kraken.Float64(bestAsk.Quantity)
 				midpoint := (bidPrice + askPrice) / 2.0
 				spread := askPrice - bidPrice
 				totalQty := bidQty + askQty

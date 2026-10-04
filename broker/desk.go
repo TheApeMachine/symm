@@ -2,7 +2,9 @@ package broker
 
 import (
 	"context"
+	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/bytedance/sonic"
 	"github.com/google/uuid"
@@ -10,6 +12,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 )
 
 /*
@@ -56,22 +59,29 @@ each completed round trip.
 */
 type Desk struct {
 	*runtime.System
-	transport Transport
-	price     *Price
-	mu        sync.Mutex
-	positions map[string]*position
-	closed    func(Closure)
+	transport        Transport
+	price            *Price
+	Balance          *Balance
+	mu               sync.Mutex
+	positions        map[string]*position
+	positionsVersion atomic.Uint64
+	closed           func(Closure)
 }
 
 func NewDesk(
 	ctx context.Context,
 	transport Transport,
 	price *Price,
+	balance ...*Balance,
 ) *Desk {
 	desk := &Desk{
 		transport: transport,
 		price:     price,
 		positions: make(map[string]*position),
+	}
+
+	if len(balance) > 0 {
+		desk.Balance = balance[0]
 	}
 
 	desk.System = runtime.NewSystem(ctx, "desk", desk)
@@ -144,6 +154,7 @@ func (desk *Desk) Enter(symbol string) error {
 		orders:   make(map[string]Direction),
 	}
 
+	desk.positionsVersion.Add(1)
 	desk.mu.Unlock()
 
 	go desk.submit(symbol, BUY, cost.Quantity)
@@ -159,6 +170,38 @@ func (desk *Desk) Exit(symbol string) error {
 	held, ok := desk.positions[symbol]
 
 	if !ok || held.exiting || held.bought.Sign() <= 0 {
+		if desk.Balance != nil {
+			snap := desk.Balance.Snapshot()
+
+			if snap != nil && snap.Assets != nil {
+				asset := symbol
+
+				if strings.Contains(symbol, "/") {
+					parts := strings.Split(symbol, "/")
+					asset = parts[0]
+				}
+
+				if qty, exists := snap.Assets[asset]; exists && qty != nil && qty.Sign() > 0 {
+					held = &position{
+						bought:   qty,
+						cost:     decimal.NewFromInt64(0),
+						sold:     decimal.NewFromInt64(0),
+						proceeds: decimal.NewFromInt64(0),
+						fees:     decimal.NewFromInt64(0),
+						orders:   make(map[string]Direction),
+						exiting:  true,
+					}
+					desk.positions[symbol] = held
+					desk.positionsVersion.Add(1)
+					quantity := held.bought
+					desk.mu.Unlock()
+
+					go desk.submit(symbol, SELL, quantity)
+					return nil
+				}
+			}
+		}
+
 		desk.mu.Unlock()
 
 		return errnie.Error(errnie.Err(
@@ -168,6 +211,7 @@ func (desk *Desk) Exit(symbol string) error {
 
 	held.exiting = true
 	quantity := held.bought
+	desk.positionsVersion.Add(1)
 
 	desk.mu.Unlock()
 
@@ -267,11 +311,13 @@ func (desk *Desk) fill(row kraken.ExecutionData) (Closure, bool) {
 	if side == BUY {
 		held.bought = held.bought.Add(row.LastQty)
 		held.cost = held.cost.Add(row.Cost)
+		desk.positionsVersion.Add(1)
 		return Closure{}, false
 	}
 
 	held.sold = held.sold.Add(row.LastQty)
 	held.proceeds = held.proceeds.Add(row.Cost)
+	desk.positionsVersion.Add(1)
 
 	if !held.exiting || held.sold.Cmp(held.bought) < 0 {
 		return Closure{}, false
@@ -342,4 +388,170 @@ func (desk *Desk) submit(symbol string, side Direction, quantity *decimal.Decima
 	if held.bought.Sign() <= 0 {
 		delete(desk.positions, symbol)
 	}
+}
+
+/*
+PositionsVersion reports the monotonic revision of the active positions.
+*/
+func (desk *Desk) PositionsVersion() uint64 {
+	if desk == nil {
+		return 0
+	}
+
+	return desk.positionsVersion.Load()
+}
+
+/*
+DecisionsVersion reports the monotonic revision of the strategy decisions.
+*/
+func (desk *Desk) DecisionsVersion() uint64 {
+	return 0
+}
+
+/*
+DecisionsWire exports recent strategy decisions for streaming to the UI.
+*/
+func (desk *Desk) DecisionsWire() *wire.StrategyFrameT {
+	return &wire.StrategyFrameT{
+		Evaluated: false,
+		Decisions: []*wire.DecisionT{},
+	}
+}
+
+/*
+PositionsWire returns the active open positions and spot holdings formatted
+for the telemetry websocket feed.
+*/
+func (desk *Desk) PositionsWire() *wire.PositionsFrameT {
+	if desk == nil {
+		return &wire.PositionsFrameT{Rows: []*wire.PositionT{}}
+	}
+
+	desk.mu.Lock()
+	defer desk.mu.Unlock()
+
+	rows := make([]*wire.PositionT, 0)
+	handled := make(map[string]bool)
+
+	for symbol, held := range desk.positions {
+		if held.bought == nil || held.bought.Sign() <= 0 {
+			continue
+		}
+
+		handled[symbol] = true
+		status := "holding"
+
+		if held.exiting {
+			status = "exiting"
+		}
+
+		qtyStr := held.bought.String()
+		basis := held.cost.Add(held.fees)
+		entryPriceStr := ""
+
+		if held.bought.Sign() > 0 {
+			entryPriceStr = basis.Div(held.bought).String()
+		}
+
+		markStr := entryPriceStr
+		pnlStr := "0.00"
+		returnPct := 0.0
+
+		if desk.price != nil {
+			mark := desk.price.CurrentMark(symbol)
+
+			if mark != nil {
+				markStr = mark.String()
+			}
+
+			net, _, err := desk.price.Liquidate(symbol, held.bought)
+
+			if err == nil {
+				pnl := net.Sub(basis)
+				pnlStr = pnl.String()
+
+				if basis.Sign() > 0 {
+					returnPct = pnl.SetScale(decimal.DefaultScale).Div(basis).Float64() * 100
+				}
+			} else if mark != nil {
+				proceeds := mark.Mul(held.bought)
+				pnl := proceeds.Sub(basis)
+				pnlStr = pnl.String()
+
+				if basis.Sign() > 0 {
+					returnPct = pnl.SetScale(decimal.DefaultScale).Div(basis).Float64() * 100
+				}
+			}
+		}
+
+		rows = append(rows, &wire.PositionT{
+			Status: status,
+			Holding: &wire.HoldingT{
+				Status:      status,
+				Symbol:      symbol,
+				Asset:       symbol,
+				Qty:         qtyStr,
+				SellableQty: qtyStr,
+				EntryPrice:  entryPriceStr,
+				Mark:        markStr,
+				Pnl:         pnlStr,
+				ReturnPct:   returnPct,
+			},
+		})
+	}
+
+	if desk.Balance != nil {
+		snap := desk.Balance.Snapshot()
+
+		if snap != nil && snap.Wallet != nil {
+			for _, item := range snap.Wallet.Data {
+				if item.Asset == desk.Balance.Quote || item.Balance == nil || item.Balance.Sign() <= 0 {
+					continue
+				}
+
+				symbol := item.Asset + "/" + desk.Balance.Quote
+
+				if handled[symbol] || handled[item.Asset] {
+					continue
+				}
+
+				handled[symbol] = true
+				qtyStr := item.Balance.String()
+				sellableStr := qtyStr
+
+				if item.Available != nil {
+					sellableStr = item.Available.String()
+				}
+
+				markStr := ""
+				pnlStr := "0.00"
+				returnPct := 0.0
+
+				if desk.price != nil {
+					mark := desk.price.CurrentMark(symbol)
+
+					if mark != nil {
+						markStr = mark.String()
+					}
+				}
+
+				rows = append(rows, &wire.PositionT{
+					Status: "holding",
+					Holding: &wire.HoldingT{
+						Status:      "holding",
+						Symbol:      symbol,
+						Asset:       item.Asset,
+						Qty:         qtyStr,
+						SellableQty: sellableStr,
+						EntryPrice:  markStr,
+						Mark:        markStr,
+						Pnl:         pnlStr,
+						ReturnPct:   returnPct,
+					},
+				})
+			}
+		}
+	}
+
+	return &wire.PositionsFrameT{Rows: rows}
 }

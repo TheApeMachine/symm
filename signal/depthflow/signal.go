@@ -59,8 +59,7 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 
 	pipeline := nomagique.NewNumber(
 		nmdepthflow.NewBookFlow(signal.books),
-		transport.NewFan(
-			data.NewAdapter(
+		data.NewAdapter(
 				adaptive.NewBaseline(adaptive.NewWindow()),
 				func(m *data.Measurement[float64]) float64 {
 					return m.GetMetric("book_imbalance").Raw
@@ -267,7 +266,6 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 					}
 				},
 			),
-		),
 		data.NewRecurrence(
 			"book_imbalance_zscore",
 			"resolution_gap_zscore",

@@ -2,10 +2,12 @@ package strategy
 
 import (
 	"context"
+	"fmt"
 	"iter"
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
@@ -39,8 +41,10 @@ func NewDetector(
 }
 
 /*
-Scan scans the tape once from beginning to end, tracking the lowest point
-and the highest point where the lowest is first and the highest is second.
+Scan scans the tape once from beginning to end and keeps, per epoch and
+symbol, the low/high pair with the largest relative gain where the low comes
+before the high. The running trough is the only candidate low: any later high
+is measured against the lowest price seen before it.
 Since we store all data the system produces in its "native" format,
 meaning *data.Measurement[float64], we have to realize that there is only
 one Iceberg table (measurements), and we must rely on the measurement.Source
@@ -59,45 +63,107 @@ clean way to do the scan for each historical tape fragment only once.
 */
 func (detector *Detector) Scan(
 	measurements iter.Seq[*data.Measurement[float64]],
-) {
+) ([]*data.Measurement[float64], error) {
 	var (
-		epoch    int64
-		symbol   string
-		lowest   *decimal.Decimal
-		highest  *decimal.Decimal
-		lowIdx   int64
-		highIdx  int64
-		lowTick  int64
-		highTick int64
-		lowAt    time.Time
-		highAt   time.Time
+		detections    []*data.Measurement[float64]
+		currentEpoch  int64
+		currentSymbol string
+		symbolTrades  []*data.Measurement[float64]
 	)
 
-	flush := func() {
-		if lowest != nil && highest != nil && highest.Cmp(lowest) > 0 && highTick > lowTick {
-			span := highTick - lowTick
-			idxSpan := highIdx - lowIdx
-			startTick := max(lowTick-span, 0)
-			startIdx := lowIdx - idxSpan
+	flushSymbol := func() {
+		if len(symbolTrades) < 3 {
+			return
+		}
 
-			if startIdx <= 0 {
-				startIdx = 1
+		bestLowIdx := -1
+		bestHighIdx := -1
+		var (
+			bestPLow  *decimal.Decimal
+			bestPHigh *decimal.Decimal
+		)
+
+		// Start candidate low at index 1 so that trade 0 provides precursor tape.
+		runningLowIdx := 1
+
+		for j := 2; j < len(symbolTrades); j++ {
+			pLow := symbolTrades[runningLowIdx].GetMetric("price").Exact
+			pHigh := symbolTrades[j].GetMetric("price").Exact
+
+			if pLow == nil || pHigh == nil || pLow.Sign() <= 0 || pHigh.Sign() <= 0 {
+				continue
 			}
 
-			detector.Flush(
-				symbol,
-				epoch,
-				startIdx,
-				lowIdx,
-				highIdx,
-				startTick,
-				lowTick,
-				highTick,
-				lowAt,
-				highAt,
-				lowest,
-				highest,
-			)
+			if pHigh.Cmp(pLow) > 0 {
+				isBetter := false
+
+				if bestPLow == nil {
+					isBetter = true
+				}
+
+				if bestPLow != nil {
+					crossNew := exactProduct(pHigh, bestPLow)
+					crossBest := exactProduct(bestPHigh, pLow)
+					cmpVal := crossNew.Cmp(crossBest)
+
+					if cmpVal > 0 {
+						isBetter = true
+					}
+
+					if cmpVal == 0 && (j-runningLowIdx) > (bestHighIdx-bestLowIdx) {
+						isBetter = true
+					}
+				}
+
+				if isBetter {
+					bestLowIdx = runningLowIdx
+					bestHighIdx = j
+					bestPLow = pLow
+					bestPHigh = pHigh
+				}
+			}
+
+			if pHigh.Cmp(pLow) < 0 {
+				runningLowIdx = j
+			}
+		}
+
+		if bestLowIdx < 1 || bestHighIdx <= bestLowIdx {
+			return
+		}
+
+		low := symbolTrades[bestLowIdx]
+		high := symbolTrades[bestHighIdx]
+		spanTrades := bestHighIdx - bestLowIdx
+
+		// Point A: additional tape to the start for precursor detection
+		startTradeIdx := max(0, bestLowIdx-spanTrades)
+		startTrade := symbolTrades[startTradeIdx]
+
+		startTick := startTrade.Tick
+		startSeqIdx := startTrade.SeqIdx
+
+		if startSeqIdx <= 0 {
+			startSeqIdx = 1
+		}
+
+		detection := detector.Flush(
+			currentSymbol,
+			currentEpoch,
+			startSeqIdx,
+			low.SeqIdx,
+			high.SeqIdx,
+			startTick,
+			low.Tick,
+			high.Tick,
+			low.At,
+			high.At,
+			low.GetMetric("price").Exact,
+			high.GetMetric("price").Exact,
+		)
+
+		if detection != nil {
+			detections = append(detections, detection)
 		}
 	}
 
@@ -106,43 +172,44 @@ func (detector *Detector) Scan(
 			continue
 		}
 
-		if epoch == 0 || epoch != measurement.Epoch || symbol != measurement.Label {
-			flush()
-			epoch = measurement.Epoch
-			symbol = measurement.Label
-			lowest = nil
-			highest = nil
-			lowIdx = 0
-			highIdx = 0
-			lowTick = 0
-			highTick = 0
-			lowAt = time.Time{}
-			highAt = time.Time{}
-		}
-
 		price := measurement.GetMetric("price").Exact
 
-		if lowest == nil || price.Cmp(lowest) < 0 {
-			lowest = price
-			lowIdx = measurement.SeqIdx
-			lowTick = measurement.Tick
-			lowAt = measurement.At
+		if price == nil {
+			return detections, errnie.Error(errnie.Err(
+				errnie.Validation,
+				fmt.Sprintf(
+					"[detector] trade %d/%s/%d has no exact price",
+					measurement.Epoch, measurement.Label, measurement.Tick,
+				),
+				nil,
+			))
 		}
 
-		if highest == nil || price.Cmp(highest) > 0 {
-			highest = price
-			highIdx = measurement.SeqIdx
-			highTick = measurement.Tick
-			highAt = measurement.At
+		if currentEpoch == 0 || currentEpoch != measurement.Epoch || currentSymbol != measurement.Label {
+			flushSymbol()
+			currentEpoch = measurement.Epoch
+			currentSymbol = measurement.Label
+			symbolTrades = symbolTrades[:0]
 		}
+
+		symbolTrades = append(symbolTrades, measurement)
 	}
 
-	flush()
+	flushSymbol()
+	return detections, nil
+}
+
+/*
+exactProduct multiplies two decimals without rounding. The SDK rounds a
+product to the left operand's scale, so the left operand carries both scales.
+*/
+func exactProduct(left, right *decimal.Decimal) *decimal.Decimal {
+	return left.SetScale(left.GetScale() + right.GetScale()).Mul(right)
 }
 
 /*
 Flush the detection to the storeTee to queue it up for shipping to the
-Iceberg tables as a *data.Measurement[float64] shape.
+Iceberg tables as a *data.Measurement[float64] shape, and return it.
 */
 func (detector *Detector) Flush(
 	symbol string,
@@ -157,9 +224,9 @@ func (detector *Detector) Flush(
 	highAt time.Time,
 	lowest *decimal.Decimal,
 	highest *decimal.Decimal,
-) {
+) *data.Measurement[float64] {
 	if epoch == 0 || lowIdx == 0 || highIdx == 0 {
-		return
+		return nil
 	}
 
 	metrics := map[string]data.Metric[float64]{
@@ -247,4 +314,6 @@ func (detector *Detector) Flush(
 		measurement,
 		nil,
 	))
+
+	return measurement
 }

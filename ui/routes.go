@@ -41,6 +41,20 @@ func (routes *Routes) Register() {
 		return c.JSON(export)
 	})
 
+	routes.hub.app.Get("/training/fragments", func(c fiber.Ctx) error {
+		if routes.hub.fragmentsSource == nil {
+			return c.JSON([]TrainedFragment{})
+		}
+
+		fragments := routes.hub.fragmentsSource.Fragments()
+
+		if fragments == nil {
+			fragments = []TrainedFragment{}
+		}
+
+		return c.JSON(fragments)
+	})
+
 	// Hindsight inspection projection reads
 	routes.hub.app.Get("/hindsight/metric-map", func(c fiber.Ctx) error {
 		return c.JSON(signal.Semantics())

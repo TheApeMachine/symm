@@ -348,6 +348,19 @@ export const PhysicsDiagnosticsHUD = ({
 
 				{tab === "wave" && (
 					<div className="space-y-3 font-mono">
+						<div className="rounded border border-(--line) p-2 text-[10px]">
+							Projection:{" "}
+							{health?.sigmaUniformLimit
+								? "uniform thermal limit"
+								: health?.spatialSigmaRaw
+									? "spatial thermal overlap"
+									: "unavailable"}
+							<br />
+							Coherence width σ:{" "}
+							{health?.sigmaUniformLimit && health.spatialSigmaRaw === 0
+								? "∞ (zero temperature limit)"
+								: formatSci(health?.spatialSigmaRaw || undefined, 4)}
+						</div>
 						<div className="grid grid-cols-2 gap-2">
 							<div className="rounded border border-(--line) bg-(--surface) p-2">
 								<div className="text-[9px] uppercase tracking-wider text-(--f4)">

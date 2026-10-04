@@ -8,6 +8,7 @@ import (
 
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/distribution"
@@ -72,10 +73,10 @@ func (op *ShapeFlow) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 
 				op.books.Book(measurement.Label, func(b *spotbook.Book) {
 					if bid := b.BestBid(); bid != nil && bid.Price != nil {
-						bidPrice = bid.Price.Float64()
+						bidPrice = kraken.Float64(bid.Price)
 					}
 					if ask := b.BestAsk(); ask != nil && ask.Price != nil {
-						askPrice = ask.Price.Float64()
+						askPrice = kraken.Float64(ask.Price)
 					}
 
 					mid := (bidPrice + askPrice) / 2.0
@@ -84,8 +85,8 @@ func (op *ShapeFlow) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 					if spread > 0 {
 						cursor := b.BestBid()
 						for count := 0; count < 100 && cursor != nil; count++ {
-							price := cursor.Price.Float64()
-							qty := cursor.Quantity.Float64()
+							price := kraken.Float64(cursor.Price)
+							qty := kraken.Float64(cursor.Quantity)
 							relativePos := (mid - price) / spread
 							bidPoints = append(bidPoints, distribution.WeightedPoint{
 								Position: relativePos,
@@ -96,8 +97,8 @@ func (op *ShapeFlow) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 
 						cursor = b.BestAsk()
 						for count := 0; count < 100 && cursor != nil; count++ {
-							price := cursor.Price.Float64()
-							qty := cursor.Quantity.Float64()
+							price := kraken.Float64(cursor.Price)
+							qty := kraken.Float64(cursor.Quantity)
 							relativePos := (price - mid) / spread
 							askPoints = append(askPoints, distribution.WeightedPoint{
 								Position: relativePos,

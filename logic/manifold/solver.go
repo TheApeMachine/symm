@@ -167,7 +167,7 @@ costs resolution — more messages fold into one advance — never latency on th
 market pipeline and never an unbounded backlog.
 */
 func (solver *Solver) run() {
-	ticker := time.NewTicker(33 * time.Millisecond)
+	ticker := time.NewTicker(16666 * time.Microsecond)
 	defer ticker.Stop()
 
 	for {

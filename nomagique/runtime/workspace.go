@@ -2,13 +2,39 @@ package runtime
 
 import (
 	"context"
+	goruntime "runtime"
 	"sync/atomic"
+	"time"
 
 	"github.com/smarty/go-disruptor"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/system"
 )
+
+type adaptiveWaitStrategy struct{}
+
+func (adaptiveWaitStrategy) Gate(int64) {
+	goruntime.Gosched()
+}
+
+func (adaptiveWaitStrategy) Idle(count int64) {
+	if count < 100 {
+		goruntime.Gosched()
+		return
+	}
+
+	time.Sleep(100 * time.Microsecond)
+}
+
+func (adaptiveWaitStrategy) Reserve(count int64) {
+	if count < 64 {
+		goruntime.Gosched()
+		return
+	}
+
+	time.Sleep(50 * time.Microsecond)
+}
 
 func optionList[O any](initial ...O) []O {
 	return initial
@@ -105,6 +131,7 @@ func NewWorkspace(
 	opts := optionList(
 		disruptor.Options.BufferCapacity(uint32(capacity)),
 		disruptor.Options.WriterCount(writerCount),
+		disruptor.Options.WaitStrategy(adaptiveWaitStrategy{}),
 	)
 
 	for stageIdx, stageNodes := range stages {

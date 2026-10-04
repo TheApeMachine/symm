@@ -53,8 +53,7 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 		crosssection.NewUpdateMember("last", signal.prices, signal.changes),
 		crosssection.NewStampPeers(signal.changes),
 		nmsentiment.NewCrossSentiment(),
-		transport.NewFan(
-			data.NewAdapter(
+		data.NewAdapter(
 				adaptive.NewBaseline(adaptive.NewWindow()),
 				func(m *data.Measurement[float64]) float64 {
 					return m.GetMetric("median_return").Raw
@@ -198,7 +197,6 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 					}
 				},
 			),
-		),
 		data.NewRecurrence(
 			"median_return",
 			"breadth",

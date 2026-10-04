@@ -30,6 +30,9 @@ func manifoldWireFixture() *ManifoldState {
 func TestEncodeManifold(t *testing.T) {
 	Convey("The published frame preserves particles, fields, modes and accepted physics health", t, func() {
 		state := manifoldWireFixture()
+		state.State.PilotVel = []float32{0, 1, -2, 3, 0, -4}
+		state.Reading.Health.SpatialSigmaRaw = 1.5
+		state.Reading.Health.SigmaUniformLimit = true
 		encoded, err := EncodeManifold(state)
 		So(err, ShouldBeNil)
 		message := wire.GetRootAsMessage(encoded, 0)
@@ -42,6 +45,9 @@ func TestEncodeManifold(t *testing.T) {
 		So(decoded.Version, ShouldEqual, 7)
 		So(decoded.ContentIds, ShouldResemble, state.State.ContentIDs)
 		So(decoded.Pos, ShouldResemble, state.State.Pos)
+		So(decoded.PilotVel, ShouldResemble, state.State.PilotVel)
+		So(decoded.Reading.Health.SpatialSigmaRaw, ShouldEqual, 1.5)
+		So(decoded.Reading.Health.SigmaUniformLimit, ShouldBeTrue)
 		So(decoded.MomRho, ShouldResemble, state.MomRho)
 		So(decoded.Modes[0].Imaginary, ShouldEqual, float32(-.4))
 		So(decoded.Resultants[0].Side, ShouldEqual, "bid")

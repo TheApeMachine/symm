@@ -81,7 +81,15 @@ describe("decodeManifold", () => {
 			[new PhaseResultantT("bid", 1, 9, 0.8, 0.1)],
 		);
 
+		frame.pilotVel = [-0.25, 0.5, -0.75];
+		health.spatialSigmaRaw = 1.5;
+		health.sigmaUniformLimit = true;
 		const decoded = decodeManifold(encode(frame));
+		expect(Array.from(decoded.particles.pilotVel!)).toEqual([
+			-0.25, 0.5, -0.75,
+		]);
+		expect(decoded.phase.reading.health?.spatialSigmaRaw).toBe(1.5);
+		expect(decoded.phase.reading.health?.sigmaUniformLimit).toBe(true);
 
 		expect(decoded.fields.sequence).toBe(7n);
 		expect(decoded.fields.grid).toEqual({ x: 2, y: 2, z: 2, spacing: 0.5 });
@@ -120,7 +128,10 @@ describe("decodeManifold", () => {
 		expect(decoded.phase.reading.version).toBe(1n);
 		expect(decoded.phase.reading.at).toBe(1000n);
 		expect(decoded.phase.reading.health?.integrator?.substeps).toBe(4);
-		expect(decoded.phase.reading.health?.integrator?.time).toBeCloseTo(1.234, 3);
+		expect(decoded.phase.reading.health?.integrator?.time).toBeCloseTo(
+			1.234,
+			3,
+		);
 		expect(decoded.phase.resultants).toHaveLength(1);
 		expect(decoded.phase.resultants[0]).toEqual({
 			side: "bid",

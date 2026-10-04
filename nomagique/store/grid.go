@@ -3,7 +3,6 @@ package store
 import (
 	"cmp"
 	"fmt"
-	"hash/fnv"
 	"iter"
 	"math"
 	"slices"
@@ -11,16 +10,13 @@ import (
 	"unsafe"
 
 	"github.com/bytedance/sonic"
-	"github.com/theapemachine/symm/nomagique/algo"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 )
 
 type Grid struct {
 	*core.PrimitiveError
-	Metrics     []*data.Metric[float64]
-	HYEstimator core.Primitive
-	
+
 	settled bool
 	updates atomic.Int64
 }
@@ -28,7 +24,6 @@ type Grid struct {
 func NewGrid() *Grid {
 	return &Grid{
 		PrimitiveError: core.NewPrimitiveError(),
-		HYEstimator:    algo.NewHayashiYoshida(),
 	}
 }
 
@@ -44,6 +39,19 @@ func (sg *Grid) Update(measurement *data.Measurement[float64]) {
 
 	sg.updates.Add(1)
 	assignMetricRegions(measurement, 0)
+
+	if sg.isMature(measurement) {
+		sg.settled = true
+	}
+}
+
+func fnv1a32(key string) uint32 {
+	var hash uint32 = 2166136261
+	for index := 0; index < len(key); index++ {
+		hash ^= uint32(key[index])
+		hash *= 16777619
+	}
+	return hash
 }
 
 func assignMetricRegions(measurement *data.Measurement[float64], depth int) {
@@ -58,16 +66,13 @@ func assignMetricRegions(measurement *data.Measurement[float64], depth int) {
 			key = metric.Label
 		}
 
-		h := fnv.New32a()
-		h.Write([]byte(key))
-
 		// Map into 20 regions (1-indexed for the UI)
-		regionID := (h.Sum32() % 20) + 1
+		regionID := (fnv1a32(key) % 20) + 1
 		metric.Region = uint8(regionID)
 
 		// Assign deterministic X, Y for the Topography map visualization (5x4 grid)
-		metric.X = int64((regionID - 1) % 5) * 200
-		metric.Y = int64((regionID - 1) / 5) * 200
+		metric.X = int64((regionID-1)%5) * 200
+		metric.Y = int64((regionID-1)/5) * 200
 	}
 
 	for _, peer := range measurement.Peers {
@@ -77,17 +82,26 @@ func assignMetricRegions(measurement *data.Measurement[float64], depth int) {
 	}
 }
 
+func (sg *Grid) isMature(measurement *data.Measurement[float64]) bool {
+	if measurement == nil {
+		return false
+	}
+
+	if len(measurement.Peers) == 0 {
+		return measurement.Maturity >= 0.95
+	}
+
+	for _, peer := range measurement.Peers {
+		if peer == nil || peer.Maturity < 0.95 {
+			return false
+		}
+	}
+
+	return true
+}
+
 func (sg *Grid) IsSettled() bool {
-	// Simulate grid development stage for the first 50 ticks
-	if sg.settled {
-		return true
-	}
-
-	if sg.updates.Load() > 50 {
-		return true
-	}
-
-	return false
+	return sg.settled
 }
 
 func (sg *Grid) Settle() {
@@ -165,14 +179,18 @@ func collectRegionActivity(measurement *data.Measurement[float64], activity map[
 
 	quality := math.Max(0.0, math.Min(1.0, measurement.Maturity))
 
-	if measurement.SNRDefined {
-		if measurement.SNR > 0 {
-			quality *= measurement.SNR / (1.0 + measurement.SNR)
-		}
-
-		if measurement.SNR <= 0 {
+	facts := measurement.Facts()
+	if facts.HasSupport {
+		if facts.Support > 1 {
+			supportDamp := 1.0 - (1.0 / facts.Support)
+			quality = math.Min(quality, supportDamp)
+		} else {
 			quality *= 0.1
 		}
+	}
+
+	if measurement.SNRDefined && measurement.SNR > 0 {
+		quality *= measurement.SNR / (1.0 + measurement.SNR)
 	}
 
 	for _, entry := range measurement.Metrics {

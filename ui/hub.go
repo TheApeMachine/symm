@@ -39,13 +39,48 @@ PositionSource supplies active open positions and recent decisions for streaming
 type PositionSource interface {
 	PositionsWire() *wire.PositionsFrameT
 	DecisionsWire() *wire.StrategyFrameT
-	EquityWire() *wire.EquityFrameT
 	PositionsVersion() uint64
 	DecisionsVersion() uint64
 }
 
+/*
+EquitySource supplies the venue-reported cash, unrealized PnL, and equity.
+*/
+type EquitySource interface {
+	EquityWire() *wire.EquityFrameT
+}
+
 type CognitionSource interface {
 	CognitionTree() cognition.CognitionTreeExport
+}
+
+type FragmentsSource interface {
+	Fragments() []TrainedFragment
+}
+
+type TrainedFragment struct {
+	ID         int             `json:"id"`
+	Symbol     string          `json:"symbol"`
+	Epoch      int64           `json:"epoch"`
+	MarkA      int64           `json:"mark_a"`
+	MarkB      int64           `json:"mark_b"`
+	MarkC      int64           `json:"mark_c"`
+	EntryPrice float64         `json:"entry_price"`
+	ExitPrice  float64         `json:"exit_price"`
+	Magnitude  float64         `json:"magnitude"`
+	Direction  string          `json:"direction"`
+	Tokens     []string        `json:"tokens"`
+	Points     []FragmentPoint `json:"points"`
+	EntryIdx   int             `json:"entry_idx"`
+	ExitIdx    int             `json:"exit_idx"`
+	LearnedAt  time.Time       `json:"learned_at"`
+}
+
+type FragmentPoint struct {
+	X    int     `json:"x"`
+	Y    float64 `json:"y"`
+	Seq  int64   `json:"seq"`
+	Time int64   `json:"time"`
 }
 
 /*
@@ -66,14 +101,16 @@ handler goroutine, so there are no per-client writer or reader goroutines.
 */
 type Hub struct {
 	*runtime.System
-	uiTee            runtime.Tee
-	physics          sensorium.PhysicsMonitor
-	app              *fiber.App
-	listenAddr       string
-	frontend         atomic.Pointer[websocket.Conn]
-	store            *tables.Catalog
+	uiTee               runtime.Tee
+	physics             sensorium.PhysicsMonitor
+	app                 *fiber.App
+	listenAddr          string
+	frontend            atomic.Pointer[websocket.Conn]
+	store               *tables.Catalog
 	positionSource      PositionSource
+	equitySource        EquitySource
 	cognitionSource     CognitionSource
+	fragmentsSource     FragmentsSource
 	manifoldSource      ManifoldSource
 	exitHandler         func(symbol string)
 	routes              *Routes
@@ -274,11 +311,11 @@ func NewHub(
 		var lastCash, lastUnrealized, lastEquity string
 
 		sendEquity := func() error {
-			if hub.positionSource == nil {
+			if hub.equitySource == nil {
 				return nil
 			}
 
-			wireFrame := hub.positionSource.EquityWire()
+			wireFrame := hub.equitySource.EquityWire()
 
 			if wireFrame == nil {
 				return nil
@@ -361,11 +398,14 @@ func NewHub(
 			return
 		}
 
+		frameTicker := time.NewTicker(16666 * time.Microsecond)
+		defer frameTicker.Stop()
+
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			default:
+			case <-frameTicker.C:
 			}
 
 			if time.Since(lastPositionsPush) >= 200*time.Millisecond {
@@ -391,28 +431,25 @@ func NewHub(
 			}
 
 			if hub.Status() != runtime.READY || hub.uiTee == nil {
-				time.Sleep(10 * time.Millisecond)
 				continue
 			}
 
-			frame := hub.uiTee.Next()
+			for {
+				frame := hub.uiTee.Next()
 
-			if frame == nil {
-				time.Sleep(100 * time.Microsecond)
-				continue
-			}
+				if frame == nil {
+					break
+				}
 
-			payload := *(*[]byte)(frame)
+				payload := *(*[]byte)(frame)
 
-			if len(payload) == 0 {
-				time.Sleep(100 * time.Microsecond)
-				continue
-			}
+				if len(payload) == 0 {
+					continue
+				}
 
-			err := conn.Conn.WriteMessage(websocket.BinaryMessage, payload)
-
-			if err != nil {
-				return
+				if err := conn.Conn.WriteMessage(websocket.BinaryMessage, payload); err != nil {
+					return
+				}
 			}
 		}
 	}, websocket.Config{
@@ -431,6 +468,17 @@ func (hub *Hub) SetPositionSource(source PositionSource) {
 	}
 
 	hub.positionSource = source
+}
+
+/*
+SetEquitySource attaches the venue account state shown in the top bar.
+*/
+func (hub *Hub) SetEquitySource(source EquitySource) {
+	if hub == nil {
+		return
+	}
+
+	hub.equitySource = source
 }
 
 /*
@@ -454,6 +502,17 @@ func (hub *Hub) SetCognitionSource(source CognitionSource) {
 	}
 
 	hub.cognitionSource = source
+}
+
+/*
+SetFragmentsSource attaches the source for already trained fragments.
+*/
+func (hub *Hub) SetFragmentsSource(source FragmentsSource) {
+	if hub == nil {
+		return
+	}
+
+	hub.fragmentsSource = source
 }
 
 /*
@@ -513,6 +572,10 @@ func (hub *Hub) handleCommand(payload []byte) {
 		types.SetFocus(request.Symbol)
 	case "route":
 		types.SetRoute(request.Route)
+	case "position.exit":
+		if hub.exitHandler != nil {
+			hub.exitHandler(request.Symbol)
+		}
 	}
 }
 

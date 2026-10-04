@@ -29,7 +29,7 @@ describe("TerminalTopBar", () => {
 		expect(html).toContain("45,678");
 	});
 
-	it("renders training steps as observations when available", () => {
+	it("renders training steps as ticks when available", () => {
 		const ring = new RingBuffer<MeasurementT>(50);
 		const measurement = new MeasurementT();
 		measurement.metrics = [new MetricT("steps", 1234)];

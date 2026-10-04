@@ -58,7 +58,14 @@ func (metric Metric[T]) Write(value T) Metric[T] {
 
 		if metric.Scale != 0 {
 			standard := (number - metric.Center) / metric.Scale
-			metric.Standardized = any(&standard).(*T)
+
+			if metric.Standardized != nil {
+				*metric.Standardized = any(standard).(T)
+			}
+
+			if metric.Standardized == nil {
+				metric.Standardized = any(&standard).(*T)
+			}
 		}
 	}
 

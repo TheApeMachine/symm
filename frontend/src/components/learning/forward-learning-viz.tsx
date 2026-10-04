@@ -2,7 +2,7 @@ import { useSelector } from "@tanstack/react-store";
 import * as d3 from "d3";
 import { ChevronRight, Clock, Pause, Play } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { focusAtom, positionCountAtom, type RingBuffer, signals } from "#/collections/app";
 import { RingCursor } from "#/collections/ring";
 import { Scanlines } from "#/components/ui/scanlines";
@@ -20,6 +20,24 @@ interface ForwardTapePoint {
 	y: number;
 	seq?: number;
 	time?: number;
+}
+
+interface TrainedFragmentResponse {
+	id: number;
+	symbol: string;
+	epoch: number;
+	mark_a: number;
+	mark_b: number;
+	mark_c: number;
+	entry_price: number;
+	exit_price: number;
+	magnitude: number;
+	direction: string;
+	tokens: string[];
+	points: { x: number; y: number; seq: number; time: number }[];
+	entry_idx: number;
+	exit_idx: number;
+	learned_at: string;
 }
 
 function parseTimestamp(
@@ -208,6 +226,88 @@ export const ForwardLearningViz = ({
 	const [currentSymbol, setCurrentSymbol] = useState("TRAINING");
 	const lastSeenSymbolRef = useRef<string>("");
 	const lastSeenExcursionStartRef = useRef<number>(-1);
+
+	const [trainedFragments, setTrainedFragments] = useState<TrainedFragmentResponse[]>([]);
+	const [selectedFragmentIndex, setSelectedFragmentIndex] = useState<number>(-1);
+
+	const loadFragment = useCallback((frag: TrainedFragmentResponse) => {
+		if (!frag) return;
+		setCurrentEpisode(null);
+		currentEpisodeRef.current = null;
+		setCurrentSymbol(frag.symbol);
+		const mappedPoints = (frag.points ?? []).map((pt, i) => ({
+			x: i,
+			y: pt.y,
+			seq: pt.seq,
+			time: pt.time,
+		}));
+		setPoints(mappedPoints);
+		setExcursionEvent({
+			type: frag.direction === "up" ? "UPWARD EXCURSION" : "DOWNWARD EXCURSION",
+			magnitude: frag.magnitude,
+			marks: { A: frag.mark_a, B: frag.mark_b, C: frag.mark_c },
+			entryIdx: frag.entry_idx,
+			exitIdx: frag.exit_idx,
+		});
+		setRawPrecursorTokens(frag.tokens ?? []);
+		setFrozenAction("ENTER");
+		setDelayedLabel("ENTER (CLEARS)");
+	}, []);
+
+	const selectFragment = useCallback(
+		(idx: number) => {
+			if (idx < 0 || idx >= trainedFragments.length) return;
+			setSelectedFragmentIndex(idx);
+			loadFragment(trainedFragments[idx]);
+		},
+		[trainedFragments, loadFragment],
+	);
+
+	const replayFragment = useCallback(() => {
+		if (selectedFragmentIndex < 0 || selectedFragmentIndex >= trainedFragments.length) return;
+		const frag = trainedFragments[selectedFragmentIndex];
+		const episodePoints = (frag.points ?? []).map((pt, i) => ({
+			x: i,
+			y: pt.y,
+			seq: pt.seq,
+			time: pt.time,
+		}));
+		if (episodePoints.length === 0) return;
+		setCurrentEpisode(episodePoints);
+		setPlaybackTick(0);
+		setPlaybackPhase("PLAYING");
+		setIsPlaying(true);
+	}, [selectedFragmentIndex, trainedFragments]);
+
+	useEffect(() => {
+		let isMounted = true;
+		const fetchFragments = async () => {
+			try {
+				const res = await fetch(`${hubBaseUrl()}/training/fragments`);
+				if (!res.ok) return;
+				const frags: TrainedFragmentResponse[] = await res.json();
+				if (!isMounted || !Array.isArray(frags)) return;
+				setTrainedFragments(frags);
+			} catch {
+				// Endpoint connecting
+			}
+		};
+
+		fetchFragments();
+		const interval = setInterval(fetchFragments, 3000);
+		return () => {
+			isMounted = false;
+			clearInterval(interval);
+		};
+	}, []);
+
+	useEffect(() => {
+		if (selectedFragmentIndex === -1 && trainedFragments.length > 0 && points.length === 0) {
+			const lastIdx = trainedFragments.length - 1;
+			setSelectedFragmentIndex(lastIdx);
+			loadFragment(trainedFragments[lastIdx]);
+		}
+	}, [trainedFragments, selectedFragmentIndex, points.length, loadFragment]);
 
 	useEffect(() => {
 		const unsubPos = positionCountAtom.subscribe((count) => {
@@ -549,28 +649,9 @@ export const ForwardLearningViz = ({
 						time: ptTime,
 					});
 
-					// Forward: rolling live tape. Historical: stream the developing
-					// fragment immediately so the desk is not stuck on "Awaiting…"
-					// while completed episodes wait for the playback queue.
-					if (sCode >= 2) {
-						setPoints((prev) => {
-							const next = [
-								...prev,
-								{ x: prev.length, y: pointPrice, seq: seqVal, time: ptTime },
-							];
-							if (next.length > 250) {
-								return next
-									.slice(next.length - 250)
-									.map((pt, i) => ({
-										x: i,
-										y: pt.y,
-										seq: pt.seq,
-										time: pt.time,
-									}));
-							}
-							return next;
-						});
-					} else if (sCode === 1 && currentEpisodeRef.current === null) {
+					// Stream into visible points during active historical validation (stage 1)
+					// when no episode is currently playing animation. Live stage 2+ does NOT pollute the fragment chart.
+					if (sCode === 1 && currentEpisodeRef.current === null) {
 						const pending = pendingEpisodeRef.current;
 						setPoints(
 							pending.map((pt, i) => ({
@@ -778,18 +859,61 @@ export const ForwardLearningViz = ({
 								data-l="tape-title"
 								className={cn(
 									"font-bold px-1.5 py-0.5 rounded text-[10px]",
-									isForward
+									stageCode === 1
 										? "bg-(--acc)/10 text-(--acc) border border-(--acc)/30"
 										: "bg-(--info)/10 text-(--info) border border-(--info)/30",
 								)}
 							>
 								{isForward
-									? "LIVE FORWARD PAPER TAPE"
+									? "TRAINED FRAGMENTS"
 									: "HISTORICAL REPLAY TAPE"}
 							</span>
 							<span className="bg-(--surface) border-(--line) border px-1.5 py-0.5 rounded text-[10px] text-(--f1) font-bold">
 								{currentSymbol}
 							</span>
+
+							{stageCode !== 1 && trainedFragments.length > 0 && (
+								<div className="flex items-center gap-1 ml-1">
+									<button
+										type="button"
+										onClick={() => selectFragment(selectedFragmentIndex - 1)}
+										disabled={selectedFragmentIndex <= 0}
+										className="px-1.5 py-0.5 rounded bg-(--surface) border border-(--line) text-(--f2) hover:text-(--f1) disabled:opacity-30 disabled:pointer-events-none text-[10px] cursor-pointer"
+										title="Previous fragment"
+									>
+										◀
+									</button>
+									<select
+										value={selectedFragmentIndex}
+										onChange={(e) => selectFragment(Number(e.target.value))}
+										className="bg-(--surface) border border-(--line) text-(--f1) text-[10px] px-1.5 py-0.5 rounded focus:outline-none focus:border-(--acc) cursor-pointer"
+									>
+										{trainedFragments.map((frag, idx) => (
+											<option key={frag.id ?? idx} value={idx}>
+												#{frag.id} {frag.symbol} ({frag.direction.toUpperCase()} {(frag.magnitude * 100).toFixed(2)}%)
+											</option>
+										))}
+									</select>
+									<button
+										type="button"
+										onClick={() => selectFragment(selectedFragmentIndex + 1)}
+										disabled={selectedFragmentIndex >= trainedFragments.length - 1}
+										className="px-1.5 py-0.5 rounded bg-(--surface) border border-(--line) text-(--f2) hover:text-(--f1) disabled:opacity-30 disabled:pointer-events-none text-[10px] cursor-pointer"
+										title="Next fragment"
+									>
+										▶
+									</button>
+									<button
+										type="button"
+										onClick={replayFragment}
+										className="ml-1 px-1.5 py-0.5 rounded bg-(--acc)/10 text-(--acc) border border-(--acc)/30 hover:bg-(--acc)/20 text-[10px] font-bold cursor-pointer"
+										title="Replay this fragment animation"
+									>
+										Replay
+									</button>
+								</div>
+							)}
+
 							<ChevronRight className="w-3 h-3 text-(--f4)" />
 							<span className="text-(--f1)">
 								{points.length} frames evaluated
@@ -831,9 +955,15 @@ export const ForwardLearningViz = ({
 							</span>
 							<button
 								type="button"
-								onClick={() => setIsPlaying(!isPlaying)}
-								className="text-(--acc) hover:text-(--f1) transition-colors p-1"
-								title={isPlaying ? "Pause tape" : "Resume tape"}
+								onClick={() => {
+									if (!isPlaying && !currentEpisode && selectedFragmentIndex >= 0 && selectedFragmentIndex < trainedFragments.length) {
+										replayFragment();
+									} else {
+										setIsPlaying(!isPlaying);
+									}
+								}}
+								className="text-(--acc) hover:text-(--f1) transition-colors p-1 cursor-pointer"
+								title={isPlaying ? "Pause tape" : "Resume / replay tape"}
 							>
 								{isPlaying ? (
 									<Pause className="w-3.5 h-3.5" />
@@ -879,9 +1009,11 @@ export const ForwardLearningViz = ({
 
 						{points.length === 0 && (
 							<div className="absolute inset-0 flex items-center justify-center text-(--f4) text-xs tracking-wider z-5">
-								Awaiting{" "}
-								{isForward ? "live market forward" : "historical replay"} tape
-								stream for {currentSymbol}...
+								{stageCode === 1
+									? `Awaiting training stream for ${currentSymbol}...`
+									: trainedFragments.length > 0
+										? `Select a trained fragment above to inspect`
+										: `Awaiting historical replay tape stream for ${currentSymbol}...`}
 							</div>
 						)}
 
@@ -892,6 +1024,7 @@ export const ForwardLearningViz = ({
 								className="absolute inset-0 z-5"
 								aria-label={`Tape of ${currentSymbol}`}
 							>
+								<title>{currentSymbol}</title>
 								<defs>
 									<linearGradient
 										id="tapeScreenAreaGradient"
@@ -1002,12 +1135,12 @@ export const ForwardLearningViz = ({
 									points.length > 0 &&
 									(isForward ||
 										playbackPhase === "EVALUATING" ||
-										excursionEvent.marks.A > 0 ||
-										excursionEvent.marks.B > 0 ||
-										excursionEvent.marks.C > 0) &&
+										excursionEvent.marks.A >= 0 ||
+										excursionEvent.marks.B >= 0 ||
+										excursionEvent.marks.C >= 0) &&
 									(() => {
 										const resolveIdx = (val: number | null): number | null => {
-											if (val === null || val <= 0 || points.length === 0)
+											if (val === null || val === undefined || val < 0 || points.length === 0)
 												return null;
 											// 1. Exact sequence index match
 											for (let i = 0; i < points.length; i++) {
@@ -1015,43 +1148,41 @@ export const ForwardLearningViz = ({
 												if (seq !== undefined && seq >= 0 && seq === val)
 													return i;
 											}
-											// 2. Nearest sequence index match
-											let nearestIdx: number | null = null;
-											let nearestDist = Number.POSITIVE_INFINITY;
-											for (let i = 0; i < points.length; i++) {
-												const seq = points[i].seq;
-												if (seq !== undefined && seq >= 0) {
-													const dist = Math.abs(seq - val);
-													if (dist < nearestDist) {
-														nearestDist = dist;
-														nearestIdx = i;
-													}
-												}
-											}
-											if (nearestIdx !== null && nearestDist < 500) {
-												return nearestIdx;
-											}
-											// 3. Window-local relative index
-											if (
-												val < points.length &&
-												points[val] &&
-												(points[val].seq === undefined || points[val].seq < 0)
-											) {
+											// 2. Window-local relative index (entry_idx, exit_idx)
+											if (val >= 0 && val < points.length) {
 												return val;
+											}
+											// 3. Nearest sequence index match within sequence range
+											if (points.length > 0) {
+												const minSeq = points[0].seq ?? 0;
+												const maxSeq = points[points.length - 1].seq ?? 0;
+												if (val >= minSeq && val <= maxSeq) {
+													let nearestIdx = 0;
+													let nearestDist = Math.abs((points[0].seq ?? 0) - val);
+													for (let i = 1; i < points.length; i++) {
+														const seq = points[i].seq ?? 0;
+														const dist = Math.abs(seq - val);
+														if (dist < nearestDist) {
+															nearestDist = dist;
+															nearestIdx = i;
+														}
+													}
+													return nearestIdx;
+												}
 											}
 											return null;
 										};
 
 										const markAIdx =
-											excursionEvent.marks.A > 0
+											excursionEvent.marks.A >= 0
 												? resolveIdx(excursionEvent.marks.A)
 												: null;
 										const markBIdx =
-											excursionEvent.marks.B > 0
+											excursionEvent.marks.B >= 0
 												? resolveIdx(excursionEvent.marks.B)
 												: null;
 										const markCIdx =
-											excursionEvent.marks.C > 0
+											excursionEvent.marks.C >= 0
 												? resolveIdx(excursionEvent.marks.C)
 												: null;
 
@@ -1065,12 +1196,12 @@ export const ForwardLearningViz = ({
 
 										const entryPtIdx =
 											excursionEvent.entryIdx !== null &&
-											excursionEvent.entryIdx > 0
+											excursionEvent.entryIdx >= 0
 												? resolveIdx(excursionEvent.entryIdx)
 												: null;
 										const exitPtIdx =
 											excursionEvent.exitIdx !== null &&
-											excursionEvent.exitIdx > 0
+											excursionEvent.exitIdx >= 0
 												? resolveIdx(excursionEvent.exitIdx)
 												: null;
 
@@ -1128,7 +1259,7 @@ export const ForwardLearningViz = ({
 																fontSize="9px"
 																fontWeight="bold"
 															>
-																{isForward ? "PAPER ENTER" : "PREDICTED ENTER"}
+																PREDICTED ENTER
 															</text>
 															<line
 																y2={tapeDim.height}
@@ -1183,7 +1314,7 @@ export const ForwardLearningViz = ({
 																fontSize="9px"
 																fontWeight="bold"
 															>
-																{isForward ? "PAPER EXIT" : "PREDICTED EXIT"}
+																PREDICTED EXIT
 															</text>
 															<line
 																y2={tapeDim.height}
@@ -1208,7 +1339,7 @@ export const ForwardLearningViz = ({
 											opacity="0.6"
 										/>
 										{timeTicks.map((tick, idx) => (
-											<g key={`time-tick-${tick.x}-${idx}`}>
+											<g key={`time-tick-${tick.x}-${tick.label}`}>
 												<line
 													x1={tick.x}
 													y1={24}

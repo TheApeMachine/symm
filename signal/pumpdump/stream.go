@@ -11,6 +11,7 @@ import (
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 )
@@ -50,11 +51,11 @@ func (op *BookTouch) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 					}
 
 					if bestBid := b.BestBid(); bestBid != nil && bestBid.Price != nil {
-						bid = bestBid.Price.Float64()
+						bid = kraken.Float64(bestBid.Price)
 					}
 
 					if bestAsk := b.BestAsk(); bestAsk != nil && bestAsk.Price != nil {
-						ask = bestAsk.Price.Float64()
+						ask = kraken.Float64(bestAsk.Price)
 					}
 				})
 			}

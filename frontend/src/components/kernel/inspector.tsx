@@ -52,6 +52,16 @@ const relativeToOwnRange = (values: number[]): number[] => {
 	return values.map((value) => (range > 0 ? (value - min) / range : 1));
 };
 
+const formatMetricValue = (val: number | null): string => {
+	if (val === null) return "—";
+	if (val === 0) return "0.0000";
+	const abs = Math.abs(val);
+	if (abs < 0.0001) {
+		return val.toExponential(2);
+	}
+	return val.toFixed(4);
+};
+
 const metricValues = (
 	row: MeasurementT | null | undefined,
 	names: string[],
@@ -241,7 +251,7 @@ export const KernelInspector = () => {
 									key={metric.name}
 									percent={metric.raw === null ? 0 : metric.normalized * 100}
 									label={metricLabel(metric.name)}
-									value={metric.raw === null ? "—" : metric.raw.toFixed(4)}
+									value={formatMetricValue(metric.raw)}
 									variant={metric.raw === null ? "disabled" : "warning"}
 									size="xs"
 									animated

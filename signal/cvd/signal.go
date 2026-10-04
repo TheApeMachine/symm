@@ -56,8 +56,7 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 		nmcvd.NewNotional(),
 		nmcvd.NewRates(),
 		nmcvd.NewResponse(),
-		transport.NewFan(
-			data.NewAdapter(
+		data.NewAdapter(
 				adaptive.NewBaseline(adaptive.NewWindow()),
 				func(m *data.Measurement[float64]) float64 { return m.GetMetric("gross_notional_rate").Raw },
 				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
@@ -240,7 +239,6 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 					}
 				},
 			),
-		),
 		data.NewRecurrence(
 			"gross_notional_rate_zscore",
 			"signed_net_fraction_zscore",

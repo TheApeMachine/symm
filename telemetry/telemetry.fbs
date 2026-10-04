@@ -721,6 +721,9 @@ table PhysicsHealth {
   particleOscillator:double;
   particleKinetic:double;
   particleMaterialTotal:double;
+  spatialSigmaRaw:double;
+  spatialSigmaUsed:double;
+  sigmaUniformLimit:bool;
 }
 
 table ManifoldReading {
@@ -782,6 +785,7 @@ table ManifoldFrame {
   waveScale:float;
   modes:[WaveMode] (required);
   resultants:[PhaseResultant];
+  pilotVel:[float];
 }
 
 table WaveMode { omega:float; real:float; imaginary:float; linewidth:float; }

@@ -362,8 +362,23 @@ resultantsLength():number {
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
+pilotVel(index: number):number|null {
+  const offset = this.bb!.__offset(this.bb_pos, 70);
+  return offset ? this.bb!.readFloat32(this.bb!.__vector(this.bb_pos + offset) + index * 4) : 0;
+}
+
+pilotVelLength():number {
+  const offset = this.bb!.__offset(this.bb_pos, 70);
+  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+}
+
+pilotVelArray():Float32Array|null {
+  const offset = this.bb!.__offset(this.bb_pos, 70);
+  return offset ? new Float32Array(this.bb!.bytes().buffer, this.bb!.bytes().byteOffset + this.bb!.__vector(this.bb_pos + offset), this.bb!.__vector_len(this.bb_pos + offset)) : null;
+}
+
 static startManifoldFrame(builder:flatbuffers.Builder) {
-  builder.startObject(33);
+  builder.startObject(34);
 }
 
 static addSequence(builder:flatbuffers.Builder, sequence:bigint) {
@@ -798,6 +813,27 @@ static startResultantsVector(builder:flatbuffers.Builder, numElems:number) {
   builder.startVector(4, numElems, 4);
 }
 
+static addPilotVel(builder:flatbuffers.Builder, pilotVelOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(33, pilotVelOffset, 0);
+}
+
+static createPilotVelVector(builder:flatbuffers.Builder, data:number[]|Float32Array):flatbuffers.Offset;
+/**
+ * @deprecated This Uint8Array overload will be removed in the future.
+ */
+static createPilotVelVector(builder:flatbuffers.Builder, data:number[]|Uint8Array):flatbuffers.Offset;
+static createPilotVelVector(builder:flatbuffers.Builder, data:number[]|Float32Array|Uint8Array):flatbuffers.Offset {
+  builder.startVector(4, data.length, 4);
+  for (let i = data.length - 1; i >= 0; i--) {
+    builder.addFloat32(data[i]!);
+  }
+  return builder.endVector();
+}
+
+static startPilotVelVector(builder:flatbuffers.Builder, numElems:number) {
+  builder.startVector(4, numElems, 4);
+}
+
 static endManifoldFrame(builder:flatbuffers.Builder):flatbuffers.Offset {
   const offset = builder.endObject();
   builder.requiredField(offset, 12) // bytes
@@ -858,7 +894,8 @@ unpack(): ManifoldFrameT {
     this.energyScale(),
     this.waveScale(),
     this.bb!.createObjList<WaveMode, WaveModeT>(this.modes.bind(this), this.modesLength()),
-    this.bb!.createObjList<PhaseResultant, PhaseResultantT>(this.resultants.bind(this), this.resultantsLength())
+    this.bb!.createObjList<PhaseResultant, PhaseResultantT>(this.resultants.bind(this), this.resultantsLength()),
+    this.bb!.createScalarList<number>(this.pilotVel.bind(this), this.pilotVelLength())
   );
 }
 
@@ -897,6 +934,7 @@ unpackTo(_o: ManifoldFrameT): void {
   _o.waveScale = this.waveScale();
   _o.modes = this.bb!.createObjList<WaveMode, WaveModeT>(this.modes.bind(this), this.modesLength());
   _o.resultants = this.bb!.createObjList<PhaseResultant, PhaseResultantT>(this.resultants.bind(this), this.resultantsLength());
+  _o.pilotVel = this.bb!.createScalarList<number>(this.pilotVel.bind(this), this.pilotVelLength());
 }
 }
 
@@ -934,7 +972,8 @@ constructor(
   public energyScale: number = 0.0,
   public waveScale: number = 0.0,
   public modes: (WaveModeT)[] = [],
-  public resultants: (PhaseResultantT)[] = []
+  public resultants: (PhaseResultantT)[] = [],
+  public pilotVel: (number)[] = []
 ){}
 
 
@@ -960,6 +999,7 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   const waveImag = ManifoldFrame.createWaveImagVector(builder, this.waveImag);
   const modes = ManifoldFrame.createModesVector(builder, builder.createObjectOffsetList(this.modes));
   const resultants = ManifoldFrame.createResultantsVector(builder, builder.createObjectOffsetList(this.resultants));
+  const pilotVel = ManifoldFrame.createPilotVelVector(builder, this.pilotVel);
 
   ManifoldFrame.startManifoldFrame(builder);
   ManifoldFrame.addSequence(builder, this.sequence);
@@ -995,6 +1035,7 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   ManifoldFrame.addWaveScale(builder, this.waveScale);
   ManifoldFrame.addModes(builder, modes);
   ManifoldFrame.addResultants(builder, resultants);
+  ManifoldFrame.addPilotVel(builder, pilotVel);
 
   return ManifoldFrame.endManifoldFrame(builder);
 }

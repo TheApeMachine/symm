@@ -59,8 +59,7 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 		nmcorrelation.NewFold(),
 		nmcorrelation.NewHistory(),
 		nmcorrelation.NewRelative(),
-		transport.NewFan(
-			data.NewAdapter(
+		data.NewAdapter(
 				temporal.NewVelocity(),
 				func(m *data.Measurement[float64]) temporal.Observation {
 					if rate, ok := m.LookupMetric("cohort_signed_correlation"); ok {
@@ -100,7 +99,6 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 					}
 				},
 			),
-		),
 		nmcorrelation.NewPeerEnergy(),
 		data.NewRecurrence(
 			"cohort_signed_correlation",

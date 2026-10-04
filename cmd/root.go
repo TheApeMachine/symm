@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -133,22 +134,24 @@ var (
 				))
 			}
 
-			var (
-				privateTransport broker.Transport
-				privateWS        *network.WebsocketClient
-			)
+			var privateTransport interface {
+				broker.Transport
+				Read() ([]byte, error)
+			}
 
 			if system.Cfg.Market.Model == "paper" {
 				privateTransport = broker.NewPaper(ctx)
 			}
 
 			if privateTransport == nil {
-				privateWS = network.NewWebsocketClient(ctx)
+				privateWS := network.NewWebsocketClient(ctx)
+
 				if err := privateWS.Open(system.Cfg.WebSocket.Endpoints.Private); err != nil {
 					return errnie.Error(errnie.Err(
 						errnie.IO, "symm: private websocket open failed", err,
 					))
 				}
+
 				privateTransport = privateWS
 			}
 
@@ -199,11 +202,7 @@ var (
 			errnie.Info("symm: initializing training and UI hub...")
 			storeTee := hindsight.NewStoreTee(ctx, "storeTee")
 
-			desk := broker.NewDesk(ctx, privateTransport, price)
-
-			if paper, ok := privateTransport.(*broker.Paper); ok {
-				paper.OnExecution(desk.Apply)
-			}
+			desk := broker.NewDesk(ctx, privateTransport, price, balance)
 
 			training := strategy.NewTraining(
 				ctx, data.NewArenaOwner(4096),
@@ -211,16 +210,22 @@ var (
 				desk,
 				catalog,
 				storeTee,
+				epoch,
 			)
+			training.SetUITee(uiTee)
 
 			uiTee.Transition(nmruntime.READY)
 
-			// Start historical detector loop which scans trade tape from catalog
-			training.Detect()
-			training.Train()
-
 			hub := ui.NewHub(ctx, catalog, uiTee)
 			hub.SetCognitionSource(training)
+			hub.SetFragmentsSource(training)
+			hub.SetEquitySource(balance)
+			hub.SetPositionSource(desk)
+			hub.SetExitHandler(func(symbol string) {
+				if err := desk.Exit(symbol); err != nil {
+					errnie.Error(err)
+				}
+			})
 
 			hub.Run()
 			hub.Transition(nmruntime.READY)
@@ -291,60 +296,8 @@ var (
 				))
 			}
 
-			// Live private WS must subscribe executions (+ balances) so fills
-			// reach Trader.ApplyExecution — Paper wires OnExecution directly.
-			if privateWS != nil {
-				auth := kraken.NewAuth()
-				token, tokErr := auth.Token()
-
-				if tokErr != nil {
-					return errnie.Error(errnie.Err(
-						errnie.NotAcceptable,
-						"symm: private websocket auth token unavailable",
-						tokErr,
-					))
-				}
-
-				subscribePrivate := func(tok string) error {
-					for _, payload := range []any{
-						kraken.NewExecutionSubscription(tok),
-						kraken.NewBalanceSubscription(tok),
-					} {
-						msg, err := sonic.Marshal(payload)
-
-						if err != nil {
-							return errnie.Error(errnie.Err(
-								errnie.IO, "symm: private subscribe marshal failed", err,
-							))
-						}
-
-						if err := privateWS.Write(msg); err != nil {
-							return errnie.Error(errnie.Err(
-								errnie.IO, "symm: private subscribe failed", err,
-							))
-						}
-					}
-
-					return nil
-				}
-
-				if err := subscribePrivate(token); err != nil {
-					return err
-				}
-
-				privateWS.OnReconnect(func() error {
-					tok, err := auth.Token()
-
-					if err != nil {
-						return err
-					}
-
-					return subscribePrivate(tok)
-				})
-			}
-
-			// Start consumers before opening market ingress. All construction,
-			// subscriptions and seeding have completed at this point.
+			// Start consumers before opening any ingress. All construction and
+			// seeding have completed at this point.
 			for _, runsys := range []nmruntime.RuntimeSystem{
 				uiTee,
 				storeTee,
@@ -378,7 +331,7 @@ var (
 			var tick int64
 
 			startIngress := func(
-				client *network.WebsocketClient, name string,
+				client interface{ Read() ([]byte, error) }, name string,
 			) {
 				go func() {
 					errnie.Info(fmt.Sprintf("[root] starting %s ingress", name))
@@ -398,108 +351,113 @@ var (
 							continue
 						}
 
-						var msg struct {
-							Channel string `json:"channel"`
-						}
+						channelNode, err := sonic.Get(buf, "channel")
 
-						if err := sonic.Unmarshal(buf, &msg); err != nil {
+						if err != nil {
 							continue
 						}
 
-						switch msg.Channel {
+						channel, err := channelNode.StrictString()
+
+						if err != nil {
+							continue
+						}
+
+						switch channel {
+						case "executions":
+							desk.Apply(kraken.NewExecution(buf))
+							balance.Invalidate()
 						case "balances":
-							wallet := kraken.NewBalance(buf)
-							if wallet != nil && balance != nil {
-								balance.UpdateWallet(wallet)
-							}
+							balance.UpdateWallet(kraken.NewBalance(buf))
+							balance.Invalidate()
 						case "level3":
-							l3 := kraken.NewLevel3(buf)
-							if l3 != nil && book != nil {
-								book.Update(l3)
+							level3Msg := kraken.NewLevel3(buf)
+							if level3Msg != nil && book != nil {
+								book.Update(level3Msg)
 							}
 
-							if l3 != nil {
-								for _, ld := range l3.Data {
-									for sideIdx, orders := range [][]kraken.Level3Order{ld.Bids, ld.Asks} {
+							if level3Msg != nil {
+								for _, level3Data := range level3Msg.Data {
+									for sideIdx, orders := range [][]kraken.Level3Order{level3Data.Bids, level3Data.Asks} {
 										side := "bid"
 										if sideIdx == 1 {
 											side = "ask"
 										}
 
+										checksumStr := strconv.FormatInt(int64(level3Data.Checksum), 10)
+
 										for _, order := range orders {
-											metrics := map[string]data.Metric[float64]{
-												"checksum": {Raw: float64(ld.Checksum)},
-											}
+											measurement := data.NewMeasurement[float64]("spot:level3")
+											measurement.SetMetric("checksum", data.Metric[float64]{Raw: float64(level3Data.Checksum)})
 
 											if order.LimitPrice != nil {
-												metrics["limit_price"] = data.Metric[float64]{
-													Raw:   order.LimitPrice.Float64(),
+												measurement.SetMetric("limit_price", data.Metric[float64]{
+													Raw:   kraken.Float64(order.LimitPrice),
 													Exact: order.LimitPrice,
-												}
+												})
 											}
 
 											if order.OrderQty != nil {
-												metrics["order_qty"] = data.Metric[float64]{
-													Raw:   order.OrderQty.Float64(),
+												measurement.SetMetric("order_qty", data.Metric[float64]{
+													Raw:   kraken.Float64(order.OrderQty),
 													Exact: order.OrderQty,
-												}
+												})
 											}
 
-											m := data.NewMeasurement("spot:level3", metrics)
-											m.Epoch = epoch
-											m.Label = ld.Symbol
-											m.At = order.Timestamp
-											if m.At.IsZero() {
-												m.At = ld.Timestamp
+											measurement.Epoch = epoch
+											measurement.Label = level3Data.Symbol
+											measurement.At = order.Timestamp
+											if measurement.At.IsZero() {
+												measurement.At = level3Data.Timestamp
 											}
-											m.SeqIdx = workspace.Sequence()
-											m.SetMetadata("type", ld.Type)
-											m.SetMetadata("order_id", order.OrderID)
-											m.SetMetadata("side", side)
-											m.SetMetadata("event", order.Event)
-											m.SetMetadata("checksum", fmt.Sprintf("%d", ld.Checksum))
-											m.SetProvenance("ingress_channel", "level3")
-											m.SetProvenance("channel", "level3")
+											measurement.SeqIdx = workspace.Sequence()
+											measurement.SetMetadata("type", level3Data.Type)
+											measurement.SetMetadata("order_id", order.OrderID)
+											measurement.SetMetadata("side", side)
+											measurement.SetMetadata("event", order.Event)
+											measurement.SetMetadata("checksum", checksumStr)
+											measurement.SetProvenance("ingress_channel", "level3")
+											measurement.SetProvenance("channel", "level3")
 
-											storeTee.Push(data.NewPublication(m, nil))
+											storeTee.Push(data.NewPublication(measurement, nil))
 										}
 									}
 								}
 							}
 						case "trade":
-							t := kraken.NewTrade(buf)
+							tradeMsg := kraken.NewTrade(buf)
 
-							if t != nil && t.IsSuccess() {
-								for _, td := range t.Data {
-									price.Update(&td)
+							if tradeMsg != nil && tradeMsg.IsSuccess() {
+								for _, tradeItem := range tradeMsg.Data {
+									price.Update(&tradeItem)
 
-									metrics := map[string]data.Metric[float64]{
-										"price": {
-											Raw:   td.Price.Float64(),
-											Exact: &td.Price,
-										},
-										"qty": {
-											Raw: td.Qty,
-										},
-									}
+									measurement := data.NewMeasurement[float64]("spot:trade")
+									measurement.SetMetric("price", data.Metric[float64]{
+										Raw:   kraken.Float64(&tradeItem.Price),
+										Exact: &tradeItem.Price,
+									})
+									measurement.SetMetric("qty", data.Metric[float64]{
+										Raw: tradeItem.Qty,
+									})
 
-									m := data.NewMeasurement("spot:trade", metrics)
-									m.Epoch = epoch
+									measurement.Epoch = epoch
 
 									tick++
-									m.Tick = tick
+									measurement.Tick = tick
 
-									m.Label = td.Symbol
-									m.At = td.Timestamp
+									measurement.Label = tradeItem.Symbol
+									measurement.At = tradeItem.Timestamp
 
-									m.SetMetadata("type", "trade")
-									m.SetMetadata("ord_type", td.OrderType)
-									m.SetMetadata("trade_id", fmt.Sprintf("%d", td.TradeID))
-									m.SetProvenance("ingress_channel", "trade")
-									m.SetProvenance("channel", "trade")
-									m.SetProvenance("side", td.Side)
+									measurement.SetMetadata("type", "trade")
+									measurement.SetMetadata("ord_type", tradeItem.OrderType)
+									measurement.SetMetadata("trade_id", strconv.FormatInt(tradeItem.TradeID, 10))
+									measurement.SetProvenance("ingress_channel", "trade")
+									measurement.SetProvenance("channel", "trade")
+									measurement.SetProvenance("side", tradeItem.Side)
 
-									workspace.Step(m)
+									workspace.Step(measurement)
+									storeTee.Push(data.NewPublication(measurement, nil))
+									balance.Invalidate()
 								}
 							}
 						}
@@ -507,11 +465,69 @@ var (
 				}()
 			}
 
-			startIngress(public, "public")
+			// The private reader runs before subscribing: Paper delivers each
+			// frame only once the reader takes it, exactly like a live socket.
+			startIngress(privateTransport, "private")
 
-			if privateWS != nil {
-				startIngress(privateWS, "private")
+			subscribePrivate := func(token string) error {
+				for _, payload := range []any{
+					kraken.NewExecutionSubscription(token),
+					kraken.NewBalanceSubscription(token),
+				} {
+					msg, err := sonic.Marshal(payload)
+
+					if err != nil {
+						return errnie.Error(errnie.Err(
+							errnie.IO, "symm: private subscribe marshal failed", err,
+						))
+					}
+
+					if err := privateTransport.Write(msg); err != nil {
+						return errnie.Error(errnie.Err(
+							errnie.IO, "symm: private subscribe failed", err,
+						))
+					}
+				}
+
+				return nil
 			}
+
+			// Paper accepts the same subscriptions without an auth token.
+			var token string
+
+			if privateWS, live := privateTransport.(*network.WebsocketClient); live {
+				auth := kraken.NewAuth()
+				issued, err := auth.Token()
+
+				if err != nil {
+					return errnie.Error(errnie.Err(
+						errnie.NotAcceptable,
+						"symm: private websocket auth token unavailable",
+						err,
+					))
+				}
+
+				token = issued
+
+				privateWS.OnReconnect(func() error {
+					reissued, err := auth.Token()
+
+					if err != nil {
+						return errnie.Error(err)
+					}
+
+					return subscribePrivate(reissued)
+				})
+			}
+
+			if err := subscribePrivate(token); err != nil {
+				return err
+			}
+
+			// The store tee is READY, so historical detections can be stored.
+			training.Train()
+
+			startIngress(public, "public")
 
 			instrument.Level3.Range(func(key, value any) bool {
 				if client, ok := value.(*network.WebsocketClient); ok {

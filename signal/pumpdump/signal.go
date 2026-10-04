@@ -58,9 +58,8 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 		NewVolumeClock(),
 
 		// 2. Adaptive baselines and temporal dynamics
-		transport.NewFan(
-			// Spread baseline & divergence
-			data.NewAdapter(
+		// Spread baseline & divergence
+		data.NewAdapter(
 				adaptive.NewBaseline(adaptive.NewWindow()),
 				func(m *data.Measurement[float64]) float64 {
 					return m.GetMetric("relative_spread").Raw
@@ -269,7 +268,6 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 					}
 				},
 			),
-		),
 
 		// 3. Recurrence
 		data.NewRecurrence(

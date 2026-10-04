@@ -201,7 +201,7 @@ export const particleShader = /* wgsl */ `
 		@location(5) phase: f32,
 		@location(6) amp: f32,
 	) -> ParticleOut {
-		let energyScale = 0.8 + 0.5 * clamp(energy, 0.0, 1.0);
+		let energyScale = 0.8 + 0.5 * clamp(energy * uniforms.energyScale, 0.0, 1.0);
 		let massScale = 0.8 + 0.6 * clamp(mass * uniforms.massScale, 0.0, 1.0);
 		let ampScale = 0.8 + 0.8 * clamp(amp * uniforms.amplitudeScale, 0.0, 1.0);
 		let size = energyScale * massScale * ampScale * uniforms.pointDiameter;
@@ -250,8 +250,8 @@ export const particleShader = /* wgsl */ `
 
 		let brightness = mix(0.7, 1.4, pow(heat, 2.0)) * (core * 0.8 + glow * 0.25);
 		return vec4<f32>(
-			thermoColor * brightness + haloColor * (ampHalo + pulseRing * 1.5),
-			glow * 0.9 + core * 0.1
+			0.5 * (thermoColor * brightness + haloColor * (ampHalo + pulseRing * 0.25)),
+			glow * 0.6
 		);
 	}
 `;

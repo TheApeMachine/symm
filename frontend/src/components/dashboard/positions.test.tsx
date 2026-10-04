@@ -31,7 +31,7 @@ describe("Positions", () => {
 			expect(markup).toContain("NMR/USD");
 			expect(markup).toContain("active");
 			expect(markup).toContain("0.4200 USD");
-			expect(markup).toContain("EXIT");
+			expect(markup).not.toContain("EXIT");
 			expect(markup).toContain("12.345600");
 			expect(markup).toContain("12.567800");
 			expect(markup).not.toContain("no open positions");

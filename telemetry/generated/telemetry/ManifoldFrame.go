@@ -40,6 +40,7 @@ type ManifoldFrameT struct {
 	WaveScale float32 `json:"waveScale"`
 	Modes []*WaveModeT `json:"modes"`
 	Resultants []*PhaseResultantT `json:"resultants"`
+	PilotVel []float32 `json:"pilotVel"`
 }
 
 func (t *ManifoldFrameT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
@@ -235,6 +236,15 @@ func (t *ManifoldFrameT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT
 		}
 		resultantsOffset = builder.EndVector(resultantsLength)
 	}
+	pilotVelOffset := flatbuffers.UOffsetT(0)
+	if t.PilotVel != nil {
+		pilotVelLength := len(t.PilotVel)
+		ManifoldFrameStartPilotVelVector(builder, pilotVelLength)
+		for j := pilotVelLength - 1; j >= 0; j-- {
+			builder.PrependFloat32(t.PilotVel[j])
+		}
+		pilotVelOffset = builder.EndVector(pilotVelLength)
+	}
 	ManifoldFrameStart(builder)
 	ManifoldFrameAddSequence(builder, t.Sequence)
 	ManifoldFrameAddAt(builder, t.At)
@@ -269,6 +279,7 @@ func (t *ManifoldFrameT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT
 	ManifoldFrameAddWaveScale(builder, t.WaveScale)
 	ManifoldFrameAddModes(builder, modesOffset)
 	ManifoldFrameAddResultants(builder, resultantsOffset)
+	ManifoldFrameAddPilotVel(builder, pilotVelOffset)
 	return ManifoldFrameEnd(builder)
 }
 
@@ -389,6 +400,11 @@ func (rcv *ManifoldFrame) UnPackTo(t *ManifoldFrameT) {
 		x := PhaseResultant{}
 		rcv.Resultants(&x, j)
 		t.Resultants[j] = x.UnPack()
+	}
+	pilotVelLength := rcv.PilotVelLength()
+	t.PilotVel = make([]float32, pilotVelLength)
+	for j := 0; j < pilotVelLength; j++ {
+		t.PilotVel[j] = rcv.PilotVel(j)
 	}
 }
 
@@ -1101,8 +1117,34 @@ func (rcv *ManifoldFrame) ResultantsLength() int {
 	return 0
 }
 
+func (rcv *ManifoldFrame) PilotVel(j int) float32 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(70))
+	if o != 0 {
+		a := rcv._tab.Vector(o)
+		return rcv._tab.GetFloat32(a + flatbuffers.UOffsetT(j*4))
+	}
+	return 0
+}
+
+func (rcv *ManifoldFrame) PilotVelLength() int {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(70))
+	if o != 0 {
+		return rcv._tab.VectorLen(o)
+	}
+	return 0
+}
+
+func (rcv *ManifoldFrame) MutatePilotVel(j int, n float32) bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(70))
+	if o != 0 {
+		a := rcv._tab.Vector(o)
+		return rcv._tab.MutateFloat32(a+flatbuffers.UOffsetT(j*4), n)
+	}
+	return false
+}
+
 func ManifoldFrameStart(builder *flatbuffers.Builder) {
-	builder.StartObject(33)
+	builder.StartObject(34)
 }
 func ManifoldFrameAddSequence(builder *flatbuffers.Builder, sequence uint64) {
 	builder.PrependUint64Slot(0, sequence, 0)
@@ -1261,6 +1303,12 @@ func ManifoldFrameAddResultants(builder *flatbuffers.Builder, resultants flatbuf
 	builder.PrependUOffsetTSlot(32, flatbuffers.UOffsetT(resultants), 0)
 }
 func ManifoldFrameStartResultantsVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(4, numElems, 4)
+}
+func ManifoldFrameAddPilotVel(builder *flatbuffers.Builder, pilotVel flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(33, flatbuffers.UOffsetT(pilotVel), 0)
+}
+func ManifoldFrameStartPilotVelVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
 }
 func ManifoldFrameEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

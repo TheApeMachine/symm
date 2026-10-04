@@ -33,6 +33,7 @@ func EncodeManifold(manifold *ManifoldState) ([]byte, error) {
 		Amp:           state.Amp,
 		Pos:           state.Pos,
 		Vel:           state.Vel,
+		PilotVel:      state.PilotVel,
 		Clamped:       state.Clamped,
 		Dark:          state.Dark,
 		GridX:         int32(manifold.GridX),
@@ -143,5 +144,8 @@ func encodePhysicsHealth(health sensorium.PhysicsHealth) *wire.PhysicsHealthT {
 		ParticleOscillator:    health.ParticleOscillator,
 		ParticleKinetic:       health.ParticleKinetic,
 		ParticleMaterialTotal: health.ParticleMaterialTotal,
+		SpatialSigmaRaw:       health.SpatialSigmaRaw,
+		SpatialSigmaUsed:      health.SpatialSigmaUsed,
+		SigmaUniformLimit:     health.SigmaUniformLimit,
 	}
 }

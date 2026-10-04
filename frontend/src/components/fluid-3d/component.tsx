@@ -356,10 +356,13 @@ export const FluidInspector = () => {
 					? "wave · hue: local phase θ · opacity: |Ψ| / peak component\n"
 					: ""}
 				{options.current
-					? "current · sampled Im(Ψ*∇Ψ) · arrow length / frame sample peak\n"
+					? "current · solver pilot velocity at each particle · relative arrow lengths\n"
 					: ""}
 				{options.current
-					? `sampled flux peak: ${currentPeak === null ? "waiting" : currentPeak.toExponential(2)}${currentPeak === 0 ? " · no phase flux at sampled cells" : ""}\n`
+					? `pilot speed peak: ${currentPeak === null ? "unavailable — backend has not published guidance" : currentPeak.toExponential(2)}${currentPeak === 0 ? " · zero guidance" : ""}\n`
+					: ""}
+				{options.wave && phaseReading?.health?.sigmaUniformLimit
+					? "wave projection · uniform thermal limit (backend)\n"
 					: ""}
 				{particleReadout(selected)}
 			</Typography.Pre>

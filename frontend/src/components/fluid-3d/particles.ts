@@ -28,7 +28,7 @@ const particleBindLayout = (device: GPUDevice) =>
 FluidParticles is one instanced-quad draw for the complete resident particle
 selection. WebGPU has no point size, so each particle is a camera-facing quad.
 */
-const maxAbs = (values: Float32Array): number => {
+const inversePeak = (values: Float32Array): number => {
 	let peak = 0;
 
 	for (const value of values) {
@@ -39,7 +39,7 @@ const maxAbs = (values: Float32Array): number => {
 		}
 	}
 
-	return peak;
+	return peak === 0 ? 0 : 1 / peak;
 };
 
 export class FluidParticles {
@@ -99,12 +99,12 @@ export class FluidParticles {
 						blend: {
 							color: {
 								srcFactor: "src-alpha",
-								dstFactor: "one",
+								dstFactor: "one-minus-src-alpha",
 								operation: "add",
 							},
 							alpha: {
 								srcFactor: "one",
-								dstFactor: "one",
+								dstFactor: "one-minus-src-alpha",
 								operation: "add",
 							},
 						},
@@ -165,10 +165,10 @@ export class FluidParticles {
 		this.gpu.device.queue.writeBuffer(this.instanceBuffer, 0, instances);
 		this.frame = frame;
 		this.scales = {
-			heat: maxAbs(frame.heat),
-			energy: maxAbs(frame.energy),
-			mass: maxAbs(frame.mass),
-			amplitude: maxAbs(frame.amp),
+			heat: inversePeak(frame.heat),
+			energy: inversePeak(frame.energy),
+			mass: inversePeak(frame.mass),
+			amplitude: inversePeak(frame.amp),
 		};
 	}
 
@@ -182,7 +182,8 @@ export class FluidParticles {
 		data[16] = camera.right[0];
 		data[17] = camera.right[1];
 		data[18] = camera.right[2];
-		data[19] = this.gridSpacing;
+		// Display diameter is 65% of the previous one; physics radii are untouched.
+		data[19] = this.gridSpacing * 0.65;
 		data[20] = camera.up[0];
 		data[21] = camera.up[1];
 		data[22] = camera.up[2];

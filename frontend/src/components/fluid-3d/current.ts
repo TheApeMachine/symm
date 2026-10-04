@@ -1,79 +1,38 @@
 import { currentShader } from "./field-shaders";
 import { createVertexBuffer, type FluidGPU } from "./gpu";
-import type { FluidFields } from "./wire";
+import type { FluidParticleFrame } from "./wire";
 
-// Display resource budget: at most 16³ spatial glyphs, independent of RAF rate.
-const MAX_CURRENT_AXIS_SAMPLES = 16;
+/* Draw the solver's per-particle guidance velocity. Only arrow geometry and
+relative display length are computed here; the wave is never differentiated. */
+export const pilotCurrentGlyphs = (
+	frame: FluidParticleFrame,
+	spacing: number,
+) => {
+	const vectors = frame.pilotVel;
+	if (vectors === null) return { vertices: new Float32Array(0), peak: null };
 
-/* Sample Im(conj(Ψ) ∇Ψ) at cell midpoints, using the same periodic trilinear
-complex interpolation as the pilot solver. This is phase flux; a particle's
-velocity additionally needs hbar / (mass * |Ψ|²). No speed or time is invented.
-The Z-fastest wire layout is x*ny*nz + y*nz + z. */
-export const phaseCurrentGlyphs = (fields: FluidFields) => {
-	const dimensions = [fields.grid.x, fields.grid.y, fields.grid.z];
-	const samples = dimensions.map((size) =>
-		Math.min(size, MAX_CURRENT_AXIS_SAMPLES),
-	);
-	const count = samples[0] * samples[1] * samples[2];
-	const vectors = new Float64Array(count * 3);
-	const positions = new Float64Array(count * 3);
-	let peak = 0;
-	for (let sample = 0; sample < count; sample++) {
-		const tile = [
-			Math.floor(sample / (samples[1] * samples[2])),
-			Math.floor(sample / samples[2]) % samples[1],
-			sample % samples[2],
-		];
-		const base = tile.map((value, axis) =>
-			Math.floor(((value + 0.5) * dimensions[axis]) / samples[axis]),
-		);
-		let real = 0;
-		let imaginary = 0;
-		const realGradient = [0, 0, 0];
-		const imaginaryGradient = [0, 0, 0];
-		const cornerValues: Array<[number, number]> = [];
-		for (let corner = 0; corner < 8; corner++) {
-			const offset = [corner >> 2, (corner >> 1) & 1, corner & 1];
-			const cell =
-				((base[0] + offset[0]) % dimensions[0]) *
-					dimensions[1] *
-					dimensions[2] +
-				((base[1] + offset[1]) % dimensions[1]) * dimensions[2] +
-				((base[2] + offset[2]) % dimensions[2]);
-			const cornerReal = fields.waveReal[cell];
-			const cornerImaginary = fields.waveImaginary[cell];
-			real += cornerReal / 8;
-			imaginary += cornerImaginary / 8;
-			cornerValues.push([cornerReal, cornerImaginary]);
-		}
-		for (let axis = 0; axis < 3; axis++) {
-			const mask = 1 << (2 - axis);
-			for (let pair = 0; pair < 4; pair++) {
-				const lower = (pair % mask) + Math.floor(pair / mask) * mask * 2;
-				const upper = lower + mask;
-				// Subtract opposing corners first so constant directions cancel exactly.
-				realGradient[axis] +=
-					(cornerValues[upper][0] - cornerValues[lower][0]) /
-					(4 * fields.grid.spacing);
-				imaginaryGradient[axis] +=
-					(cornerValues[upper][1] - cornerValues[lower][1]) /
-					(4 * fields.grid.spacing);
-			}
-			positions[sample * 3 + axis] = (base[axis] + 0.5) / dimensions[axis];
-			vectors[sample * 3 + axis] =
-				real * imaginaryGradient[axis] - imaginary * realGradient[axis];
-		}
-		peak = Math.max(
-			peak,
-			Math.hypot(...vectors.subarray(sample * 3, sample * 3 + 3)),
+	if (
+		vectors.length !== frame.count * 3 ||
+		frame.pos.length !== frame.count * 3
+	) {
+		throw new Error(
+			"pilot guidance and positions must match the particle count",
 		);
 	}
-
+	const count = frame.count;
+	const positions = frame.pos;
+	let peak = 0;
+	for (let particle = 0; particle < count; particle++) {
+		peak = Math.max(
+			peak,
+			Math.hypot(...vectors.subarray(particle * 3, particle * 3 + 3)),
+		);
+	}
 	if (peak === 0) return { vertices: new Float32Array(0), peak };
 
-	// Half a sampling interval leaves room for the half-cell center offset.
-	// Relative arrow lengths encode flux magnitude, never a time step.
-	const lengthScale = 0.5 / Math.max(...samples) / peak;
+	// The longest direction marker spans two grid cells. This is a labelled
+	// display scale, not integrated travel over a synthetic time interval.
+	const lengthScale = (2 * spacing) / peak;
 	const vertices: number[] = [];
 	for (let sample = 0; sample < count; sample++) {
 		const delta = Array.from(
@@ -111,7 +70,7 @@ export const phaseCurrentGlyphs = (fields: FluidFields) => {
 };
 
 // Owns one snapshot of spatial current glyphs. Camera redraws do not advect it.
-export class PhaseCurrent {
+export class PilotCurrent {
 	visible = true;
 	private vertexCount = 0;
 	private vertexBuffer: GPUBuffer | null = null;
@@ -186,8 +145,8 @@ export class PhaseCurrent {
 		});
 	}
 
-	update(fields: FluidFields) {
-		const { vertices, peak } = phaseCurrentGlyphs(fields);
+	update(frame: FluidParticleFrame, spacing: number) {
+		const { vertices, peak } = pilotCurrentGlyphs(frame, spacing);
 		this.vertexCount = vertices.length / 5;
 		this.vertexBuffer?.destroy();
 		this.vertexBuffer = null;

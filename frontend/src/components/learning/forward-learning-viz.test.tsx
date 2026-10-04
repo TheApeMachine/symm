@@ -63,7 +63,7 @@ it("renders screen plate scanlines and time-scale span for tape fragments", asyn
 			frame.symbol = "BTC/USD";
 			frame.tick = BigInt(index + 1);
 			frame.at = baseNanos + BigInt(index * 2) * minuteNanos; // spans 4 minutes
-			frame.metrics = [new MetricT("price", price), new MetricT("stage_code", 2)];
+			frame.metrics = [new MetricT("price", price), new MetricT("stage_code", 1)];
 			ring.add(frame);
 		}
 		signals.training.setState(() => ({ "BTC/USD": ring }));

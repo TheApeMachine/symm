@@ -120,6 +120,19 @@ describe("KernelInspector", () => {
 		terminalStore.actions.closeInspect();
 	});
 
+	it("formats sub-basis-point values using scientific notation", () => {
+		const ring = getTestRing("toxicity", DEFAULT_FOCUS_SYMBOL);
+		ring.clear();
+		ring.add(metricMeasurement(3.5, "retreat_rate", 0.0000117, 0.5));
+		signals.toxicity.setState((prev) => ({ ...prev }));
+		terminalStore.actions.inspectSource("toxicity");
+
+		const markup = renderInspector();
+		expect(markup).toContain("1.17e-5");
+
+		terminalStore.actions.closeInspect();
+	});
+
 	it("holds a metric's last value across rows that do not carry it", () => {
 		const ring = getTestRing("toxicity", DEFAULT_FOCUS_SYMBOL);
 		ring.clear();

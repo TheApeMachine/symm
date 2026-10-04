@@ -12,6 +12,8 @@ import (
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/system"
+	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
+	"golang.org/x/time/rate"
 )
 
 /*
@@ -38,26 +40,94 @@ type Balance struct {
 	paper     *Paper
 	Quote     string
 	snapshot  atomic.Pointer[AccountSnapshot]
+	stale     chan struct{}
+	limiter   *rate.Limiter
 }
+
+/*
+The venue's own request budgets bound how often Update may run.
+
+Live: Kraken's private REST counter decays by 0.33 per second on the Starter
+tier, the lowest tier any account has, and Update spends two points (Balance
+and TradeBalance).
+
+Paper: `kraken paper status` prices the wallet through one public Ticker call,
+and Kraken's public REST budget is one call per second.
+*/
+const (
+	privateDecayPerSecond = 0.33
+	privateCallsPerUpdate = 2
+	publicCallsPerSecond  = 1
+)
 
 func NewBalance(ctx context.Context, transport Transport) *Balance {
 	balance := &Balance{
 		System:    runtime.NewSystem(ctx, "balance"),
 		transport: transport,
 		Quote:     system.Cfg.Market.QuoteCurrency,
+		stale:     make(chan struct{}, 1),
+		limiter:   rate.NewLimiter(rate.Limit(privateDecayPerSecond/privateCallsPerUpdate), 1),
 	}
 
 	if paper, ok := transport.(*Paper); ok {
 		balance.paper = paper
+		balance.limiter = rate.NewLimiter(rate.Limit(publicCallsPerSecond), 1)
 	}
 
-	if err := balance.Update(); err != nil {
-		balance.Transition(runtime.ERROR)
-		return balance
+	// Startup needs the venue's account state, so the first read is retried
+	// until it succeeds, each attempt spaced by the venue's request budget.
+	for {
+		if err := balance.limiter.Wait(ctx); err != nil {
+			balance.Transition(runtime.ERROR)
+			return balance
+		}
+
+		err := balance.Update()
+
+		if err == nil {
+			break
+		}
+
+		errnie.Error(errnie.Err(
+			errnie.BadGateway, "[balance] initial account read failed, retrying", err,
+		))
 	}
+
+	go balance.watch()
 
 	balance.Transition(runtime.READY)
 	return balance
+}
+
+/*
+Invalidate requests a venue refresh after an event that likely changed the
+account (a trade print, an execution, a wallet frame). It never blocks: the
+refresh runs on the balance's own goroutine, bursts coalesce into one refresh,
+and refreshes are spaced by the venue's request budget.
+*/
+func (balance *Balance) Invalidate() {
+	select {
+	case balance.stale <- struct{}{}:
+	default:
+	}
+}
+
+func (balance *Balance) watch() {
+	for {
+		select {
+		case <-balance.Context().Done():
+			return
+		case <-balance.stale:
+		}
+
+		if err := balance.limiter.Wait(balance.Context()); err != nil {
+			return
+		}
+
+		if err := balance.Update(); err != nil {
+			errnie.Error(err)
+		}
+	}
 }
 
 func newAccountSnapshot(
@@ -158,7 +228,13 @@ func (balance *Balance) Update() error {
 			))
 		}
 
-		balance.UpdateWallet(wallet)
+		tradeBalance, err := balance.paper.TradeBalance()
+
+		if err != nil {
+			return errnie.Error(err)
+		}
+
+		balance.snapshot.Store(newAccountSnapshot(balance.Quote, wallet, tradeBalance))
 		return nil
 	}
 
@@ -184,7 +260,20 @@ func (balance *Balance) Update() error {
 	}
 
 	wallet := kraken.NewBalanceFromMap(resp.Result)
-	balance.UpdateWallet(wallet)
+
+	// No asset parameter: Kraken values the trade balance in its documented
+	// default asset, ZUSD.
+	tradeBalance, err := spot.Call[kraken.TradeBalanceResult](client, spot.RequestOptions{
+		Auth:   true,
+		Method: "POST",
+		Path:   system.Cfg.WebSocket.Endpoints.TradeBalance,
+	})
+
+	if err != nil {
+		return errnie.Error(err)
+	}
+
+	balance.snapshot.Store(newAccountSnapshot(balance.Quote, wallet, &tradeBalance.Result))
 	return nil
 }
 
@@ -237,10 +326,38 @@ func (balance *Balance) Unrealized() *decimal.Decimal {
 	return snapshot.Unrealized
 }
 
+/*
+UpdateWallet applies a streamed wallet frame. The streamed frame carries no
+trade balance, so the last one the venue reported is kept until the next
+refresh replaces it.
+*/
 func (balance *Balance) UpdateWallet(wallet *kraken.Balance) {
 	if balance == nil || wallet == nil {
 		return
 	}
-	snapshot := newAccountSnapshot(balance.Quote, wallet, nil)
-	balance.snapshot.Store(snapshot)
+
+	var tradeBalance *kraken.TradeBalanceResult
+
+	if current := balance.snapshot.Load(); current != nil {
+		tradeBalance = current.TradeBalance
+	}
+
+	balance.snapshot.Store(newAccountSnapshot(balance.Quote, wallet, tradeBalance))
+}
+
+/*
+EquityWire renders the current account state for the dashboard top bar.
+*/
+func (balance *Balance) EquityWire() *wire.EquityFrameT {
+	snapshot := balance.Snapshot()
+
+	if snapshot == nil || snapshot.Cash == nil || snapshot.Equity == nil {
+		return nil
+	}
+
+	return &wire.EquityFrameT{
+		Cash:       snapshot.Cash.String(),
+		Unrealized: snapshot.Unrealized.String(),
+		Equity:     snapshot.Equity.String(),
+	}
 }

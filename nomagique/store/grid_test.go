@@ -138,13 +138,15 @@ func TestGrid(t *testing.T) {
 			})
 		})
 
-		Convey("IsSettled transitions after 50 updates or Settle call", func() {
-			for i := 0; i < 50; i++ {
-				grid.Update(data.NewMeasurement[float64]("test", nil))
-			}
+		Convey("IsSettled transitions when measurements achieve maturity or Settle is called", func() {
+			immature := data.NewMeasurement[float64]("test", nil)
+			immature.Maturity = 0.5
+			grid.Update(immature)
 			So(grid.IsSettled(), ShouldBeFalse)
 
-			grid.Update(data.NewMeasurement[float64]("test", nil))
+			mature := data.NewMeasurement[float64]("test", nil)
+			mature.Maturity = 1.0
+			grid.Update(mature)
 			So(grid.IsSettled(), ShouldBeTrue)
 
 			grid2 := NewGrid()
