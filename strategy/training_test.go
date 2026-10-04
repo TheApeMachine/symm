@@ -13,6 +13,7 @@ import (
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/tests/tablestest"
 )
 
@@ -118,22 +119,13 @@ func TestTraining_Train(t *testing.T) {
 	})
 }
 
-func TestEncodeFrame(t *testing.T) {
-	Convey("Given region tokens for one tick", t, func() {
-		frame, err := encodeFrame([][]byte{[]byte("R3"), []byte("R17")})
+func TestRegionToken(t *testing.T) {
+	Convey("Given training component and measurements", t, func() {
+		training := &Training{
+			grid: store.NewGrid(),
+		}
 
-		Convey("It packs them into the engine's structural timestep", func() {
-			So(err, ShouldBeNil)
-			So(frame, ShouldResemble, []byte{
-				0, 0, 0, 2,
-				0, 0, 0, 0, 0, 0, 'R', '3',
-				0, 0, 0, 0, 0, 'R', '1', '7',
-			})
-		})
-
-		Convey("It rejects tokens wider than one engine token", func() {
-			_, err := encodeFrame([][]byte{[]byte("R123456789")})
-			So(err, ShouldNotBeNil)
-		})
+		tok := training.token()
+		So(tok, ShouldBeNil)
 	})
 }

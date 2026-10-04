@@ -85,8 +85,43 @@ func (detector *Detector) Scan(
 			continue
 		}
 
+		flush := func() {
+			if lowest != nil && highest != nil && highest.Cmp(lowest) > 0 && highTick > lowTick {
+				span := highTick - lowTick
+				idxSpan := highIdx - lowIdx
+
+				pulledLowTick := lowTick - span
+
+				if pulledLowTick < 0 {
+					pulledLowTick = 0
+				}
+
+				pulledLowIdx := lowIdx - idxSpan
+
+				if pulledLowIdx <= 0 {
+					pulledLowIdx = 1
+				}
+
+				extendedHighTick := highTick + span
+				extendedHighIdx := highIdx + idxSpan
+
+				detector.Flush(
+					symbol,
+					epoch,
+					pulledLowIdx,
+					extendedHighIdx,
+					pulledLowTick,
+					extendedHighTick,
+					lowAt,
+					highAt,
+					lowest,
+					highest,
+				)
+			}
+		}
+
 		if epoch == 0 || epoch != measurement.Epoch || symbol != measurement.Label {
-			detector.Flush(symbol, epoch, lowIdx, highIdx, lowTick, highTick, lowAt, highAt, lowest, highest)
+			flush()
 			epoch = measurement.Epoch
 			symbol = measurement.Label
 			lowest = nil
@@ -106,11 +141,6 @@ func (detector *Detector) Scan(
 			lowIdx = measurement.SeqIdx
 			lowTick = measurement.Tick
 			lowAt = measurement.At
-			highest = nil
-			highIdx = 0
-			highTick = 0
-			highAt = time.Time{}
-			continue
 		}
 
 		if highest == nil || price.Cmp(highest) > 0 {
@@ -121,7 +151,34 @@ func (detector *Detector) Scan(
 		}
 	}
 
-	detector.Flush(symbol, epoch, lowIdx, highIdx, lowTick, highTick, lowAt, highAt, lowest, highest)
+	if lowest != nil && highest != nil && highest.Cmp(lowest) > 0 && highTick > lowTick {
+		span := highTick - lowTick
+		idxSpan := highIdx - lowIdx
+
+		pulledLowTick := lowTick - span
+		if pulledLowTick < 0 {
+			pulledLowTick = 0
+		}
+		pulledLowIdx := lowIdx - idxSpan
+		if pulledLowIdx <= 0 {
+			pulledLowIdx = 1
+		}
+		extendedHighTick := highTick + span
+		extendedHighIdx := highIdx + idxSpan
+
+		detector.Flush(
+			symbol,
+			epoch,
+			pulledLowIdx,
+			extendedHighIdx,
+			pulledLowTick,
+			extendedHighTick,
+			lowAt,
+			highAt,
+			lowest,
+			highest,
+		)
+	}
 }
 
 /*

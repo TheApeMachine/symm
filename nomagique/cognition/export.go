@@ -1,9 +1,7 @@
 package cognition
 
 import (
-	"bytes"
 	"cmp"
-	"encoding/binary"
 	"fmt"
 	"slices"
 	"strings"
@@ -296,40 +294,24 @@ func (op *Engine) TreeExport() CognitionTreeExport {
 }
 
 /*
-regionFrames decodes a training signature of structural timesteps
-([count uint32][count × 8-byte right-aligned token]) into one "[R3,R17]"
-label per frame for the trie viz. Consecutive identical frames collapse
-(change-point only). A context that is not a complete framed signature
-yields no frames. ENTER/EXIT stay on the leaf action node.
+regionFrames splits a temporal context (e.g. "R1_R3_R7/R2_R5_R9") by slash into its
+individual timestep tokens. Consecutive identical tokens collapse (change-point only).
 */
 func regionFrames(context []byte) []string {
+	if len(context) == 0 {
+		return nil
+	}
+
 	var frames []string
 
-	for offset := 0; offset < len(context); {
-		if offset+4 > len(context) {
-			return nil
+	for _, part := range strings.Split(string(context), "/") {
+		if part == "" {
+			continue
 		}
 
-		count := int(binary.BigEndian.Uint32(context[offset:]))
-		end := offset + 4 + count*8
-
-		if count == 0 || end > len(context) {
-			return nil
+		if len(frames) == 0 || frames[len(frames)-1] != part {
+			frames = append(frames, part)
 		}
-
-		parts := make([]string, 0, count)
-
-		for token := offset + 4; token < end; token += 8 {
-			parts = append(parts, string(bytes.TrimLeft(context[token:token+8], "\x00")))
-		}
-
-		frame := "[" + strings.Join(parts, ",") + "]"
-
-		if len(frames) == 0 || frames[len(frames)-1] != frame {
-			frames = append(frames, frame)
-		}
-
-		offset = end
 	}
 
 	return frames

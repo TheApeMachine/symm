@@ -1,42 +1,22 @@
 package cognition
 
 import (
-	"encoding/binary"
 	"strings"
 	"testing"
 )
 
-func frameOf(tokens ...string) []byte {
-	frame := make([]byte, 4+8*len(tokens))
-	binary.BigEndian.PutUint32(frame, uint32(len(tokens)))
-
-	for index, token := range tokens {
-		copy(frame[4+index*8+8-len(token):], token)
-	}
-
-	return frame
-}
-
 func TestRegionFramesDecodesTimesteps(t *testing.T) {
-	ctx := append(frameOf("R1", "R2", "R3"), frameOf("R10", "R20")...)
+	ctx := []byte("R1_R2_R3/R10_R20")
 	frames := regionFrames(ctx)
 
-	if len(frames) != 2 || frames[0] != "[R1,R2,R3]" || frames[1] != "[R10,R20]" {
+	if len(frames) != 2 || frames[0] != "R1_R2_R3" || frames[1] != "R10_R20" {
 		t.Fatalf("frames=%v", frames)
-	}
-}
-
-func TestRegionFramesRejectsTruncated(t *testing.T) {
-	ctx := frameOf("R1", "R2")
-
-	if frames := regionFrames(ctx[:len(ctx)-1]); frames != nil {
-		t.Fatalf("truncated signature decoded: %v", frames)
 	}
 }
 
 func TestTreeExportActionIsLeafOnly(t *testing.T) {
 	engine := NewEngine(Config{})
-	ctx := append(frameOf("R3", "R8", "R19"), frameOf("R1", "R2", "R5")...)
+	ctx := []byte("R3_R8_R19/R1_R2_R5")
 	if _, err := engine.Observe(Association{
 		Context:  ctx,
 		Class:    []byte(ActionEnter),
@@ -66,10 +46,6 @@ func TestTreeExportActionIsLeafOnly(t *testing.T) {
 		} else if depth > 0 && (prefix == "WAIT" || prefix == "ENTER" || prefix == "EXIT") {
 			enterMidPath = true
 		}
-		// Region path nodes must look like [id,...]
-		if depth > 0 && !isAction && !strings.HasPrefix(node.TokenPrefix, "[") {
-			t.Fatalf("path node prefix should be region frame, got %q", node.TokenPrefix)
-		}
 		for _, child := range node.Children {
 			walk(child, depth+1)
 		}
@@ -81,20 +57,18 @@ func TestTreeExportActionIsLeafOnly(t *testing.T) {
 }
 
 func TestRegionFramesCollapsesAAA(t *testing.T) {
-	frame := frameOf("R4", "R5", "R15")
-	ctx := append(append(append([]byte{}, frame...), frame...), frame...)
+	ctx := []byte("R4_R5_R15/R4_R5_R15/R4_R5_R15")
 	got := regionFrames(ctx)
 
-	if len(got) != 1 || got[0] != "[R4,R5,R15]" {
+	if len(got) != 1 || got[0] != "R4_R5_R15" {
 		t.Fatalf("AAA→A frames: got %#v", got)
 	}
 }
 
 func TestRegionFramesCollapsesABBA(t *testing.T) {
-	first, second := frameOf("R1", "R2", "R3"), frameOf("R7", "R8", "R9")
-	ctx := append(append(append(append([]byte{}, first...), second...), second...), first...)
+	ctx := []byte("R1_R2_R3/R7_R8_R9/R7_R8_R9/R1_R2_R3")
 	got := regionFrames(ctx)
-	want := []string{"[R1,R2,R3]", "[R7,R8,R9]", "[R1,R2,R3]"}
+	want := []string{"R1_R2_R3", "R7_R8_R9", "R1_R2_R3"}
 
 	if len(got) != len(want) {
 		t.Fatalf("ABBA→ABA len: got %#v want %#v", got, want)

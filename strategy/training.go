@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"cmp"
 	"context"
-	"encoding/binary"
 	"fmt"
 	"math/rand/v2"
 	"slices"
@@ -190,26 +189,21 @@ func (training *Training) trade(prior *data.Measurement[float64], snapshot *Repo
 	tokens := training.grid.LitRegions(prior)
 	snapshot.RegionTokens = tokens
 
-	if len(tokens) == 0 {
-		return
-	}
+	tok := training.token(prior)
 
-	frame, err := encodeFrame(tokens)
-
-	if err != nil {
-		errnie.Error(err)
+	if len(tok) == 0 {
 		return
 	}
 
 	training.mu.Lock()
 	current := training.episode(symbol)
-	current.window = append(current.window, frame)
+	current.window = append(current.window, tok)
 
 	if overflow := len(current.window) - training.engine.Order(); overflow > 0 {
 		current.window = current.window[overflow:]
 	}
 
-	question := bytes.Join(current.window, nil)
+	question := bytes.Join(current.window, []byte("/"))
 	training.mu.Unlock()
 
 	result, err := training.engine.Evaluate(question)
@@ -469,7 +463,7 @@ func (training *Training) learn(detection *data.Measurement[float64]) error {
 	}
 
 	feedback := pnl.Div(total).Float64()
-	ticks, frames, err := training.frames(detection, highTick)
+	ticks, tokens, err := training.frames(detection, highTick)
 
 	if err != nil {
 		return errnie.Error(err)
@@ -487,15 +481,19 @@ func (training *Training) learn(detection *data.Measurement[float64]) error {
 	}
 
 	start := rand.IntN(ignition)
-	enter := bytes.Join(frames[start:ignition], nil)
-	hold := bytes.Join(frames[ignition+1:peak], nil)
+	enter := bytes.Join(tokens[start:ignition], []byte("/"))
+	hold := bytes.Join(tokens[ignition+1:peak], []byte("/"))
 
-	if _, err := training.engine.Train(enter, []byte(cognition.ActionEnter), feedback); err != nil {
-		return errnie.Error(err)
+	if len(enter) > 0 {
+		if _, err := training.engine.Train(enter, []byte(cognition.ActionEnter), feedback); err != nil {
+			return errnie.Error(err)
+		}
 	}
 
-	if _, err := training.engine.Train(hold, []byte(cognition.ActionExit), feedback); err != nil {
-		return errnie.Error(err)
+	if len(hold) > 0 {
+		if _, err := training.engine.Train(hold, []byte(cognition.ActionExit), feedback); err != nil {
+			return errnie.Error(err)
+		}
 	}
 
 	return nil
@@ -503,82 +501,57 @@ func (training *Training) learn(detection *data.Measurement[float64]) error {
 
 /*
 frames reads the excursion's signal and logic tape from the epoch start up to
-the peak and encodes one region frame per tick that lit any region.
+the peak and encodes one region token per tick from all signal and logic steps.
 */
 func (training *Training) frames(
 	detection *data.Measurement[float64], highTick int64,
 ) ([]int64, [][]byte, error) {
 	var (
 		ticks   []int64
-		frames  [][]byte
+		tokens  [][]byte
 		group   []*data.Measurement[float64]
 		current int64 = -1
 	)
 
-	flush := func() error {
+	flush := func() {
 		if len(group) == 0 {
-			return nil
+			return
 		}
 
-		tokens := training.grid.LitRegions(group...)
+		tok := training.token(group...)
 		group = group[:0]
 
-		if len(tokens) == 0 {
-			return nil
-		}
-
-		frame, err := encodeFrame(tokens)
-
-		if err != nil {
-			return err
+		if len(tok) == 0 {
+			return
 		}
 
 		ticks = append(ticks, current)
-		frames = append(frames, frame)
-		return nil
+		tokens = append(tokens, tok)
 	}
 
 	for measurement := range training.catalog.SignalLogic(
 		training.Context(), detection.Epoch, detection.Label, 0, highTick,
 	) {
 		if measurement.Tick != current {
-			if err := flush(); err != nil {
-				return nil, nil, err
-			}
-
+			flush()
 			current = measurement.Tick
 		}
 
 		group = append(group, measurement)
 	}
 
-	if err := flush(); err != nil {
-		return nil, nil, err
-	}
-
-	return ticks, frames, nil
+	flush()
+	return ticks, tokens, nil
 }
 
-/*
-encodeFrame packs one tick's region tokens into the engine's structural
-timestep: [count uint32][count × 8-byte token], each token right-aligned.
-*/
-func encodeFrame(tokens [][]byte) ([]byte, error) {
-	frame := make([]byte, 4+8*len(tokens))
-	binary.BigEndian.PutUint32(frame, uint32(len(tokens)))
+func (training *Training) token(measurements ...*data.Measurement[float64]) []byte {
+	lit := training.grid.LitRegions(measurements...)
 
-	for index, token := range tokens {
-		if len(token) > 8 {
-			return nil, errnie.Error(errnie.Err(
-				errnie.Validation, fmt.Sprintf("[training] region token %q exceeds 8 bytes", token), nil,
-			))
-		}
-
-		offset := 4 + index*8 + 8 - len(token)
-		copy(frame[offset:], token)
+	if len(lit) == 0 {
+		return nil
 	}
 
-	return frame, nil
+	return bytes.Join(lit, []byte("_"))
 }
 
 /*
