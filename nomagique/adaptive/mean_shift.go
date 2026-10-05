@@ -1,24 +1,94 @@
 package adaptive
 
-import "math"
+import (
+	"iter"
+	"math"
+	"unsafe"
+
+	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/data"
+)
 
 /*
-MeanShift holds the all/recent window cut's numeric inputs.
+MeanShift owns the support-dependent mean-shift bound.
 */
 type MeanShift struct {
-	Variance     float64
-	Observations float64
-	RecentCount  float64
-	PriorCount   float64
+	*core.PrimitiveError
+	input  data.Map[string]
+	output data.Map[float64]
 }
 
-/*
-Bound uses ln(4 n n) and the two-subwindow reciprocal support sum.
-*/
-func (shift MeanShift) Bound() float64 {
-	if shift.RecentCount <= 0 || shift.PriorCount <= 0 || shift.Observations <= 0 || shift.Variance <= 0 {
-		return 0
-	}
+func NewMeanShift() core.Primitive {
+	output := data.NewOutputMap()
+	output.Values["bound"] = 0
 
-	return math.Sqrt(shift.Variance * (math.Log(4*shift.Observations*shift.Observations) * (0.5 * (1/shift.RecentCount + 1/shift.PriorCount))))
+	return &MeanShift{
+		PrimitiveError: core.NewPrimitiveError(),
+		input: data.NewMap(
+			"variance", "variance",
+			"observations", "observations",
+			"recent_count", "recent_count",
+			"prior_count", "prior_count",
+		),
+		output: output,
+	}
+}
+
+func (op *MeanShift) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+		for arriving := range in {
+			if arriving == nil {
+				op.Error(core.ErrShape)
+				return
+			}
+
+			adapter := *(**data.Adapter)(arriving)
+
+			if adapter == nil {
+				op.Error(core.ErrShape)
+				return
+			}
+
+			var values data.Map[float64]
+
+			for pointer := range adapter.Next(data.NewValue(op.input)) {
+				values = *(*data.Map[float64])(pointer)
+			}
+
+			if err := adapter.Error(); err != nil {
+				op.Error(err)
+				return
+			}
+
+			variance, varianceOK := values.Values["variance"]
+			observations, observationsOK := values.Values["observations"]
+			recentCount, recentOK := values.Values["recent_count"]
+			priorCount, priorOK := values.Values["prior_count"]
+
+			if !varianceOK || !observationsOK || !recentOK || !priorOK {
+				op.Error(core.ErrNotHeld)
+				return
+			}
+
+			bound := 0.0
+
+			if recentCount > 0 && priorCount > 0 && observations > 0 && variance > 0 {
+				bound = math.Sqrt(variance * (math.Log(4*observations*observations) * (0.5 * (1/recentCount + 1/priorCount))))
+			}
+
+			op.output.Values["bound"] = bound
+
+			for range adapter.Next(data.NewValue(op.output)) {
+			}
+
+			if err := adapter.Error(); err != nil {
+				op.Error(err)
+				return
+			}
+
+			if !yield(arriving) {
+				return
+			}
+		}
+	}
 }
