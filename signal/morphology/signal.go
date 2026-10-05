@@ -61,44 +61,44 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 		nmmorphology.NewShapeFlow(signal.books),
 		// 1. Adaptive baseline for morphology change
 		data.NewAdapter(
-				adaptive.NewBaseline(adaptive.NewWindow()),
-				func(m *data.Measurement[float64]) float64 {
-					return m.GetMetric("morphology_change").Raw
-				},
-				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
-					m.SetMetadata(data.MetadataSupport, strconv.FormatFloat(out.Count, 'f', -1, 64))
+			adaptive.NewBaseline(adaptive.NewWindow()),
+			func(m *data.Measurement[float64]) float64 {
+				return m.GetMetric("morphology_change").Raw
+			},
+			func(m *data.Measurement[float64], out adaptive.BaselineReading) {
+				m.SetMetadata(data.MetadataSupport, strconv.FormatFloat(out.Count, 'f', -1, 64))
 
-					if out.HasPrior {
-						m.SetMetric("morphology_change_baseline", data.NewMetric[float64](
-							"morphology_change_baseline",
-							data.UnitRatio,
-							data.TimescaleRollingWindow,
-							out.Baseline,
-							out.ScoreScale,
-						).Write(out.Baseline))
+				if out.HasPrior {
+					m.SetMetric("morphology_change_baseline", data.NewMetric[float64](
+						"morphology_change_baseline",
+						data.UnitRatio,
+						data.TimescaleRollingWindow,
+						out.Baseline,
+						out.ScoreScale,
+					).Write(out.Baseline))
 
-						m.SetMetric("morphology_change_zscore", data.NewMetric[float64](
-							"morphology_change_zscore",
-							data.UnitStandardDeviation,
-							data.TimescaleRollingWindow,
-							0.0,
-							1.0,
-						).Write(out.ZScore))
+					m.SetMetric("morphology_change_zscore", data.NewMetric[float64](
+						"morphology_change_zscore",
+						data.UnitStandardDeviation,
+						data.TimescaleRollingWindow,
+						0.0,
+						1.0,
+					).Write(out.ZScore))
 
+					m.SetMetadata(
+						data.MetadataDivergence,
+						strconv.FormatFloat(out.Residual, 'f', -1, 64),
+					)
+
+					if out.VarianceDefined {
 						m.SetMetadata(
-							data.MetadataDivergence,
-							strconv.FormatFloat(out.Residual, 'f', -1, 64),
+							data.MetadataNoiseVariance,
+							strconv.FormatFloat(out.Variance, 'f', -1, 64),
 						)
-
-						if out.VarianceDefined {
-							m.SetMetadata(
-								data.MetadataNoiseVariance,
-								strconv.FormatFloat(out.Variance, 'f', -1, 64),
-							)
-						}
 					}
-				},
-			),
+				}
+			},
+		),
 		// 2. Recurrence on morphology geometry
 		data.NewRecurrence(
 			"book_shape_distance",

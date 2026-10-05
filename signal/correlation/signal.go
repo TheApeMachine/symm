@@ -14,7 +14,6 @@ import (
 	nmcorrelation "github.com/theapemachine/symm/nomagique/correlation"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	"github.com/theapemachine/symm/nomagique/temporal"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
@@ -59,46 +58,8 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 		nmcorrelation.NewFold(),
 		nmcorrelation.NewHistory(),
 		nmcorrelation.NewRelative(),
-		data.NewAdapter(
-				temporal.NewVelocity(),
-				func(m *data.Measurement[float64]) temporal.Observation {
-					if rate, ok := m.LookupMetric("cohort_signed_correlation"); ok {
-						return temporal.Observation{Value: rate.Raw, At: m.At.UnixNano()}
-					}
-					return temporal.Observation{Value: 0, At: m.At.UnixNano()}
-				},
-				func(m *data.Measurement[float64], out temporal.VelocityReading) {
-					if out.Defined {
-						m.SetMetric("correlation_velocity", data.NewMetric[float64](
-							"correlation_velocity",
-							data.UnitVelocity,
-							data.TimescalePerSecond,
-							0.0,
-							0.0,
-						).Write(out.Rate))
-					}
-				},
-			),
-			data.NewAdapter(
-				temporal.NewVelocity(),
-				func(m *data.Measurement[float64]) temporal.Observation {
-					if rate, ok := m.LookupMetric("relative_return_energy"); ok {
-						return temporal.Observation{Value: rate.Raw, At: m.At.UnixNano()}
-					}
-					return temporal.Observation{Value: 0, At: m.At.UnixNano()}
-				},
-				func(m *data.Measurement[float64], out temporal.VelocityReading) {
-					if out.Defined {
-						m.SetMetric("relative_return_energy_velocity", data.NewMetric[float64](
-							"relative_return_energy_velocity",
-							data.UnitVelocity,
-							data.TimescalePerSecond,
-							0.0,
-							0.0,
-						).Write(out.Rate))
-					}
-				},
-			),
+		nmcorrelation.NewCorrelationVelocity(),
+		nmcorrelation.NewEnergyVelocity(),
 		nmcorrelation.NewPeerEnergy(),
 		data.NewRecurrence(
 			"cohort_signed_correlation",

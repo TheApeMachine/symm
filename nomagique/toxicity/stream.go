@@ -433,6 +433,12 @@ func (op *TradeMatching) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Point
 			qty := m.GetMetric("qty").Raw
 
 			if price <= 0 || qty <= 0 {
+				m.Err = errnie.Err(
+					errnie.Validation,
+					"toxicity: positive trade price and quantity required",
+					nil,
+				)
+
 				if !yield(arriving) {
 					return
 				}

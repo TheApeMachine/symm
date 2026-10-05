@@ -95,9 +95,7 @@ func (op *Counts) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				from = p.origin()
 			}
 
-			atSec := float64(m.At.UnixNano()) * 1e-9
-			fromSec := float64(from.UnixNano()) * 1e-9
-			span := atSec - fromSec
+			span := m.At.Sub(from).Seconds()
 
 			if !from.After(m.At) {
 				m.From = from
@@ -234,9 +232,10 @@ func (op *Excitation) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
 			}
 
 			atSec := float64(m.At.UnixNano()) * 1e-9
-			span := atSec - float64(p.origin().UnixNano())*1e-9
+			span := m.At.Sub(p.origin()).Seconds()
 
-			op.evaluate(m, p, buyArrivals, sellArrivals, atSec, span, mark)
+			var _ float64 = span
+			op.evaluate(m, p, buyArrivals, sellArrivals, atSec, mark)
 
 			if !yield(arriving) {
 				return
@@ -251,12 +250,7 @@ mathematics the fitted bivariate process defines: pre-arrival intensities,
 excitation decomposition, branching descent, likelihoods against nested
 restrictions, and compensator innovations.
 */
-func (op *Excitation) evaluate(
-	m *data.Measurement[float64],
-	p *path,
-	buyArrivals, sellArrivals []float64,
-	atSec, span, mark float64,
-) {
+func (op *Excitation) evaluate(m *data.Measurement[float64], p *path, buyArrivals, sellArrivals []float64, atSec, mark float64) {
 	model := p.model
 
 	muX := model.muX

@@ -98,8 +98,8 @@ func (tee *UITee) Push(pub data.Publication) {
 
 /*
 Next yields the next available pre-encoded FlatBuffer frame ([]byte).
-Encoding is performed asynchronously by the background worker, ensuring Next
-is an instantaneous wait-free dequeue.
+Encoding is owned exclusively by the background worker, so Next is an
+instantaneous wait-free dequeue that preserves the worker's encode order.
 */
 func (tee *UITee) Next() unsafe.Pointer {
 	if tee.Status() != runtime.READY {
@@ -109,23 +109,7 @@ func (tee *UITee) Next() unsafe.Pointer {
 
 	payload, ok := tee.egress.Dequeue()
 
-	if ok {
-		if len(payload) == 0 {
-			return nil
-		}
-
-		return unsafe.Pointer(&payload)
-	}
-
-	pub, ok := tee.ingress.Dequeue()
-
-	if !ok {
-		return nil
-	}
-
-	payload = tee.encode(pub)
-
-	if len(payload) == 0 {
+	if !ok || len(payload) == 0 {
 		return nil
 	}
 
@@ -133,6 +117,9 @@ func (tee *UITee) Next() unsafe.Pointer {
 }
 
 func (tee *UITee) worker(ctx context.Context) {
+	const batchLimit = 1024
+	batch := make([]*data.Measurement[float64], 0, batchLimit)
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -140,72 +127,75 @@ func (tee *UITee) worker(ctx context.Context) {
 			return
 		case <-tee.wake:
 			for {
-				pub, ok := tee.ingress.Dequeue()
+				batch = batch[:0]
+				var encodedSomething bool
+				var dequeuedCount int
 
-				if !ok {
+				for i := 0; i < batchLimit; i++ {
+					pub, ok := tee.ingress.Dequeue()
+					if !ok {
+						break
+					}
+					dequeuedCount++
+
+					measurement := pub.Measurement
+
+					if manifoldState, ok := measurement.Result.(*types.ManifoldState); ok {
+						if manifoldState != nil && (manifoldState.Version == 0 || manifoldState.Version != tee.lastManifoldVersion) {
+							tee.lastManifoldVersion = manifoldState.Version
+							payload, err := types.EncodeManifold(manifoldState)
+							if err != nil {
+								errnie.Error(errnie.Err(
+									errnie.UnprocessableContent,
+									"[tee] Failed to encode manifold",
+									err,
+								))
+							} else {
+								if tee.egress.Length() >= 4096 {
+									tee.egress.Dequeue()
+								}
+								tee.egress.Enqueue(payload)
+								encodedSomething = true
+							}
+						}
+						pub.Release()
+						continue
+					}
+
+					batch = append(batch, measurement)
+					pub.Release()
+				}
+
+				if len(batch) > 0 {
+					payload, err := types.EncodeMeasurements(batch)
+					if err != nil {
+						errnie.Error(errnie.Err(
+							errnie.UnprocessableContent,
+							"[tee] Failed to encode measurements",
+							err,
+						))
+					} else {
+						if tee.egress.Length() >= 4096 {
+							tee.egress.Dequeue()
+						}
+						tee.egress.Enqueue(payload)
+						encodedSomething = true
+					}
+				}
+
+				if encodedSomething {
+					select {
+					case tee.available <- struct{}{}:
+					default:
+					}
+				}
+
+				if dequeuedCount == 0 {
 					break
-				}
-
-				payload := tee.encode(pub)
-
-				if len(payload) == 0 {
-					continue
-				}
-
-				if tee.egress.Length() >= 4096 {
-					tee.egress.Dequeue()
-				}
-
-				tee.egress.Enqueue(payload)
-
-				select {
-				case tee.available <- struct{}{}:
-				default:
 				}
 			}
 		}
 	}
-}
-
-func (tee *UITee) encode(pub data.Publication) []byte {
-	measurement := pub.Measurement
-
-	if manifoldState, ok := measurement.Result.(*types.ManifoldState); ok {
-		if manifoldState == nil || (manifoldState.Version != 0 && manifoldState.Version == tee.lastManifoldVersion) {
-			pub.Release()
-			return nil
-		}
-
-		tee.lastManifoldVersion = manifoldState.Version
-		payload, err := types.EncodeManifold(manifoldState)
-		pub.Release()
-
-		if err != nil {
-			errnie.Error(errnie.Err(
-				errnie.UnprocessableContent,
-				"[tee] Failed to encode manifold",
-				err,
-			))
-			return nil
-		}
-
-		return payload
-	}
-
-	batch := [1]*data.Measurement[float64]{measurement}
-	payload, err := types.EncodeMeasurements(batch[:])
-	pub.Release()
-
-	if err != nil {
-		errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"[tee] Failed to encode measurements",
-			err,
-		))
-		return nil
-	}
-
-	return payload
 }
 
 func (tee *UITee) drainIngress() {

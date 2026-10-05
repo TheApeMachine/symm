@@ -215,20 +215,6 @@ var (
 
 			uiTee.Transition(nmruntime.READY)
 
-			hub := ui.NewHub(ctx, catalog, uiTee)
-			hub.SetCognitionSource(training)
-			hub.SetFragmentsSource(training)
-			hub.SetEquitySource(balance)
-			hub.SetPositionSource(desk)
-			hub.SetExitHandler(func(symbol string) {
-				if err := desk.Exit(symbol); err != nil {
-					errnie.Error(err)
-				}
-			})
-
-			hub.Run()
-			hub.Transition(nmruntime.READY)
-
 			manifoldSolver := manifold.NewSolver(ctx, data.NewArenaOwner(4096), book)
 			book.SetNotify(func(symbol string, _ time.Time) {
 				manifoldSolver.Wake(symbol)
@@ -275,6 +261,20 @@ var (
 				uiTee,
 				storeTee,
 			)
+
+			hub := ui.NewHub(ctx, catalog, uiTee, workspace)
+			hub.SetCognitionSource(training)
+			hub.SetFragmentsSource(training)
+			hub.SetEquitySource(balance)
+			hub.SetPositionSource(desk)
+			hub.SetExitHandler(func(symbol string) {
+				if err := desk.Exit(symbol); err != nil {
+					errnie.Error(err)
+				}
+			})
+
+			hub.Run()
+			hub.Transition(nmruntime.READY)
 
 			// Subscribe and seed while transports remain BUSY. Only a complete
 			// instrument universe and restored learner may open the workspace.

@@ -2,6 +2,7 @@ package morphology_test
 
 import (
 	"context"
+	"math"
 	"testing"
 	"time"
 
@@ -16,7 +17,7 @@ import (
 )
 
 func TestMorphologyLevel3Metrics(t *testing.T) {
-	Convey("Morphology level3 instrument computes and publishes geometric shape metrics", t, func() {
+	Convey("Morphology instrument computes principled distribution geometry, concentration, and entropy", t, func() {
 		ctx := context.Background()
 		arena := data.NewArenaOwner(4096)
 		normalizer := spot.NewNormalizer()
@@ -25,13 +26,9 @@ func TestMorphologyLevel3Metrics(t *testing.T) {
 		instrument := morphology.NewSignal(ctx, arena, books)
 		instrument.Transition(nmruntime.READY)
 
-		now := time.Now()
+		now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 
-		for step := 0; step < 10; step++ {
-			bidPrice := decimal.NewFromFloat64(50000.0)
-			askPrice := decimal.NewFromFloat64(50002.0)
-			qty := decimal.NewFromFloat64(1.0 + float64(step)*0.1)
-
+		Convey("Asymmetric depth distribution yields exact KS distance and Wasserstein shape separation", func() {
 			books.Update(&kraken.Level3{
 				Channel: "level3",
 				Type:    "snapshot",
@@ -41,18 +38,25 @@ func TestMorphologyLevel3Metrics(t *testing.T) {
 						Bids: []kraken.Level3Order{
 							{
 								OrderID:    "bid-1",
-								LimitPrice: bidPrice,
-								OrderQty:   qty,
-								Timestamp:  now.Add(time.Duration(step) * 100 * time.Millisecond),
+								LimitPrice: decimal.NewFromFloat64(50000.0),
+								OrderQty:   decimal.NewFromFloat64(2.0),
+								Timestamp:  now,
 								Event:      "add",
 							},
 						},
 						Asks: []kraken.Level3Order{
 							{
 								OrderID:    "ask-1",
-								LimitPrice: askPrice,
-								OrderQty:   qty,
-								Timestamp:  now.Add(time.Duration(step) * 100 * time.Millisecond),
+								LimitPrice: decimal.NewFromFloat64(50010.0),
+								OrderQty:   decimal.NewFromFloat64(1.0),
+								Timestamp:  now,
+								Event:      "add",
+							},
+							{
+								OrderID:    "ask-2",
+								LimitPrice: decimal.NewFromFloat64(50020.0),
+								OrderQty:   decimal.NewFromFloat64(1.0),
+								Timestamp:  now,
 								Event:      "add",
 							},
 						},
@@ -62,39 +66,88 @@ func TestMorphologyLevel3Metrics(t *testing.T) {
 
 			prior := arena.NewMeasurement("ingress")
 			prior.Label = "BTC/USD"
-			prior.SeqIdx = int64(step + 1)
-			prior.At = now.Add(time.Duration(step) * 100 * time.Millisecond)
-			prior.From = prior.At
+			prior.SeqIdx = 1
+			prior.At = now
+			prior.From = now
 
 			res := instrument.Step(prior)
 			So(res, ShouldNotBeNil)
+			So(res.Err, ShouldBeNil)
 
-			_, hasDist := res.LookupMetric("book_shape_distance")
-			So(hasDist, ShouldBeTrue)
+			// Single level bid has concentration = 1.0 and zero entropy
+			So(res.GetMetric("concentration:bid").Raw, ShouldAlmostEqual, 1.0, 1e-9)
+			So(res.GetMetric("entropy:bid").Raw, ShouldAlmostEqual, 0.0, 1e-9)
 
-			_, hasKs := res.LookupMetric("book_shape_ks")
-			So(hasKs, ShouldBeTrue)
+			// Two-level ask has concentration < 1.0 and positive entropy
+			So(res.GetMetric("concentration:ask").Raw, ShouldBeLessThan, 1.0)
+			So(res.GetMetric("entropy:ask").Raw, ShouldBeGreaterThan, 0.0)
 
-			_, hasConcBid := res.LookupMetric("concentration:bid")
-			So(hasConcBid, ShouldBeTrue)
+			// Asymmetric shape relative to mid: KS statistic is positive
+			So(res.GetMetric("book_shape_ks").Raw, ShouldBeGreaterThan, 0.0)
+			So(res.GetMetric("book_shape_distance").Raw, ShouldBeGreaterThan, 0.0)
+		})
 
-			_, hasConcAsk := res.LookupMetric("concentration:ask")
-			So(hasConcAsk, ShouldBeTrue)
+		Convey("Multi-level dispersion decreases concentration, increases entropy, and tracks morphology change", func() {
+			var prevDist float64
+			for step := 0; step < 5; step++ {
+				// 4 levels of bids and asks
+				var bids, asks []kraken.Level3Order
+				for level := 0; level < 4; level++ {
+					bids = append(bids, kraken.Level3Order{
+						OrderID:    "bid-" + string(rune('a'+level)),
+						LimitPrice: decimal.NewFromFloat64(50000.0 - float64(level)*10.0),
+						OrderQty:   decimal.NewFromFloat64(1.0),
+						Timestamp:  now.Add(time.Duration(step) * 100 * time.Millisecond),
+						Event:      "add",
+					})
+					asks = append(asks, kraken.Level3Order{
+						OrderID:    "ask-" + string(rune('a'+level)),
+						LimitPrice: decimal.NewFromFloat64(50020.0 + float64(level)*10.0 + float64(step)*5.0),
+						OrderQty:   decimal.NewFromFloat64(1.0),
+						Timestamp:  now.Add(time.Duration(step) * 100 * time.Millisecond),
+						Event:      "add",
+					})
+				}
 
-			_, hasEntBid := res.LookupMetric("entropy:bid")
-			So(hasEntBid, ShouldBeTrue)
+				books.Update(&kraken.Level3{
+					Channel: "level3",
+					Type:    "snapshot",
+					Data: []kraken.Level3Data{
+						{
+							Symbol: "BTC/USD",
+							Bids:   bids,
+							Asks:   asks,
+						},
+					},
+				})
 
-			_, hasEntAsk := res.LookupMetric("entropy:ask")
-			So(hasEntAsk, ShouldBeTrue)
+				prior := arena.NewMeasurement("ingress")
+				prior.Label = "BTC/USD"
+				prior.SeqIdx = int64(step + 2)
+				prior.At = now.Add(time.Duration(step) * 100 * time.Millisecond)
+				prior.From = prior.At
 
-			if step > 0 {
-				_, hasChange := res.LookupMetric("morphology_change")
-				So(hasChange, ShouldBeTrue)
+				res := instrument.Step(prior)
+				So(res, ShouldNotBeNil)
+				So(res.Err, ShouldBeNil)
+
+				// With 4 equal levels, concentration is strictly less than 1.0 (approx 0.25)
+				So(res.GetMetric("concentration:bid").Raw, ShouldBeLessThan, 0.5)
+				So(res.GetMetric("concentration:ask").Raw, ShouldBeLessThan, 0.5)
+
+				// Entropy must be positive (approx ln(4) ≈ 1.386)
+				So(res.GetMetric("entropy:bid").Raw, ShouldBeGreaterThan, 1.0)
+				So(res.GetMetric("entropy:ask").Raw, ShouldBeGreaterThan, 1.0)
+
+				currentDist := res.GetMetric("book_shape_distance").Raw
+				So(currentDist, ShouldBeGreaterThan, 0.0)
+
+				if step > 0 {
+					expectedChange := math.Abs(currentDist - prevDist)
+					So(res.GetMetric("morphology_change").Raw, ShouldAlmostEqual, expectedChange, 1e-6)
+				}
+				prevDist = currentDist
 			}
-
-			if step > 2 {
-				So(res.Maturity, ShouldBeGreaterThan, 0)
-			}
-		}
+		})
 	})
 }

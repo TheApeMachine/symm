@@ -239,7 +239,7 @@ func TestTraining_Step(t *testing.T) {
 
 		Convey("Step enqueues without back-pressure and the off-ramp worker processes it", func() {
 			val := 1.23
-			measurement := data.NewMeasurement[float64]("cvd", map[string]data.Metric[float64]{
+			measurement := data.NewMeasurement("cvd", map[string]data.Metric[float64]{
 				"price": {Raw: 60000, Deformation: &val},
 			})
 			measurement.Epoch = 1000
@@ -273,10 +273,10 @@ func TestTraining_TriadGate(t *testing.T) {
 		training := &Training{}
 
 		Convey("When resonance surprise is positive and manifold impedance is clear", func() {
-			resonanceM := data.NewMeasurement[float64]("resonance", map[string]data.Metric[float64]{
+			resonanceM := data.NewMeasurement("resonance", map[string]data.Metric[float64]{
 				"surprise": {Raw: 1.5},
 			})
-			manifoldM := data.NewMeasurement[float64]("manifold", map[string]data.Metric[float64]{
+			manifoldM := data.NewMeasurement("manifold", map[string]data.Metric[float64]{
 				"kuramoto_r":         {Raw: 0.4},
 				"pressure_grad_norm": {Raw: 0.1},
 			})
@@ -285,10 +285,10 @@ func TestTraining_TriadGate(t *testing.T) {
 		})
 
 		Convey("When resonance surprise is zero (equilibrium churn), entry is vetoed", func() {
-			resonanceM := data.NewMeasurement[float64]("resonance", map[string]data.Metric[float64]{
+			resonanceM := data.NewMeasurement("resonance", map[string]data.Metric[float64]{
 				"surprise": {Raw: 0.0},
 			})
-			manifoldM := data.NewMeasurement[float64]("manifold", map[string]data.Metric[float64]{
+			manifoldM := data.NewMeasurement("manifold", map[string]data.Metric[float64]{
 				"kuramoto_r": {Raw: 0.4},
 			})
 
@@ -296,10 +296,10 @@ func TestTraining_TriadGate(t *testing.T) {
 		})
 
 		Convey("When manifold has complete locked synchronization and opposing pressure, entry is vetoed", func() {
-			resonanceM := data.NewMeasurement[float64]("resonance", map[string]data.Metric[float64]{
+			resonanceM := data.NewMeasurement("resonance", map[string]data.Metric[float64]{
 				"surprise": {Raw: 2.0},
 			})
-			manifoldM := data.NewMeasurement[float64]("manifold", map[string]data.Metric[float64]{
+			manifoldM := data.NewMeasurement("manifold", map[string]data.Metric[float64]{
 				"kuramoto_r":         {Raw: 1.0},
 				"pressure_grad_norm": {Raw: 5.0},
 			})

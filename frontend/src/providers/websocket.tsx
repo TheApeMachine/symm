@@ -24,6 +24,7 @@ import { MeasurementsFrame } from "#/providers/telemetry/telemetry/measurements-
 import { Message } from "#/providers/telemetry/telemetry/message";
 import { PositionsFrame } from "#/providers/telemetry/telemetry/positions-frame";
 import { StrategyFrame } from "#/providers/telemetry/telemetry/strategy-frame";
+import { TickFrame } from "#/providers/telemetry/telemetry/tick-frame";
 
 let globalWsWorker: Worker | null = null;
 
@@ -69,12 +70,56 @@ const defaultWsUrl = () => {
 };
 
 /*
+Pending display state accumulated between animation frames. Ring buffers are
+mutated as frames arrive; subscribers are notified once per display frame so a
+burst of websocket messages costs one render, not one render per message.
+*/
+const pendingSources = new Set<string>();
+let pendingTick: bigint | null = null;
+let pendingAt: bigint | null = null;
+let flushHandle: number | null = null;
+
+const flush = () => {
+	flushHandle = null;
+
+	storeBatch(() => {
+		if (pendingTick !== null) {
+			tickCountAtom.set(Number(pendingTick));
+			pendingTick = null;
+		}
+
+		if (pendingAt !== null) {
+			updateClock(pendingAt);
+			pendingAt = null;
+		}
+
+		for (const source of pendingSources) {
+			signals[source]?.setState((prev) => ({ ...prev }));
+		}
+
+		pendingSources.clear();
+	});
+};
+
+const scheduleFlush = () => {
+	if (flushHandle !== null) {
+		return;
+	}
+
+	if (typeof requestAnimationFrame !== "undefined") {
+		flushHandle = requestAnimationFrame(flush);
+	} else {
+		flushHandle = setTimeout(flush, 16) as unknown as number;
+	}
+};
+
+/*
 Dispatches one decoded MeasurementsFrame into per-measurement rings.
 Each Measurement row carries its own source, symbol, tick, snr, and metrics.
+Engine tick and clock are owned by TickFrame, never by individual rows.
 */
 export function dispatchMeasurements(frame: MeasurementsFrame) {
 	const count = frame.rowsLength();
-	const touched = new Set<string>();
 
 	for (let i = 0; i < count; i++) {
 		const row = frame.rows(i);
@@ -88,15 +133,6 @@ export function dispatchMeasurements(frame: MeasurementsFrame) {
 
 		if (symbol && !symbolsAtom.get().includes(symbol)) {
 			observeSymbols([symbol]);
-		}
-
-		const at = row.at();
-		if (at > 0n) {
-			updateClock(at);
-		}
-		const tick = row.tick();
-		if (tick > 0n) {
-			tickCountAtom.set(Number(tick));
 		}
 
 		const signalStore = signals[source];
@@ -117,13 +153,26 @@ export function dispatchMeasurements(frame: MeasurementsFrame) {
 		}
 
 		ring.add(row.unpack());
-		touched.add(source);
+		pendingSources.add(source);
 	}
 
-	for (const source of touched) {
-		signals[source]?.setState((prev) => ({ ...prev }));
+	if (pendingSources.size > 0) {
+		scheduleFlush();
 	}
 }
+
+/*
+dispatchTick records the hub's live ingress progress for the next display frame.
+*/
+const dispatchTick = (frame: TickFrame) => {
+	pendingTick = frame.count();
+
+	if (frame.at() > 0n) {
+		pendingAt = frame.at();
+	}
+
+	scheduleFlush();
+};
 
 
 /*
@@ -189,9 +238,15 @@ export const WsFeed = () => {
 						if (frameType === Frame.MeasurementsFrame) {
 							const measurementsFrame = message.frame(new MeasurementsFrame());
 							if (measurementsFrame) {
-								storeBatch(() => {
-									dispatchMeasurements(measurementsFrame);
-								});
+								dispatchMeasurements(measurementsFrame);
+							}
+							return;
+						}
+
+						if (frameType === Frame.TickFrame) {
+							const tickFrame = message.frame(new TickFrame());
+							if (tickFrame) {
+								dispatchTick(tickFrame);
 							}
 							return;
 						}
@@ -235,9 +290,7 @@ export const WsFeed = () => {
 
 					const frame = MeasurementsFrame.getRootAsMeasurementsFrame(buffer);
 
-					storeBatch(() => {
-						dispatchMeasurements(frame);
-					});
+					dispatchMeasurements(frame);
 				} catch (err) {
 					console.error("WS message processing error:", err);
 				}
@@ -261,6 +314,11 @@ export const WsFeed = () => {
 			wsWorker.postMessage({ type: "DISCONNECT" });
 			wsWorker.terminate();
 			globalWsWorker = null;
+
+			if (flushHandle !== null) {
+				cancelAnimationFrame(flushHandle);
+				flushHandle = null;
+			}
 		};
 	}, []);
 

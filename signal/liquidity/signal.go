@@ -54,154 +54,154 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 		nmliquidity.NewGate(),
 		nmliquidity.NewTouch(),
 		data.NewAdapter(
-				statistic.NewJoint(3),
-				func(m *data.Measurement[float64]) statistic.JointInput {
-					return statistic.JointInput{Values: []float64{
-						m.GetMetric("_log_bid_notional").Raw,
-						m.GetMetric("_log_ask_notional").Raw,
-						m.GetMetric("_log_relative_spread").Raw,
-					}}
-				},
-				func(m *data.Measurement[float64], reading statistic.JointReading) {
-					if len(reading.Channels) > 0 {
-						m.SetMetadata(data.MetadataSupport, strconv.FormatFloat(reading.Channels[0].Count, 'f', -1, 64))
-					}
-					if reading.SNRDefined {
-						m.SetMetadata(data.MetadataMahalanobisSNR, strconv.FormatFloat(reading.SNR, 'f', -1, 64))
-					}
+			statistic.NewJoint(3),
+			func(m *data.Measurement[float64]) statistic.JointInput {
+				return statistic.JointInput{Values: []float64{
+					m.GetMetric("_log_bid_notional").Raw,
+					m.GetMetric("_log_ask_notional").Raw,
+					m.GetMetric("_log_relative_spread").Raw,
+				}}
+			},
+			func(m *data.Measurement[float64], reading statistic.JointReading) {
+				if len(reading.Channels) > 0 {
+					m.SetMetadata(data.MetadataSupport, strconv.FormatFloat(reading.Channels[0].Count, 'f', -1, 64))
+				}
+				if reading.SNRDefined {
+					m.SetMetadata(data.MetadataMahalanobisSNR, strconv.FormatFloat(reading.SNR, 'f', -1, 64))
+				}
 
-					originals := []float64{
-						m.GetMetric("touch_notional:bid").Raw,
-						m.GetMetric("touch_notional:ask").Raw,
-						m.GetMetric("relative_spread").Raw,
+				originals := []float64{
+					m.GetMetric("touch_notional:bid").Raw,
+					m.GetMetric("touch_notional:ask").Raw,
+					m.GetMetric("relative_spread").Raw,
+				}
+
+				baselineLabels := []string{"touch_notional_baseline:bid", "touch_notional_baseline:ask", "relative_spread_baseline"}
+				ratioLabels := []string{"depth_ratio:bid", "depth_ratio:ask", "spread_ratio"}
+				divergenceLabels := []string{"depth_divergence:bid", "depth_divergence:ask", "spread_divergence"}
+				noiseLabels := []string{"depth_noise_scale:bid", "depth_noise_scale:ask", "spread_noise_scale"}
+				zscoreLabels := []string{"depth_zscore:bid", "depth_zscore:ask", "spread_zscore"}
+
+				baselineUnits := []data.Unit{data.UnitNotional, data.UnitNotional, data.UnitRelativeSpread}
+				for index, channel := range reading.Channels {
+					if !channel.HasPrior {
+						continue
 					}
+					m.SetMetric(baselineLabels[index], data.NewMetric[float64](
+						baselineLabels[index],
+						baselineUnits[index],
+						data.TimescaleInstantaneous,
+						channel.Baseline,
+						channel.ScoreScale,
+					).Write(channel.Baseline))
+					if channel.Baseline > 0 {
+						m.SetMetric(ratioLabels[index], data.NewMetric[float64](
+							ratioLabels[index],
+							data.UnitRatio,
+							data.TimescaleInstantaneous,
+							1.0,
+							channel.ScoreScale/channel.Baseline,
+						).Write(originals[index]/channel.Baseline))
+					}
+					m.SetMetric(divergenceLabels[index], data.NewMetric[float64](
+						divergenceLabels[index],
+						baselineUnits[index],
+						data.TimescaleInstantaneous,
+						0.0,
+						channel.ScoreScale,
+					).Write(channel.Residual))
 
-					baselineLabels := []string{"touch_notional_baseline:bid", "touch_notional_baseline:ask", "relative_spread_baseline"}
-					ratioLabels := []string{"depth_ratio:bid", "depth_ratio:ask", "spread_ratio"}
-					divergenceLabels := []string{"depth_divergence:bid", "depth_divergence:ask", "spread_divergence"}
-					noiseLabels := []string{"depth_noise_scale:bid", "depth_noise_scale:ask", "spread_noise_scale"}
-					zscoreLabels := []string{"depth_zscore:bid", "depth_zscore:ask", "spread_zscore"}
-
-					baselineUnits := []data.Unit{data.UnitNotional, data.UnitNotional, data.UnitRelativeSpread}
-					for index, channel := range reading.Channels {
-						if !channel.HasPrior {
-							continue
-						}
-						m.SetMetric(baselineLabels[index], data.NewMetric[float64](
-							baselineLabels[index],
+					if channel.ScoreScale > 0 {
+						m.SetMetric(noiseLabels[index], data.NewMetric[float64](
+							noiseLabels[index],
 							baselineUnits[index],
 							data.TimescaleInstantaneous,
-							channel.Baseline,
-							channel.ScoreScale,
-						).Write(channel.Baseline))
-						if channel.Baseline > 0 {
-							m.SetMetric(ratioLabels[index], data.NewMetric[float64](
-								ratioLabels[index],
-								data.UnitRatio,
-								data.TimescaleInstantaneous,
-								1.0,
-								channel.ScoreScale/channel.Baseline,
-							).Write(originals[index]/channel.Baseline))
-						}
-						m.SetMetric(divergenceLabels[index], data.NewMetric[float64](
-							divergenceLabels[index],
-							baselineUnits[index],
-							data.TimescaleInstantaneous,
 							0.0,
-							channel.ScoreScale,
-						).Write(channel.Residual))
-
-						if channel.ScoreScale > 0 {
-							m.SetMetric(noiseLabels[index], data.NewMetric[float64](
-								noiseLabels[index],
-								baselineUnits[index],
-								data.TimescaleInstantaneous,
-								0.0,
-								0.0,
-							).Write(channel.ScoreScale))
-							m.WriteStandardized(zscoreLabels[index], channel.ZScore)
-						}
+							0.0,
+						).Write(channel.ScoreScale))
+						m.WriteStandardized(zscoreLabels[index], channel.ZScore)
 					}
-				},
-			),
-			data.NewAdapter(
-				statistic.NewLocalRegression(),
-				func(m *data.Measurement[float64]) temporal.Price {
-					return temporal.Price{At: m.At.UnixNano(), Value: m.GetMetric("depth_divergence:bid").Raw}
-				},
-				func(m *data.Measurement[float64], out statistic.LocalRegressionReading) {
-					if out.SlopeDefined {
-						m.SetMetric("divergence_velocity:bid", data.NewMetric[float64](
-							"divergence_velocity:bid",
-							data.UnitVelocity,
-							data.TimescaleInstantaneous,
-							0.0,
-							0.0,
-						).Write(out.Slope))
-					}
-					if out.SNRDefined {
-						m.SetMetric("divergence_velocity_snr:bid", data.NewMetric[float64](
-							"divergence_velocity_snr:bid",
-							data.UnitSNR,
-							data.TimescaleInstantaneous,
-							0.0,
-							0.0,
-						).Write(out.SNR))
-					}
-				},
-			),
-			data.NewAdapter(
-				statistic.NewLocalRegression(),
-				func(m *data.Measurement[float64]) temporal.Price {
-					return temporal.Price{At: m.At.UnixNano(), Value: m.GetMetric("depth_divergence:ask").Raw}
-				},
-				func(m *data.Measurement[float64], out statistic.LocalRegressionReading) {
-					if out.SlopeDefined {
-						m.SetMetric("divergence_velocity:ask", data.NewMetric[float64](
-							"divergence_velocity:ask",
-							data.UnitVelocity,
-							data.TimescaleInstantaneous,
-							0.0,
-							0.0,
-						).Write(out.Slope))
-					}
-					if out.SNRDefined {
-						m.SetMetric("divergence_velocity_snr:ask", data.NewMetric[float64](
-							"divergence_velocity_snr:ask",
-							data.UnitSNR,
-							data.TimescaleInstantaneous,
-							0.0,
-							0.0,
-						).Write(out.SNR))
-					}
-				},
-			),
-			data.NewAdapter(
-				statistic.NewLocalRegression(),
-				func(m *data.Measurement[float64]) temporal.Price {
-					return temporal.Price{At: m.At.UnixNano(), Value: m.GetMetric("spread_divergence").Raw}
-				},
-				func(m *data.Measurement[float64], out statistic.LocalRegressionReading) {
-					if out.SlopeDefined {
-						m.SetMetric("spread_divergence_velocity", data.NewMetric[float64](
-							"spread_divergence_velocity",
-							data.UnitVelocity,
-							data.TimescaleInstantaneous,
-							0.0,
-							0.0,
-						).Write(out.Slope))
-					}
-					if out.SNRDefined {
-						m.SetMetric("spread_divergence_velocity_snr", data.NewMetric[float64](
-							"spread_divergence_velocity_snr",
-							data.UnitSNR,
-							data.TimescaleInstantaneous,
-							0.0,
-							0.0,
-						).Write(out.SNR))
-					}
-				},
-			),
+				}
+			},
+		),
+		data.NewAdapter(
+			statistic.NewLocalRegression(),
+			func(m *data.Measurement[float64]) temporal.Price {
+				return temporal.Price{At: m.At.UnixNano(), Value: m.GetMetric("depth_divergence:bid").Raw}
+			},
+			func(m *data.Measurement[float64], out statistic.LocalRegressionReading) {
+				if out.SlopeDefined {
+					m.SetMetric("divergence_velocity:bid", data.NewMetric[float64](
+						"divergence_velocity:bid",
+						data.UnitVelocity,
+						data.TimescaleInstantaneous,
+						0.0,
+						0.0,
+					).Write(out.Slope))
+				}
+				if out.SNRDefined {
+					m.SetMetric("divergence_velocity_snr:bid", data.NewMetric[float64](
+						"divergence_velocity_snr:bid",
+						data.UnitSNR,
+						data.TimescaleInstantaneous,
+						0.0,
+						0.0,
+					).Write(out.SNR))
+				}
+			},
+		),
+		data.NewAdapter(
+			statistic.NewLocalRegression(),
+			func(m *data.Measurement[float64]) temporal.Price {
+				return temporal.Price{At: m.At.UnixNano(), Value: m.GetMetric("depth_divergence:ask").Raw}
+			},
+			func(m *data.Measurement[float64], out statistic.LocalRegressionReading) {
+				if out.SlopeDefined {
+					m.SetMetric("divergence_velocity:ask", data.NewMetric[float64](
+						"divergence_velocity:ask",
+						data.UnitVelocity,
+						data.TimescaleInstantaneous,
+						0.0,
+						0.0,
+					).Write(out.Slope))
+				}
+				if out.SNRDefined {
+					m.SetMetric("divergence_velocity_snr:ask", data.NewMetric[float64](
+						"divergence_velocity_snr:ask",
+						data.UnitSNR,
+						data.TimescaleInstantaneous,
+						0.0,
+						0.0,
+					).Write(out.SNR))
+				}
+			},
+		),
+		data.NewAdapter(
+			statistic.NewLocalRegression(),
+			func(m *data.Measurement[float64]) temporal.Price {
+				return temporal.Price{At: m.At.UnixNano(), Value: m.GetMetric("spread_divergence").Raw}
+			},
+			func(m *data.Measurement[float64], out statistic.LocalRegressionReading) {
+				if out.SlopeDefined {
+					m.SetMetric("spread_divergence_velocity", data.NewMetric[float64](
+						"spread_divergence_velocity",
+						data.UnitVelocity,
+						data.TimescaleInstantaneous,
+						0.0,
+						0.0,
+					).Write(out.Slope))
+				}
+				if out.SNRDefined {
+					m.SetMetric("spread_divergence_velocity_snr", data.NewMetric[float64](
+						"spread_divergence_velocity_snr",
+						data.UnitSNR,
+						data.TimescaleInstantaneous,
+						0.0,
+						0.0,
+					).Write(out.SNR))
+				}
+			},
+		),
 		data.NewRecurrence(
 			"depth_zscore:bid",
 			"depth_zscore:ask",

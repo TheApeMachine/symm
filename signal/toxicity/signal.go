@@ -185,10 +185,10 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 			data.NewAdapter(
 				temporal.NewVelocity(),
 				func(m *data.Measurement[float64]) temporal.Observation {
-					if v, ok := m.LookupMetric("net_withdrawal_fraction:bid"); ok {
-						return temporal.Observation{Value: v.Raw, At: m.At.UnixNano()}
+					return temporal.Observation{
+						Value: m.GetMetric("net_withdrawal_fraction:bid").Raw,
+						At:    m.At.UnixNano(),
 					}
-					return temporal.Observation{Value: 0, At: m.At.UnixNano()}
 				},
 				func(m *data.Measurement[float64], out temporal.VelocityReading) {
 					if out.Defined {
@@ -205,10 +205,10 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 			data.NewAdapter(
 				temporal.NewVelocity(),
 				func(m *data.Measurement[float64]) temporal.Observation {
-					if v, ok := m.LookupMetric("net_withdrawal_fraction:ask"); ok {
-						return temporal.Observation{Value: v.Raw, At: m.At.UnixNano()}
+					return temporal.Observation{
+						Value: m.GetMetric("net_withdrawal_fraction:ask").Raw,
+						At:    m.At.UnixNano(),
 					}
-					return temporal.Observation{Value: 0, At: m.At.UnixNano()}
 				},
 				func(m *data.Measurement[float64], out temporal.VelocityReading) {
 					if out.Defined {
@@ -247,6 +247,9 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 					}
 					m.EnsureMetadata()
 					m.SetMetadata(data.MetadataSupport, strconv.FormatFloat(out.Count, 'f', -1, 64))
+					if out.HasPrior {
+						m.SetMetadata(data.MetadataDivergence, strconv.FormatFloat(out.Residual, 'f', -1, 64))
+					}
 					if out.VarianceDefined {
 						m.SetMetadata(data.MetadataNoiseVariance, strconv.FormatFloat(out.Variance, 'f', -1, 64))
 					}
@@ -274,16 +277,18 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 							out.ScoreScale,
 						).Write(out.Residual))
 						m.WriteStandardized("fill_fraction_zscore:ask", out.ZScore)
+						m.EnsureMetadata()
+						m.SetMetadata(data.MetadataDivergence, strconv.FormatFloat(out.Residual, 'f', -1, 64))
 					}
 				},
 			),
 			data.NewAdapter(
 				temporal.NewVelocity(),
 				func(m *data.Measurement[float64]) temporal.Observation {
-					if v, ok := m.LookupMetric("touch_fill_fraction:bid"); ok {
-						return temporal.Observation{Value: v.Raw, At: m.At.UnixNano()}
+					return temporal.Observation{
+						Value: m.GetMetric("touch_fill_fraction:bid").Raw,
+						At:    m.At.UnixNano(),
 					}
-					return temporal.Observation{Value: 0, At: m.At.UnixNano()}
 				},
 				func(m *data.Measurement[float64], out temporal.VelocityReading) {
 					if out.Defined {
@@ -300,10 +305,10 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 			data.NewAdapter(
 				temporal.NewVelocity(),
 				func(m *data.Measurement[float64]) temporal.Observation {
-					if v, ok := m.LookupMetric("touch_fill_fraction:ask"); ok {
-						return temporal.Observation{Value: v.Raw, At: m.At.UnixNano()}
+					return temporal.Observation{
+						Value: m.GetMetric("touch_fill_fraction:ask").Raw,
+						At:    m.At.UnixNano(),
 					}
-					return temporal.Observation{Value: 0, At: m.At.UnixNano()}
 				},
 				func(m *data.Measurement[float64], out temporal.VelocityReading) {
 					if out.Defined {

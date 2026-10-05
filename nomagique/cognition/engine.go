@@ -889,8 +889,8 @@ func (op *Engine) ExportTree(activeContext []byte, maxBranches int) TreeExport {
 			}
 		}
 
-		if strings.Contains(seqStr, "_") {
-			lastSep := strings.LastIndex(seqStr, "_")
+		if strings.Contains(seqStr, "/") {
+			lastSep := strings.LastIndex(seqStr, "/")
 
 			if lastSep > 0 {
 				parentSeq := seqStr[:lastSep]

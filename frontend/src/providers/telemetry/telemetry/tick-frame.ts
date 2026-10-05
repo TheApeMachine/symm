@@ -29,12 +29,21 @@ count():bigint {
   return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
 }
 
+at():bigint {
+  const offset = this.bb!.__offset(this.bb_pos, 6);
+  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
+}
+
 static startTickFrame(builder:flatbuffers.Builder) {
-  builder.startObject(1);
+  builder.startObject(2);
 }
 
 static addCount(builder:flatbuffers.Builder, count:bigint) {
   builder.addFieldInt64(0, count, BigInt('0'));
+}
+
+static addAt(builder:flatbuffers.Builder, at:bigint) {
+  builder.addFieldInt64(1, at, BigInt('0'));
 }
 
 static endTickFrame(builder:flatbuffers.Builder):flatbuffers.Offset {
@@ -42,33 +51,38 @@ static endTickFrame(builder:flatbuffers.Builder):flatbuffers.Offset {
   return offset;
 }
 
-static createTickFrame(builder:flatbuffers.Builder, count:bigint):flatbuffers.Offset {
+static createTickFrame(builder:flatbuffers.Builder, count:bigint, at:bigint):flatbuffers.Offset {
   TickFrame.startTickFrame(builder);
   TickFrame.addCount(builder, count);
+  TickFrame.addAt(builder, at);
   return TickFrame.endTickFrame(builder);
 }
 
 unpack(): TickFrameT {
   return new TickFrameT(
-    this.count()
+    this.count(),
+    this.at()
   );
 }
 
 
 unpackTo(_o: TickFrameT): void {
   _o.count = this.count();
+  _o.at = this.at();
 }
 }
 
 export class TickFrameT implements flatbuffers.IGeneratedObject {
 constructor(
-  public count: bigint = BigInt('0')
+  public count: bigint = BigInt('0'),
+  public at: bigint = BigInt('0')
 ){}
 
 
 pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   return TickFrame.createTickFrame(builder,
-    this.count
+    this.count,
+    this.at
   );
 }
 }

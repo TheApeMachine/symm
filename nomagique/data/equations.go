@@ -10,18 +10,7 @@ import (
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-/*
-drive evaluates one scalar payload through one primitive.
-*/
-func drive[From, To any](op core.Primitive, payload *From) To {
-	var answer To
 
-	for out := range op.Next(transport.NewOne(unsafe.Pointer(payload)).Next(nil)) {
-		answer = *(*To)(out)
-	}
-
-	return answer
-}
 
 /*
 driveAll evaluates one payload through one primitive and reports whether the

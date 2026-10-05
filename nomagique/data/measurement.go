@@ -677,16 +677,19 @@ func (op *Finalizer[Value]) Complete(measurement *Measurement[Value]) {
 			}
 		}
 
-		if strings.HasSuffix(key, "_zscore") {
-			if !math.IsNaN(val) && !math.IsInf(val, 0) {
-				zScores = append(zScores, val)
-			}
+		isZScore := strings.HasSuffix(key, "_zscore") || strings.Contains(key, "_zscore:") || strings.Contains(key, "zscore")
+		if isZScore && metric.Standardized == nil && !math.IsNaN(val) && !math.IsInf(val, 0) {
+			stdVal := val
+			metric.Standardized = any(&stdVal).(*Value)
+			modified = true
+		}
 
-			if metric.Standardized == nil {
-				stdVal := val
-				metric.Standardized = any(&stdVal).(*Value)
-				modified = true
+		if metric.Standardized != nil {
+			if sVal, ok := any(*metric.Standardized).(float64); ok && !math.IsNaN(sVal) && !math.IsInf(sVal, 0) {
+				zScores = append(zScores, sVal)
 			}
+		} else if isZScore && !math.IsNaN(val) && !math.IsInf(val, 0) {
+			zScores = append(zScores, val)
 		}
 
 		if modified {
@@ -717,6 +720,20 @@ func (op *Finalizer[Value]) Complete(measurement *Measurement[Value]) {
 	snr := reading.SNR
 	snrDefined := reading.SNRDefined
 
+	if !reading.Estimated && measurement.SNRDefined {
+		snr = measurement.SNR
+		snrDefined = true
+	}
+
+	facts := measurement.Facts()
+
+	if !snrDefined && facts.HasMahalanobis && facts.MahalanobisSNR >= 0 &&
+		!math.IsInf(facts.MahalanobisSNR, 0) && !math.IsNaN(facts.MahalanobisSNR) &&
+		facts.MahalanobisSNR < 1/math.Sqrt(machineEpsilon) {
+		snr = facts.MahalanobisSNR
+		snrDefined = true
+	}
+
 	if !snrDefined && len(zScores) > 0 {
 		var sumSquares float64
 		for _, zScoreVal := range zScores {
@@ -727,7 +744,23 @@ func (op *Finalizer[Value]) Complete(measurement *Measurement[Value]) {
 	}
 
 	if !snrDefined {
-		facts := measurement.Facts()
+		var snrSum float64
+		var snrCount int
+		for _, entry := range measurement.Metrics {
+			if entry.Metric.Unit == UnitSNR || strings.EqualFold(entry.Key, "snr") || strings.HasSuffix(entry.Key, "_snr") || strings.Contains(entry.Key, "_snr:") {
+				if val, ok := any(entry.Metric.Raw).(float64); ok && val >= 0 && !math.IsNaN(val) && !math.IsInf(val, 0) {
+					snrSum += val
+					snrCount++
+				}
+			}
+		}
+		if snrCount > 0 {
+			snr = snrSum / float64(snrCount)
+			snrDefined = true
+		}
+	}
+
+	if !snrDefined {
 		if facts.HasDivergence && facts.HasNoise && facts.NoiseVariance > 0 {
 			snr = (facts.Divergence * facts.Divergence) / facts.NoiseVariance
 			snrDefined = true
@@ -735,8 +768,10 @@ func (op *Finalizer[Value]) Complete(measurement *Measurement[Value]) {
 	}
 
 	maturity := reading.Maturity
+	if maturity == 0 && measurement.Maturity > 0 {
+		maturity = measurement.Maturity
+	}
 	if maturity == 0 {
-		facts := measurement.Facts()
 		if facts.HasSupport && facts.Support > 1 {
 			maturity = 1.0 - (1.0 / facts.Support)
 		}

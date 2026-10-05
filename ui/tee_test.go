@@ -47,6 +47,34 @@ func manifoldFixture() *types.ManifoldState {
 	}
 }
 
+/*
+awaitFrame returns the next frame encoded by the tee's background worker,
+failing the test when the worker produces nothing within the deadline.
+*/
+func awaitFrame(t *testing.T, tee *UITee) []byte {
+	deadline := time.After(time.Second)
+
+	for {
+		if frame := tee.Next(); frame != nil {
+			return *(*[]byte)(frame)
+		}
+
+		select {
+		case <-tee.Available():
+		case <-deadline:
+			t.Fatal("timed out waiting for the tee worker to encode a frame")
+		}
+	}
+}
+
+func sentinel(seq int64) *data.Measurement[float64] {
+	measurement := data.NewMeasurement[float64]("hawkes:trade", nil)
+	measurement.Label = "BTC/USD"
+	measurement.SeqIdx = seq
+
+	return measurement
+}
+
 func TestUITeeNext(t *testing.T) {
 	Convey("Queued websocket metrics yield frames immediately without batching", t, func() {
 		originalRoute, originalFocus := types.Route(), types.Focus()
@@ -68,15 +96,10 @@ func TestUITeeNext(t *testing.T) {
 			So(tee.Next() == nil, ShouldBeTrue)
 		})
 
-		Convey("Pushed measurement is yielded immediately as a single-measurement frame", func() {
-			measurement := data.NewMeasurement[float64]("hawkes:trade", nil)
-			measurement.Label = "BTC/USD"
-			measurement.SeqIdx = 42
-			tee.Push(data.Publication{Measurement: measurement})
+		Convey("Pushed measurement is yielded as a single-measurement frame", func() {
+			tee.Push(data.Publication{Measurement: sentinel(42)})
 
-			frame := tee.Next()
-			So(frame == nil, ShouldBeFalse)
-			decoded := wire.GetRootAsMeasurementsFrame(*(*[]byte)(frame), 0).UnPack()
+			decoded := wire.GetRootAsMeasurementsFrame(awaitFrame(t, tee), 0).UnPack()
 			So(len(decoded.Rows), ShouldEqual, 1)
 			So(decoded.Rows[0].Tick, ShouldEqual, 42)
 			So(decoded.Rows[0].Symbol, ShouldEqual, "BTC/USD")
@@ -84,16 +107,13 @@ func TestUITeeNext(t *testing.T) {
 			So(tee.Next() == nil, ShouldBeTrue)
 		})
 
-		Convey("Manifold state measurement is yielded immediately as ManifoldFrame", func() {
+		Convey("Manifold state measurement is yielded as ManifoldFrame", func() {
 			manifoldMeasurement := data.NewMeasurement[float64]("hawkes:trade", nil)
 			manifoldMeasurement.Label = "BTC/USD"
 			manifoldMeasurement.Result = manifoldFixture()
 			tee.Push(data.Publication{Measurement: manifoldMeasurement})
 
-			frame := tee.Next()
-			So(frame == nil, ShouldBeFalse)
-			payload := *(*[]byte)(frame)
-			message := wire.GetRootAsMessage(payload, 0)
+			message := wire.GetRootAsMessage(awaitFrame(t, tee), 0)
 			So(message.FrameType(), ShouldEqual, wire.FrameManifoldFrame)
 
 			So(tee.Next() == nil, ShouldBeTrue)
@@ -107,14 +127,16 @@ func TestUITeeNext(t *testing.T) {
 			manifoldMeasurement.Result = fixture
 			tee.Push(data.Publication{Measurement: manifoldMeasurement})
 
-			frame := tee.Next()
-			So(frame == nil, ShouldBeFalse)
+			first := wire.GetRootAsMessage(awaitFrame(t, tee), 0)
+			So(first.FrameType(), ShouldEqual, wire.FrameManifoldFrame)
 
-			// Pushing the same version again is dropped
+			// The duplicate is dropped, so the sentinel pushed after it is next.
 			tee.Push(data.Publication{Measurement: manifoldMeasurement})
-			So(tee.Next() == nil, ShouldBeTrue)
+			tee.Push(data.Publication{Measurement: sentinel(43)})
 
-			// Pushing a new version is accepted
+			decoded := wire.GetRootAsMeasurementsFrame(awaitFrame(t, tee), 0).UnPack()
+			So(decoded.Rows[0].Tick, ShouldEqual, 43)
+
 			newFixture := manifoldFixture()
 			newFixture.Version = 11
 			manifoldMeasurement2 := data.NewMeasurement[float64]("hawkes:trade", nil)
@@ -122,27 +144,23 @@ func TestUITeeNext(t *testing.T) {
 			manifoldMeasurement2.Result = newFixture
 			tee.Push(data.Publication{Measurement: manifoldMeasurement2})
 
-			frame2 := tee.Next()
-			So(frame2 == nil, ShouldBeFalse)
+			second := wire.GetRootAsMessage(awaitFrame(t, tee), 0)
+			So(second.FrameType(), ShouldEqual, wire.FrameManifoldFrame)
 		})
 
-		Convey("Background worker signals Available channel upon encoding", func() {
-			measurement := data.NewMeasurement[float64]("hawkes:trade", nil)
-			measurement.Label = "BTC/USD"
-			measurement.SeqIdx = 99
-			tee.Push(data.Publication{Measurement: measurement})
-
-			select {
-			case <-tee.Available():
-			case <-time.After(500 * time.Millisecond):
-				t.Fatal("timed out waiting for background worker available signal")
+		Convey("Frames are yielded in push order", func() {
+			for seq := int64(1); seq <= 64; seq++ {
+				tee.Push(data.Publication{Measurement: sentinel(seq)})
 			}
 
-			frame := tee.Next()
-			So(frame == nil, ShouldBeFalse)
-			decoded := wire.GetRootAsMeasurementsFrame(*(*[]byte)(frame), 0).UnPack()
-			So(len(decoded.Rows), ShouldEqual, 1)
-			So(decoded.Rows[0].Tick, ShouldEqual, 99)
+			var seen int64
+			for seen < 64 {
+				decoded := wire.GetRootAsMeasurementsFrame(awaitFrame(t, tee), 0).UnPack()
+				for _, row := range decoded.Rows {
+					seen++
+					So(row.Tick, ShouldEqual, seen)
+				}
+			}
 		})
 	})
 }
@@ -188,19 +206,21 @@ func TestUITeePush(t *testing.T) {
 		Convey("A rejected route drops the measurement immediately", func() {
 			types.SetRoute("journal")
 			tee.Push(data.Publication{Measurement: measurement})
+			types.SetRoute("learning")
 
-			payload := tee.Next()
-			So(payload == nil, ShouldBeTrue)
+			follower := data.NewMeasurement[float64]("training", nil)
+			follower.Label, follower.SeqIdx = "BTC/USD", 2
+			tee.Push(data.Publication{Measurement: follower})
+
+			decoded := wire.GetRootAsMeasurementsFrame(awaitFrame(t, tee), 0).UnPack()
+			So(decoded.Rows[0].Tick, ShouldEqual, 2)
 		})
 
-		Convey("An accepted route queues the cloned measurement for serialization", func() {
+		Convey("An accepted route queues the measurement for serialization", func() {
 			types.SetRoute("learning")
 			tee.Push(data.Publication{Measurement: measurement})
 
-			payload := tee.Next()
-			So(payload != nil, ShouldBeTrue)
-
-			decoded := wire.GetRootAsMeasurementsFrame(*(*[]byte)(payload), 0).UnPack()
+			decoded := wire.GetRootAsMeasurementsFrame(awaitFrame(t, tee), 0).UnPack()
 			So(len(decoded.Rows), ShouldEqual, 1)
 			So(decoded.Rows[0].Tick, ShouldEqual, 1)
 			So(decoded.Rows[0].Symbol, ShouldEqual, "BTC/USD")

@@ -38,7 +38,7 @@ table Measurement {
 }
 
 table MeasurementsFrame { rows:[Measurement] (required); }
-table TickFrame { count:long; }
+table TickFrame { count:long; at:long; }
 table EquityFrame { cash:string; unrealized:string; equity:string; }
 table Balance { asset:string (required); amount:string (required); }
 table BalancesFrame { balances:[Balance]; }

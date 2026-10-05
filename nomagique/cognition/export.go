@@ -1,6 +1,7 @@
 package cognition
 
 import (
+	"bytes"
 	"cmp"
 	"fmt"
 	"slices"
@@ -304,13 +305,15 @@ func regionFrames(context []byte) []string {
 
 	var frames []string
 
-	for _, part := range strings.Split(string(context), "/") {
-		if part == "" {
+	for part := range bytes.SplitSeq(context, []byte("/")) {
+		if len(part) == 0 {
 			continue
 		}
 
-		if len(frames) == 0 || frames[len(frames)-1] != part {
-			frames = append(frames, part)
+		frame := string(part)
+
+		if len(frames) == 0 || frames[len(frames)-1] != frame {
+			frames = append(frames, frame)
 		}
 	}
 

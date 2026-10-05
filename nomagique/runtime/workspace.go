@@ -90,6 +90,8 @@ type Workspace struct {
 	mask       int64
 	capacity   int
 	sequence   atomic.Int64
+	tick       atomic.Int64
+	at         atomic.Int64
 	stages     [][]*Consumer
 	joins      [][]*data.Measurement[float64] // [stageIdx][slot]
 	joinArenas []*data.ArenaOwner
@@ -108,10 +110,7 @@ func NewWorkspace(
 	}
 	mask := int64(capacity - 1)
 
-	numJoins := len(stages) - 1
-	if numJoins < 0 {
-		numJoins = 0
-	}
+	numJoins := max(len(stages) - 1, 0)
 
 	workspace := &Workspace{
 		buffer:     make([]*data.Measurement[float64], capacity),
@@ -206,6 +205,8 @@ func (workspace *Workspace) Step(payload *data.Measurement[float64]) *data.Measu
 
 	if payload != nil {
 		payload.SetSeqIdx(workspace.sequence.Add(1))
+		workspace.tick.Store(payload.Tick)
+		workspace.at.Store(payload.At.UnixNano())
 	}
 
 	workspace.buffer[seq&workspace.mask] = payload
@@ -223,6 +224,14 @@ func (workspace *Workspace) Sequence() int64 {
 	}
 
 	return workspace.sequence.Add(1)
+}
+
+/*
+Progress returns the tick and market time (UnixNano) of the latest live ingress
+observation, independent of which outputs any off-ramp chooses to forward.
+*/
+func (workspace *Workspace) Progress() (tick int64, at int64) {
+	return workspace.tick.Load(), workspace.at.Load()
 }
 
 func (workspace *Workspace) Stages() [][]*Consumer {

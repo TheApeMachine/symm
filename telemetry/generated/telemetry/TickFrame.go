@@ -8,6 +8,7 @@ import (
 
 type TickFrameT struct {
 	Count int64 `json:"count"`
+	At int64 `json:"at"`
 }
 
 func (t *TickFrameT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
@@ -16,11 +17,13 @@ func (t *TickFrameT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	}
 	TickFrameStart(builder)
 	TickFrameAddCount(builder, t.Count)
+	TickFrameAddAt(builder, t.At)
 	return TickFrameEnd(builder)
 }
 
 func (rcv *TickFrame) UnPackTo(t *TickFrameT) {
 	t.Count = rcv.Count()
+	t.At = rcv.At()
 }
 
 func (rcv *TickFrame) UnPack() *TickFrameT {
@@ -79,11 +82,26 @@ func (rcv *TickFrame) MutateCount(n int64) bool {
 	return rcv._tab.MutateInt64Slot(4, n)
 }
 
+func (rcv *TickFrame) At() int64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
+	if o != 0 {
+		return rcv._tab.GetInt64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *TickFrame) MutateAt(n int64) bool {
+	return rcv._tab.MutateInt64Slot(6, n)
+}
+
 func TickFrameStart(builder *flatbuffers.Builder) {
-	builder.StartObject(1)
+	builder.StartObject(2)
 }
 func TickFrameAddCount(builder *flatbuffers.Builder, count int64) {
 	builder.PrependInt64Slot(0, count, 0)
+}
+func TickFrameAddAt(builder *flatbuffers.Builder, at int64) {
+	builder.PrependInt64Slot(1, at, 0)
 }
 func TickFrameEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

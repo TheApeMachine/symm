@@ -16,10 +16,10 @@ the arriving Measurement, transforms its data into the input shape expected by
 the wrapped primitive, and then transforms the yielded result back into the Measurement.
 */
 type Adapter[In, Out any] struct {
-	err     error
-	op      core.Primitive
-	read    func(m *Measurement[float64]) In
-	write   func(m *Measurement[float64], out Out)
+	err   error
+	op    core.Primitive
+	read  func(m *Measurement[float64]) In
+	write func(m *Measurement[float64], out Out)
 }
 
 func NewAdapter[In, Out any](

@@ -54,149 +54,149 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 		crosssection.NewStampPeers(signal.changes),
 		nmsentiment.NewCrossSentiment(),
 		data.NewAdapter(
-				adaptive.NewBaseline(adaptive.NewWindow()),
-				func(m *data.Measurement[float64]) float64 {
-					return m.GetMetric("median_return").Raw
-				},
-				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
-					if out.HasPrior {
-						m.SetMetric("median_return_baseline", data.NewMetric[float64](
-							"median_return_baseline",
-							data.UnitLogReturn,
+			adaptive.NewBaseline(adaptive.NewWindow()),
+			func(m *data.Measurement[float64]) float64 {
+				return m.GetMetric("median_return").Raw
+			},
+			func(m *data.Measurement[float64], out adaptive.BaselineReading) {
+				if out.HasPrior {
+					m.SetMetric("median_return_baseline", data.NewMetric[float64](
+						"median_return_baseline",
+						data.UnitLogReturn,
+						data.TimescaleInstantaneous,
+						out.Baseline,
+						out.ScoreScale,
+					).Write(out.Baseline))
+					m.SetMetric("median_return_divergence", data.NewMetric[float64](
+						"median_return_divergence",
+						data.UnitLogReturn,
+						data.TimescaleInstantaneous,
+						0.0,
+						out.ScoreScale,
+					).Write(out.Residual))
+					m.WriteStandardized("median_return_zscore", out.ZScore)
+				}
+			},
+		),
+		data.NewAdapter(
+			adaptive.NewBaseline(adaptive.NewWindow()),
+			func(m *data.Measurement[float64]) float64 {
+				return m.GetMetric("breadth").Raw
+			},
+			func(m *data.Measurement[float64], out adaptive.BaselineReading) {
+				if out.HasPrior {
+					m.SetMetric("breadth_baseline", data.NewMetric[float64](
+						"breadth_baseline",
+						data.UnitDimensionless,
+						data.TimescaleInstantaneous,
+						out.Baseline,
+						out.ScoreScale,
+					).Write(out.Baseline))
+					m.SetMetric("breadth_divergence", data.NewMetric[float64](
+						"breadth_divergence",
+						data.UnitDimensionless,
+						data.TimescaleInstantaneous,
+						0.0,
+						out.ScoreScale,
+					).Write(out.Residual))
+					m.WriteStandardized("breadth_zscore", out.ZScore)
+				}
+			},
+		),
+		data.NewAdapter(
+			adaptive.NewBaseline(adaptive.NewWindow()),
+			func(m *data.Measurement[float64]) float64 {
+				return m.GetMetric("median_absolute_return").Raw
+			},
+			func(m *data.Measurement[float64], out adaptive.BaselineReading) {
+				if out.HasPrior {
+					m.SetMetric("median_absolute_return_baseline", data.NewMetric[float64](
+						"median_absolute_return_baseline",
+						data.UnitLogReturn,
+						data.TimescaleInstantaneous,
+						out.Baseline,
+						out.ScoreScale,
+					).Write(out.Baseline))
+					if out.Baseline > 0 {
+						m.SetMetric("median_absolute_return_ratio", data.NewMetric[float64](
+							"median_absolute_return_ratio",
+							data.UnitRatio,
 							data.TimescaleInstantaneous,
-							out.Baseline,
-							out.ScoreScale,
-						).Write(out.Baseline))
-						m.SetMetric("median_return_divergence", data.NewMetric[float64](
-							"median_return_divergence",
-							data.UnitLogReturn,
+							1.0,
+							out.ScoreScale/out.Baseline,
+						).Write(m.GetMetric("median_absolute_return").Raw/out.Baseline))
+					}
+					m.WriteStandardized("median_absolute_return_zscore", out.ZScore)
+				}
+			},
+		),
+		data.NewAdapter(
+			adaptive.NewBaseline(adaptive.NewWindow()),
+			func(m *data.Measurement[float64]) float64 {
+				return m.GetMetric("return_mad").Raw
+			},
+			func(m *data.Measurement[float64], out adaptive.BaselineReading) {
+				if out.HasPrior {
+					m.SetMetric("return_dispersion_baseline", data.NewMetric[float64](
+						"return_dispersion_baseline",
+						data.UnitLogReturn,
+						data.TimescaleInstantaneous,
+						out.Baseline,
+						out.ScoreScale,
+					).Write(out.Baseline))
+					if out.Baseline > 0 {
+						m.SetMetric("return_dispersion_ratio", data.NewMetric[float64](
+							"return_dispersion_ratio",
+							data.UnitRatio,
 							data.TimescaleInstantaneous,
-							0.0,
-							out.ScoreScale,
-						).Write(out.Residual))
-						m.WriteStandardized("median_return_zscore", out.ZScore)
+							1.0,
+							out.ScoreScale/out.Baseline,
+						).Write(m.GetMetric("return_mad").Raw/out.Baseline))
 					}
-				},
-			),
-			data.NewAdapter(
-				adaptive.NewBaseline(adaptive.NewWindow()),
-				func(m *data.Measurement[float64]) float64 {
-					return m.GetMetric("breadth").Raw
-				},
-				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
-					if out.HasPrior {
-						m.SetMetric("breadth_baseline", data.NewMetric[float64](
-							"breadth_baseline",
-							data.UnitDimensionless,
-							data.TimescaleInstantaneous,
-							out.Baseline,
-							out.ScoreScale,
-						).Write(out.Baseline))
-						m.SetMetric("breadth_divergence", data.NewMetric[float64](
-							"breadth_divergence",
-							data.UnitDimensionless,
-							data.TimescaleInstantaneous,
-							0.0,
-							out.ScoreScale,
-						).Write(out.Residual))
-						m.WriteStandardized("breadth_zscore", out.ZScore)
-					}
-				},
-			),
-			data.NewAdapter(
-				adaptive.NewBaseline(adaptive.NewWindow()),
-				func(m *data.Measurement[float64]) float64 {
-					return m.GetMetric("median_absolute_return").Raw
-				},
-				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
-					if out.HasPrior {
-						m.SetMetric("median_absolute_return_baseline", data.NewMetric[float64](
-							"median_absolute_return_baseline",
-							data.UnitLogReturn,
-							data.TimescaleInstantaneous,
-							out.Baseline,
-							out.ScoreScale,
-						).Write(out.Baseline))
-						if out.Baseline > 0 {
-							m.SetMetric("median_absolute_return_ratio", data.NewMetric[float64](
-								"median_absolute_return_ratio",
-								data.UnitRatio,
-								data.TimescaleInstantaneous,
-								1.0,
-								out.ScoreScale/out.Baseline,
-							).Write(m.GetMetric("median_absolute_return").Raw/out.Baseline))
-						}
-						m.WriteStandardized("median_absolute_return_zscore", out.ZScore)
-					}
-				},
-			),
-			data.NewAdapter(
-				adaptive.NewBaseline(adaptive.NewWindow()),
-				func(m *data.Measurement[float64]) float64 {
-					return m.GetMetric("return_mad").Raw
-				},
-				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
-					if out.HasPrior {
-						m.SetMetric("return_dispersion_baseline", data.NewMetric[float64](
-							"return_dispersion_baseline",
-							data.UnitLogReturn,
-							data.TimescaleInstantaneous,
-							out.Baseline,
-							out.ScoreScale,
-						).Write(out.Baseline))
-						if out.Baseline > 0 {
-							m.SetMetric("return_dispersion_ratio", data.NewMetric[float64](
-								"return_dispersion_ratio",
-								data.UnitRatio,
-								data.TimescaleInstantaneous,
-								1.0,
-								out.ScoreScale/out.Baseline,
-							).Write(m.GetMetric("return_mad").Raw/out.Baseline))
-						}
-						m.WriteStandardized("return_dispersion_zscore", out.ZScore)
-					}
-				},
-			),
-			data.NewAdapter(
-				temporal.NewVelocity(),
-				func(m *data.Measurement[float64]) temporal.Observation {
-					if v, ok := m.LookupMetric("median_return"); ok {
-						return temporal.Observation{Value: v.Raw, At: m.At.UnixNano()}
-					}
-					return temporal.Observation{Value: 0, At: m.At.UnixNano()}
-				},
-				func(m *data.Measurement[float64], out temporal.VelocityReading) {
-					if out.Defined {
-						m.SetMetric("median_return_velocity", data.NewMetric[float64](
-							"median_return_velocity",
-							data.UnitVelocity,
-							data.TimescaleInstantaneous,
-							0.0,
-							0.0,
-						).Write(out.Rate))
-					}
-				},
-			),
-			data.NewAdapter(
-				temporal.NewVelocity(),
-				func(m *data.Measurement[float64]) temporal.Observation {
-					if v, ok := m.LookupMetric("breadth"); ok {
-						return temporal.Observation{Value: v.Raw, At: m.At.UnixNano()}
-					}
-					return temporal.Observation{Value: 0, At: m.At.UnixNano()}
-				},
-				func(m *data.Measurement[float64], out temporal.VelocityReading) {
-					if out.Defined {
-						m.SetMetric("breadth_velocity", data.NewMetric[float64](
-							"breadth_velocity",
-							data.UnitVelocity,
-							data.TimescaleInstantaneous,
-							0.0,
-							0.0,
-						).Write(out.Rate))
-					}
-				},
-			),
+					m.WriteStandardized("return_dispersion_zscore", out.ZScore)
+				}
+			},
+		),
+		data.NewAdapter(
+			temporal.NewVelocity(),
+			func(m *data.Measurement[float64]) temporal.Observation {
+				return temporal.Observation{
+					Value: m.GetMetric("median_return").Raw,
+					At:    m.At.UnixNano(),
+				}
+			},
+			func(m *data.Measurement[float64], out temporal.VelocityReading) {
+				if out.Defined {
+					m.SetMetric("median_return_velocity", data.NewMetric[float64](
+						"median_return_velocity",
+						data.UnitVelocity,
+						data.TimescaleInstantaneous,
+						0.0,
+						0.0,
+					).Write(out.Rate))
+				}
+			},
+		),
+		data.NewAdapter(
+			temporal.NewVelocity(),
+			func(m *data.Measurement[float64]) temporal.Observation {
+				return temporal.Observation{
+					Value: m.GetMetric("breadth").Raw,
+					At:    m.At.UnixNano(),
+				}
+			},
+			func(m *data.Measurement[float64], out temporal.VelocityReading) {
+				if out.Defined {
+					m.SetMetric("breadth_velocity", data.NewMetric[float64](
+						"breadth_velocity",
+						data.UnitVelocity,
+						data.TimescaleInstantaneous,
+						0.0,
+						0.0,
+					).Write(out.Rate))
+				}
+			},
+		),
 		data.NewRecurrence(
 			"median_return",
 			"breadth",

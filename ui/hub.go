@@ -85,7 +85,8 @@ type FragmentPoint struct {
 
 type Hub struct {
 	*runtime.System
-	uiTee               runtime.Tee
+	uiTee               *UITee
+	workspace           *runtime.Workspace
 	physics             sensorium.PhysicsMonitor
 	app                 *fiber.App
 	listenAddr          string
@@ -103,13 +104,15 @@ type Hub struct {
 }
 
 /*
-NewHub constructs the dashboard hub from its queue-backed system boundaries and
-registers it on the workspace so live frames reach it through Step.
+NewHub constructs the dashboard hub from its queue-backed system boundaries.
+The workspace supplies live ingress progress, streamed as TickFrames at display
+cadence independently of the route filters applied to the tee.
 */
 func NewHub(
 	ctx context.Context,
 	hindsightStore *tables.Catalog,
-	uiTee runtime.Tee,
+	uiTee *UITee,
+	workspace *runtime.Workspace,
 ) *Hub {
 	viper.SetDefault("ui.addr", "127.0.0.1:8765")
 	viper.SetDefault("ui.websocket.max_message_bytes", 4*1024*1024)
@@ -125,6 +128,7 @@ func NewHub(
 	hub := &Hub{
 		learningInterval:    viper.GetDuration("ui.websocket.learning_interval"),
 		uiTee:               uiTee,
+		workspace:           workspace,
 		listenAddr:          viper.GetString("ui.addr"),
 		workbenchSupervisor: workbenchSupervisor,
 		app: fiber.New(fiber.Config{
@@ -139,11 +143,7 @@ func NewHub(
 
 	hub.routes = NewRoutes(hub)
 
-	closers := []io.Closer{}
-
-	if uiTee != nil {
-		closers = append(closers, uiTee)
-	}
+	closers := []io.Closer{uiTee}
 
 	if workbenchSupervisor != nil {
 		closers = append(closers, workbenchSupervisor)
@@ -329,6 +329,32 @@ func NewHub(
 			return conn.Conn.WriteMessage(websocket.BinaryMessage, payload)
 		}
 
+		var lastTick int64
+
+		sendTick := func() error {
+			tick, at := hub.workspace.Progress()
+
+			if tick == lastTick {
+				return nil
+			}
+
+			lastTick = tick
+
+			message := &wire.MessageT{
+				Sequence: uint64(time.Now().UnixNano()),
+				Frame: &wire.FrameT{
+					Type:  wire.FrameTickFrame,
+					Value: &wire.TickFrameT{Count: tick, At: at},
+				},
+			}
+
+			builder := flatbuffers.NewBuilder(64)
+			offset := message.Pack(builder)
+			builder.FinishWithFileIdentifier(offset, []byte("SYMM"))
+
+			return conn.Conn.WriteMessage(websocket.BinaryMessage, builder.FinishedBytes())
+		}
+
 		if err := sendPositions(); err != nil {
 			return
 		}
@@ -341,13 +367,14 @@ func NewHub(
 			return
 		}
 
+		if err := sendTick(); err != nil {
+			return
+		}
+
 		frameTicker := time.NewTicker(16666 * time.Microsecond)
 		defer frameTicker.Stop()
 
-		var teeAvailable <-chan struct{}
-		if streamer, ok := hub.uiTee.(interface{ Available() <-chan struct{} }); ok {
-			teeAvailable = streamer.Available()
-		}
+		teeAvailable := hub.uiTee.Available()
 
 		for {
 			select {
@@ -355,6 +382,9 @@ func NewHub(
 				return
 			case <-teeAvailable:
 			case <-frameTicker.C:
+				if err := sendTick(); err != nil {
+					return
+				}
 			}
 
 			if time.Since(lastPositionsPush) >= 200*time.Millisecond {
@@ -375,7 +405,7 @@ func NewHub(
 				}
 			}
 
-			if hub.Status() != runtime.READY || hub.uiTee == nil {
+			if hub.Status() != runtime.READY {
 				continue
 			}
 

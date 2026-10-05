@@ -60,212 +60,214 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 	pipeline := nomagique.NewNumber(
 		nmdepthflow.NewBookFlow(signal.books),
 		data.NewAdapter(
-				adaptive.NewBaseline(adaptive.NewWindow()),
-				func(m *data.Measurement[float64]) float64 {
-					return m.GetMetric("book_imbalance").Raw
-				},
-				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
-					m.SetMetadata(data.MetadataSupport, strconv.FormatFloat(out.Count, 'f', -1, 64))
+			adaptive.NewBaseline(adaptive.NewWindow()),
+			func(m *data.Measurement[float64]) float64 {
+				return m.GetMetric("book_imbalance").Raw
+			},
+			func(m *data.Measurement[float64], out adaptive.BaselineReading) {
+				m.SetMetadata(data.MetadataSupport, strconv.FormatFloat(out.Count, 'f', -1, 64))
 
-					if out.HasPrior {
-						m.SetMetric("book_imbalance_baseline", data.NewMetric[float64](
-							"book_imbalance_baseline",
-							data.UnitDimensionless,
-							data.TimescaleInstantaneous,
-							out.Baseline,
-							out.ScoreScale,
-						).Write(out.Baseline))
-						m.SetMetric("book_imbalance_divergence", data.NewMetric[float64](
-							"book_imbalance_divergence",
-							data.UnitDimensionless,
-							data.TimescaleInstantaneous,
-							0.0,
-							out.ScoreScale,
-						).Write(out.Residual))
-						m.WriteStandardized("book_imbalance_zscore", out.ZScore)
-						m.SetMetadata(data.MetadataDivergence, strconv.FormatFloat(out.Residual, 'f', -1, 64))
+				if out.HasPrior {
+					m.SetMetric("book_imbalance_baseline", data.NewMetric[float64](
+						"book_imbalance_baseline",
+						data.UnitDimensionless,
+						data.TimescaleInstantaneous,
+						out.Baseline,
+						out.ScoreScale,
+					).Write(out.Baseline))
+					m.SetMetric("book_imbalance_divergence", data.NewMetric[float64](
+						"book_imbalance_divergence",
+						data.UnitDimensionless,
+						data.TimescaleInstantaneous,
+						0.0,
+						out.ScoreScale,
+					).Write(out.Residual))
+					m.WriteStandardized("book_imbalance_zscore", out.ZScore)
+					m.SetMetadata(data.MetadataDivergence, strconv.FormatFloat(out.Residual, 'f', -1, 64))
 
-						if out.VarianceDefined {
-							m.SetMetadata(data.MetadataNoiseVariance, strconv.FormatFloat(out.Variance, 'f', -1, 64))
-						}
+					if out.VarianceDefined {
+						m.SetMetadata(data.MetadataNoiseVariance, strconv.FormatFloat(out.Variance, 'f', -1, 64))
 					}
-				},
-			),
-			data.NewAdapter(
-				adaptive.NewBaseline(adaptive.NewWindow()),
-				func(m *data.Measurement[float64]) float64 {
-					return m.GetMetric("imbalance_resolution_gap").Raw
-				},
-				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
-					if out.HasPrior {
-						m.SetMetric("resolution_gap_baseline", data.NewMetric[float64](
-							"resolution_gap_baseline",
-							data.UnitDimensionless,
+				}
+			},
+		),
+		data.NewAdapter(
+			adaptive.NewBaseline(adaptive.NewWindow()),
+			func(m *data.Measurement[float64]) float64 {
+				return m.GetMetric("imbalance_resolution_gap").Raw
+			},
+			func(m *data.Measurement[float64], out adaptive.BaselineReading) {
+				if out.HasPrior {
+					m.SetMetric("resolution_gap_baseline", data.NewMetric[float64](
+						"resolution_gap_baseline",
+						data.UnitDimensionless,
+						data.TimescaleInstantaneous,
+						out.Baseline,
+						out.ScoreScale,
+					).Write(out.Baseline))
+					m.SetMetric("resolution_gap_divergence", data.NewMetric[float64](
+						"resolution_gap_divergence",
+						data.UnitDimensionless,
+						data.TimescaleInstantaneous,
+						0.0,
+						out.ScoreScale,
+					).Write(out.Residual))
+					m.WriteStandardized("resolution_gap_zscore", out.ZScore)
+				}
+			},
+		),
+		data.NewAdapter(
+			adaptive.NewBaseline(adaptive.NewWindow()),
+			func(m *data.Measurement[float64]) float64 {
+				return m.GetMetric("book_turnover_rate").Raw
+			},
+			func(m *data.Measurement[float64], out adaptive.BaselineReading) {
+				if out.HasPrior {
+					m.SetMetric("turnover_baseline", data.NewMetric[float64](
+						"turnover_baseline",
+						data.UnitRate,
+						data.TimescaleInstantaneous,
+						out.Baseline,
+						out.ScoreScale,
+					).Write(out.Baseline))
+					if out.Baseline > 0 {
+						turnover := m.GetMetric("book_turnover_rate").Raw
+						m.SetMetric("turnover_ratio", data.NewMetric[float64](
+							"turnover_ratio",
+							data.UnitRatio,
 							data.TimescaleInstantaneous,
-							out.Baseline,
-							out.ScoreScale,
-						).Write(out.Baseline))
-						m.SetMetric("resolution_gap_divergence", data.NewMetric[float64](
-							"resolution_gap_divergence",
-							data.UnitDimensionless,
-							data.TimescaleInstantaneous,
-							0.0,
-							out.ScoreScale,
-						).Write(out.Residual))
-						m.WriteStandardized("resolution_gap_zscore", out.ZScore)
+							1.0,
+							out.ScoreScale/out.Baseline,
+						).Write(turnover/out.Baseline))
 					}
-				},
-			),
-			data.NewAdapter(
-				adaptive.NewBaseline(adaptive.NewWindow()),
-				func(m *data.Measurement[float64]) float64 {
-					return m.GetMetric("book_turnover_rate").Raw
-				},
-				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
-					if out.HasPrior {
-						m.SetMetric("turnover_baseline", data.NewMetric[float64](
-							"turnover_baseline",
-							data.UnitRate,
-							data.TimescaleInstantaneous,
-							out.Baseline,
-							out.ScoreScale,
-						).Write(out.Baseline))
-						if out.Baseline > 0 {
-							turnover := m.GetMetric("book_turnover_rate").Raw
-							m.SetMetric("turnover_ratio", data.NewMetric[float64](
-								"turnover_ratio",
-								data.UnitRatio,
-								data.TimescaleInstantaneous,
-								1.0,
-								out.ScoreScale/out.Baseline,
-							).Write(turnover/out.Baseline))
-						}
-						m.WriteStandardized("turnover_zscore", out.ZScore)
-					}
-				},
-			),
-			data.NewAdapter(
-				adaptive.NewBaseline(adaptive.NewWindow()),
-				func(m *data.Measurement[float64]) float64 {
-					return m.GetMetric("net_book_change_rate").Raw
-				},
-				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
-					if out.HasPrior {
-						m.SetMetric("net_book_change_rate_baseline", data.NewMetric[float64](
-							"net_book_change_rate_baseline",
-							data.UnitRate,
-							data.TimescaleInstantaneous,
-							out.Baseline,
-							out.ScoreScale,
-						).Write(out.Baseline))
-						m.SetMetric("net_book_change_rate_divergence", data.NewMetric[float64](
-							"net_book_change_rate_divergence",
-							data.UnitRate,
-							data.TimescaleInstantaneous,
-							0.0,
-							out.ScoreScale,
-						).Write(out.Residual))
-						m.WriteStandardized("net_book_change_rate_zscore", out.ZScore)
-					}
-				},
-			),
-			data.NewAdapter(
-				adaptive.NewBaseline(adaptive.NewWindow()),
-				func(m *data.Measurement[float64]) float64 {
-					return m.GetMetric("signed_net_displayed_flow_rate").Raw
-				},
-				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
-					if out.HasPrior {
-						m.SetMetric("signed_net_displayed_flow_rate_baseline", data.NewMetric[float64](
-							"signed_net_displayed_flow_rate_baseline",
-							data.UnitRate,
-							data.TimescaleInstantaneous,
-							out.Baseline,
-							out.ScoreScale,
-						).Write(out.Baseline))
-						m.SetMetric("signed_net_displayed_flow_rate_divergence", data.NewMetric[float64](
-							"signed_net_displayed_flow_rate_divergence",
-							data.UnitRate,
-							data.TimescaleInstantaneous,
-							0.0,
-							out.ScoreScale,
-						).Write(out.Residual))
-						m.WriteStandardized("signed_net_displayed_flow_rate_zscore", out.ZScore)
-					}
-				},
-			),
-			data.NewAdapter(
-				temporal.NewVelocity(),
-				func(m *data.Measurement[float64]) temporal.Observation {
-					if imb, ok := m.LookupMetric("book_imbalance"); ok {
-						return temporal.Observation{Value: imb.Raw, At: m.At.UnixNano()}
-					}
-					return temporal.Observation{Value: math.NaN(), At: m.At.UnixNano()}
-				},
-				func(m *data.Measurement[float64], out temporal.VelocityReading) {
-					if out.Defined {
-						m.SetMetric("book_imbalance_velocity", data.NewMetric[float64](
-							"book_imbalance_velocity",
-							data.UnitVelocity,
-							data.TimescaleInstantaneous,
-							0.0,
-							0.0,
-						).Write(out.Rate))
-					}
-				},
-			),
-			data.NewAdapter(
-				temporal.NewVelocity(),
-				func(m *data.Measurement[float64]) temporal.Observation {
-					if gap, ok := m.LookupMetric("imbalance_resolution_gap"); ok {
-						return temporal.Observation{Value: gap.Raw, At: m.At.UnixNano()}
-					}
-					return temporal.Observation{Value: math.NaN(), At: m.At.UnixNano()}
-				},
-				func(m *data.Measurement[float64], out temporal.VelocityReading) {
-					if out.Defined {
-						m.SetMetric("resolution_gap_velocity", data.NewMetric[float64](
-							"resolution_gap_velocity",
-							data.UnitVelocity,
-							data.TimescaleInstantaneous,
-							0.0,
-							0.0,
-						).Write(out.Rate))
-					}
-				},
-			),
-			data.NewAdapter(
-				statistic.NewJoint(4),
-				func(m *data.Measurement[float64]) statistic.JointInput {
-					imb := m.GetMetric("book_imbalance_divergence").Raw
-					gap := m.GetMetric("resolution_gap_divergence").Raw
-					turn := m.GetMetric("turnover_zscore").Raw
-					flow := m.GetMetric("signed_net_displayed_flow_rate_zscore").Raw
+					m.WriteStandardized("turnover_zscore", out.ZScore)
+				}
+			},
+		),
+		data.NewAdapter(
+			adaptive.NewBaseline(adaptive.NewWindow()),
+			func(m *data.Measurement[float64]) float64 {
+				return m.GetMetric("net_book_change_rate").Raw
+			},
+			func(m *data.Measurement[float64], out adaptive.BaselineReading) {
+				if out.HasPrior {
+					m.SetMetric("net_book_change_rate_baseline", data.NewMetric[float64](
+						"net_book_change_rate_baseline",
+						data.UnitRate,
+						data.TimescaleInstantaneous,
+						out.Baseline,
+						out.ScoreScale,
+					).Write(out.Baseline))
+					m.SetMetric("net_book_change_rate_divergence", data.NewMetric[float64](
+						"net_book_change_rate_divergence",
+						data.UnitRate,
+						data.TimescaleInstantaneous,
+						0.0,
+						out.ScoreScale,
+					).Write(out.Residual))
+					m.WriteStandardized("net_book_change_rate_zscore", out.ZScore)
+				}
+			},
+		),
+		data.NewAdapter(
+			adaptive.NewBaseline(adaptive.NewWindow()),
+			func(m *data.Measurement[float64]) float64 {
+				return m.GetMetric("signed_net_displayed_flow_rate").Raw
+			},
+			func(m *data.Measurement[float64], out adaptive.BaselineReading) {
+				if out.HasPrior {
+					m.SetMetric("signed_net_displayed_flow_rate_baseline", data.NewMetric[float64](
+						"signed_net_displayed_flow_rate_baseline",
+						data.UnitRate,
+						data.TimescaleInstantaneous,
+						out.Baseline,
+						out.ScoreScale,
+					).Write(out.Baseline))
+					m.SetMetric("signed_net_displayed_flow_rate_divergence", data.NewMetric[float64](
+						"signed_net_displayed_flow_rate_divergence",
+						data.UnitRate,
+						data.TimescaleInstantaneous,
+						0.0,
+						out.ScoreScale,
+					).Write(out.Residual))
+					m.WriteStandardized("signed_net_displayed_flow_rate_zscore", out.ZScore)
+				}
+			},
+		),
+		data.NewAdapter(
+			temporal.NewVelocity(),
+			func(m *data.Measurement[float64]) temporal.Observation {
+				return temporal.Observation{
+					Value: m.GetMetric("book_imbalance").Raw,
+					At:    m.At.UnixNano(),
+				}
+			},
+			func(m *data.Measurement[float64], out temporal.VelocityReading) {
+				if out.Defined {
+					m.SetMetric("book_imbalance_velocity", data.NewMetric[float64](
+						"book_imbalance_velocity",
+						data.UnitVelocity,
+						data.TimescaleInstantaneous,
+						0.0,
+						0.0,
+					).Write(out.Rate))
+				}
+			},
+		),
+		data.NewAdapter(
+			temporal.NewVelocity(),
+			func(m *data.Measurement[float64]) temporal.Observation {
+				return temporal.Observation{
+					Value: m.GetMetric("imbalance_resolution_gap").Raw,
+					At:    m.At.UnixNano(),
+				}
+			},
+			func(m *data.Measurement[float64], out temporal.VelocityReading) {
+				if out.Defined {
+					m.SetMetric("resolution_gap_velocity", data.NewMetric[float64](
+						"resolution_gap_velocity",
+						data.UnitVelocity,
+						data.TimescaleInstantaneous,
+						0.0,
+						0.0,
+					).Write(out.Rate))
+				}
+			},
+		),
+		data.NewAdapter(
+			statistic.NewJoint(4),
+			func(m *data.Measurement[float64]) statistic.JointInput {
+				imb := m.GetMetric("book_imbalance_divergence").Raw
+				gap := m.GetMetric("resolution_gap_divergence").Raw
+				turn := m.GetMetric("turnover_zscore").Raw
+				flow := m.GetMetric("signed_net_displayed_flow_rate_zscore").Raw
 
-					return statistic.JointInput{Values: []float64{imb, gap, turn, flow}}
-				},
-				func(m *data.Measurement[float64], out statistic.JointReading) {
-					if out.SNRDefined && out.SNR < 1/math.Sqrt(2.220446049250313e-16) {
-						m.SetMetric("SNR", data.NewMetric[float64](
-							"SNR",
-							data.UnitSNR,
-							data.TimescaleInstantaneous,
-							0.0,
-							0.0,
-						).Write(out.SNR))
-						m.EnsureMetadata()
-						m.SetMetadata(data.MetadataMahalanobisSNR, strconv.FormatFloat(out.SNR, 'f', -1, 64))
+				return statistic.JointInput{Values: []float64{imb, gap, turn, flow}}
+			},
+			func(m *data.Measurement[float64], out statistic.JointReading) {
+				if out.SNRDefined && out.SNR < 1/math.Sqrt(2.220446049250313e-16) {
+					m.SetMetric("SNR", data.NewMetric[float64](
+						"SNR",
+						data.UnitSNR,
+						data.TimescaleInstantaneous,
+						0.0,
+						0.0,
+					).Write(out.SNR))
+					m.EnsureMetadata()
+					m.SetMetadata(data.MetadataMahalanobisSNR, strconv.FormatFloat(out.SNR, 'f', -1, 64))
+				}
+				if len(out.Channels) > 0 {
+					m.EnsureMetadata()
+					m.SetMetadata(data.MetadataSupport, strconv.FormatFloat(out.Channels[0].Count, 'f', -1, 64))
+					n := out.Channels[0].Count
+					maturity := 0.0
+					if n > 1 {
+						maturity = 1.0 - (1.0 / n)
 					}
-					if len(out.Channels) > 0 {
-						n := out.Channels[0].Count
-						maturity := 0.0
-						if n > 1 {
-							maturity = 1.0 - (1.0 / n)
-						}
-						m.WriteNormalized("Maturity", maturity)
-					}
-				},
-			),
+					m.WriteNormalized("Maturity", maturity)
+				}
+			},
+		),
 		data.NewRecurrence(
 			"book_imbalance_zscore",
 			"resolution_gap_zscore",

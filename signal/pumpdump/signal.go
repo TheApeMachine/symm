@@ -60,214 +60,214 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 		// 2. Adaptive baselines and temporal dynamics
 		// Spread baseline & divergence
 		data.NewAdapter(
-				adaptive.NewBaseline(adaptive.NewWindow()),
-				func(m *data.Measurement[float64]) float64 {
-					return m.GetMetric("relative_spread").Raw
-				},
-				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
-					m.EnsureMetadata()
-					m.SetMetadata(data.MetadataSupport, strconv.FormatFloat(out.Count, 'f', -1, 64))
+			adaptive.NewBaseline(adaptive.NewWindow()),
+			func(m *data.Measurement[float64]) float64 {
+				return m.GetMetric("relative_spread").Raw
+			},
+			func(m *data.Measurement[float64], out adaptive.BaselineReading) {
+				m.EnsureMetadata()
+				m.SetMetadata(data.MetadataSupport, strconv.FormatFloat(out.Count, 'f', -1, 64))
 
-					if out.HasPrior {
-						m.SetMetric("relative_spread_baseline", data.NewMetric[float64](
-							"relative_spread_baseline",
-							data.UnitRelativeSpread,
+				if out.HasPrior {
+					m.SetMetric("relative_spread_baseline", data.NewMetric[float64](
+						"relative_spread_baseline",
+						data.UnitRelativeSpread,
+						data.TimescaleRollingWindow,
+						out.Baseline,
+						out.ScoreScale,
+					).Write(out.Baseline))
+
+					if out.Baseline > 0 {
+						// Relative dispersion: the baseline's measured spread in units of the baseline.
+						relative := out.ScoreScale / out.Baseline
+						rs := m.GetMetric("relative_spread").Raw
+						spreadRatio := rs / out.Baseline
+						m.SetMetric("spread_ratio", data.NewMetric[float64](
+							"spread_ratio",
+							data.UnitRatio,
 							data.TimescaleRollingWindow,
-							out.Baseline,
-							out.ScoreScale,
-						).Write(out.Baseline))
+							1.0,
+							relative,
+						).Write(spreadRatio))
 
-						if out.Baseline > 0 {
-							// Relative dispersion: the baseline's measured spread in units of the baseline.
-							relative := out.ScoreScale / out.Baseline
-							rs := m.GetMetric("relative_spread").Raw
-							spreadRatio := rs / out.Baseline
-							m.SetMetric("spread_ratio", data.NewMetric[float64](
-								"spread_ratio",
-								data.UnitRatio,
+						if rs > 0 {
+							divergence := math.Log(spreadRatio)
+							m.SetMetric("spread_divergence", data.NewMetric[float64](
+								"spread_divergence",
+								data.UnitRelativeSpread,
 								data.TimescaleRollingWindow,
-								1.0,
+								0.0,
 								relative,
-							).Write(spreadRatio))
-
-							if rs > 0 {
-								divergence := math.Log(spreadRatio)
-								m.SetMetric("spread_divergence", data.NewMetric[float64](
-									"spread_divergence",
-									data.UnitRelativeSpread,
-									data.TimescaleRollingWindow,
-									0.0,
-									relative,
-								).Write(divergence))
-								m.SetMetadata(data.MetadataDivergence, strconv.FormatFloat(divergence, 'f', -1, 64))
-							}
+							).Write(divergence))
+							m.SetMetadata(data.MetadataDivergence, strconv.FormatFloat(divergence, 'f', -1, 64))
 						}
+					}
 
-						m.SetMetric("spread_zscore", data.NewMetric[float64](
-							"spread_zscore",
-							data.UnitStandardDeviation,
+					m.SetMetric("spread_zscore", data.NewMetric[float64](
+						"spread_zscore",
+						data.UnitStandardDeviation,
+						data.TimescaleRollingWindow,
+						0.0,
+						1.0,
+					).Write(out.ZScore))
+
+					if out.VarianceDefined {
+						m.SetMetadata(data.MetadataNoiseVariance, strconv.FormatFloat(out.Variance, 'f', -1, 64))
+					}
+				}
+			},
+		),
+		// Spread velocity
+		data.NewAdapter(
+			temporal.NewVelocity(),
+			func(m *data.Measurement[float64]) temporal.Observation {
+				return temporal.Observation{
+					Value: m.GetMetric("spread_divergence").Raw,
+					At:    m.At.UnixNano(),
+				}
+			},
+			func(m *data.Measurement[float64], out temporal.VelocityReading) {
+				if out.Defined {
+					m.SetMetric("spread_divergence_velocity", data.NewMetric[float64](
+						"spread_divergence_velocity",
+						data.UnitVelocity,
+						data.TimescalePerSecond,
+						0.0,
+						0.0,
+					).Write(out.Rate))
+				}
+			},
+		),
+		// Notional rate baseline & divergence
+		data.NewAdapter(
+			adaptive.NewBaseline(adaptive.NewWindow()),
+			func(m *data.Measurement[float64]) float64 { return m.GetMetric("notional_rate").Raw },
+			func(m *data.Measurement[float64], out adaptive.BaselineReading) {
+				if out.HasPrior {
+					m.SetMetric("notional_rate_baseline", data.NewMetric[float64](
+						"notional_rate_baseline",
+						data.UnitNotionalRate,
+						data.TimescaleRollingWindow,
+						out.Baseline,
+						out.ScoreScale,
+					).Write(out.Baseline))
+
+					if out.Baseline > 0 {
+						// Relative dispersion: the baseline's measured spread in units of the baseline.
+						relative := out.ScoreScale / out.Baseline
+						ratio := m.GetMetric("notional_rate").Raw / out.Baseline
+						m.SetMetric("notional_rate_ratio", data.NewMetric[float64](
+							"notional_rate_ratio",
+							data.UnitRatio,
 							data.TimescaleRollingWindow,
-							0.0,
 							1.0,
-						).Write(out.ZScore))
+							relative,
+						).Write(ratio))
 
-						if out.VarianceDefined {
-							m.SetMetadata(data.MetadataNoiseVariance, strconv.FormatFloat(out.Variance, 'f', -1, 64))
-						}
-					}
-				},
-			),
-			// Spread velocity
-			data.NewAdapter(
-				temporal.NewVelocity(),
-				func(m *data.Measurement[float64]) temporal.Observation {
-					if div, ok := m.LookupMetric("spread_divergence"); ok {
-						return temporal.Observation{Value: div.Raw, At: m.At.UnixNano()}
-					}
-					return temporal.Observation{Value: 0, At: m.At.UnixNano()}
-				},
-				func(m *data.Measurement[float64], out temporal.VelocityReading) {
-					if out.Defined {
-						m.SetMetric("spread_divergence_velocity", data.NewMetric[float64](
-							"spread_divergence_velocity",
-							data.UnitVelocity,
-							data.TimescalePerSecond,
-							0.0,
-							0.0,
-						).Write(out.Rate))
-					}
-				},
-			),
-			// Notional rate baseline & divergence
-			data.NewAdapter(
-				adaptive.NewBaseline(adaptive.NewWindow()),
-				func(m *data.Measurement[float64]) float64 { return m.GetMetric("notional_rate").Raw },
-				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
-					if out.HasPrior {
-						m.SetMetric("notional_rate_baseline", data.NewMetric[float64](
-							"notional_rate_baseline",
-							data.UnitNotionalRate,
-							data.TimescaleRollingWindow,
-							out.Baseline,
-							out.ScoreScale,
-						).Write(out.Baseline))
-
-						if out.Baseline > 0 {
-							// Relative dispersion: the baseline's measured spread in units of the baseline.
-							relative := out.ScoreScale / out.Baseline
-							ratio := m.GetMetric("notional_rate").Raw / out.Baseline
-							m.SetMetric("notional_rate_ratio", data.NewMetric[float64](
-								"notional_rate_ratio",
-								data.UnitRatio,
+						if ratio > 0 {
+							div := math.Log(ratio)
+							m.SetMetric("notional_rate_divergence", data.NewMetric[float64](
+								"notional_rate_divergence",
+								data.UnitNotionalRate,
 								data.TimescaleRollingWindow,
-								1.0,
+								0.0,
 								relative,
-							).Write(ratio))
-
-							if ratio > 0 {
-								div := math.Log(ratio)
-								m.SetMetric("notional_rate_divergence", data.NewMetric[float64](
-									"notional_rate_divergence",
-									data.UnitNotionalRate,
-									data.TimescaleRollingWindow,
-									0.0,
-									relative,
-								).Write(div))
-								m.SetMetadata(data.MetadataDivergence, strconv.FormatFloat(div, 'f', -1, 64))
-							}
-						}
-
-						m.SetMetric("notional_rate_zscore", data.NewMetric[float64](
-							"notional_rate_zscore",
-							data.UnitStandardDeviation,
-							data.TimescaleRollingWindow,
-							0.0,
-							1.0,
-						).Write(out.ZScore))
-
-						if out.VarianceDefined {
-							m.SetMetadata(data.MetadataNoiseVariance, strconv.FormatFloat(out.Variance, 'f', -1, 64))
+							).Write(div))
+							m.SetMetadata(data.MetadataDivergence, strconv.FormatFloat(div, 'f', -1, 64))
 						}
 					}
 
-					m.EnsureMetadata()
-					m.SetMetadata(data.MetadataSupport, strconv.FormatFloat(out.Count, 'f', -1, 64))
-				},
-			),
-			// Notional rate velocity
-			data.NewAdapter(
-				temporal.NewVelocity(),
-				func(m *data.Measurement[float64]) temporal.Observation {
-					if rate, ok := m.LookupMetric("notional_rate"); ok {
-						return temporal.Observation{Value: rate.Raw, At: m.At.UnixNano()}
-					}
-					return temporal.Observation{Value: 0, At: m.At.UnixNano()}
-				},
-				func(m *data.Measurement[float64], out temporal.VelocityReading) {
-					if out.Defined {
-						m.SetMetric("notional_rate_velocity", data.NewMetric[float64](
-							"notional_rate_velocity",
-							data.UnitVelocity,
-							data.TimescalePerSecond,
-							0.0,
-							0.0,
-						).Write(out.Rate))
-					}
-				},
-			),
-			// Midpoint return baseline
-			data.NewAdapter(
-				adaptive.NewBaseline(adaptive.NewWindow()),
-				func(m *data.Measurement[float64]) float64 { return m.GetMetric("midpoint_return_rate").Raw },
-				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
-					if out.HasPrior {
-						m.SetMetric("midpoint_return_baseline", data.NewMetric[float64](
-							"midpoint_return_baseline",
-							data.UnitVelocity,
-							data.TimescaleRollingWindow,
-							out.Baseline,
-							out.ScoreScale,
-						).Write(out.Baseline))
+					m.SetMetric("notional_rate_zscore", data.NewMetric[float64](
+						"notional_rate_zscore",
+						data.UnitStandardDeviation,
+						data.TimescaleRollingWindow,
+						0.0,
+						1.0,
+					).Write(out.ZScore))
 
-						m.SetMetric("midpoint_return_divergence", data.NewMetric[float64](
-							"midpoint_return_divergence",
-							data.UnitVelocity,
-							data.TimescaleRollingWindow,
-							0.0,
-							out.ScoreScale,
-						).Write(out.Residual))
+					if out.VarianceDefined {
+						m.SetMetadata(data.MetadataNoiseVariance, strconv.FormatFloat(out.Variance, 'f', -1, 64))
+					}
+				}
 
-						m.SetMetric("midpoint_return_zscore", data.NewMetric[float64](
-							"midpoint_return_zscore",
-							data.UnitStandardDeviation,
-							data.TimescaleRollingWindow,
-							0.0,
-							1.0,
-						).Write(out.ZScore))
-					}
-				},
-			),
-			// Midpoint return velocity
-			data.NewAdapter(
-				temporal.NewVelocity(),
-				func(m *data.Measurement[float64]) temporal.Observation {
-					if rate, ok := m.LookupMetric("midpoint_return_rate"); ok {
-						return temporal.Observation{Value: rate.Raw, At: m.At.UnixNano()}
-					}
-					return temporal.Observation{Value: 0, At: m.At.UnixNano()}
-				},
-				func(m *data.Measurement[float64], out temporal.VelocityReading) {
-					if out.Defined {
-						m.SetMetric("midpoint_return_velocity", data.NewMetric[float64](
-							"midpoint_return_velocity",
-							data.UnitAcceleration,
-							data.TimescalePerSecond,
-							0.0,
-							0.0,
-						).Write(out.Rate))
-					}
-				},
-			),
+				m.EnsureMetadata()
+				m.SetMetadata(data.MetadataSupport, strconv.FormatFloat(out.Count, 'f', -1, 64))
+			},
+		),
+		// Notional rate velocity
+		data.NewAdapter(
+			temporal.NewVelocity(),
+			func(m *data.Measurement[float64]) temporal.Observation {
+				return temporal.Observation{
+					Value: m.GetMetric("notional_rate").Raw,
+					At:    m.At.UnixNano(),
+				}
+			},
+			func(m *data.Measurement[float64], out temporal.VelocityReading) {
+				if out.Defined {
+					m.SetMetric("notional_rate_velocity", data.NewMetric[float64](
+						"notional_rate_velocity",
+						data.UnitVelocity,
+						data.TimescalePerSecond,
+						0.0,
+						0.0,
+					).Write(out.Rate))
+				}
+			},
+		),
+		// Midpoint return baseline
+		data.NewAdapter(
+			adaptive.NewBaseline(adaptive.NewWindow()),
+			func(m *data.Measurement[float64]) float64 { return m.GetMetric("midpoint_return_rate").Raw },
+			func(m *data.Measurement[float64], out adaptive.BaselineReading) {
+				if out.HasPrior {
+					m.SetMetric("midpoint_return_baseline", data.NewMetric[float64](
+						"midpoint_return_baseline",
+						data.UnitVelocity,
+						data.TimescaleRollingWindow,
+						out.Baseline,
+						out.ScoreScale,
+					).Write(out.Baseline))
+
+					m.SetMetric("midpoint_return_divergence", data.NewMetric[float64](
+						"midpoint_return_divergence",
+						data.UnitVelocity,
+						data.TimescaleRollingWindow,
+						0.0,
+						out.ScoreScale,
+					).Write(out.Residual))
+
+					m.SetMetric("midpoint_return_zscore", data.NewMetric[float64](
+						"midpoint_return_zscore",
+						data.UnitStandardDeviation,
+						data.TimescaleRollingWindow,
+						0.0,
+						1.0,
+					).Write(out.ZScore))
+				}
+			},
+		),
+		// Midpoint return velocity
+		data.NewAdapter(
+			temporal.NewVelocity(),
+			func(m *data.Measurement[float64]) temporal.Observation {
+				return temporal.Observation{
+					Value: m.GetMetric("midpoint_return_rate").Raw,
+					At:    m.At.UnixNano(),
+				}
+			},
+			func(m *data.Measurement[float64], out temporal.VelocityReading) {
+				if out.Defined {
+					m.SetMetric("midpoint_return_velocity", data.NewMetric[float64](
+						"midpoint_return_velocity",
+						data.UnitAcceleration,
+						data.TimescalePerSecond,
+						0.0,
+						0.0,
+					).Write(out.Rate))
+				}
+			},
+		),
 
 		// 3. Recurrence
 		data.NewRecurrence(
