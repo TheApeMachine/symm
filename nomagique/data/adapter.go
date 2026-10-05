@@ -7,34 +7,26 @@ import (
 	"github.com/theapemachine/symm/nomagique/core"
 )
 
-type Map[T any] map[string]T
+type Map[T any] struct {
+	numeric bool
+	Values  map[string]T
+}
 
-func NewMap(
-	mapping ...string,
-) Map[string] {
-	mapper := make(Map[string])
+func NewMap(mapping ...string) Map[string] {
+	mapper := Map[string]{Values: make(map[string]string)}
 
 	for i := 0; i < len(mapping)-1; i += 2 {
-		mapper[mapping[i]] = mapping[i+1]
+		mapper.Values[mapping[i]] = mapping[i+1]
 	}
 
 	return mapper
 }
 
-func NewOutputMap(
-	mapping ...any,
-) Map[float64] {
-	mapper := make(Map[float64])
-
-	for i := 0; i < len(mapping)-1; i += 2 {
-		if k, ok := mapping[i].(string); ok {
-			if v, ok := mapping[i+1].(float64); ok {
-				mapper[k] = v
-			}
-		}
+func NewOutputMap() Map[float64] {
+	return Map[float64]{
+		numeric: true,
+		Values:  make(map[string]float64),
 	}
-
-	return mapper
 }
 
 type State struct {
@@ -42,85 +34,98 @@ type State struct {
 	output Map[float64]
 }
 
-func NewState(
-	input Map[string],
-	output ...Map[float64],
-) *State {
-	out := make(Map[float64])
-	if len(output) > 0 && output[0] != nil {
+func NewState(input Map[string], output ...Map[float64]) *State {
+	out := NewOutputMap()
+
+	if len(output) > 0 {
 		out = output[0]
 	}
 
-	return &State{
-		input:  input,
-		output: out,
-	}
+	return &State{input: input, output: out}
 }
 
 /*
-Adapter wraps a Measurement, and remaps its metric keys from the domain's
-keys (provided by the System) to the keys used by a primitive internally.
+Adapter binds a Measurement's domain keys to the native names used by
+Primitives. String maps request native inputs; float maps publish native
+outputs. The State mapping is the only place where native and domain names
+meet.
 */
 type Adapter struct {
 	*core.PrimitiveError
 	measurement *Measurement
 	state       *State
+	values      Map[float64]
 }
 
-func NewAdapter(
-	measurement *Measurement, state *State,
-) *Adapter {
+func NewAdapter(measurement *Measurement, state *State) *Adapter {
 	return &Adapter{
 		PrimitiveError: core.NewPrimitiveError(),
 		measurement:    measurement,
 		state:          state,
+		values:         NewOutputMap(),
 	}
 }
 
-/*
-Next checks if we're getting a Map[string] (reading) or a Map[float64] (writing).
-*/
 func (wrapper *Adapter) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-		if in == nil {
-			if !yield(unsafe.Pointer(wrapper.measurement)) {
+		for arriving := range in {
+			if arriving == nil || wrapper.state == nil {
+				wrapper.Error(core.ErrShape)
 				return
 			}
 
-			return
-		}
+			if (*Map[string])(arriving).numeric {
+				mapped := (*Map[float64])(arriving)
 
-		for arriving := range in {
-			switch m := (*(*any)(arriving)).(type) {
-			case Map[string]:
-				for _, domainKey := range m {
-					entry := wrapper.measurement.Read(domainKey)
-					if entry.Err != nil && wrapper.state != nil && wrapper.state.output != nil {
-						if val, found := wrapper.state.output[domainKey]; found {
-							entry = MetricEntry{
-								Key: domainKey,
-								Metric: Metric{
-									label: domainKey,
-									raw:   val,
-								},
-							}
-						}
+				for nativeKey, value := range mapped.Values {
+					domainKey := nativeKey
+
+					if alias, ok := wrapper.state.input.Values[nativeKey]; ok {
+						domainKey = alias
 					}
 
-					if !yield(unsafe.Pointer(&entry)) {
-						return
-					}
-				}
-			case Map[float64]:
-				for domainKey, val := range m {
-					if wrapper.state != nil && wrapper.state.output != nil {
-						wrapper.state.output[domainKey] = val
-					}
+					wrapper.state.output.Values[domainKey] = value
 				}
 
-				if !yield(arriving) {
+				if !yield(unsafe.Pointer(wrapper)) {
 					return
 				}
+
+				continue
+			}
+
+			clear(wrapper.values.Values)
+			requested := (*Map[string])(arriving)
+
+			for nativeKey := range requested.Values {
+				domainKey := nativeKey
+
+				if alias, ok := wrapper.state.input.Values[nativeKey]; ok {
+					domainKey = alias
+				}
+
+				if value, ok := wrapper.state.output.Values[domainKey]; ok {
+					wrapper.values.Values[nativeKey] = value
+					continue
+				}
+
+				if wrapper.measurement == nil {
+					wrapper.Error(core.ErrNotHeld)
+					return
+				}
+
+				entry := wrapper.measurement.Read(domainKey)
+
+				if entry.Err != nil {
+					wrapper.Error(entry.Err)
+					return
+				}
+
+				wrapper.values.Values[nativeKey] = entry.Metric.raw
+			}
+
+			if !yield(unsafe.Pointer(&wrapper.values)) {
+				return
 			}
 		}
 	}
